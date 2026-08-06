@@ -96,7 +96,11 @@ impl TurnRegistry {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let cancel = CancellationToken::new();
         running.insert(session_id.to_string(), (id, cancel.clone()));
-        Ok(TurnClaim { session_id: session_id.to_string(), cancel, id })
+        Ok(TurnClaim {
+            session_id: session_id.to_string(),
+            cancel,
+            id,
+        })
     }
 
     /// Release the session. Identity-checked: a late `end` from a turn that
@@ -205,7 +209,7 @@ impl Default for TurnRegistry {
 /// every exit path, so the next check finds nothing after it.
 pub fn has_unanswered_input(db: &dyn Db, session_id: &str) -> Result<bool, BoughError> {
     let own = db.messages_for(session_id)?;
-    for m in own.iter().rev() {
+    if let Some(m) = own.iter().next_back() {
         match m.role {
             Role::Supervisor => return Ok(false),
             Role::User | Role::System => return Ok(true),
@@ -303,11 +307,19 @@ pub fn classify_round_failure(
     };
 
     if is_abort(err) || attempt > max_retries || !(truncated || is_retryable(err)) {
-        return RetryDecision { retry: false, delay_ms: 0, reason };
+        return RetryDecision {
+            retry: false,
+            delay_ms: 0,
+            reason,
+        };
     }
     RetryDecision {
         retry: true,
-        delay_ms: if truncated { 0 } else { opts.outage_delay_ms.unwrap_or(OUTAGE_DELAY_MS) },
+        delay_ms: if truncated {
+            0
+        } else {
+            opts.outage_delay_ms.unwrap_or(OUTAGE_DELAY_MS)
+        },
         reason,
     }
 }
@@ -442,7 +454,10 @@ mod tests {
                 *f.lock().unwrap() = true;
             }),
         );
-        assert!(r.interrupt("s1"), "hooks alone still count as something to stop");
+        assert!(
+            r.interrupt("s1"),
+            "hooks alone still count as something to stop"
+        );
         assert!(*fired.lock().unwrap());
     }
 
@@ -497,11 +512,16 @@ mod tests {
         let registry = TurnRegistry::new();
         let stopped = Arc::new(Mutex::new(Vec::<&str>::new()));
         let s = stopped.clone();
-        let off =
-            registry.on_interrupt("parent", Arc::new(move || s.lock().unwrap().push("child-a")));
+        let off = registry.on_interrupt(
+            "parent",
+            Arc::new(move || s.lock().unwrap().push("child-a")),
+        );
         registry.on_interrupt("parent", Arc::new(|| panic!("this child is already gone")));
         let s = stopped.clone();
-        registry.on_interrupt("parent", Arc::new(move || s.lock().unwrap().push("child-b")));
+        registry.on_interrupt(
+            "parent",
+            Arc::new(move || s.lock().unwrap().push("child-b")),
+        );
 
         // No turn running: a detached child outlives its spawner's turn
         // (spec §7), and an explicit stop still has to reach it.
@@ -515,7 +535,10 @@ mod tests {
 
         registry.off_interrupt("parent", off);
         registry.interrupt("parent");
-        assert_eq!(*stopped.lock().unwrap(), vec!["child-a", "child-b", "child-b"]);
+        assert_eq!(
+            *stopped.lock().unwrap(),
+            vec!["child-a", "child-b", "child-b"]
+        );
         assert!(!registry.interrupt("nobody"));
     }
 
@@ -573,7 +596,9 @@ mod tests {
                 id: Uuid::new_v4().to_string(),
                 session_id: session.id.clone(),
                 role,
-                parts: vec![Part::Text { text: text.to_string() }],
+                parts: vec![Part::Text {
+                    text: text.to_string(),
+                }],
                 pending: false,
                 created_at: at,
             })
@@ -601,7 +626,10 @@ mod tests {
         // derived check.
         registry.enqueue(&session.id);
         assert!(should_drain(&db, &session.id, &registry).unwrap());
-        assert!(should_drain(&db, &session.id, &registry).unwrap(), "still owed by the transcript");
+        assert!(
+            should_drain(&db, &session.id, &registry).unwrap(),
+            "still owed by the transcript"
+        );
     }
 
     // ---- the retry ring -----------------------------------------------------
@@ -615,10 +643,16 @@ mod tests {
         let first = classify_round_failure(
             &truncated,
             1,
-            &ClassifyOpts { outage_delay_ms: Some(60_000), ..Default::default() },
+            &ClassifyOpts {
+                outage_delay_ms: Some(60_000),
+                ..Default::default()
+            },
         );
         assert!(first.retry);
-        assert_eq!(first.delay_ms, 0, "a lost frame is not an outage — re-stream now");
+        assert_eq!(
+            first.delay_ms, 0,
+            "a lost frame is not an outage — re-stream now"
+        );
 
         // A provider outage waits, because the client's own backoff is already
         // spent.
@@ -626,7 +660,10 @@ mod tests {
         let second = classify_round_failure(
             &outage,
             1,
-            &ClassifyOpts { outage_delay_ms: Some(60_000), ..Default::default() },
+            &ClassifyOpts {
+                outage_delay_ms: Some(60_000),
+                ..Default::default()
+            },
         );
         assert!(second.retry);
         assert_eq!(second.delay_ms, 60_000);
@@ -669,7 +706,10 @@ mod tests {
         // Already aborted, and the zero case.
         let cancelled = CancellationToken::new();
         cancelled.cancel();
-        assert_eq!(abortable_delay(0, Some(&cancelled)).await, Err(DelayInterrupted));
+        assert_eq!(
+            abortable_delay(0, Some(&cancelled)).await,
+            Err(DelayInterrupted)
+        );
         assert_eq!(abortable_delay(0, None).await, Ok(()));
     }
 }

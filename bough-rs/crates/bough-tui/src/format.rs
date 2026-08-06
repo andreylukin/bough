@@ -32,7 +32,11 @@ pub use crate::ansi::{
 fn color_cell() -> &'static AtomicBool {
     static COLOR: OnceLock<AtomicBool> = OnceLock::new();
     COLOR.get_or_init(|| {
-        AtomicBool::new(std::env::var("NO_COLOR").map(|v| v.is_empty()).unwrap_or(true))
+        AtomicBool::new(
+            std::env::var("NO_COLOR")
+                .map(|v| v.is_empty())
+                .unwrap_or(true),
+        )
     })
 }
 
@@ -185,7 +189,12 @@ fn md_inline(line: &str) -> String {
     let mut spans: Vec<String> = Vec::new();
     let s = replace_code_spans(line, &mut spans);
     let s = replace_pair(&s, "**", |inner| !inner.contains('*'), bold);
-    let s = replace_pair(&s, "~~", |inner| !inner.contains('~') && !inner.contains('\n'), strike);
+    let s = replace_pair(
+        &s,
+        "~~",
+        |inner| !inner.contains('~') && !inner.contains('\n'),
+        strike,
+    );
     let s = replace_delim_italic(&s, '*', false);
     let s = replace_delim_italic(&s, '_', true);
     let s = replace_md_links(&s, &mut spans);
@@ -231,7 +240,12 @@ fn replace_code_spans(s: &str, spans: &mut Vec<String>) -> String {
 
 /// `**bold**` / `~~strike~~`: a two-char delimiter pair whose inner run
 /// satisfies `ok` and is non-empty.
-fn replace_pair(s: &str, delim: &str, ok: impl Fn(&str) -> bool, style: impl Fn(&str) -> String) -> String {
+fn replace_pair(
+    s: &str,
+    delim: &str,
+    ok: impl Fn(&str) -> bool,
+    style: impl Fn(&str) -> String,
+) -> String {
     let stop = delim.chars().next().unwrap();
     let mut out = String::new();
     let mut rest = s;
@@ -276,9 +290,8 @@ fn replace_delim_italic(s: &str, delim: char, word_boundary: bool) -> String {
                 let inner = &after[..p];
                 let first = inner.chars().next().unwrap();
                 let last = inner.chars().last().unwrap();
-                let mut ok = !inner.contains('\n')
-                    && !first.is_whitespace()
-                    && !last.is_whitespace();
+                let mut ok =
+                    !inner.contains('\n') && !first.is_whitespace() && !last.is_whitespace();
                 if ok && word_boundary {
                     // (?<![\w\\]) … (?!\w)
                     let prev = rest[..i].chars().last();
@@ -316,7 +329,7 @@ fn replace_md_links(s: &str, spans: &mut Vec<String>) -> String {
             out.push_str(rest);
             return out;
         };
-        let escaped = rest[..i].chars().last() == Some('\x1b');
+        let escaped = rest[..i].ends_with('\x1b');
         let parsed = (!escaped)
             .then(|| {
                 let after = &rest[i + 1..];
@@ -342,7 +355,10 @@ fn replace_md_links(s: &str, spans: &mut Vec<String>) -> String {
                 let rendered = if text == url {
                     osc8(&url, &underline(&text))
                 } else {
-                    osc8(&url, &format!("{} {}", underline(&text), dim(&format!("({url})"))))
+                    osc8(
+                        &url,
+                        &format!("{} {}", underline(&text), dim(&format!("({url})"))),
+                    )
                 };
                 out.push_str(&guard(spans, rendered));
                 rest = &rest[consumed..];
@@ -358,9 +374,7 @@ fn replace_md_links(s: &str, spans: &mut Vec<String>) -> String {
 /// Bare URLs become clickable as themselves; trailing punctuation stays prose.
 /// The `\x1b` stop keeps a bolded URL from swallowing its own reset code.
 fn replace_bare_urls(s: &str, spans: &mut Vec<String>) -> String {
-    let stop = |c: char| {
-        c.is_whitespace() || matches!(c, ')' | ']' | '>' | '\'' | '"' | '\x1b')
-    };
+    let stop = |c: char| c.is_whitespace() || matches!(c, ')' | ']' | '>' | '\'' | '"' | '\x1b');
     let mut out = String::new();
     let mut rest = s;
     loop {
@@ -788,8 +802,12 @@ pub fn meter_line(m: &MeterOpts) -> String {
             .unwrap_or(""),
     );
     let candidates = [
-        join(&[&base, &model, &cost, &context, &shells, &agents, &runs, &out, &help]),
-        join(&[&model, &cost, &context, &shells, &agents, &runs, &out, &help]),
+        join(&[
+            &base, &model, &cost, &context, &shells, &agents, &runs, &out, &help,
+        ]),
+        join(&[
+            &model, &cost, &context, &shells, &agents, &runs, &out, &help,
+        ]),
         join(&[&cost, &context, &live, &out, &help]),
         join(&[&cost, &context, &out, &live]),
         join(&[&context, &live]),
@@ -830,7 +848,11 @@ pub struct BusyOpts {
 pub fn busy_line(opts: &BusyOpts) -> String {
     let frame = SPINNER[(opts.tick.unsigned_abs() % SPINNER.len() as u64) as usize];
     let activity = opts.activity.as_deref().unwrap_or("").trim();
-    let what = if activity.is_empty() { "working" } else { activity };
+    let what = if activity.is_empty() {
+        "working"
+    } else {
+        activity
+    };
     let mut bits: Vec<String> = vec![what.to_string(), fmt_duration(opts.elapsed_ms)];
     if let Some(tokens) = opts.tokens {
         if tokens > 0 {
@@ -868,7 +890,10 @@ pub fn fuzzy_score(candidate: &str, query: &str) -> u8 {
     if c.starts_with(&q) {
         return 4;
     }
-    if ["-", "_", " ", "/"].iter().any(|b| c.contains(&format!("{b}{q}"))) {
+    if ["-", "_", " ", "/"]
+        .iter()
+        .any(|b| c.contains(&format!("{b}{q}")))
+    {
         return 3;
     }
     if c.contains(&q) {
@@ -1015,7 +1040,11 @@ pub fn browse_prefix(query: &str) -> Option<String> {
     if !leaves {
         return None;
     }
-    let q = if query == "~" { "~/".to_string() } else { query.to_string() };
+    let q = if query == "~" {
+        "~/".to_string()
+    } else {
+        query.to_string()
+    };
     let cut = q.rfind('/')?;
     Some(q[..cut + 1].to_string())
 }
@@ -1031,17 +1060,29 @@ pub struct Candidate {
 
 impl Candidate {
     pub fn file(name: impl Into<String>) -> Self {
-        Self { name: name.into(), detail: String::new(), run: None }
+        Self {
+            name: name.into(),
+            detail: String::new(),
+            run: None,
+        }
     }
     pub fn skill(name: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self { name: name.into(), detail: detail.into(), run: None }
+        Self {
+            name: name.into(),
+            detail: detail.into(),
+            run: None,
+        }
     }
     pub fn command(
         name: impl Into<String>,
         detail: impl Into<String>,
         run: crate::keys::Command,
     ) -> Self {
-        Self { name: name.into(), detail: detail.into(), run: Some(run) }
+        Self {
+            name: name.into(),
+            detail: detail.into(),
+            run: Some(run),
+        }
     }
 }
 
@@ -1074,7 +1115,11 @@ pub const COMPLETION_LIMIT: usize = 6;
 
 /// Rank candidates for a trigger and cap the list.
 pub fn rank_completions(candidates: &[Candidate], trigger: &Trigger, limit: usize) -> Ranked {
-    let marker = if trigger.kind == TriggerKind::Skill { '/' } else { '@' };
+    let marker = if trigger.kind == TriggerKind::Skill {
+        '/'
+    } else {
+        '@'
+    };
     let mut ranked: Vec<(usize, u8, &Candidate)> = candidates
         .iter()
         .enumerate()
@@ -1113,7 +1158,10 @@ pub fn rank_completions(candidates: &[Candidate], trigger: &Trigger, limit: usiz
             ),
             run: c.run,
             // Positions are against the bare name; the marker shifts them by one.
-            hl: fuzzy_positions(&c.name, &trigger.query).into_iter().map(|p| p + 1).collect(),
+            hl: fuzzy_positions(&c.name, &trigger.query)
+                .into_iter()
+                .map(|p| p + 1)
+                .collect(),
         })
         .collect();
     Ranked { items, total }
@@ -1192,10 +1240,16 @@ mod tests {
     fn md_fenced_code_sits_on_a_raised_surface_when_a_width_is_given() {
         with_color(true, || {
             let out = md("```js\nconst x = 1\n```", Some(40));
-            assert!(out.contains("\x1b[48;"), "the block needs a background: {out:?}");
+            assert!(
+                out.contains("\x1b[48;"),
+                "the block needs a background: {out:?}"
+            );
             assert!(!md("plain prose", Some(40)).contains("\x1b[48;"));
             let line = surface("hi", 10);
-            assert!(line.ends_with(&format!("{}\x1b[0m", " ".repeat(8))), "{line:?}");
+            assert!(
+                line.ends_with(&format!("{}\x1b[0m", " ".repeat(8))),
+                "{line:?}"
+            );
         });
     }
 
@@ -1259,12 +1313,24 @@ mod tests {
         with_color(true, || {
             let out = highlight_code("const x = \"hi\" // note", "js");
             let p = colors();
-            assert!(out.contains(&format!("\x1b[{}mconst\x1b[39m", p.keyword)), "{out:?}");
-            assert!(out.contains(&format!("\x1b[{}m\"hi\"\x1b[39m", p.string)), "{out:?}");
-            assert!(out.contains(&format!("\x1b[{}m// note\x1b[39m", p.muted)), "{out:?}");
+            assert!(
+                out.contains(&format!("\x1b[{}mconst\x1b[39m", p.keyword)),
+                "{out:?}"
+            );
+            assert!(
+                out.contains(&format!("\x1b[{}m\"hi\"\x1b[39m", p.string)),
+                "{out:?}"
+            );
+            assert!(
+                out.contains(&format!("\x1b[{}m// note\x1b[39m", p.muted)),
+                "{out:?}"
+            );
             // A marker inside a string is not a comment.
             let quoted = highlight_code("const u = \"http://x\"", "js");
-            assert!(!quoted.contains(&format!("\x1b[{}m", p.muted)), "{quoted:?}");
+            assert!(
+                !quoted.contains(&format!("\x1b[{}m", p.muted)),
+                "{quoted:?}"
+            );
         });
     }
 
@@ -1377,19 +1443,36 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            meter_line(&MeterOpts { width: Some(200), ..m.clone() }),
+            meter_line(&MeterOpts {
+                width: Some(200),
+                ..m.clone()
+            }),
             "~/repos/bough · moonshotai/kimi-k3 · $0.007 · 98% ctx left · ? help"
         );
         // Every degraded form still fits, and the two live numbers survive longest.
         for w in [70usize, 60, 50, 40, 30, 20, 12] {
-            let line = meter_line(&MeterOpts { width: Some(w), ..m.clone() });
-            assert!(width(&line) <= w, "width {w} produced {} cols: {line}", width(&line));
+            let line = meter_line(&MeterOpts {
+                width: Some(w),
+                ..m.clone()
+            });
+            assert!(
+                width(&line) <= w,
+                "width {w} produced {} cols: {line}",
+                width(&line)
+            );
         }
         // The workspace shortens to its basename before it disappears entirely.
-        assert!(meter_line(&MeterOpts { width: Some(60), ..m.clone() }).contains("bough"));
+        assert!(meter_line(&MeterOpts {
+            width: Some(60),
+            ..m.clone()
+        })
+        .contains("bough"));
         // At the narrowest, context left is the last thing standing.
         assert_eq!(
-            meter_line(&MeterOpts { width: Some(14), ..m.clone() }),
+            meter_line(&MeterOpts {
+                width: Some(14),
+                ..m.clone()
+            }),
             "98% ctx left"
         );
 
@@ -1401,10 +1484,17 @@ mod tests {
             ..m.clone()
         };
         assert!(meter_line(&live).contains("⚙ 2 shells · ◆ 3 agents · ⧉ 1 run"));
-        assert!(meter_line(&MeterOpts { agents: Some(1), runs: Some(2), ..live.clone() })
-            .contains("◆ 1 agent · ⧉ 2 runs"));
+        assert!(meter_line(&MeterOpts {
+            agents: Some(1),
+            runs: Some(2),
+            ..live.clone()
+        })
+        .contains("◆ 1 agent · ⧉ 2 runs"));
         // Narrow: the words collapse to glyphs rather than dropping the fact.
-        let narrow = meter_line(&MeterOpts { width: Some(30), ..live.clone() });
+        let narrow = meter_line(&MeterOpts {
+            width: Some(30),
+            ..live.clone()
+        });
         assert!(narrow.contains("⚙2 ◆3 ⧉1"), "{narrow}");
         assert!(width(&narrow) <= 30, "{narrow}");
         // Nothing running says nothing at all.
@@ -1446,12 +1536,22 @@ mod tests {
             help: true,
             ..Default::default()
         };
-        assert!(meter_line(&MeterOpts { out: true, ..base.clone() }).contains("← back"));
+        assert!(meter_line(&MeterOpts {
+            out: true,
+            ..base.clone()
+        })
+        .contains("← back"));
         // A root conversation has nowhere to go back to, and must not offer.
         assert!(!meter_line(&base).contains("← back"));
         // It sits before the help hint, which stays last.
-        let line = meter_line(&MeterOpts { out: true, ..base.clone() });
-        assert!(line.find("← back").unwrap() < line.find("? help").unwrap(), "{line}");
+        let line = meter_line(&MeterOpts {
+            out: true,
+            ..base.clone()
+        });
+        assert!(
+            line.find("← back").unwrap() < line.find("? help").unwrap(),
+            "{line}"
+        );
         // AND IT SURVIVES DEGRADATION: the full line begins with an ABSOLUTE
         // workspace path, so on a real terminal it always degrades — a chip
         // added only to the full form is a chip that never renders.
@@ -1478,7 +1578,12 @@ mod tests {
         // The regression it prevents: a running turn that has printed nothing
         // looked identical to a hung terminal, and esc — the fix for a hung
         // terminal — was documented on no screen.
-        let line = busy_line(&BusyOpts { activity: None, elapsed_ms: 9_000, tick: 0, tokens: None });
+        let line = busy_line(&BusyOpts {
+            activity: None,
+            elapsed_ms: 9_000,
+            tick: 0,
+            tokens: None,
+        });
         assert_eq!(line, "⠋ working · 9s · esc interrupts");
         // The cheap-tier blurb rides along when there is one, instead of replacing it.
         assert_eq!(
@@ -1492,17 +1597,27 @@ mod tests {
         );
         // A blank blurb is the same as no blurb — never an empty middle field.
         assert_eq!(
-            busy_line(&BusyOpts { activity: Some("   ".into()), elapsed_ms: 0, tick: 0, tokens: None }),
+            busy_line(&BusyOpts {
+                activity: Some("   ".into()),
+                elapsed_ms: 0,
+                tick: 0,
+                tokens: None
+            }),
             "⠋ working · 0s · esc interrupts"
         );
         // The spinner cycles rather than running off the end of the frame list.
         let frames: std::collections::HashSet<String> = (0..40)
             .map(|i| {
-                busy_line(&BusyOpts { activity: None, elapsed_ms: 0, tick: i, tokens: None })
-                    .chars()
-                    .next()
-                    .unwrap()
-                    .to_string()
+                busy_line(&BusyOpts {
+                    activity: None,
+                    elapsed_ms: 0,
+                    tick: i,
+                    tokens: None,
+                })
+                .chars()
+                .next()
+                .unwrap()
+                .to_string()
             })
             .collect();
         assert_eq!(frames.len(), 10);
@@ -1522,7 +1637,12 @@ mod tests {
         // A provider that reports usage only at the end leaves zeros here, and a
         // zero is omitted rather than printed.
         assert_eq!(
-            busy_line(&BusyOpts { activity: None, elapsed_ms: 1_000, tick: 0, tokens: Some(0) }),
+            busy_line(&BusyOpts {
+                activity: None,
+                elapsed_ms: 1_000,
+                tick: 0,
+                tokens: Some(0)
+            }),
             "⠋ working · 1s · esc interrupts"
         );
     }
@@ -1568,24 +1688,49 @@ mod tests {
     fn active_trigger_fires_at_any_word_boundary_not_just_position_zero() {
         assert_eq!(
             active_trigger("@src", 4),
-            Some(Trigger { kind: TriggerKind::File, query: "src".into(), start: 0, end: 4 })
+            Some(Trigger {
+                kind: TriggerKind::File,
+                query: "src".into(),
+                start: 0,
+                end: 4
+            })
         );
         assert_eq!(
             active_trigger("look at @src", 12),
-            Some(Trigger { kind: TriggerKind::File, query: "src".into(), start: 8, end: 12 })
+            Some(Trigger {
+                kind: TriggerKind::File,
+                query: "src".into(),
+                start: 8,
+                end: 12
+            })
         );
         assert_eq!(
             active_trigger("/com", 4),
-            Some(Trigger { kind: TriggerKind::Skill, query: "com".into(), start: 0, end: 4 })
+            Some(Trigger {
+                kind: TriggerKind::Skill,
+                query: "com".into(),
+                start: 0,
+                end: 4
+            })
         );
         assert_eq!(
             active_trigger("fix this /com", 13),
-            Some(Trigger { kind: TriggerKind::Skill, query: "com".into(), start: 9, end: 13 })
+            Some(Trigger {
+                kind: TriggerKind::Skill,
+                query: "com".into(),
+                start: 9,
+                end: 13
+            })
         );
         // A bare marker completes everything — the menu opens on the marker alone.
         assert_eq!(
             active_trigger("@", 1),
-            Some(Trigger { kind: TriggerKind::File, query: String::new(), start: 0, end: 1 })
+            Some(Trigger {
+                kind: TriggerKind::File,
+                query: String::new(),
+                start: 0,
+                end: 1
+            })
         );
     }
 
@@ -1593,8 +1738,11 @@ mod tests {
     fn active_trigger_a_marker_mid_word_is_not_a_marker() {
         assert_eq!(active_trigger("src/server/app", 14), None); // a path, not a skill
         assert_eq!(active_trigger("user@host", 9), None); // an address, not a reference
-        // …but a real one still fires.
-        assert_eq!(active_trigger("a/b @c/d", 8).map(|t| t.kind), Some(TriggerKind::File));
+                                                          // …but a real one still fires.
+        assert_eq!(
+            active_trigger("a/b @c/d", 8).map(|t| t.kind),
+            Some(TriggerKind::File)
+        );
     }
 
     #[test]
@@ -1619,7 +1767,10 @@ mod tests {
         assert_eq!(browse_prefix("~").as_deref(), Some("~/")); // a bare `@~` opens home
         assert_eq!(browse_prefix("/etc/ho").as_deref(), Some("/etc/"));
         assert_eq!(browse_prefix("./sr").as_deref(), Some("./"));
-        assert_eq!(browse_prefix("../sibling/x").as_deref(), Some("../sibling/"));
+        assert_eq!(
+            browse_prefix("../sibling/x").as_deref(),
+            Some("../sibling/")
+        );
         // A plain repo path stays on `git ls-files` — that is where its candidates are.
         assert_eq!(browse_prefix("src/tui/"), None);
         assert_eq!(browse_prefix(""), None);

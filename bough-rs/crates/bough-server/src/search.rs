@@ -180,9 +180,8 @@ impl<D: Db> Db for SearchSafeDb<D> {
             }
             // The report itself must not fail past the write it is protecting.
             let report = self.on_error.clone();
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                report(&err, message)
-            }));
+            let _ =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| report(&err, message)));
         }
         Ok(())
     }
@@ -294,13 +293,7 @@ impl<D: Db> Db for SearchSafeDb<D> {
     fn get_state(&self, root_id: &str, key: &str) -> Result<Option<String>, BoughError> {
         self.inner.get_state(root_id, key)
     }
-    fn set_state(
-        &self,
-        root_id: &str,
-        key: &str,
-        value: &str,
-        now: i64,
-    ) -> Result<(), BoughError> {
+    fn set_state(&self, root_id: &str, key: &str, value: &str, now: i64) -> Result<(), BoughError> {
         self.inner.set_state(root_id, key, value, now)
     }
     fn list_state(&self, root_id: &str) -> Result<Vec<StateEntry>, BoughError> {
@@ -353,11 +346,7 @@ impl<D: Db> Db for SearchSafeDb<D> {
     fn create_workflow_agent(&self, agent: WorkflowAgent) -> Result<WorkflowAgent, BoughError> {
         self.inner.create_workflow_agent(agent)
     }
-    fn update_workflow_agent(
-        &self,
-        id: &str,
-        patch: WorkflowAgentPatch,
-    ) -> Result<(), BoughError> {
+    fn update_workflow_agent(&self, id: &str, patch: WorkflowAgentPatch) -> Result<(), BoughError> {
         self.inner.update_workflow_agent(id, patch)
     }
     fn list_workflow_agents(&self, run_id: &str) -> Result<Vec<WorkflowAgent>, BoughError> {
@@ -380,10 +369,7 @@ impl<D: Db> Db for SearchSafeDb<D> {
     ) -> Result<Vec<CommandTagRow>, BoughError> {
         self.inner.command_tag_rows(repo, opts)
     }
-    fn tag_spread(
-        &self,
-        since_ts: Option<i64>,
-    ) -> Result<(i64, HashMap<String, i64>), BoughError> {
+    fn tag_spread(&self, since_ts: Option<i64>) -> Result<(i64, HashMap<String, i64>), BoughError> {
         self.inner.tag_spread(since_ts)
     }
     fn tag_diversity_by_day(
@@ -432,7 +418,8 @@ impl<D: Db> Db for SearchSafeDb<D> {
         not_cmd: &str,
         since_ts: i64,
     ) -> Result<Option<String>, BoughError> {
-        self.inner.last_success_like(repo, prefix, not_cmd, since_ts)
+        self.inner
+            .last_success_like(repo, prefix, not_cmd, since_ts)
     }
     fn program_for_message(&self, message_id: &str) -> Result<Option<String>, BoughError> {
         self.inner.program_for_message(message_id)
@@ -520,7 +507,10 @@ pub fn rebuild_index(db: &dyn Db) -> Result<RebuildCounts, BoughError> {
     for session in &sessions {
         messages += db.messages_for(&session.id)?.len();
     }
-    Ok(RebuildCounts { messages, sessions: sessions.len() })
+    Ok(RebuildCounts {
+        messages,
+        sessions: sessions.len(),
+    })
 }
 
 // ---- query ------------------------------------------------------------------
@@ -572,8 +562,13 @@ fn names_the_index(err: &BoughError) -> Option<String> {
 
 /// True when the FTS parser, not the corpus, rejected the query.
 fn is_syntax_error(err: &BoughError) -> bool {
-    matches!(err, BoughError::Http { kind: ErrorKind::BadRequest, .. })
-        && names_the_index(err).is_none()
+    matches!(
+        err,
+        BoughError::Http {
+            kind: ErrorKind::BadRequest,
+            ..
+        }
+    ) && names_the_index(err).is_none()
 }
 
 /// 503 — the index is gone, not the query. Named separately from a 400 because
@@ -653,7 +648,9 @@ pub fn search_transcripts(
         // A hit whose message is gone is index drift, not a result: showing a
         // snippet with nothing to open would be worse than showing one fewer
         // hit.
-        let Some(message) = db.get_message(&hit.message_id)? else { continue };
+        let Some(message) = db.get_message(&hit.message_id)? else {
+            continue;
+        };
         let session = match sessions.entry(hit.session_id.clone()) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::hash_map::Entry::Vacant(e) => {
@@ -667,8 +664,14 @@ pub fn search_transcripts(
                 .as_ref()
                 .map(|s| s.title.clone())
                 .unwrap_or_else(|| "(unknown session)".to_string()),
-            kind: session.as_ref().map(|s| s.kind).unwrap_or(SessionKind::Root),
-            collapsed: session.as_ref().map(|s| is_collapsed_kind(s.kind)).unwrap_or(false),
+            kind: session
+                .as_ref()
+                .map(|s| s.kind)
+                .unwrap_or(SessionKind::Root),
+            collapsed: session
+                .as_ref()
+                .map(|s| is_collapsed_kind(s.kind))
+                .unwrap_or(false),
             origin_id: session.as_ref().and_then(|s| s.origin_id.clone()),
             role: message.role,
             snippet: hit.snippet,
@@ -681,8 +684,7 @@ pub fn search_transcripts(
         Some(health) if health.failures > 0 => Some(IndexReport {
             health,
             degraded: true,
-            repair: "POST /search/reindex rebuilds the index from the stored messages."
-                .to_string(),
+            repair: "POST /search/reindex rebuilds the index from the stored messages.".to_string(),
         }),
         _ => None,
     };
@@ -712,8 +714,9 @@ fn decode_component(v: &str) -> String {
                 i += 1;
             }
             b'%' => {
-                let decoded =
-                    v.get(i + 1..i + 3).and_then(|hex| u8::from_str_radix(hex, 16).ok());
+                let decoded = v
+                    .get(i + 1..i + 3)
+                    .and_then(|hex| u8::from_str_radix(hex, 16).ok());
                 if let Some(b) = decoded {
                     out.push(b);
                     i += 3;
@@ -736,7 +739,11 @@ fn decode_component(v: &str) -> String {
 fn query_param(raw_query: &str, name: &str) -> Option<String> {
     raw_query.split('&').find_map(|kv| {
         let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
-        if decode_component(k) == name { Some(decode_component(v)) } else { None }
+        if decode_component(k) == name {
+            Some(decode_component(v))
+        } else {
+            None
+        }
     })
 }
 
@@ -770,7 +777,11 @@ pub fn search() -> Handler {
                 }
             },
         };
-        let parsed = SearchQuery { q, session_id, limit };
+        let parsed = SearchQuery {
+            q,
+            session_id,
+            limit,
+        };
         parsed.validate().map_err(|err| {
             BoughError::bad_request(format!(
                 "invalid search ({err}) — GET /search?q=<words>[&sessionId=<id>]\
@@ -782,7 +793,10 @@ pub fn search() -> Handler {
         let result = search_transcripts(
             &*db,
             &parsed.q,
-            SearchOpts { session_id: parsed.session_id, limit: parsed.limit.map(i64::from) },
+            SearchOpts {
+                session_id: parsed.session_id,
+                limit: parsed.limit.map(i64::from),
+            },
         )?;
         Ok(json(&result, 200))
     })
@@ -834,12 +848,7 @@ mod tests {
 
     struct NoopStarter;
     impl TurnStarter for NoopStarter {
-        fn start_turn(
-            &self,
-            _ctx: &AppCtx,
-            _s: &bough_core::schema::parts::Session,
-            _m: &Message,
-        ) {
+        fn start_turn(&self, _ctx: &AppCtx, _s: &bough_core::schema::parts::Session, _m: &Message) {
         }
     }
 
@@ -954,8 +963,12 @@ mod tests {
     async fn a_multi_word_query_is_an_implicit_and_not_a_phrase_and_not_an_or() {
         let fx = fixture(None);
         let s = session(&fx, "index work", SessionKind::Root, None);
-        let both =
-            say(&fx, &s, "the patch engine rejects an overlapping conflict range", Role::User);
+        let both = say(
+            &fx,
+            &s,
+            "the patch engine rejects an overlapping conflict range",
+            Role::User,
+        );
         let adjacent = say(&fx, &s, "a patch conflict names the file", Role::User);
         say(&fx, &s, "patch applies cleanly here", Role::User);
         say(&fx, &s, "a conflict in the schedule spec", Role::User);
@@ -978,7 +991,12 @@ mod tests {
         let fx = fixture(None);
         let s = session(&fx, "phrases", SessionKind::Root, None);
         let adjacent = say(&fx, &s, "we hit a patch conflict on files.ts", Role::User);
-        say(&fx, &s, "the patch applied but the conflict was elsewhere", Role::User);
+        say(
+            &fx,
+            &s,
+            "the patch applied but the conflict was elsewhere",
+            Role::User,
+        );
 
         let phrase = search_ok(&fx, "q=%22patch%20conflict%22").await;
         assert_eq!(hit_ids(&phrase), vec![adjacent.id]);
@@ -1005,7 +1023,12 @@ mod tests {
              and otherwise talks about entirely unrelated machinery for several lines",
             Role::User,
         );
-        let dense = say(&fx, &s, "patch, patch, patch — the patch grammar", Role::User);
+        let dense = say(
+            &fx,
+            &s,
+            "patch, patch, patch — the patch grammar",
+            Role::User,
+        );
 
         let result = search_ok(&fx, "q=patch").await;
         assert_eq!(
@@ -1019,8 +1042,18 @@ mod tests {
     async fn a_hit_carries_the_session_its_title_and_kind_the_role_and_the_timestamp() {
         let fx = fixture(None);
         let root = session(&fx, "the spawner", SessionKind::Root, None);
-        let child = session(&fx, "review files.ts", SessionKind::Subagent, Some(&root.id));
-        let m = say(&fx, &child, "reticulating splines in the delegated branch", Role::Supervisor);
+        let child = session(
+            &fx,
+            "review files.ts",
+            SessionKind::Subagent,
+            Some(&root.id),
+        );
+        let m = say(
+            &fx,
+            &child,
+            "reticulating splines in the delegated branch",
+            Role::Supervisor,
+        );
 
         let result = search_ok(&fx, "q=reticulating").await;
         assert_eq!(result["count"], 1);
@@ -1050,10 +1083,15 @@ mod tests {
         assert_eq!(scoped["scope"], a.id.as_str());
 
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
-        let missing = call.call(testutil::get("/search?q=splines&sessionId=nope")).await;
+        let missing = call
+            .call(testutil::get("/search?q=splines&sessionId=nope"))
+            .await;
         assert_eq!(missing.status(), 404);
         let body = testutil::body_json(missing).await;
-        assert!(body["error"].as_str().unwrap().contains("no session nope"), "{body}");
+        assert!(
+            body["error"].as_str().unwrap().contains("no session nope"),
+            "{body}"
+        );
     }
 
     #[tokio::test]
@@ -1070,20 +1108,39 @@ mod tests {
         let empty = call.call(testutil::get("/search?q=%20%20")).await;
         assert_eq!(empty.status(), 400);
         let body = testutil::body_json(empty).await;
-        assert!(body["error"].as_str().unwrap().contains("search needs a query"), "{body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("search needs a query"),
+            "{body}"
+        );
 
         let bad = call.call(testutil::get("/search?q=splines&limit=0")).await;
-        assert_eq!(bad.status(), 400, "limit is validated at the boundary, not silently fixed");
+        assert_eq!(
+            bad.status(),
+            400,
+            "limit is validated at the boundary, not silently fixed"
+        );
         let why = testutil::body_json(bad).await;
         let why = why["error"].as_str().unwrap();
-        assert!(why.contains("invalid search (limit: "), "the issue is named: {why}");
+        assert!(
+            why.contains("invalid search (limit: "),
+            "the issue is named: {why}"
+        );
         assert!(!why.contains("\"code\""), "{why}");
 
         // Absent entirely, which is how most people arrive here.
         let none = call.call(testutil::get("/search")).await;
         assert_eq!(none.status(), 400);
         let body = testutil::body_json(none).await;
-        assert!(body["error"].as_str().unwrap().contains("search needs a query"), "{body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("search needs a query"),
+            "{body}"
+        );
     }
 
     #[tokio::test]
@@ -1144,7 +1201,13 @@ mod tests {
         // the two.
         say(&fx, &s, "before the index broke", Role::User);
         assert_eq!(
-            fx.ctx.db.lock().unwrap().search_messages("broke", None, None).unwrap().len(),
+            fx.ctx
+                .db
+                .lock()
+                .unwrap()
+                .search_messages("broke", None, None)
+                .unwrap()
+                .len(),
             1
         );
 
@@ -1161,12 +1224,19 @@ mod tests {
             .await;
         assert_eq!(res.status(), 202);
         let messages = fx.ctx.db.lock().unwrap().messages_for(&s.id).unwrap();
-        assert_eq!(messages.len(), 2, "the message is persisted despite the index failure");
+        assert_eq!(
+            messages.len(),
+            2,
+            "the message is persisted despite the index failure"
+        );
 
         // And direct inserts too — the guarantee is about `index_message`, not
         // about HTTP.
         say(&fx, &s, "and again", Role::User);
-        assert_eq!(fx.ctx.db.lock().unwrap().messages_for(&s.id).unwrap().len(), 3);
+        assert_eq!(
+            fx.ctx.db.lock().unwrap().messages_for(&s.id).unwrap().len(),
+            3
+        );
 
         // It failed quietly, but not invisibly: the failure is counted and
         // reported.
@@ -1186,7 +1256,12 @@ mod tests {
         let s = session(&fx, "degraded", SessionKind::Root, None);
         say(&fx, &s, "indexed while healthy", Role::User);
         break_fts(&path);
-        say(&fx, &s, "written while broken and therefore unfindable", Role::User);
+        say(
+            &fx,
+            &s,
+            "written while broken and therefore unfindable",
+            Role::User,
+        );
 
         // `db.search_messages` renders every failure of that statement as
         // "not valid FTS5 syntax", so without the translation the user is
@@ -1201,12 +1276,17 @@ mod tests {
             error.contains("search index is unavailable (no such table: messages_fts)"),
             "{error}"
         );
-        assert!(error.contains("restarting the server recreates it"), "{error}");
+        assert!(
+            error.contains("restarting the server recreates it"),
+            "{error}"
+        );
         assert!(!error.contains("not valid FTS5 syntax"), "{error}");
 
         // And a rebuild says the same thing rather than 500ing: it cannot
         // create a table.
-        let cannot = call.call(testutil::req("POST", "/search/reindex", None)).await;
+        let cannot = call
+            .call(testutil::req("POST", "/search/reindex", None))
+            .await;
         assert_eq!(cannot.status(), 503);
 
         // Restarting is what recreates it (the schema is applied at open).
@@ -1217,9 +1297,14 @@ mod tests {
         let restarted = fixture(Some(&path));
         let call = create_handler(restarted.ctx.clone(), CreateHandlerOptions::default());
         let before = search_ok(&restarted, "q=unfindable").await;
-        assert_eq!(before["count"], 0, "the index is empty until it is refilled");
+        assert_eq!(
+            before["count"], 0,
+            "the index is empty until it is refilled"
+        );
 
-        let repaired = call.call(testutil::req("POST", "/search/reindex", None)).await;
+        let repaired = call
+            .call(testutil::req("POST", "/search/reindex", None))
+            .await;
         assert_eq!(repaired.status(), 200);
         assert_eq!(
             testutil::body_json(repaired).await,
@@ -1227,7 +1312,10 @@ mod tests {
         );
 
         let after = search_ok(&restarted, "q=unfindable").await;
-        assert_eq!(after["count"], 1, "the message written while broken is searchable again");
+        assert_eq!(
+            after["count"], 1,
+            "the message written while broken is searchable again"
+        );
         assert!(
             after.get("index").is_none(),
             "and the process starts with a clean counter: {after}"
@@ -1266,7 +1354,10 @@ mod tests {
             let db = fx.ctx.db.lock().unwrap();
             search_transcripts(&*db, "indexed", SearchOpts::default()).unwrap()
         };
-        assert_eq!(during.count, 0, "the incremental rows were lost with the dropped table");
+        assert_eq!(
+            during.count, 0,
+            "the incremental rows were lost with the dropped table"
+        );
         let index = during.index.expect("degraded report present");
         assert!(index.degraded);
         assert_eq!(index.health.failures, 1);
@@ -1285,8 +1376,14 @@ mod tests {
             let db = fx.ctx.db.lock().unwrap();
             rebuild_index(&*db).unwrap();
             let after = search_transcripts(&*db, "locked", SearchOpts::default()).unwrap();
-            assert!(after.index.is_none(), "the counter is cleared by the repair");
-            assert_eq!(after.count, 1, "and the missing message is searchable again");
+            assert!(
+                after.index.is_none(),
+                "the counter is cleared by the repair"
+            );
+            assert_eq!(
+                after.count, 1,
+                "and the missing message is searchable again"
+            );
         }
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1344,7 +1441,9 @@ mod tests {
                     id: uuid::Uuid::new_v4().to_string(),
                     session_id: s.id.clone(),
                     role: Role::User,
-                    parts: vec![Part::Text { text: text.to_string() }],
+                    parts: vec![Part::Text {
+                        text: text.to_string(),
+                    }],
                     pending: false,
                     created_at: tick(),
                 })
@@ -1355,7 +1454,11 @@ mod tests {
         assert_eq!(db.get_session(&root.id).unwrap().unwrap().title, "root");
         assert_eq!(db.thread_for(&child.id).unwrap().len(), 2);
         assert_eq!(
-            db.ancestor_chain(&child.id).unwrap().iter().map(|s| &s.id).collect::<Vec<_>>(),
+            db.ancestor_chain(&child.id)
+                .unwrap()
+                .iter()
+                .map(|s| &s.id)
+                .collect::<Vec<_>>(),
             vec![&root.id, &child.id]
         );
         assert_eq!(db.list_sessions().unwrap().len(), 2);
@@ -1372,14 +1475,30 @@ mod tests {
         let fx = fixture(None);
         let a = session(&fx, "a", SessionKind::Root, None);
         let b = session(&fx, "b", SessionKind::Root, None);
-        say(&fx, &a, "the patch grammar and its conflict rules", Role::User);
+        say(
+            &fx,
+            &a,
+            "the patch grammar and its conflict rules",
+            Role::User,
+        );
         say(&fx, &b, "another patch, another conflict", Role::User);
-        say(&fx, &b, "no prose here indexes nothing relevant", Role::User);
+        say(
+            &fx,
+            &b,
+            "no prose here indexes nothing relevant",
+            Role::User,
+        );
 
         let db = fx.ctx.db.lock().unwrap();
         let incremental = db.search_messages("patch", None, None).unwrap();
         let counts = rebuild_index(&*db).unwrap();
-        assert_eq!(counts, RebuildCounts { messages: 3, sessions: 2 });
+        assert_eq!(
+            counts,
+            RebuildCounts {
+                messages: 3,
+                sessions: 2
+            }
+        );
         assert_eq!(
             db.search_messages("patch", None, None).unwrap(),
             incremental,
@@ -1408,7 +1527,9 @@ mod tests {
             })
             .unwrap();
         assert!(
-            db.search_messages("orphaned", None, None).unwrap().is_empty(),
+            db.search_messages("orphaned", None, None)
+                .unwrap()
+                .is_empty(),
             "unindexed to begin with"
         );
 
@@ -1430,7 +1551,7 @@ mod tests {
         );
 
         // Idempotent: running it twice does not double the rows.
-        index_recovered_messages(&*db, &[stranded.id.clone()]);
+        index_recovered_messages(&*db, std::slice::from_ref(&stranded.id));
         assert_eq!(db.search_messages("orphaned", None, None).unwrap().len(), 1);
     }
 
@@ -1592,11 +1713,7 @@ mod tests {
         fn create_workflow_agent(&self, _: WorkflowAgent) -> Result<WorkflowAgent, BoughError> {
             unreachable!()
         }
-        fn update_workflow_agent(
-            &self,
-            _: &str,
-            _: WorkflowAgentPatch,
-        ) -> Result<(), BoughError> {
+        fn update_workflow_agent(&self, _: &str, _: WorkflowAgentPatch) -> Result<(), BoughError> {
             unreachable!()
         }
         fn list_workflow_agents(&self, _: &str) -> Result<Vec<WorkflowAgent>, BoughError> {
@@ -1709,13 +1826,18 @@ mod tests {
                 id: uuid::Uuid::new_v4().to_string(),
                 session_id: s.id,
                 role: Role::User,
-                parts: vec![Part::Text { text: "a findable sentence".into() }],
+                parts: vec![Part::Text {
+                    text: "a findable sentence".into(),
+                }],
                 pending: false,
                 created_at: tick(),
             })
             .unwrap();
         raw.index_message(&m).unwrap();
-        assert_eq!(raw.search_messages("findable", None, None).unwrap().len(), 1);
+        assert_eq!(
+            raw.search_messages("findable", None, None).unwrap().len(),
+            1
+        );
 
         let drifting = DriftDb(raw);
         let result = search_transcripts(&drifting, "findable", SearchOpts::default()).unwrap();

@@ -13,7 +13,10 @@ members = [
 tokio        = { version = "1.47", features = ["full"] }
 tokio-util   = { version = "0.7", features = ["rt"] }   # CancellationToken
 axum         = { version = "0.8" }                       # bough-server only
-reqwest      = { version = "0.12", features = ["json", "stream"] }
+# `blocking` is for the embedding-model download only (`db/embed.rs`): the embed
+# layer is synchronous (rusqlite + a CPU-bound extension) and its callers wrap it
+# in `spawn_blocking`, so it has no async context to await a stream in.
+reqwest      = { version = "0.12", features = ["json", "stream", "blocking"] }
 rusqlite     = { version = "0.37", features = ["bundled", "load_extension"] }
 serde        = { version = "1", features = ["derive"] }
 serde_json   = "1"

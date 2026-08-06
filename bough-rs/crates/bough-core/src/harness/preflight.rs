@@ -68,7 +68,10 @@ pub fn unterminated_string(src: &str) -> Option<UnterminatedHit> {
                 Some(e) => e + 2,
                 None => s.len(),
             };
-            line += s[i..stop.min(s.len())].iter().filter(|&&ch| ch == '\n').count();
+            line += s[i..stop.min(s.len())]
+                .iter()
+                .filter(|&&ch| ch == '\n')
+                .count();
             col = 1;
             i = match end {
                 Some(e) => e + 2,
@@ -113,8 +116,17 @@ pub fn unterminated_string(src: &str) -> Option<UnterminatedHit> {
                     continue;
                 }
                 if s[i] == '\n' || (i == s.len() - 1 && s[i] != c) {
-                    let text = src.split('\n').nth(start_line - 1).unwrap_or("").to_string();
-                    return Some(UnterminatedHit { line: start_line, col: start_col, text, quote: c });
+                    let text = src
+                        .split('\n')
+                        .nth(start_line - 1)
+                        .unwrap_or("")
+                        .to_string();
+                    return Some(UnterminatedHit {
+                        line: start_line,
+                        col: start_col,
+                        text,
+                        quote: c,
+                    });
                 }
                 if s[i] == c {
                     break;
@@ -228,7 +240,12 @@ mod tests {
         let hit = unterminated_string("const p = \"one\ntwo\";").expect("a hit");
         assert_eq!(
             hit,
-            UnterminatedHit { line: 1, col: 11, text: "const p = \"one".into(), quote: '"' }
+            UnterminatedHit {
+                line: 1,
+                col: 11,
+                text: "const p = \"one".into(),
+                quote: '"'
+            }
         );
     }
 
@@ -236,7 +253,10 @@ mod tests {
     fn unterminated_string_skips_template_literals_comments_and_fine_strings() {
         assert_eq!(unterminated_string("const t = `a\nb`;\n"), None);
         assert_eq!(unterminated_string("// a 'quote\nconst x = 1;\n"), None);
-        assert_eq!(unterminated_string("/* a 'quote\nspanning */\nconst x = 1;\n"), None);
+        assert_eq!(
+            unterminated_string("/* a 'quote\nspanning */\nconst x = 1;\n"),
+            None
+        );
         assert_eq!(unterminated_string("const s = \"fine\";\n"), None);
     }
 

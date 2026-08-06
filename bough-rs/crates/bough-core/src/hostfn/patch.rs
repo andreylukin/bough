@@ -133,7 +133,11 @@ pub fn join_lines(lines: &[String], original: &str) -> String {
     if lines.is_empty() {
         return String::new();
     }
-    let eol = if original.contains("\r\n") { "\r\n" } else { "\n" };
+    let eol = if original.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
     let trailing = original.is_empty() || normalize(original).ends_with('\n');
     let mut out = lines.join(eol);
     if trailing {
@@ -170,8 +174,9 @@ static SECTION_RE: LazyLock<Regex> =
 static NUMBERED_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*\d+:").unwrap());
 // `SWAP 12.=14:` — also accepts `SWAP 12:` and the `-` / `..` / bare-space
 // range spellings, which weaker models reach for constantly.
-static SWAP_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^SWAP\s+(\d+)(?:\s*(?:\.=|\.\.|-|\s)\s*(\d+))?\s*:?\s*$").unwrap());
+static SWAP_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^SWAP\s+(\d+)(?:\s*(?:\.=|\.\.|-|\s)\s*(\d+))?\s*:?\s*$").unwrap()
+});
 static DEL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^DEL\s+(\d+)(?:\s*(?:\.=|\.\.|-|\s)\s*(\d+))?\s*$").unwrap());
 static INS_RE: LazyLock<Regex> =
@@ -258,10 +263,18 @@ pub fn parse_patch(input: &str) -> Result<Vec<PatchOp>, BoughError> {
         if let Some(sec) = SECTION_RE.captures(trimmed) {
             let path = sec.get(1).map_or("", |m| m.as_str()).trim().to_string();
             if path.is_empty() {
-                return bad(format!("line {at}: section header \"{trimmed}\" has no path"));
+                return bad(format!(
+                    "line {at}: section header \"{trimmed}\" has no path"
+                ));
             }
-            let tag = sec.get(2).map_or(String::new(), |m| m.as_str().to_uppercase());
-            seen.push(Seen { path, tag, count: 0 });
+            let tag = sec
+                .get(2)
+                .map_or(String::new(), |m| m.as_str().to_uppercase());
+            seen.push(Seen {
+                path,
+                tag,
+                count: 0,
+            });
             cur = Some(seen.len() - 1);
             open = None;
             last_was_del = false;
@@ -300,11 +313,27 @@ pub fn parse_patch(input: &str) -> Result<Vec<PatchOp>, BoughError> {
         let op = if let Some(m) = SWAP_RE.captures(trimmed) {
             let a = num(&m, 1);
             let b = m.get(2).map_or(a, |v| parse_num(v.as_str()));
-            PatchOp { path, tag, kind: OpKind::Swap, a: Some(a), b: Some(b), body: vec![], at }
+            PatchOp {
+                path,
+                tag,
+                kind: OpKind::Swap,
+                a: Some(a),
+                b: Some(b),
+                body: vec![],
+                at,
+            }
         } else if let Some(m) = DEL_RE.captures(trimmed) {
             let a = num(&m, 1);
             let b = m.get(2).map_or(a, |v| parse_num(v.as_str()));
-            PatchOp { path, tag, kind: OpKind::Del, a: Some(a), b: Some(b), body: vec![], at }
+            PatchOp {
+                path,
+                tag,
+                kind: OpKind::Del,
+                a: Some(a),
+                b: Some(b),
+                body: vec![],
+                at,
+            }
         } else if let Some(m) = INS_RE.captures(trimmed) {
             let a = num(&m, 2);
             let kind = if m.get(1).is_some_and(|v| v.as_str() == "PRE") {
@@ -312,14 +341,30 @@ pub fn parse_patch(input: &str) -> Result<Vec<PatchOp>, BoughError> {
             } else {
                 OpKind::InsPost
             };
-            PatchOp { path, tag, kind, a: Some(a), b: Some(a), body: vec![], at }
+            PatchOp {
+                path,
+                tag,
+                kind,
+                a: Some(a),
+                b: Some(a),
+                body: vec![],
+                at,
+            }
         } else if let Some(m) = INS_END_RE.captures(trimmed) {
             let kind = if m.get(1).is_some_and(|v| v.as_str() == "HEAD") {
                 OpKind::InsHead
             } else {
                 OpKind::InsTail
             };
-            PatchOp { path, tag, kind, a: None, b: None, body: vec![], at }
+            PatchOp {
+                path,
+                tag,
+                kind,
+                a: None,
+                b: None,
+                body: vec![],
+                at,
+            }
         } else {
             return bad(format!(
                 "line {at}: \"{}\" is not an operation. Use SWAP A.=B:, \
@@ -331,7 +376,11 @@ pub fn parse_patch(input: &str) -> Result<Vec<PatchOp>, BoughError> {
         last_was_del = op.kind == OpKind::Del;
         ops.push(op);
         seen[cur_idx].count += 1;
-        open = if last_was_del { None } else { Some(ops.len() - 1) };
+        open = if last_was_del {
+            None
+        } else {
+            Some(ops.len() - 1)
+        };
     }
 
     if seen.is_empty() {
@@ -368,7 +417,11 @@ pub fn group_by_file(ops: &[PatchOp]) -> Result<Vec<FileOps>, BoughError> {
             None => {
                 by_path.insert(
                     op.path.clone(),
-                    FileOps { path: op.path.clone(), tag: op.tag.clone(), ops: vec![op.clone()] },
+                    FileOps {
+                        path: op.path.clone(),
+                        tag: op.tag.clone(),
+                        ops: vec![op.clone()],
+                    },
                 );
                 order.push(op.path.clone());
             }
@@ -385,7 +438,10 @@ pub fn group_by_file(ops: &[PatchOp]) -> Result<Vec<FileOps>, BoughError> {
             }
         }
     }
-    Ok(order.into_iter().map(|p| by_path.remove(&p).expect("path was inserted")).collect())
+    Ok(order
+        .into_iter()
+        .map(|p| by_path.remove(&p).expect("path was inserted"))
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -463,9 +519,17 @@ pub fn check_ops(path: &str, ops: &[PatchOp], count: usize) -> Result<(), BoughE
         }
         let x = op.a.expect("ins op has a");
         for &(sa, sb) in &spans {
-            let inside = if op.kind == OpKind::InsPre { x > sa && x <= sb } else { x >= sa && x < sb };
+            let inside = if op.kind == OpKind::InsPre {
+                x > sa && x <= sb
+            } else {
+                x >= sa && x < sb
+            };
             if inside {
-                let verb = if op.kind == OpKind::InsPre { "INS.PRE" } else { "INS.POST" };
+                let verb = if op.kind == OpKind::InsPre {
+                    "INS.PRE"
+                } else {
+                    "INS.POST"
+                };
                 return bad(format!(
                     "{path}: {verb} {x} anchors inside lines {sa}.={sb}, which \
                      another operation in this patch replaces. Fold the inserted text \
@@ -506,7 +570,9 @@ pub fn materialize(lines: &[String], ops: &[PatchOp]) -> Vec<String> {
             OpKind::InsHead => head.extend(op.body.iter().cloned()),
             OpKind::InsTail => tail.extend(op.body.iter().cloned()),
             OpKind::InsPre => pre[op.a.expect("ins_pre has a") - 1].extend(op.body.iter().cloned()),
-            OpKind::InsPost => post[op.a.expect("ins_post has a") - 1].extend(op.body.iter().cloned()),
+            OpKind::InsPost => {
+                post[op.a.expect("ins_post has a") - 1].extend(op.body.iter().cloned())
+            }
             OpKind::Swap | OpKind::Del => {
                 span_at.insert(op.a.expect("span has a") - 1, op);
             }
@@ -676,7 +742,11 @@ pub fn rebase_ops(ops: &[PatchOp], base: &[String], cur: &[String]) -> RebaseRes
             });
             continue;
         }
-        out.push(PatchOp { a: Some(a + 1), b: Some(b + 1), ..op.clone() });
+        out.push(PatchOp {
+            a: Some(a + 1),
+            b: Some(b + 1),
+            ..op.clone()
+        });
     }
     if conflicts.is_empty() {
         RebaseResult::Ok { ops: out }
@@ -754,7 +824,10 @@ pub fn apply_patch(
             g.ops.clone()
         };
 
-        result.insert(g.path.clone(), join_lines(&materialize(&current_lines, &effective), current));
+        result.insert(
+            g.path.clone(),
+            join_lines(&materialize(&current_lines, &effective), current),
+        );
     }
 
     Ok(result)
@@ -802,7 +875,11 @@ fn stale_tag_message(path: &str, tag: &str, current: &str) -> String {
 }
 
 fn conflict_message(path: &str, conflicts: &[RebaseConflict]) -> String {
-    let reasons = conflicts.iter().map(|c| c.reason.as_str()).collect::<Vec<_>>().join("; ");
+    let reasons = conflicts
+        .iter()
+        .map(|c| c.reason.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
     format!(
         "patch conflict in {path}: {reasons}. \
          Someone else changed {path} since the version you viewed. Nothing was \
@@ -827,7 +904,10 @@ mod tests {
     }
 
     fn fmap(entries: &[(&str, &str)]) -> HashMap<String, String> {
-        entries.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     fn try_apply(
@@ -901,7 +981,10 @@ mod tests {
         assert_ne!(tag_of(lf), tag_of("a\nc\n"));
         let tag = tag_of(lf);
         assert!(
-            tag.len() == 4 && tag.chars().all(|c| c.is_ascii_hexdigit() && !c.is_lowercase()),
+            tag.len() == 4
+                && tag
+                    .chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_lowercase()),
             "{tag}"
         );
     }
@@ -1008,12 +1091,21 @@ mod tests {
         // A four-hex tag wins the trailing segment rather than joining the path.
         assert_eq!(parse_patch("[a.ts#a1b2]\nDEL 1").unwrap()[0].path, "a.ts");
         // A "#" that is not a tag stays in the path.
-        assert_eq!(parse_patch("[weird#name.ts]\nDEL 1").unwrap()[0].path, "weird#name.ts");
+        assert_eq!(
+            parse_patch("[weird#name.ts]\nDEL 1").unwrap()[0].path,
+            "weird#name.ts"
+        );
     }
 
     #[test]
     fn parse_patch_single_line_and_alternate_range_spellings() {
-        for spelling in ["SWAP 5:", "SWAP 5.=5:", "SWAP 5..5:", "SWAP 5-5:", "SWAP 5 5:"] {
+        for spelling in [
+            "SWAP 5:",
+            "SWAP 5.=5:",
+            "SWAP 5..5:",
+            "SWAP 5-5:",
+            "SWAP 5 5:",
+        ] {
             let ops = parse_patch(&format!("[a.ts#]\n{spelling}\n+x")).unwrap();
             assert_eq!((ops[0].a, ops[0].b), (Some(5), Some(5)), "{spelling}");
         }
@@ -1025,11 +1117,16 @@ mod tests {
     fn parse_patch_multiple_files_in_one_patch() {
         let ops = parse_patch("[a.ts#]\nDEL 1\n\n[b.ts#C0DE]\nINS.TAIL:\n+z").unwrap();
         let groups = group_by_file(&ops).unwrap();
-        let shape: Vec<(String, String, usize)> =
-            groups.iter().map(|g| (g.path.clone(), g.tag.clone(), g.ops.len())).collect();
+        let shape: Vec<(String, String, usize)> = groups
+            .iter()
+            .map(|g| (g.path.clone(), g.tag.clone(), g.ops.len()))
+            .collect();
         assert_eq!(
             shape,
-            vec![("a.ts".into(), "".into(), 1), ("b.ts".into(), "C0DE".into(), 1)]
+            vec![
+                ("a.ts".into(), "".into(), 1),
+                ("b.ts".into(), "C0DE".into(), 1)
+            ]
         );
     }
 
@@ -1043,7 +1140,9 @@ mod tests {
     #[test]
     fn parse_patch_codex_style_envelopes_are_swallowed() {
         assert_eq!(
-            parse_patch("*** Begin Patch\n[a.ts#]\nDEL 1\n*** End Patch").unwrap().len(),
+            parse_patch("*** Begin Patch\n[a.ts#]\nDEL 1\n*** End Patch")
+                .unwrap()
+                .len(),
             1
         );
     }
@@ -1056,8 +1155,14 @@ mod tests {
             ("[a.ts#]", "has no operations"),
             ("[a.ts#]\n+x", "has no operation above it"),
             ("[a.ts#]\nDEL 1\n+x", "DEL takes no body rows"),
-            ("[a.ts#]\n-old line", "\"-\" rows are not part of this format"),
-            ("[a.ts#]\n  12:const x = 1;", "looks like a line from view()'s listing"),
+            (
+                "[a.ts#]\n-old line",
+                "\"-\" rows are not part of this format",
+            ),
+            (
+                "[a.ts#]\n  12:const x = 1;",
+                "looks like a line from view()'s listing",
+            ),
             ("[a.ts#]\nREPLACE 1 2", "is not an operation"),
             ("[a.ts#]\nSWAP one:", "is not an operation"),
         ];
@@ -1111,7 +1216,10 @@ mod tests {
             apply("[a#]\nDEL 3", &[("a", &six())])["a"],
             doc(&["one", "two", "four", "five", "six"])
         );
-        assert_eq!(apply("[a#]\nDEL 2.=5", &[("a", &six())])["a"], doc(&["one", "six"]));
+        assert_eq!(
+            apply("[a#]\nDEL 2.=5", &[("a", &six())])["a"],
+            doc(&["one", "six"])
+        );
         assert_eq!(apply("[a#]\nDEL 1.=6", &[("a", &six())])["a"], "");
     }
 
@@ -1123,7 +1231,15 @@ mod tests {
         );
         assert_eq!(
             apply("[a#]\nINS.PRE 6:\n+FIVE-AND-A-HALF", &[("a", &six())])["a"],
-            doc(&["one", "two", "three", "four", "five", "FIVE-AND-A-HALF", "six"])
+            doc(&[
+                "one",
+                "two",
+                "three",
+                "four",
+                "five",
+                "FIVE-AND-A-HALF",
+                "six"
+            ])
         );
     }
 
@@ -1131,7 +1247,15 @@ mod tests {
     fn apply_ins_post_text_lands_after_the_named_line() {
         assert_eq!(
             apply("[a#]\nINS.POST 1:\n+ONE-AND-A-HALF", &[("a", &six())])["a"],
-            doc(&["one", "ONE-AND-A-HALF", "two", "three", "four", "five", "six"])
+            doc(&[
+                "one",
+                "ONE-AND-A-HALF",
+                "two",
+                "three",
+                "four",
+                "five",
+                "six"
+            ])
         );
         assert_eq!(
             apply("[a#]\nINS.POST 6:\n+SEVEN", &[("a", &six())])["a"],
@@ -1142,17 +1266,29 @@ mod tests {
     #[test]
     fn apply_ins_head_ins_tail() {
         assert_eq!(
-            apply("[a#]\nINS.HEAD:\n+top\nINS.TAIL:\n+bottom", &[("a", &six())])["a"],
+            apply(
+                "[a#]\nINS.HEAD:\n+top\nINS.TAIL:\n+bottom",
+                &[("a", &six())]
+            )["a"],
             doc(&["top", "one", "two", "three", "four", "five", "six", "bottom"])
         );
         // They are the only ops that work on an empty file.
-        assert_eq!(apply("[a#]\nINS.HEAD:\n+first", &[("a", "")])["a"], doc(&["first"]));
-        assert_eq!(apply("[a#]\nINS.TAIL:\n+last", &[("a", "")])["a"], doc(&["last"]));
+        assert_eq!(
+            apply("[a#]\nINS.HEAD:\n+first", &[("a", "")])["a"],
+            doc(&["first"])
+        );
+        assert_eq!(
+            apply("[a#]\nINS.TAIL:\n+last", &[("a", "")])["a"],
+            doc(&["last"])
+        );
     }
 
     #[test]
     fn apply_an_empty_ins_body_is_a_no_op_not_a_corruption() {
-        assert_eq!(apply("[a#]\nINS.HEAD:\nINS.TAIL:", &[("a", &six())])["a"], six());
+        assert_eq!(
+            apply("[a#]\nINS.HEAD:\nINS.TAIL:", &[("a", &six())])["a"],
+            six()
+        );
     }
 
     #[test]
@@ -1175,7 +1311,10 @@ mod tests {
             .join("\n"),
             &[("a", &six())],
         );
-        assert_eq!(out["a"], doc(&["H", "P", "one", "TWO", "three", "Q", "four", "six", "T"]));
+        assert_eq!(
+            out["a"],
+            doc(&["H", "P", "one", "TWO", "three", "Q", "four", "six", "T"])
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1201,7 +1340,10 @@ mod tests {
     fn op_order_in_the_patch_text_does_not_change_the_result() {
         let forwards = "[a#]\nDEL 1\nINS.POST 3:\n+X\nSWAP 6:\n+SIX";
         let backwards = "[a#]\nSWAP 6:\n+SIX\nINS.POST 3:\n+X\nDEL 1";
-        assert_eq!(apply(forwards, &[("a", &six())])["a"], apply(backwards, &[("a", &six())])["a"]);
+        assert_eq!(
+            apply(forwards, &[("a", &six())])["a"],
+            apply(backwards, &[("a", &six())])["a"]
+        );
         assert_eq!(
             apply(forwards, &[("a", &six())])["a"],
             doc(&["two", "three", "X", "four", "five", "SIX"])
@@ -1221,12 +1363,18 @@ mod tests {
         );
         // INS.POST N precedes INS.PRE N+1 in the gap they share.
         assert_eq!(
-            materialize(&lines, &parse_patch("[a#]\nINS.PRE 2:\n+B\nINS.POST 1:\n+A").unwrap()),
+            materialize(
+                &lines,
+                &parse_patch("[a#]\nINS.PRE 2:\n+B\nINS.POST 1:\n+A").unwrap()
+            ),
             svec(&["one", "A", "B", "two", "three"])
         );
         // Two ops of the same kind at one anchor emit in patch order.
         assert_eq!(
-            materialize(&lines, &parse_patch("[a#]\nINS.POST 1:\n+A\nINS.POST 1:\n+B").unwrap()),
+            materialize(
+                &lines,
+                &parse_patch("[a#]\nINS.POST 1:\n+A\nINS.POST 1:\n+B").unwrap()
+            ),
             svec(&["one", "A", "B", "two", "three"])
         );
     }
@@ -1245,19 +1393,43 @@ mod tests {
 
     #[test]
     fn out_of_bounds_anchors_are_rejected() {
-        throws_patch(try_apply("[a#]\nSWAP 7:\n+x", &[("a", &six())], None), "out of range");
-        throws_patch(try_apply("[a#]\nDEL 0", &[("a", &six())], None), "out of range");
-        throws_patch(try_apply("[a#]\nINS.PRE 9:\n+x", &[("a", &six())], None), "out of range");
-        throws_patch(try_apply("[a#]\nINS.POST 7:\n+x", &[("a", &six())], None), "out of range");
-        throws_patch(try_apply("[a#]\nDEL 3.=99", &[("a", &six())], None), "is invalid");
-        throws_patch(try_apply("[a#]\nSWAP 4.=2:\n+x", &[("a", &six())], None), "is invalid");
+        throws_patch(
+            try_apply("[a#]\nSWAP 7:\n+x", &[("a", &six())], None),
+            "out of range",
+        );
+        throws_patch(
+            try_apply("[a#]\nDEL 0", &[("a", &six())], None),
+            "out of range",
+        );
+        throws_patch(
+            try_apply("[a#]\nINS.PRE 9:\n+x", &[("a", &six())], None),
+            "out of range",
+        );
+        throws_patch(
+            try_apply("[a#]\nINS.POST 7:\n+x", &[("a", &six())], None),
+            "out of range",
+        );
+        throws_patch(
+            try_apply("[a#]\nDEL 3.=99", &[("a", &six())], None),
+            "is invalid",
+        );
+        throws_patch(
+            try_apply("[a#]\nSWAP 4.=2:\n+x", &[("a", &six())], None),
+            "is invalid",
+        );
         // The message names the file and its real length so the model can re-aim.
-        throws_patch(try_apply("[a#]\nSWAP 7:\n+x", &[("a", &six())], None), "a has 6 lines");
+        throws_patch(
+            try_apply("[a#]\nSWAP 7:\n+x", &[("a", &six())], None),
+            "a has 6 lines",
+        );
     }
 
     #[test]
     fn an_empty_file_rejects_line_anchored_ops_by_name() {
-        throws_patch(try_apply("[a#]\nSWAP 1:\n+x", &[("a", "")], None), "a is empty");
+        throws_patch(
+            try_apply("[a#]\nSWAP 1:\n+x", &[("a", "")], None),
+            "a is empty",
+        );
         throws_patch(try_apply("[a#]\nDEL 1", &[("a", "")], None), "INS.HEAD");
     }
 
@@ -1268,7 +1440,10 @@ mod tests {
             "operations overlap",
         );
         // Identical spans overlap too.
-        throws_patch(try_apply("[a#]\nDEL 2\nDEL 2", &[("a", &six())], None), "operations overlap");
+        throws_patch(
+            try_apply("[a#]\nDEL 2\nDEL 2", &[("a", &six())], None),
+            "operations overlap",
+        );
         // A span fully containing another is caught regardless of the order written.
         throws_patch(
             try_apply("[a#]\nDEL 3\nSWAP 2.=5:\n+x", &[("a", &six())], None),
@@ -1284,7 +1459,11 @@ mod tests {
     #[test]
     fn an_ins_anchored_inside_a_replaced_span_is_rejected() {
         throws_patch(
-            try_apply("[a#]\nSWAP 2.=4:\n+X\nINS.PRE 3:\n+Y", &[("a", &six())], None),
+            try_apply(
+                "[a#]\nSWAP 2.=4:\n+X\nINS.PRE 3:\n+Y",
+                &[("a", &six())],
+                None,
+            ),
             "anchors inside lines 2.=4",
         );
         throws_patch(
@@ -1293,20 +1472,32 @@ mod tests {
         );
         // The span boundaries themselves are legal: before it, and after it.
         assert_eq!(
-            apply("[a#]\nSWAP 2.=4:\n+X\nINS.PRE 2:\n+B\nINS.POST 4:\n+A", &[("a", &six())])["a"],
+            apply(
+                "[a#]\nSWAP 2.=4:\n+X\nINS.PRE 2:\n+B\nINS.POST 4:\n+A",
+                &[("a", &six())]
+            )["a"],
             doc(&["one", "B", "X", "A", "five", "six"])
         );
         // And so is inserting around a single-line SWAP.
         assert_eq!(
-            apply("[a#]\nSWAP 2:\n+X\nINS.PRE 2:\n+B\nINS.POST 2:\n+A", &[("a", &six())])["a"],
+            apply(
+                "[a#]\nSWAP 2:\n+X\nINS.PRE 2:\n+B\nINS.POST 2:\n+A",
+                &[("a", &six())]
+            )["a"],
             doc(&["one", "B", "X", "A", "three", "four", "five", "six"])
         );
     }
 
     #[test]
     fn swap_with_no_body_is_rejected_del_is_how_you_remove_lines() {
-        throws_patch(try_apply("[a#]\nSWAP 2.=3:", &[("a", &six())], None), "has no body rows");
-        throws_patch(try_apply("[a#]\nSWAP 2.=3:", &[("a", &six())], None), "use DEL 2.=3");
+        throws_patch(
+            try_apply("[a#]\nSWAP 2.=3:", &[("a", &six())], None),
+            "has no body rows",
+        );
+        throws_patch(
+            try_apply("[a#]\nSWAP 2.=3:", &[("a", &six())], None),
+            "use DEL 2.=3",
+        );
     }
 
     #[test]
@@ -1339,18 +1530,29 @@ mod tests {
     #[test]
     fn a_patch_chains_the_second_is_written_against_the_firsts_echoed_tag() {
         let first = apply("[a#]\nDEL 1", &[("a", &six())])["a"].clone();
-        let second =
-            apply(&format!("[a#{}]\nSWAP 1:\n+TWO", tag_of(&first)), &[("a", &first)])["a"].clone();
+        let second = apply(
+            &format!("[a#{}]\nSWAP 1:\n+TWO", tag_of(&first)),
+            &[("a", &first)],
+        )["a"]
+            .clone();
         assert_eq!(second, doc(&["TWO", "three", "four", "five", "six"]));
     }
 
     #[test]
     fn a_stale_tag_is_refused_with_the_empty_tag_escape_hatch_spelled_out() {
         let err = throws_patch(
-            try_apply(&format!("[a#{}]\nDEL 1", wrong_tag(&six())), &[("a", &six())], None),
+            try_apply(
+                &format!("[a#{}]\nDEL 1", wrong_tag(&six())),
+                &[("a", &six())],
+                None,
+            ),
             "stale tag",
         );
-        assert!(err.to_string().contains(&format!("is now #{}", tag_of(&six()))), "{err}");
+        assert!(
+            err.to_string()
+                .contains(&format!("is now #{}", tag_of(&six()))),
+            "{err}"
+        );
         assert!(err.to_string().contains("\"[a#]\""), "{err}");
         assert_eq!(err.status(), 400);
     }
@@ -1374,7 +1576,11 @@ mod tests {
         // rebase from, so applying against the current text would be exactly
         // the silent clobber.
         throws_patch(
-            try_apply("[a#]\nDEL 1", &[("a", &six()), ("b", &six())], Some(&[("b", &six())])),
+            try_apply(
+                "[a#]\nDEL 1",
+                &[("a", &six()), ("b", &six())],
+                Some(&[("b", &six())]),
+            ),
             "no viewed version of a is on record",
         );
     }
@@ -1391,16 +1597,30 @@ mod tests {
     fn rebase_the_file_moved_but_the_patched_range_is_untouched() {
         // Another agent inserted a line at the top of the version we viewed.
         let current = doc(&["header", "alpha", "beta", "gamma", "delta"]);
-        let out = apply_with("[a#]\nSWAP 4:\n+DELTA", &[("a", &current)], &[("a", &base4())]);
+        let out = apply_with(
+            "[a#]\nSWAP 4:\n+DELTA",
+            &[("a", &current)],
+            &[("a", &base4())],
+        );
         // Both edits survive: the other agent's header AND ours, correctly aimed.
-        assert_eq!(out["a"], doc(&["header", "alpha", "beta", "gamma", "DELTA"]));
+        assert_eq!(
+            out["a"],
+            doc(&["header", "alpha", "beta", "gamma", "DELTA"])
+        );
     }
 
     #[test]
     fn rebase_an_insert_in_the_middle_shifts_only_the_ops_below_it() {
         let current = doc(&["one", "two", "NEW", "three", "four", "five", "six"]);
-        let out = apply_with("[a#]\nSWAP 5.=6:\n+FIVE-SIX", &[("a", &current)], &[("a", &six())]);
-        assert_eq!(out["a"], doc(&["one", "two", "NEW", "three", "four", "FIVE-SIX"]));
+        let out = apply_with(
+            "[a#]\nSWAP 5.=6:\n+FIVE-SIX",
+            &[("a", &current)],
+            &[("a", &six())],
+        );
+        assert_eq!(
+            out["a"],
+            doc(&["one", "two", "NEW", "three", "four", "FIVE-SIX"])
+        );
     }
 
     #[test]
@@ -1418,12 +1638,19 @@ mod tests {
             &[("a", &current)],
             &[("a", &base4())],
         );
-        assert_eq!(out["a"], doc(&["header", "alpha", "beta", "gamma", "DELTA"]));
+        assert_eq!(
+            out["a"],
+            doc(&["header", "alpha", "beta", "gamma", "DELTA"])
+        );
     }
 
     #[test]
     fn rebase_unchanged_file_needs_no_rebase_and_is_byte_identical_elsewhere() {
-        let out = apply_with("[a#]\nSWAP 4:\n+DELTA", &[("a", &base4())], &[("a", &base4())]);
+        let out = apply_with(
+            "[a#]\nSWAP 4:\n+DELTA",
+            &[("a", &base4())],
+            &[("a", &base4())],
+        );
         assert_eq!(out["a"], doc(&["alpha", "beta", "gamma", "DELTA"]));
     }
 
@@ -1431,11 +1658,18 @@ mod tests {
     fn conflict_the_patched_line_itself_was_rewritten() {
         let current = doc(&["alpha", "beta", "gamma", "delta -- edited elsewhere"]);
         let err = throws_patch(
-            try_apply("[a#]\nSWAP 4:\n+DELTA", &[("a", &current)], Some(&[("a", &base4())])),
+            try_apply(
+                "[a#]\nSWAP 4:\n+DELTA",
+                &[("a", &current)],
+                Some(&[("a", &base4())]),
+            ),
             "patch conflict in a",
         );
         // Names the file, the range, and the move (error text is a surface).
-        assert!(err.to_string().contains("lines 4.=4 were rewritten"), "{err}");
+        assert!(
+            err.to_string().contains("lines 4.=4 were rewritten"),
+            "{err}"
+        );
         assert!(err.to_string().contains("Someone else changed a"), "{err}");
         assert!(err.to_string().contains("Re-view a"), "{err}");
         assert!(err.to_string().contains("Nothing was written"), "{err}");
@@ -1447,7 +1681,11 @@ mod tests {
         // rewriting it would silently discard the other agent's insert.
         let current = doc(&["one", "two", "NEW", "three", "four", "five", "six"]);
         throws_patch(
-            try_apply("[a#]\nSWAP 2.=4:\n+X", &[("a", &current)], Some(&[("a", &six())])),
+            try_apply(
+                "[a#]\nSWAP 2.=4:\n+X",
+                &[("a", &current)],
+                Some(&[("a", &six())]),
+            ),
             "lines 2.=4 had lines inserted inside them",
         );
     }
@@ -1456,7 +1694,11 @@ mod tests {
     fn conflict_the_patched_line_was_deleted_by_the_other_write() {
         let current = doc(&["alpha", "gamma", "delta"]);
         throws_patch(
-            try_apply("[a#]\nSWAP 2:\n+BETA", &[("a", &current)], Some(&[("a", &base4())])),
+            try_apply(
+                "[a#]\nSWAP 2:\n+BETA",
+                &[("a", &current)],
+                Some(&[("a", &base4())]),
+            ),
             "lines 2.=2 were rewritten",
         );
     }
@@ -1497,7 +1739,11 @@ mod tests {
     #[test]
     fn ins_head_ins_tail_never_conflict_they_name_no_line() {
         let current = doc(&["totally", "different", "content"]);
-        let out = apply_with("[a#]\nINS.TAIL:\n+z", &[("a", &current)], &[("a", &base4())]);
+        let out = apply_with(
+            "[a#]\nINS.TAIL:\n+z",
+            &[("a", &current)],
+            &[("a", &base4())],
+        );
         assert_eq!(out["a"], doc(&["totally", "different", "content", "z"]));
     }
 
@@ -1508,7 +1754,11 @@ mod tests {
         // out-of-range parse error.
         let current = doc(&["alpha", "beta"]);
         throws_patch(
-            try_apply("[a#]\nSWAP 4:\n+D", &[("a", &current)], Some(&[("a", &base4())])),
+            try_apply(
+                "[a#]\nSWAP 4:\n+D",
+                &[("a", &current)],
+                Some(&[("a", &base4())]),
+            ),
             "patch conflict in a",
         );
     }
@@ -1520,7 +1770,10 @@ mod tests {
             line_map(&base, &svec(&["x", "a", "b", "c"])),
             vec![Some(1), Some(2), Some(3)]
         );
-        assert_eq!(line_map(&base, &svec(&["a", "B", "c"])), vec![Some(0), None, Some(2)]);
+        assert_eq!(
+            line_map(&base, &svec(&["a", "B", "c"])),
+            vec![Some(0), None, Some(2)]
+        );
 
         let ops = parse_patch("[f#]\nDEL 2").unwrap();
         match rebase_ops(&ops, &base, &svec(&["x", "a", "b", "c"])) {
@@ -1541,7 +1794,11 @@ mod tests {
     fn multi_file_all_files_change_together_on_success() {
         let out = apply(
             "[a#]\nDEL 1\n\n[b#]\nINS.TAIL:\n+z",
-            &[("a", &six()), ("b", &doc(&["x", "y"])), ("untouched", &doc(&["keep"]))],
+            &[
+                ("a", &six()),
+                ("b", &doc(&["x", "y"])),
+                ("untouched", &doc(&["keep"])),
+            ],
         );
         assert_eq!(out["a"], doc(&["two", "three", "four", "five", "six"]));
         assert_eq!(out["b"], doc(&["x", "y", "z"]));
@@ -1558,7 +1815,10 @@ mod tests {
         let files = fmap(&current);
         let ops = parse_patch("[a#]\nDEL 1\n\n[b#]\nSWAP 2:\n+Y").unwrap();
 
-        throws_patch(apply_patch(&files, &ops, Some(&fmap(&base))), "patch conflict in b");
+        throws_patch(
+            apply_patch(&files, &ops, Some(&fmap(&base))),
+            "patch conflict in b",
+        );
         // The input map is untouched — a caller that writes only the return
         // value cannot have half-applied this patch.
         assert_eq!(files["a"], six());
@@ -1577,7 +1837,11 @@ mod tests {
         let b = doc(&["x"]);
         let files = fmap(&[("a", &six()), ("b", &b)]);
         throws_patch(
-            apply_patch(&files, &parse_patch("[a#]\nDEL 1\n\n[b#]\nDEL 9").unwrap(), None),
+            apply_patch(
+                &files,
+                &parse_patch("[a#]\nDEL 1\n\n[b#]\nDEL 9").unwrap(),
+                None,
+            ),
             "out of range",
         );
         assert_eq!(files["a"], six());
@@ -1588,7 +1852,10 @@ mod tests {
         let b = doc(&["x"]);
         let files = fmap(&[("a", &six()), ("b", &b)]);
         let input = format!("[a#]\nDEL 1\n\n[b#{}]\nDEL 1", wrong_tag(&b));
-        throws_patch(apply_patch(&files, &parse_patch(&input).unwrap(), None), "stale tag");
+        throws_patch(
+            apply_patch(&files, &parse_patch(&input).unwrap(), None),
+            "stale tag",
+        );
         assert_eq!(files["a"], six());
     }
 
@@ -1606,11 +1873,17 @@ mod tests {
         let out = apply_patch(&files, &ops, Some(&base)).unwrap();
         assert_eq!(files["a"], six());
         assert_eq!(base["a"], six());
-        assert_eq!(out["a"], doc(&["ONE", "two", "three", "four", "five", "six"]));
+        assert_eq!(
+            out["a"],
+            doc(&["ONE", "two", "three", "four", "five", "six"])
+        );
         // The rebase does not rewrite ops in place.
         assert_eq!(ops, snapshot);
         // Same inputs, same answer.
-        assert_eq!(apply_patch(&files, &ops, Some(&base)).unwrap()["a"], out["a"]);
+        assert_eq!(
+            apply_patch(&files, &ops, Some(&base)).unwrap()["a"],
+            out["a"]
+        );
     }
 
     #[test]
@@ -1620,12 +1893,18 @@ mod tests {
             "one\r\nthree\r\n"
         );
         // …including when the patch body itself is plain LF.
-        assert_eq!(apply("[a#]\nSWAP 2:\n+TWO", &[("a", "one\r\ntwo\r\n")])["a"], "one\r\nTWO\r\n");
+        assert_eq!(
+            apply("[a#]\nSWAP 2:\n+TWO", &[("a", "one\r\ntwo\r\n")])["a"],
+            "one\r\nTWO\r\n"
+        );
     }
 
     #[test]
     fn a_file_with_no_trailing_newline_keeps_having_none() {
-        assert_eq!(apply("[a#]\nSWAP 1:\n+ONE", &[("a", "one\ntwo")])["a"], "ONE\ntwo");
+        assert_eq!(
+            apply("[a#]\nSWAP 1:\n+ONE", &[("a", "one\ntwo")])["a"],
+            "ONE\ntwo"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1642,7 +1921,11 @@ mod tests {
         // another writer changed line 2; count unchanged
         let cur = doc(&["X", "Y-EDITED", "Z"]);
         let err = throws_patch(
-            try_apply("[a#]\nSWAP 1.=3:\n+N", &[("a", &cur)], Some(&[("a", &base)])),
+            try_apply(
+                "[a#]\nSWAP 1.=3:\n+N",
+                &[("a", &cur)],
+                Some(&[("a", &base)]),
+            ),
             "1.=3",
         );
         assert!(err.to_string().contains('a'), "names the file");
@@ -1652,7 +1935,10 @@ mod tests {
     fn conflict_a_multi_line_del_whose_interior_was_rewritten_in_place() {
         let base = doc(&["a", "b", "c", "d", "e"]);
         let cur = doc(&["a", "B!", "C!", "d", "e"]);
-        throws_patch(try_apply("[f#]\nDEL 1.=5", &[("f", &cur)], Some(&[("f", &base)])), "1.=5");
+        throws_patch(
+            try_apply("[f#]\nDEL 1.=5", &[("f", &cur)], Some(&[("f", &base)])),
+            "1.=5",
+        );
     }
 
     #[test]

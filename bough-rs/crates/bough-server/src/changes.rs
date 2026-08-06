@@ -61,7 +61,12 @@ pub struct SessionChangeSet {
 // behind is a nuisance, deleting files the user was never shown is a
 // surprise.
 
-const NOISE_SEGMENTS: [&str; 4] = ["__pycache__", "node_modules", ".pytest_cache", ".mypy_cache"];
+const NOISE_SEGMENTS: [&str; 4] = [
+    "__pycache__",
+    "node_modules",
+    ".pytest_cache",
+    ".mypy_cache",
+];
 const NOISE_BASENAMES: [&str; 1] = [".DS_Store"];
 const NOISE_SUFFIXES: [&str; 2] = [".pyc", ".pyo"];
 
@@ -94,7 +99,10 @@ fn require_session(ctx: &AppCtx, id: &str) -> Result<(), BoughError> {
 /// attributing whatever is uncommitted in bough's own checkout to a session
 /// that never named one would report a stranger's work as the agent's, and
 /// offer to revert it.
-pub async fn session_changes(ctx: &AppCtx, session_id: &str) -> Result<SessionChangeSet, BoughError> {
+pub async fn session_changes(
+    ctx: &AppCtx,
+    session_id: &str,
+) -> Result<SessionChangeSet, BoughError> {
     // The lock is scoped: `change_set` shells out to git and must not hold
     // the one database mutex across that.
     let runtime = { ctx.db.lock().unwrap().get_session_runtime(session_id)? };
@@ -115,7 +123,10 @@ pub async fn session_changes(ctx: &AppCtx, session_id: &str) -> Result<SessionCh
     };
     let mut set = change_set(&workspace, runtime.base.as_deref()).await;
     set.files.retain(|f| !is_noise(&f.path));
-    Ok(SessionChangeSet { set, workspace: Some(workspace) })
+    Ok(SessionChangeSet {
+        set,
+        workspace: Some(workspace),
+    })
 }
 
 // ---- revert ------------------------------------------------------------------
@@ -146,7 +157,11 @@ fn match_path(requested: &str, changed: &HashSet<String>) -> Option<String> {
     let trimmed = requested.trim();
     let trimmed = trimmed.strip_prefix("./").unwrap_or(trimmed);
     let trimmed = trimmed.trim_end_matches('/');
-    if changed.contains(trimmed) { Some(trimmed.to_string()) } else { None }
+    if changed.contains(trimmed) {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
 }
 
 /// Revert the session's work on `paths` — or on everything the rail is
@@ -184,8 +199,7 @@ pub async fn revert_changes(
     }
 
     let set = session_changes(ctx, session_id).await?;
-    let (Some(base), Some(workspace)) = (set.set.base.as_deref(), set.workspace.as_deref())
-    else {
+    let (Some(base), Some(workspace)) = (set.set.base.as_deref(), set.workspace.as_deref()) else {
         return Err(nothing_to_revert(&set));
     };
     if !set.set.available {
@@ -210,7 +224,11 @@ pub async fn revert_changes(
     let selection = if paths.is_some() { targets } else { in_order };
 
     let result = revert_paths(workspace, base, &selection).await;
-    Ok(RevertOutcome { reverted: result.reverted, skipped, failed: result.failed })
+    Ok(RevertOutcome {
+        reverted: result.reverted,
+        skipped,
+        failed: result.failed,
+    })
 }
 
 fn nothing_to_revert(set: &SessionChangeSet) -> BoughError {
@@ -229,7 +247,9 @@ fn nothing_to_revert(set: &SessionChangeSet) -> BoughError {
 /// that could not be written must not turn a successful revert into an error.
 fn post_no_wake_note(ctx: &AppCtx, session_id: &str, text: String) {
     let db = ctx.db.lock().unwrap();
-    let Ok(Some(_)) = db.get_session(session_id) else { return };
+    let Ok(Some(_)) = db.get_session(session_id) else {
+        return;
+    };
     let stored = db.create_message(Message {
         id: uuid::Uuid::new_v4().to_string(),
         session_id: session_id.to_string(),
@@ -385,7 +405,9 @@ mod tests {
 
     async fn changes_of(fx: &testutil::Fixture, id: &str) -> serde_json::Value {
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
-        let res = call.call(testutil::get(&format!("/sessions/{id}/changes"))).await;
+        let res = call
+            .call(testutil::get(&format!("/sessions/{id}/changes")))
+            .await;
         assert_eq!(res.status(), 200);
         testutil::body_json(res).await
     }
@@ -396,8 +418,13 @@ mod tests {
         body: Option<serde_json::Value>,
     ) -> (u16, serde_json::Value) {
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
-        let res =
-            call.call(testutil::req("POST", &format!("/sessions/{id}/changes/revert"), body)).await;
+        let res = call
+            .call(testutil::req(
+                "POST",
+                &format!("/sessions/{id}/changes/revert"),
+                body,
+            ))
+            .await;
         let status = res.status().as_u16();
         (status, testutil::body_json(res).await)
     }
@@ -499,13 +526,26 @@ mod tests {
         assert_eq!(set["available"], true);
         assert_eq!(
             set["base"].as_str(),
-            fx.ctx.db.lock().unwrap().get_session_runtime(id).unwrap().base.as_deref()
+            fx.ctx
+                .db
+                .lock()
+                .unwrap()
+                .get_session_runtime(id)
+                .unwrap()
+                .base
+                .as_deref()
         );
         assert_eq!(set["workspace"], d.as_str());
 
         assert_eq!(paths_of(&set), vec!["README.md", "new.txt"]);
         let by_path = |p: &str| {
-            set["files"].as_array().unwrap().iter().find(|f| f["path"] == p).cloned().unwrap()
+            set["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|f| f["path"] == p)
+                .cloned()
+                .unwrap()
         };
         assert_eq!(by_path("README.md")["status"], "modified");
         // Untracked ⇒ all-added, with real content so the rail can render it.
@@ -577,13 +617,24 @@ mod tests {
         std::fs::write(repo.join("kept.txt"), "keep me\n").unwrap(); // the sibling
 
         let before = changes_of(&fx, id).await;
-        assert_eq!(paths_of(&before), vec!["README.md", "kept.txt", "sub/created.txt"]);
+        assert_eq!(
+            paths_of(&before),
+            vec!["README.md", "kept.txt", "sub/created.txt"]
+        );
 
-        let (status, outcome) =
-            revert(&fx, id, Some(j!({"paths": ["README.md", "sub/created.txt"]}))).await;
+        let (status, outcome) = revert(
+            &fx,
+            id,
+            Some(j!({"paths": ["README.md", "sub/created.txt"]})),
+        )
+        .await;
         assert_eq!(status, 200);
-        let mut reverted: Vec<&str> =
-            outcome["reverted"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        let mut reverted: Vec<&str> = outcome["reverted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         reverted.sort();
         assert_eq!(reverted, vec!["README.md", "sub/created.txt"]);
         assert_eq!(outcome["skipped"], j!([]));
@@ -591,11 +642,17 @@ mod tests {
 
         // The tracked file is back at its base content; the created one is
         // gone along with the directory that existed only to hold it…
-        assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap(), "base\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("README.md")).unwrap(),
+            "base\n"
+        );
         assert!(!exists(&repo.join("sub/created.txt")));
         assert!(!exists(&repo.join("sub")));
         // …and the sibling edit the reviewer did not pick is untouched.
-        assert_eq!(std::fs::read_to_string(repo.join("kept.txt")).unwrap(), "keep me\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("kept.txt")).unwrap(),
+            "keep me\n"
+        );
 
         let after = changes_of(&fx, id).await;
         assert_eq!(paths_of(&after), vec!["kept.txt"]);
@@ -626,7 +683,11 @@ mod tests {
         assert_eq!(status, 200);
 
         let messages = fx.ctx.db.lock().unwrap().messages_for(id).unwrap();
-        assert_eq!(messages.len(), before + 1, "a revert must leave a record the model replays");
+        assert_eq!(
+            messages.len(),
+            before + 1,
+            "a revert must leave a record the model replays"
+        );
         let note = messages.last().unwrap();
         assert_eq!(note.role, Role::System);
         let text: String = note
@@ -641,7 +702,10 @@ mod tests {
         // this was deliberate, and it is not yours to repair.
         assert!(text.contains("README.md"), "{text}");
         assert!(text.to_lowercase().contains("revert"), "{text}");
-        assert!(text.contains("Do not re-apply them unless you are asked to."), "{text}");
+        assert!(
+            text.contains("Do not re-apply them unless you are asked to."),
+            "{text}"
+        );
         let _ = std::fs::remove_dir_all(&repo);
     }
 
@@ -664,7 +728,10 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(outcome["reverted"], j!([]));
         assert_eq!(outcome["skipped"], j!(["nope.txt"]));
-        assert_eq!(fx.ctx.db.lock().unwrap().messages_for(id).unwrap().len(), before);
+        assert_eq!(
+            fx.ctx.db.lock().unwrap().messages_for(id).unwrap().len(),
+            before
+        );
         let _ = std::fs::remove_dir_all(&repo);
     }
 
@@ -683,12 +750,19 @@ mod tests {
 
         let (status, outcome) = revert(&fx, id, Some(j!({}))).await;
         assert_eq!(status, 200);
-        let mut reverted: Vec<&str> =
-            outcome["reverted"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        let mut reverted: Vec<&str> = outcome["reverted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         reverted.sort();
         assert_eq!(reverted, vec!["README.md", "new.txt"]);
 
-        assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap(), "base\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("README.md")).unwrap(),
+            "base\n"
+        );
         assert!(!exists(&repo.join("new.txt")));
         assert_eq!(changes_of(&fx, id).await["files"], j!([]));
         let _ = std::fs::remove_dir_all(&repo);
@@ -723,9 +797,18 @@ mod tests {
         assert!(error.contains("omit `paths`"), "{error}");
 
         // Nothing was touched — this is the whole point.
-        assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap(), "clobbered\n");
-        assert_eq!(std::fs::read_to_string(repo.join("new.txt")).unwrap(), "hi\n");
-        assert_eq!(paths_of(&changes_of(&fx, id).await), vec!["README.md", "new.txt"]);
+        assert_eq!(
+            std::fs::read_to_string(repo.join("README.md")).unwrap(),
+            "clobbered\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("new.txt")).unwrap(),
+            "hi\n"
+        );
+        assert_eq!(
+            paths_of(&changes_of(&fx, id).await),
+            vec!["README.md", "new.txt"]
+        );
         let _ = std::fs::remove_dir_all(&repo);
     }
 
@@ -751,20 +834,38 @@ mod tests {
         let (status, outcome) = revert(
             &fx,
             id,
-            Some(j!({"paths": ["real.py", "mod.pyc", "ignored.txt", "vendor.txt", "../escape.txt"]})),
+            Some(
+                j!({"paths": ["real.py", "mod.pyc", "ignored.txt", "vendor.txt", "../escape.txt"]}),
+            ),
         )
         .await;
         assert_eq!(status, 200);
         assert_eq!(outcome["reverted"], j!(["real.py"]));
-        let mut skipped: Vec<&str> =
-            outcome["skipped"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        let mut skipped: Vec<&str> = outcome["skipped"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         skipped.sort();
-        assert_eq!(skipped, vec!["../escape.txt", "ignored.txt", "mod.pyc", "vendor.txt"]);
+        assert_eq!(
+            skipped,
+            vec!["../escape.txt", "ignored.txt", "mod.pyc", "vendor.txt"]
+        );
 
         assert!(!exists(&repo.join("real.py")));
-        assert_eq!(std::fs::read_to_string(repo.join("mod.pyc")).unwrap(), "junk\n");
-        assert_eq!(std::fs::read_to_string(repo.join("ignored.txt")).unwrap(), "user's own\n");
-        assert_eq!(std::fs::read_to_string(repo.join("vendor.txt")).unwrap(), "untouched\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("mod.pyc")).unwrap(),
+            "junk\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("ignored.txt")).unwrap(),
+            "user's own\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("vendor.txt")).unwrap(),
+            "untouched\n"
+        );
         let _ = std::fs::remove_dir_all(&repo);
     }
 
@@ -787,7 +888,13 @@ mod tests {
         // spelled out. The distinction is the whole point — "not a
         // repository" and "you changed nothing" are different facts.
         assert_eq!(set["available"], false);
-        assert!(set["reason"].as_str().unwrap().contains("not a git repository"), "{set}");
+        assert!(
+            set["reason"]
+                .as_str()
+                .unwrap()
+                .contains("not a git repository"),
+            "{set}"
+        );
         assert_eq!(set["files"], j!([]));
         assert!(set["base"].is_null());
         assert_eq!(set["workspace"], dir.to_string_lossy().as_ref());
@@ -795,7 +902,13 @@ mod tests {
         // Revert is unavailable, and says why in the same words.
         let (status, body) = revert(&fx, id, Some(j!({}))).await;
         assert_eq!(status, 400);
-        assert!(body["error"].as_str().unwrap().contains("not a git repository"), "{body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("not a git repository"),
+            "{body}"
+        );
         // The file the agent wrote is still there — a refused revert deletes
         // nothing.
         assert!(exists(&dir.join("work.txt")));
@@ -807,7 +920,11 @@ mod tests {
         let fx = testutil::fixture();
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let res = call
-            .call(testutil::req("POST", "/sessions", Some(j!({"title": "no workspace"}))))
+            .call(testutil::req(
+                "POST",
+                "/sessions",
+                Some(j!({"title": "no workspace"})),
+            ))
             .await;
         let s = testutil::body_json(res).await;
         let id = s["id"].as_str().unwrap();
@@ -815,7 +932,10 @@ mod tests {
         let set = changes_of(&fx, id).await;
         assert_eq!(set["available"], false);
         assert!(set["workspace"].is_null());
-        assert!(set["reason"].as_str().unwrap().contains("no workspace"), "{set}");
+        assert!(
+            set["reason"].as_str().unwrap().contains("no workspace"),
+            "{set}"
+        );
         let (status, _) = revert(&fx, id, Some(j!({}))).await;
         assert_eq!(status, 400);
     }
@@ -826,8 +946,13 @@ mod tests {
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let res = call.call(testutil::get("/sessions/nope/changes")).await;
         assert_eq!(res.status(), 404);
-        let res =
-            call.call(testutil::req("POST", "/sessions/nope/changes/revert", Some(j!({})))).await;
+        let res = call
+            .call(testutil::req(
+                "POST",
+                "/sessions/nope/changes/revert",
+                Some(j!({})),
+            ))
+            .await;
         assert_eq!(res.status(), 404);
     }
 
@@ -870,10 +995,19 @@ mod tests {
 
         let legacy = changes_of(&fx, "legacy").await;
         assert_eq!(legacy["available"], false);
-        assert!(legacy["reason"].as_str().unwrap().contains("no starting commit"), "{legacy}");
+        assert!(
+            legacy["reason"]
+                .as_str()
+                .unwrap()
+                .contains("no starting commit"),
+            "{legacy}"
+        );
         assert_eq!(legacy["files"], j!([]));
         // …while the session that DID record one sees the same edit fine.
-        assert_eq!(paths_of(&changes_of(&fx, s["id"].as_str().unwrap()).await), vec!["README.md"]);
+        assert_eq!(
+            paths_of(&changes_of(&fx, s["id"].as_str().unwrap()).await),
+            vec!["README.md"]
+        );
         let _ = std::fs::remove_dir_all(&repo);
     }
 }

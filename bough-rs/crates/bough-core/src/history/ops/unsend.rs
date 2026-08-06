@@ -121,5 +121,10 @@ pub fn unsend(
     let target_id = target.id.clone();
     let removed = with_db(&ctx.db, |d| d.delete_messages_from(&session.id, &target_id))?;
 
-    Ok(UnsendResult { session_id: session.id, text, removed, interrupted })
+    Ok(UnsendResult {
+        session_id: session.id,
+        text,
+        removed,
+        interrupted,
+    })
 }

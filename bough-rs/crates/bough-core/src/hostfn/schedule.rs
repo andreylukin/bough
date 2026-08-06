@@ -210,7 +210,10 @@ pub fn schedule_patch(
 
     let mut next = Schedule {
         title: patch.title.clone().unwrap_or_else(|| current.title.clone()),
-        prompt: patch.prompt.clone().unwrap_or_else(|| current.prompt.clone()),
+        prompt: patch
+            .prompt
+            .clone()
+            .unwrap_or_else(|| current.prompt.clone()),
         workspace,
         spec: patch.spec.clone().unwrap_or_else(|| current.spec.clone()),
         enabled: patch.enabled.unwrap_or(current.enabled),
@@ -268,7 +271,10 @@ pub fn schedule_verb(
         }
         "enable" | "disable" => {
             let id = schedule_id(verb, args)?;
-            let patch = PatchScheduleBody { enabled: Some(verb == "enable"), ..Default::default() };
+            let patch = PatchScheduleBody {
+                enabled: Some(verb == "enable"),
+                ..Default::default()
+            };
             let patched = schedule_patch(db, &id, &patch, deps)?;
             Ok(serde_json::to_value(patched).unwrap_or(Value::Null))
         }
@@ -279,7 +285,9 @@ pub fn schedule_verb(
         }
         _ => Err(schedule_error(
             400,
-            format!("unknown schedule verb: {verb}. The verbs are list, add, enable, disable, remove."),
+            format!(
+                "unknown schedule verb: {verb}. The verbs are list, add, enable, disable, remove."
+            ),
         )),
     }
 }
@@ -362,8 +370,11 @@ pub fn create_schedule_host_fn(ctx: &TurnCtx, deps: ScheduleDeps) -> HostFn {
     // already resolved for this turn, so a schedule created from a program
     // always names a real directory instead of inheriting whatever the
     // server's cwd happens to be at fire time, months later.
-    let default_workspace =
-        if ctx.workspace.is_empty() { None } else { Some(ctx.workspace.clone()) };
+    let default_workspace = if ctx.workspace.is_empty() {
+        None
+    } else {
+        Some(ctx.workspace.clone())
+    };
     let call_deps = ScheduleDeps {
         now: deps.now.clone().or_else(|| Some(ctx.app.now.clone())),
         workspace: deps.workspace.clone(),
@@ -382,13 +393,16 @@ pub fn create_schedule_host_fn(ctx: &TurnCtx, deps: ScheduleDeps) -> HostFn {
                 Value::Null
             } else {
                 serde_json::from_str(&args_json).map_err(|_| {
-                    schedule_error(400, format!("schedule.{verb}: arguments were not valid JSON"))
+                    schedule_error(
+                        400,
+                        format!("schedule.{verb}: arguments were not valid JSON"),
+                    )
                 })?
             };
             let result = {
-                let guard = db.lock().map_err(|_| {
-                    schedule_error(500, "schedule: the database lock is poisoned")
-                })?;
+                let guard = db
+                    .lock()
+                    .map_err(|_| schedule_error(500, "schedule: the database lock is poisoned"))?;
                 schedule_verb(&*guard, &verb, &parsed, default_workspace.as_deref(), &deps)?
             };
             Ok(serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string()))
@@ -409,7 +423,10 @@ mod tests {
 
     /// `Date.UTC(2026, 0, 15, 12, 0, 0)`.
     fn t0() -> i64 {
-        chrono::Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap().timestamp_millis()
+        chrono::Utc
+            .with_ymd_and_hms(2026, 1, 15, 12, 0, 0)
+            .unwrap()
+            .timestamp_millis()
     }
 
     const MINUTE: i64 = 60_000;
@@ -449,7 +466,10 @@ mod tests {
     fn assert_schedule_err(err: BoughError, status: u16, fragment: &str) {
         assert_eq!(err.name(), "ScheduleError", "{err}");
         assert_eq!(err.status(), status, "{err}");
-        assert!(err.to_string().contains(fragment), "expected {fragment:?} in: {err}");
+        assert!(
+            err.to_string().contains(fragment),
+            "expected {fragment:?} in: {err}"
+        );
     }
 
     // ---- CRUD ---------------------------------------------------------------
@@ -464,7 +484,12 @@ mod tests {
         assert_eq!(created.created_at, t0());
         assert_eq!(created.next_run_at, t0() + 2 * HOUR);
         assert_eq!(
-            store.list_schedules().unwrap().iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
+            store
+                .list_schedules()
+                .unwrap()
+                .iter()
+                .map(|s| s.id.clone())
+                .collect::<Vec<_>>(),
             vec![created.id]
         );
     }
@@ -472,8 +497,7 @@ mod tests {
     #[test]
     fn schedule_create_rejects_a_bad_spec_with_the_grammar() {
         let store = db();
-        let err =
-            schedule_create(&store, &create_body("hourly"), &deps_at(t0())).unwrap_err();
+        let err = schedule_create(&store, &create_body("hourly"), &deps_at(t0())).unwrap_err();
         assert_schedule_err(err, 400, "every:<N><m|h|d>");
         assert!(store.list_schedules().unwrap().is_empty());
     }
@@ -481,7 +505,10 @@ mod tests {
     #[test]
     fn schedule_create_resolves_the_workspace_through_the_injected_resolver() {
         let store = db();
-        let body = CreateScheduleBody { workspace: Some("~/repo".into()), ..create_body("every:1d") };
+        let body = CreateScheduleBody {
+            workspace: Some("~/repo".into()),
+            ..create_body("every:1d")
+        };
         let created = schedule_create(&store, &body, &deps_at(t0())).unwrap();
         assert_eq!(created.workspace.as_deref(), Some("/resolved~/repo"));
     }
@@ -492,11 +519,18 @@ mod tests {
         let deps = ScheduleDeps {
             now: Some(Arc::new(t0)),
             workspace: Some(Arc::new(|_raw: &str| {
-                Err(BoughError::http(400, ErrorKind::Schedule, "workspace does not exist: /nope"))
+                Err(BoughError::http(
+                    400,
+                    ErrorKind::Schedule,
+                    "workspace does not exist: /nope",
+                ))
             })),
             session_id: None,
         };
-        let body = CreateScheduleBody { workspace: Some("/nope".into()), ..create_body("every:1d") };
+        let body = CreateScheduleBody {
+            workspace: Some("/nope".into()),
+            ..create_body("every:1d")
+        };
         let err = schedule_create(&store, &body, &deps).unwrap_err();
         assert_schedule_err(err, 400, "workspace does not exist");
     }
@@ -519,7 +553,10 @@ mod tests {
     fn schedule_patch_leaves_next_run_at_alone_for_a_cosmetic_edit() {
         let store = db();
         let created = seed(&store);
-        let patch = PatchScheduleBody { title: Some("renamed".into()), ..Default::default() };
+        let patch = PatchScheduleBody {
+            title: Some("renamed".into()),
+            ..Default::default()
+        };
         let patched =
             schedule_patch(&store, &created.id, &patch, &deps_at(t0() + 5 * MINUTE)).unwrap();
         assert_eq!(patched.title, "renamed");
@@ -531,7 +568,10 @@ mod tests {
         let store = db();
         let created = seed(&store);
         let at = t0() + 5 * MINUTE;
-        let patch = PatchScheduleBody { spec: Some("every:2h".into()), ..Default::default() };
+        let patch = PatchScheduleBody {
+            spec: Some("every:2h".into()),
+            ..Default::default()
+        };
         let patched = schedule_patch(&store, &created.id, &patch, &deps_at(at)).unwrap();
         assert_eq!(patched.next_run_at, at + 2 * HOUR);
     }
@@ -540,14 +580,20 @@ mod tests {
     fn re_enabling_recomputes_from_now_the_disabled_stretch_is_not_downtime() {
         let store = db();
         let created = seed(&store);
-        let disable = PatchScheduleBody { enabled: Some(false), ..Default::default() };
+        let disable = PatchScheduleBody {
+            enabled: Some(false),
+            ..Default::default()
+        };
         schedule_patch(&store, &created.id, &disable, &deps_at(t0())).unwrap();
 
         // A week later. If re-enabling kept the stale next_run_at, the
         // schedule would be due the instant it was switched back on — which is
         // not what "enable" means.
         let at = t0() + 7 * 24 * HOUR;
-        let enable = PatchScheduleBody { enabled: Some(true), ..Default::default() };
+        let enable = PatchScheduleBody {
+            enabled: Some(true),
+            ..Default::default()
+        };
         let reenabled = schedule_patch(&store, &created.id, &enable, &deps_at(at)).unwrap();
         assert!(reenabled.enabled);
         assert_eq!(reenabled.next_run_at, at + 30 * MINUTE);
@@ -558,7 +604,10 @@ mod tests {
     fn disabling_does_not_recompute_and_a_disabled_row_is_never_due() {
         let store = db();
         let created = seed(&store);
-        let patch = PatchScheduleBody { enabled: Some(false), ..Default::default() };
+        let patch = PatchScheduleBody {
+            enabled: Some(false),
+            ..Default::default()
+        };
         let patched = schedule_patch(&store, &created.id, &patch, &deps_at(t0() + MINUTE)).unwrap();
         assert_eq!(patched.next_run_at, created.next_run_at);
         assert!(store.due_schedules(t0() + 10 * HOUR).unwrap().is_empty());
@@ -567,10 +616,16 @@ mod tests {
     #[test]
     fn schedule_patch_clears_the_workspace_with_an_explicit_null() {
         let store = db();
-        let body = CreateScheduleBody { workspace: Some("/repo".into()), ..create_body("every:1d") };
+        let body = CreateScheduleBody {
+            workspace: Some("/repo".into()),
+            ..create_body("every:1d")
+        };
         let created = schedule_create(&store, &body, &deps_at(t0())).unwrap();
         assert!(created.workspace.is_some());
-        let patch = PatchScheduleBody { workspace: Patch::Clear, ..Default::default() };
+        let patch = PatchScheduleBody {
+            workspace: Patch::Clear,
+            ..Default::default()
+        };
         let patched = schedule_patch(&store, &created.id, &patch, &deps_at(t0())).unwrap();
         assert_eq!(patched.workspace, None);
     }
@@ -578,13 +633,20 @@ mod tests {
     #[test]
     fn patching_and_removing_an_unknown_id_is_a_404_not_a_silent_success() {
         let store = db();
-        let patch = PatchScheduleBody { title: Some("x".into()), ..Default::default() };
+        let patch = PatchScheduleBody {
+            title: Some("x".into()),
+            ..Default::default()
+        };
         assert_schedule_err(
             schedule_patch(&store, "nope", &patch, &deps_at(t0())).unwrap_err(),
             404,
             "not found",
         );
-        assert_schedule_err(schedule_remove(&store, "nope").unwrap_err(), 404, "not found");
+        assert_schedule_err(
+            schedule_remove(&store, "nope").unwrap_err(),
+            404,
+            "not found",
+        );
     }
 
     #[test]
@@ -674,7 +736,10 @@ mod tests {
             &deps_at(t0()),
         )
         .unwrap();
-        assert_eq!(removed, serde_json::json!({"ok": true, "removed": created.id}));
+        assert_eq!(
+            removed,
+            serde_json::json!({"ok": true, "removed": created.id})
+        );
     }
 
     #[test]
@@ -734,12 +799,16 @@ mod tests {
 
     #[tokio::test]
     async fn the_schedule_host_fn_takes_json_in_and_returns_json_out() {
-        let shared: crate::types::SharedDb =
-            Arc::new(std::sync::Mutex::new(SqliteDb::new(":memory:", DbOptions::default()).unwrap()));
+        let shared: crate::types::SharedDb = Arc::new(std::sync::Mutex::new(
+            SqliteDb::new(":memory:", DbOptions::default()).unwrap(),
+        ));
         let ctx = turn_ctx(shared.clone(), "/work/repo");
         let schedule = create_schedule_host_fn(
             &ctx,
-            ScheduleDeps { workspace: Some(any_workspace()), ..Default::default() },
+            ScheduleDeps {
+                workspace: Some(any_workspace()),
+                ..Default::default()
+            },
         );
 
         let added: Value = serde_json::from_str(
@@ -766,19 +835,27 @@ mod tests {
         assert_eq!(listed[0]["id"], added["id"]);
 
         let removed: Value = serde_json::from_str(
-            &schedule(vec!["remove".into(), added["id"].to_string()]).await.unwrap(),
+            &schedule(vec!["remove".into(), added["id"].to_string()])
+                .await
+                .unwrap(),
         )
         .unwrap();
-        assert_eq!(removed, serde_json::json!({"ok": true, "removed": added["id"]}));
+        assert_eq!(
+            removed,
+            serde_json::json!({"ok": true, "removed": added["id"]})
+        );
     }
 
     #[tokio::test]
     async fn the_schedule_host_fn_rejects_non_json_arguments_catchably() {
-        let shared: crate::types::SharedDb =
-            Arc::new(std::sync::Mutex::new(SqliteDb::new(":memory:", DbOptions::default()).unwrap()));
+        let shared: crate::types::SharedDb = Arc::new(std::sync::Mutex::new(
+            SqliteDb::new(":memory:", DbOptions::default()).unwrap(),
+        ));
         let ctx = turn_ctx(shared, "/work/repo");
         let schedule = create_schedule_host_fn(&ctx, ScheduleDeps::default());
-        let err = schedule(vec!["add".into(), "{not json".into()]).await.unwrap_err();
+        let err = schedule(vec!["add".into(), "{not json".into()])
+            .await
+            .unwrap_err();
         assert_schedule_err(err, 400, "valid JSON");
     }
 }

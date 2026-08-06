@@ -93,7 +93,10 @@ pub const FALLBACK: [(&str, &str); 12] = [
 
 /// `FALLBACK` as the map form the layering works over.
 pub fn fallback_colors() -> ThemeColors {
-    FALLBACK.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect()
+    FALLBACK
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect()
 }
 
 /// Resolve a state to the flat token map the palette is read from:
@@ -268,7 +271,10 @@ impl Drop for ThemeSubscription {
 /// hangs off the palette rather than off whatever state a caller touches nearby.
 pub fn subscribe_theme(listener: impl Fn() + Send + Sync + 'static) -> ThemeSubscription {
     let id = next_id();
-    listeners_cell().lock().unwrap().push((id, Arc::new(listener)));
+    listeners_cell()
+        .lock()
+        .unwrap()
+        .push((id, Arc::new(listener)));
     ThemeSubscription(id)
 }
 
@@ -335,8 +341,12 @@ pub fn apply_theme(state: Option<&ThemeState>) {
         p(&next.bg);
     }
     // Copied out of the lock: a listener may unsubscribe (drop) as it runs.
-    let listeners: Vec<Listener> =
-        listeners_cell().lock().unwrap().iter().map(|(_, l)| l.clone()).collect();
+    let listeners: Vec<Listener> = listeners_cell()
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, l)| l.clone())
+        .collect();
     for l in listeners {
         l();
     }
@@ -353,7 +363,11 @@ fn rgb(hex: &str) -> Option<(u8, u8, u8)> {
         return None;
     };
     let n = u32::from_str_radix(&full, 16).ok()?;
-    Some((((n >> 16) & 255) as u8, ((n >> 8) & 255) as u8, (n & 255) as u8))
+    Some((
+        ((n >> 16) & 255) as u8,
+        ((n >> 8) & 255) as u8,
+        (n & 255) as u8,
+    ))
 }
 
 /// hex → SGR truecolor foreground params (`38;2;r;g;b`) for [`crate::format`].
@@ -384,7 +398,10 @@ pub struct ThemePreset {
 
 impl ThemePreset {
     pub fn colors_map(&self) -> ThemeColors {
-        self.colors.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect()
+        self.colors
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
     }
 }
 
@@ -397,9 +414,21 @@ impl ThemePreset {
 /// also moves the token it collides with: accent, warn and error must stay
 /// three distinguishable hues, or a warning reads as an ordinary highlight.
 pub static THEME_PRESETS: &[ThemePreset] = &[
-    ThemePreset { name: "Default", note: "built-in palette", colors: &[] },
-    ThemePreset { name: "Fjord", note: "accent #5c88c9", colors: &[("green", "#5c88c9")] },
-    ThemePreset { name: "Iris", note: "accent #9a7fd1", colors: &[("green", "#9a7fd1")] },
+    ThemePreset {
+        name: "Default",
+        note: "built-in palette",
+        colors: &[],
+    },
+    ThemePreset {
+        name: "Fjord",
+        note: "accent #5c88c9",
+        colors: &[("green", "#5c88c9")],
+    },
+    ThemePreset {
+        name: "Iris",
+        note: "accent #9a7fd1",
+        colors: &[("green", "#9a7fd1")],
+    },
     ThemePreset {
         name: "Ember",
         note: "accent #d9a04f",
@@ -410,8 +439,16 @@ pub static THEME_PRESETS: &[ThemePreset] = &[
         note: "accent #d97a8e",
         colors: &[("green", "#d97a8e"), ("red", "#c85850")],
     },
-    ThemePreset { name: "Lagoon", note: "accent #3fbdb0", colors: &[("green", "#3fbdb0")] },
-    ThemePreset { name: "Graphite", note: "accent #a7b5c8", colors: &[("green", "#a7b5c8")] },
+    ThemePreset {
+        name: "Lagoon",
+        note: "accent #3fbdb0",
+        colors: &[("green", "#3fbdb0")],
+    },
+    ThemePreset {
+        name: "Graphite",
+        note: "accent #a7b5c8",
+        colors: &[("green", "#a7b5c8")],
+    },
     ThemePreset {
         name: "Midnight",
         note: "deeper surfaces",
@@ -460,7 +497,10 @@ pub struct SwatchCell {
 /// row must look like itself whether or not it is the theme currently painted.
 pub fn preset_swatch(p: &ThemePreset) -> Vec<SwatchCell> {
     let c = resolve_colors(Some(&ThemeState {
-        theme: Some(NamedTheme { name: p.name.to_string(), colors: p.colors_map() }),
+        theme: Some(NamedTheme {
+            name: p.name.to_string(),
+            colors: p.colors_map(),
+        }),
         defaults: ThemeColors::new(),
     }));
     ["bg", "panel", "panelInset", "green", "text"]
@@ -468,7 +508,11 @@ pub fn preset_swatch(p: &ThemePreset) -> Vec<SwatchCell> {
         .map(|token| SwatchCell {
             token,
             color: c.get(*token).cloned().unwrap_or_default(),
-            block: if matches!(*token, "bg" | "panel" | "panelInset") { "███" } else { "██" },
+            block: if matches!(*token, "bg" | "panel" | "panelInset") {
+                "███"
+            } else {
+                "██"
+            },
         })
         .collect()
 }
@@ -486,10 +530,16 @@ pub fn state_for(base: Option<&ThemeState>, preset: &ThemePreset) -> ThemeState 
     let defaults = base.map(|b| b.defaults.clone()).unwrap_or_default();
     // The empty partial IS the reset: no stored theme, defaults only (DELETE /theme).
     if preset.colors.is_empty() {
-        ThemeState { theme: None, defaults }
+        ThemeState {
+            theme: None,
+            defaults,
+        }
     } else {
         ThemeState {
-            theme: Some(NamedTheme { name: preset.name.to_string(), colors: preset.colors_map() }),
+            theme: Some(NamedTheme {
+                name: preset.name.to_string(),
+                colors: preset.colors_map(),
+            }),
             defaults,
         }
     }
@@ -508,7 +558,10 @@ pub enum ThemeWrite {
 pub fn persist_request(state: &ThemeState) -> ThemeWrite {
     match &state.theme {
         None => ThemeWrite::Delete,
-        Some(t) => ThemeWrite::Put { name: t.name.clone(), colors: t.colors.clone() },
+        Some(t) => ThemeWrite::Put {
+            name: t.name.clone(),
+            colors: t.colors.clone(),
+        },
     }
 }
 
@@ -577,7 +630,10 @@ impl ThemePreview {
     }
     /// The name of the theme currently painted.
     pub fn name(&self) -> &'static str {
-        self.presets.get(self.index).map(|p| p.name).unwrap_or("Default")
+        self.presets
+            .get(self.index)
+            .map(|p| p.name)
+            .unwrap_or("Default")
     }
     /// The baseline in force — what [`ThemePreview::cancel`] restores.
     pub fn baseline(&self) -> Option<&ThemeState> {
@@ -594,8 +650,11 @@ impl ThemePreview {
     fn paint(&mut self, i: usize) {
         self.index = i;
         let next = state_for(self.baseline.as_ref(), &self.presets[i]);
-        let next_name =
-            next.theme.as_ref().map(|t| t.name.clone()).unwrap_or_else(|| "Default".to_string());
+        let next_name = next
+            .theme
+            .as_ref()
+            .map(|t| t.name.clone())
+            .unwrap_or_else(|| "Default".to_string());
         self.previewing = next_name != self.baseline_name();
         (self.apply)(Some(&next));
     }
@@ -649,8 +708,9 @@ impl ThemePreview {
 /// Slice bounds for a viewport of `height` rows keeping `selected` centered,
 /// clamped so the window never runs past either edge (format.ts::windowAround).
 fn window_around(selected: usize, total: usize, height: usize) -> (usize, usize) {
-    let start =
-        (selected as i64 - (height / 2) as i64).min(total as i64 - height as i64).max(0) as usize;
+    let start = (selected as i64 - (height / 2) as i64)
+        .min(total as i64 - height as i64)
+        .max(0) as usize;
     (start, start + height)
 }
 
@@ -683,11 +743,19 @@ pub fn theme_tab_lines(preview: Option<&ThemePreview>, rows: usize) -> Vec<Line<
             let mut spans: Vec<Span<'static>> = Vec::new();
             spans.push(Span::styled(
                 if sel { "❯ " } else { "  " },
-                if sel { Style::default().fg(p.accent_color()) } else { Style::default() },
+                if sel {
+                    Style::default().fg(p.accent_color())
+                } else {
+                    Style::default()
+                },
             ));
             spans.push(Span::styled(
                 format!("{:<16}", preset.name),
-                if sel { Style::default().add_modifier(Modifier::BOLD) } else { Style::default() },
+                if sel {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                },
             ));
             for cell in preset_swatch(preset) {
                 spans.push(Span::styled(
@@ -705,7 +773,11 @@ pub fn theme_tab_lines(preview: Option<&ThemePreview>, rows: usize) -> Vec<Line<
     out.push(Line::from(Span::styled(
         format!(
             "{}{} — ↑↓ preview live · ⏎ keep · esc back (leaving reverts)",
-            if preview.previewing() { "previewing " } else { "current: " },
+            if preview.previewing() {
+                "previewing "
+            } else {
+                "current: "
+            },
             preview.name()
         ),
         Style::default().add_modifier(Modifier::DIM),
@@ -730,7 +802,9 @@ mod tests {
     /// and leave it as found.
     fn guard() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     fn preset(name: &str) -> &'static ThemePreset {
@@ -739,7 +813,10 @@ mod tests {
 
     fn state_of(p: &ThemePreset) -> ThemeState {
         ThemeState {
-            theme: Some(NamedTheme { name: p.name.to_string(), colors: p.colors_map() }),
+            theme: Some(NamedTheme {
+                name: p.name.to_string(),
+                colors: p.colors_map(),
+            }),
             defaults: ThemeColors::new(),
         }
     }
@@ -749,7 +826,11 @@ mod tests {
         let (r, g, b) = rgb(hex).unwrap();
         let lin = |c: u8| {
             let c = c as f64 / 255.0;
-            if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+            if c <= 0.03928 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
         };
         0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
     }
@@ -838,7 +919,11 @@ mod tests {
 
         drop(stop);
         apply_theme(None);
-        assert_eq!(seen.lock().unwrap().len(), 1, "unsubscribed listeners stop hearing");
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            1,
+            "unsubscribed listeners stop hearing"
+        );
     }
 
     #[test]
@@ -925,12 +1010,17 @@ mod tests {
         let (preview, _log) = recording();
         let mut preview =
             preview.with_persist(Box::new(move |p: &'static ThemePreset, s: &ThemeState| {
-                sink.lock().unwrap().push((p.name.to_string(), persist_request(s)));
+                sink.lock()
+                    .unwrap()
+                    .push((p.name.to_string(), persist_request(s)));
             }));
         preview.move_by(2); // Iris
         preview.commit();
         assert!(!preview.previewing());
-        assert_eq!(preview.baseline().unwrap().theme.as_ref().unwrap().name, "Iris");
+        assert_eq!(
+            preview.baseline().unwrap().theme.as_ref().unwrap().name,
+            "Iris"
+        );
         // Cancel after a commit is a no-op: the baseline moved with it.
         preview.cancel();
         assert_eq!(preview.index(), 2);
@@ -964,7 +1054,9 @@ mod tests {
     fn a_committed_state_keeps_the_servers_defaults() {
         let base = ThemeState {
             theme: None,
-            defaults: [("green".to_string(), "#010203".to_string())].into_iter().collect(),
+            defaults: [("green".to_string(), "#010203".to_string())]
+                .into_iter()
+                .collect(),
         };
         let next = state_for(Some(&base), preset("Lagoon"));
         assert_eq!(next.defaults["green"], "#010203");
@@ -978,7 +1070,9 @@ mod tests {
         let custom = ThemeState {
             theme: Some(NamedTheme {
                 name: "Handmade".into(),
-                colors: [("green".to_string(), "#123456".to_string())].into_iter().collect(),
+                colors: [("green".to_string(), "#123456".to_string())]
+                    .into_iter()
+                    .collect(),
             }),
             defaults: ThemeColors::new(),
         };
@@ -1008,7 +1102,9 @@ mod tests {
         let state = ThemeState {
             theme: Some(NamedTheme {
                 name: "X".into(),
-                colors: [("green".to_string(), "#111111".to_string())].into_iter().collect(),
+                colors: [("green".to_string(), "#111111".to_string())]
+                    .into_iter()
+                    .collect(),
             }),
             defaults: [
                 ("green".to_string(), "#222222".to_string()),
@@ -1049,7 +1145,8 @@ mod tests {
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|f| render_theme_tab(preview, f.area(), f.buffer_mut())).unwrap();
+        term.draw(|f| render_theme_tab(preview, f.area(), f.buffer_mut()))
+            .unwrap();
         let buf = term.backend().buffer().clone();
         (0..h)
             .map(|y| {
@@ -1080,7 +1177,11 @@ mod tests {
     fn the_legend_says_current_when_nothing_is_previewed() {
         let (preview, _log) = recording();
         let out = rendered(Some(&preview), 70, 10);
-        assert!(out[9].starts_with("current: Default — ↑↓ preview live"), "{:?}", out[9]);
+        assert!(
+            out[9].starts_with("current: Default — ↑↓ preview live"),
+            "{:?}",
+            out[9]
+        );
     }
 
     #[test]
@@ -1099,7 +1200,11 @@ mod tests {
         let out = rendered(Some(&preview), 70, 4);
         // Three list rows + the legend, ending on the selected last preset.
         assert!(out[2].starts_with("❯ Rosé Pine Moon"), "{:?}", out[2]);
-        assert!(out[3].starts_with("previewing Rosé Pine Moon"), "{:?}", out[3]);
+        assert!(
+            out[3].starts_with("previewing Rosé Pine Moon"),
+            "{:?}",
+            out[3]
+        );
     }
 
     #[test]

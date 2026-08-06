@@ -122,7 +122,10 @@ mod tests {
         let body = testutil::body_json(res).await;
         assert_eq!(body["interrupted"], true);
         assert_eq!(body["sessionId"], id.as_str());
-        assert!(claim.cancel.is_cancelled(), "the turn's token must be cancelled");
+        assert!(
+            claim.cancel.is_cancelled(),
+            "the turn's token must be cancelled"
+        );
         assert!(
             cascaded.load(std::sync::atomic::Ordering::SeqCst),
             "the cascade hooks must fire — that is what kills the children"
@@ -141,7 +144,10 @@ mod tests {
         let body = testutil::body_json(res).await;
         assert_eq!(body["interrupted"], false);
         assert!(
-            body["message"].as_str().unwrap().contains("nothing was running"),
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("nothing was running"),
             "{body}"
         );
     }

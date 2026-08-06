@@ -159,8 +159,7 @@ pub fn resolve_artifact_path(
 /// `encodeURIComponent`, byte for byte — the URL the store hands out must
 /// round-trip through the server's per-segment decode.
 fn encode_uri_component(s: &str) -> String {
-    const KEEP: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()";
+    const KEEP: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()";
     let mut out = String::with_capacity(s.len());
     for b in s.as_bytes() {
         if KEEP.contains(b) {
@@ -182,10 +181,22 @@ fn to_artifact(
     let url = format!(
         "/artifacts/{}/{}",
         encode_uri_component(session_id),
-        name.split('/').map(encode_uri_component).collect::<Vec<_>>().join("/"),
+        name.split('/')
+            .map(encode_uri_component)
+            .collect::<Vec<_>>()
+            .join("/"),
     );
-    let href = format!("{}{url}", opts.base_url.clone().unwrap_or_else(server_base_url));
-    Artifact { name: name.to_string(), url, href, bytes, ts }
+    let href = format!(
+        "{}{url}",
+        opts.base_url.clone().unwrap_or_else(server_base_url)
+    );
+    Artifact {
+        name: name.to_string(),
+        url,
+        href,
+        bytes,
+        ts,
+    }
 }
 
 fn mtime_ms(meta: &std::fs::Metadata) -> Option<i64> {
@@ -236,7 +247,7 @@ pub fn list_artifacts(session_id: &str, opts: &ArtifactStoreOptions) -> Vec<Arti
     };
     let mut out = Vec::new();
     walk(&dir, "", session_id, opts, &mut out);
-    out.sort_by(|a, b| b.ts.cmp(&a.ts));
+    out.sort_by_key(|a| std::cmp::Reverse(a.ts));
     out
 }
 
@@ -252,7 +263,11 @@ fn walk(
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let child_rel = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+        let child_rel = if rel.is_empty() {
+            name.clone()
+        } else {
+            format!("{rel}/{name}")
+        };
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
@@ -425,7 +440,10 @@ mod tests {
     }
 
     fn names(session_id: &str, opts: &ArtifactStoreOptions) -> Vec<String> {
-        list_artifacts(session_id, opts).into_iter().map(|a| a.name).collect()
+        list_artifacts(session_id, opts)
+            .into_iter()
+            .map(|a| a.name)
+            .collect()
     }
 
     // ---- the bridged host function ------------------------------------------
@@ -435,7 +453,9 @@ mod tests {
         let tmp = TmpDir::new();
         let artifact = create_artifact_host_fn(&turn_ctx("sX"), store(tmp.path()));
         let result: serde_json::Value = serde_json::from_str(
-            &artifact(vec!["index.html".into(), "<h1>report</h1>".into()]).await.unwrap(),
+            &artifact(vec!["index.html".into(), "<h1>report</h1>".into()])
+                .await
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -455,7 +475,9 @@ mod tests {
         let tmp = TmpDir::new();
         let spawner = create_artifact_host_fn(&turn_ctx("spawner"), store(tmp.path()));
         let child = create_artifact_host_fn(&turn_ctx("child"), store(tmp.path()));
-        spawner(vec!["a.html".into(), "spawner".into()]).await.unwrap();
+        spawner(vec!["a.html".into(), "spawner".into()])
+            .await
+            .unwrap();
         child(vec!["a.html".into(), "child".into()]).await.unwrap();
 
         assert_eq!(read(tmp.path(), "spawner/a.html"), "spawner");
@@ -463,7 +485,9 @@ mod tests {
         assert_eq!(names("child", &store(tmp.path())), vec!["a.html"]);
 
         // Reaching sideways is a path escape, not a write into the sibling's store.
-        assert!(child(vec!["../spawner/a.html".into(), "pwned".into()]).await.is_err());
+        assert!(child(vec!["../spawner/a.html".into(), "pwned".into()])
+            .await
+            .is_err());
         assert_eq!(read(tmp.path(), "spawner/a.html"), "spawner");
     }
 
@@ -478,7 +502,10 @@ mod tests {
             assert_eq!(err.name(), "ArtifactError");
             assert_eq!(err.status(), 400);
             let message = err.to_string();
-            assert!(message.contains("escapes this session's artifact directory"), "{message}");
+            assert!(
+                message.contains("escapes this session's artifact directory"),
+                "{message}"
+            );
             assert!(message.contains("plain relative name"), "{message}");
             assert!(message.contains("index.html"), "{message}");
             assert!(message.contains("nothing was written"), "{message}");
@@ -491,11 +518,15 @@ mod tests {
         let tmp = TmpDir::new();
         let artifact = create_artifact_host_fn(&turn_ctx("sZ"), store(tmp.path()));
         let first: serde_json::Value = serde_json::from_str(
-            &artifact(vec!["page.html".into(), "v1".into()]).await.unwrap(),
+            &artifact(vec!["page.html".into(), "v1".into()])
+                .await
+                .unwrap(),
         )
         .unwrap();
         let second: serde_json::Value = serde_json::from_str(
-            &artifact(vec!["page.html".into(), "v2-longer".into()]).await.unwrap(),
+            &artifact(vec!["page.html".into(), "v2-longer".into()])
+                .await
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(second["url"], first["url"]);
@@ -507,9 +538,13 @@ mod tests {
     async fn nested_asset_paths_publish_and_list_with_forward_slashes() {
         let tmp = TmpDir::new();
         let artifact = create_artifact_host_fn(&turn_ctx("sN"), store(tmp.path()));
-        artifact(vec!["index.html".into(), "<html></html>".into()]).await.unwrap();
+        artifact(vec!["index.html".into(), "<html></html>".into()])
+            .await
+            .unwrap();
         let asset: serde_json::Value = serde_json::from_str(
-            &artifact(vec!["assets/app.js".into(), "console.log(1)".into()]).await.unwrap(),
+            &artifact(vec!["assets/app.js".into(), "console.log(1)".into()])
+                .await
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(asset["name"], "assets/app.js");
@@ -528,7 +563,10 @@ mod tests {
             publish_artifact("sessAbc", "index.html", "<h1>hi</h1>", &store(tmp.path())).unwrap();
         assert_eq!(art.name, "index.html");
         assert_eq!(art.url, "/artifacts/sessAbc/index.html");
-        assert_eq!(art.href, "http://127.0.0.1:4321/artifacts/sessAbc/index.html");
+        assert_eq!(
+            art.href,
+            "http://127.0.0.1:4321/artifacts/sessAbc/index.html"
+        );
         assert_eq!(art.bytes, "<h1>hi</h1>".len() as u64);
         assert_eq!(read(tmp.path(), "sessAbc/index.html"), "<h1>hi</h1>");
     }
@@ -563,7 +601,13 @@ mod tests {
     #[test]
     fn ac_traversal_in_the_name_is_blocked() {
         let tmp = TmpDir::new();
-        for bad in ["../escaped.html", "sub/../../escaped.html", "..", "", "sub/.."] {
+        for bad in [
+            "../escaped.html",
+            "sub/../../escaped.html",
+            "..",
+            "",
+            "sub/..",
+        ] {
             let err = resolve_artifact_path("s1", bad, &store(tmp.path()))
                 .expect_err(&format!("name {bad:?} should not resolve"));
             assert_eq!(err.name(), "PathError", "{bad:?}: {err}");
@@ -578,7 +622,14 @@ mod tests {
         let tmp = TmpDir::new();
         let outside = TmpDir::new();
         let outside_str = outside.path().to_string_lossy().into_owned();
-        for bad in ["..", "../evil", "../../evil", outside_str.as_str(), "", "a/b"] {
+        for bad in [
+            "..",
+            "../evil",
+            "../../evil",
+            outside_str.as_str(),
+            "",
+            "a/b",
+        ] {
             let err = resolve_artifact_path(bad, "index.html", &store(tmp.path()))
                 .expect_err(&format!("session id {bad:?} should not resolve"));
             assert_eq!(err.name(), "PathError", "{bad:?}: {err}");
@@ -620,8 +671,13 @@ mod tests {
     #[test]
     fn a_percent_needing_name_encodes_per_segment_in_the_url() {
         let tmp = TmpDir::new();
-        let art =
-            publish_artifact("s8", "my report.html", "<html>ok</html>", &store(tmp.path())).unwrap();
+        let art = publish_artifact(
+            "s8",
+            "my report.html",
+            "<html>ok</html>",
+            &store(tmp.path()),
+        )
+        .unwrap();
         assert_eq!(art.url, "/artifacts/s8/my%20report.html");
     }
 

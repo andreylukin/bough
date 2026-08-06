@@ -86,8 +86,12 @@ pub enum DelegationTier {
 /// is nothing to take — both of its branches now just explain that. Left
 /// callable so an old transcript replays unchanged; taken out of the prompt so
 /// no round is ever spent on it again.
-pub const TOP_LEVEL_DELEGATION: [HostFnName; 4] =
-    [HostFnName::Agent, HostFnName::Spawn, HostFnName::Join, HostFnName::Adopt];
+pub const TOP_LEVEL_DELEGATION: [HostFnName; 4] = [
+    HostFnName::Agent,
+    HostFnName::Spawn,
+    HostFnName::Join,
+    HostFnName::Adopt,
+];
 
 /// What a subagent may call: blocking only.
 ///
@@ -120,7 +124,9 @@ pub fn delegation_fns_for(tier: DelegationTier) -> &'static [HostFnName] {
 /// capability contract forbids.
 pub fn delegation_tier(db: &dyn Db, session_id: &str) -> DelegationTier {
     let session = db.get_session(session_id).ok().flatten();
-    let Some(session) = session else { return DelegationTier::None };
+    let Some(session) = session else {
+        return DelegationTier::None;
+    };
     if session.kind == SessionKind::WorkflowAgent {
         return DelegationTier::None;
     }
@@ -175,7 +181,9 @@ pub struct DetachedSubagents {
 
 impl DetachedSubagents {
     pub fn new() -> Self {
-        DetachedSubagents { by_child: Mutex::new(Vec::new()) }
+        DetachedSubagents {
+            by_child: Mutex::new(Vec::new()),
+        }
     }
 
     pub fn register(
@@ -199,7 +207,12 @@ impl DetachedSubagents {
     }
 
     pub fn get(&self, session_id: &str) -> Option<Arc<DetachedRecord>> {
-        self.by_child.lock().unwrap().iter().find(|r| r.session_id == session_id).cloned()
+        self.by_child
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|r| r.session_id == session_id)
+            .cloned()
     }
 
     /// The children this session detached, newest last. The refusal message
@@ -246,7 +259,10 @@ impl DetachedSubagents {
     }
 
     pub fn forget(&self, session_id: &str) {
-        self.by_child.lock().unwrap().retain(|r| r.session_id != session_id);
+        self.by_child
+            .lock()
+            .unwrap()
+            .retain(|r| r.session_id != session_id);
     }
 
     pub fn size(&self) -> usize {
@@ -313,8 +329,9 @@ fn parse_options(verb: &str, opts_json: &str) -> Result<SubagentOptions, BoughEr
             None | Some(Value::Null) => {}
             Some(v) => match serde_json::from_value(v.clone()) {
                 Ok(e) => opts.effort = Some(e),
-                Err(_) => issues
-                    .push("effort: expected one of low, medium, high, xhigh, max".to_string()),
+                Err(_) => {
+                    issues.push("effort: expected one of low, medium, high, xhigh, max".to_string())
+                }
             },
         }
     }
@@ -483,14 +500,17 @@ impl DelegationInner {
             caps: self.caps.clone(),
         };
         let deps = self.child_deps();
-        capped_launch(&self.ctx, &reserve, || (self.launch)(&self.ctx, task, opts, &deps))
+        capped_launch(&self.ctx, &reserve, || {
+            (self.launch)(&self.ctx, task, opts, &deps)
+        })
     }
 
     async fn agent(&self, task: &str, opts_json: &str) -> Result<String, BoughError> {
         self.assert_live("agent")?;
         let opts = parse_options("agent", opts_json)?;
         let child = self.capped(task, &opts, DelegationMode::Blocking, "agent()")?;
-        self.await_as_own_work(&child.session_id.clone(), child.result).await
+        self.await_as_own_work(&child.session_id.clone(), child.result)
+            .await
     }
 
     /// Detached delegation. Returns the handle immediately and deliberately
@@ -543,8 +563,7 @@ impl DelegationInner {
             registry.off_interrupt(&spawner, hook_id);
         });
 
-        Ok(serde_json::json!({ "sessionId": child.session_id, "title": child.title })
-            .to_string())
+        Ok(serde_json::json!({ "sessionId": child.session_id, "title": child.title }).to_string())
     }
 
     /// Claim a detached child in-band. From this point the child IS this
@@ -552,7 +571,8 @@ impl DelegationInner {
     /// blocking mode.
     async fn join(&self, session_id: &str) -> Result<String, BoughError> {
         let record = self.detached.claim(&self.ctx.session_id, session_id)?;
-        self.await_as_own_work(&record.session_id.clone(), record.result.clone()).await
+        self.await_as_own_work(&record.session_id.clone(), record.result.clone())
+            .await
     }
 
     /// Take over a subagent's session.
@@ -640,11 +660,13 @@ pub fn create_delegation_host_fns(ctx: &TurnCtx, deps: DelegationDeps) -> HostFn
 
     let inner = Arc::new(DelegationInner {
         ctx: ctx.clone(),
-        registry: deps.registry.unwrap_or_else(|| ctx.app.turn_registry.clone()),
-        detached: deps.detached.unwrap_or_else(|| ctx.app.host.detached.clone()),
-        launch: deps
-            .launch
-            .unwrap_or_else(|| Arc::new(|c, t, o, d| launch_subagent(c, t, o, d))),
+        registry: deps
+            .registry
+            .unwrap_or_else(|| ctx.app.turn_registry.clone()),
+        detached: deps
+            .detached
+            .unwrap_or_else(|| ctx.app.host.detached.clone()),
+        launch: deps.launch.unwrap_or_else(|| Arc::new(launch_subagent)),
         caps: deps.caps,
         exempt: deps.exempt,
         child: deps.child,
@@ -742,8 +764,24 @@ fn merge_host_fns(base: &mut HostFns, over: HostFns) {
         ($($f:ident),*) => { $( if over.$f.is_some() { base.$f = over.$f; } )* };
     }
     lay!(
-        bash, sh, bash_bg, bash_output, bash_wait, bash_kill, view, patch, write, agent,
-        spawn, join, adopt, workflow, ask, state, schedule, artifact
+        bash,
+        sh,
+        bash_bg,
+        bash_output,
+        bash_wait,
+        bash_kill,
+        view,
+        patch,
+        write,
+        agent,
+        spawn,
+        join,
+        adopt,
+        workflow,
+        ask,
+        state,
+        schedule,
+        artifact
     );
 }
 
@@ -757,8 +795,11 @@ fn merge_host_fns(base: &mut HostFns, over: HostFns) {
 /// round, and a turn that can call one it was never told about will not.
 pub fn delegation_turn_deps(tier: DelegationTier, wiring: DelegationWiring) -> TurnDeps {
     let mut deps = wiring.base.clone();
-    let mut granted =
-        wiring.base.granted.clone().unwrap_or_else(|| BASE_HOST_FNS.to_vec());
+    let mut granted = wiring
+        .base
+        .granted
+        .clone()
+        .unwrap_or_else(|| BASE_HOST_FNS.to_vec());
     granted.extend_from_slice(delegation_fns_for(tier));
     deps.granted = Some(granted);
 
@@ -774,10 +815,11 @@ pub fn delegation_turn_deps(tier: DelegationTier, wiring: DelegationWiring) -> T
         let child_wiring = w.clone();
         let child: Arc<dyn Fn(&TurnCtx) -> LaunchDeps + Send + Sync> =
             Arc::new(move |_ctx: &TurnCtx| {
-                let mut launch_deps =
-                    child_wiring.launch_deps.clone().unwrap_or_default();
-                launch_deps.turn =
-                    Some(delegation_turn_deps(child_tier_of(tier), child_wiring.clone()));
+                let mut launch_deps = child_wiring.launch_deps.clone().unwrap_or_default();
+                launch_deps.turn = Some(delegation_turn_deps(
+                    child_tier_of(tier),
+                    child_wiring.clone(),
+                ));
                 launch_deps
             });
         let delegation = create_delegation_host_fns(
@@ -861,9 +903,7 @@ mod tests {
     use crate::schema::events::BoughEvent;
     use crate::schema::parts::{Part, Role};
     use crate::turn::testkit::{answering_llm, ok_program};
-    use crate::types::{
-        system_clock, LlmBlock, LlmClient, LlmParams, LlmResult, OnText, SharedDb,
-    };
+    use crate::types::{system_clock, LlmBlock, LlmClient, LlmParams, LlmResult, OnText, SharedDb};
 
     // ---- fixtures -----------------------------------------------------------
 
@@ -946,8 +986,15 @@ mod tests {
         let release = Arc::new(tokio::sync::Notify::new());
         let (tx, rx) = tokio::sync::watch::channel(false);
         (
-            Arc::new(GatedLlm { report: report.to_string(), release: release.clone(), started: tx }),
-            Gate { release, started: rx },
+            Arc::new(GatedLlm {
+                report: report.to_string(),
+                release: release.clone(),
+                started: tx,
+            }),
+            Gate {
+                release,
+                started: rx,
+            },
         )
     }
 
@@ -1037,7 +1084,11 @@ mod tests {
     async fn agent_runs_a_child_to_completion_and_returns_its_report_in_band() {
         let h = harness();
         let spawner = seed_session(&h.db, SeedOpts::default());
-        let ctx = spawner_ctx(&h, &spawner.id, answering_llm("Renamed foo to bar; tests pass."));
+        let ctx = spawner_ctx(
+            &h,
+            &spawner.id,
+            answering_llm("Renamed foo to bar; tests pass."),
+        );
         let mut deps = delegation_deps(&h);
         let child_deps = child_turn_deps(&h);
         deps.child = Some(Arc::new(move |_ctx| LaunchDeps {
@@ -1052,7 +1103,10 @@ mod tests {
         let result = parse(
             &call(
                 host.agent.as_ref().unwrap(),
-                vec!["Rename foo to bar in src/thing.ts.", r#"{"name":"renamer"}"#],
+                vec![
+                    "Rename foo to bar in src/thing.ts.",
+                    r#"{"name":"renamer"}"#,
+                ],
             )
             .await
             .unwrap(),
@@ -1071,7 +1125,11 @@ mod tests {
         );
         // Carried alongside `ok` so "failed" is not one undifferentiated fact.
         assert_eq!(result["status"], json!("done"));
-        assert_eq!(result["title"], json!("renamer"), "the spawner's name labels the branch");
+        assert_eq!(
+            result["title"],
+            json!("renamer"),
+            "the spawner's name labels the branch"
+        );
 
         // It really was a subagent branch of this session, and it really
         // finished.
@@ -1081,7 +1139,10 @@ mod tests {
             let child = db.get_session(child_id).unwrap().unwrap();
             assert_eq!(child.kind, SessionKind::Subagent);
             assert_eq!(child.origin_id.as_deref(), Some(spawner.id.as_str()));
-            assert_eq!(child.origin_message_id.as_deref(), Some(ctx.message_id.as_str()));
+            assert_eq!(
+                child.origin_message_id.as_deref(),
+                Some(ctx.message_id.as_str())
+            );
             assert_eq!(
                 db.thread_for(child_id).unwrap().len(),
                 2,
@@ -1124,9 +1185,12 @@ mod tests {
         let host = create_delegation_host_fns(&ctx, deps);
 
         let result = parse(
-            &call(host.agent.as_ref().unwrap(), vec!["Do the impossible.", r#"{"name":"doomed"}"#])
-                .await
-                .unwrap(),
+            &call(
+                host.agent.as_ref().unwrap(),
+                vec!["Do the impossible.", r#"{"name":"doomed"}"#],
+            )
+            .await
+            .unwrap(),
         );
         assert_eq!(result["ok"], json!(false));
         assert_eq!(
@@ -1134,7 +1198,10 @@ mod tests {
             json!("error"),
             "distinguishable from an interrupt or an orphan"
         );
-        assert!(result["report"].as_str().unwrap().contains("on fire"), "{result}");
+        assert!(
+            result["report"].as_str().unwrap().contains("on fire"),
+            "{result}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1144,16 +1211,27 @@ mod tests {
         let ctx = spawner_ctx(&h, &spawner.id, answering_llm("x"));
         let host = create_delegation_host_fns(&ctx, delegation_deps(&h));
 
-        let bad_name =
-            call(host.agent.as_ref().unwrap(), vec!["do it", r#"{"name":42}"#]).await.unwrap_err();
+        let bad_name = call(
+            host.agent.as_ref().unwrap(),
+            vec!["do it", r#"{"name":42}"#],
+        )
+        .await
+        .unwrap_err();
         assert_eq!(bad_name.name(), "AgentError");
         assert!(bad_name.to_string().contains("name"), "{bad_name}");
-        assert!(bad_name.to_string().contains("always pass a name"), "{bad_name}");
+        assert!(
+            bad_name.to_string().contains("always pass a name"),
+            "{bad_name}"
+        );
 
-        let not_json =
-            call(host.agent.as_ref().unwrap(), vec!["do it", "not json"]).await.unwrap_err();
+        let not_json = call(host.agent.as_ref().unwrap(), vec!["do it", "not json"])
+            .await
+            .unwrap_err();
         assert_eq!(not_json.name(), "AgentError");
-        assert!(not_json.to_string().contains("could not be read as JSON"), "{not_json}");
+        assert!(
+            not_json.to_string().contains("could not be read as JSON"),
+            "{not_json}"
+        );
 
         let db = h.db.lock().unwrap();
         assert_eq!(
@@ -1172,7 +1250,10 @@ mod tests {
         // eight.
         let mut deps = delegation_deps(&h);
         deps.caps = Some(Arc::new(SpawnCaps::with_limits(
-            crate::agents::caps::CapLimits { per_turn: Some(1), concurrent: Some(4) },
+            crate::agents::caps::CapLimits {
+                per_turn: Some(1),
+                concurrent: Some(4),
+            },
         )));
         let host = create_delegation_host_fns(&ctx, deps);
 
@@ -1186,15 +1267,20 @@ mod tests {
         );
         assert_eq!(first["ok"], json!(true));
 
-        let refused = call(host.agent.as_ref().unwrap(), vec!["One too many.", r#"{"name":"second"}"#])
-            .await
-            .unwrap_err();
+        let refused = call(
+            host.agent.as_ref().unwrap(),
+            vec!["One too many.", r#"{"name":"second"}"#],
+        )
+        .await
+        .unwrap_err();
         assert!(refused.to_string().contains("per-turn limit"), "{refused}");
         // The refusal cost the sibling nothing: its branch and its report
         // still stand.
         let db = h.db.lock().unwrap();
-        let first_child =
-            db.get_session(first["sessionId"].as_str().unwrap()).unwrap().unwrap();
+        let first_child = db
+            .get_session(first["sessionId"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
         assert_eq!(first_child.outcome_ok, Some(true));
         assert_eq!(
             db.sessions_by_origin(&spawner.id).unwrap().len(),
@@ -1218,9 +1304,12 @@ mod tests {
         let host = create_delegation_host_fns(&ctx, deps);
 
         let handle = parse(
-            &call(host.spawn.as_ref().unwrap(), vec!["Sweep the handlers.", r#"{"name":"sweeper"}"#])
-                .await
-                .unwrap(),
+            &call(
+                host.spawn.as_ref().unwrap(),
+                vec!["Sweep the handlers.", r#"{"name":"sweeper"}"#],
+            )
+            .await
+            .unwrap(),
         );
         assert!(handle["sessionId"].is_string());
         assert_eq!(handle["title"], json!("sweeper"));
@@ -1234,8 +1323,15 @@ mod tests {
         // race that usually wins.
         let child_id = handle["sessionId"].as_str().unwrap().to_string();
         gate.started().await;
-        assert!(h.registry.is_running(&child_id), "the child is still mid-turn");
-        assert_eq!(delivered.lock().unwrap().len(), 0, "and nothing has been reported yet");
+        assert!(
+            h.registry.is_running(&child_id),
+            "the child is still mid-turn"
+        );
+        assert_eq!(
+            delivered.lock().unwrap().len(),
+            0,
+            "and nothing has been reported yet"
+        );
 
         gate.release();
         let result = h.detached.get(&child_id).unwrap().result.clone().await;
@@ -1251,7 +1347,12 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
         assert_eq!(
-            delivered.lock().unwrap().iter().map(|r| r.session_id.clone()).collect::<Vec<_>>(),
+            delivered
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|r| r.session_id.clone())
+                .collect::<Vec<_>>(),
             vec![child_id]
         );
     }
@@ -1269,9 +1370,12 @@ mod tests {
         let host = create_delegation_host_fns(&ctx, deps);
 
         let handle = parse(
-            &call(host.spawn.as_ref().unwrap(), vec!["Audit the handlers.", r#"{"name":"auditor"}"#])
-                .await
-                .unwrap(),
+            &call(
+                host.spawn.as_ref().unwrap(),
+                vec!["Audit the handlers.", r#"{"name":"auditor"}"#],
+            )
+            .await
+            .unwrap(),
         );
         let child_id = handle["sessionId"].as_str().unwrap().to_string();
         gate.started().await;
@@ -1287,17 +1391,32 @@ mod tests {
 
         assert_eq!(result["sessionId"], json!(child_id));
         assert_eq!(result["ok"], json!(true));
-        assert_eq!(result["report"], json!("audit complete: two missing error paths"));
-        assert!(h.detached.get(&child_id).unwrap().claimed.load(Ordering::SeqCst));
+        assert_eq!(
+            result["report"],
+            json!("audit complete: two missing error paths")
+        );
+        assert!(h
+            .detached
+            .get(&child_id)
+            .unwrap()
+            .claimed
+            .load(Ordering::SeqCst));
 
         // Give the completion chain its ticks: the note must NOT be posted,
         // because the program already has the report in hand.
         let _ = h.detached.get(&child_id).unwrap().result.clone().await;
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        assert!(delivered.lock().unwrap().is_empty(), "a claimed result is not also announced");
+        assert!(
+            delivered.lock().unwrap().is_empty(),
+            "a claimed result is not also announced"
+        );
 
         // Joining again is a program being careful, not a program being wrong.
-        let again = parse(&call(host.join.as_ref().unwrap(), vec![&child_id]).await.unwrap());
+        let again = parse(
+            &call(host.join.as_ref().unwrap(), vec![&child_id])
+                .await
+                .unwrap(),
+        );
         assert_eq!(again["sessionId"], json!(child_id));
     }
 
@@ -1308,7 +1427,9 @@ mod tests {
         let ctx = spawner_ctx(&h, &spawner.id, answering_llm("x"));
         let host = create_delegation_host_fns(&ctx, delegation_deps(&h));
 
-        let err = call(host.join.as_ref().unwrap(), vec!["no-such-session"]).await.unwrap_err();
+        let err = call(host.join.as_ref().unwrap(), vec!["no-such-session"])
+            .await
+            .unwrap_err();
         assert_eq!(err.name(), "AgentError");
         assert!(err.to_string().contains("has not spawn()ed any"), "{err}");
         assert!(
@@ -1321,13 +1442,18 @@ mod tests {
         let other_ctx = spawner_ctx(&h, &other.id, answering_llm("done"));
         let other_host = create_delegation_host_fns(&other_ctx, delegation_deps(&h));
         let theirs = parse(
-            &call(other_host.spawn.as_ref().unwrap(), vec!["Their work.", r#"{"name":"theirs"}"#])
-                .await
-                .unwrap(),
+            &call(
+                other_host.spawn.as_ref().unwrap(),
+                vec!["Their work.", r#"{"name":"theirs"}"#],
+            )
+            .await
+            .unwrap(),
         );
         let theirs_id = theirs["sessionId"].as_str().unwrap().to_string();
         let _ = h.detached.get(&theirs_id).unwrap().result.clone().await;
-        let foreign = call(host.join.as_ref().unwrap(), vec![&theirs_id]).await.unwrap_err();
+        let foreign = call(host.join.as_ref().unwrap(), vec![&theirs_id])
+            .await
+            .unwrap_err();
         assert_eq!(foreign.name(), "AgentError");
     }
 
@@ -1362,8 +1488,11 @@ mod tests {
         let detached_id = handle["sessionId"].as_str().unwrap().to_string();
         let agent_fn = blocking_host.agent.clone().unwrap();
         let pending = tokio::spawn(async move {
-            agent_fn(vec!["Blocking work.".to_string(), r#"{"name":"blocking"}"#.to_string()])
-                .await
+            agent_fn(vec![
+                "Blocking work.".to_string(),
+                r#"{"name":"blocking"}"#.to_string(),
+            ])
+            .await
         });
         blocking_gate.started().await;
         detached_gate.started().await;
@@ -1384,11 +1513,18 @@ mod tests {
         turn.cancel();
         let result = parse(&pending.await.unwrap().unwrap());
 
-        assert_eq!(result["status"], json!("interrupted"), "the blocking child is this turn's work");
+        assert_eq!(
+            result["status"],
+            json!("interrupted"),
+            "the blocking child is this turn's work"
+        );
         assert_eq!(result["ok"], json!(false));
         {
             let db = h.db.lock().unwrap();
-            assert_eq!(db.get_session(&blocking_id).unwrap().unwrap().outcome_ok, Some(false));
+            assert_eq!(
+                db.get_session(&blocking_id).unwrap().unwrap().outcome_ok,
+                Some(false)
+            );
         }
 
         // …and the detached one is not. It is still running, and it still
@@ -1399,7 +1535,10 @@ mod tests {
         );
         detached_gate.release();
         let survivor = h.detached.get(&detached_id).unwrap().result.clone().await;
-        assert_eq!(survivor.status, crate::agents::subagent::SubagentStatus::Done);
+        assert_eq!(
+            survivor.status,
+            crate::agents::subagent::SubagentStatus::Done
+        );
         assert_eq!(survivor.report, "finished on my own");
     }
 
@@ -1412,9 +1551,12 @@ mod tests {
         let host = create_delegation_host_fns(&ctx, delegation_deps(&h));
 
         let handle = parse(
-            &call(host.spawn.as_ref().unwrap(), vec!["Runaway work.", r#"{"name":"runaway"}"#])
-                .await
-                .unwrap(),
+            &call(
+                host.spawn.as_ref().unwrap(),
+                vec!["Runaway work.", r#"{"name":"runaway"}"#],
+            )
+            .await
+            .unwrap(),
         );
         let child_id = handle["sessionId"].as_str().unwrap().to_string();
         gate.started().await;
@@ -1427,7 +1569,10 @@ mod tests {
         h.registry.interrupt(&spawner.id);
 
         let result = h.detached.get(&child_id).unwrap().result.clone().await;
-        assert_eq!(result.status, crate::agents::subagent::SubagentStatus::Interrupted);
+        assert_eq!(
+            result.status,
+            crate::agents::subagent::SubagentStatus::Interrupted
+        );
         assert!(!result.ok);
 
         // And the hook unregisters itself once the child has settled: a
@@ -1458,7 +1603,11 @@ mod tests {
             assert!(err.to_string().contains("interrupted"), "{err}");
         }
         let db = h.db.lock().unwrap();
-        assert_eq!(db.list_sessions().unwrap().len(), 1, "no branch was created");
+        assert_eq!(
+            db.list_sessions().unwrap().len(),
+            1,
+            "no branch was created"
+        );
     }
 
     // ---- adopt --------------------------------------------------------------
@@ -1471,14 +1620,19 @@ mod tests {
         let host = create_delegation_host_fns(&ctx, delegation_deps(&h));
 
         let result = parse(
-            &call(host.agent.as_ref().unwrap(), vec!["Do the thing.", r#"{"name":"worker"}"#])
-                .await
-                .unwrap(),
+            &call(
+                host.agent.as_ref().unwrap(),
+                vec!["Do the thing.", r#"{"name":"worker"}"#],
+            )
+            .await
+            .unwrap(),
         );
         let child_id = result["sessionId"].as_str().unwrap().to_string();
 
         let before = h.events.lock().unwrap().len();
-        let text = call(host.adopt.as_ref().unwrap(), vec![&child_id]).await.unwrap();
+        let text = call(host.adopt.as_ref().unwrap(), vec![&child_id])
+            .await
+            .unwrap();
         assert!(text.contains("worker"), "{text}");
         assert!(text.contains("nothing to merge"), "{text}");
         assert!(text.contains("finished"), "{text}");
@@ -1491,9 +1645,14 @@ mod tests {
         );
 
         // A session that is not this one's subagent is not adoptable.
-        let err = call(host.adopt.as_ref().unwrap(), vec![&spawner.id]).await.unwrap_err();
+        let err = call(host.adopt.as_ref().unwrap(), vec![&spawner.id])
+            .await
+            .unwrap_err();
         assert_eq!(err.name(), "AgentError");
-        assert!(err.to_string().contains("not a subagent of this session"), "{err}");
+        assert!(
+            err.to_string().contains("not a subagent of this session"),
+            "{err}"
+        );
     }
 
     // ---- tiers --------------------------------------------------------------
@@ -1506,16 +1665,26 @@ mod tests {
         let two = seed_session(&h.db, SeedOpts::subagent_of(&one.id));
         let wf = seed_session(
             &h.db,
-            SeedOpts { kind: Some(SessionKind::WorkflowAgent), origin_id: None },
+            SeedOpts {
+                kind: Some(SessionKind::WorkflowAgent),
+                origin_id: None,
+            },
         );
 
         {
             let db = h.db.lock().unwrap();
             assert_eq!(delegation_tier(&*db, &root.id), DelegationTier::Top);
             assert_eq!(delegation_tier(&*db, &one.id), DelegationTier::Nested);
-            assert_eq!(delegation_tier(&*db, &two.id), DelegationTier::None, "the nesting cap");
+            assert_eq!(
+                delegation_tier(&*db, &two.id),
+                DelegationTier::None,
+                "the nesting cap"
+            );
             assert_eq!(delegation_tier(&*db, &wf.id), DelegationTier::None);
-            assert_eq!(delegation_tier(&*db, "no such session"), DelegationTier::None);
+            assert_eq!(
+                delegation_tier(&*db, "no such session"),
+                DelegationTier::None
+            );
         }
 
         let bridged = |session_id: &str| {
@@ -1538,7 +1707,11 @@ mod tests {
         };
 
         assert_eq!(bridged(&root.id), vec!["adopt", "agent", "join", "spawn"]);
-        assert_eq!(bridged(&one.id), vec!["adopt", "agent"], "a subagent delegates blocking only");
+        assert_eq!(
+            bridged(&one.id),
+            vec!["adopt", "agent"],
+            "a subagent delegates blocking only"
+        );
         assert_eq!(
             bridged(&two.id),
             Vec::<&str>::new(),
@@ -1556,7 +1729,9 @@ mod tests {
         // a section documenting spawn() cannot reach a session that has no
         // spawn().
         let granted = |tier: DelegationTier| {
-            delegation_turn_deps(tier, DelegationWiring::default()).granted.unwrap()
+            delegation_turn_deps(tier, DelegationWiring::default())
+                .granted
+                .unwrap()
         };
 
         let mut top = BASE_HOST_FNS.to_vec();
@@ -1567,13 +1742,20 @@ mod tests {
         assert_eq!(granted(DelegationTier::Nested), nested);
         assert_eq!(granted(DelegationTier::None), BASE_HOST_FNS.to_vec());
 
-        for tier in [DelegationTier::Top, DelegationTier::Nested, DelegationTier::None] {
+        for tier in [
+            DelegationTier::Top,
+            DelegationTier::Nested,
+            DelegationTier::None,
+        ] {
             let delegation: Vec<HostFnName> = granted(tier)
                 .into_iter()
                 .filter(|f| {
                     matches!(
                         f,
-                        HostFnName::Agent | HostFnName::Spawn | HostFnName::Join | HostFnName::Adopt
+                        HostFnName::Agent
+                            | HostFnName::Spawn
+                            | HostFnName::Join
+                            | HostFnName::Adopt
                     )
                 })
                 .collect();
@@ -1619,7 +1801,9 @@ mod tests {
                     id: Uuid::new_v4().to_string(),
                     session_id: session_id.to_string(),
                     role: Role::User,
-                    parts: vec![Part::Text { text: "hi".to_string() }],
+                    parts: vec![Part::Text {
+                        text: "hi".to_string(),
+                    }],
                     pending: false,
                     created_at: at,
                 })
@@ -1647,6 +1831,9 @@ mod tests {
         assert_eq!(started.lock().unwrap().len(), 2);
         let sub_granted = started.lock().unwrap()[1].clone();
         assert!(sub_granted.contains(&HostFnName::Agent));
-        assert!(!sub_granted.contains(&HostFnName::Spawn), "a subagent may not detach work");
+        assert!(
+            !sub_granted.contains(&HostFnName::Spawn),
+            "a subagent may not detach work"
+        );
     }
 }

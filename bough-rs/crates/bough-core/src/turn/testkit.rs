@@ -24,11 +24,16 @@ use crate::types::{
 // ---- block builders ---------------------------------------------------------
 
 pub fn text(t: &str) -> LlmBlock {
-    LlmBlock::Text { text: t.to_string() }
+    LlmBlock::Text {
+        text: t.to_string(),
+    }
 }
 
 pub fn reasoning(t: &str, meta: Option<Value>) -> LlmBlock {
-    LlmBlock::Reasoning { text: t.to_string(), meta }
+    LlmBlock::Reasoning {
+        text: t.to_string(),
+        meta,
+    }
 }
 
 pub fn run_steps(id: &str, code: &str) -> LlmBlock {
@@ -40,7 +45,11 @@ pub fn run_steps(id: &str, code: &str) -> LlmBlock {
 }
 
 pub fn stop(id: &str) -> LlmBlock {
-    LlmBlock::ToolUse { id: id.to_string(), name: STOP.to_string(), input: json!({}) }
+    LlmBlock::ToolUse {
+        id: id.to_string(),
+        name: STOP.to_string(),
+        input: json!({}),
+    }
 }
 
 // ---- the scripted client ----------------------------------------------------
@@ -97,12 +106,19 @@ impl LlmClient for ScriptedLlm {
         for d in &round.deltas {
             on_text(d);
         }
-        Ok(LlmResult { content: round.content, stop_reason: "end_turn".to_string(), usage: round.usage })
+        Ok(LlmResult {
+            content: round.content,
+            stop_reason: "end_turn".to_string(),
+            usage: round.usage,
+        })
     }
 }
 
 pub fn scripted_llm(rounds: Vec<ScriptedRound>) -> Arc<ScriptedLlm> {
-    Arc::new(ScriptedLlm { rounds: Mutex::new(rounds.into()), calls: Mutex::new(vec![]) })
+    Arc::new(ScriptedLlm {
+        rounds: Mutex::new(rounds.into()),
+        calls: Mutex::new(vec![]),
+    })
 }
 
 /// A model that never answers: the crash test's turn is genuinely mid-round
@@ -147,7 +163,9 @@ impl LlmClient for AnsweringLlm {
 }
 
 pub fn answering_llm(reply: &str) -> Arc<dyn LlmClient> {
-    Arc::new(AnsweringLlm { text: reply.to_string() })
+    Arc::new(AnsweringLlm {
+        text: reply.to_string(),
+    })
 }
 
 // ---- ctx and deps -----------------------------------------------------------
@@ -173,7 +191,15 @@ pub fn test_ctx(db: SharedDb, llm: Arc<dyn LlmClient>) -> AppCtx {
 /// A program runner that succeeds and prints nothing.
 pub fn ok_program() -> ProgramRunner {
     Arc::new(|_run| {
-        async { ProgramResult { ok: true, logs: vec![], error: None, interrupted: None } }.boxed()
+        async {
+            ProgramResult {
+                ok: true,
+                logs: vec![],
+                error: None,
+                interrupted: None,
+            }
+        }
+        .boxed()
     })
 }
 

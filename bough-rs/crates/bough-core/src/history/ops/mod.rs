@@ -10,4 +10,6 @@ pub mod handoff;
 pub mod move_into;
 pub mod sections;
 pub mod seed;
+#[cfg(test)]
+pub(crate) mod testkit;
 pub mod unsend;

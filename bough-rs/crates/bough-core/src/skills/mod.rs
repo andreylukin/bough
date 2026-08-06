@@ -80,7 +80,9 @@ static BUNDLED: include_dir::Dir<'_> =
 /// Where the bundle materializes: versioned so an upgraded binary never
 /// serves a stale body.
 pub fn bundled_skills_dir() -> PathBuf {
-    bough_home().join("bundled-skills").join(env!("CARGO_PKG_VERSION"))
+    bough_home()
+        .join("bundled-skills")
+        .join(env!("CARGO_PKG_VERSION"))
 }
 
 /// Write the bundled skill folders into `dest` (one folder per skill,
@@ -128,8 +130,14 @@ fn ensure_bundled_skills() -> PathBuf {
 /// Bundled, then the user's. First name wins (spec §16).
 pub fn default_sources() -> Vec<SkillSource> {
     vec![
-        SkillSource { source: SkillSourceName::Bundled, dir: ensure_bundled_skills() },
-        SkillSource { source: SkillSourceName::User, dir: user_skills_dir() },
+        SkillSource {
+            source: SkillSourceName::Bundled,
+            dir: ensure_bundled_skills(),
+        },
+        SkillSource {
+            source: SkillSourceName::User,
+            dir: user_skills_dir(),
+        },
     ]
 }
 
@@ -215,7 +223,10 @@ pub struct Frontmatter {
 
 impl Frontmatter {
     pub fn field(&self, key: &str) -> Option<&str> {
-        self.fields.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+        self.fields
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -238,7 +249,10 @@ impl Frontmatter {
 /// containing a horizontal rule — only a line that trimmed equals `---`
 /// closes the block.
 pub fn parse_frontmatter(raw: &str) -> Frontmatter {
-    let text = raw.strip_prefix('\u{FEFF}').unwrap_or(raw).replace("\r\n", "\n");
+    let text = raw
+        .strip_prefix('\u{FEFF}')
+        .unwrap_or(raw)
+        .replace("\r\n", "\n");
     let lines: Vec<&str> = text.split('\n').collect();
 
     let mut open = 0;
@@ -246,10 +260,17 @@ pub fn parse_frontmatter(raw: &str) -> Frontmatter {
         open += 1;
     }
     if open >= lines.len() || lines[open].trim() != FENCE {
-        return Frontmatter { fields: vec![], body: text.trim().to_string(), error: None };
+        return Frontmatter {
+            fields: vec![],
+            body: text.trim().to_string(),
+            error: None,
+        };
     }
 
-    let close = lines[open + 1..].iter().position(|l| l.trim() == FENCE).map(|i| open + 1 + i);
+    let close = lines[open + 1..]
+        .iter()
+        .position(|l| l.trim() == FENCE)
+        .map(|i| open + 1 + i);
     let Some(close) = close else {
         return Frontmatter {
             fields: vec![],
@@ -269,7 +290,9 @@ pub fn parse_frontmatter(raw: &str) -> Frontmatter {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        let Some(colon) = trimmed.find(':') else { continue };
+        let Some(colon) = trimmed.find(':') else {
+            continue;
+        };
         if colon == 0 {
             continue;
         }
@@ -281,7 +304,11 @@ pub fn parse_frontmatter(raw: &str) -> Frontmatter {
         let value = unquote(trimmed[colon + 1..].trim()).to_string();
         fields.push((key, value));
     }
-    Frontmatter { fields, body: lines[close + 1..].join("\n").trim().to_string(), error: None }
+    Frontmatter {
+        fields,
+        body: lines[close + 1..].join("\n").trim().to_string(),
+        error: None,
+    }
 }
 
 /// Strip ONE matched pair of YAML quotes. Only a matched pair goes — an
@@ -347,7 +374,9 @@ pub fn list_skills(sources: &[SkillSource]) -> Vec<Skill> {
     let mut out: Vec<Skill> = vec![];
     let mut taken: Vec<String> = vec![];
     for SkillSource { source, dir } in sources {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
         let mut names: Vec<(String, bool)> = entries
             .flatten()
             .map(|e| {
@@ -357,10 +386,12 @@ pub fn list_skills(sources: &[SkillSource]) -> Vec<Skill> {
             .collect();
         names.sort_by(|a, b| a.0.cmp(&b.0));
         for (name, is_dir) in names {
-            if !is_dir || taken.iter().any(|t| *t == name) {
+            if !is_dir || taken.contains(&name) {
                 continue;
             }
-            let Some(skill) = read_skill(*source, dir, &name) else { continue };
+            let Some(skill) = read_skill(*source, dir, &name) else {
+                continue;
+            };
             taken.push(skill.name.clone());
             out.push(skill);
         }
@@ -374,7 +405,9 @@ pub fn load_skill(name: &str, sources: &[SkillSource]) -> Option<Skill> {
     if !name_ok(name) {
         return None;
     }
-    sources.iter().find_map(|s| read_skill(s.source, &s.dir, name))
+    sources
+        .iter()
+        .find_map(|s| read_skill(s.source, &s.dir, name))
 }
 
 // ---------------------------------------------------------------------------
@@ -396,13 +429,16 @@ pub fn mention_index(message: &str, name: &str) -> Option<usize> {
     let mut from = 0;
     while let Some(pos) = message[from..].find(&needle) {
         let at = from + pos;
-        let before_ok =
-            at == 0 || message[..at].chars().next_back().is_some_and(|c| c.is_whitespace());
+        let before_ok = at == 0
+            || message[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_whitespace());
         let after = message[at + needle.len()..].chars().next();
         // The TS class `[\w./-]`: a word char, dot, slash or hyphen continues
         // the token and disqualifies the mention.
-        let after_ok = !after
-            .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'));
+        let after_ok =
+            !after.is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'));
         if before_ok && after_ok {
             return Some(at);
         }
@@ -438,7 +474,10 @@ pub fn active_skills(message: &str, sources: &[SkillSource]) -> ActiveSkills {
                 out.servers.push(server.clone());
             }
         }
-        out.skills.push(PromptSkill { name: skill.name, body: skill.body });
+        out.skills.push(PromptSkill {
+            name: skill.name,
+            body: skill.body,
+        });
     }
     out
 }
@@ -507,7 +546,10 @@ pub fn turn_skills(
     session_id: &str,
     sources: &[SkillSource],
 ) -> Result<ActiveSkills, BoughError> {
-    Ok(active_skills(&invoking_text(&db.messages_for(session_id)?), sources))
+    Ok(active_skills(
+        &invoking_text(&db.messages_for(session_id)?),
+        sources,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -537,7 +579,10 @@ mod tests {
             folder
         }
         fn as_source(&self) -> SkillSource {
-            SkillSource { source: self.source, dir: self.dir.clone() }
+            SkillSource {
+                source: self.source,
+                dir: self.dir.clone(),
+            }
         }
     }
 
@@ -578,7 +623,11 @@ mod tests {
     fn frontmatter_an_unterminated_fence_is_an_error_and_withholds_the_body() {
         let fm =
             parse_frontmatter("---\nname: broken\ndescription: no closing fence\n\nThe body.\n");
-        assert!(fm.error.as_deref().unwrap().contains("opens with `---` and never closes"));
+        assert!(fm
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("opens with `---` and never closes"));
         assert_eq!(fm.body, "");
         assert!(fm.fields.is_empty());
     }
@@ -587,8 +636,10 @@ mod tests {
     fn frontmatter_a_rule_inside_the_body_does_not_truncate_it() {
         // The old implementation split the whole file on "---", so a horizontal
         // rule or a fenced block containing one silently ate the rest.
-        let fm =
-            parse_frontmatter(&skill_file("description: d", "before\n\n---\n\nafter the rule"));
+        let fm = parse_frontmatter(&skill_file(
+            "description: d",
+            "before\n\n---\n\nafter the rule",
+        ));
         assert!(fm.body.starts_with("before"), "{}", fm.body);
         assert!(fm.body.ends_with("after the rule"), "{}", fm.body);
     }
@@ -624,13 +675,25 @@ mod tests {
     fn a_name_in_two_sources_resolves_to_the_bundled_one_first_source_wins() {
         let bundled = TempSource::new(SkillSourceName::Bundled);
         let user = TempSource::new(SkillSourceName::User);
-        bundled.write("history", &skill_file("description: the bundled one", "BUNDLED BODY"));
-        user.write("history", &skill_file("description: the shadow", "USER BODY"));
-        user.write("mine", &skill_file("description: only the user has this", "MINE"));
+        bundled.write(
+            "history",
+            &skill_file("description: the bundled one", "BUNDLED BODY"),
+        );
+        user.write(
+            "history",
+            &skill_file("description: the shadow", "USER BODY"),
+        );
+        user.write(
+            "mine",
+            &skill_file("description: only the user has this", "MINE"),
+        );
 
         let sources = [bundled.as_source(), user.as_source()];
         let listed = list_skills(&sources);
-        assert_eq!(listed.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["history", "mine"]);
+        assert_eq!(
+            listed.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            ["history", "mine"]
+        );
 
         let history = listed.iter().find(|s| s.name == "history").unwrap();
         assert_eq!(history.source, SkillSourceName::Bundled);
@@ -639,8 +702,14 @@ mod tests {
         // Exactly one row per name: the shadowed copy is resolved away.
         assert_eq!(listed.iter().filter(|s| s.name == "history").count(), 1);
 
-        assert_eq!(load_skill("history", &sources).unwrap().body, "BUNDLED BODY");
-        assert_eq!(load_skill("mine", &sources).unwrap().source, SkillSourceName::User);
+        assert_eq!(
+            load_skill("history", &sources).unwrap().body,
+            "BUNDLED BODY"
+        );
+        assert_eq!(
+            load_skill("mine", &sources).unwrap().source,
+            SkillSourceName::User
+        );
         assert_eq!(load_skill("absent", &sources), None);
     }
 
@@ -658,7 +727,10 @@ mod tests {
             user.as_source(),
         ];
         assert_eq!(
-            list_skills(&sources).iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            list_skills(&sources)
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
             ["real"]
         );
     }
@@ -687,7 +759,10 @@ mod tests {
         let skill = load_skill("helper", &[user.as_source()]).unwrap();
         let folder = folder.to_string_lossy();
         assert_eq!(skill.dir, folder);
-        assert_eq!(skill.body, format!("Run `python3 {folder}/run.py` then read {folder}/notes.md"));
+        assert_eq!(
+            skill.body,
+            format!("Run `python3 {folder}/run.py` then read {folder}/notes.md")
+        );
         assert!(!skill.body.contains("SKILL_DIR"), "{}", skill.body);
     }
 
@@ -709,15 +784,25 @@ mod tests {
     #[test]
     fn named_skills_load_in_invocation_order_with_their_servers_unioned() {
         let user = TempSource::new(SkillSourceName::User);
-        user.write("alpha", &skill_file("description: a\nmcp: linear, github", "ALPHA BODY"));
-        user.write("beta", &skill_file("description: b\nmcp: github", "BETA BODY"));
+        user.write(
+            "alpha",
+            &skill_file("description: a\nmcp: linear, github", "ALPHA BODY"),
+        );
+        user.write(
+            "beta",
+            &skill_file("description: b\nmcp: github", "BETA BODY"),
+        );
         user.write("gamma", &skill_file("description: c", "GAMMA BODY"));
         let sources = [user.as_source()];
 
         let active = active_skills("first /beta then /alpha", &sources);
         assert_eq!(active.names, ["beta", "alpha"]);
         assert_eq!(
-            active.skills.iter().map(|s| s.body.as_str()).collect::<Vec<_>>(),
+            active
+                .skills
+                .iter()
+                .map(|s| s.body.as_str())
+                .collect::<Vec<_>>(),
             ["BETA BODY", "ALPHA BODY"]
         );
         let mut servers = active.servers.clone();
@@ -732,7 +817,10 @@ mod tests {
     #[test]
     fn a_named_skill_that_cannot_be_parsed_contributes_a_note_never_a_body() {
         let user = TempSource::new(SkillSourceName::User);
-        user.write("broken", "---\nname: broken\ndescription: unterminated\n\nThe instructions.\n");
+        user.write(
+            "broken",
+            "---\nname: broken\ndescription: unterminated\n\nThe instructions.\n",
+        );
         let sources = [user.as_source()];
         let active = active_skills("please /broken this", &sources);
         assert!(active.skills.is_empty());
@@ -741,7 +829,11 @@ mod tests {
         assert!(active.notes[0].starts_with("## Skill /broken could not be loaded"));
         assert!(active.notes[0].contains("never closes"));
         // The frontmatter itself must not have leaked into what the model is told.
-        assert!(!active.notes[0].contains("The instructions."), "{}", active.notes[0]);
+        assert!(
+            !active.notes[0].contains("The instructions."),
+            "{}",
+            active.notes[0]
+        );
         // It is still LISTED, with its error — the panel is where the user
         // finds out (the broken-listed-never-omitted gate).
         let listed = list_skills(&sources);
@@ -803,7 +895,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: session_id.clone(),
             role: Role::User,
-            parts: vec![Part::Text { text: "use /alpha please".into() }],
+            parts: vec![Part::Text {
+                text: "use /alpha please".into(),
+            }],
             pending: false,
             created_at: 2,
         })
@@ -818,7 +912,10 @@ mod tests {
     fn the_bundled_history_skill_materializes_and_is_discoverable() {
         let dest = std::env::temp_dir().join(format!("bough-bundle-{}", uuid::Uuid::new_v4()));
         materialize_bundled_skills(&dest).unwrap();
-        let sources = [SkillSource { source: SkillSourceName::Bundled, dir: dest.clone() }];
+        let sources = [SkillSource {
+            source: SkillSourceName::Bundled,
+            dir: dest.clone(),
+        }];
 
         let skill = load_skill("history", &sources).expect("the history skill ships bundled");
         assert_eq!(skill.source, SkillSourceName::Bundled);
@@ -827,15 +924,30 @@ mod tests {
         // It documents the CURRENT schema — the tables it names must be real.
         let schema = include_str!("../db/schema.sql");
         for table in ["messages_fts", "sessions", "messages", "turns"] {
-            assert!(skill.body.contains(table), "history skill should mention {table}");
+            assert!(
+                skill.body.contains(table),
+                "history skill should mention {table}"
+            );
             assert!(schema.contains(table), "{table} should exist in the schema");
         }
         // And nothing that no longer exists (spec §17: no semantic recall).
-        for gone in ["recall(", "message_embeddings", "archived_at", "deprecated_at"] {
-            assert!(!skill.body.contains(gone), "history skill must not mention {gone}");
+        for gone in [
+            "recall(",
+            "message_embeddings",
+            "archived_at",
+            "deprecated_at",
+        ] {
+            assert!(
+                !skill.body.contains(gone),
+                "history skill must not mention {gone}"
+            );
         }
         // Frontmatter is stripped, not appended to the prompt.
-        assert!(!skill.body.contains("description:"), "{}", &skill.body[..200.min(skill.body.len())]);
+        assert!(
+            !skill.body.contains("description:"),
+            "{}",
+            &skill.body[..200.min(skill.body.len())]
+        );
         // The TS sources that share the bundle's folder are not skills and
         // never materialize.
         assert!(!dest.join("skills.ts").exists());
@@ -859,7 +971,11 @@ mod tests {
         input.skills = active.skills;
         let prompt = assemble_prompt(&input);
         assert!(prompt.sections.contains(&SectionId::Skills));
-        assert!(prompt.system_volatile.contains("## Skill: alpha"), "{}", prompt.system_volatile);
+        assert!(
+            prompt.system_volatile.contains("## Skill: alpha"),
+            "{}",
+            prompt.system_volatile
+        );
         assert!(prompt.system_volatile.contains("ALPHA INSTRUCTIONS"));
         // The stable tier stays byte-identical to a turn with no skills — one
         // volatile byte in the shared prefix would cost every other session

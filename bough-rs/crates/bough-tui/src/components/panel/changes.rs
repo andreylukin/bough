@@ -117,13 +117,19 @@ pub fn file_stats(f: &FileDiff) -> (usize, usize) {
 
 /// The file list, in the server's order — git's, which is already path-sorted.
 pub fn change_items(set: Option<&SessionChangeSet>) -> Vec<ChangeItem> {
-    let Some(set) = set.filter(|s| s.available) else { return Vec::new() };
+    let Some(set) = set.filter(|s| s.available) else {
+        return Vec::new();
+    };
     set.files
         .iter()
         .filter_map(|v| serde_json::from_value::<FileDiff>(v.clone()).ok())
         .map(|file| {
             let (added, removed) = file_stats(&file);
-            ChangeItem { file, added, removed }
+            ChangeItem {
+                file,
+                added,
+                removed,
+            }
         })
         .collect()
 }
@@ -135,7 +141,10 @@ pub fn diff_body(f: Option<&FileDiff>) -> Vec<String> {
         // BINARY IS ITS OWN ANSWER: an empty file and an unreadable one must
         // not give the reviewer the same sentence.
         if f.binary == Some(true) {
-            return vec![format!("(binary file — {}, contents not shown)", f.status.word())];
+            return vec![format!(
+                "(binary file — {}, contents not shown)",
+                f.status.word()
+            )];
         }
         return vec![format!("(no textual diff — {})", f.status.word())];
     }
@@ -238,6 +247,10 @@ impl Default for ChangesProps<'_> {
 }
 
 /// The lines this tab paints, in order.
+// `head_rows` keeps the empty and focused arms apart even though both are 1 —
+// that is the ternary in src/tui/components/Changes.tsx:226, where the two cases
+// are one row for different reasons.
+#[allow(clippy::if_same_then_else)]
 pub fn changes_lines(p: &ChangesProps, cols: usize) -> Vec<Line<'static>> {
     let dim = Style::default().add_modifier(Modifier::DIM);
     let bold = Style::default().add_modifier(Modifier::BOLD);
@@ -248,7 +261,10 @@ pub fn changes_lines(p: &ChangesProps, cols: usize) -> Vec<Line<'static>> {
         return out;
     };
     if !set.available {
-        let reason = set.reason.clone().unwrap_or_else(|| "no change set here".to_string());
+        let reason = set
+            .reason
+            .clone()
+            .unwrap_or_else(|| "no change set here".to_string());
         for row in wrap_line(&reason, cols) {
             out.push(Line::from(Span::styled(row, Style::default().fg(WARN))));
         }
@@ -289,18 +305,31 @@ pub fn changes_lines(p: &ChangesProps, cols: usize) -> Vec<Line<'static>> {
     // What is left for the diff, after its own blank separator row.
     let room = (p.rows as isize - msg_rows as isize - head_rows as isize - foot_rows as isize - 1)
         .max(0) as usize;
-    let body_rows = if body.len() > room { room.saturating_sub(1) } else { room };
+    let body_rows = if body.len() > room {
+        room.saturating_sub(1)
+    } else {
+        room
+    };
     let at = p.scroll.min(body.len().saturating_sub(body_rows));
 
     if let Some(message) = p.message {
-        out.push(Line::from(Span::styled(message.to_string(), Style::default().fg(WARN))));
+        out.push(Line::from(Span::styled(
+            message.to_string(),
+            Style::default().fg(WARN),
+        )));
     }
     if p.items.is_empty() {
-        out.push(Line::from(Span::styled("no changes in this checkout yet", dim)));
+        out.push(Line::from(Span::styled(
+            "no changes in this checkout yet",
+            dim,
+        )));
     } else if p.focused {
         if let Some(current) = current {
             out.push(Line::from(vec![
-                Span::styled(current.file.status.mark(), Style::default().fg(current.file.status.color())),
+                Span::styled(
+                    current.file.status.mark(),
+                    Style::default().fg(current.file.status.color()),
+                ),
                 Span::raw(" "),
                 Span::styled(current.file.path.clone(), bold),
             ]));
@@ -331,7 +360,11 @@ pub fn changes_lines(p: &ChangesProps, cols: usize) -> Vec<Line<'static>> {
             out.push(Line::from(vec![
                 Span::styled(
                     if sel { "❯ " } else { "  " },
-                    if sel { Style::default().fg(ACCENT) } else { Style::default() },
+                    if sel {
+                        Style::default().fg(ACCENT)
+                    } else {
+                        Style::default()
+                    },
                 ),
                 Span::styled(item.file.status.mark(), status_style),
                 Span::raw(" "),
@@ -341,11 +374,19 @@ pub fn changes_lines(p: &ChangesProps, cols: usize) -> Vec<Line<'static>> {
                 ),
                 Span::styled(
                     format!("  +{}", item.added),
-                    if sel { Style::default() } else { Style::default().fg(ACCENT) },
+                    if sel {
+                        Style::default()
+                    } else {
+                        Style::default().fg(ACCENT)
+                    },
                 ),
                 Span::styled(
                     format!(" -{}", item.removed),
-                    if sel { Style::default() } else { Style::default().fg(ERROR) },
+                    if sel {
+                        Style::default()
+                    } else {
+                        Style::default().fg(ERROR)
+                    },
                 ),
             ]));
         }
@@ -364,7 +405,11 @@ pub fn changes_lines(p: &ChangesProps, cols: usize) -> Vec<Line<'static>> {
                 dim
             };
             out.push(Line::from(Span::styled(
-                if line.is_empty() { " ".to_string() } else { line.clone() },
+                if line.is_empty() {
+                    " ".to_string()
+                } else {
+                    line.clone()
+                },
                 style,
             )));
         }
@@ -381,17 +426,31 @@ pub fn changes_lines(p: &ChangesProps, cols: usize) -> Vec<Line<'static>> {
         Some(pending) => out.extend(revert_confirm(pending, p.items, set.base.as_deref())),
         None => {
             let items: Vec<String> = if p.focused {
-                ["← back", "↑↓ scroll the diff", "x revert this path", "X revert everything"]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect()
+                [
+                    "← back",
+                    "↑↓ scroll the diff",
+                    "x revert this path",
+                    "X revert everything",
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
             } else {
-                ["↑↓ move", "→ focus one file", "x revert this path", "X revert all", "esc back"]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect()
+                [
+                    "↑↓ move",
+                    "→ focus one file",
+                    "x revert this path",
+                    "X revert all",
+                    "esc back",
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
             };
-            out.push(Line::from(Span::styled(legend_line(&items, Some(cols)), dim)));
+            out.push(Line::from(Span::styled(
+                legend_line(&items, Some(cols)),
+                dim,
+            )));
         }
     }
     out
@@ -439,7 +498,10 @@ fn revert_confirm(
             ]
         }
         PendingRevert::File(item) => vec![
-            Line::from(Span::styled(format!("revert {}?", item.file.path), bold.fg(WARN))),
+            Line::from(Span::styled(
+                format!("revert {}?", item.file.path),
+                bold.fg(WARN),
+            )),
             Line::from(Span::styled(revert_scope(item, items.len()), dim)),
             Line::from(vec![
                 Span::styled("⏎ revert it", Style::default().fg(WARN)),
@@ -507,7 +569,10 @@ mod tests {
         let frame = draw_panel(PanelTab::Changes, &body, 100, 12).join("\n");
         assert!(frame.contains("not a git repository"), "{frame}");
         assert!(!frame.contains("files changed"), "{frame}");
-        assert!(!frame.contains("no changes in this checkout yet"), "{frame}");
+        assert!(
+            !frame.contains("no changes in this checkout yet"),
+            "{frame}"
+        );
         // The way out is always named.
         assert!(frame.contains("esc back · ^t close"), "{frame}");
     }
@@ -523,12 +588,23 @@ mod tests {
             workspace: None,
         };
         let lines = changes_lines(
-            &ChangesProps { set: Some(&none), rows: 12, hint: None, ..Default::default() },
+            &ChangesProps {
+                set: Some(&none),
+                rows: 12,
+                hint: None,
+                ..Default::default()
+            },
             80,
         );
         let text: Vec<String> = lines.iter().map(text_of).collect();
-        assert!(text.iter().any(|l| l.contains("no conversation is open")), "{text:?}");
-        assert!(!text.iter().any(|l| l.contains("still works here")), "{text:?}");
+        assert!(
+            text.iter().any(|l| l.contains("no conversation is open")),
+            "{text:?}"
+        );
+        assert!(
+            !text.iter().any(|l| l.contains("still works here")),
+            "{text:?}"
+        );
     }
 
     #[test]
@@ -556,7 +632,10 @@ mod tests {
             json!({"path": "a.png", "status": "added", "hunks": [], "binary": true}),
         )
         .unwrap();
-        assert_eq!(diff_body(Some(&binary)), vec!["(binary file — added, contents not shown)"]);
+        assert_eq!(
+            diff_body(Some(&binary)),
+            vec!["(binary file — added, contents not shown)"]
+        );
 
         // CONTROL BYTES NEVER REACH THE ROW. Tab survives; it is layout.
         let noisy: FileDiff = serde_json::from_value(json!({
@@ -600,7 +679,10 @@ mod tests {
     #[test]
     fn a_revert_names_its_own_blast_radius_before_it_happens() {
         let added = item("new.ts", "added", 12, 0);
-        assert_eq!(revert_scope(&added, 1), "added by this session — reverting DELETES it");
+        assert_eq!(
+            revert_scope(&added, 1),
+            "added by this session — reverting DELETES it"
+        );
         let deleted = item("gone.ts", "deleted", 0, 4);
         assert_eq!(
             revert_scope(&deleted, 2),
@@ -630,7 +712,10 @@ mod tests {
         );
         let text: Vec<String> = lines.iter().map(text_of).collect();
         assert!(text.iter().any(|l| l == "revert a.ts?"), "{text:?}");
-        assert!(text.iter().any(|l| l.contains("DISCARDS +3 -1")), "{text:?}");
+        assert!(
+            text.iter().any(|l| l.contains("DISCARDS +3 -1")),
+            "{text:?}"
+        );
         // ⏎ confirms THIS path; the all-scope is its own key, named here.
         let foot = text.last().unwrap();
         assert!(foot.starts_with("⏎ revert it"), "{foot}");
@@ -652,12 +737,19 @@ mod tests {
         .iter()
         .map(text_of)
         .collect();
-        assert!(text.iter().any(|l| l == "revert all 2 files (+12 -1)?"), "{text:?}");
         assert!(
-            text.iter().any(|l| l.contains("goes back to abcdef12, and files it created are deleted")),
+            text.iter().any(|l| l == "revert all 2 files (+12 -1)?"),
             "{text:?}"
         );
-        assert!(text.last().unwrap().starts_with("⏎ revert everything"), "{text:?}");
+        assert!(
+            text.iter()
+                .any(|l| l.contains("goes back to abcdef12, and files it created are deleted")),
+            "{text:?}"
+        );
+        assert!(
+            text.last().unwrap().starts_with("⏎ revert everything"),
+            "{text:?}"
+        );
     }
 
     #[test]
@@ -678,7 +770,10 @@ mod tests {
         .iter()
         .map(text_of)
         .collect();
-        assert!(text.iter().any(|l| l == "revert all 1 file (+3 -1)?"), "{text:?}");
+        assert!(
+            text.iter().any(|l| l == "revert all 1 file (+3 -1)?"),
+            "{text:?}"
+        );
         let file_pending = PendingRevert::File(items[0].clone());
         let text: Vec<String> = changes_lines(
             &ChangesProps {
@@ -706,8 +801,15 @@ mod tests {
         });
         let changes = set(true, None, vec![file]);
         let items = change_items(Some(&changes));
-        let plain =
-            changes_lines(&ChangesProps { set: Some(&changes), items: &items, rows: 14, ..Default::default() }, 80);
+        let plain = changes_lines(
+            &ChangesProps {
+                set: Some(&changes),
+                items: &items,
+                rows: 14,
+                ..Default::default()
+            },
+            80,
+        );
         let pending = PendingRevert::All;
         let armed = changes_lines(
             &ChangesProps {
@@ -767,12 +869,21 @@ mod tests {
         let changes = set(true, None, vec![file]);
         let items = change_items(Some(&changes));
         let text: Vec<String> = changes_lines(
-            &ChangesProps { set: Some(&changes), items: &items, rows: 12, ..Default::default() },
+            &ChangesProps {
+                set: Some(&changes),
+                items: &items,
+                rows: 12,
+                ..Default::default()
+            },
             80,
         )
         .iter()
         .map(text_of)
         .collect();
-        assert!(text.iter().any(|l| l.starts_with("— ") && l.ends_with("/41 —")), "{text:?}");
+        assert!(
+            text.iter()
+                .any(|l| l.starts_with("— ") && l.ends_with("/41 —")),
+            "{text:?}"
+        );
     }
 }

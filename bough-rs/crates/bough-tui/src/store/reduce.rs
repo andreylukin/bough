@@ -21,7 +21,9 @@
 //! default arm — a new event type must be a compile error.
 
 use bough_core::schema::events::{BoughEvent, EventType};
-use bough_core::schema::parts::{AskQuestion, AskQuestionStatus, BackgroundJob, Message, Part, Session, TurnStatus};
+use bough_core::schema::parts::{
+    AskQuestion, AskQuestionStatus, BackgroundJob, Message, Part, Session, TurnStatus,
+};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -45,7 +47,11 @@ pub fn event_key(seq: u64, ts: i64) -> String {
 /// Has this exact event already been applied, or does the snapshot already
 /// contain it? The rule the whole reconnect story rests on.
 pub fn is_duplicate(state: &TuiState, event: &BoughEvent) -> bool {
-    if state.seen.iter().any(|k| *k == event_key(event.seq, event.ts)) {
+    if state
+        .seen
+        .iter()
+        .any(|k| *k == event_key(event.seq, event.ts))
+    {
         return true;
     }
     let Some(session_id) = &event.session_id else {
@@ -112,7 +118,10 @@ pub fn part_key(part: &Part) -> Option<String> {
 /// Returns None when nothing changed.
 fn append_part(parts: &[Part], part: &Part) -> Option<Vec<Part>> {
     if let Some(key) = part_key(part) {
-        if parts.iter().any(|p| part_key(p).as_deref() == Some(key.as_str())) {
+        if parts
+            .iter()
+            .any(|p| part_key(p).as_deref() == Some(key.as_str()))
+        {
             return None;
         }
     }
@@ -187,7 +196,11 @@ fn patch_session<F: Fn(&mut TuiSessionRow)>(
         .collect()
 }
 
-fn patch_message<F: Fn(&Message) -> Message>(thread: &[Message], id: &str, patch: F) -> Vec<Message> {
+fn patch_message<F: Fn(&Message) -> Message>(
+    thread: &[Message],
+    id: &str,
+    patch: F,
+) -> Vec<Message> {
     thread
         .iter()
         .map(|m| if m.id == id { patch(m) } else { m.clone() })
@@ -303,7 +316,9 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
     // must be a compile error here, mirroring the TS comment.
     match event.r#type {
         EventType::SessionCreated => {
-            let Some(s) = parse::<Session>(&event.data) else { return state };
+            let Some(s) = parse::<Session>(&event.data) else {
+                return state;
+            };
             if state.sessions.iter().any(|p| p.row.session.id == s.id) {
                 return state;
             }
@@ -316,7 +331,13 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
             next.sessions.insert(
                 0,
                 TuiSessionRow {
-                    row: SessionRow { session: s, busy: false, last_turn_status: None, cost_usd: None, tokens: None },
+                    row: SessionRow {
+                        session: s,
+                        busy: false,
+                        last_turn_status: None,
+                        cost_usd: None,
+                        tokens: None,
+                    },
                     unseen: None,
                 },
             );
@@ -324,7 +345,9 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
         }
 
         EventType::SessionUpdated => {
-            let Some(s) = parse::<Session>(&event.data) else { return state };
+            let Some(s) = parse::<Session>(&event.data) else {
+                return state;
+            };
             let mut next = state;
             next.sessions = patch_session(&next.sessions, &s.id, |p| p.row.session = s.clone());
             if next.session.as_ref().map(|x| x.id.as_str()) == Some(s.id.as_str()) {
@@ -337,14 +360,18 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
             if !mine {
                 return state;
             }
-            let Some(d) = parse::<ActivityData>(&event.data) else { return state };
+            let Some(d) = parse::<ActivityData>(&event.data) else {
+                return state;
+            };
             let mut next = state;
             next.activity = d.activity;
             next
         }
 
         EventType::MessageStarted => {
-            let Some(m) = parse::<Message>(&event.data) else { return state };
+            let Some(m) = parse::<Message>(&event.data) else {
+                return state;
+            };
             let mut next = state;
             if m.pending {
                 next.sessions = patch_session(&next.sessions, &m.session_id, |s| s.row.busy = true);
@@ -362,7 +389,8 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
             // A pending message in the open session IS the turn starting. The
             // clock the meter needs is the event's own `ts`.
             let start_turn = m.pending
-                && (next.turn.is_none() || next.turn.as_ref().is_some_and(|t| t.ended_at.is_some()));
+                && (next.turn.is_none()
+                    || next.turn.as_ref().is_some_and(|t| t.ended_at.is_some()));
             if start_turn {
                 next.turn = Some(TurnMeter {
                     session_id: m.session_id.clone(),
@@ -382,16 +410,23 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
             if !mine && current.is_some() {
                 return state;
             }
-            let Some(d) = parse::<DeltaData>(&event.data) else { return state };
+            let Some(d) = parse::<DeltaData>(&event.data) else {
+                return state;
+            };
             let mut next = state;
-            next.streaming.entry(d.message_id).or_default().push_str(&d.delta);
+            next.streaming
+                .entry(d.message_id)
+                .or_default()
+                .push_str(&d.delta);
             next
         }
 
         EventType::MessageRetry => {
             // The round re-streams from the top: the partial text is a
             // competing copy, not a prefix of what is coming.
-            let Some(d) = parse::<RetryData>(&event.data) else { return state };
+            let Some(d) = parse::<RetryData>(&event.data) else {
+                return state;
+            };
             let mut next = state;
             next.streaming.remove(&d.message_id);
             if mine {
@@ -405,7 +440,9 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
         }
 
         EventType::MessagePart => {
-            let Some(d) = parse::<PartData>(&event.data) else { return state };
+            let Some(d) = parse::<PartData>(&event.data) else {
+                return state;
+            };
             let mut next = state;
             next.thread = patch_message(&next.thread, &d.message_id, |m| {
                 match append_part(&m.parts, &d.part) {
@@ -431,17 +468,25 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
         }
 
         EventType::ToolLog => {
-            let Some(d) = parse::<LogData>(&event.data) else { return state };
+            let Some(d) = parse::<LogData>(&event.data) else {
+                return state;
+            };
             let mut next = state;
             next.tool_logs.entry(d.call_id).or_default().push(d.line);
             next
         }
 
         EventType::MessageFinished => {
-            let Some(d) = parse::<FinishedData>(&event.data) else { return state };
+            let Some(d) = parse::<FinishedData>(&event.data) else {
+                return state;
+            };
             let mut next = state;
             if let Some(session_id) = event.session_id.clone() {
-                let row = next.sessions.iter().find(|s| s.row.session.id == session_id).cloned();
+                let row = next
+                    .sessions
+                    .iter()
+                    .find(|s| s.row.session.id == session_id)
+                    .cloned();
                 next.sessions = patch_session(&next.sessions, &session_id, |s| {
                     s.row.busy = false;
                     s.unseen = Some(s.unseen == Some(true) || !mine);
@@ -478,7 +523,9 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
         }
 
         EventType::TurnFinished => {
-            let Some(d) = parse::<TurnDoneData>(&event.data) else { return state };
+            let Some(d) = parse::<TurnDoneData>(&event.data) else {
+                return state;
+            };
             let mut next = state;
             // Stamped, not settled: the tokens are only final after the usage
             // refetch this event triggers.
@@ -498,7 +545,9 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
         }
 
         EventType::AskQuestion => {
-            let Some(q) = parse::<AskQuestion>(&event.data) else { return state };
+            let Some(q) = parse::<AskQuestion>(&event.data) else {
+                return state;
+            };
             let mut next = state;
             if q.status == AskQuestionStatus::Pending {
                 if let Some(existing) = next.asks.iter_mut().find(|p| p.id == q.id) {
@@ -514,7 +563,9 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
         }
 
         EventType::JobSpawned | EventType::JobExited => {
-            let Some(job) = parse::<BackgroundJob>(&event.data) else { return state };
+            let Some(job) = parse::<BackgroundJob>(&event.data) else {
+                return state;
+            };
             let known = state.jobs.iter().any(|j| j.job.id == job.id);
             // Only the open session's own rows are inserted; the server owns
             // the lineage rules.
@@ -533,7 +584,11 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
             } else {
                 next.jobs.insert(
                     0,
-                    super::state::JobListRow { job, tail: None, output_lines: None },
+                    super::state::JobListRow {
+                        job,
+                        tail: None,
+                        output_lines: None,
+                    },
                 );
             }
             next
@@ -562,7 +617,9 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
         }
 
         EventType::WorkflowLog => {
-            let Some(d) = parse::<WfLogData>(&event.data) else { return state };
+            let Some(d) = parse::<WfLogData>(&event.data) else {
+                return state;
+            };
             let mut next = state;
             next.workflow_logs.insert(d.run_id, d.line);
             next
@@ -708,7 +765,10 @@ pub fn reduce(state: TuiState, action: StoreAction) -> TuiState {
             next
         }
 
-        StoreAction::Changes { session_id, changes } => {
+        StoreAction::Changes {
+            session_id,
+            changes,
+        } => {
             if Some(session_id.as_str()) != state.current_id.as_deref() {
                 return state;
             }
@@ -738,7 +798,10 @@ pub fn reduce(state: TuiState, action: StoreAction) -> TuiState {
             next
         }
 
-        StoreAction::Workflows { session_id, workflows } => {
+        StoreAction::Workflows {
+            session_id,
+            workflows,
+        } => {
             if Some(session_id.as_str()) != state.current_id.as_deref() {
                 return state;
             }
@@ -759,12 +822,22 @@ pub fn reduce(state: TuiState, action: StoreAction) -> TuiState {
             next
         }
 
-        StoreAction::Mark { session_id, at, text } => {
+        StoreAction::Mark {
+            session_id,
+            at,
+            text,
+        } => {
             let id = format!("mark:{at}:{}", state.marks.len());
             let mut next = state;
             next.marks = append_mark(
                 &next.marks,
-                TranscriptMark { id, session_id, at, kind: MarkKind::Destructive, text },
+                TranscriptMark {
+                    id,
+                    session_id,
+                    at,
+                    kind: MarkKind::Destructive,
+                    text,
+                },
             );
             next
         }
@@ -785,8 +858,12 @@ pub fn reduce(state: TuiState, action: StoreAction) -> TuiState {
         StoreAction::TurnSettle { at: _ } => {
             // Only a turn that has ENDED settles: a stray settle mid-turn would
             // print a "✓" under a spinner that is still going.
-            let Some(turn) = state.turn.clone() else { return state };
-            let Some(ended_at) = turn.ended_at else { return state };
+            let Some(turn) = state.turn.clone() else {
+                return state;
+            };
+            let Some(ended_at) = turn.ended_at else {
+                return state;
+            };
             let mut next = state;
             next.turn = None;
             next.marks = append_mark(
@@ -877,7 +954,11 @@ mod tests {
 
     impl Recorder {
         fn new() -> Self {
-            Recorder { seq: 0, ts: 1_000, log: Vec::new() }
+            Recorder {
+                seq: 0,
+                ts: 1_000,
+                log: Vec::new(),
+            }
         }
         fn now(&self) -> i64 {
             self.ts
@@ -953,9 +1034,14 @@ mod tests {
     }
 
     fn replay_events(state: TuiState, events: &[BoughEvent]) -> TuiState {
-        events
-            .iter()
-            .fold(state, |s, event| reduce(s, StoreAction::Event { event: event.clone() }))
+        events.iter().fold(state, |s, event| {
+            reduce(
+                s,
+                StoreAction::Event {
+                    event: event.clone(),
+                },
+            )
+        })
     }
 
     fn apply(state: TuiState, actions: Vec<StoreAction>) -> TuiState {
@@ -1000,7 +1086,9 @@ mod tests {
     }
 
     fn open(id: &str) -> StoreAction {
-        StoreAction::Open { session_id: Some(id.to_string()) }
+        StoreAction::Open {
+            session_id: Some(id.to_string()),
+        }
     }
 
     // ---- the acceptance test ------------------------------------------------
@@ -1008,7 +1096,10 @@ mod tests {
     #[test]
     fn reconnect_redelivers_applied_events_no_duplicates_no_lost_deltas() {
         let mut rec = Recorder::new();
-        let user = message("m-user", json!({"role": "user", "parts": [{"type": "text", "text": "go"}]}));
+        let user = message(
+            "m-user",
+            json!({"role": "user", "parts": [{"type": "text", "text": "go"}]}),
+        );
         let supervisor = message("m-1", json!({"pending": true}));
 
         let before: Vec<BoughEvent> = vec![
@@ -1025,14 +1116,12 @@ mod tests {
             ),
         ];
         // The outage. Both are lost to the client and restored by the fetch.
-        let _missed = vec![
-            rec.emit(
+        let _missed = [rec.emit(
                 EventType::MessagePart,
                 json!({"messageId": "m-1", "part": {"type": "tool_result", "callId": "call-1", "output": "ok", "isError": false}}),
                 Some(SESSION),
             ),
-            rec.emit(EventType::MessageDelta, json!({"messageId": "m-1", "delta": "!"}), Some(SESSION)),
-        ];
+            rec.emit(EventType::MessageDelta, json!({"messageId": "m-1", "delta": "!"}), Some(SESSION))];
 
         // 1. Live, through the outage point.
         let mut state = apply(initial_state(), vec![open(SESSION)]);
@@ -1049,10 +1138,23 @@ mod tests {
         rec.tick(500);
         let at = rec.now();
         rec.tick(20); // the round trip
-        state = reduce(state, StoreAction::Snapshot { at, snapshot: snapshot_after_outage() });
+        state = reduce(
+            state,
+            StoreAction::Snapshot {
+                at,
+                snapshot: snapshot_after_outage(),
+            },
+        );
         state = reduce(state, StoreAction::Connection { connected: true });
 
-        let supervisor_parts = |s: &TuiState| s.thread.iter().find(|m| m.id == "m-1").unwrap().parts.clone();
+        let supervisor_parts = |s: &TuiState| {
+            s.thread
+                .iter()
+                .find(|m| m.id == "m-1")
+                .unwrap()
+                .parts
+                .clone()
+        };
         assert_eq!(supervisor_parts(&state), vec![tool_call(), tool_result()]);
         // The delta streamed before the outage survives — "no lost deltas".
         assert_eq!(state.streaming["m-1"], "Looking…");
@@ -1062,29 +1164,69 @@ mod tests {
         state = replay_events(state, &rec.log.clone());
         assert_eq!(state, before4, "a fully re-delivered log must be a no-op");
         assert_eq!(state.thread.len(), 2, "no duplicate message");
-        assert_eq!(supervisor_parts(&state), vec![tool_call(), tool_result()], "no duplicate part");
+        assert_eq!(
+            supervisor_parts(&state),
+            vec![tool_call(), tool_result()],
+            "no duplicate part"
+        );
         assert_eq!(state.streaming["m-1"], "Looking…", "no doubled delta");
-        assert_eq!(state.tool_logs["call-1"], vec!["compiling"], "no doubled tool log");
+        assert_eq!(
+            state.tool_logs["call-1"],
+            vec!["compiling"],
+            "no doubled tool log"
+        );
 
         // 5. Live again. New events land; a redialed overlap deduped.
-        let live = vec![
-            rec.emit(EventType::MessageDelta, json!({"messageId": "m-1", "delta": "!"}), Some(SESSION)),
-            rec.emit(EventType::MessagePart, json!({"messageId": "m-1", "part": {"type": "text", "text": "Looking…!"}}), Some(SESSION)),
-            rec.emit(EventType::MessageFinished, json!({"messageId": "m-1"}), Some(SESSION)),
-            rec.emit(EventType::TurnFinished, json!({"turnId": "t-1", "sessionId": SESSION, "status": "done"}), Some(SESSION)),
+        let live = [
+            rec.emit(
+                EventType::MessageDelta,
+                json!({"messageId": "m-1", "delta": "!"}),
+                Some(SESSION),
+            ),
+            rec.emit(
+                EventType::MessagePart,
+                json!({"messageId": "m-1", "part": {"type": "text", "text": "Looking…!"}}),
+                Some(SESSION),
+            ),
+            rec.emit(
+                EventType::MessageFinished,
+                json!({"messageId": "m-1"}),
+                Some(SESSION),
+            ),
+            rec.emit(
+                EventType::TurnFinished,
+                json!({"turnId": "t-1", "sessionId": SESSION, "status": "done"}),
+                Some(SESSION),
+            ),
         ];
         state = replay_events(
             state,
-            &[live[0].clone(), live[0].clone(), live[1].clone(), live[2].clone(), live[3].clone()],
+            &[
+                live[0].clone(),
+                live[0].clone(),
+                live[1].clone(),
+                live[2].clone(),
+                live[3].clone(),
+            ],
         );
 
         let finished = state.thread.iter().find(|m| m.id == "m-1").unwrap();
-        assert_eq!(finished.parts, vec![tool_call(), tool_result(), text_part()]);
+        assert_eq!(
+            finished.parts,
+            vec![tool_call(), tool_result(), text_part()]
+        );
         assert!(!finished.pending);
-        assert!(!state.streaming.contains_key("m-1"), "the finalized text supersedes the buffer");
+        assert!(
+            !state.streaming.contains_key("m-1"),
+            "the finalized text supersedes the buffer"
+        );
         assert_eq!(state.thread.len(), 2);
         assert!(!is_busy(&state));
-        let listed = state.sessions.iter().find(|s| s.row.session.id == SESSION).unwrap();
+        let listed = state
+            .sessions
+            .iter()
+            .find(|s| s.row.session.id == SESSION)
+            .unwrap();
         assert!(!listed.row.busy);
         assert_eq!(listed.row.last_turn_status, Some(TurnStatus::Done));
     }
@@ -1094,9 +1236,21 @@ mod tests {
         let mut rec = Recorder::new();
         let mut state = apply(initial_state(), vec![open(SESSION)]);
         let first = vec![
-            rec.emit(EventType::MessageStarted, message("m-1", json!({"pending": true})), Some(SESSION)),
-            rec.emit(EventType::MessageDelta, json!({"messageId": "m-1", "delta": "one "}), Some(SESSION)),
-            rec.emit(EventType::MessageDelta, json!({"messageId": "m-1", "delta": "two "}), Some(SESSION)),
+            rec.emit(
+                EventType::MessageStarted,
+                message("m-1", json!({"pending": true})),
+                Some(SESSION),
+            ),
+            rec.emit(
+                EventType::MessageDelta,
+                json!({"messageId": "m-1", "delta": "one "}),
+                Some(SESSION),
+            ),
+            rec.emit(
+                EventType::MessageDelta,
+                json!({"messageId": "m-1", "delta": "two "}),
+                Some(SESSION),
+            ),
         ];
         state = replay_events(state, &first);
         rec.tick(100);
@@ -1107,7 +1261,9 @@ mod tests {
                 at,
                 snapshot: SessionSnapshot {
                     session: serde_json::from_value(session(SESSION)).unwrap(),
-                    thread: vec![serde_json::from_value(message("m-1", json!({"pending": true}))).unwrap()],
+                    thread: vec![
+                        serde_json::from_value(message("m-1", json!({"pending": true}))).unwrap(),
+                    ],
                     usage: usage(10, 5, 0.01),
                     effective_model: None,
                     context_limit: None,
@@ -1117,7 +1273,11 @@ mod tests {
             },
         );
         let mut whole = rec.log.clone();
-        whole.push(rec.emit(EventType::MessageDelta, json!({"messageId": "m-1", "delta": "three"}), Some(SESSION)));
+        whole.push(rec.emit(
+            EventType::MessageDelta,
+            json!({"messageId": "m-1", "delta": "three"}),
+            Some(SESSION),
+        ));
         state = replay_events(state, &whole);
         state = replay_events(state, &rec.log.clone()); // once more, for good measure
         assert_eq!(state.streaming["m-1"], "one two three");
@@ -1128,8 +1288,16 @@ mod tests {
         let mut rec = Recorder::new();
         let mut state = apply(initial_state(), vec![open(SESSION)]);
         let first = vec![
-            rec.emit(EventType::MessageStarted, message("m-1", json!({"pending": true})), Some(SESSION)),
-            rec.emit(EventType::MessageDelta, json!({"messageId": "m-1", "delta": "before"}), Some(SESSION)),
+            rec.emit(
+                EventType::MessageStarted,
+                message("m-1", json!({"pending": true})),
+                Some(SESSION),
+            ),
+            rec.emit(
+                EventType::MessageDelta,
+                json!({"messageId": "m-1", "delta": "before"}),
+                Some(SESSION),
+            ),
         ];
         state = replay_events(state, &first);
 
@@ -1141,7 +1309,9 @@ mod tests {
                 at,
                 snapshot: SessionSnapshot {
                     session: serde_json::from_value(session(SESSION)).unwrap(),
-                    thread: vec![serde_json::from_value(message("m-2", json!({"pending": true}))).unwrap()],
+                    thread: vec![
+                        serde_json::from_value(message("m-2", json!({"pending": true}))).unwrap(),
+                    ],
                     usage: usage(10, 5, 0.01),
                     effective_model: None,
                     context_limit: None,
@@ -1152,11 +1322,21 @@ mod tests {
         );
         rec.restart();
         rec.tick(10);
-        let fresh = rec.emit(EventType::MessageDelta, json!({"messageId": "m-2", "delta": "after"}), Some(SESSION));
-        assert_eq!(fresh.seq, 1, "the recorder must actually reset, or this test proves nothing");
+        let fresh = rec.emit(
+            EventType::MessageDelta,
+            json!({"messageId": "m-2", "delta": "after"}),
+            Some(SESSION),
+        );
+        assert_eq!(
+            fresh.seq, 1,
+            "the recorder must actually reset, or this test proves nothing"
+        );
 
         state = reduce(state, StoreAction::Event { event: fresh });
-        assert_eq!(state.streaming["m-2"], "after", "a restarted server's seq 1 is not the old seq 1");
+        assert_eq!(
+            state.streaming["m-2"], "after",
+            "a restarted server's seq 1 is not the old seq 1"
+        );
     }
 
     #[test]
@@ -1184,10 +1364,25 @@ mod tests {
             data: json!({}),
         };
         assert!(is_duplicate(&state, &ev(Some(SESSION), 9, 4_999)));
-        assert!(!is_duplicate(&state, &ev(Some(SESSION), 10, 5_000)), "the boundary is exclusive: `at` itself is live");
-        assert!(!is_duplicate(&state, &ev(Some(OTHER), 11, 1)), "another session has its own watermark");
-        let global = BoughEvent { r#type: EventType::WorkflowLog, session_id: None, seq: 12, ts: 1, data: json!({}) };
-        assert!(!is_duplicate(&state, &global), "an un-scoped event is never watermarked away");
+        assert!(
+            !is_duplicate(&state, &ev(Some(SESSION), 10, 5_000)),
+            "the boundary is exclusive: `at` itself is live"
+        );
+        assert!(
+            !is_duplicate(&state, &ev(Some(OTHER), 11, 1)),
+            "another session has its own watermark"
+        );
+        let global = BoughEvent {
+            r#type: EventType::WorkflowLog,
+            session_id: None,
+            seq: 12,
+            ts: 1,
+            data: json!({}),
+        };
+        assert!(
+            !is_duplicate(&state, &global),
+            "an un-scoped event is never watermarked away"
+        );
     }
 
     #[test]
@@ -1209,7 +1404,10 @@ mod tests {
             );
         }
         assert_eq!(state.seen.len(), DEDUPE_WINDOW);
-        assert!(!state.seen.contains(&event_key(1, 1)), "the oldest identity aged out");
+        assert!(
+            !state.seen.contains(&event_key(1, 1)),
+            "the oldest identity aged out"
+        );
         assert_eq!(state.seen.last().unwrap(), &format!("{n}:{n}"));
     }
 
@@ -1230,7 +1428,11 @@ mod tests {
                 },
             },
         );
-        assert_eq!(state.sessions.len(), 0, "delegated work collapses under its origin (spec §4)");
+        assert_eq!(
+            state.sessions.len(),
+            0,
+            "delegated work collapses under its origin (spec §4)"
+        );
 
         state = reduce(
             state,
@@ -1244,7 +1446,11 @@ mod tests {
                 },
             },
         );
-        let ids: Vec<&str> = state.sessions.iter().map(|s| s.row.session.id.as_str()).collect();
+        let ids: Vec<&str> = state
+            .sessions
+            .iter()
+            .map(|s| s.row.session.id.as_str())
+            .collect();
         assert_eq!(ids, vec!["root-2"]);
     }
 
@@ -1252,7 +1458,12 @@ mod tests {
     fn another_sessions_turn_marks_its_row_busy_without_touching_the_open_thread() {
         let mut state = apply(
             initial_state(),
-            vec![StoreAction::Sessions { sessions: vec![row(SESSION), row(OTHER)] }, open(SESSION)],
+            vec![
+                StoreAction::Sessions {
+                    sessions: vec![row(SESSION), row(OTHER)],
+                },
+                open(SESSION),
+            ],
         );
         state = reduce(
             state,
@@ -1266,8 +1477,20 @@ mod tests {
                 },
             },
         );
-        assert_eq!(state.thread.len(), 0, "a message of another session is not in this thread");
-        assert!(state.sessions.iter().find(|s| s.row.session.id == OTHER).unwrap().row.busy);
+        assert_eq!(
+            state.thread.len(),
+            0,
+            "a message of another session is not in this thread"
+        );
+        assert!(
+            state
+                .sessions
+                .iter()
+                .find(|s| s.row.session.id == OTHER)
+                .unwrap()
+                .row
+                .busy
+        );
     }
 
     #[test]
@@ -1295,13 +1518,42 @@ mod tests {
         );
         assert_eq!(state.background.as_ref().unwrap().session_id, OTHER);
         assert_eq!(state.background.as_ref().unwrap().seq, 1);
-        assert_eq!(state.sessions.iter().find(|s| s.row.session.id == OTHER).unwrap().unseen, Some(true));
+        assert_eq!(
+            state
+                .sessions
+                .iter()
+                .find(|s| s.row.session.id == OTHER)
+                .unwrap()
+                .unseen,
+            Some(true)
+        );
 
         // Opening it clears the mark; a server refetch must not bring it back.
         state = reduce(state, open(OTHER));
-        assert_eq!(state.sessions.iter().find(|s| s.row.session.id == OTHER).unwrap().unseen, Some(false));
-        state = reduce(state, StoreAction::Sessions { sessions: vec![row(SESSION), row(OTHER)] });
-        assert_eq!(state.sessions.iter().find(|s| s.row.session.id == OTHER).unwrap().unseen, None);
+        assert_eq!(
+            state
+                .sessions
+                .iter()
+                .find(|s| s.row.session.id == OTHER)
+                .unwrap()
+                .unseen,
+            Some(false)
+        );
+        state = reduce(
+            state,
+            StoreAction::Sessions {
+                sessions: vec![row(SESSION), row(OTHER)],
+            },
+        );
+        assert_eq!(
+            state
+                .sessions
+                .iter()
+                .find(|s| s.row.session.id == OTHER)
+                .unwrap()
+                .unseen,
+            None
+        );
     }
 
     #[test]
@@ -1330,7 +1582,10 @@ mod tests {
                 },
             },
         );
-        assert_eq!(state.background, None, "a subagent finishes inside its spawner's turn — not news");
+        assert_eq!(
+            state.background, None,
+            "a subagent finishes inside its spawner's turn — not news"
+        );
     }
 
     #[test]
@@ -1373,15 +1628,25 @@ mod tests {
 
     #[test]
     fn ask_holds_surface_oldest_first_and_settle_out_of_the_queue() {
-        let hold = |id: &str, status: &str| {
-            json!({"id": id, "sessionId": SESSION, "messageId": "m-1", "question": format!("q {id}"), "status": status, "ts": 1})
-        };
+        let hold = |id: &str, status: &str| json!({"id": id, "sessionId": SESSION, "messageId": "m-1", "question": format!("q {id}"), "status": status, "ts": 1});
         let mut state = apply(initial_state(), vec![open(SESSION)]);
         state = replay_events(
             state,
             &[
-                BoughEvent { r#type: EventType::AskQuestion, session_id: Some(SESSION.into()), seq: 1, ts: 1, data: hold("q1", "pending") },
-                BoughEvent { r#type: EventType::AskQuestion, session_id: Some(SESSION.into()), seq: 2, ts: 2, data: hold("q2", "pending") },
+                BoughEvent {
+                    r#type: EventType::AskQuestion,
+                    session_id: Some(SESSION.into()),
+                    seq: 1,
+                    ts: 1,
+                    data: hold("q1", "pending"),
+                },
+                BoughEvent {
+                    r#type: EventType::AskQuestion,
+                    session_id: Some(SESSION.into()),
+                    seq: 2,
+                    ts: 2,
+                    data: hold("q2", "pending"),
+                },
             ],
         );
         assert_eq!(state.asks.len(), 2);
@@ -1393,7 +1658,13 @@ mod tests {
         state = reduce(
             state,
             StoreAction::Event {
-                event: BoughEvent { r#type: EventType::AskQuestion, session_id: Some(SESSION.into()), seq: 3, ts: 3, data: hold("q1", "answered") },
+                event: BoughEvent {
+                    r#type: EventType::AskQuestion,
+                    session_id: Some(SESSION.into()),
+                    seq: 3,
+                    ts: 3,
+                    data: hold("q1", "answered"),
+                },
             },
         );
         let ids: Vec<&str> = state.asks.iter().map(|q| q.id.as_str()).collect();
@@ -1405,9 +1676,13 @@ mod tests {
         let mut state = apply(
             initial_state(),
             vec![
-                StoreAction::Sessions { sessions: vec![row(SESSION), row(OTHER)] },
+                StoreAction::Sessions {
+                    sessions: vec![row(SESSION), row(OTHER)],
+                },
                 open(SESSION),
-                StoreAction::Queue { text: "typed while busy".into() },
+                StoreAction::Queue {
+                    text: "typed while busy".into(),
+                },
             ],
         );
         state = replay_events(
@@ -1434,38 +1709,62 @@ mod tests {
 
         state = reduce(state, open(OTHER));
         assert!(state.thread.is_empty());
-        assert!(state.queued.is_empty(), "a staged message belongs to the session it was typed in");
+        assert!(
+            state.queued.is_empty(),
+            "a staged message belongs to the session it was typed in"
+        );
         assert_eq!(state.activity, None);
         assert!(!state.streaming.contains_key("m-1"));
     }
 
     #[test]
     fn merge_thread_keeps_stream_only_messages_and_the_longer_part_list() {
-        let m = |id: &str, over: Value| -> Message { serde_json::from_value(message(id, over)).unwrap() };
+        let m = |id: &str, over: Value| -> Message {
+            serde_json::from_value(message(id, over)).unwrap()
+        };
         let from_db = vec![
-            m("a", json!({"parts": [{"type": "tool_call", "id": "call-1", "name": "run_steps", "input": {"code": "1"}}]})),
+            m(
+                "a",
+                json!({"parts": [{"type": "tool_call", "id": "call-1", "name": "run_steps", "input": {"code": "1"}}]}),
+            ),
             m("b", json!({})),
         ];
         let local = vec![
-            m("a", json!({"parts": [
+            m(
+                "a",
+                json!({"parts": [
                 {"type": "tool_call", "id": "call-1", "name": "run_steps", "input": {"code": "1"}},
                 {"type": "tool_result", "callId": "call-1", "output": "ok", "isError": false},
-            ], "pending": true})),
+            ], "pending": true}),
+            ),
             m("c", json!({"pending": true})),
         ];
         let merged = merge_thread(&from_db, &local);
         let ids: Vec<&str> = merged.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, vec!["a", "b", "c"]);
         assert_eq!(merged[0].parts, vec![tool_call(), tool_result()]);
-        assert!(!merged[0].pending, "finished beats pending — `pending` only ever clears");
+        assert!(
+            !merged[0].pending,
+            "finished beats pending — `pending` only ever clears"
+        );
     }
 
     #[test]
     fn part_identity_is_what_makes_an_append_idempotent() {
         assert_eq!(part_key(&tool_call()).as_deref(), Some("tool_call:call-1"));
-        assert_eq!(part_key(&tool_result()).as_deref(), Some("tool_result:call-1"));
+        assert_eq!(
+            part_key(&tool_result()).as_deref(),
+            Some("tool_result:call-1")
+        );
         assert_eq!(part_key(&Part::Text { text: "hi".into() }), None);
-        assert_eq!(part_key(&Part::Reasoning { text: "hm".into(), meta: None, model: None }), None);
+        assert_eq!(
+            part_key(&Part::Reasoning {
+                text: "hm".into(),
+                meta: None,
+                model: None
+            }),
+            None
+        );
     }
 
     // ---- attribution, and the audit trail -----------------------------------
@@ -1489,17 +1788,27 @@ mod tests {
                 },
             }],
         );
-        let started = rec.emit(EventType::MessageStarted, message("m-1", json!({"pending": true})), Some(SESSION));
+        let started = rec.emit(
+            EventType::MessageStarted,
+            message("m-1", json!({"pending": true})),
+            Some(SESSION),
+        );
         state = replay_events(state, &[started]);
         assert_eq!(state.turn.as_ref().unwrap().base_tokens, 1_200);
         assert_eq!(state.turn.as_ref().unwrap().tokens, 0);
 
         state = apply(
             state,
-            vec![StoreAction::Usage { session_id: SESSION.into(), usage: usage(1_500, 700, 0.05) }],
+            vec![StoreAction::Usage {
+                session_id: SESSION.into(),
+                usage: usage(1_500, 700, 0.05),
+            }],
         );
         assert_eq!(state.turn.as_ref().unwrap().tokens, 1_000);
-        assert_eq!((state.turn.as_ref().unwrap().cost_usd * 1000.0).round() as i64, 30);
+        assert_eq!(
+            (state.turn.as_ref().unwrap().cost_usd * 1000.0).round() as i64,
+            30
+        );
         // The session meter still reports the session.
         assert_eq!(state.usage.as_ref().unwrap().totals.input_tokens, 1_500);
     }
@@ -1508,20 +1817,36 @@ mod tests {
     fn a_finished_turn_leaves_a_settled_line_and_the_spinners_numbers_do_not_vanish() {
         let mut rec = Recorder::new();
         let mut state = apply(initial_state(), vec![open(SESSION)]);
-        let started = rec.emit(EventType::MessageStarted, message("m-1", json!({"pending": true})), Some(SESSION));
+        let started = rec.emit(
+            EventType::MessageStarted,
+            message("m-1", json!({"pending": true})),
+            Some(SESSION),
+        );
         state = replay_events(state, &[started]);
         let started_at = state.turn.as_ref().unwrap().started_at;
         state = apply(
             state,
-            vec![StoreAction::Usage { session_id: SESSION.into(), usage: usage(3_000, 200, 0.021) }],
+            vec![StoreAction::Usage {
+                session_id: SESSION.into(),
+                usage: usage(3_000, 200, 0.021),
+            }],
         );
-        let done = rec.emit(EventType::TurnFinished, json!({"sessionId": SESSION, "turnId": "t1", "status": "done"}), Some(SESSION));
+        let done = rec.emit(
+            EventType::TurnFinished,
+            json!({"sessionId": SESSION, "turnId": "t1", "status": "done"}),
+            Some(SESSION),
+        );
         state = replay_events(state, &[done]);
         // Ended, but not settled: the numbers are only final after the refetch.
         assert!(state.turn.as_ref().unwrap().ended_at.is_some());
         assert_eq!(state.marks.len(), 0);
 
-        state = apply(state, vec![StoreAction::TurnSettle { at: started_at + 14_000 }]);
+        state = apply(
+            state,
+            vec![StoreAction::TurnSettle {
+                at: started_at + 14_000,
+            }],
+        );
         assert_eq!(state.turn, None);
         let mark = state.marks.last().unwrap();
         assert_eq!(mark.kind, MarkKind::Turn);
@@ -1531,7 +1856,10 @@ mod tests {
         assert!(!mark.text.contains('$'), "{}", mark.text);
         // A settle with nothing to settle is a no-op, not a "✓" under a live spinner.
         let settled = state.clone();
-        assert_eq!(reduce(settled.clone(), StoreAction::TurnSettle { at: 0 }), settled);
+        assert_eq!(
+            reduce(settled.clone(), StoreAction::TurnSettle { at: 0 }),
+            settled
+        );
     }
 
     #[test]
@@ -1539,8 +1867,16 @@ mod tests {
         let mut rec = Recorder::new();
         let mut state = apply(initial_state(), vec![open(SESSION)]);
         let events = vec![
-            rec.emit(EventType::MessageStarted, message("m-1", json!({"pending": true})), Some(SESSION)),
-            rec.emit(EventType::TurnFinished, json!({"sessionId": SESSION, "turnId": "t1", "status": "interrupted"}), Some(SESSION)),
+            rec.emit(
+                EventType::MessageStarted,
+                message("m-1", json!({"pending": true})),
+                Some(SESSION),
+            ),
+            rec.emit(
+                EventType::TurnFinished,
+                json!({"sessionId": SESSION, "turnId": "t1", "status": "interrupted"}),
+                Some(SESSION),
+            ),
         ];
         state = replay_events(state, &events);
         state = apply(state, vec![StoreAction::TurnSettle { at: 0 }]);
@@ -1558,11 +1894,22 @@ mod tests {
         let events = vec![
             rec.emit(
                 EventType::MessageStarted,
-                message("m-user", json!({"role": "user", "parts": [{"type": "text", "text": "the typo"}]})),
+                message(
+                    "m-user",
+                    json!({"role": "user", "parts": [{"type": "text", "text": "the typo"}]}),
+                ),
                 Some(SESSION),
             ),
-            rec.emit(EventType::MessageStarted, message("m-1", json!({"pending": true})), Some(SESSION)),
-            rec.emit(EventType::MessageDelta, json!({"messageId": "m-1", "delta": "half an ans"}), Some(SESSION)),
+            rec.emit(
+                EventType::MessageStarted,
+                message("m-1", json!({"pending": true})),
+                Some(SESSION),
+            ),
+            rec.emit(
+                EventType::MessageDelta,
+                json!({"messageId": "m-1", "delta": "half an ans"}),
+                Some(SESSION),
+            ),
         ];
         state = replay_events(state, &events);
         state = apply(state, vec![StoreAction::Sent { at: 5_000 }]);
@@ -1589,13 +1936,19 @@ mod tests {
         let mut state = apply(initial_state(), vec![open(SESSION)]);
         let started = rec.emit(
             EventType::MessageStarted,
-            message("m-user", json!({"role": "user", "parts": [{"type": "text", "text": "the typo"}]})),
+            message(
+                "m-user",
+                json!({"role": "user", "parts": [{"type": "text", "text": "the typo"}]}),
+            ),
             Some(SESSION),
         );
         state = replay_events(state, &[started]);
         state = apply(
             state,
-            vec![StoreAction::ThreadDropped { session_id: SESSION.into(), ids: vec!["m-user".into()] }],
+            vec![StoreAction::ThreadDropped {
+                session_id: SESSION.into(),
+                ids: vec!["m-user".into()],
+            }],
         );
 
         // The read the server computed BEFORE it deleted the row.
@@ -1605,13 +1958,25 @@ mod tests {
             json!({"role": "user", "parts": [{"type": "text", "text": "the typo"}]}),
         ))
         .unwrap()];
-        state = apply(state, vec![StoreAction::Snapshot { at: 9_000, snapshot: stale }]);
+        state = apply(
+            state,
+            vec![StoreAction::Snapshot {
+                at: 9_000,
+                snapshot: stale,
+            }],
+        );
         assert!(state.thread.is_empty());
 
         // …and a fresh read that no longer carries it settles the same way.
         let mut fresh_snap = snapshot_after_outage();
         fresh_snap.thread = vec![];
-        state = apply(state, vec![StoreAction::Snapshot { at: 10_000, snapshot: fresh_snap }]);
+        state = apply(
+            state,
+            vec![StoreAction::Snapshot {
+                at: 10_000,
+                snapshot: fresh_snap,
+            }],
+        );
         assert!(state.thread.is_empty());
     }
 
@@ -1619,11 +1984,18 @@ mod tests {
     fn a_take_back_aimed_at_another_session_leaves_the_open_one_alone() {
         let mut rec = Recorder::new();
         let mut state = apply(initial_state(), vec![open(SESSION)]);
-        let started = rec.emit(EventType::MessageStarted, message("m-user", json!({"role": "user"})), Some(SESSION));
+        let started = rec.emit(
+            EventType::MessageStarted,
+            message("m-user", json!({"role": "user"})),
+            Some(SESSION),
+        );
         state = replay_events(state, &[started]);
         state = apply(
             state,
-            vec![StoreAction::ThreadDropped { session_id: "other".into(), ids: vec!["m-user".into()] }],
+            vec![StoreAction::ThreadDropped {
+                session_id: "other".into(),
+                ids: vec!["m-user".into()],
+            }],
         );
         let ids: Vec<&str> = state.thread.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, vec!["m-user"]);
@@ -1663,7 +2035,11 @@ mod tests {
             json!({"messageId": message_id, "part": {"type": "tool_result", "callId": call_id, "output": "ok", "isError": false}}),
             Some(session_id),
         ));
-        out.push(rec.emit(EventType::MessageFinished, json!({"messageId": message_id}), Some(session_id)));
+        out.push(rec.emit(
+            EventType::MessageFinished,
+            json!({"messageId": message_id}),
+            Some(session_id),
+        ));
         out
     }
 
@@ -1709,7 +2085,11 @@ mod tests {
             );
             state = replay_events(state, &[log]);
         }
-        assert_eq!(state.tool_logs["call-1"].len(), 5_000, "live output must be retained while running");
+        assert_eq!(
+            state.tool_logs["call-1"].len(),
+            5_000,
+            "live output must be retained while running"
+        );
 
         let result = rec.emit(
             EventType::MessagePart,
@@ -1717,10 +2097,15 @@ mod tests {
             Some(SESSION),
         );
         state = replay_events(state, &[result]);
-        assert!(!state.tool_logs.contains_key("call-1"), "the buffer must be released with the result");
+        assert!(
+            !state.tool_logs.contains_key("call-1"),
+            "the buffer must be released with the result"
+        );
         // Released, not lost: the finalized result carries the same output.
         let parts = &state.thread.iter().find(|m| m.id == "msg-1").unwrap().parts;
-        assert!(parts.iter().any(|p| matches!(p, Part::ToolResult { call_id, .. } if call_id == "call-1")));
+        assert!(parts
+            .iter()
+            .any(|p| matches!(p, Part::ToolResult { call_id, .. } if call_id == "call-1")));
     }
 
     #[test]
@@ -1731,9 +2116,21 @@ mod tests {
             let events = round(&mut rec, n, 200, SESSION);
             state = replay_events(state, &events);
         }
-        assert_eq!(state.tool_logs.len(), 0, "every settled call must have released its buffer");
-        assert_eq!(state.streaming.len(), 0, "no live text buffer outlives its finalized part");
-        assert_eq!(state.thread.len(), 50, "the transcript itself is the thing that keeps growing");
+        assert_eq!(
+            state.tool_logs.len(),
+            0,
+            "every settled call must have released its buffer"
+        );
+        assert_eq!(
+            state.streaming.len(),
+            0,
+            "no live text buffer outlives its finalized part"
+        );
+        assert_eq!(
+            state.thread.len(),
+            50,
+            "the transcript itself is the thing that keeps growing"
+        );
     }
 
     #[test]
@@ -1753,7 +2150,10 @@ mod tests {
         assert_eq!(state.tool_logs["call-9"].len(), 1);
 
         state = apply(state, vec![open("sess-2")]);
-        assert!(state.tool_logs.is_empty(), "the previous session's live output must not follow you");
+        assert!(
+            state.tool_logs.is_empty(),
+            "the previous session's live output must not follow you"
+        );
     }
 
     #[test]
@@ -1768,10 +2168,18 @@ mod tests {
             );
             state = replay_events(state, &[log]);
         }
-        assert_eq!(state.workflow_logs.len(), 200, "a live run's narrator line is state");
+        assert_eq!(
+            state.workflow_logs.len(),
+            200,
+            "a live run's narrator line is state"
+        );
 
         state = apply(state, vec![open("sess-2")]);
-        assert_eq!(state.workflow_logs.len(), 0, "run ids never recur, so a line kept past its session is unreachable forever");
+        assert_eq!(
+            state.workflow_logs.len(),
+            0,
+            "run ids never recur, so a line kept past its session is unreachable forever"
+        );
     }
 
     #[test]
@@ -1797,8 +2205,16 @@ mod tests {
             );
         }
         assert_eq!(state.reconciled_at.len(), RECONCILED_LIMIT);
-        assert!(state.reconciled_at.contains_key(&format!("other-{}", total - 1)), "the newest watermark must survive");
-        assert!(!state.reconciled_at.contains_key("other-0"), "the oldest must have been evicted");
+        assert!(
+            state
+                .reconciled_at
+                .contains_key(&format!("other-{}", total - 1)),
+            "the newest watermark must survive"
+        );
+        assert!(
+            !state.reconciled_at.contains_key("other-0"),
+            "the oldest must have been evicted"
+        );
     }
 
     #[test]
@@ -1837,7 +2253,11 @@ mod tests {
                 }],
             );
         }
-        assert_eq!(state.reconciled_at.get(SESSION), Some(&5_000), "the open session's watermark must be kept");
+        assert_eq!(
+            state.reconciled_at.get(SESSION),
+            Some(&5_000),
+            "the open session's watermark must be kept"
+        );
         assert_eq!(state.reconciled_at.len(), RECONCILED_LIMIT);
         // And it still does its job: an event older than the snapshot is dropped.
         let stale = BoughEvent {
@@ -1848,7 +2268,11 @@ mod tests {
             data: json!({"messageId": "old"}),
         };
         let held = state.clone();
-        assert_eq!(replay_events(state, &[stale]), held, "the surviving watermark must still drop stale events");
+        assert_eq!(
+            replay_events(state, &[stale]),
+            held,
+            "the surviving watermark must still drop stale events"
+        );
     }
 
     #[test]
@@ -1863,7 +2287,11 @@ mod tests {
             );
             state = replay_events(state, &[ev]);
         }
-        assert_eq!(state.seen.len(), DEDUPE_WINDOW, "the dedupe window is a window, not a ledger");
+        assert_eq!(
+            state.seen.len(),
+            DEDUPE_WINDOW,
+            "the dedupe window is a window, not a ledger"
+        );
 
         for i in 0..MARK_LIMIT * 3 {
             state = apply(
@@ -1877,7 +2305,12 @@ mod tests {
         }
         assert_eq!(state.marks.len(), MARK_LIMIT, "marks are capped");
         assert!(
-            state.marks.last().unwrap().text.ends_with(&format!("f{}", MARK_LIMIT * 3 - 1)),
+            state
+                .marks
+                .last()
+                .unwrap()
+                .text
+                .ends_with(&format!("f{}", MARK_LIMIT * 3 - 1)),
             "the cap must drop the OLDEST marks, keeping the recent ones"
         );
     }
@@ -1891,7 +2324,9 @@ mod tests {
             state = apply(
                 state,
                 vec![
-                    StoreAction::Open { session_id: Some(id.clone()) },
+                    StoreAction::Open {
+                        session_id: Some(id.clone()),
+                    },
                     StoreAction::Snapshot {
                         at: rec.now(),
                         snapshot: SessionSnapshot {
@@ -1920,11 +2355,23 @@ mod tests {
         let tool_log_lines: usize = state.tool_logs.values().map(Vec::len).sum();
         assert_eq!(tool_log_lines, 0, "dead program output retained");
         assert_eq!(state.streaming.len(), 0, "dead text buffers retained");
-        assert!(state.workflow_logs.len() <= 40, "{} workflow lines retained across 1,000 runs", state.workflow_logs.len());
-        assert!(state.reconciled_at.len() <= RECONCILED_LIMIT, "{} watermarks retained", state.reconciled_at.len());
+        assert!(
+            state.workflow_logs.len() <= 40,
+            "{} workflow lines retained across 1,000 runs",
+            state.workflow_logs.len()
+        );
+        assert!(
+            state.reconciled_at.len() <= RECONCILED_LIMIT,
+            "{} watermarks retained",
+            state.reconciled_at.len()
+        );
         assert_eq!(state.seen.len(), DEDUPE_WINDOW);
         assert!(state.marks.len() <= MARK_LIMIT);
-        assert_eq!(state.thread.len(), 40, "only the open session's thread is held");
+        assert_eq!(
+            state.thread.len(),
+            40,
+            "only the open session's thread is held"
+        );
     }
 
     #[test]

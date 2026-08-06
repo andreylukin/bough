@@ -79,15 +79,29 @@ pub fn visible_slice(len: usize, height: usize, scroll_off: usize) -> VisibleSli
     } else {
         ((start as f64 / max_off as f64) * 100.0).round() as usize
     };
-    VisibleSlice { start, rows: start..end, more: off, pct }
+    VisibleSlice {
+        start,
+        rows: start..end,
+        more: off,
+        pct,
+    }
 }
 
 /// The line shown while a turn is running: motion, elapsed time, and the way
 /// out, always (format.ts::busyLine, verbatim wording).
-pub(crate) fn busy_line(activity: Option<&str>, elapsed_ms: i64, tick: u64, tokens: Option<i64>) -> String {
+pub(crate) fn busy_line(
+    activity: Option<&str>,
+    elapsed_ms: i64,
+    tick: u64,
+    tokens: Option<i64>,
+) -> String {
     let frame = SPINNER[(tick as usize) % SPINNER.len()];
     let trimmed = activity.map(str::trim).unwrap_or("");
-    let what = if trimmed.is_empty() { "working" } else { trimmed };
+    let what = if trimmed.is_empty() {
+        "working"
+    } else {
+        trimmed
+    };
     let mut bits: Vec<String> = vec![what.to_string(), fmt_duration(elapsed_ms)];
     if let Some(t) = tokens {
         if t > 0 {
@@ -145,7 +159,10 @@ pub fn render_chat(p: &ChatProps, area: Rect, buf: &mut Buffer) {
             y,
             Line::from(vec![
                 Span::styled(head.clone(), Style::default().fg(INFO)),
-                Span::styled(pad_row(&tail, width.saturating_sub(display_width(&head))), dim),
+                Span::styled(
+                    pad_row(&tail, width.saturating_sub(display_width(&head))),
+                    dim,
+                ),
             ]),
             buf,
         );
@@ -155,7 +172,11 @@ pub fn render_chat(p: &ChatProps, area: Rect, buf: &mut Buffer) {
     y += 1;
 
     for q in p.queued {
-        put(y, Line::from(Span::styled(pad_row(&format!("⧖ queued: {q}"), width), dim)), buf);
+        put(
+            y,
+            Line::from(Span::styled(pad_row(&format!("⧖ queued: {q}"), width), dim)),
+            buf,
+        );
         y += 1;
     }
 
@@ -189,7 +210,14 @@ pub fn render_chat(p: &ChatProps, area: Rect, buf: &mut Buffer) {
     y += 1;
 
     if let Some(notice) = p.notice {
-        put(y, Line::from(Span::styled(pad_row(notice, width), Style::default().fg(WARN))), buf);
+        put(
+            y,
+            Line::from(Span::styled(
+                pad_row(notice, width),
+                Style::default().fg(WARN),
+            )),
+            buf,
+        );
     }
 }
 
@@ -237,7 +265,14 @@ mod tests {
     // Chat.test.tsx: "Chat with an empty thread shows the placeholder, not a blank screen"
     #[test]
     fn empty_thread_shows_the_placeholder_not_a_blank_screen() {
-        let frame = draw(&ChatProps { height: 4, ..props(&[]) }, 80, 4);
+        let frame = draw(
+            &ChatProps {
+                height: 4,
+                ..props(&[])
+            },
+            80,
+            4,
+        );
         assert!(frame.contains("one program per round"), "{frame}");
     }
 
@@ -259,19 +294,33 @@ mod tests {
         assert!(frame.contains("row 9"), "{frame}");
 
         // Scrolled up, the window says how much is below and where the top sits.
-        let scrolled = draw(&ChatProps { height: 4, scroll_off: 2, ..props(&lines) }, 80, 4);
+        let scrolled = draw(
+            &ChatProps {
+                height: 4,
+                scroll_off: 2,
+                ..props(&lines)
+            },
+            80,
+            4,
+        );
         assert!(scrolled.contains("↓ 2 more lines below ·"), "{scrolled}");
     }
 
     #[test]
     fn busy_line_always_names_the_way_out() {
-        assert_eq!(busy_line(None, 9_000, 0, None), "⠋ working · 9s · esc interrupts");
+        assert_eq!(
+            busy_line(None, 9_000, 0, None),
+            "⠋ working · 9s · esc interrupts"
+        );
         assert_eq!(
             busy_line(Some("reading files"), 64_000, 1, Some(3_200)),
             "⠙ reading files · 1m04s · 3.2k tok · esc interrupts"
         );
         // Zero tokens are omitted, not printed.
-        assert_eq!(busy_line(None, 0, 0, Some(0)), "⠋ working · 0s · esc interrupts");
+        assert_eq!(
+            busy_line(None, 0, 0, Some(0)),
+            "⠋ working · 0s · esc interrupts"
+        );
     }
 
     #[test]

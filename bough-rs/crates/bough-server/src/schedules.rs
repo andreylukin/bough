@@ -35,7 +35,10 @@ pub fn create_schedule() -> Handler {
     handler(|req, ctx, _params| async move {
         let body: CreateScheduleBody = parse_body(req, None).await?;
         body.validate()?;
-        let deps = ScheduleDeps { now: Some(ctx.now.clone()), ..Default::default() };
+        let deps = ScheduleDeps {
+            now: Some(ctx.now.clone()),
+            ..Default::default()
+        };
         let created = {
             let db = ctx.db.lock().unwrap();
             schedule_create(&*db, &body, &deps)?
@@ -51,7 +54,10 @@ pub fn patch_schedule() -> Handler {
         let id = params.get("id").cloned().unwrap_or_default();
         let body: PatchScheduleBody = parse_body(req, Some(serde_json::json!({}))).await?;
         body.validate()?;
-        let deps = ScheduleDeps { now: Some(ctx.now.clone()), ..Default::default() };
+        let deps = ScheduleDeps {
+            now: Some(ctx.now.clone()),
+            ..Default::default()
+        };
         let patched = {
             let db = ctx.db.lock().unwrap();
             schedule_patch(&*db, &id, &body, &deps)?
@@ -124,19 +130,33 @@ mod tests {
 
         let listed = testutil::body_json(call.call(testutil::get("/schedules")).await).await;
         assert_eq!(
-            listed.as_array().unwrap().iter().map(|s| s["id"].clone()).collect::<Vec<_>>(),
+            listed
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["id"].clone())
+                .collect::<Vec<_>>(),
             vec![j!(id)]
         );
 
         let patched = call
-            .call(testutil::req("PATCH", &format!("/schedules/{id}"), Some(j!({"enabled": false}))))
+            .call(testutil::req(
+                "PATCH",
+                &format!("/schedules/{id}"),
+                Some(j!({"enabled": false})),
+            ))
             .await;
         assert_eq!(patched.status(), 200);
         assert_eq!(testutil::body_json(patched).await["enabled"], j!(false));
 
-        let removed = call.call(testutil::req("DELETE", &format!("/schedules/{id}"), None)).await;
+        let removed = call
+            .call(testutil::req("DELETE", &format!("/schedules/{id}"), None))
+            .await;
         assert_eq!(removed.status(), 200);
-        assert_eq!(testutil::body_json(removed).await, j!({"ok": true, "removed": id}));
+        assert_eq!(
+            testutil::body_json(removed).await,
+            j!({"ok": true, "removed": id})
+        );
         assert!(ctx.db.lock().unwrap().list_schedules().unwrap().is_empty());
     }
 
@@ -163,9 +183,13 @@ mod tests {
     async fn patch_and_delete_on_an_unknown_schedule_are_404s() {
         let ctx = frozen_ctx();
         let call = create_handler(ctx, CreateHandlerOptions::default());
-        let patched = call.call(testutil::req("PATCH", "/schedules/nope", Some(j!({})))).await;
+        let patched = call
+            .call(testutil::req("PATCH", "/schedules/nope", Some(j!({}))))
+            .await;
         assert_eq!(patched.status(), 404);
-        let deleted = call.call(testutil::req("DELETE", "/schedules/nope", None)).await;
+        let deleted = call
+            .call(testutil::req("DELETE", "/schedules/nope", None))
+            .await;
         assert_eq!(deleted.status(), 404);
     }
 
@@ -185,9 +209,14 @@ mod tests {
         let id = created["id"].as_str().unwrap();
 
         // No body at all.
-        let res = call.call(testutil::req("PATCH", &format!("/schedules/{id}"), None)).await;
+        let res = call
+            .call(testutil::req("PATCH", &format!("/schedules/{id}"), None))
+            .await;
         assert_eq!(res.status(), 200);
-        assert_eq!(testutil::body_json(res).await["nextRunAt"], created["nextRunAt"]);
+        assert_eq!(
+            testutil::body_json(res).await["nextRunAt"],
+            created["nextRunAt"]
+        );
     }
 
     #[tokio::test]

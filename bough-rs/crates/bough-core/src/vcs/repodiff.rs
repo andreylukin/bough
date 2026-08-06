@@ -101,7 +101,12 @@ pub struct ChangeSet {
 
 /// An unavailable change set — the shape every "no diff here" path returns.
 fn unavailable(reason: String, base: Option<String>) -> ChangeSet {
-    ChangeSet { available: false, reason: Some(reason), base, files: Vec::new() }
+    ChangeSet {
+        available: false,
+        reason: Some(reason),
+        base,
+        files: Vec::new(),
+    }
 }
 
 // ---- git --------------------------------------------------------------------
@@ -133,7 +138,11 @@ pub async fn git(dir: &str, args: &[&str]) -> GitResult {
             out: String::from_utf8_lossy(&output.stdout).into_owned(),
             err: String::from_utf8_lossy(&output.stderr).into_owned(),
         },
-        Err(e) => GitResult { ok: false, out: String::new(), err: e.to_string() },
+        Err(e) => GitResult {
+            ok: false,
+            out: String::new(),
+            err: e.to_string(),
+        },
     }
 }
 
@@ -147,7 +156,11 @@ pub async fn is_repo(dir: &str) -> bool {
 pub async fn head_sha(dir: &str) -> Option<String> {
     let r = git(dir, &["rev-parse", "--verify", "-q", "HEAD"]).await;
     let sha = r.out.trim();
-    if r.ok && !sha.is_empty() { Some(sha.to_string()) } else { None }
+    if r.ok && !sha.is_empty() {
+        Some(sha.to_string())
+    } else {
+        None
+    }
 }
 
 /// The sha to record as a session's `base` for `dir`, or None when `dir` is
@@ -159,7 +172,11 @@ pub async fn base_for(dir: &str) -> Option<String> {
     if !is_repo(dir).await {
         return None;
     }
-    Some(head_sha(dir).await.unwrap_or_else(|| EMPTY_TREE.to_string()))
+    Some(
+        head_sha(dir)
+            .await
+            .unwrap_or_else(|| EMPTY_TREE.to_string()),
+    )
 }
 
 /// Record the sha a session starts from, best-effort.
@@ -179,7 +196,11 @@ pub async fn record_base(db: &SharedDb, session_id: &str, dir: &str) -> Option<S
         };
         db.set_session_base(session_id, &base).is_ok()
     };
-    if stored { Some(base) } else { None }
+    if stored {
+        Some(base)
+    } else {
+        None
+    }
 }
 
 // ---- parsing ----------------------------------------------------------------
@@ -199,11 +220,7 @@ pub fn parse_git_diff(text: &str) -> Vec<FileDiff> {
         }
         *hunk = None;
     }
-    fn flush_file(
-        files: &mut Vec<FileDiff>,
-        cur: &mut Option<FileDiff>,
-        hunk: &mut Option<Hunk>,
-    ) {
+    fn flush_file(files: &mut Vec<FileDiff>, cur: &mut Option<FileDiff>, hunk: &mut Option<Hunk>) {
         flush_hunk(cur, hunk);
         if let Some(c) = cur.take() {
             files.push(c);
@@ -223,7 +240,9 @@ pub fn parse_git_diff(text: &str) -> Vec<FileDiff> {
             });
             continue;
         }
-        let Some(current) = cur.as_mut() else { continue };
+        let Some(current) = cur.as_mut() else {
+            continue;
+        };
 
         if line.starts_with("new file mode") {
             current.status = FileStatus::Added;
@@ -236,13 +255,22 @@ pub fn parse_git_diff(text: &str) -> Vec<FileDiff> {
             // File headers — the b-side name is already captured.
         } else if line.starts_with("@@") {
             flush_hunk(&mut cur, &mut hunk);
-            hunk = Some(Hunk { header: line.to_string(), lines: Vec::new() });
-        } else if hunk.is_some()
-            && (line.starts_with(' ') || line.starts_with('+') || line.starts_with('-'))
-        {
-            hunk.as_mut().unwrap().lines.push(line.to_string());
-        } else if hunk.is_some() && line == "\\ No newline at end of file" {
-            hunk.as_mut().unwrap().lines.push(line.to_string());
+            hunk = Some(Hunk {
+                header: line.to_string(),
+                lines: Vec::new(),
+            });
+        } else if let Some(h) = hunk.as_mut() {
+            // Context/added/removed lines and git's no-newline marker are the
+            // hunk body (src/vcs/repodiff.ts:234-238 keeps these as two arms
+            // with the same body; the conditions are disjoint, so one arm with
+            // the union reads the same lines).
+            if line.starts_with(' ')
+                || line.starts_with('+')
+                || line.starts_with('-')
+                || line == "\\ No newline at end of file"
+            {
+                h.lines.push(line.to_string());
+            }
         }
     }
     flush_file(&mut files, &mut cur, &mut hunk);
@@ -275,7 +303,11 @@ async fn ls_files(dir: &str, extra: &[&str]) -> Vec<String> {
     if !r.ok {
         return Vec::new();
     }
-    r.out.split('\n').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()
+    r.out
+        .split('\n')
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
 }
 
 /// Paths git neither tracks nor ignores, relative to the repo root — with a
@@ -357,7 +389,10 @@ async fn added_file(dir: &str, path: &str) -> FileDiff {
         hunks: if lines.is_empty() {
             Vec::new()
         } else {
-            vec![Hunk { header: format!("@@ -0,0 +1,{} @@", lines.len()), lines }]
+            vec![Hunk {
+                header: format!("@@ -0,0 +1,{} @@", lines.len()),
+                lines,
+            }]
         },
         binary: if binary { Some(true) } else { None },
     }
@@ -400,7 +435,11 @@ pub async fn change_set(dir: &str, base: Option<&str>) -> ChangeSet {
                 "git diff {base} failed in {dir}: {}. The commit the session started from \
                  may have been dropped by a rebase or a prune, which leaves nothing to \
                  measure this session's work against.",
-                if why.is_empty() { "git reported no reason" } else { why }
+                if why.is_empty() {
+                    "git reported no reason"
+                } else {
+                    why
+                }
             ),
             Some(base.to_string()),
         );
@@ -410,7 +449,12 @@ pub async fn change_set(dir: &str, base: Option<&str>) -> ChangeSet {
     for path in untracked(dir).await {
         files.push(added_file(dir, &path).await);
     }
-    ChangeSet { available: true, reason: None, base: Some(base.to_string()), files }
+    ChangeSet {
+        available: true,
+        reason: None,
+        base: Some(base.to_string()),
+        files,
+    }
 }
 
 // ---- revert -----------------------------------------------------------------
@@ -478,7 +522,10 @@ pub async fn revert_paths(dir: &str, base: &str, paths: &[String]) -> RevertResu
                 result.reverted.push(path.clone());
             }
             Err(e) => {
-                result.failed.push(RevertFailure { path: path.clone(), error: e.to_string() });
+                result.failed.push(RevertFailure {
+                    path: path.clone(),
+                    error: e.to_string(),
+                });
             }
         }
     }
@@ -547,7 +594,10 @@ mod tests {
         );
 
         assert_eq!(
-            files.iter().map(|f| (f.path.as_str(), f.status)).collect::<Vec<_>>(),
+            files
+                .iter()
+                .map(|f| (f.path.as_str(), f.status))
+                .collect::<Vec<_>>(),
             vec![
                 ("keep.ts", FileStatus::Modified),
                 ("gone.ts", FileStatus::Deleted),
@@ -582,7 +632,10 @@ mod tests {
             files: vec![FileDiff {
                 path: "a.ts".into(),
                 status: FileStatus::Added,
-                hunks: vec![Hunk { header: "@@ -0,0 +1 @@".into(), lines: vec!["+x".into()] }],
+                hunks: vec![Hunk {
+                    header: "@@ -0,0 +1 @@".into(),
+                    lines: vec!["+x".into()],
+                }],
                 binary: None,
             }],
         };
@@ -669,8 +722,11 @@ mod tests {
         // directory holding far more files than a reviewer will ever scroll.
         std::fs::create_dir_all(dir.join("bench/state")).unwrap();
         for i in 0..60 {
-            std::fs::write(dir.join(format!("bench/state/r{i}.json")), format!("{{\"i\":{i}}}\n"))
-                .unwrap();
+            std::fs::write(
+                dir.join(format!("bench/state/r{i}.json")),
+                format!("{{\"i\":{i}}}\n"),
+            )
+            .unwrap();
         }
         std::fs::write(dir.join("loose.txt"), "new\n").unwrap();
         // A small new directory is the agent's actual work and stays itemized.
@@ -683,13 +739,27 @@ mod tests {
         let mut paths: Vec<&str> = set.files.iter().map(|f| f.path.as_str()).collect();
         paths.sort();
         // One entry for the whole directory — not 60 — plus the loose file.
-        assert_eq!(paths, vec!["bench/", "feature/a.ts", "feature/b.ts", "loose.txt"]);
+        assert_eq!(
+            paths,
+            vec!["bench/", "feature/a.ts", "feature/b.ts", "loose.txt"]
+        );
         // The collapsed directory carries no body: there is no single file to
         // show.
-        assert!(set.files.iter().find(|f| f.path == "bench/").unwrap().hunks.is_empty());
+        assert!(set
+            .files
+            .iter()
+            .find(|f| f.path == "bench/")
+            .unwrap()
+            .hunks
+            .is_empty());
         // The loose file still gets its contents, because that IS reviewable.
         assert_eq!(
-            set.files.iter().find(|f| f.path == "loose.txt").unwrap().hunks[0].lines,
+            set.files
+                .iter()
+                .find(|f| f.path == "loose.txt")
+                .unwrap()
+                .hunks[0]
+                .lines,
             vec!["+new"]
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -710,11 +780,19 @@ mod tests {
         paths.sort();
         assert_eq!(paths, vec!["added.txt", "tracked.txt"]);
         assert_eq!(
-            set.files.iter().find(|f| f.path == "tracked.txt").unwrap().status,
+            set.files
+                .iter()
+                .find(|f| f.path == "tracked.txt")
+                .unwrap()
+                .status,
             FileStatus::Modified
         );
         assert_eq!(
-            set.files.iter().find(|f| f.path == "added.txt").unwrap().status,
+            set.files
+                .iter()
+                .find(|f| f.path == "added.txt")
+                .unwrap()
+                .status,
             FileStatus::Added
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -731,8 +809,11 @@ mod tests {
         // U+FFFD — so a 200-byte blob was diffed as "+" lines of replacement
         // characters and painted into the diff pane. Raw bytes on a terminal
         // are not merely unreadable: an escape sequence among them is executed.
-        std::fs::write(dir.join("blob.bin"), [0x89u8, 0x50, 0, 0x1b, 0x5b, 0x32, 0x4a, 0xff])
-            .unwrap();
+        std::fs::write(
+            dir.join("blob.bin"),
+            [0x89u8, 0x50, 0, 0x1b, 0x5b, 0x32, 0x4a, 0xff],
+        )
+        .unwrap();
         std::fs::write(dir.join("text.txt"), "still text\n").unwrap();
         let set = change_set(&d, Some(&head)).await;
         let blob = set.files.iter().find(|f| f.path == "blob.bin").unwrap();
@@ -775,7 +856,11 @@ mod tests {
         let set = change_set(&dir.to_string_lossy(), None).await;
         // Unavailable is an ANSWER, and it says why.
         assert!(!set.available);
-        assert!(set.reason.as_deref().unwrap_or("").contains("not a git repository"));
+        assert!(set
+            .reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("not a git repository"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -792,7 +877,10 @@ mod tests {
         let bare = std::env::temp_dir().join(format!("bough-nocommit-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&bare).unwrap();
         run(&bare, &["init", "-q"]);
-        assert_eq!(base_for(&bare.to_string_lossy()).await, Some(EMPTY_TREE.to_string()));
+        assert_eq!(
+            base_for(&bare.to_string_lossy()).await,
+            Some(EMPTY_TREE.to_string())
+        );
         let _ = std::fs::remove_dir_all(&bare);
 
         // Not a repository records nothing at all.

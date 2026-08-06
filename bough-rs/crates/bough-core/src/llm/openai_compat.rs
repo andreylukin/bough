@@ -32,7 +32,9 @@ use crate::llm::routing::{
 };
 use crate::llm::sse::{aborted, fetch_cancellable, http_error, parse_tool_args, SseEvents};
 use crate::schema::parts::Usage;
-use crate::types::{LlmBlock, LlmClient, LlmContentBlock, LlmMessage, LlmParams, LlmResult, LlmRole, OnText};
+use crate::types::{
+    LlmBlock, LlmClient, LlmContentBlock, LlmMessage, LlmParams, LlmResult, LlmRole, OnText,
+};
 
 /// Flatten our multi-block messages into chat-completions messages, splitting
 /// tool_results out into their own `tool` messages.
@@ -63,7 +65,11 @@ pub fn to_openai_messages(system: Option<&str>, messages: &[LlmMessage]) -> Vec<
                 .iter()
                 .filter_map(|b| match b {
                     LlmContentBlock::ToolUse { id, name, input } => {
-                        let input = if input.is_null() { json!({}) } else { input.clone() };
+                        let input = if input.is_null() {
+                            json!({})
+                        } else {
+                            input.clone()
+                        };
                         Some(json!({
                             "id": id,
                             "type": "function",
@@ -75,7 +81,14 @@ pub fn to_openai_messages(system: Option<&str>, messages: &[LlmMessage]) -> Vec<
                 .collect();
             let mut msg = Map::new();
             msg.insert("role".into(), json!("assistant"));
-            msg.insert("content".into(), if text.is_empty() { Value::Null } else { json!(text) });
+            msg.insert(
+                "content".into(),
+                if text.is_empty() {
+                    Value::Null
+                } else {
+                    json!(text)
+                },
+            );
             if !tool_calls.is_empty() {
                 msg.insert("tool_calls".into(), Value::Array(tool_calls));
             }
@@ -109,7 +122,10 @@ pub fn to_openai_messages(system: Option<&str>, messages: &[LlmMessage]) -> Vec<
                         parts.push(json!({ "type": "text", "text": joined }));
                     }
                     for b in &images {
-                        if let LlmContentBlock::Image { data, media_type, .. } = b {
+                        if let LlmContentBlock::Image {
+                            data, media_type, ..
+                        } = b
+                        {
                             parts.push(json!({
                                 "type": "image_url",
                                 "image_url": { "url": format!("data:{media_type};base64,{data}") },
@@ -121,7 +137,12 @@ pub fn to_openai_messages(system: Option<&str>, messages: &[LlmMessage]) -> Vec<
                 out.push(json!({ "role": "user", "content": content }));
             }
             for b in &m.content {
-                if let LlmContentBlock::ToolResult { tool_use_id, content, .. } = b {
+                if let LlmContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    ..
+                } = b
+                {
                     out.push(json!({
                         "role": "tool",
                         "tool_call_id": tool_use_id,
@@ -218,7 +239,10 @@ impl LlmClient for OpenAICompatClient {
         body.insert("stream_options".into(), json!({ "include_usage": true }));
         body.insert(
             "messages".into(),
-            Value::Array(to_openai_messages(joined_system(&params).as_deref(), &params.messages)),
+            Value::Array(to_openai_messages(
+                joined_system(&params).as_deref(),
+                &params.messages,
+            )),
         );
         body.insert(
             "tools".into(),
@@ -279,7 +303,9 @@ impl LlmClient for OpenAICompatClient {
                 ended = true;
                 continue;
             }
-            let Ok(chunk) = serde_json::from_str::<Value>(&data) else { continue };
+            let Ok(chunk) = serde_json::from_str::<Value>(&data) else {
+                continue;
+            };
             // An upstream provider failure arrives as a terminal `error` chunk
             // on an otherwise-200 stream; without this the partial round
             // passes as success.
@@ -288,27 +314,39 @@ impl LlmClient for OpenAICompatClient {
                     .as_str()
                     .map(String::from)
                     .unwrap_or_else(|| error.to_string());
-                let status =
-                    error["code"].as_i64().and_then(|c| u16::try_from(c).ok()).unwrap_or(502);
-                return Err(BoughError::llm_with(format!("{provider}: {message}"), status, None));
+                let status = error["code"]
+                    .as_i64()
+                    .and_then(|c| u16::try_from(c).ok())
+                    .unwrap_or(502);
+                return Err(BoughError::llm_with(
+                    format!("{provider}: {message}"),
+                    status,
+                    None,
+                ));
             }
             if let Some(u) = chunk.get("usage").filter(|u| u.is_object()) {
                 usage = Some(Usage {
                     input_tokens: u["prompt_tokens"].as_i64().unwrap_or(0),
                     output_tokens: u["completion_tokens"].as_i64().unwrap_or(0),
                     reasoning_tokens: Some(
-                        u["completion_tokens_details"]["reasoning_tokens"].as_i64().unwrap_or(0),
+                        u["completion_tokens_details"]["reasoning_tokens"]
+                            .as_i64()
+                            .unwrap_or(0),
                     ),
                     // The upstream provider's cache hits, relayed in the
                     // OpenAI shape.
                     cache_read_tokens: Some(
-                        u["prompt_tokens_details"]["cached_tokens"].as_i64().unwrap_or(0),
+                        u["prompt_tokens_details"]["cached_tokens"]
+                            .as_i64()
+                            .unwrap_or(0),
                     ),
                     cache_write_tokens: Some(0),
                     cost_usd: None,
                 });
             }
-            let Some(choice) = chunk["choices"].get(0) else { continue };
+            let Some(choice) = chunk["choices"].get(0) else {
+                continue;
+            };
             if let Some(reason) = choice["finish_reason"].as_str() {
                 finish_reason = reason.to_string();
                 ended = true;
@@ -320,7 +358,9 @@ impl LlmClient for OpenAICompatClient {
             }
             if let Some(calls) = delta["tool_calls"].as_array() {
                 for tc in calls {
-                    let Some(index) = tc["index"].as_i64() else { continue };
+                    let Some(index) = tc["index"].as_i64() else {
+                        continue;
+                    };
                     let cur = tool_calls.entry(index).or_default();
                     if let Some(id) = tc["id"].as_str() {
                         cur.id = Some(id.to_string());
@@ -338,7 +378,9 @@ impl LlmClient for OpenAICompatClient {
             }
         }
         if !ended {
-            return Err(BoughError::llm(format!("{provider}: stream truncated before completion")));
+            return Err(BoughError::llm(format!(
+                "{provider}: stream truncated before completion"
+            )));
         }
 
         let mut content: Vec<LlmBlock> = Vec::new();
@@ -366,7 +408,11 @@ impl LlmClient for OpenAICompatClient {
             "length" => "max_tokens".to_string(),
             other => other.to_string(),
         };
-        Ok(LlmResult { content, stop_reason, usage })
+        Ok(LlmResult {
+            content,
+            stop_reason,
+            usage,
+        })
     }
 }
 
@@ -375,7 +421,10 @@ pub fn openrouter_client(opts: ProviderOpts) -> Arc<dyn LlmClient> {
     openrouter_client_with_stall(opts, crate::llm::sse::STALL_TIMEOUT_MS)
 }
 
-pub(crate) fn openrouter_client_with_stall(opts: ProviderOpts, stall_ms: u64) -> Arc<dyn LlmClient> {
+pub(crate) fn openrouter_client_with_stall(
+    opts: ProviderOpts,
+    stall_ms: u64,
+) -> Arc<dyn LlmClient> {
     Arc::new(OpenAICompatClient {
         opts,
         provider: Provider::Openrouter,
@@ -444,7 +493,9 @@ mod tests {
                 msg(
                     LlmRole::Assistant,
                     vec![
-                        LlmContentBlock::Text { text: "running".into() },
+                        LlmContentBlock::Text {
+                            text: "running".into(),
+                        },
                         LlmContentBlock::ToolUse {
                             id: "c1".into(),
                             name: "run_steps".into(),
@@ -452,7 +503,12 @@ mod tests {
                         },
                     ],
                 ),
-                msg(LlmRole::User, vec![LlmContentBlock::Text { text: "actually, stop".into() }]),
+                msg(
+                    LlmRole::User,
+                    vec![LlmContentBlock::Text {
+                        text: "actually, stop".into(),
+                    }],
+                ),
             ],
         );
         assert_eq!(msgs.len(), 3);
@@ -488,15 +544,25 @@ mod tests {
             ],
         );
         assert_eq!(msgs[0], json!({ "role": "system", "content": "SYS" }));
-        assert_eq!(msgs.len(), 3, "no synthesized result should have been added");
-        assert_eq!(msgs[2], json!({ "role": "tool", "tool_call_id": "c1", "content": "done" }));
+        assert_eq!(
+            msgs.len(),
+            3,
+            "no synthesized result should have been added"
+        );
+        assert_eq!(
+            msgs[2],
+            json!({ "role": "tool", "tool_call_id": "c1", "content": "done" })
+        );
     }
 
     #[test]
     fn to_openai_messages_images_become_multimodal_parts_text_alone_stays_a_string() {
         let plain = to_openai_messages(
             None,
-            &[msg(LlmRole::User, vec![LlmContentBlock::Text { text: "hi".into() }])],
+            &[msg(
+                LlmRole::User,
+                vec![LlmContentBlock::Text { text: "hi".into() }],
+            )],
         );
         assert_eq!(plain[0]["content"], json!("hi"));
 
@@ -505,7 +571,9 @@ mod tests {
             &[msg(
                 LlmRole::User,
                 vec![
-                    LlmContentBlock::Text { text: "look".into() },
+                    LlmContentBlock::Text {
+                        text: "look".into(),
+                    },
                     LlmContentBlock::Image {
                         data: "AAAA".into(),
                         media_type: "image/png".into(),
@@ -540,7 +608,10 @@ mod tests {
                 json!({ "tool_calls": [{ "index": 0, "id": "c1", "function": { "name": "run_steps" } }] }),
                 None,
             ),
-            chunk(json!({ "tool_calls": [{ "index": 0, "function": { "arguments": "{\"co" } }] }), None),
+            chunk(
+                json!({ "tool_calls": [{ "index": 0, "function": { "arguments": "{\"co" } }] }),
+                None,
+            ),
             chunk(
                 json!({ "tool_calls": [{ "index": 0, "function": { "arguments": "de\":\"1\"}" } }] }),
                 None,
@@ -574,11 +645,17 @@ mod tests {
             .unwrap();
 
         let requests = transport.requests.lock().unwrap();
-        assert_eq!(requests[0].url, "https://openrouter.ai/api/v1/chat/completions");
+        assert_eq!(
+            requests[0].url,
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
         let body: Value = serde_json::from_str(requests[0].body.as_ref().unwrap()).unwrap();
         assert_eq!(body["model"], "google/gemini-2.5-pro");
         assert_eq!(body["stream_options"], json!({ "include_usage": true }));
-        assert!(requests[0].headers.iter().any(|(k, v)| k == "x-title" && v == "bough"));
+        assert!(requests[0]
+            .headers
+            .iter()
+            .any(|(k, v)| k == "x-title" && v == "bough"));
         assert!(requests[0]
             .headers
             .iter()
@@ -589,7 +666,9 @@ mod tests {
         assert_eq!(
             result.content,
             vec![
-                LlmBlock::Text { text: "one moment".into() },
+                LlmBlock::Text {
+                    text: "one moment".into()
+                },
                 LlmBlock::ToolUse {
                     id: "c1".into(),
                     name: "run_steps".into(),
@@ -616,8 +695,10 @@ mod tests {
             json!({ "content": "partial" }),
             None,
         )]]));
-        let client =
-            openrouter_client(ProviderOpts { env: Some(keyed_env()), transport: Some(transport) });
+        let client = openrouter_client(ProviderOpts {
+            env: Some(keyed_env()),
+            transport: Some(transport),
+        });
         let err = client
             .run(
                 params_over("z-ai/glm-5.2", &TOOLS, |_| {}),
@@ -626,7 +707,10 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("truncated before completion"), "{err}");
+        assert!(
+            err.to_string().contains("truncated before completion"),
+            "{err}"
+        );
         assert!(crate::llm::retry::is_retryable(&err));
     }
 
@@ -636,8 +720,10 @@ mod tests {
             chunk(json!({ "content": "start" }), None),
             json!({ "error": { "message": "upstream is down", "code": 502 } }).to_string(),
         ]]));
-        let client =
-            openrouter_client(ProviderOpts { env: Some(keyed_env()), transport: Some(transport) });
+        let client = openrouter_client(ProviderOpts {
+            env: Some(keyed_env()),
+            transport: Some(transport),
+        });
         let err = client
             .run(
                 params_over("z-ai/glm-5.2", &TOOLS, |_| {}),
@@ -659,8 +745,10 @@ mod tests {
             ),
             "[DONE]".to_string(),
         ]]));
-        let client =
-            openrouter_client(ProviderOpts { env: Some(keyed_env()), transport: Some(transport) });
+        let client = openrouter_client(ProviderOpts {
+            env: Some(keyed_env()),
+            transport: Some(transport),
+        });
         let err = client
             .run(
                 params_over("z-ai/glm-5.2", &TOOLS, |_| {}),
@@ -669,7 +757,11 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("no arguments (truncated mid-call)"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("no arguments (truncated mid-call)"),
+            "{err}"
+        );
         assert!(crate::llm::retry::is_retryable(&err));
     }
 
@@ -679,8 +771,10 @@ mod tests {
             chunk(json!({ "content": "cut" }), Some("length")),
             "[DONE]".to_string(),
         ]]));
-        let client =
-            openrouter_client(ProviderOpts { env: Some(keyed_env()), transport: Some(transport) });
+        let client = openrouter_client(ProviderOpts {
+            env: Some(keyed_env()),
+            transport: Some(transport),
+        });
         let result = client
             .run(
                 params_over("z-ai/glm-5.2", &TOOLS, |_| {}),
@@ -701,8 +795,10 @@ mod tests {
             ),
             "[DONE]".to_string(),
         ]]));
-        let client =
-            openrouter_client(ProviderOpts { env: Some(keyed_env()), transport: Some(transport) });
+        let client = openrouter_client(ProviderOpts {
+            env: Some(keyed_env()),
+            transport: Some(transport),
+        });
         let result = client
             .run(
                 params_over("z-ai/glm-5.2", &TOOLS, |_| {}),
@@ -711,8 +807,13 @@ mod tests {
             )
             .await
             .unwrap();
-        let LlmBlock::ToolUse { id, name, input } = &result.content[0] else { panic!() };
-        assert!(!id.is_empty(), "the stream never sent an id — one is generated");
+        let LlmBlock::ToolUse { id, name, input } = &result.content[0] else {
+            panic!()
+        };
+        assert!(
+            !id.is_empty(),
+            "the stream never sent an id — one is generated"
+        );
         assert_eq!(name, "stop");
         assert_eq!(*input, json!({}));
     }
@@ -780,15 +881,30 @@ mod tests {
             transport: Some(transport.clone()),
         });
         let p = || params_over("@cf/openai/gpt-oss-120b", &TOOLS, |_| {});
-        client.run(p(), Arc::new(|_| {}), CancellationToken::new()).await.unwrap();
+        client
+            .run(p(), Arc::new(|_| {}), CancellationToken::new())
+            .await
+            .unwrap();
         *account.lock().unwrap() = "second".to_string();
-        client.run(p(), Arc::new(|_| {}), CancellationToken::new()).await.unwrap();
+        client
+            .run(p(), Arc::new(|_| {}), CancellationToken::new())
+            .await
+            .unwrap();
         let requests = transport.requests.lock().unwrap();
-        assert_eq!(requests[0].url, "http://127.0.0.1:9/v4/accounts/first/ai/v1/chat/completions");
-        assert_eq!(requests[1].url, "http://127.0.0.1:9/v4/accounts/second/ai/v1/chat/completions");
+        assert_eq!(
+            requests[0].url,
+            "http://127.0.0.1:9/v4/accounts/first/ai/v1/chat/completions"
+        );
+        assert_eq!(
+            requests[1].url,
+            "http://127.0.0.1:9/v4/accounts/second/ai/v1/chat/completions"
+        );
         // CLOUDFLARE_API_TOKEN is accepted as the key — it is Cloudflare's
         // own spelling.
-        assert!(requests[0].headers.iter().any(|(k, v)| k == "authorization" && v == "Bearer tok"));
+        assert!(requests[0]
+            .headers
+            .iter()
+            .any(|(k, v)| k == "authorization" && v == "Bearer tok"));
     }
 
     #[tokio::test]
@@ -798,7 +914,10 @@ mod tests {
         let transport = Arc::new(CannedTransport::sse(vec![]));
         let env: crate::llm::routing::Env =
             Arc::new(|k| (k == "CLOUDFLARE_API_KEY").then(|| "cf-key".to_string()));
-        let client = cloudflare_client(ProviderOpts { env: Some(env), transport: Some(transport.clone()) });
+        let client = cloudflare_client(ProviderOpts {
+            env: Some(env),
+            transport: Some(transport.clone()),
+        });
         let err = client
             .run(
                 params_over("@cf/zai-org/glm-5.2", &TOOLS, |_| {}),
@@ -807,9 +926,16 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert_eq!(err.status(), 401, "a missing account id must not be retried");
+        assert_eq!(
+            err.status(),
+            401,
+            "a missing account id must not be retried"
+        );
         assert!(err.to_string().contains("CLOUDFLARE_ACCOUNT_ID"), "{err}");
         assert!(!crate::llm::retry::is_retryable(&err));
-        assert!(transport.requests.lock().unwrap().is_empty(), "must not be called");
+        assert!(
+            transport.requests.lock().unwrap().is_empty(),
+            "must not be called"
+        );
     }
 }

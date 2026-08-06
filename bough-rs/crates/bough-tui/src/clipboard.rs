@@ -122,7 +122,10 @@ pub async fn paste_clipboard() -> Option<Clipboard> {
         return None;
     }
     if let Some(bytes) = pasteboard_png().await {
-        return Some(Clipboard::Image { bytes, media_type: "image/png".to_string() });
+        return Some(Clipboard::Image {
+            bytes,
+            media_type: "image/png".to_string(),
+        });
     }
     let out = tokio::process::Command::new("pbpaste")
         .stderr(std::process::Stdio::null())

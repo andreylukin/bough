@@ -90,7 +90,11 @@ pub enum AskStatus {
 /// fields — the persisted-part asymmetry vs LLM wire blocks (`callId`/`output`
 /// here, `toolUseId`/`content` there) is deliberate; the two are never unified.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum Part {
     /// Model prose. The only part kind a turn is *required* to produce.
     Text { text: String },
@@ -336,15 +340,23 @@ pub struct BackgroundJob {
     pub pid: i64,
     pub command: String,
     pub status: JobStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// THE THREE OUTCOME FIELDS SERIALIZE AS `null`, they are not skipped. TS
+    /// declares them `.nullish()` and its rows carry the keys from the moment a
+    /// job spawns — `job.spawned` on that server is a ten-key object with three
+    /// nulls in it. Skipping them here made `job.spawned` a seven-key object,
+    /// which is a different wire: a client that asks whether the key is present
+    /// (`"signal" in job`, `Object.keys`, a schema with no default) reads a
+    /// Rust-served job differently from a TS-served one. `default` stays, so a
+    /// row from a server that DID omit them still parses.
+    #[serde(default)]
     pub exit_code: Option<i64>,
     /// The signal that ended it, when one did — `"SIGTERM"` for a job the user
     /// killed. `exitCode` is null for a signalled process, and without this a
     /// user-killed shell misread as `✓ done`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub signal: Option<String>,
     pub started_at: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub exited_at: Option<i64>,
 }
 
@@ -537,9 +549,15 @@ mod tests {
 
     #[test]
     fn every_session_kind_parses_and_the_union_is_closed() {
-        for kind in
-            ["root", "fork", "compaction", "subagent", "workflow_agent", "schedule_run", "shell"]
-        {
+        for kind in [
+            "root",
+            "fork",
+            "compaction",
+            "subagent",
+            "workflow_agent",
+            "schedule_run",
+            "shell",
+        ] {
             let s: Session = serde_json::from_value(json!({
                 "id": "s", "title": "t", "kind": kind, "createdAt": 0, "parentId": null,
             }))
@@ -581,9 +599,52 @@ mod tests {
 
     #[test]
     fn usage_optionals_omit_when_absent() {
-        let u = Usage { input_tokens: 1, output_tokens: 2, ..Default::default() };
+        let u = Usage {
+            input_tokens: 1,
+            output_tokens: 2,
+            ..Default::default()
+        };
         let s = serde_json::to_string(&u).unwrap();
         assert_eq!(s, r#"{"inputTokens":1,"outputTokens":2}"#);
+    }
+
+    #[test]
+    fn a_spawned_job_carries_its_outcome_keys_as_null_the_way_ts_does() {
+        // The TS server's `job.spawned` is a TEN-key object: `exitCode`,
+        // `signal` and `exitedAt` are present and null from the moment the job
+        // starts. Skipping them here made it a seven-key object — the same
+        // information, a different wire. Caught by event-parity.sh on a turn
+        // that ran `bashBg`, which is the only place a job row reaches a
+        // client; no unit test could see it, because both sides were
+        // self-consistent.
+        let job = BackgroundJob {
+            id: "j1".into(),
+            name: String::new(),
+            session_id: "s1".into(),
+            pid: 42,
+            command: "sleep 1".into(),
+            status: JobStatus::Running,
+            exit_code: None,
+            signal: None,
+            started_at: 7,
+            exited_at: None,
+        };
+        let v: serde_json::Value = serde_json::to_value(&job).unwrap();
+        let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        for k in ["exitCode", "signal", "exitedAt"] {
+            assert!(keys.contains(&k), "{k} must be on the wire: {keys:?}");
+            assert!(v[k].is_null(), "{k} must be null, not {}", v[k]);
+        }
+        assert_eq!(keys.len(), 10, "{keys:?}");
+        // And a row from a server that DID omit them still parses.
+        assert_eq!(
+            serde_json::from_value::<BackgroundJob>(serde_json::json!({
+                "id": "j1", "name": "", "sessionId": "s1", "pid": 42,
+                "command": "sleep 1", "status": "running", "startedAt": 7
+            }))
+            .unwrap(),
+            job
+        );
     }
 
     #[test]

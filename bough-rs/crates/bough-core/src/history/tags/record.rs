@@ -15,7 +15,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::types::{system_clock, Clock, CommandRecord, CommandRecorder, RecordedCommand, SharedDb};
+use crate::types::{
+    system_clock, Clock, CommandRecord, CommandRecorder, RecordedCommand, SharedDb,
+};
 
 use super::hygiene::clean_tags;
 
@@ -53,10 +55,8 @@ const VOCAB_LOOKBACK_MS: i64 = 150 * 24 * 60 * 60 * 1000;
 /// and `repo-inspect` must keep splitting.
 fn is_ref_piece(piece: &str) -> bool {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        regex::Regex::new(r"^[a-z][a-z0-9]*\.[a-z0-9][a-z0-9._/-]*$").unwrap()
-    })
-    .is_match(piece)
+    RE.get_or_init(|| regex::Regex::new(r"^[a-z][a-z0-9]*\.[a-z0-9][a-z0-9._/-]*$").unwrap())
+        .is_match(piece)
 }
 
 /// Is this normalized tag a reference rather than a coined word?
@@ -90,8 +90,10 @@ pub fn normalize_tags(raw: Option<&str>) -> String {
             continue;
         }
         for part in piece.split('-') {
-            let tag: String =
-                part.chars().filter(|c| matches!(c, 'a'..='z' | '0'..='9' | '_' | '.')).collect();
+            let tag: String = part
+                .chars()
+                .filter(|c| matches!(c, 'a'..='z' | '0'..='9' | '_' | '.'))
+                .collect();
             // At least one letter or digit: `...` survives the character
             // filter (dots are legal in a tag) and would then read as a
             // reference, which it is not.
@@ -179,7 +181,11 @@ fn git_origin_url(workspace: &str) -> Option<String> {
 /// profile. Cached per workspace for the process lifetime; a mid-session
 /// `git remote set-url` is not a case worth a subprocess per command.
 pub fn repo_identity(workspace: &str) -> String {
-    if let Some(hit) = repo_cache().lock().ok().and_then(|c| c.get(workspace).cloned()) {
+    if let Some(hit) = repo_cache()
+        .lock()
+        .ok()
+        .and_then(|c| c.get(workspace).cloned())
+    {
         return hit;
     }
     let repo = git_origin_url(workspace).unwrap_or_else(|| workspace.to_string());
@@ -245,8 +251,8 @@ fn extract_abs_dirs(command: &str, workspace: &str) -> Vec<String> {
             break;
         }
         let mut tok = raw_token
-            .trim_start_matches(|c| matches!(c, '\'' | '"' | '`'))
-            .trim_end_matches(|c| matches!(c, '\'' | '"' | '`' | ','))
+            .trim_start_matches(['\'', '"', '`'])
+            .trim_end_matches(['\'', '"', '`', ','])
             .to_string();
         // `--output=path/x` and `FOO=path/x` both carry the path after `=`.
         if let Some(eq) = tok.find('=') {
@@ -302,7 +308,11 @@ fn git_root_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
 /// `.git` (a directory in a normal clone, a file in a worktree — either
 /// counts); cached per starting directory for the process lifetime.
 pub fn find_git_root(dir: &str) -> Option<String> {
-    if let Some(hit) = git_root_cache().lock().ok().and_then(|c| c.get(dir).cloned()) {
+    if let Some(hit) = git_root_cache()
+        .lock()
+        .ok()
+        .and_then(|c| c.get(dir).cloned())
+    {
         return hit;
     }
     let mut cur = dir.to_string();
@@ -384,7 +394,11 @@ pub fn attribute_command(command: &str, workspace: &str) -> Attribution {
             rel_dirs.push(rel);
         }
     }
-    Attribution { repo: repo_identity(&root), rel_dirs, abs_dirs }
+    Attribution {
+        repo: repo_identity(&root),
+        rel_dirs,
+        abs_dirs,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -431,7 +445,9 @@ pub fn create_command_recorder(ctx: RecorderCtx) -> CommandRecorder {
         }
         let ts = now();
         let vocab: HashMap<String, i64> = {
-            let Ok(mut map) = vocab_by_repo.lock() else { return };
+            let Ok(mut map) = vocab_by_repo.lock() else {
+                return;
+            };
             match map.get(&att.repo) {
                 Some(v) => v.clone(),
                 None => {
@@ -507,7 +523,10 @@ mod tests {
         // The one exception to "dashes are separators", and the rule is the
         // dot: a namespace says the thing has an identity outside bough, so
         // bough does not get to reformat the id.
-        assert_eq!(normalize_tags(Some("git:push:linear.ENG-1234")), "git:push:linear.eng-1234");
+        assert_eq!(
+            normalize_tags(Some("git:push:linear.ENG-1234")),
+            "git:push:linear.eng-1234"
+        );
         assert_eq!(normalize_tags(Some("pr.456")), "pr.456");
         assert_eq!(normalize_tags(Some("commit.3c1c78e")), "commit.3c1c78e");
         // A branch name keeps its slashes, because half of one points at nothing.
@@ -542,7 +561,10 @@ mod tests {
 
     #[test]
     fn normalize_caps_the_count() {
-        assert_eq!(normalize_tags(Some("a:b:c:d:e:f:g:h:i:j")), "a:b:c:d:e:f:g:h");
+        assert_eq!(
+            normalize_tags(Some("a:b:c:d:e:f:g:h:i:j")),
+            "a:b:c:d:e:f:g:h"
+        );
     }
 
     #[test]
@@ -554,7 +576,10 @@ mod tests {
     #[test]
     fn spill_path_is_parsed_back_out_of_the_marker() {
         let marker = "head\n[… 1 chars omitted from the middle. FULL OUTPUT SAVED — 30,000 chars:\n   /tmp/s/bash-001.log\n   rg -n 'error|fail' '/tmp/s/bash-001.log'\n…]\ntail";
-        assert_eq!(spill_path_from(marker).as_deref(), Some("/tmp/s/bash-001.log"));
+        assert_eq!(
+            spill_path_from(marker).as_deref(),
+            Some("/tmp/s/bash-001.log")
+        );
         assert_eq!(spill_path_from("plain output"), None);
     }
 
@@ -583,7 +608,10 @@ mod tests {
                 ["migrations"]
             );
             // A directory token attributes to itself; a file to its dirname.
-            assert_eq!(attribute_command("ls -la src/tui", ws).rel_dirs, ["src/tui"]);
+            assert_eq!(
+                attribute_command("ls -la src/tui", ws).rel_dirs,
+                ["src/tui"]
+            );
             // `--flag=path` and line refs both resolve.
             assert_eq!(
                 attribute_command("tool --input=src/tui/composer.ts", ws).rel_dirs,
@@ -601,15 +629,24 @@ mod tests {
     #[test]
     fn attribute_command_ignores_non_paths_and_the_trees_nobody_means() {
         with_workspace(|ws| {
-            assert_eq!(attribute_command("git push origin main", ws).rel_dirs, Vec::<String>::new());
+            assert_eq!(
+                attribute_command("git push origin main", ws).rel_dirs,
+                Vec::<String>::new()
+            );
             assert_eq!(
                 attribute_command("curl https://example.com/a/b", ws).rel_dirs,
                 Vec::<String>::new()
             );
             // Outside every checkout and outside the workspace: touch-tracked,
             // never a rel dir.
-            assert_eq!(attribute_command("cat /etc/hosts", ws).rel_dirs, Vec::<String>::new());
-            assert_eq!(attribute_command("ls node_modules/pkg", ws).rel_dirs, Vec::<String>::new());
+            assert_eq!(
+                attribute_command("cat /etc/hosts", ws).rel_dirs,
+                Vec::<String>::new()
+            );
+            assert_eq!(
+                attribute_command("ls node_modules/pkg", ws).rel_dirs,
+                Vec::<String>::new()
+            );
             // A path that does not exist attributes nothing — the heuristic
             // never guesses.
             assert_eq!(
@@ -648,7 +685,7 @@ mod tests {
             let at_root = attribute_command(&format!("cd {proj} && ls -la"), ws);
             assert_eq!(at_root.repo, proj);
             assert_eq!(at_root.rel_dirs, Vec::<String>::new());
-            assert_eq!(at_root.abs_dirs, [proj.clone()]);
+            assert_eq!(at_root.abs_dirs, std::slice::from_ref(&proj));
             // Touching a file inside it attributes REPO-ROOT-relative dirs,
             // so sessions rooted anywhere agree on what "src" means.
             let inside = attribute_command(&format!("sed -n 1p {proj}/src/a.ts"), ws);
@@ -678,7 +715,10 @@ mod tests {
         };
         run(&["init", "-q"]);
         run(&["remote", "add", "origin", "https://example.com/me/repo.git"]);
-        assert_eq!(repo_identity(&git.to_string_lossy()), "https://example.com/me/repo.git");
+        assert_eq!(
+            repo_identity(&git.to_string_lossy()),
+            "https://example.com/me/repo.git"
+        );
         let _ = std::fs::remove_dir_all(&ws);
         let _ = std::fs::remove_dir_all(&git);
     }
@@ -686,7 +726,9 @@ mod tests {
     // ---- the recorder -------------------------------------------------------
 
     fn mem_db() -> SharedDb {
-        Arc::new(Mutex::new(SqliteDb::new(":memory:", DbOptions::default()).unwrap()))
+        Arc::new(Mutex::new(
+            SqliteDb::new(":memory:", DbOptions::default()).unwrap(),
+        ))
     }
 
     fn make_session(db: &SharedDb, id: &str) {
@@ -743,12 +785,24 @@ mod tests {
             touched: None,
         });
         record(finished("bun test src/a.ts", "bun:test"));
-        let rows = db.lock().unwrap().command_tag_rows(&ws_s, CommandTagOpts::default()).unwrap();
+        let rows = db
+            .lock()
+            .unwrap()
+            .command_tag_rows(&ws_s, CommandTagOpts::default())
+            .unwrap();
         assert_eq!(
             rows,
             vec![
-                crate::types::CommandTagRow { tag: "bun".into(), ts: 42, exit_code: Some(0) },
-                crate::types::CommandTagRow { tag: "test".into(), ts: 42, exit_code: Some(0) },
+                crate::types::CommandTagRow {
+                    tag: "bun".into(),
+                    ts: 42,
+                    exit_code: Some(0)
+                },
+                crate::types::CommandTagRow {
+                    tag: "test".into(),
+                    ts: 42,
+                    exit_code: Some(0)
+                },
             ]
         );
         assert_eq!(
@@ -756,7 +810,10 @@ mod tests {
                 .unwrap()
                 .command_tag_rows(
                     &ws_s,
-                    CommandTagOpts { dir: Some("src".into()), since_ts: None }
+                    CommandTagOpts {
+                        dir: Some("src".into()),
+                        since_ts: None
+                    }
                 )
                 .unwrap()
                 .len(),
@@ -806,7 +863,10 @@ mod tests {
         record(finished("ls migrations/", "ls"));
         assert_eq!(
             touched.lock().unwrap().clone(),
-            vec![Path::new(&ws_s).join("migrations").to_string_lossy().into_owned()]
+            vec![Path::new(&ws_s)
+                .join("migrations")
+                .to_string_lossy()
+                .into_owned()]
         );
         let _ = std::fs::remove_dir_all(&ws);
     }

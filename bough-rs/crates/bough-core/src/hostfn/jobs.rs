@@ -36,8 +36,8 @@ use tokio::sync::watch;
 use crate::bus::Bus;
 use crate::errors::BoughError;
 use crate::hostfn::spill::{
-    omission_marker, spill, MAX_HEAD_CHARS, MAX_TAIL_CHARS, RealSpillDeps, SpillCtx, SpillDeps,
-    SpillSink, TruncateLimits, SPILL_OVER_CHARS,
+    omission_marker, spill, RealSpillDeps, SpillCtx, SpillDeps, SpillSink, TruncateLimits,
+    MAX_HEAD_CHARS, MAX_TAIL_CHARS, SPILL_OVER_CHARS,
 };
 use crate::schema::events::{EventInput, EventType};
 use crate::schema::parts::{BackgroundJob, JobStatus};
@@ -146,7 +146,10 @@ impl Shell {
             }
             if rx.changed().await.is_err() {
                 // Sender dropped; read whatever landed.
-                return rx.borrow().clone().unwrap_or(ExitStatus { code: 0, signal: None });
+                return rx.borrow().clone().unwrap_or(ExitStatus {
+                    code: 0,
+                    signal: None,
+                });
             }
         }
     }
@@ -170,7 +173,13 @@ impl Shell {
 pub fn normalize_job_name(raw: &str) -> Option<String> {
     let cleaned: String = raw
         .chars()
-        .map(|c| if (c as u32) < 0x20 || c as u32 == 0x7f { ' ' } else { c })
+        .map(|c| {
+            if (c as u32) < 0x20 || c as u32 == 0x7f {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect();
     let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.is_empty() {
@@ -225,7 +234,11 @@ fn append(shell: &Shell, text: &str) {
     };
     let ctx = SpillCtx {
         scratch: shell.scratch.clone(),
-        label: Some(if st.id.is_empty() { "bash".to_string() } else { st.id.clone() }),
+        label: Some(if st.id.is_empty() {
+            "bash".to_string()
+        } else {
+            st.id.clone()
+        }),
     };
     let total = st.written;
     st.sink = crate::hostfn::spill::stream_spill(
@@ -269,7 +282,7 @@ fn retained_from(st: &ShellState, from: usize) -> (String, usize) {
         parts.push(skip_chars(&st.head, from).to_string());
     }
     let gap_from = from.max(head_end);
-    let omitted = if gap_from < tail_start { tail_start - gap_from } else { 0 };
+    let omitted = tail_start.saturating_sub(gap_from);
     if omitted > 0 {
         parts.push(omission_marker(omitted, st.written));
     }
@@ -291,14 +304,19 @@ pub fn format_final(shell: &Shell, deps: &dyn SpillDeps) -> String {
         let st = shell.state.lock().unwrap();
         (
             retained_from(&st, 0).0,
-            SpillCtx { scratch: shell.scratch.clone(), label: Some("bash".to_string()) },
+            SpillCtx {
+                scratch: shell.scratch.clone(),
+                label: Some("bash".to_string()),
+            },
             st.sink.clone(),
             st.status.clone(),
         )
     };
     // Spilled before the exit line is appended, so the marker cannot be
     // separated from the output it describes.
-    let body = spill(&text, &ctx, sink.as_ref(), deps).trim_end().to_string();
+    let body = spill(&text, &ctx, sink.as_ref(), deps)
+        .trim_end()
+        .to_string();
     let mut parts: Vec<String> = Vec::new();
     if !body.is_empty() {
         parts.push(body);
@@ -333,7 +351,10 @@ pub fn background_note(shell: &Shell, id: &str, after_ms: u64) -> String {
         (
             text,
             st.name.clone(),
-            SpillCtx { scratch: shell.scratch.clone(), label: Some(id.to_string()) },
+            SpillCtx {
+                scratch: shell.scratch.clone(),
+                label: Some(id.to_string()),
+            },
             st.sink.clone(),
         )
     };
@@ -343,9 +364,15 @@ pub fn background_note(shell: &Shell, id: &str, after_ms: u64) -> String {
          {id}{}. It keeps running; you'll be notified \
          when it finishes. Read progress: \
          bashOutput(\"{id}\"); block until done: bashWait(\"{id}\"); stop it: bashKill(\"{id}\").]",
-        if name.is_empty() { String::new() } else { format!(" \"{name}\"") },
+        if name.is_empty() {
+            String::new()
+        } else {
+            format!(" \"{name}\"")
+        },
     );
-    let so_far = spill(&text, &ctx, sink.as_ref(), &RealSpillDeps).trim_end().to_string();
+    let so_far = spill(&text, &ctx, sink.as_ref(), &RealSpillDeps)
+        .trim_end()
+        .to_string();
     if so_far.is_empty() {
         head
     } else {
@@ -475,11 +502,7 @@ impl JobRegistry {
     /// paint a password prompt over the TUI's alternate screen. A fresh
     /// session makes that open fail while stdout/stderr still flow through
     /// our pipes.
-    pub fn spawn(
-        self: &Arc<Self>,
-        command: &str,
-        opts: SpawnOpts,
-    ) -> std::io::Result<Arc<Shell>> {
+    pub fn spawn(self: &Arc<Self>, command: &str, opts: SpawnOpts) -> std::io::Result<Arc<Shell>> {
         let mut cmd = tokio::process::Command::new("/bin/sh");
         cmd.arg("-c").arg(command);
         if let Some(cwd) = &opts.cwd {
@@ -495,7 +518,9 @@ impl JobRegistry {
         if let Some(sid) = &opts.session_id {
             cmd.env("BOUGH_SESSION", sid);
         }
-        cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         // ssh/sudo/pinentry can bypass stdio through /dev/tty. A fresh
         // session cannot acquire the TUI's controlling terminal.
         unsafe {
@@ -552,7 +577,10 @@ impl JobRegistry {
             let status = child.wait().await;
             let es = match status {
                 Ok(st) => exit_status_of(st),
-                Err(_) => ExitStatus { code: 0, signal: None },
+                Err(_) => ExitStatus {
+                    code: 0,
+                    signal: None,
+                },
             };
             let promoted = {
                 let mut st = sh.state.lock().unwrap();
@@ -613,7 +641,11 @@ impl JobRegistry {
                     .unwrap_or_else(|| derive_name(&shell.command));
                 st.session_id = ctx.session_id.clone();
             }
-            inner.sessions.entry(ctx.session_id.clone()).or_default().push(shell.clone());
+            inner
+                .sessions
+                .entry(ctx.session_id.clone())
+                .or_default()
+                .push(shell.clone());
             id
         };
         // Raced a near-instant exit between the caller's threshold and here.
@@ -675,7 +707,13 @@ impl JobRegistry {
         // No signal: an explicit background shell survives the turn's stop
         // button.
         let shell = self
-            .spawn(command, SpawnOpts { cwd: Some(ctx.workspace.clone()), ..Default::default() })
+            .spawn(
+                command,
+                SpawnOpts {
+                    cwd: Some(ctx.workspace.clone()),
+                    ..Default::default()
+                },
+            )
             .map_err(|e| BoughError::program(format!("could not start command: {e}")))?;
         // Set BEFORE promote wires the exit path: `notified` is the flag the
         // exit handler checks, and a fast command can finish immediately.
@@ -683,7 +721,14 @@ impl JobRegistry {
             shell.state.lock().unwrap().notified = true;
         }
         let id = self
-            .promote(&shell, ctx, PromoteOpts { force: true, name: Some(label) })
+            .promote(
+                &shell,
+                ctx,
+                PromoteOpts {
+                    force: true,
+                    name: Some(label),
+                },
+            )
             .expect("forced promote always succeeds");
         let name = shell.name();
         Ok(serde_json::json!({ "id": id, "name": name, "pid": shell.pid }).to_string())
@@ -702,13 +747,19 @@ impl JobRegistry {
                 text,
                 SpillCtx {
                     scratch: shell.scratch.clone(),
-                    label: Some(if id.is_empty() { "bg".to_string() } else { id.to_string() }),
+                    label: Some(if id.is_empty() {
+                        "bg".to_string()
+                    } else {
+                        id.to_string()
+                    }),
                 },
                 st.sink.clone(),
                 st.status.clone(),
             )
         };
-        let fresh = spill(&text, &ctx, sink.as_ref(), &RealSpillDeps).trim_end().to_string();
+        let fresh = spill(&text, &ctx, sink.as_ref(), &RealSpillDeps)
+            .trim_end()
+            .to_string();
         let status_line = match status {
             None => "[running]".to_string(),
             Some(s) => format!(
@@ -717,7 +768,11 @@ impl JobRegistry {
                 s.signal.map(|sig| format!(" on {sig}")).unwrap_or_default()
             ),
         };
-        let body = if fresh.is_empty() { "(no new output)".to_string() } else { fresh };
+        let body = if fresh.is_empty() {
+            "(no new output)".to_string()
+        } else {
+            fresh
+        };
         Ok(format!("{body}\n{status_line}"))
     }
 
@@ -763,7 +818,9 @@ impl JobRegistry {
         shell.wait_pumps().await;
         Ok(format!(
             "killed {id} ({})",
-            status.signal.unwrap_or_else(|| format!("exit {}", status.code))
+            status
+                .signal
+                .unwrap_or_else(|| format!("exit {}", status.code))
         ))
     }
 
@@ -805,7 +862,10 @@ impl JobRegistry {
         let shell = self.find(id)?;
         let body = shell_text(&shell).trim_end().to_string();
         if body.is_empty() {
-            return Some(JobTail { tail: Vec::new(), output_lines: 0 });
+            return Some(JobTail {
+                tail: Vec::new(),
+                output_lines: 0,
+            });
         }
         let all: Vec<&str> = body.split('\n').collect();
         let start = all.len().saturating_sub(lines);
@@ -895,8 +955,15 @@ impl JobRegistry {
     /// dev server) never touches its broken pipe, survives SIGPIPE, and would
     /// be reparented invisibly.
     pub fn kill_all(&self) -> usize {
-        let session_ids: Vec<String> =
-            { self.inner.lock().unwrap().sessions.keys().cloned().collect() };
+        let session_ids: Vec<String> = {
+            self.inner
+                .lock()
+                .unwrap()
+                .sessions
+                .keys()
+                .cloned()
+                .collect()
+        };
         session_ids.iter().map(|sid| self.kill_jobs_of(sid)).sum()
     }
 
@@ -915,7 +982,11 @@ impl JobRegistry {
     ) -> impl FnOnce() + Send {
         {
             let mut inner = self.inner.lock().unwrap();
-            inner.foreground.entry(session_id.to_string()).or_default().push(shell.clone());
+            inner
+                .foreground
+                .entry(session_id.to_string())
+                .or_default()
+                .push(shell.clone());
         }
         let registry = self.clone();
         let shell = shell.clone();
@@ -1043,15 +1114,19 @@ impl JobRegistry {
             st.notified = true;
             let (body, _) = retained_from(&st, 0);
             let body = body.trim_end();
-            let lines =
-                if body.is_empty() { 0 } else { body.split('\n').filter(|l| !l.is_empty()).count() };
+            let lines = if body.is_empty() {
+                0
+            } else {
+                body.split('\n').filter(|l| !l.is_empty()).count()
+            };
             let code = st.status.as_ref().map(|s| s.code);
             let signal = st.status.as_ref().and_then(|s| s.signal.clone());
             if code.unwrap_or(0) == 0 && signal.is_none() && lines == 0 {
                 return;
             }
-            let code_text =
-                code.map(|c| c.to_string()).unwrap_or_else(|| "?".to_string());
+            let code_text = code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".to_string());
             (
                 st.session_id.clone(),
                 format!(
@@ -1100,7 +1175,11 @@ fn job_info_locked(shell: &Arc<Shell>, st: &ShellState) -> BackgroundJob {
         session_id: st.session_id.clone(),
         pid: shell.pid as i64,
         command: shell.command.clone(),
-        status: if st.status.is_none() { JobStatus::Running } else { JobStatus::Exited },
+        status: if st.status.is_none() {
+            JobStatus::Running
+        } else {
+            JobStatus::Exited
+        },
         exit_code: st.status.as_ref().map(|s| s.code),
         signal: st.status.as_ref().and_then(|s| s.signal.clone()),
         started_at: st.started_at,
@@ -1188,11 +1267,15 @@ pub fn descendant_pids(root: i32) -> Vec<i32> {
     let mut kids: HashMap<i32, Vec<i32>> = HashMap::new();
     for line in text.split('\n') {
         let mut it = line.split_whitespace();
-        let (Some(pid), Some(ppid)) = (it.next(), it.next()) else { continue };
+        let (Some(pid), Some(ppid)) = (it.next(), it.next()) else {
+            continue;
+        };
         if it.next().is_some() {
             continue;
         }
-        let (Ok(pid), Ok(ppid)) = (pid.parse::<i32>(), ppid.parse::<i32>()) else { continue };
+        let (Ok(pid), Ok(ppid)) = (pid.parse::<i32>(), ppid.parse::<i32>()) else {
+            continue;
+        };
         kids.entry(ppid).or_default().push(pid);
     }
     let mut out: Vec<i32> = Vec::new();
@@ -1231,7 +1314,10 @@ pub fn signal_tree(shell: &Shell, sig: Signal) {
 
 fn exit_status_of(st: std::process::ExitStatus) -> ExitStatus {
     use std::os::unix::process::ExitStatusExt;
-    ExitStatus { code: st.code().unwrap_or(0) as i64, signal: st.signal().map(signal_name) }
+    ExitStatus {
+        code: st.code().unwrap_or(0) as i64,
+        signal: st.signal().map(signal_name),
+    }
 }
 
 fn signal_name(n: i32) -> String {
@@ -1276,7 +1362,10 @@ mod tests {
 
     #[test]
     fn derive_name_strips_preludes_and_assignments() {
-        assert_eq!(derive_name("cd /src/bough && npm run build -- --watch"), "npm run build -- --watch");
+        assert_eq!(
+            derive_name("cd /src/bough && npm run build -- --watch"),
+            "npm run build -- --watch"
+        );
         assert_eq!(derive_name("NODE_ENV=test sleep 60"), "sleep 60");
         assert_eq!(derive_name("   "), "shell");
         assert_eq!(derive_name("printf a | wc -l"), "printf a");
@@ -1284,7 +1373,10 @@ mod tests {
 
     #[test]
     fn normalize_job_name_collapses_and_caps() {
-        assert_eq!(normalize_job_name("  dev   server \n").as_deref(), Some("dev server"));
+        assert_eq!(
+            normalize_job_name("  dev   server \n").as_deref(),
+            Some("dev server")
+        );
         assert_eq!(normalize_job_name(""), None);
         assert_eq!(normalize_job_name("   "), None);
         assert_eq!(normalize_job_name("\n\t"), None);

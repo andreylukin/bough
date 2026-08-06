@@ -21,11 +21,11 @@
 //! privileges. That is deliberate — explicit agent OUTPUT the user chooses to
 //! open, not a containment boundary.
 //!
-//! WAVE-3 GAP (rows 2.7 note + 3.14): the TS server splices the comment
-//! widget into every served HTML document at serve time. The comments
-//! subsystem is not ported yet, so HTML serves RAW — the sanctioned interim
-//! answer (server.md §8: "serve artifacts raw until comments port").
-//! `inject_comment_layer` is where it goes when it lands.
+//! THE COMMENT LAYER IS SPLICED IN AT SERVE TIME (row 3.14,
+//! `inject_comment_layer`), into HTML documents and nothing else: the bytes on
+//! disk stay exactly what the agent wrote, so a page the user saves or forwards
+//! is the page — not the page plus an annotation toolbar pointed at a loopback
+//! server that is not running.
 
 use std::path::Path;
 
@@ -86,7 +86,9 @@ fn sniff_html(full: &Path) -> Option<&'static str> {
 }
 
 fn basename(path: &Path) -> String {
-    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -120,10 +122,32 @@ p { margin: 0; color: #52514e; }
 </main>
 "#;
 
-/// Where the comment layer goes when the comments subsystem lands (row 3.14).
-/// Until then: identity — the bytes on disk are the bytes on the wire.
-fn inject_comment_layer(html: String) -> String {
-    html
+/// Splice the comment layer in before `</body>`, or append it when the document
+/// has no body tag (a fragment still renders, and the layer still works).
+///
+/// THE INVARIANT: **every served HTML artifact gets the layer injected AT SERVE
+/// TIME**, and nothing else does. Two consequences, both deliberate: the bytes
+/// on disk stay exactly what the agent wrote (a page the user saves or forwards
+/// is the page, not the page plus an annotation toolbar pointed at a loopback
+/// server that is not running), and the layer only exists where it means
+/// something, which is inside bough. It goes into HTML documents only —
+/// injecting into the page's own CSS or JS, served through the same route,
+/// would corrupt them and the layer would not work anyway.
+pub fn inject_comment_layer(html: String) -> String {
+    let widget = crate::comments::comment_widget();
+    // Case-insensitive over the ORIGINAL bytes, never over a lowercased copy:
+    // a lowercase mapping can change byte lengths, and an index from the copy
+    // would then slice the original mid-codepoint.
+    let tag = b"</body>";
+    let bytes = html.as_bytes();
+    let found = bytes
+        .windows(tag.len())
+        .rposition(|w| w.eq_ignore_ascii_case(tag))
+        .filter(|idx| html.is_char_boundary(*idx));
+    match found {
+        Some(idx) => format!("{}{widget}{}", &html[..idx], &html[idx..]),
+        None => format!("{html}{widget}"),
+    }
 }
 
 /// Options for [`serve_artifact`], over the store's own.
@@ -186,7 +210,11 @@ pub fn serve_artifact(session_id: &str, name: &str, opts: &ServeArtifactOptions)
     match served {
         Some(response) => response,
         None => {
-            if opts.accept.as_deref().is_some_and(|a| a.contains("text/html")) {
+            if opts
+                .accept
+                .as_deref()
+                .is_some_and(|a| a.contains("text/html"))
+            {
                 respond(404, "text/html; charset=utf-8", NOT_FOUND_PAGE)
             } else {
                 respond(
@@ -268,10 +296,14 @@ pub fn get_artifact() -> Handler {
             .map(String::from);
         let id = decode_segments(params.get("id").map(String::as_str).unwrap_or(""));
         let path = decode_segments(params.get("path").map(String::as_str).unwrap_or(""));
-        Ok(serve_artifact(&id, &path, &ServeArtifactOptions {
-            store: ArtifactStoreOptions::default(),
-            accept,
-        }))
+        Ok(serve_artifact(
+            &id,
+            &path,
+            &ServeArtifactOptions {
+                store: ArtifactStoreOptions::default(),
+                accept,
+            },
+        ))
     })
 }
 
@@ -288,7 +320,7 @@ mod tests {
     use crate::http::testutil;
     use bough_core::hostfn::artifact::publish_artifact;
     use std::path::PathBuf;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::sync::MutexGuard;
 
     struct TmpDir(PathBuf);
     impl TmpDir {
@@ -326,15 +358,17 @@ mod tests {
     }
     impl HomeGuard {
         fn new() -> HomeGuard {
-            static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-            let lock = LOCK
-                .get_or_init(|| Mutex::new(()))
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            // The CRATE-wide lock (`http::testutil::home_lock`), not a
+            // module-local one: `BOUGH_HOME` is one variable, so one lock.
+            let lock = testutil::home_lock();
             let tmp = TmpDir::new();
             let previous = std::env::var("BOUGH_HOME").ok();
             std::env::set_var("BOUGH_HOME", &tmp.0);
-            HomeGuard { _lock: lock, _tmp: tmp, previous }
+            HomeGuard {
+                _lock: lock,
+                _tmp: tmp,
+                previous,
+            }
         }
     }
     impl Drop for HomeGuard {
@@ -351,7 +385,10 @@ mod tests {
     }
 
     fn header<'a>(res: &'a axum::response::Response, name: &str) -> &'a str {
-        res.headers().get(name).map(|v| v.to_str().unwrap()).unwrap_or("")
+        res.headers()
+            .get(name)
+            .map(|v| v.to_str().unwrap())
+            .unwrap_or("")
     }
 
     // ---- AC 1: traversal is blocked, at the route, as a 403 -----------------
@@ -359,7 +396,13 @@ mod tests {
     #[test]
     fn one_session_cannot_read_anothers_artifacts_through_serve() {
         let tmp = TmpDir::new();
-        publish_artifact("victim", "secret.html", "<b>secret</b>", &store(&tmp.0).store).unwrap();
+        publish_artifact(
+            "victim",
+            "secret.html",
+            "<b>secret</b>",
+            &store(&tmp.0).store,
+        )
+        .unwrap();
         let res = serve_artifact("attacker", "../victim/secret.html", &store(&tmp.0));
         assert_eq!(res.status(), 403);
     }
@@ -369,8 +412,13 @@ mod tests {
         // Handlers read the default paths, so the whole test runs under a
         // temp BOUGH_HOME.
         let _home = HomeGuard::new();
-        publish_artifact("s1", "index.html", "<h1>hi</h1>", &ArtifactStoreOptions::default())
-            .unwrap();
+        publish_artifact(
+            "s1",
+            "index.html",
+            "<h1>hi</h1>",
+            &ArtifactStoreOptions::default(),
+        )
+        .unwrap();
         let fx = testutil::fixture();
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
 
@@ -387,7 +435,9 @@ mod tests {
         }
 
         // The 403 is reachable through the router for a well-formed escaping id.
-        let res = call.call(testutil::get("/artifacts/..%2Fevil/index.html")).await;
+        let res = call
+            .call(testutil::get("/artifacts/..%2Fevil/index.html"))
+            .await;
         assert_eq!(res.status(), 403);
         assert_eq!(body_text(res).await, "forbidden");
     }
@@ -403,7 +453,14 @@ mod tests {
 
         // A brand-new, empty database: nothing knows this session ever existed.
         let fx = testutil::fixture();
-        assert!(fx.ctx.db.lock().unwrap().get_session("ghost").unwrap().is_none());
+        assert!(fx
+            .ctx
+            .db
+            .lock()
+            .unwrap()
+            .get_session("ghost")
+            .unwrap()
+            .is_none());
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
 
         let res = call.call(testutil::get("/sessions/ghost/artifacts")).await;
@@ -418,7 +475,9 @@ mod tests {
         listed.sort();
         assert_eq!(listed, vec!["assets/app.js", "index.html"]);
 
-        let served = call.call(testutil::get("/artifacts/ghost/index.html")).await;
+        let served = call
+            .call(testutil::get("/artifacts/ghost/index.html"))
+            .await;
         assert_eq!(served.status(), 200);
         assert!(body_text(served).await.contains("still here"));
     }
@@ -429,8 +488,13 @@ mod tests {
     async fn serve_artifact_sets_the_content_type_and_never_caches() {
         let tmp = TmpDir::new();
         let opts = store(&tmp.0);
-        publish_artifact("s3", "page.html", "<!doctype html><title>x</title>", &opts.store)
-            .unwrap();
+        publish_artifact(
+            "s3",
+            "page.html",
+            "<!doctype html><title>x</title>",
+            &opts.store,
+        )
+        .unwrap();
         publish_artifact("s3", "app.js", "console.log(1)", &opts.store).unwrap();
         publish_artifact("s3", "data.csv", "a,b", &opts.store).unwrap();
 
@@ -441,7 +505,10 @@ mod tests {
         assert!(body_text(html).await.contains("<title>x</title>"));
 
         let js = serve_artifact("s3", "app.js", &opts);
-        assert_eq!(header(&js, "content-type"), "text/javascript; charset=utf-8");
+        assert_eq!(
+            header(&js, "content-type"),
+            "text/javascript; charset=utf-8"
+        );
         assert_eq!(body_text(js).await, "console.log(1)"); // untouched: no layer in a script
 
         let csv = serve_artifact("s3", "data.csv", &opts);
@@ -452,15 +519,20 @@ mod tests {
     async fn serve_artifact_sniffs_an_extensionless_html_file_so_it_renders() {
         let tmp = TmpDir::new();
         let opts = store(&tmp.0);
-        publish_artifact("s7", "my-explorer", "<!doctype html>\n<title>x</title>", &opts.store)
-            .unwrap();
+        publish_artifact(
+            "s7",
+            "my-explorer",
+            "<!doctype html>\n<title>x</title>",
+            &opts.store,
+        )
+        .unwrap();
         publish_artifact("s7", "notes", "just text", &opts.store).unwrap();
 
         let html = serve_artifact("s7", "my-explorer", &opts);
         assert_eq!(header(&html, "content-type"), "text/html; charset=utf-8");
-        // NOTE: the TS test also asserts the injected comment widget
-        // ("bgh-cmt-toggle") here — that assertion ports with the comments
-        // subsystem (row 3.14); HTML currently serves raw by design.
+        // …and a sniffed HTML document gets the comment layer, exactly like a
+        // named `.html` one.
+        assert!(body_text(html).await.contains("bgh-cmt-toggle"));
 
         let plain = serve_artifact("s7", "notes", &opts);
         assert_eq!(header(&plain, "content-type"), "application/octet-stream");
@@ -471,7 +543,10 @@ mod tests {
         let tmp = TmpDir::new();
         let api = serve_artifact("s5", "nope.html", &store(&tmp.0));
         assert_eq!(api.status(), 404);
-        assert_eq!(header(&api, "content-type"), "application/json; charset=utf-8");
+        assert_eq!(
+            header(&api, "content-type"),
+            "application/json; charset=utf-8"
+        );
         let body = testutil::body_json(api).await;
         assert!(body["error"].as_str().unwrap().contains("nope.html"));
 
@@ -486,6 +561,62 @@ mod tests {
         assert_eq!(browser.status(), 404);
         assert_eq!(header(&browser, "content-type"), "text/html; charset=utf-8");
         assert_eq!(body_text(browser).await, NOT_FOUND_PAGE);
+    }
+
+    // ---- the comment layer (row 3.14) ---------------------------------------
+
+    #[tokio::test]
+    async fn every_served_html_document_carries_the_comment_layer_and_nothing_else_does() {
+        let tmp = TmpDir::new();
+        let opts = store(&tmp.0);
+        publish_artifact(
+            "s9",
+            "page.html",
+            "<!doctype html><html><body><h1>hi</h1></body></html>",
+            &opts.store,
+        )
+        .unwrap();
+        publish_artifact("s9", "app.js", "console.log(1)", &opts.store).unwrap();
+        publish_artifact("s9", "style.css", "body{}", &opts.store).unwrap();
+
+        let html = body_text(serve_artifact("s9", "page.html", &opts)).await;
+        assert!(
+            html.contains("bgh-cmt-toggle"),
+            "the layer must be in a served HTML document"
+        );
+        // Spliced BEFORE `</body>`, so the page's own markup still closes.
+        let widget_at = html.find("bgh-cmt-toggle").unwrap();
+        assert!(widget_at < html.rfind("</body>").unwrap());
+        assert!(html.starts_with("<!doctype html><html><body><h1>hi</h1>"));
+        assert!(html.trim_end().ends_with("</body></html>"));
+
+        // Injecting into the page's own CSS or JS — served through the same
+        // route — would corrupt them, and the layer would not work anyway.
+        assert_eq!(
+            body_text(serve_artifact("s9", "app.js", &opts)).await,
+            "console.log(1)"
+        );
+        assert_eq!(
+            body_text(serve_artifact("s9", "style.css", &opts)).await,
+            "body{}"
+        );
+
+        // The bytes on DISK are untouched: what the agent wrote is what a user
+        // who saves or forwards the file gets.
+        assert_eq!(
+            std::fs::read_to_string(tmp.0.join("s9").join("page.html")).unwrap(),
+            "<!doctype html><html><body><h1>hi</h1></body></html>"
+        );
+    }
+
+    #[test]
+    fn a_fragment_with_no_body_tag_still_gets_the_layer_appended() {
+        let out = inject_comment_layer("<h1>just a fragment</h1>".to_string());
+        assert!(out.starts_with("<h1>just a fragment</h1>"));
+        assert!(out.contains("bgh-cmt-toggle"));
+        // An uppercase closing tag is the same closing tag.
+        let cased = inject_comment_layer("<BODY>x</BODY>".to_string());
+        assert!(cased.find("bgh-cmt-toggle").unwrap() < cased.rfind("</BODY>").unwrap());
     }
 
     #[test]

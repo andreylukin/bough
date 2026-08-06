@@ -108,7 +108,7 @@ impl HostFnName {
             "state" => HostFnName::State,
             "schedule" => HostFnName::Schedule,
             "artifact" => HostFnName::Artifact,
-        _ => return None,
+            _ => return None,
         })
     }
 }
@@ -130,8 +130,9 @@ pub fn program_params() -> Vec<&'static str> {
 /// drift.
 pub const STATE_VERBS: [&str; 4] = ["get", "set", "list", "delete"];
 pub const SCHEDULE_VERBS: [&str; 5] = ["list", "add", "enable", "disable", "remove"];
-pub const WORKFLOW_VERBS: [&str; 7] =
-    ["start", "rerun", "stop", "pause", "resume", "status", "list"];
+pub const WORKFLOW_VERBS: [&str; 7] = [
+    "start", "rerun", "stop", "pause", "resume", "status", "list",
+];
 
 // ---- program worker: host → worker ------------------------------------------
 
@@ -175,7 +176,9 @@ pub enum FromProgramWorker {
         args: Vec<serde_json::Value>,
     },
     /// One `console.*` line, as printed. Streamed live AND kept in the batch.
-    Log { line: String },
+    Log {
+        line: String,
+    },
     /// Children swept; safe to terminate. The host waits briefly for this.
     Aborted,
     Done {
@@ -237,8 +240,14 @@ pub enum ToWorkflowWorker {
         #[serde(rename = "argsJson")]
         args_json: String,
     },
-    Check { code: String },
-    HostResult { id: u64, ok: bool, value: String },
+    Check {
+        code: String,
+    },
+    HostResult {
+        id: u64,
+        ok: bool,
+        value: String,
+    },
     Abort,
 }
 
@@ -333,17 +342,30 @@ mod tests {
         );
         let log: FromProgramWorker =
             serde_json::from_str(r#"{"type":"log","line":"one line as printed"}"#).unwrap();
-        assert_eq!(log, FromProgramWorker::Log { line: "one line as printed".into() });
+        assert_eq!(
+            log,
+            FromProgramWorker::Log {
+                line: "one line as printed".into()
+            }
+        );
         let aborted: FromProgramWorker = serde_json::from_str(r#"{"type":"aborted"}"#).unwrap();
         assert_eq!(aborted, FromProgramWorker::Aborted);
         let done: FromProgramWorker =
             serde_json::from_str(r#"{"type":"done","logs":["a","b"]}"#).unwrap();
-        assert_eq!(done, FromProgramWorker::Done { logs: vec!["a".into(), "b".into()] });
+        assert_eq!(
+            done,
+            FromProgramWorker::Done {
+                logs: vec!["a".into(), "b".into()]
+            }
+        );
         let err: FromProgramWorker =
             serde_json::from_str(r#"{"type":"error","message":"boom","logs":["a"]}"#).unwrap();
         assert_eq!(
             err,
-            FromProgramWorker::Error { message: "boom".into(), logs: vec!["a".into()] }
+            FromProgramWorker::Error {
+                message: "boom".into(),
+                logs: vec!["a".into()]
+            }
         );
 
         // Workflow worker `pos` rides on `host` for `agent` only.
@@ -366,8 +388,16 @@ mod tests {
     fn program_result_field_presence_matches_ts() {
         // `error`/`interrupted` are absent when unset — the turn runner
         // persists this shape and the TS tests pin `undefined`, not `null`.
-        let ok = ProgramResult { ok: true, logs: vec!["a".into()], error: None, interrupted: None };
-        assert_eq!(serde_json::to_string(&ok).unwrap(), r#"{"ok":true,"logs":["a"]}"#);
+        let ok = ProgramResult {
+            ok: true,
+            logs: vec!["a".into()],
+            error: None,
+            interrupted: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&ok).unwrap(),
+            r#"{"ok":true,"logs":["a"]}"#
+        );
         let stopped = ProgramResult {
             ok: false,
             logs: vec![],
@@ -383,7 +413,10 @@ mod tests {
     #[test]
     fn workflow_lists_are_the_spec_lists() {
         assert_eq!(WORKFLOW_HOST_FN_NAMES, ["agent", "phase", "log"]);
-        assert_eq!(workflow_script_params(), vec!["agent", "phase", "log", "args"]);
+        assert_eq!(
+            workflow_script_params(),
+            vec!["agent", "phase", "log", "args"]
+        );
         assert_eq!(STATE_VERBS.len(), 4);
         assert_eq!(SCHEDULE_VERBS.len(), 5);
         assert_eq!(WORKFLOW_VERBS.len(), 7);

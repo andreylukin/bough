@@ -298,7 +298,11 @@ pub fn note_project_rules(session_id: &str, files: &[ProjectRuleFile], workspace
 
 /// Take the queued lines for a session. Empty when nothing changed.
 pub fn drain_project_rule_notes(session_id: &str) -> Vec<String> {
-    PENDING.lock().unwrap().remove(session_id).unwrap_or_default()
+    PENDING
+        .lock()
+        .unwrap()
+        .remove(session_id)
+        .unwrap_or_default()
 }
 
 /// Test seam: forget every session's rule history.
@@ -319,8 +323,8 @@ mod tests {
     struct TempRoot(PathBuf);
     impl TempRoot {
         fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir()
-                .join(format!("bough-agentsmd-{}-{name}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("bough-agentsmd-{}-{name}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             TempRoot(dir)
@@ -366,7 +370,10 @@ mod tests {
         write(&repo.join("AGENTS.md"), "house style");
         write(&pkg.join("AGENTS.md"), "web rules");
 
-        assert_eq!(bodies(&find_project_rules(&pkg, None)), ["house style", "web rules"]);
+        assert_eq!(
+            bodies(&find_project_rules(&pkg, None)),
+            ["house style", "web rules"]
+        );
     }
 
     #[test]
@@ -400,7 +407,10 @@ mod tests {
         write(&home.join("AGENTS.md"), "global");
         write(&ws.join("AGENTS.md"), "project");
 
-        assert_eq!(bodies(&find_project_rules(&ws, Some(&home))), ["global", "project"]);
+        assert_eq!(
+            bodies(&find_project_rules(&ws, Some(&home))),
+            ["global", "project"]
+        );
     }
 
     #[test]
@@ -427,8 +437,14 @@ mod tests {
     fn the_note_says_the_rules_win_and_names_its_sources_relative_to_the_workspace() {
         let note = project_rules_note(
             &[
-                ProjectRuleFile { path: PathBuf::from("/w/AGENTS.md"), body: "house".into() },
-                ProjectRuleFile { path: PathBuf::from("/w/pkg/AGENTS.md"), body: "pkg".into() },
+                ProjectRuleFile {
+                    path: PathBuf::from("/w/AGENTS.md"),
+                    body: "house".into(),
+                },
+                ProjectRuleFile {
+                    path: PathBuf::from("/w/pkg/AGENTS.md"),
+                    body: "pkg".into(),
+                },
             ],
             Path::new("/w"),
         )
@@ -484,7 +500,11 @@ mod tests {
         assert_eq!(
             summary.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
             [
-                root.path().join("home").join("AGENTS.md").display().to_string(),
+                root.path()
+                    .join("home")
+                    .join("AGENTS.md")
+                    .display()
+                    .to_string(),
                 repo.join("AGENTS.md").display().to_string(),
                 "AGENTS.md".to_string(),
             ]
@@ -492,7 +512,10 @@ mod tests {
             .map(|s| s.as_str())
             .collect::<Vec<_>>()
         );
-        assert_eq!(summary.iter().map(|r| r.bytes).collect::<Vec<_>>(), [6, 11, 13]);
+        assert_eq!(
+            summary.iter().map(|r| r.bytes).collect::<Vec<_>>(),
+            [6, 11, 13]
+        );
         assert!(summary.iter().all(|r| r.path.is_absolute()));
     }
 
@@ -539,20 +562,32 @@ mod tests {
         note_project_rules(sid, &find_project_rules(&pkg, None), &pkg);
         let edited = drain_project_rule_notes(sid);
         assert_eq!(edited.len(), 1);
-        assert!(edited[0].contains("changed (5 → 25)"), "line: {}", edited[0]);
+        assert!(
+            edited[0].contains("changed (5 → 25)"),
+            "line: {}",
+            edited[0]
+        );
 
         // A new nearer file: added, not "changed".
         write(&pkg.join("AGENTS.md"), "pkg");
         note_project_rules(sid, &find_project_rules(&pkg, None), &pkg);
         let added = drain_project_rule_notes(sid);
         assert_eq!(added.len(), 1);
-        assert!(added[0].starts_with("[rules] + AGENTS.md (3)"), "line: {}", added[0]);
+        assert!(
+            added[0].starts_with("[rules] + AGENTS.md (3)"),
+            "line: {}",
+            added[0]
+        );
 
         std::fs::remove_file(pkg.join("AGENTS.md")).unwrap();
         note_project_rules(sid, &find_project_rules(&pkg, None), &pkg);
         let removed = drain_project_rule_notes(sid);
         assert_eq!(removed.len(), 1);
-        assert!(removed[0].contains("gone, no longer in the prompt"), "line: {}", removed[0]);
+        assert!(
+            removed[0].contains("gone, no longer in the prompt"),
+            "line: {}",
+            removed[0]
+        );
     }
 
     #[test]

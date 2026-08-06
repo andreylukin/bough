@@ -24,7 +24,9 @@ use crate::types::{
 pub const SPAWNER_SECRET: &str = "PINEAPPLE-QUADRANT-7";
 
 pub fn shared_db() -> SharedDb {
-    Arc::new(Mutex::new(SqliteDb::new(":memory:", DbOptions::default()).unwrap()))
+    Arc::new(Mutex::new(
+        SqliteDb::new(":memory:", DbOptions::default()).unwrap(),
+    ))
 }
 
 pub fn is_cap_error(err: &BoughError) -> bool {
@@ -41,7 +43,10 @@ pub struct SeedOpts {
 
 impl SeedOpts {
     pub fn subagent_of(origin_id: &str) -> Self {
-        SeedOpts { kind: Some(SessionKind::Subagent), origin_id: Some(origin_id.to_string()) }
+        SeedOpts {
+            kind: Some(SessionKind::Subagent),
+            origin_id: Some(origin_id.to_string()),
+        }
     }
 }
 
@@ -121,7 +126,9 @@ impl AgentsFixture {
         let bus = Arc::new(Bus::new(system_clock()));
         let events: Arc<Mutex<Vec<BoughEvent>>> = Arc::new(Mutex::new(vec![]));
         let sink = events.clone();
-        bus.subscribe(Arc::new(move |e: &BoughEvent| sink.lock().unwrap().push(e.clone())));
+        bus.subscribe(Arc::new(move |e: &BoughEvent| {
+            sink.lock().unwrap().push(e.clone())
+        }));
         let registry = Arc::new(TurnRegistry::new());
         let ctx = AppCtx {
             db: db.clone(),
@@ -136,7 +143,12 @@ impl AgentsFixture {
             turn_registry: registry.clone(),
             model_defaults_path: None,
         };
-        AgentsFixture { db, ctx, events, registry }
+        AgentsFixture {
+            db,
+            ctx,
+            events,
+            registry,
+        }
     }
 
     /// The same fixture with the client every turn will use.
@@ -176,7 +188,9 @@ pub fn seed_idle_session(f: &AgentsFixture) -> Session {
             id: Uuid::new_v4().to_string(),
             session_id: session.id.clone(),
             role: Role::User,
-            parts: vec![Part::Text { text: "delegate the audit".to_string() }],
+            parts: vec![Part::Text {
+                text: "delegate the audit".to_string(),
+            }],
             pending: false,
             created_at: 1_001,
         })
@@ -233,12 +247,17 @@ pub fn seed_spawner(f: &AgentsFixture) -> SeededSpawner {
             id: Uuid::new_v4().to_string(),
             session_id: session.id.clone(),
             role: Role::Supervisor,
-            parts: vec![Part::Text { text: format!("acknowledged, {SPAWNER_SECRET} it is") }],
+            parts: vec![Part::Text {
+                text: format!("acknowledged, {SPAWNER_SECRET} it is"),
+            }],
             pending: true,
             created_at: 1_002,
         })
         .unwrap();
-    SeededSpawner { session, supervisor }
+    SeededSpawner {
+        session,
+        supervisor,
+    }
 }
 
 /// The spawning turn's ctx, as the runner would have built it.
@@ -254,7 +273,11 @@ pub fn spawner_turn_ctx(
         session_id: seeded.session.id.clone(),
         turn_id: "turn-spawner".to_string(),
         message_id: seeded.supervisor.id.clone(),
-        workspace: seeded.session.workspace.clone().unwrap_or_else(|| "/tmp/checkout".into()),
+        workspace: seeded
+            .session
+            .workspace
+            .clone()
+            .unwrap_or_else(|| "/tmp/checkout".into()),
         model: "claude-test-model".to_string(),
         cancel: CancellationToken::new(),
         exits: Arc::new(Mutex::new(vec![])),
@@ -303,7 +326,10 @@ impl LlmClient for RecordingLlm {
 }
 
 pub fn recording_llm(reply: &str) -> Arc<RecordingLlm> {
-    Arc::new(RecordingLlm { reply: reply.to_string(), calls: Mutex::new(vec![]) })
+    Arc::new(RecordingLlm {
+        reply: reply.to_string(),
+        calls: Mutex::new(vec![]),
+    })
 }
 
 /// A model whose round parks until released, and that rejects like a real
@@ -311,7 +337,11 @@ pub fn recording_llm(reply: &str) -> Arc<RecordingLlm> {
 /// `started` flips true once the round is actually in flight.
 pub fn gated_llm(
     report: &str,
-) -> (Arc<dyn LlmClient>, Arc<dyn Fn() + Send + Sync>, tokio::sync::watch::Receiver<bool>) {
+) -> (
+    Arc<dyn LlmClient>,
+    Arc<dyn Fn() + Send + Sync>,
+    tokio::sync::watch::Receiver<bool>,
+) {
     let (started_tx, started_rx) = tokio::sync::watch::channel(false);
     let (gate_tx, gate_rx) = tokio::sync::watch::channel(false);
 
@@ -355,8 +385,11 @@ pub fn gated_llm(
         }
     }
 
-    let client: Arc<dyn LlmClient> =
-        Arc::new(Gated { report: report.to_string(), started: started_tx, gate: gate_rx });
+    let client: Arc<dyn LlmClient> = Arc::new(Gated {
+        report: report.to_string(),
+        started: started_tx,
+        gate: gate_rx,
+    });
     let release: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
         let _ = gate_tx.send(true);
     });
@@ -377,7 +410,12 @@ pub struct TurnWatch {
 
 impl TurnWatch {
     pub fn turns_for(&self, session_id: &str) -> usize {
-        self.starts.lock().unwrap().iter().filter(|s| s.as_str() == session_id).count()
+        self.starts
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| s.as_str() == session_id)
+            .count()
     }
     pub fn violations(&self) -> Vec<String> {
         self.violations.lock().unwrap().clone()
@@ -390,7 +428,9 @@ pub fn watch_turns(bus: &Bus) -> TurnWatch {
     let violations: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
     let (l, s, v) = (live.clone(), starts.clone(), violations.clone());
     bus.subscribe(Arc::new(move |e: &BoughEvent| {
-        let Some(id) = e.session_id.clone() else { return };
+        let Some(id) = e.session_id.clone() else {
+            return;
+        };
         match e.r#type {
             EventType::MessageStarted
                 if e.data.get("role").and_then(|r| r.as_str()) == Some("supervisor") =>

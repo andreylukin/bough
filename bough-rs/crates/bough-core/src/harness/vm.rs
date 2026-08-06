@@ -75,26 +75,41 @@ pub fn runtime_bin() -> Option<PathBuf> {
 
 fn find_on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|d| d.join(name)).find(|p| p.is_file())
+    std::env::split_paths(&path)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
 }
 
-/// Materialize the embedded worker script to a cache dir at first use. The
+/// Materialize an embedded worker script to a cache dir at first use. The
 /// filename carries a content hash so a new binary never runs a stale cached
 /// copy, and the write is tmp-then-rename so concurrent first uses are safe.
-/// `.cjs` because the script is CommonJS and Node decides by extension.
-fn worker_script_path() -> std::io::Result<PathBuf> {
+/// `.cjs` because the scripts are CommonJS and Node decides by extension.
+///
+/// Parameterized by `name`/`src` so the workflow sidecar (`harness/wf.rs`)
+/// materializes its own worker through the same path.
+pub(crate) fn worker_script_path_for(name: &str, src: &str) -> std::io::Result<PathBuf> {
     use sha2::{Digest, Sha256};
-    let dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("bough");
+    let dir = dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("bough");
     std::fs::create_dir_all(&dir)?;
-    let digest = Sha256::digest(VM_WORKER_JS.as_bytes());
+    let digest = Sha256::digest(src.as_bytes());
     let hash: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
-    let path = dir.join(format!("vm_worker-{hash}.cjs"));
+    let path = dir.join(format!("{name}-{hash}.cjs"));
     if !path.exists() {
-        let tmp = dir.join(format!("vm_worker-{hash}.{}.tmp", std::process::id()));
-        std::fs::write(&tmp, VM_WORKER_JS)?;
+        // The temp name is unique per CALL, not per process: two workers (or
+        // two tests) materializing at once inside one process shared a
+        // pid-named temp file, and the loser's rename hit a path the winner had
+        // already moved.
+        let tmp = dir.join(format!("{name}-{hash}.{}.tmp", uuid::Uuid::new_v4()));
+        std::fs::write(&tmp, src)?;
         std::fs::rename(&tmp, &path)?;
     }
     Ok(path)
+}
+
+fn worker_script_path() -> std::io::Result<PathBuf> {
+    worker_script_path_for("vm_worker", VM_WORKER_JS)
 }
 
 // ---------------------------------------------------------------------------
@@ -115,13 +130,19 @@ pub(crate) struct Sidecar {
 
 impl Sidecar {
     pub(crate) async fn spawn() -> std::io::Result<Sidecar> {
+        Sidecar::spawn_script(worker_script_path()?).await
+    }
+
+    /// Spawn a sidecar running `script`. The workflow worker
+    /// (`harness/wf.rs`) reuses this: same process-group, same writer task,
+    /// same stderr capture — one lifecycle, two workers.
+    pub(crate) async fn spawn_script(script: PathBuf) -> std::io::Result<Sidecar> {
         let bin = runtime_bin().ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "neither bun nor node found on PATH — a code-mode program needs a JS runtime",
             )
         })?;
-        let script = worker_script_path()?;
         let mut child = Command::new(&bin)
             .arg(&script)
             .stdin(Stdio::piped())
@@ -162,7 +183,13 @@ impl Sidecar {
             }
         });
 
-        Ok(Sidecar { child, pid, tx, lines, stderr })
+        Ok(Sidecar {
+            child,
+            pid,
+            tx,
+            lines,
+            stderr,
+        })
     }
 
     /// Post one message as an NDJSON line. `false` = the worker is already
@@ -173,7 +200,7 @@ impl Sidecar {
 
     /// A sender host-call tasks use to post `host_result`s back through the
     /// writer. Sends after settle land in a closed channel and are dropped.
-    fn sender(&self) -> mpsc::UnboundedSender<String> {
+    pub(crate) fn sender(&self) -> mpsc::UnboundedSender<String> {
         self.tx.clone()
     }
 
@@ -194,7 +221,7 @@ impl Sidecar {
         let _ = self.child.start_kill();
     }
 
-    fn stderr_text(&self) -> String {
+    pub(crate) fn stderr_text(&self) -> String {
         self.stderr.lock().expect("stderr sink").trim().to_string()
     }
 }
@@ -216,14 +243,20 @@ pub(crate) async fn engine_check(code: &str) -> std::io::Result<Option<String>> 
                     }
                 }
                 Ok(None) => {
-                    return Err(std::io::Error::other("sidecar exited during the syntax check"))
+                    return Err(std::io::Error::other(
+                        "sidecar exited during the syntax check",
+                    ))
                 }
                 Err(e) => return Err(e),
             }
         }
     })
     .await
-    .unwrap_or_else(|_| Err(std::io::Error::other("sidecar did not answer the syntax check")));
+    .unwrap_or_else(|_| {
+        Err(std::io::Error::other(
+            "sidecar did not answer the syntax check",
+        ))
+    });
     side.kill();
     answer
 }
@@ -272,7 +305,13 @@ fn survived(lines: usize) -> String {
 /// times out, or is interrupted is an ordinary result with `ok: false`,
 /// because every one of those is something the next round can act on.
 pub async fn run_program(opts: RunProgramOptions) -> ProgramResult {
-    let RunProgramOptions { code, host, timeout_ms, cancel, on_log } = opts;
+    let RunProgramOptions {
+        code,
+        host,
+        timeout_ms,
+        cancel,
+        on_log,
+    } = opts;
     let timeout_ms = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
     let cancel = cancel.unwrap_or_default();
 
@@ -639,7 +678,9 @@ mod tests {
     }
 
     fn sidecar_is_bun() -> bool {
-        runtime_bin().map(|p| p.file_name().is_some_and(|n| n == "bun")).unwrap_or(false)
+        runtime_bin()
+            .map(|p| p.file_name().is_some_and(|n| n == "bun"))
+            .unwrap_or(false)
     }
 
     // ---- the name lists — the invariant protocol.rs exists to hold ---------
@@ -667,7 +708,10 @@ mod tests {
             let t = seen
                 .get(name)
                 .unwrap_or_else(|| panic!("{name} is in PROGRAM_PARAMS but absent from the scope"));
-            assert_ne!(t, "undefined", "{name} is declared in protocol.rs but not bound by the worker");
+            assert_ne!(
+                t, "undefined",
+                "{name} is declared in protocol.rs but not bound by the worker"
+            );
         }
         // Every bridged name is callable — either a function or a
         // verb-dispatched method object (`state.get`, `workflow.start`).
@@ -705,12 +749,18 @@ mod tests {
         // The engine's own words are carried through, whichever engine parsed:
         // JSC says "Cannot declare a let variable twice", V8 says "already
         // been declared".
-        assert!(err.contains("twice") || err.contains("already been declared"), "{err}");
+        assert!(
+            err.contains("twice") || err.contains("already been declared"),
+            "{err}"
+        );
         // Error text is a product surface (spec §6): the message must say WHY
         // the name is taken and what to do, not just quote the parser.
         assert!(err.contains("already bound"), "{err}");
         assert!(err.contains("myBash"), "{err}");
-        assert!(!called.load(Ordering::SeqCst), "the program must never have started");
+        assert!(
+            !called.load(Ordering::SeqCst),
+            "the program must never have started"
+        );
     }
 
     #[tokio::test]
@@ -751,7 +801,10 @@ mod tests {
 
         assert!(!res.ok);
         assert!(
-            res.error.as_deref().unwrap().contains("boom: the thing exploded"),
+            res.error
+                .as_deref()
+                .unwrap()
+                .contains("boom: the thing exploded"),
             "{:?}",
             res.error
         );
@@ -786,7 +839,11 @@ mod tests {
         .await;
 
         assert!(res.ok, "{:?}", res.error);
-        assert!(res.logs[0].contains("agent() is not available in this turn"), "{}", res.logs[0]);
+        assert!(
+            res.logs[0].contains("agent() is not available in this turn"),
+            "{}",
+            res.logs[0]
+        );
         assert!(res.logs[0].contains("system prompt"), "{}", res.logs[0]);
     }
 
@@ -817,7 +874,9 @@ mod tests {
             host: fake_host(),
             timeout_ms: None,
             cancel: None,
-            on_log: Some(Arc::new(move |line| sink.lock().unwrap().push(line.to_string()))),
+            on_log: Some(Arc::new(move |line| {
+                sink.lock().unwrap().push(line.to_string())
+            })),
         })
         .await;
 
@@ -873,9 +932,15 @@ mod tests {
         assert_eq!(res.logs[0], "ok");
         // sh() is variadic program-side, a JSON array on the wire, and returns
         // parsed objects — a non-zero code is data.
-        assert_eq!(res.logs[1], r#"[{"code":0,"out":"a"},{"code":1,"out":"b"}]"#);
+        assert_eq!(
+            res.logs[1],
+            r#"[{"code":0,"out":"a"},{"code":1,"out":"b"}]"#
+        );
         assert_eq!(res.logs[2], "yes");
-        assert_eq!(res.logs[3], r#"{"verb":"set","args":{"key":"k","value":1}}"#);
+        assert_eq!(
+            res.logs[3],
+            r#"{"verb":"set","args":{"key":"k","value":1}}"#
+        );
 
         let seen = seen.lock().unwrap();
         assert_eq!(seen[0], vec!["echo hi"]);
@@ -896,8 +961,16 @@ mod tests {
         // The program ran to completion — an untrapped exit would have killed
         // the worker and left the turn hanging until its wall timeout.
         assert!(res.ok, "{:?}", res.error);
-        assert!(res.logs[0].starts_with("caught process.exit:"), "{}", res.logs[0]);
-        assert!(res.logs[0].contains("a program ends by returning"), "{}", res.logs[0]);
+        assert!(
+            res.logs[0].starts_with("caught process.exit:"),
+            "{}",
+            res.logs[0]
+        );
+        assert!(
+            res.logs[0].contains("a program ends by returning"),
+            "{}",
+            res.logs[0]
+        );
         assert_eq!(res.logs[1], "still running");
     }
 
@@ -906,7 +979,14 @@ mod tests {
         let res = run(r#"console.log("a"); process.exit(0);"#).await;
 
         assert!(!res.ok);
-        assert!(res.error.as_deref().unwrap().contains("exit(0) is not available"), "{:?}", res.error);
+        assert!(
+            res.error
+                .as_deref()
+                .unwrap()
+                .contains("exit(0) is not available"),
+            "{:?}",
+            res.error
+        );
         assert_eq!(res.logs[0], "a");
     }
 
@@ -922,9 +1002,18 @@ mod tests {
             "execSync",
             r#"const { execSync } = await import("node:child_process"); execSync("echo hi");"#,
         ),
-        ("exec", r#"(await import("node:child_process")).exec("echo hi", () => {});"#),
-        ("require'd execSync", r#"require("child_process").execSync("echo hi");"#),
-        ("spawn of sh", r#"(await import("node:child_process")).spawn("/bin/sh", ["-c", "echo hi"]);"#),
+        (
+            "exec",
+            r#"(await import("node:child_process")).exec("echo hi", () => {});"#,
+        ),
+        (
+            "require'd execSync",
+            r#"require("child_process").execSync("echo hi");"#,
+        ),
+        (
+            "spawn of sh",
+            r#"(await import("node:child_process")).spawn("/bin/sh", ["-c", "echo hi"]);"#,
+        ),
         (
             "spawn with shell:true",
             r#"(await import("node:child_process")).spawn("echo", ["hi"], { shell: true });"#,
@@ -932,8 +1021,14 @@ mod tests {
     ];
     const BUN_DOORS: &[(&str, &str)] = &[
         ("Bun.spawn of sh", r#"Bun.spawn(["sh", "-c", "echo hi"]);"#),
-        ("Bun.spawn({cmd}) of bash", r#"Bun.spawn({ cmd: ["/bin/bash", "-c", "echo hi"] });"#),
-        ("Bun.spawnSync of sh", r#"Bun.spawnSync(["sh", "-c", "echo hi"]);"#),
+        (
+            "Bun.spawn({cmd}) of bash",
+            r#"Bun.spawn({ cmd: ["/bin/bash", "-c", "echo hi"] });"#,
+        ),
+        (
+            "Bun.spawnSync of sh",
+            r#"Bun.spawnSync(["sh", "-c", "echo hi"]);"#,
+        ),
         ("Bun.$", "Bun.$`echo hi`;"),
     ];
 
@@ -1019,7 +1114,10 @@ mod tests {
         // The load-bearing assertion: if the sweep ran in the wrong order — or
         // not at all — the child's timer completes and the marker appears.
         tokio::time::sleep(Duration::from_millis(3_000)).await;
-        assert!(!marker.exists(), "the child outlived the abort — orphaned process");
+        assert!(
+            !marker.exists(),
+            "the child outlived the abort — orphaned process"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1066,7 +1164,10 @@ mod tests {
         .expect("no aborted ack within 10s");
 
         tokio::time::sleep(Duration::from_millis(3_000)).await;
-        assert!(!marker.exists(), "the abort acked without killing the child");
+        assert!(
+            !marker.exists(),
+            "the abort acked without killing the child"
+        );
 
         side.kill_group();
         let _ = std::fs::remove_dir_all(&dir);
@@ -1122,7 +1223,10 @@ mod tests {
         assert!(!res.ok);
         assert_eq!(res.interrupted, Some(true));
         assert_eq!(res.logs.len(), 0);
-        assert!(!called.load(Ordering::SeqCst), "the program must never have started");
+        assert!(
+            !called.load(Ordering::SeqCst),
+            "the program must never have started"
+        );
     }
 
     #[tokio::test]

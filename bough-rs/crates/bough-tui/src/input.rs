@@ -16,14 +16,16 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 /// SGR mouse tracking + bracketed paste + focus reporting + the title push.
 /// NOT `?1049h` — the renderer owns the alternate screen.
-pub const ENTER_SEQ: &str = "\u{1b}[22;0t\u{1b}[?1000h\u{1b}[?1002h\u{1b}[?1006h\u{1b}[?2004h\u{1b}[?1004h";
+pub const ENTER_SEQ: &str =
+    "\u{1b}[22;0t\u{1b}[?1000h\u{1b}[?1002h\u{1b}[?1006h\u{1b}[?2004h\u{1b}[?1004h";
 
 /// Mouse, paste and focus modes off, cursor visible, the pushed title popped
 /// back. `?25h` stays even though the renderer shows the cursor too: it is
 /// idempotent, and it is the only restore on a path where the renderer's
 /// teardown never ran. Must run AFTER renderer teardown (the renderer blanks
 /// the title on exit).
-pub const LEAVE_SEQ: &str = "\u{1b}[?1004l\u{1b}[?2004l\u{1b}[?1006l\u{1b}[?1002l\u{1b}[?1000l\u{1b}[?25h\u{1b}[23;0t";
+pub const LEAVE_SEQ: &str =
+    "\u{1b}[?1004l\u{1b}[?2004l\u{1b}[?1006l\u{1b}[?1002l\u{1b}[?1000l\u{1b}[?25h\u{1b}[23;0t";
 
 fn write_stdout(seq: &str) {
     // stdout already gone (exiting) — there is nothing left to signal to.
@@ -61,7 +63,7 @@ impl GuardInner {
             return;
         }
         if let Some(cleanup) = self.cleanup.lock().ok().and_then(|mut c| c.take()) {
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cleanup()));
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(cleanup));
         }
         (self.write)(LEAVE_SEQ);
     }
@@ -156,7 +158,7 @@ pub fn decode_modify_other(mods: u32, code: u32) -> String {
     let bits = mods.saturating_sub(1);
     let alt = bits & 2 != 0;
     let ctrl = bits & 4 != 0;
-    if code < 1 || code > 0x10ffff {
+    if !(1..=0x10ffff).contains(&code) {
         return String::new();
     }
     let mut base: char = match code {
@@ -229,7 +231,11 @@ mod tests {
             guard.leave();
             assert!(guard.has_left());
         }
-        assert_eq!(writes.load(Ordering::SeqCst), 1, "exactly one restore, however many paths ran");
+        assert_eq!(
+            writes.load(Ordering::SeqCst),
+            1,
+            "exactly one restore, however many paths ran"
+        );
         assert_eq!(cleanups.load(Ordering::SeqCst), 1, "cleanup runs once");
     }
 
@@ -263,9 +269,17 @@ mod tests {
         // this call run the same code.)
         let result = std::panic::catch_unwind(|| panic!("render exploded"));
         assert!(result.is_err());
-        assert_eq!(writes.load(Ordering::SeqCst), 1, "the hook restored the terminal");
+        assert_eq!(
+            writes.load(Ordering::SeqCst),
+            1,
+            "the hook restored the terminal"
+        );
         drop(guard);
-        assert_eq!(writes.load(Ordering::SeqCst), 1, "Drop after the hook is a no-op");
+        assert_eq!(
+            writes.load(Ordering::SeqCst),
+            1,
+            "Drop after the hook is a no-op"
+        );
     }
 
     #[test]

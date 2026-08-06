@@ -291,16 +291,23 @@ pub fn connect_events(options: EventStreamOptions) -> EventStream {
                                     if let Some(pos) = find_last_frame_end(&carry) {
                                         let complete: Vec<u8> = carry.drain(..pos).collect();
                                         let text = String::from_utf8_lossy(&complete);
-                                        let tail = parse_frames(&text, |t, d| {
-                                            match decode_frame(t, d) {
+                                        let tail =
+                                            parse_frames(&text, |t, d| match decode_frame(t, d) {
                                                 FrameOutcome::Event(event) => on_event(event),
-                                                FrameOutcome::Bad { r#type, data, error } => {
+                                                FrameOutcome::Bad {
+                                                    r#type,
+                                                    data,
+                                                    error,
+                                                } => {
                                                     if let Some(cb) = &on_bad_frame {
-                                                        cb(BadFrame { r#type, data, error });
+                                                        cb(BadFrame {
+                                                            r#type,
+                                                            data,
+                                                            error,
+                                                        });
                                                     }
                                                 }
-                                            }
-                                        });
+                                            });
                                         debug_assert!(tail.is_empty());
                                     }
                                 }
@@ -345,8 +352,18 @@ fn encode_uri_component(value: &str) -> String {
     let mut out = String::new();
     for byte in value.bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'!' | b'~' | b'*'
-            | b'\'' | b'(' | b')' => out.push(byte as char),
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'_'
+            | b'.'
+            | b'!'
+            | b'~'
+            | b'*'
+            | b'\''
+            | b'('
+            | b')' => out.push(byte as char),
             _ => out.push_str(&format!("%{byte:02X}")),
         }
     }
@@ -364,16 +381,23 @@ mod tests {
     #[test]
     fn parse_frames_returns_the_unconsumed_tail_so_a_split_frame_survives() {
         let mut seen: Vec<(String, String)> = Vec::new();
-        let tail = parse_frames("event: message.delta\ndata: {\"a\":1}\n\nevent: turn.fi", |t, d| {
-            seen.push((t.to_string(), d.to_string()))
-        });
-        assert_eq!(seen, vec![("message.delta".to_string(), "{\"a\":1}".to_string())]);
+        let tail = parse_frames(
+            "event: message.delta\ndata: {\"a\":1}\n\nevent: turn.fi",
+            |t, d| seen.push((t.to_string(), d.to_string())),
+        );
+        assert_eq!(
+            seen,
+            vec![("message.delta".to_string(), "{\"a\":1}".to_string())]
+        );
         assert_eq!(tail, "event: turn.fi");
 
         let tail = parse_frames(&format!("{tail}nished\ndata: {{\"b\":2}}\n\n"), |t, d| {
             seen.push((t.to_string(), d.to_string()))
         });
-        assert_eq!(seen[1], ("turn.finished".to_string(), "{\"b\":2}".to_string()));
+        assert_eq!(
+            seen[1],
+            ("turn.finished".to_string(), "{\"b\":2}".to_string())
+        );
         assert_eq!(tail, "");
     }
 
@@ -394,7 +418,10 @@ mod tests {
         parse_frames("event: tool.log\ndata: {\"a\":\ndata:  1}\n\n", |t, d| {
             seen.push((t.to_string(), d.to_string()))
         });
-        assert_eq!(seen, vec![("tool.log".to_string(), "{\"a\": 1}".to_string())]);
+        assert_eq!(
+            seen,
+            vec![("tool.log".to_string(), "{\"a\": 1}".to_string())]
+        );
     }
 
     #[test]
@@ -489,20 +516,30 @@ mod tests {
             fetch_fn: Some(fetch),
         });
 
-        until(|| received.lock().unwrap().len() == 1, "the event to arrive").await;
+        until(
+            || received.lock().unwrap().len() == 1,
+            "the event to arrive",
+        )
+        .await;
         {
             let got = received.lock().unwrap();
             assert_eq!(got[0].seq, 1);
             assert_eq!(got[0].session_id.as_deref(), Some("s1"));
         }
         // seq is not a resume cursor: the dial carries accept and NOTHING else.
-        let headers = fake.headers_seen.lock().unwrap();
-        assert_eq!(headers[0], vec![("accept".to_string(), "text/event-stream".to_string())]);
-        assert!(
-            !headers[0].iter().any(|(k, _)| k.eq_ignore_ascii_case("last-event-id")),
-            "seq is not a resume cursor"
-        );
-        drop(headers);
+        {
+            let headers = fake.headers_seen.lock().unwrap();
+            assert_eq!(
+                headers[0],
+                vec![("accept".to_string(), "text/event-stream".to_string())]
+            );
+            assert!(
+                !headers[0]
+                    .iter()
+                    .any(|(k, _)| k.eq_ignore_ascii_case("last-event-id")),
+                "seq is not a resume cursor"
+            );
+        }
 
         assert!(stream.connected());
         stream.close();
@@ -573,7 +610,11 @@ mod tests {
             fetch_fn: Some(fetch),
         });
 
-        until(|| received.lock().unwrap().len() == 1, "the good event to arrive").await;
+        until(
+            || received.lock().unwrap().len() == 1,
+            "the good event to arrive",
+        )
+        .await;
         assert_eq!(
             *bad.lock().unwrap(),
             vec!["session.teleported", "tool.log", "tool.log"]
@@ -586,7 +627,9 @@ mod tests {
 
     #[tokio::test]
     async fn connected_clears_on_a_clean_eof_and_close_stops_the_redial_loop() {
-        let (fetch, fake) = fake_fetch(vec![Attempt::ChunksThenEof(vec![b": connected\n\n".to_vec()])]);
+        let (fetch, fake) = fake_fetch(vec![Attempt::ChunksThenEof(vec![
+            b": connected\n\n".to_vec()
+        ])]);
         let stream = connect_events(EventStreamOptions {
             url: Some("http://127.0.0.1:4321/events".into()),
             base: None,

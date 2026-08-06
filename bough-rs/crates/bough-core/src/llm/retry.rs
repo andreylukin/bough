@@ -87,7 +87,10 @@ fn retry_after_hint(err: &BoughError) -> Option<u64> {
 /// and the workspace carries no rand crate.
 fn jitter() -> f64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
     (nanos % 1_000_000) as f64 / 1_000_000.0
 }
 
@@ -108,7 +111,11 @@ impl LlmClient for Retry {
     ) -> Result<LlmResult, BoughError> {
         let mut attempt: u32 = 1;
         loop {
-            match self.inner.run(params.clone(), on_text.clone(), cancel.clone()).await {
+            match self
+                .inner
+                .run(params.clone(), on_text.clone(), cancel.clone())
+                .await
+            {
                 Ok(result) => return Ok(result),
                 Err(err) => {
                     // Give up on exhaustion, on an abort raised during the
@@ -196,22 +203,33 @@ mod tests {
                 on_retry: Some(Arc::new(move |i| seen2.lock().unwrap().push(i.attempt))),
             },
         );
-        let result =
-            wrapped.run(params(&TOOLS), noop_text(), CancellationToken::new()).await.unwrap();
+        let result = wrapped
+            .run(params(&TOOLS), noop_text(), CancellationToken::new())
+            .await
+            .unwrap();
         assert_eq!(result.stop_reason, "end_turn");
         assert_eq!(*seen.lock().unwrap(), vec![1]);
     }
 
     #[tokio::test]
     async fn a_400_is_a_caller_mistake_and_is_never_re_attempted() {
-        let (client, calls) =
-            fake_client(vec![Err(BoughError::llm_with("openai: 400 bad schema", 400, None))]);
+        let (client, calls) = fake_client(vec![Err(BoughError::llm_with(
+            "openai: 400 bad schema",
+            400,
+            None,
+        ))]);
         let wrapped = with_retries(
             client,
-            RetryOpts { base_delay_ms: Some(0), max_attempts: Some(4), on_retry: None },
+            RetryOpts {
+                base_delay_ms: Some(0),
+                max_attempts: Some(4),
+                on_retry: None,
+            },
         );
-        let err =
-            wrapped.run(params(&TOOLS), noop_text(), CancellationToken::new()).await.unwrap_err();
+        let err = wrapped
+            .run(params(&TOOLS), noop_text(), CancellationToken::new())
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("400 bad schema"));
         assert_eq!(calls.lock().unwrap().len(), 1);
     }
@@ -222,10 +240,16 @@ mod tests {
         let (client, calls) = fake_client(vec![Err(boom()), Err(boom()), Err(boom())]);
         let wrapped = with_retries(
             client,
-            RetryOpts { base_delay_ms: Some(0), max_attempts: Some(3), on_retry: None },
+            RetryOpts {
+                base_delay_ms: Some(0),
+                max_attempts: Some(3),
+                on_retry: None,
+            },
         );
-        let err =
-            wrapped.run(params(&TOOLS), noop_text(), CancellationToken::new()).await.unwrap_err();
+        let err = wrapped
+            .run(params(&TOOLS), noop_text(), CancellationToken::new())
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("truncated before completion"));
         // 3 scripted failures & maxAttempts=3 sees exactly 3 calls.
         assert_eq!(calls.lock().unwrap().len(), 3);
@@ -250,19 +274,32 @@ mod tests {
         }
         let wrapped = with_retries(
             Arc::new(AbortingClient),
-            RetryOpts { base_delay_ms: Some(50_000), max_attempts: Some(6), on_retry: None },
+            RetryOpts {
+                base_delay_ms: Some(50_000),
+                max_attempts: Some(6),
+                on_retry: None,
+            },
         );
         let start = std::time::Instant::now();
-        let err =
-            wrapped.run(params(&TOOLS), noop_text(), CancellationToken::new()).await.unwrap_err();
+        let err = wrapped
+            .run(params(&TOOLS), noop_text(), CancellationToken::new())
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("503"));
-        assert!(start.elapsed() < Duration::from_secs(5), "must not back off");
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "must not back off"
+        );
     }
 
     #[tokio::test]
     async fn retry_after_lifts_the_delay_above_the_backoff() {
         let (client, _calls) = fake_client(vec![
-            Err(BoughError::llm_with("openrouter: 429 slow down", 429, Some(50))),
+            Err(BoughError::llm_with(
+                "openrouter: 429 slow down",
+                429,
+                Some(50),
+            )),
             Ok(good()),
         ]);
         let seen: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
@@ -275,7 +312,10 @@ mod tests {
                 on_retry: Some(Arc::new(move |i| seen2.lock().unwrap().push(i.delay_ms))),
             },
         );
-        wrapped.run(params(&TOOLS), noop_text(), CancellationToken::new()).await.unwrap();
+        wrapped
+            .run(params(&TOOLS), noop_text(), CancellationToken::new())
+            .await
+            .unwrap();
         // delay = round(max(retryAfterHint, backoff)); the 50ms Retry-After
         // hint dominates the 1ms base's jittered backoff (≤1ms).
         assert_eq!(*seen.lock().unwrap(), vec![50]);
@@ -284,15 +324,29 @@ mod tests {
     #[test]
     fn is_retryable_transport_faults_yes_aborts_and_caller_mistakes_no() {
         assert!(is_retryable(&BoughError::llm("transport fault"))); // defaults to 502
-        assert!(is_retryable(&BoughError::llm_with("rate limited", 429, None)));
+        assert!(is_retryable(&BoughError::llm_with(
+            "rate limited",
+            429,
+            None
+        )));
         assert!(is_retryable(&BoughError::llm_with("slow", 408, None)));
-        assert!(!is_retryable(&BoughError::llm_with("bad request", 400, None)));
+        assert!(!is_retryable(&BoughError::llm_with(
+            "bad request",
+            400,
+            None
+        )));
         assert!(!is_retryable(&BoughError::llm_with("no key", 401, None)));
         // The abort raised by a cancelled backoff is 499 — never re-attempted.
-        assert!(!is_retryable(&BoughError::llm_with("interrupted during retry backoff", 499, None)));
+        assert!(!is_retryable(&BoughError::llm_with(
+            "interrupted during retry backoff",
+            499,
+            None
+        )));
         // Network faults arrive from the transport edge as the 502 default —
         // the Rust spelling of ECONNRESET-on-a-plain-Error.
-        assert!(is_retryable(&BoughError::llm("error sending request: connection reset")));
+        assert!(is_retryable(&BoughError::llm(
+            "error sending request: connection reset"
+        )));
     }
 
     #[test]

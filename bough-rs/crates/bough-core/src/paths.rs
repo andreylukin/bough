@@ -19,7 +19,9 @@ use crate::errors::BoughError;
 pub fn bough_home() -> PathBuf {
     match std::env::var("BOUGH_HOME") {
         Ok(v) if !v.trim().is_empty() => PathBuf::from(v),
-        _ => dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")).join(".bough"),
+        _ => dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".bough"),
     }
 }
 
@@ -209,7 +211,9 @@ pub fn confine(root: &Path, candidate: &Path) -> Result<PathBuf, BoughError> {
         lexical_normalize(root)
     } else {
         lexical_normalize(
-            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")).join(root),
+            &std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("/"))
+                .join(root),
         )
     };
     let full = lexical_resolve(&base, candidate);
@@ -252,7 +256,9 @@ pub(crate) mod test_env {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn lock() -> MutexGuard<'static, ()> {
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     /// Restores the prior values on drop, even if the test body panics.
@@ -273,7 +279,9 @@ pub(crate) mod test_env {
     pub(crate) fn with_env(vars: &[(&str, Option<&str>)], f: impl FnOnce()) {
         let _guard = lock();
         let _restore = Restore(
-            vars.iter().map(|(k, _)| ((*k).to_string(), std::env::var(k).ok())).collect(),
+            vars.iter()
+                .map(|(k, _)| ((*k).to_string(), std::env::var(k).ok()))
+                .collect(),
         );
         for (k, v) in vars {
             match v {
@@ -307,32 +315,50 @@ mod tests {
 
     #[test]
     fn bough_home_relocates_the_entire_tree() {
-        with_env(&[("BOUGH_HOME", Some("/fake/root")), ("BOUGH_DB", None)], || {
-            assert_eq!(bough_home(), PathBuf::from("/fake/root"));
-            assert_eq!(bough_path(&["x", "y"]), PathBuf::from("/fake/root/x/y"));
-            assert_eq!(db_path(), PathBuf::from("/fake/root/bough.db"));
-            assert_eq!(artifacts_dir(), PathBuf::from("/fake/root/artifacts"));
-            assert_eq!(artifacts_dir_for("s1"), PathBuf::from("/fake/root/artifacts/s1"));
-            assert_eq!(comments_dir(), PathBuf::from("/fake/root/comments"));
-            assert_eq!(comments_path_for("s1"), PathBuf::from("/fake/root/comments/s1.json"));
-            assert_eq!(attachments_dir(), PathBuf::from("/fake/root/attachments"));
-            assert_eq!(scratch_root(), PathBuf::from("/fake/root/scratch"));
-            assert_eq!(scratch_dir_for("s1"), PathBuf::from("/fake/root/scratch/s1"));
-            assert_eq!(workflows_dir(), PathBuf::from("/fake/root/workflows"));
-            assert_eq!(workflow_script_path("w7"), PathBuf::from("/fake/root/workflows/w7.js"));
-            assert_eq!(user_skills_dir(), PathBuf::from("/fake/root/skills"));
-            assert_eq!(maps_dir(), PathBuf::from("/fake/root/maps"));
-            assert_eq!(
-                map_dir_for("payments-rewrite").unwrap(),
-                PathBuf::from("/fake/root/maps/payments-rewrite")
-            );
-            assert_eq!(theme_path(), PathBuf::from("/fake/root/theme.json"));
-            assert_eq!(model_settings_path(), PathBuf::from("/fake/root/model.json"));
-            assert_eq!(env_path(), PathBuf::from("/fake/root/env"));
-            assert_eq!(mcp_registry_path(), PathBuf::from("/fake/root/mcp.json"));
-            assert_eq!(mcp_auth_path(), PathBuf::from("/fake/root/mcp-auth.json"));
-            assert_eq!(logs_dir(), PathBuf::from("/fake/root/logs"));
-        });
+        with_env(
+            &[("BOUGH_HOME", Some("/fake/root")), ("BOUGH_DB", None)],
+            || {
+                assert_eq!(bough_home(), PathBuf::from("/fake/root"));
+                assert_eq!(bough_path(&["x", "y"]), PathBuf::from("/fake/root/x/y"));
+                assert_eq!(db_path(), PathBuf::from("/fake/root/bough.db"));
+                assert_eq!(artifacts_dir(), PathBuf::from("/fake/root/artifacts"));
+                assert_eq!(
+                    artifacts_dir_for("s1"),
+                    PathBuf::from("/fake/root/artifacts/s1")
+                );
+                assert_eq!(comments_dir(), PathBuf::from("/fake/root/comments"));
+                assert_eq!(
+                    comments_path_for("s1"),
+                    PathBuf::from("/fake/root/comments/s1.json")
+                );
+                assert_eq!(attachments_dir(), PathBuf::from("/fake/root/attachments"));
+                assert_eq!(scratch_root(), PathBuf::from("/fake/root/scratch"));
+                assert_eq!(
+                    scratch_dir_for("s1"),
+                    PathBuf::from("/fake/root/scratch/s1")
+                );
+                assert_eq!(workflows_dir(), PathBuf::from("/fake/root/workflows"));
+                assert_eq!(
+                    workflow_script_path("w7"),
+                    PathBuf::from("/fake/root/workflows/w7.js")
+                );
+                assert_eq!(user_skills_dir(), PathBuf::from("/fake/root/skills"));
+                assert_eq!(maps_dir(), PathBuf::from("/fake/root/maps"));
+                assert_eq!(
+                    map_dir_for("payments-rewrite").unwrap(),
+                    PathBuf::from("/fake/root/maps/payments-rewrite")
+                );
+                assert_eq!(theme_path(), PathBuf::from("/fake/root/theme.json"));
+                assert_eq!(
+                    model_settings_path(),
+                    PathBuf::from("/fake/root/model.json")
+                );
+                assert_eq!(env_path(), PathBuf::from("/fake/root/env"));
+                assert_eq!(mcp_registry_path(), PathBuf::from("/fake/root/mcp.json"));
+                assert_eq!(mcp_auth_path(), PathBuf::from("/fake/root/mcp-auth.json"));
+                assert_eq!(logs_dir(), PathBuf::from("/fake/root/logs"));
+            },
+        );
     }
 
     #[test]
@@ -360,9 +386,15 @@ mod tests {
 
     #[test]
     fn bough_db_overrides_the_database_path_outright() {
-        with_env(&[("BOUGH_HOME", Some("/fake/root")), ("BOUGH_DB", Some(":memory:"))], || {
-            assert_eq!(db_path(), PathBuf::from(":memory:"));
-        });
+        with_env(
+            &[
+                ("BOUGH_HOME", Some("/fake/root")),
+                ("BOUGH_DB", Some(":memory:")),
+            ],
+            || {
+                assert_eq!(db_path(), PathBuf::from(":memory:"));
+            },
+        );
     }
 
     #[test]
@@ -422,9 +454,7 @@ mod tests {
 
     #[test]
     fn confine_resolves_a_relative_root_against_the_cwd() {
-        let expected = lexical_normalize(
-            &std::env::current_dir().unwrap().join("store").join("x"),
-        );
+        let expected = lexical_normalize(&std::env::current_dir().unwrap().join("store").join("x"));
         assert_eq!(ok("store", "x"), expected);
     }
 
@@ -502,9 +532,7 @@ mod tests {
                 PathBuf::from("/fake/root/artifacts/s1")
             );
             assert!(confine(&artifacts_dir(), &artifacts_dir_for("../../etc")).is_err());
-            assert!(
-                confine(&artifacts_dir_for("s1"), Path::new("../s2/secret.html")).is_err()
-            );
+            assert!(confine(&artifacts_dir_for("s1"), Path::new("../s2/secret.html")).is_err());
         });
     }
 
@@ -512,8 +540,7 @@ mod tests {
 
     #[test]
     fn confine_is_lexical_around_a_real_symlink() {
-        let tmp = std::env::temp_dir()
-            .join(format!("bough-paths-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("bough-paths-test-{}", std::process::id()));
         let root = tmp.join("root");
         let outside = tmp.join("outside");
         std::fs::create_dir_all(&root).unwrap();
@@ -531,7 +558,10 @@ mod tests {
         // Documented boundary: the link itself resolves inside the root and is
         // ACCEPTED, because confine is lexical and never follows symlinks.
         // Pinned so a later move to fs-based resolution is deliberate.
-        assert_eq!(confine(&root, Path::new("link")).unwrap(), root.join("link"));
+        assert_eq!(
+            confine(&root, Path::new("link")).unwrap(),
+            root.join("link")
+        );
         assert_eq!(
             confine(&root, Path::new("link/secret.txt")).unwrap(),
             root.join("link/secret.txt")

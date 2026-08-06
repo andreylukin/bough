@@ -251,15 +251,10 @@ struct RawTurn {
 // ---- the handle -------------------------------------------------------------
 
 /// How `open_db`/`SqliteDb` take their seams.
+#[derive(Default)]
 pub struct DbOptions {
     /// Injected clock; only `update_turn` reads it. Absent = the system clock.
     pub now: Option<Clock>,
-}
-
-impl Default for DbOptions {
-    fn default() -> Self {
-        DbOptions { now: None }
-    }
 }
 
 /// The one concrete `Db`. Lives behind `Arc<Mutex<..>>` (`types::SharedDb`);
@@ -275,9 +270,13 @@ impl SqliteDb {
             .map_err(|e| BoughError::bad_request(format!("cannot open database {path}: {e}")))?;
         // Declared foreign keys are only enforced when this is on, and it is a
         // per-connection setting — off by default, so set at every open.
-        conn.execute_batch("PRAGMA foreign_keys = ON").map_err(sql_err)?;
+        conn.execute_batch("PRAGMA foreign_keys = ON")
+            .map_err(sql_err)?;
         migrate(&conn)?;
-        Ok(SqliteDb { conn, now: opts.now.unwrap_or_else(system_clock) })
+        Ok(SqliteDb {
+            conn,
+            now: opts.now.unwrap_or_else(system_clock),
+        })
     }
 
     /// Consume and close the handle. (The trait's `close(&self)` is a no-op —
@@ -307,7 +306,10 @@ impl SqliteDb {
     where
         F: FnOnce(&Row) -> rusqlite::Result<T>,
     {
-        self.conn.query_row(sql, params, f).optional().map_err(sql_err)
+        self.conn
+            .query_row(sql, params, f)
+            .optional()
+            .map_err(sql_err)
     }
 
     fn run(&self, sql: &str, params: impl rusqlite::Params) -> Result<(), BoughError> {
@@ -315,7 +317,11 @@ impl SqliteDb {
     }
 
     fn agent(&self, id: &str) -> Result<Option<WorkflowAgent>, BoughError> {
-        self.one("SELECT * FROM workflow_agents WHERE id = ?", [id], to_workflow_agent)
+        self.one(
+            "SELECT * FROM workflow_agents WHERE id = ?",
+            [id],
+            to_workflow_agent,
+        )
     }
 }
 
@@ -357,9 +363,16 @@ impl Db for SqliteDb {
     }
 
     fn get_session_runtime(&self, id: &str) -> Result<SessionRuntime, BoughError> {
-        let r = self.one("SELECT workspace, base FROM sessions WHERE id = ?", [id], |row| {
-            Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?))
-        })?;
+        let r = self.one(
+            "SELECT workspace, base FROM sessions WHERE id = ?",
+            [id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            },
+        )?;
         let (workspace, base) = r.unwrap_or((None, None));
         Ok(SessionRuntime { workspace, base })
     }
@@ -368,7 +381,11 @@ impl Db for SqliteDb {
     /// that from `kind` + `originId`. Tie-broken by rowid so two sessions
     /// created in one millisecond have a stable order.
     fn list_sessions(&self) -> Result<Vec<Session>, BoughError> {
-        self.all("SELECT * FROM sessions ORDER BY created_at DESC, rowid DESC", [], to_session)
+        self.all(
+            "SELECT * FROM sessions ORDER BY created_at DESC, rowid DESC",
+            [],
+            to_session,
+        )
     }
 
     /// The branches collapsed under `originId`, in creation order — the drill-in.
@@ -403,34 +420,55 @@ impl Db for SqliteDb {
     }
 
     fn set_session_title(&self, id: &str, title: &str) -> Result<(), BoughError> {
-        self.run("UPDATE sessions SET title = ? WHERE id = ?", params![title, id])
+        self.run(
+            "UPDATE sessions SET title = ? WHERE id = ?",
+            params![title, id],
+        )
     }
 
     fn set_session_workspace(&self, id: &str, workspace: &str) -> Result<(), BoughError> {
-        self.run("UPDATE sessions SET workspace = ? WHERE id = ?", params![workspace, id])
+        self.run(
+            "UPDATE sessions SET workspace = ? WHERE id = ?",
+            params![workspace, id],
+        )
     }
 
     fn set_session_base(&self, id: &str, base: &str) -> Result<(), BoughError> {
-        self.run("UPDATE sessions SET base = ? WHERE id = ?", params![base, id])
+        self.run(
+            "UPDATE sessions SET base = ? WHERE id = ?",
+            params![base, id],
+        )
     }
 
     /// Set by handoff; cleared with `None` by the first posted message.
     fn set_session_draft(&self, id: &str, draft: Option<&str>) -> Result<(), BoughError> {
-        self.run("UPDATE sessions SET draft = ? WHERE id = ?", params![draft, id])
+        self.run(
+            "UPDATE sessions SET draft = ? WHERE id = ?",
+            params![draft, id],
+        )
     }
 
     /// `None` clears the pin back to the global default.
     fn set_session_model(&self, id: &str, model: Option<&str>) -> Result<(), BoughError> {
-        self.run("UPDATE sessions SET model = ? WHERE id = ?", params![model, id])
+        self.run(
+            "UPDATE sessions SET model = ? WHERE id = ?",
+            params![model, id],
+        )
     }
 
     fn set_session_effort(&self, id: &str, effort: Option<&str>) -> Result<(), BoughError> {
-        self.run("UPDATE sessions SET effort = ? WHERE id = ?", params![effort, id])
+        self.run(
+            "UPDATE sessions SET effort = ? WHERE id = ?",
+            params![effort, id],
+        )
     }
 
     /// Whether the delegated TURN errored. Not an acceptance gate.
     fn set_session_outcome(&self, id: &str, ok: bool) -> Result<(), BoughError> {
-        self.run("UPDATE sessions SET outcome_ok = ? WHERE id = ?", params![bit(ok), id])
+        self.run(
+            "UPDATE sessions SET outcome_ok = ? WHERE id = ?",
+            params![bit(ok), id],
+        )
     }
 
     /// Fold one round's usage into the session. Two different things happen
@@ -562,7 +600,14 @@ impl Db for SqliteDb {
         self.run(
             "INSERT INTO messages (id, session_id, role, parts, pending, created_at)
              VALUES (?, ?, ?, ?, ?, ?)",
-            params![m.id, m.session_id, role, parts, bit(m.pending), m.created_at],
+            params![
+                m.id,
+                m.session_id,
+                role,
+                parts,
+                bit(m.pending),
+                m.created_at
+            ],
         )?;
         self.get_message(&m.id)?
             .ok_or_else(|| BoughError::bad_request("createMessage read-back found no row"))
@@ -636,9 +681,12 @@ impl Db for SqliteDb {
         }
         let tx = self.conn.unchecked_transaction().map_err(sql_err)?;
         for id in &doomed {
-            tx.execute("DELETE FROM turns WHERE message_id = ?", [id]).map_err(sql_err)?;
-            tx.execute("DELETE FROM messages_fts WHERE message_id = ?", [id]).map_err(sql_err)?;
-            tx.execute("DELETE FROM messages WHERE id = ?", [id]).map_err(sql_err)?;
+            tx.execute("DELETE FROM turns WHERE message_id = ?", [id])
+                .map_err(sql_err)?;
+            tx.execute("DELETE FROM messages_fts WHERE message_id = ?", [id])
+                .map_err(sql_err)?;
+            tx.execute("DELETE FROM messages WHERE id = ?", [id])
+                .map_err(sql_err)?;
         }
         tx.commit().map_err(sql_err)?;
         Ok(doomed)
@@ -746,10 +794,26 @@ impl Db for SqliteDb {
                 error,
                 u.as_ref().map(|u| u.input_tokens).or(cur.input_tokens),
                 u.as_ref().map(|u| u.output_tokens).or(cur.output_tokens),
-                if let Some(u) = &u { u.reasoning_tokens } else { cur.reasoning_tokens },
-                if let Some(u) = &u { u.cache_read_tokens } else { cur.cache_read_tokens },
-                if let Some(u) = &u { u.cache_write_tokens } else { cur.cache_write_tokens },
-                if let Some(u) = &u { u.cost_usd } else { cur.cost_usd },
+                if let Some(u) = &u {
+                    u.reasoning_tokens
+                } else {
+                    cur.reasoning_tokens
+                },
+                if let Some(u) = &u {
+                    u.cache_read_tokens
+                } else {
+                    cur.cache_read_tokens
+                },
+                if let Some(u) = &u {
+                    u.cache_write_tokens
+                } else {
+                    cur.cache_write_tokens
+                },
+                if let Some(u) = &u {
+                    u.cost_usd
+                } else {
+                    cur.cost_usd
+                },
                 id,
             ],
         )
@@ -766,13 +830,7 @@ impl Db for SqliteDb {
     }
 
     /// Upsert: a re-set overwrites in place and re-stamps `updated_at`.
-    fn set_state(
-        &self,
-        root_id: &str,
-        key: &str,
-        value: &str,
-        now: i64,
-    ) -> Result<(), BoughError> {
+    fn set_state(&self, root_id: &str, key: &str, value: &str, now: i64) -> Result<(), BoughError> {
         self.run(
             "INSERT INTO session_state (root_id, key, value, updated_at) VALUES (?, ?, ?, ?)
              ON CONFLICT(root_id, key)
@@ -837,7 +895,11 @@ impl Db for SqliteDb {
     }
 
     fn list_schedules(&self) -> Result<Vec<Schedule>, BoughError> {
-        self.all("SELECT * FROM schedules ORDER BY created_at, rowid", [], to_schedule)
+        self.all(
+            "SELECT * FROM schedules ORDER BY created_at, rowid",
+            [],
+            to_schedule,
+        )
     }
 
     /// The ticker's due set: enabled and past due, soonest first.
@@ -1042,11 +1104,7 @@ impl Db for SqliteDb {
 
     /// Patch a journal row. `started_at` is patchable on purpose: a queued
     /// agent's clock is reset when it actually leaves the run's semaphore.
-    fn update_workflow_agent(
-        &self,
-        id: &str,
-        patch: WorkflowAgentPatch,
-    ) -> Result<(), BoughError> {
+    fn update_workflow_agent(&self, id: &str, patch: WorkflowAgentPatch) -> Result<(), BoughError> {
         let Some(cur) = self.agent(id)? else {
             return Ok(());
         };
@@ -1184,10 +1242,7 @@ impl Db for SqliteDb {
     /// uses names a TOOL (`git`, `bun`, `rg`) and reusing it was never in
     /// question, while a tag only this project uses names its subject and is
     /// the vocabulary worth sharing.
-    fn tag_spread(
-        &self,
-        since_ts: Option<i64>,
-    ) -> Result<(i64, HashMap<String, i64>), BoughError> {
+    fn tag_spread(&self, since_ts: Option<i64>) -> Result<(i64, HashMap<String, i64>), BoughError> {
         let since = since_ts.unwrap_or(i64::MIN);
         let repos: i64 = self
             .one(
@@ -1215,7 +1270,11 @@ impl Db for SqliteDb {
         since_ts: i64,
         repo: Option<&str>,
     ) -> Result<Vec<TagDiversityDay>, BoughError> {
-        let scope = if repo.is_some() { " AND h.repo = ?" } else { "" };
+        let scope = if repo.is_some() {
+            " AND h.repo = ?"
+        } else {
+            ""
+        };
         let sql = format!(
             "WITH d AS (
                SELECT h.id AS id, h.session_id AS session_id, h.tags AS tags,
@@ -1264,7 +1323,11 @@ impl Db for SqliteDb {
         repo: Option<&str>,
         limit: Option<i64>,
     ) -> Result<Vec<TaggedCommand>, BoughError> {
-        let scope = if repo.is_some() { " AND h.repo = ?" } else { "" };
+        let scope = if repo.is_some() {
+            " AND h.repo = ?"
+        } else {
+            ""
+        };
         let sql = format!(
             "SELECT h.ts AS ts, h.repo AS repo, h.cmd AS cmd, h.tags AS tags,
                     h.exit_code AS exit_code, h.duration_ms AS duration_ms,
@@ -1336,7 +1399,13 @@ impl Db for SqliteDb {
                 AND exit_code IS NOT NULL AND exit_code <> 0",
             params![session_id, repo, cmd, since_ts],
             |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
             },
         )?;
         let Some((n, n_session, last_ts, exit_code, output_head)) = row else {
@@ -1375,7 +1444,9 @@ impl Db for SqliteDb {
             |row| {
                 Ok(RecentFailure {
                     cmd: row.get("cmd")?,
-                    output_head: row.get::<_, Option<String>>("output_head")?.unwrap_or_default(),
+                    output_head: row
+                        .get::<_, Option<String>>("output_head")?
+                        .unwrap_or_default(),
                     ts: row.get("ts")?,
                     session_id: row.get("session_id")?,
                 })
@@ -1409,8 +1480,11 @@ impl Db for SqliteDb {
     /// the whole design, so "first" is "the one". A part list that will not
     /// parse is a corrupt row, not a crash for a reader.
     fn program_for_message(&self, message_id: &str) -> Result<Option<String>, BoughError> {
-        let parts: Option<String> =
-            self.one("SELECT parts FROM messages WHERE id = ?", [message_id], |row| row.get(0))?;
+        let parts: Option<String> = self.one(
+            "SELECT parts FROM messages WHERE id = ?",
+            [message_id],
+            |row| row.get(0),
+        )?;
         let Some(parts) = parts else {
             return Ok(None);
         };
@@ -1420,8 +1494,10 @@ impl Db for SqliteDb {
         if let Some(arr) = parsed.as_array() {
             for p in arr {
                 if p.get("type").and_then(Value::as_str) == Some("tool_call") {
-                    if let Some(code) =
-                        p.get("input").and_then(|i| i.get("code")).and_then(Value::as_str)
+                    if let Some(code) = p
+                        .get("input")
+                        .and_then(|i| i.get("code"))
+                        .and_then(Value::as_str)
                     {
                         return Ok(Some(code.to_string()));
                     }
@@ -1473,7 +1549,11 @@ impl Db for SqliteDb {
                 {}
               ORDER BY rank, m.created_at DESC, messages_fts.message_id
               LIMIT ?",
-            if scoped { "AND messages_fts.session_id = ?" } else { "" }
+            if scoped {
+                "AND messages_fts.session_id = ?"
+            } else {
+                ""
+            }
         );
         let params: Vec<SqlValue> = match session_id {
             Some(sid) => vec![
@@ -1510,8 +1590,11 @@ Quote a phrase as \"like this\"; bare \", *, ^, : and NEAR are operators.",
     /// makes a rebuild produce results identical to incremental indexing.
     fn rebuild_search_index(&self) -> Result<(), BoughError> {
         self.run("DELETE FROM messages_fts", [])?;
-        let messages =
-            self.all("SELECT * FROM messages ORDER BY created_at, rowid", [], to_message)?;
+        let messages = self.all(
+            "SELECT * FROM messages ORDER BY created_at, rowid",
+            [],
+            to_message,
+        )?;
         for m in &messages {
             self.index_message(m)?;
         }
@@ -1567,7 +1650,9 @@ mod tests {
     fn clocked(v: Arc<AtomicI64>) -> SqliteDb {
         SqliteDb::new(
             ":memory:",
-            DbOptions { now: Some(Arc::new(move || v.load(Ordering::SeqCst))) },
+            DbOptions {
+                now: Some(Arc::new(move || v.load(Ordering::SeqCst))),
+            },
         )
         .unwrap()
     }
@@ -1695,8 +1780,9 @@ mod tests {
     /// Every object in `sqlite_master`, plus the stamped version. Read raw.
     fn introspect(path: &str) -> (Vec<(String, String, Option<String>)>, i64) {
         let raw = Connection::open(path).unwrap();
-        let mut stmt =
-            raw.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").unwrap();
+        let mut stmt = raw
+            .prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name")
+            .unwrap();
         let objects = stmt
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
             .unwrap()
@@ -1713,10 +1799,16 @@ mod tests {
         let db = mem();
         db.create_session(session("s")).unwrap();
         // Everything in the same millisecond: only rowid can order these.
-        db.create_message(message("m1", "s", "first", 5_000)).unwrap();
-        db.create_message(message("m2", "s", "second", 5_000)).unwrap();
-        db.create_message(message("m3", "s", "third", 5_000)).unwrap();
-        assert_eq!(texts(&db.messages_for("s").unwrap()), ["first", "second", "third"]);
+        db.create_message(message("m1", "s", "first", 5_000))
+            .unwrap();
+        db.create_message(message("m2", "s", "second", 5_000))
+            .unwrap();
+        db.create_message(message("m3", "s", "third", 5_000))
+            .unwrap();
+        assert_eq!(
+            texts(&db.messages_for("s").unwrap()),
+            ["first", "second", "third"]
+        );
     }
 
     #[test]
@@ -1727,9 +1819,12 @@ mod tests {
         let db = mem();
         db.create_session(session("branch")).unwrap();
         let seeded_at = (system_clock())();
-        db.create_message(message("seed1", "branch", "seeded user", seeded_at)).unwrap();
-        db.create_message(message("seed2", "branch", "seeded reply", seeded_at)).unwrap();
-        db.create_message(message("live", "branch", "the new turn", seeded_at)).unwrap();
+        db.create_message(message("seed1", "branch", "seeded user", seeded_at))
+            .unwrap();
+        db.create_message(message("seed2", "branch", "seeded reply", seeded_at))
+            .unwrap();
+        db.create_message(message("live", "branch", "the new turn", seeded_at))
+            .unwrap();
         assert_eq!(
             texts(&db.messages_for("branch").unwrap()),
             ["seeded user", "seeded reply", "the new turn"]
@@ -1742,8 +1837,10 @@ mod tests {
         // later but stamped earlier still sorts earlier.
         let db = mem();
         db.create_session(session("s")).unwrap();
-        db.create_message(message("late", "s", "later", 9_000)).unwrap();
-        db.create_message(message("early", "s", "earlier", 1_000)).unwrap();
+        db.create_message(message("late", "s", "later", 9_000))
+            .unwrap();
+        db.create_message(message("early", "s", "earlier", 1_000))
+            .unwrap();
         assert_eq!(texts(&db.messages_for("s").unwrap()), ["earlier", "later"]);
     }
 
@@ -1768,12 +1865,18 @@ mod tests {
 
         // Interleaved timestamps on purpose: the thread is grouped by SESSION,
         // root first, and only ordered by time WITHIN a session.
-        db.create_message(message("r2", "root", "root b", 200)).unwrap();
-        db.create_message(message("r1", "root", "root a", 100)).unwrap();
-        db.create_message(message("m1", "mid", "mid a", 50)).unwrap();
-        db.create_message(message("m2", "mid", "mid b", 400)).unwrap();
-        db.create_message(message("l1", "leaf", "leaf a", 10)).unwrap();
-        db.create_message(message("l2", "leaf", "leaf b", 300)).unwrap();
+        db.create_message(message("r2", "root", "root b", 200))
+            .unwrap();
+        db.create_message(message("r1", "root", "root a", 100))
+            .unwrap();
+        db.create_message(message("m1", "mid", "mid a", 50))
+            .unwrap();
+        db.create_message(message("m2", "mid", "mid b", 400))
+            .unwrap();
+        db.create_message(message("l1", "leaf", "leaf a", 10))
+            .unwrap();
+        db.create_message(message("l2", "leaf", "leaf b", 300))
+            .unwrap();
 
         assert_eq!(
             texts(&db.thread_for("leaf").unwrap()),
@@ -1798,7 +1901,10 @@ mod tests {
         leaf.parent_id = Some("mid".into());
         db.create_session(leaf).unwrap();
         let ids = |v: Vec<Session>| v.into_iter().map(|s| s.id).collect::<Vec<_>>();
-        assert_eq!(ids(db.ancestor_chain("leaf").unwrap()), ["root", "mid", "leaf"]);
+        assert_eq!(
+            ids(db.ancestor_chain("leaf").unwrap()),
+            ["root", "mid", "leaf"]
+        );
         assert_eq!(ids(db.ancestor_chain("root").unwrap()), ["root"]);
         assert!(db.ancestor_chain("nope").unwrap().is_empty());
     }
@@ -1812,7 +1918,9 @@ mod tests {
         let mut b = session("b");
         b.parent_id = Some("a".into());
         db.create_session(b).unwrap();
-        db.conn.execute("UPDATE sessions SET parent_id = 'b' WHERE id = 'a'", []).unwrap();
+        db.conn
+            .execute("UPDATE sessions SET parent_id = 'b' WHERE id = 'a'", [])
+            .unwrap();
         let chain = db.ancestor_chain("b").unwrap();
         assert_eq!(chain.len(), 2);
     }
@@ -1823,15 +1931,21 @@ mod tests {
         // though origin_id points back at the spawner.
         let db = mem();
         db.create_session(session("spawner")).unwrap();
-        db.create_message(message("p1", "spawner", "parent context", 1)).unwrap();
+        db.create_message(message("p1", "spawner", "parent context", 1))
+            .unwrap();
         let mut sub = session("sub");
         sub.kind = SessionKind::Subagent;
         sub.origin_id = Some("spawner".into());
         db.create_session(sub).unwrap();
-        db.create_message(message("t1", "sub", "the task", 2)).unwrap();
+        db.create_message(message("t1", "sub", "the task", 2))
+            .unwrap();
         assert_eq!(texts(&db.thread_for("sub").unwrap()), ["the task"]);
         assert_eq!(
-            db.sessions_by_origin("spawner").unwrap().iter().map(|s| &s.id).collect::<Vec<_>>(),
+            db.sessions_by_origin("spawner")
+                .unwrap()
+                .iter()
+                .map(|s| &s.id)
+                .collect::<Vec<_>>(),
             ["sub"]
         );
     }
@@ -1849,7 +1963,9 @@ mod tests {
         s.workspace = Some("/w".into());
         s.base = Some("abc123".into());
         first.create_session(s).unwrap();
-        first.create_message(message("m1", "s", "hello", 100)).unwrap();
+        first
+            .create_message(message("m1", "s", "hello", 100))
+            .unwrap();
         first.create_turn(turn("t1", "s", "m1")).unwrap();
         let mut sc = schedule("sc1", 2, true);
         sc.title = "nightly".into();
@@ -1864,10 +1980,16 @@ mod tests {
         // Second open re-applies the same schema block. It must not throw,
         // must not alter the schema, and must not touch a single row.
         let second = open_db(Some(path_s), DbOptions::default()).unwrap();
-        assert_eq!(second.get_session("s").unwrap().unwrap().base.as_deref(), Some("abc123"));
+        assert_eq!(
+            second.get_session("s").unwrap().unwrap().base.as_deref(),
+            Some("abc123")
+        );
         assert_eq!(texts(&second.messages_for("s").unwrap()), ["hello"]);
         assert_eq!(second.get_turn("t1").unwrap().unwrap().step, "start");
-        assert_eq!(second.get_schedule("sc1").unwrap().unwrap().spec, "daily@09:00");
+        assert_eq!(
+            second.get_schedule("sc1").unwrap().unwrap().spec,
+            "daily@09:00"
+        );
         drop(second);
         assert_eq!(introspect(path_s), schema_before);
 
@@ -1911,7 +2033,11 @@ mod tests {
         db.create_session(b).unwrap();
         // Visibility is the caller's derivation: every kind is returned here.
         assert_eq!(
-            db.list_sessions().unwrap().iter().map(|s| &s.id).collect::<Vec<_>>(),
+            db.list_sessions()
+                .unwrap()
+                .iter()
+                .map(|s| &s.id)
+                .collect::<Vec<_>>(),
             ["b", "sub", "a"]
         );
     }
@@ -1935,7 +2061,10 @@ mod tests {
         assert_eq!(s.outcome_ok, Some(false));
         assert_eq!(
             db.get_session_runtime("s").unwrap(),
-            SessionRuntime { workspace: Some("/checkout".into()), base: Some("deadbeef".into()) }
+            SessionRuntime {
+                workspace: Some("/checkout".into()),
+                base: Some("deadbeef".into())
+            }
         );
 
         db.set_session_model("s", None).unwrap();
@@ -2009,7 +2138,12 @@ mod tests {
         for id in ["root", "sub", "nested", "wfa", "fork"] {
             db.add_session_usage(
                 id,
-                &Usage { input_tokens: 10, output_tokens: 1, cost_usd: Some(1.0), ..Default::default() },
+                &Usage {
+                    input_tokens: 10,
+                    output_tokens: 1,
+                    cost_usd: Some(1.0),
+                    ..Default::default()
+                },
                 1,
             )
             .unwrap();
@@ -2036,7 +2170,8 @@ mod tests {
         db.create_turn(tb).unwrap();
         // b's message is still pending after a crash, but its turn is orphaned
         // — the session must not read as busy forever.
-        db.update_message("mb", &[Part::Text { text: "x".into() }], true).unwrap();
+        db.update_message("mb", &[Part::Text { text: "x".into() }], true)
+            .unwrap();
         let busy = db.busy_session_ids().unwrap();
         assert_eq!(busy, HashSet::from(["a".to_string()]));
     }
@@ -2059,8 +2194,14 @@ mod tests {
         db.update_message(
             "m",
             &[
-                Part::Reasoning { text: "thinking".into(), meta: None, model: None },
-                Part::Text { text: "done".into() },
+                Part::Reasoning {
+                    text: "thinking".into(),
+                    meta: None,
+                    model: None,
+                },
+                Part::Text {
+                    text: "done".into(),
+                },
             ],
             false,
         )
@@ -2077,7 +2218,8 @@ mod tests {
         db.create_session(session("s")).unwrap();
         db.create_message(message("m1", "s", "keep", 100)).unwrap();
         db.create_message(message("m2", "s", "cut", 200)).unwrap();
-        db.create_message(message("m3", "s", "cut too", 200)).unwrap();
+        db.create_message(message("m3", "s", "cut too", 200))
+            .unwrap();
         db.create_turn(turn("t2", "s", "m2")).unwrap();
         for id in ["m1", "m2", "m3"] {
             let m = db.get_message(id).unwrap().unwrap();
@@ -2109,8 +2251,14 @@ mod tests {
         assert_eq!(t.usage, None, "a turn with no reported round has no usage");
 
         clock.store(6_000, Ordering::SeqCst);
-        db.update_turn("t", TurnPatch { step: Some("round 1".into()), ..Default::default() })
-            .unwrap();
+        db.update_turn(
+            "t",
+            TurnPatch {
+                step: Some("round 1".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(db.get_turn("t").unwrap().unwrap().updated_at, 6_000);
         assert_eq!(
             db.get_turn("t").unwrap().unwrap().status,
@@ -2155,12 +2303,24 @@ mod tests {
         db.update_turn(
             "t",
             TurnPatch {
-                usage: Some(Usage { input_tokens: 25, output_tokens: 4, ..Default::default() }),
+                usage: Some(Usage {
+                    input_tokens: 25,
+                    output_tokens: 4,
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
         )
         .unwrap();
-        assert_eq!(db.get_turn("t").unwrap().unwrap().usage.unwrap().input_tokens, 25);
+        assert_eq!(
+            db.get_turn("t")
+                .unwrap()
+                .unwrap()
+                .usage
+                .unwrap()
+                .input_tokens,
+            25
+        );
 
         db.update_turn(
             "t",
@@ -2175,7 +2335,14 @@ mod tests {
             db.get_turn("t").unwrap().unwrap().error.as_deref(),
             Some("context window exceeded")
         );
-        db.update_turn("t", TurnPatch { error: Patch::Clear, ..Default::default() }).unwrap();
+        db.update_turn(
+            "t",
+            TurnPatch {
+                error: Patch::Clear,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(db.get_turn("t").unwrap().unwrap().error, None);
 
         // Unknown id: silent no-op.
@@ -2200,17 +2367,29 @@ mod tests {
 
         let ids = |ts: Vec<Turn>| ts.into_iter().map(|t| t.id).collect::<Vec<_>>();
         assert_eq!(ids(db.turns_for_session("s").unwrap()), ["t1", "t2"]);
-        assert_eq!(ids(db.turns_by_status(TurnStatus::Running).unwrap()), ["t1", "t2"]);
+        assert_eq!(
+            ids(db.turns_by_status(TurnStatus::Running).unwrap()),
+            ["t1", "t2"]
+        );
         assert_eq!(db.turn_for_message("m1").unwrap().unwrap().id, "t1");
 
         // Both checkpoints land on the same millisecond — the tie-break must
         // still pick the later row rather than an arbitrary one.
         clock.store(9, Ordering::SeqCst);
-        db.update_turn("t1", TurnPatch { status: Some(TurnStatus::Done), ..Default::default() })
-            .unwrap();
+        db.update_turn(
+            "t1",
+            TurnPatch {
+                status: Some(TurnStatus::Done),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         db.update_turn(
             "t2",
-            TurnPatch { status: Some(TurnStatus::Interrupted), ..Default::default() },
+            TurnPatch {
+                status: Some(TurnStatus::Interrupted),
+                ..Default::default()
+            },
         )
         .unwrap();
         assert_eq!(
@@ -2230,19 +2409,33 @@ mod tests {
         db.set_state("root", "a", r#"{"n":11}"#, 30).unwrap();
         db.set_state("other", "a", r#"{"n":9}"#, 40).unwrap();
 
-        assert_eq!(db.get_state("root", "a").unwrap().as_deref(), Some(r#"{"n":11}"#));
+        assert_eq!(
+            db.get_state("root", "a").unwrap().as_deref(),
+            Some(r#"{"n":11}"#)
+        );
         assert_eq!(db.get_state("root", "missing").unwrap(), None);
         assert_eq!(
             db.list_state("root").unwrap(),
             vec![
-                StateEntry { key: "a".into(), bytes: 8, updated_at: 30 },
-                StateEntry { key: "b".into(), bytes: 7, updated_at: 10 },
+                StateEntry {
+                    key: "a".into(),
+                    bytes: 8,
+                    updated_at: 30
+                },
+                StateEntry {
+                    key: "b".into(),
+                    bytes: 7,
+                    updated_at: 10
+                },
             ]
         );
         assert!(db.delete_state("root", "a").unwrap());
         assert!(!db.delete_state("root", "a").unwrap());
         // Scoping is by root id: the other lineage is untouched.
-        assert_eq!(db.get_state("other", "a").unwrap().as_deref(), Some(r#"{"n":9}"#));
+        assert_eq!(
+            db.get_state("other", "a").unwrap().as_deref(),
+            Some(r#"{"n":9}"#)
+        );
     }
 
     // ---- schedules ----------------------------------------------------------
@@ -2259,14 +2452,20 @@ mod tests {
         assert_eq!(ids(db.due_schedules(100).unwrap()), ["late", "later"]);
         db.mark_schedule_run("late", 100, 3_700_100).unwrap();
         assert_eq!(ids(db.due_schedules(100).unwrap()), ["later"]);
-        assert_eq!(db.get_schedule("late").unwrap().unwrap().last_run_at, Some(100));
+        assert_eq!(
+            db.get_schedule("late").unwrap().unwrap().last_run_at,
+            Some(100)
+        );
 
         let mut s = db.get_schedule("later").unwrap().unwrap();
         s.enabled = false;
         s.spec = "daily@07:00".into();
         db.update_schedule(&s).unwrap();
         assert!(!db.get_schedule("later").unwrap().unwrap().enabled);
-        assert_eq!(db.get_schedule("later").unwrap().unwrap().spec, "daily@07:00");
+        assert_eq!(
+            db.get_schedule("later").unwrap().unwrap().spec,
+            "daily@07:00"
+        );
         assert!(db.due_schedules(100).unwrap().is_empty());
 
         db.delete_schedule("off").unwrap();
@@ -2284,8 +2483,14 @@ mod tests {
         w.description = "review handlers".into();
         w.script = "export const meta = {}".into();
         w.phases = vec![
-            WorkflowPhase { title: "Review".into(), detail: None },
-            WorkflowPhase { title: "Verify".into(), detail: Some("second pass".into()) },
+            WorkflowPhase {
+                title: "Review".into(),
+                detail: None,
+            },
+            WorkflowPhase {
+                title: "Verify".into(),
+                detail: Some("second pass".into()),
+            },
         ];
         w.status = WorkflowStatus::Running;
         w.args = Some(json!({"files": ["a.ts"]}));
@@ -2296,13 +2501,23 @@ mod tests {
 
         db.update_workflow(
             "w1",
-            WorkflowPatch { current_phase: Patch::Set("Review".into()), ..Default::default() },
+            WorkflowPatch {
+                current_phase: Patch::Set("Review".into()),
+                ..Default::default()
+            },
         )
         .unwrap();
         // An unpatched field survives — including the JSON ones.
-        assert_eq!(db.get_workflow("w1").unwrap().unwrap().args, Some(json!({"files": ["a.ts"]})));
         assert_eq!(
-            db.get_workflow("w1").unwrap().unwrap().current_phase.as_deref(),
+            db.get_workflow("w1").unwrap().unwrap().args,
+            Some(json!({"files": ["a.ts"]}))
+        );
+        assert_eq!(
+            db.get_workflow("w1")
+                .unwrap()
+                .unwrap()
+                .current_phase
+                .as_deref(),
             Some("Review")
         );
 
@@ -2320,11 +2535,18 @@ mod tests {
         assert_eq!(done.status, WorkflowStatus::Done);
         assert_eq!(done.result, Some(json!([1, 2, 3])));
         assert_eq!(done.finished_at, Some(99));
-        assert_eq!(done.script, "export const meta = {}", "the script is never patched");
+        assert_eq!(
+            done.script, "export const meta = {}",
+            "the script is never patched"
+        );
 
         assert!(db.unfinished_workflows().unwrap().is_empty());
         assert_eq!(
-            db.list_workflows(Some("s")).unwrap().iter().map(|w| &w.id).collect::<Vec<_>>(),
+            db.list_workflows(Some("s"))
+                .unwrap()
+                .iter()
+                .map(|w| &w.id)
+                .collect::<Vec<_>>(),
             ["w1"]
         );
         assert!(db.list_workflows(Some("nobody")).unwrap().is_empty());
@@ -2385,7 +2607,11 @@ mod tests {
         db.create_workflow(workflow("w1", "root")).unwrap();
 
         assert_eq!(
-            db.list_workflows(Some("branch")).unwrap().iter().map(|w| &w.id).collect::<Vec<_>>(),
+            db.list_workflows(Some("branch"))
+                .unwrap()
+                .iter()
+                .map(|w| &w.id)
+                .collect::<Vec<_>>(),
             ["w1"]
         );
         // `origin_id` on a delegate means its SPAWNER. Its runs are not the
@@ -2421,10 +2647,17 @@ mod tests {
         db.create_workflow_agent(agent("a1", 1, "k1")).unwrap();
 
         assert_eq!(
-            db.list_workflow_agents("w1").unwrap().iter().map(|a| &a.id).collect::<Vec<_>>(),
+            db.list_workflow_agents("w1")
+                .unwrap()
+                .iter()
+                .map(|a| &a.id)
+                .collect::<Vec<_>>(),
             ["a1", "a2"]
         );
-        assert_eq!(db.find_workflow_agent("w1", "k2").unwrap().unwrap().id, "a2");
+        assert_eq!(
+            db.find_workflow_agent("w1", "k2").unwrap().unwrap().id,
+            "a2"
+        );
         assert!(db.find_workflow_agent("w1", "nope").unwrap().is_none());
         assert!(db.find_workflow_agent("other", "k1").unwrap().is_none());
 
@@ -2477,7 +2710,9 @@ mod tests {
                 id: "m1".into(),
                 session_id: "s1".into(),
                 role: Role::User,
-                parts: vec![Part::Text { text: "the patch engine anchors on hashes".into() }],
+                parts: vec![Part::Text {
+                    text: "the patch engine anchors on hashes".into(),
+                }],
                 pending: false,
                 created_at: 100,
             })
@@ -2498,7 +2733,9 @@ mod tests {
                         name: "run_steps".into(),
                         input: json!({"code": "patch patch patch"}),
                     },
-                    Part::Text { text: "applied the patch".into() },
+                    Part::Text {
+                        text: "applied the patch".into(),
+                    },
                 ],
                 pending: false,
                 created_at: 200,
@@ -2527,7 +2764,10 @@ mod tests {
         db.index_message(&m2).unwrap();
 
         let hits = db.search_messages("patch", None, None).unwrap();
-        let mut ids = hits.iter().map(|h| h.message_id.clone()).collect::<Vec<_>>();
+        let mut ids = hits
+            .iter()
+            .map(|h| h.message_id.clone())
+            .collect::<Vec<_>>();
         ids.sort();
         assert_eq!(ids, ["m1", "m2"]);
         assert_eq!(hits.len(), 2, "no duplicate row from re-indexing");
@@ -2536,7 +2776,13 @@ mod tests {
             "tool results are not indexed — only prose and reasoning"
         );
         assert!(hits.iter().all(|h| h.snippet.contains("patch")));
-        assert_eq!(hits.iter().find(|h| h.message_id == "m1").unwrap().created_at, 100);
+        assert_eq!(
+            hits.iter()
+                .find(|h| h.message_id == "m1")
+                .unwrap()
+                .created_at,
+            100
+        );
 
         assert_eq!(
             db.search_messages("patch", Some("s2"), None)
@@ -2547,7 +2793,10 @@ mod tests {
             ["m2"]
         );
         assert_eq!(db.search_messages("patch", None, Some(1)).unwrap().len(), 1);
-        assert!(db.search_messages("nonexistentword", None, None).unwrap().is_empty());
+        assert!(db
+            .search_messages("nonexistentword", None, None)
+            .unwrap()
+            .is_empty());
         // Reasoning text is indexed too.
         assert_eq!(
             db.search_messages("grammar", None, None)
@@ -2575,8 +2824,14 @@ mod tests {
             .expect_err("a malformed query must throw");
         assert_eq!(err.status(), 400);
         let msg = err.to_string();
-        assert!(msg.contains("FTS5"), "the message names the syntax, not just 'failed': {msg}");
-        assert!(msg.contains("Quote a phrase"), "and it names the move that resolves it: {msg}");
+        assert!(
+            msg.contains("FTS5"),
+            "the message names the syntax, not just 'failed': {msg}"
+        );
+        assert!(
+            msg.contains("Quote a phrase"),
+            "and it names the move that resolves it: {msg}"
+        );
     }
 
     // ---- integrity ----------------------------------------------------------
@@ -2621,15 +2876,29 @@ mod tests {
         r2.ts = 2_000;
         db.record_command(&r2).unwrap();
         assert_eq!(
-            db.command_tag_rows("repo", CommandTagOpts::default()).unwrap(),
+            db.command_tag_rows("repo", CommandTagOpts::default())
+                .unwrap(),
             vec![
-                CommandTagRow { tag: "git".into(), ts: 1_000, exit_code: Some(0) },
-                CommandTagRow { tag: "push".into(), ts: 1_000, exit_code: Some(0) },
+                CommandTagRow {
+                    tag: "git".into(),
+                    ts: 1_000,
+                    exit_code: Some(0)
+                },
+                CommandTagRow {
+                    tag: "push".into(),
+                    ts: 1_000,
+                    exit_code: Some(0)
+                },
             ]
         );
         assert_eq!(
-            db.command_tag_rows("other", CommandTagOpts::default()).unwrap(),
-            vec![CommandTagRow { tag: "bun".into(), ts: 2_000, exit_code: Some(0) }]
+            db.command_tag_rows("other", CommandTagOpts::default())
+                .unwrap(),
+            vec![CommandTagRow {
+                tag: "bun".into(),
+                ts: 2_000,
+                exit_code: Some(0)
+            }]
         );
     }
 
@@ -2647,7 +2916,10 @@ mod tests {
         let tags = |dir: &str| {
             db.command_tag_rows(
                 "repo",
-                CommandTagOpts { dir: Some(dir.into()), since_ts: None },
+                CommandTagOpts {
+                    dir: Some(dir.into()),
+                    since_ts: None,
+                },
             )
             .unwrap()
             .into_iter()
@@ -2670,11 +2942,17 @@ mod tests {
             db.record_command(&r).unwrap();
         }
         assert_eq!(
-            db.command_tag_rows("repo", CommandTagOpts { dir: None, since_ts: Some(100) })
-                .unwrap()
-                .into_iter()
-                .map(|r| r.tag)
-                .collect::<Vec<_>>(),
+            db.command_tag_rows(
+                "repo",
+                CommandTagOpts {
+                    dir: None,
+                    since_ts: Some(100)
+                }
+            )
+            .unwrap()
+            .into_iter()
+            .map(|r| r.tag)
+            .collect::<Vec<_>>(),
             ["new"]
         );
     }
@@ -2693,8 +2971,10 @@ mod tests {
             r.output_head = head.into();
             r
         };
-        db.record_command(&fail("s1", 100, 1, "first boom")).unwrap();
-        db.record_command(&fail("s2", 200, 2, "second boom")).unwrap();
+        db.record_command(&fail("s1", 100, 1, "first boom"))
+            .unwrap();
+        db.record_command(&fail("s2", 200, 2, "second boom"))
+            .unwrap();
         // A success and a different command never count.
         let mut ok = cmd_record();
         ok.cmd = "make x".into();
@@ -2705,7 +2985,10 @@ mod tests {
         other.exit_code = Some(1);
         db.record_command(&other).unwrap();
 
-        let pf = db.prior_failures("repo", "make x", 0, "s1").unwrap().unwrap();
+        let pf = db
+            .prior_failures("repo", "make x", 0, "s1")
+            .unwrap()
+            .unwrap();
         assert_eq!(pf.count, 2);
         assert_eq!(pf.in_session, 1);
         assert_eq!(pf.last_ts, 200);
@@ -2714,10 +2997,16 @@ mod tests {
         assert_eq!(pf.exit_code, Some(2));
         assert_eq!(pf.output_head, "second boom");
 
-        let windowed = db.prior_failures("repo", "make x", 150, "s1").unwrap().unwrap();
+        let windowed = db
+            .prior_failures("repo", "make x", 150, "s1")
+            .unwrap()
+            .unwrap();
         assert_eq!(windowed.count, 1);
         assert_eq!(windowed.in_session, 0);
-        assert!(db.prior_failures("repo", "never ran", 0, "s1").unwrap().is_none());
+        assert!(db
+            .prior_failures("repo", "never ran", 0, "s1")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -2747,10 +3036,16 @@ mod tests {
         assert_eq!(db.recent_failures("repo", 0, 0).unwrap().len(), 1);
 
         assert_eq!(
-            db.last_success_like("repo", "cargo test", "cargo test", 0).unwrap().as_deref(),
+            db.last_success_like("repo", "cargo test", "cargo test", 0)
+                .unwrap()
+                .as_deref(),
             Some("cargo test --all")
         );
-        assert_eq!(db.last_success_like("repo", "cargo test", "cargo test", 250).unwrap(), None);
+        assert_eq!(
+            db.last_success_like("repo", "cargo test", "cargo test", 250)
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -2762,7 +3057,9 @@ mod tests {
             session_id: "s".into(),
             role: Role::Supervisor,
             parts: vec![
-                Part::Text { text: "running".into() },
+                Part::Text {
+                    text: "running".into(),
+                },
                 Part::ToolCall {
                     id: "c1".into(),
                     name: "run_steps".into(),
@@ -2784,10 +3081,13 @@ mod tests {
             Some("await bash('ls', 'ls')")
         );
         assert_eq!(db.program_for_message("missing").unwrap(), None);
-        db.create_message(message("plain", "s", "no program here", 2)).unwrap();
+        db.create_message(message("plain", "s", "no program here", 2))
+            .unwrap();
         assert_eq!(db.program_for_message("plain").unwrap(), None);
         // A part list that will not parse is a corrupt row, not a crash.
-        db.conn.execute("UPDATE messages SET parts = 'not json' WHERE id = 'm'", []).unwrap();
+        db.conn
+            .execute("UPDATE messages SET parts = 'not json' WHERE id = 'm'", [])
+            .unwrap();
         assert_eq!(db.program_for_message("m").unwrap(), None);
     }
 
@@ -2812,7 +3112,11 @@ mod tests {
         seed_tagged(&db, "r3", "bun test", &["bun"], 50);
         let (repos, by_tag) = db.tag_spread(None).unwrap();
         assert_eq!(repos, 3);
-        assert_eq!(by_tag.get("git"), Some(&2), "two repos use git, not three uses");
+        assert_eq!(
+            by_tag.get("git"),
+            Some(&2),
+            "two repos use git, not three uses"
+        );
         assert_eq!(by_tag.get("push"), Some(&1));
         assert_eq!(by_tag.get("bun"), Some(&1));
         // The window filters both halves from the same scan.
@@ -2850,9 +3154,10 @@ mod tests {
         assert_eq!(all[0].repo, "other");
         assert_eq!(all[0].session_id, "s1");
         let scoped = db.commands_for_tag("t", Some("repo"), None).unwrap();
-        assert_eq!(scoped.iter().map(|c| c.cmd.as_str()).collect::<Vec<_>>(), [
-            "second", "first"
-        ]);
+        assert_eq!(
+            scoped.iter().map(|c| c.cmd.as_str()).collect::<Vec<_>>(),
+            ["second", "first"]
+        );
         // The TS `Math.max(1, trunc)` clamp: a zero limit still returns one.
         assert_eq!(db.commands_for_tag("t", None, Some(0)).unwrap().len(), 1);
     }
@@ -2951,14 +3256,22 @@ mod tests {
         }
         let db = open_db(Some(path_s), DbOptions::default()).unwrap();
         // The old rows are gone, the new shape accepts a full record.
-        assert!(db.command_tag_rows("r", CommandTagOpts::default()).unwrap().is_empty());
+        assert!(db
+            .command_tag_rows("r", CommandTagOpts::default())
+            .unwrap()
+            .is_empty());
         db.create_session(session("s1")).unwrap();
         let mut r = cmd_record();
         r.tags = "a".into();
         r.tag_list = vec!["a".into()];
         r.output_head = "out".into();
         db.record_command(&r).unwrap();
-        assert_eq!(db.command_tag_rows("repo", CommandTagOpts::default()).unwrap().len(), 1);
+        assert_eq!(
+            db.command_tag_rows("repo", CommandTagOpts::default())
+                .unwrap()
+                .len(),
+            1
+        );
         drop(db);
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -2994,7 +3307,11 @@ mod tests {
         // recall queries.
         assert_eq!(
             db.command_tag_rows("r", CommandTagOpts::default()).unwrap(),
-            vec![CommandTagRow { tag: "kept".into(), ts: 1, exit_code: Some(0) }]
+            vec![CommandTagRow {
+                tag: "kept".into(),
+                ts: 1,
+                exit_code: Some(0)
+            }]
         );
         drop(db);
         let _ = std::fs::remove_dir_all(dir);
@@ -3027,7 +3344,9 @@ mod tests {
         let path_s = copy.to_str().unwrap();
         let db = open_db(Some(path_s), DbOptions::default())
             .expect("the live-db copy must open clean under the Rust migrate");
-        let sessions = db.list_sessions().expect("every stored session row must map to the wire shape");
+        let sessions = db
+            .list_sessions()
+            .expect("every stored session row must map to the wire shape");
         let _ = db.latest_turn_statuses().unwrap();
         let _ = db.list_schedules().unwrap();
         drop(db);

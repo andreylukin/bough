@@ -56,7 +56,10 @@ pub fn list_skills_h() -> Handler {
         let sources = default_sources();
         let skills: Vec<_> = list_skills(&sources).iter().map(row).collect();
         let sources: Vec<_> = sources.iter().map(source_row).collect();
-        Ok(json_res(&json!({ "skills": skills, "sources": sources }), 200))
+        Ok(json_res(
+            &json!({ "skills": skills, "sources": sources }),
+            200,
+        ))
     })
 }
 
@@ -78,10 +81,14 @@ pub fn get_skill() -> Handler {
                 Ok(json_res(&out, 200))
             }
             None => {
-                let installed: Vec<String> =
-                    list_skills(&sources).iter().map(|s| format!("/{}", s.name)).collect();
-                let dirs: Vec<String> =
-                    sources.iter().map(|s| s.dir.to_string_lossy().into_owned()).collect();
+                let installed: Vec<String> = list_skills(&sources)
+                    .iter()
+                    .map(|s| format!("/{}", s.name))
+                    .collect();
+                let dirs: Vec<String> = sources
+                    .iter()
+                    .map(|s| s.dir.to_string_lossy().into_owned())
+                    .collect();
                 Err(BoughError::not_found(format!(
                     "no skill \"{name}\". A skill is a folder <dir>/{name}/SKILL.md in one of \
                      {}. {}",
@@ -117,8 +124,14 @@ mod tests {
         assert!(!skills.is_empty(), "the bundled skills must be discovered");
         for s in skills {
             assert!(s["name"].is_string(), "every row names its skill");
-            assert!(s["dir"].is_string(), "every row carries the folder ${{SKILL_DIR}} resolves to");
-            assert!(s.get("body").is_none(), "the body is deliberately not in the listing");
+            assert!(
+                s["dir"].is_string(),
+                "every row carries the folder ${{SKILL_DIR}} resolves to"
+            );
+            assert!(
+                s.get("body").is_none(),
+                "the body is deliberately not in the listing"
+            );
         }
         // Name-sorted, first source winning.
         let names: Vec<&str> = skills.iter().map(|s| s["name"].as_str().unwrap()).collect();
@@ -127,8 +140,13 @@ mod tests {
         assert_eq!(names, sorted, "the listing is name-sorted");
 
         let sources = body["sources"].as_array().expect("sources is an array");
-        assert!(!sources.is_empty(), "a client must be able to see where we looked");
-        assert!(sources.iter().all(|s| s["dir"].is_string() && s["source"].is_string()));
+        assert!(
+            !sources.is_empty(),
+            "a client must be able to see where we looked"
+        );
+        assert!(sources
+            .iter()
+            .all(|s| s["dir"].is_string() && s["source"].is_string()));
     }
 
     #[tokio::test]
@@ -136,13 +154,18 @@ mod tests {
         let fx = testutil::fixture();
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let listing = testutil::body_json(call.call(testutil::get("/skills")).await).await;
-        let first = listing["skills"][0]["name"].as_str().expect("a bundled skill").to_string();
+        let first = listing["skills"][0]["name"]
+            .as_str()
+            .expect("a bundled skill")
+            .to_string();
 
         let res = call.call(testutil::get(&format!("/skills/{first}"))).await;
         assert_eq!(res.status(), 200);
         let body = testutil::body_json(res).await;
         assert_eq!(body["name"], first.as_str());
-        let text = body["body"].as_str().expect("the body route serves the body");
+        let text = body["body"]
+            .as_str()
+            .expect("the body route serves the body");
         assert!(!text.is_empty(), "a loadable skill contributes a body");
         assert!(
             !text.contains("${SKILL_DIR}"),
@@ -154,7 +177,9 @@ mod tests {
     async fn an_unknown_skill_is_a_404_naming_it_and_the_alternatives() {
         let fx = testutil::fixture();
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
-        let res = call.call(testutil::get("/skills/definitely-not-a-skill")).await;
+        let res = call
+            .call(testutil::get("/skills/definitely-not-a-skill"))
+            .await;
         assert_eq!(res.status(), 404);
         let body = testutil::body_json(res).await;
         let msg = body["error"].as_str().unwrap();

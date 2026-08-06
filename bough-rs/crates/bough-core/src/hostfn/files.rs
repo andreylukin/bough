@@ -69,7 +69,11 @@ impl SnapshotStore {
     }
 
     pub fn with_limits(max_sessions: usize, max_per_session: usize) -> Self {
-        SnapshotStore { max_sessions, max_per_session, by_session: Mutex::new(Vec::new()) }
+        SnapshotStore {
+            max_sessions,
+            max_per_session,
+            by_session: Mutex::new(Vec::new()),
+        }
     }
 
     /// Remember the text a session just saw. Call after view, patch and write.
@@ -106,7 +110,11 @@ impl SnapshotStore {
     /// Live path count for a session — the eviction tests read it.
     pub fn size(&self, session_id: &str) -> usize {
         let sessions = self.by_session.lock().unwrap();
-        sessions.iter().find(|(id, _)| id == session_id).map(|(_, f)| f.len()).unwrap_or(0)
+        sessions
+            .iter()
+            .find(|(id, _)| id == session_id)
+            .map(|(_, f)| f.len())
+            .unwrap_or(0)
     }
 
     /// Forget everything a session saw. Not called in the turn path.
@@ -138,7 +146,9 @@ pub struct WriteLog {
 
 impl WriteLog {
     pub fn new() -> Self {
-        WriteLog { by_session: Mutex::new(HashMap::new()) }
+        WriteLog {
+            by_session: Mutex::new(HashMap::new()),
+        }
     }
 
     pub fn record(&self, session_id: &str, path: &str) {
@@ -155,7 +165,11 @@ impl WriteLog {
     /// store that only ever grows in a process that runs for weeks is a leak
     /// with extra steps.
     pub fn take(&self, session_id: &str) -> Vec<String> {
-        self.by_session.lock().unwrap().remove(session_id).unwrap_or_default()
+        self.by_session
+            .lock()
+            .unwrap()
+            .remove(session_id)
+            .unwrap_or_default()
     }
 }
 
@@ -202,7 +216,11 @@ pub fn create_file_host_fns(
     snapshots: Arc<SnapshotStore>,
     writes: Arc<WriteLog>,
 ) -> FileHostFns {
-    FileHostFns { ctx, snapshots, writes }
+    FileHostFns {
+        ctx,
+        snapshots,
+        writes,
+    }
 }
 
 impl FileHostFns {
@@ -305,8 +323,7 @@ impl FileHostFns {
             claimed.insert(p.clone(), g.path.clone());
             full.insert(g.path.clone(), p.clone());
 
-            let bytes =
-                std::fs::read(&p).map_err(|err| patch_read_error(&g.path, &p, &err))?;
+            let bytes = std::fs::read(&p).map_err(|err| patch_read_error(&g.path, &p, &err))?;
             let text = String::from_utf8_lossy(&bytes).into_owned();
             current.insert(g.path.clone(), text);
 
@@ -478,7 +495,8 @@ fn dirname(path: &str) -> String {
 /// Single-quote a path for the shell hints above, so a space or `$` is inert.
 fn shell_quote(s: &str) -> String {
     let plain = !s.is_empty()
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'));
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'));
     if plain {
         s.to_string()
     } else {
@@ -513,8 +531,8 @@ mod tests {
 
     impl Workspace {
         fn new(files: &[(&str, &str)], store: SnapshotStore) -> Self {
-            let dir = std::env::temp_dir()
-                .join(format!("bough-files-test-{}", uuid::Uuid::new_v4()));
+            let dir =
+                std::env::temp_dir().join(format!("bough-files-test-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&dir).unwrap();
             let ws = Workspace {
                 dir,
@@ -607,23 +625,31 @@ mod tests {
         let first_tag = echoed_tag(&first, "a.ts");
         assert_eq!(first_tag, tag_of(&w.read("a.ts")));
         assert_ne!(first_tag, viewed_tag);
-        assert!(first.contains("patched — 1 operation, now 4 lines"), "{first}");
+        assert!(
+            first.contains("patched — 1 operation, now 4 lines"),
+            "{first}"
+        );
 
         // 3. a SECOND patch chains onto the echoed tag with no view() between.
-        let second =
-            fns.patch(&format!("[a.ts#{first_tag}]\nINS.POST 4:\n+five\nDEL 1\n")).unwrap();
+        let second = fns
+            .patch(&format!("[a.ts#{first_tag}]\nINS.POST 4:\n+five\nDEL 1\n"))
+            .unwrap();
         assert_eq!(w.read("a.ts"), doc(&["TWO", "three", "four", "five"]));
 
         // …and that echo chains again, indefinitely.
         let second_tag = echoed_tag(&second, "a.ts");
         assert_eq!(second_tag, tag_of(&w.read("a.ts")));
         assert_ne!(second_tag, first_tag);
-        fns.patch(&format!("[a.ts#{second_tag}]\nSWAP 1:\n+2\n")).unwrap();
+        fns.patch(&format!("[a.ts#{second_tag}]\nSWAP 1:\n+2\n"))
+            .unwrap();
         assert_eq!(w.read("a.ts"), doc(&["2", "three", "four", "five"]));
 
         // …as does an empty tag, which now names what the last patch wrote.
         fns.patch("[a.ts#]\nINS.HEAD:\n+// header\n").unwrap();
-        assert_eq!(w.read("a.ts"), doc(&["// header", "2", "three", "four", "five"]));
+        assert_eq!(
+            w.read("a.ts"),
+            doc(&["// header", "2", "three", "four", "five"])
+        );
     }
 
     // -- view ----------------------------------------------------------------
@@ -661,7 +687,10 @@ mod tests {
         let w = ws(&[("empty.ts", "")]);
         let fns = w.fns();
         let out = fns.view("empty.ts").unwrap();
-        assert_eq!(out.split('\n').next().unwrap(), format!("[empty.ts#{}]", tag_of("")));
+        assert_eq!(
+            out.split('\n').next().unwrap(),
+            format!("[empty.ts#{}]", tag_of(""))
+        );
         assert!(out.contains("this file is empty"), "{out}");
         assert!(out.contains("INS.HEAD:"), "{out}");
         // …and it is on record, so INS.HEAD against it works.
@@ -760,7 +789,10 @@ mod tests {
         let err = err_of(w.fns().patch("[a.ts#]\nSWAP 1:\n+ONE\n"));
         assert_eq!(err.name(), "PatchError");
         let msg = err.to_string();
-        assert!(msg.contains("no viewed version of a.ts is on record"), "{msg}");
+        assert!(
+            msg.contains("no viewed version of a.ts is on record"),
+            "{msg}"
+        );
         assert!(msg.contains("call view(\"a.ts\")"), "{msg}");
         assert_eq!(w.read("a.ts"), doc(&["one", "two"])); // untouched
     }
@@ -771,11 +803,16 @@ mod tests {
         w.session("spawner").view("a.ts").unwrap();
         // A subagent is its own session and must anchor to what IT read.
         let msg = err_of(w.session("subagent").patch("[a.ts#]\nSWAP 1:\n+ONE\n")).to_string();
-        assert!(msg.contains("no viewed version of a.ts is on record"), "{msg}");
+        assert!(
+            msg.contains("no viewed version of a.ts is on record"),
+            "{msg}"
+        );
         assert_eq!(w.read("a.ts"), doc(&["one", "two"]));
 
         // The session that did view it is unaffected.
-        w.session("spawner").patch("[a.ts#]\nSWAP 1:\n+ONE\n").unwrap();
+        w.session("spawner")
+            .patch("[a.ts#]\nSWAP 1:\n+ONE\n")
+            .unwrap();
         assert_eq!(w.read("a.ts"), doc(&["ONE", "two"]));
     }
 
@@ -784,10 +821,8 @@ mod tests {
         let w = ws(&[("a.ts", &doc(&["one"]))]);
         let fns = w.fns();
         fns.view("a.ts").unwrap();
-        let msg = err_of(
-            fns.patch("[a.ts#]\nSWAP 1:\n+ONE\n\n[gone.ts#]\nSWAP 1:\n+x\n"),
-        )
-        .to_string();
+        let msg =
+            err_of(fns.patch("[a.ts#]\nSWAP 1:\n+ONE\n\n[gone.ts#]\nSWAP 1:\n+x\n")).to_string();
         assert!(msg.contains("cannot patch gone.ts: no such file"), "{msg}");
         assert!(msg.contains("write(\"gone.ts\""), "{msg}");
         assert!(msg.contains("all its files or none"), "{msg}");
@@ -801,7 +836,10 @@ mod tests {
         fns.view("a.ts").unwrap();
         let msg = err_of(fns.patch("[a.ts#0000]\nSWAP 1:\n+ONE\n")).to_string();
         assert!(msg.contains("stale tag"), "{msg}");
-        assert!(msg.contains(&format!("now #{}", tag_of(&doc(&["one", "two"])))), "{msg}");
+        assert!(
+            msg.contains(&format!("now #{}", tag_of(&doc(&["one", "two"])))),
+            "{msg}"
+        );
         assert!(msg.contains("empty tag \"[a.ts#]\""), "{msg}");
         assert_eq!(w.read("a.ts"), doc(&["one", "two"]));
     }
@@ -851,16 +889,15 @@ mod tests {
         fns.view("b.ts").unwrap();
 
         // b's anchor is out of range, so NEITHER file may be written.
-        let msg = err_of(
-            fns.patch("[a.ts#]\nSWAP 1:\n+A1\n\n[b.ts#]\nSWAP 99:\n+B\n"),
-        )
-        .to_string();
+        let msg = err_of(fns.patch("[a.ts#]\nSWAP 1:\n+A1\n\n[b.ts#]\nSWAP 99:\n+B\n")).to_string();
         assert!(msg.contains("b.ts: line 99 is out of range"), "{msg}");
         assert_eq!(w.read("a.ts"), a);
         assert_eq!(w.read("b.ts"), b);
 
         // Corrected, both land in one call, and both tags are echoed.
-        let out = fns.patch("[a.ts#]\nSWAP 1:\n+A1\n\n[b.ts#]\nSWAP 2:\n+B2\n").unwrap();
+        let out = fns
+            .patch("[a.ts#]\nSWAP 1:\n+A1\n\n[b.ts#]\nSWAP 2:\n+B2\n")
+            .unwrap();
         assert_eq!(w.read("a.ts"), doc(&["A1", "a2"]));
         assert_eq!(w.read("b.ts"), doc(&["b1", "B2"]));
         assert_eq!(echoed_tag(&out, "a.ts"), tag_of(&w.read("a.ts")));
@@ -875,9 +912,7 @@ mod tests {
         fns.view("a.ts").unwrap();
         // Both sections would be computed against the pre-patch text, so the
         // second write would silently discard the first.
-        let err = err_of(
-            fns.patch("[a.ts#]\nSWAP 1:\n+ONE\n\n[./a.ts#]\nSWAP 2:\n+TWO\n"),
-        );
+        let err = err_of(fns.patch("[a.ts#]\nSWAP 1:\n+ONE\n\n[./a.ts#]\nSWAP 2:\n+TWO\n"));
         assert_eq!(err.name(), "PatchError");
         let msg = err.to_string();
         assert!(msg.contains("name the same file"), "{msg}");
@@ -887,8 +922,8 @@ mod tests {
 
     #[test]
     fn an_absolute_path_outside_the_workspace_is_an_ordinary_target() {
-        let outside = std::env::temp_dir()
-            .join(format!("bough-files-outside-{}", uuid::Uuid::new_v4()));
+        let outside =
+            std::env::temp_dir().join(format!("bough-files-outside-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&outside).unwrap();
         let target = outside.join("cfg.txt");
         std::fs::write(&target, doc(&["k=1"])).unwrap();
@@ -898,7 +933,8 @@ mod tests {
         let fns = w.fns();
         // The workspace is the ORIGIN for relative paths, never a boundary.
         fns.view(&target_s).unwrap();
-        fns.patch(&format!("[{target_s}#]\nSWAP 1:\n+k=2\n")).unwrap();
+        fns.patch(&format!("[{target_s}#]\nSWAP 1:\n+k=2\n"))
+            .unwrap();
         assert_eq!(std::fs::read_to_string(&target).unwrap(), doc(&["k=2"]));
         let _ = std::fs::remove_dir_all(&outside);
     }
@@ -918,7 +954,11 @@ mod tests {
     #[test]
     fn the_oldest_path_is_evicted_and_a_dropped_one_costs_a_re_view() {
         let w = Workspace::new(
-            &[("a.ts", &doc(&["a"])), ("b.ts", &doc(&["b"])), ("c.ts", &doc(&["c"]))],
+            &[
+                ("a.ts", &doc(&["a"])),
+                ("b.ts", &doc(&["b"])),
+                ("c.ts", &doc(&["c"])),
+            ],
             SnapshotStore::with_limits(MAX_SESSIONS, 2),
         );
         let fns = w.fns();
@@ -928,7 +968,10 @@ mod tests {
         assert_eq!(w.snapshots.size("s1"), 2);
 
         let msg = err_of(fns.patch("[a.ts#]\nSWAP 1:\n+A\n")).to_string();
-        assert!(msg.contains("no viewed version of a.ts is on record"), "{msg}");
+        assert!(
+            msg.contains("no viewed version of a.ts is on record"),
+            "{msg}"
+        );
         assert_eq!(w.read("a.ts"), doc(&["a"]));
 
         // Re-viewing puts it back — the eviction costs a round, never an edit.
@@ -950,9 +993,11 @@ mod tests {
         assert_eq!(w.snapshots.size("s-mid"), 1);
         assert_eq!(w.snapshots.size("s-new"), 1);
 
-        let msg =
-            err_of(w.session("s-old").patch("[a.ts#]\nSWAP 1:\n+A\n")).to_string();
-        assert!(msg.contains("no viewed version of a.ts is on record"), "{msg}");
+        let msg = err_of(w.session("s-old").patch("[a.ts#]\nSWAP 1:\n+A\n")).to_string();
+        assert!(
+            msg.contains("no viewed version of a.ts is on record"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -978,8 +1023,10 @@ mod tests {
         // A patch counts too: it is the other way a file changes.
         let shown = fns.view("lib/alpha.py").unwrap();
         let tag = echoed_tag(&shown, "lib/alpha.py");
-        fns.patch(&format!("[lib/alpha.py#{tag}]\nSWAP 1.=1:\n+def a(): return 1"))
-            .unwrap();
+        fns.patch(&format!(
+            "[lib/alpha.py#{tag}]\nSWAP 1.=1:\n+def a(): return 1"
+        ))
+        .unwrap();
 
         let mut wrote = w.writes.take("s1");
         wrote.sort();

@@ -82,7 +82,11 @@ pub fn row_span(sel: &Selection, y: i64) -> Option<Span> {
     if y < a.y || y > b.y {
         return None;
     }
-    let from = if y == a.y { (a.x - 1).max(0) as usize } else { 0 };
+    let from = if y == a.y {
+        (a.x - 1).max(0) as usize
+    } else {
+        0
+    };
     let to = if y == b.y { b.x.max(0) as usize } else { EOL };
     (from < to).then_some(Span { from, to })
 }
@@ -131,10 +135,16 @@ pub struct CopyRow {
 
 impl CopyRow {
     pub fn painted(text: impl Into<String>) -> CopyRow {
-        CopyRow { text: text.into(), src: None }
+        CopyRow {
+            text: text.into(),
+            src: None,
+        }
     }
     pub fn with_src(text: impl Into<String>, src: impl Into<String>) -> CopyRow {
-        CopyRow { text: text.into(), src: Some(src.into()) }
+        CopyRow {
+            text: text.into(),
+            src: Some(src.into()),
+        }
     }
 }
 
@@ -191,7 +201,11 @@ fn covers_row(text: &str, span: Span) -> bool {
     if span.to == EOL {
         return true;
     }
-    span.to >= strip_right_border(&strip_ansi(text)).trim_end().chars().count()
+    span.to
+        >= strip_right_border(&strip_ansi(text))
+            .trim_end()
+            .chars()
+            .count()
 }
 
 /// A source line as it should reach the clipboard.
@@ -224,7 +238,11 @@ fn clean_source(src: &str) -> Option<String> {
         out.pop();
     }
     if out.is_empty() {
-        return if dropped_chrome { None } else { Some(String::new()) };
+        return if dropped_chrome {
+            None
+        } else {
+            Some(String::new())
+        };
     }
     Some(out.join("\n"))
 }
@@ -278,7 +296,9 @@ pub fn selected_copy(sel: &Selection, row_at: impl Fn(i64) -> Option<CopyRow>) -
     let mut out: Vec<String> = Vec::new();
     let mut last_source: Option<String> = None;
     for y in top..=bottom {
-        let Some(span) = row_span(sel, y) else { continue };
+        let Some(span) = row_span(sel, y) else {
+            continue;
+        };
         let Some(row) = row_at(y) else {
             // A gap the selection crossed — padding above a short transcript.
             // It pastes as a blank line, because a selection that spans a gap
@@ -320,7 +340,9 @@ pub fn selected_text(sel: &Selection, row_at: impl Fn(i64) -> Option<String>) ->
     let (top, bottom) = sel_rows(sel);
     let mut out: Vec<String> = Vec::new();
     for y in top..=bottom {
-        let Some(span) = row_span(sel, y) else { continue };
+        let Some(span) = row_span(sel, y) else {
+            continue;
+        };
         out.push(match row_at(y) {
             Some(line) => extract_span(&line, span.from, span.to),
             None => String::new(),
@@ -368,7 +390,11 @@ pub fn link_at(text: &str, col: usize) -> Option<String> {
 
 /// Characters that can belong to an address (`format.ts::URL_CHARS`).
 fn url_char(c: char) -> bool {
-    !c.is_whitespace() && !matches!(c, '"' | '\'' | '`' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | '│')
+    !c.is_whitespace()
+        && !matches!(
+            c,
+            '"' | '\'' | '`' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | '│'
+        )
 }
 
 /// The bare URL under 0-based column `col` of a PLAIN row.
@@ -379,8 +405,7 @@ fn url_char(c: char) -> bool {
 /// matter how obviously it was a URL. This reads the characters instead, which
 /// works on any surface.
 ///
-/// PORT NOTE: the single-row reading only. Rejoining an address across the rows
-/// it was wrapped onto (`urlAcross`) is row 3.21.
+/// Rejoining an address across the rows it was wrapped onto is [`url_across`].
 pub fn url_at(plain: &str, col: usize) -> Option<String> {
     let chars: Vec<char> = plain.chars().collect();
     let mut start = 0usize;
@@ -397,11 +422,61 @@ pub fn url_at(plain: &str, col: usize) -> Option<String> {
         if col >= start && col < end {
             // Trailing sentence punctuation is not part of the address.
             let url: String = chars[start..end].iter().collect();
-            return Some(url.trim_end_matches(['.', ',', ';', ':', '!', '?']).to_string());
+            return Some(
+                url.trim_end_matches(['.', ',', ';', ':', '!', '?'])
+                    .to_string(),
+            );
         }
         start = end.max(start + 1);
     }
     None
+}
+
+/// The URL under `(row, col)`, rejoined across the rows it was wrapped onto.
+///
+/// A long URL — an OAuth authorization link is the case that matters — is laid
+/// out across four or five rows, and each of them holds a fragment that is not
+/// an address. Clicking one and opening the fragment would be worse than doing
+/// nothing.
+///
+/// `rows` are CONTENT rows: already stripped of any border or padding, so "these
+/// two rows join" is a fact about the text rather than about the box it is drawn
+/// in. Two rows join when the upper ends and the lower begins on characters that
+/// could both belong to a URL — which is what a wrap inside an address looks
+/// like, and what a wrap between two words does not.
+pub fn url_across(rows: &[String], row: usize, col: usize) -> Option<String> {
+    // A row that CONTINUES an address is one unbroken token — an address has no
+    // spaces, so a wrap inside one produces a row that is nothing but more
+    // address. A row with a space in it is prose, or the next list entry.
+    let joins = |above: &str, below: &str| -> bool {
+        let a = above.trim_end();
+        let b = below.trim();
+        !a.is_empty()
+            && !b.is_empty()
+            && !b.chars().any(char::is_whitespace)
+            && url_char(a.chars().next_back().unwrap())
+            && url_char(b.chars().next().unwrap())
+    };
+    let at = |i: usize| -> &str { rows.get(i).map(String::as_str).unwrap_or("") };
+    // BACKWARD FIRST: the click usually lands in the middle of a long address, on
+    // a row that carries no scheme at all.
+    let mut start = row;
+    while start > 0 && joins(at(start - 1), at(start)) {
+        start -= 1;
+    }
+    // Then forward, remembering where the clicked cell ended up in the joined text.
+    let mut joined = String::new();
+    let mut click_at: Option<usize> = None;
+    for y in start..rows.len() {
+        if y > start && !joins(at(y - 1), at(y)) {
+            break;
+        }
+        if y == row {
+            click_at = Some(joined.chars().count() + col);
+        }
+        joined.push_str(at(y).trim_end());
+    }
+    url_at(&joined, click_at?)
 }
 
 // ---------------------------------------------------------------------------
@@ -413,7 +488,10 @@ mod tests {
     use super::*;
 
     fn sel(ax: i64, ay: i64, fx: i64, fy: i64) -> Selection {
-        Selection { anchor: Point { x: ax, y: ay }, focus: Point { x: fx, y: fy } }
+        Selection {
+            anchor: Point { x: ax, y: ay },
+            focus: Point { x: fx, y: fy },
+        }
     }
     fn span(from: usize, to: usize) -> Option<Span> {
         Some(Span { from, to })
@@ -482,17 +560,33 @@ mod tests {
 
     #[test]
     fn selected_text_joins_the_rows_the_drag_covered_clipped_at_both_ends() {
-        let rows = ["first line here", "\u{1b}[1msecond\u{1b}[0m line", "third line"];
+        let rows = [
+            "first line here",
+            "\u{1b}[1msecond\u{1b}[0m line",
+            "third line",
+        ];
         let at = |y: i64| {
-            usize::try_from(y - 1).ok().and_then(|i| rows.get(i)).map(|s| s.to_string())
+            usize::try_from(y - 1)
+                .ok()
+                .and_then(|i| rows.get(i))
+                .map(|s| s.to_string())
         };
-        assert_eq!(selected_text(&sel(7, 1, 5, 3), at), "line here\nsecond line\nthird");
+        assert_eq!(
+            selected_text(&sel(7, 1, 5, 3), at),
+            "line here\nsecond line\nthird"
+        );
     }
 
     #[test]
     fn a_row_that_shows_nothing_contributes_a_blank_line_not_a_skipped_one() {
         // Padding above a short transcript: the gap is part of what was dragged.
-        let at = |y: i64| if y == 2 { None } else { Some(format!("row {y}")) };
+        let at = |y: i64| {
+            if y == 2 {
+                None
+            } else {
+                Some(format!("row {y}"))
+            }
+        };
         assert_eq!(selected_text(&sel(1, 1, 5, 3), at), "row 1\n\nrow 3");
     }
 
@@ -505,7 +599,13 @@ mod tests {
     // ---- what the clipboard actually gets ----------------------------------
 
     fn rows_at(rows: Vec<Option<CopyRow>>) -> impl Fn(i64) -> Option<CopyRow> {
-        move |y: i64| usize::try_from(y - 1).ok().and_then(|i| rows.get(i)).cloned().flatten()
+        move |y: i64| {
+            usize::try_from(y - 1)
+                .ok()
+                .and_then(|i| rows.get(i))
+                .cloned()
+                .flatten()
+        }
     }
 
     #[test]
@@ -513,7 +613,10 @@ mod tests {
         // Two screen rows, one source line — a wrapped code block.
         let src = "const x = await bash(\"a very long command\");";
         let at = rows_at(vec![
-            Some(CopyRow::with_src("  │ const x = await bash(\"a very long", src)),
+            Some(CopyRow::with_src(
+                "  │ const x = await bash(\"a very long",
+                src,
+            )),
             Some(CopyRow::with_src("  │  command\");", src)),
         ]);
         let out = selected_copy(&sel(1, 1, 40, 2), at);
@@ -539,7 +642,10 @@ mod tests {
         let out = selected_copy(&sel(5, 1, 9, 2), para());
         assert_eq!(out, "quick brown fox jumps\nover the");
         assert!(!out.contains("keeps going"), "a row the drag never reached");
-        assert!(!out.contains("the quick"), "text before where the drag started");
+        assert!(
+            !out.contains("the quick"),
+            "text before where the drag started"
+        );
     }
 
     #[test]
@@ -572,7 +678,10 @@ mod tests {
             Some(CopyRow::painted("  │ painted only")),
             Some(CopyRow::painted("plain row")),
         ]);
-        assert_eq!(selected_copy(&sel(1, 1, 20, 2), at), "  painted only\nplain row");
+        assert_eq!(
+            selected_copy(&sel(1, 1, 20, 2), at),
+            "  painted only\nplain row"
+        );
     }
 
     #[test]
@@ -598,7 +707,10 @@ mod tests {
     fn a_highlighted_source_is_stripped_no_escape_bytes_reach_the_clipboard() {
         let styled = "\u{1b}[38;5;140mconst\u{1b}[39m x = 1";
         let at = rows_at(vec![
-            Some(CopyRow::with_src(format!("  \u{1b}[2m│\u{1b}[22m {styled}"), styled)),
+            Some(CopyRow::with_src(
+                format!("  \u{1b}[2m│\u{1b}[22m {styled}"),
+                styled,
+            )),
             Some(CopyRow::with_src("  next", "next")),
         ]);
         let out = selected_copy(&sel(1, 1, 30, 2), at);
@@ -619,8 +731,13 @@ mod tests {
     #[test]
     fn a_panel_row_loses_its_right_border_too() {
         // The mcp tab's authorization URL was the visible victim.
-        let at = rows_at(vec![Some(CopyRow::painted("│ https://example.com/auth    │"))]);
-        assert_eq!(selected_copy(&sel(1, 1, 40, 1), at), "https://example.com/auth");
+        let at = rows_at(vec![Some(CopyRow::painted(
+            "│ https://example.com/auth    │",
+        ))]);
+        assert_eq!(
+            selected_copy(&sel(1, 1, 40, 1), at),
+            "https://example.com/auth"
+        );
     }
 
     #[test]
@@ -637,10 +754,17 @@ mod tests {
         let row = "open https://x.dev/a?b=1 now";
         assert_eq!(url_at(row, 0), None, "the click was on prose");
         assert_eq!(url_at(row, 5).as_deref(), Some("https://x.dev/a?b=1"));
-        assert_eq!(url_at(row, 20).as_deref(), Some("https://x.dev/a?b=1"), "mid-address");
+        assert_eq!(
+            url_at(row, 20).as_deref(),
+            Some("https://x.dev/a?b=1"),
+            "mid-address"
+        );
         assert_eq!(url_at(row, 25), None, "past the address");
         // Sentence punctuation is not part of the address.
-        assert_eq!(url_at("see http://x.dev.", 6).as_deref(), Some("http://x.dev"));
+        assert_eq!(
+            url_at("see http://x.dev.", 6).as_deref(),
+            Some("http://x.dev")
+        );
         assert_eq!(url_at("no address here", 3), None);
     }
 
@@ -652,5 +776,88 @@ mod tests {
         assert_eq!(link_at(text, 11).as_deref(), Some("https://x.dev"));
         assert_eq!(link_at(text, 12), None, "past the closing marker");
         assert_eq!(link_at("plain text", 3), None);
+    }
+
+    fn rows(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn url_across_rejoins_a_url_wrapped_over_several_rows() {
+        // Exactly the shape of an OAuth link in the mcp tab: it runs to the edge of
+        // each row and continues on the next with no space.
+        let r = rows(&[
+            "open this, then come back: https://mcp.example.com/authorize?response_ty",
+            "pe=code&client_id=abc&code_challenge=xyz&redirect_uri=http%3A%2F%2F127.0",
+            ".0.1%3A4399&scope=read+write",
+        ]);
+        assert_eq!(
+            url_across(&r, 0, 30).as_deref(),
+            Some(
+                "https://mcp.example.com/authorize?response_type=code\
+                 &client_id=abc&code_challenge=xyz&redirect_uri=http%3A%2F%2F127.0\
+                 .0.1%3A4399&scope=read+write"
+            )
+        );
+    }
+
+    #[test]
+    fn url_across_does_not_glue_the_next_row_onto_a_url_that_already_ended() {
+        let r = rows(&[
+            "see https://example.com/a and more text",
+            "notacontinuation",
+        ]);
+        assert_eq!(
+            url_across(&r, 0, 10).as_deref(),
+            Some("https://example.com/a")
+        );
+    }
+
+    #[test]
+    fn url_across_stops_when_a_continuation_row_carries_anything_else() {
+        // An address has no spaces, so a row with one is prose or the next list
+        // entry. Nothing of it is taken.
+        let r = rows(&[
+            "https://example.com/averylongpathrunningtotheedge",
+            "tail and then words",
+        ]);
+        assert_eq!(
+            url_across(&r, 0, 5).as_deref(),
+            Some("https://example.com/averylongpathrunningtotheedge")
+        );
+    }
+
+    #[test]
+    fn url_across_does_not_weld_the_row_below_a_finished_address_onto_it() {
+        // The exact shape that broke it live: the last row of a wrapped
+        // authorization URL is short, and the mcp list row under it starts with "1".
+        let r = rows(&[
+            "open this: https://mcp.example.com/authorize?response_type=code&client_i",
+            "d=abc&resource=https%3A%2F%2Fmcp.example.com%2Fmcp",
+            "1 linear  off · needs auth",
+        ]);
+        let url = url_across(&r, 1, 10);
+        assert_eq!(
+            url.as_deref(),
+            Some(
+                "https://mcp.example.com/authorize?response_type=code&client_i\
+                 d=abc&resource=https%3A%2F%2Fmcp.example.com%2Fmcp"
+            )
+        );
+        assert!(!url.unwrap().ends_with('1'), "a row below leaked in");
+    }
+
+    #[test]
+    fn clicking_a_continuation_row_resolves_the_whole_address() {
+        // The click usually lands mid-URL, on a row carrying no scheme at all —
+        // which is why the search has to run backward before it runs forward.
+        let r = rows(&[
+            "open this: https://mcp.example.com/authorize?response_type=code&client_i",
+            "d=abc&scope=read",
+        ]);
+        assert_eq!(
+            url_across(&r, 1, 3).as_deref(),
+            Some("https://mcp.example.com/authorize?response_type=code&client_id=abc&scope=read")
+        );
     }
 }

@@ -27,9 +27,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 
-use bough_core::schema::parts::{
-    AskQuestion, BackgroundJob, Message, Session, TurnStatus,
-};
+use bough_core::schema::parts::{AskQuestion, BackgroundJob, Message, Session, TurnStatus};
 use bough_core::schema::requests::{
     CreateSessionBody, PatchSessionBody, PostMessageBody, PutModelSettingsBody, UnsendBody,
 };
@@ -135,8 +133,8 @@ fn reqwest_fetch() -> FetchFn {
     Arc::new(move |req: FetchRequest| {
         let client = client.clone();
         Box::pin(async move {
-            let method = reqwest::Method::from_bytes(req.method.as_bytes())
-                .map_err(|e| e.to_string())?;
+            let method =
+                reqwest::Method::from_bytes(req.method.as_bytes()).map_err(|e| e.to_string())?;
             let mut builder = client.request(method, &req.url);
             if let Some(body) = req.body {
                 builder = builder
@@ -409,8 +407,18 @@ fn seg(value: &str) -> String {
     let mut out = String::new();
     for byte in value.bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'!' | b'~' | b'*'
-            | b'\'' | b'(' | b')' => out.push(byte as char),
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'_'
+            | b'.'
+            | b'!'
+            | b'~'
+            | b'*'
+            | b'\''
+            | b'('
+            | b')' => out.push(byte as char),
             _ => out.push_str(&format!("%{byte:02X}")),
         }
     }
@@ -449,7 +457,11 @@ impl Api {
 
     /// `GET /events[?sessionId=]`. Built here so the SSE client owns no URL either.
     pub fn events_url(&self, session_id: Option<&str>) -> String {
-        format!("{}/events{}", self.base, query(&[("sessionId", session_id)]))
+        format!(
+            "{}/events{}",
+            self.base,
+            query(&[("sessionId", session_id)])
+        )
     }
 
     /// Same-origin link to a published artifact — what the agent prints for the
@@ -488,10 +500,12 @@ impl Api {
             body: body_text,
             binary: None,
         };
-        (self.fetch)(req).await.map_err(|cause| ApiFailure::Offline {
-            base: self.base.clone(),
-            cause,
-        })
+        (self.fetch)(req)
+            .await
+            .map_err(|cause| ApiFailure::Offline {
+                base: self.base.clone(),
+                cause,
+            })
     }
 
     /// Request → parsed JSON, with the server's `{error}` message preserved on
@@ -642,7 +656,10 @@ impl Api {
         };
         let res = (self.fetch)(req)
             .await
-            .map_err(|cause| ApiFailure::Offline { base: self.base.clone(), cause })?;
+            .map_err(|cause| ApiFailure::Offline {
+                base: self.base.clone(),
+                cause,
+            })?;
         let parsed: Option<Value> = serde_json::from_str(&res.body).ok();
         if !(200..300).contains(&res.status) {
             let message = parsed
@@ -702,8 +719,11 @@ impl Api {
         &self,
         session_id: Option<&str>,
     ) -> Result<Vec<AskQuestion>, ApiFailure> {
-        self.get(&format!("/questions{}", query(&[("sessionId", session_id)])))
-            .await
+        self.get(&format!(
+            "/questions{}",
+            query(&[("sessionId", session_id)])
+        ))
+        .await
     }
 
     pub async fn answer_question(
@@ -740,14 +760,12 @@ impl Api {
     /// was sent in, stopping the turn it started on the way, and hands the text
     /// back for the composer. Only ever called with the session's own LAST user
     /// message: the server refuses anything else, and everything else is a fork.
-    pub async fn unsend(
-        &self,
-        id: &str,
-        at_message_id: &str,
-    ) -> Result<UnsendResult, ApiFailure> {
+    pub async fn unsend(&self, id: &str, at_message_id: &str) -> Result<UnsendResult, ApiFailure> {
         self.post(
             &format!("/sessions/{}/unsend", seg(id)),
-            Some(to_value(&UnsendBody { at_message_id: at_message_id.to_string() })?),
+            Some(to_value(&UnsendBody {
+                at_message_id: at_message_id.to_string(),
+            })?),
         )
         .await
     }
@@ -834,13 +852,18 @@ impl Api {
 
     /// The `@` completion's candidates for that session's workspace.
     pub async fn list_files(&self, session_id: &str) -> Result<FileList, ApiFailure> {
-        self.get(&format!("/sessions/{}/files", seg(session_id))).await
+        self.get(&format!("/sessions/{}/files", seg(session_id)))
+            .await
     }
 
     /// The same, for a conversation that has not started and so has no session
     /// — the screen where someone types `@` for the first time.
     pub async fn list_files_in(&self, workspace: &str) -> Result<FileList, ApiFailure> {
-        self.get(&format!("/files{}", query(&[("workspace", Some(workspace))]))).await
+        self.get(&format!(
+            "/files{}",
+            query(&[("workspace", Some(workspace))])
+        ))
+        .await
     }
 
     /// One directory's entries, for an `@` path that leaves the workspace.
@@ -853,13 +876,198 @@ impl Api {
         dir: &str,
         base: Option<&str>,
     ) -> Result<EntryList, ApiFailure> {
-        self.get(&format!("/fs/entries{}", query(&[("dir", Some(dir)), ("base", base)])))
-            .await
+        self.get(&format!(
+            "/fs/entries{}",
+            query(&[("dir", Some(dir)), ("base", base)])
+        ))
+        .await
     }
 
     /// What is installed, for the `/` popup's skill rows.
     pub async fn list_skills(&self) -> Result<SkillList, ApiFailure> {
         self.get("/skills").await
+    }
+
+    /// The same route, read as the skills TAB needs it: every field the server
+    /// serves, `error` and `sources` included. Two readings of one payload
+    /// rather than one widened row, because the composer ranks names and must
+    /// not carry a broken skill's reason into a completion popup.
+    pub async fn list_skill_rows(&self) -> Result<SkillTabList, ApiFailure> {
+        self.get("/skills").await
+    }
+
+    // -- the model tab's catalog ----------------------------------------------
+
+    /// `GET /models` — the picker's catalog, answered SERVER-SIDE because the
+    /// server is the process that holds the credential. A TUI that discovered
+    /// with its own environment would offer rows the server cannot bill.
+    pub async fn list_models(&self) -> Result<ModelCatalog, ApiFailure> {
+        self.get("/models").await
+    }
+
+    // -- the mcp tab ----------------------------------------------------------
+
+    /// `GET /mcp/servers` — registry, grants, connections and stored
+    /// credentials, for one scope. NEVER CACHED by the caller: grants and
+    /// connections change between turns, and a panel showing last minute's MCP
+    /// state is worse than one showing none.
+    pub async fn mcp_status(&self, session_id: Option<&str>) -> Result<McpStatus, ApiFailure> {
+        self.get(&format!(
+            "/mcp/servers{}",
+            query(&[("session", session_id)])
+        ))
+        .await
+    }
+
+    /// `POST /mcp/servers/:name/enable|disable` — the grant, which is the ⏎ of
+    /// this tab. Install-wide, not per-turn.
+    pub async fn set_mcp_enabled(
+        &self,
+        name: &str,
+        enabled: bool,
+        session_id: Option<&str>,
+    ) -> Result<Value, ApiFailure> {
+        let verb = if enabled { "enable" } else { "disable" };
+        self.post(
+            &format!(
+                "/mcp/servers/{}/{verb}{}",
+                seg(name),
+                query(&[("session", session_id)])
+            ),
+            None,
+        )
+        .await
+    }
+
+    /// `PUT /mcp/servers/:name` — register a remote server by URL.
+    pub async fn put_mcp_server(&self, name: &str, url: &str) -> Result<Value, ApiFailure> {
+        self.put(
+            &format!("/mcp/servers/{}", seg(name)),
+            Some(serde_json::json!({ "url": url })),
+        )
+        .await
+    }
+
+    /// `DELETE /mcp/servers/:name` — drop the registration itself. `F` next door
+    /// drops only the CREDENTIALS and keeps the entry.
+    pub async fn delete_mcp_server(&self, name: &str) -> Result<Value, ApiFailure> {
+        self.json("DELETE", &format!("/mcp/servers/{}", seg(name)), None)
+            .await
+    }
+
+    /// `POST /mcp/servers/:name/connect` — the `c` test: names the tools, or the
+    /// error, without spending a turn on a tool call.
+    pub async fn connect_mcp_server(&self, name: &str) -> Result<Value, ApiFailure> {
+        self.post(&format!("/mcp/servers/{}/connect", seg(name)), None)
+            .await
+    }
+
+    /// `POST /mcp/servers/:name/restart` — bounce a stdio server's process.
+    pub async fn restart_mcp_server(&self, name: &str) -> Result<Value, ApiFailure> {
+        self.post(&format!("/mcp/servers/{}/restart", seg(name)), None)
+            .await
+    }
+
+    /// `POST /mcp/servers/:name/auth` — begin the OAuth flow. The answer carries
+    /// the URL the panel prints; nothing here opens a browser.
+    pub async fn begin_mcp_auth(&self, name: &str) -> Result<Value, ApiFailure> {
+        self.post(&format!("/mcp/servers/{}/auth", seg(name)), None)
+            .await
+    }
+
+    /// `DELETE /mcp/servers/:name/auth` — forget the stored tokens.
+    pub async fn clear_mcp_auth(&self, name: &str) -> Result<Value, ApiFailure> {
+        self.json("DELETE", &format!("/mcp/servers/{}/auth", seg(name)), None)
+            .await
+    }
+
+    // -- the workflows tab ----------------------------------------------------
+
+    /// `GET /workflows[?session=]` — every run, newest first. Summaries: the
+    /// script text is the largest field by far.
+    pub async fn list_workflows(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<WorkflowList, ApiFailure> {
+        self.get(&format!("/workflows{}", query(&[("session", session_id)])))
+            .await
+    }
+
+    /// `GET /workflows/:id` — the run, its agents, and the three accounting
+    /// fields spec §8 requires of a run view.
+    pub async fn get_workflow(&self, id: &str) -> Result<WorkflowDetail, ApiFailure> {
+        self.get(&format!("/workflows/{}", seg(id))).await
+    }
+
+    pub async fn pause_workflow(&self, id: &str) -> Result<Value, ApiFailure> {
+        self.post(&format!("/workflows/{}/pause", seg(id)), None)
+            .await
+    }
+
+    pub async fn resume_workflow(&self, id: &str) -> Result<Value, ApiFailure> {
+        self.post(&format!("/workflows/{}/resume", seg(id)), None)
+            .await
+    }
+
+    pub async fn stop_workflow(&self, id: &str) -> Result<Value, ApiFailure> {
+        self.post(&format!("/workflows/{}/stop", seg(id)), None)
+            .await
+    }
+
+    /// `POST /workflows/:id/rerun` — a NEW run seeded from this one's journal.
+    pub async fn rerun_workflow(&self, id: &str) -> Result<Value, ApiFailure> {
+        self.post(&format!("/workflows/{}/rerun", seg(id)), None)
+            .await
+    }
+
+    /// `POST /workflows/:id/save` — store the script to run again by name.
+    pub async fn save_workflow_as(&self, id: &str, name: &str) -> Result<Value, ApiFailure> {
+        self.post(
+            &format!("/workflows/{}/save", seg(id)),
+            Some(serde_json::json!({ "name": name })),
+        )
+        .await
+    }
+
+    // -- the cheap-tier cosmetics (row 3.21) ----------------------------------
+
+    /// `POST /sessions/:id/ghost` — the cheap tier's guess at the next message.
+    ///
+    /// ALWAYS resolves for a session that exists: `{ghost: null}` covers a
+    /// missing key, a provider error and an empty conversation alike, so the
+    /// composer needs no error path. POST rather than GET because the
+    /// half-typed prefix is user text with no business in a URL or a log.
+    pub async fn ghost_text(&self, id: &str, prefix: &str) -> Result<GhostText, ApiFailure> {
+        self.post(
+            &format!("/sessions/{}/ghost", seg(id)),
+            Some(serde_json::json!({ "prefix": prefix })),
+        )
+        .await
+    }
+
+    /// `POST /sessions/:id/sections` — topic headers over a conversation's own
+    /// turns. Stateless: gists in, labeled index ranges out.
+    pub async fn sections(&self, id: &str, gists: &[String]) -> Result<SectionsResult, ApiFailure> {
+        let turns: Vec<Value> = gists
+            .iter()
+            .map(|g| serde_json::json!({ "gist": g }))
+            .collect();
+        self.post(
+            &format!("/sessions/{}/sections", seg(id)),
+            Some(serde_json::json!({ "turns": turns })),
+        )
+        .await
+    }
+
+    /// `GET /search` — full-text over every transcript. The tree's `/` filter
+    /// is a search of every message, which is what the keymap has always said.
+    pub async fn search(&self, q: &str, limit: Option<u32>) -> Result<SearchResult, ApiFailure> {
+        let limit = limit.map(|l| l.to_string());
+        self.get(&format!(
+            "/search{}",
+            query(&[("q", Some(q)), ("limit", limit.as_deref())])
+        ))
+        .await
     }
 
     // -- theme ----------------------------------------------------------------
@@ -881,10 +1089,13 @@ impl Api {
         match write {
             crate::theme::ThemeWrite::Delete => self.json("DELETE", "/theme", None).await,
             crate::theme::ThemeWrite::Put { name, colors } => {
-                self.put("/theme", Some(to_value(&serde_json::json!({
-                    "name": name,
-                    "colors": colors,
-                }))?))
+                self.put(
+                    "/theme",
+                    Some(to_value(&serde_json::json!({
+                        "name": name,
+                        "colors": colors,
+                    }))?),
+                )
                 .await
             }
         }
@@ -915,11 +1126,153 @@ pub struct SkillRow {
     pub description: String,
 }
 
-/// `GET /skills`. `sources` is deliberately not modelled here — the skills tab
-/// (wave 3) reads it; the composer ranks names.
+/// `POST /sessions/:id/ghost` — `{ghost: string|null}`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct GhostText {
+    pub ghost: Option<String>,
+}
+
+/// `POST /sessions/:id/sections` — index ranges over the session's OWN turns.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SectionsResult {
+    pub sections: Vec<crate::forest::SectionRange>,
+}
+
+/// One `GET /search` hit. Only the fields the tree reads are modelled: a hit in
+/// a COLLAPSED session (a subagent, a workflow agent) is attributed to its
+/// spawner, because that is the row the tree can actually show.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHit {
+    pub message_id: String,
+    pub session_id: String,
+    #[serde(default)]
+    pub collapsed: bool,
+    #[serde(default)]
+    pub origin_id: Option<String>,
+}
+
+/// `GET /search`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SearchResult {
+    #[serde(default)]
+    pub hits: Vec<SearchHit>,
+}
+
+/// `GET /skills`. `sources` rides along because "why is my skill not listed?"
+/// is almost always answered by naming the directory that was walked — a client
+/// that only ever sees an empty array cannot tell "nothing installed" from
+/// "looking in the wrong place".
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SkillList {
     pub skills: Vec<SkillRow>,
+    #[serde(default)]
+    pub sources: Vec<SkillSourceRow>,
+}
+
+/// Where the listing was read from.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct SkillSourceRow {
+    pub source: String,
+    pub dir: String,
+}
+
+/// `GET /skills` as the skills TAB reads it — the full rows, `error` included.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SkillTabList {
+    pub skills: Vec<crate::components::panel::skills::SkillRow>,
+    #[serde(default)]
+    pub sources: Vec<SkillSourceRow>,
+}
+
+/// `GET /models` — the picker's catalog.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ModelCatalog {
+    pub models: Vec<ModelRow>,
+}
+
+/// One catalog row. An id is a PROVIDER ROUTING DECISION, so the table lives in
+/// `llm/routing.rs` and the picker takes these as data — no provider name is
+/// written outside `llm/`.
+pub use bough_core::llm::routing::ModelRow;
+
+/// `GET /mcp/servers` — the whole MCP state for one scope, as `mcp/status.rs`
+/// serialises it.
+pub use bough_core::mcp::status::McpStatus;
+
+// ---------------------------------------------------------------------------
+// Workflows
+// ---------------------------------------------------------------------------
+
+/// `GET /workflows` — every run in this conversation, newest first.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct WorkflowList {
+    pub workflows: Vec<WorkflowSummary>,
+}
+
+/// A run's per-status agent counts. `cached` is broken out from `done` because
+/// a replay and a live call are different news about the same green number.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct WorkflowAgentCounts {
+    #[serde(default)]
+    pub total: usize,
+    #[serde(default)]
+    pub done: usize,
+    #[serde(default)]
+    pub cached: usize,
+    #[serde(default)]
+    pub running: usize,
+    #[serde(default)]
+    pub queued: usize,
+    #[serde(default)]
+    pub failed: usize,
+}
+
+/// A run trimmed for the list: no script text, which is the largest field by
+/// far. `status` is read as a STRING, not the enum — the glyph table keys on the
+/// wire spelling, and a status this build has never heard of must render as
+/// `⚠ orphaned` rather than fail the whole fetch.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowSummary {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub status: String,
+    #[serde(default)]
+    pub current_phase: Option<String>,
+    #[serde(default)]
+    pub agents: WorkflowAgentCounts,
+    pub created_at: i64,
+    #[serde(default)]
+    pub finished_at: Option<i64>,
+}
+
+/// `GET /workflows/:id` — the run view's whole body.
+///
+/// `replay`, `cost` and `warning` are the three accounting fields spec §8
+/// requires; `replay` is REQUIRED rather than optional here on purpose, because
+/// a client that can decode a run without it is a client that can render one
+/// without it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowDetail {
+    pub workflow: bough_core::schema::parts::WorkflowRun,
+    #[serde(default)]
+    pub agents: Vec<bough_core::workflow::control::WorkflowAgentView>,
+    /// `~/.bough/workflows/<id>.js` — the file the steering loop edits.
+    pub script_file: String,
+    /// Is this run held by a worker in the process that answered? A run left
+    /// `running` by a dead process is reconciled to `orphaned` at boot, and a
+    /// client that cannot tell the two apart shows a fan-out that will never
+    /// advance.
+    #[serde(default)]
+    pub live: bool,
+    pub replay: bough_core::workflow::report::ReplaySummary,
+    pub cost: bough_core::workflow::report::RunCost,
+    #[serde(default)]
+    pub warning: Option<bough_core::workflow::report::LargeRunFlag>,
 }
 
 fn to_value<T: serde::Serialize>(body: &T) -> Result<Value, ApiFailure> {
@@ -965,9 +1318,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_dead_server_says_so_in_one_sentence_with_the_command_that_fixes_it() {
-        let (fetch, _seen) = scripted(vec![Err(
-            "error sending request: Connection refused".into()
-        )]);
+        let (fetch, _seen) = scripted(vec![
+            Err("error sending request: Connection refused".into()),
+        ]);
         let api = api_with(fetch);
         let err = api.list_sessions(None).await.unwrap_err();
         assert!(err.is_offline());
@@ -993,7 +1346,9 @@ mod tests {
         let api = api_with(fetch);
         let err = api.get_session("nope").await.unwrap_err();
         match &err {
-            ApiFailure::Api { status, message, .. } => {
+            ApiFailure::Api {
+                status, message, ..
+            } => {
                 assert_eq!(*status, 404);
                 // Error text is a product surface: the message names the id.
                 assert!(message.contains("session nope not found"), "{message}");
@@ -1082,11 +1437,20 @@ mod tests {
         // `available: false` with a stated reason is a first-class answer:
         // "not a repository" and "you changed nothing" are different facts.
         let body = r#"{"available":false,"reason":"this workspace is not a git repository","files":[],"workspace":"/tmp/x"}"#;
-        let (fetch, seen) = scripted(vec![Ok(HttpResponse { status: 200, body: body.into() })]);
+        let (fetch, seen) = scripted(vec![Ok(HttpResponse {
+            status: 200,
+            body: body.into(),
+        })]);
         let set = api_with(fetch).changes("s 1").await.unwrap();
-        assert_eq!(seen.lock().unwrap()[0].url, "http://127.0.0.1:4321/sessions/s%201/changes");
+        assert_eq!(
+            seen.lock().unwrap()[0].url,
+            "http://127.0.0.1:4321/sessions/s%201/changes"
+        );
         assert!(!set.available);
-        assert_eq!(set.reason.as_deref(), Some("this workspace is not a git repository"));
+        assert_eq!(
+            set.reason.as_deref(),
+            Some("this workspace is not a git repository")
+        );
     }
 
     #[tokio::test]
@@ -1095,16 +1459,25 @@ mod tests {
         // "the whole change set" is the absence of the key — conflating the
         // two reverts everything by accident.
         let ack = r#"{"reverted":["a.ts"],"skipped":[],"failed":[]}"#;
-        let (fetch, seen) = scripted(vec![Ok(HttpResponse { status: 200, body: ack.into() })]);
+        let (fetch, seen) = scripted(vec![Ok(HttpResponse {
+            status: 200,
+            body: ack.into(),
+        })]);
         let api = api_with(fetch);
         let outcome = api.revert_changes("s1", None).await.unwrap();
         assert_eq!(outcome.reverted, vec!["a.ts"]);
-        let req = &seen.lock().unwrap()[0];
-        assert_eq!(req.method, "POST");
-        assert_eq!(req.url, "http://127.0.0.1:4321/sessions/s1/changes/revert");
-        assert_eq!(req.body.as_deref(), Some("{}"));
+        {
+            let seen = seen.lock().unwrap();
+            let req = &seen[0];
+            assert_eq!(req.method, "POST");
+            assert_eq!(req.url, "http://127.0.0.1:4321/sessions/s1/changes/revert");
+            assert_eq!(req.body.as_deref(), Some("{}"));
+        }
 
-        let (fetch, seen) = scripted(vec![Ok(HttpResponse { status: 200, body: ack.into() })]);
+        let (fetch, seen) = scripted(vec![Ok(HttpResponse {
+            status: 200,
+            body: ack.into(),
+        })]);
         api_with(fetch)
             .revert_changes("s1", Some(&["a.ts".to_string()]))
             .await
@@ -1175,7 +1548,10 @@ mod tests {
 
     #[tokio::test]
     async fn an_attachment_failure_with_no_sentence_still_says_something_useful() {
-        let (fetch, _) = scripted(vec![Ok(HttpResponse { status: 500, body: String::new() })]);
+        let (fetch, _) = scripted(vec![Ok(HttpResponse {
+            status: 500,
+            body: String::new(),
+        })]);
         let err = api_with(fetch)
             .upload_image(vec![1], "image/png")
             .await
@@ -1202,7 +1578,10 @@ mod tests {
     #[tokio::test]
     async fn the_completion_routes_carry_encoded_paths() {
         let ok = |body: &str| {
-            Ok(HttpResponse { status: 200, body: body.to_string() })
+            Ok(HttpResponse {
+                status: 200,
+                body: body.to_string(),
+            })
         };
         let (fetch, seen) = scripted(vec![
             ok(r#"{"files":["src/app.rs"]}"#),
@@ -1211,10 +1590,16 @@ mod tests {
             ok(r#"{"skills":[{"name":"prewalk","description":"plan first"}],"sources":[]}"#),
         ]);
         let api = api_with(fetch);
-        assert_eq!(api.list_files("s1").await.unwrap().files, vec!["src/app.rs"]);
+        assert_eq!(
+            api.list_files("s1").await.unwrap().files,
+            vec!["src/app.rs"]
+        );
         api.list_files_in("/w/demo").await.unwrap();
         assert_eq!(
-            api.list_dir_entries("~/", Some("/w/demo")).await.unwrap().entries,
+            api.list_dir_entries("~/", Some("/w/demo"))
+                .await
+                .unwrap()
+                .entries,
             vec!["repos/"]
         );
         let skills = api.list_skills().await.unwrap().skills;
@@ -1223,7 +1608,202 @@ mod tests {
         let urls: Vec<String> = seen.lock().unwrap().iter().map(|r| r.url.clone()).collect();
         assert_eq!(urls[0], "http://127.0.0.1:4321/sessions/s1/files");
         assert_eq!(urls[1], "http://127.0.0.1:4321/files?workspace=%2Fw%2Fdemo");
-        assert_eq!(urls[2], "http://127.0.0.1:4321/fs/entries?dir=%7E%2F&base=%2Fw%2Fdemo");
+        assert_eq!(
+            urls[2],
+            "http://127.0.0.1:4321/fs/entries?dir=%7E%2F&base=%2Fw%2Fdemo"
+        );
         assert_eq!(urls[3], "http://127.0.0.1:4321/skills");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Wire-decode tests — the payloads are built by the SERVER'S OWN serializers,
+// not typed out here. A client type that has drifted from the route it reads is
+// the failure mode these exist for, and a fixture string would only prove this
+// file agrees with itself.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+    use bough_core::db::sqlite_db::{DbOptions, SqliteDb};
+    use bough_core::schema::parts::{
+        Session, SessionKind, WorkflowAgent, WorkflowAgentStatus, WorkflowPhase, WorkflowRun,
+        WorkflowStatus,
+    };
+    use bough_core::types::SharedDb;
+    use bough_core::workflow::control::workflow_detail;
+    use bough_core::workflow::engine::workflow_summary;
+    use std::sync::{Arc, Mutex};
+
+    fn db() -> SharedDb {
+        let db: SharedDb = Arc::new(Mutex::new(
+            SqliteDb::new(":memory:", DbOptions::default()).unwrap(),
+        ));
+        db.lock()
+            .unwrap()
+            .create_session(Session {
+                id: "sess-owner".into(),
+                title: "s".into(),
+                kind: SessionKind::Root,
+                created_at: 1,
+                parent_id: None,
+                origin_id: None,
+                origin_message_id: None,
+                workspace: Some("/tmp/w".into()),
+                origin_dir: Some("/tmp/w".into()),
+                base: None,
+                model: None,
+                effort: None,
+                draft: None,
+                context_tokens: None,
+                cached_tokens: None,
+                last_llm_at: None,
+                outcome_ok: None,
+            })
+            .unwrap();
+        db.lock()
+            .unwrap()
+            .create_workflow(WorkflowRun {
+                id: "run-2".into(),
+                session_id: "sess-owner".into(),
+                name: "audit-handlers".into(),
+                description: "Review every handler".into(),
+                script: "phase('Review')\n".into(),
+                phases: vec![WorkflowPhase {
+                    title: "Review".into(),
+                    detail: None,
+                }],
+                status: WorkflowStatus::Running,
+                current_phase: Some("Review".into()),
+                result: None,
+                error: None,
+                args: None,
+                // No source run: the FK points at `workflows(id)`, and what this
+                // test is pinning is the DECODE, not the relaunch chain.
+                resume_of: None,
+                created_at: 10,
+                finished_at: None,
+            })
+            .unwrap();
+        db.lock()
+            .unwrap()
+            .create_workflow_agent(WorkflowAgent {
+                id: "a1".into(),
+                run_id: "run-2".into(),
+                idx: 0,
+                key: "k1".into(),
+                label: "review app.rs".into(),
+                phase: Some("Review".into()),
+                prompt: "Review src/server/app.rs".into(),
+                model: Some("sonnet".into()),
+                status: WorkflowAgentStatus::Cached,
+                result: Some("no findings".into()),
+                error: None,
+                session_id: None,
+                started_at: 10,
+                finished_at: Some(30),
+            })
+            .unwrap();
+        db
+    }
+
+    #[test]
+    fn a_run_summary_off_the_route_decodes_into_the_list_row() {
+        let db = db();
+        let run = db.lock().unwrap().get_workflow("run-2").unwrap().unwrap();
+        let body = workflow_summary(&db, &run);
+        let row: WorkflowSummary =
+            serde_json::from_value(body.clone()).unwrap_or_else(|e| panic!("{e}: {body}"));
+        assert_eq!(row.id, "run-2");
+        assert_eq!(row.name, "audit-handlers");
+        // The wire spells the status; the glyph table keys on that spelling.
+        assert_eq!(row.status, "running");
+        assert_eq!(row.current_phase.as_deref(), Some("Review"));
+        // The counts the list row prints — `cached` broken out from `done`,
+        // because a replay and a live call are different news.
+        assert_eq!(row.agents.total, 1);
+        assert_eq!(row.agents.done, 1);
+        assert_eq!(row.agents.cached, 1);
+        assert_eq!(row.created_at, 10);
+    }
+
+    #[test]
+    fn a_run_detail_off_the_route_decodes_with_its_replay_accounting_intact() {
+        let db = db();
+        let run = db.lock().unwrap().get_workflow("run-2").unwrap().unwrap();
+        let body = workflow_detail(&db, &run, &[], 100).unwrap();
+        let detail: WorkflowDetail =
+            serde_json::from_value(body.clone()).unwrap_or_else(|e| panic!("{e}: {body}"));
+        assert_eq!(detail.workflow.id, "run-2");
+        assert_eq!(detail.agents.len(), 1);
+        assert_eq!(detail.agents[0].agent.label, "review app.rs");
+        assert!(detail.script_file.ends_with("run-2.js"));
+        // SPEC §8: the accounting is REQUIRED, and a client that can decode a
+        // run without it is a client that can render one without it — hence a
+        // non-Option field, and hence this assertion.
+        assert_eq!(detail.replay.total, 1);
+        assert_eq!(detail.replay.replayed, 1);
+        assert!(
+            !detail.replay.line.is_empty(),
+            "the canonical sentence rides the wire"
+        );
+        // `final` is a Rust keyword and the wire does not care: the field must
+        // survive the round trip under its real name.
+        assert!(
+            body.get("replay").and_then(|r| r.get("final")).is_some(),
+            "{body}"
+        );
+        assert_eq!(detail.cost.agents, 1);
+    }
+
+    #[test]
+    fn the_skills_route_decodes_both_ways_the_client_reads_it() {
+        // The composer's narrow row and the tab's full row are two readings of
+        // ONE payload; a widened row would carry a broken skill's reason into a
+        // completion popup.
+        let body = serde_json::json!({
+            "skills": [
+                {"name": "history", "description": "query the db", "source": "user", "dir": "/s"},
+                {"name": "broken", "description": "", "source": "user", "dir": "/s",
+                 "error": "SKILL.md has no front matter", "mcp": ["todoist"]}
+            ],
+            "sources": [{"source": "user", "dir": "/home/u/.bough/skills"}]
+        });
+        let narrow: SkillList = serde_json::from_value(body.clone()).unwrap();
+        assert_eq!(narrow.skills.len(), 2);
+        assert_eq!(narrow.sources[0].dir, "/home/u/.bough/skills");
+        let full: SkillTabList = serde_json::from_value(body).unwrap();
+        assert_eq!(
+            full.skills[1].error.as_deref(),
+            Some("SKILL.md has no front matter")
+        );
+        assert_eq!(full.skills[1].mcp, vec!["todoist".to_string()]);
+        // A skill with neither key decodes rather than failing the whole list.
+        assert!(full.skills[0].error.is_none());
+        assert!(full.skills[0].mcp.is_empty());
+    }
+
+    #[test]
+    fn the_model_catalog_decodes_the_rows_the_router_serves() {
+        let models: &[bough_core::llm::routing::ModelRow] = &bough_core::llm::routing::MODELS;
+        let body = serde_json::json!({ "models": models });
+        let catalog: ModelCatalog = serde_json::from_value(body).unwrap();
+        assert_eq!(catalog.models.len(), models.len());
+        assert!(
+            !catalog.models.is_empty(),
+            "the compiled-in table is never empty"
+        );
+    }
+
+    #[test]
+    fn the_mcp_status_decodes_the_four_keys_the_route_documents() {
+        let status = bough_core::mcp::status::mcp_status_for(&Default::default());
+        let body = serde_json::to_value(&status).unwrap();
+        for key in ["registry", "auth", "active", "connections"] {
+            assert!(body.get(key).is_some(), "{key} missing: {body}");
+        }
+        let decoded: McpStatus = serde_json::from_value(body).unwrap();
+        assert_eq!(decoded.active.len(), status.active.len());
     }
 }

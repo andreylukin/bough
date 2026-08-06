@@ -22,7 +22,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agents::caps::SpawnCaps;
 use crate::bus::{Bus, Listener};
-use crate::turn::queue::TurnRegistry;
 use crate::errors::BoughError;
 use crate::harness::protocol::HostFnName;
 use crate::hostfn::ask::AskRegistry;
@@ -31,9 +30,10 @@ use crate::hostfn::files::{SnapshotStore, WriteLog};
 use crate::hostfn::jobs::JobRegistry;
 use crate::schema::events::{BoughEvent, EventInput};
 use crate::schema::parts::{
-    Message, Part, Schedule, Session, Turn, TurnStatus, Usage, WorkflowAgent,
-    WorkflowAgentStatus, WorkflowPhase, WorkflowRun, WorkflowStatus,
+    Message, Part, Schedule, Session, Turn, TurnStatus, Usage, WorkflowAgent, WorkflowAgentStatus,
+    WorkflowPhase, WorkflowRun, WorkflowStatus,
 };
+use crate::turn::queue::TurnRegistry;
 
 // ---- the clock --------------------------------------------------------------
 
@@ -45,7 +45,10 @@ pub type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 pub fn system_clock() -> Clock {
     Arc::new(|| {
         use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
     })
 }
 
@@ -96,7 +99,9 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Patch<T> {
         // reaches here — `#[serde(default)]` supplies Keep.
         match Option::<serde_json::Value>::deserialize(deserializer)? {
             None => Ok(Patch::Clear),
-            Some(v) => T::deserialize(v).map(Patch::Set).map_err(serde::de::Error::custom),
+            Some(v) => T::deserialize(v)
+                .map(Patch::Set)
+                .map_err(serde::de::Error::custom),
         }
     }
 }
@@ -398,8 +403,7 @@ pub trait Db: Send {
 
     // durable KV, scoped to the lineage root
     fn get_state(&self, root_id: &str, key: &str) -> Result<Option<String>, BoughError>;
-    fn set_state(&self, root_id: &str, key: &str, value: &str, now: i64)
-        -> Result<(), BoughError>;
+    fn set_state(&self, root_id: &str, key: &str, value: &str, now: i64) -> Result<(), BoughError>;
     /// Byte lengths only, ordered by key — a listing must never drag whole
     /// values into context.
     fn list_state(&self, root_id: &str) -> Result<Vec<StateEntry>, BoughError>;
@@ -436,11 +440,7 @@ pub trait Db: Send {
     /// The `schema` column is always inserted NULL; the wire shape has no
     /// schema field (the JSON Schema is part of what `key` hashes).
     fn create_workflow_agent(&self, agent: WorkflowAgent) -> Result<WorkflowAgent, BoughError>;
-    fn update_workflow_agent(
-        &self,
-        id: &str,
-        patch: WorkflowAgentPatch,
-    ) -> Result<(), BoughError>;
+    fn update_workflow_agent(&self, id: &str, patch: WorkflowAgentPatch) -> Result<(), BoughError>;
     /// `ORDER BY idx, rowid`.
     fn list_workflow_agents(&self, run_id: &str) -> Result<Vec<WorkflowAgent>, BoughError>;
     /// Journal lookup on rerun: first call wins (`idx, rowid LIMIT 1`).
@@ -462,8 +462,7 @@ pub trait Db: Send {
         opts: CommandTagOpts,
     ) -> Result<Vec<CommandTagRow>, BoughError>;
     /// Distinct repos in the memory, and how many of them use each tag.
-    fn tag_spread(&self, since_ts: Option<i64>)
-        -> Result<(i64, HashMap<String, i64>), BoughError>;
+    fn tag_spread(&self, since_ts: Option<i64>) -> Result<(i64, HashMap<String, i64>), BoughError>;
     /// Per-day tag coverage and vocabulary size, day DESC, local time.
     fn tag_diversity_by_day(
         &self,
@@ -565,7 +564,11 @@ pub enum Effort {
 /// `toolUseId`/`content` here, `callId`/`output` there. Two types, never
 /// unified.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum LlmBlock {
     Text {
         text: String,
@@ -585,7 +588,11 @@ pub enum LlmBlock {
 
 /// A block as it appears in a request message.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum LlmContentBlock {
     Text {
         text: String,
@@ -833,7 +840,7 @@ pub struct TurnCtx {
     /// Absolute directories the turn's shell commands were about.
     pub touched: Arc<Mutex<Vec<String>>>,
     /// MCP servers inherited from the spawning turn, captured at spawn time.
-    pub mcp_grant: Option<Vec<String>>,
+    pub mcp_grant: Option<crate::mcp::manager::McpGrant>,
     /// Delegation depth. 0 = top level (may `spawn` and start workflows);
     /// 1 = a subagent, which may delegate one level further, blocking only.
     pub depth: u8,
@@ -969,13 +976,22 @@ mod tests {
             #[serde(skip_serializing_if = "Patch::is_keep")]
             error: Patch<String>,
         }
-        assert_eq!(serde_json::to_string(&Body { error: Patch::Keep }).unwrap(), "{}");
         assert_eq!(
-            serde_json::to_string(&Body { error: Patch::Clear }).unwrap(),
+            serde_json::to_string(&Body { error: Patch::Keep }).unwrap(),
+            "{}"
+        );
+        assert_eq!(
+            serde_json::to_string(&Body {
+                error: Patch::Clear
+            })
+            .unwrap(),
             r#"{"error":null}"#
         );
         assert_eq!(
-            serde_json::to_string(&Body { error: Patch::Set("x".into()) }).unwrap(),
+            serde_json::to_string(&Body {
+                error: Patch::Set("x".into())
+            })
+            .unwrap(),
             r#"{"error":"x"}"#
         );
     }

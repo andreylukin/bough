@@ -33,9 +33,8 @@ pub const PRICING_JSON: &str = include_str!("pricing.json");
 /// `[input, output, cacheRead, cacheWrite, contextWindow]`.
 type Row = (f64, f64, Option<f64>, Option<f64>, Option<i64>);
 
-static ROWS: LazyLock<HashMap<String, Row>> = LazyLock::new(|| {
-    serde_json::from_str(PRICING_JSON).expect("vendored pricing.json parses")
-});
+static ROWS: LazyLock<HashMap<String, Row>> =
+    LazyLock::new(|| serde_json::from_str(PRICING_JSON).expect("vendored pricing.json parses"));
 
 /// USD per million tokens. Cache rates fall back to the input rate when the
 /// catalog has none.
@@ -94,7 +93,9 @@ pub fn catalog_keys(model: &str) -> Vec<String> {
 
 /// The single key a model id resolved to, or `None` when nothing matched.
 pub fn catalog_key(model: &str) -> Option<String> {
-    catalog_keys(model).into_iter().find(|k| ROWS.contains_key(k))
+    catalog_keys(model)
+        .into_iter()
+        .find(|k| ROWS.contains_key(k))
 }
 
 fn row_for(model: &str) -> Option<&'static Row> {
@@ -193,7 +194,10 @@ mod tests {
 
     #[test]
     fn catalog_keys_mirrors_the_clients_routing_rule() {
-        assert_eq!(catalog_keys("claude-opus-5"), vec!["anthropic/claude-opus-5"]);
+        assert_eq!(
+            catalog_keys("claude-opus-5"),
+            vec!["anthropic/claude-opus-5"]
+        );
         assert_eq!(catalog_keys("openai:gpt-5"), vec!["openai/gpt-5"]);
         // OpenRouter first, then the vendor's own models.dev row as a
         // fallback — many vendors are listed directly and that row is usable
@@ -227,7 +231,11 @@ mod tests {
         assert_eq!(
             usage_cost_usd(
                 model,
-                &BillableTokens { input_tokens: 1_000_000, output_tokens: 1_000_000, ..Default::default() }
+                &BillableTokens {
+                    input_tokens: 1_000_000,
+                    output_tokens: 1_000_000,
+                    ..Default::default()
+                }
             ),
             None
         );
@@ -238,8 +246,14 @@ mod tests {
         // openai/gpt-5 carries a null cacheWrite slot in the snapshot.
         let rates = rates_for("openai:gpt-5").unwrap();
         assert!(rates.cache_read > 0.0 && rates.cache_write > 0.0);
-        assert!(rates.cache_read <= rates.input, "a cache read is never dearer than fresh input");
-        assert_eq!(rates.cache_write, rates.input, "null slot falls back to the input rate");
+        assert!(
+            rates.cache_read <= rates.input,
+            "a cache read is never dearer than fresh input"
+        );
+        assert_eq!(
+            rates.cache_write, rates.input,
+            "null slot falls back to the input rate"
+        );
     }
 
     #[test]
@@ -273,7 +287,11 @@ mod tests {
         // The whole point of the discount: the same tokens billed fresh cost more.
         let uncached = usage_cost_usd(
             model,
-            &BillableTokens { input_tokens: 1_000_000, output_tokens: 1_000_000, ..Default::default() },
+            &BillableTokens {
+                input_tokens: 1_000_000,
+                output_tokens: 1_000_000,
+                ..Default::default()
+            },
         )
         .unwrap();
         assert!(uncached > cost);
@@ -292,7 +310,11 @@ mod tests {
         );
         let without = usage_cost_usd(
             "claude-opus-5",
-            &BillableTokens { input_tokens: 1000, output_tokens: 1000, ..Default::default() },
+            &BillableTokens {
+                input_tokens: 1000,
+                output_tokens: 1000,
+                ..Default::default()
+            },
         );
         assert_eq!(with_nulls, without);
         assert!(with_nulls.unwrap().is_finite());

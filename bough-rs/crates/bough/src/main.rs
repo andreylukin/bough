@@ -1,9 +1,9 @@
 //! `bough` — subcommand dispatch (port of `scripts/bough`'s command surface,
 //! reduced to what the Rust binary owns per ARCHITECTURE §1). Bare `bough` →
-//! TUI; `start` → server; `exec` is ported (see `exec.rs`); `mcp`/`tags`/
-//! `sync-mcp` port later;
-//! `patterns` is a stub (exit 2). No clap — the grammar is tiny and USAGE
-//! text is product surface, ported verbatim.
+//! TUI; `start` → server; `exec` is ported (see `exec.rs`); `mcp` (rows 3.6),
+//! `sync-mcp` (3.6), `tags` (3.18) and `patterns` (3.19) are ported in their own
+//! modules. No clap — the grammar is tiny and USAGE text is product surface,
+//! ported verbatim.
 //!
 //! `BOUGH_PORT` stays an env var, never a flag (see `TUI_USAGE`): the API
 //! client is bound before a flag could be read, and a `--port` that parsed
@@ -14,7 +14,17 @@
 //! lives here only until that port lands, because a silently-ignored `-w` is
 //! the worst failure this flag can have and the dispatch must not ship it.
 
+// Each subcommand takes its process edges (env reads, path resolution, the
+// embedding layer) as `Arc<dyn Fn(..)>` fields on a `Deps` struct so the tests
+// can drive them without a real process — the same injection seam bough-core
+// uses, and the same reason not to hide it behind an alias.
+#![allow(clippy::type_complexity)]
+
 mod exec;
+mod mcp;
+mod patterns;
+mod sync_mcp;
+mod tags;
 
 use std::process::ExitCode;
 
@@ -106,10 +116,10 @@ fn usage() -> &'static str {
   (no args) open the terminal UI (bough [-w DIR], -h for flags)
   start    run the server in the foreground
   exec     headless one-shot turn
-  mcp      inspect and repair the MCP registry (not yet ported)
-  sync-mcp adopt Claude Code's MCP servers (not yet ported)
-  tags     what the command memory knows (not yet ported)
-  patterns compress a log into its distinct statements (not yet ported)"
+  mcp      inspect and repair the MCP registry
+  sync-mcp adopt Claude Code's MCP servers
+  tags     what the command memory knows
+  patterns compress a log into its distinct statements"
 }
 
 fn run_tui(argv: &[String]) -> ExitCode {
@@ -125,11 +135,14 @@ fn run_tui(argv: &[String]) -> ExitCode {
         }
         TuiArgs::Args { workspace } => {
             let workspace = workspace.or_else(|| {
-                std::env::var("BOUGH_TUI_CWD").ok().filter(|s| !s.is_empty()).or_else(|| {
-                    std::env::current_dir()
-                        .ok()
-                        .map(|p| p.to_string_lossy().into_owned())
-                })
+                std::env::var("BOUGH_TUI_CWD")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| {
+                        std::env::current_dir()
+                            .ok()
+                            .map(|p| p.to_string_lossy().into_owned())
+                    })
             });
             match bough_tui::run(TuiOptions { workspace }) {
                 Ok(()) => ExitCode::SUCCESS,
@@ -169,9 +182,32 @@ fn main() -> ExitCode {
             let code = rt.block_on(exec::run_exec(&args[1..], &deps));
             ExitCode::from(code as u8)
         }
-        Some(cmd @ ("mcp" | "sync-mcp" | "tags" | "patterns")) => {
-            eprintln!("bough {cmd}: not yet ported");
-            ExitCode::from(2)
+        Some("mcp") => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            let deps = mcp::real_deps();
+            let code = rt.block_on(mcp::run_mcp(&args[1..], &deps));
+            ExitCode::from(code as u8)
+        }
+        Some("sync-mcp") => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            let deps = sync_mcp::SyncDeps::default();
+            let code = rt.block_on(sync_mcp::run_sync_mcp(&args[1..], &deps));
+            ExitCode::from(code as u8)
+        }
+        Some("tags") => {
+            // FIRST, before anything opens a Database. `enable_sqlite_extensions`
+            // is a one-shot swap that must happen ahead of the first open — it
+            // was missing in the TS once, and that made `bough tags similar`
+            // structurally dead on every machine: writes worked, reads could not.
+            bough_core::db::extensions::enable_sqlite_extensions();
+            let deps = tags::TagsDeps::real();
+            ExitCode::from(tags::run_tags(&args[1..], &deps) as u8)
+        }
+        Some("patterns") => {
+            // Fully synchronous: the pipeline has no tokio anywhere and the
+            // reader is a plain `BufReader`, so no runtime is started.
+            let code = patterns::run_patterns(&args[1..], &patterns::RealDeps);
+            ExitCode::from(code as u8)
         }
         Some(other) => {
             eprintln!("error: unknown command '{other}'\n{}", usage());
@@ -229,7 +265,10 @@ mod tests {
                     msg.contains("bough takes no positional argument (got \"fix the tests\")"),
                     "{msg}"
                 );
-                assert!(msg.contains("Did you mean: bough exec \"fix the tests\"?"), "{msg}");
+                assert!(
+                    msg.contains("Did you mean: bough exec \"fix the tests\"?"),
+                    "{msg}"
+                );
             }
             _ => panic!("expected usage error"),
         }
@@ -240,7 +279,9 @@ mod tests {
     fn help_is_answered_and_the_usage_states_the_posture() {
         assert!(matches!(parse_tui_args(&argv(&["--help"])), TuiArgs::Help));
         assert!(matches!(parse_tui_args(&argv(&["-h"])), TuiArgs::Help));
-        assert!(TUI_USAGE.contains("programs run as you, with your authority — there is no sandbox"));
+        assert!(
+            TUI_USAGE.contains("programs run as you, with your authority — there is no sandbox")
+        );
         assert!(TUI_USAGE.contains("BOUGH_PORT (default 4321)"));
     }
 

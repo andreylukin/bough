@@ -95,8 +95,11 @@ pub fn convo_from(messages: &[Message]) -> Vec<ConvoLine> {
             if text.is_empty() {
                 return None;
             }
-            let role =
-                if m.role == Role::Supervisor { ConvoRole::Agent } else { ConvoRole::User };
+            let role = if m.role == Role::Supervisor {
+                ConvoRole::Agent
+            } else {
+                ConvoRole::User
+            };
             Some(ConvoLine { role, text })
         })
         .collect()
@@ -110,7 +113,12 @@ pub fn render_convo(lines: &[ConvoLine]) -> String {
         .map(|l| {
             let chars: Vec<char> = l.text.chars().collect();
             let text = if chars.len() > MAX_LINE_CHARS {
-                format!("…{}", chars[chars.len() - MAX_LINE_CHARS..].iter().collect::<String>())
+                format!(
+                    "…{}",
+                    chars[chars.len() - MAX_LINE_CHARS..]
+                        .iter()
+                        .collect::<String>()
+                )
             } else {
                 l.text.clone()
             };
@@ -146,13 +154,22 @@ pub fn sanitize_suggestion(raw: &str) -> Option<String> {
         std::sync::LazyLock::new(|| regex::Regex::new("^[\"'`]+").unwrap());
     static QUOTES_TRAIL: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| regex::Regex::new("[\"'`]+$").unwrap());
-    let line = raw.trim().split('\n').map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let line = raw
+        .trim()
+        .split('\n')
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
     let clean = LABEL.replace(line, "");
     let clean = QUOTES_LEAD.replace(&clean, "");
     let clean = QUOTES_TRAIL.replace(&clean, "");
     let clean: String = clean.chars().take(MAX_SUGGESTION).collect();
     let clean = clean.trim();
-    if clean.is_empty() { None } else { Some(clean.to_string()) }
+    if clean.is_empty() {
+        None
+    } else {
+        Some(clean.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -233,10 +250,15 @@ mod tests {
             long.push('x');
         }
         long.push_str("THE-CONCLUSION");
-        let rendered =
-            render_convo(&[ConvoLine { role: ConvoRole::Agent, text: long }]);
+        let rendered = render_convo(&[ConvoLine {
+            role: ConvoRole::Agent,
+            text: long,
+        }]);
         assert!(rendered.ends_with("THE-CONCLUSION"), "the outcome survives");
-        assert!(!rendered.contains("PREAMBLE"), "the preamble is what gets dropped");
+        assert!(
+            !rendered.contains("PREAMBLE"),
+            "the preamble is what gets dropped"
+        );
         assert!(rendered.starts_with("agent: …"));
     }
 
@@ -244,23 +266,35 @@ mod tests {
     fn render_convo_keeps_only_the_last_max_lines_turns_oldest_first() {
         let lines: Vec<ConvoLine> = (0..MAX_LINES + 4)
             .map(|i| ConvoLine {
-                role: if i % 2 == 0 { ConvoRole::User } else { ConvoRole::Agent },
+                role: if i % 2 == 0 {
+                    ConvoRole::User
+                } else {
+                    ConvoRole::Agent
+                },
                 text: format!("line{i}"),
             })
             .collect();
-        let rendered: Vec<String> =
-            render_convo(&lines).split('\n').map(String::from).collect();
+        let rendered: Vec<String> = render_convo(&lines).split('\n').map(String::from).collect();
         assert_eq!(rendered.len(), MAX_LINES);
         assert!(rendered[0].ends_with(&format!("line{}", lines.len() - MAX_LINES)));
-        assert!(rendered.last().unwrap().ends_with(&format!("line{}", lines.len() - 1)));
+        assert!(rendered
+            .last()
+            .unwrap()
+            .ends_with(&format!("line{}", lines.len() - 1)));
     }
 
     #[test]
     fn a_typed_prefix_becomes_a_continuation_instruction() {
-        let lines = [ConvoLine { role: ConvoRole::Agent, text: "done".into() }];
+        let lines = [ConvoLine {
+            role: ConvoRole::Agent,
+            text: "done".into(),
+        }];
         assert!(ghost_prompt(&lines, "").contains("The user's next message:"));
         let with_prefix = ghost_prompt(&lines, "  run the  ");
-        assert!(with_prefix.contains("has started typing: run the"), "{with_prefix}");
+        assert!(
+            with_prefix.contains("has started typing: run the"),
+            "{with_prefix}"
+        );
         assert!(with_prefix.contains("starting from what they typed"));
     }
 
@@ -271,14 +305,22 @@ mod tests {
             message(
                 Role::Supervisor,
                 vec![
-                    Part::Reasoning { text: "thinking".into(), meta: None, model: None },
-                    Part::Text { text: "done".into() },
+                    Part::Reasoning {
+                        text: "thinking".into(),
+                        meta: None,
+                        model: None,
+                    },
+                    Part::Text {
+                        text: "done".into(),
+                    },
                 ],
                 2,
             ),
             message(
                 Role::System,
-                vec![Part::Text { text: "[background] bg_1 finished".into() }],
+                vec![Part::Text {
+                    text: "[background] bg_1 finished".into(),
+                }],
                 3,
             ),
             message(Role::Supervisor, vec![], 4),
@@ -286,21 +328,39 @@ mod tests {
         assert_eq!(
             convo_from(&messages),
             vec![
-                ConvoLine { role: ConvoRole::User, text: "go".into() },
+                ConvoLine {
+                    role: ConvoRole::User,
+                    text: "go".into()
+                },
                 // Reasoning is display-only and never reaches a prompt.
-                ConvoLine { role: ConvoRole::Agent, text: "done".into() },
-                ConvoLine { role: ConvoRole::User, text: "[background] bg_1 finished".into() },
+                ConvoLine {
+                    role: ConvoRole::Agent,
+                    text: "done".into()
+                },
+                ConvoLine {
+                    role: ConvoRole::User,
+                    text: "[background] bg_1 finished".into()
+                },
             ]
         );
     }
 
     #[test]
     fn sanitize_suggestion_unlabels_unquotes_and_caps() {
-        assert_eq!(sanitize_suggestion("next: \"run the tests\"").as_deref(), Some("run the tests"));
-        assert_eq!(sanitize_suggestion("\n\ncommit it\nand push").as_deref(), Some("commit it"));
+        assert_eq!(
+            sanitize_suggestion("next: \"run the tests\"").as_deref(),
+            Some("run the tests")
+        );
+        assert_eq!(
+            sanitize_suggestion("\n\ncommit it\nand push").as_deref(),
+            Some("commit it")
+        );
         assert_eq!(sanitize_suggestion("   "), None);
         let long = "x".repeat(MAX_SUGGESTION + 50);
-        assert_eq!(sanitize_suggestion(&long).unwrap().chars().count(), MAX_SUGGESTION);
+        assert_eq!(
+            sanitize_suggestion(&long).unwrap().chars().count(),
+            MAX_SUGGESTION
+        );
     }
 
     #[tokio::test]
@@ -317,8 +377,10 @@ mod tests {
                 panic!("must not be called")
             }
         }
-        let opts =
-            CheapCallOpts { llm: Some(Arc::new(MustNotBeCalled)), ..Default::default() };
+        let opts = CheapCallOpts {
+            llm: Some(Arc::new(MustNotBeCalled)),
+            ..Default::default()
+        };
         assert_eq!(cheap_ghost("  ", &opts).await, None);
     }
 
@@ -335,7 +397,10 @@ mod tests {
         let session_id = seed_session(&db, "");
         let tier = Arc::new(StubTier::ghost("nope"));
         let cheap: Arc<dyn CheapTier> = tier.clone();
-        assert_eq!(ghost_for(&db, Some(&cheap), &session_id, "").await.unwrap(), None);
+        assert_eq!(
+            ghost_for(&db, Some(&cheap), &session_id, "").await.unwrap(),
+            None
+        );
         assert_eq!(
             tier.ghost_calls.load(std::sync::atomic::Ordering::SeqCst),
             0,

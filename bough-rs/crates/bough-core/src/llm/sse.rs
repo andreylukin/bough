@@ -95,7 +95,9 @@ pub struct ReqwestTransport {
 
 impl ReqwestTransport {
     pub fn new() -> Self {
-        ReqwestTransport { client: reqwest::Client::new() }
+        ReqwestTransport {
+            client: reqwest::Client::new(),
+        }
     }
 }
 
@@ -117,17 +119,31 @@ impl Transport for ReqwestTransport {
         }
         // A transport-level failure carries no status: the 502 default is what
         // makes it retryable.
-        let res = builder.send().await.map_err(|e| BoughError::llm(e.to_string()))?;
+        let res = builder
+            .send()
+            .await
+            .map_err(|e| BoughError::llm(e.to_string()))?;
         let status = res.status().as_u16();
         let headers = res
             .headers()
             .iter()
-            .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_string(),
+                    String::from_utf8_lossy(v.as_bytes()).into_owned(),
+                )
+            })
             .collect();
-        let body = res
-            .bytes_stream()
-            .map(|chunk| chunk.map(|b| b.to_vec()).map_err(|e| BoughError::llm(e.to_string())));
-        Ok(HttpResponse { status, headers, body: Box::pin(body) })
+        let body = res.bytes_stream().map(|chunk| {
+            chunk
+                .map(|b| b.to_vec())
+                .map_err(|e| BoughError::llm(e.to_string()))
+        });
+        Ok(HttpResponse {
+            status,
+            headers,
+            body: Box::pin(body),
+        })
     }
 }
 
@@ -158,7 +174,12 @@ impl SseEvents {
 
     /// The knob the tests turn down so a stall assertion does not take a minute.
     pub fn with_stall(body: ByteStream, provider: &str, stall_ms: u64) -> Self {
-        SseEvents { body: Some(body), provider: provider.to_string(), stall_ms, buffer: Vec::new() }
+        SseEvents {
+            body: Some(body),
+            provider: provider.to_string(),
+            stall_ms,
+            buffer: Vec::new(),
+        }
     }
 
     /// The next `data:` payload, `None` at stream end.
@@ -173,7 +194,9 @@ impl SseEvents {
                     return Ok(Some(rest.trim().to_string()));
                 }
             }
-            let Some(body) = self.body.as_mut() else { return Ok(None) };
+            let Some(body) = self.body.as_mut() else {
+                return Ok(None);
+            };
             let read = tokio::time::timeout(Duration::from_millis(self.stall_ms), body.next());
             match read.await {
                 Err(_) => {
@@ -211,7 +234,9 @@ pub async fn http_error(provider: &str, res: HttpResponse) -> BoughError {
         .map(|secs| (secs * 1000.0) as u64);
     let body = res.text().await;
     BoughError::llm_with(
-        format!("{provider}: {status} {body}").trim_end().to_string(),
+        format!("{provider}: {status} {body}")
+            .trim_end()
+            .to_string(),
         status,
         retry_after_ms,
     )
@@ -315,8 +340,10 @@ pub fn blocks_to_parts(blocks: &[LlmBlock], model: Option<&str>) -> Vec<Part> {
 /// canned transports in this module's and the clients' tests.
 #[cfg(test)]
 pub fn body_of(chunks: Vec<&str>) -> ByteStream {
-    let owned: Vec<Result<Vec<u8>, BoughError>> =
-        chunks.into_iter().map(|c| Ok(c.as_bytes().to_vec())).collect();
+    let owned: Vec<Result<Vec<u8>, BoughError>> = chunks
+        .into_iter()
+        .map(|c| Ok(c.as_bytes().to_vec()))
+        .collect();
     Box::pin(futures::stream::iter(owned))
 }
 
@@ -356,8 +383,7 @@ mod tests {
 
     #[tokio::test]
     async fn sse_yields_data_payloads_and_passes_done_through_untouched() {
-        let events =
-            SseEvents::new(body_of(vec!["data: {\"a\":1}\n", "data: [DONE]\n"]), "test");
+        let events = SseEvents::new(body_of(vec!["data: {\"a\":1}\n", "data: [DONE]\n"]), "test");
         assert_eq!(collect(events).await, vec!["{\"a\":1}", "[DONE]"]);
     }
 
@@ -369,13 +395,21 @@ mod tests {
             body_of(vec!["data: {\"de", "lta\":\"hi\"}\n", "data: {\"x\":2}\n"]),
             "test",
         );
-        assert_eq!(collect(events).await, vec!["{\"delta\":\"hi\"}", "{\"x\":2}"]);
+        assert_eq!(
+            collect(events).await,
+            vec!["{\"delta\":\"hi\"}", "{\"x\":2}"]
+        );
     }
 
     #[tokio::test]
     async fn sse_comments_blank_lines_and_event_lines_are_skipped() {
         let events = SseEvents::new(
-            body_of(vec![": keepalive\n", "\n", "event: ping\n", "data: {\"real\":true}\n"]),
+            body_of(vec![
+                ": keepalive\n",
+                "\n",
+                "event: ping\n",
+                "data: {\"real\":true}\n",
+            ]),
             "test",
         );
         assert_eq!(collect(events).await, vec!["{\"real\":true}"]);
@@ -385,8 +419,10 @@ mod tests {
     async fn sse_a_trailing_un_newlined_fragment_is_dropped_not_half_yielded() {
         // It is by definition incomplete. The caller's "did I see a completion
         // marker?" check is what turns this into a retryable transport fault.
-        let events =
-            SseEvents::new(body_of(vec!["data: {\"ok\":1}\n", "data: {\"cut\":"]), "test");
+        let events = SseEvents::new(
+            body_of(vec!["data: {\"ok\":1}\n", "data: {\"cut\":"]),
+            "test",
+        );
         assert_eq!(collect(events).await, vec!["{\"ok\":1}"]);
     }
 
@@ -424,8 +460,11 @@ mod tests {
 
     #[tokio::test]
     async fn http_error_no_retry_after_leaves_the_hint_absent() {
-        let res =
-            HttpResponse { status: 500, headers: vec![], body: body_of(vec!["nope"]) };
+        let res = HttpResponse {
+            status: 500,
+            headers: vec![],
+            body: body_of(vec!["nope"]),
+        };
         let err = http_error("openai", res).await;
         match &err {
             BoughError::Llm { retry_after_ms, .. } => assert_eq!(*retry_after_ms, None),
@@ -448,10 +487,17 @@ mod tests {
     #[test]
     fn parse_tool_args_the_schema_decides_whether_emptiness_is_legitimate() {
         // `stop` requires nothing, so no arguments is a real call.
-        assert_eq!(parse_tool_args("openai", None, Some(&stop()), "stop").unwrap(), json!({}));
+        assert_eq!(
+            parse_tool_args("openai", None, Some(&stop()), "stop").unwrap(),
+            json!({})
+        );
         // `run_steps` requires `code`, so no arguments means the stream was cut.
         let err = parse_tool_args("openai", None, Some(&run_steps()), "run_steps").unwrap_err();
-        assert!(err.to_string().contains("no arguments (truncated mid-call)"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("no arguments (truncated mid-call)"),
+            "{err}"
+        );
         assert!(crate::llm::retry::is_retryable(&err));
     }
 
@@ -459,16 +505,30 @@ mod tests {
     fn parse_tool_args_unknown_tool_with_no_arguments_is_not_assumed_truncated() {
         // No schema to judge by — `{}` is the only defensible reading, and the
         // tool dispatcher will report the unknown name properly.
-        assert_eq!(parse_tool_args("openrouter", None, None, "mystery").unwrap(), json!({}));
+        assert_eq!(
+            parse_tool_args("openrouter", None, None, "mystery").unwrap(),
+            json!({})
+        );
     }
 
     #[test]
     fn parse_tool_args_half_a_json_object_is_a_truncation_not_a_parse_bug() {
-        let err =
-            parse_tool_args("openrouter", Some(r#"{"code":"a"#), Some(&run_steps()), "run_steps")
-                .unwrap_err();
-        assert!(err.to_string().contains("malformed arguments (truncated mid-call)"), "{err}");
-        assert!(err.to_string().starts_with("openrouter:"), "the provider must be named");
+        let err = parse_tool_args(
+            "openrouter",
+            Some(r#"{"code":"a"#),
+            Some(&run_steps()),
+            "run_steps",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("malformed arguments (truncated mid-call)"),
+            "{err}"
+        );
+        assert!(
+            err.to_string().starts_with("openrouter:"),
+            "the provider must be named"
+        );
     }
 
     #[test]
@@ -478,7 +538,9 @@ mod tests {
                 text: "weighing options".into(),
                 meta: Some(json!({ "signature": "sig" })),
             },
-            LlmBlock::Text { text: "here goes".into() },
+            LlmBlock::Text {
+                text: "here goes".into(),
+            },
             LlmBlock::ToolUse {
                 id: "t1".into(),
                 name: "run_steps".into(),
@@ -493,7 +555,9 @@ mod tests {
                     meta: Some(json!({ "signature": "sig" })),
                     model: Some("some-model".into()),
                 },
-                Part::Text { text: "here goes".into() },
+                Part::Text {
+                    text: "here goes".into()
+                },
                 Part::ToolCall {
                     id: "t1".into(),
                     name: "run_steps".into(),
@@ -557,7 +621,10 @@ mod tests {
                     text: "".into(),
                     meta: Some(json!({ "type": "redacted_thinking" })),
                 },
-                LlmBlock::Reasoning { text: "   \n ".into(), meta: None },
+                LlmBlock::Reasoning {
+                    text: "   \n ".into(),
+                    meta: None,
+                },
                 LlmBlock::Text { text: "".into() },
             ],
             Some("m1"),
@@ -576,12 +643,20 @@ mod tests {
     fn blocks_to_parts_a_tool_call_with_no_input_still_yields_a_part() {
         // `stop` takes no arguments; the call is the whole message.
         let parts = blocks_to_parts(
-            &[LlmBlock::ToolUse { id: "t9".into(), name: "stop".into(), input: json!({}) }],
+            &[LlmBlock::ToolUse {
+                id: "t9".into(),
+                name: "stop".into(),
+                input: json!({}),
+            }],
             None,
         );
         assert_eq!(
             parts,
-            vec![Part::ToolCall { id: "t9".into(), name: "stop".into(), input: json!({}) }]
+            vec![Part::ToolCall {
+                id: "t9".into(),
+                name: "stop".into(),
+                input: json!({})
+            }]
         );
     }
 }

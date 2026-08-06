@@ -120,7 +120,10 @@ impl Store {
             let previous = inner.state.clone();
             let next = reduce(previous.clone(), action);
             if next == previous {
-                return TimerSignals { notice_changed: None, usage_poll: None };
+                return TimerSignals {
+                    notice_changed: None,
+                    usage_poll: None,
+                };
             }
             inner.state = next.clone();
             let listeners: Vec<Listener> =
@@ -149,12 +152,16 @@ impl Store {
 
     /// Report a failure to the user instead of throwing into a render.
     pub fn fail(&self, error: &str) {
-        self.dispatch(StoreAction::Notice { notice: Some(error.to_string()) });
+        self.dispatch(StoreAction::Notice {
+            notice: Some(error.to_string()),
+        });
     }
 
     /// A transient aside. Expires — see [`NOTICE_TTL_MS`].
     pub fn notify(&self, message: &str) {
-        self.dispatch(StoreAction::Notice { notice: Some(message.to_string()) });
+        self.dispatch(StoreAction::Notice {
+            notice: Some(message.to_string()),
+        });
     }
 
     /// A destructive outcome: said now AND written into the transcript for
@@ -163,13 +170,19 @@ impl Store {
     /// NO mark (nothing was destroyed) — callers route that through
     /// [`Store::fail`] instead.
     pub fn record(&self, message: &str) {
-        self.dispatch(StoreAction::Notice { notice: Some(message.to_string()) });
+        self.dispatch(StoreAction::Notice {
+            notice: Some(message.to_string()),
+        });
         let (id, at) = {
             let inner = self.inner.borrow();
             (inner.state.current_id.clone(), (inner.now)())
         };
         if let Some(id) = id {
-            self.dispatch(StoreAction::Mark { session_id: id, at, text: message.to_string() });
+            self.dispatch(StoreAction::Mark {
+                session_id: id,
+                at,
+                text: message.to_string(),
+            });
         }
     }
 
@@ -258,7 +271,9 @@ mod tests {
     const OTHER: &str = "sess-2";
 
     fn open(store: &Store, id: &str) {
-        store.dispatch(StoreAction::Open { session_id: Some(id.to_string()) });
+        store.dispatch(StoreAction::Open {
+            session_id: Some(id.to_string()),
+        });
     }
 
     #[test]
@@ -270,18 +285,30 @@ mod tests {
             let calls = Rc::new(Cell::new(0));
             let c = Rc::clone(&calls);
             let id = store.subscribe(move |_| c.set(c.get() + 1));
-            store.dispatch(StoreAction::Notice { notice: Some(format!("notice {i}")) });
-            assert_eq!(calls.get(), 1, "cycle {i}: the live subscriber must be told");
+            store.dispatch(StoreAction::Notice {
+                notice: Some(format!("notice {i}")),
+            });
+            assert_eq!(
+                calls.get(),
+                1,
+                "cycle {i}: the live subscriber must be told"
+            );
             store.unsubscribe(id);
             store.dispatch(StoreAction::Notice { notice: None });
-            assert_eq!(calls.get(), 1, "cycle {i}: a released subscriber must never be told again");
+            assert_eq!(
+                calls.get(),
+                1,
+                "cycle {i}: a released subscriber must never be told again"
+            );
         }
         assert_eq!(store.listener_count(), 0);
 
         // A detached listener that would panic proves nothing still holds it.
         let id = store.subscribe(|_| panic!("this listener was released and must not run"));
         store.unsubscribe(id);
-        store.dispatch(StoreAction::Notice { notice: Some("after".into()) });
+        store.dispatch(StoreAction::Notice {
+            notice: Some("after".into()),
+        });
     }
 
     #[test]
@@ -291,7 +318,9 @@ mod tests {
         store.subscribe(|_| panic!("wedged renderer"));
         let t = Rc::clone(&told);
         store.subscribe(move |_| t.set(true));
-        store.dispatch(StoreAction::Notice { notice: Some("x".into()) });
+        store.dispatch(StoreAction::Notice {
+            notice: Some("x".into()),
+        });
         assert!(told.get(), "the second listener must still be told");
     }
 
@@ -301,11 +330,19 @@ mod tests {
         open(&store, SESSION);
 
         store.record("reverted README.md");
-        assert_eq!(store.get_state().notice.as_deref(), Some("reverted README.md"));
+        assert_eq!(
+            store.get_state().notice.as_deref(),
+            Some("reverted README.md")
+        );
         let state = store.get_state();
-        let marks: Vec<(_, _)> =
-            marks_for(&state, Some(SESSION)).iter().map(|m| (m.kind, m.text.clone())).collect();
-        assert_eq!(marks, vec![(MarkKind::Destructive, "reverted README.md".to_string())]);
+        let marks: Vec<(_, _)> = marks_for(&state, Some(SESSION))
+            .iter()
+            .map(|m| (m.kind, m.text.clone()))
+            .collect();
+        assert_eq!(
+            marks,
+            vec![(MarkKind::Destructive, "reverted README.md".to_string())]
+        );
 
         // The notice expires. The mark does not.
         store.dismiss_notice();
@@ -323,8 +360,12 @@ mod tests {
     fn a_queued_message_can_be_taken_back_before_it_is_ever_posted() {
         let store = Store::new();
         open(&store, SESSION);
-        store.dispatch(StoreAction::Queue { text: "first".into() });
-        store.dispatch(StoreAction::Queue { text: "second thoughts".into() });
+        store.dispatch(StoreAction::Queue {
+            text: "first".into(),
+        });
+        store.dispatch(StoreAction::Queue {
+            text: "second thoughts".into(),
+        });
         assert_eq!(store.get_state().queued, vec!["first", "second thoughts"]);
 
         // The newest comes back — an undo of the last send, not a purge.
@@ -332,17 +373,25 @@ mod tests {
         assert_eq!(store.get_state().queued, vec!["first"]);
         assert_eq!(store.take_back_queued().as_deref(), Some("first"));
         assert!(store.get_state().queued.is_empty());
-        assert_eq!(store.take_back_queued(), None, "with nothing queued it is a no-op");
+        assert_eq!(
+            store.take_back_queued(),
+            None,
+            "with nothing queued it is a no-op"
+        );
     }
 
     #[test]
     fn timer_signals_are_edges_of_state_transitions_not_call_sites() {
         let store = Store::new();
         // A notice set → the expiry arms with the text.
-        let s = store.dispatch(StoreAction::Notice { notice: Some("hi".into()) });
+        let s = store.dispatch(StoreAction::Notice {
+            notice: Some("hi".into()),
+        });
         assert_eq!(s.notice_changed, Some(Some("hi".into())));
         // Same notice again → no state change → no edge.
-        let s = store.dispatch(StoreAction::Notice { notice: Some("hi".into()) });
+        let s = store.dispatch(StoreAction::Notice {
+            notice: Some("hi".into()),
+        });
         assert_eq!(s.notice_changed, None);
         // Cleared → the edge carries None so the timer is disarmed.
         let s = store.dispatch(StoreAction::Notice { notice: None });
@@ -406,7 +455,9 @@ mod tests {
         assert_eq!(drainable(&store.get_state()), None, "nothing open");
         open(&store, SESSION);
         assert_eq!(drainable(&store.get_state()), None, "nothing queued");
-        store.dispatch(StoreAction::Queue { text: "while busy".into() });
+        store.dispatch(StoreAction::Queue {
+            text: "while busy".into(),
+        });
         let state = store.get_state();
         assert_eq!(
             drainable(&state),

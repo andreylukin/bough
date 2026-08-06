@@ -29,7 +29,10 @@ pub struct ModelDefaults {
 }
 
 /// The unpinned state.
-pub const NO_DEFAULTS: ModelDefaults = ModelDefaults { model: None, effort: None };
+pub const NO_DEFAULTS: ModelDefaults = ModelDefaults {
+    model: None,
+    effort: None,
+};
 
 /// The production location: `~/.bough/model.json`.
 pub fn default_path() -> PathBuf {
@@ -42,9 +45,15 @@ pub fn default_path() -> PathBuf {
 /// test that wrote the developer's own home directory would be a test that
 /// changed their editor's model.
 pub fn load_defaults(path: &Path) -> ModelDefaults {
-    let Ok(raw) = std::fs::read_to_string(path) else { return NO_DEFAULTS };
-    let Ok(value) = serde_json::from_str::<Value>(&raw) else { return NO_DEFAULTS };
-    let Some(obj) = value.as_object() else { return NO_DEFAULTS };
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return NO_DEFAULTS;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return NO_DEFAULTS;
+    };
+    let Some(obj) = value.as_object() else {
+        return NO_DEFAULTS;
+    };
     let model = obj
         .get("model")
         .and_then(Value::as_str)
@@ -106,12 +115,18 @@ mod tests {
     fn a_saved_default_round_trips() {
         let path = scratch();
         save_defaults(
-            &ModelDefaults { model: Some("claude-sonnet-5".into()), effort: Some(Effort::High) },
+            &ModelDefaults {
+                model: Some("claude-sonnet-5".into()),
+                effort: Some(Effort::High),
+            },
             &path,
         );
         assert_eq!(
             load_defaults(&path),
-            ModelDefaults { model: Some("claude-sonnet-5".into()), effort: Some(Effort::High) }
+            ModelDefaults {
+                model: Some("claude-sonnet-5".into()),
+                effort: Some(Effort::High)
+            }
         );
     }
 
@@ -119,16 +134,25 @@ mod tests {
     fn null_clears_a_pin_let_the_provider_decide_is_a_real_state() {
         let path = scratch();
         save_defaults(
-            &ModelDefaults { model: Some("claude-sonnet-5".into()), effort: Some(Effort::High) },
+            &ModelDefaults {
+                model: Some("claude-sonnet-5".into()),
+                effort: Some(Effort::High),
+            },
             &path,
         );
         save_defaults(
-            &ModelDefaults { model: Some("claude-sonnet-5".into()), effort: None },
+            &ModelDefaults {
+                model: Some("claude-sonnet-5".into()),
+                effort: None,
+            },
             &path,
         );
         assert_eq!(
             load_defaults(&path),
-            ModelDefaults { model: Some("claude-sonnet-5".into()), effort: None }
+            ModelDefaults {
+                model: Some("claude-sonnet-5".into()),
+                effort: None
+            }
         );
     }
 
@@ -137,7 +161,13 @@ mod tests {
         // This runs on the path that answers WHICH MODEL TO USE. Taking the
         // server down because someone fat-fingered the JSON would be much
         // worse than falling back.
-        for bad in ["{ not json", "null", "[]", "\"a string\"", r#"{"model": 42}"#] {
+        for bad in [
+            "{ not json",
+            "null",
+            "[]",
+            "\"a string\"",
+            r#"{"model": 42}"#,
+        ] {
             let path = scratch();
             write(&path, bad);
             assert_eq!(load_defaults(&path), NO_DEFAULTS, "{bad}");
@@ -150,7 +180,10 @@ mod tests {
         write(&path, r#"{"model": "claude-opus-5", "effort": "turbo"}"#);
         assert_eq!(
             load_defaults(&path),
-            ModelDefaults { model: Some("claude-opus-5".into()), effort: None }
+            ModelDefaults {
+                model: Some("claude-opus-5".into()),
+                effort: None
+            }
         );
     }
 
@@ -162,7 +195,10 @@ mod tests {
         write(&path, r#"{"model": "   ", "effort": "low"}"#);
         assert_eq!(
             load_defaults(&path),
-            ModelDefaults { model: None, effort: Some(Effort::Low) }
+            ModelDefaults {
+                model: None,
+                effort: Some(Effort::Low)
+            }
         );
     }
 
@@ -170,13 +206,20 @@ mod tests {
     fn save_rebuilds_the_document_it_trims_and_holds_exactly_two_keys() {
         let path = scratch();
         save_defaults(
-            &ModelDefaults { model: Some(" claude-opus-5 ".into()), effort: Some(Effort::Max) },
+            &ModelDefaults {
+                model: Some(" claude-opus-5 ".into()),
+                effort: Some(Effort::Max),
+            },
             &path,
         );
         let stored: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        let mut keys: Vec<&str> =
-            stored.as_object().unwrap().keys().map(String::as_str).collect();
+        let mut keys: Vec<&str> = stored
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
         keys.sort();
         assert_eq!(keys, vec!["effort", "model"]);
         assert_eq!(stored["model"], "claude-opus-5");

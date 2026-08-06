@@ -27,7 +27,8 @@
 //! running turn (esc esc never shadows the stop), scrollback counts up from
 //! the live tail, ^c is a two-press quit.
 
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 
 use bough_core::schema::events::{
     BoughEvent, EventType, MessageDeltaData, MessageFinishedData, MessagePartData,
@@ -47,17 +48,17 @@ use ratatui::text::{Line, Span};
 
 use crate::components::ask::{ask_card_height, ask_prompt_lines, render_ask_card, AskCardProps};
 use crate::components::chat::{render_chat, ChatProps, CHAT_PLACEHOLDER};
-use crate::components::job_output::{
-    job_body_rows, job_sub_lines, render_job_output, JobOutputProps,
-};
-use crate::components::rail::{live_subagents, rail_rows, render_rail};
 use crate::components::composer::{
     completion_popup_height, composer_height, render_completion_popup, render_composer,
     CompletionPopupProps, ComposerProps,
 };
 use crate::components::help::{clamp_help_offset, overlay_lines, render_help, HELP_STEP};
+use crate::components::job_output::{
+    job_body_rows, job_sub_lines, render_job_output, JobOutputProps,
+};
 use crate::components::panel::host::{HostRequest, PanelHost};
 use crate::components::panel::{panel_body_rows, render_panel, PanelBody};
+use crate::components::rail::{live_subagents, rail_rows, render_rail};
 use crate::components::status::{render_status, ChatMeter};
 use crate::components::WARN;
 use crate::format::{
@@ -69,7 +70,8 @@ use crate::keys::{
     UiMode, SLASH_COMMANDS,
 };
 use crate::selection::{
-    is_empty_selection, link_at, row_content, selected_copy, url_at, CopyRow, Point, Selection,
+    is_empty_selection, link_at, row_content, selected_copy, url_across, url_at, CopyRow, Point,
+    Selection,
 };
 use crate::store::selectors::{live_units, LiveUnit, LiveUnitKind};
 
@@ -103,7 +105,10 @@ pub enum Action {
     /// One directory's entries, for an `@` path that left the workspace. The
     /// prefix travels with them: a reply for a path the user has already typed
     /// past must not rank against the query it does not belong to.
-    DirEntries { prefix: String, entries: Vec<String> },
+    DirEntries {
+        prefix: String,
+        entries: Vec<String>,
+    },
     /// The installed skills, for the `/` popup's rows below the built-ins.
     Skills(Vec<(String, String)>),
     /// `GET /sessions` — the tree tab's rows.
@@ -139,6 +144,40 @@ pub enum Action {
     Asks(Vec<AskQuestion>),
     /// A posted take-back came back: the text returns to the composer.
     TookBack(String),
+    /// `POST /sessions/:id/ghost` — the cheap tier's guess at the next message,
+    /// or the empty string for every failure there is.
+    Ghost(String),
+    /// `POST /sessions/:id/sections` — topic headers over one conversation.
+    Sections {
+        session_id: String,
+        sections: Vec<crate::forest::SectionRange>,
+    },
+    /// `GET /search` — the conversations and turns the tree's `/` matched. `q`
+    /// travels with them so a stale reply cannot mark the wrong rows.
+    SearchHits {
+        q: String,
+        sessions: Vec<String>,
+        messages: Vec<String>,
+    },
+    /// `GET /workflows` — the workflows tab's run list.
+    Workflows(Vec<crate::api::WorkflowSummary>),
+    /// `GET /workflows/:id` — one run's whole view. `None` is a failed fetch,
+    /// which drops the view back to the list rather than painting zeroes.
+    Workflow(Option<crate::api::WorkflowDetail>),
+    /// `GET /mcp/servers` — registry, grants, connections. NEVER cached: it is
+    /// re-fetched on every entry into the tab.
+    Mcp(Option<crate::api::McpStatus>),
+    /// `GET /skills` — the full rows AND the directories that were walked.
+    /// `skills: None` is a failed fetch and carries its reason.
+    SkillRows {
+        skills: Option<Vec<crate::components::panel::skills::SkillRow>>,
+        sources: Vec<crate::api::SkillSourceRow>,
+        note: Option<String>,
+    },
+    /// `GET /models` — the picker's catalog.
+    Models(Vec<crate::api::ModelRow>),
+    /// `GET /model-settings` — what a NEW conversation runs on, both tiers.
+    ModelSettings(crate::api::ModelSettings),
 }
 
 /// Outbound calls. The loop never does I/O itself; the transport does.
@@ -184,11 +223,67 @@ pub enum Effect {
     /// GET the live `ask()` holds, on attach and on session switch.
     LoadQuestions,
     /// Answer / decline the hold the card is showing.
-    AnswerAsk { session_id: String, id: String, answer: String },
-    DeclineAsk { session_id: String, id: String },
+    AnswerAsk {
+        session_id: String,
+        id: String,
+        answer: String,
+    },
+    DeclineAsk {
+        session_id: String,
+        id: String,
+    },
     /// The posted take-back: delete this message (and what followed) and stop
     /// the turn it started, in ONE call.
     Unsend(String),
+    /// Ask the cheap tier what the user is about to type. Debounced, and every
+    /// failure is silence.
+    GhostText(String),
+    /// Ask the cheap tier where this conversation changed subject.
+    Sections {
+        session_id: String,
+        gists: Vec<String>,
+    },
+    /// Full-text search behind the tree's `/`.
+    SearchSessions(String),
+    // ---- row 3.20: the four remaining tabs, each fetch injected -------------
+    /// `GET /workflows?session=` — the run list, on entry to the tab.
+    LoadWorkflows,
+    /// `GET /workflows/:id` — one run's view, on open and after a steer.
+    LoadWorkflow(String),
+    /// One steering verb, then a re-read: the answer to "did it pause" is the
+    /// run's own state, never the POST's 202.
+    SteerWorkflow {
+        id: String,
+        action: crate::components::panel::host::WorkflowAction,
+    },
+    /// `POST /workflows/:id/save`.
+    SaveWorkflow(String),
+    /// `GET /mcp/servers` — re-fetched on every entry, never cached.
+    LoadMcp,
+    /// The MCP verbs. Each is followed by a re-read, because the panel's job is
+    /// to show the state that resulted and not the one that was asked for.
+    SetMcpEnabled {
+        name: String,
+        enabled: bool,
+    },
+    AddMcpServer {
+        name: String,
+        url: String,
+    },
+    DeleteMcpServer(String),
+    ConnectMcpServer(String),
+    RestartMcpServer(String),
+    BeginMcpAuth(String),
+    ClearMcpAuth(String),
+    /// `GET /skills` — the skills TAB's rows (error and sources included), not
+    /// the composer's name/description pairs.
+    LoadSkillRows,
+    /// `GET /models` — the picker's catalog.
+    LoadModels,
+    /// `GET /model-settings` — both tiers' defaults.
+    LoadModelSettings,
+    /// `PUT /model-settings` + this session's pin, as one config.
+    SaveModel(crate::components::panel::model::ModelConfig),
 }
 
 /// The transport seam — scripted in tests; wired to `api.rs` when row 1.32 lands.
@@ -225,6 +320,37 @@ struct JobView {
 /// (`SPINNER_MS` = 120ms → ~1s). The rail redraws every second in the TS, and
 /// this is the same cadence expressed in the one timer this loop already has.
 const POLL_TICKS: u64 = 8;
+
+/// How long the composer waits before asking the cheap tier what comes next.
+const GHOST_DEBOUNCE_MS: i64 = 400;
+
+/// How long the tree's `/` waits before searching every transcript.
+const SEARCH_DEBOUNCE_MS: i64 = 180;
+
+/// Below this a conversation is short enough to read whole, and topic headers
+/// over it would be chrome captioning four rows.
+const SECTION_MIN_TURNS: usize = 8;
+
+/// What a turn contributes to the sections pass: its text, capped — the route
+/// reads gists, not transcripts, and the cap is what keeps a long conversation
+/// from being sent back in full.
+fn turn_gist(m: &Message) -> String {
+    let text: String = m
+        .parts
+        .iter()
+        .filter_map(|p| match p {
+            bough_core::schema::parts::Part::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let text = if text.is_empty() {
+        format!("{:?}", m.role).to_lowercase()
+    } else {
+        text
+    };
+    text.chars().take(200).collect()
+}
 
 /// The take-back's on-screen affordance. The TS gesture is keymap-only, which
 /// makes a three-second window that nothing announces; this row is the window,
@@ -312,6 +438,23 @@ pub struct App<T: Transport> {
     ask: Option<AskQuestion>,
     /// The free-text answer, as typed.
     ask_typed: String,
+    // ---- the cheap-tier cosmetics (row 3.21) -------------------------------
+    /// The cheap tier's guess at the next message, shown dim after the input.
+    /// Empty is the normal case, and every failure is empty.
+    ghost: String,
+    /// When the debounced ghost fetch is due, and what it was asked for. A
+    /// prediction that appears while you type is a prediction fighting you for
+    /// the row, so the timer restarts whenever the conditions change.
+    ghost_due: Option<i64>,
+    ghost_asked: Option<String>,
+    /// Conversations a `sections` pass has been asked for. Marked BEFORE the
+    /// reply lands so a second frame does not ask twice.
+    sections_asked: HashSet<String>,
+    /// When the debounced tree search is due, and the query it will carry.
+    search_due: Option<i64>,
+    search_asked: String,
+    /// The query the running timer belongs to.
+    search_pending: String,
     /// When the last message left this client — the take-back window's clock.
     /// Read at the keystroke rather than held as a flag: the window expires on
     /// the clock, and a flag would need a timer that can be missed.
@@ -352,6 +495,13 @@ impl<T: Transport> App<T> {
             files_requested: false,
             skills_requested: false,
             browse_requested: None,
+            ghost: String::new(),
+            ghost_due: None,
+            ghost_asked: None,
+            sections_asked: HashSet::new(),
+            search_due: None,
+            search_asked: String::new(),
+            search_pending: String::new(),
             panel: PanelHost::default(),
             help_open: false,
             help_off: 0,
@@ -441,6 +591,33 @@ impl<T: Transport> App<T> {
         }
     }
 
+    /// The terminal-window / multiplexer-tab title for the state on screen.
+    ///
+    /// The conversation's own title, and whether its turn is running — the two
+    /// facts a tab bar can carry. `main.tsx` computes exactly this and pushes it
+    /// only when it CHANGES; the push itself is the loop's (`run_loop`).
+    pub fn tab_title(&self, spinner_frame: usize) -> String {
+        let title = self.session_id.as_ref().and_then(|id| {
+            self.panel
+                .sessions
+                .iter()
+                .find(|row| &row.session.id == id)
+                .map(|row| row.session.title.clone())
+        });
+        let status = match &self.turn {
+            Some(turn) if !turn.ended => Some(crate::term::TitleStatus::Running),
+            Some(_) => Some(crate::term::TitleStatus::Complete),
+            None => None,
+        };
+        crate::term::bough_title(title.as_deref(), status, spinner_frame)
+    }
+
+    /// The spinner frame the title is drawn at — the loop's own tick, which
+    /// runs at `SPINNER_MS` (the TS title spinner's 120ms exactly).
+    pub fn spinner_frame(&self) -> usize {
+        self.tick as usize
+    }
+
     /// The rows the rail paints, capped at a third of the screen: the rail is
     /// pinned under the composer and must never push it off.
     fn rail_lines(&self) -> Vec<String> {
@@ -475,7 +652,7 @@ impl<T: Transport> App<T> {
                     self.notice = None;
                 }
                 self.poll_tick = self.poll_tick.wrapping_add(1);
-                if self.poll_tick % POLL_TICKS == 0 && self.session_id.is_some() {
+                if self.poll_tick.is_multiple_of(POLL_TICKS) && self.session_id.is_some() {
                     self.transport.effect(Effect::PollJobs);
                     // The rail's agent rows come from the listing, and a fan-out
                     // that started since the last read is exactly what it is for.
@@ -489,7 +666,12 @@ impl<T: Transport> App<T> {
                 self.jobs = jobs;
                 self.clamp_rail();
             }
-            Action::JobOutput { id, output, job, error } => {
+            Action::JobOutput {
+                id,
+                output,
+                job,
+                error,
+            } => {
                 if let Some(view) = self.job.as_mut() {
                     if view.id == id {
                         view.output = output;
@@ -504,7 +686,8 @@ impl<T: Transport> App<T> {
                     .find(|q| q.status == AskQuestionStatus::Pending);
             }
             Action::TookBack(text) => {
-                self.notice = Some(crate::store::lifecycle::take_back_notice(self.busy()).to_string());
+                self.notice =
+                    Some(crate::store::lifecycle::take_back_notice(self.busy()).to_string());
                 self.cursor = text.chars().count();
                 self.draft = text;
                 self.scroll_off = 0;
@@ -540,8 +723,67 @@ impl<T: Transport> App<T> {
                 self.scroll_off = 0;
             }
             Action::Sessions(sessions) => self.panel.set_sessions(sessions),
+            Action::Ghost(ghost) => {
+                // Late is the same as never for a prediction: if the composer
+                // is no longer empty and idle, the row it would paint on is
+                // the row the user is typing into.
+                if self.ghost_wanted().is_some() {
+                    self.ghost = ghost;
+                }
+            }
+            Action::Sections {
+                session_id,
+                sections,
+            } => {
+                self.panel.sections.insert(session_id, sections);
+            }
+            Action::SearchHits {
+                q,
+                sessions,
+                messages,
+            } => {
+                self.panel.set_search_hits(&q, sessions, messages);
+            }
             Action::Changes(set) => self.panel.set_changes(set),
             Action::Theme(state) => self.panel.set_theme(state),
+            Action::Workflows(runs) => self.panel.set_workflows(runs),
+            Action::Workflow(detail) => {
+                // A failed fetch drops back to the list: a detail level with no
+                // detail is a header full of zeroes over a run that may not
+                // exist.
+                if detail.is_none() && self.panel.wf_level > 0 {
+                    self.panel.wf_level = 0;
+                }
+                self.panel.set_workflow_detail(detail);
+            }
+            Action::Mcp(status) => self.panel.set_mcp(status),
+            Action::SkillRows {
+                skills,
+                sources,
+                note,
+            } => self.panel.set_skills(skills, sources, note),
+            Action::Models(models) => self.panel.set_models(models),
+            Action::ModelSettings(settings) => {
+                // The session's OWN pin is what this screen runs on; the
+                // settings answer what a NEW conversation would.
+                let open = self
+                    .session_id
+                    .as_ref()
+                    .and_then(|id| self.panel.sessions.iter().find(|row| &row.session.id == id));
+                let cfg = crate::components::panel::model::ModelConfig {
+                    default_model: settings.default_model,
+                    session_model: open.and_then(|row| row.session.model.clone()),
+                    cheap_model: settings.cheap_model,
+                    default_effort: settings
+                        .default_effort
+                        .map(crate::components::panel::model::EffortChoice::Level)
+                        .unwrap_or(crate::components::panel::model::EffortChoice::Default),
+                    session_effort: crate::components::panel::model::as_effort_choice(
+                        open.and_then(|row| row.session.effort.as_deref()),
+                    ),
+                };
+                self.panel.set_model_config(cfg);
+            }
             Action::Run(command) => self.run_client_command(command),
             Action::Files(files) => self.files = files,
             Action::DirEntries { prefix, entries } => self.browsed = (prefix, entries),
@@ -556,6 +798,125 @@ impl<T: Transport> App<T> {
             Action::Term(TermEvent::Key(k)) => self.on_key(k, now_ms),
             Action::Term(_) => {}
         }
+        self.cosmetics(now_ms);
+    }
+
+    // ---- the cheap-tier cosmetics (row 3.21) -------------------------------
+    //
+    // Ghost text, topic headers and the tree's full-text search. All three are
+    // cheap-tier answers, all three are debounced, and EVERY failure is silence
+    // — a feature whose whole value is that you can ignore it must never put a
+    // banner on the screen. Driven off the loop's own tick rather than three
+    // timers: the tick already arrives while the screen is idle.
+
+    /// The conversation a prediction would be FOR, or None when one would be
+    /// noise: mid-turn (the conversation is still moving), mid-typing (it would
+    /// fight the user for the row), or on an empty conversation.
+    fn ghost_wanted(&self) -> Option<&str> {
+        if self.busy() || !self.draft.is_empty() || self.thread.is_empty() {
+            return None;
+        }
+        self.session_id.as_deref()
+    }
+
+    fn cosmetics(&mut self, now_ms: i64) {
+        self.mirror_thread();
+        self.tick_ghost(now_ms);
+        self.tick_sections();
+        self.tick_search(now_ms);
+    }
+
+    /// The open conversation's turns, where the tree reads them from. Without
+    /// this the topic headers and the searched-turn marks would have nothing to
+    /// hang on — the tree's own thread map is filled per session.
+    fn mirror_thread(&mut self) {
+        let Some(id) = self.session_id.clone() else {
+            return;
+        };
+        if self.panel.threads.get(&id).map(Vec::len) != Some(self.thread.len()) {
+            self.panel.threads.insert(id, self.thread.clone());
+        }
+    }
+
+    fn tick_ghost(&mut self, now_ms: i64) {
+        let Some(id) = self.ghost_wanted().map(str::to_string) else {
+            // The conditions stopped holding: drop the prediction AND the
+            // in-flight ask, so typing then stopping asks again.
+            self.ghost.clear();
+            self.ghost_due = None;
+            self.ghost_asked = None;
+            return;
+        };
+        if self.ghost_asked.as_deref() == Some(id.as_str()) {
+            return;
+        }
+        match self.ghost_due {
+            None => self.ghost_due = Some(now_ms + GHOST_DEBOUNCE_MS),
+            Some(due) if now_ms >= due => {
+                self.ghost_due = None;
+                self.ghost_asked = Some(id.clone());
+                self.transport.effect(Effect::GhostText(id));
+            }
+            Some(_) => {}
+        }
+    }
+
+    /// One pass per conversation, and only for one long enough to need it: the
+    /// route is a cheap-tier LLM read of every turn gist, and it is stateless,
+    /// so the answer is cached rather than re-asked as the cursor moves.
+    fn tick_sections(&mut self) {
+        if !self.panel.open() || self.panel.tab() != crate::keys::PanelTab::Tree {
+            return;
+        }
+        let want: Vec<(String, Vec<String>)> = self
+            .panel
+            .expanded
+            .iter()
+            .filter(|id| !self.sections_asked.contains(*id))
+            .filter_map(|id| {
+                let thread = self.panel.threads.get(id)?;
+                (thread.len() >= SECTION_MIN_TURNS)
+                    .then(|| (id.clone(), thread.iter().map(turn_gist).collect()))
+            })
+            .collect();
+        for (session_id, gists) in want {
+            self.sections_asked.insert(session_id.clone());
+            self.transport
+                .effect(Effect::Sections { session_id, gists });
+        }
+    }
+
+    /// The tree's `/` is a full-text search of every message — which is what
+    /// the keymap has always said it is, and what it never did.
+    fn tick_search(&mut self, now_ms: i64) {
+        let q = if self.panel.open() && self.panel.tab() == crate::keys::PanelTab::Tree {
+            self.panel.filter.trim().to_string()
+        } else {
+            String::new()
+        };
+        // One character matches everything; FTS over every transcript is not
+        // free, and the title filter alone already answers that keystroke.
+        if q.chars().count() < 2 {
+            self.search_due = None;
+            self.search_asked.clear();
+            return;
+        }
+        // The timer is restarted by a CHANGED query, not by the tick that
+        // happens to be checking it — a countdown reset every frame never
+        // reaches zero.
+        if q != self.search_pending {
+            self.search_pending = q;
+            self.search_due = Some(now_ms + SEARCH_DEBOUNCE_MS);
+            return;
+        }
+        if q == self.search_asked {
+            return;
+        }
+        if self.search_due.is_some_and(|due| now_ms >= due) {
+            self.search_due = None;
+            self.search_asked = q.clone();
+            self.transport.effect(Effect::SearchSessions(q));
+        }
     }
 
     /// Wheel, drag selection and click (row 2.25).
@@ -568,12 +929,18 @@ impl<T: Transport> App<T> {
     /// hit-tests for a link.
     fn on_mouse(&mut self, m: MouseEvent) {
         // Reports are 0-based; a selection is 1-based cells (selection.rs).
-        let at = Point { x: m.column as i64 + 1, y: m.row as i64 + 1 };
+        let at = Point {
+            x: m.column as i64 + 1,
+            y: m.row as i64 + 1,
+        };
         match m.kind {
             MouseEventKind::ScrollUp => self.scroll_by(WHEEL_ROWS as isize),
             MouseEventKind::ScrollDown => self.scroll_by(-(WHEEL_ROWS as isize)),
             MouseEventKind::Down(MouseButton::Left) => {
-                self.sel = Some(Selection { anchor: at, focus: at });
+                self.sel = Some(Selection {
+                    anchor: at,
+                    focus: at,
+                });
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if let Some(s) = self.sel.as_mut() {
@@ -599,7 +966,12 @@ impl<T: Transport> App<T> {
     /// nothing at all; answering from the painted grid makes a selection work on
     /// every surface without each one having to hand its rows up.
     fn painted_rows(&self) -> Vec<String> {
-        let area = Rect { x: 0, y: 0, width: self.cols.max(20), height: self.rows.max(8) };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: self.cols.max(20),
+            height: self.rows.max(8),
+        };
         let mut buf = Buffer::empty(area);
         self.draw(area, &mut buf);
         (0..area.height)
@@ -648,7 +1020,22 @@ impl<T: Transport> App<T> {
             return;
         }
         let (content, offset) = row_content(row);
-        if let Some(url) = col.checked_sub(offset).and_then(|c| url_at(&content, c)) {
+        let Some(here) = col.checked_sub(offset) else {
+            return;
+        };
+        if let Some(url) = url_at(&content, here) {
+            self.open_link(&url);
+            return;
+        }
+        // A long address — the mcp tab's authorization link is the case that
+        // matters — is wrapped over several rows, and no single one of them is a
+        // URL. `url_across` rejoins them, so a click anywhere in it opens the
+        // whole thing rather than a fragment.
+        let contents: Vec<String> = painted.iter().map(|r| row_content(r).0).collect();
+        if let Some(url) = usize::try_from(at.y - 1)
+            .ok()
+            .and_then(|y| url_across(&contents, y, here))
+        {
             self.open_link(&url);
         }
     }
@@ -712,8 +1099,11 @@ impl<T: Transport> App<T> {
                     .collect();
                 return rank_completions(&candidates, &trigger, COMPLETION_LIMIT);
             }
-            let candidates: Vec<Candidate> =
-                self.files.iter().map(|name| Candidate::file(name.clone())).collect();
+            let candidates: Vec<Candidate> = self
+                .files
+                .iter()
+                .map(|name| Candidate::file(name.clone()))
+                .collect();
             return rank_completions(&candidates, &trigger, COMPLETION_LIMIT);
         }
         // Built-in commands come FIRST in the candidate list, which is also how
@@ -725,7 +1115,11 @@ impl<T: Transport> App<T> {
             .iter()
             .map(|c| Candidate::command(c.name, c.desc, c.command))
             .collect();
-        candidates.extend(self.skills.iter().map(|(name, desc)| Candidate::skill(name, desc)));
+        candidates.extend(
+            self.skills
+                .iter()
+                .map(|(name, desc)| Candidate::skill(name, desc)),
+        );
         rank_completions(&candidates, &trigger, COMPLETION_LIMIT)
     }
 
@@ -750,7 +1144,9 @@ impl<T: Transport> App<T> {
     /// types a marker, and then exactly once per conversation (files), per
     /// process (skills) or per browsed directory.
     fn ensure_candidates(&mut self) {
-        let Some(trigger) = self.trigger() else { return };
+        let Some(trigger) = self.trigger() else {
+            return;
+        };
         match trigger.kind {
             TriggerKind::File => match browse_prefix(&trigger.query) {
                 Some(prefix) => {
@@ -779,7 +1175,9 @@ impl<T: Transport> App<T> {
     /// comes out of the draft — leaving `/model ` behind would put it in the
     /// next message as text — but what follows is the command, not an insertion.
     fn complete_accept(&mut self) {
-        let Some(trigger) = self.trigger() else { return };
+        let Some(trigger) = self.trigger() else {
+            return;
+        };
         let ranked = self.completion();
         let Some(item) = ranked.items.get(self.sel_at(ranked.items.len())).cloned() else {
             return;
@@ -853,7 +1251,14 @@ impl<T: Transport> App<T> {
             return ask_card_height(lines.len(), options) as u16;
         }
         let composer_rows = ((rows as usize) / 4).clamp(3, 8);
-        composer_height(&self.draft, "", self.busy(), cols, composer_rows, 0) as u16
+        composer_height(
+            &self.draft,
+            &self.ghost,
+            self.busy(),
+            cols,
+            composer_rows,
+            0,
+        ) as u16
     }
 
     /// Rows the open tab may paint. The panel's own box takes two of the
@@ -904,6 +1309,10 @@ impl<T: Transport> App<T> {
             // Inside the window Escape means the take-back, and it outranks the
             // stop — nobody takes a message back and still wants the answer.
             just_sent: self.just_sent(),
+            // While the `/` buffer has the keyboard, bare letters are text —
+            // the keymap's own guard, and the reason `j`/`k` do not walk the
+            // list mid-query.
+            panel_filtering: self.panel.filtering,
             ..Default::default()
         };
         lookup(&ctx, &crate::keys::chord_of(&input, flags))
@@ -933,6 +1342,40 @@ impl<T: Transport> App<T> {
                 HostRequest::Revert(paths) => self.transport.effect(Effect::Revert(paths)),
                 HostRequest::LoadTheme => self.transport.effect(Effect::LoadTheme),
                 HostRequest::SaveTheme(write) => self.transport.effect(Effect::SaveTheme(write)),
+                // ---- row 3.20 ---------------------------------------------
+                HostRequest::LoadWorkflows => self.transport.effect(Effect::LoadWorkflows),
+                HostRequest::LoadWorkflow(id) => self.transport.effect(Effect::LoadWorkflow(id)),
+                HostRequest::SteerWorkflow { id, action } => {
+                    self.transport.effect(Effect::SteerWorkflow { id, action })
+                }
+                HostRequest::SaveWorkflow(id) => self.transport.effect(Effect::SaveWorkflow(id)),
+                HostRequest::OpenAgentSession(id) => self.transport.effect(Effect::OpenSession(id)),
+                HostRequest::LoadMcp => self.transport.effect(Effect::LoadMcp),
+                HostRequest::SetMcpEnabled { name, enabled } => self
+                    .transport
+                    .effect(Effect::SetMcpEnabled { name, enabled }),
+                HostRequest::AddMcpServer { name, url } => {
+                    self.transport.effect(Effect::AddMcpServer { name, url })
+                }
+                HostRequest::DeleteMcpServer(name) => {
+                    self.transport.effect(Effect::DeleteMcpServer(name))
+                }
+                HostRequest::ConnectMcpServer(name) => {
+                    self.transport.effect(Effect::ConnectMcpServer(name))
+                }
+                HostRequest::RestartMcpServer(name) => {
+                    self.transport.effect(Effect::RestartMcpServer(name))
+                }
+                HostRequest::BeginMcpAuth(name) => {
+                    self.transport.effect(Effect::BeginMcpAuth(name))
+                }
+                HostRequest::ClearMcpAuth(name) => {
+                    self.transport.effect(Effect::ClearMcpAuth(name))
+                }
+                HostRequest::LoadSkillRows => self.transport.effect(Effect::LoadSkillRows),
+                HostRequest::LoadModels => self.transport.effect(Effect::LoadModels),
+                HostRequest::LoadModelSettings => self.transport.effect(Effect::LoadModelSettings),
+                HostRequest::SaveModel(cfg) => self.transport.effect(Effect::SaveModel(cfg)),
             }
         }
     }
@@ -952,9 +1395,21 @@ impl<T: Transport> App<T> {
             if self.ui_mode() == UiMode::Ask {
                 return self.type_into_ask(k);
             }
+            // While the panel's `/` buffer is open, an unbound printable key
+            // IS the query — the one place in the panel where text is text.
+            if self.panel.filtering {
+                if let KeyCode::Char(c) = k.code {
+                    if !c.is_control() && !k.modifiers.contains(KeyModifiers::ALT) {
+                        self.panel.type_filter(c);
+                        return true;
+                    }
+                }
+            }
             // In a surface that owns the keyboard, an unbound key is eaten
             // rather than typed into a composer nobody can see.
-            return self.help_open || self.panel.open() || self.job.is_some()
+            return self.help_open
+                || self.panel.open()
+                || self.job.is_some()
                 || self.rail_sel.is_some();
         };
         // `^c` is bound in EVERY mode and is the one way out of a wedged
@@ -1028,6 +1483,17 @@ impl<T: Transport> App<T> {
                     self.take_back();
                     true
                 }
+                // ⇥ with no popup TAKES the prediction: it replaces the draft
+                // and is gone. Nothing happens when there is none — the key
+                // falls through rather than eating itself.
+                Command::GhostAccept => {
+                    if self.ghost.is_empty() {
+                        return false;
+                    }
+                    self.draft = std::mem::take(&mut self.ghost);
+                    self.cursor = self.draft.chars().count();
+                    true
+                }
                 _ => false,
             },
         }
@@ -1037,7 +1503,10 @@ impl<T: Transport> App<T> {
 
     fn on_rail_command(&mut self, command: Command, _digit: Option<usize>) {
         let units = self.units();
-        let at = self.rail_sel.unwrap_or(0).min(units.len().saturating_sub(1));
+        let at = self
+            .rail_sel
+            .unwrap_or(0)
+            .min(units.len().saturating_sub(1));
         match command {
             Command::RailUp => {
                 self.rail_armed = None;
@@ -1066,7 +1535,8 @@ impl<T: Transport> App<T> {
                             scroll: 0,
                             armed: false,
                         });
-                        self.transport.effect(Effect::LoadJobOutput(unit.id.clone()));
+                        self.transport
+                            .effect(Effect::LoadJobOutput(unit.id.clone()));
                     }
                     LiveUnitKind::Subagent => {
                         self.transport.effect(Effect::OpenSession(unit.id.clone()))
@@ -1086,9 +1556,7 @@ impl<T: Transport> App<T> {
                 }
                 self.rail_armed = None;
                 match unit.kind {
-                    LiveUnitKind::Shell => {
-                        self.transport.effect(Effect::KillJob(unit.id.clone()))
-                    }
+                    LiveUnitKind::Shell => self.transport.effect(Effect::KillJob(unit.id.clone())),
                     LiveUnitKind::Subagent => {
                         self.transport.effect(Effect::StopSession(unit.id.clone()))
                     }
@@ -1108,7 +1576,9 @@ impl<T: Transport> App<T> {
 
     fn on_job_command(&mut self, command: Command) {
         let page = self.page();
-        let Some(view) = self.job.as_mut() else { return };
+        let Some(view) = self.job.as_mut() else {
+            return;
+        };
         match command {
             Command::JobClose => self.job = None,
             Command::ScrollUp => view.scroll += 1,
@@ -1136,10 +1606,10 @@ impl<T: Transport> App<T> {
         match command {
             Command::AskPick => {
                 // A digit picks an option; the card numbers them from 1.
-                let Some(d) = digit.filter(|d| *d > 0) else { return };
-                let Some(option) =
-                    ask.options.as_ref().and_then(|o| o.get(d - 1)).cloned()
-                else {
+                let Some(d) = digit.filter(|d| *d > 0) else {
+                    return;
+                };
+                let Some(option) = ask.options.as_ref().and_then(|o| o.get(d - 1)).cloned() else {
                     return;
                 };
                 self.answer_ask(&ask, option);
@@ -1239,9 +1709,8 @@ impl<T: Transport> App<T> {
                     self.quit = true;
                 } else {
                     self.quit_armed = true;
-                    self.notice = Some(
-                        "^c again to quit — subagents and workflows keep running".to_string(),
-                    );
+                    self.notice =
+                        Some("^c again to quit — subagents and workflows keep running".to_string());
                 }
             }
             (KeyCode::Esc, _) => self.on_escape(now_ms),
@@ -1262,18 +1731,15 @@ impl<T: Transport> App<T> {
             (KeyCode::End, _) => self.cursor_end(),
             (KeyCode::Backspace, _) => self.delete_back(),
             (KeyCode::Left, _) => self.cursor = self.cursor.saturating_sub(1),
-            (KeyCode::Right, _) => {
-                self.cursor = (self.cursor + 1).min(self.draft.chars().count())
-            }
+            (KeyCode::Right, _) => self.cursor = (self.cursor + 1).min(self.draft.chars().count()),
             (KeyCode::PageUp, _) => self.scroll_by(self.page() as isize),
             (KeyCode::PageDown, _) => self.scroll_by(-(self.page() as isize)),
-            (KeyCode::Char(c), false) => {
+            (KeyCode::Char(c), false)
                 // stripCtl-lite: whole control chars never reach the draft;
                 // meta chords are commands, never text (inkKey: Option = meta).
-                if !c.is_control() && !k.modifiers.contains(KeyModifiers::ALT) {
+                if !c.is_control() && !k.modifiers.contains(KeyModifiers::ALT) => {
                     self.insert_char(c);
                 }
-            }
             _ => {}
         }
     }
@@ -1396,7 +1862,9 @@ impl<T: Transport> App<T> {
         if let Some((name, suggestion)) = unknown_command(&text, &skill_names) {
             self.notice = Some(format!(
                 "there is no /{name}{} · type / for the list, or ? for every key",
-                suggestion.map(|s| format!(" — did you mean /{s}?")).unwrap_or_default(),
+                suggestion
+                    .map(|s| format!(" — did you mean /{s}?"))
+                    .unwrap_or_default(),
             ));
             return; // draft kept
         }
@@ -1454,16 +1922,21 @@ impl<T: Transport> App<T> {
                 // turn.started event); the clock is the event's ts, never a
                 // wall clock read in the reducer.
                 if msg.pending {
-                    self.turn = Some(TurnClock { started_at: event.ts, ended: false });
+                    self.turn = Some(TurnClock {
+                        started_at: event.ts,
+                        ended: false,
+                    });
                 }
                 // The server's copy of a message we sent supersedes the
                 // optimistic local echo (the TS store reconciles by id via the
                 // snapshot merge; v1 matches the echo by text).
                 if msg.role == Role::User {
                     let text = first_text(&msg);
-                    if let Some(pos) = self.thread.iter().position(|m| {
-                        m.id.starts_with("local-") && first_text(m) == text
-                    }) {
+                    if let Some(pos) = self
+                        .thread
+                        .iter()
+                        .position(|m| m.id.starts_with("local-") && first_text(m) == text)
+                    {
                         self.thread.remove(pos);
                     }
                 }
@@ -1475,7 +1948,10 @@ impl<T: Transport> App<T> {
             }
             EventType::MessageDelta => {
                 if let Ok(d) = serde_json::from_value::<MessageDeltaData>(event.data) {
-                    self.streaming.entry(d.message_id).or_default().push_str(&d.delta);
+                    self.streaming
+                        .entry(d.message_id)
+                        .or_default()
+                        .push_str(&d.delta);
                 }
             }
             EventType::MessagePart => {
@@ -1539,9 +2015,43 @@ impl<T: Transport> App<T> {
                     self.transport.effect(Effect::PollJobs);
                 }
             }
-            EventType::WorkflowUpdated => {}
-            EventType::WorkflowAgent => {}
-            EventType::WorkflowLog => {}
+            // A run's state moved. The event says "re-read" and never carries
+            // the row: one shape (`GET /workflows`) decides what a run is, so an
+            // event that arrives out of order cannot invent one. Only while the
+            // tab is open — a closed panel polling a fan-out is a background
+            // request nobody asked for.
+            EventType::WorkflowUpdated | EventType::WorkflowAgent => {
+                if self.panel.open() && self.panel.tab() == crate::keys::PanelTab::Workflows {
+                    self.transport.effect(Effect::LoadWorkflows);
+                    if let Some(id) = self
+                        .panel
+                        .run_detail
+                        .as_ref()
+                        .map(|d| d.workflow.id.clone())
+                    {
+                        self.transport.effect(Effect::LoadWorkflow(id));
+                    }
+                }
+            }
+            // The narrator line, which the run header prints as its `▸` row.
+            // Kept for the OPEN run only: a line from another run under this
+            // run's header is a sentence about work you are not looking at.
+            EventType::WorkflowLog => {
+                let Ok(d) = serde_json::from_value::<bough_core::schema::events::WorkflowLogData>(
+                    event.data.clone(),
+                ) else {
+                    return;
+                };
+                if self
+                    .panel
+                    .run_detail
+                    .as_ref()
+                    .map(|r| r.workflow.id.as_str())
+                    == Some(d.run_id.as_str())
+                {
+                    self.panel.last_log = Some(d.line);
+                }
+            }
         }
     }
 
@@ -1603,6 +2113,15 @@ impl<T: Transport> App<T> {
     /// budget for the border, and the tab bodies are clamped to what is left.
     fn draw_panel(&self, area: Rect, buf: &mut Buffer) {
         let rows = self.panel.rows();
+        // Derived ONCE, here, because the props borrow them: two derivations of
+        // "which rows are visible" is how a digit comes to select a row nobody
+        // can see (the host's `pick_target` walks these same functions).
+        let skills = self
+            .panel
+            .skills
+            .as_ref()
+            .map(|_| self.panel.filtered_skills());
+        let entries = self.panel.model_entries();
         let body = match self.panel.tab() {
             crate::keys::PanelTab::Tree => {
                 PanelBody::Tree(crate::components::panel::tree::TreeProps {
@@ -1612,7 +2131,11 @@ impl<T: Transport> App<T> {
                     workspace: self.options.workspace.as_deref(),
                     cols: Some((area.width as usize).saturating_sub(4).max(20)),
                     message: self.panel.message.as_deref(),
-                    ..Default::default()
+                    // The `/` buffer echoes as its own row while it has the
+                    // keyboard AND after: a narrowed list must say what
+                    // narrowed it.
+                    filter: (!self.panel.filter.is_empty()).then_some(self.panel.filter.as_str()),
+                    filtering: self.panel.filtering,
                 })
             }
             crate::keys::PanelTab::Changes => {
@@ -1628,15 +2151,67 @@ impl<T: Transport> App<T> {
                     // With no conversation open there is no checkout, and the
                     // non-git sentence would be a claim about a directory that
                     // does not exist.
-                    hint: self.session_id.as_ref().map(|_| {
-                        crate::components::panel::changes::NOT_A_REPO_HINT
-                    }),
+                    hint: self
+                        .session_id
+                        .as_ref()
+                        .map(|_| crate::components::panel::changes::NOT_A_REPO_HINT),
                 })
             }
             crate::keys::PanelTab::Theme => PanelBody::Theme(self.panel.theme.as_ref()),
-            // The remaining tabs land in row 3.20; an absent surface says so
-            // rather than painting an empty box.
-            _ => PanelBody::Text("nothing to show here yet"),
+            crate::keys::PanelTab::Workflows => {
+                PanelBody::Workflows(crate::components::panel::workflows::WorkflowsProps {
+                    runs: &self.panel.runs,
+                    sel: self.panel.sel,
+                    level: self.panel.wf_level,
+                    detail: self.panel.run_detail.as_ref(),
+                    phase_sel: self.panel.phase_sel,
+                    agent_sel: self.panel.agent_sel,
+                    scroll: self.panel.wf_scroll,
+                    filter: self.panel.wf_filter(),
+                    prompt_open: self.panel.prompt_open,
+                    rows: panel_body_rows((area.height as usize).saturating_sub(2)),
+                    cols: (area.width as usize).saturating_sub(4).max(20),
+                    last_log: self.panel.last_log.as_deref(),
+                    now: self.now_ms,
+                })
+            }
+            crate::keys::PanelTab::Mcp => {
+                PanelBody::Mcp(crate::components::panel::mcp::McpTabProps {
+                    status: self.panel.mcp.as_ref(),
+                    selected: self.panel.sel,
+                    message: self.panel.message.as_deref(),
+                    rows: panel_body_rows((area.height as usize).saturating_sub(2)),
+                    cols: (area.width as usize).saturating_sub(4).max(20),
+                    entry: self.panel.mcp_entry.as_deref(),
+                })
+            }
+            crate::keys::PanelTab::Skills => {
+                PanelBody::Skills(crate::components::panel::skills::SkillsTabProps {
+                    // `filtered` is a temporary, so it is built into the field
+                    // the props borrow — the list the cursor addresses and the
+                    // list painted must be the SAME derivation.
+                    skills: skills.as_deref(),
+                    rows: panel_body_rows((area.height as usize).saturating_sub(2)),
+                    cols: (area.width as usize).saturating_sub(4).max(20),
+                    selected: self.panel.sel,
+                    note: self.panel.skills_note.as_deref(),
+                    sources: &self.panel.skill_sources,
+                    filter: &self.panel.filter,
+                    filtering: self.panel.filtering,
+                })
+            }
+            crate::keys::PanelTab::Model => {
+                PanelBody::Model(crate::components::panel::model::ModelPickerProps {
+                    cols: (area.width as usize).saturating_sub(4).max(20),
+                    cfg: &self.panel.model_cfg,
+                    entries: &entries,
+                    selected: self.panel.sel,
+                    rows: panel_body_rows((area.height as usize).saturating_sub(2)),
+                    message: self.panel.message.as_deref(),
+                    filters: &self.panel.model_filters,
+                    focused: self.panel.model_focus,
+                })
+            }
         };
         render_panel(self.panel.tab(), &body, area, buf);
     }
@@ -1675,7 +2250,13 @@ impl<T: Transport> App<T> {
             .options
             .workspace
             .as_deref()
-            .map(|w| w.trim_end_matches('/').rsplit('/').next().unwrap_or(w).to_string())
+            .map(|w| {
+                w.trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(w)
+                    .to_string()
+            })
             .unwrap_or_else(|| "new conversation".to_string());
         let mut header = vec![Span::styled(
             title,
@@ -1690,29 +2271,30 @@ impl<T: Transport> App<T> {
             Some(t) if !t.ended => (self.now_ms - t.started_at).max(0),
             _ => 0,
         };
-        let growing = Rect { x: area.x, y: area.y + 1, width: cols, height: chat_h };
+        let growing = Rect {
+            x: area.x,
+            y: area.y + 1,
+            width: cols,
+            height: chat_h,
+        };
         // The growing region is the transcript OR the panel — the panel
         // DISPLACES it rather than floating over it, which is what makes
         // "there is exactly one place that is not the chat" true on screen.
         if let Some(view) = &self.job {
             // The open job takes the growing region: it is a reading surface,
             // and it returns to the rail it was opened from.
-            let sub = job_sub_lines(
-                view.job.as_ref(),
-                &view.id,
-                cols as usize,
-                chat_h as usize,
-            );
+            let sub = job_sub_lines(view.job.as_ref(), &view.id, cols as usize, chat_h as usize);
             render_job_output(
                 &JobOutputProps {
                     id: &view.id,
                     job: view.job.as_ref(),
                     output: &view.output,
-                    scroll: view
-                        .scroll
-                        .min(view.output.lines().count().saturating_sub(
-                            job_body_rows(chat_h as usize, sub.len()),
-                        )),
+                    scroll: view.scroll.min(
+                        view.output
+                            .lines()
+                            .count()
+                            .saturating_sub(job_body_rows(chat_h as usize, sub.len())),
+                    ),
                     width: cols as usize,
                     height: chat_h as usize,
                     now: self.now_ms,
@@ -1753,7 +2335,12 @@ impl<T: Transport> App<T> {
                     sel: Some(self.sel_at(ranked.items.len())),
                     more,
                 },
-                Rect { x: area.x, y: area.y + 1 + chat_h, width: cols, height: popup_h },
+                Rect {
+                    x: area.x,
+                    y: area.y + 1 + chat_h,
+                    width: cols,
+                    height: popup_h,
+                },
                 buf,
             );
         }
@@ -1767,7 +2354,12 @@ impl<T: Transport> App<T> {
                 &self.units(),
                 self.rail_sel,
                 self.rail_armed.as_deref(),
-                Rect { x: area.x, y: area.y + 1 + chat_h + popup_h, width: cols, height: rail_h },
+                Rect {
+                    x: area.x,
+                    y: area.y + 1 + chat_h + popup_h,
+                    width: cols,
+                    height: rail_h,
+                },
                 buf,
             );
         }
@@ -1784,7 +2376,11 @@ impl<T: Transport> App<T> {
             let lines = ask_prompt_lines(&ask.question, rows, cols);
             let options = ask.options.clone().unwrap_or_default();
             render_ask_card(
-                &AskCardProps { lines: &lines, options: &options, typed: &self.ask_typed },
+                &AskCardProps {
+                    lines: &lines,
+                    options: &options,
+                    typed: &self.ask_typed,
+                },
                 input_at,
                 buf,
             );
@@ -1796,7 +2392,13 @@ impl<T: Transport> App<T> {
                     busy,
                     width: cols,
                     max_rows: composer_rows,
-                    ghost: "", // ghost absent by contract in v1
+                    // Suppressed while the popup is up: two dim suggestions
+                    // competing for one row, and ⇥ belongs to the popup then.
+                    ghost: if self.trigger().is_some() {
+                        ""
+                    } else {
+                        &self.ghost
+                    },
                     attachments: &[],
                     // While the panel is open the keyboard is ITS own, and the box
                     // says so: a block cursor is the strongest claim a terminal UI
@@ -1848,7 +2450,11 @@ fn osc52_copy(text: &str) {
 /// The production link path: the platform opener, detached, failures ignored —
 /// there is nothing useful to say to a user whose desktop has no handler.
 fn open_url(url: &str) {
-    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
     let _ = std::process::Command::new(opener)
         .arg(url)
         .stdout(std::process::Stdio::null())
@@ -1878,7 +2484,10 @@ fn revert_outcome(outcome: &crate::api::RevertOutcome) -> String {
         format!("reverted {}", outcome.reverted.join(", "))
     }];
     if !outcome.skipped.is_empty() {
-        parts.push(format!("not in this change set: {}", outcome.skipped.join(", ")));
+        parts.push(format!(
+            "not in this change set: {}",
+            outcome.skipped.join(", ")
+        ));
     }
     for f in &outcome.failed {
         parts.push(format!("failed {}: {}", f.path, f.error));
@@ -1959,6 +2568,94 @@ fn hard_wrap(line: &str, width: usize) -> Vec<String> {
 /// and the draw stay on this task. `events` is the SSE action feed — the
 /// composition root supplies it once `events.rs` (row 1.33) lands; an empty
 /// feed renders the honest disconnected state.
+/// The terminal's timers, driven by the loop's own tick instead of by the
+/// runtime.
+///
+/// `Term`'s callbacks are `Fn()` and not `Send` (they close over the writer),
+/// so they cannot be handed to `tokio::spawn`. They do not need to be: the loop
+/// already wakes at `SPINNER_MS`, and both users of this — the 5s progress
+/// keep-alive and the 4s error-progress clear — are far coarser than that.
+#[derive(Default)]
+struct LoopTimers {
+    next: Cell<u64>,
+    /// The last tick's clock, so a timer added between ticks is scheduled
+    /// against a time this object has actually seen.
+    now: Cell<i64>,
+    /// `(handle, due_ms, repeat_every, callback)`.
+    entries: RefCell<Vec<(u64, i64, Option<u64>, Box<dyn Fn()>)>>,
+}
+
+impl LoopTimers {
+    fn add(&self, f: Box<dyn Fn()>, ms: u64, repeat: bool) -> u64 {
+        let h = self.next.get() + 1;
+        self.next.set(h);
+        // Scheduled against the LAST tick, not a fresh clock read: `fire` is
+        // the only place time is read, so a timer added between ticks is due
+        // one full period after the tick that follows it — never immediately.
+        let due = self.now.get() + ms as i64;
+        self.entries
+            .borrow_mut()
+            .push((h, due, repeat.then_some(ms), f));
+        h
+    }
+    fn remove(&self, handle: u64) {
+        self.entries.borrow_mut().retain(|(h, ..)| *h != handle);
+    }
+    /// Run everything due at `now`. Callbacks run OUTSIDE the borrow: one that
+    /// clears or adds a timer would otherwise panic on re-entry.
+    fn fire(&self, now: i64) {
+        self.now.set(now);
+        let due: Vec<u64> = self
+            .entries
+            .borrow()
+            .iter()
+            .filter(|(_, at, ..)| now >= *at)
+            .map(|(h, ..)| *h)
+            .collect();
+        for h in due {
+            self.call(h, now);
+        }
+    }
+    /// Take the entry out, run it, and put a REPEATING one back at its next
+    /// due time. A one-shot stays out — including one whose callback cleared
+    /// itself, which is what the error-progress timer does.
+    fn call(&self, handle: u64, now: i64) {
+        let taken = {
+            let mut entries = self.entries.borrow_mut();
+            entries
+                .iter()
+                .position(|(h, ..)| *h == handle)
+                .map(|i| entries.remove(i))
+        };
+        let Some((h, _, period, f)) = taken else {
+            return;
+        };
+        f();
+        if let Some(ms) = period {
+            // Only if the callback did not clear it while it ran.
+            let mut entries = self.entries.borrow_mut();
+            if !entries.iter().any(|(x, ..)| *x == h) {
+                entries.push((h, now + ms as i64, Some(ms), f));
+            }
+        }
+    }
+}
+
+impl crate::term::TermTimers for LoopTimers {
+    fn set_interval(&self, f: Box<dyn Fn()>, ms: u64) -> u64 {
+        self.add(f, ms, true)
+    }
+    fn clear_interval(&self, handle: u64) {
+        self.remove(handle);
+    }
+    fn set_timeout(&self, f: Box<dyn Fn()>, ms: u64) -> u64 {
+        self.add(f, ms, false)
+    }
+    fn clear_timeout(&self, handle: u64) {
+        self.remove(handle);
+    }
+}
+
 pub async fn run_loop<T: Transport>(
     options: TuiOptions,
     transport: T,
@@ -1970,6 +2667,42 @@ pub async fn run_loop<T: Transport>(
     let mut terminal = ratatui::init();
     // Wheel scroll is the one mouse gesture wave 1 ships.
     let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
+    // Focus reporting: `notify_desktop` is silent while focused, and it can
+    // only know that if the terminal says so.
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableFocusChange);
+    // The terminal's own chrome: window/tab title, taskbar progress, the
+    // desktop banner. Every one is capability-gated inside `Term` and every one
+    // degrades to nothing where the terminal cannot do it (term.rs).
+    let timers = std::rc::Rc::new(LoopTimers::default());
+    let term = crate::term::create_term(crate::term::TermOptions {
+        caps: crate::term::term_caps(&std::env::vars().collect()),
+        write: std::rc::Rc::new(|seq: &str| {
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = out.write_all(seq.as_bytes());
+            let _ = out.flush();
+        }),
+        // OSC 0 names the pane; tmux's and zellij's own CLIs name the WINDOW
+        // and the TAB, which no escape sequence can reach. Detached, output
+        // ignored: a multiplexer that is not there is not an error.
+        rename_tmux_window: Some(std::rc::Rc::new(|title: &str| {
+            let _ = std::process::Command::new("tmux")
+                .args(["rename-window", "--", title])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        })),
+        rename_zellij_tab: Some(std::rc::Rc::new(|title: &str| {
+            let _ = std::process::Command::new("zellij")
+                .args(["action", "rename-tab", title])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        })),
+        timers: timers.clone(),
+    });
+    let mut tab_title = String::new();
+    let mut was_busy = false;
     let size = terminal.size()?;
     let mut app = App::new(options, transport, size.width, size.height);
 
@@ -2008,7 +2741,36 @@ pub async fn run_loop<T: Transport>(
         let Some(action) = action else { break Ok(()) };
         let is_tick = matches!(action, Action::Tick);
         let now = now_ms();
+        // Focus is the terminal's own report, not a keypress: it decides
+        // whether a finished turn is worth a desktop banner.
+        match &action {
+            Action::Term(TermEvent::FocusGained) => term.set_focused(true),
+            Action::Term(TermEvent::FocusLost) => term.set_focused(false),
+            _ => {}
+        }
         app.apply(action, now);
+        // The progress keep-alive rides the loop's own tick (Ghostty expires a
+        // stale progress after ~15s, so `Term` re-asserts every 5s).
+        timers.fire(now);
+        // The chrome, pushed only when it CHANGES: a title written every frame
+        // makes a tab bar flicker, and a terminal that renames a tmux window
+        // per keystroke spawns a process per keystroke.
+        let title = app.tab_title(app.spinner_frame());
+        if title != tab_title {
+            tab_title = title;
+            term.set_title(&tab_title);
+        }
+        if app.busy() != was_busy {
+            was_busy = app.busy();
+            if was_busy {
+                term.progress_start();
+            } else {
+                term.progress_end(false);
+                // ONLY while unfocused — `Term` enforces that itself, so the
+                // call is unconditional here and silent when you are looking.
+                term.notify_desktop("bough finished a turn");
+            }
+        }
         if app.quit {
             break Ok(());
         }
@@ -2030,6 +2792,10 @@ pub async fn run_loop<T: Transport>(
 
     input_task.abort();
     tick_task.abort();
+    // Every sticky thing this process set on the terminal: the progress bar and
+    // any tab tint. Left behind, they outlive the program in the user's tab.
+    term.cleanup();
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableFocusChange);
     // The terminal is restored on every exit path (main.tsx contract; the
     // panic-hook half is term.rs, row 1.38).
     let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
@@ -2120,7 +2886,10 @@ impl Transport for LiveTransport {
                 tokio::spawn(async move {
                     // A half-typed path is the middle of typing, not an error.
                     if let Ok(list) = api.list_dir_entries(&prefix, workspace.as_deref()).await {
-                        let _ = tx.send(Action::DirEntries { prefix, entries: list.entries });
+                        let _ = tx.send(Action::DirEntries {
+                            prefix,
+                            entries: list.entries,
+                        });
                     }
                 });
             }
@@ -2129,7 +2898,10 @@ impl Transport for LiveTransport {
                     // No skills, no `/` rows — never a modal.
                     if let Ok(list) = api.list_skills().await {
                         let _ = tx.send(Action::Skills(
-                            list.skills.into_iter().map(|s| (s.name, s.description)).collect(),
+                            list.skills
+                                .into_iter()
+                                .map(|s| (s.name, s.description))
+                                .collect(),
                         ));
                     }
                 });
@@ -2237,18 +3009,22 @@ impl Transport for LiveTransport {
             }
             Effect::PollJobs => {
                 tokio::spawn(async move {
-                    let Some(sid) = session.lock().expect("session lock").clone() else { return };
+                    let Some(sid) = session.lock().expect("session lock").clone() else {
+                        return;
+                    };
                     // A poll that fails is a beat with no news, never a modal:
                     // the rail keeps the rows it had and the next tick retries.
                     if let Ok(list) = api.list_jobs(&sid).await {
-                        let _ = tx
-                            .send(Action::Jobs(list.jobs.into_iter().map(|r| r.job).collect()));
+                        let _ =
+                            tx.send(Action::Jobs(list.jobs.into_iter().map(|r| r.job).collect()));
                     }
                 });
             }
             Effect::LoadJobOutput(job_id) => {
                 tokio::spawn(async move {
-                    let Some(sid) = session.lock().expect("session lock").clone() else { return };
+                    let Some(sid) = session.lock().expect("session lock").clone() else {
+                        return;
+                    };
                     match api.job_output(&sid, &job_id).await {
                         Ok(out) => {
                             let _ = tx.send(Action::JobOutput {
@@ -2272,7 +3048,9 @@ impl Transport for LiveTransport {
             }
             Effect::KillJob(job_id) => {
                 tokio::spawn(async move {
-                    let Some(sid) = session.lock().expect("session lock").clone() else { return };
+                    let Some(sid) = session.lock().expect("session lock").clone() else {
+                        return;
+                    };
                     match api.kill_job(&sid, &job_id).await {
                         // The server's own sentence, and then a re-read: the
                         // rail row it was killed from is stale immediately.
@@ -2300,13 +3078,19 @@ impl Transport for LiveTransport {
             }
             Effect::LoadQuestions => {
                 tokio::spawn(async move {
-                    let Some(sid) = session.lock().expect("session lock").clone() else { return };
+                    let Some(sid) = session.lock().expect("session lock").clone() else {
+                        return;
+                    };
                     if let Ok(asks) = api.list_questions(Some(&sid)).await {
                         let _ = tx.send(Action::Asks(asks));
                     }
                 });
             }
-            Effect::AnswerAsk { session_id, id, answer } => {
+            Effect::AnswerAsk {
+                session_id,
+                id,
+                answer,
+            } => {
                 tokio::spawn(async move {
                     // The hold belongs to the session that RAISED it — a
                     // delegate's question is answered on the delegate.
@@ -2324,7 +3108,9 @@ impl Transport for LiveTransport {
             }
             Effect::Unsend(at_message_id) => {
                 tokio::spawn(async move {
-                    let Some(sid) = session.lock().expect("session lock").clone() else { return };
+                    let Some(sid) = session.lock().expect("session lock").clone() else {
+                        return;
+                    };
                     match api.unsend(&sid, &at_message_id).await {
                         Ok(result) => {
                             let _ = tx.send(Action::TookBack(result.text));
@@ -2341,6 +3127,58 @@ impl Transport for LiveTransport {
                     }
                 });
             }
+            // The three cheap-tier cosmetics (row 3.21). Every failure is
+            // SILENCE — not a notice: a prediction, a topic header and a search
+            // that could not answer are all things the screen is fine without,
+            // and a banner for one would be worse than the missing feature.
+            Effect::GhostText(id) => {
+                tokio::spawn(async move {
+                    if let Ok(r) = api.ghost_text(&id, "").await {
+                        let _ = tx.send(Action::Ghost(r.ghost.unwrap_or_default()));
+                    }
+                });
+            }
+            Effect::Sections { session_id, gists } => {
+                tokio::spawn(async move {
+                    if let Ok(r) = api.sections(&session_id, &gists).await {
+                        let _ = tx.send(Action::Sections {
+                            session_id,
+                            sections: r.sections,
+                        });
+                    }
+                });
+            }
+            Effect::SearchSessions(q) => {
+                tokio::spawn(async move {
+                    let Ok(r) = api.search(&q, Some(60)).await else {
+                        return;
+                    };
+                    // A hit inside a COLLAPSED session (a subagent, a workflow
+                    // agent) is not a row the tree can show: those surface only
+                    // under their spawner on drill-in. The spawner IS the row,
+                    // so the hit is attributed to it — otherwise "searches every
+                    // message" quietly excludes every message a delegate wrote.
+                    let mut sessions: Vec<String> = Vec::new();
+                    let mut messages: Vec<String> = Vec::new();
+                    for hit in r.hits {
+                        let sid = match (hit.collapsed, hit.origin_id) {
+                            (true, Some(origin)) => origin,
+                            _ => hit.session_id,
+                        };
+                        if !sessions.contains(&sid) {
+                            sessions.push(sid);
+                        }
+                        if !messages.contains(&hit.message_id) {
+                            messages.push(hit.message_id);
+                        }
+                    }
+                    let _ = tx.send(Action::SearchHits {
+                        q,
+                        sessions,
+                        messages,
+                    });
+                });
+            }
             Effect::Interrupt => {
                 tokio::spawn(async move {
                     let known = session.lock().expect("session lock").clone();
@@ -2354,6 +3192,292 @@ impl Transport for LiveTransport {
                     }
                 });
             }
+            // ---- row 3.20: the four remaining tabs ------------------------
+            Effect::LoadWorkflows => {
+                tokio::spawn(async move {
+                    let sid = session.lock().expect("session lock").clone();
+                    // No runs is a state, not an error: the tab says "no
+                    // workflow runs in this conversation — ask for one".
+                    let runs = api.list_workflows(sid.as_deref()).await.ok();
+                    let _ = tx.send(Action::Workflows(
+                        runs.map(|l| l.workflows).unwrap_or_default(),
+                    ));
+                });
+            }
+            Effect::LoadWorkflow(id) => {
+                tokio::spawn(async move {
+                    match api.get_workflow(&id).await {
+                        Ok(detail) => {
+                            let _ = tx.send(Action::Workflow(Some(detail)));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                            let _ = tx.send(Action::Workflow(None));
+                        }
+                    }
+                });
+            }
+            // Steer, THEN re-read: the answer to "did it pause" is the run's
+            // own state, never the POST's 202.
+            Effect::SteerWorkflow { id, action } => {
+                tokio::spawn(async move {
+                    use crate::components::panel::host::WorkflowAction as A;
+                    let result = match action {
+                        A::Pause => api.pause_workflow(&id).await,
+                        A::Resume => api.resume_workflow(&id).await,
+                        A::Stop => api.stop_workflow(&id).await,
+                        A::Rerun => api.rerun_workflow(&id).await,
+                    };
+                    if let Err(e) = result {
+                        let _ = tx.send(Action::Notice(e.to_string()));
+                    }
+                    if let Ok(list) = api.list_workflows(None).await {
+                        let _ = tx.send(Action::Workflows(list.workflows));
+                    }
+                    if let Ok(detail) = api.get_workflow(&id).await {
+                        let _ = tx.send(Action::Workflow(Some(detail)));
+                    }
+                });
+            }
+            Effect::SaveWorkflow(id) => {
+                tokio::spawn(async move {
+                    // The saved name is the run's own — the point of saving is
+                    // that you watched THIS script work.
+                    let name = match api.get_workflow(&id).await {
+                        Ok(detail) => detail.workflow.name,
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                            return;
+                        }
+                    };
+                    match api.save_workflow_as(&id, &name).await {
+                        Ok(_) => {
+                            let _ = tx.send(Action::Notice(format!(
+                                "saved as {name} — run it again by name"
+                            )));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                });
+            }
+            Effect::LoadMcp => {
+                tokio::spawn(async move {
+                    let sid = session.lock().expect("session lock").clone();
+                    match api.mcp_status(sid.as_deref()).await {
+                        Ok(status) => {
+                            let _ = tx.send(Action::Mcp(Some(status)));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                            let _ = tx.send(Action::Mcp(None));
+                        }
+                    }
+                });
+            }
+            Effect::SetMcpEnabled { name, enabled } => {
+                tokio::spawn(async move {
+                    let sid = session.lock().expect("session lock").clone();
+                    if let Err(e) = api.set_mcp_enabled(&name, enabled, sid.as_deref()).await {
+                        let _ = tx.send(Action::Notice(e.to_string()));
+                    }
+                    let _ = tx.send(Action::Mcp(api.mcp_status(sid.as_deref()).await.ok()));
+                });
+            }
+            Effect::AddMcpServer { name, url } => {
+                tokio::spawn(async move {
+                    match api.put_mcp_server(&name, &url).await {
+                        Ok(_) => {
+                            // Registering GRANTS NOTHING: the row appears "off"
+                            // and ⏎ is what turns it on. Authorization is named
+                            // rather than started behind the user's back.
+                            let _ = tx.send(Action::Notice(format!(
+                                "registered {name} — ⏎ grants it to this conversation; a authorizes"
+                            )));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                    let sid = session.lock().expect("session lock").clone();
+                    let _ = tx.send(Action::Mcp(api.mcp_status(sid.as_deref()).await.ok()));
+                });
+            }
+            Effect::DeleteMcpServer(name) => {
+                tokio::spawn(async move {
+                    if let Err(e) = api.delete_mcp_server(&name).await {
+                        let _ = tx.send(Action::Notice(e.to_string()));
+                    }
+                    let sid = session.lock().expect("session lock").clone();
+                    let _ = tx.send(Action::Mcp(api.mcp_status(sid.as_deref()).await.ok()));
+                });
+            }
+            // `c` REPORTS: the tool count, or the error, so "keychain" (which
+            // credential will be TRIED) becomes an answer without spending a
+            // turn on a tool call.
+            Effect::ConnectMcpServer(name) => {
+                tokio::spawn(async move {
+                    match api.connect_mcp_server(&name).await {
+                        Ok(v) => {
+                            let tools = v
+                                .get("toolCount")
+                                .and_then(|n| n.as_i64())
+                                .or_else(|| {
+                                    v.get("tools")
+                                        .and_then(|t| t.as_array())
+                                        .map(|a| a.len() as i64)
+                                })
+                                .unwrap_or(0);
+                            let _ = tx.send(Action::Notice(
+                                match v.get("error").and_then(|e| e.as_str()) {
+                                    Some(err) => format!("{name}: {err}"),
+                                    None => format!("{name}: connected · {tools} tools"),
+                                },
+                            ));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                    let sid = session.lock().expect("session lock").clone();
+                    let _ = tx.send(Action::Mcp(api.mcp_status(sid.as_deref()).await.ok()));
+                });
+            }
+            Effect::RestartMcpServer(name) => {
+                tokio::spawn(async move {
+                    if let Err(e) = api.restart_mcp_server(&name).await {
+                        let _ = tx.send(Action::Notice(e.to_string()));
+                    }
+                    let sid = session.lock().expect("session lock").clone();
+                    let _ = tx.send(Action::Mcp(api.mcp_status(sid.as_deref()).await.ok()));
+                });
+            }
+            // The URL is PRINTED, never opened: the panel must not launch a
+            // browser behind the keypress that asked for a token.
+            Effect::BeginMcpAuth(name) => {
+                tokio::spawn(async move {
+                    match api.begin_mcp_auth(&name).await {
+                        Ok(v) => {
+                            let url = v
+                                .get("url")
+                                .or_else(|| v.get("authorizeUrl"))
+                                .and_then(|u| u.as_str())
+                                .unwrap_or("");
+                            let _ = tx.send(Action::Notice(if url.is_empty() {
+                                format!("{name}: no authorization URL was returned")
+                            } else {
+                                format!("open {url}")
+                            }));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                });
+            }
+            Effect::ClearMcpAuth(name) => {
+                tokio::spawn(async move {
+                    match api.clear_mcp_auth(&name).await {
+                        Ok(_) => {
+                            let _ = tx.send(Action::Notice(format!(
+                                "forgot {name}'s credentials — the registration is kept"
+                            )));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                    let sid = session.lock().expect("session lock").clone();
+                    let _ = tx.send(Action::Mcp(api.mcp_status(sid.as_deref()).await.ok()));
+                });
+            }
+            // The TAB's rows, which carry `error` and `sources` — a failed
+            // fetch is `None` with its reason, never an empty list.
+            Effect::LoadSkillRows => {
+                tokio::spawn(async move {
+                    match api.list_skill_rows().await {
+                        Ok(list) => {
+                            let _ = tx.send(Action::SkillRows {
+                                skills: Some(list.skills),
+                                sources: list.sources,
+                                note: None,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::SkillRows {
+                                skills: None,
+                                sources: Vec::new(),
+                                note: Some(e.to_string()),
+                            });
+                        }
+                    }
+                });
+            }
+            Effect::LoadModels => {
+                tokio::spawn(async move {
+                    // A catalog that did not answer leaves the compiled-in rows
+                    // the server already merged; an empty list is not a modal.
+                    if let Ok(catalog) = api.list_models().await {
+                        let _ = tx.send(Action::Models(catalog.models));
+                    }
+                });
+            }
+            Effect::LoadModelSettings => {
+                tokio::spawn(async move {
+                    if let Ok(settings) = api.get_model_settings().await {
+                        let _ = tx.send(Action::ModelSettings(settings));
+                    }
+                });
+            }
+            // BOTH halves of spec §12, in one place: the install default moves
+            // and THIS session is pinned. Every other session keeps what it had
+            // — nothing here can express a change to them.
+            //
+            // KNOWN GAP, reported rather than worked around: there is no write
+            // route for the CHEAP tier (`PUT /model-settings` carries
+            // `model`/`effort` only, and `cheapModel` is resolved server-side
+            // from `BOUGH_CHEAP_MODEL`). A cheap pick therefore moves the ● on
+            // this screen and nothing else, and the tab says so rather than
+            // letting the dot claim a write that did not happen.
+            Effect::SaveModel(cfg) => {
+                tokio::spawn(async move {
+                    use crate::components::panel::model::EffortChoice;
+                    use bough_core::schema::requests::{PatchSessionBody, PutModelSettingsBody};
+                    use bough_core::types::Patch;
+                    let effort = match cfg.default_effort {
+                        EffortChoice::Default => Patch::Clear,
+                        EffortChoice::Level(e) => Patch::Set(e),
+                    };
+                    let body = PutModelSettingsBody {
+                        model: Patch::Set(cfg.default_model.clone()),
+                        effort: effort.clone(),
+                    };
+                    if let Err(e) = api.put_model_settings(&body).await {
+                        let _ = tx.send(Action::Notice(e.to_string()));
+                    }
+                    let sid = session.lock().expect("session lock").clone();
+                    if let Some(sid) = sid {
+                        let patch = PatchSessionBody {
+                            model: match &cfg.session_model {
+                                Some(m) => Patch::Set(m.clone()),
+                                None => Patch::Clear,
+                            },
+                            effort: match cfg.session_effort {
+                                Some(EffortChoice::Level(e)) => Patch::Set(e),
+                                Some(EffortChoice::Default) => Patch::Clear,
+                                None => Patch::Keep,
+                            },
+                        };
+                        if let Err(e) = api.patch_session(&sid, &patch).await {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                    if let Ok(settings) = api.get_model_settings().await {
+                        let _ = tx.send(Action::ModelSettings(settings));
+                    }
+                });
+            }
         }
     }
 }
@@ -2362,7 +3486,10 @@ impl Transport for LiveTransport {
 /// The error string is already the user-facing sentence (`bough tui: …`),
 /// printed by the bin with exit 2 (main.tsx::preflight contract).
 pub async fn run_live(options: TuiOptions) -> Result<(), String> {
-    let api = crate::api::Api::new(crate::api::ApiOptions { base: None, fetch_fn: None });
+    let api = crate::api::Api::new(crate::api::ApiOptions {
+        base: None,
+        fetch_fn: None,
+    });
     if let Err(e) = api.preflight().await {
         return Err(format!("bough tui: {e}"));
     }
@@ -2477,6 +3604,262 @@ mod tests {
         })
     }
 
+    // ---- row 3.20: the four remaining tabs, through the COMPOSITION ROOT ----
+    //
+    // The failure this pins is not a rendering bug: it is a subsystem that
+    // exists, is tested, and is reachable from nothing. Every assertion below
+    // drives the real keymap into the real `App` and reads the real frame, so a
+    // tab wired to `PanelBody::Text("nothing to show here yet")` fails here even
+    // with its own module's tests green.
+
+    /// The chord for a tab, straight off the keymap rather than typed in twice.
+    fn tab_chord(tab: crate::keys::PanelTab) -> Action {
+        let chord = crate::keys::TABS
+            .iter()
+            .find(|t| t.id == tab)
+            .expect("a tab")
+            .chord;
+        let c = chord.strip_prefix("ctrl+").expect("a ctrl chord");
+        ctrl(c.chars().next().unwrap())
+    }
+
+    #[test]
+    fn every_tab_chord_opens_its_own_surface_and_asks_for_its_own_data() {
+        use crate::keys::PanelTab as T;
+        for (tab, effect) in [
+            (T::Workflows, Effect::LoadWorkflows),
+            (T::Mcp, Effect::LoadMcp),
+            (T::Skills, Effect::LoadSkillRows),
+            (T::Model, Effect::LoadModels),
+        ] {
+            let (effects, sink) = scripted();
+            let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+            app.apply(tab_chord(tab), 0);
+            assert!(
+                app.panel.open(),
+                "{tab:?}: the chord did not open the panel"
+            );
+            assert_eq!(app.panel.tab(), tab);
+            // THE WIRING GATE: the tab's fetch reached the transport. A tab
+            // whose route is never called is invisible to every client.
+            assert!(
+                effects.borrow().contains(&effect),
+                "{tab:?}: {effect:?} was never issued — {:?}",
+                effects.borrow()
+            );
+            // …and the frame is the tab's own body, not the absent-surface
+            // placeholder every unported tab used to fall through to.
+            let frame = frame_of(&app, 100, 24);
+            assert!(
+                frame.contains(&format!("[{}]", tab.id())),
+                "{tab:?}:\n{frame}"
+            );
+            assert!(
+                !frame.contains("nothing to show here yet"),
+                "{tab:?} still paints the placeholder:\n{frame}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_workflows_tab_paints_a_runs_replay_accounting_through_the_panel() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 110, 30);
+        app.apply(tab_chord(crate::keys::PanelTab::Workflows), 0);
+        app.apply(
+            Action::Workflows(vec![crate::api::WorkflowSummary {
+                id: "run-2".into(),
+                name: "audit-handlers".into(),
+                description: "Review every handler".into(),
+                status: "running".into(),
+                current_phase: Some("Verify".into()),
+                agents: crate::api::WorkflowAgentCounts {
+                    total: 6,
+                    done: 3,
+                    cached: 2,
+                    running: 1,
+                    queued: 0,
+                    failed: 1,
+                },
+                created_at: 0,
+                finished_at: None,
+            }]),
+            1,
+        );
+        let list = frame_of(&app, 110, 30);
+        assert!(list.contains("audit-handlers"), "{list}");
+        assert!(
+            list.contains("2 replayed"),
+            "the list hides what cost nothing:\n{list}"
+        );
+
+        // ⏎ opens it, and the detail carries the accounting spec §8 requires.
+        app.apply(key(KeyCode::Enter), 2);
+        app.apply(
+            Action::Workflow(Some(crate::components::panel::workflows::fixtures::detail())),
+            3,
+        );
+        let detail = frame_of(&app, 110, 30);
+        assert!(detail.contains("≡ replay"), "{detail}");
+        assert!(detail.contains("2 replayed"), "{detail}");
+        assert!(detail.contains("2 ran live"), "{detail}");
+        assert!(detail.contains("of 6"), "{detail}");
+        assert!(detail.contains("≡ usage"), "{detail}");
+        assert!(detail.contains("Phases"), "{detail}");
+    }
+
+    /// A live run's events must MOVE the tab. A run view that only updates on
+    /// re-entry is a fan-out you have to keep closing and reopening to watch,
+    /// which is the surface delegation is for reduced to a screenshot.
+    #[test]
+    fn a_live_runs_events_refresh_the_open_tab_and_its_narrator_line() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 110, 30);
+        open_s1(&mut app);
+        app.apply(tab_chord(crate::keys::PanelTab::Workflows), 0);
+        app.apply(
+            Action::Workflow(Some(crate::components::panel::workflows::fixtures::detail())),
+            1,
+        );
+        app.panel.wf_level = 1;
+        effects.borrow_mut().clear();
+        app.apply(event(EventType::WorkflowAgent, 2, serde_json::json!({})), 2);
+        let sent = effects.borrow().clone();
+        assert!(sent.contains(&Effect::LoadWorkflows), "{sent:?}");
+        assert!(
+            sent.contains(&Effect::LoadWorkflow("run-2".into())),
+            "{sent:?}"
+        );
+
+        // The narrator line lands on the header — but only for the run in view.
+        app.apply(
+            event(
+                EventType::WorkflowLog,
+                3,
+                serde_json::json!({"runId": "someone-else", "line": "not this run"}),
+            ),
+            3,
+        );
+        assert_eq!(app.panel.last_log, None);
+        app.apply(
+            event(
+                EventType::WorkflowLog,
+                4,
+                serde_json::json!({"runId": "run-2", "line": "dispatching Verify"}),
+            ),
+            4,
+        );
+        assert_eq!(app.panel.last_log.as_deref(), Some("dispatching Verify"));
+        assert!(frame_of(&app, 110, 30).contains("▸ dispatching Verify"));
+
+        // A CLOSED panel does not poll a fan-out nobody is watching.
+        app.apply(ctrl('t'), 5);
+        assert!(!app.panel.open());
+        effects.borrow_mut().clear();
+        app.apply(event(EventType::WorkflowAgent, 6, serde_json::json!({})), 6);
+        assert!(effects.borrow().is_empty(), "{:?}", effects.borrow());
+    }
+
+    #[test]
+    fn the_mcp_tab_paints_grant_connection_and_credential_through_the_panel() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 110, 24);
+        app.apply(tab_chord(crate::keys::PanelTab::Mcp), 0);
+        // The beat before the fetch lands is `loading…`, never an empty list.
+        assert!(frame_of(&app, 110, 24).contains("loading…"));
+        app.apply(
+            Action::Mcp(Some(crate::components::panel::mcp::fixtures::status(
+                &[(
+                    "alpha",
+                    crate::components::panel::mcp::fixtures::stdio("alpha-server"),
+                )],
+                &["alpha"],
+                &[("alpha", false)],
+                vec![],
+            ))),
+            1,
+        );
+        let frame = frame_of(&app, 110, 24);
+        assert!(frame.contains("alpha"), "{frame}");
+        assert!(frame.contains("granted"), "{frame}");
+        assert!(frame.contains("needs auth"), "{frame}");
+        assert!(
+            frame.contains("F forget"),
+            "the nine-key legend is cut:\n{frame}"
+        );
+    }
+
+    #[test]
+    fn the_skills_tab_paints_the_rows_and_never_fakes_an_empty_list() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 110, 24);
+        app.apply(tab_chord(crate::keys::PanelTab::Skills), 0);
+        // A failed fetch says WHY; it does not claim the user has no skills.
+        app.apply(
+            Action::SkillRows {
+                skills: None,
+                sources: Vec::new(),
+                note: Some("the server did not answer /skills".into()),
+            },
+            1,
+        );
+        let failed = frame_of(&app, 110, 24);
+        assert!(
+            failed.contains("the server did not answer /skills"),
+            "{failed}"
+        );
+        assert!(!failed.contains("no skills installed"), "{failed}");
+        app.apply(
+            Action::SkillRows {
+                skills: Some(vec![crate::components::panel::skills::SkillRow {
+                    name: "history".into(),
+                    description: "query the db".into(),
+                    error: None,
+                    mcp: Vec::new(),
+                }]),
+                sources: vec![crate::api::SkillSourceRow {
+                    source: "user".into(),
+                    dir: "/home/u/.bough/skills".into(),
+                }],
+                note: None,
+            },
+            2,
+        );
+        let frame = frame_of(&app, 110, 24);
+        assert!(frame.contains("/history"), "{frame}");
+        assert!(frame.contains("query the db"), "{frame}");
+        assert!(
+            frame.contains("read from user /home/u/.bough/skills"),
+            "{frame}"
+        );
+    }
+
+    #[test]
+    fn the_model_tab_paints_both_tiers_and_marks_what_is_in_force() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 110, 30);
+        app.apply(tab_chord(crate::keys::PanelTab::Model), 0);
+        app.apply(
+            Action::Models(crate::components::panel::model::fixtures::catalog()),
+            1,
+        );
+        app.apply(
+            Action::ModelSettings(crate::api::ModelSettings {
+                default_model: "claude-opus-5".into(),
+                cheap_model: None,
+                default_effort: None,
+            }),
+            2,
+        );
+        let frame = frame_of(&app, 110, 30);
+        assert!(frame.contains("frontier model"), "{frame}");
+        assert!(frame.contains("cheap model"), "{frame}");
+        assert!(frame.contains("thinking depth"), "{frame}");
+        assert!(frame.contains("Opus 5"), "{frame}");
+        // An install with no cheap tier gets a real row, not a missing dot.
+        assert!(frame.contains("(unset)"), "{frame}");
+    }
+
     fn frame_of<T: Transport>(app: &App<T>, cols: u16, rows: u16) -> String {
         let mut term = Terminal::new(TestBackend::new(cols, rows)).unwrap();
         term.draw(|f| {
@@ -2500,7 +3883,9 @@ mod tests {
     #[test]
     fn type_stream_interrupt_scroll_smoke() {
         let (effects, sink) = scripted();
-        let opts = TuiOptions { workspace: Some("/tmp/demo".into()) };
+        let opts = TuiOptions {
+            workspace: Some("/tmp/demo".into()),
+        };
         let mut app = App::new(opts, sink, 80, 24);
         app.apply(Action::Connected(true), 0);
         open_s1(&mut app);
@@ -2516,7 +3901,10 @@ mod tests {
         assert_eq!(sends(&effects), vec![Effect::Send("add a test".into())]);
         let sent = frame_of(&app, 80, 24);
         assert!(sent.contains("you"), "{sent}");
-        assert!(sent.contains("type a message · enter sends"), "composer cleared: {sent}");
+        assert!(
+            sent.contains("type a message · enter sends"),
+            "composer cleared: {sent}"
+        );
 
         // -- stream --
         app.apply(
@@ -2532,11 +3920,19 @@ mod tests {
         );
         assert!(app.busy());
         app.apply(
-            event(EventType::MessageDelta, 1_100, json!({"messageId": "m1", "delta": "Working on"})),
+            event(
+                EventType::MessageDelta,
+                1_100,
+                json!({"messageId": "m1", "delta": "Working on"}),
+            ),
             1_100,
         );
         app.apply(
-            event(EventType::MessageDelta, 1_200, json!({"messageId": "m1", "delta": " it now."})),
+            event(
+                EventType::MessageDelta,
+                1_200,
+                json!({"messageId": "m1", "delta": " it now."}),
+            ),
             1_200,
         );
         let streaming = frame_of(&app, 80, 24);
@@ -2600,7 +3996,11 @@ mod tests {
             1_000,
         );
         app.apply(
-            event(EventType::MessageDelta, 1_100, json!({"messageId": "m1", "delta": "Done."})),
+            event(
+                EventType::MessageDelta,
+                1_100,
+                json!({"messageId": "m1", "delta": "Done."}),
+            ),
             1_100,
         );
         app.apply(
@@ -2613,7 +4013,10 @@ mod tests {
         );
         let lines = app.transcript_lines();
         let hits = lines.iter().filter(|l| l.contains("Done.")).count();
-        assert_eq!(hits, 1, "live lines are replaced by the part, not duplicated: {lines:?}");
+        assert_eq!(
+            hits, 1,
+            "live lines are replaced by the part, not duplicated: {lines:?}"
+        );
         assert!(!lines.iter().any(|l| l.contains('▌')));
     }
 
@@ -2634,7 +4037,11 @@ mod tests {
             1_000,
         );
         app.apply(
-            event(EventType::MessageDelta, 1_100, json!({"messageId": "m1", "delta": "half a"})),
+            event(
+                EventType::MessageDelta,
+                1_100,
+                json!({"messageId": "m1", "delta": "half a"}),
+            ),
             1_100,
         );
         app.apply(
@@ -2705,7 +4112,10 @@ mod tests {
         open_s1(&mut app);
         app.apply(Action::Jobs(vec![job("job-1", "sleep 30")]), 5_000);
         let railed = frame_of(&app, 80, 24);
-        assert!(railed.contains("sleep 30"), "the rail shows the shell: {railed}");
+        assert!(
+            railed.contains("sleep 30"),
+            "the rail shows the shell: {railed}"
+        );
 
         // ↓ from an empty composer enters the rail; ⏎ opens the job.
         app.apply(key(KeyCode::Down), 5_100);
@@ -2725,7 +4135,9 @@ mod tests {
         assert!(opened.contains("hello from the shell"), "{opened}");
         // x arms, x again kills — consent is never inferred.
         app.apply(key(KeyCode::Char('x')), 5_400);
-        assert!(sends(&effects).iter().all(|e| *e != Effect::KillJob("job-1".into())));
+        assert!(sends(&effects)
+            .iter()
+            .all(|e| *e != Effect::KillJob("job-1".into())));
         app.apply(key(KeyCode::Char('x')), 5_500);
         assert!(sends(&effects).contains(&Effect::KillJob("job-1".into())));
         // esc returns to the rail, not to the composer.
@@ -2826,7 +4238,10 @@ mod tests {
         let (_effects, sink) = scripted();
         let mut app = App::new(TuiOptions::default(), sink, 80, 24);
         open_s1(&mut app);
-        assert!(!app.animating(), "an idle screen still stops the redraw loop");
+        assert!(
+            !app.animating(),
+            "an idle screen still stops the redraw loop"
+        );
         app.apply(Action::Jobs(vec![job("job-1", "sleep 30")]), 1_000);
         assert!(!app.busy());
         assert!(app.animating(), "a running shell is a reason to repaint");
@@ -2856,17 +4271,24 @@ mod tests {
         let mut app = App::new(TuiOptions::default(), sink, 80, 24);
         type_text(&mut app, "!echo hi", 0);
         app.apply(key(KeyCode::Enter), 10);
-        assert!(effects.borrow().is_empty(), "a ! line must not bill the model");
+        assert!(
+            effects.borrow().is_empty(),
+            "a ! line must not bill the model"
+        );
         assert_eq!(app.draft, "!echo hi");
 
         app.apply(key(KeyCode::Esc), 20);
         app.apply(key(KeyCode::Esc), 30); // clear
-        // An unrecognised `/word` is a command ATTEMPT, never prose: it is
-        // intercepted with the teaching error and the draft is kept.
+                                          // An unrecognised `/word` is a command ATTEMPT, never prose: it is
+                                          // intercepted with the teaching error and the draft is kept.
         type_text(&mut app, "/zzz", 40);
         app.apply(key(KeyCode::Enter), 50);
         assert!(sends(&effects).is_empty(), "{:?}", effects.borrow());
-        assert!(app.notice.as_deref().unwrap().contains("there is no /zzz"), "{:?}", app.notice);
+        assert!(
+            app.notice.as_deref().unwrap().contains("there is no /zzz"),
+            "{:?}",
+            app.notice
+        );
         assert_eq!(app.draft, "/zzz", "the draft is kept so it can be edited");
 
         // A message that merely BEGINS with a command is still a message.
@@ -2904,7 +4326,10 @@ mod tests {
         app.apply(key(KeyCode::Enter), 10);
         assert_eq!(
             sends(&effects).as_slice(),
-            &[Effect::Run(Command::Tab(crate::keys::PanelTab::Model), String::new())]
+            &[Effect::Run(
+                Command::Tab(crate::keys::PanelTab::Model),
+                String::new()
+            )]
         );
         assert_eq!(app.draft, "", "a dispatched command leaves nothing behind");
 
@@ -2931,7 +4356,10 @@ mod tests {
         let notice = app.notice.clone().unwrap();
         assert!(notice.contains("there is no /clear"), "{notice}");
         assert!(notice.contains("did you mean /new?"), "{notice}");
-        assert!(notice.contains("type / for the list, or ? for every key"), "{notice}");
+        assert!(
+            notice.contains("type / for the list, or ? for every key"),
+            "{notice}"
+        );
         assert_eq!(app.draft, "/clear");
     }
 
@@ -2943,12 +4371,18 @@ mod tests {
         type_text(&mut app, "look at @app", 0);
         // The listing is fetched once, lazily, when the marker is first typed.
         assert!(effects.borrow().contains(&Effect::LoadFiles));
-        with_files(&mut app, &["server/app.ts", "app.tsx", "components/Chat.tsx"]);
+        with_files(
+            &mut app,
+            &["server/app.ts", "app.tsx", "components/Chat.tsx"],
+        );
 
         let frame = frame_of(&app, 80, 24);
         assert!(frame.contains("@app.tsx"), "exact prefix leads: {frame}");
         assert!(frame.contains("files & dirs"), "{frame}");
-        assert!(!frame.contains("Chat.tsx"), "a non-match is not a row: {frame}");
+        assert!(
+            !frame.contains("Chat.tsx"),
+            "a non-match is not a row: {frame}"
+        );
 
         // ⏎ belongs to the popup while it is open — it inserts, never sends.
         app.apply(key(KeyCode::Enter), 10);
@@ -2998,7 +4432,9 @@ mod tests {
         // `git ls-files` cannot name anything outside the repo, so this fetches
         // ONE directory instead — the one already visible in what was typed.
         assert!(
-            effects.borrow().contains(&Effect::LoadDirEntries("~/".into())),
+            effects
+                .borrow()
+                .contains(&Effect::LoadDirEntries("~/".into())),
             "{:?}",
             effects.borrow()
         );
@@ -3019,7 +4455,9 @@ mod tests {
         app.apply(key(KeyCode::Enter), 20);
         assert_eq!(app.draft, "@~/repos/");
         assert!(
-            effects.borrow().contains(&Effect::LoadDirEntries("~/repos/".into())),
+            effects
+                .borrow()
+                .contains(&Effect::LoadDirEntries("~/repos/".into())),
             "accepting a directory fetches the next level: {:?}",
             effects.borrow()
         );
@@ -3044,7 +4482,10 @@ mod tests {
         assert_eq!(app.draft, "");
         assert_eq!(
             sends(&effects).as_slice(),
-            &[Effect::Run(Command::Tab(crate::keys::PanelTab::Tree), String::new())]
+            &[Effect::Run(
+                Command::Tab(crate::keys::PanelTab::Tree),
+                String::new()
+            )]
         );
 
         // A SKILL row is a reference the model reads: it inserts, never runs.
@@ -3107,7 +4548,11 @@ mod tests {
             }));
             app.apply(up, 200);
         }
-        assert_eq!(app.scroll_off, app.transcript_lines().len() - 1, "clamped to lines-1");
+        assert_eq!(
+            app.scroll_off,
+            app.transcript_lines().len() - 1,
+            "clamped to lines-1"
+        );
     }
 
     // ---- mouse selection and click (row 2.25) ------------------------------
@@ -3182,7 +4627,9 @@ mod tests {
             id: "m-url".into(),
             session_id: "s1".into(),
             role: Role::Supervisor,
-            parts: vec![Part::Text { text: "see https://example.com/auth now".into() }],
+            parts: vec![Part::Text {
+                text: "see https://example.com/auth now".into(),
+            }],
             pending: false,
             created_at: 1,
         });
@@ -3192,14 +4639,34 @@ mod tests {
             .enumerate()
             .find_map(|(i, row)| row.find("https://").map(|b| (i, row[..b].chars().count())))
             .expect("the address is on screen");
-        app.apply(mouse(MouseEventKind::Down(MouseButton::Left), col as u16, y as u16), 0);
-        app.apply(mouse(MouseEventKind::Up(MouseButton::Left), col as u16, y as u16), 1);
-        assert_eq!(recorded(&opened).as_slice(), &["https://example.com/auth".to_string()]);
+        app.apply(
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                col as u16,
+                y as u16,
+            ),
+            0,
+        );
+        app.apply(
+            mouse(MouseEventKind::Up(MouseButton::Left), col as u16, y as u16),
+            1,
+        );
+        assert_eq!(
+            recorded(&opened).as_slice(),
+            &["https://example.com/auth".to_string()]
+        );
 
         // One column before the address is prose, and prose opens nothing.
-        app.apply(mouse(MouseEventKind::Down(MouseButton::Left), 0, y as u16), 2);
+        app.apply(
+            mouse(MouseEventKind::Down(MouseButton::Left), 0, y as u16),
+            2,
+        );
         app.apply(mouse(MouseEventKind::Up(MouseButton::Left), 0, y as u16), 3);
-        assert_eq!(recorded(&opened).len(), 1, "a click on prose opened nothing");
+        assert_eq!(
+            recorded(&opened).len(),
+            1,
+            "a click on prose opened nothing"
+        );
     }
 
     #[test]
@@ -3230,7 +4697,10 @@ mod tests {
             }),
         };
         app.apply(Action::Event(foreign.clone()), 1_000);
-        assert!(!app.busy(), "a foreign session's turn must not mark this one busy");
+        assert!(
+            !app.busy(),
+            "a foreign session's turn must not mark this one busy"
+        );
         assert!(app.transcript_lines().is_empty());
         // Un-scoped events still pass.
         foreign.session_id = None;
@@ -3275,7 +4745,10 @@ mod tests {
         assert!(sends(&effects).contains(&Effect::LoadChanges));
         let frame = frame_of(&app, 80, 24);
         assert!(frame.contains("[changes]"), "{frame}");
-        assert!(frame.contains("has the keyboard · esc returns here"), "{frame}");
+        assert!(
+            frame.contains("has the keyboard · esc returns here"),
+            "{frame}"
+        );
         // The chord that brought you here takes you back.
         app.apply(ctrl('d'), 0);
         assert!(!app.panel.open());
@@ -3297,18 +4770,25 @@ mod tests {
         let mut app = App::new(TuiOptions::default(), sink, 80, 24);
         open_s1(&mut app);
         app.apply(
-            event(EventType::MessageStarted, 1_000, json!({
-                "id": "m1", "sessionId": "s1", "role": "user",
-                "parts": [{"type": "text", "text": "a transcript row"}],
-                "pending": false, "createdAt": 1_000,
-            })),
+            event(
+                EventType::MessageStarted,
+                1_000,
+                json!({
+                    "id": "m1", "sessionId": "s1", "role": "user",
+                    "parts": [{"type": "text", "text": "a transcript row"}],
+                    "pending": false, "createdAt": 1_000,
+                }),
+            ),
             1_000,
         );
         assert!(frame_of(&app, 80, 24).contains("a transcript row"));
         app.apply(ctrl('t'), 0);
         app.apply(Action::Sessions(sessions()), 0);
         let frame = frame_of(&app, 80, 24);
-        assert!(!frame.contains("a transcript row"), "the panel must displace the chat: {frame}");
+        assert!(
+            !frame.contains("a transcript row"),
+            "the panel must displace the chat: {frame}"
+        );
         assert!(frame.contains("nightly bench"), "{frame}");
         // …and the composer and status line stay pinned below it.
         assert!(frame.contains("? help"), "{frame}");
@@ -3335,7 +4815,10 @@ mod tests {
         // The dispatch stays ONE funnel: the effect goes out…
         assert_eq!(
             sends(&effects),
-            &[Effect::Run(Command::Tab(crate::keys::PanelTab::Tree), String::new())]
+            &[Effect::Run(
+                Command::Tab(crate::keys::PanelTab::Tree),
+                String::new()
+            )]
         );
         assert!(!app.panel.open());
         // …and the transport hands the client-owned ones straight back.
@@ -3347,7 +4830,14 @@ mod tests {
     #[test]
     fn the_help_overlay_opens_on_a_bare_question_mark_and_is_the_whole_screen() {
         let (_effects, sink) = scripted();
-        let mut app = App::new(TuiOptions { workspace: Some("/w/demo".into()) }, sink, 80, 24);
+        let mut app = App::new(
+            TuiOptions {
+                workspace: Some("/w/demo".into()),
+            },
+            sink,
+            80,
+            24,
+        );
         app.apply(key(KeyCode::Char('?')), 0);
         let frame = frame_of(&app, 80, 24);
         assert!(frame.starts_with("keys · esc closes"), "{frame}");
@@ -3367,10 +4857,21 @@ mod tests {
         for open in ["ctrl+t", "?"] {
             let (_effects, sink) = scripted();
             let mut app = App::new(TuiOptions::default(), sink, 80, 24);
-            app.apply(if open == "?" { key(KeyCode::Char('?')) } else { ctrl('t') }, 0);
+            app.apply(
+                if open == "?" {
+                    key(KeyCode::Char('?'))
+                } else {
+                    ctrl('t')
+                },
+                0,
+            );
             app.apply(ctrl('c'), 0);
             assert!(!app.quit, "one ^c must never tear the UI down");
-            assert!(app.notice.as_deref().unwrap_or("").contains("^c again to quit"));
+            assert!(app
+                .notice
+                .as_deref()
+                .unwrap_or("")
+                .contains("^c again to quit"));
             app.apply(ctrl('c'), 0);
             assert!(app.quit, "^c ^c must quit from {open}");
         }
@@ -3429,11 +4930,12 @@ mod tests {
         let armed = frame_of(&app, 80, 24);
         assert!(armed.contains("revert src/a.ts?"), "{armed}");
         assert!(armed.contains("DISCARDS +1 -1"), "{armed}");
-        assert!(!sends(&effects).iter().any(|e| matches!(e, Effect::Revert(_))));
+        assert!(!sends(&effects)
+            .iter()
+            .any(|e| matches!(e, Effect::Revert(_))));
         // ⏎ performs it, addressed to the path.
         app.apply(key(KeyCode::Enter), 0);
-        assert!(sends(&effects)
-            .contains(&Effect::Revert(Some(vec!["src/a.ts".to_string()]))));
+        assert!(sends(&effects).contains(&Effect::Revert(Some(vec!["src/a.ts".to_string()]))));
     }
 
     #[test]
@@ -3470,12 +4972,292 @@ mod tests {
     #[test]
     fn disconnected_suffix_rides_the_header() {
         let (_effects, sink) = scripted();
-        let mut app =
-            App::new(TuiOptions { workspace: Some("/w/demo".into()) }, sink, 80, 24);
+        let mut app = App::new(
+            TuiOptions {
+                workspace: Some("/w/demo".into()),
+            },
+            sink,
+            80,
+            24,
+        );
         let down = frame_of(&app, 80, 24);
         assert!(down.contains("demo  · disconnected"), "{down}");
         app.apply(Action::Connected(true), 0);
         let up = frame_of(&app, 80, 24);
         assert!(!up.contains("disconnected"), "{up}");
+    }
+
+    // ---- the cheap-tier cosmetics (row 3.21) -------------------------------
+
+    fn turn(id: &str, text: &str) -> Message {
+        Message {
+            id: id.into(),
+            session_id: "s1".into(),
+            role: Role::User,
+            parts: vec![Part::Text { text: text.into() }],
+            pending: false,
+            created_at: 1,
+        }
+    }
+
+    #[test]
+    fn the_ghost_is_asked_for_only_on_an_idle_empty_composer_and_only_after_the_debounce() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(Action::Thread(vec![turn("m1", "hello")]), 0);
+        assert!(
+            !sends(&effects)
+                .iter()
+                .any(|e| matches!(e, Effect::GhostText(_))),
+            "asked before the debounce elapsed"
+        );
+        app.apply(Action::Tick, GHOST_DEBOUNCE_MS + 1);
+        assert_eq!(
+            sends(&effects)
+                .iter()
+                .filter(|e| matches!(e, Effect::GhostText(_)))
+                .count(),
+            1,
+            "exactly one ask"
+        );
+        // …and not again while the same conditions hold.
+        app.apply(Action::Tick, GHOST_DEBOUNCE_MS + 5_000);
+        assert_eq!(
+            sends(&effects)
+                .iter()
+                .filter(|e| matches!(e, Effect::GhostText(_)))
+                .count(),
+            1,
+        );
+    }
+
+    #[test]
+    fn a_prediction_is_shown_then_taken_by_tab_and_typing_drops_it() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(Action::Thread(vec![turn("m1", "hello")]), 0);
+        app.apply(Action::Ghost("run the tests".into()), 1);
+        let frame = frame_of(&app, 80, 24);
+        assert!(
+            frame.contains("run the tests"),
+            "the prediction is on screen:\n{frame}"
+        );
+        assert!(frame.contains("⇥ tab"), "and says how to take it:\n{frame}");
+        // ⇥ REPLACES the draft with it, and the prediction is gone.
+        app.apply(key(KeyCode::Tab), 2);
+        assert_eq!(app.draft, "run the tests");
+        assert_eq!(app.cursor, "run the tests".chars().count());
+        assert_eq!(app.ghost, "");
+        // A prediction that appears while you type fights you for the row.
+        app.apply(Action::Ghost("something else".into()), 3);
+        assert_eq!(app.ghost, "", "a non-empty composer takes no prediction");
+    }
+
+    #[test]
+    fn the_ghost_never_appears_mid_turn() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        let mut pending = turn("m1", "hello");
+        pending.pending = true;
+        app.apply(Action::Thread(vec![pending]), 0);
+        app.apply(Action::Tick, GHOST_DEBOUNCE_MS + 1);
+        assert!(!sends(&effects)
+            .iter()
+            .any(|e| matches!(e, Effect::GhostText(_))));
+    }
+
+    #[test]
+    fn topic_sections_are_asked_for_once_and_only_for_a_long_conversation() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(ctrl('t'), 0); // the tree
+        app.apply(
+            Action::Sessions(vec![crate::forest::fixtures::session_row(
+                "s1",
+                bough_core::schema::parts::SessionKind::Root,
+                1,
+            )]),
+            0,
+        );
+        app.panel.expanded.insert("s1".into());
+        // Short: nothing to caption.
+        let short: Vec<Message> = (0..SECTION_MIN_TURNS - 1)
+            .map(|i| turn(&format!("m{i}"), "short"))
+            .collect();
+        app.apply(Action::Thread(short), 1);
+        assert!(!sends(&effects)
+            .iter()
+            .any(|e| matches!(e, Effect::Sections { .. })));
+        let long: Vec<Message> = (0..SECTION_MIN_TURNS)
+            .map(|i| turn(&format!("m{i}"), "a turn about the discount bug"))
+            .collect();
+        app.apply(Action::Thread(long), 2);
+        let asked: Vec<&Effect> = sends(&effects)
+            .iter()
+            .filter(|e| matches!(e, Effect::Sections { .. }))
+            .cloned()
+            .collect::<Vec<_>>()
+            .leak()
+            .iter()
+            .collect();
+        assert_eq!(asked.len(), 1, "one pass per conversation");
+        match asked[0] {
+            Effect::Sections { session_id, gists } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(gists.len(), SECTION_MIN_TURNS);
+                assert_eq!(gists[0], "a turn about the discount bug");
+            }
+            _ => unreachable!(),
+        }
+        // A second frame does not ask again.
+        app.apply(Action::Tick, 3);
+        assert_eq!(
+            sends(&effects)
+                .iter()
+                .filter(|e| matches!(e, Effect::Sections { .. }))
+                .count(),
+            1
+        );
+        // The answer becomes caption rows over the turns beneath it.
+        app.apply(
+            Action::Sections {
+                session_id: "s1".into(),
+                sections: vec![crate::forest::SectionRange {
+                    start: 0,
+                    end: 3,
+                    label: "the discount bug".into(),
+                }],
+            },
+            4,
+        );
+        assert!(
+            app.panel.rows().iter().any(
+                |r| matches!(r, crate::forest::ForestRow::Section { label, .. }
+                    if label == "the discount bug")
+            ),
+            "the header is a row"
+        );
+    }
+
+    #[test]
+    fn the_trees_slash_searches_every_message_after_its_own_debounce() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(ctrl('t'), 0);
+        app.apply(key(KeyCode::Char('/')), 0);
+        assert!(app.panel.filtering, "the buffer has the keyboard");
+        // One character is not a search: FTS over every transcript is not free.
+        app.apply(key(KeyCode::Char('c')), 1);
+        app.apply(Action::Tick, 1_000);
+        assert!(!sends(&effects)
+            .iter()
+            .any(|e| matches!(e, Effect::SearchSessions(_))));
+        app.apply(key(KeyCode::Char('o')), 1_001);
+        assert_eq!(app.panel.filter, "co");
+        assert!(
+            !sends(&effects)
+                .iter()
+                .any(|e| matches!(e, Effect::SearchSessions(_))),
+            "not before the debounce"
+        );
+        app.apply(Action::Tick, 1_001 + SEARCH_DEBOUNCE_MS);
+        assert_eq!(
+            sends(&effects)
+                .iter()
+                .filter(|e| matches!(e, Effect::SearchSessions(q) if q == "co"))
+                .count(),
+            1
+        );
+        // The hits EXPAND their conversations — a marked turn in a collapsed
+        // row is a mark nobody can see.
+        app.apply(
+            Action::SearchHits {
+                q: "co".into(),
+                sessions: vec!["other".into()],
+                messages: vec!["m9".into()],
+            },
+            2_000,
+        );
+        assert!(app.panel.expanded.contains("other"));
+        assert_eq!(app.panel.matched_messages, vec!["m9".to_string()]);
+        // esc clears the query AND what it matched.
+        app.apply(key(KeyCode::Esc), 2_001);
+        assert_eq!(app.panel.filter, "");
+        assert!(app.panel.matched_messages.is_empty());
+    }
+
+    #[test]
+    fn a_stale_search_reply_never_marks_rows_against_a_query_typed_past() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(ctrl('t'), 0);
+        app.apply(key(KeyCode::Char('/')), 0);
+        type_text(&mut app, "compound", 1);
+        app.apply(
+            Action::SearchHits {
+                q: "comp".into(),
+                sessions: vec!["other".into()],
+                messages: vec!["m9".into()],
+            },
+            2,
+        );
+        assert!(
+            app.panel.matched_sessions.is_empty(),
+            "a reply for an older query"
+        );
+    }
+
+    #[test]
+    fn the_tab_title_carries_the_conversation_and_whether_its_turn_runs() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        assert_eq!(app.tab_title(0), "bough", "no conversation, no claim");
+        open_s1(&mut app);
+        app.apply(
+            event(
+                EventType::MessageStarted,
+                10,
+                json!({
+                    "id": "m1",
+                    "sessionId": "s1",
+                    "role": "supervisor",
+                    "parts": [],
+                    "pending": true,
+                    "createdAt": 10,
+                }),
+            ),
+            10,
+        );
+        assert_eq!(app.tab_title(0), "bough · ⠋", "a running turn spins");
+        assert_eq!(app.tab_title(1), "bough · ⠙", "and the frame advances");
+    }
+
+    #[test]
+    fn the_loops_timers_repeat_until_cleared_and_a_one_shot_runs_once() {
+        use crate::term::TermTimers;
+        let timers = LoopTimers::default();
+        let fired: Rc<RefCell<Vec<&'static str>>> = Rc::default();
+        let a = fired.clone();
+        let repeat =
+            timers.set_interval(Box::new(move || a.borrow_mut().push("keep-alive")), 5_000);
+        let b = fired.clone();
+        timers.set_timeout(Box::new(move || b.borrow_mut().push("clear")), 4_000);
+        timers.fire(1_000);
+        assert!(fired.borrow().is_empty(), "nothing is due yet");
+        timers.fire(4_000);
+        assert_eq!(fired.borrow().as_slice(), &["clear"], "the one-shot, once");
+        timers.fire(9_000);
+        assert_eq!(fired.borrow().as_slice(), &["clear", "keep-alive"]);
+        timers.fire(20_000);
+        assert_eq!(fired.borrow().len(), 3, "the interval keeps going");
+        timers.clear_interval(repeat);
+        timers.fire(40_000);
+        assert_eq!(fired.borrow().len(), 3, "and stops when cleared");
     }
 }

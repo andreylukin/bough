@@ -43,8 +43,7 @@ pub const SCHEDULE_NOTE_PREFIX: &str = "[schedule fired]";
 // The grammar (pure)
 // ---------------------------------------------------------------------------
 
-static EVERY_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^every:(\d+)(m|h|d)$").unwrap());
+static EVERY_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^every:(\d+)(m|h|d)$").unwrap());
 static DAILY_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^daily@(\d{1,2}):(\d{2})$").unwrap());
 
@@ -64,7 +63,9 @@ pub fn parse_spec(spec: &str) -> Option<ParsedSpec> {
             "d" => 86_400_000,
             _ => unreachable!("the regex admits only m|h|d"),
         };
-        return Some(ParsedSpec::Every { ms: n.checked_mul(unit_ms)? });
+        return Some(ParsedSpec::Every {
+            ms: n.checked_mul(unit_ms)?,
+        });
     }
     if let Some(caps) = DAILY_RE.captures(spec) {
         let hh: u8 = caps[1].parse().ok()?;
@@ -113,8 +114,11 @@ pub fn next_run_in<Tz: TimeZone>(tz: &Tz, spec: ParsedSpec, from: i64) -> i64 {
                 .expect("an instant maps to exactly one local time");
             let date = local.date_naive();
             let wall = |d: chrono::NaiveDate| {
-                resolve_local(tz, d.and_hms_opt(hh as u32, mm as u32, 0)
-                    .expect("parse_spec bounds hh/mm"))
+                resolve_local(
+                    tz,
+                    d.and_hms_opt(hh as u32, mm as u32, 0)
+                        .expect("parse_spec bounds hh/mm"),
+                )
             };
             let today = wall(date);
             // Strictly after, never equal: `next_run` is called at fire time
@@ -265,7 +269,11 @@ fn report_via(deps: &FireDeps, err: &BoughError, schedule: &Schedule) {
 
 fn lock_db(ctx: &AppCtx) -> Result<std::sync::MutexGuard<'_, dyn Db + 'static>, BoughError> {
     ctx.db.lock().map_err(|_| {
-        BoughError::http(500, ErrorKind::Schedule, "schedules: the database lock is poisoned")
+        BoughError::http(
+            500,
+            ErrorKind::Schedule,
+            "schedules: the database lock is poisoned",
+        )
     })
 }
 
@@ -338,7 +346,11 @@ fn try_fire(
     let session = lock_db(ctx)?.create_session(Session {
         id: uuid::Uuid::new_v4().to_string(),
         title: schedule.title.clone(),
-        kind: if creator.is_some() { SessionKind::ScheduleRun } else { SessionKind::Root },
+        kind: if creator.is_some() {
+            SessionKind::ScheduleRun
+        } else {
+            SessionKind::Root
+        },
         created_at: now(),
         // A fired session inherits nothing: no parent thread. The prompt is
         // the whole briefing. The lineage edge below is for VISIBILITY and
@@ -369,7 +381,9 @@ fn try_fire(
         id: uuid::Uuid::new_v4().to_string(),
         session_id: session.id.clone(),
         role: Role::User,
-        parts: vec![Part::Text { text: schedule.prompt.clone() }],
+        parts: vec![Part::Text {
+            text: schedule.prompt.clone(),
+        }],
         pending: false,
         created_at: now(),
     })?;
@@ -504,21 +518,25 @@ fn note_firing_outcome(
                 // `changed_files` callback the future resolves on first poll —
                 // it awaits nothing — so `block_on` here cannot stall the
                 // runtime.
-                let result = futures::executor::block_on(
-                    crate::agents::subagent::build_result(
-                        &ctx.db,
-                        fired_session_id,
-                        &turn.message_id,
-                        None,
-                        crate::agents::subagent::InterruptCause::default(),
-                    ),
-                );
-                FiringOutcome { status: result.status.into(), report: result.report }
+                let result = futures::executor::block_on(crate::agents::subagent::build_result(
+                    &ctx.db,
+                    fired_session_id,
+                    &turn.message_id,
+                    None,
+                    crate::agents::subagent::InterruptCause::default(),
+                ));
+                FiringOutcome {
+                    status: result.status.into(),
+                    report: result.report,
+                }
             }
         }),
         None => None,
     };
-    let status = outcome.as_ref().map(|o| o.status).unwrap_or(FiringStatus::Orphaned);
+    let status = outcome
+        .as_ref()
+        .map(|o| o.status)
+        .unwrap_or(FiringStatus::Orphaned);
     let report = outcome.map(|o| o.report).unwrap_or_default();
     let text = firing_note_text(&schedule.title, fired_session_id, status, &report);
     match &deps.post_note {
@@ -686,28 +704,52 @@ mod tests {
 
     /// `Date.UTC(2026, 0, 15, 12, 0, 0)`.
     fn t0() -> i64 {
-        Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap().timestamp_millis()
+        Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0)
+            .unwrap()
+            .timestamp_millis()
     }
 
     const MINUTE: i64 = 60_000;
     const HOUR: i64 = 3_600_000;
 
     fn local_ms(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> i64 {
-        Local.with_ymd_and_hms(y, mo, d, h, mi, 0).single().unwrap().timestamp_millis()
+        Local
+            .with_ymd_and_hms(y, mo, d, h, mi, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis()
     }
 
     #[test]
     fn parse_spec_accepts_every_n_m_h_d() {
-        assert_eq!(parse_spec("every:30m"), Some(ParsedSpec::Every { ms: 30 * MINUTE }));
-        assert_eq!(parse_spec("every:2h"), Some(ParsedSpec::Every { ms: 2 * HOUR }));
-        assert_eq!(parse_spec("every:1d"), Some(ParsedSpec::Every { ms: 86_400_000 }));
+        assert_eq!(
+            parse_spec("every:30m"),
+            Some(ParsedSpec::Every { ms: 30 * MINUTE })
+        );
+        assert_eq!(
+            parse_spec("every:2h"),
+            Some(ParsedSpec::Every { ms: 2 * HOUR })
+        );
+        assert_eq!(
+            parse_spec("every:1d"),
+            Some(ParsedSpec::Every { ms: 86_400_000 })
+        );
     }
 
     #[test]
     fn parse_spec_accepts_daily_hh_mm() {
-        assert_eq!(parse_spec("daily@09:00"), Some(ParsedSpec::Daily { hh: 9, mm: 0 }));
-        assert_eq!(parse_spec("daily@9:05"), Some(ParsedSpec::Daily { hh: 9, mm: 5 }));
-        assert_eq!(parse_spec("daily@23:59"), Some(ParsedSpec::Daily { hh: 23, mm: 59 }));
+        assert_eq!(
+            parse_spec("daily@09:00"),
+            Some(ParsedSpec::Daily { hh: 9, mm: 0 })
+        );
+        assert_eq!(
+            parse_spec("daily@9:05"),
+            Some(ParsedSpec::Daily { hh: 9, mm: 5 })
+        );
+        assert_eq!(
+            parse_spec("daily@23:59"),
+            Some(ParsedSpec::Daily { hh: 23, mm: 59 })
+        );
     }
 
     #[test]
@@ -753,11 +795,17 @@ mod tests {
 
         // Already past today → tomorrow, same wall clock.
         let afternoon = local_ms(2026, 1, 15, 14, 0);
-        assert_eq!(next_run("daily@09:00", afternoon).unwrap(), local_ms(2026, 1, 16, 9, 0));
+        assert_eq!(
+            next_run("daily@09:00", afternoon).unwrap(),
+            local_ms(2026, 1, 16, 9, 0)
+        );
 
         // Exactly at the slot is NOT "now again": strictly after, or the row
         // stays due.
-        assert_eq!(next_run("daily@09:00", nine).unwrap(), local_ms(2026, 1, 16, 9, 0));
+        assert_eq!(
+            next_run("daily@09:00", nine).unwrap(),
+            local_ms(2026, 1, 16, 9, 0)
+        );
     }
 
     #[test]
@@ -766,7 +814,10 @@ mod tests {
         assert_eq!(err.status(), 400);
         assert_eq!(err.name(), "ScheduleError");
         let message = err.to_string();
-        assert!(message.contains("invalid schedule spec: weekly"), "message: {message}");
+        assert!(
+            message.contains("invalid schedule spec: weekly"),
+            "message: {message}"
+        );
         // The grammar is in the message — the model's next move is to write
         // another spec, and "invalid" alone gets a second guess, not a fix.
         assert!(message.contains("every:<N><m|h|d>"), "message: {message}");
@@ -780,7 +831,9 @@ mod tests {
     use chrono_tz::America::Los_Angeles as LA;
 
     fn utc_ms(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> i64 {
-        Utc.with_ymd_and_hms(y, mo, d, h, mi, 0).unwrap().timestamp_millis()
+        Utc.with_ymd_and_hms(y, mo, d, h, mi, 0)
+            .unwrap()
+            .timestamp_millis()
     }
 
     #[test]
@@ -826,7 +879,6 @@ mod tests {
             utc_ms(2026, 11, 1, 8, 30)
         );
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -846,7 +898,10 @@ mod fire_tests {
 
     /// `Date.UTC(2026, 0, 15, 12, 0, 0)`.
     fn t0() -> i64 {
-        chrono::Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap().timestamp_millis()
+        chrono::Utc
+            .with_ymd_and_hms(2026, 1, 15, 12, 0, 0)
+            .unwrap()
+            .timestamp_millis()
     }
 
     const MINUTE: i64 = 60_000;
@@ -862,7 +917,10 @@ mod fire_tests {
     struct RecordingStarter(Arc<Mutex<Vec<(String, String)>>>);
     impl TurnStarter for RecordingStarter {
         fn start_turn(&self, _ctx: &AppCtx, session: &Session, message: &Message) {
-            self.0.lock().unwrap().push((session.id.clone(), message.id.clone()));
+            self.0
+                .lock()
+                .unwrap()
+                .push((session.id.clone(), message.id.clone()));
         }
     }
 
@@ -874,12 +932,15 @@ mod fire_tests {
     }
 
     fn fixture_bare() -> Fx {
-        let db: SharedDb =
-            Arc::new(Mutex::new(SqliteDb::new(":memory:", DbOptions::default()).unwrap()));
+        let db: SharedDb = Arc::new(Mutex::new(
+            SqliteDb::new(":memory:", DbOptions::default()).unwrap(),
+        ));
         let bus = Arc::new(Bus::new(Arc::new(t0)));
         let events = Arc::new(Mutex::new(Vec::new()));
         let sink = events.clone();
-        bus.subscribe(Arc::new(move |e: &BoughEvent| sink.lock().unwrap().push(e.clone())));
+        bus.subscribe(Arc::new(move |e: &BoughEvent| {
+            sink.lock().unwrap().push(e.clone())
+        }));
         let started = Arc::new(Mutex::new(Vec::new()));
         let ctx = AppCtx {
             db,
@@ -894,7 +955,11 @@ mod fire_tests {
             turn_registry: Arc::new(crate::turn::queue::TurnRegistry::new()),
             model_defaults_path: None,
         };
-        Fx { ctx, events, started }
+        Fx {
+            ctx,
+            events,
+            started,
+        }
     }
 
     fn fixture() -> Fx {
@@ -954,6 +1019,10 @@ mod fire_tests {
 
     /// Persist the rows a real run would leave in the fired session: a
     /// supervisor message carrying `report` and a settled turn row.
+    ///
+    /// The suites that only need the turn row use `play_run_raw`; this fuller
+    /// shape is kept for the report-carrying firings.
+    #[allow(dead_code)]
     fn play_run(f: &Fx, session_id: &str, status: TurnStatus, report: &str) -> String {
         let db = f.ctx.db.lock().unwrap();
         let sup = db
@@ -964,7 +1033,9 @@ mod fire_tests {
                 parts: if report.is_empty() {
                     vec![]
                 } else {
-                    vec![Part::Text { text: report.into() }]
+                    vec![Part::Text {
+                        text: report.into(),
+                    }]
                 },
                 pending: false,
                 created_at: t0() + 1,
@@ -1040,7 +1111,13 @@ mod fire_tests {
                 data: serde_json::to_value(&message).unwrap(),
             });
             if let Some(starter) = ctx.turn_starter() {
-                let session = ctx.db.lock().unwrap().get_session(session_id).unwrap().unwrap();
+                let session = ctx
+                    .db
+                    .lock()
+                    .unwrap()
+                    .get_session(session_id)
+                    .unwrap()
+                    .unwrap();
                 starter.start_turn(ctx, &session, &message);
             }
         })
@@ -1057,7 +1134,9 @@ mod fire_tests {
         )
     }
 
-    fn count_fire(fired: Arc<Mutex<Vec<String>>>) -> impl FnMut(&Schedule) -> Result<(), BoughError> {
+    fn count_fire(
+        fired: Arc<Mutex<Vec<String>>>,
+    ) -> impl FnMut(&Schedule) -> Result<(), BoughError> {
         move |s: &Schedule| {
             fired.lock().unwrap().push(s.id.clone());
             Ok(())
@@ -1075,7 +1154,9 @@ mod fire_tests {
         let db = f.ctx.db.lock().unwrap();
 
         // Not due yet.
-        assert!(tick_schedules(&*db, t0() + 30 * MINUTE, &mut fire).unwrap().is_empty());
+        assert!(tick_schedules(&*db, t0() + 30 * MINUTE, &mut fire)
+            .unwrap()
+            .is_empty());
 
         // The server was down from T0+1h to T0+6h — five slots came and went.
         let back = t0() + 6 * HOUR;
@@ -1107,27 +1188,39 @@ mod fire_tests {
         assert_eq!(fired.lock().unwrap().len(), 1);
 
         // Then the cadence resumes, exactly once.
-        assert_eq!(tick_schedules(&*db, back + HOUR, &mut fire).unwrap().len(), 1);
+        assert_eq!(
+            tick_schedules(&*db, back + HOUR, &mut fire).unwrap().len(),
+            1
+        );
         assert_eq!(fired.lock().unwrap().len(), 2);
     }
 
     #[test]
     fn a_daily_schedule_missed_for_a_week_also_fires_once() {
         let f = fixture();
-        let at = Local.with_ymd_and_hms(2026, 1, 15, 9, 0, 0).unwrap().timestamp_millis();
+        let at = Local
+            .with_ymd_and_hms(2026, 1, 15, 9, 0, 0)
+            .unwrap()
+            .timestamp_millis();
         let schedule = seed(&f, "daily@09:00", at, None);
         let fired = Arc::new(Mutex::new(Vec::new()));
         let mut fire = count_fire(fired.clone());
         let db = f.ctx.db.lock().unwrap();
 
         // A week later, at 09:30 local.
-        let back = Local.with_ymd_and_hms(2026, 1, 22, 9, 30, 0).unwrap().timestamp_millis();
+        let back = Local
+            .with_ymd_and_hms(2026, 1, 22, 9, 30, 0)
+            .unwrap()
+            .timestamp_millis();
         tick_schedules(&*db, back, &mut fire).unwrap();
         assert_eq!(fired.lock().unwrap().clone(), vec![schedule.id.clone()]);
         // Next occurrence is tomorrow at 09:00 — today's 09:00 is already past.
         assert_eq!(
             db.get_schedule(&schedule.id).unwrap().unwrap().next_run_at,
-            Local.with_ymd_and_hms(2026, 1, 23, 9, 0, 0).unwrap().timestamp_millis()
+            Local
+                .with_ymd_and_hms(2026, 1, 23, 9, 0, 0)
+                .unwrap()
+                .timestamp_millis()
         );
     }
 
@@ -1152,7 +1245,9 @@ mod fire_tests {
             db.get_schedule(&schedule.id).unwrap().unwrap().next_run_at,
             t0() + 30 * MINUTE
         );
-        assert!(tick_schedules(&*db, t0() + 30_000, &mut boom).unwrap().is_empty());
+        assert!(tick_schedules(&*db, t0() + 30_000, &mut boom)
+            .unwrap()
+            .is_empty());
         assert_eq!(*attempts.lock().unwrap(), 1);
     }
 
@@ -1165,7 +1260,11 @@ mod fire_tests {
         {
             let db = f.ctx.db.lock().unwrap();
             let row = db.get_schedule(&disabled.id).unwrap().unwrap();
-            db.update_schedule(&Schedule { enabled: false, ..row }).unwrap();
+            db.update_schedule(&Schedule {
+                enabled: false,
+                ..row
+            })
+            .unwrap();
         }
         seed(&f, "every:30m", t0() + HOUR, None); // later
 
@@ -1186,17 +1285,30 @@ mod fire_tests {
         let mut schedule = seed(&f, "every:30m", t0() + 30 * MINUTE, None);
         schedule.workspace = Some("/work/repo".into());
         f.ctx.db.lock().unwrap().update_schedule(&schedule).unwrap();
-        let schedule = f.ctx.db.lock().unwrap().get_schedule(&schedule.id).unwrap().unwrap();
+        let schedule = f
+            .ctx
+            .db
+            .lock()
+            .unwrap()
+            .get_schedule(&schedule.id)
+            .unwrap()
+            .unwrap();
 
         let fired = fire_schedule(&f.ctx, &schedule).expect("the firing succeeds");
 
         let db = f.ctx.db.lock().unwrap();
         let session = db.get_session(&fired.session.id).unwrap().unwrap();
         assert_eq!(session.kind, SessionKind::Root);
-        assert_eq!(session.parent_id, None, "a fired session inherits no thread");
+        assert_eq!(
+            session.parent_id, None,
+            "a fired session inherits no thread"
+        );
         assert_eq!(session.title, schedule.title);
         assert_eq!(
-            db.get_session_runtime(&session.id).unwrap().workspace.as_deref(),
+            db.get_session_runtime(&session.id)
+                .unwrap()
+                .workspace
+                .as_deref(),
             Some("/work/repo")
         );
 
@@ -1205,7 +1317,12 @@ mod fire_tests {
         let thread = db.thread_for(&session.id).unwrap();
         assert_eq!(thread.len(), 1);
         assert_eq!(thread[0].role, Role::User);
-        assert_eq!(thread[0].parts, vec![Part::Text { text: schedule.prompt.clone() }]);
+        assert_eq!(
+            thread[0].parts,
+            vec![Part::Text {
+                text: schedule.prompt.clone()
+            }]
+        );
         assert!(!thread[0].pending);
 
         // And a turn was asked for, on that session, with that message.
@@ -1216,7 +1333,10 @@ mod fire_tests {
 
         // Announced in order: the session, then the message on it.
         let kinds: Vec<EventType> = f.events.lock().unwrap().iter().map(|e| e.r#type).collect();
-        assert_eq!(kinds, vec![EventType::SessionCreated, EventType::MessageStarted]);
+        assert_eq!(
+            kinds,
+            vec![EventType::SessionCreated, EventType::MessageStarted]
+        );
     }
 
     #[tokio::test]
@@ -1248,16 +1368,28 @@ mod fire_tests {
             "the top level still holds exactly the one conversation the user made"
         );
         assert_eq!(
-            db.sessions_by_origin("creator").unwrap().iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
+            db.sessions_by_origin("creator")
+                .unwrap()
+                .iter()
+                .map(|s| s.id.clone())
+                .collect::<Vec<_>>(),
             vec![session.id.clone()]
         );
 
         // Collapsed, but NOT inherited: the prompt is still the whole briefing.
         assert_eq!(session.parent_id, None, "a firing inherits no thread");
-        assert_eq!(session.origin_message_id, None, "the clock asked for it, not a turn");
+        assert_eq!(
+            session.origin_message_id, None,
+            "the clock asked for it, not a turn"
+        );
         let thread = db.thread_for(&session.id).unwrap();
         assert_eq!(thread.len(), 1);
-        assert_eq!(thread[0].parts, vec![Part::Text { text: schedule.prompt.clone() }]);
+        assert_eq!(
+            thread[0].parts,
+            vec![Part::Text {
+                text: schedule.prompt.clone()
+            }]
+        );
     }
 
     #[tokio::test]
@@ -1266,14 +1398,31 @@ mod fire_tests {
         // A schedule created over REST carries no sessionId…
         let orphan = fire_schedule(&f.ctx, &seed(&f, "every:30m", t0(), None)).unwrap();
         assert_eq!(
-            f.ctx.db.lock().unwrap().get_session(&orphan.session.id).unwrap().unwrap().kind,
+            f.ctx
+                .db
+                .lock()
+                .unwrap()
+                .get_session(&orphan.session.id)
+                .unwrap()
+                .unwrap()
+                .kind,
             SessionKind::Root
         );
 
         // …and a creator can be gone by the time the schedule fires.
-        let gone =
-            fire_schedule(&f.ctx, &seed(&f, "every:30m", t0(), Some("deleted-long-ago"))).unwrap();
-        let session = f.ctx.db.lock().unwrap().get_session(&gone.session.id).unwrap().unwrap();
+        let gone = fire_schedule(
+            &f.ctx,
+            &seed(&f, "every:30m", t0(), Some("deleted-long-ago")),
+        )
+        .unwrap();
+        let session = f
+            .ctx
+            .db
+            .lock()
+            .unwrap()
+            .get_session(&gone.session.id)
+            .unwrap()
+            .unwrap();
         assert_eq!(session.kind, SessionKind::Root);
         assert_eq!(session.origin_id, None);
     }
@@ -1283,7 +1432,13 @@ mod fire_tests {
         let f = fixture();
         let fired = fire_schedule(&f.ctx, &seed(&f, "every:30m", t0(), None)).unwrap();
         assert_eq!(
-            f.ctx.db.lock().unwrap().get_session_runtime(&fired.session.id).unwrap().workspace,
+            f.ctx
+                .db
+                .lock()
+                .unwrap()
+                .get_session_runtime(&fired.session.id)
+                .unwrap()
+                .workspace,
             None
         );
     }
@@ -1295,7 +1450,11 @@ mod fire_tests {
         let deps = FireDeps {
             report_error: Some(report),
             start: Some(Arc::new(|_ctx: &AppCtx, _s: &Session, _m: &Message| {
-                StartOutcome::Failed(BoughError::http(500, ErrorKind::Schedule, "no turn for you"))
+                StartOutcome::Failed(BoughError::http(
+                    500,
+                    ErrorKind::Schedule,
+                    "no turn for you",
+                ))
             })),
             ..Default::default()
         };
@@ -1312,7 +1471,10 @@ mod fire_tests {
         let f = fixture();
         *f.ctx.starter.write().unwrap() = Some(Arc::new(PanickingStarter));
         let (report, errors) = collecting_report();
-        let deps = FireDeps { report_error: Some(report), ..Default::default() };
+        let deps = FireDeps {
+            report_error: Some(report),
+            ..Default::default()
+        };
         let fired = fire_schedule_with(&f.ctx, &seed(&f, "every:30m", t0(), None), &deps);
         assert!(fired.is_none());
         assert_eq!(errors.lock().unwrap().len(), 1);
@@ -1325,7 +1487,16 @@ mod fire_tests {
     fn firing_with_no_turn_starter_wired_still_records_the_session() {
         let f = fixture_bare();
         let fired = fire_schedule(&f.ctx, &seed(&f, "every:30m", t0(), None)).unwrap();
-        assert_eq!(f.ctx.db.lock().unwrap().thread_for(&fired.session.id).unwrap().len(), 1);
+        assert_eq!(
+            f.ctx
+                .db
+                .lock()
+                .unwrap()
+                .thread_for(&fired.session.id)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     // ---- reporting back -----------------------------------------------------
@@ -1364,33 +1535,40 @@ mod fire_tests {
         let fx_db = f.ctx.db.clone();
         let started = f.started.clone();
         let deps = FireDeps {
-            start: Some(Arc::new(move |_ctx: &AppCtx, session: &Session, message: &Message| {
-                started.lock().unwrap().push((session.id.clone(), message.id.clone()));
-                let db = fx_db.lock().unwrap();
-                let sup = db
-                    .create_message(Message {
+            start: Some(Arc::new(
+                move |_ctx: &AppCtx, session: &Session, message: &Message| {
+                    started
+                        .lock()
+                        .unwrap()
+                        .push((session.id.clone(), message.id.clone()));
+                    let db = fx_db.lock().unwrap();
+                    let sup = db
+                        .create_message(Message {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            session_id: session.id.clone(),
+                            role: Role::Supervisor,
+                            parts: vec![Part::Text {
+                                text: "Bench passed: 14/16 solved.".into(),
+                            }],
+                            pending: false,
+                            created_at: t0() + 1,
+                        })
+                        .unwrap();
+                    db.create_turn(Turn {
                         id: uuid::Uuid::new_v4().to_string(),
                         session_id: session.id.clone(),
-                        role: Role::Supervisor,
-                        parts: vec![Part::Text { text: "Bench passed: 14/16 solved.".into() }],
-                        pending: false,
-                        created_at: t0() + 1,
+                        message_id: sup.id,
+                        status: TurnStatus::Done,
+                        step: "done".into(),
+                        created_at: t0(),
+                        updated_at: t0() + 1,
+                        error: None,
+                        usage: None,
                     })
                     .unwrap();
-                db.create_turn(Turn {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    session_id: session.id.clone(),
-                    message_id: sup.id,
-                    status: TurnStatus::Done,
-                    step: "done".into(),
-                    created_at: t0(),
-                    updated_at: t0() + 1,
-                    error: None,
-                    usage: None,
-                })
-                .unwrap();
-                StartOutcome::Done
-            })),
+                    StartOutcome::Done
+                },
+            )),
             build_outcome: Some(fake_build()),
             post_note: Some(fake_post()),
             ..Default::default()
@@ -1403,7 +1581,9 @@ mod fire_tests {
         let notes = f.ctx.db.lock().unwrap().thread_for("creator").unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].role, Role::System);
-        let Part::Text { text } = &notes[0].parts[0] else { panic!("expected a text part") };
+        let Part::Text { text } = &notes[0].parts[0] else {
+            panic!("expected a text part")
+        };
         assert!(
             text.starts_with(&format!(
                 "[schedule fired] \"deploy check\" finished (session {})",
@@ -1415,7 +1595,12 @@ mod fire_tests {
 
         // …and woke it: the creator was idle, so the note started a turn there.
         assert_eq!(
-            f.started.lock().unwrap().iter().map(|(s, _)| s.clone()).collect::<Vec<_>>(),
+            f.started
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(s, _)| s.clone())
+                .collect::<Vec<_>>(),
             vec![fired.session.id.clone(), "creator".to_string()]
         );
     }
@@ -1430,33 +1615,40 @@ mod fire_tests {
         let fx_db = f.ctx.db.clone();
         let started = f.started.clone();
         let deps = FireDeps {
-            start: Some(Arc::new(move |_ctx: &AppCtx, session: &Session, message: &Message| {
-                started.lock().unwrap().push((session.id.clone(), message.id.clone()));
-                let db = fx_db.lock().unwrap();
-                let sup = db
-                    .create_message(Message {
+            start: Some(Arc::new(
+                move |_ctx: &AppCtx, session: &Session, message: &Message| {
+                    started
+                        .lock()
+                        .unwrap()
+                        .push((session.id.clone(), message.id.clone()));
+                    let db = fx_db.lock().unwrap();
+                    let sup = db
+                        .create_message(Message {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            session_id: session.id.clone(),
+                            role: Role::Supervisor,
+                            parts: vec![Part::Text {
+                                text: "All checks green.".into(),
+                            }],
+                            pending: false,
+                            created_at: t0() + 1,
+                        })
+                        .unwrap();
+                    db.create_turn(Turn {
                         id: uuid::Uuid::new_v4().to_string(),
                         session_id: session.id.clone(),
-                        role: Role::Supervisor,
-                        parts: vec![Part::Text { text: "All checks green.".into() }],
-                        pending: false,
-                        created_at: t0() + 1,
+                        message_id: sup.id,
+                        status: TurnStatus::Done,
+                        step: "done".into(),
+                        created_at: t0(),
+                        updated_at: t0() + 1,
+                        error: None,
+                        usage: None,
                     })
                     .unwrap();
-                db.create_turn(Turn {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    session_id: session.id.clone(),
-                    message_id: sup.id,
-                    status: TurnStatus::Done,
-                    step: "done".into(),
-                    created_at: t0(),
-                    updated_at: t0() + 1,
-                    error: None,
-                    usage: None,
-                })
-                .unwrap();
-                StartOutcome::Done
-            })),
+                    StartOutcome::Done
+                },
+            )),
             ..Default::default()
         };
 
@@ -1465,7 +1657,9 @@ mod fire_tests {
         let notes = f.ctx.db.lock().unwrap().thread_for("creator").unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].role, Role::System);
-        let Part::Text { text } = &notes[0].parts[0] else { panic!("expected a text part") };
+        let Part::Text { text } = &notes[0].parts[0] else {
+            panic!("expected a text part")
+        };
         assert_eq!(
             *text,
             firing_note_text(
@@ -1477,7 +1671,12 @@ mod fire_tests {
         );
         // The real post applies the one wake rule: the idle creator was woken.
         assert_eq!(
-            f.started.lock().unwrap().iter().map(|(s, _)| s.clone()).collect::<Vec<_>>(),
+            f.started
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(s, _)| s.clone())
+                .collect::<Vec<_>>(),
             vec![fired.session.id.clone(), "creator".to_string()]
         );
     }
@@ -1494,26 +1693,27 @@ mod fire_tests {
         let fx_db = f.ctx.db.clone();
         let posted_signal = done_tx.clone();
         let post = fake_post();
-        let deps = FireDeps {
-            report_error: Some(report),
-            start: Some(Arc::new(move |_ctx: &AppCtx, session: &Session, _m: &Message| {
-                play_run_raw(&fx_db, &session.id, TurnStatus::Error);
-                // The starter's own settling REJECTS — the run errored.
-                StartOutcome::Settles(Box::pin(futures::future::ready(Err(BoughError::http(
-                    500,
-                    ErrorKind::Schedule,
-                    "the run errored",
-                )))))
-            })),
-            build_outcome: Some(fake_build()),
-            post_note: Some(Arc::new(move |ctx: &AppCtx, sid: &str, text: &str| {
-                post(ctx, sid, text);
-                if let Some(tx) = posted_signal.lock().unwrap().take() {
-                    let _ = tx.send(());
-                }
-            })),
-            ..Default::default()
-        };
+        let deps =
+            FireDeps {
+                report_error: Some(report),
+                start: Some(Arc::new(
+                    move |_ctx: &AppCtx, session: &Session, _m: &Message| {
+                        play_run_raw(&fx_db, &session.id, TurnStatus::Error);
+                        // The starter's own settling REJECTS — the run errored.
+                        StartOutcome::Settles(Box::pin(futures::future::ready(Err(
+                            BoughError::http(500, ErrorKind::Schedule, "the run errored"),
+                        ))))
+                    },
+                )),
+                build_outcome: Some(fake_build()),
+                post_note: Some(Arc::new(move |ctx: &AppCtx, sid: &str, text: &str| {
+                    post(ctx, sid, text);
+                    if let Some(tx) = posted_signal.lock().unwrap().take() {
+                        let _ = tx.send(());
+                    }
+                })),
+                ..Default::default()
+            };
 
         fire_schedule_with(&f.ctx, &schedule, &deps).expect("fires");
         tokio::time::timeout(std::time::Duration::from_secs(2), done_rx)
@@ -1522,8 +1722,12 @@ mod fire_tests {
             .unwrap();
 
         let notes = f.ctx.db.lock().unwrap().thread_for("creator").unwrap();
-        let note = notes.first().expect("the failed firing still owes the creator its note");
-        let Part::Text { text } = &note.parts[0] else { panic!("expected a text part") };
+        let note = notes
+            .first()
+            .expect("the failed firing still owes the creator its note");
+        let Part::Text { text } = &note.parts[0] else {
+            panic!("expected a text part")
+        };
         assert!(text.contains("FAILED"), "{text}");
         // The starter's rejection is reported too — the note does not swallow it.
         assert_eq!(errors.lock().unwrap().len(), 1);
@@ -1601,7 +1805,16 @@ mod fire_tests {
 
         let fired = fire_schedule_with(&f.ctx, &schedule, &deps).expect("fires");
         // No note yet: the run has not settled.
-        assert_eq!(f.ctx.db.lock().unwrap().thread_for("creator").unwrap().len(), 0);
+        assert_eq!(
+            f.ctx
+                .db
+                .lock()
+                .unwrap()
+                .thread_for("creator")
+                .unwrap()
+                .len(),
+            0
+        );
 
         // The run ends: rows land, then the runner announces turn.finished.
         play_run_raw(&f.ctx.db, &fired.session.id, TurnStatus::Done);
@@ -1644,13 +1857,20 @@ mod fire_tests {
             fire: Some(Arc::new(move |_ctx: &AppCtx, s: &Schedule| {
                 fired.lock().unwrap().push(s.id.clone());
             })),
-            fire_deps: FireDeps { now: Some(now), ..Default::default() },
+            fire_deps: FireDeps {
+                now: Some(now),
+                ..Default::default()
+            },
         };
 
         let stop = start_schedule_ticker_with(&f.ctx, deps(fired.clone(), now.clone()));
         tokio::time::sleep(std::time::Duration::from_millis(60)).await;
         stop();
-        assert_eq!(fired.lock().unwrap().len(), 1, "expected exactly one firing");
+        assert_eq!(
+            fired.lock().unwrap().len(),
+            1,
+            "expected exactly one firing"
+        );
 
         // Advance past the next slot and it fires again — the ticker is
         // alive, not stuck.
@@ -1679,7 +1899,10 @@ mod fire_tests {
                 fire: Some(Arc::new(move |_ctx: &AppCtx, s: &Schedule| {
                     sink.lock().unwrap().push(s.id.clone());
                 })),
-                fire_deps: FireDeps { now: Some(now), ..Default::default() },
+                fire_deps: FireDeps {
+                    now: Some(now),
+                    ..Default::default()
+                },
             },
         );
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;

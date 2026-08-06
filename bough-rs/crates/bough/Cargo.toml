@@ -13,6 +13,12 @@ reqwest = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+chrono = { workspace = true }
+dirs = { workspace = true }
+# `bough tags sql` opens its own READ-ONLY connection — never the injected
+# handle. The gate is structural (OPEN_READ_ONLY + PRAGMA query_only), which
+# needs the driver directly.
+rusqlite = { workspace = true }
 
 [dev-dependencies]
 # exec's tests drive the REAL route table over an in-memory database: the

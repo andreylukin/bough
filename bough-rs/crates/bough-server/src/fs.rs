@@ -90,7 +90,9 @@ pub fn expand_tilde(p: &str) -> PathBuf {
 /// dotfiles included, sorted, capped. Unreadable or missing → empty: a
 /// half-typed path is not a mistake, it is the middle of typing.
 pub fn list_dir_entries(dir: &Path) -> Vec<String> {
-    let Ok(read) = std::fs::read_dir(dir) else { return Vec::new() };
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
     let mut out: Vec<String> = Vec::new();
     for entry in read.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -126,8 +128,9 @@ fn percent_decode(v: &str) -> String {
                 i += 1;
             }
             b'%' => {
-                let decoded =
-                    v.get(i + 1..i + 3).and_then(|hex| u8::from_str_radix(hex, 16).ok());
+                let decoded = v
+                    .get(i + 1..i + 3)
+                    .and_then(|hex| u8::from_str_radix(hex, 16).ok());
                 if let Some(b) = decoded {
                     out.push(b);
                     i += 3;
@@ -175,7 +178,10 @@ pub fn list_files_for_workspace() -> Handler {
         if dir.is_empty() {
             return Err(BoughError::bad_request("workspace is required"));
         }
-        Ok(json_res(&json!({ "files": list_workspace_files(&dir).await }), 200))
+        Ok(json_res(
+            &json!({ "files": list_workspace_files(&dir).await }),
+            200,
+        ))
     })
 }
 
@@ -194,7 +200,9 @@ pub fn list_dir_entries_h() -> Handler {
         } else if !base.is_empty() {
             PathBuf::from(base).join(expanded)
         } else {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(expanded)
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(expanded)
         };
         Ok(json_res(&json!({ "entries": list_dir_entries(&dir) }), 200))
     })
@@ -213,7 +221,11 @@ pub fn branch() -> Handler {
             .into_iter()
             .next()
             .unwrap_or_default();
-        let branch = if name.is_empty() || name == "HEAD" { String::new() } else { name };
+        let branch = if name.is_empty() || name == "HEAD" {
+            String::new()
+        } else {
+            name
+        };
         Ok(json_res(&json!({ "branch": branch }), 200))
     })
 }
@@ -267,11 +279,17 @@ mod tests {
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let res = call.call(testutil::get("/files")).await;
         assert_eq!(res.status(), 400);
-        assert_eq!(testutil::body_json(res).await, j!({"error": "workspace is required"}));
+        assert_eq!(
+            testutil::body_json(res).await,
+            j!({"error": "workspace is required"})
+        );
 
         let dir = temp_dir();
         let res = call
-            .call(testutil::get(&format!("/files?workspace={}", dir.display())))
+            .call(testutil::get(&format!(
+                "/files?workspace={}",
+                dir.display()
+            )))
             .await;
         assert_eq!(res.status(), 200);
         assert_eq!(testutil::body_json(res).await, j!({"files": []}));
@@ -286,7 +304,9 @@ mod tests {
         assert_eq!(res.status(), 404);
 
         let id = seed_session(&fx, None);
-        let res = call.call(testutil::get(&format!("/sessions/{id}/files"))).await;
+        let res = call
+            .call(testutil::get(&format!("/sessions/{id}/files")))
+            .await;
         assert_eq!(res.status(), 200);
         assert_eq!(testutil::body_json(res).await, j!({"files": []}));
     }
@@ -313,7 +333,10 @@ mod tests {
         );
         // An unreadable/missing directory is empty, not an error.
         let res = call
-            .call(testutil::get(&format!("/fs/entries?dir={}/nope", dir.display())))
+            .call(testutil::get(&format!(
+                "/fs/entries?dir={}/nope",
+                dir.display()
+            )))
             .await;
         assert_eq!(res.status(), 200);
         assert_eq!(testutil::body_json(res).await, j!({"entries": []}));
@@ -328,7 +351,10 @@ mod tests {
         std::fs::create_dir(dir.join("inner")).unwrap();
         std::fs::write(dir.join("inner").join("x.txt"), "x").unwrap();
         let res = call
-            .call(testutil::get(&format!("/fs/entries?dir=inner&base={}", dir.display())))
+            .call(testutil::get(&format!(
+                "/fs/entries?dir=inner&base={}",
+                dir.display()
+            )))
             .await;
         assert_eq!(res.status(), 200);
         assert_eq!(testutil::body_json(res).await, j!({"entries": ["x.txt"]}));
@@ -341,7 +367,10 @@ mod tests {
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let res = call.call(testutil::get("/fs/branch")).await;
         assert_eq!(res.status(), 400);
-        assert_eq!(testutil::body_json(res).await, j!({"error": "dir is required"}));
+        assert_eq!(
+            testutil::body_json(res).await,
+            j!({"error": "dir is required"})
+        );
 
         let dir = temp_dir();
         let res = call

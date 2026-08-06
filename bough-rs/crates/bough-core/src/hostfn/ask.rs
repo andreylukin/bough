@@ -151,7 +151,11 @@ impl AskHolds {
     }
 
     pub fn with_clock(now: Clock) -> Self {
-        AskHolds { pending: Mutex::new(HashMap::new()), now, seq: AtomicU64::new(0) }
+        AskHolds {
+            pending: Mutex::new(HashMap::new()),
+            now,
+            seq: AtomicU64::new(0),
+        }
     }
 
     /// Raise one question; the returned [`RaisedAsk`] parks until it settles.
@@ -193,7 +197,10 @@ impl AskHolds {
             tx,
             watcher: None,
         };
-        self.pending.lock().unwrap().insert(record.id.clone(), entry);
+        self.pending
+            .lock()
+            .unwrap()
+            .insert(record.id.clone(), entry);
         bus.publish(EventInput {
             r#type: EventType::AskQuestion,
             session_id: Some(record.session_id.clone()),
@@ -262,7 +269,11 @@ impl AskHolds {
 
     /// A pending question by id — the route's lookup. Settled ones are gone.
     pub fn get(&self, id: &str) -> Option<AskQuestion> {
-        self.pending.lock().unwrap().get(id).map(|e| e.record.clone())
+        self.pending
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|e| e.record.clone())
     }
 
     /// Questions currently awaiting an answer, oldest first, optionally for
@@ -295,7 +306,9 @@ impl AskHolds {
                 .map(|e| e.record.id.clone())
                 .collect()
         };
-        ids.iter().filter(|id| self.settle(id, AskSettlement::Interrupted, None)).count()
+        ids.iter()
+            .filter(|id| self.settle(id, AskSettlement::Interrupted, None))
+            .count()
     }
 
     /// Live hold count. The leak checks read it.
@@ -357,8 +370,12 @@ pub fn append_ask_part(
     message_id: &str,
     part: &Part,
 ) -> bool {
-    let Part::Ask { id: part_id, .. } = part else { return false };
-    let Ok(Some(message)) = db.get_message(message_id) else { return false };
+    let Part::Ask { id: part_id, .. } = part else {
+        return false;
+    };
+    let Ok(Some(message)) = db.get_message(message_id) else {
+        return false;
+    };
     let duplicate = message
         .parts
         .iter()
@@ -368,7 +385,10 @@ pub fn append_ask_part(
     }
     let mut parts = message.parts.clone();
     parts.push(part.clone());
-    if db.update_message(message_id, &parts, message.pending).is_err() {
+    if db
+        .update_message(message_id, &parts, message.pending)
+        .is_err()
+    {
         return false;
     }
     bus.publish(EventInput {
@@ -433,7 +453,11 @@ fn parse_ask_options(opts_json: &str) -> Result<Option<Vec<String>>, BoughError>
         })
         .filter(|s| !s.is_empty())
         .collect();
-    Ok(if cleaned.is_empty() { None } else { Some(cleaned) })
+    Ok(if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    })
 }
 
 fn options_shape_error() -> BoughError {
@@ -537,7 +561,11 @@ pub fn create_ask_host_fn(ctx: &TurnCtx, deps: AskDeps) -> AskHostFn {
             ctx: ctx.clone(),
             holds,
             append: deps.append,
-            st: Mutex::new(AskFnState { buffered: vec![], closed: false, sub: None }),
+            st: Mutex::new(AskFnState {
+                buffered: vec![],
+                closed: false,
+                sub: None,
+            }),
         }),
     }
 }
@@ -619,18 +647,24 @@ impl AskHostFn {
         match raised.settled().await {
             (AskSettlement::Answered, ans) => {
                 let given = ans.unwrap_or_default();
-                self.inner.sink(ask_part_of(&record, AskSettlement::Answered, Some(given.clone())));
+                self.inner.sink(ask_part_of(
+                    &record,
+                    AskSettlement::Answered,
+                    Some(given.clone()),
+                ));
                 Ok(given)
             }
             // The settlement says which of the two happened — "you dismissed
             // it" and "the turn was stopped" are different facts for both the
             // user and the next round.
             (AskSettlement::Declined, _) => {
-                self.inner.sink(ask_part_of(&record, AskSettlement::Declined, None));
+                self.inner
+                    .sink(ask_part_of(&record, AskSettlement::Declined, None));
                 Err(declined(&record.question))
             }
             (AskSettlement::Interrupted, _) => {
-                self.inner.sink(ask_part_of(&record, AskSettlement::Interrupted, None));
+                self.inner
+                    .sink(ask_part_of(&record, AskSettlement::Interrupted, None));
                 Err(interrupted(&record.question))
             }
         }
@@ -683,7 +717,12 @@ mod tests {
     impl Fixture {
         /// The supervisor message as it stands in the database right now.
         fn message(&self) -> Message {
-            self.db.lock().unwrap().get_message(MESSAGE).unwrap().unwrap()
+            self.db
+                .lock()
+                .unwrap()
+                .get_message(MESSAGE)
+                .unwrap()
+                .unwrap()
         }
 
         /// Its `ask` parts, in order.
@@ -743,8 +782,9 @@ mod tests {
     }
 
     fn fixture() -> Fixture {
-        let db: SharedDb =
-            Arc::new(Mutex::new(SqliteDb::new(":memory:", DbOptions::default()).unwrap()));
+        let db: SharedDb = Arc::new(Mutex::new(
+            SqliteDb::new(":memory:", DbOptions::default()).unwrap(),
+        ));
         let bus = Arc::new(Bus::with_error_hook(system_clock(), Arc::new(|_e, _ev| {})));
         let holds = Arc::new(AskHolds::new());
         let questions: Arc<Mutex<Vec<AskQuestion>>> = Arc::new(Mutex::new(vec![]));
@@ -799,7 +839,13 @@ mod tests {
             mcp_grant: None,
             depth: 0,
         };
-        Fixture { db, bus, holds, questions, ctx }
+        Fixture {
+            db,
+            bus,
+            holds,
+            questions,
+            ctx,
+        }
     }
 
     fn input(session_id: &str, message_id: &str, question: &str) -> AskInput {
@@ -811,9 +857,23 @@ mod tests {
         }
     }
 
-    fn part_fields(p: &Part) -> (String, String, Option<Vec<String>>, AskStatus, Option<String>) {
+    fn part_fields(
+        p: &Part,
+    ) -> (
+        String,
+        String,
+        Option<Vec<String>>,
+        AskStatus,
+        Option<String>,
+    ) {
         match p {
-            Part::Ask { id, question, options, status, answer } => (
+            Part::Ask {
+                id,
+                question,
+                options,
+                status,
+                answer,
+            } => (
                 id.clone(),
                 question.clone(),
                 options.clone(),
@@ -844,11 +904,18 @@ mod tests {
         // racing it.
         assert_eq!(f.holds.get(&record.id).unwrap().question, "Which env?");
         assert_eq!(
-            f.holds.list(Some(SESSION)).iter().map(|q| q.id.clone()).collect::<Vec<_>>(),
+            f.holds
+                .list(Some(SESSION))
+                .iter()
+                .map(|q| q.id.clone())
+                .collect::<Vec<_>>(),
             vec![record.id.clone()]
         );
         assert_eq!(f.questions()[0].status, AskQuestionStatus::Pending);
-        assert_eq!(f.questions()[0].options, Some(vec!["dev".to_string(), "prod".to_string()]));
+        assert_eq!(
+            f.questions()[0].options,
+            Some(vec!["dev".to_string(), "prod".to_string()])
+        );
 
         assert!(f.holds.answer(&record.id, "prod"));
         assert_eq!(raised.answer().await.unwrap(), "prod");
@@ -871,7 +938,9 @@ mod tests {
     #[tokio::test]
     async fn raise_decline_rejects_catchably_with_user_declined() {
         let f = fixture();
-        let raised = f.holds.raise(&f.bus, input(SESSION, MESSAGE, "Drop the table?"), None);
+        let raised = f
+            .holds
+            .raise(&f.bus, input(SESSION, MESSAGE, "Drop the table?"), None);
         let id = raised.record.id.clone();
         assert!(f.holds.decline(&id));
 
@@ -889,7 +958,11 @@ mod tests {
     async fn ac_an_interrupt_settles_the_hold_rather_than_hanging() {
         let f = fixture();
         let cancel = CancellationToken::new();
-        let raised = f.holds.raise(&f.bus, input(SESSION, MESSAGE, "Which branch?"), Some(&cancel));
+        let raised = f.holds.raise(
+            &f.bus,
+            input(SESSION, MESSAGE, "Which branch?"),
+            Some(&cancel),
+        );
         assert_eq!(f.holds.size(), 1);
 
         cancel.cancel();
@@ -911,10 +984,15 @@ mod tests {
         let f = fixture();
         let cancel = CancellationToken::new();
         cancel.cancel();
-        let raised = f.holds.raise(&f.bus, input(SESSION, MESSAGE, "Which?"), Some(&cancel));
+        let raised = f
+            .holds
+            .raise(&f.bus, input(SESSION, MESSAGE, "Which?"), Some(&cancel));
         raised.answer().await.unwrap_err();
         assert_eq!(f.holds.size(), 0);
-        assert_eq!(f.questions().last().unwrap().status, AskQuestionStatus::Interrupted);
+        assert_eq!(
+            f.questions().last().unwrap().status,
+            AskQuestionStatus::Interrupted
+        );
     }
 
     #[tokio::test]
@@ -926,7 +1004,11 @@ mod tests {
         assert_eq!(f.holds.expire(Some("sA")), 1);
         a.answer().await.unwrap_err();
         assert_eq!(
-            f.holds.list(None).iter().map(|q| q.id.clone()).collect::<Vec<_>>(),
+            f.holds
+                .list(None)
+                .iter()
+                .map(|q| q.id.clone())
+                .collect::<Vec<_>>(),
             vec![b.record.id.clone()]
         );
 
@@ -950,11 +1032,19 @@ mod tests {
         let three = holds.raise(&bus, input("sA", "m", "3"), None);
 
         assert_eq!(
-            holds.list(Some("sA")).iter().map(|q| q.id.clone()).collect::<Vec<_>>(),
+            holds
+                .list(Some("sA"))
+                .iter()
+                .map(|q| q.id.clone())
+                .collect::<Vec<_>>(),
             vec![one.record.id.clone(), three.record.id.clone()]
         );
         assert_eq!(
-            holds.list(None).iter().map(|q| q.question.clone()).collect::<Vec<_>>(),
+            holds
+                .list(None)
+                .iter()
+                .map(|q| q.question.clone())
+                .collect::<Vec<_>>(),
             vec!["1", "2", "3"]
         );
         holds.expire(None);
@@ -1012,7 +1102,10 @@ mod tests {
             let db = f.db.lock().unwrap();
             assert!(append_ask_part(&*db, &f.bus, SESSION, MESSAGE, &part));
         }
-        assert!(f.message().pending, "an append during the turn leaves it pending");
+        assert!(
+            f.message().pending,
+            "an append during the turn leaves it pending"
+        );
         // A second append of the same question is refused: a transcript with
         // the question in it twice is worse than one missing it.
         {
@@ -1051,7 +1144,13 @@ mod tests {
     #[tokio::test]
     async fn ask_resolves_with_the_answer_and_records_it_on_the_message() {
         let f = fixture();
-        let ask = create_ask_host_fn(&f.ctx, AskDeps { holds: Some(f.holds.clone()), ..Default::default() });
+        let ask = create_ask_host_fn(
+            &f.ctx,
+            AskDeps {
+                holds: Some(f.holds.clone()),
+                ..Default::default()
+            },
+        );
 
         let opts_json = json!({"options": ["dev", "prod"]}).to_string();
         let parked = ask.ask("Which env?", &opts_json);
@@ -1060,7 +1159,10 @@ mod tests {
         assert!(futures::poll!(parked.as_mut()).is_pending());
         let live = f.holds.list(Some(SESSION));
         assert_eq!(live.len(), 1);
-        assert_eq!(live[0].options, Some(vec!["dev".to_string(), "prod".to_string()]));
+        assert_eq!(
+            live[0].options,
+            Some(vec!["dev".to_string(), "prod".to_string()])
+        );
 
         f.holds.answer(&live[0].id, "prod");
         assert_eq!(parked.await.unwrap(), "prod");
@@ -1085,7 +1187,13 @@ mod tests {
     #[tokio::test]
     async fn a_part_written_during_the_turn_would_be_erased_the_buffer_is_why_it_is_not() {
         let f = fixture();
-        let ask = create_ask_host_fn(&f.ctx, AskDeps { holds: Some(f.holds.clone()), ..Default::default() });
+        let ask = create_ask_host_fn(
+            &f.ctx,
+            AskDeps {
+                holds: Some(f.holds.clone()),
+                ..Default::default()
+            },
+        );
         let parked = ask.ask("Which env?", "{}");
         tokio::pin!(parked);
         assert!(futures::poll!(parked.as_mut()).is_pending());
@@ -1097,7 +1205,14 @@ mod tests {
         // would clobber it.
         {
             let db = f.db.lock().unwrap();
-            db.update_message(MESSAGE, &[Part::Text { text: "done".into() }], true).unwrap();
+            db.update_message(
+                MESSAGE,
+                &[Part::Text {
+                    text: "done".into(),
+                }],
+                true,
+            )
+            .unwrap();
         }
 
         f.finish_turn("done");
@@ -1111,7 +1226,13 @@ mod tests {
     #[tokio::test]
     async fn ask_rejects_catchably_on_decline_and_records_the_dismissal() {
         let f = fixture();
-        let ask = create_ask_host_fn(&f.ctx, AskDeps { holds: Some(f.holds.clone()), ..Default::default() });
+        let ask = create_ask_host_fn(
+            &f.ctx,
+            AskDeps {
+                holds: Some(f.holds.clone()),
+                ..Default::default()
+            },
+        );
         let parked = ask.ask("Drop the table?", "{}");
         tokio::pin!(parked);
         assert!(futures::poll!(parked.as_mut()).is_pending());
@@ -1132,7 +1253,13 @@ mod tests {
     #[tokio::test]
     async fn ac_interrupting_the_turn_settles_a_parked_ask_rather_than_hanging_it() {
         let f = fixture();
-        let ask = create_ask_host_fn(&f.ctx, AskDeps { holds: Some(f.holds.clone()), ..Default::default() });
+        let ask = create_ask_host_fn(
+            &f.ctx,
+            AskDeps {
+                holds: Some(f.holds.clone()),
+                ..Default::default()
+            },
+        );
         let parked = ask.ask("Which branch?", "{}");
         tokio::pin!(parked);
         assert!(futures::poll!(parked.as_mut()).is_pending());
@@ -1151,7 +1278,13 @@ mod tests {
     #[tokio::test]
     async fn ac_a_hold_still_parked_when_the_turn_ends_is_swept_not_left_haunting() {
         let f = fixture();
-        let ask = create_ask_host_fn(&f.ctx, AskDeps { holds: Some(f.holds.clone()), ..Default::default() });
+        let ask = create_ask_host_fn(
+            &f.ctx,
+            AskDeps {
+                holds: Some(f.holds.clone()),
+                ..Default::default()
+            },
+        );
         // No cancel and no answer: the shape a wall-clock timeout leaves
         // behind, where the worker is gone but the host promise was never
         // unwound.
@@ -1165,10 +1298,17 @@ mod tests {
         let err = parked.await.unwrap_err();
         assert!(err.to_string().contains("interrupted"), "{err}");
         assert_eq!(f.holds.size(), 0, "the hold is gone from the registry");
-        assert_eq!(f.holds.list(Some(SESSION)).len(), 0, "and from every client's card list");
+        assert_eq!(
+            f.holds.list(Some(SESSION)).len(),
+            0,
+            "and from every client's card list"
+        );
         // The final event says how it ended, so a card that was showing
         // "pending" closes.
-        assert_eq!(f.questions().last().unwrap().status, AskQuestionStatus::Interrupted);
+        assert_eq!(
+            f.questions().last().unwrap().status,
+            AskQuestionStatus::Interrupted
+        );
         // Swept after the message closed, so its part applies straight
         // through.
         assert_eq!(f.ask_parts().len(), 1);
@@ -1180,7 +1320,13 @@ mod tests {
     async fn the_turns_bus_subscription_is_released_when_the_turn_ends() {
         let f = fixture();
         let before = f.bus.size();
-        let ask = create_ask_host_fn(&f.ctx, AskDeps { holds: Some(f.holds.clone()), ..Default::default() });
+        let ask = create_ask_host_fn(
+            &f.ctx,
+            AskDeps {
+                holds: Some(f.holds.clone()),
+                ..Default::default()
+            },
+        );
         // Nothing is subscribed until the first question — a turn that never
         // asks pays nothing.
         assert_eq!(f.bus.size(), before);
@@ -1197,7 +1343,13 @@ mod tests {
     #[tokio::test]
     async fn two_questions_in_one_turn_both_land_in_the_order_they_were_asked() {
         let f = fixture();
-        let ask = create_ask_host_fn(&f.ctx, AskDeps { holds: Some(f.holds.clone()), ..Default::default() });
+        let ask = create_ask_host_fn(
+            &f.ctx,
+            AskDeps {
+                holds: Some(f.holds.clone()),
+                ..Default::default()
+            },
+        );
 
         let opts_json = json!({"options": ["dev", "prod"]}).to_string();
         let first = ask.ask("Which env?", &opts_json);
@@ -1234,7 +1386,13 @@ mod tests {
     async fn ask_refuses_before_announcing_a_card_nobody_can_answer() {
         let f = fixture();
         f.ctx.cancel.cancel();
-        let ask = create_ask_host_fn(&f.ctx, AskDeps { holds: Some(f.holds.clone()), ..Default::default() });
+        let ask = create_ask_host_fn(
+            &f.ctx,
+            AskDeps {
+                holds: Some(f.holds.clone()),
+                ..Default::default()
+            },
+        );
         let err = ask.ask("Which env?", "{}").await.unwrap_err();
         assert!(err.to_string().contains("interrupted"), "{err}");
         // Nothing was announced and nothing parked: the turn was already over.
@@ -1295,7 +1453,13 @@ mod tests {
     #[tokio::test]
     async fn a_settled_ask_never_reopens_a_message_the_runner_already_closed() {
         let f = fixture();
-        let ask = create_ask_host_fn(&f.ctx, AskDeps { holds: Some(f.holds.clone()), ..Default::default() });
+        let ask = create_ask_host_fn(
+            &f.ctx,
+            AskDeps {
+                holds: Some(f.holds.clone()),
+                ..Default::default()
+            },
+        );
         let parked = ask.ask("Which env?", "{}");
         tokio::pin!(parked);
         assert!(futures::poll!(parked.as_mut()).is_pending());

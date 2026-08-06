@@ -64,7 +64,9 @@ fn table_exists(db: &Connection, name: &str) -> Result<bool, BoughError> {
 fn has_column(db: &Connection, table: &str, column: &str) -> Result<bool, BoughError> {
     // PRAGMA table_info takes no bound parameter; `table` here is always a
     // literal from this module, never caller input.
-    let mut stmt = db.prepare(&format!("PRAGMA table_info({table})")).map_err(sql_err)?;
+    let mut stmt = db
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(sql_err)?;
     let mut rows = stmt.query([]).map_err(sql_err)?;
     while let Some(row) = rows.next().map_err(sql_err)? {
         let name: String = row.get(1).map_err(sql_err)?;
@@ -88,7 +90,8 @@ fn add_command_message_id(db: &Connection) -> Result<(), BoughError> {
     if has_column(db, "command_history", "message_id")? {
         return Ok(());
     }
-    db.execute_batch("ALTER TABLE command_history ADD COLUMN message_id TEXT").map_err(sql_err)
+    db.execute_batch("ALTER TABLE command_history ADD COLUMN message_id TEXT")
+        .map_err(sql_err)
 }
 
 /// The second sanctioned reshape: schedules gained `session_id` (2026-08) —
@@ -104,7 +107,8 @@ fn add_schedule_session_id(db: &Connection) -> Result<(), BoughError> {
     if has_column(db, "schedules", "session_id")? {
         return Ok(());
     }
-    db.execute_batch("ALTER TABLE schedules ADD COLUMN session_id TEXT").map_err(sql_err)
+    db.execute_batch("ALTER TABLE schedules ADD COLUMN session_id TEXT")
+        .map_err(sql_err)
 }
 
 /// The first sanctioned reshape, and a deliberate exception to "no migration
@@ -145,7 +149,8 @@ fn set_user_version(db: &Connection, version: i64) -> Result<(), BoughError> {
             "refusing to stamp a non-integer schema version: {version}"
         )));
     }
-    db.execute_batch(&format!("PRAGMA user_version = {version}")).map_err(sql_err)
+    db.execute_batch(&format!("PRAGMA user_version = {version}"))
+        .map_err(sql_err)
 }
 
 #[cfg(test)]
@@ -169,7 +174,8 @@ mod tests {
     #[test]
     fn migration_is_forward_only_a_newer_schema_version_is_refused() {
         let raw = Connection::open_in_memory().unwrap();
-        raw.execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_VERSION + 1)).unwrap();
+        raw.execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_VERSION + 1))
+            .unwrap();
         let err = migrate(&raw).expect_err("a newer file must be refused");
         let msg = err.to_string();
         // The error must name both versions, not just say 'failed'.

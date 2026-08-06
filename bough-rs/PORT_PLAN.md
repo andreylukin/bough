@@ -137,7 +137,7 @@ answers; cutover checklist (live `~/.bough` on the Rust server) green.
 | 3.16 | llm/trace (un-stub) | port | n counts failed attempts; prefix sha emitted once; all fs errors swallowed |
 | 3.17 | db/embed + history/tags/embed (un-stub) | port | count-delta drain (never `changes`), probed dims, model-change rebuild, fixture: docker-exec KNN hit |
 | 3.18 | cli/tags (list/show/stats/sql/similar) | port | read-only sql gate (query_only + keyword + 200-row cap), exit codes 0/1/2 |
-| 3.19 | logs/ + cli/patterns | v1-stub (exit 2 "not yet ported") → port last | nothing else calls it; port with its own clean-room suite |
+| 3.19 | logs/ + cli/patterns | **PORTED** (`bough-core::logs`, `crates/bough/src/patterns.rs`) | 141 tests; gated by byte-identical `--json/--llm/--human` vs the TS on 31 fixture/flag combinations incl. a 400k-line log |
 | 3.20 | tui: workflows tab (all levels) + mcp tab + skills tab + model tab | port | replay-accounting rows present once detail view exists; disjoint tab-letter sets verified by deadBindings |
 | 3.21 | tui: sections/topic headers, search-in-tree, ghost text, activity blurbs, urlAcross/click-open, tab tint/progress/notifications, tmux/zellij renames | port (cosmetic tail) | per-feature TS test ports; all degrade silently when absent |
 | 3.22 | scratch sweep + embeddings drain ticker + MCP grant promotion (no-op) | port / v1-stub(promotion no-op) | sweep boundary tests; drain pump on server tick |

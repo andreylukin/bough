@@ -154,8 +154,11 @@ pub fn fork(
     // tellable apart in the pickers, falling back to the source's BASE title —
     // a fork of a fork must not compound into "fork · fork · X".
     let excerpt = excerpt_of(at);
-    let title_tail =
-        if excerpt.is_empty() { base_title(&source.title) } else { excerpt };
+    let title_tail = if excerpt.is_empty() {
+        base_title(&source.title)
+    } else {
+        excerpt
+    };
     let branch_ctx = BranchCtx::from(ctx);
     let seeder = open_branch(
         branch_ctx.clone(),
@@ -182,8 +185,10 @@ pub fn fork(
 
     if let Some(at_part) = body.at_part {
         // Mid-message cut: the at-message survives truncated to the cut point.
-        let truncated =
-            Message { parts: at.parts[0..=(at_part as usize)].to_vec(), ..at.clone() };
+        let truncated = Message {
+            parts: at.parts[0..=(at_part as usize)].to_vec(),
+            ..at.clone()
+        };
         messages.push(seeder.copy(&truncated)?);
     } else if !edited && !body.exclusive.unwrap_or(false) {
         // Plain branch point: include the fork-point message, ready for new
@@ -193,7 +198,11 @@ pub fn fork(
     }
 
     if !edited {
-        return Ok(ForkResult { session: branch, messages, turn_started: false });
+        return Ok(ForkResult {
+            session: branch,
+            messages,
+            turn_started: false,
+        });
     }
 
     // Edit & resend. The user message goes through the seeder like every other
@@ -211,10 +220,18 @@ pub fn fork(
     } else if let Some(starter) = ctx.turn_starter() {
         starter.start_turn(ctx, &branch, &user);
     } else {
-        return Ok(ForkResult { session: branch, messages, turn_started: false });
+        return Ok(ForkResult {
+            session: branch,
+            messages,
+            turn_started: false,
+        });
     }
 
-    Ok(ForkResult { session: branch, messages, turn_started: true })
+    Ok(ForkResult {
+        session: branch,
+        messages,
+        turn_started: true,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +253,9 @@ fn role_str(role: Role) -> &'static str {
 /// "not found" would send them looking for a client bug; naming the ancestor
 /// names the session they should be forking.
 fn bad_fork_point(ctx: &AppCtx, source: &Session, at_message_id: &str) -> String {
-    let message = with_db(&ctx.db, |d| d.get_message(at_message_id)).ok().flatten();
+    let message = with_db(&ctx.db, |d| d.get_message(at_message_id))
+        .ok()
+        .flatten();
     let Some(message) = message else {
         return format!("no message {at_message_id} exists");
     };
@@ -315,9 +334,7 @@ mod tests {
     use crate::turn::queue::TurnRegistry;
     use crate::turn::runner::{begin_turn, StartedTurn, RUN_STEPS};
     use crate::turn::testkit::{scripted_llm, stop, stub_deps, text, ScriptedLlm, ScriptedRound};
-    use crate::types::{
-        system_clock, HostState, LlmContentBlock, SharedDb,
-    };
+    use crate::types::{system_clock, HostState, LlmContentBlock, SharedDb};
     use std::sync::{Mutex, RwLock};
     use uuid::Uuid;
 
@@ -340,12 +357,15 @@ mod tests {
     }
 
     fn fixture(said: &str) -> Fixture {
-        let db: SharedDb =
-            Arc::new(Mutex::new(SqliteDb::new(":memory:", DbOptions::default()).unwrap()));
+        let db: SharedDb = Arc::new(Mutex::new(
+            SqliteDb::new(":memory:", DbOptions::default()).unwrap(),
+        ));
         let bus = Arc::new(Bus::new(system_clock()));
         let events: Arc<Mutex<Vec<BoughEvent>>> = Arc::new(Mutex::new(vec![]));
         let sink = events.clone();
-        bus.subscribe(Arc::new(move |e: &BoughEvent| sink.lock().unwrap().push(e.clone())));
+        bus.subscribe(Arc::new(move |e: &BoughEvent| {
+            sink.lock().unwrap().push(e.clone())
+        }));
         let llm = scripted_llm(one_round(said));
         let ctx = AppCtx {
             db: db.clone(),
@@ -360,7 +380,12 @@ mod tests {
             turn_registry: Arc::new(TurnRegistry::new()),
             model_defaults_path: None,
         };
-        Fixture { db, events, ctx, llm }
+        Fixture {
+            db,
+            events,
+            ctx,
+            llm,
+        }
     }
 
     /// The starter the resend tests inject: a real turn whose handle they can
@@ -421,7 +446,15 @@ mod tests {
     }
 
     fn text_message(db: &SharedDb, session_id: &str, role: Role, body: &str, at: i64) -> Message {
-        message(db, session_id, role, vec![Part::Text { text: body.to_string() }], at)
+        message(
+            db,
+            session_id,
+            role,
+            vec![Part::Text {
+                text: body.to_string(),
+            }],
+            at,
+        )
     }
 
     struct Scenario {
@@ -441,7 +474,13 @@ mod tests {
     fn scenario(f: &Fixture) -> Scenario {
         let parent = session(&f.db, base_session("parent"));
         text_message(&f.db, &parent.id, Role::User, "ancestor question", 1_000);
-        text_message(&f.db, &parent.id, Role::Supervisor, "ancestor answer", 1_001);
+        text_message(
+            &f.db,
+            &parent.id,
+            Role::Supervisor,
+            "ancestor answer",
+            1_001,
+        );
         let target = session(
             &f.db,
             Session {
@@ -457,7 +496,11 @@ mod tests {
         text_message(&f.db, &target.id, Role::User, "second ask", 1_004);
         text_message(&f.db, &target.id, Role::Supervisor, "second answer", 1_005);
         let own = with_db(&f.db, |d| d.messages_for(&target.id)).unwrap();
-        Scenario { parent, target, own }
+        Scenario {
+            parent,
+            target,
+            own,
+        }
     }
 
     /// Everything about the source that a fork must not disturb.
@@ -509,7 +552,12 @@ mod tests {
         // survives.
         assert_eq!(
             own_texts(&f, &result.session.id),
-            vec!["first ask", "first answer", "second ask, rephrased", "fresh answer"]
+            vec![
+                "first ask",
+                "first answer",
+                "second ask, rephrased",
+                "fresh answer"
+            ]
         );
         assert_eq!(
             with_db(&f.db, |d| d.messages_for(&result.session.id))
@@ -523,7 +571,10 @@ mod tests {
         // A SIBLING: parented at the target's parent, so the ancestors are
         // inherited rather than copied, and the branch's thread is the whole
         // conversation.
-        assert_eq!(result.session.parent_id.as_deref(), Some(s.parent.id.as_str()));
+        assert_eq!(
+            result.session.parent_id.as_deref(),
+            Some(s.parent.id.as_str())
+        );
         assert_eq!(result.session.kind, SessionKind::Fork);
         assert_eq!(
             texts_of(&with_db(&f.db, |d| d.thread_for(&result.session.id)).unwrap()),
@@ -538,8 +589,14 @@ mod tests {
         );
 
         // Lineage, for the tree view: what it branched from, and where.
-        assert_eq!(result.session.origin_id.as_deref(), Some(s.target.id.as_str()));
-        assert_eq!(result.session.origin_message_id.as_deref(), Some(s.own[2].id.as_str()));
+        assert_eq!(
+            result.session.origin_id.as_deref(),
+            Some(s.target.id.as_str())
+        );
+        assert_eq!(
+            result.session.origin_message_id.as_deref(),
+            Some(s.own[2].id.as_str())
+        );
         // The same checkout, worked in place — and the sha its change set is
         // measured from.
         assert_eq!(result.session.workspace.as_deref(), Some("/tmp/checkout"));
@@ -615,7 +672,10 @@ mod tests {
         let result = fork(
             &f.ctx,
             &s.target.id,
-            &ForkBody { edited_text: Some("  padded  \n".into()), ..body(&s.own[2].id) },
+            &ForkBody {
+                edited_text: Some("  padded  \n".into()),
+                ..body(&s.own[2].id)
+            },
             ForkDeps::default(),
         )
         .unwrap();
@@ -627,7 +687,10 @@ mod tests {
         let err = fork(
             &f.ctx,
             &s.target.id,
-            &ForkBody { edited_text: Some("   ".into()), ..body(&s.own[2].id) },
+            &ForkBody {
+                edited_text: Some("   ".into()),
+                ..body(&s.own[2].id)
+            },
             ForkDeps::default(),
         )
         .unwrap_err();
@@ -645,7 +708,13 @@ mod tests {
         let before = snapshot(&f.db, &s.target.id);
         f.events.lock().unwrap().clear();
 
-        let result = fork(&f.ctx, &s.target.id, &body(&s.own[2].id), ForkDeps::default()).unwrap();
+        let result = fork(
+            &f.ctx,
+            &s.target.id,
+            &body(&s.own[2].id),
+            ForkDeps::default(),
+        )
+        .unwrap();
 
         assert!(!result.turn_started);
         assert_eq!(
@@ -664,8 +733,18 @@ mod tests {
         // for a session the client has never heard of is a message it has
         // nowhere to put.
         assert_eq!(
-            f.events.lock().unwrap().iter().map(|e| e.r#type.as_str()).collect::<Vec<_>>(),
-            vec!["session.created", "message.started", "message.started", "message.started"]
+            f.events
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|e| e.r#type.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "session.created",
+                "message.started",
+                "message.started",
+                "message.started"
+            ]
         );
     }
 
@@ -680,16 +759,25 @@ mod tests {
         let result = fork(
             &f.ctx,
             &s.target.id,
-            &ForkBody { exclusive: Some(true), ..body(&s.own[2].id) },
+            &ForkBody {
+                exclusive: Some(true),
+                ..body(&s.own[2].id)
+            },
             ForkDeps::default(),
         )
         .unwrap();
 
-        assert_eq!(own_texts(&f, &result.session.id), vec!["first ask", "first answer"]);
+        assert_eq!(
+            own_texts(&f, &result.session.id),
+            vec!["first ask", "first answer"]
+        );
         assert!(!result.turn_started);
         // Still the at-message that lineage points at — that is where the cut
         // was made, whether or not the message itself came along.
-        assert_eq!(result.session.origin_message_id.as_deref(), Some(s.own[2].id.as_str()));
+        assert_eq!(
+            result.session.origin_message_id.as_deref(),
+            Some(s.own[2].id.as_str())
+        );
         assert_eq!(snapshot(&f.db, &s.target.id), before);
     }
 
@@ -722,7 +810,11 @@ mod tests {
         let cut = fork(
             &f.ctx,
             &s.target.id,
-            &ForkBody { at_part: Some(0), exclusive: Some(true), ..body(&s.own[2].id) },
+            &ForkBody {
+                at_part: Some(0),
+                exclusive: Some(true),
+                ..body(&s.own[2].id)
+            },
             ForkDeps::default(),
         )
         .unwrap();
@@ -745,7 +837,9 @@ mod tests {
             &s.target.id,
             Role::Supervisor,
             vec![
-                Part::Text { text: "looking".into() },
+                Part::Text {
+                    text: "looking".into(),
+                },
                 Part::ToolCall {
                     id: "c1".into(),
                     name: RUN_STEPS.into(),
@@ -757,7 +851,9 @@ mod tests {
                     is_error: true,
                     interrupted: None,
                 },
-                Part::Text { text: "that failed, trying again".into() },
+                Part::Text {
+                    text: "that failed, trying again".into(),
+                },
                 Part::ToolCall {
                     id: "c2".into(),
                     name: RUN_STEPS.into(),
@@ -773,7 +869,10 @@ mod tests {
         let result = fork(
             &f.ctx,
             &s.target.id,
-            &ForkBody { at_part: Some(2), ..body(&rich.id) },
+            &ForkBody {
+                at_part: Some(2),
+                ..body(&rich.id)
+            },
             ForkDeps::default(),
         )
         .unwrap();
@@ -798,7 +897,10 @@ mod tests {
         let err = fork(
             &f.ctx,
             &s.target.id,
-            &ForkBody { at_part: Some(5), ..body(&rich.id) },
+            &ForkBody {
+                at_part: Some(5),
+                ..body(&rich.id)
+            },
             ForkDeps::default(),
         )
         .unwrap_err();
@@ -810,7 +912,10 @@ mod tests {
         let boundary = fork(
             &f.ctx,
             &s.target.id,
-            &ForkBody { at_part: Some(4), ..body(&rich.id) },
+            &ForkBody {
+                at_part: Some(4),
+                ..body(&rich.id)
+            },
             ForkDeps::default(),
         )
         .unwrap();
@@ -827,7 +932,9 @@ mod tests {
             &s.target.id,
             Role::Supervisor,
             vec![
-                Part::Text { text: "looking".into() },
+                Part::Text {
+                    text: "looking".into(),
+                },
                 Part::ToolCall {
                     id: "c1".into(),
                     name: RUN_STEPS.into(),
@@ -904,20 +1011,27 @@ mod tests {
         let err = fork(
             &f.ctx,
             &s.target.id,
-            &ForkBody { edited_text: Some("you said this".into()), ..body(&s.own[1].id) },
+            &ForkBody {
+                edited_text: Some("you said this".into()),
+                ..body(&s.own[1].id)
+            },
             ForkDeps::default(),
         )
         .unwrap_err();
         assert_eq!(err.status(), 400);
         assert!(
-            err.to_string().contains("editedText can only replace a user message"),
+            err.to_string()
+                .contains("editedText can only replace a user message"),
             "{err}"
         );
 
         // Refused BEFORE the branch was opened: a check that ran after
         // `open_branch` would leave an empty half-seeded session in the user's
         // list on every bad request.
-        assert_eq!(with_db(&f.db, |d| d.list_sessions()).unwrap().len(), sessions_before);
+        assert_eq!(
+            with_db(&f.db, |d| d.list_sessions()).unwrap().len(),
+            sessions_before
+        );
         assert!(f.events.lock().unwrap().is_empty());
         assert_eq!(snapshot(&f.db, &s.target.id), before);
     }
@@ -926,8 +1040,7 @@ mod tests {
     async fn a_400_fork_point_in_ancestor_history_names_the_ancestor_to_fork_instead() {
         let f = fixture("unused");
         let s = scenario(&f);
-        let ancestor_message =
-            with_db(&f.db, |d| d.messages_for(&s.parent.id)).unwrap()[0].clone();
+        let ancestor_message = with_db(&f.db, |d| d.messages_for(&s.parent.id)).unwrap()[0].clone();
         // The user can SEE this message in the target's transcript — the
         // thread is ancestors ++ own — which is why the error has to name the
         // session that owns it.
@@ -937,33 +1050,63 @@ mod tests {
             .any(|m| m.id == ancestor_message.id));
         f.events.lock().unwrap().clear();
 
-        let err =
-            fork(&f.ctx, &s.target.id, &body(&ancestor_message.id), ForkDeps::default())
-                .unwrap_err();
+        let err = fork(
+            &f.ctx,
+            &s.target.id,
+            &body(&ancestor_message.id),
+            ForkDeps::default(),
+        )
+        .unwrap_err();
         assert_eq!(err.status(), 400);
-        assert!(err.to_string().contains(&format!("fork {} instead", s.parent.id)), "{err}");
+        assert!(
+            err.to_string()
+                .contains(&format!("fork {} instead", s.parent.id)),
+            "{err}"
+        );
         assert!(f.events.lock().unwrap().is_empty());
 
         // An id from an unrelated session is refused too, and says something
         // different.
         let other = session(&f.db, base_session("unrelated"));
         let stranger = text_message(&f.db, &other.id, Role::User, "elsewhere", 1_010);
-        let err = fork(&f.ctx, &s.target.id, &body(&stranger.id), ForkDeps::default())
-            .unwrap_err();
-        assert!(err.to_string().contains("fork a session at one of its own"), "{err}");
+        let err = fork(
+            &f.ctx,
+            &s.target.id,
+            &body(&stranger.id),
+            ForkDeps::default(),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("fork a session at one of its own"),
+            "{err}"
+        );
 
         // And an id that exists nowhere.
-        let err = fork(&f.ctx, &s.target.id, &body("no-such-message"), ForkDeps::default())
-            .unwrap_err();
+        let err = fork(
+            &f.ctx,
+            &s.target.id,
+            &body("no-such-message"),
+            ForkDeps::default(),
+        )
+        .unwrap_err();
         assert_eq!(err.status(), 400);
-        assert!(err.to_string().contains("no message no-such-message exists"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("no message no-such-message exists"),
+            "{err}"
+        );
     }
 
     #[tokio::test]
     async fn a_404_forking_a_session_that_does_not_exist() {
         let f = fixture("unused");
-        let err =
-            fork(&f.ctx, "no-such-session", &body("whatever"), ForkDeps::default()).unwrap_err();
+        let err = fork(
+            &f.ctx,
+            "no-such-session",
+            &body("whatever"),
+            ForkDeps::default(),
+        )
+        .unwrap_err();
         assert_eq!(err.status(), 404);
     }
 
@@ -973,11 +1116,20 @@ mod tests {
     async fn the_branch_inherits_the_sources_model_and_effort_pins() {
         let f = fixture("unused");
         let s = scenario(&f);
-        with_db(&f.db, |d| d.set_session_model(&s.target.id, Some("openai:gpt-5"))).unwrap();
+        with_db(&f.db, |d| {
+            d.set_session_model(&s.target.id, Some("openai:gpt-5"))
+        })
+        .unwrap();
         with_db(&f.db, |d| d.set_session_effort(&s.target.id, Some("high"))).unwrap();
         f.events.lock().unwrap().clear();
 
-        let result = fork(&f.ctx, &s.target.id, &body(&s.own[2].id), ForkDeps::default()).unwrap();
+        let result = fork(
+            &f.ctx,
+            &s.target.id,
+            &body(&s.own[2].id),
+            ForkDeps::default(),
+        )
+        .unwrap();
 
         // A resend is a controlled comparison — same history, one changed
         // message. Falling back to the global default would answer it on a
@@ -985,12 +1137,19 @@ mod tests {
         assert_eq!(result.session.model.as_deref(), Some("openai:gpt-5"));
         assert_eq!(result.session.effort.as_deref(), Some("high"));
         assert_eq!(
-            with_db(&f.db, |d| d.get_session(&result.session.id)).unwrap().unwrap(),
+            with_db(&f.db, |d| d.get_session(&result.session.id))
+                .unwrap()
+                .unwrap(),
             result.session
         );
         // Announced, so a client that only follows events sees the pins too.
         assert_eq!(
-            f.events.lock().unwrap().iter().map(|e| e.r#type.as_str()).collect::<Vec<_>>(),
+            f.events
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|e| e.r#type.as_str())
+                .collect::<Vec<_>>(),
             vec![
                 "session.created",
                 "session.updated",
@@ -1006,14 +1165,25 @@ mod tests {
         let f = fixture("unused");
         let s = scenario(&f);
 
-        let first = fork(&f.ctx, &s.target.id, &body(&s.own[2].id), ForkDeps::default()).unwrap();
+        let first = fork(
+            &f.ctx,
+            &s.target.id,
+            &body(&s.own[2].id),
+            ForkDeps::default(),
+        )
+        .unwrap();
         assert_eq!(first.session.title, "fork · second ask");
 
         // Forking the fork: the excerpt is the branch point's text, not
         // "fork · fork · …".
         let first_own = with_db(&f.db, |d| d.messages_for(&first.session.id)).unwrap();
-        let second =
-            fork(&f.ctx, &first.session.id, &body(&first_own[0].id), ForkDeps::default()).unwrap();
+        let second = fork(
+            &f.ctx,
+            &first.session.id,
+            &body(&first_own[0].id),
+            ForkDeps::default(),
+        )
+        .unwrap();
         assert_eq!(second.session.title, "fork · first ask");
 
         // A fork point with no text at all falls back to the source's BASE
@@ -1029,7 +1199,13 @@ mod tests {
             }],
             1_006,
         );
-        let third = fork(&f.ctx, &s.target.id, &body(&tool_only.id), ForkDeps::default()).unwrap();
+        let third = fork(
+            &f.ctx,
+            &s.target.id,
+            &body(&tool_only.id),
+            ForkDeps::default(),
+        )
+        .unwrap();
         assert_eq!(third.session.title, "fork · rename the router");
     }
 
@@ -1054,7 +1230,13 @@ mod tests {
         // One unbroken 48-character word has no boundary to back up to, and is
         // better shown truncated than reduced to nothing.
         let nospace = text_message(&f.db, &s.target.id, Role::User, &"A".repeat(60), 1_007);
-        let forked2 = fork(&f.ctx, &s.target.id, &body(&nospace.id), ForkDeps::default()).unwrap();
+        let forked2 = fork(
+            &f.ctx,
+            &s.target.id,
+            &body(&nospace.id),
+            ForkDeps::default(),
+        )
+        .unwrap();
         assert_eq!(forked2.session.title, format!("fork · {}…", "A".repeat(48)));
     }
 
@@ -1066,11 +1248,16 @@ mod tests {
         let exclusive = fork(
             &f.ctx,
             &s.target.id,
-            &ForkBody { exclusive: Some(true), ..body(&s.own[0].id) },
+            &ForkBody {
+                exclusive: Some(true),
+                ..body(&s.own[0].id)
+            },
             ForkDeps::default(),
         )
         .unwrap();
-        assert!(with_db(&f.db, |d| d.messages_for(&exclusive.session.id)).unwrap().is_empty());
+        assert!(with_db(&f.db, |d| d.messages_for(&exclusive.session.id))
+            .unwrap()
+            .is_empty());
         // The ancestors are still inherited: an empty branch is not an empty
         // thread.
         assert_eq!(

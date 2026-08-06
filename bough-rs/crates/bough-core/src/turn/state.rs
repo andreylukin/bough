@@ -105,7 +105,11 @@ pub fn checkpoint(
 ) -> Result<(), BoughError> {
     db.update_turn(
         turn_id,
-        TurnPatch { step: Some(step.to_string()), usage: usage.cloned(), ..Default::default() },
+        TurnPatch {
+            step: Some(step.to_string()),
+            usage: usage.cloned(),
+            ..Default::default()
+        },
     )
 }
 
@@ -200,14 +204,19 @@ pub fn recover_orphaned_turns(
             db,
             &turn.id,
             FinalTurnStatus::Orphaned,
-            FinishOpts { error: Some(ORPHAN_ERROR.to_string()), ..Default::default() },
+            FinishOpts {
+                error: Some(ORPHAN_ERROR.to_string()),
+                ..Default::default()
+            },
         )?;
 
         let message = db.get_message(&turn.message_id)?;
         let mut closed_message = false;
         if let Some(message) = message {
             if message.pending {
-                let note = Part::Text { text: ORPHAN_NOTE.to_string() };
+                let note = Part::Text {
+                    text: ORPHAN_NOTE.to_string(),
+                };
                 let mut parts = message.parts.clone();
                 parts.push(note.clone());
                 db.update_message(&message.id, &parts, false)?;
@@ -339,7 +348,9 @@ mod tests {
             id: Uuid::new_v4().to_string(),
             session_id: session_id.to_string(),
             role: Role::User,
-            parts: vec![Part::Text { text: text.to_string() }],
+            parts: vec![Part::Text {
+                text: text.to_string(),
+            }],
             pending: false,
             created_at: at,
         })
@@ -368,7 +379,10 @@ mod tests {
         assert_eq!(turn.step, INITIAL_STEP);
         assert_eq!(turn.created_at, 5_000);
         assert_eq!(
-            db.busy_session_ids().unwrap().into_iter().collect::<Vec<_>>(),
+            db.busy_session_ids()
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
             vec![session.id.clone()]
         );
 
@@ -390,7 +404,11 @@ mod tests {
         let mid = db.get_turn(&turn.id).unwrap().unwrap();
         assert_eq!(mid.step, "tool:run_steps");
         assert_eq!(mid.usage.as_ref().unwrap().input_tokens, 10);
-        assert_eq!(mid.status, TurnStatus::Running, "a checkpoint never ends a turn");
+        assert_eq!(
+            mid.status,
+            TurnStatus::Running,
+            "a checkpoint never ends a turn"
+        );
 
         // Usage REPLACES rather than accumulates — the runner carries the
         // running total.
@@ -398,14 +416,33 @@ mod tests {
             &db,
             &turn.id,
             "round:2",
-            Some(&Usage { input_tokens: 25, output_tokens: 5, ..Default::default() }),
+            Some(&Usage {
+                input_tokens: 25,
+                output_tokens: 5,
+                ..Default::default()
+            }),
         )
         .unwrap();
-        assert_eq!(db.get_turn(&turn.id).unwrap().unwrap().usage.unwrap().input_tokens, 25);
+        assert_eq!(
+            db.get_turn(&turn.id)
+                .unwrap()
+                .unwrap()
+                .usage
+                .unwrap()
+                .input_tokens,
+            25
+        );
 
         finish_turn(&db, &turn.id, FinalTurnStatus::Done, FinishOpts::default()).unwrap();
-        assert_eq!(db.get_turn(&turn.id).unwrap().unwrap().status, TurnStatus::Done);
-        assert_eq!(db.busy_session_ids().unwrap().len(), 0, "a finished turn frees its session");
+        assert_eq!(
+            db.get_turn(&turn.id).unwrap().unwrap().status,
+            TurnStatus::Done
+        );
+        assert_eq!(
+            db.busy_session_ids().unwrap().len(),
+            0,
+            "a finished turn frees its session"
+        );
     }
 
     #[test]
@@ -413,13 +450,17 @@ mod tests {
         let db = mem_db();
         let session = seed_session(&db);
         let message = user_message(&db, &session.id, "hi", 2_000);
-        let turn = start_turn(&db, &session.id, &message.id, &crate::types::system_clock()).unwrap();
+        let turn =
+            start_turn(&db, &session.id, &message.id, &crate::types::system_clock()).unwrap();
 
         finish_turn(
             &db,
             &turn.id,
             FinalTurnStatus::Error,
-            FinishOpts { error: Some("provider exploded".into()), ..Default::default() },
+            FinishOpts {
+                error: Some("provider exploded".into()),
+                ..Default::default()
+            },
         )
         .unwrap();
         assert_eq!(
@@ -440,8 +481,9 @@ mod tests {
         let path = path.to_str().unwrap().to_string();
 
         // ── before the crash ──
-        let db1: SharedDb =
-            Arc::new(Mutex::new(SqliteDb::new(&path, DbOptions::default()).unwrap()));
+        let db1: SharedDb = Arc::new(Mutex::new(
+            SqliteDb::new(&path, DbOptions::default()).unwrap(),
+        ));
         let session = {
             let g = db1.lock().unwrap();
             seed_session(&*g)
@@ -487,7 +529,10 @@ mod tests {
         assert_eq!(recovered.len(), 1);
         assert_eq!(recovered[0].turn_id, wedged_turn.id);
         assert_eq!(recovered[0].session_id, session.id);
-        assert_eq!(recovered[0].step, INITIAL_STEP, "it says where the turn got to");
+        assert_eq!(
+            recovered[0].step, INITIAL_STEP,
+            "it says where the turn got to"
+        );
         assert!(recovered[0].closed_message);
 
         // The row, the message, and the session.
@@ -498,9 +543,15 @@ mod tests {
         assert!(!closed.pending, "no stuck pending message");
         assert_eq!(
             closed.parts.last(),
-            Some(&Part::Text { text: ORPHAN_NOTE.to_string() })
+            Some(&Part::Text {
+                text: ORPHAN_NOTE.to_string()
+            })
         );
-        assert_eq!(db2.busy_session_ids().unwrap().len(), 0, "the session unblocks");
+        assert_eq!(
+            db2.busy_session_ids().unwrap().len(),
+            0,
+            "the session unblocks"
+        );
 
         // The client is told, so a reconnecting UI stops showing a turn in
         // flight.
@@ -515,14 +566,17 @@ mod tests {
 
         // ── the session is usable ──
         let db2: SharedDb = Arc::new(Mutex::new(db2));
-        let ctx2: AppCtx =
-            test_ctx(db2.clone(), answering_llm("Picking up where we left off."));
+        let ctx2: AppCtx = test_ctx(db2.clone(), answering_llm("Picking up where we left off."));
         {
             let g = db2.lock().unwrap();
             user_message(&*g, &session.id, "try again", now_ms());
         }
-        let outcome =
-            begin_turn(&ctx2, &session.id, stub_deps()).unwrap().done.await.unwrap().unwrap();
+        let outcome = begin_turn(&ctx2, &session.id, stub_deps())
+            .unwrap()
+            .done
+            .await
+            .unwrap()
+            .unwrap();
 
         assert_eq!(outcome.status, crate::turn::runner::TurnOutcomeStatus::Done);
         {
@@ -549,14 +603,22 @@ mod tests {
         let finished = user_message(&db, &session.id, "one", 2_000);
         let clock_a: Clock = Arc::new(|| 2_100);
         let done_turn = start_turn(&db, &session.id, &finished.id, &clock_a).unwrap();
-        finish_turn(&db, &done_turn.id, FinalTurnStatus::Done, FinishOpts::default()).unwrap();
+        finish_turn(
+            &db,
+            &done_turn.id,
+            FinalTurnStatus::Done,
+            FinishOpts::default(),
+        )
+        .unwrap();
 
         let stranded_message = db
             .create_message(Message {
                 id: Uuid::new_v4().to_string(),
                 session_id: session.id.clone(),
                 role: Role::Supervisor,
-                parts: vec![Part::Text { text: "partial answer".into() }],
+                parts: vec![Part::Text {
+                    text: "partial answer".into(),
+                }],
                 pending: true,
                 created_at: 3_000,
             })
@@ -565,11 +627,15 @@ mod tests {
         let stranded = start_turn(&db, &session.id, &stranded_message.id, &clock_b).unwrap();
 
         assert_eq!(
-            recover_orphaned_turns(&db, bus.as_ref(), RecoverOptions::default()).unwrap().len(),
+            recover_orphaned_turns(&db, bus.as_ref(), RecoverOptions::default())
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(
-            recover_orphaned_turns(&db, bus.as_ref(), RecoverOptions::default()).unwrap().len(),
+            recover_orphaned_turns(&db, bus.as_ref(), RecoverOptions::default())
+                .unwrap()
+                .len(),
             0,
             "a second boot finds nothing"
         );
@@ -579,11 +645,19 @@ mod tests {
             TurnStatus::Done,
             "a finished turn is untouched"
         );
-        assert_eq!(db.get_turn(&stranded.id).unwrap().unwrap().status, TurnStatus::Orphaned);
+        assert_eq!(
+            db.get_turn(&stranded.id).unwrap().unwrap().status,
+            TurnStatus::Orphaned
+        );
         // The partial answer survives — the note is appended, not substituted.
         let parts = db.get_message(&stranded_message.id).unwrap().unwrap().parts;
         assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0], Part::Text { text: "partial answer".into() });
+        assert_eq!(
+            parts[0],
+            Part::Text {
+                text: "partial answer".into()
+            }
+        );
     }
 
     #[test]
@@ -602,12 +676,15 @@ mod tests {
                 id: Uuid::new_v4().to_string(),
                 session_id: session.id.clone(),
                 role: Role::Supervisor,
-                parts: vec![Part::Text { text: "answered".into() }],
+                parts: vec![Part::Text {
+                    text: "answered".into(),
+                }],
                 pending: false,
                 created_at: 3_000,
             })
             .unwrap();
-        let turn = start_turn(&db, &session.id, &message.id, &crate::types::system_clock()).unwrap();
+        let turn =
+            start_turn(&db, &session.id, &message.id, &crate::types::system_clock()).unwrap();
 
         let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
         let s = seen.clone();
@@ -615,14 +692,22 @@ mod tests {
         let recovered = recover_orphaned_turns(
             &db,
             bus.as_ref(),
-            RecoverOptions { on_orphan: Some(&on_orphan), on_hook_error: None },
+            RecoverOptions {
+                on_orphan: Some(&on_orphan),
+                on_hook_error: None,
+            },
         )
         .unwrap();
 
         assert!(!recovered[0].closed_message);
         assert_eq!(*seen.lock().unwrap(), vec![turn.id.clone()]);
         assert_eq!(
-            events.lock().unwrap().iter().map(|e| e.r#type.as_str()).collect::<Vec<_>>(),
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|e| e.r#type.as_str())
+                .collect::<Vec<_>>(),
             vec!["turn.finished"]
         );
         assert_eq!(
@@ -659,13 +744,20 @@ mod tests {
         let recovered = recover_orphaned_turns(
             &db,
             bus.as_ref(),
-            RecoverOptions { on_orphan: Some(&on_orphan), on_hook_error: Some(&on_hook_error) },
+            RecoverOptions {
+                on_orphan: Some(&on_orphan),
+                on_hook_error: Some(&on_hook_error),
+            },
         )
         .unwrap();
 
         assert_eq!(recovered.len(), 2);
         assert_eq!(errors.lock().unwrap().len(), 2);
-        assert_eq!(db.busy_session_ids().unwrap().len(), 0, "every session unblocked regardless");
+        assert_eq!(
+            db.busy_session_ids().unwrap().len(),
+            0,
+            "every session unblocked regardless"
+        );
     }
 
     #[test]

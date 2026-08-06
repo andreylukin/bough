@@ -168,7 +168,11 @@ mod tests {
 
         assert_eq!(*seen.lock().unwrap(), vec!["first", "third", "fifth"]);
         let errs = errors.lock().unwrap();
-        assert_eq!(errs.len(), 2, "both throws were reported, not swallowed silently");
+        assert_eq!(
+            errs.len(),
+            2,
+            "both throws were reported, not swallowed silently"
+        );
         assert_eq!(errs[0], "this SSE connection is gone");
     }
 
@@ -254,7 +258,11 @@ mod tests {
 
         let a = a.lock().unwrap();
         assert_eq!(*a, vec![1, 2, 3]);
-        assert_eq!(*bb.lock().unwrap(), *a, "one seq per event, not one per delivery");
+        assert_eq!(
+            *bb.lock().unwrap(),
+            *a,
+            "one seq per event, not one per delivery"
+        );
     }
 
     #[test]
@@ -292,7 +300,10 @@ mod tests {
             // listener's own lock would deadlock against it.
             let received = received.lock().unwrap();
             assert_eq!(received.len(), 1);
-            assert_eq!(received[0], returned, "listeners get the event publish returns");
+            assert_eq!(
+                received[0], returned,
+                "listeners get the event publish returns"
+            );
         }
 
         assert_eq!(b.publish(delta("again")).ts, 1010);
@@ -308,7 +319,11 @@ mod tests {
         }));
         b.publish(delta("x"));
         // If this were deferred, two emits could reach a client out of seq order.
-        assert_eq!(delivered.load(Ordering::SeqCst), 1, "listener ran before publish returned");
+        assert_eq!(
+            delivered.load(Ordering::SeqCst),
+            1,
+            "listener ran before publish returned"
+        );
     }
 
     // ---- subscribe / unsubscribe --------------------------------------------
@@ -320,9 +335,13 @@ mod tests {
         assert_eq!(b.size(), 0);
 
         let s = seen.clone();
-        let off = b.subscribe(Arc::new(move |e| s.lock().unwrap().push(format!("a:{}", e.seq))));
+        let off = b.subscribe(Arc::new(move |e| {
+            s.lock().unwrap().push(format!("a:{}", e.seq))
+        }));
         let s = seen.clone();
-        b.subscribe(Arc::new(move |e| s.lock().unwrap().push(format!("b:{}", e.seq))));
+        b.subscribe(Arc::new(move |e| {
+            s.lock().unwrap().push(format!("b:{}", e.seq))
+        }));
         assert_eq!(b.size(), 2);
 
         b.publish(delta("1"));
@@ -345,7 +364,11 @@ mod tests {
             let id = b.subscribe(Arc::new(|_| {}));
             b.unsubscribe(id);
         }
-        assert_eq!(b.size(), 0, "the SSE endpoint's cancel path depends on this");
+        assert_eq!(
+            b.size(),
+            0,
+            "the SSE endpoint's cancel path depends on this"
+        );
     }
 
     #[test]
@@ -363,12 +386,17 @@ mod tests {
         }));
         *own_id.lock().unwrap() = id;
         let s = seen.clone();
-        b.subscribe(Arc::new(move |e| s.lock().unwrap().push(format!("always:{}", e.seq))));
+        b.subscribe(Arc::new(move |e| {
+            s.lock().unwrap().push(format!("always:{}", e.seq))
+        }));
 
         b.publish(delta("1"));
         b.publish(delta("2"));
 
-        assert_eq!(*seen.lock().unwrap(), vec!["once:1", "always:1", "always:2"]);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["once:1", "always:1", "always:2"]
+        );
         assert_eq!(b.size(), 1);
     }
 

@@ -61,7 +61,11 @@ pub fn provider_for(model: &str) -> Provider {
     if model.starts_with("@cf/") {
         return Provider::Cloudflare;
     }
-    if model.contains('/') { Provider::Openrouter } else { Provider::Anthropic }
+    if model.contains('/') {
+        Provider::Openrouter
+    } else {
+        Provider::Anthropic
+    }
 }
 
 /// The env var carrying each provider's key. Read at `run()` time, never cached.
@@ -100,7 +104,9 @@ impl ProviderOpts {
         self.env.clone().unwrap_or_else(process_env)
     }
     pub fn transport_or_default(&self) -> Arc<dyn crate::llm::sse::Transport> {
-        self.transport.clone().unwrap_or_else(|| Arc::new(crate::llm::sse::ReqwestTransport::new()))
+        self.transport
+            .clone()
+            .unwrap_or_else(|| Arc::new(crate::llm::sse::ReqwestTransport::new()))
     }
 }
 
@@ -124,7 +130,11 @@ pub fn require_key(
             }
         }
     }
-    Err(BoughError::llm_with(format!("{provider}: {} is not set", names.join(" / ")), 401, None))
+    Err(BoughError::llm_with(
+        format!("{provider}: {} is not set", names.join(" / ")),
+        401,
+        None,
+    ))
 }
 
 /// Both system tiers joined, stable first, for the providers that take a
@@ -136,7 +146,11 @@ pub fn joined_system(p: &LlmParams) -> Option<String> {
         p.system.as_deref().unwrap_or(""),
         p.system_volatile.as_deref().unwrap_or("")
     );
-    if s.is_empty() { None } else { Some(s) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 // ---- the model catalog ------------------------------------------------------
@@ -154,7 +168,11 @@ pub struct ModelRow {
 }
 
 fn row(id: &str, label: &str, provider: Provider) -> ModelRow {
-    ModelRow { id: id.to_string(), label: label.to_string(), provider }
+    ModelRow {
+        id: id.to_string(),
+        label: label.to_string(),
+        provider,
+    }
 }
 
 /// The curated picker entries. Frontier and cheap tiers are both chosen here
@@ -171,15 +189,39 @@ pub static MODELS: LazyLock<Vec<ModelRow>> = LazyLock::new(|| {
         row("openai:gpt-5", "GPT-5 (OpenAI)", Openai),
         row("openai:gpt-5-mini", "GPT-5 mini (OpenAI)", Openai),
         row("openai/gpt-5", "GPT-5 (OpenRouter)", Openrouter),
-        row("openai/gpt-oss-120b", "GPT-OSS 120B (OpenRouter)", Openrouter),
-        row("google/gemini-2.5-pro", "Gemini 2.5 Pro (OpenRouter)", Openrouter),
+        row(
+            "openai/gpt-oss-120b",
+            "GPT-OSS 120B (OpenRouter)",
+            Openrouter,
+        ),
+        row(
+            "google/gemini-2.5-pro",
+            "Gemini 2.5 Pro (OpenRouter)",
+            Openrouter,
+        ),
         row("z-ai/glm-5.2", "GLM 5.2 (OpenRouter)", Openrouter),
-        row("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash (OpenRouter)", Openrouter),
+        row(
+            "deepseek/deepseek-v4-flash",
+            "DeepSeek V4 Flash (OpenRouter)",
+            Openrouter,
+        ),
         row("moonshotai/kimi-k3", "Kimi K3 (OpenRouter)", Openrouter),
         row("@cf/zai-org/glm-5.2", "GLM 5.2 (Workers AI)", Cloudflare),
-        row("@cf/openai/gpt-oss-120b", "GPT-OSS 120B (Workers AI)", Cloudflare),
-        row("@cf/moonshotai/kimi-k2.7-code", "Kimi K2.7 Code (Workers AI)", Cloudflare),
-        row("@cf/meta/llama-3.3-70b-instruct-fp8-fast", "Llama 3.3 70B (Workers AI)", Cloudflare),
+        row(
+            "@cf/openai/gpt-oss-120b",
+            "GPT-OSS 120B (Workers AI)",
+            Cloudflare,
+        ),
+        row(
+            "@cf/moonshotai/kimi-k2.7-code",
+            "Kimi K2.7 Code (Workers AI)",
+            Cloudflare,
+        ),
+        row(
+            "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+            "Llama 3.3 70B (Workers AI)",
+            Cloudflare,
+        ),
     ]
 });
 
@@ -205,7 +247,10 @@ mod tests {
             // shaped too, and sending it to OpenRouter would 400 on a model
             // that provider never had.
             ("@cf/zai-org/glm-5.2", Provider::Cloudflare),
-            ("@cf/meta/llama-3.3-70b-instruct-fp8-fast", Provider::Cloudflare),
+            (
+                "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+                Provider::Cloudflare,
+            ),
         ];
         for (model, provider) in table {
             assert_eq!(provider_for(model), *provider, "{model}");
@@ -257,7 +302,10 @@ mod tests {
             "ANTHROPIC_AUTH_TOKEN" => Some(" tok ".into()),
             _ => None,
         });
-        assert_eq!(require_key(&env, Provider::Anthropic, &["ANTHROPIC_AUTH_TOKEN"]).unwrap(), "tok");
+        assert_eq!(
+            require_key(&env, Provider::Anthropic, &["ANTHROPIC_AUTH_TOKEN"]).unwrap(),
+            "tok"
+        );
     }
 
     #[test]
@@ -275,6 +323,9 @@ mod tests {
         assert_eq!(joined_system(&p(Some("A"), Some("B"))), Some("AB".into()));
         assert_eq!(joined_system(&p(None, None)), None);
         assert_eq!(joined_system(&p(Some(""), None)), None);
-        assert_eq!(joined_system(&p(None, Some("only volatile"))), Some("only volatile".into()));
+        assert_eq!(
+            joined_system(&p(None, Some("only volatile"))),
+            Some("only volatile".into())
+        );
     }
 }

@@ -89,7 +89,12 @@ pub fn pick_parts(m: &Message, indexes: Option<&[u32]>) -> Option<Vec<Part>> {
     if indexes.iter().any(|&i| i as usize >= m.parts.len()) {
         return None;
     }
-    Some(indexes.iter().map(|&i| m.parts[i as usize].clone()).collect())
+    Some(
+        indexes
+            .iter()
+            .map(|&i| m.parts[i as usize].clone())
+            .collect(),
+    )
 }
 
 /// One resolved pick: where the message sat in the thread, and the view to copy.
@@ -124,7 +129,13 @@ pub fn resolve_picks(
         let Some(parts) = pick_parts(&thread[i], sel.as_deref()) else {
             return Err(err(&format!("part index out of range for message {id}")));
         };
-        resolved.push(ResolvedPick { idx: i, view: Message { parts, ..thread[i].clone() } });
+        resolved.push(ResolvedPick {
+            idx: i,
+            view: Message {
+                parts,
+                ..thread[i].clone()
+            },
+        });
     }
     resolved.sort_by_key(|r| r.idx);
     Ok(resolved)
@@ -173,7 +184,11 @@ pub struct BranchCtx {
 
 impl From<&AppCtx> for BranchCtx {
     fn from(ctx: &AppCtx) -> BranchCtx {
-        BranchCtx { db: ctx.db.clone(), bus: ctx.bus.clone(), now: ctx.now.clone() }
+        BranchCtx {
+            db: ctx.db.clone(),
+            bus: ctx.bus.clone(),
+            now: ctx.now.clone(),
+        }
     }
 }
 
@@ -237,7 +252,11 @@ pub fn open_branch(ctx: BranchCtx, spec: BranchSpec) -> Result<Seeder, BoughErro
     // the row back, so the event and a later `GET /sessions/:id` cannot
     // disagree.
     let stored = with_db(&ctx.db, |d| d.create_session(session))?;
-    ctx.bus.publish(event(EventType::SessionCreated, &stored.id, to_value(&stored)));
+    ctx.bus.publish(event(
+        EventType::SessionCreated,
+        &stored.id,
+        to_value(&stored),
+    ));
     Ok(Seeder::new(ctx, stored))
 }
 
@@ -281,7 +300,11 @@ impl Seeder {
         // so skipping this would make the incremental and rebuilt indexes
         // disagree.
         index_quietly(&self.ctx.db, &stored);
-        self.ctx.bus.publish(event(EventType::MessageStarted, &self.session.id, to_value(&stored)));
+        self.ctx.bus.publish(event(
+            EventType::MessageStarted,
+            &self.session.id,
+            to_value(&stored),
+        ));
         Ok(stored)
     }
 
@@ -323,15 +346,23 @@ pub fn inherit_pins(
         return Ok(branch);
     }
     if let Some(model) = &source.model {
-        with_db(&ctx.db, |d| d.set_session_model(&branch.id, Some(model.as_str())))?;
+        with_db(&ctx.db, |d| {
+            d.set_session_model(&branch.id, Some(model.as_str()))
+        })?;
     }
     if let Some(effort) = &source.effort {
-        with_db(&ctx.db, |d| d.set_session_effort(&branch.id, Some(effort.as_str())))?;
+        with_db(&ctx.db, |d| {
+            d.set_session_effort(&branch.id, Some(effort.as_str()))
+        })?;
     }
     let Some(stored) = with_db(&ctx.db, |d| d.get_session(&branch.id))? else {
         return Ok(branch);
     };
-    ctx.bus.publish(event(EventType::SessionUpdated, &stored.id, to_value(&stored)));
+    ctx.bus.publish(event(
+        EventType::SessionUpdated,
+        &stored.id,
+        to_value(&stored),
+    ));
     Ok(stored)
 }
 
@@ -350,7 +381,11 @@ pub(crate) fn with_db<R>(db: &SharedDb, f: impl FnOnce(&dyn Db) -> R) -> R {
 }
 
 pub(crate) fn event(r#type: EventType, session_id: &str, data: Value) -> EventInput {
-    EventInput { r#type, session_id: Some(session_id.to_string()), data }
+    EventInput {
+        r#type,
+        session_id: Some(session_id.to_string()),
+        data,
+    }
 }
 
 pub(crate) fn to_value(v: &impl serde::Serialize) -> Value {
@@ -389,6 +424,9 @@ pub(crate) mod tests {
 
     pub(crate) struct Fixture {
         pub db: SharedDb,
+        /// Held so the fixture owns the bus the ctx publishes on; the tests
+        /// assert through `events` rather than subscribing themselves.
+        #[allow(dead_code)]
         pub bus: Arc<Bus>,
         pub events: Arc<Mutex<Vec<BoughEvent>>>,
         pub ctx: BranchCtx,
@@ -397,12 +435,15 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn fixture() -> Fixture {
-        let db: SharedDb =
-            Arc::new(Mutex::new(SqliteDb::new(":memory:", DbOptions::default()).unwrap()));
+        let db: SharedDb = Arc::new(Mutex::new(
+            SqliteDb::new(":memory:", DbOptions::default()).unwrap(),
+        ));
         let bus = Arc::new(Bus::new(crate::types::system_clock()));
         let events: Arc<Mutex<Vec<BoughEvent>>> = Arc::new(Mutex::new(vec![]));
         let sink = events.clone();
-        bus.subscribe(Arc::new(move |e: &BoughEvent| sink.lock().unwrap().push(e.clone())));
+        bus.subscribe(Arc::new(move |e: &BoughEvent| {
+            sink.lock().unwrap().push(e.clone())
+        }));
         let clock = Arc::new(TestClock {
             now: AtomicI64::new(1_700_000_000_000),
             calls: AtomicUsize::new(0),
@@ -412,8 +453,18 @@ pub(crate) mod tests {
             c.calls.fetch_add(1, Ordering::SeqCst);
             c.now.load(Ordering::SeqCst)
         });
-        let ctx = BranchCtx { db: db.clone(), bus: bus.clone(), now };
-        Fixture { db, bus, events, ctx, clock }
+        let ctx = BranchCtx {
+            db: db.clone(),
+            bus: bus.clone(),
+            now,
+        };
+        Fixture {
+            db,
+            bus,
+            events,
+            ctx,
+            clock,
+        }
     }
 
     pub(crate) fn session(db: &SharedDb, title: &str, parent_id: Option<&str>) -> Session {
@@ -453,7 +504,9 @@ pub(crate) mod tests {
                 id: Uuid::new_v4().to_string(),
                 session_id: session_id.to_string(),
                 role,
-                parts: vec![Part::Text { text: text.to_string() }],
+                parts: vec![Part::Text {
+                    text: text.to_string(),
+                }],
                 pending: false,
                 created_at,
             })
@@ -490,11 +543,23 @@ pub(crate) mod tests {
         // A parent with shared history, and the session about to be forked.
         let parent = session(&f.db, "parent", None);
         message(&f.db, &parent.id, Role::User, "ancestor question", 1_100);
-        message(&f.db, &parent.id, Role::Supervisor, "ancestor answer", 1_101);
+        message(
+            &f.db,
+            &parent.id,
+            Role::Supervisor,
+            "ancestor answer",
+            1_101,
+        );
         let target = session(&f.db, "target", Some(&parent.id));
         message(&f.db, &target.id, Role::User, "own question", 1_200);
         message(&f.db, &target.id, Role::Supervisor, "own answer", 1_201);
-        message(&f.db, &target.id, Role::User, "the turn being forked away from", 1_202);
+        message(
+            &f.db,
+            &target.id,
+            Role::User,
+            "the turn being forked away from",
+            1_202,
+        );
 
         // Every write from here on lands in the SAME millisecond: the seed,
         // the user message, and the supervisor message the runner creates.
@@ -529,7 +594,9 @@ pub(crate) mod tests {
                 id: Uuid::new_v4().to_string(),
                 session_id: branch_id.clone(),
                 role: Role::User,
-                parts: vec![Part::Text { text: "edited question".to_string() }],
+                parts: vec![Part::Text {
+                    text: "edited question".to_string(),
+                }],
                 pending: false,
                 created_at: ms,
             })
@@ -545,7 +612,12 @@ pub(crate) mod tests {
         let branch_own = with_db(&f.db, |d| d.messages_for(&branch_id)).unwrap();
         assert_eq!(
             texts_of(&branch_own),
-            vec!["own question", "own answer", "edited question", "fresh answer"]
+            vec![
+                "own question",
+                "own answer",
+                "edited question",
+                "fresh answer"
+            ]
         );
 
         // ── and the case is genuinely the same-millisecond one ──
@@ -572,14 +644,19 @@ pub(crate) mod tests {
         assert_eq!(branch_own.len(), 4);
         assert_eq!(
             texts_of(&with_db(&f.db, |d| d.messages_for(&target.id)).unwrap()),
-            vec!["own question", "own answer", "the turn being forked away from"]
+            vec![
+                "own question",
+                "own answer",
+                "the turn being forked away from"
+            ]
         );
     }
 
     #[tokio::test]
     async fn the_same_ordering_holds_on_the_real_clock_with_no_injected_time_at_all() {
-        let db: SharedDb =
-            Arc::new(Mutex::new(SqliteDb::new(":memory:", DbOptions::default()).unwrap()));
+        let db: SharedDb = Arc::new(Mutex::new(
+            SqliteDb::new(":memory:", DbOptions::default()).unwrap(),
+        ));
         let target = session(&db, "target", None);
         let now = crate::types::system_clock();
         message(&db, &target.id, Role::User, "one", now());
@@ -606,7 +683,9 @@ pub(crate) mod tests {
                 id: Uuid::new_v4().to_string(),
                 session_id: seeder.session.id.clone(),
                 role: Role::User,
-                parts: vec![Part::Text { text: "three".to_string() }],
+                parts: vec![Part::Text {
+                    text: "three".to_string(),
+                }],
                 pending: false,
                 created_at: now(),
             })
@@ -627,19 +706,47 @@ pub(crate) mod tests {
         f.clock.set(42);
         let seeder = open_branch(
             f.ctx.clone(),
-            BranchSpec { title: "b".to_string(), ..Default::default() },
+            BranchSpec {
+                title: "b".to_string(),
+                ..Default::default()
+            },
         )
         .unwrap();
-        seeder.add(Role::User, vec![Part::Text { text: "a".to_string() }]).unwrap();
-        seeder.add(Role::Supervisor, vec![Part::Text { text: "b".to_string() }]).unwrap();
-        seeder.add(Role::User, vec![Part::Text { text: "c".to_string() }]).unwrap();
+        seeder
+            .add(
+                Role::User,
+                vec![Part::Text {
+                    text: "a".to_string(),
+                }],
+            )
+            .unwrap();
+        seeder
+            .add(
+                Role::Supervisor,
+                vec![Part::Text {
+                    text: "b".to_string(),
+                }],
+            )
+            .unwrap();
+        seeder
+            .add(
+                Role::User,
+                vec![Part::Text {
+                    text: "c".to_string(),
+                }],
+            )
+            .unwrap();
 
         let stamps: Vec<i64> = with_db(&f.db, |d| d.messages_for(&seeder.session.id))
             .unwrap()
             .iter()
             .map(|m| m.created_at)
             .collect();
-        assert_eq!(stamps, vec![42, 42, 42], "no per-message increment may be invented");
+        assert_eq!(
+            stamps,
+            vec![42, 42, 42],
+            "no per-message increment may be invented"
+        );
         assert_eq!(seeder.session.created_at, 42);
         // One read per write, and the value is stored verbatim — nothing is
         // derived from the previous message's stamp.
@@ -647,7 +754,14 @@ pub(crate) mod tests {
 
         // A clock that moves is followed, not overridden.
         f.clock.set(99);
-        let later = seeder.add(Role::User, vec![Part::Text { text: "d".to_string() }]).unwrap();
+        let later = seeder
+            .add(
+                Role::User,
+                vec![Part::Text {
+                    text: "d".to_string(),
+                }],
+            )
+            .unwrap();
         assert_eq!(later.created_at, 99);
     }
 
@@ -671,9 +785,21 @@ pub(crate) mod tests {
             },
         )
         .unwrap();
-        let first = seeder.add(Role::User, vec![Part::Text { text: "seeded".to_string() }]).unwrap();
+        let first = seeder
+            .add(
+                Role::User,
+                vec![Part::Text {
+                    text: "seeded".to_string(),
+                }],
+            )
+            .unwrap();
         let second = seeder
-            .add(Role::Supervisor, vec![Part::Text { text: "also seeded".to_string() }])
+            .add(
+                Role::Supervisor,
+                vec![Part::Text {
+                    text: "also seeded".to_string(),
+                }],
+            )
             .unwrap();
 
         let events = f.events.lock().unwrap().clone();
@@ -683,14 +809,19 @@ pub(crate) mod tests {
         );
         // The event carries what storage kept, not the argument that was passed in.
         let created: Session = serde_json::from_value(events[0].data.clone()).unwrap();
-        let stored = with_db(&f.db, |d| d.get_session(&seeder.session.id)).unwrap().unwrap();
+        let stored = with_db(&f.db, |d| d.get_session(&seeder.session.id))
+            .unwrap()
+            .unwrap();
         assert_eq!(created, stored);
         assert_eq!(created.kind, SessionKind::Root);
         assert_eq!(created.workspace.as_deref(), Some("/tmp/checkout"));
         assert_eq!(created.base.as_deref(), Some("abc123"));
         assert_eq!(created.origin_id.as_deref(), Some("src-1"));
         assert_eq!(created.origin_message_id.as_deref(), Some("msg-1"));
-        assert_eq!(events[0].session_id.as_deref(), Some(seeder.session.id.as_str()));
+        assert_eq!(
+            events[0].session_id.as_deref(),
+            Some(seeder.session.id.as_str())
+        );
 
         assert_eq!(events[1].data, to_value(&first));
         assert_eq!(events[2].data, to_value(&second));
@@ -705,10 +836,15 @@ pub(crate) mod tests {
         let f = fixture();
         let seeder = open_branch(
             f.ctx.clone(),
-            BranchSpec { title: "bare".to_string(), ..Default::default() },
+            BranchSpec {
+                title: "bare".to_string(),
+                ..Default::default()
+            },
         )
         .unwrap();
-        let stored = with_db(&f.db, |d| d.get_session(&seeder.session.id)).unwrap().unwrap();
+        let stored = with_db(&f.db, |d| d.get_session(&seeder.session.id))
+            .unwrap()
+            .unwrap();
         assert_eq!(stored.workspace, None);
         assert_eq!(stored.origin_id, None);
         assert_eq!(stored.base, None);
@@ -722,7 +858,9 @@ pub(crate) mod tests {
         let f = fixture();
         let source = session(&f.db, "source", None);
         let parts = vec![
-            Part::Text { text: "prose".to_string() },
+            Part::Text {
+                text: "prose".to_string(),
+            },
             Part::ToolCall {
                 id: "call-1".to_string(),
                 name: RUN_STEPS.to_string(),
@@ -749,7 +887,10 @@ pub(crate) mod tests {
 
         let seeder = open_branch(
             f.ctx.clone(),
-            BranchSpec { title: "b".to_string(), ..Default::default() },
+            BranchSpec {
+                title: "b".to_string(),
+                ..Default::default()
+            },
         )
         .unwrap();
         let copied = seeder.copy(&original).unwrap();
@@ -762,7 +903,9 @@ pub(crate) mod tests {
         // The copy shares no structure with the original: what storage holds
         // for the copy is exactly the parts at copy time, reachable only
         // through its own row.
-        let held = with_db(&f.db, |d| d.get_message(&copied.id)).unwrap().unwrap();
+        let held = with_db(&f.db, |d| d.get_message(&copied.id))
+            .unwrap()
+            .unwrap();
         assert_eq!(text_of(&held).split('|').next().unwrap(), "prose");
         assert_eq!(held.parts, parts);
     }
@@ -772,11 +915,19 @@ pub(crate) mod tests {
         let f = fixture();
         let seeder = open_branch(
             f.ctx.clone(),
-            BranchSpec { title: "b".to_string(), ..Default::default() },
+            BranchSpec {
+                title: "b".to_string(),
+                ..Default::default()
+            },
         )
         .unwrap();
         seeder
-            .add(Role::User, vec![Part::Text { text: "the peculiar zarquon problem".to_string() }])
+            .add(
+                Role::User,
+                vec![Part::Text {
+                    text: "the peculiar zarquon problem".to_string(),
+                }],
+            )
             .unwrap();
 
         let incremental = with_db(&f.db, |d| d.search_messages("zarquon", None, None)).unwrap();
@@ -803,7 +954,9 @@ pub(crate) mod tests {
         let picked = message(&f.db, &source.id, Role::Supervisor, "moved in", 2);
 
         f.clock.set(7);
-        Seeder::new(f.ctx.clone(), target.clone()).copy(&picked).unwrap();
+        Seeder::new(f.ctx.clone(), target.clone())
+            .copy(&picked)
+            .unwrap();
 
         assert_eq!(
             texts_of(&with_db(&f.db, |d| d.messages_for(&target.id)).unwrap()),
@@ -826,7 +979,10 @@ pub(crate) mod tests {
     // ---- picks --------------------------------------------------------------
 
     fn pick(id: &str, parts: Option<Vec<u32>>) -> PartPick {
-        PartPick { message_id: id.to_string(), parts }
+        PartPick {
+            message_id: id.to_string(),
+            parts,
+        }
     }
 
     #[test]
@@ -841,7 +997,11 @@ pub(crate) mod tests {
         ]);
         let get = |id: &str| merged.iter().find(|(k, _)| k == id).unwrap().1.clone();
         assert_eq!(get("a"), Some(vec![1, 2, 3]));
-        assert_eq!(get("b"), None, "a whole-message pick supersedes an earlier partial");
+        assert_eq!(
+            get("b"),
+            None,
+            "a whole-message pick supersedes an earlier partial"
+        );
         assert_eq!(get("c"), None, "…and is not narrowed by a later partial");
     }
 
@@ -852,9 +1012,17 @@ pub(crate) mod tests {
             session_id: "s".to_string(),
             role: Role::Supervisor,
             parts: vec![
-                Part::Text { text: "zero".to_string() },
-                Part::Reasoning { text: "one".to_string(), meta: None, model: None },
-                Part::Text { text: "two".to_string() },
+                Part::Text {
+                    text: "zero".to_string(),
+                },
+                Part::Reasoning {
+                    text: "one".to_string(),
+                    meta: None,
+                    model: None,
+                },
+                Part::Text {
+                    text: "two".to_string(),
+                },
             ],
             pending: false,
             created_at: 0,
@@ -882,30 +1050,45 @@ pub(crate) mod tests {
         // from the thread.
         let resolved = resolve_picks(
             &thread,
-            &[pick(&c.id, None), pick(&a.id, None), pick(&b.id, Some(vec![0]))],
+            &[
+                pick(&c.id, None),
+                pick(&a.id, None),
+                pick(&b.id, Some(vec![0])),
+            ],
             err,
         )
         .unwrap();
-        assert_eq!(resolved.iter().map(|r| r.idx).collect::<Vec<_>>(), vec![0, 1, 2]);
+        assert_eq!(
+            resolved.iter().map(|r| r.idx).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
         assert_eq!(
             texts_of(&resolved.iter().map(|r| r.view.clone()).collect::<Vec<_>>()),
             vec!["first", "second", "third"]
         );
 
         let missing = resolve_picks(&thread, &[pick("not-in-thread", None)], err).unwrap_err();
-        assert!(missing.to_string().contains("must be messages of the source thread"));
+        assert!(missing
+            .to_string()
+            .contains("must be messages of the source thread"));
         let range = resolve_picks(&thread, &[pick(&a.id, Some(vec![4]))], err).unwrap_err();
         assert!(range.to_string().contains(&a.id));
     }
 
     #[test]
     fn base_title_strips_accumulated_branch_prefixes_once() {
-        assert_eq!(base_title("fork · fork · rename the router"), "rename the router");
+        assert_eq!(
+            base_title("fork · fork · rename the router"),
+            "rename the router"
+        );
         assert_eq!(base_title("extract · subagent · handoff · thing"), "thing");
         assert_eq!(base_title("rename the router"), "rename the router");
         // Only leading prefixes, and only the known ones — a title that merely
         // mentions one keeps it.
-        assert_eq!(base_title("why the fork · thing broke"), "why the fork · thing broke");
+        assert_eq!(
+            base_title("why the fork · thing broke"),
+            "why the fork · thing broke"
+        );
         assert_eq!(base_title("compacted · 3 turns"), "compacted · 3 turns");
     }
 }

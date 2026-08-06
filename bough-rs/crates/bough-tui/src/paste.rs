@@ -76,7 +76,11 @@ mod tests {
 
     #[test]
     fn a_mark_expands_where_it_sits_not_at_the_end() {
-        let draft = format!("compare {} with {} and explain", paste_mark(1), paste_mark(2));
+        let draft = format!(
+            "compare {} with {} and explain",
+            paste_mark(1),
+            paste_mark(2)
+        );
         let out = expand_pastes(&draft, &both());
         assert_eq!(out, format!("compare {A} with {B} and explain"));
         // The whole point: the pastes are INSIDE the sentence, not trailing it.
@@ -112,7 +116,10 @@ mod tests {
     #[test]
     fn a_mark_repeated_is_a_paste_repeated() {
         let draft = format!("{} vs {}", paste_mark(1), paste_mark(1));
-        assert_eq!(expand_pastes(&draft, &[A.to_string()]), format!("{A} vs {A}"));
+        assert_eq!(
+            expand_pastes(&draft, &[A.to_string()]),
+            format!("{A} vs {A}")
+        );
     }
 
     #[test]

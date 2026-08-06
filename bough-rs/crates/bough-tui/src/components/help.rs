@@ -51,24 +51,35 @@ pub fn help_view(rows: usize, offset: usize) -> Vec<Line<'static>> {
     let more = all.len() - (start + visible.len());
 
     let dim = Style::default().add_modifier(Modifier::DIM);
-    let mut out: Vec<Line<'static>> =
-        vec![Line::from(Span::styled("keys · esc closes", Style::default().add_modifier(Modifier::BOLD)))];
+    let mut out: Vec<Line<'static>> = vec![Line::from(Span::styled(
+        "keys · esc closes",
+        Style::default().add_modifier(Modifier::BOLD),
+    ))];
     for l in visible {
         out.push(match l.kind {
             HelpLineKind::Blank => Line::from(Span::raw(" ")),
             HelpLineKind::Header => Line::from(Span::styled(
                 l.desc.clone(),
-                if l.muted { dim } else { Style::default().fg(ACCENT) },
+                if l.muted {
+                    dim
+                } else {
+                    Style::default().fg(ACCENT)
+                },
             )),
             HelpLineKind::Row => {
-                let desc = Span::styled(l.desc.clone(), if l.muted { dim } else { Style::default() });
+                let desc =
+                    Span::styled(l.desc.clone(), if l.muted { dim } else { Style::default() });
                 if l.prose {
                     Line::from(vec![Span::styled("  · ", dim), desc])
                 } else {
                     Line::from(vec![
                         Span::styled(
                             format!("  {:<12}", l.chord),
-                            if l.muted { dim } else { Style::default().fg(INFO) },
+                            if l.muted {
+                                dim
+                            } else {
+                                Style::default().fg(INFO)
+                            },
                         ),
                         desc,
                     ])
@@ -93,7 +104,11 @@ pub fn help_view(rows: usize, offset: usize) -> Vec<Line<'static>> {
 
 /// The full-screen overlay — the one surface that displaces everything.
 pub fn render_help(rows: usize, offset: usize, area: Rect, buf: &mut Buffer) {
-    for (i, line) in help_view(rows, offset).iter().take(area.height as usize).enumerate() {
+    for (i, line) in help_view(rows, offset)
+        .iter()
+        .take(area.height as usize)
+        .enumerate()
+    {
         buf.set_line(area.x, area.y + i as u16, line, area.width);
     }
 }
@@ -138,14 +153,21 @@ mod tests {
         let top = text(&help_view(24, 0));
         assert_eq!(top.len(), 24, "the overlay must fill exactly its rows");
         assert_eq!(top[0], "keys · esc closes");
-        assert!(top.last().unwrap().contains("more below"), "{:?}", top.last());
+        assert!(
+            top.last().unwrap().contains("more below"),
+            "{:?}",
+            top.last()
+        );
 
         // The last page says `end`, and never blanks: an unclamped offset
         // scrolled the body off the screen entirely.
         let bottom = text(&help_view(24, 10_000));
         assert_eq!(bottom.len(), 24);
         assert_eq!(bottom.last().unwrap(), "↑↓ pgup/pgdn scroll · end");
-        assert!(bottom[1..].iter().any(|r| r.trim() != ""), "the overlay went blank");
+        assert!(
+            bottom[1..].iter().any(|r| r.trim() != ""),
+            "the overlay went blank"
+        );
 
         // A terminal tall enough for everything offers no scroll hint.
         let all = text(&help_view(total + 2, 0));
@@ -167,12 +189,16 @@ mod tests {
         // `won't do` rows are prose: they have nothing to press.
         let rendered = text(&help_view(400, 0));
         assert!(
-            rendered.iter().any(|r| r == "  · ^c ^c quits; subagents keep running"),
+            rendered
+                .iter()
+                .any(|r| r == "  · ^c ^c quits; subagents keep running"),
             "{rendered:?}"
         );
         // `not bound` rows keep their chord column, dimmed.
         assert!(
-            rendered.iter().any(|r| r.starts_with("  ^r          no reverse search")),
+            rendered
+                .iter()
+                .any(|r| r.starts_with("  ^r          no reverse search")),
             "{rendered:?}"
         );
     }

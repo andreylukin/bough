@@ -34,7 +34,10 @@ pub type TermEnv = HashMap<String, String>;
 
 /// Build a [`TermEnv`] from pairs — test/fixture convenience.
 pub fn env_of(pairs: &[(&str, &str)]) -> TermEnv {
-    pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,7 +90,11 @@ pub fn term_caps(env: &TermEnv) -> TermCaps {
         kitty,
         progress: PROGRESS_PROGRAMS.contains(&program.as_str()),
         tab_color: program == "iTerm.app" && !tmux,
-        notify: if program == "Apple_Terminal" { Notify::Bell } else { Notify::Osc9 },
+        notify: if program == "Apple_Terminal" {
+            Notify::Bell
+        } else {
+            Notify::Osc9
+        },
         program,
         term,
     }
@@ -116,7 +123,10 @@ pub fn sanitize(text: &str) -> String {
 /// tmux swallows unknown OSC — passthrough-wrap so it reaches the outer terminal.
 pub fn tmux_wrap(seq: &str, in_tmux: bool) -> String {
     if in_tmux {
-        format!("\u{1b}Ptmux;{}\u{1b}\\", seq.replace('\u{1b}', "\u{1b}\u{1b}"))
+        format!(
+            "\u{1b}Ptmux;{}\u{1b}\\",
+            seq.replace('\u{1b}', "\u{1b}\u{1b}")
+        )
     } else {
         seq.to_string()
     }
@@ -153,7 +163,14 @@ pub fn classify_bg(hex: &str) -> (String, Scheme) {
     let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0) as f64;
     let (r, g, b) = (byte(1), byte(3), byte(5));
     let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    (hex.to_string(), if luma < 128.0 { Scheme::Dark } else { Scheme::Light })
+    (
+        hex.to_string(),
+        if luma < 128.0 {
+            Scheme::Dark
+        } else {
+            Scheme::Light
+        },
+    )
 }
 
 /// Frames for an active bough turn in a terminal or multiplexer tab.
@@ -166,10 +183,16 @@ pub enum TitleStatus {
 }
 
 /// The compact title shared by the terminal window and multiplexer tab bars.
-pub fn bough_title(session: Option<&str>, status: Option<TitleStatus>, spinner_frame: usize) -> String {
+pub fn bough_title(
+    session: Option<&str>,
+    status: Option<TitleStatus>,
+    spinner_frame: usize,
+) -> String {
     let label = sanitize(session.unwrap_or("")).trim().to_string();
     let state = match status {
-        Some(TitleStatus::Running) => TITLE_SPINNER[spinner_frame % TITLE_SPINNER.len()].to_string(),
+        Some(TitleStatus::Running) => {
+            TITLE_SPINNER[spinner_frame % TITLE_SPINNER.len()].to_string()
+        }
         Some(TitleStatus::Complete) => "complete".to_string(),
         None => String::new(),
     };
@@ -248,7 +271,9 @@ pub fn create_term(options: TermOptions) -> Term {
     Term {
         caps: options.caps,
         write: options.write,
-        rename_tmux_window: options.rename_tmux_window.unwrap_or_else(|| Rc::new(|_| {})),
+        rename_tmux_window: options
+            .rename_tmux_window
+            .unwrap_or_else(|| Rc::new(|_| {})),
         rename_zellij_tab: options.rename_zellij_tab.unwrap_or_else(|| Rc::new(|_| {})),
         timers: options.timers,
         progress_timer: Cell::new(None),
@@ -283,7 +308,10 @@ impl Term {
             (self.write)("\u{7}");
             return;
         }
-        (self.write)(&tmux_wrap(&format!("\u{1b}]9;{}\u{7}", sanitize(body)), self.caps.tmux));
+        (self.write)(&tmux_wrap(
+            &format!("\u{1b}]9;{}\u{7}", sanitize(body)),
+            self.caps.tmux,
+        ));
     }
 
     /// Indeterminate progress while a turn runs, kept alive until `progress_end`.
@@ -446,7 +474,10 @@ mod tests {
 
     impl FakeTimers {
         fn new() -> Self {
-            FakeTimers { next: Cell::new(1), timers: RefCell::new(HashMap::new()) }
+            FakeTimers {
+                next: Cell::new(1),
+                timers: RefCell::new(HashMap::new()),
+            }
         }
     }
 
@@ -551,8 +582,14 @@ mod tests {
 
     #[test]
     fn terminal_app_gets_a_bell_because_it_accepts_osc_9_and_shows_nothing() {
-        assert_eq!(term_caps(&env_of(&[("TERM_PROGRAM", "Apple_Terminal")])).notify, Notify::Bell);
-        assert_eq!(term_caps(&env_of(&[("TERM_PROGRAM", "ghostty")])).notify, Notify::Osc9);
+        assert_eq!(
+            term_caps(&env_of(&[("TERM_PROGRAM", "Apple_Terminal")])).notify,
+            Notify::Bell
+        );
+        assert_eq!(
+            term_caps(&env_of(&[("TERM_PROGRAM", "ghostty")])).notify,
+            Notify::Osc9
+        );
         assert!(term_caps(&env_of(&[("ZELLIJ", "0")])).zellij);
         assert!(!term_caps(&env_of(&[])).zellij);
     }
@@ -568,8 +605,14 @@ mod tests {
     #[test]
     fn bough_title_animates_active_work_and_marks_completed_work() {
         assert_eq!(bough_title(None, None, 0), "bough");
-        assert_eq!(bough_title(Some("Fix parser"), Some(TitleStatus::Running), 0), "bough · Fix parser · ⠋");
-        assert_eq!(bough_title(Some("Fix parser"), Some(TitleStatus::Running), 1), "bough · Fix parser · ⠙");
+        assert_eq!(
+            bough_title(Some("Fix parser"), Some(TitleStatus::Running), 0),
+            "bough · Fix parser · ⠋"
+        );
+        assert_eq!(
+            bough_title(Some("Fix parser"), Some(TitleStatus::Running), 1),
+            "bough · Fix parser · ⠙"
+        );
         assert_eq!(
             bough_title(Some("Fix\u{7} parser"), Some(TitleStatus::Complete), 0),
             "bough · Fix  parser · complete"
@@ -587,7 +630,10 @@ mod tests {
 
     #[test]
     fn parse_bg_spec_scales_16_8_4_bit_channels_to_rrggbb() {
-        assert_eq!(parse_bg_spec("rgb:1e1e/1e1e/2e2e").as_deref(), Some("#1e1e2e"));
+        assert_eq!(
+            parse_bg_spec("rgb:1e1e/1e1e/2e2e").as_deref(),
+            Some("#1e1e2e")
+        );
         assert_eq!(parse_bg_spec("rgb:fa/fa/fa").as_deref(), Some("#fafafa"));
         assert_eq!(parse_bg_spec("rgb:f/0/f").as_deref(), Some("#ff00ff"));
         assert_eq!(parse_bg_spec("not-a-color"), None);
@@ -595,8 +641,14 @@ mod tests {
 
     #[test]
     fn classify_bg_splits_dark_from_light_on_rec_709_luma() {
-        assert_eq!(classify_bg("#1e1e2e"), ("#1e1e2e".to_string(), Scheme::Dark));
-        assert_eq!(classify_bg("#fafafa"), ("#fafafa".to_string(), Scheme::Light));
+        assert_eq!(
+            classify_bg("#1e1e2e"),
+            ("#1e1e2e".to_string(), Scheme::Dark)
+        );
+        assert_eq!(
+            classify_bg("#fafafa"),
+            ("#fafafa".to_string(), Scheme::Light)
+        );
     }
 
     // ---- effects ----
@@ -606,7 +658,10 @@ mod tests {
         let h = harness(term_caps(&env_of(&[])));
         assert_eq!(h.term.term_background(), None); // null until the terminal answers
         h.term.report_term_bg("rgb:1e1e/1e1e/2e2e");
-        assert_eq!(h.term.term_background(), Some(("#1e1e2e".to_string(), Scheme::Dark)));
+        assert_eq!(
+            h.term.term_background(),
+            Some(("#1e1e2e".to_string(), Scheme::Dark))
+        );
         h.term.report_term_bg("garbage");
         assert_eq!(h.term.term_background().unwrap().0, "#1e1e2e");
     }
@@ -671,14 +726,21 @@ mod tests {
         h.term.cleanup();
         assert_eq!(h.timer_count(), 0);
         assert!(h.out.borrow().iter().any(|s| s == "\u{1b}]9;4;0\u{7}"));
-        assert!(h.out.borrow().iter().any(|s| s == "\u{1b}]6;1;bg;*;default\u{7}"));
+        assert!(h
+            .out
+            .borrow()
+            .iter()
+            .any(|s| s == "\u{1b}]6;1;bg;*;default\u{7}"));
     }
 
     #[test]
     fn the_title_names_the_terminal_pane() {
         let h = harness(term_caps(&env_of(&[])));
         h.term.set_title("bough · fix\u{7} the parser");
-        assert_eq!(*h.out.borrow(), vec!["\u{1b}]0;bough · fix  the parser\u{7}".to_string()]);
+        assert_eq!(
+            *h.out.borrow(),
+            vec!["\u{1b}]0;bough · fix  the parser\u{7}".to_string()]
+        );
     }
 
     #[test]
@@ -717,10 +779,16 @@ mod tests {
         h.term.osc52_copy("hi");
         assert_eq!(
             h.last(),
-            format!("\u{1b}]52;c;{}\u{7}", base64::engine::general_purpose::STANDARD.encode("hi"))
+            format!(
+                "\u{1b}]52;c;{}\u{7}",
+                base64::engine::general_purpose::STANDARD.encode("hi")
+            )
         );
         h.term.osc52_copy(&"x".repeat(200_000));
         // 72_000 bytes → 96_000 base64 chars.
-        assert_eq!(h.last().chars().count(), 96_000 + "\u{1b}]52;c;\u{7}".chars().count());
+        assert_eq!(
+            h.last().chars().count(),
+            96_000 + "\u{1b}]52;c;\u{7}".chars().count()
+        );
     }
 }

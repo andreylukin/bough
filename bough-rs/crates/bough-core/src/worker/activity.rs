@@ -71,12 +71,21 @@ pub fn sanitize_blurb(raw: &str) -> Option<String> {
         std::sync::LazyLock::new(|| regex::Regex::new("^[\"'`]+").unwrap());
     static QUOTES_TRAIL: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| regex::Regex::new("[\"'`.]+$").unwrap());
-    let line = raw.trim().split('\n').map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let line = raw
+        .trim()
+        .split('\n')
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
     let clean = QUOTES_LEAD.replace(line, "");
     let clean = QUOTES_TRAIL.replace(&clean, "");
     let clean: String = clean.chars().take(MAX_BLURB).collect();
     let clean = clean.trim();
-    if clean.is_empty() { None } else { Some(clean.to_string()) }
+    if clean.is_empty() {
+        None
+    } else {
+        Some(clean.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -103,7 +112,9 @@ pub async fn cheap_activity(recent: &str, opts: &CheapCallOpts) -> Option<String
 
 /// The `run_steps` code in a part, or `None` for every other part. Pure.
 pub fn program_of(part: Option<&Part>) -> Option<String> {
-    let Some(Part::ToolCall { name, input, .. }) = part else { return None };
+    let Some(Part::ToolCall { name, input, .. }) = part else {
+        return None;
+    };
     if name != "run_steps" {
         return None;
     }
@@ -152,8 +163,12 @@ pub fn watch_activity(ctx: &ActivityCtx) -> impl Fn() + Send + Sync {
     let cheap_opt = ctx.cheap.clone();
     let bus_for_listener = ctx.bus.clone();
     let id = ctx.bus.subscribe(Arc::new(move |e: &BoughEvent| {
-        let Some(cheap) = cheap_opt.clone() else { return };
-        let Some(session_id) = e.session_id.clone() else { return };
+        let Some(cheap) = cheap_opt.clone() else {
+            return;
+        };
+        let Some(session_id) = e.session_id.clone() else {
+            return;
+        };
 
         if e.r#type == EventType::TurnFinished {
             *epoch.lock().unwrap().entry(session_id.clone()).or_insert(0) += 1;
@@ -173,7 +188,9 @@ pub fn watch_activity(ctx: &ActivityCtx) -> impl Fn() + Send + Sync {
             .data
             .get("part")
             .and_then(|v| serde_json::from_value::<Part>(v.clone()).ok());
-        let Some(code) = program_of(part.as_ref()) else { return };
+        let Some(code) = program_of(part.as_ref()) else {
+            return;
+        };
 
         // THE DROP RULE. Not a queue, not a debounce, and not a replacement
         // of the pending call: the round is simply not described, and the
@@ -289,9 +306,18 @@ mod tests {
         let bus = Arc::new(Bus::new(system_clock()));
         let events = Arc::new(Mutex::new(Vec::new()));
         let sink = events.clone();
-        bus.subscribe(Arc::new(move |e: &BoughEvent| sink.lock().unwrap().push(e.clone())));
-        let stop = watch_activity(&ActivityCtx { bus: bus.clone(), cheap });
-        Rig { bus, events, stop: Box::new(stop) }
+        bus.subscribe(Arc::new(move |e: &BoughEvent| {
+            sink.lock().unwrap().push(e.clone())
+        }));
+        let stop = watch_activity(&ActivityCtx {
+            bus: bus.clone(),
+            cheap,
+        });
+        Rig {
+            bus,
+            events,
+            stop: Box::new(stop),
+        }
     }
 
     fn sad(session_id: &str, activity: Option<&str>) -> SessionActivityData {
@@ -311,20 +337,34 @@ mod tests {
             input,
         };
         assert_eq!(
-            program_of(Some(&call("run_steps", json!({"code": "await bash('ls')"})))),
+            program_of(Some(&call(
+                "run_steps",
+                json!({"code": "await bash('ls')"})
+            ))),
             Some("await bash('ls')".to_string())
         );
         // `stop` is the other tool the model sees, and it describes nothing.
         assert_eq!(program_of(Some(&call("stop", json!({})))), None);
-        assert_eq!(program_of(Some(&Part::Text { text: "hello".into() })), None);
+        assert_eq!(
+            program_of(Some(&Part::Text {
+                text: "hello".into()
+            })),
+            None
+        );
         assert_eq!(program_of(Some(&call("run_steps", json!({})))), None);
-        assert_eq!(program_of(Some(&call("run_steps", json!({"code": "   "})))), None);
+        assert_eq!(
+            program_of(Some(&call("run_steps", json!({"code": "   "})))),
+            None
+        );
         assert_eq!(program_of(None), None);
     }
 
     #[test]
     fn program_gist_truncates_from_the_head_the_opening_lines_are_the_intent() {
-        let code = format!("// INTENT\n{}\n// FORMATTING", "x".repeat(MAX_CODE_CHARS + 500));
+        let code = format!(
+            "// INTENT\n{}\n// FORMATTING",
+            "x".repeat(MAX_CODE_CHARS + 500)
+        );
         let gist = program_gist(&code);
         assert!(gist.contains("// INTENT"));
         assert!(!gist.contains("// FORMATTING"));
@@ -374,7 +414,10 @@ mod tests {
         let r = rig(Some(Arc::new(StubTier::activity("running the test suite"))));
         r.bus.publish(run_steps("s1", "await bash('deno test')"));
         settle().await;
-        assert_eq!(r.activities(), vec![sad("s1", Some("running the test suite"))]);
+        assert_eq!(
+            r.activities(),
+            vec![sad("s1", Some("running the test suite"))]
+        );
         (r.stop)();
     }
 
@@ -389,12 +432,22 @@ mod tests {
             r.bus.publish(run_steps("s1", &format!("round {i}")));
         }
         settle().await;
-        assert_eq!(tier.calls.load(Ordering::SeqCst), 1, "eleven rounds were DROPPED, not queued");
-        assert!(r.activities().is_empty(), "nothing is published until it answers");
+        assert_eq!(
+            tier.calls.load(Ordering::SeqCst),
+            1,
+            "eleven rounds were DROPPED, not queued"
+        );
+        assert!(
+            r.activities().is_empty(),
+            "nothing is published until it answers"
+        );
 
         tier.release("running the test suite");
         settle().await;
-        assert_eq!(r.activities(), vec![sad("s1", Some("running the test suite"))]);
+        assert_eq!(
+            r.activities(),
+            vec![sad("s1", Some("running the test suite"))]
+        );
 
         // …and the slot is released, so the session is describable again.
         // This is the half that makes "drop" survivable.
@@ -410,7 +463,8 @@ mod tests {
         let tier = Arc::new(GatedTier::hang_when("busy", "listing"));
         let r = rig(Some(tier.clone()));
         for i in 0..5 {
-            r.bus.publish(run_steps("s-busy", &format!("busy round {i}")));
+            r.bus
+                .publish(run_steps("s-busy", &format!("busy round {i}")));
         }
         r.bus.publish(run_steps("s-other", "await bash('ls')"));
         settle().await;
@@ -470,11 +524,16 @@ mod tests {
         let r = rig(Some(Arc::new(Panicking)));
         let seen = Arc::new(Mutex::new(Vec::<EventType>::new()));
         let sink = seen.clone();
-        r.bus.subscribe(Arc::new(move |e: &BoughEvent| sink.lock().unwrap().push(e.r#type)));
+        r.bus.subscribe(Arc::new(move |e: &BoughEvent| {
+            sink.lock().unwrap().push(e.r#type)
+        }));
 
         r.bus.publish(run_steps("s1", "await bash('deno test')"));
         settle().await;
-        assert!(r.activities().is_empty(), "no blurb, and no error event either");
+        assert!(
+            r.activities().is_empty(),
+            "no blurb, and no error event either"
+        );
         // The listener registered after the watcher still received the round.
         assert_eq!(*seen.lock().unwrap(), vec![EventType::MessagePart]);
         (r.stop)();

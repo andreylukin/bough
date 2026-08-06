@@ -103,7 +103,11 @@ pub struct ShellOptions {
 
 impl ShellOptions {
     pub fn new(registry: Arc<JobRegistry>) -> Self {
-        ShellOptions { registry, bg_after_ms: None, sh_timeout_ms: None }
+        ShellOptions {
+            registry,
+            bg_after_ms: None,
+            sh_timeout_ms: None,
+        }
     }
 }
 
@@ -229,7 +233,10 @@ fn spawn_opts_for(ctx: &ShellCtx) -> SpawnOpts {
 }
 
 fn job_ctx_of(ctx: &ShellCtx) -> JobCtx {
-    JobCtx { session_id: ctx.session_id.clone(), workspace: ctx.workspace.clone() }
+    JobCtx {
+        session_id: ctx.session_id.clone(),
+        workspace: ctx.workspace.clone(),
+    }
 }
 
 /// The first `n` chars of `s` (TS `slice` counted UTF-16 units; the two agree
@@ -315,10 +322,10 @@ pub async fn bash(
                 let code = shell.status().map(|s| s.code).unwrap_or(0);
                 if code != 0 {
                     if let Some(exits) = &ctx.exits {
-                        exits
-                            .lock()
-                            .unwrap()
-                            .push(ExitNote { command: command.to_string(), code });
+                        exits.lock().unwrap().push(ExitNote {
+                            command: command.to_string(),
+                            code,
+                        });
                     }
                 }
                 // The memory keeps what the PROGRAM saw — head, spill marker
@@ -326,8 +333,10 @@ pub async fn bash(
                 let final_text = format_final(&shell, &RealSpillDeps);
                 // Asked BEFORE this run is recorded, so "already failed 3×"
                 // means three times before this one.
-                let echo =
-                    ctx.echo.as_ref().and_then(|e| (e.note)(command, Some(code), &final_text));
+                let echo = ctx
+                    .echo
+                    .as_ref()
+                    .and_then(|e| (e.note)(command, Some(code), &final_text));
                 if let Some(record) = &ctx.record {
                     record(crate::types::RecordedCommand {
                         command: command.to_string(),
@@ -352,7 +361,14 @@ pub async fn bash(
                 // loops, not to punish a command for being slow — so this
                 // promotion always succeeds (force).
                 let id = registry
-                    .promote(&shell, &job_ctx_of(ctx), PromoteOpts { force: true, name: None })
+                    .promote(
+                        &shell,
+                        &job_ctx_of(ctx),
+                        PromoteOpts {
+                            force: true,
+                            name: None,
+                        },
+                    )
                     .expect("forced promote always succeeds");
                 // The memory row waits for the REAL exit: a backgrounded
                 // build that fails ten minutes from now must not be
@@ -430,8 +446,11 @@ pub async fn sh_concurrent(
             ShCommand::Tagged { cmd, tag } => (cmd.clone(), normalize_tags(tag.as_deref())),
         })
         .collect();
-    futures::future::join_all(legs.into_iter().map(|(command, tags)| sh_leg(command, tags, ctx, opts)))
-        .await
+    futures::future::join_all(
+        legs.into_iter()
+            .map(|(command, tags)| sh_leg(command, tags, ctx, opts)),
+    )
+    .await
 }
 
 async fn sh_leg(command: String, tags: String, ctx: &ShellCtx, opts: &ShellOptions) -> ShResult {
@@ -442,7 +461,12 @@ async fn sh_leg(command: String, tags: String, ctx: &ShellCtx, opts: &ShellOptio
     let shell = match registry.spawn(&command, spawn_opts_for(ctx)) {
         Ok(s) => s,
         // Spawn failure (no /bin/sh). Reported, not thrown.
-        Err(err) => return ShResult { code: -1, out: format!("could not start command: {err}") },
+        Err(err) => {
+            return ShResult {
+                code: -1,
+                out: format!("could not start command: {err}"),
+            }
+        }
     };
     // The deadline: `sh` owes the caller an exit code, so past it the tree is
     // SIGKILLed rather than handed to the background registry.
@@ -470,8 +494,13 @@ async fn sh_leg(command: String, tags: String, ctx: &ShellCtx, opts: &ShellOptio
     // Retention already bounded the buffer; bound it again so the same rule
     // applies to a command whose output arrived in one burst — and so an
     // oversized `sh` leg spills to a file exactly like an oversized `bash`.
-    let sctx = SpillCtx { scratch: ctx.scratch.clone(), label: Some("sh".to_string()) };
-    let mut out = spill(&shell_text(&shell), &sctx, None, &RealSpillDeps).trim_end().to_string();
+    let sctx = SpillCtx {
+        scratch: ctx.scratch.clone(),
+        label: Some("sh".to_string()),
+    };
+    let mut out = spill(&shell_text(&shell), &sctx, None, &RealSpillDeps)
+        .trim_end()
+        .to_string();
     if timed_out.load(std::sync::atomic::Ordering::SeqCst) {
         out = format!(
             "[killed after {}s — sh has no background handoff; use bashBg(name, cmd) for a \
@@ -491,7 +520,10 @@ async fn sh_leg(command: String, tags: String, ctx: &ShellCtx, opts: &ShellOptio
     // Noted but never guarded: `sh` legs run concurrently, so the count a
     // guard would read is racing its own siblings. A loop is a `bash` shape
     // anyway.
-    let echo = ctx.echo.as_ref().and_then(|e| (e.note)(&command, Some(status.code), &out));
+    let echo = ctx
+        .echo
+        .as_ref()
+        .and_then(|e| (e.note)(&command, Some(status.code), &out));
     if let Some(record) = &ctx.record {
         record(crate::types::RecordedCommand {
             command: command.clone(),
@@ -502,7 +534,10 @@ async fn sh_leg(command: String, tags: String, ctx: &ShellCtx, opts: &ShellOptio
             spill_path: spill_path_from(&out),
         });
     }
-    ShResult { code: status.code, out: with_echo(out, echo) }
+    ShResult {
+        code: status.code,
+        out: with_echo(out, echo),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -562,7 +597,9 @@ impl ShellHostFns {
     }
 
     pub fn bash_bg(&self, name: &str, cmd: &str) -> Result<String, BoughError> {
-        self.opts.registry.bash_bg(name, cmd, &job_ctx_of(&self.ctx), true)
+        self.opts
+            .registry
+            .bash_bg(name, cmd, &job_ctx_of(&self.ctx), true)
     }
 
     pub fn bash_output(&self, id: &str) -> Result<String, BoughError> {
@@ -603,7 +640,11 @@ fn parse_sh_commands(raw: &serde_json::Value) -> Option<Vec<ShCommand>> {
 }
 
 fn sh_shape_error(raw: &serde_json::Value) -> BoughError {
-    let got = if raw.is_array() { "an array with an element that is neither" } else { js_typeof(raw) };
+    let got = if raw.is_array() {
+        "an array with an element that is neither"
+    } else {
+        js_typeof(raw)
+    };
     BoughError::program(format!(
         "sh expects command strings or {{cmd, tag}} objects; got {got}. Call it as \
          sh(\"cmd one\", \"cmd two\"), or tag legs for your command history: \
@@ -681,11 +722,19 @@ mod tests {
         }
 
         fn opts_bg(&self, bg_after_ms: u64) -> ShellOptions {
-            ShellOptions { bg_after_ms: Some(bg_after_ms), ..self.opts() }
+            ShellOptions {
+                bg_after_ms: Some(bg_after_ms),
+                ..self.opts()
+            }
         }
 
         fn event_types(&self) -> Vec<EventType> {
-            self.events.lock().unwrap().iter().map(|e| e.r#type).collect()
+            self.events
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|e| e.r#type)
+                .collect()
         }
 
         /// SIGTERM anything still running and wait, so no test leaks a process.
@@ -705,12 +754,17 @@ mod tests {
         let bus = Arc::new(Bus::new(system_clock()));
         {
             let events = events.clone();
-            bus.subscribe(Arc::new(move |e: &BoughEvent| events.lock().unwrap().push(e.clone())));
+            bus.subscribe(Arc::new(move |e: &BoughEvent| {
+                events.lock().unwrap().push(e.clone())
+            }));
         }
         let notify = {
             let notes = notes.clone();
             Arc::new(move |sid: &str, text: &str| {
-                notes.lock().unwrap().push((sid.to_string(), text.to_string()));
+                notes
+                    .lock()
+                    .unwrap()
+                    .push((sid.to_string(), text.to_string()));
             })
         };
         let registry = Arc::new(JobRegistry::with_options(JobRegistryOptions {
@@ -720,11 +774,19 @@ mod tests {
         }));
         let ctx = ShellCtx {
             session_id: session_id.to_string(),
-            workspace: std::env::current_dir().unwrap().to_string_lossy().into_owned(),
+            workspace: std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
             cancel,
             ..Default::default()
         };
-        Rig { registry, ctx, events, notes }
+        Rig {
+            registry,
+            ctx,
+            events,
+            notes,
+        }
     }
 
     /// Whether `pid` still exists. Signal 0 tests existence without delivering.
@@ -819,7 +881,11 @@ mod tests {
         )
         .await;
         has(&seen, "[running]");
-        lacks(&seen, "before", "the cursor must not hand the same output out twice");
+        lacks(
+            &seen,
+            "before",
+            "the cursor must not hand the same output out twice",
+        );
 
         let jobs = r.registry.list_jobs(&r.ctx.session_id);
         assert_eq!(jobs.len(), 1);
@@ -827,9 +893,16 @@ mod tests {
         assert_eq!(jobs[0].id, "bg_1");
         assert_eq!(r.event_types(), vec![EventType::JobSpawned]);
 
-        let killed = r.registry.bash_kill("bg_1", &r.ctx.session_id).await.unwrap();
+        let killed = r
+            .registry
+            .bash_kill("bg_1", &r.ctx.session_id)
+            .await
+            .unwrap();
         assert!(killed.starts_with("killed bg_1 ("), "{killed}");
-        assert_eq!(r.event_types(), vec![EventType::JobSpawned, EventType::JobExited]);
+        assert_eq!(
+            r.event_types(),
+            vec![EventType::JobSpawned, EventType::JobExited]
+        );
         r.cleanup().await;
     }
 
@@ -840,7 +913,10 @@ mod tests {
         // Well past the threshold, the process is still alive.
         tokio::time::sleep(Duration::from_millis(400)).await;
         assert_eq!(r.registry.running_ids(&r.ctx.session_id), vec!["bg_1"]);
-        has(&r.registry.bash_output("bg_1", &r.ctx.session_id).unwrap(), "[running]");
+        has(
+            &r.registry.bash_output("bg_1", &r.ctx.session_id).unwrap(),
+            "[running]",
+        );
         r.cleanup().await;
     }
 
@@ -851,7 +927,9 @@ mod tests {
         let r = rig();
         let jctx = job_ctx_of(&r.ctx);
         for _ in 0..8 {
-            r.registry.bash_bg("sleeper", "sleep 60", &jctx, true).unwrap();
+            r.registry
+                .bash_bg("sleeper", "sleep 60", &jctx, true)
+                .unwrap();
         }
         assert_eq!(r.registry.running_ids(&r.ctx.session_id).len(), 8);
 
@@ -865,7 +943,9 @@ mod tests {
     async fn bash_returns_output_inline_when_the_command_finishes_first() {
         let r = rig();
         assert_eq!(
-            bash("printf 'hi\\n'", &r.ctx, &r.opts_bg(5_000), "").await.unwrap(),
+            bash("printf 'hi\\n'", &r.ctx, &r.opts_bg(5_000), "")
+                .await
+                .unwrap(),
             "hi"
         );
         assert!(r.registry.list_jobs(&r.ctx.session_id).is_empty());
@@ -876,9 +956,14 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn bash_reports_a_non_zero_exit_as_data_not_as_a_throw() {
         let r = rig();
-        let out = bash("printf 'nope\\n'; exit 3", &r.ctx, &r.opts_bg(5_000), "").await.unwrap();
+        let out = bash("printf 'nope\\n'; exit 3", &r.ctx, &r.opts_bg(5_000), "")
+            .await
+            .unwrap();
         assert_eq!(out, "nope\n[exit code 3]");
-        assert_eq!(bash("exit 0", &r.ctx, &r.opts(), "").await.unwrap(), "(no output)");
+        assert_eq!(
+            bash("exit 0", &r.ctx, &r.opts(), "").await.unwrap(),
+            "(no output)"
+        );
         r.cleanup().await;
     }
 
@@ -886,12 +971,18 @@ mod tests {
     async fn a_non_zero_exit_is_pushed_onto_ctx_exits_before_the_string_returns() {
         let r = rig();
         let exits: Arc<Mutex<Vec<ExitNote>>> = Arc::new(Mutex::new(Vec::new()));
-        let ctx = ShellCtx { exits: Some(exits.clone()), ..r.ctx.clone() };
+        let ctx = ShellCtx {
+            exits: Some(exits.clone()),
+            ..r.ctx.clone()
+        };
         let out = bash("exit 3", &ctx, &r.opts_bg(5_000), "").await.unwrap();
         assert_eq!(out, "[exit code 3]");
         assert_eq!(
             *exits.lock().unwrap(),
-            vec![ExitNote { command: "exit 3".to_string(), code: 3 }]
+            vec![ExitNote {
+                command: "exit 3".to_string(),
+                code: 3
+            }]
         );
         // A clean exit records nothing.
         bash("exit 0", &ctx, &r.opts_bg(5_000), "").await.unwrap();
@@ -936,7 +1027,10 @@ mod tests {
         )
         .await;
         // What the turn runner attaches to the interrupted tool record.
-        let partial = r.registry.inflight_foreground_output(&r.ctx.session_id).unwrap();
+        let partial = r
+            .registry
+            .inflight_foreground_output(&r.ctx.session_id)
+            .unwrap();
         has(&partial, "[interrupted] bash");
         has(&partial, "partial");
 
@@ -944,7 +1038,10 @@ mod tests {
         let err = err_of(running.await.unwrap());
         has(&err.to_string(), "the turn was interrupted");
         // The foreground set empties once the call returns.
-        assert_eq!(r.registry.inflight_foreground_output(&r.ctx.session_id), None);
+        assert_eq!(
+            r.registry.inflight_foreground_output(&r.ctx.session_id),
+            None
+        );
         r.cleanup().await;
     }
 
@@ -969,12 +1066,20 @@ mod tests {
         // Two deep: `sh -c` and the `sleep` it does not forward signals to.
         until_true(
             "the shell and its sleep to appear",
-            || descendant_pids(self_pid).iter().filter(|p| !before.contains(p)).count() >= 2,
+            || {
+                descendant_pids(self_pid)
+                    .iter()
+                    .filter(|p| !before.contains(p))
+                    .count()
+                    >= 2
+            },
             10_000,
         )
         .await;
-        let spawned: Vec<i32> =
-            descendant_pids(self_pid).into_iter().filter(|p| !before.contains(p)).collect();
+        let spawned: Vec<i32> = descendant_pids(self_pid)
+            .into_iter()
+            .filter(|p| !before.contains(p))
+            .collect();
 
         cancel.cancel();
         let err = err_of(running.await.unwrap());
@@ -1006,10 +1111,22 @@ mod tests {
         assert_eq!(
             res,
             vec![
-                ShResult { code: 3, out: String::new() },
-                ShResult { code: 0, out: "ok".to_string() },
-                ShResult { code: 1, out: String::new() },
-                ShResult { code: 7, out: "err".to_string() },
+                ShResult {
+                    code: 3,
+                    out: String::new()
+                },
+                ShResult {
+                    code: 0,
+                    out: "ok".to_string()
+                },
+                ShResult {
+                    code: 1,
+                    out: String::new()
+                },
+                ShResult {
+                    code: 7,
+                    out: "err".to_string()
+                },
             ]
         );
         r.cleanup().await;
@@ -1019,14 +1136,22 @@ mod tests {
     async fn sh_reports_a_command_that_does_not_exist_rather_than_throwing() {
         let r = rig();
         let res = sh_concurrent(
-            &[ShCommand::Plain("definitely-not-a-command-xyzzy".to_string())],
+            &[ShCommand::Plain(
+                "definitely-not-a-command-xyzzy".to_string(),
+            )],
             &r.ctx,
             &r.opts(),
         )
         .await;
         assert_eq!(res.len(), 1);
-        assert_ne!(res[0].code, 0, "a missing command must report a non-zero code");
-        assert!(!res[0].out.is_empty(), "the shell's own diagnostic must reach the caller");
+        assert_ne!(
+            res[0].code, 0,
+            "a missing command must report a non-zero code"
+        );
+        assert!(
+            !res[0].out.is_empty(),
+            "the shell's own diagnostic must reach the caller"
+        );
         r.cleanup().await;
     }
 
@@ -1046,16 +1171,28 @@ mod tests {
             )
         };
         let res = sh_concurrent(
-            &[ShCommand::Plain(meet("a", "b")), ShCommand::Plain(meet("b", "a"))],
+            &[
+                ShCommand::Plain(meet("a", "b")),
+                ShCommand::Plain(meet("b", "a")),
+            ],
             &r.ctx,
-            &ShellOptions { sh_timeout_ms: Some(10_000), ..r.opts() },
+            &ShellOptions {
+                sh_timeout_ms: Some(10_000),
+                ..r.opts()
+            },
         )
         .await;
         assert_eq!(
             res,
             vec![
-                ShResult { code: 0, out: "a".to_string() },
-                ShResult { code: 0, out: "b".to_string() },
+                ShResult {
+                    code: 0,
+                    out: "a".to_string()
+                },
+                ShResult {
+                    code: 0,
+                    out: "b".to_string()
+                },
             ]
         );
         r.cleanup().await;
@@ -1066,9 +1203,14 @@ mod tests {
     async fn sh_kills_a_command_that_outlives_its_deadline_and_names_the_escape_hatch() {
         let r = rig();
         let res = sh_concurrent(
-            &[ShCommand::Plain("printf 'started\\n'; sleep 60".to_string())],
+            &[ShCommand::Plain(
+                "printf 'started\\n'; sleep 60".to_string(),
+            )],
             &r.ctx,
-            &ShellOptions { sh_timeout_ms: Some(200), ..r.opts() },
+            &ShellOptions {
+                sh_timeout_ms: Some(200),
+                ..r.opts()
+            },
         )
         .await;
         assert_eq!(res.len(), 1);
@@ -1083,7 +1225,10 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn bash_bg_returns_an_id_and_a_pid_and_publishes_job_spawned() {
         let r = rig();
-        let raw = r.registry.bash_bg("sleeper", "sleep 60", &job_ctx_of(&r.ctx), true).unwrap();
+        let raw = r
+            .registry
+            .bash_bg("sleeper", "sleep 60", &job_ctx_of(&r.ctx), true)
+            .unwrap();
         let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(v["id"], "bg_1");
         let pid = v["pid"].as_i64().unwrap();
@@ -1118,7 +1263,11 @@ mod tests {
         // The buffer merges stdout and stderr, so the shell's own redirect
         // diagnostic may ride along — what matters is which branch ran.
         has(&res[0].out, "ISOLATED");
-        lacks(&res[0].out, "LEAK", "a shell must never bypass its pipes and repaint the TUI");
+        lacks(
+            &res[0].out,
+            "LEAK",
+            "a shell must never bypass its pipes and repaint the TUI",
+        );
         r.cleanup().await;
     }
 
@@ -1139,14 +1288,20 @@ mod tests {
             "has no command to run",
         );
 
-        let raw = r.registry.bash_bg("  dev   server \n", "sleep 60", &jctx, true).unwrap();
+        let raw = r
+            .registry
+            .bash_bg("  dev   server \n", "sleep 60", &jctx, true)
+            .unwrap();
         let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
         // Normalized on the way in: this string is painted into one rail row.
         assert_eq!(v["name"], "dev server");
         let job: BackgroundJob =
             serde_json::from_value(r.events.lock().unwrap()[0].data.clone()).unwrap();
         assert_eq!(job.name, "dev server");
-        has(&r.registry.bash_output("bg_1", &r.ctx.session_id).unwrap(), "[running]");
+        has(
+            &r.registry.bash_output("bg_1", &r.ctx.session_id).unwrap(),
+            "[running]",
+        );
         r.cleanup().await;
     }
 
@@ -1156,7 +1311,9 @@ mod tests {
         // The threshold, not a decision, made this a job, so there is no
         // caller to ask for a name — the command's first words are the honest
         // answer.
-        let note = bash("NODE_ENV=test sleep 60", &r.ctx, &r.opts_bg(50), "").await.unwrap();
+        let note = bash("NODE_ENV=test sleep 60", &r.ctx, &r.opts_bg(50), "")
+            .await
+            .unwrap();
         has(&note, "moved to background as bg_1");
         has(&note, "\"sleep 60\"");
         r.cleanup().await;
@@ -1167,7 +1324,9 @@ mod tests {
         let r = rig();
         let jctx = job_ctx_of(&r.ctx);
         for _ in 0..8 {
-            r.registry.bash_bg("sleeper", "sleep 60", &jctx, true).unwrap();
+            r.registry
+                .bash_bg("sleeper", "sleep 60", &jctx, true)
+                .unwrap();
         }
         let err = err_of(r.registry.bash_bg("sleeper", "sleep 60", &jctx, true));
         assert_eq!(err.name(), "ConflictError");
@@ -1202,7 +1361,11 @@ mod tests {
             10_000,
         )
         .await;
-        lacks(&second, "one", "the cursor must not re-hand output the model already saw");
+        lacks(
+            &second,
+            "one",
+            "the cursor must not re-hand output the model already saw",
+        );
         r.cleanup().await;
     }
 
@@ -1210,14 +1373,26 @@ mod tests {
     async fn bash_wait_blocks_until_exit_returns_the_exit_line_and_suppresses_the_note() {
         let r = rig();
         r.registry
-            .bash_bg("quick failure", "printf 'done\\n'; exit 4", &job_ctx_of(&r.ctx), true)
+            .bash_bg(
+                "quick failure",
+                "printf 'done\\n'; exit 4",
+                &job_ctx_of(&r.ctx),
+                true,
+            )
             .unwrap();
-        let out = r.registry.bash_wait("bg_1", &r.ctx.session_id).await.unwrap();
+        let out = r
+            .registry
+            .bash_wait("bg_1", &r.ctx.session_id)
+            .await
+            .unwrap();
         has(&out, "done");
         has(&out, "[exited with code 4]");
         // Claimed in band — the model already has the result; nothing wakes it.
         assert!(r.notes.lock().unwrap().is_empty());
-        assert_eq!(r.event_types(), vec![EventType::JobSpawned, EventType::JobExited]);
+        assert_eq!(
+            r.event_types(),
+            vec![EventType::JobSpawned, EventType::JobExited]
+        );
         r.cleanup().await;
     }
 
@@ -1225,22 +1400,40 @@ mod tests {
     async fn an_unclaimed_noisy_exit_posts_a_note_a_silent_clean_one_does_not() {
         let r = rig();
         let jctx = job_ctx_of(&r.ctx);
-        r.registry.bash_bg("oops", "printf 'oops\\n'; exit 2", &jctx, true).unwrap();
-        until_true("the completion note", || r.notes.lock().unwrap().len() == 1, 10_000).await;
+        r.registry
+            .bash_bg("oops", "printf 'oops\\n'; exit 2", &jctx, true)
+            .unwrap();
+        until_true(
+            "the completion note",
+            || r.notes.lock().unwrap().len() == 1,
+            10_000,
+        )
+        .await;
         {
             let notes = r.notes.lock().unwrap();
             assert_eq!(notes[0].0, r.ctx.session_id);
             has(&notes[0].1, "[background] bg_1 \"oops\" finished (exit 2)");
-            has(&notes[0].1, "1 line of output. Read it with bashOutput(\"bg_1\")");
+            has(
+                &notes[0].1,
+                "1 line of output. Read it with bashOutput(\"bg_1\")",
+            );
         }
 
         // A clean, silent, fire-and-forget exit has nothing to report:
         // notifying would wake an idle session into a whole LLM turn just to
         // say "bg_2 finished". The job.exited event still carries the outcome.
-        r.registry.bash_bg("silent success", "exit 0", &jctx, true).unwrap();
+        r.registry
+            .bash_bg("silent success", "exit 0", &jctx, true)
+            .unwrap();
         until_true(
             "the second job.exited",
-            || r.event_types().iter().filter(|t| **t == EventType::JobExited).count() == 2,
+            || {
+                r.event_types()
+                    .iter()
+                    .filter(|t| **t == EventType::JobExited)
+                    .count()
+                    == 2
+            },
             10_000,
         )
         .await;
@@ -1251,10 +1444,20 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn bash_kill_reports_the_real_outcome_and_a_second_kill_reports_the_prior_exit() {
         let r = rig();
-        r.registry.bash_bg("sleeper", "sleep 60", &job_ctx_of(&r.ctx), true).unwrap();
-        let first = r.registry.bash_kill("bg_1", &r.ctx.session_id).await.unwrap();
+        r.registry
+            .bash_bg("sleeper", "sleep 60", &job_ctx_of(&r.ctx), true)
+            .unwrap();
+        let first = r
+            .registry
+            .bash_kill("bg_1", &r.ctx.session_id)
+            .await
+            .unwrap();
         assert!(first.starts_with("killed bg_1 ("), "{first}");
-        let second = r.registry.bash_kill("bg_1", &r.ctx.session_id).await.unwrap();
+        let second = r
+            .registry
+            .bash_kill("bg_1", &r.ctx.session_id)
+            .await
+            .unwrap();
         assert!(second.starts_with("bg_1 already exited"), "{second}");
         // A deliberate kill is claimed: it must not also wake the model.
         assert!(r.notes.lock().unwrap().is_empty());
@@ -1269,7 +1472,9 @@ mod tests {
         has(&empty.to_string(), "has started none");
         has(&empty.to_string(), "bashBg");
 
-        r.registry.bash_bg("sleeper", "sleep 60", &job_ctx_of(&r.ctx), true).unwrap();
+        r.registry
+            .bash_bg("sleeper", "sleep 60", &job_ctx_of(&r.ctx), true)
+            .unwrap();
         let known = err_of(r.registry.bash_output("bg_9", &r.ctx.session_id));
         has(&known.to_string(), "this session has bg_1");
         r.cleanup().await;
@@ -1278,13 +1483,18 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_session_cannot_see_or_read_another_sessions_shells() {
         let r = rig_with("sess-a", None);
-        r.registry.bash_bg("sleeper", "sleep 60", &job_ctx_of(&r.ctx), true).unwrap();
+        r.registry
+            .bash_bg("sleeper", "sleep 60", &job_ctx_of(&r.ctx), true)
+            .unwrap();
         assert!(r.registry.list_jobs("sess-b").is_empty());
         let err = err_of(r.registry.bash_output("bg_1", "sess-b"));
         assert_eq!(err.name(), "NotFoundError");
         // The jobs API, by contrast, reaches across sessions on purpose:
         // anything the UI can list it must also be able to read and kill.
-        assert_eq!(r.registry.job_output("bg_1").unwrap().1.session_id, "sess-a");
+        assert_eq!(
+            r.registry.job_output("bg_1").unwrap().1.session_id,
+            "sess-a"
+        );
         r.cleanup().await;
     }
 
@@ -1292,16 +1502,30 @@ mod tests {
     async fn job_output_does_not_steal_the_models_bash_output_cursor() {
         let r = rig();
         r.registry
-            .bash_bg("shared", "printf 'shared\\n'; sleep 60", &job_ctx_of(&r.ctx), true)
+            .bash_bg(
+                "shared",
+                "printf 'shared\\n'; sleep 60",
+                &job_ctx_of(&r.ctx),
+                true,
+            )
             .unwrap();
         until_true(
             "the UI read",
-            || r.registry.job_output("bg_1").map(|(o, _)| o).unwrap_or_default().contains("shared"),
+            || {
+                r.registry
+                    .job_output("bg_1")
+                    .map(|(o, _)| o)
+                    .unwrap_or_default()
+                    .contains("shared")
+            },
             10_000,
         )
         .await;
         // A human looked; the model has still never read this shell.
-        has(&r.registry.bash_output("bg_1", &r.ctx.session_id).unwrap(), "shared");
+        has(
+            &r.registry.bash_output("bg_1", &r.ctx.session_id).unwrap(),
+            "shared",
+        );
         r.cleanup().await;
     }
 
@@ -1309,17 +1533,30 @@ mod tests {
     async fn kill_jobs_of_stops_one_sessions_shells_and_kill_all_takes_the_rest() {
         let r = rig_with("sess-a", None);
         let a = job_ctx_of(&r.ctx);
-        let b = JobCtx { session_id: "sess-b".to_string(), workspace: r.ctx.workspace.clone() };
+        let b = JobCtx {
+            session_id: "sess-b".to_string(),
+            workspace: r.ctx.workspace.clone(),
+        };
         r.registry.bash_bg("sleeper", "sleep 60", &a, true).unwrap();
         r.registry.bash_bg("sleeper", "sleep 60", &a, true).unwrap();
         r.registry.bash_bg("sleeper", "sleep 60", &b, true).unwrap();
         assert_eq!(r.registry.kill_jobs_of("sess-a"), 2);
-        until_true("both exits", || r.registry.running_ids("sess-a").is_empty(), 10_000).await;
+        until_true(
+            "both exits",
+            || r.registry.running_ids("sess-a").is_empty(),
+            10_000,
+        )
+        .await;
         assert_eq!(r.registry.running_ids("sess-b").len(), 1);
         // Server shutdown: a silent shell survives SIGPIPE and must be killed
         // explicitly.
         assert_eq!(r.registry.kill_all(), 1);
-        until_true("the last exit", || r.registry.running_ids("sess-b").is_empty(), 10_000).await;
+        until_true(
+            "the last exit",
+            || r.registry.running_ids("sess-b").is_empty(),
+            10_000,
+        )
+        .await;
         r.cleanup().await;
     }
 
@@ -1328,14 +1565,22 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_shells_retained_buffer_keeps_the_head_when_output_overruns_the_budget() {
         let registry = Arc::new(JobRegistry::with_options(JobRegistryOptions {
-            limits: TruncateLimits { head: Some(40), tail: Some(40) },
+            limits: TruncateLimits {
+                head: Some(40),
+                tail: Some(40),
+            },
             ..Default::default()
         }));
         let shell = registry
             .spawn(
                 MANY_LINES,
                 SpawnOpts {
-                    cwd: Some(std::env::current_dir().unwrap().to_string_lossy().into_owned()),
+                    cwd: Some(
+                        std::env::current_dir()
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned(),
+                    ),
                     ..Default::default()
                 },
             )
@@ -1346,8 +1591,14 @@ mod tests {
         // The head is the FIRST bytes the command printed, not the last — a
         // rolling buffer that dropped the oldest would silently rewrite what
         // was already seen.
-        assert!(text.starts_with("line1\n"), "expected the verbatim head, got:\n{text}");
-        assert!(text.trim_end().ends_with("line200"), "expected the verbatim tail, got:\n{text}");
+        assert!(
+            text.starts_with("line1\n"),
+            "expected the verbatim head, got:\n{text}"
+        );
+        assert!(
+            text.trim_end().ends_with("line200"),
+            "expected the verbatim tail, got:\n{text}"
+        );
         has(&text, "chars omitted from the middle");
         lacks(&text, "line100", "the middle is what gets omitted");
     }
@@ -1355,12 +1606,18 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn bash_output_reports_the_hole_when_unread_output_falls_out_of_retention() {
         let registry = Arc::new(JobRegistry::with_options(JobRegistryOptions {
-            limits: TruncateLimits { head: Some(20), tail: Some(20) },
+            limits: TruncateLimits {
+                head: Some(20),
+                tail: Some(20),
+            },
             ..Default::default()
         }));
         let ctx = JobCtx {
             session_id: "sess-hole".to_string(),
-            workspace: std::env::current_dir().unwrap().to_string_lossy().into_owned(),
+            workspace: std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
         };
         registry.bash_bg("noisy", MANY_LINES, &ctx, true).unwrap();
         let seen = registry.bash_wait("bg_1", &ctx.session_id).await.unwrap();
@@ -1383,9 +1640,18 @@ mod tests {
         assert_eq!(
             res,
             vec![
-                ShResult { code: 0, out: "a".to_string() },
-                ShResult { code: 5, out: String::new() },
-                ShResult { code: 0, out: "c".to_string() },
+                ShResult {
+                    code: 0,
+                    out: "a".to_string()
+                },
+                ShResult {
+                    code: 5,
+                    out: String::new()
+                },
+                ShResult {
+                    code: 0,
+                    out: "c".to_string()
+                },
             ]
         );
         r.cleanup().await;
@@ -1407,7 +1673,9 @@ mod tests {
     async fn the_bridged_job_verbs_round_trip_through_the_registry() {
         let r = rig();
         let host = create_shell_host_fns(r.ctx.clone(), r.opts());
-        let raw = host.bash_bg("bridge check", "printf 'bridged\\n'; exit 0").unwrap();
+        let raw = host
+            .bash_bg("bridge check", "printf 'bridged\\n'; exit 0")
+            .unwrap();
         let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(v["id"], "bg_1");
         let waited = host.bash_wait("bg_1").await.unwrap();
@@ -1432,18 +1700,32 @@ mod tests {
             .await
             .unwrap();
         let res: Vec<ShResult> = serde_json::from_str(&out).unwrap();
-        assert_eq!(res, vec![ShResult { code: 0, out: "sess-42".to_string() }]);
+        assert_eq!(
+            res,
+            vec![ShResult {
+                code: 0,
+                out: "sess-42".to_string()
+            }]
+        );
 
         let dir = temp_dir("bough-scratch");
-        let scratch_ctx =
-            ShellCtx { scratch: Some(dir.to_string_lossy().into_owned()), ..r.ctx.clone() };
+        let scratch_ctx = ShellCtx {
+            scratch: Some(dir.to_string_lossy().into_owned()),
+            ..r.ctx.clone()
+        };
         let host = create_shell_host_fns(scratch_ctx, r.opts());
         let out = host
             .sh(&serde_json::json!(["printf \"%s\" \"$BOUGH_SCRATCH\""]).to_string())
             .await
             .unwrap();
         let res: Vec<ShResult> = serde_json::from_str(&out).unwrap();
-        assert_eq!(res, vec![ShResult { code: 0, out: dir.to_string_lossy().into_owned() }]);
+        assert_eq!(
+            res,
+            vec![ShResult {
+                code: 0,
+                out: dir.to_string_lossy().into_owned()
+            }]
+        );
         r.cleanup().await;
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1457,7 +1739,10 @@ mod tests {
         for missing in [None, Some(""), Some("   "), Some(":::")] {
             let err = err_of(host.bash("printf hi", missing).await);
             assert_eq!(err.name(), "ProgramError");
-            has(&err.to_string(), "bash(\"git push origin main\", \"git:push:main\")");
+            has(
+                &err.to_string(),
+                "bash(\"git push origin main\", \"git:push:main\")",
+            );
         }
         r.cleanup().await;
     }
@@ -1474,7 +1759,10 @@ mod tests {
         assert_eq!(rows[0].command, "printf ok");
         assert_eq!(rows[0].tags, "git:push");
         assert_eq!(rows[0].exit_code, Some(0));
-        assert!(rows[0].duration_ms.is_some_and(|d| d >= 0), "duration is measured");
+        assert!(
+            rows[0].duration_ms.is_some_and(|d| d >= 0),
+            "duration is measured"
+        );
         assert_eq!(rows[1].exit_code, Some(3));
         r.cleanup().await;
     }
@@ -1484,13 +1772,20 @@ mod tests {
         let r = rig();
         let (ctx, recorded) = recording(&r.ctx);
         sh_concurrent(
-            &[ShCommand::Plain("printf a".to_string()), ShCommand::Plain("exit 7".to_string())],
+            &[
+                ShCommand::Plain("printf a".to_string()),
+                ShCommand::Plain("exit 7".to_string()),
+            ],
             &ctx,
             &r.opts(),
         )
         .await;
-        let rows: Vec<(String, Option<i64>)> =
-            recorded.lock().unwrap().iter().map(|e| (e.tags.clone(), e.exit_code)).collect();
+        let rows: Vec<(String, Option<i64>)> = recorded
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| (e.tags.clone(), e.exit_code))
+            .collect();
         assert_eq!(
             rows,
             vec![(String::new(), Some(0)), (String::new(), Some(7))]
@@ -1502,7 +1797,9 @@ mod tests {
     async fn an_auto_backgrounded_bash_records_the_real_exit_not_the_handoff() {
         let r = rig();
         let (ctx, recorded) = recording(&r.ctx);
-        let out = bash("sleep 0.3; exit 9", &ctx, &r.opts_bg(30), "").await.unwrap();
+        let out = bash("sleep 0.3; exit 9", &ctx, &r.opts_bg(30), "")
+            .await
+            .unwrap();
         has(&out, "moved to background");
         assert_eq!(
             recorded.lock().unwrap().len(),
@@ -1537,13 +1834,26 @@ mod tests {
         assert_eq!(
             res,
             vec![
-                ShResult { code: 0, out: "a".to_string() },
-                ShResult { code: 4, out: String::new() },
-                ShResult { code: 0, out: "plain".to_string() },
+                ShResult {
+                    code: 0,
+                    out: "a".to_string()
+                },
+                ShResult {
+                    code: 4,
+                    out: String::new()
+                },
+                ShResult {
+                    code: 0,
+                    out: "plain".to_string()
+                },
             ]
         );
-        let mut rows: Vec<(String, Option<i64>)> =
-            recorded.lock().unwrap().iter().map(|e| (e.tags.clone(), e.exit_code)).collect();
+        let mut rows: Vec<(String, Option<i64>)> = recorded
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| (e.tags.clone(), e.exit_code))
+            .collect();
         rows.sort();
         assert_eq!(
             rows,
@@ -1570,16 +1880,30 @@ mod tests {
         let dir = temp_dir("bough-spillrec");
         let r = rig();
         let (base, recorded) = recording(&r.ctx);
-        let ctx = ShellCtx { scratch: Some(dir.to_string_lossy().into_owned()), ..base };
+        let ctx = ShellCtx {
+            scratch: Some(dir.to_string_lossy().into_owned()),
+            ..base
+        };
         let host = create_shell_host_fns(ctx, r.opts());
-        host.bash("printf hello-there", Some("smoke:out")).await.unwrap();
+        host.bash("printf hello-there", Some("smoke:out"))
+            .await
+            .unwrap();
         // 30k chars: over the spill bound, so the head keeps the marker's path.
-        host.bash("yes x | head -c 30000", Some("smoke:spill")).await.unwrap();
+        host.bash("yes x | head -c 30000", Some("smoke:spill"))
+            .await
+            .unwrap();
         let rows = recorded.lock().unwrap().clone();
-        assert!(rows[0].output_head.starts_with("hello-there"), "{}", rows[0].output_head);
+        assert!(
+            rows[0].output_head.starts_with("hello-there"),
+            "{}",
+            rows[0].output_head
+        );
         assert_eq!(rows[0].spill_path, None);
         assert!(
-            rows[1].spill_path.as_deref().is_some_and(|p| p.starts_with(&*dir.to_string_lossy())),
+            rows[1]
+                .spill_path
+                .as_deref()
+                .is_some_and(|p| p.starts_with(&*dir.to_string_lossy())),
             "spill path in {:?}",
             rows[1].spill_path
         );
@@ -1600,7 +1924,10 @@ mod tests {
             ..r.ctx.clone()
         };
         let host = create_shell_host_fns(ctx, r.opts());
-        let out = host.bash("printf boom; exit 1", Some("smoke:echo")).await.unwrap();
+        let out = host
+            .bash("printf boom; exit 1", Some("smoke:echo"))
+            .await
+            .unwrap();
         has(&out, "boom");
         has(&out, "[history] seen this before");
         assert!(

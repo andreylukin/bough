@@ -76,8 +76,10 @@ pub fn lineage_root(db: &dyn Db, session_id: &str) -> Result<String, BoughError>
         let Some(root) = chain.first() else {
             return Ok(id);
         };
-        let delegated =
-            matches!(root.kind, SessionKind::Subagent | SessionKind::WorkflowAgent);
+        let delegated = matches!(
+            root.kind,
+            SessionKind::Subagent | SessionKind::WorkflowAgent
+        );
         if delegated {
             if let Some(origin) = &root.origin_id {
                 if !seen.contains(origin) {
@@ -228,7 +230,10 @@ pub fn state_verb(
 
         _ => Err(state_error(
             400,
-            format!("state: unknown verb \"{verb}\" — it is one of {}.", STATE_VERBS.join(", ")),
+            format!(
+                "state: unknown verb \"{verb}\" — it is one of {}.",
+                STATE_VERBS.join(", ")
+            ),
         )),
     }
 }
@@ -263,13 +268,20 @@ pub struct StateHostFn {
 
 /// Build `state(verb, argsJson)` for one turn.
 pub fn create_state_host_fn(ctx: &TurnCtx, deps: StateDeps) -> StateHostFn {
-    StateHostFn { ctx: ctx.clone(), deps }
+    StateHostFn {
+        ctx: ctx.clone(),
+        deps,
+    }
 }
 
 impl StateHostFn {
     pub fn state(&self, verb: &str, args_json: &str) -> Result<String, BoughError> {
         let args = parse_args(verb, args_json)?;
-        let now: Clock = self.deps.now.clone().unwrap_or_else(|| self.ctx.app.now.clone());
+        let now: Clock = self
+            .deps
+            .now
+            .clone()
+            .unwrap_or_else(|| self.ctx.app.now.clone());
         let db = self.ctx.app.db.lock().unwrap();
         let root_id = match &self.deps.root_id {
             Some(pinned) => pinned.clone(),
@@ -280,7 +292,8 @@ impl StateHostFn {
         // is the typed rows in declaration order ({key, bytes, updatedAt}) —
         // a `Value` round-trip would alphabetize the keys.
         if verb == "list" {
-            if let Ok(rows) = serde_json::from_value::<Vec<crate::types::StateEntry>>(result.clone())
+            if let Ok(rows) =
+                serde_json::from_value::<Vec<crate::types::StateEntry>>(result.clone())
             {
                 return Ok(serde_json::to_string(&rows).unwrap_or_else(|_| result.to_string()));
             }
@@ -434,7 +447,10 @@ mod tests {
     #[test]
     fn get_set_list_delete_round_trip_any_json() {
         let db = mem();
-        assert_eq!(verb(&db, "root", "get", json!("todo")).unwrap(), Value::Null);
+        assert_eq!(
+            verb(&db, "root", "get", json!("todo")).unwrap(),
+            Value::Null
+        );
 
         let set = verb_at(
             &db,
@@ -459,7 +475,12 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["key"], json!("todo"));
         assert_eq!(rows[0]["updatedAt"], json!(1_000));
-        let mut keys: Vec<&str> = rows[0].as_object().unwrap().keys().map(String::as_str).collect();
+        let mut keys: Vec<&str> = rows[0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
         keys.sort();
         assert_eq!(keys.join(","), "bytes,key,updatedAt");
 
@@ -472,13 +493,19 @@ mod tests {
             verb(&db, "root", "delete", json!("todo")).unwrap(),
             json!({"ok": true, "key": "todo", "removed": false})
         );
-        assert_eq!(verb(&db, "root", "get", json!("todo")).unwrap(), Value::Null);
+        assert_eq!(
+            verb(&db, "root", "get", json!("todo")).unwrap(),
+            Value::Null
+        );
     }
 
     #[test]
     fn an_unset_key_reads_as_null_not_an_error() {
         let db = mem();
-        assert_eq!(verb(&db, "root", "get", json!("never-written")).unwrap(), Value::Null);
+        assert_eq!(
+            verb(&db, "root", "get", json!("never-written")).unwrap(),
+            Value::Null
+        );
         // A stored null is indistinguishable from unset, and that is fine:
         // both mean "nothing useful here".
         verb(&db, "root", "set", json!({"key": "k", "value": null})).unwrap();
@@ -508,7 +535,14 @@ mod tests {
         verb(&db, "a", "set", json!({"key": "k", "value": 3})).unwrap();
         assert_eq!(verb(&db, "a", "get", json!("k")).unwrap(), json!(3));
         assert_eq!(verb(&db, "b", "get", json!("k")).unwrap(), json!(2));
-        assert_eq!(verb(&db, "a", "list", Value::Null).unwrap().as_array().unwrap().len(), 1);
+        assert_eq!(
+            verb(&db, "a", "list", Value::Null)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     // ---- scope — the acceptance criterion -----------------------------------
@@ -521,8 +555,13 @@ mod tests {
             db.create_session(session("root1")).unwrap();
             // A fork is parented at the target's parent, so it shares every
             // ancestor.
-            db.create_session(session_kind("fork1", SessionKind::Fork, Some("root1"), Some("root1")))
-                .unwrap();
+            db.create_session(session_kind(
+                "fork1",
+                SessionKind::Fork,
+                Some("root1"),
+                Some("root1"),
+            ))
+            .unwrap();
         }
 
         let parent = create_state_host_fn(
@@ -534,14 +573,25 @@ mod tests {
             StateDeps::default(),
         );
 
-        parent.state("set", &json!({"key": "ported", "value": ["a.ts"]}).to_string()).unwrap();
+        parent
+            .state(
+                "set",
+                &json!({"key": "ported", "value": ["a.ts"]}).to_string(),
+            )
+            .unwrap();
         // The fork sees what the parent wrote…
         assert_eq!(fork.state("get", "\"ported\"").unwrap(), "[\"a.ts\"]");
         // …and writing from the fork is visible to the parent. One store, one
         // lineage.
-        fork.state("set", &json!({"key": "ported", "value": ["a.ts", "b.ts"]}).to_string())
-            .unwrap();
-        assert_eq!(parent.state("get", "\"ported\"").unwrap(), "[\"a.ts\",\"b.ts\"]");
+        fork.state(
+            "set",
+            &json!({"key": "ported", "value": ["a.ts", "b.ts"]}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            parent.state("get", "\"ported\"").unwrap(),
+            "[\"a.ts\",\"b.ts\"]"
+        );
 
         // Both resolve to the same scope, which is what makes the above true
         // rather than a coincidence of two writes landing in two stores that
@@ -555,10 +605,20 @@ mod tests {
     fn a_compaction_child_and_a_deep_fork_chain_resolve_to_the_same_root() {
         let db = mem();
         db.create_session(session("root1")).unwrap();
-        db.create_session(session_kind("f1", SessionKind::Fork, Some("root1"), Some("root1")))
-            .unwrap();
-        db.create_session(session_kind("c1", SessionKind::Compaction, Some("f1"), Some("f1")))
-            .unwrap();
+        db.create_session(session_kind(
+            "f1",
+            SessionKind::Fork,
+            Some("root1"),
+            Some("root1"),
+        ))
+        .unwrap();
+        db.create_session(session_kind(
+            "c1",
+            SessionKind::Compaction,
+            Some("f1"),
+            Some("f1"),
+        ))
+        .unwrap();
         assert_eq!(lineage_root(&db, "c1").unwrap(), "root1");
     }
 
@@ -570,8 +630,13 @@ mod tests {
             db.create_session(session("root1")).unwrap();
             // What `agents/subagent` creates: a fresh, task-only thread
             // (`parentId: null`) whose only link upward is the lineage edge.
-            db.create_session(session_kind("sub1", SessionKind::Subagent, None, Some("root1")))
-                .unwrap();
+            db.create_session(session_kind(
+                "sub1",
+                SessionKind::Subagent,
+                None,
+                Some("root1"),
+            ))
+            .unwrap();
             assert_eq!(lineage_root(&*db, "sub1").unwrap(), "root1");
         }
 
@@ -584,20 +649,42 @@ mod tests {
             StateDeps::default(),
         );
         spawner
-            .state("set", &json!({"key": "plan", "value": "port files 1-40"}).to_string())
+            .state(
+                "set",
+                &json!({"key": "plan", "value": "port files 1-40"}).to_string(),
+            )
             .unwrap();
-        assert_eq!(child.state("get", "\"plan\"").unwrap(), "\"port files 1-40\"");
+        assert_eq!(
+            child.state("get", "\"plan\"").unwrap(),
+            "\"port files 1-40\""
+        );
     }
 
     #[test]
     fn a_workflow_agent_and_a_subagent_of_a_fork_both_reach_the_lineage_root() {
         let db = mem();
         db.create_session(session("root1")).unwrap();
-        db.create_session(session_kind("f1", SessionKind::Fork, Some("root1"), Some("root1")))
-            .unwrap();
-        db.create_session(session_kind("sub1", SessionKind::Subagent, None, Some("f1"))).unwrap();
-        db.create_session(session_kind("wa1", SessionKind::WorkflowAgent, None, Some("f1")))
-            .unwrap();
+        db.create_session(session_kind(
+            "f1",
+            SessionKind::Fork,
+            Some("root1"),
+            Some("root1"),
+        ))
+        .unwrap();
+        db.create_session(session_kind(
+            "sub1",
+            SessionKind::Subagent,
+            None,
+            Some("f1"),
+        ))
+        .unwrap();
+        db.create_session(session_kind(
+            "wa1",
+            SessionKind::WorkflowAgent,
+            None,
+            Some("f1"),
+        ))
+        .unwrap();
         assert_eq!(lineage_root(&db, "sub1").unwrap(), "root1");
         assert_eq!(lineage_root(&db, "wa1").unwrap(), "root1");
     }
@@ -608,8 +695,10 @@ mod tests {
         // A session whose origin points back at a descendant: a bad write, not
         // a shape the system creates. It must terminate, not hang every state
         // call in the process.
-        db.create_session(session_kind("x", SessionKind::Subagent, None, Some("y"))).unwrap();
-        db.create_session(session_kind("y", SessionKind::Subagent, None, Some("x"))).unwrap();
+        db.create_session(session_kind("x", SessionKind::Subagent, None, Some("y")))
+            .unwrap();
+        db.create_session(session_kind("y", SessionKind::Subagent, None, Some("x")))
+            .unwrap();
         let root = lineage_root(&db, "x").unwrap();
         assert!(root == "x" || root == "y");
         // An unknown session is its own root — the only answer available.
@@ -622,11 +711,20 @@ mod tests {
     fn ac_a_value_over_16kb_is_rejected_and_nothing_is_stored() {
         let db = mem();
         let oversized = "x".repeat(MAX_VALUE_BYTES); // + 2 quote bytes once serialized
-        let err = verb(&db, "root", "set", json!({"key": "log", "value": oversized})).unwrap_err();
+        let err = verb(
+            &db,
+            "root",
+            "set",
+            json!({"key": "log", "value": oversized}),
+        )
+        .unwrap_err();
         assert_eq!(err.status(), 400);
         assert_eq!(err.name(), "StateError");
         assert!(err.to_string().contains("too large"), "{err}");
-        assert!(err.to_string().contains(&MAX_VALUE_BYTES.to_string()), "{err}");
+        assert!(
+            err.to_string().contains(&MAX_VALUE_BYTES.to_string()),
+            "{err}"
+        );
         // The message must say what to do instead, not merely that it failed.
         assert!(err.to_string().contains("file"), "{err}");
         // Rejected, never truncated: a shortened note is a wrong note.
@@ -654,20 +752,49 @@ mod tests {
     fn the_key_cap_refuses_a_201st_key_but_still_lets_an_existing_one_be_rewritten() {
         let db = mem();
         for i in 0..MAX_KEYS {
-            verb(&db, "root", "set", json!({"key": format!("k{i}"), "value": i})).unwrap();
+            verb(
+                &db,
+                "root",
+                "set",
+                json!({"key": format!("k{i}"), "value": i}),
+            )
+            .unwrap();
         }
-        let err =
-            verb(&db, "root", "set", json!({"key": "one-too-many", "value": 1})).unwrap_err();
+        let err = verb(
+            &db,
+            "root",
+            "set",
+            json!({"key": "one-too-many", "value": 1}),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("too many keys"), "{err}");
         assert!(err.to_string().contains("state.delete"), "{err}");
         // A lineage at the cap must still be able to correct itself, or it is
         // bricked.
-        verb(&db, "root", "set", json!({"key": "k0", "value": "rewritten"})).unwrap();
-        assert_eq!(verb(&db, "root", "get", json!("k0")).unwrap(), json!("rewritten"));
+        verb(
+            &db,
+            "root",
+            "set",
+            json!({"key": "k0", "value": "rewritten"}),
+        )
+        .unwrap();
+        assert_eq!(
+            verb(&db, "root", "get", json!("k0")).unwrap(),
+            json!("rewritten")
+        );
         // …and freeing a slot lets a new key in.
         verb(&db, "root", "delete", json!("k1")).unwrap();
-        verb(&db, "root", "set", json!({"key": "one-too-many", "value": 1})).unwrap();
-        assert_eq!(verb(&db, "root", "get", json!("one-too-many")).unwrap(), json!(1));
+        verb(
+            &db,
+            "root",
+            "set",
+            json!({"key": "one-too-many", "value": 1}),
+        )
+        .unwrap();
+        assert_eq!(
+            verb(&db, "root", "get", json!("one-too-many")).unwrap(),
+            json!(1)
+        );
     }
 
     // ---- argument errors — the text is a product surface --------------------
@@ -680,17 +807,28 @@ mod tests {
         assert!(empty.to_string().contains("state.get"), "{empty}");
 
         assert!(verb(&db, "root", "get", json!({"key": 42})).is_err());
-        let long =
-            verb(&db, "root", "set", json!({"key": "x".repeat(500), "value": 1})).unwrap_err();
+        let long = verb(
+            &db,
+            "root",
+            "set",
+            json!({"key": "x".repeat(500), "value": 1}),
+        )
+        .unwrap_err();
         assert!(long.to_string().contains("key too long"), "{long}");
 
         let missing = verb(&db, "root", "set", json!({"key": "k"})).unwrap_err();
-        assert!(missing.to_string().contains("value is required"), "{missing}");
+        assert!(
+            missing.to_string().contains("value is required"),
+            "{missing}"
+        );
         assert!(missing.to_string().contains("state.delete"), "{missing}");
 
         let unknown = verb(&db, "root", "nope", Value::Null).unwrap_err();
         assert!(unknown.to_string().contains("unknown verb"), "{unknown}");
-        assert!(unknown.to_string().contains("get, set, list, delete"), "{unknown}");
+        assert!(
+            unknown.to_string().contains("get, set, list, delete"),
+            "{unknown}"
+        );
     }
 
     #[test]
@@ -708,7 +846,11 @@ mod tests {
     #[test]
     fn the_host_fn_is_string_in_string_out_and_an_unset_key_comes_back_as_null() {
         let shared: SharedDb = Arc::new(Mutex::new(mem()));
-        shared.lock().unwrap().create_session(session("s1")).unwrap();
+        shared
+            .lock()
+            .unwrap()
+            .create_session(session("s1"))
+            .unwrap();
         let fns =
             create_state_host_fn(&turn_ctx(shared, "s1", frozen(5_000)), StateDeps::default());
 
@@ -719,23 +861,34 @@ mod tests {
         assert_eq!(fns.state("get", "\"nope\"").unwrap(), "null");
         assert_eq!(fns.state("list", "null").unwrap(), "[]");
 
-        fns.state("set", &json!({"key": "k", "value": {"a": 1}}).to_string()).unwrap();
+        fns.state("set", &json!({"key": "k", "value": {"a": 1}}).to_string())
+            .unwrap();
         assert_eq!(fns.state("get", "\"k\"").unwrap(), "{\"a\":1}");
 
         // `state.list()` sends no arguments at all in some shapes; an empty
         // string must not be a parse failure.
-        assert_eq!(fns.state("list", "").unwrap(), "[{\"key\":\"k\",\"bytes\":7,\"updatedAt\":5000}]");
+        assert_eq!(
+            fns.state("list", "").unwrap(),
+            "[{\"key\":\"k\",\"bytes\":7,\"updatedAt\":5000}]"
+        );
     }
 
     #[test]
     fn the_host_fn_rejects_rather_than_throwing_junk_at_the_program() {
         let shared: SharedDb = Arc::new(Mutex::new(mem()));
-        shared.lock().unwrap().create_session(session("s1")).unwrap();
+        shared
+            .lock()
+            .unwrap()
+            .create_session(session("s1"))
+            .unwrap();
         let fns =
             create_state_host_fn(&turn_ctx(shared, "s1", frozen(5_000)), StateDeps::default());
         let bad = fns.state("get", "{not json").unwrap_err();
         assert_eq!(bad.name(), "StateError");
-        assert!(bad.to_string().contains("could not be read as JSON"), "{bad}");
+        assert!(
+            bad.to_string().contains("could not be read as JSON"),
+            "{bad}"
+        );
         let unknown = fns.state("frobnicate", "null").unwrap_err();
         assert_eq!(unknown.name(), "StateError");
     }
@@ -745,9 +898,13 @@ mod tests {
         let shared: SharedDb = Arc::new(Mutex::new(mem()));
         let fns = create_state_host_fn(
             &turn_ctx(shared.clone(), "whatever", frozen(0)),
-            StateDeps { root_id: Some("pinned".to_string()), now: Some(frozen(777)) },
+            StateDeps {
+                root_id: Some("pinned".to_string()),
+                now: Some(frozen(777)),
+            },
         );
-        fns.state("set", &json!({"key": "k", "value": 1}).to_string()).unwrap();
+        fns.state("set", &json!({"key": "k", "value": 1}).to_string())
+            .unwrap();
         let db = shared.lock().unwrap();
         assert_eq!(verb(&*db, "pinned", "get", json!("k")).unwrap(), json!(1));
         let list = verb(&*db, "pinned", "list", Value::Null).unwrap();

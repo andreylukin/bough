@@ -146,13 +146,21 @@ Minor-version drift is fine; major-version bumps need a note in this file. Notes
   Port `ansiSpans` first in `bough-tui::ansi` and do width/truncate/wrap/slice **over
   parsed spans**; OSC 8 links are zero-width in all of them. `ansi.rs` is also the
   bridge to ratatui (`Vec<AnsiSpan> -> Line<'_>`).
-- **sqlite-vec / sqlite-lembed (embeddings)**: **stubbed in v1.**
-  `create_embed_layer()` returns `None` — graceful absence is the documented contract
-  (macOS-without-Homebrew is already this state in TS); tags + FTS carry recall alone,
-  and `bough tags similar` exits 1 with the existing message. When ported (wave 3+):
-  `sqlite-vec` crate statically registered; lembed either dylib-loaded or replaced by
-  in-process embedding (`fastembed`) writing vectors directly — separate
-  `embeddings.db` + ATTACH + count-delta drain + model-id rebuild semantics kept.
+- **sqlite-vec / sqlite-lembed (embeddings)**: **ported (row 3.17)**, in
+  `bough-core::db::embed` with the drain pump in `history::tags::embed`.
+  `sqlite-vec` is the crate, **statically registered** via `sqlite3_auto_extension` —
+  no dylib, no install step. **lembed is dylib-loaded** from `$BOUGH_LEMBED_PATH`, else
+  `~/.bough/lib/lembed0.{dylib,so,dll}` (copy it out of the npm
+  `sqlite-lembed-<os>-<arch>` package, or build asg017/sqlite-lembed). `fastembed` was
+  the alternative and is NOT used: it is a different embedding pipeline from the one the
+  TS install has been filling `~/.bough/embeddings.db` with, so the model-id check would
+  throw that store away — the dylib keeps the same GGUF and the same SQL, and cutover is
+  a no-op (verified: same `embed_meta` model id, no rebuild, identical KNN rows and
+  distances as `bough tags similar` in TS). Separate `embeddings.db` + ATTACH +
+  count-delta drain + probed dims + model-id rebuild all kept. Absent lembed or
+  `BOUGH_NO_EMBED` → `create_embed_layer()` returns `None`; graceful absence is the
+  documented contract, tags + FTS carry recall alone, and `bough tags similar` exits 1
+  with the existing message.
 - **Sidecar JS runtime**: Bun if present on PATH, else Node ≥ 20 (see §4). Not a
   Cargo dependency; the two worker scripts ship via `include_str!` and are written to
   `~/.bough/bin/` (or a cache dir) at first use.

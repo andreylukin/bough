@@ -56,7 +56,9 @@ pub fn live_text<'a>(state: &'a TuiState, message_id: &str) -> &'a str {
 
 /// The marks belonging to one session, oldest first — what the transcript interleaves.
 pub fn marks_for<'a>(state: &'a TuiState, session_id: Option<&str>) -> Vec<&'a TranscriptMark> {
-    let Some(id) = session_id else { return Vec::new() };
+    let Some(id) = session_id else {
+        return Vec::new();
+    };
     state.marks.iter().filter(|m| m.session_id == id).collect()
 }
 
@@ -72,8 +74,11 @@ pub fn current_ask<'a>(
     let mut mine: HashSet<&str> = HashSet::new();
     mine.insert(current);
     mine.extend(descendants.iter().copied());
-    let by_id: HashMap<&str, &super::state::TuiSessionRow> =
-        state.sessions.iter().map(|s| (s.row.session.id.as_str(), s)).collect();
+    let by_id: HashMap<&str, &super::state::TuiSessionRow> = state
+        .sessions
+        .iter()
+        .map(|s| (s.row.session.id.as_str(), s))
+        .collect();
     let belongs = |session_id: &str| -> bool {
         let mut seen: HashSet<&str> = HashSet::new();
         let mut cur = Some(session_id);
@@ -138,8 +143,10 @@ pub fn live_units(
     schedules: &[Schedule],
     now: i64,
 ) -> Vec<LiveUnit> {
-    let mut shells: Vec<&BackgroundJob> =
-        jobs.iter().filter(|j| j.status == JobStatus::Running).collect();
+    let mut shells: Vec<&BackgroundJob> = jobs
+        .iter()
+        .filter(|j| j.status == JobStatus::Running)
+        .collect();
     shells.sort_by_key(|j| j.started_at);
     let mut out: Vec<LiveUnit> = shells
         .into_iter()
@@ -164,7 +171,11 @@ pub fn live_units(
         kind: LiveUnitKind::Subagent,
         id: s.session.id.clone(),
         session_id: s.session.id.clone(),
-        title: one_line(if s.session.title.is_empty() { "subagent" } else { &s.session.title }),
+        title: one_line(if s.session.title.is_empty() {
+            "subagent"
+        } else {
+            &s.session.title
+        }),
         elapsed_ms: (now - s.session.created_at).max(0),
         tokens: s.tokens,
         cost_usd: s.cost_usd,
@@ -181,7 +192,11 @@ pub fn live_units(
         kind: LiveUnitKind::Workflow,
         id: w.id.clone(),
         session_id: w.id.clone(),
-        title: one_line(if w.name.is_empty() { "workflow" } else { &w.name }),
+        title: one_line(if w.name.is_empty() {
+            "workflow"
+        } else {
+            &w.name
+        }),
         elapsed_ms: (now - w.created_at).max(0),
         tokens: None,
         cost_usd: None,
@@ -192,7 +207,10 @@ pub fn live_units(
             None
         },
         detail: if w.status == WorkflowStatus::Paused {
-            Some(format!("paused · {}", w.current_phase.as_deref().unwrap_or("no phase")))
+            Some(format!(
+                "paused · {}",
+                w.current_phase.as_deref().unwrap_or("no phase")
+            ))
         } else {
             w.current_phase.clone()
         },
@@ -207,7 +225,11 @@ pub fn live_units(
         kind: LiveUnitKind::Schedule,
         id: s.id.clone(),
         session_id: s.id.clone(),
-        title: one_line(if s.title.is_empty() { &s.prompt } else { &s.title }),
+        title: one_line(if s.title.is_empty() {
+            &s.prompt
+        } else {
+            &s.title
+        }),
         // Countdown, deliberately unclamped: past-due reads as "due".
         elapsed_ms: s.next_run_at - now,
         tokens: None,
@@ -274,7 +296,9 @@ pub fn one_line(s: &str) -> String {
     let mut cleaned = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
-            '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}' => cleaned.push(' '),
+            '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}' => {
+                cleaned.push(' ')
+            }
             _ => cleaned.push(c),
         }
     }
@@ -317,7 +341,10 @@ pub fn one_line(s: &str) -> String {
         joined.push(c);
     }
     // Tabs → space, runs of 2+ spaces collapse, trim.
-    let tabbed: String = joined.chars().map(|c| if c == '\t' { ' ' } else { c }).collect();
+    let tabbed: String = joined
+        .chars()
+        .map(|c| if c == '\t' { ' ' } else { c })
+        .collect();
     let mut collapsed = String::with_capacity(tabbed.len());
     let mut last_space = false;
     for c in tabbed.chars() {
@@ -423,9 +450,7 @@ pub fn humanize_retry_reason(raw: &str, max: usize) -> String {
         found
     };
 
-    let source = nested.unwrap_or_else(|| {
-        text.split(['{', '[']).next().unwrap_or("").to_string()
-    });
+    let source = nested.unwrap_or_else(|| text.split(['{', '[']).next().unwrap_or("").to_string());
     // Drop the status token itself from the prose — the name is the readable half.
     let without_status = match &status {
         Some(s) => {
@@ -461,7 +486,11 @@ pub fn humanize_retry_reason(raw: &str, max: usize) -> String {
         .to_string();
 
     let prefix = status.as_deref().and_then(named).unwrap_or("");
-    let body = if !prose.is_empty() && prose != prefix { prose.as_str() } else { "" };
+    let body = if !prose.is_empty() && prose != prefix {
+        prose.as_str()
+    } else {
+        ""
+    };
     let joined = if !prefix.is_empty() && !body.is_empty() {
         format!("{prefix} · {body}")
     } else if !prefix.is_empty() {
@@ -502,7 +531,13 @@ mod tests {
         .unwrap()
     }
 
-    fn subagent_row(id: &str, title: &str, busy: bool, created_at: i64, tokens: Option<i64>) -> SessionRow {
+    fn subagent_row(
+        id: &str,
+        title: &str,
+        busy: bool,
+        created_at: i64,
+        tokens: Option<i64>,
+    ) -> SessionRow {
         serde_json::from_value(json!({
             "id": id, "title": title, "kind": "root", "createdAt": created_at, "parentId": null,
             "busy": busy, "tokens": tokens,
@@ -534,7 +569,13 @@ mod tests {
     fn live_units_attributes_every_running_thing_separately() {
         let now = 100_000;
         let jobs = vec![
-            job("bg_7", "the long sleep", "sleep 90", "running", now - 30_000),
+            job(
+                "bg_7",
+                "the long sleep",
+                "sleep 90",
+                "running",
+                now - 30_000,
+            ),
             job("bg_6", "finished one", "done", "exited", now - 60_000),
         ];
         let subagents = vec![
@@ -548,7 +589,10 @@ mod tests {
             .iter()
             .map(|u| format!("{:?}:{}", u.kind, u.id).to_lowercase())
             .collect();
-        assert_eq!(labels, vec!["shell:bg_7", "subagent:sub-1", "workflow:run-1"]);
+        assert_eq!(
+            labels,
+            vec!["shell:bg_7", "subagent:sub-1", "workflow:run-1"]
+        );
         assert_eq!(units[0].elapsed_ms, 30_000);
         assert_eq!(units[0].tokens, None);
         assert_eq!(units[0].detail.as_deref(), Some("sleep 90"));
@@ -563,7 +607,13 @@ mod tests {
     #[test]
     fn enabled_schedules_ride_the_rail_as_countdowns_below_the_live_work() {
         let now = 100_000;
-        let jobs = vec![job("bg_7", "dev server", "npm run dev", "running", now - 30_000)];
+        let jobs = vec![job(
+            "bg_7",
+            "dev server",
+            "npm run dev",
+            "running",
+            now - 30_000,
+        )];
         let schedules = vec![
             // Created later but due sooner: order is by CREATION.
             schedule("soon", 2, now + 10_000, true),
@@ -575,7 +625,10 @@ mod tests {
             .iter()
             .map(|u| format!("{:?}:{}", u.kind, u.id).to_lowercase())
             .collect();
-        assert_eq!(labels, vec!["shell:bg_7", "schedule:later", "schedule:soon"]);
+        assert_eq!(
+            labels,
+            vec!["shell:bg_7", "schedule:later", "schedule:soon"]
+        );
         // The countdown, unclamped.
         assert_eq!(units[2].elapsed_ms, 10_000);
         assert_eq!(units[1].detail.as_deref(), Some("every:4h"));
@@ -597,7 +650,10 @@ mod tests {
         let detail = units[0].detail.as_deref().unwrap();
         assert!(!detail.contains('\n'), "{detail}");
         // The join is MARKED rather than silently closed up.
-        assert!(detail.contains("for i in 1 2 3; do ¶ echo \"request $i\""), "{detail}");
+        assert!(
+            detail.contains("for i in 1 2 3; do ¶ echo \"request $i\""),
+            "{detail}"
+        );
     }
 
     #[test]
@@ -611,7 +667,9 @@ mod tests {
         };
         let mut state = reduce(
             initial_state(),
-            StoreAction::Open { session_id: Some(SESSION.into()) },
+            StoreAction::Open {
+                session_id: Some(SESSION.into()),
+            },
         );
         state = reduce(
             state,
@@ -663,7 +721,10 @@ mod tests {
         let mut delegate_only = state.clone();
         delegate_only.asks = vec![hold("fromAgent", "agent-1")];
         assert!(current_ask(&delegate_only, &[]).is_none());
-        assert_eq!(current_ask(&delegate_only, &["agent-1"]).unwrap().id, "fromAgent");
+        assert_eq!(
+            current_ask(&delegate_only, &["agent-1"]).unwrap().id,
+            "fromAgent"
+        );
 
         // No conversation open: nothing may claim the composer.
         let mut nothing_open = state.clone();
@@ -684,13 +745,19 @@ mod tests {
             status,
         };
         use bough_core::schema::parts::TurnStatus as T;
-        assert_eq!(settled_line(&turn(Some(T::Done), 3_200), 14_000), "✓ 14s · 3.2k tok");
+        assert_eq!(
+            settled_line(&turn(Some(T::Done), 3_200), 14_000),
+            "✓ 14s · 3.2k tok"
+        );
         assert_eq!(settled_line(&turn(Some(T::Done), 0), 14_000), "✓ 14s");
         assert_eq!(
             settled_line(&turn(Some(T::Interrupted), 100), 14_000),
             "⏹ 14s · 100 tok · interrupted"
         );
-        assert_eq!(settled_line(&turn(Some(T::Error), 0), 14_000), "✗ 14s · failed");
+        assert_eq!(
+            settled_line(&turn(Some(T::Error), 0), 14_000),
+            "✗ 14s · failed"
+        );
         assert_eq!(settled_line(&turn(Some(T::Orphaned), 0), 14_000), "⚠ 14s");
     }
 
@@ -721,7 +788,10 @@ mod tests {
         assert!(out.contains("Provider returned error"), "{out}");
         assert!(!out.contains('{'), "{out}");
         // An unfamiliar reason is shown, just shorter — never classified.
-        assert_eq!(humanize_retry_reason("weird thing happened", 60), "weird thing happened");
+        assert_eq!(
+            humanize_retry_reason("weird thing happened", 60),
+            "weird thing happened"
+        );
         assert!(humanize_retry_reason(&"x".repeat(200), 60).chars().count() <= 60);
     }
 }

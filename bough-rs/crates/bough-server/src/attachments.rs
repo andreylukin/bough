@@ -123,7 +123,10 @@ mod tests {
         let dir = temp_dir();
         let wrong = store_attachment(&dir, "text/plain", b"hello").unwrap_err();
         assert_eq!(wrong.status(), 400);
-        assert_eq!(wrong.to_string(), "unsupported image type: use PNG, JPEG, GIF, or WebP");
+        assert_eq!(
+            wrong.to_string(),
+            "unsupported image type: use PNG, JPEG, GIF, or WebP"
+        );
 
         let empty = store_attachment(&dir, "image/png", b"").unwrap_err();
         assert_eq!(empty.status(), 400);
@@ -155,6 +158,9 @@ mod tests {
         let res = call.call(req).await;
         assert_eq!(res.status(), 400);
         let body = testutil::body_json(res).await;
-        assert_eq!(body["error"], "unsupported image type: use PNG, JPEG, GIF, or WebP");
+        assert_eq!(
+            body["error"],
+            "unsupported image type: use PNG, JPEG, GIF, or WebP"
+        );
     }
 }

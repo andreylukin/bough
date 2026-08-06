@@ -245,7 +245,13 @@ fn match_escape(s: &str) -> Option<(usize, Escape)> {
                 } else {
                     params
                         .split(';')
-                        .map(|p| if p.is_empty() { 0 } else { p.parse().unwrap_or(0) })
+                        .map(|p| {
+                            if p.is_empty() {
+                                0
+                            } else {
+                                p.parse().unwrap_or(0)
+                            }
+                        })
                         .collect()
                 };
                 Some((i + 1, Escape::Sgr(ps)))
@@ -625,7 +631,10 @@ mod tests {
             assert!(!concat.contains('\x1b'), "{text:?}");
         }
         assert_eq!(strip_ansi("\x1b[1mbold\x1b[22m plain"), "bold plain");
-        assert_eq!(strip_ansi("cursor moves \x1b[2Adropped"), "cursor moves dropped");
+        assert_eq!(
+            strip_ansi("cursor moves \x1b[2Adropped"),
+            "cursor moves dropped"
+        );
     }
 
     #[test]
@@ -662,7 +671,8 @@ mod tests {
 
     #[test]
     fn serialization_round_trips_through_the_parser() {
-        let original = "\x1b[1;38;2;10;20;30mbold\x1b[0m \x1b]8;;https://x.dev\x1b\\link\x1b]8;;\x1b\\";
+        let original =
+            "\x1b[1;38;2;10;20;30mbold\x1b[0m \x1b]8;;https://x.dev\x1b\\link\x1b]8;;\x1b\\";
         let spans = ansi_spans(original);
         let reparsed = ansi_spans(&spans_to_ansi(&spans));
         assert_eq!(spans, reparsed);
@@ -678,7 +688,10 @@ mod tests {
         assert_eq!(truncate_ansi(linked, 10, ""), linked);
         let cut = truncate_ansi(linked, 2, "");
         assert_eq!(width(&cut), 2);
-        assert_eq!(ansi_spans(&cut)[0].link.as_deref(), Some("https://example.com/very/long/target"));
+        assert_eq!(
+            ansi_spans(&cut)[0].link.as_deref(),
+            Some("https://example.com/very/long/target")
+        );
         // Wrapping a row with a link does not break early for the escape bytes.
         let padded = format!("{} {}", linked, "word".repeat(5));
         for row in wrap_line(&padded, 20) {

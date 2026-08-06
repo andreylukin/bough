@@ -47,7 +47,10 @@ pub struct VLine {
 }
 
 fn vl(text: impl Into<String>) -> VLine {
-    VLine { text: text.into(), ..Default::default() }
+    VLine {
+        text: text.into(),
+        ..Default::default()
+    }
 }
 
 fn wrap(text: &str, w: usize) -> Vec<String> {
@@ -150,7 +153,10 @@ static IMAGE_NOTE_RE: LazyLock<Regex> =
 
 pub fn parse_image_note(text: &str) -> Option<(String, Option<String>)> {
     let c = IMAGE_NOTE_RE.captures(text.trim())?;
-    let note = c.get(2).map(|m| m.as_str().trim().to_string()).filter(|s| !s.is_empty());
+    let note = c
+        .get(2)
+        .map(|m| m.as_str().trim().to_string())
+        .filter(|s| !s.is_empty());
     Some((c[1].to_string(), note))
 }
 
@@ -214,7 +220,11 @@ fn push_block(out: &mut Vec<VLine>, text: &str, w: usize, opts: BlockOpts) {
     let shown = &logical[..logical.len().min(opts.max_lines)];
     for line in shown {
         for l in wrap(line, w.saturating_sub(2)) {
-            let styled = if l.is_empty() { String::new() } else { (opts.style)(&l) };
+            let styled = if l.is_empty() {
+                String::new()
+            } else {
+                (opts.style)(&l)
+            };
             out.push(VLine {
                 text: finish(format!("{} {}", dim("│"), styled)),
                 click: Some(opts.click.to_string()),
@@ -279,7 +289,10 @@ pub fn split_margin_notes(text: &str) -> (String, Vec<String>) {
     while let Some(last) = lines.last() {
         if let Some(rest) = last.strip_prefix("[rules] ") {
             // One shape for every rule note: `rules: ` + what changed.
-            hints.insert(0, format!("rules: {}", rest.split(" — ").next().unwrap_or("")));
+            hints.insert(
+                0,
+                format!("rules: {}", rest.split(" — ").next().unwrap_or("")),
+            );
             lines.pop();
             continue;
         }
@@ -355,8 +368,11 @@ pub struct ToolSummary<'a> {
 /// The facts a collapsed tool header shows without expanding. No "check
 /// passed" verdict — bough has no acceptance gate.
 pub fn tool_summary<'a>(parts: &[&'a Part]) -> ToolSummary<'a> {
-    let calls: Vec<&Part> =
-        parts.iter().copied().filter(|p| matches!(p, Part::ToolCall { .. })).collect();
+    let calls: Vec<&Part> = parts
+        .iter()
+        .copied()
+        .filter(|p| matches!(p, Part::ToolCall { .. }))
+        .collect();
     let mut results: HashMap<&str, &Part> = HashMap::new();
     for p in parts {
         if let Part::ToolResult { call_id, .. } = p {
@@ -371,10 +387,23 @@ pub fn tool_summary<'a>(parts: &[&'a Part]) -> ToolSummary<'a> {
         .values()
         .filter(|r| matches!(r, Part::ToolResult { is_error: true, .. }))
         .count();
-    let interrupted = results
-        .values()
-        .any(|r| matches!(r, Part::ToolResult { interrupted: Some(true), .. }));
-    ToolSummary { calls, results, running, has_error: errors > 0, errors, interrupted }
+    let interrupted = results.values().any(|r| {
+        matches!(
+            r,
+            Part::ToolResult {
+                interrupted: Some(true),
+                ..
+            }
+        )
+    });
+    ToolSummary {
+        calls,
+        results,
+        running,
+        has_error: errors > 0,
+        errors,
+        interrupted,
+    }
 }
 
 /// One-line excerpt of a tool call's input: the first meaningful code line, or
@@ -419,9 +448,11 @@ fn call_fields(call: &Part) -> (&str, &str, &Value) {
 
 fn result_flags(res: &Part) -> (bool, bool) {
     match res {
-        Part::ToolResult { is_error, interrupted, .. } => {
-            (*is_error, interrupted.unwrap_or(false))
-        }
+        Part::ToolResult {
+            is_error,
+            interrupted,
+            ..
+        } => (*is_error, interrupted.unwrap_or(false)),
         _ => (false, false),
     }
 }
@@ -488,7 +519,11 @@ fn tool_group_lines(
             names.push(name);
         }
     }
-    let count = format!("{} {}", s.calls.len(), if s.calls.len() == 1 { "step" } else { "steps" });
+    let count = format!(
+        "{} {}",
+        s.calls.len(),
+        if s.calls.len() == 1 { "step" } else { "steps" }
+    );
     let mut head = format!("{} {}", if expanded { "▾" } else { "▸" }, state);
     head.push_str(&dim(&if names.len() > 1 {
         format!("{count}  {}", names.join(" · "))
@@ -530,8 +565,11 @@ fn tool_group_lines(
             let bare = merged.last().map(|l| XN_RE.replace(l, "").to_string());
             if bare.as_deref() == Some(g.as_str()) {
                 let last = merged.last().unwrap().clone();
-                let n: u32 =
-                    XN_RE.captures(&last).and_then(|c| c[1].parse().ok()).unwrap_or(1) + 1;
+                let n: u32 = XN_RE
+                    .captures(&last)
+                    .and_then(|c| c[1].parse().ok())
+                    .unwrap_or(1)
+                    + 1;
                 *merged.last_mut().unwrap() = format!("{g} ×{n}");
             } else {
                 merged.push(g);
@@ -540,13 +578,24 @@ fn tool_group_lines(
         // ONE ROW PER STEP once there is more than one; a single step stays on
         // the header.
         if merged.len() == 1 {
-            head.push_str(&dim(&format!(" · {}", clip(&merged[0], w.saturating_sub(16).max(20)))));
+            head.push_str(&dim(&format!(
+                " · {}",
+                clip(&merged[0], w.saturating_sub(16).max(20))
+            )));
         } else if merged.len() > 1 {
-            steps = merged.iter().map(|g| clip(g, w.saturating_sub(6).max(20))).collect();
+            steps = merged
+                .iter()
+                .map(|g| clip(g, w.saturating_sub(6).max(20)))
+                .collect();
         }
     }
     // Never wrapped: the whole visual row stays one click target.
-    out.push(VLine { text: head, click: Some(key.to_string()), copy: None, src: None });
+    out.push(VLine {
+        text: head,
+        click: Some(key.to_string()),
+        copy: None,
+        src: None,
+    });
     for step in steps {
         out.push(VLine {
             text: format!("  {}", dim(&step)),
@@ -603,13 +652,18 @@ fn tool_group_lines(
         let input_text = call_input_text(input);
         if !input_text.is_empty() {
             let full_key = format!("{key}!full");
-            push_block(out, &input_text, w, BlockOpts {
-                max_lines: cap_code,
-                style: &|l| highlight_code(l, "js"),
-                click: key,
-                full_key: Some(&full_key),
-                raised: true,
-            });
+            push_block(
+                out,
+                &input_text,
+                w,
+                BlockOpts {
+                    max_lines: cap_code,
+                    style: &|l| highlight_code(l, "js"),
+                    click: key,
+                    full_key: Some(&full_key),
+                    raised: true,
+                },
+            );
         }
         if let Some(r) = res.filter(|r| !output_text(r).is_empty()) {
             // Directory tag hints ride the result's LOGS; pulled out of the
@@ -624,13 +678,18 @@ fn tool_group_lines(
                     src: None,
                 });
                 let full_key = format!("{key}!full");
-                push_block(out, &body, w, BlockOpts {
-                    max_lines: cap_out,
-                    style: &|l| style_output_line(l, is_error),
-                    click: key,
-                    full_key: Some(&full_key),
-                    raised: true,
-                });
+                push_block(
+                    out,
+                    &body,
+                    w,
+                    BlockOpts {
+                        max_lines: cap_out,
+                        style: &|l| style_output_line(l, is_error),
+                        click: key,
+                        full_key: Some(&full_key),
+                        raised: true,
+                    },
+                );
             }
             for h in hints {
                 out.push(VLine {
@@ -652,13 +711,18 @@ fn tool_group_lines(
                     src: None,
                 });
                 let full_key = format!("{key}!full");
-                push_block(out, &live.join("\n"), w, BlockOpts {
-                    max_lines: cap_out,
-                    style: &|l| style_output_line(l, false),
-                    click: key,
-                    full_key: Some(&full_key),
-                    raised: true,
-                });
+                push_block(
+                    out,
+                    &live.join("\n"),
+                    w,
+                    BlockOpts {
+                        max_lines: cap_out,
+                        style: &|l| style_output_line(l, false),
+                        click: key,
+                        full_key: Some(&full_key),
+                        raised: true,
+                    },
+                );
             }
         }
     }
@@ -702,7 +766,10 @@ fn workflow_note_lines(
     };
     let facts = [
         note.succeeded.clone(),
-        Some(format!("click to {}", if expanded { "collapse" } else { "expand" })),
+        Some(format!(
+            "click to {}",
+            if expanded { "collapse" } else { "expand" }
+        )),
     ]
     .into_iter()
     .flatten()
@@ -725,13 +792,18 @@ fn workflow_note_lines(
         return;
     }
     let full_key = format!("{key}!full");
-    push_block(out, text, w, BlockOpts {
-        max_lines: if full { usize::MAX } else { OUTPUT_LINES },
-        style: &|l| dim(l),
-        click: key,
-        full_key: Some(&full_key),
-        raised: false,
-    });
+    push_block(
+        out,
+        text,
+        w,
+        BlockOpts {
+            max_lines: if full { usize::MAX } else { OUTPUT_LINES },
+            style: &|l| dim(l),
+            click: key,
+            full_key: Some(&full_key),
+            raised: false,
+        },
+    );
 }
 
 fn text_parts_joined(msg: &Message, sep: &str) -> String {
@@ -749,13 +821,15 @@ fn text_parts_joined(msg: &Message, sep: &str) -> String {
 /// tool. End-of-message only; a fence must hold nothing else. Presentational
 /// only — the stored text is untouched.
 fn without_stop_sentinel(text: &str) -> String {
-    static STOP_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\n*(?:```[a-z]*\n)?\s*<stop>\s*(?:\n```)?\s*$").unwrap()
-    });
+    static STOP_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\n*(?:```[a-z]*\n)?\s*<stop>\s*(?:\n```)?\s*$").unwrap());
     STOP_RE.replace(text, "").trim_end().to_string()
 }
 
 #[allow(clippy::too_many_arguments)]
+// `copy` is bound late because each arm produces it alongside the lines it
+// pushes, and one arm `continue`s without producing anything at all.
+#[allow(clippy::needless_late_init)]
 pub fn message_lines(
     msg: &Message,
     is_expanded: &dyn Fn(&str) -> bool,
@@ -771,10 +845,16 @@ pub fn message_lines(
     let inner = w.saturating_sub(2);
     // An image note collapses to ONE line with no role label.
     if msg.role == Role::System {
-        let texts: Vec<&Part> =
-            msg.parts.iter().filter(|p| matches!(p, Part::Text { .. })).collect();
-        let imgs: Vec<&Part> =
-            msg.parts.iter().filter(|p| matches!(p, Part::Image { .. })).collect();
+        let texts: Vec<&Part> = msg
+            .parts
+            .iter()
+            .filter(|p| matches!(p, Part::Text { .. }))
+            .collect();
+        let imgs: Vec<&Part> = msg
+            .parts
+            .iter()
+            .filter(|p| matches!(p, Part::Image { .. }))
+            .collect();
         if texts.len() == 1 && imgs.len() == 1 {
             if let Part::Text { text } = texts[0] {
                 if let Some((path, note)) = parse_image_note(text) {
@@ -806,14 +886,25 @@ pub fn message_lines(
         if parse_workflow_note(&text).is_some() {
             let key = format!("{}:workflow", msg.id);
             out.push(vl(""));
-            workflow_note_lines(&mut out, &text, &key, is_expanded(&key), is_full(&key), w.saturating_sub(2));
+            workflow_note_lines(
+                &mut out,
+                &text,
+                &key,
+                is_expanded(&key),
+                is_full(&key),
+                w.saturating_sub(2),
+            );
             return out
                 .into_iter()
                 .map(|l| {
                     if l.text.is_empty() {
                         l
                     } else {
-                        VLine { text: format!("  {}", l.text), copy: Some(text.clone()), ..l }
+                        VLine {
+                            text: format!("  {}", l.text),
+                            copy: Some(text.clone()),
+                            ..l
+                        }
                     }
                 })
                 .collect();
@@ -822,10 +913,15 @@ pub fn message_lines(
     out.push(vl(""));
     out.push(vl(role_label(msg.role)));
     // Bodies hang two columns under the role label so turns read as blocks.
-    let declined = msg
-        .parts
-        .iter()
-        .any(|p| matches!(p, Part::Ask { status: AskStatus::Declined, .. }));
+    let declined = msg.parts.iter().any(|p| {
+        matches!(
+            p,
+            Part::Ask {
+                status: AskStatus::Declined,
+                ..
+            }
+        )
+    });
     for (i, s) in segment_parts(&msg.parts).iter().enumerate() {
         let key = format!("{}:{i}", msg.id);
         let mut seg: Vec<VLine> = Vec::new();
@@ -847,20 +943,32 @@ pub fn message_lines(
                     seg.push(VLine {
                         text: format!(
                             "▾ {}",
-                            dim(&format!("thinking ({})", plural(logical.len() as i64, "line")))
+                            dim(&format!(
+                                "thinking ({})",
+                                plural(logical.len() as i64, "line")
+                            ))
                         ),
                         click: Some(key.clone()),
                         copy: None,
                         src: None,
                     });
                     let full_key = format!("{key}!full");
-                    push_block(&mut seg, text, inner, BlockOpts {
-                        max_lines: if is_full(&key) { usize::MAX } else { OUTPUT_LINES },
-                        style: &|l| dim(l),
-                        click: &key,
-                        full_key: Some(&full_key),
-                        raised: false,
-                    });
+                    push_block(
+                        &mut seg,
+                        text,
+                        inner,
+                        BlockOpts {
+                            max_lines: if is_full(&key) {
+                                usize::MAX
+                            } else {
+                                OUTPUT_LINES
+                            },
+                            style: &|l| dim(l),
+                            click: &key,
+                            full_key: Some(&full_key),
+                            raised: false,
+                        },
+                    );
                 } else {
                     let gist = logical
                         .iter()
@@ -877,14 +985,27 @@ pub fn message_lines(
                 copy = (*text).to_string();
             }
             Segment::Image(p) => {
-                let Part::Image { path, name, size, .. } = p else { continue };
+                let Part::Image {
+                    path, name, size, ..
+                } = p
+                else {
+                    continue;
+                };
                 let kb = ((*size as f64) / 1024.0).round().max(1.0) as i64;
                 seg.push(vl(dim(&format!("🖼 {name} ({kb} KB)"))));
                 copy = path.clone();
             }
             Segment::Ask(p) => {
                 // A settled `ask()` — one always-visible line, never folded.
-                let Part::Ask { question, status, answer, .. } = p else { continue };
+                let Part::Ask {
+                    question,
+                    status,
+                    answer,
+                    ..
+                } = p
+                else {
+                    continue;
+                };
                 let outcome = match status {
                     AskStatus::Answered => bold(answer.as_deref().unwrap_or("")),
                     AskStatus::Declined => dim("declined"),
@@ -904,7 +1025,15 @@ pub fn message_lines(
                 copy = format!("{question} → {status_word}");
             }
             Segment::Workflow(p) => {
-                let Part::Workflow { id, name, description, rerun_of } = p else { continue };
+                let Part::Workflow {
+                    id,
+                    name,
+                    description,
+                    rerun_of,
+                } = p
+                else {
+                    continue;
+                };
                 workflow_card_lines(
                     &mut seg,
                     id,
@@ -931,21 +1060,30 @@ pub fn message_lines(
             }
         }
         for l in seg {
-            body.push(VLine { copy: Some(copy.clone()), ..l });
+            body.push(VLine {
+                copy: Some(copy.clone()),
+                ..l
+            });
         }
     }
     if let Some(streaming) = streaming.filter(|s| !s.is_empty()) {
         let mut seg: Vec<VLine> = Vec::new();
         push(&mut seg, &format!("{}▌", md(streaming, None)), inner, None);
         for l in seg {
-            body.push(VLine { copy: Some(streaming.to_string()), ..l });
+            body.push(VLine {
+                copy: Some(streaming.to_string()),
+                ..l
+            });
         }
     }
     out.extend(body.into_iter().map(|l| {
         if l.text.is_empty() {
             l
         } else {
-            VLine { text: format!("  {}", l.text), ..l }
+            VLine {
+                text: format!("  {}", l.text),
+                ..l
+            }
         }
     }));
     out
@@ -1067,7 +1205,13 @@ fn fmt_elapsed(ms: i64) -> String {
 }
 
 /// The card for a finished subagent: header, files, capped report, next action.
-fn subagent_note_lines(out: &mut Vec<VLine>, note: &SubagentNote, w: usize, full: bool, spent: &str) {
+fn subagent_note_lines(
+    out: &mut Vec<VLine>,
+    note: &SubagentNote,
+    w: usize,
+    full: bool,
+    spent: &str,
+) {
     let open = format!("open:{}", note.session_id);
     // Amber = stopped or orphaned (not the agent's fault); red is a genuine
     // failure. Four outcomes, four readings.
@@ -1086,9 +1230,17 @@ fn subagent_note_lines(out: &mut Vec<VLine>, note: &SubagentNote, w: usize, full
     } else {
         danger(&note.status)
     };
-    let title = note.title.strip_prefix("subagent · ").unwrap_or(&note.title);
+    let title = note
+        .title
+        .strip_prefix("subagent · ")
+        .unwrap_or(&note.title);
     out.push(VLine {
-        text: format!("{dot} {}  {}{}", bold(title), clip(&status_tag, 200), dim(spent)),
+        text: format!(
+            "{dot} {}  {}{}",
+            bold(title),
+            clip(&status_tag, 200),
+            dim(spent)
+        ),
         click: Some(open.clone()),
         copy: None,
         src: None,
@@ -1112,7 +1264,11 @@ fn subagent_note_lines(out: &mut Vec<VLine>, note: &SubagentNote, w: usize, full
             .split('\n')
             .flat_map(|line| wrap(line, w.saturating_sub(2)))
             .collect();
-        let shown = if full { physical.len() } else { physical.len().min(REPORT_LINES) };
+        let shown = if full {
+            physical.len()
+        } else {
+            physical.len().min(REPORT_LINES)
+        };
         for l in &physical[..shown] {
             out.push(VLine {
                 text: format!("{} {l}", dim("│")),
@@ -1123,7 +1279,11 @@ fn subagent_note_lines(out: &mut Vec<VLine>, note: &SubagentNote, w: usize, full
         }
         if physical.len() > shown {
             out.push(VLine {
-                text: format!("{} {}", dim("│"), dim(&format!("… +{} more", physical.len() - shown))),
+                text: format!(
+                    "{} {}",
+                    dim("│"),
+                    dim(&format!("… +{} more", physical.len() - shown))
+                ),
                 click: Some(format!("report:{}!full", note.session_id)),
                 copy: None,
                 src: None,
@@ -1172,7 +1332,11 @@ fn branch_card_lines(out: &mut Vec<VLine>, b: &Branch, w: usize, is_full: &dyn F
         };
         let title = b.title.strip_prefix("subagent · ").unwrap_or(&b.title);
         body.push(VLine {
-            text: format!("{dot} {title}{}{}", dim(&tail), dim(&billed(b.tokens, b.cost_usd))),
+            text: format!(
+                "{dot} {title}{}{}",
+                dim(&tail),
+                dim(&billed(b.tokens, b.cost_usd))
+            ),
             click: Some(format!("open:{}", b.id)),
             copy: None,
             src: None,
@@ -1182,9 +1346,16 @@ fn branch_card_lines(out: &mut Vec<VLine>, b: &Branch, w: usize, is_full: &dyn F
     out.push(vl(""));
     out.extend(body.into_iter().map(|l| {
         if l.text.is_empty() {
-            VLine { copy: Some(copy.clone()), ..l }
+            VLine {
+                copy: Some(copy.clone()),
+                ..l
+            }
         } else {
-            VLine { copy: Some(copy.clone()), text: format!("  {}", l.text), ..l }
+            VLine {
+                copy: Some(copy.clone()),
+                text: format!("  {}", l.text),
+                ..l
+            }
         }
     }));
 }
@@ -1240,8 +1411,16 @@ pub fn job_card_lines(out: &mut Vec<VLine>, job: &JobView, w: usize, now: i64) {
     // The command is NOT repeated when it is already the title.
     let titled = !job.name.is_empty() && one_line(&job.name) != one_line(&job.command);
     let facts: Vec<String> = [
-        if job.name.is_empty() { String::new() } else { job.id.clone() },
-        if titled { clip(&one_line(&job.command), 60) } else { String::new() },
+        if job.name.is_empty() {
+            String::new()
+        } else {
+            job.id.clone()
+        },
+        if titled {
+            clip(&one_line(&job.command), 60)
+        } else {
+            String::new()
+        },
         took,
     ]
     .into_iter()
@@ -1249,7 +1428,11 @@ pub fn job_card_lines(out: &mut Vec<VLine>, job: &JobView, w: usize, now: i64) {
     .collect();
     body.push(vl(format!(
         "{glyph} {} {}  {}",
-        bold(if job.name.is_empty() { &job.id } else { &job.name }),
+        bold(if job.name.is_empty() {
+            &job.id
+        } else {
+            &job.name
+        }),
         job_status_text(job),
         dim(&facts.join(" · "))
     )));
@@ -1259,7 +1442,10 @@ pub fn job_card_lines(out: &mut Vec<VLine>, job: &JobView, w: usize, now: i64) {
         }
     }
     if job.output_lines > job.tail.len() as i64 {
-        body.push(vl(dim(&format!("  {} total", plural(job.output_lines, "line")))));
+        body.push(vl(dim(&format!(
+            "  {} total",
+            plural(job.output_lines, "line")
+        ))));
     }
     let copy = std::iter::once(format!("{} · {}", job.id, job.command))
         .chain(job.tail.iter().cloned())
@@ -1331,10 +1517,16 @@ pub fn workflow_card_lines(
     };
     // No run row yet: the card still renders — the alternative is a launch
     // that left no trace at all.
-    let status = run.map(run_status_text).unwrap_or_else(|| dim("· launched"));
+    let status = run
+        .map(run_status_text)
+        .unwrap_or_else(|| dim("· launched"));
     let mut facts: Vec<String> = Vec::new();
     if let Some(r) = run {
-        facts.push(format!("{}/{} agents", r.agents.done + r.agents.cached, r.agents.total));
+        facts.push(format!(
+            "{}/{} agents",
+            r.agents.done + r.agents.cached,
+            r.agents.total
+        ));
         if r.agents.failed > 0 {
             facts.push(format!("{} failed", r.agents.failed));
         }
@@ -1348,10 +1540,18 @@ pub fn workflow_card_lines(
     body.push(vl(format!(
         "{glyph} {} {status}  {}",
         bold(name),
-        dim(&described.into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · "))
+        dim(&described
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · "))
     )));
     // The way in, named on the card; click FIRST (^w is composer-owned).
-    body.push(vl(format!("{}{}", dim("⎿ "), dim("click to open the run view · or ^w"))));
+    body.push(vl(format!(
+        "{}{}",
+        dim("⎿ "),
+        dim("click to open the run view · or ^w")
+    )));
     let copy = format!("{name} — {description} ({id})");
     out.extend(body.into_iter().map(|l| VLine {
         copy: Some(copy.clone()),
@@ -1389,7 +1589,11 @@ fn margin_row(prefix: &str, items: &[String], w: usize, suffix: &str) -> VLine {
     let mut shown = String::new();
     let mut elided = false;
     for item in items {
-        let next = if shown.is_empty() { item.clone() } else { format!("{shown} · {item}") };
+        let next = if shown.is_empty() {
+            item.clone()
+        } else {
+            format!("{shown} · {item}")
+        };
         if format!("{prefix}{next}").chars().count() > w.saturating_sub(2) {
             shown = format!("{shown} …");
             elided = true;
@@ -1404,7 +1608,12 @@ fn margin_row(prefix: &str, items: &[String], w: usize, suffix: &str) -> VLine {
     } else {
         format!("{prefix}{shown}")
     };
-    VLine { text: dim(&row), click: None, copy: Some(row), src: None }
+    VLine {
+        text: dim(&row),
+        click: None,
+        copy: Some(row),
+        src: None,
+    }
 }
 
 /// One mark as one row, two columns in. A destructive mark is amber — the
@@ -1413,7 +1622,11 @@ fn mark_line(mark: &TranscriptMark) -> VLine {
     VLine {
         text: format!(
             "  {}",
-            if mark.kind == MarkKind::Destructive { warn(&mark.text) } else { dim(&mark.text) }
+            if mark.kind == MarkKind::Destructive {
+                warn(&mark.text)
+            } else {
+                dim(&mark.text)
+            }
         ),
         click: None,
         copy: Some(mark.text.clone()),
@@ -1449,8 +1662,11 @@ pub fn build_lines(
 ) -> Vec<VLine> {
     use bough_core::schema::parts::JobStatus;
     let now = opts.now.unwrap_or(0);
-    let runs_by_id: HashMap<String, RunCardView> =
-        opts.runs.iter().map(|r| (r.id.clone(), r.clone())).collect();
+    let runs_by_id: HashMap<String, RunCardView> = opts
+        .runs
+        .iter()
+        .map(|r| (r.id.clone(), r.clone()))
+        .collect();
     // A note that already renders as a card is dropped from the raw thread,
     // and so is a job wake note while its card is showing.
     let noted_ids: Vec<&str> = opts
@@ -1481,7 +1697,12 @@ pub fn build_lines(
     let mut out: Vec<VLine> = Vec::new();
     // The memory margin: `#` means remembered, not happening now.
     if !opts.primed_tags.is_empty() {
-        out.push(margin_row("# this repo remembers: ", &opts.primed_tags, w, ""));
+        out.push(margin_row(
+            "# this repo remembers: ",
+            &opts.primed_tags,
+            w,
+            "",
+        ));
     }
     if !opts.project_rules.is_empty() {
         out.push(margin_row("# rules: ", &opts.project_rules, w, " · /rules"));
@@ -1491,8 +1712,11 @@ pub fn build_lines(
     marks.sort_by_key(|m| m.at);
     let mut mark_at = 0usize;
     // Exited job cards, drained the same way — IN TIME ORDER, not at the tail.
-    let mut timed: Vec<&JobView> =
-        opts.jobs.iter().filter(|j| j.status != JobStatus::Running).collect();
+    let mut timed: Vec<&JobView> = opts
+        .jobs
+        .iter()
+        .filter(|j| j.status != JobStatus::Running)
+        .collect();
     timed.sort_by_key(|j| j.exited_at.unwrap_or(j.started_at));
     let mut job_at = 0usize;
 
@@ -1502,7 +1726,10 @@ pub fn build_lines(
             *mark_at += 1;
         }
         while *job_at < timed.len()
-            && timed[*job_at].exited_at.unwrap_or(timed[*job_at].started_at) <= until
+            && timed[*job_at]
+                .exited_at
+                .unwrap_or(timed[*job_at].started_at)
+                <= until
         {
             job_card_lines(out, timed[*job_at], w, now);
             *job_at += 1;
@@ -1548,7 +1775,11 @@ pub fn build_lines(
                             "  {}",
                             dim(&format!(
                                 "↳ skill loaded: {}",
-                                named.iter().map(|n| format!("/{n}")).collect::<Vec<_>>().join(", ")
+                                named
+                                    .iter()
+                                    .map(|n| format!("/{n}"))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
                             ))
                         ),
                         click: None,
@@ -1588,7 +1819,10 @@ pub fn build_lines(
     }
     if !tail.is_empty() {
         out.push(vl(""));
-        out.push(vl(format!("  {}", dim("subagents with no spawn point in this thread"))));
+        out.push(vl(format!(
+            "  {}",
+            dim("subagents with no spawn point in this thread")
+        )));
     }
     for b in tail {
         branch_card_lines(&mut out, b, w, is_full);
@@ -1648,7 +1882,12 @@ pub fn visible_slice(lines: &[VLine], height: usize, scroll_off: usize) -> Visib
 /// The transcript line under a screen slot — the exact inverse of the render
 /// loop INCLUDING the pad: a short conversation hangs from the BOTTOM, so the
 /// first `body - rows.len()` slots are empty air and resolve to None.
-pub fn line_at_slot(lines: &[VLine], body: usize, scroll_off: usize, slot: usize) -> Option<&VLine> {
+pub fn line_at_slot(
+    lines: &[VLine],
+    body: usize,
+    scroll_off: usize,
+    slot: usize,
+) -> Option<&VLine> {
     let v = visible_slice(lines, body, scroll_off);
     let pad = body.max(1).saturating_sub(v.rows.len());
     if slot < pad {
@@ -1702,7 +1941,13 @@ mod tests {
     }
 
     fn joined(lines: &[VLine]) -> String {
-        strip_ansi(&lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n"))
+        strip_ansi(
+            &lines
+                .iter()
+                .map(|l| l.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
     }
 
     fn mlines(m: &Message, exp: fn(&str) -> bool, full: fn(&str) -> bool, w: usize) -> Vec<VLine> {
@@ -1725,20 +1970,34 @@ mod tests {
             ]}),
         );
         for l in mlines(&m, open, closed, 60) {
-            assert!(width(&l.text) <= 60, "{} cols: {:?}", width(&l.text), strip_ansi(&l.text));
+            assert!(
+                width(&l.text) <= 60,
+                "{} cols: {:?}",
+                width(&l.text),
+                strip_ansi(&l.text)
+            );
         }
     }
 
     #[test]
     fn a_hard_wrapped_block_keeps_its_gutter_on_every_physical_line() {
         let long_out = "x".repeat(150);
-        let m = msg("m1", json!({"parts": [call("c1", "a()"), result("c1", &long_out)]}));
+        let m = msg(
+            "m1",
+            json!({"parts": [call("c1", "a()"), result("c1", &long_out)]}),
+        );
         let lines = mlines(&m, open, closed, 60);
-        let block: Vec<&VLine> =
-            lines.iter().filter(|l| strip_ansi(&l.text).contains('x')).collect();
+        let block: Vec<&VLine> = lines
+            .iter()
+            .filter(|l| strip_ansi(&l.text).contains('x'))
+            .collect();
         assert!(block.len() >= 2, "the long line must wrap");
         for l in block {
-            assert!(strip_ansi(&l.text).trim_start().starts_with('│'), "{:?}", l.text);
+            assert!(
+                strip_ansi(&l.text).trim_start().starts_with('│'),
+                "{:?}",
+                l.text
+            );
         }
     }
 
@@ -1751,15 +2010,20 @@ mod tests {
             json!({"parts": [call("c1", "a()"), result("c1", "1"), call("c2", "b()"), result("c2", "2")]}),
         );
         let lines = mlines(&m, closed, closed, 120);
-        let heads: Vec<&VLine> =
-            lines.iter().filter(|l| strip_ansi(&l.text).contains("steps")).collect();
+        let heads: Vec<&VLine> = lines
+            .iter()
+            .filter(|l| strip_ansi(&l.text).contains("steps"))
+            .collect();
         assert_eq!(heads.len(), 1);
         assert!(strip_ansi(&heads[0].text).contains("2 steps"));
     }
 
     #[test]
     fn a_running_call_is_visible_on_the_collapsed_header_and_shows_live_console_output() {
-        let m = msg("m1", json!({"pending": true, "parts": [call("c1", "console.log('x')")]}));
+        let m = msg(
+            "m1",
+            json!({"pending": true, "parts": [call("c1", "console.log('x')")]}),
+        );
         let mut logs: HashMap<String, Vec<String>> = HashMap::new();
         logs.insert("c1".into(), vec!["first".into(), "second".into()]);
         let head_lines = message_lines(&m, &closed, &closed, 120, None, Some(&logs), None, 0);
@@ -1770,9 +2034,21 @@ mod tests {
         let head_text = strip_ansi(&head.text);
         // The live marker leads the row, where a 100-column screen cannot clip it.
         assert!(head_text.contains('⚙'), "{head_text}");
-        assert!(head_text.find('⚙').unwrap() < head_text.find("step").unwrap(), "{head_text}");
+        assert!(
+            head_text.find('⚙').unwrap() < head_text.find("step").unwrap(),
+            "{head_text}"
+        );
 
-        let live = joined(&message_lines(&m, &open, &closed, 120, None, Some(&logs), None, 0));
+        let live = joined(&message_lines(
+            &m,
+            &open,
+            &closed,
+            120,
+            None,
+            Some(&logs),
+            None,
+            0,
+        ));
         assert!(live.contains("↳ output (live)"));
         assert!(live.contains("first") && live.contains("second"));
 
@@ -1781,16 +2057,34 @@ mod tests {
             "m1",
             json!({"pending": true, "parts": [call("c1", "console.log('x')"), result("c1", "first\nsecond")]}),
         );
-        let settled = joined(&message_lines(&done, &open, &closed, 120, None, Some(&logs), None, 0));
+        let settled = joined(&message_lines(
+            &done,
+            &open,
+            &closed,
+            120,
+            None,
+            Some(&logs),
+            None,
+            0,
+        ));
         assert!(!settled.contains("(live)"));
         assert_eq!(settled.matches("first").count(), 1);
     }
 
     #[test]
     fn caps_a_long_program_and_a_long_output_truncate_only_full_lifts_them() {
-        let code = (0..40).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
-        let out = (0..60).map(|i| format!("out {i}")).collect::<Vec<_>>().join("\n");
-        let m = msg("m1", json!({"parts": [call("c1", &code), result("c1", &out)]}));
+        let code = (0..40)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let out = (0..60)
+            .map(|i| format!("out {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let m = msg(
+            "m1",
+            json!({"parts": [call("c1", &code), result("c1", &out)]}),
+        );
 
         let capped = joined(&mlines(&m, open, closed, 120));
         assert!(capped.contains("line 13")); // CODE_LINES = 14
@@ -1826,7 +2120,10 @@ mod tests {
         assert!(!text.contains("✓ done"));
         // …and it is legible without expanding.
         let lines = mlines(&m, closed, closed, 120);
-        let head = lines.iter().find(|l| strip_ansi(&l.text).contains("step")).unwrap();
+        let head = lines
+            .iter()
+            .find(|l| strip_ansi(&l.text).contains("step"))
+            .unwrap();
         assert!(strip_ansi(&head.text).contains("⏹ interrupted"));
     }
 
@@ -1840,7 +2137,10 @@ mod tests {
             ]}),
         );
         let lines = mlines(&m, closed, closed, 120);
-        let head = lines.iter().find(|l| strip_ansi(&l.text).contains("step")).unwrap();
+        let head = lines
+            .iter()
+            .find(|l| strip_ansi(&l.text).contains("step"))
+            .unwrap();
         assert!(strip_ansi(&head.text).contains("✗ error"), "{}", head.text);
     }
 
@@ -1854,7 +2154,10 @@ mod tests {
         assert!(out.contains("filled with green"), "{out}");
         assert!(!out.contains("<stop>"), "{out}");
 
-        let bare = msg("m2", json!({"parts": [{"type": "text", "text": "Done.\n<stop>"}]}));
+        let bare = msg(
+            "m2",
+            json!({"parts": [{"type": "text", "text": "Done.\n<stop>"}]}),
+        );
         let out2 = joined(&mlines(&bare, closed, closed, 120));
         assert!(out2.contains("Done."), "{out2}");
         assert!(!out2.contains("<stop>"), "{out2}");
@@ -1878,7 +2181,10 @@ mod tests {
             ]}),
         );
         let lines = mlines(&m, closed, closed, 120);
-        let head = lines.iter().find(|l| strip_ansi(&l.text).contains("step")).unwrap();
+        let head = lines
+            .iter()
+            .find(|l| strip_ansi(&l.text).contains("step"))
+            .unwrap();
         let head_text = strip_ansi(&head.text);
         assert!(head_text.contains("⏹ declined"), "{head_text}");
         assert!(!head_text.contains("✗ error"), "{head_text}");
@@ -1893,8 +2199,15 @@ mod tests {
             ]}),
         );
         let lines2 = mlines(&failed, closed, closed, 120);
-        let head2 = lines2.iter().find(|l| strip_ansi(&l.text).contains("step")).unwrap();
-        assert!(strip_ansi(&head2.text).contains("✗ error"), "{}", head2.text);
+        let head2 = lines2
+            .iter()
+            .find(|l| strip_ansi(&l.text).contains("step"))
+            .unwrap();
+        assert!(
+            strip_ansi(&head2.text).contains("✗ error"),
+            "{}",
+            head2.text
+        );
     }
 
     #[test]
@@ -1909,7 +2222,10 @@ mod tests {
             ]}),
         );
         let lines = mlines(&m, closed, closed, 120);
-        let head = lines.iter().find(|l| strip_ansi(&l.text).contains("step")).unwrap();
+        let head = lines
+            .iter()
+            .find(|l| strip_ansi(&l.text).contains("step"))
+            .unwrap();
         let text = strip_ansi(&head.text);
         assert!(text.contains("⚠ 1 of 2 failed"), "{text}");
         assert!(!text.contains("✗ error"), "{text}");
@@ -1925,8 +2241,15 @@ mod tests {
             ]}),
         );
         let lines = mlines(&m, closed, closed, 120);
-        let head = lines.iter().find(|l| strip_ansi(&l.text).contains("step")).unwrap();
-        assert!(strip_ansi(&head.text).contains("⚠ 1 command failed"), "{}", head.text);
+        let head = lines
+            .iter()
+            .find(|l| strip_ansi(&l.text).contains("step"))
+            .unwrap();
+        assert!(
+            strip_ansi(&head.text).contains("⚠ 1 command failed"),
+            "{}",
+            head.text
+        );
     }
 
     // ---- reasoning / other part kinds ----
@@ -1941,16 +2264,18 @@ mod tests {
             ]}),
         );
         let collapsed = mlines(&m, closed, closed, 120);
-        let head = collapsed.iter().find(|l| strip_ansi(&l.text).contains("thinking")).unwrap();
+        let head = collapsed
+            .iter()
+            .find(|l| strip_ansi(&l.text).contains("thinking"))
+            .unwrap();
         assert!(strip_ansi(&head.text).contains('▸'));
         assert!(strip_ansi(&head.text).contains("Let me look at the auth flow."));
         assert_eq!(head.click.as_deref(), Some("m1:0"));
         assert!(!joined(&collapsed).contains("Second thought."));
 
         let expanded = mlines(&m, open, closed, 120);
-        assert!(expanded
-            .iter()
-            .any(|l| strip_ansi(&l.text).contains('▾') && strip_ansi(&l.text).contains("thinking (3 lines)")));
+        assert!(expanded.iter().any(|l| strip_ansi(&l.text).contains('▾')
+            && strip_ansi(&l.text).contains("thinking (3 lines)")));
         assert!(joined(&expanded).contains("Second thought."));
         // The prose is never folded — it is the answer.
         assert!(joined(&collapsed).contains("done"));
@@ -1972,7 +2297,10 @@ mod tests {
             json!({"parts": [{"type": "ask", "id": "q1", "question": "Ship it?", "status": "answered", "answer": "yes"}]}),
         );
         let lines = mlines(&answered, closed, closed, 120);
-        let line = lines.iter().find(|l| strip_ansi(&l.text).contains("Ship it?")).unwrap();
+        let line = lines
+            .iter()
+            .find(|l| strip_ansi(&l.text).contains("Ship it?"))
+            .unwrap();
         assert!(strip_ansi(&line.text).contains('→') && strip_ansi(&line.text).contains("yes"));
         assert_eq!(line.copy.as_deref(), Some("Ship it? → yes"));
 
@@ -1993,9 +2321,15 @@ mod tests {
             ]}),
         );
         let lines = mlines(&m, closed, closed, 120);
-        let img = lines.iter().find(|l| strip_ansi(&l.text).contains("🖼")).unwrap();
+        let img = lines
+            .iter()
+            .find(|l| strip_ansi(&l.text).contains("🖼"))
+            .unwrap();
         assert!(strip_ansi(&img.text).contains("shot.png (34 KB)"));
-        assert_eq!(img.copy.as_deref(), Some("/home/u/.bough/attachments/x.png"));
+        assert_eq!(
+            img.copy.as_deref(),
+            Some("/home/u/.bough/attachments/x.png")
+        );
     }
 
     #[test]
@@ -2023,20 +2357,28 @@ mod tests {
             &serde_json::to_string_pretty(&json!({"findings": ["one", "two"]})).unwrap(),
         ]
         .join("\n");
-        let m = msg("wf-note", json!({"role": "system", "parts": [{"type": "text", "text": report}]}));
+        let m = msg(
+            "wf-note",
+            json!({"role": "system", "parts": [{"type": "text", "text": report}]}),
+        );
         let collapsed = mlines(&m, closed, closed, 120);
         let head = collapsed
             .iter()
             .find(|l| strip_ansi(&l.text).contains("audit all handlers"))
             .unwrap();
         let head_text = strip_ansi(&head.text);
-        assert!(head_text.contains('▸') && head_text.contains("2/2 agents succeeded"), "{head_text}");
+        assert!(
+            head_text.contains('▸') && head_text.contains("2/2 agents succeeded"),
+            "{head_text}"
+        );
         assert!(!joined(&collapsed).contains("\"findings\""));
         assert_eq!(head.click.as_deref(), Some("wf-note:workflow"));
 
         let expanded = mlines(&m, open, closed, 120);
         assert!(joined(&expanded).contains("\"findings\""));
-        assert!(expanded.iter().any(|l| strip_ansi(&l.text).contains("▾ workflow")));
+        assert!(expanded
+            .iter()
+            .any(|l| strip_ansi(&l.text).contains("▾ workflow")));
     }
 
     // ---- system-note parsing ----
@@ -2056,7 +2398,12 @@ mod tests {
 
     #[test]
     fn parse_subagent_note_the_real_note_shape() {
-        let p = parse_subagent_note(&note("finished", "a.ts, b.ts", Some("# Findings\nAll good."))).unwrap();
+        let p = parse_subagent_note(&note(
+            "finished",
+            "a.ts, b.ts",
+            Some("# Findings\nAll good."),
+        ))
+        .unwrap();
         assert_eq!(p.title, "extract token logic");
         assert_eq!(p.session_id, "sub-1");
         assert!(p.ok);
@@ -2066,19 +2413,31 @@ mod tests {
 
     #[test]
     fn parse_subagent_note_the_four_outcomes_stay_distinguishable() {
-        assert!(parse_subagent_note(&note("finished", "none", None)).unwrap().ok);
-        let failed =
-            parse_subagent_note(&note("FAILED — its turn errored. Nothing retried it", "x", None)).unwrap();
+        assert!(
+            parse_subagent_note(&note("finished", "none", None))
+                .unwrap()
+                .ok
+        );
+        let failed = parse_subagent_note(&note(
+            "FAILED — its turn errored. Nothing retried it",
+            "x",
+            None,
+        ))
+        .unwrap();
         assert!(!failed.ok);
         assert!(failed.status.starts_with("FAILED"));
-        assert!(parse_subagent_note(&note("STOPPED — it was interrupted", "x", None))
-            .unwrap()
-            .status
-            .starts_with("STOPPED"));
-        assert!(parse_subagent_note(&note("ORPHANED — the server restarted", "x", None))
-            .unwrap()
-            .status
-            .starts_with("ORPHANED"));
+        assert!(
+            parse_subagent_note(&note("STOPPED — it was interrupted", "x", None))
+                .unwrap()
+                .status
+                .starts_with("STOPPED")
+        );
+        assert!(
+            parse_subagent_note(&note("ORPHANED — the server restarted", "x", None))
+                .unwrap()
+                .status
+                .starts_with("ORPHANED")
+        );
         assert!(parse_subagent_note("just a normal message").is_none());
     }
 
@@ -2092,7 +2451,8 @@ mod tests {
     #[test]
     fn parse_bg_note_and_parse_image_note() {
         assert_eq!(
-            parse_bg_note("[background] bg_2 finished (exit 1) — command \"make\", 3 lines").as_deref(),
+            parse_bg_note("[background] bg_2 finished (exit 1) — command \"make\", 3 lines")
+                .as_deref(),
             Some("bg_2")
         );
         assert_eq!(parse_bg_note("hello"), None);
@@ -2100,14 +2460,21 @@ mod tests {
             parse_image_note("[image] /tmp/a.png — note"),
             Some(("/tmp/a.png".to_string(), Some("note".to_string())))
         );
-        assert_eq!(parse_image_note("[image] /tmp/a.png"), Some(("/tmp/a.png".to_string(), None)));
+        assert_eq!(
+            parse_image_note("[image] /tmp/a.png"),
+            Some(("/tmp/a.png".to_string(), None))
+        );
         assert_eq!(parse_image_note("not an image note"), None);
     }
 
     // ---- the whole transcript ----
 
     fn branch(id: &str) -> Branch {
-        Branch { id: id.to_string(), title: id.to_string(), ..Default::default() }
+        Branch {
+            id: id.to_string(),
+            title: id.to_string(),
+            ..Default::default()
+        }
     }
 
     fn build(thread: &[Message], w: usize, opts: &BuildOptions) -> Vec<VLine> {
@@ -2118,9 +2485,18 @@ mod tests {
     fn a_finished_subagents_card_replaces_its_raw_note_at_the_spawn_point() {
         let note_text = note("finished", "a.ts", Some("Found three call sites."));
         let thread = vec![
-            msg("u1", json!({"role": "user", "parts": [{"type": "text", "text": "go"}]})),
-            msg("a1", json!({"parts": [call("c1", "await agent('x')"), result("c1", "{}")]})),
-            msg("n1", json!({"role": "system", "parts": [{"type": "text", "text": note_text}]})),
+            msg(
+                "u1",
+                json!({"role": "user", "parts": [{"type": "text", "text": "go"}]}),
+            ),
+            msg(
+                "a1",
+                json!({"parts": [call("c1", "await agent('x')"), result("c1", "{}")]}),
+            ),
+            msg(
+                "n1",
+                json!({"role": "system", "parts": [{"type": "text", "text": note_text}]}),
+            ),
         ];
         let b = Branch {
             id: "sub-1".into(),
@@ -2129,7 +2505,10 @@ mod tests {
             note: parse_subagent_note(&note_text),
             ..Default::default()
         };
-        let opts = BuildOptions { branches: vec![b], ..Default::default() };
+        let opts = BuildOptions {
+            branches: vec![b],
+            ..Default::default()
+        };
         let text = joined(&build(&thread, 100, &opts));
         assert!(!text.contains("[subagent finished]")); // the raw wall is gone
         assert!(text.contains("extract token logic"));
@@ -2145,14 +2524,20 @@ mod tests {
 
     #[test]
     fn a_running_subagent_is_left_to_the_rail_a_card_with_no_spawn_point_tails_out() {
-        let thread = vec![msg("a1", json!({"parts": [{"type": "text", "text": "working"}]}))];
+        let thread = vec![msg(
+            "a1",
+            json!({"parts": [{"type": "text", "text": "working"}]}),
+        )];
         let running = Branch {
             busy: true,
             origin_message_id: Some("a1".into()),
             title: "live one".into(),
             ..branch("sub-1")
         };
-        let opts = BuildOptions { branches: vec![running], ..Default::default() };
+        let opts = BuildOptions {
+            branches: vec![running],
+            ..Default::default()
+        };
         assert!(!joined(&build(&thread, 100, &opts)).contains("live one"));
         // A branch whose spawn turn a fork dropped still renders, at the tail.
         let stranded = Branch {
@@ -2160,7 +2545,10 @@ mod tests {
             title: "stranded".into(),
             ..branch("sub-2")
         };
-        let opts = BuildOptions { branches: vec![stranded], ..Default::default() };
+        let opts = BuildOptions {
+            branches: vec![stranded],
+            ..Default::default()
+        };
         let out = joined(&build(&thread, 100, &opts));
         assert!(out.contains("subagents with no spawn point in this thread"));
         assert!(out.contains("stranded"));
@@ -2182,15 +2570,33 @@ mod tests {
             joined(&build(&thread, 100, &opts))
         };
         let base = Branch::default;
-        assert!(render(Branch { status: Some(BranchStatus::Done), ok: Some(true), ..base() })
-            .contains("✓ done"));
-        assert!(render(Branch { status: Some(BranchStatus::Error), ..base() }).contains("✗ failed"));
-        assert!(render(Branch { status: Some(BranchStatus::Done), ok: Some(false), ..base() })
-            .contains("✗ failed"));
-        assert!(render(Branch { status: Some(BranchStatus::Interrupted), ..base() })
-            .contains("◼ interrupted"));
-        assert!(render(Branch { status: Some(BranchStatus::Orphaned), ..base() })
-            .contains("the server restarted"));
+        assert!(render(Branch {
+            status: Some(BranchStatus::Done),
+            ok: Some(true),
+            ..base()
+        })
+        .contains("✓ done"));
+        assert!(render(Branch {
+            status: Some(BranchStatus::Error),
+            ..base()
+        })
+        .contains("✗ failed"));
+        assert!(render(Branch {
+            status: Some(BranchStatus::Done),
+            ok: Some(false),
+            ..base()
+        })
+        .contains("✗ failed"));
+        assert!(render(Branch {
+            status: Some(BranchStatus::Interrupted),
+            ..base()
+        })
+        .contains("◼ interrupted"));
+        assert!(render(Branch {
+            status: Some(BranchStatus::Orphaned),
+            ..base()
+        })
+        .contains("the server restarted"));
 
         // WHAT IT COST, next to the outcome.
         let paid = render(Branch {
@@ -2203,29 +2609,52 @@ mod tests {
         assert!(paid.contains("18k tok"), "{paid}");
         assert!(paid.contains("$0.03"), "{paid}");
         // Zero tokens is a fact, not missing data.
-        assert!(render(Branch { status: Some(BranchStatus::Interrupted), tokens: Some(0), ..base() })
-            .contains("0 tok"));
+        assert!(render(Branch {
+            status: Some(BranchStatus::Interrupted),
+            tokens: Some(0),
+            ..base()
+        })
+        .contains("0 tok"));
     }
 
     #[test]
     fn a_message_steered_into_a_running_turn_carries_a_queued_ack() {
         let with_pending = vec![
-            msg("u1", json!({"role": "user", "parts": [{"type": "text", "text": "go"}]})),
-            msg("a1", json!({"pending": true, "parts": [{"type": "text", "text": "working"}]})),
-            msg("u2", json!({"role": "user", "parts": [{"type": "text", "text": "also this"}]})),
+            msg(
+                "u1",
+                json!({"role": "user", "parts": [{"type": "text", "text": "go"}]}),
+            ),
+            msg(
+                "a1",
+                json!({"pending": true, "parts": [{"type": "text", "text": "working"}]}),
+            ),
+            msg(
+                "u2",
+                json!({"role": "user", "parts": [{"type": "text", "text": "also this"}]}),
+            ),
         ];
         assert!(joined(&build(&with_pending, 100, &BuildOptions::default())).contains("⧖ queued"));
         // The first user message, before any pending reply, is not queued.
-        assert!(!joined(&build(&with_pending[..1], 100, &BuildOptions::default()))
-            .contains("⧖ queued"));
+        assert!(
+            !joined(&build(&with_pending[..1], 100, &BuildOptions::default())).contains("⧖ queued")
+        );
     }
 
     #[test]
     fn marks_land_where_they_happened_and_a_destructive_one_outlives_its_toast() {
         let thread = vec![
-            msg("u1", json!({"role": "user", "parts": [{"type": "text", "text": "go"}], "createdAt": 10})),
-            msg("a1", json!({"parts": [{"type": "text", "text": "done"}], "createdAt": 20})),
-            msg("u2", json!({"role": "user", "parts": [{"type": "text", "text": "again"}], "createdAt": 40})),
+            msg(
+                "u1",
+                json!({"role": "user", "parts": [{"type": "text", "text": "go"}], "createdAt": 10}),
+            ),
+            msg(
+                "a1",
+                json!({"parts": [{"type": "text", "text": "done"}], "createdAt": 20}),
+            ),
+            msg(
+                "u2",
+                json!({"role": "user", "parts": [{"type": "text", "text": "again"}], "createdAt": 40}),
+            ),
         ];
         let mark = |id: &str, at: i64, kind: MarkKind, text: &str| TranscriptMark {
             id: id.to_string(),
@@ -2243,8 +2672,10 @@ mod tests {
             ..Default::default()
         };
         let lines = build(&thread, 100, &opts);
-        let rows: Vec<String> =
-            lines.iter().map(|l| strip_ansi(&l.text).trim().to_string()).collect();
+        let rows: Vec<String> = lines
+            .iter()
+            .map(|l| strip_ansi(&l.text).trim().to_string())
+            .collect();
         let at = |text: &str| rows.iter().position(|r| r == text).unwrap();
         assert!(at("reverted README.md") > at("go"));
         assert!(at("reverted README.md") < at("done"));
@@ -2253,7 +2684,10 @@ mod tests {
         // A mark newer than every message still renders — at the tail.
         assert_eq!(at("killed bg_7"), rows.len() - 1);
         // A copy yields the line itself, not the indent it hangs from.
-        let killed = lines.iter().find(|l| strip_ansi(&l.text).trim() == "killed bg_7").unwrap();
+        let killed = lines
+            .iter()
+            .find(|l| strip_ansi(&l.text).trim() == "killed bg_7")
+            .unwrap();
         assert_eq!(killed.copy.as_deref(), Some("killed bg_7"));
     }
 
@@ -2268,19 +2702,29 @@ mod tests {
             .and_then(|t| t.as_array())
             .map(|a| a.iter().map(|v| v.as_str().unwrap().to_string()).collect())
             .unwrap_or_default();
-        let output_lines = over_obj.get("outputLines").and_then(Value::as_i64).unwrap_or(0);
+        let output_lines = over_obj
+            .get("outputLines")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
         for (k, v) in &over_obj {
             if k != "tail" && k != "outputLines" {
                 base[k] = v.clone();
             }
         }
-        JobView { job: serde_json::from_value(base).unwrap(), tail, output_lines }
+        JobView {
+            job: serde_json::from_value(base).unwrap(),
+            tail,
+            output_lines,
+        }
     }
 
     #[test]
     fn job_cards_a_running_shell_looks_alive_an_exited_one_states_its_outcome() {
         let now = 100_000;
-        let running = job("bg_1", json!({"startedAt": now - 65_000, "tail": ["running tests"], "outputLines": 12}));
+        let running = job(
+            "bg_1",
+            json!({"startedAt": now - 65_000, "tail": ["running tests"], "outputLines": 12}),
+        );
         let failed = job(
             "bg_2",
             json!({"startedAt": now - 65_000, "status": "exited", "exitCode": 1, "exitedAt": now, "tail": ["FAILED"], "outputLines": 1}),
@@ -2289,13 +2733,19 @@ mod tests {
         job_card_lines(&mut out, &running, 80, now);
         job_card_lines(&mut out, &failed, 80, now);
         let text = joined(&out);
-        assert!(text.contains("⋯ running") && text.contains("1m 5s"), "{text}");
+        assert!(
+            text.contains("⋯ running") && text.contains("1m 5s"),
+            "{text}"
+        );
         assert!(text.contains("running tests"));
         assert!(text.contains("12 lines total"));
         assert!(text.contains("✗ exit 1")); // the outcome survives the exit
-        // Every card row is a door INTO that job.
+                                            // Every card row is a door INTO that job.
         assert!(out.iter().all(|l| {
-            l.click.as_deref().is_some_and(|c| c.starts_with("job:s1:bg_")) || l.text.trim().is_empty()
+            l.click
+                .as_deref()
+                .is_some_and(|c| c.starts_with("job:s1:bg_"))
+                || l.text.trim().is_empty()
         }));
 
         // A JOB THE USER KILLED IS NOT A JOB THAT SUCCEEDED.
@@ -2335,19 +2785,29 @@ mod tests {
         let mut out2: Vec<VLine> = Vec::new();
         job_card_lines(&mut out2, &named, 80, now);
         let text2 = joined(&out2);
-        assert!(text2.contains("dev server") && text2.contains("npm run dev"), "{text2}");
+        assert!(
+            text2.contains("dev server") && text2.contains("npm run dev"),
+            "{text2}"
+        );
     }
 
     #[test]
     fn a_background_wake_note_is_dropped_while_its_job_card_shows_it() {
         let note = "[background] bg_1 finished (exit 0) — command \"make\", 2 lines of output.";
-        let thread = vec![msg("n1", json!({"role": "system", "parts": [{"type": "text", "text": note}]}))];
+        let thread = vec![msg(
+            "n1",
+            json!({"role": "system", "parts": [{"type": "text", "text": note}]}),
+        )];
         let j = job(
             "bg_1",
             json!({"name": "make", "command": "make", "status": "exited", "exitCode": 0,
                    "startedAt": 1, "exitedAt": 2}),
         );
-        let opts = BuildOptions { jobs: vec![j], now: Some(3), ..Default::default() };
+        let opts = BuildOptions {
+            jobs: vec![j],
+            now: Some(3),
+            ..Default::default()
+        };
         let with_card = joined(&build(&thread, 80, &opts));
         assert!(!with_card.contains("[background]"));
         assert!(with_card.contains("bg_1"));
@@ -2395,14 +2855,28 @@ mod tests {
     #[test]
     fn line_at_slot_inverts_the_pad_a_short_transcript_hangs_from_the_bottom() {
         let lines = vec![
-            VLine { text: "a".into(), click: Some("ka".into()), ..Default::default() },
-            VLine { text: "b".into(), click: Some("kb".into()), ..Default::default() },
+            VLine {
+                text: "a".into(),
+                click: Some("ka".into()),
+                ..Default::default()
+            },
+            VLine {
+                text: "b".into(),
+                click: Some("kb".into()),
+                ..Default::default()
+            },
         ];
         // Body of 5, two lines: three rows of empty air ABOVE, then the lines.
         assert!(line_at_slot(&lines, 5, 0, 0).is_none());
         assert!(line_at_slot(&lines, 5, 0, 2).is_none());
-        assert_eq!(line_at_slot(&lines, 5, 0, 3).unwrap().click.as_deref(), Some("ka"));
-        assert_eq!(line_at_slot(&lines, 5, 0, 4).unwrap().click.as_deref(), Some("kb"));
+        assert_eq!(
+            line_at_slot(&lines, 5, 0, 3).unwrap().click.as_deref(),
+            Some("ka")
+        );
+        assert_eq!(
+            line_at_slot(&lines, 5, 0, 4).unwrap().click.as_deref(),
+            Some("kb")
+        );
         // Off the bottom of the body.
         assert!(line_at_slot(&lines, 5, 0, 5).is_none());
     }
@@ -2410,14 +2884,30 @@ mod tests {
     #[test]
     fn line_at_slot_follows_the_scroll_offset() {
         let lines: Vec<VLine> = (0..10)
-            .map(|i| VLine { text: format!("l{i}"), click: Some(format!("k{i}")), ..Default::default() })
+            .map(|i| VLine {
+                text: format!("l{i}"),
+                click: Some(format!("k{i}")),
+                ..Default::default()
+            })
             .collect();
         // Pinned to the tail: a body of 3 shows the last three, no pad.
-        assert_eq!(line_at_slot(&lines, 3, 0, 0).unwrap().click.as_deref(), Some("k7"));
-        assert_eq!(line_at_slot(&lines, 3, 0, 2).unwrap().click.as_deref(), Some("k9"));
+        assert_eq!(
+            line_at_slot(&lines, 3, 0, 0).unwrap().click.as_deref(),
+            Some("k7")
+        );
+        assert_eq!(
+            line_at_slot(&lines, 3, 0, 2).unwrap().click.as_deref(),
+            Some("k9")
+        );
         // Scrolled back two: the same slots resolve two lines earlier.
-        assert_eq!(line_at_slot(&lines, 3, 2, 0).unwrap().click.as_deref(), Some("k5"));
-        assert_eq!(line_at_slot(&lines, 3, 2, 2).unwrap().click.as_deref(), Some("k7"));
+        assert_eq!(
+            line_at_slot(&lines, 3, 2, 0).unwrap().click.as_deref(),
+            Some("k5")
+        );
+        assert_eq!(
+            line_at_slot(&lines, 3, 2, 2).unwrap().click.as_deref(),
+            Some("k7")
+        );
     }
 
     #[test]
@@ -2428,7 +2918,10 @@ mod tests {
             status: Some(BranchStatus::Done),
             ..Default::default()
         };
-        let opts = BuildOptions { branches: vec![b], ..Default::default() };
+        let opts = BuildOptions {
+            branches: vec![b],
+            ..Default::default()
+        };
         let out = build(&[], 80, &opts);
         // The target exists AND it is the descend form — the `open:` prefix is
         // the contract.
@@ -2437,12 +2930,23 @@ mod tests {
 
     #[test]
     fn a_message_that_names_an_installed_skill_says_so_under_the_message() {
-        let installed: Vec<String> =
-            ["prewalk", "exa", "shell-use"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(skills_named("/prewalk fix the parser", &installed), vec!["prewalk"]);
+        let installed: Vec<String> = ["prewalk", "exa", "shell-use"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            skills_named("/prewalk fix the parser", &installed),
+            vec!["prewalk"]
+        );
         // Mid-sentence counts.
-        assert_eq!(skills_named("fix this, use /exa to check", &installed), vec!["exa"]);
-        assert_eq!(skills_named("/exa and /shell-use please", &installed), vec!["exa", "shell-use"]);
+        assert_eq!(
+            skills_named("fix this, use /exa to check", &installed),
+            vec!["exa"]
+        );
+        assert_eq!(
+            skills_named("/exa and /shell-use please", &installed),
+            vec!["exa", "shell-use"]
+        );
         // Names not installed claim nothing.
         assert!(skills_named("/model", &installed).is_empty());
         assert!(skills_named("/prewalkk typo", &installed).is_empty());
@@ -2450,10 +2954,19 @@ mod tests {
         assert!(skills_named("look at src/exa/mod.ts", &installed).is_empty());
         assert!(skills_named("/prewalk", &[]).is_empty());
         // Repeats collapse.
-        assert_eq!(skills_named("/exa then /exa again", &installed), vec!["exa"]);
+        assert_eq!(
+            skills_named("/exa then /exa again", &installed),
+            vec!["exa"]
+        );
 
-        let thread = vec![msg("u1", json!({"role": "user", "parts": [{"type": "text", "text": "/exa search"}]}))];
-        let opts = BuildOptions { skills: Some(installed), ..Default::default() };
+        let thread = vec![msg(
+            "u1",
+            json!({"role": "user", "parts": [{"type": "text", "text": "/exa search"}]}),
+        )];
+        let opts = BuildOptions {
+            skills: Some(installed),
+            ..Default::default()
+        };
         let text = joined(&build(&thread, 80, &opts));
         assert!(text.contains("↳ skill loaded: /exa"), "{text}");
         // With no skills fetched yet, no claim is made.
@@ -2464,20 +2977,35 @@ mod tests {
     #[test]
     fn an_exited_job_card_lands_where_the_command_finished_not_at_the_tail() {
         let thread = vec![
-            msg("u1", json!({"role": "user", "parts": [{"type": "text", "text": "first"}], "createdAt": 10})),
-            msg("u2", json!({"role": "user", "parts": [{"type": "text", "text": "second"}], "createdAt": 40})),
+            msg(
+                "u1",
+                json!({"role": "user", "parts": [{"type": "text", "text": "first"}], "createdAt": 10}),
+            ),
+            msg(
+                "u2",
+                json!({"role": "user", "parts": [{"type": "text", "text": "second"}], "createdAt": 40}),
+            ),
         ];
         let early = job(
             "bg_old",
             json!({"name": "bg_old", "command": "make", "status": "exited", "exitCode": 1,
                    "startedAt": 15, "exitedAt": 20}),
         );
-        let opts = BuildOptions { jobs: vec![early], now: Some(50), ..Default::default() };
-        let rows: Vec<String> =
-            build(&thread, 100, &opts).iter().map(|l| strip_ansi(&l.text)).collect();
+        let opts = BuildOptions {
+            jobs: vec![early],
+            now: Some(50),
+            ..Default::default()
+        };
+        let rows: Vec<String> = build(&thread, 100, &opts)
+            .iter()
+            .map(|l| strip_ansi(&l.text))
+            .collect();
         let card = rows.iter().position(|r| r.contains("bg_old")).unwrap();
         let second = rows.iter().position(|r| r.contains("second")).unwrap();
-        assert!(card < second, "the failed job renders before the later message");
+        assert!(
+            card < second,
+            "the failed job renders before the later message"
+        );
     }
 
     // ---- branchesFrom ----
@@ -2493,8 +3021,14 @@ mod tests {
         ]
         .join("\n");
         let thread = vec![
-            msg("u1", json!({"role": "user", "parts": [{"type": "text", "text": "spawn one"}]})),
-            msg("n1", json!({"role": "system", "parts": [{"type": "text", "text": note_text}]})),
+            msg(
+                "u1",
+                json!({"role": "user", "parts": [{"type": "text", "text": "spawn one"}]}),
+            ),
+            msg(
+                "n1",
+                json!({"role": "system", "parts": [{"type": "text", "text": note_text}]}),
+            ),
         ];
         let child = ChildRow {
             id: "agent-1".into(),
@@ -2518,7 +3052,10 @@ mod tests {
         assert_eq!(b.note.as_ref().unwrap().files, vec!["src/mango.py"]);
 
         // AND the note it paired is dropped from the raw thread.
-        let opts = BuildOptions { branches, ..Default::default() };
+        let opts = BuildOptions {
+            branches,
+            ..Default::default()
+        };
         let text = joined(&build(&thread, 100, &opts));
         assert!(text.contains("create mango.py"), "{text}");
         assert!(!text.contains("It worked in THIS session"), "{text}");
@@ -2527,9 +3064,11 @@ mod tests {
 
     #[test]
     fn branches_from_reports_a_running_child_as_running_and_leaves_an_unpaired_note_raw() {
-        let note_text =
-            "[subagent finished] \"other\" (agent-9) — finished.\nChanged files: none.";
-        let thread = vec![msg("n1", json!({"role": "system", "parts": [{"type": "text", "text": note_text}]}))];
+        let note_text = "[subagent finished] \"other\" (agent-9) — finished.\nChanged files: none.";
+        let thread = vec![msg(
+            "n1",
+            json!({"role": "system", "parts": [{"type": "text", "text": note_text}]}),
+        )];
 
         // `running` is not a settled status and must not be reported as one.
         let child = |kind: SessionKind, status: Option<TurnStatus>, busy: bool| ChildRow {
@@ -2543,7 +3082,14 @@ mod tests {
             tokens: None,
             cost_usd: None,
         };
-        let live = branches_from(&[], &[child(SessionKind::Subagent, Some(TurnStatus::Running), true)]);
+        let live = branches_from(
+            &[],
+            &[child(
+                SessionKind::Subagent,
+                Some(TurnStatus::Running),
+                true,
+            )],
+        );
         assert_eq!(live[0].status, None);
         assert!(live[0].busy);
         assert_eq!(live[0].ok, None);
@@ -2552,11 +3098,23 @@ mod tests {
         assert!(branches_from(&thread, &[]).is_empty());
 
         // DELEGATED KINDS ONLY.
-        for kind in [SessionKind::Root, SessionKind::Fork, SessionKind::Compaction] {
+        for kind in [
+            SessionKind::Root,
+            SessionKind::Fork,
+            SessionKind::Compaction,
+        ] {
             assert!(branches_from(&[], &[child(kind, Some(TurnStatus::Done), false)]).is_empty());
         }
         assert_eq!(
-            branches_from(&[], &[child(SessionKind::WorkflowAgent, Some(TurnStatus::Done), false)]).len(),
+            branches_from(
+                &[],
+                &[child(
+                    SessionKind::WorkflowAgent,
+                    Some(TurnStatus::Done),
+                    false
+                )]
+            )
+            .len(),
             1
         );
         let text = joined(&build(&thread, 100, &BuildOptions::default()));
@@ -2573,17 +3131,25 @@ mod tests {
             ]}),
         );
         let lines = mlines(&m, closed, closed, 100);
-        let head =
-            lines.iter().position(|l| strip_ansi(&l.text).contains("2 steps")).unwrap();
+        let head = lines
+            .iter()
+            .position(|l| strip_ansi(&l.text).contains("2 steps"))
+            .unwrap();
         // Two step rows follow, each carrying the fold's click key.
         assert!(strip_ansi(&lines[head + 1].text).contains("alpha()"));
         assert!(strip_ansi(&lines[head + 2].text).contains("beta()"));
         assert_eq!(lines[head + 1].click, lines[head].click);
 
         // One step rides the header.
-        let single = msg("m2", json!({"parts": [call("c1", "alpha()"), result("c1", "1")]}));
+        let single = msg(
+            "m2",
+            json!({"parts": [call("c1", "alpha()"), result("c1", "1")]}),
+        );
         let lines2 = mlines(&single, closed, closed, 100);
-        let head2 = lines2.iter().find(|l| strip_ansi(&l.text).contains("1 step")).unwrap();
+        let head2 = lines2
+            .iter()
+            .find(|l| strip_ansi(&l.text).contains("1 step"))
+            .unwrap();
         assert!(strip_ansi(&head2.text).contains("alpha()"));
     }
 
@@ -2620,7 +3186,10 @@ mod tests {
 
     #[test]
     fn primed_tags_render_once_dim_as_the_transcripts_first_row() {
-        let thread = vec![msg("m1", json!({"role": "user", "parts": [{"type": "text", "text": "hi"}]}))];
+        let thread = vec![msg(
+            "m1",
+            json!({"role": "user", "parts": [{"type": "text", "text": "hi"}]}),
+        )];
         let opts = BuildOptions {
             primed_tags: vec!["git:push".into(), "bun:test".into(), "psql:migrate".into()],
             ..Default::default()
@@ -2630,7 +3199,10 @@ mod tests {
             strip_ansi(&lines[0].text),
             "# this repo remembers: git:push · bun:test · psql:migrate"
         );
-        assert_eq!(lines[0].copy.as_deref().map(strip_ansi), Some(strip_ansi(&lines[0].text)));
+        assert_eq!(
+            lines[0].copy.as_deref().map(strip_ansi),
+            Some(strip_ansi(&lines[0].text))
+        );
         // No primed tags — no row, not an empty row.
         let bare = build_lines(&thread, &open, &open, 100, &BuildOptions::default());
         assert!(!strip_ansi(&bare[0].text).starts_with('#'));
@@ -2655,20 +3227,29 @@ mod tests {
 
     #[test]
     fn the_injected_agents_md_files_render_as_their_own_row_under_the_tags_one() {
-        let thread = vec![msg("m1", json!({"role": "user", "parts": [{"type": "text", "text": "hi"}]}))];
+        let thread = vec![msg(
+            "m1",
+            json!({"role": "user", "parts": [{"type": "text", "text": "hi"}]}),
+        )];
         let opts = BuildOptions {
             primed_tags: vec!["git:push".into()],
             project_rules: vec!["AGENTS.md".into(), "packages/api/AGENTS.md".into()],
             ..Default::default()
         };
         let lines = build_lines(&thread, &open, &open, 100, &opts);
-        assert_eq!(strip_ansi(&lines[0].text), "# this repo remembers: git:push");
+        assert_eq!(
+            strip_ansi(&lines[0].text),
+            "# this repo remembers: git:push"
+        );
         assert_eq!(
             strip_ansi(&lines[1].text),
             "# rules: AGENTS.md · packages/api/AGENTS.md · /rules"
         );
         // No AGENTS.md anywhere — no row.
-        let bare_opts = BuildOptions { primed_tags: vec!["git:push".into()], ..Default::default() };
+        let bare_opts = BuildOptions {
+            primed_tags: vec!["git:push".into()],
+            ..Default::default()
+        };
         let bare = build_lines(&thread, &open, &open, 100, &bare_opts);
         assert!(!strip_ansi(&bare[1].text).starts_with('#'));
     }
@@ -2693,11 +3274,17 @@ mod tests {
     #[test]
     fn history_hints_leave_the_output_block_and_become_marginalia() {
         let out = "ok\n[history] tags previously used in migrations/: psql, alembic — see history.sql() for the commands behind them";
-        let m = msg("m1", json!({"parts": [call("c1", "await bash('x', 'y')"), result("c1", out)]}));
+        let m = msg(
+            "m1",
+            json!({"parts": [call("c1", "await bash('x', 'y')"), result("c1", out)]}),
+        );
         let opts = BuildOptions::default();
         let text = joined(&build_lines(&[m], &open, &open, 100, &opts));
         // The hint line is rewritten and outside the │ block…
-        assert!(text.contains("  # migrations/ also remembers: psql · alembic"), "{text}");
+        assert!(
+            text.contains("  # migrations/ also remembers: psql · alembic"),
+            "{text}"
+        );
         // …and the model-facing raw line is nowhere on screen.
         assert!(!text.contains("[history]"), "{text}");
         assert!(!text.contains("history.sql()"), "{text}");
@@ -2708,10 +3295,22 @@ mod tests {
     #[test]
     fn a_result_that_is_only_hints_renders_no_output_block_at_all() {
         let out = "[history] tags previously used in src/tui/: opentui — see history.sql()";
-        let m = msg("m1", json!({"parts": [call("c1", "await view('a')"), result("c1", out)]}));
-        let text = joined(&build_lines(&[m], &open, &open, 100, &BuildOptions::default()));
+        let m = msg(
+            "m1",
+            json!({"parts": [call("c1", "await view('a')"), result("c1", out)]}),
+        );
+        let text = joined(&build_lines(
+            &[m],
+            &open,
+            &open,
+            100,
+            &BuildOptions::default(),
+        ));
         assert!(!text.contains("↳ output"), "{text}");
-        assert!(text.contains("# src/tui/ also remembers: opentui"), "{text}");
+        assert!(
+            text.contains("# src/tui/ also remembers: opentui"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -2720,7 +3319,10 @@ mod tests {
             "real output\n[rules] AGENTS.md changed — re-read it\n[history] tags previously used in a/: x, y — see",
         );
         assert_eq!(body, "real output");
-        assert_eq!(hints, vec!["rules: AGENTS.md changed", "a/ also remembers: x · y"]);
+        assert_eq!(
+            hints,
+            vec!["rules: AGENTS.md changed", "a/ also remembers: x · y"]
+        );
         let (body2, hints2) = split_margin_notes("just output");
         assert_eq!(body2, "just output");
         assert!(hints2.is_empty());

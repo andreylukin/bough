@@ -26,8 +26,7 @@ use crate::llm::routing::{require_key, Provider, ProviderOpts};
 use crate::llm::sse::{aborted, fetch_cancellable, http_error, parse_tool_args, SseEvents};
 use crate::schema::parts::Usage;
 use crate::types::{
-    Effort, LlmBlock, LlmClient, LlmContentBlock, LlmMessage, LlmParams, LlmResult, LlmRole,
-    OnText,
+    Effort, LlmBlock, LlmClient, LlmContentBlock, LlmMessage, LlmParams, LlmResult, LlmRole, OnText,
 };
 
 /// The two system tiers as Anthropic system blocks, each with a 1-hour cache
@@ -35,7 +34,10 @@ use crate::types::{
 /// breakpoint, so the volatile block must never precede the stable one — one
 /// per-session byte early in the prefix defeats cross-session cache sharing
 /// entirely.
-pub fn anthropic_system_blocks(system: Option<&str>, system_volatile: Option<&str>) -> Option<Value> {
+pub fn anthropic_system_blocks(
+    system: Option<&str>,
+    system_volatile: Option<&str>,
+) -> Option<Value> {
     let blocks: Vec<Value> = [system, system_volatile]
         .into_iter()
         .flatten()
@@ -48,7 +50,11 @@ pub fn anthropic_system_blocks(system: Option<&str>, system_volatile: Option<&st
             })
         })
         .collect();
-    if blocks.is_empty() { None } else { Some(Value::Array(blocks)) }
+    if blocks.is_empty() {
+        None
+    } else {
+        Some(Value::Array(blocks))
+    }
 }
 
 /// Our normalized message → the Anthropic wire shape.
@@ -59,7 +65,9 @@ pub fn to_api_message(m: &LlmMessage) -> Value {
             LlmContentBlock::Text { text } => {
                 content.push(json!({ "type": "text", "text": text }));
             }
-            LlmContentBlock::Image { data, media_type, .. } => {
+            LlmContentBlock::Image {
+                data, media_type, ..
+            } => {
                 // The name is dropped: the wire shape has no slot for it.
                 content.push(json!({
                     "type": "image",
@@ -70,7 +78,10 @@ pub fn to_api_message(m: &LlmMessage) -> Value {
                 // A thinking block replays verbatim, signature included — the
                 // API rejects a tool_use whose preceding thinking was altered
                 // or dropped.
-                let meta_type = meta.as_ref().and_then(|m| m.get("type")).and_then(|t| t.as_str());
+                let meta_type = meta
+                    .as_ref()
+                    .and_then(|m| m.get("type"))
+                    .and_then(|t| t.as_str());
                 if matches!(meta_type, Some("thinking") | Some("redacted_thinking")) {
                     content.push(meta.clone().unwrap());
                 } else if !text.trim().is_empty() {
@@ -80,10 +91,18 @@ pub fn to_api_message(m: &LlmMessage) -> Value {
                 }
             }
             LlmContentBlock::ToolUse { id, name, input } => {
-                let input = if input.is_null() { json!({}) } else { input.clone() };
+                let input = if input.is_null() {
+                    json!({})
+                } else {
+                    input.clone()
+                };
                 content.push(json!({ "type": "tool_use", "id": id, "name": name, "input": input }));
             }
-            LlmContentBlock::ToolResult { tool_use_id, content: text, is_error } => {
+            LlmContentBlock::ToolResult {
+                tool_use_id,
+                content: text,
+                is_error,
+            } => {
                 content.push(json!({
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
@@ -180,11 +199,18 @@ fn request_body(params: &LlmParams) -> Value {
 /// One in-flight content block, assembled from the Messages SSE events.
 enum Builder {
     Text(String),
-    Thinking { thinking: String, signature: String },
+    Thinking {
+        thinking: String,
+        signature: String,
+    },
     /// The whole block, verbatim — nothing displayable, but it must be echoed
     /// back on the next round exactly as received.
     Redacted(Value),
-    ToolUse { id: String, name: String, args: String },
+    ToolUse {
+        id: String,
+        name: String,
+        args: String,
+    },
     /// Server tools etc. — we do not enable those features.
     Dropped,
 }
@@ -237,7 +263,9 @@ impl LlmClient for AnthropicClient {
                 next = events.next() => next?,
             };
             let Some(data) = data else { break };
-            let Ok(ev) = serde_json::from_str::<Value>(&data) else { continue };
+            let Ok(ev) = serde_json::from_str::<Value>(&data) else {
+                continue;
+            };
             match ev.get("type").and_then(|t| t.as_str()) {
                 Some("message_start") => {
                     let usage = &ev["message"]["usage"];
@@ -309,14 +337,19 @@ impl LlmClient for AnthropicClient {
         }
         // No terminal marker at all → the stream was cut → a transport fault.
         if !done {
-            return Err(BoughError::llm("anthropic: stream ended without message_stop"));
+            return Err(BoughError::llm(
+                "anthropic: stream ended without message_stop",
+            ));
         }
 
         let mut content: Vec<LlmBlock> = Vec::new();
         for b in builders {
             match b {
                 Builder::Text(text) => content.push(LlmBlock::Text { text }),
-                Builder::Thinking { thinking, signature } => {
+                Builder::Thinking {
+                    thinking,
+                    signature,
+                } => {
                     // Keep the raw block (signature included) for verbatim
                     // in-turn replay.
                     let meta = json!({
@@ -324,15 +357,25 @@ impl LlmClient for AnthropicClient {
                         "thinking": thinking,
                         "signature": signature,
                     });
-                    content.push(LlmBlock::Reasoning { text: thinking, meta: Some(meta) });
+                    content.push(LlmBlock::Reasoning {
+                        text: thinking,
+                        meta: Some(meta),
+                    });
                 }
                 Builder::Redacted(block) => {
                     // Nothing displayable, but the block must still be echoed
                     // on the next round.
-                    content.push(LlmBlock::Reasoning { text: String::new(), meta: Some(block) });
+                    content.push(LlmBlock::Reasoning {
+                        text: String::new(),
+                        meta: Some(block),
+                    });
                 }
                 Builder::ToolUse { id, name, args } => {
-                    let raw = if args.is_empty() { None } else { Some(args.as_str()) };
+                    let raw = if args.is_empty() {
+                        None
+                    } else {
+                        Some(args.as_str())
+                    };
                     let tool = params.tools.iter().find(|t| t.name == name);
                     let input = parse_tool_args("anthropic", raw, tool, &name)?;
                     content.push(LlmBlock::ToolUse { id, name, input });
@@ -361,10 +404,17 @@ impl LlmClient for AnthropicClient {
 
 /// The bare Anthropic client, without retries or pricing.
 pub fn anthropic_client(opts: ProviderOpts) -> Arc<dyn LlmClient> {
-    Arc::new(AnthropicClient { opts, stall_ms: crate::llm::sse::STALL_TIMEOUT_MS })
+    Arc::new(AnthropicClient {
+        opts,
+        stall_ms: crate::llm::sse::STALL_TIMEOUT_MS,
+    })
 }
 
+/// The stall knob, turned down so an assertion does not take a minute. The
+/// stall guard itself is pinned at the sse layer (`llm::sse`, porting
+/// src/llm/stream.test.ts:72), which is the only place TS tests it.
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn anthropic_client_with_stall(opts: ProviderOpts, stall_ms: u64) -> Arc<dyn LlmClient> {
     Arc::new(AnthropicClient { opts, stall_ms })
 }
@@ -383,7 +433,10 @@ mod tests {
         assert_eq!(blocks[0]["text"], "STABLE");
         assert_eq!(blocks[1]["text"], "VOLATILE");
         for b in blocks {
-            assert_eq!(b["cache_control"], json!({ "type": "ephemeral", "ttl": "1h" }));
+            assert_eq!(
+                b["cache_control"],
+                json!({ "type": "ephemeral", "ttl": "1h" })
+            );
         }
     }
 
@@ -401,7 +454,10 @@ mod tests {
         let msg = to_api_message(&LlmMessage {
             role: LlmRole::Assistant,
             content: vec![
-                LlmContentBlock::Reasoning { text: "step one".into(), meta: Some(raw.clone()) },
+                LlmContentBlock::Reasoning {
+                    text: "step one".into(),
+                    meta: Some(raw.clone()),
+                },
                 LlmContentBlock::ToolUse {
                     id: "t1".into(),
                     name: "run_steps".into(),
@@ -423,7 +479,10 @@ mod tests {
                 meta: Some(json!({ "type": "reasoning" })),
             }],
         });
-        assert_eq!(with_text["content"], json!([{ "type": "text", "text": "a summary" }]));
+        assert_eq!(
+            with_text["content"],
+            json!([{ "type": "text", "text": "a summary" }])
+        );
 
         // A summary-less item would become an empty text block, which the API
         // rejects.
@@ -471,7 +530,10 @@ mod tests {
     #[test]
     fn effort_params_only_sent_to_models_that_accept_adaptive_thinking() {
         let sent = effort_params(Some(Effort::High), Some("claude-opus-5"));
-        assert_eq!(sent["thinking"], json!({ "type": "adaptive", "display": "summarized" }));
+        assert_eq!(
+            sent["thinking"],
+            json!({ "type": "adaptive", "display": "summarized" })
+        );
         assert_eq!(sent["output_config"], json!({ "effort": "high" }));
         assert!(effort_params(Some(Effort::Low), Some("claude-opus-4-8")).contains_key("thinking"));
         // Haiku 4.5 hard-400s on the param: an effort setting must not kill
@@ -547,7 +609,10 @@ mod tests {
         // The request: three breakpoints, in order.
         let requests = transport.requests.lock().unwrap();
         assert_eq!(requests[0].url, "https://api.anthropic.com/v1/messages");
-        assert!(requests[0].headers.iter().any(|(k, v)| k == "x-api-key" && v == "test-key"));
+        assert!(requests[0]
+            .headers
+            .iter()
+            .any(|(k, v)| k == "x-api-key" && v == "test-key"));
         assert!(requests[0]
             .headers
             .iter()
@@ -556,9 +621,15 @@ mod tests {
         let system = body["system"].as_array().unwrap();
         // (1) stable @1h, (2) volatile @1h — stable MUST precede volatile.
         assert_eq!(system[0]["text"], "STABLE");
-        assert_eq!(system[0]["cache_control"], json!({ "type": "ephemeral", "ttl": "1h" }));
+        assert_eq!(
+            system[0]["cache_control"],
+            json!({ "type": "ephemeral", "ttl": "1h" })
+        );
         assert_eq!(system[1]["text"], "VOLATILE");
-        assert_eq!(system[1]["cache_control"], json!({ "type": "ephemeral", "ttl": "1h" }));
+        assert_eq!(
+            system[1]["cache_control"],
+            json!({ "type": "ephemeral", "ttl": "1h" })
+        );
         // (3) the last content block of the last message, default 5-min TTL.
         let messages = body["messages"].as_array().unwrap();
         let last_content = messages.last().unwrap()["content"].as_array().unwrap();
@@ -567,7 +638,10 @@ mod tests {
             json!({ "type": "ephemeral" })
         );
         // Effort params ride along for a supported model.
-        assert_eq!(body["thinking"], json!({ "type": "adaptive", "display": "summarized" }));
+        assert_eq!(
+            body["thinking"],
+            json!({ "type": "adaptive", "display": "summarized" })
+        );
         assert_eq!(body["output_config"], json!({ "effort": "high" }));
         assert_eq!(body["stream"], json!(true));
 
@@ -582,7 +656,12 @@ mod tests {
                     "type": "thinking", "thinking": "step one", "signature": "sig-abc" })),
             }
         );
-        assert_eq!(result.content[1], LlmBlock::Text { text: "working".into() });
+        assert_eq!(
+            result.content[1],
+            LlmBlock::Text {
+                text: "working".into()
+            }
+        );
         assert_eq!(
             result.content[2],
             LlmBlock::ToolUse {
@@ -616,10 +695,15 @@ mod tests {
             )
             .await
             .unwrap();
-        let LlmBlock::Reasoning { text, meta } = &result.content[0] else { panic!() };
+        let LlmBlock::Reasoning { text, meta } = &result.content[0] else {
+            panic!()
+        };
         let msg = to_api_message(&LlmMessage {
             role: LlmRole::Assistant,
-            content: vec![LlmContentBlock::Reasoning { text: text.clone(), meta: meta.clone() }],
+            content: vec![LlmContentBlock::Reasoning {
+                text: text.clone(),
+                meta: meta.clone(),
+            }],
         });
         assert_eq!(msg["content"][0], *meta.as_ref().unwrap());
     }
@@ -632,9 +716,15 @@ mod tests {
             transport: Some(transport.clone()),
         });
         let params = params_over("claude-opus-5", &TOOLS, |p| {
-            p.messages = vec![LlmMessage { role: LlmRole::User, content: vec![] }];
+            p.messages = vec![LlmMessage {
+                role: LlmRole::User,
+                content: vec![],
+            }];
         });
-        client.run(params, Arc::new(|_| {}), CancellationToken::new()).await.unwrap();
+        client
+            .run(params, Arc::new(|_| {}), CancellationToken::new())
+            .await
+            .unwrap();
         let requests = transport.requests.lock().unwrap();
         let body: Value = serde_json::from_str(requests[0].body.as_ref().unwrap()).unwrap();
         assert_eq!(body["messages"][0]["content"], json!([]));
@@ -644,8 +734,10 @@ mod tests {
     async fn a_stream_that_ends_without_message_stop_is_a_transport_fault() {
         let cut: Vec<String> = anthropic_sse().into_iter().take(8).collect();
         let transport = Arc::new(CannedTransport::sse(vec![cut]));
-        let client =
-            anthropic_client(ProviderOpts { env: Some(keyed_env()), transport: Some(transport) });
+        let client = anthropic_client(ProviderOpts {
+            env: Some(keyed_env()),
+            transport: Some(transport),
+        });
         let err = client
             .run(
                 params_over("claude-opus-5", &TOOLS, |_| {}),
@@ -654,8 +746,15 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("stream ended without message_stop"), "{err}");
-        assert!(crate::llm::retry::is_retryable(&err), "a cut stream must be retryable");
+        assert!(
+            err.to_string()
+                .contains("stream ended without message_stop"),
+            "{err}"
+        );
+        assert!(
+            crate::llm::retry::is_retryable(&err),
+            "a cut stream must be retryable"
+        );
     }
 
     #[tokio::test]
@@ -665,8 +764,10 @@ mod tests {
             vec![("retry-after".to_string(), "3".to_string())],
             "slow down".to_string(),
         )]));
-        let client =
-            anthropic_client(ProviderOpts { env: Some(keyed_env()), transport: Some(transport) });
+        let client = anthropic_client(ProviderOpts {
+            env: Some(keyed_env()),
+            transport: Some(transport),
+        });
         let err = client
             .run(
                 params_over("claude-opus-5", &TOOLS, |_| {}),
@@ -700,6 +801,10 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.status(), 401);
         assert!(err.to_string().contains("ANTHROPIC_API_KEY"), "{err}");
-        assert_eq!(transport.requests.lock().unwrap().len(), 0, "no fetch without a key");
+        assert_eq!(
+            transport.requests.lock().unwrap().len(),
+            0,
+            "no fetch without a key"
+        );
     }
 }

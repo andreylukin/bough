@@ -103,18 +103,28 @@ pub(crate) fn meter_line(m: &ChatMeter, width: Option<usize>) -> String {
             _ => String::new(),
         }
     };
-    let live = [live_bit(m.shells, "⚙"), live_bit(m.agents, "◆"), live_bit(m.runs, "⧉")]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
+    let live = [
+        live_bit(m.shells, "⚙"),
+        live_bit(m.agents, "◆"),
+        live_bit(m.runs, "⧉"),
+    ]
+    .into_iter()
+    .filter(|s| !s.is_empty())
+    .collect::<Vec<_>>()
+    .join(" ");
     let help = if m.help { "? help" } else { "" }.to_string();
     let out = if m.out { "← back" } else { "" }.to_string();
     let join = |bits: &[&str]| -> String {
-        bits.iter().filter(|b| !b.is_empty()).copied().collect::<Vec<_>>().join(" · ")
+        bits.iter()
+            .filter(|b| !b.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" · ")
     };
 
-    let full = join(&[&workspace, &model, &cost, &context, &shells, &agents, &runs, &out, &help]);
+    let full = join(&[
+        &workspace, &model, &cost, &context, &shells, &agents, &runs, &out, &help,
+    ]);
     let Some(w) = width else { return full };
     if display_width(&full) <= w {
         return full;
@@ -128,8 +138,12 @@ pub(crate) fn meter_line(m: &ChatMeter, width: Option<usize>) -> String {
     let base_name = ws.trim_end_matches('/').rsplit('/').next().unwrap_or("");
     let base = place(base_name);
     for candidate in [
-        join(&[&base, &model, &cost, &context, &shells, &agents, &runs, &out, &help]),
-        join(&[&model, &cost, &context, &shells, &agents, &runs, &out, &help]),
+        join(&[
+            &base, &model, &cost, &context, &shells, &agents, &runs, &out, &help,
+        ]),
+        join(&[
+            &model, &cost, &context, &shells, &agents, &runs, &out, &help,
+        ]),
         join(&[&cost, &context, &live, &out, &help]),
         join(&[&cost, &context, &out, &live]),
         join(&[&context, &live]),
@@ -160,7 +174,10 @@ pub fn render_status(m: &ChatMeter, area: Rect, buf: &mut Buffer) {
     if text.is_empty() {
         return;
     }
-    let line = Line::from(Span::styled(text, Style::default().add_modifier(Modifier::DIM)));
+    let line = Line::from(Span::styled(
+        text,
+        Style::default().add_modifier(Modifier::DIM),
+    ));
     buf.set_line(area.x, area.y, &line, area.width);
 }
 
@@ -191,7 +208,10 @@ mod tests {
 
     #[test]
     fn unknown_context_limit_shows_tokens_never_an_invented_percentage() {
-        let m = ChatMeter { context_tokens: Some(1234), ..Default::default() };
+        let m = ChatMeter {
+            context_tokens: Some(1234),
+            ..Default::default()
+        };
         assert_eq!(meter_line(&m, None), "1.2k ctx");
     }
 
@@ -226,7 +246,11 @@ mod tests {
 
     #[test]
     fn out_chip_and_binding_share_the_condition() {
-        let m = ChatMeter { out: true, help: true, ..Default::default() };
+        let m = ChatMeter {
+            out: true,
+            help: true,
+            ..Default::default()
+        };
         assert_eq!(meter_line(&m, None), "← back · ? help");
     }
 }

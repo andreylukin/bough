@@ -148,8 +148,14 @@ mod tests {
         // The bug: `bough -w /other/repo` opened in the cwd and said nothing, which
         // points an unsandboxed agent at a repository the user did not choose.
         assert_eq!(ok(&["-w", "/tmp/x"]).workspace.as_deref(), Some("/tmp/x"));
-        assert_eq!(ok(&["--workspace", "/tmp/x"]).workspace.as_deref(), Some("/tmp/x"));
-        assert_eq!(ok(&["--workspace=/tmp/x"]).workspace.as_deref(), Some("/tmp/x"));
+        assert_eq!(
+            ok(&["--workspace", "/tmp/x"]).workspace.as_deref(),
+            Some("/tmp/x")
+        );
+        assert_eq!(
+            ok(&["--workspace=/tmp/x"]).workspace.as_deref(),
+            Some("/tmp/x")
+        );
         assert_eq!(ok(&["-w=/tmp/x"]).workspace.as_deref(), Some("/tmp/x"));
         // No flag at all is still the common case, and still means "the cwd".
         assert_eq!(ok(&[]).workspace, None);

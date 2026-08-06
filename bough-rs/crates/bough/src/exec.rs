@@ -389,11 +389,7 @@ pub struct ExecEnvelope {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Value>,
     /// This session plus every subagent and workflow agent collapsed under it.
-    #[serde(
-        rename = "treeUsage",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "treeUsage", default, skip_serializing_if = "Option::is_none")]
     pub tree_usage: Option<Value>,
 }
 
@@ -577,7 +573,10 @@ pub async fn run_exec(argv: &[String], deps: &ExecDeps) -> i32 {
             if !res.ok() {
                 let status = res.status;
                 let text = res.text().await;
-                (deps.warn)(&format!("bough refused the message: {status} {}", text.trim()));
+                (deps.warn)(&format!(
+                    "bough refused the message: {status} {}",
+                    text.trim()
+                ));
                 return 2;
             }
         }
@@ -874,8 +873,18 @@ fn encode_component(value: &str) -> String {
     let mut out = String::new();
     for byte in value.bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'!' | b'~' | b'*'
-            | b'\'' | b'(' | b')' => out.push(byte as char),
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'_'
+            | b'.'
+            | b'!'
+            | b'~'
+            | b'*'
+            | b'\''
+            | b'('
+            | b')' => out.push(byte as char),
             _ => out.push_str(&format!("%{byte:02X}")),
         }
     }
@@ -1085,10 +1094,8 @@ mod tests {
         if let Some(turn) = options.turn {
             *ctx.starter.write().unwrap() = Some(Arc::new(FakeStarter(turn)));
         }
-        let handler: Arc<Dispatcher> = Arc::new(create_handler(
-            ctx.clone(),
-            CreateHandlerOptions::default(),
-        ));
+        let handler: Arc<Dispatcher> =
+            Arc::new(create_handler(ctx.clone(), CreateHandlerOptions::default()));
 
         let calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let out = Arc::new(Mutex::new(String::new()));
@@ -1150,9 +1157,7 @@ mod tests {
             }),
             stdin_is_terminal: Arc::new(move || is_terminal),
             env: Arc::new(move |name: &str| {
-                env.iter()
-                    .find(|(k, _)| k == name)
-                    .map(|(_, v)| v.clone())
+                env.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
             }),
             cwd: Arc::new(|| "/tmp".to_string()),
             real_path: options.real_path.unwrap_or_else(|| {
@@ -1186,7 +1191,12 @@ mod tests {
             ..Default::default()
         });
         let code = run_exec(&argv(&["--timeout", "1", "do the thing"]), &f.deps).await;
-        assert_eq!(code, 0, "expected a completed turn; stderr was: {}", f.err());
+        assert_eq!(
+            code,
+            0,
+            "expected a completed turn; stderr was: {}",
+            f.err()
+        );
         assert_eq!(f.out(), "the answer\n");
 
         // The ordering itself, stated as a fact about the call sequence.
@@ -1248,7 +1258,11 @@ mod tests {
             for frame in feed.push(&chunk) {
                 let data = payload_of(&frame.data).unwrap_or(Value::Null);
                 if frame.name == "message.delta" {
-                    text.push_str(data.get("delta").and_then(Value::as_str).unwrap_or_default());
+                    text.push_str(
+                        data.get("delta")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    );
                 }
                 if frame.name == "turn.finished" {
                     saw_finish = true;
@@ -1272,7 +1286,10 @@ mod tests {
             !saw_finish,
             "the inverted ordering observed turn.finished — this fixture no longer proves anything"
         );
-        assert_eq!(text, "", "the inverted ordering observed the assistant text");
+        assert_eq!(
+            text, "",
+            "the inverted ordering observed the assistant text"
+        );
     }
 
     // ---- exit codes --------------------------------------------------------
@@ -1382,7 +1399,11 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(run_exec(&argv(&["--port", "4399", "go"]), &f.deps).await, 2);
-        assert!(f.err().contains("cannot reach bough on :4399"), "{}", f.err());
+        assert!(
+            f.err().contains("cannot reach bough on :4399"),
+            "{}",
+            f.err()
+        );
         assert!(f.err().contains("connection refused"), "{}", f.err());
     }
 
@@ -1447,7 +1468,11 @@ mod tests {
         assert!(!envelope.session.is_empty());
         // Usage rides along from `GET /sessions/:id`, the authoritative record.
         assert!(
-            envelope.usage.as_ref().and_then(|u| u.get("inputTokens")).is_some_and(Value::is_number),
+            envelope
+                .usage
+                .as_ref()
+                .and_then(|u| u.get("inputTokens"))
+                .is_some_and(Value::is_number),
             "{:?}",
             envelope.usage
         );
@@ -1703,7 +1728,8 @@ mod tests {
     #[test]
     fn sse_reader_field_order_does_not_matter_and_comments_carry_nothing() {
         let mut feed = SseReader::new();
-        let frames = feed.push(": connected\n\ndata: {\"a\":1}\nevent: message.delta\n\n: ping\n\n");
+        let frames =
+            feed.push(": connected\n\ndata: {\"a\":1}\nevent: message.delta\n\n: ping\n\n");
         assert_eq!(
             frames,
             vec![SseFrame {

@@ -66,8 +66,7 @@ pub struct EchoCtx {
 /// `[exit code N]`. Clipped to [`ERROR_CHARS`] chars with `…`.
 pub(crate) fn first_error_line(output_head: &str) -> String {
     static EXIT_LINE: OnceLock<regex::Regex> = OnceLock::new();
-    let exit_line =
-        EXIT_LINE.get_or_init(|| regex::Regex::new(r"^\[exit code -?\d+\]$").unwrap());
+    let exit_line = EXIT_LINE.get_or_init(|| regex::Regex::new(r"^\[exit code -?\d+\]$").unwrap());
     let Some(line) = output_head
         .split('\n')
         .map(str::trim)
@@ -104,7 +103,7 @@ pub(crate) fn ago(ms: i64) -> String {
 /// with LIKE's own wildcards escaped so a command containing `%` cannot widen
 /// its own search. None when there is nothing distinctive to match on.
 pub(crate) fn success_prefix(command: &str) -> Option<String> {
-    let tokens: Vec<&str> = command.trim().split_whitespace().take(PREFIX_TOKENS).collect();
+    let tokens: Vec<&str> = command.split_whitespace().take(PREFIX_TOKENS).collect();
     if tokens.is_empty() {
         return None;
     }
@@ -167,8 +166,11 @@ impl CommandEcho {
             .prior_failures(&repo, command, at - ECHO_WINDOW_MS, &self.session_id)
             .ok()?;
         if let Some(prior) = &prior {
-            let times =
-                if prior.count == 1 { "once".to_string() } else { format!("{}×", prior.count) };
+            let times = if prior.count == 1 {
+                "once".to_string()
+            } else {
+                format!("{}×", prior.count)
+            };
             lines.push(format!(
                 "[history] this exact command already failed here {times} (last {}): {}",
                 ago(at - prior.last_ts),
@@ -183,7 +185,10 @@ impl CommandEcho {
         if !signature.is_empty() {
             let mut seen: HashSet<String> = HashSet::new();
             let mut last = 0i64;
-            for f in db.recent_failures(&repo, at - ERROR_WINDOW_MS, ERROR_SCAN_LIMIT).ok()? {
+            for f in db
+                .recent_failures(&repo, at - ERROR_WINDOW_MS, ERROR_SCAN_LIMIT)
+                .ok()?
+            {
                 if f.cmd == command || first_error_line(&f.output_head) != signature {
                     continue;
                 }
@@ -296,7 +301,12 @@ mod tests {
     }
 
     fn at(ts: i64) -> FailOpts {
-        FailOpts { ts, session: None, out: None, exit_code: Some(1) }
+        FailOpts {
+            ts,
+            session: None,
+            out: None,
+            exit_code: Some(1),
+        }
     }
 
     fn record(db: &SharedDb, cmd: &str, opts: FailOpts) {
@@ -325,7 +335,16 @@ mod tests {
     }
 
     fn ok_cmd(db: &SharedDb, cmd: &str, ts: i64, out: &'static str) {
-        record(db, cmd, FailOpts { ts, session: None, out: Some(out), exit_code: Some(0) });
+        record(
+            db,
+            cmd,
+            FailOpts {
+                ts,
+                session: None,
+                out: Some(out),
+                exit_code: Some(0),
+            },
+        );
     }
 
     /// A database with the sessions the history rows below hang off.
@@ -369,7 +388,10 @@ mod tests {
     fn a_command_with_no_failing_history_gets_no_note() {
         let db = fresh_db();
         let echo = echo_over(&db);
-        assert_eq!(echo.note("gh search prs --state merged", Some(1), ERR), None);
+        assert_eq!(
+            echo.note("gh search prs --state merged", Some(1), ERR),
+            None
+        );
     }
 
     #[test]
@@ -390,7 +412,12 @@ mod tests {
     fn a_successful_sibling_command_is_offered_alongside_the_failure() {
         let db = fresh_db();
         fail(&db, "gh search prs --state merged", at(T0 - 30_000));
-        ok_cmd(&db, "gh search prs --state closed --json number", T0 - 20_000, "[]");
+        ok_cmd(
+            &db,
+            "gh search prs --state closed --json number",
+            T0 - 20_000,
+            "[]",
+        );
         let note = echo_over(&db)
             .note("gh search prs --state merged", Some(1), ERR)
             .expect("expected a note");
@@ -420,7 +447,9 @@ mod tests {
         fail(&db, cmd, at(T0 - 2_000));
         assert_eq!(echo.guard(cmd), None, "two failures are not a loop");
         fail(&db, cmd, at(T0 - 1_000));
-        let skip = echo.guard(cmd).expect("three identical failures in seconds is a loop");
+        let skip = echo
+            .guard(cmd)
+            .expect("three identical failures in seconds is a loop");
         assert!(skip.starts_with("[not run]"), "{skip}");
         assert!(skip.contains("failed 3 times in this session"), "{skip}");
         assert!(skip.contains("invalid argument \"merged\""), "{skip}");
@@ -434,22 +463,37 @@ mod tests {
             fail(&db, cmd, at(T0 - 10 * 60_000));
         }
         let echo = echo_over(&db);
-        assert_eq!(echo.guard(cmd), None, "ten minutes ago is history, not a loop");
+        assert_eq!(
+            echo.guard(cmd),
+            None,
+            "ten minutes ago is history, not a loop"
+        );
 
         for ts in [T0 - 3_000, T0 - 2_000, T0 - 1_000] {
-            fail(&db, cmd, FailOpts {
-                ts,
-                session: Some("someone-else"),
-                out: None,
-                exit_code: Some(1),
-            });
+            fail(
+                &db,
+                cmd,
+                FailOpts {
+                    ts,
+                    session: Some("someone-else"),
+                    out: None,
+                    exit_code: Some(1),
+                },
+            );
         }
-        assert_eq!(echo.guard(cmd), None, "another session's loop is not this one's");
+        assert_eq!(
+            echo.guard(cmd),
+            None,
+            "another session's loop is not this one's"
+        );
 
         for ts in [T0 - 3_000, T0 - 2_000, T0 - 1_000] {
             fail(&db, cmd, at(ts));
         }
-        assert!(echo.guard(cmd).is_some(), "this session's own loop does fire");
+        assert!(
+            echo.guard(cmd).is_some(),
+            "this session's own loop does fire"
+        );
         assert_eq!(
             echo.guard(&format!("{cmd} --json number")),
             None,
@@ -462,7 +506,9 @@ mod tests {
         let db = fresh_db();
         fail(&db, "rg %_ src", at(T0 - 30_000));
         ok_cmd(&db, "rg unrelated-thing src", T0 - 20_000, "");
-        let note = echo_over(&db).note("rg %_ src", Some(1), ERR).expect("expected a note");
+        let note = echo_over(&db)
+            .note("rg %_ src", Some(1), ERR)
+            .expect("expected a note");
         assert!(
             !note.contains("unrelated-thing"),
             "`%_` must be escaped, not matched as wildcards: {note}"
@@ -475,8 +521,8 @@ mod tests {
         // entry points must swallow that. The tables are dropped through a
         // SECOND connection to the same file, so the handle under test holds
         // no raw-SQL escape hatch.
-        let path = std::env::temp_dir()
-            .join(format!("bough-echo-broken-{}.db", uuid::Uuid::new_v4()));
+        let path =
+            std::env::temp_dir().join(format!("bough-echo-broken-{}.db", uuid::Uuid::new_v4()));
         let path_s = path.to_string_lossy().into_owned();
         let under_test = SqliteDb::new(&path_s, DbOptions::default()).unwrap();
         {
@@ -519,21 +565,37 @@ mod tests {
 
         // The byte-exact matchers are blind to it, exactly as they were in
         // production.
-        assert_eq!(echo.guard(&next), None, "distinct commands are not a stuck loop");
+        assert_eq!(
+            echo.guard(&next),
+            None,
+            "distinct commands are not a stuck loop"
+        );
         let note = echo
             .note(&next, Some(1), ERR)
             .expect("the error path must see what command identity cannot");
-        assert!(note.contains("4 other commands here failed the same way"), "{note}");
+        assert!(
+            note.contains("4 other commands here failed the same way"),
+            "{note}"
+        );
         assert!(note.contains("invalid argument \"merged\""), "{note}");
-        assert!(note.contains("The command has been changing; the mistake has not"), "{note}");
-        assert!(!note.contains("this exact command"), "no command ran twice: {note}");
+        assert!(
+            note.contains("The command has been changing; the mistake has not"),
+            "{note}"
+        );
+        assert!(
+            !note.contains("this exact command"),
+            "no command ran twice: {note}"
+        );
     }
 
     #[test]
     fn one_other_command_with_the_same_error_is_not_yet_a_pattern() {
         let db = fresh_db();
         fail(&db, "gh pr list --state merged", at(T0 - 5_000));
-        assert_eq!(echo_over(&db).note("gh search prs --state merged", Some(1), ERR), None);
+        assert_eq!(
+            echo_over(&db).note("gh search prs --state merged", Some(1), ERR),
+            None
+        );
     }
 
     #[test]
@@ -543,15 +605,22 @@ mod tests {
             let out: &'static str = Box::leak(
                 format!("connection refused on port {i}\n[exit code 1]").into_boxed_str(),
             );
-            fail(&db, &format!("cmd-{i}"), FailOpts {
-                ts: T0 - 5_000,
-                session: None,
-                out: Some(out),
-                exit_code: Some(1),
-            });
+            fail(
+                &db,
+                &format!("cmd-{i}"),
+                FailOpts {
+                    ts: T0 - 5_000,
+                    session: None,
+                    out: Some(out),
+                    exit_code: Some(1),
+                },
+            );
         }
         // Same repo, plenty of failures, unrelated mistake.
-        assert_eq!(echo_over(&db).note("gh search prs --state merged", Some(1), ERR), None);
+        assert_eq!(
+            echo_over(&db).note("gh search prs --state merged", Some(1), ERR),
+            None
+        );
     }
 
     #[test]
@@ -559,25 +628,43 @@ mod tests {
         let db = fresh_db();
         let cmd = "gh search prs --state merged";
         fail(&db, cmd, at(T0 - 9_000));
-        fail(&db, "gh search prs --owner x --state merged", at(T0 - 8_000));
-        fail(&db, "gh search prs --owner y --state merged", at(T0 - 7_000));
+        fail(
+            &db,
+            "gh search prs --owner x --state merged",
+            at(T0 - 8_000),
+        );
+        fail(
+            &db,
+            "gh search prs --owner y --state merged",
+            at(T0 - 7_000),
+        );
         let note = echo_over(&db).note(cmd, Some(1), ERR).expect("a note");
         let exact = note.find("this exact command");
         let spread = note.find("other commands here failed the same way");
-        assert!(exact.is_some() && spread.is_some(), "both lines present: {note}");
-        assert!(exact < spread, "the certain fact comes before the inferred pattern");
+        assert!(
+            exact.is_some() && spread.is_some(),
+            "both lines present: {note}"
+        );
+        assert!(
+            exact < spread,
+            "the certain fact comes before the inferred pattern"
+        );
     }
 
     #[test]
     fn a_command_that_printed_nothing_has_no_signature_to_group_on() {
         let db = fresh_db();
         for i in 0..4 {
-            fail(&db, &format!("q-{i}"), FailOpts {
-                ts: T0 - 5_000,
-                session: None,
-                out: Some(""),
-                exit_code: Some(1),
-            });
+            fail(
+                &db,
+                &format!("q-{i}"),
+                FailOpts {
+                    ts: T0 - 5_000,
+                    session: None,
+                    out: Some(""),
+                    exit_code: Some(1),
+                },
+            );
         }
         assert_eq!(echo_over(&db).note("q-new", Some(1), ""), None);
     }

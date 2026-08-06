@@ -98,7 +98,11 @@ pub type ImageLoader<'a> = &'a dyn Fn(&ImageRef<'_>) -> Option<LoadedImage>;
 /// different job.)
 pub fn attachment_path(part: &ImageRef<'_>) -> PathBuf {
     let p = Path::new(part.path);
-    if p.is_absolute() { p.to_path_buf() } else { attachments_dir().join(part.path) }
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        attachments_dir().join(part.path)
+    }
 }
 
 /// The production loader: read the file, base64 it. Every failure mode —
@@ -189,8 +193,18 @@ pub fn message_to_llm(m: &Message, opts: &ReplayOptions<'_>) -> Vec<LlmMessage> 
                         content.push(LlmContentBlock::Text { text: text.clone() });
                     }
                 }
-                Part::Image { path, media_type, name, size } => {
-                    let r = ImageRef { path, media_type, name, size: *size };
+                Part::Image {
+                    path,
+                    media_type,
+                    name,
+                    size,
+                } => {
+                    let r = ImageRef {
+                        path,
+                        media_type,
+                        name,
+                        size: *size,
+                    };
                     let loaded = match opts.load_image {
                         Some(f) => f(&r),
                         None => read_attachment(&r),
@@ -201,7 +215,9 @@ pub fn message_to_llm(m: &Message, opts: &ReplayOptions<'_>) -> Vec<LlmMessage> 
                             media_type: img.media_type,
                             name: name.clone(),
                         },
-                        None => LlmContentBlock::Text { text: lost_attachment_text(&r) },
+                        None => LlmContentBlock::Text {
+                            text: lost_attachment_text(&r),
+                        },
                     });
                 }
                 // Every other part kind is supervisor-side and cannot appear here.
@@ -211,7 +227,10 @@ pub fn message_to_llm(m: &Message, opts: &ReplayOptions<'_>) -> Vec<LlmMessage> 
         if content.is_empty() {
             return vec![];
         }
-        return vec![LlmMessage { role: LlmRole::User, content }];
+        return vec![LlmMessage {
+            role: LlmRole::User,
+            content,
+        }];
     }
 
     let mut assistant: Vec<LlmContentBlock> = Vec::new();
@@ -246,7 +265,12 @@ pub fn message_to_llm(m: &Message, opts: &ReplayOptions<'_>) -> Vec<LlmMessage> 
                     input: input.clone(),
                 });
             }
-            Part::ToolResult { call_id, output, is_error, .. } => {
+            Part::ToolResult {
+                call_id,
+                output,
+                is_error,
+                ..
+            } => {
                 resolved.insert(call_id.clone());
                 results.push(LlmContentBlock::ToolResult {
                     tool_use_id: call_id.clone(),
@@ -254,7 +278,12 @@ pub fn message_to_llm(m: &Message, opts: &ReplayOptions<'_>) -> Vec<LlmMessage> 
                     is_error: *is_error,
                 });
             }
-            Part::Ask { question, status, answer, .. } => {
+            Part::Ask {
+                question,
+                status,
+                answer,
+                ..
+            } => {
                 asks.push(LlmContentBlock::Text {
                     text: ask_text(question, *status, answer.as_deref()),
                 });
@@ -284,13 +313,19 @@ pub fn message_to_llm(m: &Message, opts: &ReplayOptions<'_>) -> Vec<LlmMessage> 
 
     let mut out: Vec<LlmMessage> = Vec::new();
     if !assistant.is_empty() {
-        out.push(LlmMessage { role: LlmRole::Assistant, content: assistant });
+        out.push(LlmMessage {
+            role: LlmRole::Assistant,
+            content: assistant,
+        });
     }
     // Results lead; ask text follows. Reversing this is a provider 400.
     if !results.is_empty() || !asks.is_empty() {
         let mut content = results;
         content.extend(asks);
-        out.push(LlmMessage { role: LlmRole::User, content });
+        out.push(LlmMessage {
+            role: LlmRole::User,
+            content,
+        });
     }
     out
 }
@@ -317,7 +352,10 @@ pub struct ThreadOptions<'a> {
 /// then own, each by `(created_at, rowid)`) and re-deriving it here would put
 /// two answers in the tree.
 pub fn build_thread(messages: &[Message], opts: &ThreadOptions<'_>) -> Vec<LlmMessage> {
-    let replay = ReplayOptions { load_image: opts.load_image, model: opts.model };
+    let replay = ReplayOptions {
+        load_image: opts.load_image,
+        model: opts.model,
+    };
     let mut out: Vec<LlmMessage> = Vec::new();
     for m in messages {
         if opts.exclude.is_some_and(|ex| m.id == ex) {
@@ -342,7 +380,9 @@ pub fn strip_reasoning(messages: &mut Vec<LlmMessage>) {
         if messages[i].role != LlmRole::Assistant {
             continue;
         }
-        messages[i].content.retain(|b| !matches!(b, LlmContentBlock::Reasoning { .. }));
+        messages[i]
+            .content
+            .retain(|b| !matches!(b, LlmContentBlock::Reasoning { .. }));
         if messages[i].content.is_empty() {
             messages.remove(i);
         }
@@ -383,12 +423,20 @@ mod tests {
     }
 
     fn image_ref() -> ImageRef<'static> {
-        ImageRef { path: "abc.png", media_type: "image/png", name: "screenshot.png", size: 4_096 }
+        ImageRef {
+            path: "abc.png",
+            media_type: "image/png",
+            name: "screenshot.png",
+            size: 4_096,
+        }
     }
 
     /// A loader that always answers, so the "found" path needs no file.
     fn found(_: &ImageRef<'_>) -> Option<LoadedImage> {
-        Some(LoadedImage { data: "AAAA".into(), media_type: "image/png".into() })
+        Some(LoadedImage {
+            data: "AAAA".into(),
+            media_type: "image/png".into(),
+        })
     }
     /// A loader that never answers — the moved/deleted attachment.
     fn lost(_: &ImageRef<'_>) -> Option<LoadedImage> {
@@ -419,8 +467,22 @@ mod tests {
 
     #[test]
     fn a_user_message_becomes_one_user_message_of_text_and_image_blocks() {
-        let m = message(Role::User, vec![Part::Text { text: "look at this".into() }, image_part()]);
-        let out = message_to_llm(&m, &ReplayOptions { load_image: Some(&found), model: None });
+        let m = message(
+            Role::User,
+            vec![
+                Part::Text {
+                    text: "look at this".into(),
+                },
+                image_part(),
+            ],
+        );
+        let out = message_to_llm(
+            &m,
+            &ReplayOptions {
+                load_image: Some(&found),
+                model: None,
+            },
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].role, LlmRole::User);
         assert_eq!(types(&out[0].content), vec!["text", "image"]);
@@ -437,7 +499,13 @@ mod tests {
     #[test]
     fn a_lost_attachment_replays_as_placeholder_text_never_as_a_failure() {
         let m = message(Role::User, vec![image_part()]);
-        let out = message_to_llm(&m, &ReplayOptions { load_image: Some(&lost), model: None });
+        let out = message_to_llm(
+            &m,
+            &ReplayOptions {
+                load_image: Some(&lost),
+                model: None,
+            },
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(types(&out[0].content), vec!["text"]);
         let placeholder = text_of(&out[0].content[0]);
@@ -451,9 +519,12 @@ mod tests {
     #[test]
     fn a_system_note_replays_user_side() {
         // It is input to the model, not words it said.
-        let m = message(Role::System, vec![Part::Text {
-            text: "[subagent finished] audit-handlers".into(),
-        }]);
+        let m = message(
+            Role::System,
+            vec![Part::Text {
+                text: "[subagent finished] audit-handlers".into(),
+            }],
+        );
         let out = message_to_llm(&m, &ReplayOptions::default());
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].role, LlmRole::User);
@@ -463,10 +534,11 @@ mod tests {
     fn a_message_with_nothing_to_say_produces_no_message_at_all() {
         let opts = ReplayOptions::default();
         assert!(message_to_llm(&message(Role::User, vec![]), &opts).is_empty());
-        assert!(
-            message_to_llm(&message(Role::User, vec![Part::Text { text: "".into() }]), &opts)
-                .is_empty()
-        );
+        assert!(message_to_llm(
+            &message(Role::User, vec![Part::Text { text: "".into() }]),
+            &opts
+        )
+        .is_empty());
         assert!(message_to_llm(&message(Role::Supervisor, vec![]), &opts).is_empty());
     }
 
@@ -474,46 +546,73 @@ mod tests {
 
     #[test]
     fn a_supervisor_round_becomes_an_assistant_message_and_then_its_tool_results() {
-        let m = message(Role::Supervisor, vec![
-            Part::Text { text: "Running it.".into() },
-            Part::ToolCall { id: "c1".into(), name: "run_steps".into(), input: json!({"code":"1"}) },
-            Part::ToolResult {
-                call_id: "c1".into(),
-                output: json!("ok"),
-                is_error: false,
-                interrupted: None,
-            },
-        ]);
+        let m = message(
+            Role::Supervisor,
+            vec![
+                Part::Text {
+                    text: "Running it.".into(),
+                },
+                Part::ToolCall {
+                    id: "c1".into(),
+                    name: "run_steps".into(),
+                    input: json!({"code":"1"}),
+                },
+                Part::ToolResult {
+                    call_id: "c1".into(),
+                    output: json!("ok"),
+                    is_error: false,
+                    interrupted: None,
+                },
+            ],
+        );
         let out = message_to_llm(&m, &ReplayOptions::default());
 
-        assert_eq!(out.iter().map(|m| m.role).collect::<Vec<_>>(), vec![
-            LlmRole::Assistant,
-            LlmRole::User
-        ]);
+        assert_eq!(
+            out.iter().map(|m| m.role).collect::<Vec<_>>(),
+            vec![LlmRole::Assistant, LlmRole::User]
+        );
         assert_eq!(types(&out[0].content), vec!["text", "tool_use"]);
-        assert_eq!(out[1].content, vec![LlmContentBlock::ToolResult {
-            tool_use_id: "c1".into(),
-            content: "ok".into(),
-            is_error: false,
-        }]);
+        assert_eq!(
+            out[1].content,
+            vec![LlmContentBlock::ToolResult {
+                tool_use_id: "c1".into(),
+                content: "ok".into(),
+                is_error: false,
+            }]
+        );
     }
 
     #[test]
     fn signed_reasoning_replays_verbatim_to_the_model_that_signed_it() {
         let meta = json!({"type":"thinking","thinking":"step one","signature":"sig-abc"});
-        let m = message(Role::Supervisor, vec![
-            Part::Reasoning {
-                text: "step one".into(),
-                meta: Some(meta.clone()),
-                model: Some("m1".into()),
+        let m = message(
+            Role::Supervisor,
+            vec![
+                Part::Reasoning {
+                    text: "step one".into(),
+                    meta: Some(meta.clone()),
+                    model: Some("m1".into()),
+                },
+                Part::Text {
+                    text: "Here is the answer.".into(),
+                },
+            ],
+        );
+        let out = message_to_llm(
+            &m,
+            &ReplayOptions {
+                load_image: None,
+                model: Some("m1"),
             },
-            Part::Text { text: "Here is the answer.".into() },
-        ]);
-        let out = message_to_llm(&m, &ReplayOptions { load_image: None, model: Some("m1") });
+        );
         assert_eq!(types(&out[0].content), vec!["reasoning", "text"]);
         match &out[0].content[0] {
             LlmContentBlock::Reasoning { meta: got, .. } => {
-                assert_eq!(got.as_ref(), Some(&meta), "the payload survives the db untouched")
+                assert_eq!(
+                    got.as_ref(),
+                    Some(&meta),
+                    "the payload survives the db untouched"
+                )
             }
             other => panic!("expected reasoning, got {other:?}"),
         }
@@ -524,15 +623,26 @@ mod tests {
         // A signature is scoped to the model that produced it. This is the
         // whole gate: no provider is named anywhere, because the rule holds
         // for all of them.
-        let m = message(Role::Supervisor, vec![
-            Part::Reasoning {
-                text: "step one".into(),
-                meta: Some(json!({"signature":"s"})),
-                model: Some("m1".into()),
+        let m = message(
+            Role::Supervisor,
+            vec![
+                Part::Reasoning {
+                    text: "step one".into(),
+                    meta: Some(json!({"signature":"s"})),
+                    model: Some("m1".into()),
+                },
+                Part::Text {
+                    text: "Here is the answer.".into(),
+                },
+            ],
+        );
+        let out = message_to_llm(
+            &m,
+            &ReplayOptions {
+                load_image: None,
+                model: Some("m2"),
             },
-            Part::Text { text: "Here is the answer.".into() },
-        ]);
-        let out = message_to_llm(&m, &ReplayOptions { load_image: None, model: Some("m2") });
+        );
         assert_eq!(types(&out[0].content), vec!["text"]);
     }
 
@@ -542,65 +652,107 @@ mod tests {
         // give none. Re-sending the text alone would be an unsigned imitation
         // of thinking.
         for model in [None, Some("m1")] {
-            let m = message(Role::Supervisor, vec![
-                Part::Reasoning {
-                    text: "SECRET-THINKING".into(),
-                    meta: None,
-                    model: Some("m1".into()),
+            let m = message(
+                Role::Supervisor,
+                vec![
+                    Part::Reasoning {
+                        text: "SECRET-THINKING".into(),
+                        meta: None,
+                        model: Some("m1".into()),
+                    },
+                    Part::Text {
+                        text: "Here is the answer.".into(),
+                    },
+                ],
+            );
+            let out = message_to_llm(
+                &m,
+                &ReplayOptions {
+                    load_image: None,
+                    model,
                 },
-                Part::Text { text: "Here is the answer.".into() },
-            ]);
-            let out = message_to_llm(&m, &ReplayOptions { load_image: None, model });
-            assert!(!serde_json::to_string(&out).unwrap().contains("SECRET-THINKING"));
+            );
+            assert!(!serde_json::to_string(&out)
+                .unwrap()
+                .contains("SECRET-THINKING"));
         }
     }
 
     #[test]
     fn reasoning_is_dropped_on_replay_and_takes_nothing_else_with_it() {
-        let m = message(Role::Supervisor, vec![
-            Part::Reasoning { text: "SECRET-THINKING".into(), meta: None, model: None },
-            Part::Text { text: "Here is the answer.".into() },
-            Part::ToolCall { id: "c1".into(), name: "run_steps".into(), input: json!({"code":"1"}) },
-            Part::ToolResult {
-                call_id: "c1".into(),
-                output: json!("ok"),
-                is_error: false,
-                interrupted: None,
-            },
-        ]);
+        let m = message(
+            Role::Supervisor,
+            vec![
+                Part::Reasoning {
+                    text: "SECRET-THINKING".into(),
+                    meta: None,
+                    model: None,
+                },
+                Part::Text {
+                    text: "Here is the answer.".into(),
+                },
+                Part::ToolCall {
+                    id: "c1".into(),
+                    name: "run_steps".into(),
+                    input: json!({"code":"1"}),
+                },
+                Part::ToolResult {
+                    call_id: "c1".into(),
+                    output: json!("ok"),
+                    is_error: false,
+                    interrupted: None,
+                },
+            ],
+        );
         let out = message_to_llm(&m, &ReplayOptions::default());
-        assert!(!serde_json::to_string(&out).unwrap().contains("SECRET-THINKING"));
-        assert_eq!(types(&out[0].content), vec!["text", "tool_use"], "everything else survives");
+        assert!(!serde_json::to_string(&out)
+            .unwrap()
+            .contains("SECRET-THINKING"));
+        assert_eq!(
+            types(&out[0].content),
+            vec!["text", "tool_use"],
+            "everything else survives"
+        );
     }
 
     #[test]
     fn a_reasoning_only_message_vanishes_rather_than_replaying_as_an_empty_turn() {
-        let m = message(Role::Supervisor, vec![Part::Reasoning {
-            text: "hm".into(),
-            meta: None,
-            model: None,
-        }]);
+        let m = message(
+            Role::Supervisor,
+            vec![Part::Reasoning {
+                text: "hm".into(),
+                meta: None,
+                model: None,
+            }],
+        );
         assert!(message_to_llm(&m, &ReplayOptions::default()).is_empty());
     }
 
     #[test]
     fn a_settled_ask_replays_as_plain_text_after_the_tool_results() {
-        let m = message(Role::Supervisor, vec![
-            Part::ToolCall { id: "c1".into(), name: "run_steps".into(), input: json!({"code":"1"}) },
-            Part::Ask {
-                id: "q1".into(),
-                question: "Which branch?".into(),
-                options: Some(vec!["main".into(), "next".into()]),
-                status: AskStatus::Answered,
-                answer: Some("next".into()),
-            },
-            Part::ToolResult {
-                call_id: "c1".into(),
-                output: json!("ok"),
-                is_error: false,
-                interrupted: None,
-            },
-        ]);
+        let m = message(
+            Role::Supervisor,
+            vec![
+                Part::ToolCall {
+                    id: "c1".into(),
+                    name: "run_steps".into(),
+                    input: json!({"code":"1"}),
+                },
+                Part::Ask {
+                    id: "q1".into(),
+                    question: "Which branch?".into(),
+                    options: Some(vec!["main".into(), "next".into()]),
+                    status: AskStatus::Answered,
+                    answer: Some("next".into()),
+                },
+                Part::ToolResult {
+                    call_id: "c1".into(),
+                    output: json!("ok"),
+                    is_error: false,
+                    interrupted: None,
+                },
+            ],
+        );
         let out = message_to_llm(&m, &ReplayOptions::default());
 
         // A tool_use's result must LEAD the user message that follows it; text
@@ -617,55 +769,72 @@ mod tests {
     #[test]
     fn a_declined_or_interrupted_ask_says_which_in_the_past_tense() {
         let declined = message_to_llm(
-            &message(Role::Supervisor, vec![Part::Ask {
-                id: "q1".into(),
-                question: "Proceed?".into(),
-                options: None,
-                status: AskStatus::Declined,
-                answer: None,
-            }]),
+            &message(
+                Role::Supervisor,
+                vec![Part::Ask {
+                    id: "q1".into(),
+                    question: "Proceed?".into(),
+                    options: None,
+                    status: AskStatus::Declined,
+                    answer: None,
+                }],
+            ),
             &ReplayOptions::default(),
         );
         assert!(text_of(&declined[0].content[0]).contains("the user declined to answer"));
 
         let cut = message_to_llm(
-            &message(Role::Supervisor, vec![Part::Ask {
-                id: "q2".into(),
-                question: "Proceed?".into(),
-                options: None,
-                status: AskStatus::Interrupted,
-                answer: None,
-            }]),
+            &message(
+                Role::Supervisor,
+                vec![Part::Ask {
+                    id: "q2".into(),
+                    question: "Proceed?".into(),
+                    options: None,
+                    status: AskStatus::Interrupted,
+                    answer: None,
+                }],
+            ),
             &ReplayOptions::default(),
         );
-        assert!(
-            text_of(&cut[0].content[0]).contains("the turn was interrupted before an answer")
-        );
+        assert!(text_of(&cut[0].content[0]).contains("the turn was interrupted before an answer"));
     }
 
     #[test]
     fn a_tool_use_with_no_result_gets_a_synthetic_one_so_the_thread_stays_valid() {
         // The shape a crash, an orphaned turn or an interrupt between call and
         // result leaves behind. Every provider rejects the open pair.
-        let m = message(Role::Supervisor, vec![
-            Part::ToolCall { id: "c1".into(), name: "run_steps".into(), input: json!({"code":"1"}) },
-            Part::ToolCall { id: "c2".into(), name: "run_steps".into(), input: json!({"code":"2"}) },
-            Part::ToolResult {
-                call_id: "c1".into(),
-                output: json!("ok"),
-                is_error: false,
-                interrupted: None,
-            },
-        ]);
+        let m = message(
+            Role::Supervisor,
+            vec![
+                Part::ToolCall {
+                    id: "c1".into(),
+                    name: "run_steps".into(),
+                    input: json!({"code":"1"}),
+                },
+                Part::ToolCall {
+                    id: "c2".into(),
+                    name: "run_steps".into(),
+                    input: json!({"code":"2"}),
+                },
+                Part::ToolResult {
+                    call_id: "c1".into(),
+                    output: json!("ok"),
+                    is_error: false,
+                    interrupted: None,
+                },
+            ],
+        );
         let out = message_to_llm(&m, &ReplayOptions::default());
 
         let results: Vec<(&str, bool, &str)> = out[1]
             .content
             .iter()
             .map(|b| match b {
-                LlmContentBlock::ToolResult { tool_use_id, is_error, content } => {
-                    (tool_use_id.as_str(), *is_error, content.as_str())
-                }
+                LlmContentBlock::ToolResult {
+                    tool_use_id,
+                    is_error,
+                    content,
+                } => (tool_use_id.as_str(), *is_error, content.as_str()),
                 other => panic!("expected tool_result, got {other:?}"),
             })
             .collect();
@@ -691,23 +860,40 @@ mod tests {
 
     #[test]
     fn a_thread_replays_in_order_minus_the_message_being_written() {
-        let user = message(Role::User, vec![Part::Text { text: "do it".into() }]);
-        let supervisor = message(Role::Supervisor, vec![
-            Part::Reasoning { text: "thinking".into(), meta: None, model: None },
-            Part::Text { text: "done".into() },
-        ]);
+        let user = message(
+            Role::User,
+            vec![Part::Text {
+                text: "do it".into(),
+            }],
+        );
+        let supervisor = message(
+            Role::Supervisor,
+            vec![
+                Part::Reasoning {
+                    text: "thinking".into(),
+                    meta: None,
+                    model: None,
+                },
+                Part::Text {
+                    text: "done".into(),
+                },
+            ],
+        );
         let pending = message(Role::Supervisor, vec![]);
         let pending_id = pending.id.clone();
 
         let all = vec![user, supervisor, pending];
-        let out = build_thread(&all, &ThreadOptions {
-            exclude: Some(&pending_id),
-            ..Default::default()
-        });
-        assert_eq!(out.iter().map(|m| m.role).collect::<Vec<_>>(), vec![
-            LlmRole::User,
-            LlmRole::Assistant
-        ]);
+        let out = build_thread(
+            &all,
+            &ThreadOptions {
+                exclude: Some(&pending_id),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            out.iter().map(|m| m.role).collect::<Vec<_>>(),
+            vec![LlmRole::User, LlmRole::Assistant]
+        );
         assert!(!serde_json::to_string(&out).unwrap().contains("thinking"));
 
         // Without the exclusion the pending message would still contribute
@@ -735,7 +921,10 @@ mod tests {
             },
             LlmMessage {
                 role: LlmRole::Assistant,
-                content: vec![LlmContentBlock::Reasoning { text: "only thinking".into(), meta: None }],
+                content: vec![LlmContentBlock::Reasoning {
+                    text: "only thinking".into(),
+                    meta: None,
+                }],
             },
         ];
         strip_reasoning(&mut messages);

@@ -67,7 +67,11 @@ pub fn render_completion_popup(p: &CompletionPopupProps, area: Rect, buf: &mut B
         .border_style(Style::default().fg(MUTED));
     let body = block.inner(area);
     block.render(area, buf);
-    let body = Rect { x: body.x + 1, width: body.width.saturating_sub(2), ..body }; // paddingX
+    let body = Rect {
+        x: body.x + 1,
+        width: body.width.saturating_sub(2),
+        ..body
+    }; // paddingX
     let dim = Style::default().add_modifier(Modifier::DIM);
 
     let mut lines: Vec<Line> = Vec::new();
@@ -124,9 +128,7 @@ pub fn render_completion_popup(p: &CompletionPopupProps, area: Rect, buf: &mut B
     lines.push(Line::from(Span::styled(
         match p.kind {
             TriggerKind::File => "files & dirs — ↑↓ select · ⏎ or ⇥ inserts · esc closes",
-            TriggerKind::Skill => {
-                "commands & skills — ↑↓ select · ⏎ runs or inserts · esc closes"
-            }
+            TriggerKind::Skill => "commands & skills — ↑↓ select · ⏎ runs or inserts · esc closes",
         },
         dim,
     )));
@@ -216,7 +218,10 @@ fn wrap_rows(full: &str, inner_w: usize) -> Vec<WrapRow> {
         let mut i = 0usize;
         loop {
             let end = (i + inner_w).min(chars.len());
-            rows.push(WrapRow { start: off + i, text: chars[i..end].to_vec() });
+            rows.push(WrapRow {
+                start: off + i,
+                text: chars[i..end].to_vec(),
+            });
             if i + inner_w >= chars.len() {
                 break;
             }
@@ -304,7 +309,11 @@ pub fn render_composer(p: &ComposerProps, area: Rect, buf: &mut Buffer) {
         // strongest claim a terminal UI can make about where typing goes.
         let has_cursor = p.keyboard_owner.is_none() && i == cur_row;
         let prefix = if r.start == 0 { 2 } else { 0 };
-        let seg = |from: usize, to: usize| -> String { r.text[from.min(r.text.len())..to.min(r.text.len())].iter().collect() };
+        let seg = |from: usize, to: usize| -> String {
+            r.text[from.min(r.text.len())..to.min(r.text.len())]
+                .iter()
+                .collect()
+        };
         // Where this row crosses into ghost text — everything from there is dim.
         let gcol = (ghost_start.saturating_sub(r.start)).clamp(prefix, r.text.len());
         let mut spans: Vec<Span> = Vec::new();
@@ -315,13 +324,20 @@ pub fn render_composer(p: &ComposerProps, area: Rect, buf: &mut Buffer) {
             let col = cur - r.start;
             let at: Option<char> = r.text.get(col).copied();
             spans.push(Span::raw(seg(prefix, col)));
-            spans.push(Span::styled(at.map(String::from).unwrap_or_else(|| " ".into()), caret));
+            spans.push(Span::styled(
+                at.map(String::from).unwrap_or_else(|| " ".into()),
+                caret,
+            ));
             if !placeholder.is_empty() {
                 spans.push(Span::styled(placeholder.clone(), dim));
             }
             if at.is_some() {
                 let rest = seg(col + 1, r.text.len());
-                let rest_style = if col + 1 >= gcol { dim } else { Style::default() };
+                let rest_style = if col + 1 >= gcol {
+                    dim
+                } else {
+                    Style::default()
+                };
                 spans.push(Span::styled(rest, rest_style));
             }
         } else if r.text.len() <= prefix {
@@ -350,7 +366,10 @@ pub fn render_composer(p: &ComposerProps, area: Rect, buf: &mut Buffer) {
         let above = top;
         let below = rows.len() - top - shown_count;
         lines.push(Line::from(Span::styled(
-            format!("… {above} line{} above · {below} below", if above == 1 { "" } else { "s" }),
+            format!(
+                "… {above} line{} above · {below} below",
+                if above == 1 { "" } else { "s" }
+            ),
             dim,
         )));
     }
@@ -426,11 +445,21 @@ mod tests {
     // Chat.test.tsx: "Composer caps its height on a large paste and says what is off-screen"
     #[test]
     fn caps_height_on_a_large_paste_and_says_what_is_off_screen() {
-        let input: String = (0..30).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
-        let p = ComposerProps { max_rows: 5, width: 60, ..props(&input, input.chars().count(), false) };
+        let input: String = (0..30)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let p = ComposerProps {
+            max_rows: 5,
+            width: 60,
+            ..props(&input, input.chars().count(), false)
+        };
         let frame = draw(&p, 60, 10);
         assert!(frame.contains("lines above ·"), "{frame}");
-        assert!(!frame.contains("line 0 "), "windowed to the cursor: {frame}");
+        assert!(
+            !frame.contains("line 0 "),
+            "windowed to the cursor: {frame}"
+        );
         assert!(frame.contains("line 29"), "{frame}");
     }
 
@@ -452,7 +481,10 @@ mod tests {
         // `!` line always carries its hint row.
         assert_eq!(composer_height("!ls", "", false, 60, 6, 0), 4);
         // clipped: cap-1 shown rows + counter row.
-        let long: String = (0..30).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let long: String = (0..30)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert_eq!(composer_height(&long, "", false, 60, 5, 0), 2 + 4 + 1);
         // a ghost widens the text ("  ⇥ tab" tail) but adds no chrome rows.
         assert_eq!(composer_height("", "do it", false, 60, 6, 0), 3);
@@ -481,11 +513,10 @@ mod tests {
     fn renders_the_at_popup_for_the_trigger_under_the_cursor() {
         let text = "look at @app";
         let trigger = crate::format::active_trigger(text, text.chars().count()).unwrap();
-        let candidates: Vec<crate::format::Candidate> =
-            ["server/app.ts", "app.tsx", "docs/app.md"]
-                .iter()
-                .map(|n| crate::format::Candidate::file(*n))
-                .collect();
+        let candidates: Vec<crate::format::Candidate> = ["server/app.ts", "app.tsx", "docs/app.md"]
+            .iter()
+            .map(|n| crate::format::Candidate::file(*n))
+            .collect();
         let ranked = crate::format::rank_completions(&candidates, &trigger, 2);
         let frame = draw_popup(
             &CompletionPopupProps {
@@ -530,8 +561,14 @@ mod tests {
 
     #[test]
     fn keyboard_owner_names_the_owner_and_drops_the_caret() {
-        let p = ComposerProps { keyboard_owner: Some("the tree"), ..props("", 0, false) };
+        let p = ComposerProps {
+            keyboard_owner: Some("the tree"),
+            ..props("", 0, false)
+        };
         let frame = draw(&p, 60, 6);
-        assert!(frame.contains("the tree has the keyboard · esc returns here"), "{frame}");
+        assert!(
+            frame.contains("the tree has the keyboard · esc returns here"),
+            "{frame}"
+        );
     }
 }

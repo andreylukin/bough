@@ -203,10 +203,12 @@ pub fn normalize_workspace(raw: &str, home: &str) -> String {
 /// inside the program, which reads as the agent being broken.
 fn require_directory(path: &str) -> Result<(), BoughError> {
     match std::fs::metadata(path) {
-        Err(_) => Err(BoughError::bad_request(format!("workspace does not exist: {path}"))),
-        Ok(info) if !info.is_dir() => {
-            Err(BoughError::bad_request(format!("workspace is not a directory: {path}")))
-        }
+        Err(_) => Err(BoughError::bad_request(format!(
+            "workspace does not exist: {path}"
+        ))),
+        Ok(info) if !info.is_dir() => Err(BoughError::bad_request(format!(
+            "workspace is not a directory: {path}"
+        ))),
         Ok(_) => Ok(()),
     }
 }
@@ -262,7 +264,9 @@ pub fn create_session() -> Handler {
         let parent_id = body.parent_id.clone();
         if let Some(parent) = &parent_id {
             if ctx.db.lock().unwrap().get_session(parent)?.is_none() {
-                return Err(BoughError::bad_request(format!("parent {parent} not found")));
+                return Err(BoughError::bad_request(format!(
+                    "parent {parent} not found"
+                )));
             }
         }
 
@@ -311,7 +315,10 @@ pub fn create_session() -> Handler {
             // default (`~/.bough/model.json`), then nothing.
             let pinned = defaults_of(&ctx);
             let model = body.model.clone().or(pinned.model);
-            let effort = body.effort.clone().or(pinned.effort.map(|e| effort_str(e).to_string()));
+            let effort = body
+                .effort
+                .clone()
+                .or(pinned.effort.map(|e| effort_str(e).to_string()));
             if let Some(model) = &model {
                 db.set_session_model(&session.id, Some(model))?;
             }
@@ -366,8 +373,11 @@ pub fn get_session() -> Handler {
         let session = require_session(&ctx, param(&params, "id"))?;
         // Session pin first, then the global default, then the built-in —
         // resolved the same way the runner resolves it.
-        let model =
-            session.model.clone().or(ctx.model.clone()).unwrap_or_else(|| DEFAULT_MODEL.to_string());
+        let model = session
+            .model
+            .clone()
+            .or(ctx.model.clone())
+            .unwrap_or_else(|| DEFAULT_MODEL.to_string());
 
         let (thread, usage, tree) = {
             let db = ctx.db.lock().unwrap();
@@ -532,7 +542,10 @@ pub fn put_draft() -> Handler {
         let id = param(&params, "id").to_string();
         require_session(&ctx, &id)?;
         let body: SetDraftBody = parse_body(req, None).await?;
-        ctx.db.lock().unwrap().set_session_draft(&id, body.draft.as_deref())?;
+        ctx.db
+            .lock()
+            .unwrap()
+            .set_session_draft(&id, body.draft.as_deref())?;
         Ok(json(&json!({ "ok": true, "draft": body.draft }), 200))
     })
 }
@@ -641,7 +654,9 @@ mod tests {
     }
 
     async fn new_session(fx: &Fixture, body: Value) -> Session {
-        let res = call(fx).call(testutil::req("POST", "/sessions", Some(body))).await;
+        let res = call(fx)
+            .call(testutil::req("POST", "/sessions", Some(body)))
+            .await;
         assert_eq!(res.status(), 201);
         serde_json::from_value(testutil::body_json(res).await).unwrap()
     }
@@ -721,12 +736,18 @@ mod tests {
         let child = seed_delegated(&fx, SessionKind::Subagent, &root, "review handlers");
 
         let top = testutil::body_json(call(&fx).call(testutil::get("/sessions")).await).await;
-        let ids: Vec<&str> =
-            top.as_array().unwrap().iter().map(|s| s["id"].as_str().unwrap()).collect();
+        let ids: Vec<&str> = top
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_str().unwrap())
+            .collect();
         assert_eq!(ids, vec![root.id.as_str()]);
 
         let drill = testutil::body_json(
-            call(&fx).call(testutil::get(&format!("/sessions?originId={}", root.id))).await,
+            call(&fx)
+                .call(testutil::get(&format!("/sessions?originId={}", root.id)))
+                .await,
         )
         .await;
         let drill = drill.as_array().unwrap();
@@ -742,9 +763,15 @@ mod tests {
         let root = new_session(&fx, j!({})).await;
         let agent = seed_delegated(&fx, SessionKind::WorkflowAgent, &root, "verify: title");
         let top = testutil::body_json(call(&fx).call(testutil::get("/sessions")).await).await;
-        assert!(!top.as_array().unwrap().iter().any(|s| s["id"] == agent.id.as_str()));
+        assert!(!top
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == agent.id.as_str()));
         let drill = testutil::body_json(
-            call(&fx).call(testutil::get(&format!("/sessions?originId={}", root.id))).await,
+            call(&fx)
+                .call(testutil::get(&format!("/sessions?originId={}", root.id)))
+                .await,
         )
         .await;
         assert_eq!(drill.as_array().unwrap()[0]["id"], agent.id.as_str());
@@ -755,9 +782,11 @@ mod tests {
         let fx = testutil::fixture();
         let root = new_session(&fx, j!({"title": "root"})).await;
         let fork = new_session(&fx, j!({"title": "fork", "parentId": root.id})).await;
-        let compaction =
-            new_session(&fx, j!({"title": "compaction", "parentId": root.id, "kind": "compaction"}))
-                .await;
+        let compaction = new_session(
+            &fx,
+            j!({"title": "compaction", "parentId": root.id, "kind": "compaction"}),
+        )
+        .await;
         assert_eq!(fork.kind, SessionKind::Fork); // derived from parentId
         let top = testutil::body_json(call(&fx).call(testutil::get("/sessions")).await).await;
         let mut ids: Vec<String> = top
@@ -805,7 +834,9 @@ mod tests {
             })
             .unwrap();
         let drill = testutil::body_json(
-            call(&fx).call(testutil::get(&format!("/sessions?originId={}", root.id))).await,
+            call(&fx)
+                .call(testutil::get(&format!("/sessions?originId={}", root.id)))
+                .await,
         )
         .await;
         let mut ids: Vec<String> = drill
@@ -823,24 +854,43 @@ mod tests {
     #[tokio::test]
     async fn an_unknown_origin_id_is_a_404_not_an_empty_list() {
         let fx = testutil::fixture();
-        let res = call(&fx).call(testutil::get("/sessions?originId=nope")).await;
+        let res = call(&fx)
+            .call(testutil::get("/sessions?originId=nope"))
+            .await;
         assert_eq!(res.status(), 404);
         let body = testutil::body_json(res).await;
-        assert!(body["error"].as_str().unwrap().contains("session nope not found"), "{body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("session nope not found"),
+            "{body}"
+        );
     }
 
     #[tokio::test]
     async fn post_sessions_refuses_a_collapsed_kind_no_listing_could_reach() {
         let fx = testutil::fixture();
         for kind in ["subagent", "workflow_agent"] {
-            let res =
-                call(&fx).call(testutil::req("POST", "/sessions", Some(j!({"kind": kind})))).await;
+            let res = call(&fx)
+                .call(testutil::req("POST", "/sessions", Some(j!({"kind": kind}))))
+                .await;
             assert_eq!(res.status(), 400);
             let body = testutil::body_json(res).await;
-            assert!(body["error"].as_str().unwrap().contains("agent()/spawn()"), "{body}");
+            assert!(
+                body["error"].as_str().unwrap().contains("agent()/spawn()"),
+                "{body}"
+            );
         }
         // And nothing was persisted by the refused calls.
-        assert!(fx.ctx.db.lock().unwrap().list_sessions().unwrap().is_empty());
+        assert!(fx
+            .ctx
+            .db
+            .lock()
+            .unwrap()
+            .list_sessions()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -879,12 +929,20 @@ mod tests {
         let session = new_session(&fx, j!({"title": "hello"})).await;
         assert_eq!(session.kind, SessionKind::Root);
         assert_eq!(
-            fx.ctx.db.lock().unwrap().get_session(&session.id).unwrap().unwrap(),
+            fx.ctx
+                .db
+                .lock()
+                .unwrap()
+                .get_session(&session.id)
+                .unwrap()
+                .unwrap(),
             session
         );
         let events = fx.events.lock().unwrap();
-        let created: Vec<_> =
-            events.iter().filter(|e| e.r#type == EventType::SessionCreated).collect();
+        let created: Vec<_> = events
+            .iter()
+            .filter(|e| e.r#type == EventType::SessionCreated)
+            .collect();
         assert_eq!(created.len(), 1);
         assert_eq!(created[0].data, serde_json::to_value(&session).unwrap());
         assert_eq!(created[0].session_id.as_deref(), Some(session.id.as_str()));
@@ -897,7 +955,10 @@ mod tests {
         assert_eq!(session.model.as_deref(), Some("openai:gpt-5"));
         assert_eq!(session.effort.as_deref(), Some("high"));
         let events = fx.events.lock().unwrap();
-        let created = events.iter().find(|e| e.r#type == EventType::SessionCreated).unwrap();
+        let created = events
+            .iter()
+            .find(|e| e.r#type == EventType::SessionCreated)
+            .unwrap();
         // The event carried the pins too: a client that renders from the event
         // and one that renders from the response must not disagree.
         assert_eq!(created.data, serde_json::to_value(&session).unwrap());
@@ -906,12 +967,30 @@ mod tests {
     #[tokio::test]
     async fn an_unknown_parent_is_a_400_naming_it_and_nothing_is_created() {
         let fx = testutil::fixture();
-        let res =
-            call(&fx).call(testutil::req("POST", "/sessions", Some(j!({"parentId": "ghost"})))).await;
+        let res = call(&fx)
+            .call(testutil::req(
+                "POST",
+                "/sessions",
+                Some(j!({"parentId": "ghost"})),
+            ))
+            .await;
         assert_eq!(res.status(), 400);
         let body = testutil::body_json(res).await;
-        assert!(body["error"].as_str().unwrap().contains("parent ghost not found"), "{body}");
-        assert!(fx.ctx.db.lock().unwrap().list_sessions().unwrap().is_empty());
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("parent ghost not found"),
+            "{body}"
+        );
+        assert!(fx
+            .ctx
+            .db
+            .lock()
+            .unwrap()
+            .list_sessions()
+            .unwrap()
+            .is_empty());
         assert!(fx.events.lock().unwrap().is_empty());
     }
 
@@ -931,12 +1010,29 @@ mod tests {
     async fn a_workspace_that_does_not_exist_is_rejected_at_creation() {
         let fx = testutil::fixture();
         let res = call(&fx)
-            .call(testutil::req("POST", "/sessions", Some(j!({"workspace": "/no/such/checkout"}))))
+            .call(testutil::req(
+                "POST",
+                "/sessions",
+                Some(j!({"workspace": "/no/such/checkout"})),
+            ))
             .await;
         assert_eq!(res.status(), 400);
         let body = testutil::body_json(res).await;
-        assert!(body["error"].as_str().unwrap().contains("workspace does not exist"), "{body}");
-        assert!(fx.ctx.db.lock().unwrap().list_sessions().unwrap().is_empty());
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("workspace does not exist"),
+            "{body}"
+        );
+        assert!(fx
+            .ctx
+            .db
+            .lock()
+            .unwrap()
+            .list_sessions()
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
@@ -947,21 +1043,34 @@ mod tests {
         let file = dir.join("not-a-checkout");
         std::fs::write(&file, "").unwrap();
         let res = call(&fx)
-            .call(testutil::req("POST", "/sessions", Some(j!({"workspace": file.to_string_lossy()}))))
+            .call(testutil::req(
+                "POST",
+                "/sessions",
+                Some(j!({"workspace": file.to_string_lossy()})),
+            ))
             .await;
         assert_eq!(res.status(), 400);
         let body = testutil::body_json(res).await;
-        assert!(body["error"].as_str().unwrap().contains("not a directory"), "{body}");
+        assert!(
+            body["error"].as_str().unwrap().contains("not a directory"),
+            "{body}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn normalize_workspace_expands_tilde_and_absolutizes_with_home_as_a_parameter() {
         assert_eq!(normalize_workspace("~", "/home/dev"), "/home/dev");
-        assert_eq!(normalize_workspace("~/src/bough", "/home/dev"), "/home/dev/src/bough");
+        assert_eq!(
+            normalize_workspace("~/src/bough", "/home/dev"),
+            "/home/dev/src/bough"
+        );
         assert_eq!(normalize_workspace("  /srv/x  ", "/home/dev"), "/srv/x");
         // `~name` is a login, not this user's home — it must not expand.
-        assert_ne!(normalize_workspace("~other/x", "/home/dev"), "/home/dev/other/x");
+        assert_ne!(
+            normalize_workspace("~other/x", "/home/dev"),
+            "/home/dev/other/x"
+        );
     }
 
     // ---- the session view ----------------------------------------------------
@@ -987,16 +1096,24 @@ mod tests {
             .await;
 
         let body = testutil::body_json(
-            call(&fx).call(testutil::get(&format!("/sessions/{}", child.id))).await,
+            call(&fx)
+                .call(testutil::get(&format!("/sessions/{}", child.id)))
+                .await,
         )
         .await;
         assert_eq!(body["session"]["id"], child.id.as_str());
         let thread = body["thread"].as_array().unwrap();
         // Thread inheritance: the ancestor's message is present without being
         // copied.
-        assert_eq!(thread.iter().map(text_of).collect::<Vec<_>>(), vec!["one", "two"]);
         assert_eq!(
-            thread.iter().map(|m| m["sessionId"].as_str().unwrap()).collect::<Vec<_>>(),
+            thread.iter().map(text_of).collect::<Vec<_>>(),
+            vec!["one", "two"]
+        );
+        assert_eq!(
+            thread
+                .iter()
+                .map(|m| m["sessionId"].as_str().unwrap())
+                .collect::<Vec<_>>(),
             vec![root.id.as_str(), child.id.as_str()]
         );
         assert_eq!(body["usage"]["costUsd"], 0.0);
@@ -1039,11 +1156,16 @@ mod tests {
         assert_eq!(message["pending"], false);
         assert_eq!(text_of(message), "ship it");
         let stored = fx.ctx.db.lock().unwrap().messages_for(&session.id).unwrap();
-        assert_eq!(serde_json::to_value(&stored).unwrap(), j!([message.clone()]));
+        assert_eq!(
+            serde_json::to_value(&stored).unwrap(),
+            j!([message.clone()])
+        );
 
         let events = fx.events.lock().unwrap();
-        let started: Vec<_> =
-            events.iter().filter(|e| e.r#type == EventType::MessageStarted).collect();
+        let started: Vec<_> = events
+            .iter()
+            .filter(|e| e.r#type == EventType::MessageStarted)
+            .collect();
         assert_eq!(started.len(), 1);
         assert_eq!(&started[0].data, message);
         drop(events);
@@ -1125,7 +1247,12 @@ mod tests {
         assert_eq!(ok.status(), 202);
         let body = testutil::body_json(ok).await;
         assert_eq!(
-            body["message"]["parts"].as_array().unwrap().iter().map(|p| &p["type"]).collect::<Vec<_>>(),
+            body["message"]["parts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| &p["type"])
+                .collect::<Vec<_>>(),
             vec!["image"]
         );
 
@@ -1138,15 +1265,31 @@ mod tests {
             .await;
         assert_eq!(empty.status(), 400);
         let err = testutil::body_json(empty).await;
-        assert!(err["error"].as_str().unwrap().contains("empty message"), "{err}");
-        assert_eq!(fx.ctx.db.lock().unwrap().messages_for(&session.id).unwrap().len(), 1);
+        assert!(
+            err["error"].as_str().unwrap().contains("empty message"),
+            "{err}"
+        );
+        assert_eq!(
+            fx.ctx
+                .db
+                .lock()
+                .unwrap()
+                .messages_for(&session.id)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]
     async fn posting_into_an_unknown_session_is_a_404_and_starts_nothing() {
         let fx = testutil::fixture();
         let res = call(&fx)
-            .call(testutil::req("POST", "/sessions/ghost/messages", Some(j!({"text": "hi"}))))
+            .call(testutil::req(
+                "POST",
+                "/sessions/ghost/messages",
+                Some(j!({"text": "hi"})),
+            ))
             .await;
         assert_eq!(res.status(), 404);
         assert!(fx.started.lock().unwrap().is_empty());
@@ -1170,15 +1313,27 @@ mod tests {
             ))
             .await;
         assert_eq!(
-            fx.ctx.db.lock().unwrap().get_session(&session.id).unwrap().unwrap().draft,
+            fx.ctx
+                .db
+                .lock()
+                .unwrap()
+                .get_session(&session.id)
+                .unwrap()
+                .unwrap()
+                .draft,
             None
         );
         let events = fx.events.lock().unwrap();
-        let updated: Vec<_> =
-            events.iter().filter(|e| e.r#type == EventType::SessionUpdated).collect();
+        let updated: Vec<_> = events
+            .iter()
+            .filter(|e| e.r#type == EventType::SessionUpdated)
+            .collect();
         assert_eq!(updated.len(), 1);
         // Nullish, not absent — sessions.test.ts:512 asserts `draft ?? null`.
-        assert!(updated[0].data["draft"].is_null(), "the announced row carries no draft");
+        assert!(
+            updated[0].data["draft"].is_null(),
+            "the announced row carries no draft"
+        );
     }
 
     #[tokio::test]
@@ -1196,7 +1351,16 @@ mod tests {
         assert_eq!(res.status(), 202);
         // The message survived the failed start: the transcript is the source
         // of truth.
-        assert_eq!(fx.ctx.db.lock().unwrap().messages_for(&session.id).unwrap().len(), 1);
+        assert_eq!(
+            fx.ctx
+                .db
+                .lock()
+                .unwrap()
+                .messages_for(&session.id)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -1211,7 +1375,16 @@ mod tests {
             ))
             .await;
         assert_eq!(res.status(), 202);
-        assert_eq!(fx.ctx.db.lock().unwrap().messages_for(&session.id).unwrap().len(), 1);
+        assert_eq!(
+            fx.ctx
+                .db
+                .lock()
+                .unwrap()
+                .messages_for(&session.id)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -1225,7 +1398,13 @@ mod tests {
                 Some(j!({"text": "reticulating splines"})),
             ))
             .await;
-        let hits = fx.ctx.db.lock().unwrap().search_messages("splines", None, None).unwrap();
+        let hits = fx
+            .ctx
+            .db
+            .lock()
+            .unwrap()
+            .search_messages("splines", None, None)
+            .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].session_id, session.id);
     }
@@ -1241,7 +1420,12 @@ mod tests {
 
         let rows = testutil::body_json(call(&fx).call(testutil::get("/sessions")).await).await;
         let by_id = |id: &str| {
-            rows.as_array().unwrap().iter().find(|r| r["id"] == id).cloned().unwrap()
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["id"] == id)
+                .cloned()
+                .unwrap()
         };
         assert_eq!(by_id(&busy.id)["busy"], true);
         assert_eq!(by_id(&busy.id)["lastTurnStatus"], "running");
@@ -1276,7 +1460,12 @@ mod tests {
 
         let rows = testutil::body_json(call(&fx).call(testutil::get("/sessions")).await).await;
         let by_id = |id: &str| {
-            rows.as_array().unwrap().iter().find(|r| r["id"] == id).cloned().unwrap()
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["id"] == id)
+                .cloned()
+                .unwrap()
         };
         assert_eq!(by_id(&spent.id)["tokens"], 1_250);
         assert_eq!(by_id(&idle.id).get("tokens"), None);
@@ -1302,7 +1491,15 @@ mod tests {
             j!({"ok": true, "draft": "half-typed"})
         );
         assert_eq!(
-            fx.ctx.db.lock().unwrap().get_session(&session.id).unwrap().unwrap().draft.as_deref(),
+            fx.ctx
+                .db
+                .lock()
+                .unwrap()
+                .get_session(&session.id)
+                .unwrap()
+                .unwrap()
+                .draft
+                .as_deref(),
             Some("half-typed")
         );
         // The writer is the client switching away; echoing session.updated
@@ -1329,7 +1526,14 @@ mod tests {
             ))
             .await;
         assert_eq!(
-            fx.ctx.db.lock().unwrap().get_session(&session.id).unwrap().unwrap().draft,
+            fx.ctx
+                .db
+                .lock()
+                .unwrap()
+                .get_session(&session.id)
+                .unwrap()
+                .unwrap()
+                .draft,
             None
         );
     }
@@ -1338,7 +1542,11 @@ mod tests {
     async fn put_draft_rejects_a_missing_session_and_a_wrong_shaped_body() {
         let fx = testutil::fixture();
         let missing = call(&fx)
-            .call(testutil::req("PUT", "/sessions/ghost/draft", Some(j!({"draft": "x"}))))
+            .call(testutil::req(
+                "PUT",
+                "/sessions/ghost/draft",
+                Some(j!({"draft": "x"})),
+            ))
             .await;
         assert_eq!(missing.status(), 404);
         let session = new_session(&fx, j!({})).await;
@@ -1351,7 +1559,13 @@ mod tests {
             .await;
         assert_eq!(bad.status(), 400);
         let body = testutil::body_json(bad).await;
-        assert!(body["error"].as_str().unwrap().starts_with("invalid body: "), "{body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("invalid body: "),
+            "{body}"
+        );
     }
 
     // ---- PATCH (pins) --------------------------------------------------------
@@ -1363,7 +1577,9 @@ mod tests {
         let patch = |body: Value| {
             let d = call(&fx);
             let path = format!("/sessions/{}", session.id);
-            async move { testutil::body_json(d.call(testutil::req("PATCH", &path, Some(body))).await).await }
+            async move {
+                testutil::body_json(d.call(testutil::req("PATCH", &path, Some(body))).await).await
+            }
         };
 
         let pinned = patch(j!({"model": "openai:gpt-x"})).await;
@@ -1380,7 +1596,10 @@ mod tests {
         // `null`), and sessions.test.ts:694 asserts `cleared.model ?? null`.
         let cleared = patch(j!({"model": null})).await;
         assert!(cleared["model"].is_null());
-        assert_eq!(cleared["effort"], "high", "clearing one override must not clear the other");
+        assert_eq!(
+            cleared["effort"], "high",
+            "clearing one override must not clear the other"
+        );
     }
 
     #[tokio::test]
@@ -1396,7 +1615,11 @@ mod tests {
             .await;
         assert_eq!(bad.status(), 400);
         let missing = call(&fx)
-            .call(testutil::req("PATCH", "/sessions/nope", Some(j!({"model": "x"}))))
+            .call(testutil::req(
+                "PATCH",
+                "/sessions/nope",
+                Some(j!({"model": "x"})),
+            ))
             .await;
         assert_eq!(missing.status(), 404);
     }
@@ -1412,7 +1635,14 @@ mod tests {
                 Some(j!({"model": "claude-opus-4-8", "effort": "high"})),
             ))
             .await;
-        let stored = fx.ctx.db.lock().unwrap().get_session(&session.id).unwrap().unwrap();
+        let stored = fx
+            .ctx
+            .db
+            .lock()
+            .unwrap()
+            .get_session(&session.id)
+            .unwrap()
+            .unwrap();
         assert_eq!(stored.model.as_deref(), Some("claude-opus-4-8"));
         assert_eq!(
             stored.effort.as_deref(),
@@ -1459,7 +1689,9 @@ mod tests {
         }
 
         let body = testutil::body_json(
-            call(&fx).call(testutil::get(&format!("/sessions/{}/usage", root.id))).await,
+            call(&fx)
+                .call(testutil::get(&format!("/sessions/{}/usage", root.id)))
+                .await,
         )
         .await;
         assert_eq!(body["usage"]["inputTokens"], 100);
@@ -1469,7 +1701,13 @@ mod tests {
         assert_eq!(body["tree"]["costUsd"], 0.75);
         assert_eq!(body["tree"]["inputTokens"], 110);
 
-        assert_eq!(call(&fx).call(testutil::get("/sessions/ghost/usage")).await.status(), 404);
+        assert_eq!(
+            call(&fx)
+                .call(testutil::get("/sessions/ghost/usage"))
+                .await
+                .status(),
+            404
+        );
     }
 
     // ---- model settings ------------------------------------------------------
@@ -1477,7 +1715,8 @@ mod tests {
     #[tokio::test]
     async fn get_model_settings_names_every_tier_not_just_the_frontier_one() {
         let fx = testutil::fixture();
-        let body = testutil::body_json(call(&fx).call(testutil::get("/model-settings")).await).await;
+        let body =
+            testutil::body_json(call(&fx).call(testutil::get("/model-settings")).await).await;
         assert_eq!(body["defaultModel"], "test-model");
         assert_eq!(body["cheapModel"], cheap_model());
         assert_eq!(body["defaultEffort"], Value::Null);
@@ -1504,8 +1743,11 @@ mod tests {
         let put = |body: Value| {
             let d = d.clone();
             async move {
-                testutil::body_json(d.call(testutil::req("PUT", "/model-settings", Some(body))).await)
-                    .await
+                testutil::body_json(
+                    d.call(testutil::req("PUT", "/model-settings", Some(body)))
+                        .await,
+                )
+                .await
             }
         };
 

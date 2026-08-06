@@ -111,7 +111,10 @@ pub async fn cheap_text(
         Some(env) => cheap_model_with(env),
         None => cheap_model(),
     });
-    let llm = opts.llm.clone().unwrap_or_else(|| client_for(&model, ClientOpts::default()));
+    let llm = opts
+        .llm
+        .clone()
+        .unwrap_or_else(|| client_for(&model, ClientOpts::default()));
     let fut = complete_text(
         &llm,
         CompleteTextOpts {
@@ -126,7 +129,11 @@ pub async fn cheap_text(
     match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), fut).await {
         Ok(Ok(text)) => {
             let text = text.trim();
-            if text.is_empty() { None } else { Some(text.to_string()) }
+            if text.is_empty() {
+                None
+            } else {
+                Some(text.to_string())
+            }
         }
         _ => None,
     }
@@ -170,8 +177,10 @@ pub fn sanitize_title(raw: &str) -> String {
     // ("I don't have access to your codebase, so") — a reply never begins a
     // noun phrase, so it is refused outright.
     static REPLY: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)^(i|i'm|i'll|i've|sorry|sure|certainly|okay|ok|here|let|as|based|the user|you)\b")
-            .unwrap()
+        Regex::new(
+            r"(?i)^(i|i'm|i'll|i've|sorry|sure|certainly|okay|ok|here|let|as|based|the user|you)\b",
+        )
+        .unwrap()
     });
 
     let line = raw
@@ -180,7 +189,7 @@ pub fn sanitize_title(raw: &str) -> String {
         .map(str::trim)
         .find(|l| !l.is_empty())
         .unwrap_or("");
-    let cleaned = LABEL.replace(&line, "");
+    let cleaned = LABEL.replace(line, "");
     let cleaned = LEADER.replace(&cleaned, "");
     let cleaned = QUOTES_LEAD.replace(&cleaned, "");
     let cleaned = QUOTES_TRAIL.replace(&cleaned, "");
@@ -209,15 +218,32 @@ pub fn sanitize_title(raw: &str) -> String {
             .to_lowercase();
         let connective = matches!(
             last.as_str(),
-            "and" | "or" | "but" | "so" | "because" | "that" | "which" | "with" | "for" | "to"
-                | "of" | "in" | "on" | "a" | "an" | "the"
+            "and"
+                | "or"
+                | "but"
+                | "so"
+                | "because"
+                | "that"
+                | "which"
+                | "with"
+                | "for"
+                | "to"
+                | "of"
+                | "in"
+                | "on"
+                | "a"
+                | "an"
+                | "the"
         );
         if !connective {
             break;
         }
         capped.pop();
     }
-    let mut out: String = sentence_case(&capped.join(" ")).chars().take(TITLE_MAX_CHARS).collect();
+    let mut out: String = sentence_case(&capped.join(" "))
+        .chars()
+        .take(TITLE_MAX_CHARS)
+        .collect();
     if out.ends_with([',', ';', ':']) {
         out.pop();
     }
@@ -248,7 +274,13 @@ fn sentence_case(title: &str) -> String {
     words
         .iter()
         .enumerate()
-        .map(|(i, w)| if i == 0 || !prose(w) { (*w).to_string() } else { w.to_lowercase() })
+        .map(|(i, w)| {
+            if i == 0 || !prose(w) {
+                (*w).to_string()
+            } else {
+                w.to_lowercase()
+            }
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -265,7 +297,11 @@ pub async fn cheap_title(first_message: &str, opts: &CheapCallOpts) -> Option<St
     }
     let raw = cheap_text(TITLE_SYSTEM, text, 64, opts).await?;
     let title = sanitize_title(&raw);
-    if title.is_empty() { None } else { Some(title) }
+    if title.is_empty() {
+        None
+    } else {
+        Some(title)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -308,7 +344,9 @@ pub struct AutoTitleOpts {
 /// titled or renamed session is never re-titled and never re-billed. After
 /// it: the SAME check again, because a user can rename during the round-trip.
 pub fn maybe_auto_title(ctx: &TitleCtx, session_id: &str, text: &str, opts: AutoTitleOpts) {
-    let Some(cheap) = ctx.cheap.clone() else { return };
+    let Some(cheap) = ctx.cheap.clone() else {
+        return;
+    };
     if text.trim().is_empty() {
         return;
     }
@@ -423,8 +461,12 @@ pub fn watch_titles(ctx: &TitleCtx) -> impl Fn() + Send + Sync {
         if e.r#type != EventType::MessageStarted {
             return;
         }
-        let Some(session_id) = e.session_id.clone() else { return };
-        let Ok(message) = serde_json::from_value::<Message>(e.data.clone()) else { return };
+        let Some(session_id) = e.session_id.clone() else {
+            return;
+        };
+        let Ok(message) = serde_json::from_value::<Message>(e.data.clone()) else {
+            return;
+        };
         if message.role != Role::User {
             return;
         }
@@ -432,7 +474,10 @@ pub fn watch_titles(ctx: &TitleCtx) -> impl Fn() + Send + Sync {
             &listener_ctx,
             &session_id,
             &user_text(&message),
-            AutoTitleOpts { placeholder: String::new(), inflight: Some(inflight.clone()) },
+            AutoTitleOpts {
+                placeholder: String::new(),
+                inflight: Some(inflight.clone()),
+            },
         );
     }));
     let bus = ctx.bus.clone();
@@ -464,8 +509,14 @@ mod tests {
 
     #[tokio::test]
     async fn cheap_text_returns_the_concatenated_text_of_a_successful_round() {
-        let opts = CheapCallOpts { llm: Some(saying_client("  hello  ")), ..Default::default() };
-        assert_eq!(cheap_text("s", "p", 16, &opts).await.as_deref(), Some("hello"));
+        let opts = CheapCallOpts {
+            llm: Some(saying_client("  hello  ")),
+            ..Default::default()
+        };
+        assert_eq!(
+            cheap_text("s", "p", 16, &opts).await.as_deref(),
+            Some("hello")
+        );
     }
 
     #[tokio::test]
@@ -491,13 +542,20 @@ mod tests {
                 _t: OnText,
                 _c: CancellationToken,
             ) -> Result<LlmResult, BoughError> {
-                Ok(LlmResult { content: vec![], stop_reason: "end_turn".into(), usage: None })
+                Ok(LlmResult {
+                    content: vec![],
+                    stop_reason: "end_turn".into(),
+                    usage: None,
+                })
             }
         }
         let clients: Vec<Arc<dyn crate::types::LlmClient>> =
             vec![Arc::new(Failing), Arc::new(Empty), saying_client("   ")];
         for llm in clients {
-            let opts = CheapCallOpts { llm: Some(llm), ..Default::default() };
+            let opts = CheapCallOpts {
+                llm: Some(llm),
+                ..Default::default()
+            };
             assert_eq!(cheap_text("s", "p", 16, &opts).await, None);
         }
     }
@@ -524,9 +582,8 @@ mod tests {
     fn the_cheap_model_is_read_per_call_and_defaults_when_unset() {
         let none: Env = Arc::new(|_| None);
         let blank: Env = Arc::new(|_| Some("   ".into()));
-        let set: Env = Arc::new(|k| {
-            (k == CHEAP_MODEL_ENV).then(|| "openai:gpt-5-mini".to_string())
-        });
+        let set: Env =
+            Arc::new(|k| (k == CHEAP_MODEL_ENV).then(|| "openai:gpt-5-mini".to_string()));
         assert_eq!(cheap_model_with(&none), DEFAULT_CHEAP_MODEL);
         assert_eq!(cheap_model_with(&blank), DEFAULT_CHEAP_MODEL);
         assert_eq!(cheap_model_with(&set), "openai:gpt-5-mini");
@@ -549,8 +606,14 @@ mod tests {
 
     #[test]
     fn sanitize_title_strips_the_label_the_quoting_and_the_trailing_period() {
-        assert_eq!(sanitize_title("Title: \"Fix the patch parser.\""), "Fix the patch parser");
-        assert_eq!(sanitize_title("\n\n  rewrite the theme route  \n"), "rewrite the theme route");
+        assert_eq!(
+            sanitize_title("Title: \"Fix the patch parser.\""),
+            "Fix the patch parser"
+        );
+        assert_eq!(
+            sanitize_title("\n\n  rewrite the theme route  \n"),
+            "rewrite the theme route"
+        );
         assert_eq!(sanitize_title("**bold answer**"), "bold answer");
     }
 
@@ -565,16 +628,28 @@ mod tests {
                 .count(),
             8
         );
-        assert_eq!(sanitize_title("theme picker previews live"), "theme picker previews live");
+        assert_eq!(
+            sanitize_title("theme picker previews live"),
+            "theme picker previews live"
+        );
     }
 
     #[tokio::test]
     async fn cheap_title_is_none_for_empty_input_and_for_an_unusable_answer() {
-        let x = CheapCallOpts { llm: Some(saying_client("x")), ..Default::default() };
+        let x = CheapCallOpts {
+            llm: Some(saying_client("x")),
+            ..Default::default()
+        };
         assert_eq!(cheap_title("   ", &x).await, None);
-        let quotes = CheapCallOpts { llm: Some(saying_client("\"\"")), ..Default::default() };
+        let quotes = CheapCallOpts {
+            llm: Some(saying_client("\"\"")),
+            ..Default::default()
+        };
         assert_eq!(cheap_title("hello", &quotes).await, None);
-        let fix = CheapCallOpts { llm: Some(saying_client("Fix it")), ..Default::default() };
+        let fix = CheapCallOpts {
+            llm: Some(saying_client("Fix it")),
+            ..Default::default()
+        };
         assert_eq!(cheap_title("hello", &fix).await.as_deref(), Some("Fix it"));
     }
 
@@ -587,14 +662,18 @@ mod tests {
             pending: false,
             created_at: 0,
             parts: vec![
-                Part::Text { text: "look at".into() },
+                Part::Text {
+                    text: "look at".into(),
+                },
                 Part::Image {
                     path: "/x.png".into(),
                     media_type: "image/png".into(),
                     name: "x.png".into(),
                     size: 1,
                 },
-                Part::Text { text: "this".into() },
+                Part::Text {
+                    text: "this".into(),
+                },
             ],
         };
         assert_eq!(user_text(&message), "look at\nthis");
@@ -629,7 +708,13 @@ mod tests {
         settle().await;
 
         assert_eq!(
-            ctx.db.lock().unwrap().get_session(&session_id).unwrap().unwrap().title,
+            ctx.db
+                .lock()
+                .unwrap()
+                .get_session(&session_id)
+                .unwrap()
+                .unwrap()
+                .title,
             "fix the patch parser"
         );
         let updated: Vec<_> = events
@@ -639,7 +724,11 @@ mod tests {
             .filter(|e| e.r#type == EventType::SessionUpdated)
             .cloned()
             .collect();
-        assert_eq!(updated.len(), 1, "one session.updated re-renders every sidebar");
+        assert_eq!(
+            updated.len(),
+            1,
+            "one session.updated re-renders every sidebar"
+        );
         assert_eq!(updated[0].data["title"], "fix the patch parser");
         stop();
     }
@@ -654,7 +743,13 @@ mod tests {
         settle().await;
         assert_eq!(tier.title_calls.load(Ordering::SeqCst), 0);
         assert_eq!(
-            ctx.db.lock().unwrap().get_session(&session_id).unwrap().unwrap().title,
+            ctx.db
+                .lock()
+                .unwrap()
+                .get_session(&session_id)
+                .unwrap()
+                .unwrap()
+                .title,
             "the name I chose"
         );
         stop();
@@ -666,10 +761,20 @@ mod tests {
         let stop = watch_titles(&ctx);
         // The TUI writes this when `!command` creates the conversation.
         let provisional = seed_session(&ctx.db, "! ls -1 src");
-        post_user_message(&ctx, &provisional, "Add a discount(items, pct) helper to src/cart.py");
+        post_user_message(
+            &ctx,
+            &provisional,
+            "Add a discount(items, pct) helper to src/cart.py",
+        );
         settle().await;
         assert_eq!(
-            ctx.db.lock().unwrap().get_session(&provisional).unwrap().unwrap().title,
+            ctx.db
+                .lock()
+                .unwrap()
+                .get_session(&provisional)
+                .unwrap()
+                .unwrap()
+                .title,
             "Add a discount helper"
         );
 
@@ -679,7 +784,13 @@ mod tests {
         post_user_message(&ctx, &chosen, "and now the shipping rules");
         settle().await;
         assert_eq!(
-            ctx.db.lock().unwrap().get_session(&chosen).unwrap().unwrap().title,
+            ctx.db
+                .lock()
+                .unwrap()
+                .get_session(&chosen)
+                .unwrap()
+                .unwrap()
+                .title,
             "Pricing rewrite"
         );
         stop();
@@ -694,11 +805,21 @@ mod tests {
         post_user_message(&ctx, &session_id, "hello");
         settle().await;
         // The user renames while the cheap model is still thinking.
-        ctx.db.lock().unwrap().set_session_title(&session_id, "mine").unwrap();
+        ctx.db
+            .lock()
+            .unwrap()
+            .set_session_title(&session_id, "mine")
+            .unwrap();
         tier.release("the model's idea");
         settle().await;
         assert_eq!(
-            ctx.db.lock().unwrap().get_session(&session_id).unwrap().unwrap().title,
+            ctx.db
+                .lock()
+                .unwrap()
+                .get_session(&session_id)
+                .unwrap()
+                .unwrap()
+                .title,
             "mine"
         );
         stop();
@@ -722,7 +843,13 @@ mod tests {
         tier.release("one title");
         settle().await;
         assert_eq!(
-            ctx.db.lock().unwrap().get_session(&session_id).unwrap().unwrap().title,
+            ctx.db
+                .lock()
+                .unwrap()
+                .get_session(&session_id)
+                .unwrap()
+                .unwrap()
+                .title,
             "one title"
         );
         stop();
@@ -764,7 +891,9 @@ mod tests {
         // A listener registered AFTER the titler still receives the event.
         let seen = Arc::new(Mutex::new(Vec::<EventType>::new()));
         let sink = seen.clone();
-        ctx.bus.subscribe(Arc::new(move |e: &BoughEvent| sink.lock().unwrap().push(e.r#type)));
+        ctx.bus.subscribe(Arc::new(move |e: &BoughEvent| {
+            sink.lock().unwrap().push(e.r#type)
+        }));
 
         let session_id = seed_session(&ctx.db, "");
         post_user_message(&ctx, &session_id, "the patch parser drops the last line");
@@ -773,9 +902,22 @@ mod tests {
         assert!(seen.lock().unwrap().contains(&EventType::MessageStarted));
         // The only consequence is the one the spec allows: the session keeps
         // its placeholder. Annoying, not broken.
-        assert_eq!(ctx.db.lock().unwrap().get_session(&session_id).unwrap().unwrap().title, "");
+        assert_eq!(
+            ctx.db
+                .lock()
+                .unwrap()
+                .get_session(&session_id)
+                .unwrap()
+                .unwrap()
+                .title,
+            ""
+        );
         assert!(
-            !events.lock().unwrap().iter().any(|e| e.r#type == EventType::SessionUpdated),
+            !events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|e| e.r#type == EventType::SessionUpdated),
             "no session.updated for a failed title"
         );
         stop();
@@ -788,13 +930,25 @@ mod tests {
         let session_id = seed_session(&ctx.db, "");
         post_user_message(&ctx, &session_id, "hello");
         settle().await;
-        assert_eq!(ctx.db.lock().unwrap().get_session(&session_id).unwrap().unwrap().title, "");
+        assert_eq!(
+            ctx.db
+                .lock()
+                .unwrap()
+                .get_session(&session_id)
+                .unwrap()
+                .unwrap()
+                .title,
+            ""
+        );
         stop();
     }
 
     #[test]
     fn a_model_that_answered_instead_of_titling_yields_no_title_not_a_truncated_lie() {
-        assert_eq!(sanitize_title("I don't have access to your codebase, so I can't say"), "");
+        assert_eq!(
+            sanitize_title("I don't have access to your codebase, so I can't say"),
+            ""
+        );
         for reply in [
             "I'll take a look at that for you",
             "Sure! Here is what that file does",
@@ -823,7 +977,10 @@ mod tests {
             sanitize_title("Title: Add retry to the LLM client"),
             "Add retry to the LLM client"
         );
-        assert_eq!(sanitize_title("\"Wire up the changes rail\""), "Wire up the changes rail");
+        assert_eq!(
+            sanitize_title("\"Wire up the changes rail\""),
+            "Wire up the changes rail"
+        );
         // "Interrupt" starts with I but is not the pronoun — the boundary holds.
         assert_eq!(
             sanitize_title("Interrupt handling for running turns"),
@@ -834,22 +991,37 @@ mod tests {
 
     #[test]
     fn sanitize_title_lowers_the_models_title_case_so_the_tree_reads_as_one_column() {
-        assert_eq!(sanitize_title("C Function Implementation"), "C function implementation");
-        assert_eq!(sanitize_title("Add b() function to mod.py"), "Add b() function to mod.py");
+        assert_eq!(
+            sanitize_title("C Function Implementation"),
+            "C function implementation"
+        );
+        assert_eq!(
+            sanitize_title("Add b() function to mod.py"),
+            "Add b() function to mod.py"
+        );
         // Identifiers and acronyms carry their own capitalization.
         assert_eq!(sanitize_title("Fix CI Flake"), "Fix CI flake");
         // A lowercase-initial word means hands off the whole title.
-        assert_eq!(sanitize_title("Rename getUser Everywhere"), "Rename getUser Everywhere");
+        assert_eq!(
+            sanitize_title("Rename getUser Everywhere"),
+            "Rename getUser Everywhere"
+        );
         // Already sentence case: untouched.
         assert_eq!(sanitize_title("Image input support"), "Image input support");
     }
 
     #[test]
     fn sanitize_title_drops_a_markdown_leader_the_model_decorated_with() {
-        assert_eq!(sanitize_title("# Big Python File Creation"), "Big python file creation");
+        assert_eq!(
+            sanitize_title("# Big Python File Creation"),
+            "Big python file creation"
+        );
         assert_eq!(sanitize_title("### Fix the parser"), "Fix the parser");
         assert_eq!(sanitize_title("- Add retry logic"), "Add retry logic");
         // A `#` that is part of the name, not a leader, stays put.
-        assert_eq!(sanitize_title("Fix #412 in the parser"), "Fix #412 in the parser");
+        assert_eq!(
+            sanitize_title("Fix #412 in the parser"),
+            "Fix #412 in the parser"
+        );
     }
 }

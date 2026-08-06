@@ -20,6 +20,7 @@ pub mod ghost;
 pub mod history_ops;
 pub mod http;
 pub mod jobs;
+pub mod mcp_oauth;
 pub mod mcp_routes;
 pub mod models;
 pub mod questions;

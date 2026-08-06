@@ -19,6 +19,25 @@ use crate::types::{Effort, Patch};
 
 // ---- shared -----------------------------------------------------------------
 
+/// A field that must be PRESENT and may be `null` — TS's `z.string().nullable()`
+/// as opposed to `.nullable().optional()`.
+///
+/// serde's derive treats EVERY `Option<T>` field as optional: a missing key
+/// deserializes to `None` with no error, because the generated code falls back
+/// to `missing_field`, which succeeds for `Option`. That silent default is the
+/// wrong contract wherever `null` is an INSTRUCTION rather than an absence —
+/// `PUT /draft` with a typo'd key would clear the composer instead of answering
+/// 400. Naming a `deserialize_with` takes the field off that implicit-default
+/// path, so an absent key is `missing field`, while an explicit `null` still
+/// reads as `None`.
+fn required_nullable<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d)
+}
+
 /// One message selected out of a thread, optionally narrowed to specific part
 /// indexes. Absent `parts` = the whole message. When present, `parts` must be
 /// non-empty (validated at the router edge).
@@ -74,9 +93,14 @@ pub struct PostMessageBody {
 }
 
 /// PUT /sessions/:id/draft — `null` clears the prefilled composer text.
+///
+/// `draft` is REQUIRED and nullable, never optional: clearing the composer is
+/// something a client must ASK for, so a body that forgot the key is a 400 and
+/// not a silent wipe of text the user typed.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SetDraftBody {
+    #[serde(deserialize_with = "required_nullable")]
     pub draft: Option<String>,
 }
 
@@ -433,11 +457,15 @@ impl SectionsBody {
             return Err(BoughError::bad_request("turns must not be empty"));
         }
         if self.turns.len() > 500 {
-            return Err(BoughError::bad_request("turns must have at most 500 entries"));
+            return Err(BoughError::bad_request(
+                "turns must have at most 500 entries",
+            ));
         }
         for turn in &self.turns {
             if turn.gist.chars().count() > 500 {
-                return Err(BoughError::bad_request("gist must be at most 500 characters"));
+                return Err(BoughError::bad_request(
+                    "gist must be at most 500 characters",
+                ));
             }
         }
         Ok(())
@@ -467,7 +495,9 @@ impl RunShellBody {
     pub fn validate(&self) -> Result<(), BoughError> {
         require_non_empty(&self.command, "command")?;
         if self.command.chars().count() > 4000 {
-            return Err(BoughError::bad_request("command must be at most 4000 characters"));
+            return Err(BoughError::bad_request(
+                "command must be at most 4000 characters",
+            ));
         }
         Ok(())
     }
@@ -530,7 +560,9 @@ impl PutThemeBody {
             return Err(BoughError::bad_request("name must not be empty"));
         }
         if trimmed.chars().count() > 80 {
-            return Err(BoughError::bad_request("name must be at most 80 characters"));
+            return Err(BoughError::bad_request(
+                "name must be at most 80 characters",
+            ));
         }
         Ok(())
     }
@@ -586,11 +618,30 @@ mod tests {
     }
 
     #[test]
+    fn set_draft_needs_the_key_because_null_is_an_instruction_not_an_absence() {
+        // `z.string().nullable()` — required, and nullable. An explicit null is
+        // "clear the composer"; a MISSING key is a malformed body. serde makes
+        // every `Option<T>` field optional unless it is taken off the
+        // implicit-default path, so without the guard a client that PUT the
+        // wrong key wiped text the user had typed and got a 200 for it.
+        let set: SetDraftBody = serde_json::from_str(r#"{"draft":"hello"}"#).unwrap();
+        assert_eq!(set.draft.as_deref(), Some("hello"));
+        let cleared: SetDraftBody = serde_json::from_str(r#"{"draft":null}"#).unwrap();
+        assert_eq!(cleared.draft, None);
+        for body in ["{}", r#"{"text":"typo"}"#] {
+            let err = serde_json::from_str::<SetDraftBody>(body).unwrap_err();
+            assert!(
+                err.to_string().contains("missing field `draft`"),
+                "{body}: {err}"
+            );
+        }
+    }
+
+    #[test]
     fn request_bodies_reject_the_empty_selections_that_make_a_no_op_branch() {
         // The freeze-suite pin: `PartPick.parse({messageId, parts: []})` rejects
         // (min 1 when present); absent parts is the whole message and is fine.
-        let empty: PartPick =
-            serde_json::from_str(r#"{"messageId":"m1","parts":[]}"#).unwrap();
+        let empty: PartPick = serde_json::from_str(r#"{"messageId":"m1","parts":[]}"#).unwrap();
         assert!(empty.validate().is_err(), "parts: [] must reject");
         let whole: PartPick = serde_json::from_str(r#"{"messageId":"m1"}"#).unwrap();
         assert_eq!(whole.parts, None);
@@ -610,8 +661,16 @@ mod tests {
     #[test]
     fn validation_bounds() {
         assert!(RunShellBody { command: "".into() }.validate().is_err());
-        assert!(RunShellBody { command: "x".repeat(4000) }.validate().is_ok());
-        assert!(RunShellBody { command: "x".repeat(4001) }.validate().is_err());
+        assert!(RunShellBody {
+            command: "x".repeat(4000)
+        }
+        .validate()
+        .is_ok());
+        assert!(RunShellBody {
+            command: "x".repeat(4001)
+        }
+        .validate()
+        .is_err());
 
         let turns = |n: usize| SectionsBody {
             turns: (0..n).map(|_| SectionsTurn { gist: "g".into() }).collect(),
@@ -627,15 +686,27 @@ mod tests {
         let b: PatchSessionBody = serde_json::from_str(r#"{"model":null}"#).unwrap();
         assert!(b.validate().is_ok());
 
-        assert!(SearchQuery { q: "x".into(), session_id: None, limit: Some(0) }
-            .validate()
-            .is_err());
-        assert!(SearchQuery { q: "x".into(), session_id: None, limit: Some(200) }
-            .validate()
-            .is_ok());
-        assert!(SearchQuery { q: "x".into(), session_id: None, limit: Some(201) }
-            .validate()
-            .is_err());
+        assert!(SearchQuery {
+            q: "x".into(),
+            session_id: None,
+            limit: Some(0)
+        }
+        .validate()
+        .is_err());
+        assert!(SearchQuery {
+            q: "x".into(),
+            session_id: None,
+            limit: Some(200)
+        }
+        .validate()
+        .is_ok());
+        assert!(SearchQuery {
+            q: "x".into(),
+            session_id: None,
+            limit: Some(201)
+        }
+        .validate()
+        .is_err());
     }
 
     #[test]

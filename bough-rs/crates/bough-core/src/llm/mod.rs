@@ -96,7 +96,11 @@ pub async fn complete_text(
         effort: None,
     };
     let result = llm
-        .run(params, Arc::new(|_| {}), tokio_util::sync::CancellationToken::new())
+        .run(
+            params,
+            Arc::new(|_| {}),
+            tokio_util::sync::CancellationToken::new(),
+        )
         .await?;
     Ok(result
         .content
@@ -158,7 +162,9 @@ pub(crate) mod test_support {
             max_tokens: 1024,
             messages: vec![LlmMessage {
                 role: LlmRole::User,
-                content: vec![LlmContentBlock::Text { text: "hello".into() }],
+                content: vec![LlmContentBlock::Text {
+                    text: "hello".into(),
+                }],
             }],
             tools: tools.to_vec(),
             tool_choice_none: false,
@@ -260,10 +266,16 @@ pub(crate) mod test_support {
                 .map(|payloads| CannedResponse {
                     status: 200,
                     headers: vec![("content-type".into(), "text/event-stream".into())],
-                    chunks: payloads.into_iter().map(|p| format!("data: {p}\n")).collect(),
+                    chunks: payloads
+                        .into_iter()
+                        .map(|p| format!("data: {p}\n"))
+                        .collect(),
                 })
                 .collect();
-            CannedTransport { responses: Mutex::new(responses), requests: Mutex::new(Vec::new()) }
+            CannedTransport {
+                responses: Mutex::new(responses),
+                requests: Mutex::new(Vec::new()),
+            }
         }
 
         /// Plain (non-SSE) responses: `(status, headers, body)`.
@@ -276,7 +288,10 @@ pub(crate) mod test_support {
                     chunks: vec![body],
                 })
                 .collect();
-            CannedTransport { responses: Mutex::new(responses), requests: Mutex::new(Vec::new()) }
+            CannedTransport {
+                responses: Mutex::new(responses),
+                requests: Mutex::new(Vec::new()),
+            }
         }
     }
 
@@ -293,7 +308,11 @@ pub(crate) mod test_support {
                 return Err(BoughError::llm("CannedTransport: no response queued"));
             };
             let chunks: Vec<&str> = next.chunks.iter().map(String::as_str).collect();
-            Ok(HttpResponse { status: next.status, headers: next.headers, body: body_of(chunks) })
+            Ok(HttpResponse {
+                status: next.status,
+                headers: next.headers,
+                body: body_of(chunks),
+            })
         }
     }
 }
@@ -311,8 +330,13 @@ mod tests {
     async fn a_fake_satisfies_llm_client_streamed_deltas_blocks_and_stop_reason() {
         let (client, calls) = fake_client(vec![Ok(LlmResult {
             content: vec![
-                LlmBlock::Reasoning { text: "thinking about it".into(), meta: None },
-                LlmBlock::Text { text: "on it".into() },
+                LlmBlock::Reasoning {
+                    text: "thinking about it".into(),
+                    meta: None,
+                },
+                LlmBlock::Text {
+                    text: "on it".into(),
+                },
                 LlmBlock::ToolUse {
                     id: "t1".into(),
                     name: "run_steps".into(),
@@ -352,8 +376,13 @@ mod tests {
         let (client, calls) = fake_client(vec![Ok(LlmResult {
             content: vec![
                 LlmBlock::Text { text: "a ".into() },
-                LlmBlock::Reasoning { text: "hm".into(), meta: None },
-                LlmBlock::Text { text: "title".into() },
+                LlmBlock::Reasoning {
+                    text: "hm".into(),
+                    meta: None,
+                },
+                LlmBlock::Text {
+                    text: "title".into(),
+                },
             ],
             stop_reason: "end_turn".into(),
             usage: None,
@@ -384,14 +413,20 @@ mod tests {
         let cases: &[(&str, &str)] = &[
             ("claude-opus-5", "ANTHROPIC_API_KEY"),
             ("openai/gpt-5", "OPENROUTER_API_KEY"),
-            ("openai:gpt-5", "provider not configured"),
-            ("@cf/zai-org/glm-5.2", "CLOUDFLARE_API_KEY / CLOUDFLARE_API_TOKEN"),
+            ("openai:gpt-5", "OPENAI_API_KEY"),
+            (
+                "@cf/zai-org/glm-5.2",
+                "CLOUDFLARE_API_KEY / CLOUDFLARE_API_TOKEN",
+            ),
         ];
         for (model, needle) in cases {
             let client = client_for(
                 model,
                 ClientOpts {
-                    provider: ProviderOpts { env: Some(Arc::new(|_| None)), transport: None },
+                    provider: ProviderOpts {
+                        env: Some(Arc::new(|_| None)),
+                        transport: None,
+                    },
                     retry: RetryOpts {
                         max_attempts: Some(2),
                         base_delay_ms: Some(0),
@@ -401,10 +436,18 @@ mod tests {
                 },
             );
             let err = client
-                .run(params_for_model(model, &TOOLS), Arc::new(|_| {}), CancellationToken::new())
+                .run(
+                    params_for_model(model, &TOOLS),
+                    Arc::new(|_| {}),
+                    CancellationToken::new(),
+                )
                 .await
                 .unwrap_err();
-            assert_eq!(err.status(), 401, "{model}: a missing key must not be retried");
+            assert_eq!(
+                err.status(),
+                401,
+                "{model}: a missing key must not be retried"
+            );
             assert!(err.to_string().contains(needle), "{model}: got {err}");
         }
     }
@@ -414,7 +457,11 @@ mod tests {
         // A transient failure then a success: the surviving round carries a
         // catalog cost, proving with_pricing sits inside with_retries.
         let (inner, _calls) = fake_client(vec![
-            Err(crate::errors::BoughError::llm_with("openrouter: 500 upstream", 500, None)),
+            Err(crate::errors::BoughError::llm_with(
+                "openrouter: 500 upstream",
+                500,
+                None,
+            )),
             Ok(LlmResult {
                 content: vec![LlmBlock::Text { text: "ok".into() }],
                 stop_reason: "end_turn".into(),
@@ -430,7 +477,11 @@ mod tests {
         ]);
         let composed = retry::with_retries(
             trace::with_trace(pricing::with_pricing(inner), None),
-            RetryOpts { max_attempts: Some(3), base_delay_ms: Some(0), on_retry: None },
+            RetryOpts {
+                max_attempts: Some(3),
+                base_delay_ms: Some(0),
+                on_retry: None,
+            },
         );
         let result = composed
             .run(params(&TOOLS), Arc::new(|_| {}), CancellationToken::new())

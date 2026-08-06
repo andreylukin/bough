@@ -23,6 +23,9 @@ nix = { workspace = true }
 tracing = { workspace = true }
 libc = { workspace = true }
 include_dir = { workspace = true }
+# The vec0 KNN virtual table, STATICALLY registered (`sqlite3_auto_extension`) —
+# no dylib to find, unlike the npm package the TS side loads. See `db/embed.rs`.
+sqlite-vec = "0.1.9"
 
 [dev-dependencies]
 chrono-tz = { workspace = true }

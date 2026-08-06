@@ -63,7 +63,11 @@ pub struct TakenBack {
 /// refused (it has said why, on the notice row).
 pub async fn take_back(store: &Store, api: &Api) -> Option<TakenBack> {
     let (session_id, target, busy) = store.with_state(|s| {
-        (s.current_id.clone(), take_back_target(&s.queued, &s.thread), is_busy(s))
+        (
+            s.current_id.clone(),
+            take_back_target(&s.queued, &s.thread),
+            is_busy(s),
+        )
     });
     match target {
         TakeBack::Queued => {
@@ -90,7 +94,10 @@ pub async fn take_back(store: &Store, api: &Api) -> Option<TakenBack> {
                 ids: result.removed,
             });
             store.notify(take_back_notice(busy));
-            Some(TakenBack { text: result.text, resync: Some(id) })
+            Some(TakenBack {
+                text: result.text,
+                resync: Some(id),
+            })
         }
     }
 }
@@ -134,14 +141,17 @@ pub async fn decline_ask(store: &Store, api: &Api, descendants: &[&str]) {
 /// re-read, because they are memory-only server-side and the server is the
 /// only place that knows.
 async fn settle_ask(store: &Store, api: &Api, descendants: &[&str], answer: Option<&str>) {
-    let Some((session_id, id)) =
-        store.with_state(|s| current_ask(s, descendants).map(|q| (q.session_id.clone(), q.id.clone())))
+    let Some((session_id, id)) = store
+        .with_state(|s| current_ask(s, descendants).map(|q| (q.session_id.clone(), q.id.clone())))
     else {
         return;
     };
     store.dispatch(StoreAction::AskSettled { id: id.clone() });
     let sent = match answer {
-        Some(text) => api.answer_question(&session_id, &id, text).await.map(|_| ()),
+        Some(text) => api
+            .answer_question(&session_id, &id, text)
+            .await
+            .map(|_| ()),
         None => api.decline_question(&session_id, &id).await.map(|_| ()),
     };
     if sent.is_err() {
@@ -247,11 +257,16 @@ mod tests {
     }
 
     fn ok(body: &str) -> Result<HttpResponse, String> {
-        Ok(HttpResponse { status: 200, body: body.into() })
+        Ok(HttpResponse {
+            status: 200,
+            body: body.into(),
+        })
     }
 
     fn open(store: &Store) {
-        store.dispatch(StoreAction::Open { session_id: Some(SESSION.into()) });
+        store.dispatch(StoreAction::Open {
+            session_id: Some(SESSION.into()),
+        });
     }
 
     fn seed_thread(store: &Store, thread: Vec<Message>) {
@@ -297,12 +312,21 @@ mod tests {
         // Armed, and a turn is running: the take-back wins — it stops the turn
         // anyway, so nothing is lost by preferring it.
         assert!(just_sent(&store.get_state(), 5_000 + UNSEND_MS - 1));
-        assert_eq!(lookup(&ctx(5_000 + UNSEND_MS - 1), "esc"), Some(Command::MessageUnsend));
+        assert_eq!(
+            lookup(&ctx(5_000 + UNSEND_MS - 1), "esc"),
+            Some(Command::MessageUnsend)
+        );
         // One millisecond past the window Escape is the stop again.
         assert!(!just_sent(&store.get_state(), 5_000 + UNSEND_MS));
-        assert_eq!(lookup(&ctx(5_000 + UNSEND_MS), "esc"), Some(Command::TurnInterrupt));
+        assert_eq!(
+            lookup(&ctx(5_000 + UNSEND_MS), "esc"),
+            Some(Command::TurnInterrupt)
+        );
         // Idle inside the window: still the take-back, with nothing to stop.
-        let idle = KeyContext { just_sent: true, ..Default::default() };
+        let idle = KeyContext {
+            just_sent: true,
+            ..Default::default()
+        };
         assert_eq!(lookup(&idle, "esc"), Some(Command::MessageUnsend));
     }
 
@@ -314,8 +338,13 @@ mod tests {
         open(&store);
         store.dispatch(StoreAction::Sent { at: 5_000 });
         assert!(just_sent(&store.get_state(), 5_100));
-        store.dispatch(StoreAction::Open { session_id: Some("sess-2".into()) });
-        assert!(!just_sent(&store.get_state(), 5_100), "the window does not travel");
+        store.dispatch(StoreAction::Open {
+            session_id: Some("sess-2".into()),
+        });
+        assert!(
+            !just_sent(&store.get_state(), 5_100),
+            "the window does not travel"
+        );
     }
 
     // ---- what the gesture acts on ----------------------------------------
@@ -335,14 +364,20 @@ mod tests {
         );
         assert_eq!(
             take_back_target(&[], &thread),
-            TakeBack::Sent { at_message_id: "m3".into(), text: "the typo".into() }
+            TakeBack::Sent {
+                at_message_id: "m3".into(),
+                text: "the typo".into()
+            }
         );
         // A reply already streaming under it does not hide the user turn.
         let mut streaming = thread.clone();
         streaming.push(msg("m4", "supervisor", "validating…"));
         assert_eq!(
             take_back_target(&[], &streaming),
-            TakeBack::Sent { at_message_id: "m3".into(), text: "the typo".into() }
+            TakeBack::Sent {
+                at_message_id: "m3".into(),
+                text: "the typo".into()
+            }
         );
         // Nothing of the user's in the thread: nothing to take back, and the
         // caller must NOT fall through to a stop.
@@ -358,7 +393,10 @@ mod tests {
         let multiline = msg("m1", "user", "line one\nline two");
         assert_eq!(
             take_back_target(&[], &[multiline]),
-            TakeBack::Sent { at_message_id: "m1".into(), text: "line one\nline two".into() }
+            TakeBack::Sent {
+                at_message_id: "m1".into(),
+                text: "line one\nline two".into()
+            }
         );
     }
 
@@ -380,9 +418,15 @@ mod tests {
         seed_thread(&store, thread);
         store.dispatch(StoreAction::Sent { at: 5_000 });
 
-        let taken = take_back(&store, &api).await.expect("the server allowed it");
+        let taken = take_back(&store, &api)
+            .await
+            .expect("the server allowed it");
         assert_eq!(taken.text, "the typo");
-        assert_eq!(taken.resync.as_deref(), Some(SESSION), "the thread is re-read once, after");
+        assert_eq!(
+            taken.resync.as_deref(),
+            Some(SESSION),
+            "the thread is re-read once, after"
+        );
 
         let req = &seen.lock().unwrap()[0];
         assert_eq!(req.method, "POST");
@@ -391,7 +435,14 @@ mod tests {
 
         let state = store.get_state();
         // The message AND its half-written answer are gone…
-        assert_eq!(state.thread.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["m1", "m2"]);
+        assert_eq!(
+            state
+                .thread
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>(),
+            ["m1", "m2"]
+        );
         // …the window is disarmed by the drop…
         assert_eq!(state.last_send_at, None);
         // …and the outcome is said, naming the turn that was stopped.
@@ -407,7 +458,10 @@ mod tests {
         open(&store);
         seed_thread(&store, vec![msg("m1", "user", "the typo")]);
         take_back(&store, &api).await.unwrap();
-        assert_eq!(store.get_state().notice.as_deref(), Some(take_back_notice(false)));
+        assert_eq!(
+            store.get_state().notice.as_deref(),
+            Some(take_back_notice(false))
+        );
     }
 
     #[tokio::test]
@@ -422,7 +476,11 @@ mod tests {
         open(&store);
         seed_thread(&store, vec![msg("m1", "user", "the typo")]);
 
-        assert_eq!(take_back(&store, &api).await, None, "refused — the composer keeps its draft");
+        assert_eq!(
+            take_back(&store, &api).await,
+            None,
+            "refused — the composer keeps its draft"
+        );
         let state = store.get_state();
         assert_eq!(state.thread.len(), 1, "nothing was dropped locally");
         assert_eq!(
@@ -438,12 +496,17 @@ mod tests {
         let store = Store::new();
         open(&store);
         seed_thread(&store, vec![msg("m1", "user", "posted")]);
-        store.dispatch(StoreAction::Queue { text: "second thoughts".into() });
+        store.dispatch(StoreAction::Queue {
+            text: "second thoughts".into(),
+        });
 
         let taken = take_back(&store, &api).await.unwrap();
         assert_eq!(taken.text, "second thoughts");
         assert_eq!(taken.resync, None);
-        assert!(seen.lock().unwrap().is_empty(), "nothing outside this client knew about it");
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "nothing outside this client knew about it"
+        );
         assert!(store.get_state().queued.is_empty());
     }
 
@@ -483,7 +546,10 @@ mod tests {
 
         answer_ask(&store, &api, &[], "prod").await;
         let req = &seen.lock().unwrap()[0];
-        assert_eq!(req.url, "http://127.0.0.1:4321/sessions/sess-1/questions/q1");
+        assert_eq!(
+            req.url,
+            "http://127.0.0.1:4321/sessions/sess-1/questions/q1"
+        );
         assert_eq!(req.body.as_deref(), Some(r#"{"answer":"prod"}"#));
         // The card is already free: the next hold surfaces without a round-trip.
         assert!(store.get_state().asks.is_empty());
@@ -498,7 +564,10 @@ mod tests {
 
         decline_ask(&store, &api, &[]).await;
         let req = &seen.lock().unwrap()[0];
-        assert_eq!(req.url, "http://127.0.0.1:4321/sessions/sess-1/questions/q1");
+        assert_eq!(
+            req.url,
+            "http://127.0.0.1:4321/sessions/sess-1/questions/q1"
+        );
         assert_eq!(req.body.as_deref(), Some(r#"{"decline":true}"#));
     }
 
@@ -528,7 +597,10 @@ mod tests {
         // The server's truth wins over the optimistic removal, in both
         // directions: q1 is gone and q2 is now the card.
         let state = store.get_state();
-        assert_eq!(state.asks.iter().map(|q| q.id.as_str()).collect::<Vec<_>>(), ["q2"]);
+        assert_eq!(
+            state.asks.iter().map(|q| q.id.as_str()).collect::<Vec<_>>(),
+            ["q2"]
+        );
         assert_eq!(current_ask(&state, &[]).unwrap().id, "q2");
     }
 
@@ -570,7 +642,9 @@ mod tests {
             "parentId": null, "busy": true,
         }))
         .unwrap();
-        store.dispatch(StoreAction::Sessions { sessions: vec![row] });
+        store.dispatch(StoreAction::Sessions {
+            sessions: vec![row],
+        });
         store.dispatch(StoreAction::Event {
             event: bough_core::schema::events::BoughEvent {
                 r#type: bough_core::schema::events::EventType::MessageFinished,
@@ -587,7 +661,10 @@ mod tests {
         let store = Store::new();
         open(&store);
         let mut watch = BackgroundWatch::default();
-        assert!(watch.poll(&store.get_state()).is_none(), "nothing has finished yet");
+        assert!(
+            watch.poll(&store.get_state()).is_none(),
+            "nothing has finished yet"
+        );
 
         finished_elsewhere(&store, "sess-2", "the other thing", 1);
         let state = store.get_state();

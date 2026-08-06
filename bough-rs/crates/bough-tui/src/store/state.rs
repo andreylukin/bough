@@ -369,43 +369,93 @@ pub fn initial_state() -> TuiState {
 #[derive(Clone, Debug)]
 pub enum StoreAction {
     /// One event off the wire. Everything about dedupe happens under this arm.
-    Event { event: BoughEvent },
-    Connection { connected: bool },
-    Sessions { sessions: Vec<SessionRow> },
+    Event {
+        event: BoughEvent,
+    },
+    Connection {
+        connected: bool,
+    },
+    Sessions {
+        sessions: Vec<SessionRow>,
+    },
     /// Focus a session. Clears everything that belonged to the previous one.
-    Open { session_id: Option<String> },
+    Open {
+        session_id: Option<String>,
+    },
     /// A fresh `GET /sessions/:id`. `at` is when the FETCH WAS ISSUED, not when
     /// it landed — the conservative end of the window.
-    Snapshot { at: i64, snapshot: SessionSnapshot },
-    Questions { questions: Vec<AskQuestion> },
+    Snapshot {
+        at: i64,
+        snapshot: SessionSnapshot,
+    },
+    Questions {
+        questions: Vec<AskQuestion>,
+    },
     /// Optimistic settle: the next hold surfaces immediately; the event confirms it.
-    AskSettled { id: String },
-    Changes { session_id: String, changes: SessionChangeSet },
-    Jobs { session_id: String, jobs: Vec<JobListRow> },
+    AskSettled {
+        id: String,
+    },
+    Changes {
+        session_id: String,
+        changes: SessionChangeSet,
+    },
+    Jobs {
+        session_id: String,
+        jobs: Vec<JobListRow>,
+    },
     /// Open, refresh, or (with `view: None`) close the job output view.
-    JobView { view: Option<JobViewState> },
-    Workflows { session_id: String, workflows: Vec<WorkflowSummary> },
+    JobView {
+        view: Option<JobViewState>,
+    },
+    Workflows {
+        session_id: String,
+        workflows: Vec<WorkflowSummary>,
+    },
     /// The whole schedule list, re-read. No sessionId gate — schedules are global.
-    Schedules { schedules: Vec<Schedule> },
-    Replay { replay: Option<ReplayReport> },
-    Notice { notice: Option<String> },
+    Schedules {
+        schedules: Vec<Schedule>,
+    },
+    Replay {
+        replay: Option<ReplayReport>,
+    },
+    Notice {
+        notice: Option<String>,
+    },
     /// A destructive outcome, recorded permanently. Raised by `record()`, which
     /// ALSO sets the notice — the two are one call.
-    Mark { session_id: String, at: i64, text: String },
+    Mark {
+        session_id: String,
+        at: i64,
+        text: String,
+    },
     /// The model a NEW conversation would run on just changed, with none open.
-    EffectiveModel { model: Option<String> },
+    EffectiveModel {
+        model: Option<String>,
+    },
     /// Live usage for a session, polled while its turn runs.
-    Usage { session_id: String, usage: SnapshotUsage },
+    Usage {
+        session_id: String,
+        usage: SnapshotUsage,
+    },
     /// The turn is over AND its final usage has landed: compute the delta and
     /// write the settled mark.
-    TurnSettle { at: i64 },
-    Queue { text: String },
+    TurnSettle {
+        at: i64,
+    },
+    Queue {
+        text: String,
+    },
     QueueDrained,
     /// The tail of `queued` goes back to the composer.
     QueuePop,
     /// A message left this client. Arms the take-back window.
-    Sent { at: i64 },
+    Sent {
+        at: i64,
+    },
     /// Messages the server has DELETED — the posted half of the take-back.
     /// Named ids, because the server decided what went.
-    ThreadDropped { session_id: String, ids: Vec<String> },
+    ThreadDropped {
+        session_id: String,
+        ids: Vec<String>,
+    },
 }

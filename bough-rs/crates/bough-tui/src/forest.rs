@@ -37,7 +37,7 @@ pub fn is_delegated(kind: SessionKind) -> bool {
 
 /// One topic header, as `POST /sessions/:id/sections` returns it: an index
 /// range over that session's OWN turns.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
 pub struct SectionRange {
     pub start: usize,
     pub end: usize,
@@ -250,13 +250,11 @@ impl Walk<'_> {
     fn children_of(&self, id: &str) -> Vec<SessionRow> {
         let mut out: Vec<SessionRow> = Vec::new();
         let mut index: HashMap<String, usize> = HashMap::new();
-        let mut push = |s: &SessionRow, out: &mut Vec<SessionRow>| {
-            match index.get(&s.session.id) {
-                Some(&at) => out[at] = s.clone(),
-                None => {
-                    index.insert(s.session.id.clone(), out.len());
-                    out.push(s.clone());
-                }
+        let mut push = |s: &SessionRow, out: &mut Vec<SessionRow>| match index.get(&s.session.id) {
+            Some(&at) => out[at] = s.clone(),
+            None => {
+                index.insert(s.session.id.clone(), out.len());
+                out.push(s.clone());
             }
         };
         for s in self.input.sessions {
@@ -410,7 +408,11 @@ impl Walk<'_> {
 
 /// Build the rows, depth-first.
 pub fn forest_rows(input: &ForestInput) -> Vec<ForestRow> {
-    let mut walk = Walk { input, rows: Vec::new(), seen: HashSet::new() };
+    let mut walk = Walk {
+        input,
+        rows: Vec::new(),
+        seen: HashSet::new(),
+    };
     let mut roots: Vec<SessionRow> = input
         .sessions
         .iter()
@@ -422,7 +424,7 @@ pub fn forest_rows(input: &ForestInput) -> Vec<ForestRow> {
         .cloned()
         .collect();
     // Newest first at the top level: this is also the switcher.
-    roots.sort_by(|a, b| b.session.created_at.cmp(&a.session.created_at));
+    roots.sort_by_key(|r| std::cmp::Reverse(r.session.created_at));
     for root in roots {
         walk.walk(&root, 0);
     }
@@ -468,7 +470,9 @@ pub fn reveal_path(
     children_by_origin: &HashMap<String, Vec<SessionRow>>,
     current_id: Option<&str>,
 ) -> Vec<String> {
-    let Some(current) = current_id else { return Vec::new() };
+    let Some(current) = current_id else {
+        return Vec::new();
+    };
     if current.is_empty() {
         return Vec::new();
     }
@@ -490,7 +494,9 @@ pub fn reveal_path(
         }
         seen.insert(id.clone());
         path.insert(0, id.clone());
-        cur = by_id.get(id.as_str()).and_then(|s| s.session.origin_id.clone());
+        cur = by_id
+            .get(id.as_str())
+            .and_then(|s| s.session.origin_id.clone());
     }
     path
 }
@@ -510,7 +516,9 @@ pub fn rewind_index(rows: &[ForestRow], current_id: Option<&str>) -> usize {
     for (i, r) in rows.iter().enumerate() {
         match r {
             ForestRow::Session { id, .. } if id == current => session = Some(i),
-            ForestRow::Message { session_id, role, .. } if session_id == current => {
+            ForestRow::Message {
+                session_id, role, ..
+            } if session_id == current => {
                 last_turn = Some(i);
                 if *role == Role::User {
                     last_user = Some(i);
@@ -558,7 +566,10 @@ pub fn take_back_target(queued: &[String], thread: &[Message]) -> TakeBack {
     // The LAST user turn, searched from the end rather than assumed to be the
     // final message: the supervisor's reply may already be streaming.
     match thread.iter().rev().find(|m| m.role == Role::User) {
-        Some(m) => TakeBack::Sent { at_message_id: m.id.clone(), text: message_text(m) },
+        Some(m) => TakeBack::Sent {
+            at_message_id: m.id.clone(),
+            text: message_text(m),
+        },
         None => TakeBack::None,
     }
 }
@@ -573,7 +584,9 @@ pub fn selection_for(row: &ForestRow, threads: &HashMap<String, Vec<Message>>) -
         // stays one keypress; walking into its turns is `→`.
         ForestRow::Session { id, .. } => Selection::Open(id.clone()),
         ForestRow::Message { id, session_id, .. } => {
-            let m = threads.get(session_id).and_then(|t| t.iter().find(|x| &x.id == id));
+            let m = threads
+                .get(session_id)
+                .and_then(|t| t.iter().find(|x| &x.id == id));
             match m {
                 Some(m) if m.role == Role::User => Selection::Fork {
                     session_id: session_id.clone(),
@@ -647,7 +660,9 @@ pub(crate) mod fixtures {
             parts: if text.is_empty() {
                 vec![]
             } else {
-                vec![Part::Text { text: text.to_string() }]
+                vec![Part::Text {
+                    text: text.to_string(),
+                }]
             },
             pending: false,
             created_at: 1,
@@ -684,7 +699,11 @@ mod tests {
     fn thread() -> Vec<Message> {
         vec![
             msg("m1", Role::User, "add a discount function"),
-            msg("m2", Role::Supervisor, "done, it multiplies by (1 - pct/100)"),
+            msg(
+                "m2",
+                Role::Supervisor,
+                "done, it multiplies by (1 - pct/100)",
+            ),
             msg("m3", Role::User, "now validate pct"),
         ]
     }
@@ -693,7 +712,10 @@ mod tests {
     fn collapsing_and_delegation_are_different_questions() {
         assert!(is_delegated(SessionKind::Subagent));
         assert!(is_delegated(SessionKind::WorkflowAgent));
-        assert!(!is_delegated(SessionKind::ScheduleRun), "the clock is not a delegator");
+        assert!(
+            !is_delegated(SessionKind::ScheduleRun),
+            "the clock is not a delegator"
+        );
         assert!(!is_delegated(SessionKind::Root));
         assert!(!is_delegated(SessionKind::Fork));
         assert!(!is_delegated(SessionKind::Compaction));
@@ -757,7 +779,10 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(i, id)| {
-                with_origin(session_row(id, SessionKind::WorkflowAgent, 3 + i as i64), "fork")
+                with_origin(
+                    session_row(id, SessionKind::WorkflowAgent, 3 + i as i64),
+                    "fork",
+                )
             })
             .collect();
         let sub = with_origin(session_row("sub", SessionKind::Subagent, 10), "root");
@@ -885,7 +910,10 @@ mod tests {
     #[test]
     fn an_unfetched_thread_is_not_an_empty_one() {
         let sessions = vec![session_row("root", SessionKind::Root, 1)];
-        let unfetched = forest_rows(&ForestInput { sessions: &sessions, ..Default::default() });
+        let unfetched = forest_rows(&ForestInput {
+            sessions: &sessions,
+            ..Default::default()
+        });
         match &unfetched[0] {
             ForestRow::Session { expandable, .. } => assert!(*expandable),
             other => panic!("{other:?}"),
@@ -926,7 +954,10 @@ mod tests {
         let old = session_row("old", SessionKind::Root, 1);
         let recent = session_row("recent", SessionKind::Root, 9);
         let sessions = vec![old, recent];
-        let rows = forest_rows(&ForestInput { sessions: &sessions, ..Default::default() });
+        let rows = forest_rows(&ForestInput {
+            sessions: &sessions,
+            ..Default::default()
+        });
         assert_eq!(shape(&rows), vec!["recent", "old"]);
     }
 
@@ -975,7 +1006,9 @@ mod tests {
         let active: Vec<&str> = rows
             .iter()
             .filter_map(|r| match r {
-                ForestRow::Message { id, active: true, .. } => Some(id.as_str()),
+                ForestRow::Message {
+                    id, active: true, ..
+                } => Some(id.as_str()),
                 _ => None,
             })
             .collect();
@@ -1056,8 +1089,14 @@ mod tests {
                 editor_text: None,
             }
         );
-        assert_eq!(selection_for(&at("root"), &f.threads), Selection::Open("root".into()));
-        assert_eq!(selection_for(&at("fork"), &f.threads), Selection::Open("fork".into()));
+        assert_eq!(
+            selection_for(&at("root"), &f.threads),
+            Selection::Open("root".into())
+        );
+        assert_eq!(
+            selection_for(&at("fork"), &f.threads),
+            Selection::Open("fork".into())
+        );
         assert_eq!(
             selection_for(&at("collapsed:root"), &f.threads),
             Selection::Drill("root".into())
@@ -1067,19 +1106,31 @@ mod tests {
     #[test]
     fn the_take_back_prefers_a_queued_message_then_the_last_user_turn() {
         let t = thread();
-        assert_eq!(take_back_target(&["typed while busy".to_string()], &t), TakeBack::Queued);
+        assert_eq!(
+            take_back_target(&["typed while busy".to_string()], &t),
+            TakeBack::Queued
+        );
         assert_eq!(
             take_back_target(&[], &t),
-            TakeBack::Sent { at_message_id: "m3".into(), text: "now validate pct".into() }
+            TakeBack::Sent {
+                at_message_id: "m3".into(),
+                text: "now validate pct".into()
+            }
         );
         let mut answered = t.clone();
         answered.push(msg("m4", Role::Supervisor, "validating…"));
         assert_eq!(
             take_back_target(&[], &answered),
-            TakeBack::Sent { at_message_id: "m3".into(), text: "now validate pct".into() }
+            TakeBack::Sent {
+                at_message_id: "m3".into(),
+                text: "now validate pct".into()
+            }
         );
         assert_eq!(take_back_target(&[], &[]), TakeBack::None);
-        assert_eq!(take_back_target(&[], &[msg("m1", Role::Supervisor, "hi")]), TakeBack::None);
+        assert_eq!(
+            take_back_target(&[], &[msg("m1", Role::Supervisor, "hi")]),
+            TakeBack::None
+        );
     }
 
     #[test]
@@ -1089,7 +1140,10 @@ mod tests {
             TakeBack::Sent { text, .. } => assert_eq!(text, "first line\n\n  indented second\n"),
             other => panic!("{other:?}"),
         }
-        assert_eq!(message_gist(&multiline, usize::MAX), "first line indented second");
+        assert_eq!(
+            message_gist(&multiline, usize::MAX),
+            "first line indented second"
+        );
     }
 
     #[test]
@@ -1157,7 +1211,11 @@ mod tests {
         let busy_of = |id: &str| {
             rows.iter()
                 .find_map(|r| match r {
-                    ForestRow::Session { id: rid, busy_below, .. } if rid == id => Some(*busy_below),
+                    ForestRow::Session {
+                        id: rid,
+                        busy_below,
+                        ..
+                    } if rid == id => Some(*busy_below),
                     _ => None,
                 })
                 .unwrap()
@@ -1175,7 +1233,10 @@ mod tests {
         let sessions = vec![root.clone(), fork.clone(), handoff];
         let empty: HashMap<String, Vec<SessionRow>> = HashMap::new();
 
-        assert_eq!(reveal_path(&sessions, &empty, Some("hand")), vec!["root", "fork"]);
+        assert_eq!(
+            reveal_path(&sessions, &empty, Some("hand")),
+            vec!["root", "fork"]
+        );
         assert_eq!(reveal_path(&sessions, &empty, Some("fork")), vec!["root"]);
         assert!(reveal_path(&sessions, &empty, Some("root")).is_empty());
         assert!(reveal_path(&sessions, &empty, None).is_empty());
@@ -1208,8 +1269,11 @@ mod tests {
                 })
                 .collect()
         };
-        let base =
-            ForestInput { sessions: &sessions, filter: Some("compound"), ..Default::default() };
+        let base = ForestInput {
+            sessions: &sessions,
+            filter: Some("compound"),
+            ..Default::default()
+        };
         // Title-only matching hides both: neither title contains the word.
         assert!(session_ids(forest_rows(&base)).is_empty());
         let matched = vec!["beta".to_string()];
@@ -1250,8 +1314,16 @@ mod tests {
         let sections = HashMap::from([(
             "root".to_string(),
             vec![
-                SectionRange { start: 0, end: 1, label: "the discount bug".into() },
-                SectionRange { start: 2, end: 3, label: "shipping rules".into() },
+                SectionRange {
+                    start: 0,
+                    end: 1,
+                    label: "the discount bug".into(),
+                },
+                SectionRange {
+                    start: 2,
+                    end: 3,
+                    label: "shipping rules".into(),
+                },
             ],
         )]);
         let rows = forest_rows(&ForestInput {
@@ -1263,9 +1335,21 @@ mod tests {
         });
         assert_eq!(
             shape(&rows),
-            vec!["root", "§the discount bug", "·m1", "·m2", "§shipping rules", "·m3", "·m4"]
+            vec![
+                "root",
+                "§the discount bug",
+                "·m1",
+                "·m2",
+                "§shipping rules",
+                "·m3",
+                "·m4"
+            ]
         );
-        match rows.iter().find(|r| matches!(r, ForestRow::Section { .. })).unwrap() {
+        match rows
+            .iter()
+            .find(|r| matches!(r, ForestRow::Section { .. }))
+            .unwrap()
+        {
             ForestRow::Section { session_id, .. } => assert_eq!(session_id, "root"),
             other => panic!("{other:?}"),
         }
@@ -1274,8 +1358,16 @@ mod tests {
         let dots = HashMap::from([(
             "root".to_string(),
             vec![
-                SectionRange { start: 0, end: 1, label: "…".into() },
-                SectionRange { start: 2, end: 3, label: "shipping".into() },
+                SectionRange {
+                    start: 0,
+                    end: 1,
+                    label: "…".into(),
+                },
+                SectionRange {
+                    start: 2,
+                    end: 3,
+                    label: "shipping".into(),
+                },
             ],
         )]);
         let rows = forest_rows(&ForestInput {
@@ -1285,7 +1377,10 @@ mod tests {
             sections: Some(&dots),
             ..Default::default()
         });
-        assert_eq!(shape(&rows), vec!["root", "·m1", "·m2", "§shipping", "·m3", "·m4"]);
+        assert_eq!(
+            shape(&rows),
+            vec!["root", "·m1", "·m2", "§shipping", "·m3", "·m4"]
+        );
 
         // Absent sections render no headers — "not fetched" is not "no topics".
         let rows = forest_rows(&ForestInput {
@@ -1308,9 +1403,16 @@ mod tests {
         let threads = HashMap::from([("root".to_string(), vec![msg("m1", Role::User, "fix it")])]);
         assert_eq!(selection_for(&row, &threads), Selection::None);
 
-        let collapsed =
-            ForestRow::Collapsed { id: "c".into(), origin_id: "root".into(), depth: 1, count: 2 };
-        assert_eq!(selection_for(&collapsed, &HashMap::new()), Selection::Drill("root".into()));
+        let collapsed = ForestRow::Collapsed {
+            id: "c".into(),
+            origin_id: "root".into(),
+            depth: 1,
+            count: 2,
+        };
+        assert_eq!(
+            selection_for(&collapsed, &HashMap::new()),
+            Selection::Drill("root".into())
+        );
     }
 
     #[test]
@@ -1339,7 +1441,9 @@ mod tests {
         let marked: Vec<&str> = rows
             .iter()
             .filter_map(|r| match r {
-                ForestRow::Message { id, matched: true, .. } => Some(id.as_str()),
+                ForestRow::Message {
+                    id, matched: true, ..
+                } => Some(id.as_str()),
                 _ => None,
             })
             .collect();
@@ -1359,6 +1463,8 @@ mod tests {
             expanded: &expanded,
             ..Default::default()
         });
-        assert!(!plain.iter().any(|r| matches!(r, ForestRow::Message { matched: true, .. })));
+        assert!(!plain
+            .iter()
+            .any(|r| matches!(r, ForestRow::Message { matched: true, .. })));
     }
 }

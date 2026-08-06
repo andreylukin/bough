@@ -85,7 +85,10 @@ impl Pattern {
                 }
             })
             .collect();
-        Pattern { pathname: pathname.to_string(), segments }
+        Pattern {
+            pathname: pathname.to_string(),
+            segments,
+        }
     }
 
     /// Match a request pathname; `Some(params)` carries only the groups that
@@ -123,7 +126,11 @@ impl Pattern {
                 }
             }
         }
-        if i == parts.len() { Some(params) } else { None }
+        if i == parts.len() {
+            Some(params)
+        } else {
+            None
+        }
     }
 }
 
@@ -138,7 +145,11 @@ pub struct Route {
 
 /// Build one route entry — the one-line append shape the shared table is made of.
 pub fn route(method: &'static str, pathname: &str, handler: Handler) -> Route {
-    Route { method, pattern: Pattern::new(pathname), handler }
+    Route {
+        method,
+        pattern: Pattern::new(pathname),
+        handler,
+    }
 }
 
 // ---- response helpers -------------------------------------------------------
@@ -174,8 +185,7 @@ pub async fn parse_body<T: DeserializeOwned>(
         .await
         .map_err(|e| BoughError::bad_request(format!("invalid body: {e}")))?;
     let value: Value = serde_json::from_slice(&bytes).unwrap_or(fallback.unwrap_or(Value::Null));
-    serde_json::from_value(value)
-        .map_err(|e| BoughError::bad_request(format!("invalid body: {e}")))
+    serde_json::from_value(value).map_err(|e| BoughError::bad_request(format!("invalid body: {e}")))
 }
 
 // ---- test fixtures (shared across this crate's handler tests) ---------------
@@ -206,7 +216,10 @@ pub(crate) mod testutil {
     struct RecordingStarter(Arc<Mutex<Vec<(Session, Message)>>>);
     impl TurnStarter for RecordingStarter {
         fn start_turn(&self, _ctx: &AppCtx, session: &Session, message: &Message) {
-            self.0.lock().unwrap().push((session.clone(), message.clone()));
+            self.0
+                .lock()
+                .unwrap()
+                .push((session.clone(), message.clone()));
         }
     }
 
@@ -229,12 +242,15 @@ pub(crate) mod testutil {
 
     /// Like [`fixture`] but with NO turn starter wired (the M1 shape).
     pub fn fixture_bare() -> Fixture {
-        let db: SharedDb =
-            Arc::new(Mutex::new(SqliteDb::new(":memory:", DbOptions::default()).unwrap()));
+        let db: SharedDb = Arc::new(Mutex::new(
+            SqliteDb::new(":memory:", DbOptions::default()).unwrap(),
+        ));
         let bus = Arc::new(Bus::new(system_clock()));
         let events = Arc::new(Mutex::new(Vec::new()));
         let sink = events.clone();
-        bus.subscribe(Arc::new(move |e: &BoughEvent| sink.lock().unwrap().push(e.clone())));
+        bus.subscribe(Arc::new(move |e: &BoughEvent| {
+            sink.lock().unwrap().push(e.clone())
+        }));
         let started = Arc::new(Mutex::new(Vec::new()));
         let ctx = AppCtx {
             db,
@@ -255,7 +271,11 @@ pub(crate) mod testutil {
                     .join("model.json"),
             ),
         };
-        Fixture { ctx, events, started }
+        Fixture {
+            ctx,
+            events,
+            started,
+        }
     }
 
     /// Install a starter that panics with `msg` — the "throwing starter" case.
@@ -264,7 +284,11 @@ pub(crate) mod testutil {
     }
 
     pub fn get(path: &str) -> Request {
-        Request::builder().method("GET").uri(path).body(Body::empty()).unwrap()
+        Request::builder()
+            .method("GET")
+            .uri(path)
+            .body(Body::empty())
+            .unwrap()
     }
 
     pub fn req(method: &str, path: &str, body: Option<serde_json::Value>) -> Request {
@@ -276,13 +300,34 @@ pub(crate) mod testutil {
     }
 
     pub async fn body_json(res: Response) -> serde_json::Value {
-        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice(&bytes).unwrap()
     }
 
     pub async fn body_text(res: Response) -> String {
-        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    /// THE crate-wide lock for tests that relocate `BOUGH_HOME`.
+    ///
+    /// The variable is process-global and cargo runs tests in parallel threads,
+    /// so a per-module lock is not a lock — it is N independent locks racing
+    /// each other, and the failure it produces is a handler reading a DIFFERENT
+    /// module's temp home between two requests of the same test. Every
+    /// env-relocating guard in this crate must take this one.
+    ///
+    /// The guard is held across `await`s: these tests run on tokio's
+    /// current-thread runtime, so the future never migrates threads.
+    pub fn home_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -325,10 +370,12 @@ mod tests {
 
     #[tokio::test]
     async fn parse_body_validates_and_a_bad_body_becomes_a_catchable_400() {
-        let ok: BodyShape =
-            parse_body(testutil::req("POST", "/m", Some(serde_json::json!({"text": "a"}))), None)
-                .await
-                .unwrap();
+        let ok: BodyShape = parse_body(
+            testutil::req("POST", "/m", Some(serde_json::json!({"text": "a"}))),
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(ok.text, "a");
 
         let bad = parse_body::<BodyShape>(
@@ -347,18 +394,22 @@ mod tests {
         let strict = parse_body::<BodyShape>(testutil::req("POST", "/m", None), None).await;
         assert_eq!(strict.unwrap_err().status(), 400);
         // An all-optional shape passes `{}` so "no body" means "no options".
-        let lenient: AllOptional =
-            parse_body(testutil::req("POST", "/m", None), Some(serde_json::json!({})))
-                .await
-                .unwrap();
+        let lenient: AllOptional = parse_body(
+            testutil::req("POST", "/m", None),
+            Some(serde_json::json!({})),
+        )
+        .await
+        .unwrap();
         assert_eq!(lenient, AllOptional { paths: None });
     }
 
     #[test]
     fn route_compiles_its_pathname_and_keeps_the_method_verbatim() {
-        let r = route("POST", "/sessions/:id/messages", handler(|_r, _c, _p| async {
-            Ok(json(&serde_json::json!({}), 200))
-        }));
+        let r = route(
+            "POST",
+            "/sessions/:id/messages",
+            handler(|_r, _c, _p| async { Ok(json(&serde_json::json!({}), 200)) }),
+        );
         assert_eq!(r.method, "POST");
         assert!(r.pattern.matches("/sessions/abc/messages").is_some());
         assert!(r.pattern.matches("/sessions/abc").is_none());

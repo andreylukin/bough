@@ -10,19 +10,19 @@
 //! 3. build Bus, HostState, AppCtx
 //! 4. recover orphaned turns — BEFORE the listener binds (a client that
 //!    connected first would fetch a session that looks busy forever); orphaned
-//!    WORKFLOW recovery arrives with the workflow subsystem (wave 2, row 2.x)
+//!    WORKFLOW runs are recovered the same way, right after the wrapper (5b)
 //! 5. install the `SearchSafeDb` wrapper on ctx.db — AFTER recovery used the
 //!    raw handle; everything served goes through the wrapper, which is what
 //!    keeps an FTS failure from failing a message insert
 //! 6. wire the ONE composed turn starter (runner production defaults; wave 2
 //!    layers skills/grants/notes); without it a posted message
 //!    lands + announces without starting a turn (the documented M1 shape)
-//! 7. `sweep_scratch` best-effort (v1 stub: sweeps nothing)
+//! 7. `sweep_scratch` best-effort
 //! 8. start the schedule ticker (v1 stub: never fires) — after the starter
 //! 9. bind `127.0.0.1:$BOUGH_PORT` — **loopback only, no override**: there is
 //!    no auth layer and none is planned; binding anywhere else would silently
 //!    publish an unauthenticated API that runs arbitrary programs as the user
-//! 10. SIGINT/SIGTERM → `jobs.kill_all()` (MCP child kill arrives with wave 3)
+//! 10. SIGINT/SIGTERM → `jobs.kill_all()` + `kill_all_mcp_servers()`
 //!
 //! **Coexistence:** `BOUGH_PORT` moves the listener and `BOUGH_HOME` relocates
 //! the data root, which is what lets this run beside the live install.
@@ -33,6 +33,12 @@ use bough_core::bus::Bus;
 use bough_core::db::extensions::enable_sqlite_extensions;
 use bough_core::db::sqlite_db::{open_db, DbOptions};
 use bough_core::errors::BoughError;
+use bough_core::mcp::client::kill_all_mcp_servers;
+use bough_core::mcp::config::{load_registry, promote_session_grants, registry_file};
+use bough_core::mcp::manager::mcp_manager;
+use bough_core::mcp::oauth::configure_oauth_callback;
+use bough_core::mcp::service::{reconcile_mcp, reconcile_summary, ServiceDeps};
+use bough_core::mcp::status::{mcp_status_for, prompt_mcp_servers, McpStatusOptions};
 use bough_core::paths::db_path;
 use bough_core::scratch::{sweep_scratch, SweepOptions};
 use bough_core::turn::queue::TurnRegistry;
@@ -83,15 +89,14 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
                 .join(", ")
         );
     }
-    // Orphaned WORKFLOW recovery belongs here too (same reason, same timing);
-    // it arrives with the workflow subsystem (wave 2).
-
     // 5. The `SearchSafeDb` wrapper — everything downstream serves with this
     // handle, which is the whole write path the wrapper protects: an FTS
     // failure must never fail a message insert. Mandatory now that FTS
     // indexing rides the message write path over HTTP.
-    let db: SharedDb =
-        Arc::new(Mutex::new(SearchSafeDb::new(raw, SearchSafeOptions::default())));
+    let db: SharedDb = Arc::new(Mutex::new(SearchSafeDb::new(
+        raw,
+        SearchSafeOptions::default(),
+    )));
 
     // Then the messages boot recovery just closed. A turn that died
     // mid-stream never reached the finish path that indexes its message, so
@@ -107,6 +112,25 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
         if reindexed > 0 {
             println!("re-indexed {reindexed} message(s) closed by turn recovery");
         }
+    }
+
+    // 5b. Orphaned WORKFLOW recovery, for the same reason and with the same
+    // timing as the turns above: the worker and every subagent turn it was
+    // driving went with the old process, and a run left `running` reads as work
+    // still in flight forever. A restart is SURFACED, not resumed — re-running
+    // would spend the user's money on work they did not ask for twice
+    // (`workflow/engine.rs`). Before the listener binds, so no client ever sees
+    // the stale row.
+    match bough_core::workflow::engine::recover_orphaned_workflows(&db, Some(&bus), None) {
+        Ok(ids) if !ids.is_empty() => println!(
+            "recovered {} workflow run(s) orphaned by the previous process: {}",
+            ids.len(),
+            ids.join(", ")
+        ),
+        Ok(_) => {}
+        // Best-effort: a recovery read that fails is not a reason to refuse to
+        // start, and the run stays visible as `running` until the next boot.
+        Err(error) => println!("could not recover orphaned workflows: {error}"),
     }
 
     let host = Arc::new(HostState::new());
@@ -150,8 +174,8 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
     // every tier, because a subagent that renders a comparison should be able
     // to publish it and the artifact store is per-session anyway.
     {
-        use bough_core::hostfn::delegate::{create_delegating_turn_starter, DelegationWiring};
         use bough_core::harness::protocol::HostFnName;
+        use bough_core::hostfn::delegate::{create_delegating_turn_starter, DelegationWiring};
         use bough_core::turn::runner::{TurnDeps, BASE_HOST_FNS};
         use bough_core::types::HostFns;
 
@@ -171,6 +195,18 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
         *ctx.starter.write().unwrap() = Some(create_delegating_turn_starter(DelegationWiring {
             base: TurnDeps {
                 granted: Some(granted),
+                // The MCP grant, as a LIVE read of this session's activations:
+                // a revocation is visible to the very next call, and the SPAWN
+                // is what freezes it into a subagent's snapshot (row 3.3).
+                bind_mcp_grant: true,
+                // The MCP catalog, per turn, from the same read-only status
+                // document the panel and `bough mcp` render — resolved HERE
+                // because this is where a session id exists, and read fresh
+                // because grants and connections change between turns. Without
+                // it the mcp-tools section never renders: servers could be
+                // registered, granted and connected and the model would never
+                // be told they existed.
+                mcp_catalog: Some(Arc::new(mcp_catalog_for)),
                 // Background shells outlive an interrupt on purpose, so the
                 // stop note can name them instead of implying there were none.
                 surviving_jobs: Some(Arc::new(move |session_id: &str| {
@@ -178,26 +214,27 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
                 })),
                 ..Default::default()
             },
-            deliver: Some(bough_core::agents::notes::create_note_deliverer(Default::default())),
-            extend: Some(Arc::new(|turn_ctx: &bough_core::types::TurnCtx| {
-                let mut fns = HostFns::default();
-                fns.schedule = Some(bough_core::hostfn::schedule::create_schedule_host_fn(
+            deliver: Some(bough_core::agents::notes::create_note_deliverer(
+                Default::default(),
+            )),
+            extend: Some(Arc::new(|turn_ctx: &bough_core::types::TurnCtx| HostFns {
+                schedule: Some(bough_core::hostfn::schedule::create_schedule_host_fn(
                     turn_ctx,
                     Default::default(),
-                ));
-                fns.ask = Some(
+                )),
+                ask: Some(
                     bough_core::hostfn::ask::create_ask_host_fn(turn_ctx, Default::default())
                         .into_host_fn(),
-                );
-                fns.state = Some(
+                ),
+                state: Some(
                     bough_core::hostfn::state::create_state_host_fn(turn_ctx, Default::default())
                         .into_host_fn(),
-                );
-                fns.artifact = Some(bough_core::hostfn::artifact::create_artifact_host_fn(
+                ),
+                artifact: Some(bough_core::hostfn::artifact::create_artifact_host_fn(
                     turn_ctx,
                     Default::default(),
-                ));
-                fns
+                )),
+                ..Default::default()
             })),
             ..Default::default()
         }));
@@ -213,12 +250,11 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
         bus: ctx.bus.clone(),
         cheap: ctx.cheap.clone(),
     });
-    let _ = bough_core::worker::activity::watch_activity(
-        &bough_core::worker::activity::ActivityCtx {
+    let _ =
+        bough_core::worker::activity::watch_activity(&bough_core::worker::activity::ActivityCtx {
             bus: ctx.bus.clone(),
             cheap: ctx.cheap.clone(),
-        },
-    );
+        });
     println!(
         "cheap tier: {} ({}) — auto titles, composer ghost text (POST /sessions/:id/ghost), \
          live activity blurbs. Fire-and-forget: every failure is silent and none of them \
@@ -227,8 +263,59 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
         bough_core::worker::CHEAP_MODEL_ENV,
     );
 
+    // 6b. The saved-workflow store (row 3.12). Created at boot so
+    // `~/.bough/workflows/saved/` is a place the user can drop a script into,
+    // not one that materializes on the first API save — a directory nobody
+    // finds is a feature nobody uses. Best-effort: a read-only `~/.bough` must
+    // not stop the server, and saving reports its own error when it is tried.
+    let saved_count = bough_core::workflow::saved::ensure_saved_dir();
+    println!(
+        "{saved_count} saved workflow(s) under {} — POST /saved-workflows/<name>/runs \
+         invokes one with {{sessionId, args}}",
+        bough_core::workflow::saved::saved_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "<unaddressable>".to_string()),
+    );
+
+    // 6c. MCP. There is nothing to construct: the registry is a FILE, read
+    // fresh on every use, because grants and connections change between turns
+    // and a cached catalog is how the model ends up calling a tool that was
+    // revoked two turns ago. The count is logged because the registry lives
+    // outside the database — a server the user registered by editing the file is
+    // otherwise invisible until a turn needs it.
+    {
+        let config = mcp_manager().config();
+        let registered: Vec<String> = load_registry(&config).servers.keys().cloned().collect();
+        println!(
+            "{} MCP server(s) registered in {}{}",
+            registered.len(),
+            registry_file(&config).display(),
+            if registered.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", registered.join(", "))
+            },
+        );
+        // A ONE-TIME NORMALIZATION. Every grant written before the panel's ⏎
+        // became install-wide is scoped to the conversation it was made in, so
+        // those servers read `off` everywhere else — and on the new-conversation
+        // screen, which has no session, `off` full stop. Announced rather than
+        // silent: this widens a permission, once.
+        match promote_session_grants(&config) {
+            Ok(promoted) if !promoted.is_empty() => println!(
+                "MCP: {} — grants made in one conversation are now granted in every \
+                 conversation (the /mcp panel's ⏎ is install-wide). Revoke there if that is \
+                 not what you want.",
+                promoted.join(", "),
+            ),
+            Ok(_) => {}
+            // Best-effort: an unreadable registry must not stop the server.
+            Err(error) => println!("could not normalize MCP grants: {error}"),
+        }
+    }
+
     // 7. The scratchpad sweep, best-effort: a scratch root that cannot be
-    // read is not a reason to refuse to start. (v1 stub: sweeps nothing.)
+    // read is not a reason to refuse to start.
     let swept = sweep_scratch(SweepOptions::default());
     if !swept.is_empty() {
         println!(
@@ -239,6 +326,20 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
     }
 
     Ok(Boot { ctx, recovered })
+}
+
+/// The turn-start MCP catalog for one session: the same read-only status
+/// document the panel and `bough mcp` render, turned into the prompt's server
+/// list. A free function rather than a closure so the wiring the starter gets is
+/// the thing a test can drive.
+pub(crate) fn mcp_catalog_for(
+    session_id: &str,
+) -> Vec<bough_core::prompt::assemble::PromptMcpServer> {
+    prompt_mcp_servers(&mcp_status_for(&McpStatusOptions {
+        config: mcp_manager().config(),
+        session_id: Some(session_id.to_string()),
+        ..Default::default()
+    }))
 }
 
 /// Step 9: **loopback only, no override.** The hostname is a constant, not a
@@ -279,7 +380,18 @@ async fn shutdown_signal(ctx: AppCtx) {
         signal_name = "SIGINT";
     }
     let killed = ctx.host.jobs.kill_all();
-    println!("{signal_name}: killed {killed} background shell(s), closing db");
+    // MCP servers are children of THIS process too, and a silent one — an idle
+    // HTTP bridge, a server between requests — survives our exit reparented and
+    // invisible unless it is signalled.
+    let servers = kill_all_mcp_servers();
+    println!(
+        "{signal_name}: killed {killed} background shell(s){}, closing db",
+        if servers > 0 {
+            format!(" and {servers} MCP server subprocess(es)")
+        } else {
+            String::new()
+        },
+    );
 }
 
 /// `bough start` — the whole boot order, then serve until a signal.
@@ -291,15 +403,70 @@ pub async fn start() -> Result<(), BoughError> {
 
     let boot = boot_ctx(None)?;
 
+    // 6a2. The per-run script mirrors (`~/.bough/workflows/<id>.js`), so "edit
+    // the script on disk and rerun" is true for every run the database knows
+    // about. MISSING ones only — an existing file may hold an edit the user has
+    // not run yet, and the whole point of the mirror is that it may differ from
+    // the row (`workflow/journal_fs.rs`). Bounded to the newest runs.
+    let mirrored = bough_core::workflow::journal_fs::sync_script_mirrors(
+        &boot.ctx.db,
+        bough_core::workflow::journal_fs::SyncOptions::default(),
+    )
+    .await;
+    if !mirrored.is_empty() {
+        println!(
+            "recreated {} missing workflow script mirror(s) under {}",
+            mirrored.len(),
+            bough_core::paths::workflows_dir().display()
+        );
+    }
+
     // 8. The schedule ticker, after the starter exists (v1 stub: no-op). The
     // stopper is held for the life of the serve loop.
     let stop_ticker = bough_core::schedules::start_schedule_ticker(&boot.ctx);
+
+    // 8b. The tag-history vector layer's drain pump (row 3.17). `None` on a
+    // machine without an extension-capable SQLite, without sqlite-lembed, or
+    // with `BOUGH_NO_EMBED` — everything else works identically there, so the
+    // absence is reported once and never again. Without this line the layer
+    // would exist and embed NOTHING, and `bough tags similar` would search an
+    // empty index while writes looked fine: the exact "built but not wired"
+    // failure, and it has bitten this feature once already in TS.
+    match bough_core::history::tags::embed::start_drain_ticker() {
+        Some(_pump) => println!("{}", bough_core::history::tags::embed::DRAIN_READY_LINE),
+        None => println!(
+            "history embeddings: off (no sqlite-lembed / BOUGH_NO_EMBED) — tags + FTS recall \
+             unaffected"
+        ),
+    }
 
     // 9. Bind, THEN report. No read/idle timeout middleware anywhere: the
     // `/events` SSE stream is idle by design between turns, and one
     // `bough exec` request is held open for a whole turn.
     let listener = bind_loopback(port).await?;
-    println!("bough listening on 127.0.0.1:{port} — db {}", db_path().display());
+    // The redirect URI is registered with an authorization server and baked into
+    // every authorization request, so it has to name the port the listener ACTUALLY
+    // bound: name one nothing is listening on and the user approves access in their
+    // browser and lands on a connection error with no way back. Set from the bound
+    // socket, never from the request.
+    let bound = listener.local_addr().map(|a| a.port()).unwrap_or(port);
+    configure_oauth_callback(bound);
+    println!(
+        "bough listening on 127.0.0.1:{port} — db {}",
+        db_path().display()
+    );
+
+    // The MCP SERVICE: granted REMOTE servers are connected by the process, not by a
+    // conversation, so "is Slack connected?" has a process-level answer before the
+    // first message is sent. Fire-and-forget — FAILURE IS NORMAL AND SILENT HERE, a
+    // third party being down is not a reason for boot to wait or to fail, and the
+    // reason is already a `failed` row in the panel and in `bough mcp`.
+    tokio::spawn(async {
+        let result = reconcile_mcp(&ServiceDeps::default()).await;
+        if let Some(line) = reconcile_summary(&result) {
+            println!("{line}");
+        }
+    });
 
     let router = build_router(boot.ctx.clone());
     let ctx = boot.ctx.clone();
@@ -316,9 +483,7 @@ pub async fn start() -> Result<(), BoughError> {
 mod tests {
     use super::*;
     use bough_core::db::sqlite_db::SqliteDb;
-    use bough_core::schema::parts::{
-        Message, Part, Role, Session, SessionKind, Turn, TurnStatus,
-    };
+    use bough_core::schema::parts::{Message, Part, Role, Session, SessionKind, Turn, TurnStatus};
     use bough_core::types::Db;
 
     /// A database file holding one session whose turn was left `running` — the
@@ -354,7 +519,9 @@ mod tests {
                 id: uuid::Uuid::new_v4().to_string(),
                 session_id: session_id.clone(),
                 role: Role::Supervisor,
-                parts: vec![Part::Text { text: "partial".into() }],
+                parts: vec![Part::Text {
+                    text: "partial".into(),
+                }],
                 pending: true,
                 created_at: 2,
             })
@@ -485,5 +652,56 @@ mod tests {
         // proof the recovery ran before anything could be served.
         assert_eq!(row["busy"], false);
         assert_eq!(row["lastTurnStatus"], "orphaned");
+    }
+
+    #[tokio::test]
+    async fn the_turn_catalog_names_a_granted_server_so_the_model_is_told_it_exists() {
+        // The wiring failure this pins: `mcp_catalog_for` is what boot hands the
+        // turn starter, and without it the mcp-tools section never renders —
+        // servers can be registered, granted and connected and the model is
+        // never told they exist. Driven through the SAME function the starter
+        // gets, over a hermetic registry installed on the process manager.
+        use bough_core::mcp::config::{set_activation, upsert_server, McpConfigOptions};
+        use bough_core::mcp::manager::{set_mcp_manager, McpManager, McpManagerOptions};
+
+        let dir = std::env::temp_dir().join(format!("bough-boot-mcp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = McpConfigOptions::with_file(dir.join("mcp.json"));
+        let previous = set_mcp_manager(Arc::new(McpManager::new(McpManagerOptions {
+            config: Some(config.clone()),
+            ..Default::default()
+        })));
+
+        assert!(
+            mcp_catalog_for("s1").is_empty(),
+            "nothing registered, nothing claimed"
+        );
+        upsert_server(
+            "echo",
+            &serde_json::json!({"command": "/bin/echo"}),
+            &config,
+        )
+        .unwrap();
+        assert!(
+            mcp_catalog_for("s1").is_empty(),
+            "registering is not granting"
+        );
+
+        set_activation(Some("s1"), "echo", true, None, &config).unwrap();
+        let catalog = mcp_catalog_for("s1");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].name, "echo");
+        // Granted and not yet connected is NAMED with the way to see its tools,
+        // never dropped and never rendered as an empty catalog.
+        assert!(catalog[0]
+            .note
+            .as_deref()
+            .unwrap_or("")
+            .contains("not connected yet"));
+        // …and another conversation is told nothing, because it was granted
+        // nothing.
+        assert!(mcp_catalog_for("s2").is_empty());
+
+        set_mcp_manager(previous);
     }
 }

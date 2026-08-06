@@ -36,6 +36,7 @@
 
 use std::collections::HashSet;
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::harness::protocol::HostFnName;
@@ -131,7 +132,7 @@ pub struct AssembledPrompt {
 
 /// One included section's identity: what it was, and the exact bytes it
 /// contributed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SectionSha {
     pub id: SectionId,
     /// sha256 of the section text, truncated — collision-free at this scale,
@@ -145,7 +146,10 @@ pub struct SectionSha {
 
 /// Ids of the sections, in prompt order — the 17 file-backed (stable-tier)
 /// ones plus the three volatile ids rendered rather than read from a file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// `kebab-case` on the wire so a serialized id is byte-identical to
+/// [`SectionId::as_str`] — the form traces, tests and the UI already show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum SectionId {
     Identity,
     Shell,
@@ -221,8 +225,11 @@ struct SectionSpec {
 }
 
 /// A session that may `spawn()` and start workflows: everything but a delegate.
-const TOP_LEVEL_KINDS: [SessionKind; 3] =
-    [SessionKind::Root, SessionKind::Fork, SessionKind::Compaction];
+const TOP_LEVEL_KINDS: [SessionKind; 3] = [
+    SessionKind::Root,
+    SessionKind::Fork,
+    SessionKind::Compaction,
+];
 
 fn is_top_level(kind: SessionKind) -> bool {
     TOP_LEVEL_KINDS.contains(&kind)
@@ -431,7 +438,11 @@ fn mcp_server_block(server: &PromptMcpServer) -> String {
     if let Some(note) = &server.note {
         return format!("server \"{}\": {}", server.name, note);
     }
-    let mut lines = vec![format!("server \"{}\" ({} tools):", server.name, server.tools.len())];
+    let mut lines = vec![format!(
+        "server \"{}\" ({} tools):",
+        server.name,
+        server.tools.len()
+    )];
     let mut used = 0usize;
     let mut shown = 0usize;
     for tool in &server.tools {
@@ -541,7 +552,10 @@ pub fn scratch_note(dir: &str) -> String {
 /// never requires touching the joiner.
 pub fn assemble_prompt(input: &PromptInput) -> AssembledPrompt {
     let granted: HashSet<HostFnName> = input.granted.iter().copied().collect();
-    let facts = Facts { kind: input.kind, granted: &granted };
+    let facts = Facts {
+        kind: input.kind,
+        granted: &granted,
+    };
 
     let mut sections: Vec<SectionId> = Vec::new();
     let mut shas: Vec<SectionSha> = Vec::new();
@@ -552,7 +566,10 @@ pub fn assemble_prompt(input: &PromptInput) -> AssembledPrompt {
     // apart.
     fn note(sections: &mut Vec<SectionId>, shas: &mut Vec<SectionSha>, id: SectionId, text: &str) {
         sections.push(id);
-        shas.push(SectionSha { id, sha: section_sha(text) });
+        shas.push(SectionSha {
+            id,
+            sha: section_sha(text),
+        });
     }
 
     for spec in SECTIONS.iter() {
@@ -577,8 +594,12 @@ pub fn assemble_prompt(input: &PromptInput) -> AssembledPrompt {
         note(&mut sections, &mut shas, SectionId::Skills, &text);
         volatile.push(text);
     }
-    let notes: Vec<&str> =
-        input.notes.iter().map(|n| n.trim()).filter(|n| !n.is_empty()).collect();
+    let notes: Vec<&str> = input
+        .notes
+        .iter()
+        .map(|n| n.trim())
+        .filter(|n| !n.is_empty())
+        .collect();
     if !notes.is_empty() {
         // The notes join into ONE section: they are separate strings only
         // because the caller resolves them separately, and a per-note id would
@@ -606,7 +627,10 @@ mod tests {
     use crate::harness::protocol::HOST_FN_NAMES;
 
     fn all() -> Vec<HostFnName> {
-        HOST_FN_NAMES.iter().map(|n| HostFnName::parse(n).unwrap()).collect()
+        HOST_FN_NAMES
+            .iter()
+            .map(|n| HostFnName::parse(n).unwrap())
+            .collect()
     }
 
     /// What every turn bridges: shell + the one editing idiom.
@@ -645,7 +669,10 @@ mod tests {
     /// sections are hard-wrapped, so a sentence-length phrase straddles a
     /// newline.
     fn flat(text: &str) -> String {
-        text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+        text.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
     }
 
     fn has(p: &AssembledPrompt, id: SectionId) -> bool {
@@ -668,10 +695,17 @@ mod tests {
 
     #[test]
     fn a_top_level_session_gets_the_top_level_section_and_not_the_nested_one() {
-        for kind in [SessionKind::Root, SessionKind::Fork, SessionKind::Compaction] {
+        for kind in [
+            SessionKind::Root,
+            SessionKind::Fork,
+            SessionKind::Compaction,
+        ] {
             let p = build(kind);
             assert!(has(&p, SectionId::Delegation), "{kind:?} should delegate");
-            assert!(!has(&p, SectionId::DelegationNested), "{kind:?} is not nested");
+            assert!(
+                !has(&p, SectionId::DelegationNested),
+                "{kind:?} is not nested"
+            );
             assert!(p.system.contains("await spawn(task, {name})"));
         }
     }
@@ -700,8 +734,10 @@ mod tests {
     #[test]
     fn workflows_are_offered_only_to_a_session_that_may_start_one() {
         assert!(has(&build_root(), SectionId::Workflow));
-        let revoked =
-            assemble_prompt(&PromptInput::new(SessionKind::Root, without(&[HostFnName::Workflow])));
+        let revoked = assemble_prompt(&PromptInput::new(
+            SessionKind::Root,
+            without(&[HostFnName::Workflow]),
+        ));
         assert!(!has(&revoked, SectionId::Workflow));
         assert!(!has(&build(SessionKind::Subagent), SectionId::Workflow));
     }
@@ -711,26 +747,52 @@ mod tests {
     /// Section → the host function it grants, and a phrase only that section
     /// carries.
     const GRANTS: [(SectionId, HostFnName, &str); 9] = [
-        (SectionId::Shell, HostFnName::Bash, "await bashBg(name, cmd)"),
+        (
+            SectionId::Shell,
+            HostFnName::Bash,
+            "await bashBg(name, cmd)",
+        ),
         (SectionId::Files, HostFnName::View, "await view(path)"),
         (SectionId::PatchGrammar, HostFnName::Patch, "INS.HEAD:"),
         (SectionId::Ask, HostFnName::Ask, "await ask(question"),
         (SectionId::State, HostFnName::State, "await state.get(key)"),
-        (SectionId::Schedule, HostFnName::Schedule, "await schedule.list()"),
-        (SectionId::Artifact, HostFnName::Artifact, "await artifact(name, content)"),
-        (SectionId::Delegation, HostFnName::Spawn, "await spawn(task, {name})"),
-        (SectionId::Workflow, HostFnName::Workflow, "await workflow.start("),
+        (
+            SectionId::Schedule,
+            HostFnName::Schedule,
+            "await schedule.list()",
+        ),
+        (
+            SectionId::Artifact,
+            HostFnName::Artifact,
+            "await artifact(name, content)",
+        ),
+        (
+            SectionId::Delegation,
+            HostFnName::Spawn,
+            "await spawn(task, {name})",
+        ),
+        (
+            SectionId::Workflow,
+            HostFnName::Workflow,
+            "await workflow.start(",
+        ),
     ];
 
     #[test]
     fn a_section_granting_a_host_function_is_absent_when_the_capability_is_absent() {
         for (id, func, phrase) in GRANTS {
             let granted = build_root();
-            assert!(has(&granted, id), "{id:?} should be present when {func:?} is granted");
+            assert!(
+                has(&granted, id),
+                "{id:?} should be present when {func:?} is granted"
+            );
             assert!(granted.system.contains(phrase));
 
             let revoked = assemble_prompt(&PromptInput::new(SessionKind::Root, without(&[func])));
-            assert!(!has(&revoked, id), "{id:?} must be absent when {func:?} is not granted");
+            assert!(
+                !has(&revoked, id),
+                "{id:?} must be absent when {func:?} is not granted"
+            );
             assert!(
                 !whole(&revoked).contains(phrase),
                 "no section may document {func:?} when it is not granted (found {phrase:?})"
@@ -789,7 +851,9 @@ mod tests {
         assert!(has(&p, SectionId::McpTools));
         assert!(p.system_volatile.contains("## MCP tools"));
         assert!(p.system_volatile.contains("bough mcp call SERVER TOOL"));
-        assert!(p.system_volatile.contains("- read_file({path}) — Read a file"));
+        assert!(p
+            .system_volatile
+            .contains("- read_file({path}) — Read a file"));
         // A failed server is named with its error, not silently dropped.
         assert!(p
             .system_volatile
@@ -804,7 +868,9 @@ mod tests {
             ..Default::default()
         }];
         let pending = assemble_prompt(&pending_input);
-        assert!(pending.system_volatile.contains("server \"notion\": granted, not connected yet"));
+        assert!(pending
+            .system_volatile
+            .contains("server \"notion\": granted, not connected yet"));
         assert!(!pending.system_volatile.contains("0 tools"));
 
         // The catalog is per-session; it must never reach the cacheable prefix.
@@ -813,7 +879,10 @@ mod tests {
         // NO SHELL, NO CATALOG. A tool is called by running `bough mcp call`,
         // so a turn that cannot run a command cannot reach one.
         let mut no_bash = PromptInput::new(SessionKind::Root, without(&[HostFnName::Bash]));
-        no_bash.mcp_servers = vec![PromptMcpServer { name: "files".into(), ..Default::default() }];
+        no_bash.mcp_servers = vec![PromptMcpServer {
+            name: "files".into(),
+            ..Default::default()
+        }];
         assert!(!has(&assemble_prompt(&no_bash), SectionId::McpTools));
     }
 
@@ -824,8 +893,11 @@ mod tests {
             name: "history".into(),
             body: "Query ~/.bough/bough.db with sqlite3.".into(),
         }];
-        input.notes =
-            vec!["# Workspace\nbash starts in /repo.".into(), "   ".into(), "".into()];
+        input.notes = vec![
+            "# Workspace\nbash starts in /repo.".into(),
+            "   ".into(),
+            "".into(),
+        ];
         let p = assemble_prompt(&input);
         assert_eq!(
             &p.sections[p.sections.len() - 2..],
@@ -842,10 +914,16 @@ mod tests {
     #[test]
     fn the_stable_tier_is_byte_identical_for_the_same_shape() {
         let mut a_input = PromptInput::new(SessionKind::Root, all());
-        a_input.mcp_servers = vec![PromptMcpServer { name: "x".into(), ..Default::default() }];
+        a_input.mcp_servers = vec![PromptMcpServer {
+            name: "x".into(),
+            ..Default::default()
+        }];
         a_input.notes = vec!["# A\nfirst".into()];
         let mut b_input = PromptInput::new(SessionKind::Root, all());
-        b_input.mcp_servers = vec![PromptMcpServer { name: "y".into(), ..Default::default() }];
+        b_input.mcp_servers = vec![PromptMcpServer {
+            name: "y".into(),
+            ..Default::default()
+        }];
         b_input.notes = vec!["# B\nsecond".into()];
         let a = assemble_prompt(&a_input);
         let b = assemble_prompt(&b_input);
@@ -858,7 +936,12 @@ mod tests {
     #[test]
     fn the_prompt_grants_view_patch_write_and_nothing_else_for_files() {
         let text = whole(&build_root());
-        for gone in ["await read(", "await edit(", "await extract(", "await recall("] {
+        for gone in [
+            "await read(",
+            "await edit(",
+            "await extract(",
+            "await recall(",
+        ] {
             assert!(!text.contains(gone), "{gone} was removed from the spec");
         }
         assert!(flat(&text).contains("there is no read() and no edit()."));
@@ -868,8 +951,16 @@ mod tests {
     #[test]
     fn there_is_no_done_gate_and_no_committed_check() {
         let text = flat(&whole(&build_root()));
-        for gone in ["done-gate", "committed check", "checkpassed", "re-runs the committed"] {
-            assert!(!text.contains(gone), "{gone:?} belongs to the old acceptance gate");
+        for gone in [
+            "done-gate",
+            "committed check",
+            "checkpassed",
+            "re-runs the committed",
+        ] {
+            assert!(
+                !text.contains(gone),
+                "{gone:?} belongs to the old acceptance gate"
+            );
         }
         assert!(text.contains("there is no acceptance gate in this harness"));
         // `done` survives as a report, and stop is what ends a turn.
@@ -884,9 +975,13 @@ mod tests {
         assert!(p.system.contains("## Network"));
         let text = flat(&p.system);
         assert!(text.contains("you have network access, and nothing filters it"));
-        assert!(text
-            .contains("there is no egress proxy, no allowlist, no credential gate, and no review step"));
-        assert!(!text.contains("egress gate"), "there is no egress gate to describe");
+        assert!(text.contains(
+            "there is no egress proxy, no allowlist, no credential gate, and no review step"
+        ));
+        assert!(
+            !text.contains("egress gate"),
+            "there is no egress gate to describe"
+        );
     }
 
     // ---- the section files themselves --------------------------------------
@@ -913,7 +1008,10 @@ mod tests {
             .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
             .unwrap_or_default();
         assert!(message.contains("no-such-section.md"), "message: {message}");
-        assert!(message.contains("not a recoverable condition"), "message: {message}");
+        assert!(
+            message.contains("not a recoverable condition"),
+            "message: {message}"
+        );
     }
 
     // ---- the workspace note ------------------------------------------------
@@ -951,8 +1049,8 @@ mod tests {
         assert!(note.contains("/home/u/.bough/scratch/abc123"));
         let text = flat(&note);
         assert!(text.contains("/tmp")); // …and says what it replaces
-        // The reason, in the form that transfers: a temp file in the checkout
-        // is work the human has to review.
+                                        // The reason, in the form that transfers: a temp file in the checkout
+                                        // is work the human has to review.
         assert!(text.contains("changes"));
 
         let mut input = PromptInput::new(SessionKind::Root, all());
@@ -985,14 +1083,17 @@ mod tests {
             SessionKind::Subagent,
             SessionKind::WorkflowAgent,
         ] {
-            let ws = format!("/w/{}", match kind {
-                SessionKind::Root => "root",
-                SessionKind::Fork => "fork",
-                SessionKind::Compaction => "compaction",
-                SessionKind::Subagent => "subagent",
-                SessionKind::WorkflowAgent => "workflow_agent",
-                _ => unreachable!(),
-            });
+            let ws = format!(
+                "/w/{}",
+                match kind {
+                    SessionKind::Root => "root",
+                    SessionKind::Fork => "fork",
+                    SessionKind::Compaction => "compaction",
+                    SessionKind::Subagent => "subagent",
+                    SessionKind::WorkflowAgent => "workflow_agent",
+                    _ => unreachable!(),
+                }
+            );
             let mut input = PromptInput::new(kind, core());
             input.notes = vec![workspace_note(&ws)];
             let p = assemble_prompt(&input);
@@ -1005,7 +1106,10 @@ mod tests {
     #[test]
     fn every_included_section_is_fingerprinted_in_prompt_order() {
         let mut input = PromptInput::new(SessionKind::Root, all());
-        input.skills = vec![PromptSkill { name: "s".into(), body: "B".into() }];
+        input.skills = vec![PromptSkill {
+            name: "s".into(),
+            body: "B".into(),
+        }];
         input.notes = vec!["## N\nnote".into()];
         let p = assemble_prompt(&input);
         assert_eq!(

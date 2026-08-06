@@ -126,7 +126,10 @@ impl SpillDeps for RealSpillDeps {
     }
     fn append(&self, path: &str, text: &str) -> std::io::Result<()> {
         use std::io::Write;
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
         f.write_all(text.as_bytes())
     }
 }
@@ -197,7 +200,11 @@ pub fn stream_spill(
                 let path = next_path(scratch, ctx.label.as_deref().unwrap_or("output"), deps);
                 let head = pending();
                 deps.write(&path, &head)?;
-                Ok(SpillSink { path, chars: char_len(&head), lines: count_lines(&head) })
+                Ok(SpillSink {
+                    path,
+                    chars: char_len(&head),
+                    lines: count_lines(&head),
+                })
             };
             // Give up on the file and let the inline extract fall back to
             // plain truncation.
@@ -235,7 +242,10 @@ fn next_path(dir: &str, label: &str, deps: &dyn SpillDeps) -> String {
     // 999 spills in one session is not a real scenario, but silently
     // overwriting would be, so the last slot is reused explicitly rather than
     // by accident.
-    Path::new(dir).join(format!("{label}-999.log")).to_string_lossy().into_owned()
+    Path::new(dir)
+        .join(format!("{label}-999.log"))
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// What the inline extract should say. Pure — no filesystem, no decision to
@@ -306,8 +316,11 @@ fn last_chars(s: &str, n: usize) -> &str {
 /// in particular is a thing it would not otherwise think to reach for on a
 /// 9,000-line log.
 pub fn spill_marker(path: &str, total: usize, lines: usize, omitted: usize) -> String {
-    let lines_clause =
-        if lines > 0 { format!(", {} lines", commafy(lines)) } else { String::new() };
+    let lines_clause = if lines > 0 {
+        format!(", {} lines", commafy(lines))
+    } else {
+        String::new()
+    };
     format!(
         "\n[… {} chars omitted from the middle. \
          FULL OUTPUT SAVED — {} chars{}:\n   {}\n   \
@@ -330,7 +343,7 @@ fn commafy(n: usize) -> String {
     let s = n.to_string();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -358,8 +371,11 @@ pub fn spill(text: &str, ctx: &SpillCtx, sink: Option<&SpillSink>, deps: &dyn Sp
     // 400KB.
     if let Some(sink) = sink {
         let plan = plan_spill(text, true);
-        let (head, tail) =
-            if plan.spilled { (plan.head.as_str(), plan.tail.as_str()) } else { (text, "") };
+        let (head, tail) = if plan.spilled {
+            (plan.head.as_str(), plan.tail.as_str())
+        } else {
+            (text, "")
+        };
         let omitted = sink.chars.saturating_sub(char_len(head) + char_len(tail));
         return format!(
             "{head}{}{tail}",
@@ -372,10 +388,16 @@ pub fn spill(text: &str, ctx: &SpillCtx, sink: Option<&SpillSink>, deps: &dyn Sp
         // the right fallback in the second case — see the module note.
         return truncate_middle(
             text,
-            TruncateLimits { head: Some(MAX_HEAD_CHARS), tail: Some(MAX_TAIL_CHARS) },
+            TruncateLimits {
+                head: Some(MAX_HEAD_CHARS),
+                tail: Some(MAX_TAIL_CHARS),
+            },
         );
     }
-    let dir = ctx.scratch.as_deref().expect("plan.spilled implies a scratchpad");
+    let dir = ctx
+        .scratch
+        .as_deref()
+        .expect("plan.spilled implies a scratchpad");
     let attempt = || -> std::io::Result<String> {
         deps.mkdirp(dir)?;
         let path = next_path(dir, ctx.label.as_deref().unwrap_or("output"), deps);
@@ -390,7 +412,10 @@ pub fn spill(text: &str, ctx: &SpillCtx, sink: Option<&SpillSink>, deps: &dyn Sp
     attempt().unwrap_or_else(|_| {
         truncate_middle(
             text,
-            TruncateLimits { head: Some(MAX_HEAD_CHARS), tail: Some(MAX_TAIL_CHARS) },
+            TruncateLimits {
+                head: Some(MAX_HEAD_CHARS),
+                tail: Some(MAX_TAIL_CHARS),
+            },
         )
     })
 }
@@ -422,7 +447,9 @@ mod tests {
             Ok(())
         }
         fn write(&self, path: &str, text: &str) -> std::io::Result<()> {
-            self.files.borrow_mut().insert(path.to_string(), text.to_string());
+            self.files
+                .borrow_mut()
+                .insert(path.to_string(), text.to_string());
             Ok(())
         }
         fn append(&self, path: &str, text: &str) -> std::io::Result<()> {
@@ -439,11 +466,17 @@ mod tests {
     }
 
     fn ctx(scratch: &str, label: &str) -> SpillCtx {
-        SpillCtx { scratch: Some(scratch.to_string()), label: Some(label.to_string()) }
+        SpillCtx {
+            scratch: Some(scratch.to_string()),
+            label: Some(label.to_string()),
+        }
     }
 
     fn no_label(scratch: &str) -> SpillCtx {
-        SpillCtx { scratch: Some(scratch.to_string()), label: None }
+        SpillCtx {
+            scratch: Some(scratch.to_string()),
+            label: None,
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -467,7 +500,10 @@ mod tests {
         assert_eq!(plan.tail.len(), SPILL_TAIL_CHARS);
         assert!(plan.head.starts_with("HEAD"));
         assert!(plan.tail.ends_with("TAIL"));
-        assert_eq!(plan.omitted, text.len() - SPILL_HEAD_CHARS - SPILL_TAIL_CHARS);
+        assert_eq!(
+            plan.omitted,
+            text.len() - SPILL_HEAD_CHARS - SPILL_TAIL_CHARS
+        );
     }
 
     #[test]
@@ -479,8 +515,11 @@ mod tests {
 
     #[test]
     fn plan_spill_counts_lines_for_the_marker() {
-        let text: String =
-            "line\n".repeat(SPILL_OVER_CHARS / 2).chars().take(SPILL_OVER_CHARS * 2).collect();
+        let text: String = "line\n"
+            .repeat(SPILL_OVER_CHARS / 2)
+            .chars()
+            .take(SPILL_OVER_CHARS * 2)
+            .collect();
         let plan = plan_spill(&text, true);
         assert!(plan.spilled);
         assert_eq!(plan.lines, text.split('\n').count());
@@ -503,7 +542,10 @@ mod tests {
             let (p, c) = files.iter().next().unwrap();
             (p.clone(), c.clone())
         };
-        assert_eq!(contents, text, "the file did not receive the complete output");
+        assert_eq!(
+            contents, text,
+            "the file did not receive the complete output"
+        );
         // The invariant that matters is a CEILING, not a ratio: the inline
         // cost is the budget plus one marker no matter how vast the command's
         // output was.
@@ -512,7 +554,10 @@ mod tests {
             "inline extract was {} chars, above the fixed budget",
             shown.len()
         );
-        assert!(shown.contains(&path), "the extract does not name the file it wrote");
+        assert!(
+            shown.contains(&path),
+            "the extract does not name the file it wrote"
+        );
     }
 
     #[test]
@@ -537,7 +582,12 @@ mod tests {
     #[test]
     fn the_directory_is_created_before_the_write() {
         let f = FakeFs::default();
-        spill(&big(SPILL_OVER_CHARS * 2, 'x'), &no_label("/scratch/s9"), None, &f);
+        spill(
+            &big(SPILL_OVER_CHARS * 2, 'x'),
+            &no_label("/scratch/s9"),
+            None,
+            &f,
+        );
         assert_eq!(*f.dirs.borrow(), vec!["/scratch/s9".to_string()]);
     }
 
@@ -547,13 +597,31 @@ mod tests {
         // turn is still about to read.
         let f = FakeFs::default();
         let c = ctx("/s", "bash");
-        spill(&format!("one{}", big(SPILL_OVER_CHARS * 2, 'x')), &c, None, &f);
-        spill(&format!("two{}", big(SPILL_OVER_CHARS * 2, 'x')), &c, None, &f);
-        spill(&format!("three{}", big(SPILL_OVER_CHARS * 2, 'x')), &c, None, &f);
+        spill(
+            &format!("one{}", big(SPILL_OVER_CHARS * 2, 'x')),
+            &c,
+            None,
+            &f,
+        );
+        spill(
+            &format!("two{}", big(SPILL_OVER_CHARS * 2, 'x')),
+            &c,
+            None,
+            &f,
+        );
+        spill(
+            &format!("three{}", big(SPILL_OVER_CHARS * 2, 'x')),
+            &c,
+            None,
+            &f,
+        );
         let files = f.files.borrow();
         assert_eq!(files.len(), 3);
         let names: Vec<&String> = files.keys().collect();
-        assert_eq!(names, vec!["/s/bash-001.log", "/s/bash-002.log", "/s/bash-003.log"]);
+        assert_eq!(
+            names,
+            vec!["/s/bash-001.log", "/s/bash-002.log", "/s/bash-003.log"]
+        );
         assert!(files["/s/bash-001.log"].starts_with("one"));
         assert!(files["/s/bash-003.log"].starts_with("three"));
     }
@@ -561,7 +629,12 @@ mod tests {
     #[test]
     fn the_label_separates_one_verbs_spills_from_anothers() {
         let f = FakeFs::default();
-        spill(&big(SPILL_OVER_CHARS * 2, 'x'), &ctx("/s", "bash"), None, &f);
+        spill(
+            &big(SPILL_OVER_CHARS * 2, 'x'),
+            &ctx("/s", "bash"),
+            None,
+            &f,
+        );
         spill(&big(SPILL_OVER_CHARS * 2, 'x'), &ctx("/s", "sh"), None, &f);
         let files = f.files.borrow();
         let names: Vec<&String> = files.keys().collect();
@@ -571,7 +644,12 @@ mod tests {
     #[test]
     fn a_path_with_a_space_or_a_quote_survives_into_the_suggested_commands() {
         let f = FakeFs::default();
-        let shown = spill(&big(SPILL_OVER_CHARS * 2, 'x'), &ctx("/tmp/my logs", "bash"), None, &f);
+        let shown = spill(
+            &big(SPILL_OVER_CHARS * 2, 'x'),
+            &ctx("/tmp/my logs", "bash"),
+            None,
+            &f,
+        );
         // Unquoted, the rg hint would silently search two different paths.
         assert!(
             shown.contains("rg -n 'error|fail' '/tmp/my logs/bash-001.log'"),
@@ -591,7 +669,10 @@ mod tests {
         let text = big(SPILL_OVER_CHARS * 5, 'x');
         let shown = spill(&text, &SpillCtx::default(), None, &f);
         assert_eq!(f.files.borrow().len(), 0);
-        assert_eq!(shown, text, "a 100k text fits the old budget and must be untouched");
+        assert_eq!(
+            shown, text,
+            "a 100k text fits the old budget and must be untouched"
+        );
     }
 
     /// A filesystem that refuses every mutation.
@@ -618,7 +699,10 @@ mod tests {
         let text = big(SPILL_OVER_CHARS * 2, 'x');
         let shown = spill(&text, &no_label("/s"), None, &BrokenFs);
         assert!(!shown.contains("FULL OUTPUT SAVED"));
-        assert_eq!(shown, text, "within the fallback budget, so it should be intact");
+        assert_eq!(
+            shown, text,
+            "within the fallback budget, so it should be intact"
+        );
     }
 
     #[test]
@@ -639,7 +723,11 @@ mod tests {
         let huge = spill(&big(10_000_000, 'x'), &ctx("/s", "b"), None, &f);
         let ceiling = SPILL_HEAD_CHARS + SPILL_TAIL_CHARS + 1_000;
         assert!(small.len() <= ceiling);
-        assert!(huge.len() <= ceiling, "10MB of output produced {} inline chars", huge.len());
+        assert!(
+            huge.len() <= ceiling,
+            "10MB of output produced {} inline chars",
+            huge.len()
+        );
         // And the 10MB is genuinely on disk, not discarded.
         assert_eq!(f.files.borrow()["/s/b-001.log"].len(), 10_000_000);
     }
@@ -660,7 +748,9 @@ mod tests {
             let total = snapshot.chars().count();
             sink = stream_spill(sink, chunk, &c, total, move || snapshot, f);
         }
-        let contents = sink.as_ref().and_then(|s| f.files.borrow().get(&s.path).cloned());
+        let contents = sink
+            .as_ref()
+            .and_then(|s| f.files.borrow().get(&s.path).cloned());
         (sink, contents)
     }
 
@@ -670,8 +760,12 @@ mod tests {
         // chunk dropped exactly one chunk — 262,144 chars of a 1.29MB command
         // — from a file whose banner claimed it held everything.
         let f = FakeFs::default();
-        let chunks =
-            vec![big(9_000, 'a'), big(9_000, 'b'), big(9_000, 'c'), big(9_000, 'd')];
+        let chunks = vec![
+            big(9_000, 'a'),
+            big(9_000, 'b'),
+            big(9_000, 'c'),
+            big(9_000, 'd'),
+        ];
         let (sink, contents) = stream(&chunks, &f);
         let sink = sink.expect("the sink should have opened");
         let joined = chunks.concat();
@@ -699,8 +793,9 @@ mod tests {
         // anything written from it afterwards would be missing precisely the
         // part the marker promises is on disk.
         let f = FakeFs::default();
-        let chunks: Vec<String> =
-            (0..12).map(|i| big(50_000, char::from(b'a' + i as u8))).collect();
+        let chunks: Vec<String> = (0..12)
+            .map(|i| big(50_000, char::from(b'a' + i as u8)))
+            .collect();
         let (_, contents) = stream(&chunks, &f);
         let joined = chunks.concat();
         let contents = contents.expect("the sink should have opened");

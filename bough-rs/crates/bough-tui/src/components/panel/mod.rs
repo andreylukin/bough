@@ -26,7 +26,11 @@
 
 pub mod changes;
 pub mod host;
+pub mod mcp;
+pub mod model;
+pub mod skills;
 pub mod tree;
+pub mod workflows;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -51,7 +55,10 @@ pub struct PanelState {
 
 /// The tree is the panel's home tab: it is the switcher AND the history, so it
 /// is what `^t` with no further intent should land on.
-pub const INITIAL_PANEL: PanelState = PanelState { open: false, tab: PanelTab::Tree };
+pub const INITIAL_PANEL: PanelState = PanelState {
+    open: false,
+    tab: PanelTab::Tree,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PanelAction {
@@ -115,13 +122,28 @@ pub fn reduce_panel(
         next
     };
     match action {
-        PanelAction::Toggle => leave(PanelState { open: !state.open, ..state }, &mut theme),
-        PanelAction::Close => leave(PanelState { open: false, ..state }, &mut theme),
+        PanelAction::Toggle => leave(
+            PanelState {
+                open: !state.open,
+                ..state
+            },
+            &mut theme,
+        ),
+        PanelAction::Close => leave(
+            PanelState {
+                open: false,
+                ..state
+            },
+            &mut theme,
+        ),
         PanelAction::Jump(tab) => {
             // The chord that brought you here takes you back: jumping to the
             // open tab closes.
             let next = if state.open && state.tab == tab {
-                PanelState { open: false, ..state }
+                PanelState {
+                    open: false,
+                    ..state
+                }
             } else {
                 PanelState { open: true, tab }
             };
@@ -131,7 +153,13 @@ pub fn reduce_panel(
             let at = PANEL_TABS.iter().position(|t| *t == state.tab).unwrap_or(0) as isize;
             let n = PANEL_TABS.len() as isize;
             let next = PANEL_TABS[(((at + delta) % n + n) % n) as usize];
-            leave(PanelState { open: true, tab: next }, &mut theme)
+            leave(
+                PanelState {
+                    open: true,
+                    tab: next,
+                },
+                &mut theme,
+            )
         }
         PanelAction::Move(delta) => {
             if state.open && state.tab == PanelTab::Theme {
@@ -143,7 +171,7 @@ pub fn reduce_panel(
         }
         PanelAction::Confirm => {
             if state.open && state.tab == PanelTab::Theme {
-                if let Some(t) = theme.as_deref_mut() {
+                if let Some(t) = theme {
                     t.commit();
                 }
             }
@@ -173,8 +201,14 @@ pub fn window_around(selected: usize, total: usize, height: usize) -> (usize, us
 pub fn legend_line(items: &[String], max: Option<usize>) -> String {
     let kept: Vec<&String> = items.iter().filter(|i| !i.trim().is_empty()).collect();
     let join = |parts: &[&str]| parts.join(" · ");
-    let full = kept.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" · ");
-    let Some(w) = max.filter(|w| *w > 0) else { return full };
+    let full = kept
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let Some(w) = max.filter(|w| *w > 0) else {
+        return full;
+    };
     if width(&full) <= w {
         return full;
     }
@@ -192,7 +226,11 @@ pub fn legend_line(items: &[String], max: Option<usize>) -> String {
     // truncation beats a row of half a word.
     if kept.len() > 1 && width(exit) <= w {
         let pair = join(&[kept[0].as_str(), "…", exit.as_str()]);
-        return if width(&pair) <= w { pair } else { exit.to_string() };
+        return if width(&pair) <= w {
+            pair
+        } else {
+            exit.to_string()
+        };
     }
     truncate_ansi(kept.first().map(|s| s.as_str()).unwrap_or(""), w, "…")
 }
@@ -292,6 +330,14 @@ pub enum PanelBody<'a> {
     /// `loading theme…` for it rather than an empty list, which would read as
     /// a build with no presets.
     Theme(Option<&'a crate::theme::ThemePreview>),
+    /// The workflow run view — runs, phases, agents, one agent, the script.
+    Workflows(workflows::WorkflowsProps<'a>),
+    /// Registry · grant · connection · credential, never conflated.
+    Mcp(mcp::McpTabProps<'a>),
+    /// The `/name` bundles this install can load.
+    Skills(skills::SkillsTabProps<'a>),
+    /// Both model tiers and the thinking depth, one list.
+    Model(model::ModelPickerProps<'a>),
     Text(&'a str),
 }
 
@@ -323,7 +369,12 @@ pub fn render_panel(tab: PanelTab, body: &PanelBody, area: Rect, buf: &mut Buffe
         return;
     }
     let rows = inner.height as usize;
-    buf.set_line(inner.x, inner.y, &panel_tabs_line(tab, Some(inner.width as usize)), inner.width);
+    buf.set_line(
+        inner.x,
+        inner.y,
+        &panel_tabs_line(tab, Some(inner.width as usize)),
+        inner.width,
+    );
 
     let body_rows = panel_body_rows(rows);
     if body_rows == 0 {
@@ -342,6 +393,10 @@ pub fn render_panel(tab: PanelTab, body: &PanelBody, area: Rect, buf: &mut Buffe
         PanelBody::Tree(p) => tree::render_tree(p, body_area, buf),
         PanelBody::Changes(p) => changes::render_changes(p, body_cols, body_area, buf),
         PanelBody::Theme(preview) => crate::theme::render_theme_tab(*preview, body_area, buf),
+        PanelBody::Workflows(p) => workflows::render_workflows(p, body_area, buf),
+        PanelBody::Mcp(p) => mcp::render_mcp(p, body_area, buf),
+        PanelBody::Skills(p) => skills::render_skills(p, body_area, buf),
+        PanelBody::Model(p) => model::render_model(p, body_area, buf),
         PanelBody::Text(text) => {
             let dim = Style::default().add_modifier(Modifier::DIM);
             buf.set_line(
@@ -378,7 +433,12 @@ pub(crate) mod test_render {
     pub fn draw_panel(tab: PanelTab, body: &PanelBody, cols: u16, rows: usize) -> Vec<String> {
         let mut term = Terminal::new(TestBackend::new(cols, rows as u16 + 4)).unwrap();
         term.draw(|f| {
-            let area = Rect { x: 0, y: 0, width: cols, height: rows as u16 + 2 };
+            let area = Rect {
+                x: 0,
+                y: 0,
+                width: cols,
+                height: rows as u16 + 2,
+            };
             render_panel(tab, body, area, f.buffer_mut());
         })
         .unwrap();
@@ -432,50 +492,112 @@ mod tests {
         assert_eq!(toggle, PanelAction::Toggle);
         state = reduce_panel(state, toggle, None);
         // The tree is the home tab.
-        assert_eq!(state, PanelState { open: true, tab: PanelTab::Tree });
+        assert_eq!(
+            state,
+            PanelState {
+                open: true,
+                tab: PanelTab::Tree
+            }
+        );
 
         // A chord is a DIRECT jump: it works from any tab, and from a closed panel.
         for t in TABS.iter() {
             let action = panel_action_for(Command::Tab(t.id)).unwrap();
             assert_eq!(action, PanelAction::Jump(t.id), "{}", t.chord);
             let next = reduce_panel(
-                PanelState { open: false, tab: PanelTab::Tree },
+                PanelState {
+                    open: false,
+                    tab: PanelTab::Tree,
+                },
                 action,
                 None,
             );
-            assert_eq!(next, PanelState { open: true, tab: t.id });
+            assert_eq!(
+                next,
+                PanelState {
+                    open: true,
+                    tab: t.id
+                }
+            );
         }
 
         // The chord that brought you here takes you back.
         let closed = reduce_panel(
-            PanelState { open: true, tab: PanelTab::Changes },
+            PanelState {
+                open: true,
+                tab: PanelTab::Changes,
+            },
             PanelAction::Jump(PanelTab::Changes),
             None,
         );
-        assert_eq!(closed, PanelState { open: false, tab: PanelTab::Changes });
+        assert_eq!(
+            closed,
+            PanelState {
+                open: false,
+                tab: PanelTab::Changes
+            }
+        );
     }
 
     #[test]
     fn tab_cycles_the_bar_in_both_directions_and_wraps() {
         let first = PANEL_TABS[0];
         let last = PANEL_TABS[PANEL_TABS.len() - 1];
-        let state = reduce_panel(PanelState { open: true, tab: first }, PanelAction::Cycle(1), None);
+        let state = reduce_panel(
+            PanelState {
+                open: true,
+                tab: first,
+            },
+            PanelAction::Cycle(1),
+            None,
+        );
         assert_eq!(state.tab, PANEL_TABS[1]);
-        let state =
-            reduce_panel(PanelState { open: true, tab: first }, PanelAction::Cycle(-1), None);
+        let state = reduce_panel(
+            PanelState {
+                open: true,
+                tab: first,
+            },
+            PanelAction::Cycle(-1),
+            None,
+        );
         assert_eq!(state.tab, last);
-        let state = reduce_panel(PanelState { open: true, tab: last }, PanelAction::Cycle(1), None);
+        let state = reduce_panel(
+            PanelState {
+                open: true,
+                tab: last,
+            },
+            PanelAction::Cycle(1),
+            None,
+        );
         assert_eq!(state.tab, first);
     }
 
     #[test]
     fn panel_action_for_claims_the_panels_commands_and_nothing_else() {
-        assert_eq!(panel_action_for(Command::PanelClose), Some(PanelAction::Close));
-        assert_eq!(panel_action_for(Command::PanelNext), Some(PanelAction::Cycle(1)));
-        assert_eq!(panel_action_for(Command::PanelPrev), Some(PanelAction::Cycle(-1)));
-        assert_eq!(panel_action_for(Command::MoveDown), Some(PanelAction::Move(1)));
-        assert_eq!(panel_action_for(Command::MoveUp), Some(PanelAction::Move(-1)));
-        assert_eq!(panel_action_for(Command::PanelConfirm), Some(PanelAction::Confirm));
+        assert_eq!(
+            panel_action_for(Command::PanelClose),
+            Some(PanelAction::Close)
+        );
+        assert_eq!(
+            panel_action_for(Command::PanelNext),
+            Some(PanelAction::Cycle(1))
+        );
+        assert_eq!(
+            panel_action_for(Command::PanelPrev),
+            Some(PanelAction::Cycle(-1))
+        );
+        assert_eq!(
+            panel_action_for(Command::MoveDown),
+            Some(PanelAction::Move(1))
+        );
+        assert_eq!(
+            panel_action_for(Command::MoveUp),
+            Some(PanelAction::Move(-1))
+        );
+        assert_eq!(
+            panel_action_for(Command::PanelConfirm),
+            Some(PanelAction::Confirm)
+        );
         // Chat's own commands pass straight through — the panel is not a key sink.
         assert_eq!(panel_action_for(Command::Send), None);
         assert_eq!(panel_action_for(Command::DeleteWordBack), None);
@@ -509,14 +631,20 @@ mod tests {
         ];
         for action in departures {
             let mut theme = Recorder::default();
-            let state = PanelState { open: true, tab: PanelTab::Theme };
+            let state = PanelState {
+                open: true,
+                tab: PanelTab::Theme,
+            };
             reduce_panel(state, action, Some(&mut theme));
             assert_eq!(theme.cancels, 1, "{action:?} did not revert the preview");
             assert_eq!(theme.commits, 0);
         }
         // Staying put never reverts — a cursor move is browsing, not leaving.
         let mut theme = Recorder::default();
-        let state = PanelState { open: true, tab: PanelTab::Theme };
+        let state = PanelState {
+            open: true,
+            tab: PanelTab::Theme,
+        };
         reduce_panel(state, PanelAction::Move(1), Some(&mut theme));
         assert_eq!(theme.cancels, 0);
         assert_eq!(theme.moves, vec![1]);
@@ -528,7 +656,10 @@ mod tests {
         // Departing from any OTHER tab touches nothing.
         let mut theme = Recorder::default();
         reduce_panel(
-            PanelState { open: true, tab: PanelTab::Tree },
+            PanelState {
+                open: true,
+                tab: PanelTab::Tree,
+            },
             PanelAction::Close,
             Some(&mut theme),
         );
@@ -545,7 +676,10 @@ mod tests {
                 .iter()
                 .map(|s| s.content.to_string())
                 .collect();
-            assert!(text.contains(&format!("[{}]", id.id())), "tab {id:?} is not marked: {text}");
+            assert!(
+                text.contains(&format!("[{}]", id.id())),
+                "tab {id:?} is not marked: {text}"
+            );
             assert_eq!(text.matches('[').count(), 1, "{text}");
         }
         // Every tab is still listed, marked or not.
@@ -602,7 +736,11 @@ mod tests {
                     seen.insert(hit);
                 }
             }
-            assert_eq!(seen.len(), TABS.len(), "active={active:?}: reached {seen:?}");
+            assert_eq!(
+                seen.len(),
+                TABS.len(),
+                "active={active:?}: reached {seen:?}"
+            );
         }
     }
 
@@ -628,11 +766,15 @@ mod tests {
 
     #[test]
     fn a_legend_drops_items_from_the_middle_and_always_keeps_the_way_out() {
-        let items: Vec<String> =
-            ["↑↓ move", "→ focus one file", "x revert this path", "esc back"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+        let items: Vec<String> = [
+            "↑↓ move",
+            "→ focus one file",
+            "x revert this path",
+            "esc back",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         assert_eq!(legend_line(&items, None), items.join(" · "));
         let narrow = legend_line(&items, Some(30));
         assert!(narrow.ends_with("esc back"), "{narrow}");
@@ -660,12 +802,39 @@ mod tests {
     #[test]
     fn no_tab_paints_past_its_row_budget_the_100x12_panel_corruption() {
         let sessions = many_sessions();
-        let items = forest_rows(&ForestInput { sessions: &sessions, ..Default::default() });
+        let items = forest_rows(&ForestInput {
+            sessions: &sessions,
+            ..Default::default()
+        });
         // Every height from "absurdly cramped" up to comfortable must hold the
         // property, because the corruption appeared at some heights and not others.
         // The theme tab windows its own list, so it is the one body that can
         // out-emit its budget without a caller passing a wrong height.
         let preview = crate::theme::ThemePreview::with_apply(None, Box::new(|_| {}));
+        // Every tab's own data, at a size that overruns any budget it is given —
+        // the tabs each had their own arithmetic and each got it wrong in its
+        // own way.
+        let wf_detail = workflows::fixtures::detail();
+        let catalog = model::fixtures::catalog();
+        let model_cfg = model::fixtures::cfg();
+        let filters = model::ModelFilters::default();
+        let entries = model::model_entries(&catalog, None, &filters);
+        let mcp_servers: Vec<(String, bough_core::mcp::config::ServerConfig)> = (0..30)
+            .map(|i| (format!("srv{i:02}"), mcp::fixtures::stdio("x")))
+            .collect();
+        let mcp_refs: Vec<(&str, bough_core::mcp::config::ServerConfig)> = mcp_servers
+            .iter()
+            .map(|(n, c)| (n.as_str(), c.clone()))
+            .collect();
+        let mcp_status = mcp::fixtures::status(&mcp_refs, &[], &[], vec![]);
+        let skill_rows: Vec<skills::SkillRow> = (0..30)
+            .map(|i| skills::SkillRow {
+                name: format!("skill{i:02}"),
+                description: "does a thing".into(),
+                error: None,
+                mcp: Vec::new(),
+            })
+            .collect();
         for h in [1usize, 2, 3, 4, 6, 8, 12, 20] {
             let bodies = [
                 PanelBody::Tree(tree::TreeProps {
@@ -678,14 +847,39 @@ mod tests {
                     rows: panel_body_rows(h),
                     ..Default::default()
                 }),
+                PanelBody::Workflows(workflows::WorkflowsProps {
+                    level: 1,
+                    detail: Some(&wf_detail),
+                    rows: panel_body_rows(h),
+                    cols: 96,
+                    ..Default::default()
+                }),
+                PanelBody::Model(model::ModelPickerProps {
+                    cols: 96,
+                    cfg: &model_cfg,
+                    entries: &entries,
+                    selected: 0,
+                    rows: panel_body_rows(h),
+                    message: None,
+                    filters: &filters,
+                    focused: None,
+                }),
+                PanelBody::Mcp(mcp::McpTabProps {
+                    status: Some(&mcp_status),
+                    selected: 0,
+                    rows: panel_body_rows(h),
+                    cols: 96,
+                    ..Default::default()
+                }),
+                PanelBody::Skills(skills::SkillsTabProps {
+                    skills: Some(&skill_rows),
+                    rows: panel_body_rows(h),
+                    cols: 96,
+                    ..Default::default()
+                }),
                 PanelBody::Theme(Some(&preview)),
-                PanelBody::Text("nothing to show here"),
             ];
-            for (tab, body) in
-                [PanelTab::Tree, PanelTab::Changes, PanelTab::Theme, PanelTab::Model]
-                    .iter()
-                    .zip(bodies.iter())
-            {
+            for (tab, body) in PANEL_TABS.iter().zip(bodies.iter()) {
                 let painted = draw_panel(*tab, body, 100, h);
                 // The panel is `rows + 2` tall. Nothing may be painted below it…
                 for (i, row) in painted.iter().enumerate().skip(h + 2) {
@@ -694,7 +888,8 @@ mod tests {
                 // …and nothing may be painted ON its bottom border.
                 let bottom = &painted[h + 1];
                 assert!(
-                    bottom.starts_with('╰') && bottom.ends_with('╯')
+                    bottom.starts_with('╰')
+                        && bottom.ends_with('╯')
                         && bottom[3..bottom.len() - 3].chars().all(|c| c == '─'),
                     "{tab:?} @{h}: the bottom border was painted over: {bottom}"
                 );
@@ -707,13 +902,24 @@ mod tests {
         let preview = crate::theme::ThemePreview::with_apply(None, Box::new(|_| {}));
         let painted = draw_panel(PanelTab::Theme, &PanelBody::Theme(Some(&preview)), 100, 12);
         let screen = painted.join("\n");
-        assert!(screen.contains("[theme]"), "the tab bar must mark the open tab:\n{screen}");
+        assert!(
+            screen.contains("[theme]"),
+            "the tab bar must mark the open tab:\n{screen}"
+        );
         // The cursor is on the palette in force, and the rows are the presets.
-        assert!(screen.contains("❯ Default"), "the picker's cursor row is missing:\n{screen}");
-        assert!(screen.contains("Fjord"), "the preset list is missing:\n{screen}");
+        assert!(
+            screen.contains("❯ Default"),
+            "the picker's cursor row is missing:\n{screen}"
+        );
+        assert!(
+            screen.contains("Fjord"),
+            "the preset list is missing:\n{screen}"
+        );
         // The legend is the LAST row of the body and says what leaving costs.
         assert!(
-            screen.contains("current: Default — ↑↓ preview live · ⏎ keep · esc back (leaving reverts)"),
+            screen.contains(
+                "current: Default — ↑↓ preview live · ⏎ keep · esc back (leaving reverts)"
+            ),
             "the legend is missing or reworded:\n{screen}"
         );
         assert!(

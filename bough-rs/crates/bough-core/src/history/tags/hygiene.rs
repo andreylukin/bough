@@ -88,11 +88,7 @@ pub fn canonical_by_stem(vocab: &HashMap<String, i64>) -> HashMap<String, String
 /// is what the tags are about. Both rules need one of the two, which is why
 /// this cannot live in `normalize_tags` — that function is pure and total by
 /// design.
-pub fn clean_tags(
-    tag_list: &[String],
-    command: &str,
-    vocab: &HashMap<String, i64>,
-) -> Vec<String> {
+pub fn clean_tags(tag_list: &[String], command: &str, vocab: &HashMap<String, i64>) -> Vec<String> {
     if tag_list.is_empty() {
         return Vec::new();
     }
@@ -195,13 +191,19 @@ mod tests {
     #[test]
     fn a_plural_snaps_onto_the_singular_this_project_already_uses() {
         let v = vocab(&[("evaluator", 40)]);
-        assert_eq!(clean_tags(&tags(&["evaluators"]), "rg evaluators src", &v), ["evaluator"]);
+        assert_eq!(
+            clean_tags(&tags(&["evaluators"]), "rg evaluators src", &v),
+            ["evaluator"]
+        );
     }
 
     #[test]
     fn the_snap_works_the_other_way_too_the_vocabulary_decides_not_a_rule() {
         let v = vocab(&[("evaluators", 40)]);
-        assert_eq!(clean_tags(&tags(&["evaluator"]), "rg foo src", &v), ["evaluators"]);
+        assert_eq!(
+            clean_tags(&tags(&["evaluator"]), "rg foo src", &v),
+            ["evaluators"]
+        );
     }
 
     #[test]
@@ -214,7 +216,10 @@ mod tests {
     fn a_novel_word_already_inside_its_own_command_is_dropped() {
         let v = vocab(&[("rg", 50)]);
         // `pycache` adds nothing: command_history_fts already indexes the command.
-        assert_eq!(clean_tags(&tags(&["rg", "pycache"]), "rg -n pycache src/", &v), ["rg"]);
+        assert_eq!(
+            clean_tags(&tags(&["rg", "pycache"]), "rg -n pycache src/", &v),
+            ["rg"]
+        );
     }
 
     #[test]
@@ -232,7 +237,11 @@ mod tests {
     fn a_novel_word_not_in_its_command_is_kept_a_description_not_an_echo() {
         let v = vocab(&[("git", 900)]);
         assert_eq!(
-            clean_tags(&tags(&["git", "quiesce"]), "git push --force-with-lease", &v),
+            clean_tags(
+                &tags(&["git", "quiesce"]),
+                "git push --force-with-lease",
+                &v
+            ),
             ["git", "quiesce"]
         );
     }
@@ -288,18 +297,27 @@ mod tests {
     #[test]
     fn duplicates_collapse_when_two_tags_snap_onto_the_same_word() {
         let v = vocab(&[("deploy", 40)]);
-        assert_eq!(clean_tags(&tags(&["deploy", "deploys"]), "helm upgrade", &v), ["deploy"]);
+        assert_eq!(
+            clean_tags(&tags(&["deploy", "deploys"]), "helm upgrade", &v),
+            ["deploy"]
+        );
     }
 
     #[test]
     fn no_tags_in_no_tags_out() {
-        assert_eq!(clean_tags(&[], "git status", &vocab(&[])), Vec::<String>::new());
+        assert_eq!(
+            clean_tags(&[], "git status", &vocab(&[])),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
     fn clean_tag_string_round_trips_the_colon_joined_form() {
         let v = vocab(&[("evaluator", 40)]);
-        assert_eq!(clean_tag_string("evaluators:rg", "rg foo", &v), "evaluator:rg");
+        assert_eq!(
+            clean_tag_string("evaluators:rg", "rg foo", &v),
+            "evaluator:rg"
+        );
         assert_eq!(clean_tag_string("", "rg foo", &v), "");
     }
 }

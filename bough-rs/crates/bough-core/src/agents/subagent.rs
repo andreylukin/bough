@@ -95,7 +95,13 @@ pub fn clean_subagent_name(name: Option<&Value>) -> Result<Option<String>, Bough
     };
     let stripped: String = raw
         .chars()
-        .map(|c| if ('\u{0}'..='\u{1f}').contains(&c) || c == '\u{7f}' { ' ' } else { c })
+        .map(|c| {
+            if ('\u{0}'..='\u{1f}').contains(&c) || c == '\u{7f}' {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect();
     let flat = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.is_empty() {
@@ -362,7 +368,9 @@ pub fn launch_subagent(
             id: Uuid::new_v4().to_string(),
             session_id: session.id.clone(),
             role: Role::User,
-            parts: vec![Part::Text { text: task.to_string() }],
+            parts: vec![Part::Text {
+                text: task.to_string(),
+            }],
             // Complete the moment it lands; `pending` is the streaming flag.
             pending: false,
             created_at: now(),
@@ -393,11 +401,23 @@ pub fn launch_subagent(
         model_defaults_path: ctx.app.model_defaults_path.clone(),
     };
 
-    let turn_deps = deps.turn.clone().unwrap_or_default();
-    let registry =
-        turn_deps.registry.clone().unwrap_or_else(|| child_app.turn_registry.clone());
-    let begin: BeginTurn =
-        deps.begin.clone().unwrap_or_else(|| Arc::new(|c, sid, d| begin_turn(c, sid, d)));
+    let mut turn_deps = deps.turn.clone().unwrap_or_default();
+    // THE MCP GRANT, CAPTURED HERE. The human's grant to a spawner extends to
+    // the subagents doing parts of that same granted work, so the child's turn
+    // is handed the spawner's grant RESOLVED AT THIS INSTANT (Live → Inherited):
+    // a child that resolved its own would resolve to nothing (it has no
+    // activations of its own) and every delegated MCP task would die at the
+    // first tool call, while one that re-read the file would pick up grants made
+    // after it was spawned. A later manual continuation of this branch starts
+    // from the server's own `AppCtx`, carries no grant, and so inherits nothing.
+    if let Some(grant) = &ctx.mcp_grant {
+        turn_deps.mcp_grant = Some(grant.snapshot(&crate::mcp::manager::mcp_manager().config()));
+    }
+    let registry = turn_deps
+        .registry
+        .clone()
+        .unwrap_or_else(|| child_app.turn_registry.clone());
+    let begin: BeginTurn = deps.begin.clone().unwrap_or_else(|| Arc::new(begin_turn));
     // The task lands BEFORE the turn begins — `begin_turn` reads the thread
     // synchronously.
     let started = begin(&child_app, &session.id, turn_deps)?;
@@ -440,7 +460,10 @@ pub fn launch_subagent(
             &sid,
             &mid,
             changed.as_ref(),
-            InterruptCause { timed_out: fired, cap_ms },
+            InterruptCause {
+                timed_out: fired,
+                cap_ms,
+            },
         )
         .await;
         // The runner already stamped `outcome_ok`. Announcing it is this
@@ -494,7 +517,9 @@ pub async fn build_result(
     cause: InterruptCause,
 ) -> SubagentResult {
     let session = with_db(db, |d| d.get_session(session_id)).ok().flatten();
-    let turn = with_db(db, |d| d.turn_for_message(message_id)).ok().flatten();
+    let turn = with_db(db, |d| d.turn_for_message(message_id))
+        .ok()
+        .flatten();
     let status = final_status(turn.as_ref());
     let interrupt_reason = if status != SubagentStatus::Interrupted {
         None
@@ -521,7 +546,9 @@ pub async fn build_result(
 
     SubagentResult {
         session_id: session_id.to_string(),
-        title: session.map(|s| s.title).unwrap_or_else(|| UNTITLED.to_string()),
+        title: session
+            .map(|s| s.title)
+            .unwrap_or_else(|| UNTITLED.to_string()),
         ok: status == SubagentStatus::Done,
         status,
         report: report_of(db, message_id, status, interrupt_reason.as_deref()),
@@ -591,7 +618,10 @@ fn report_of(
 /// search, never a failed launch.
 fn index_quietly(db: &SharedDb, message: &Message) {
     if let Err(err) = with_db(db, |d| d.index_message(message)) {
-        tracing::error!("failed to index subagent task message {}: {err}", message.id);
+        tracing::error!(
+            "failed to index subagent task message {}: {err}",
+            message.id
+        );
     }
 }
 
@@ -612,7 +642,10 @@ mod tests {
 
     fn launch_deps(f: &AgentsFixture) -> LaunchDeps {
         LaunchDeps {
-            turn: Some(TurnDeps { registry: Some(f.registry.clone()), ..stub_deps() }),
+            turn: Some(TurnDeps {
+                registry: Some(f.registry.clone()),
+                ..stub_deps()
+            }),
             ..Default::default()
         }
     }
@@ -647,17 +680,33 @@ mod tests {
             "every message in the thread is the child's own — nothing is inherited"
         );
         assert_eq!(at_launch[0].id, launch.task_message.id);
-        assert_eq!(at_launch[0].parts, vec![Part::Text { text: task.to_string() }]);
-        assert_eq!(at_launch[1].parts, vec![], "the placeholder is empty at launch");
-        assert_eq!(launch.session.parent_id, None, "parentId null is what makes it task-only");
+        assert_eq!(
+            at_launch[0].parts,
+            vec![Part::Text {
+                text: task.to_string()
+            }]
+        );
+        assert_eq!(
+            at_launch[1].parts,
+            vec![],
+            "the placeholder is empty at launch"
+        );
+        assert_eq!(
+            launch.session.parent_id, None,
+            "parentId null is what makes it task-only"
+        );
 
         // And what the MODEL saw: one user message, the task, nothing of the
         // spawner's.
         let calls = llm.calls();
         assert_eq!(calls.len(), 1, "one round: text plus stop");
         let sent = &calls[0].messages;
-        assert_eq!(sent.len(), 1, "the child's first round carries only its briefing");
-        assert_eq!(serde_json::to_value(&sent[0].role).unwrap(), json!("user"));
+        assert_eq!(
+            sent.len(),
+            1,
+            "the child's first round carries only its briefing"
+        );
+        assert_eq!(serde_json::to_value(sent[0].role).unwrap(), json!("user"));
         assert_eq!(
             serde_json::to_value(&sent[0].content).unwrap(),
             json!([{ "type": "text", "text": task }])
@@ -693,7 +742,9 @@ mod tests {
         .unwrap();
         launch.result.clone().await;
 
-        let child = with_db(&f.db, |d| d.get_session(&launch.session_id)).unwrap().unwrap();
+        let child = with_db(&f.db, |d| d.get_session(&launch.session_id))
+            .unwrap()
+            .unwrap();
         assert_eq!(child.kind, SessionKind::Subagent);
         assert_eq!(child.origin_id.as_deref(), Some(seeded.session.id.as_str()));
         assert_eq!(
@@ -704,7 +755,10 @@ mod tests {
 
         // The edge is what makes it reachable: collapsed out of the top level,
         // present under its origin.
-        assert!(is_collapsed_kind(child.kind), "subagents collapse under their origin");
+        assert!(
+            is_collapsed_kind(child.kind),
+            "subagents collapse under their origin"
+        );
         assert_eq!(
             with_db(&f.db, |d| d.sessions_by_origin(&seeded.session.id))
                 .unwrap()
@@ -733,21 +787,33 @@ mod tests {
 
         let long = "Review every request handler in the server for missing error paths";
         let stub = task_stub_title(long);
-        assert!(stub.chars().count() <= 41, "{stub:?} fits the budget plus the ellipsis");
+        assert!(
+            stub.chars().count() <= 41,
+            "{stub:?} fits the budget plus the ellipsis"
+        );
         assert!(stub.ends_with('…'));
-        assert!(long.starts_with(stub.trim_end_matches('…').trim_end()), "a prefix of the task");
+        assert!(
+            long.starts_with(stub.trim_end_matches('…').trim_end()),
+            "a prefix of the task"
+        );
         // Word boundary, not a mid-word chop.
         assert_eq!(stub, "Review every request handler in the…");
 
         // A 60-char single word has no boundary worth cutting at.
-        assert_eq!(task_stub_title(&"x".repeat(60)), format!("{}…", "x".repeat(40)));
+        assert_eq!(
+            task_stub_title(&"x".repeat(60)),
+            format!("{}…", "x".repeat(40))
+        );
         assert_eq!(task_stub_title("   "), UNTITLED);
     }
 
     #[test]
     fn a_spawner_supplied_name_wins_and_is_safe_to_render() {
         let clean = |s: &str| clean_subagent_name(Some(&json!(s))).unwrap();
-        assert_eq!(clean("audit the seatbelt profile").as_deref(), Some("audit the seatbelt profile"));
+        assert_eq!(
+            clean("audit the seatbelt profile").as_deref(),
+            Some("audit the seatbelt profile")
+        );
         assert_eq!(clean("two\nlines\there").as_deref(), Some("two lines here"));
         assert_eq!(clean("   "), None, "empty once cleaned falls back");
         assert_eq!(clean_subagent_name(None).unwrap(), None);
@@ -766,13 +832,19 @@ mod tests {
         let named = launch_subagent(
             &ctx,
             "Some very long briefing that would otherwise become the title",
-            &SubagentOptions { name: Some(json!("seatbelt audit")), ..Default::default() },
+            &SubagentOptions {
+                name: Some(json!("seatbelt audit")),
+                ..Default::default()
+            },
             &launch_deps(&f),
         )
         .unwrap();
         assert_eq!(named.title, "seatbelt audit");
         assert_eq!(
-            with_db(&f.db, |d| d.get_session(&named.session_id)).unwrap().unwrap().title,
+            with_db(&f.db, |d| d.get_session(&named.session_id))
+                .unwrap()
+                .unwrap()
+                .title,
             "seatbelt audit"
         );
         named.result.clone().await;
@@ -795,25 +867,35 @@ mod tests {
         let f = AgentsFixture::new();
         let seeded = seed_spawner(&f);
         // The spawner's stored workspace is what the child must inherit.
-        with_db(&f.db, |d| d.set_session_workspace(&seeded.session.id, "/tmp/shared-checkout"))
-            .unwrap();
+        with_db(&f.db, |d| {
+            d.set_session_workspace(&seeded.session.id, "/tmp/shared-checkout")
+        })
+        .unwrap();
         let ctx = spawner_turn_ctx(&f, &seeded, recording_llm("done"));
 
         let captured: Arc<Mutex<Option<TurnCtx>>> = Arc::new(Mutex::new(None));
         let sink = captured.clone();
-        let mut turn = TurnDeps { registry: Some(f.registry.clone()), ..stub_deps() };
+        let mut turn = TurnDeps {
+            registry: Some(f.registry.clone()),
+            ..stub_deps()
+        };
         turn.program = None;
         turn.program_for = Some(Arc::new(move |c: &TurnCtx| {
             *sink.lock().unwrap() = Some(c.clone());
             crate::turn::testkit::ok_program()
         }));
-        let deps = LaunchDeps { turn: Some(turn), ..Default::default() };
+        let deps = LaunchDeps {
+            turn: Some(turn),
+            ..Default::default()
+        };
 
         let launch =
             launch_subagent(&ctx, "Do the thing.", &SubagentOptions::default(), &deps).unwrap();
         launch.result.clone().await;
 
-        let child = with_db(&f.db, |d| d.get_session(&launch.session_id)).unwrap().unwrap();
+        let child = with_db(&f.db, |d| d.get_session(&launch.session_id))
+            .unwrap()
+            .unwrap();
         assert_eq!(
             child.workspace.as_deref(),
             Some("/tmp/shared-checkout"),
@@ -821,7 +903,10 @@ mod tests {
         );
         let child_ctx = captured.lock().unwrap().clone().unwrap();
         assert_eq!(child_ctx.workspace, "/tmp/shared-checkout");
-        assert_eq!(child_ctx.model, "claude-test-model", "the spawning turn's model flows in");
+        assert_eq!(
+            child_ctx.model, "claude-test-model",
+            "the spawning turn's model flows in"
+        );
         assert_eq!(child_ctx.depth, 1, "the child is a delegated tier");
         assert_eq!(
             child.model, None,
@@ -835,13 +920,19 @@ mod tests {
         let seeded = seed_spawner(&f);
         let ctx = spawner_turn_ctx(&f, &seeded, recording_llm("done"));
 
-        let launch =
-            launch_subagent(&ctx, "Do the thing.", &SubagentOptions::default(), &launch_deps(&f))
-                .unwrap();
+        let launch = launch_subagent(
+            &ctx,
+            "Do the thing.",
+            &SubagentOptions::default(),
+            &launch_deps(&f),
+        )
+        .unwrap();
         {
             let events = f.events.lock().unwrap();
-            let for_child: Vec<_> =
-                events.iter().filter(|e| e.session_id.as_deref() == Some(&launch.session_id)).collect();
+            let for_child: Vec<_> = events
+                .iter()
+                .filter(|e| e.session_id.as_deref() == Some(&launch.session_id))
+                .collect();
             assert_eq!(for_child[0].r#type, EventType::SessionCreated);
             assert_eq!(for_child[1].r#type, EventType::MessageStarted);
             assert_eq!(
@@ -866,24 +957,38 @@ mod tests {
     async fn the_result_carries_the_childs_report_and_its_outcome() {
         let f = AgentsFixture::new();
         let seeded = seed_spawner(&f);
-        let ctx =
-            spawner_turn_ctx(&f, &seeded, recording_llm("Renamed foo to bar in src/thing.ts; tests pass."));
+        let ctx = spawner_turn_ctx(
+            &f,
+            &seeded,
+            recording_llm("Renamed foo to bar in src/thing.ts; tests pass."),
+        );
 
         let mut deps = launch_deps(&f);
         deps.changed_files = Some(Arc::new(|_s: &Session| {
             async { Ok(vec!["src/thing.ts".to_string()]) }.boxed()
         }));
-        let launch = launch_subagent(&ctx, "Rename foo to bar.", &SubagentOptions::default(), &deps)
-            .unwrap();
+        let launch = launch_subagent(
+            &ctx,
+            "Rename foo to bar.",
+            &SubagentOptions::default(),
+            &deps,
+        )
+        .unwrap();
         let result = launch.result.clone().await;
 
         assert_eq!(result.session_id, launch.session_id);
         assert_eq!(result.status, SubagentStatus::Done);
         assert!(result.ok);
-        assert_eq!(result.report, "Renamed foo to bar in src/thing.ts; tests pass.");
+        assert_eq!(
+            result.report,
+            "Renamed foo to bar in src/thing.ts; tests pass."
+        );
         assert_eq!(result.changed_files, vec!["src/thing.ts"]);
         assert_eq!(
-            with_db(&f.db, |d| d.get_session(&launch.session_id)).unwrap().unwrap().outcome_ok,
+            with_db(&f.db, |d| d.get_session(&launch.session_id))
+                .unwrap()
+                .unwrap()
+                .outcome_ok,
             Some(true)
         );
     }
@@ -892,18 +997,24 @@ mod tests {
     async fn a_child_whose_turn_errored_reports_not_ok_and_says_why() {
         let f = AgentsFixture::new();
         let seeded = seed_spawner(&f);
-        let on_fire = crate::turn::testkit::scripted_llm(vec![crate::turn::testkit::ScriptedRound {
-            throws: Some(BoughError::llm_with("provider is on fire", 400, None)),
-            ..Default::default()
-        }]);
+        let on_fire =
+            crate::turn::testkit::scripted_llm(vec![crate::turn::testkit::ScriptedRound {
+                throws: Some(BoughError::llm_with("provider is on fire", 400, None)),
+                ..Default::default()
+            }]);
         let ctx = spawner_turn_ctx(&f, &seeded, on_fire);
 
         let mut deps = launch_deps(&f);
         if let Some(turn) = deps.turn.as_mut() {
             turn.max_round_retries = Some(0);
         }
-        let launch = launch_subagent(&ctx, "Do the impossible.", &SubagentOptions::default(), &deps)
-            .unwrap();
+        let launch = launch_subagent(
+            &ctx,
+            "Do the impossible.",
+            &SubagentOptions::default(),
+            &deps,
+        )
+        .unwrap();
         let result = launch.result.clone().await;
 
         assert!(!result.ok);
@@ -912,9 +1023,16 @@ mod tests {
             SubagentStatus::Error,
             "distinguishable from an interrupt or an orphan"
         );
-        assert!(result.report.contains("on fire"), "the report carries the actual error: {}", result.report);
+        assert!(
+            result.report.contains("on fire"),
+            "the report carries the actual error: {}",
+            result.report
+        );
         assert_eq!(
-            with_db(&f.db, |d| d.get_session(&launch.session_id)).unwrap().unwrap().outcome_ok,
+            with_db(&f.db, |d| d.get_session(&launch.session_id))
+                .unwrap()
+                .unwrap()
+                .outcome_ok,
             Some(false)
         );
     }
@@ -935,9 +1053,20 @@ mod tests {
         assert_eq!(result.status, SubagentStatus::Interrupted);
         assert!(!result.ok);
         // The timeout REASON is appended to whatever the child wrote.
-        assert!(result.report.contains("cap and was stopped"), "{}", result.report);
+        assert!(
+            result.report.contains("cap and was stopped"),
+            "{}",
+            result.report
+        );
         assert!(result.report.contains("less to do"), "{}", result.report);
-        assert!(!result.report.to_lowercase().contains("stopped deliberately"), "{}", result.report);
+        assert!(
+            !result
+                .report
+                .to_lowercase()
+                .contains("stopped deliberately"),
+            "{}",
+            result.report
+        );
     }
 
     // ---- refusals -----------------------------------------------------------
@@ -1001,9 +1130,13 @@ mod tests {
             supervisor: root.supervisor.clone(),
         };
         let ctx = spawner_turn_ctx(&f, &seeded, recording_llm("x"));
-        let err =
-            launch_subagent(&ctx, "one level too far", &SubagentOptions::default(), &launch_deps(&f))
-                .unwrap_err();
+        let err = launch_subagent(
+            &ctx,
+            "one level too far",
+            &SubagentOptions::default(),
+            &launch_deps(&f),
+        )
+        .unwrap_err();
         assert_eq!(err.name(), "AgentError");
         assert!(err.to_string().contains("depth limit (2)"), "{err}");
     }
@@ -1068,7 +1201,9 @@ mod tests {
                 id: "m-partial".to_string(),
                 session_id: session.id.clone(),
                 role: Role::Supervisor,
-                parts: vec![Part::Text { text: "⏹ Stopped.".to_string() }],
+                parts: vec![Part::Text {
+                    text: "⏹ Stopped.".to_string(),
+                }],
                 pending: false,
                 created_at: 3,
             })
@@ -1088,14 +1223,24 @@ mod tests {
             })
         })
         .unwrap();
-        let r = build_result(&f.db, &session.id, &partial.id, None, InterruptCause::default()).await;
+        let r = build_result(
+            &f.db,
+            &session.id,
+            &partial.id,
+            None,
+            InterruptCause::default(),
+        )
+        .await;
         assert!(r.report.contains("⏹ Stopped."));
         assert!(r.report.to_lowercase().contains("stopped deliberately"));
 
         // A deliberate stop: do not just retry it.
         let stopped =
             build_result(&f.db, &session.id, &msg.id, None, InterruptCause::default()).await;
-        assert!(stopped.report.to_lowercase().contains("stopped deliberately"));
+        assert!(stopped
+            .report
+            .to_lowercase()
+            .contains("stopped deliberately"));
         assert!(stopped.report.to_lowercase().contains("not just retry"));
 
         // An overrun: the remedy IS to give the next one less to do.
@@ -1104,12 +1249,19 @@ mod tests {
             &session.id,
             &msg.id,
             None,
-            InterruptCause { timed_out: true, cap_ms: 90_000 },
+            InterruptCause {
+                timed_out: true,
+                cap_ms: 90_000,
+            },
         )
         .await;
         assert!(over.report.contains("90s cap"), "{}", over.report);
         assert!(over.report.to_lowercase().contains("less to do"));
-        assert!(!over.report.to_lowercase().contains("stopped deliberately"), "{}", over.report);
+        assert!(
+            !over.report.to_lowercase().contains("stopped deliberately"),
+            "{}",
+            over.report
+        );
     }
 
     #[tokio::test]
@@ -1122,10 +1274,13 @@ mod tests {
         deps.changed_files = Some(Arc::new(|_s: &Session| {
             async { Err(BoughError::bad_request("git hiccup")) }.boxed()
         }));
-        let launch = launch_subagent(&ctx, "Do a thing.", &SubagentOptions::default(), &deps)
-            .unwrap();
+        let launch =
+            launch_subagent(&ctx, "Do a thing.", &SubagentOptions::default(), &deps).unwrap();
         let result = launch.result.clone().await;
         assert_eq!(result.status, SubagentStatus::Done);
-        assert!(result.changed_files.is_empty(), "a git hiccup never fails the report");
+        assert!(
+            result.changed_files.is_empty(),
+            "a git hiccup never fails the report"
+        );
     }
 }

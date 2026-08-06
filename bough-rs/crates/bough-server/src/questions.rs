@@ -44,7 +44,7 @@ pub fn answer_question() -> Handler {
         let id = params.get("id").cloned().unwrap_or_default();
         let qid = params.get("qid").cloned().unwrap_or_default();
         let question = ctx.host.asks.get(&qid);
-        if !question.is_some_and(|q| q.session_id == id) {
+        if question.is_none_or(|q| q.session_id != id) {
             return Err(BoughError::not_found(format!(
                 "no question awaiting an answer for {qid} in session {id} — holds are \
                  memory-only, so one that was already settled, interrupted, or raised before \
@@ -52,14 +52,16 @@ pub fn answer_question() -> Handler {
             )));
         }
 
-        let body: AnswerQuestionBody =
-            parse_body(req, Some(serde_json::json!({}))).await?;
+        let body: AnswerQuestionBody = parse_body(req, Some(serde_json::json!({}))).await?;
 
         if body.decline == Some(true) {
             if !ctx.host.asks.decline(&qid) {
                 return Err(settled_meanwhile(&qid));
             }
-            return Ok(json(&serde_json::json!({ "ok": true, "id": qid, "status": "declined" }), 200));
+            return Ok(json(
+                &serde_json::json!({ "ok": true, "id": qid, "status": "declined" }),
+                200,
+            ));
         }
 
         let answer = body.answer.as_deref().unwrap_or("");
@@ -73,7 +75,10 @@ pub fn answer_question() -> Handler {
         if !ctx.host.asks.answer(&qid, answer) {
             return Err(settled_meanwhile(&qid));
         }
-        Ok(json(&serde_json::json!({ "ok": true, "id": qid, "status": "answered" }), 200))
+        Ok(json(
+            &serde_json::json!({ "ok": true, "id": qid, "status": "answered" }),
+            200,
+        ))
     })
 }
 
@@ -118,7 +123,10 @@ mod tests {
         assert_eq!(res.status(), 404);
         let body = testutil::body_json(res).await;
         let msg = body["error"].as_str().unwrap();
-        assert!(msg.contains("no question awaiting an answer for q_missing in session s1"), "{msg}");
+        assert!(
+            msg.contains("no question awaiting an answer for q_missing in session s1"),
+            "{msg}"
+        );
         assert!(msg.contains("memory-only"), "{msg}");
         assert!(msg.contains("GET /questions"), "{msg}");
     }

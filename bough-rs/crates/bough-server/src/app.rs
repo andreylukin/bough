@@ -28,8 +28,8 @@ use bough_core::types::AppCtx;
 
 use crate::http::{error_response, route, Params, Route};
 use crate::{
-    artifacts, attachments, changes, events, fs, ghost, history_ops, jobs, mcp_routes, models,
-    questions, schedules, search, sessions, skills, theme, turns, workflows,
+    artifacts, attachments, changes, comments, events, fs, ghost, history_ops, jobs, mcp_oauth,
+    mcp_routes, models, questions, schedules, search, sessions, skills, theme, turns, workflows,
 };
 
 // ---- the route table --------------------------------------------------------
@@ -52,20 +52,49 @@ pub fn routes() -> Vec<Route> {
         route("GET", "/model-settings", sessions::get_model_settings_h()),
         route("PUT", "/model-settings", sessions::put_model_settings_h()),
         // the user interrupt
-        route("POST", "/sessions/:id/interrupt", turns::interrupt_session()),
+        route(
+            "POST",
+            "/sessions/:id/interrupt",
+            turns::interrupt_session(),
+        ),
         // the live cost meter
-        route("GET", "/sessions/:id/usage", sessions::get_session_usage_h()),
+        route(
+            "GET",
+            "/sessions/:id/usage",
+            sessions::get_session_usage_h(),
+        ),
         // ── row 1.31: the remaining route families (v1 stubs are marked in
         //    their own modules; the table keeps the TS append order) ──
-        // workflows (wave-2 subsystem; stubbed answers)
+        // workflows (rows 3.9–3.12; the engine-backed verbs answer the
+        // unknown-run 404 until row 3.9 lands — see workflows.rs)
         route("GET", "/workflows", workflows::list_workflows()),
         route("POST", "/workflows", workflows::create_workflow()),
-        route("GET", "/workflows/:id", workflows::workflow_not_found()),
-        route("POST", "/workflows/:id/stop", workflows::workflow_not_found()),
-        route("POST", "/workflows/:id/pause", workflows::workflow_not_found()),
-        route("POST", "/workflows/:id/resume", workflows::workflow_not_found()),
-        route("POST", "/workflows/:id/rerun", workflows::workflow_not_found()),
-        route("POST", "/workflows/:id/agents/:agentId/:action", workflows::control_workflow_agent()),
+        route("GET", "/workflows/:id", workflows::get_workflow()),
+        route(
+            "POST",
+            "/workflows/:id/stop",
+            workflows::stop_workflow_route(),
+        ),
+        route(
+            "POST",
+            "/workflows/:id/pause",
+            workflows::pause_workflow_route(),
+        ),
+        route(
+            "POST",
+            "/workflows/:id/resume",
+            workflows::resume_workflow_route(),
+        ),
+        route(
+            "POST",
+            "/workflows/:id/rerun",
+            workflows::workflow_not_found(),
+        ),
+        route(
+            "POST",
+            "/workflows/:id/agents/:agentId/:action",
+            workflows::control_workflow_agent(),
+        ),
         // schedules
         route("GET", "/schedules", schedules::list_schedules()),
         route("POST", "/schedules", schedules::create_schedule()),
@@ -73,24 +102,60 @@ pub fn routes() -> Vec<Route> {
         route("DELETE", "/schedules/:id", schedules::delete_schedule()),
         // ask() holds
         route("GET", "/questions", questions::list_questions()),
-        route("POST", "/sessions/:id/questions/:qid", questions::answer_question()),
+        route(
+            "POST",
+            "/sessions/:id/questions/:qid",
+            questions::answer_question(),
+        ),
         // artifacts (listing is filesystem-backed, deliberately no session check)
-        route("GET", "/sessions/:id/artifacts", artifacts::list_artifacts()),
+        route(
+            "GET",
+            "/sessions/:id/artifacts",
+            artifacts::list_artifacts(),
+        ),
         route("GET", "/artifacts/:id/:path*", artifacts::get_artifact()),
         // jobs — a session's list covers its subagents' work too
         route("GET", "/sessions/:id/jobs", jobs::list_jobs()),
         route("POST", "/sessions/:id/jobs", jobs::run_shell()),
         route("POST", "/sessions/:id/jobs/:jobId/kill", jobs::kill_job()),
-        route("GET", "/sessions/:id/jobs/:jobId/output", jobs::job_output()),
+        route(
+            "GET",
+            "/sessions/:id/jobs/:jobId/output",
+            jobs::job_output(),
+        ),
         // workflow relaunch/replay + saving (top-level /saved-workflows so the
         // append-order table cannot let /workflows/:id swallow it)
-        route("POST", "/workflows/:id/relaunch", workflows::workflow_not_found()),
-        route("GET", "/workflows/:id/replay", workflows::workflow_not_found()),
-        route("POST", "/workflows/:id/save", workflows::workflow_not_found()),
-        route("GET", "/saved-workflows", workflows::list_saved_workflows()),
-        route("GET", "/saved-workflows/:name", workflows::saved_workflow_not_found()),
-        route("PUT", "/saved-workflows/:name", workflows::workflow_not_yet()),
-        route("POST", "/saved-workflows/:name/runs", workflows::saved_workflow_not_found()),
+        route(
+            "POST",
+            "/workflows/:id/relaunch",
+            workflows::workflow_not_found(),
+        ),
+        route("GET", "/workflows/:id/replay", workflows::workflow_replay()),
+        route(
+            "POST",
+            "/workflows/:id/save",
+            workflows::save_workflow_route(),
+        ),
+        route(
+            "GET",
+            "/saved-workflows",
+            workflows::list_saved_workflows_route(),
+        ),
+        route(
+            "GET",
+            "/saved-workflows/:name",
+            workflows::get_saved_workflow(),
+        ),
+        route(
+            "PUT",
+            "/saved-workflows/:name",
+            workflows::put_saved_workflow(),
+        ),
+        route(
+            "POST",
+            "/saved-workflows/:name/runs",
+            workflows::run_saved_workflow(),
+        ),
         // the picker's catalog (static table + discovered rows, 2.5s deadline)
         route("GET", "/models", models::get_models()),
         // the composer's `@` completion
@@ -98,32 +163,73 @@ pub fn routes() -> Vec<Route> {
         route("GET", "/files", fs::list_files_for_workspace()),
         route("GET", "/fs/entries", fs::list_dir_entries_h()),
         route("GET", "/fs/branch", fs::branch()),
-        route("GET", "/workflow-settings", workflows::get_workflow_settings()),
-        route("PUT", "/workflow-settings", workflows::put_workflow_settings()),
-        // MCP + OAuth (wave-3 subsystem; GET answers the empty document)
-        route("GET", mcp_routes::CALLBACK_PATH, mcp_routes::mcp_not_yet()),
-        route("GET", "/mcp/servers/:name/auth", mcp_routes::mcp_not_yet()),
-        route("POST", "/mcp/servers/:name/auth", mcp_routes::mcp_not_yet()),
-        route("DELETE", "/mcp/servers/:name/auth", mcp_routes::mcp_not_yet()),
+        route(
+            "GET",
+            "/workflow-settings",
+            workflows::get_workflow_settings(),
+        ),
+        route(
+            "PUT",
+            "/workflow-settings",
+            workflows::put_workflow_settings(),
+        ),
+        // MCP: the registry, the grants and the connections (rows 3.1-3.3);
+        // the OAuth verbs are row 3.5's, in `mcp_oauth.rs`
+        route("GET", mcp_oauth::CALLBACK_PATH, mcp_oauth::oauth_callback()),
+        route("GET", "/mcp/servers/:name/auth", mcp_oauth::auth_status()),
+        route("POST", "/mcp/servers/:name/auth", mcp_oauth::begin_auth()),
+        route("DELETE", "/mcp/servers/:name/auth", mcp_oauth::clear_auth()),
         route("GET", "/mcp/servers", mcp_routes::get_mcp_servers()),
-        route("PUT", "/mcp/servers", mcp_routes::mcp_not_yet()),
-        route("PUT", "/mcp/servers/:name", mcp_routes::mcp_not_yet()),
-        route("DELETE", "/mcp/servers/:name", mcp_routes::mcp_not_yet()),
-        route("POST", "/mcp/servers/:name/connect", mcp_routes::mcp_not_yet()),
-        route("POST", "/mcp/servers/:name/tools/:tool", mcp_routes::mcp_not_yet()),
-        route("POST", "/mcp/servers/:name/restart", mcp_routes::mcp_not_yet()),
-        route("POST", "/mcp/servers/:name/enable", mcp_routes::mcp_not_yet()),
-        route("POST", "/mcp/servers/:name/disable", mcp_routes::mcp_not_yet()),
+        route("PUT", "/mcp/servers", mcp_routes::put_mcp_servers()),
+        route("PUT", "/mcp/servers/:name", mcp_routes::put_mcp_server()),
+        route(
+            "DELETE",
+            "/mcp/servers/:name",
+            mcp_routes::delete_mcp_server(),
+        ),
+        route(
+            "POST",
+            "/mcp/servers/:name/connect",
+            mcp_routes::connect_mcp_server(),
+        ),
+        route(
+            "POST",
+            "/mcp/servers/:name/tools/:tool",
+            mcp_routes::call_mcp_tool(),
+        ),
+        route(
+            "POST",
+            "/mcp/servers/:name/restart",
+            mcp_routes::restart_mcp_server(),
+        ),
+        route(
+            "POST",
+            "/mcp/servers/:name/enable",
+            mcp_routes::set_mcp_activation(true),
+        ),
+        route(
+            "POST",
+            "/mcp/servers/:name/disable",
+            mcp_routes::set_mcp_activation(false),
+        ),
         // history operations (wave-2/3 subsystem; session typos still 404 first)
         route("POST", "/sessions/:id/fork", history_ops::fork_session()),
-        route("POST", "/sessions/:id/compact", history_ops::compact_session()),
+        route(
+            "POST",
+            "/sessions/:id/compact",
+            history_ops::compact_session(),
+        ),
         route("POST", "/sessions/:id/sections", history_ops::sections()),
         route("POST", "/sessions/:id/extract", history_ops::extract()),
         route("POST", "/sessions/:id/move-into", history_ops::move_into()),
         route("POST", "/sessions/:id/handoff", history_ops::handoff()),
         // the Changes rail
         route("GET", "/sessions/:id/changes", changes::get_changes()),
-        route("POST", "/sessions/:id/changes/revert", changes::revert_changes_h()),
+        route(
+            "POST",
+            "/sessions/:id/changes/revert",
+            changes::revert_changes_h(),
+        ),
         // transcript search
         route("GET", "/search", search::search()),
         route("POST", "/search/reindex", search::reindex()),
@@ -139,7 +245,27 @@ pub fn routes() -> Vec<Route> {
         // clipboard images
         route("POST", "/attachments", attachments::upload_attachment()),
         // the take-back
-        route("POST", "/sessions/:id/unsend", history_ops::unsend_message()),
+        route(
+            "POST",
+            "/sessions/:id/unsend",
+            history_ops::unsend_message(),
+        ),
+        // artifact comments (row 3.14). These are what the layer injected into
+        // every served HTML artifact talks to. `/comments/send` is listed
+        // before `/comments/:cid` for reading order; the two cannot collide
+        // anyway (different methods).
+        route("GET", "/sessions/:id/comments", comments::list_comments()),
+        route("POST", "/sessions/:id/comments", comments::post_comment()),
+        route(
+            "POST",
+            "/sessions/:id/comments/send",
+            comments::send_comments(),
+        ),
+        route(
+            "DELETE",
+            "/sessions/:id/comments/:cid",
+            comments::delete_comment_route(),
+        ),
     ]
 }
 
@@ -179,7 +305,11 @@ pub fn create_handler(ctx: AppCtx, opts: CreateHandlerOptions) -> Dispatcher {
     let on_unexpected_error = opts.on_unexpected_error.unwrap_or_else(|| {
         Arc::new(|msg: &str| tracing::error!("unhandled error in handler: {msg}"))
     });
-    Dispatcher { ctx, table, on_unexpected_error }
+    Dispatcher {
+        ctx,
+        table,
+        on_unexpected_error,
+    }
 }
 
 impl Dispatcher {
@@ -191,7 +321,9 @@ impl Dispatcher {
             if entry.method != method {
                 continue;
             }
-            let Some(params) = entry.pattern.matches(&pathname) else { continue };
+            let Some(params) = entry.pattern.matches(&pathname) else {
+                continue;
+            };
             return self.run(entry, req, params).await;
         }
 
@@ -295,7 +427,11 @@ mod tests {
                 })),
             },
         );
-        H { call, reported, _fx: fx }
+        H {
+            call,
+            reported,
+            _fx: fx,
+        }
     }
 
     #[tokio::test]
@@ -344,7 +480,9 @@ mod tests {
         let got = seen.lock().unwrap().clone().unwrap();
         assert!(!got.contains_key("path"));
         assert_eq!(got.get("id").unwrap(), "s1");
-        h.call.call(testutil::get("/artifacts/s1/deep/page.html")).await;
+        h.call
+            .call(testutil::get("/artifacts/s1/deep/page.html"))
+            .await;
         let got = seen.lock().unwrap().clone().unwrap();
         assert_eq!(got.get("path").unwrap(), "deep/page.html");
     }
@@ -378,7 +516,10 @@ mod tests {
         let h = with_handler(vec![route("GET", "/sessions/:id", missing)]);
         let res = h.call.call(testutil::get("/sessions/nope")).await;
         assert_eq!(res.status(), 404);
-        assert_eq!(testutil::body_json(res).await, j!({"error": "session not found"}));
+        assert_eq!(
+            testutil::body_json(res).await,
+            j!({"error": "session not found"})
+        );
         // A domain error is an outcome, not a defect: nothing is reported.
         assert!(h.reported.lock().unwrap().is_empty());
     }
@@ -459,7 +600,10 @@ mod tests {
         let h = with_handler(vec![]);
         let res = h.call.call(testutil::get("/")).await;
         assert_eq!(res.status(), 200);
-        assert_eq!(res.headers().get("content-type").unwrap(), "text/plain; charset=utf-8");
+        assert_eq!(
+            res.headers().get("content-type").unwrap(),
+            "text/plain; charset=utf-8"
+        );
         let body = testutil::body_text(res).await;
         assert!(body.contains("bough server"), "{body}");
         assert!(body.contains("no web UI"), "{body}");
@@ -470,7 +614,10 @@ mod tests {
         let h = with_handler(vec![route("GET", "/sessions", ok())]);
         let res = h.call.call(testutil::get("/nope")).await;
         assert_eq!(res.status(), 404);
-        assert_eq!(testutil::body_json(res).await, j!({"error": "no route for GET /nope"}));
+        assert_eq!(
+            testutil::body_json(res).await,
+            j!({"error": "no route for GET /nope"})
+        );
     }
 
     #[tokio::test]
@@ -479,12 +626,18 @@ mod tests {
             route("GET", "/sessions/:id", ok()),
             route("POST", "/sessions/:id", ok()),
         ]);
-        let res = h.call.call(testutil::req("DELETE", "/sessions/a", None)).await;
+        let res = h
+            .call
+            .call(testutil::req("DELETE", "/sessions/a", None))
+            .await;
         assert_eq!(res.status(), 405);
         assert_eq!(res.headers().get("allow").unwrap(), "GET, POST");
         let body = testutil::body_json(res).await;
         assert!(
-            body["error"].as_str().unwrap().contains("DELETE not allowed on /sessions/a"),
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("DELETE not allowed on /sessions/a"),
             "{body}"
         );
     }
@@ -494,7 +647,10 @@ mod tests {
         let h = with_handler(vec![route("POST", "/", ok())]);
         let res = h.call.call(testutil::get("/")).await;
         assert_eq!(res.status(), 200);
-        assert_eq!(res.headers().get("content-type").unwrap(), "text/plain; charset=utf-8");
+        assert_eq!(
+            res.headers().get("content-type").unwrap(),
+            "text/plain; charset=utf-8"
+        );
     }
 
     #[tokio::test]
@@ -512,10 +668,19 @@ mod tests {
                 Ok(json(&j!({}), 200))
             }),
         )]);
-        let res = h.call.call(testutil::req("POST", "/m", Some(j!({"text": 42})))).await;
+        let res = h
+            .call
+            .call(testutil::req("POST", "/m", Some(j!({"text": 42}))))
+            .await;
         assert_eq!(res.status(), 400);
         let body = testutil::body_json(res).await;
-        assert!(body["error"].as_str().unwrap().starts_with("invalid body: "), "{body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("invalid body: "),
+            "{body}"
+        );
         // A 400 is a domain outcome, not a defect — it must not be logged as one.
         assert!(h.reported.lock().unwrap().is_empty());
     }
@@ -559,7 +724,12 @@ mod tests {
         let fx = testutil::fixture();
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         assert_eq!(call.call(testutil::get("/")).await.status(), 200);
-        assert_eq!(call.call(testutil::get("/__no_such_route__")).await.status(), 404);
+        assert_eq!(
+            call.call(testutil::get("/__no_such_route__"))
+                .await
+                .status(),
+            404
+        );
     }
 
     /// The gate's required shape: the wrapped axum Router answers via
@@ -576,7 +746,11 @@ mod tests {
             .oneshot(testutil::req("DELETE", "/sessions", None))
             .await
             .unwrap();
-        assert_eq!(res.status(), 405, "the table's 405 semantics survive the Router wrap");
+        assert_eq!(
+            res.status(),
+            405,
+            "the table's 405 semantics survive the Router wrap"
+        );
         assert_eq!(res.headers().get("allow").unwrap(), "GET, POST");
     }
 }

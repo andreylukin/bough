@@ -72,7 +72,12 @@ impl Default for ModelCatalog {
 
 impl ModelCatalog {
     pub fn new() -> ModelCatalog {
-        ModelCatalog { state: Arc::new(Mutex::new(CatalogState { cached: None, inflight: None })) }
+        ModelCatalog {
+            state: Arc::new(Mutex::new(CatalogState {
+                cached: None,
+                inflight: None,
+            })),
+        }
     }
 
     /// The merged catalog: static table first (keeping its ids), discovered
@@ -177,7 +182,10 @@ mod tests {
     async fn discovered_rows_land_after_the_static_table_which_keeps_its_ids() {
         let catalog = ModelCatalog::new();
         let rows = catalog
-            .catalog(CatalogOpts { discover: Some(resolved(vec![luna()])), ..Default::default() })
+            .catalog(CatalogOpts {
+                discover: Some(resolved(vec![luna()])),
+                ..Default::default()
+            })
             .await;
         assert_eq!(rows[..MODELS.len()], MODELS[..]);
         assert_eq!(rows.last().unwrap(), &luna());
@@ -187,7 +195,11 @@ mod tests {
     async fn a_hung_provider_answers_from_the_static_table_instead_of_blocking_the_boot() {
         let catalog = ModelCatalog::new();
         let rows = catalog
-            .catalog(CatalogOpts { discover: Some(hung()), deadline_ms: Some(1), ..Default::default() })
+            .catalog(CatalogOpts {
+                discover: Some(hung()),
+                deadline_ms: Some(1),
+                ..Default::default()
+            })
             .await;
         assert_eq!(rows, *MODELS);
     }
@@ -203,9 +215,16 @@ mod tests {
         });
 
         let first = catalog
-            .catalog(CatalogOpts { discover: Some(slow), deadline_ms: Some(1), ..Default::default() })
+            .catalog(CatalogOpts {
+                discover: Some(slow),
+                deadline_ms: Some(1),
+                ..Default::default()
+            })
             .await;
-        assert_eq!(first, *MODELS, "the deadline answered without the slow rows");
+        assert_eq!(
+            first, *MODELS,
+            "the deadline answered without the slow rows"
+        );
 
         tx.send(vec![luna()]).unwrap();
         // Let the abandoned discovery settle into the cache.
@@ -216,7 +235,10 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
         let rows = catalog
-            .catalog(CatalogOpts { discover: Some(hung()), ..Default::default() })
+            .catalog(CatalogOpts {
+                discover: Some(hung()),
+                ..Default::default()
+            })
             .await;
         assert_eq!(rows.last().unwrap(), &luna());
     }
@@ -235,7 +257,12 @@ mod tests {
             let catalog = catalog.clone();
             let counted = counted.clone();
             async move {
-                catalog.catalog(CatalogOpts { discover: Some(counted), ..Default::default() }).await
+                catalog
+                    .catalog(CatalogOpts {
+                        discover: Some(counted),
+                        ..Default::default()
+                    })
+                    .await
             }
         });
         futures::future::join_all(asks).await;
@@ -256,7 +283,11 @@ mod tests {
         let reading = clock.clone();
         let now: Clock = Arc::new(move || reading.load(Ordering::SeqCst));
 
-        let ask = |c: Discover, n: Clock| CatalogOpts { discover: Some(c), now: Some(n), ..Default::default() };
+        let ask = |c: Discover, n: Clock| CatalogOpts {
+            discover: Some(c),
+            now: Some(n),
+            ..Default::default()
+        };
         catalog.catalog(ask(counted.clone(), now.clone())).await;
         catalog.catalog(ask(counted.clone(), now.clone())).await;
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -273,7 +304,12 @@ mod tests {
         // down with it.
         let catalog = ModelCatalog::new();
         let boom: Discover = Arc::new(|| async { panic!("boom") }.boxed());
-        let rows = catalog.catalog(CatalogOpts { discover: Some(boom), ..Default::default() }).await;
+        let rows = catalog
+            .catalog(CatalogOpts {
+                discover: Some(boom),
+                ..Default::default()
+            })
+            .await;
         assert_eq!(rows, *MODELS);
     }
 

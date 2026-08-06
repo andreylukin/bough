@@ -95,7 +95,9 @@ pub fn theme_defaults() -> Value {
 /// `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`. The TUI renders truecolor;
 /// nothing else.
 fn is_hex(v: &str) -> bool {
-    let Some(digits) = v.strip_prefix('#') else { return false };
+    let Some(digits) = v.strip_prefix('#') else {
+        return false;
+    };
     matches!(digits.len(), 3 | 4 | 6 | 8) && digits.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
@@ -148,8 +150,11 @@ pub fn validate_theme(name: &str, colors: &HashMap<String, String>) -> Result<Th
         return Err(BoughError::bad_request("theme name is over 80 characters"));
     }
 
-    let mut unknown: Vec<&str> =
-        colors.keys().map(String::as_str).filter(|k| !THEME_TOKENS.contains(k)).collect();
+    let mut unknown: Vec<&str> = colors
+        .keys()
+        .map(String::as_str)
+        .filter(|k| !THEME_TOKENS.contains(k))
+        .collect();
     unknown.sort_unstable();
     if !unknown.is_empty() {
         return Err(BoughError::bad_request(format!(
@@ -177,7 +182,10 @@ pub fn validate_theme(name: &str, colors: &HashMap<String, String>) -> Result<Th
 
     // Rebuilt rather than passed through, so what is persisted contains
     // exactly the validated keys and nothing a looser parse let ride along.
-    Ok(Theme { name: name.to_string(), colors: colors.clone() })
+    Ok(Theme {
+        name: name.to_string(),
+        colors: colors.clone(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +215,10 @@ pub fn load_theme(path: &Path) -> Option<Theme> {
     if trimmed.is_empty() {
         return None;
     }
-    Some(Theme { name: trimmed.to_string(), colors: clean })
+    Some(Theme {
+        name: trimmed.to_string(),
+        colors: clean,
+    })
 }
 
 /// Persist a validated theme. Creates the data root if this is the first
@@ -253,7 +264,10 @@ pub fn put_theme() -> Handler {
         let theme = validate_theme(&body.name, &body.colors)?;
         save_theme(&theme, &theme_path())
             .map_err(|e| BoughError::bad_request(format!("could not save theme: {e}")))?;
-        Ok(json_res(&json!({ "theme": theme.to_value(), "defaults": theme_defaults() }), 200))
+        Ok(json_res(
+            &json!({ "theme": theme.to_value(), "defaults": theme_defaults() }),
+            200,
+        ))
     })
 }
 
@@ -263,7 +277,10 @@ pub fn put_theme() -> Handler {
 pub fn delete_theme() -> Handler {
     handler(|_req, _ctx, _params| async move {
         clear_theme(&theme_path());
-        Ok(json_res(&json!({ "theme": null, "defaults": theme_defaults() }), 200))
+        Ok(json_res(
+            &json!({ "theme": null, "defaults": theme_defaults() }),
+            200,
+        ))
     })
 }
 
@@ -274,10 +291,13 @@ mod tests {
     use crate::http::testutil;
     use serde_json::json as j;
     use std::path::PathBuf;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::sync::MutexGuard;
 
     fn colors(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     // ---- validation ---------------------------------------------------------
@@ -342,8 +362,13 @@ mod tests {
         let defaults = theme_defaults();
         let table = defaults.as_object().unwrap();
         for token in THEME_TOKENS {
-            let value = table.get(token).unwrap_or_else(|| panic!("{token} has no default"));
-            assert!(is_hex(value.as_str().unwrap()), "{token} default is not hex");
+            let value = table
+                .get(token)
+                .unwrap_or_else(|| panic!("{token} has no default"));
+            assert!(
+                is_hex(value.as_str().unwrap()),
+                "{token} default is not hex"
+            );
         }
         assert_eq!(table.len(), THEME_TOKENS.len());
     }
@@ -351,7 +376,9 @@ mod tests {
     // ---- persistence --------------------------------------------------------
 
     fn temp_path() -> PathBuf {
-        std::env::temp_dir().join(format!("bough-theme-{}", uuid::Uuid::new_v4())).join("theme.json")
+        std::env::temp_dir()
+            .join(format!("bough-theme-{}", uuid::Uuid::new_v4()))
+            .join("theme.json")
     }
 
     #[test]
@@ -377,7 +404,10 @@ mod tests {
         // does not.
         assert_eq!(
             load_theme(&path),
-            Some(Theme { name: "Hand".into(), colors: colors(&[("green", "#123456")]) })
+            Some(Theme {
+                name: "Hand".into(),
+                colors: colors(&[("green", "#123456")])
+            })
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
@@ -393,11 +423,19 @@ mod tests {
     #[test]
     fn save_theme_creates_the_data_root_on_first_write() {
         let path = temp_path();
-        save_theme(&Theme { name: "Fjord".into(), colors: colors(&[("green", "#5c88c9")]) }, &path)
-            .unwrap();
-        let stored: Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(stored, j!({ "name": "Fjord", "colors": { "green": "#5c88c9" } }));
+        save_theme(
+            &Theme {
+                name: "Fjord".into(),
+                colors: colors(&[("green", "#5c88c9")]),
+            },
+            &path,
+        )
+        .unwrap();
+        let stored: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            stored,
+            j!({ "name": "Fjord", "colors": { "green": "#5c88c9" } })
+        );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
@@ -407,9 +445,11 @@ mod tests {
     // fresh temp dir per test, serialized by a lock because the env is
     // process-global.
 
+    /// The CRATE-wide lock (`http::testutil::home_lock`), not a module-local
+    /// one: `BOUGH_HOME` is one variable, so one lock. Two module-local locks
+    /// let a handler in one module read another module's temp home.
     fn env_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+        crate::http::testutil::home_lock()
     }
 
     struct HomeGuard {
@@ -424,7 +464,11 @@ mod tests {
         let home = std::env::temp_dir().join(format!("bough-theme-home-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&home).unwrap();
         std::env::set_var("BOUGH_HOME", &home);
-        HomeGuard { previous, home, _lock: lock }
+        HomeGuard {
+            previous,
+            home,
+            _lock: lock,
+        }
     }
 
     impl Drop for HomeGuard {
@@ -465,7 +509,10 @@ mod tests {
             .await;
         assert_eq!(put.status(), 200);
         let put_body = testutil::body_json(put).await;
-        assert_eq!(put_body["theme"], j!({ "name": "Iris", "colors": { "green": "#9a7fd1" } }));
+        assert_eq!(
+            put_body["theme"],
+            j!({ "name": "Iris", "colors": { "green": "#9a7fd1" } })
+        );
 
         let get = testutil::body_json(call.call(testutil::get("/theme")).await).await;
         // The whole point of serving both halves: the client can still tell
@@ -473,7 +520,10 @@ mod tests {
         // cannot express.
         assert!(get["theme"]["colors"].get("amber").is_none());
         assert_eq!(get["defaults"]["amber"], "#d9b45f");
-        assert_eq!(get["theme"], j!({ "name": "Iris", "colors": { "green": "#9a7fd1" } }));
+        assert_eq!(
+            get["theme"],
+            j!({ "name": "Iris", "colors": { "green": "#9a7fd1" } })
+        );
     }
 
     #[tokio::test]
@@ -495,7 +545,10 @@ mod tests {
             ))
             .await;
         assert_eq!(bad.status(), 400);
-        let msg = testutil::body_json(bad).await["error"].as_str().unwrap().to_string();
+        let msg = testutil::body_json(bad).await["error"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert!(msg.contains("forground"), "{msg}");
         // The stored theme is untouched: validation happens before the write.
         let get = testutil::body_json(call.call(testutil::get("/theme")).await).await;

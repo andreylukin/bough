@@ -68,11 +68,14 @@ use crate::hostfn::files::{create_file_host_fns, FileCtx};
 use crate::hostfn::shell::{create_shell_host_fns, EchoHooks, ShellCtx, ShellOptions};
 use crate::llm::pricing::context_window_for;
 use crate::llm::retry::{RetryInfo, RetryOpts};
+use crate::llm::routing::process_env;
 use crate::llm::routing::{api_key_env, provider_for, Provider};
+use crate::llm::trace::{trace_label, write_manifest, TurnManifest};
 use crate::llm::{client_for, ClientOpts};
+use crate::mcp::manager::McpGrant;
 use crate::paths::bough_home;
 use crate::prompt::assemble::{
-    assemble_prompt, scratch_note, workspace_note, AssembledPrompt, PromptInput,
+    assemble_prompt, scratch_note, workspace_note, AssembledPrompt, PromptInput, PromptMcpServer,
 };
 use crate::prompt::project::{find_project_rules, note_project_rules, project_rules_note};
 use crate::schema::events::{
@@ -88,8 +91,8 @@ use crate::turn::queue::{
 use crate::turn::replay::{build_thread, ThreadOptions};
 use crate::turn::state::{checkpoint, finish_turn, start_turn, FinalTurnStatus, FinishOpts};
 use crate::types::{
-    AppCtx, Clock, Db, Effort, ExitNote, HostFns, LlmBlock, LlmClient, LlmContentBlock,
-    LlmMessage, LlmParams, LlmRole, LlmToolDef, OnText, SharedDb, TurnCtx, TurnStarter,
+    AppCtx, Clock, Db, Effort, ExitNote, HostFns, LlmBlock, LlmClient, LlmContentBlock, LlmMessage,
+    LlmParams, LlmRole, LlmToolDef, OnText, SharedDb, TurnCtx, TurnStarter,
 };
 
 // ---------------------------------------------------------------------------
@@ -212,8 +215,7 @@ pub struct ProgramRun {
 /// and no worker is ever spawned in a unit test — which is the difference
 /// between a turn test that runs in milliseconds offline and one that needs a
 /// machine.
-pub type ProgramRunner =
-    Arc<dyn Fn(ProgramRun) -> BoxFuture<'static, ProgramResult> + Send + Sync>;
+pub type ProgramRunner = Arc<dyn Fn(ProgramRun) -> BoxFuture<'static, ProgramResult> + Send + Sync>;
 
 /// The host functions the default runner bridges, and therefore the
 /// capabilities the prompt grants. Shell and files are always wired;
@@ -287,7 +289,11 @@ pub fn base_host_fns(ctx: &TurnCtx) -> HostFns {
             workspace: ctx.workspace.clone(),
             exits: Some(ctx.exits.clone()),
             cancel: Some(ctx.cancel.clone()),
-            scratch: Some(ensure_scratch_dir(&ctx.session_id).to_string_lossy().into_owned()),
+            scratch: Some(
+                ensure_scratch_dir(&ctx.session_id)
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
             record: Some(ctx.record.clone().unwrap_or_else(|| recorder_for(ctx))),
             echo: Some(echo_hooks_for(ctx)),
         },
@@ -331,14 +337,20 @@ pub fn base_host_fns(ctx: &TurnCtx) -> HostFns {
     let s = shell.clone();
     fns.bash_wait = Some(Arc::new(move |args: Vec<String>| {
         let s = s.clone();
-        async move { s.bash_wait(args.first().map(String::as_str).unwrap_or_default()).await }
-            .boxed()
+        async move {
+            s.bash_wait(args.first().map(String::as_str).unwrap_or_default())
+                .await
+        }
+        .boxed()
     }));
     let s = shell;
     fns.bash_kill = Some(Arc::new(move |args: Vec<String>| {
         let s = s.clone();
-        async move { s.bash_kill(args.first().map(String::as_str).unwrap_or_default()).await }
-            .boxed()
+        async move {
+            s.bash_kill(args.first().map(String::as_str).unwrap_or_default())
+                .await
+        }
+        .boxed()
     }));
     let f = files.clone();
     fns.view = Some(Arc::new(move |args: Vec<String>| {
@@ -410,7 +422,9 @@ pub fn default_program_runner(ctx: &TurnCtx, host: Option<HostFns>) -> ProgramRu
                 reads[from_reads.min(reads.len())..]
                     .iter()
                     .filter_map(|p| {
-                        Path::new(p).parent().map(|d| d.to_string_lossy().into_owned())
+                        Path::new(p)
+                            .parent()
+                            .map(|d| d.to_string_lossy().into_owned())
                     })
                     .chain(touched[from_touched.min(touched.len())..].iter().cloned())
                     .collect()
@@ -495,14 +509,18 @@ pub fn with_exit_notes(result: ProgramResult, exits: &[ExitNote]) -> ProgramResu
         return result;
     }
     let said = result.logs.join("\n");
-    let unsaid: Vec<&ExitNote> =
-        exits.iter().filter(|e| !said.contains(&format!("[exit code {}", e.code))).collect();
+    let unsaid: Vec<&ExitNote> = exits
+        .iter()
+        .filter(|e| !said.contains(&format!("[exit code {}", e.code)))
+        .collect();
     if unsaid.is_empty() {
         return result;
     }
     let mut logs = result.logs.clone();
     logs.extend(
-        unsaid.iter().map(|e| format!("[exit code {}] {}", e.code, one_line_command(&e.command))),
+        unsaid
+            .iter()
+            .map(|e| format!("[exit code {}] {}", e.code, one_line_command(&e.command))),
     );
     ProgramResult { logs, ..result }
 }
@@ -561,6 +579,20 @@ pub struct TurnDeps {
     /// A test passes a collector so an intentional failure does not print a
     /// stack, and so the reporting can be asserted rather than inferred.
     pub report_error: Option<ReportError>,
+    /// Bind this turn's MCP grant as a LIVE read of its session's activations
+    /// (`mcp::manager::bind_turn_grant`). Boot sets it; a test leaves it false
+    /// so nothing reads the real `~/.bough/mcp.json`. Ignored when
+    /// `mcp_grant` carries an inherited snapshot — a subagent's grant is its
+    /// spawner's and re-deriving it from the child's own (empty) activations
+    /// would revoke it.
+    pub bind_mcp_grant: bool,
+    /// The spawn-time snapshot a subagent's turn inherits (`agents/subagent`).
+    pub mcp_grant: Option<Vec<String>>,
+    /// The turn-start MCP catalog, per session — the same read-only status
+    /// document the panel and `bough mcp` render. Resolved by the caller
+    /// because only boot knows the session at this seam; absent = no catalog,
+    /// and the prompt's MCP section simply does not render.
+    pub mcp_catalog: Option<Arc<dyn Fn(&str) -> Vec<PromptMcpServer> + Send + Sync>>,
 }
 
 /// How a finished turn ended.
@@ -633,7 +665,10 @@ pub fn begin_turn(
     deps: TurnDeps,
 ) -> Result<StartedTurn, BoughError> {
     let now: Clock = deps.now.clone().unwrap_or_else(|| ctx.now.clone());
-    let registry = deps.registry.clone().unwrap_or_else(|| ctx.turn_registry.clone());
+    let registry = deps
+        .registry
+        .clone()
+        .unwrap_or_else(|| ctx.turn_registry.clone());
 
     let claim = registry.begin(session_id)?;
 
@@ -745,8 +780,11 @@ struct StarterImpl {
 
 impl TurnStarter for StarterImpl {
     fn start_turn(&self, ctx: &AppCtx, session: &Session, _message: &Message) {
-        let registry =
-            self.deps.registry.clone().unwrap_or_else(|| ctx.turn_registry.clone());
+        let registry = self
+            .deps
+            .registry
+            .clone()
+            .unwrap_or_else(|| ctx.turn_registry.clone());
         if registry.is_running(&session.id) {
             registry.enqueue(&session.id);
             return;
@@ -824,8 +862,10 @@ fn prepare_turn(
         .and_then(|s| s.model.clone())
         .or_else(|| ctx.model.clone())
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
-    let effort: Option<Effort> =
-        session.as_ref().and_then(|s| s.effort.as_deref().and_then(parse_effort)).or(ctx.effort);
+    let effort: Option<Effort> = session
+        .as_ref()
+        .and_then(|s| s.effort.as_deref().and_then(parse_effort))
+        .or(ctx.effort);
     let workspace = with_db(&db, |d| d.get_session_runtime(&session_id))?
         .workspace
         .unwrap_or_else(|| {
@@ -860,7 +900,17 @@ fn prepare_turn(
         record: None,
         reads: Arc::new(std::sync::Mutex::new(Vec::new())),
         touched: Arc::new(std::sync::Mutex::new(Vec::new())),
-        mcp_grant: None,
+        // The grant this turn holds: an inherited snapshot when a spawner
+        // handed one down, otherwise a LIVE read of this session's
+        // activations when boot asked for one (so a revocation is visible to
+        // the very next call), otherwise nothing.
+        mcp_grant: match (&deps.mcp_grant, deps.bind_mcp_grant) {
+            (Some(names), _) => Some(McpGrant::Inherited(names.clone())),
+            (None, true) => Some(McpGrant::Live {
+                session_id: session_id.clone(),
+            }),
+            (None, false) => None,
+        },
         depth,
     };
     // ONE recorder per turn, shared by every construction path (the TS
@@ -879,34 +929,41 @@ fn prepare_turn(
     // composes the routed client with `message.retry` announcements — the
     // provider client's own backoff is invisible otherwise, and a retried
     // round re-streams from the top so the client also has to drop its
-    // partial text. (Tracing is a v1 no-op — `llm/trace.rs`.)
+    // partial text. Tracing is `None` unless `BOUGH_TRACE_DIR` is set —
+    // resolved here because this is the only place that knows both ids, and
+    // written to below once the prompt is assembled (`llm/trace.rs`).
+    let trace = trace_label(&session_id, &turn.id, &process_env());
     let llm: Arc<dyn LlmClient> = ctx.llm.clone().unwrap_or_else(|| {
         let bus = bus.clone();
         let sid = session_id.clone();
         let mid = message_id.clone();
-        client_for(&model, ClientOpts {
-            retry: RetryOpts {
-                on_retry: Some(Arc::new(move |info: RetryInfo| {
-                    bus.publish(event(
-                        EventType::MessageRetry,
-                        &sid,
-                        serde_json::to_value(MessageRetryData {
-                            message_id: mid.clone(),
-                            attempt: info.attempt,
-                            reason: format!(
-                                "{} — retry {}/{}",
-                                short_reason(&info.error),
-                                info.attempt,
-                                info.max_attempts
-                            ),
-                        })
-                        .unwrap_or_default(),
-                    ));
-                })),
+        client_for(
+            &model,
+            ClientOpts {
+                retry: RetryOpts {
+                    on_retry: Some(Arc::new(move |info: RetryInfo| {
+                        bus.publish(event(
+                            EventType::MessageRetry,
+                            &sid,
+                            serde_json::to_value(MessageRetryData {
+                                message_id: mid.clone(),
+                                attempt: info.attempt,
+                                reason: format!(
+                                    "{} — retry {}/{}",
+                                    short_reason(&info.error),
+                                    info.attempt,
+                                    info.max_attempts
+                                ),
+                            })
+                            .unwrap_or_default(),
+                        ));
+                    })),
+                    ..Default::default()
+                },
+                trace: trace.clone(),
                 ..Default::default()
             },
-            ..Default::default()
-        })
+        )
     });
 
     // The workspace note leads, unconditionally and for every kind. It is not
@@ -926,8 +983,10 @@ fn prepare_turn(
     let tags_note = with_db(&db, |d| {
         tags_note_for(d, stats_memo(), &session_id, &workspace, now())
     });
-    let mut notes: Vec<String> =
-        vec![workspace_note(&workspace), scratch_note(&scratch.to_string_lossy())];
+    let mut notes: Vec<String> = vec![
+        workspace_note(&workspace),
+        scratch_note(&scratch.to_string_lossy()),
+    ];
     if let Some(n) = tags_note {
         notes.push(n);
     }
@@ -938,9 +997,23 @@ fn prepare_turn(
         notes.extend(extra.iter().cloned());
     }
     let prompt_input = PromptInput {
-        kind: session.as_ref().map(|s| s.kind).unwrap_or(SessionKind::Root),
-        granted: deps.granted.clone().unwrap_or_else(|| BASE_HOST_FNS.to_vec()),
-        mcp_servers: vec![],
+        kind: session
+            .as_ref()
+            .map(|s| s.kind)
+            .unwrap_or(SessionKind::Root),
+        granted: deps
+            .granted
+            .clone()
+            .unwrap_or_else(|| BASE_HOST_FNS.to_vec()),
+        // The MCP catalog, per turn, read fresh because grants and connections
+        // change between turns. A capability nobody is told about is not a
+        // capability: without this the mcp-tools section never renders and the
+        // model never learns a granted server exists.
+        mcp_servers: deps
+            .mcp_catalog
+            .as_ref()
+            .map(|catalog| catalog(&session_id))
+            .unwrap_or_default(),
         skills: vec![],
         notes,
     };
@@ -949,16 +1022,39 @@ fn prepare_turn(
         None => assemble_prompt(&prompt_input),
     };
 
+    // The section identities the raw trace cannot see: `LlmParams` carries
+    // the assembled prefix as one opaque string, so which .md files went into
+    // it has to be recorded from here (`llm/trace.rs`).
+    if let Some(trace) = &trace {
+        write_manifest(
+            trace,
+            &TurnManifest {
+                session_id: session_id.clone(),
+                turn_id: turn.id.clone(),
+                model: model.clone(),
+                effort: effort
+                    .and_then(|e| serde_json::to_value(e).ok())
+                    .and_then(|v| v.as_str().map(String::from)),
+                workspace: Some(workspace.clone()),
+                sections: prompt.shas.clone(),
+                started_at: now(),
+            },
+        );
+    }
+
     // The thread as the provider sees it, minus the message we are writing.
     // Built once: a turn's history does not change under it, and rebuilding
     // per round would re-read every attachment from disk every round.
     let thread = with_db(&db, |d| d.thread_for(&session_id))?;
-    let messages: Vec<LlmMessage> = build_thread(&thread, &ThreadOptions {
-        exclude: Some(&message_id),
-        // Reasoning replays only to the model that signed it (replay.rs).
-        model: Some(&model),
-        load_image: None,
-    });
+    let messages: Vec<LlmMessage> = build_thread(
+        &thread,
+        &ThreadOptions {
+            exclude: Some(&message_id),
+            // Reasoning replays only to the model that signed it (replay.rs).
+            model: Some(&model),
+            load_image: None,
+        },
+    );
     drop(thread);
 
     Ok(PreparedTurn {
@@ -1100,7 +1196,9 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
                         + round_usage.cache_read_tokens.unwrap_or(0)
                         + round_usage.cache_write_tokens.unwrap_or(0);
                     fold_usage(&mut usage, round_usage);
-                    with_db(&db, |d| d.add_session_usage(&session_id, round_usage, now()))?;
+                    with_db(&db, |d| {
+                        d.add_session_usage(&session_id, round_usage, now())
+                    })?;
                     if let Some(refreshed) = with_db(&db, |d| d.get_session(&session_id))? {
                         bus.publish(event(
                             EventType::SessionUpdated,
@@ -1126,9 +1224,14 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
                                 text = TRAILING_STOP_SENTINEL.replace(&text, "").into_owned();
                             }
                             if !text.is_empty() {
-                                append_part(&db, &bus, &session_id, &message_id, &mut parts, Part::Text {
-                                    text: text.clone(),
-                                })?;
+                                append_part(
+                                    &db,
+                                    &bus,
+                                    &session_id,
+                                    &message_id,
+                                    &mut parts,
+                                    Part::Text { text: text.clone() },
+                                )?;
                                 assistant.push(LlmContentBlock::Text { text });
                             }
                         }
@@ -1140,11 +1243,18 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
                             // signed — that is a redacted thinking block, and
                             // it has to go back whole or not at all.
                             if !text.trim().is_empty() || meta.is_some() {
-                                append_part(&db, &bus, &session_id, &message_id, &mut parts, Part::Reasoning {
-                                    text: text.clone(),
-                                    meta: meta.clone(),
-                                    model: Some(model.clone()),
-                                })?;
+                                append_part(
+                                    &db,
+                                    &bus,
+                                    &session_id,
+                                    &message_id,
+                                    &mut parts,
+                                    Part::Reasoning {
+                                        text: text.clone(),
+                                        meta: meta.clone(),
+                                        model: Some(model.clone()),
+                                    },
+                                )?;
                             }
                             assistant.push(LlmContentBlock::Reasoning {
                                 text: text.clone(),
@@ -1156,11 +1266,18 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
                                 stop_requested = true;
                                 continue;
                             }
-                            append_part(&db, &bus, &session_id, &message_id, &mut parts, Part::ToolCall {
-                                id: id.clone(),
-                                name: name.clone(),
-                                input: input.clone(),
-                            })?;
+                            append_part(
+                                &db,
+                                &bus,
+                                &session_id,
+                                &message_id,
+                                &mut parts,
+                                Part::ToolCall {
+                                    id: id.clone(),
+                                    name: name.clone(),
+                                    input: input.clone(),
+                                },
+                            )?;
                             assistant.push(LlmContentBlock::ToolUse {
                                 id: id.clone(),
                                 name: name.clone(),
@@ -1170,9 +1287,14 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
                     }
                 }
                 if !assistant.is_empty() {
-                    messages.push(LlmMessage { role: LlmRole::Assistant, content: assistant });
+                    messages.push(LlmMessage {
+                        role: LlmRole::Assistant,
+                        content: assistant,
+                    });
                 }
-                with_db(&db, |d| checkpoint(d, &turn.id, &format!("round:{}", round + 1), Some(&usage)))?;
+                with_db(&db, |d| {
+                    checkpoint(d, &turn.id, &format!("round:{}", round + 1), Some(&usage))
+                })?;
 
                 // The forced round had tools forbidden, so whatever it said is
                 // the ending.
@@ -1217,20 +1339,34 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
                                 ));
                             })
                         };
-                        let executed = execute_tool(id, name, input, &program, &cancel, on_log).await;
-                        append_part(&db, &bus, &session_id, &message_id, &mut parts, Part::ToolResult {
-                            call_id: id.clone(),
-                            output: Value::String(executed.output.clone()),
-                            is_error: executed.is_error,
-                            // The key only present when true.
-                            interrupted: if executed.interrupted { Some(true) } else { None },
-                        })?;
+                        let executed =
+                            execute_tool(id, name, input, &program, &cancel, on_log).await;
+                        append_part(
+                            &db,
+                            &bus,
+                            &session_id,
+                            &message_id,
+                            &mut parts,
+                            Part::ToolResult {
+                                call_id: id.clone(),
+                                output: Value::String(executed.output.clone()),
+                                is_error: executed.is_error,
+                                // The key only present when true.
+                                interrupted: if executed.interrupted {
+                                    Some(true)
+                                } else {
+                                    None
+                                },
+                            },
+                        )?;
                         tool_results.push(LlmContentBlock::ToolResult {
                             tool_use_id: id.clone(),
                             content: executed.output,
                             is_error: executed.is_error,
                         });
-                        with_db(&db, |d| checkpoint(d, &turn.id, &format!("tool:{name}"), Some(&usage)))?;
+                        with_db(&db, |d| {
+                            checkpoint(d, &turn.id, &format!("tool:{name}"), Some(&usage))
+                        })?;
                     }
 
                     // The report nudge rides INSIDE the tool_result message
@@ -1241,18 +1377,28 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
                     if stop_requested && !said_something(&parts) {
                         if report_nudges < 1 {
                             report_nudges += 1;
-                            tool_results
-                                .push(LlmContentBlock::Text { text: REPORT_NUDGE.to_string() });
-                            messages.push(LlmMessage { role: LlmRole::User, content: tool_results });
+                            tool_results.push(LlmContentBlock::Text {
+                                text: REPORT_NUDGE.to_string(),
+                            });
+                            messages.push(LlmMessage {
+                                role: LlmRole::User,
+                                content: tool_results,
+                            });
                             round += 1;
                             continue;
                         }
-                        messages.push(LlmMessage { role: LlmRole::User, content: tool_results });
+                        messages.push(LlmMessage {
+                            role: LlmRole::User,
+                            content: tool_results,
+                        });
                         force_text = true;
                         round += 1;
                         continue;
                     }
-                    messages.push(LlmMessage { role: LlmRole::User, content: tool_results });
+                    messages.push(LlmMessage {
+                        role: LlmRole::User,
+                        content: tool_results,
+                    });
                     if stop_requested {
                         return Ok(());
                     }
@@ -1268,7 +1414,9 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
                         report_nudges += 1;
                         messages.push(LlmMessage {
                             role: LlmRole::User,
-                            content: vec![LlmContentBlock::Text { text: REPORT_NUDGE.to_string() }],
+                            content: vec![LlmContentBlock::Text {
+                                text: REPORT_NUDGE.to_string(),
+                            }],
                         });
                         round += 1;
                         continue;
@@ -1301,7 +1449,9 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
                 nudges += 1;
                 messages.push(LlmMessage {
                     role: LlmRole::User,
-                    content: vec![LlmContentBlock::Text { text: STOP_NUDGE.to_string() }],
+                    content: vec![LlmContentBlock::Text {
+                        text: STOP_NUDGE.to_string(),
+                    }],
                 });
                 round += 1;
             }
@@ -1321,17 +1471,24 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
             with_db(&db, |d| d.update_message(&message_id, &parts, false))?;
             index_quietly(&db, &message_id);
             with_db(&db, |d| {
-                finish_turn(d, &turn.id, FinalTurnStatus::Done, FinishOpts {
-                    usage: Some(usage.clone()),
-                    step: Some("done".to_string()),
-                    error: None,
-                })
+                finish_turn(
+                    d,
+                    &turn.id,
+                    FinalTurnStatus::Done,
+                    FinishOpts {
+                        usage: Some(usage.clone()),
+                        step: Some("done".to_string()),
+                        error: None,
+                    },
+                )
             })?;
             bus.publish(event(
                 EventType::MessageFinished,
                 &session_id,
-                serde_json::to_value(MessageFinishedData { message_id: message_id.clone() })
-                    .unwrap_or_default(),
+                serde_json::to_value(MessageFinishedData {
+                    message_id: message_id.clone(),
+                })
+                .unwrap_or_default(),
             ));
             bus.publish(event(
                 EventType::TurnFinished,
@@ -1393,25 +1550,35 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
             }
 
             with_db(&db, |d| {
-                finish_turn(d, &turn.id, status.into(), FinishOpts {
-                    usage: Some(usage.clone()),
-                    // `error ?? null`: the interrupt path CLEARS — "an
-                    // interrupt is not an error".
-                    error: friendly.clone(),
-                    step: Some("ended".to_string()),
-                })
+                finish_turn(
+                    d,
+                    &turn.id,
+                    status.into(),
+                    FinishOpts {
+                        usage: Some(usage.clone()),
+                        // `error ?? null`: the interrupt path CLEARS — "an
+                        // interrupt is not an error".
+                        error: friendly.clone(),
+                        step: Some("ended".to_string()),
+                    },
+                )
             })?;
             bus.publish(event(
                 EventType::MessagePart,
                 &session_id,
-                serde_json::to_value(MessagePartData { message_id: message_id.clone(), part: note })
-                    .unwrap_or_default(),
+                serde_json::to_value(MessagePartData {
+                    message_id: message_id.clone(),
+                    part: note,
+                })
+                .unwrap_or_default(),
             ));
             bus.publish(event(
                 EventType::MessageFinished,
                 &session_id,
-                serde_json::to_value(MessageFinishedData { message_id: message_id.clone() })
-                    .unwrap_or_default(),
+                serde_json::to_value(MessageFinishedData {
+                    message_id: message_id.clone(),
+                })
+                .unwrap_or_default(),
             ));
             bus.publish(event(
                 EventType::TurnFinished,
@@ -1421,7 +1588,13 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
             if delegated {
                 with_db(&db, |d| d.set_session_outcome(&session_id, false))?;
             }
-            Ok(TurnOutcome { turn_id: turn.id, message_id, status, error: friendly, usage })
+            Ok(TurnOutcome {
+                turn_id: turn.id,
+                message_id,
+                status,
+                error: friendly,
+                usage,
+            })
         }
     }
 }
@@ -1457,13 +1630,20 @@ async fn run_round(
 ) -> Result<crate::types::LlmResult, TurnFailure> {
     let mut attempt: u32 = 1;
     loop {
-        match llm.run(params.clone(), on_text.clone(), cancel.clone()).await {
+        match llm
+            .run(params.clone(), on_text.clone(), cancel.clone())
+            .await
+        {
             Ok(result) => return Ok(result),
             Err(err) => {
-                let decision = classify_round_failure(&err, attempt, &ClassifyOpts {
-                    max_retries: deps.max_round_retries,
-                    outage_delay_ms: deps.outage_delay_ms,
-                });
+                let decision = classify_round_failure(
+                    &err,
+                    attempt,
+                    &ClassifyOpts {
+                        max_retries: deps.max_round_retries,
+                        outage_delay_ms: deps.outage_delay_ms,
+                    },
+                );
                 if !decision.retry || cancel.is_cancelled() {
                     return Err(TurnFailure::Failed(err));
                 }
@@ -1537,7 +1717,11 @@ async fn execute_tool(
     on_log: Arc<dyn Fn(&str) + Send + Sync>,
 ) -> ExecutedTool {
     if name != RUN_STEPS {
-        return ExecutedTool { output: unknown_tool_message(name), is_error: true, interrupted: false };
+        return ExecutedTool {
+            output: unknown_tool_message(name),
+            is_error: true,
+            interrupted: false,
+        };
     }
 
     let parsed: RunStepsInput = match serde_json::from_value(input.clone()) {
@@ -1584,10 +1768,16 @@ pub fn program_output(result: &ProgramResult) -> ExecutedTool {
             interrupted: false,
         };
     }
-    let error =
-        result.error.clone().unwrap_or_else(|| "the program failed with no message".to_string());
+    let error = result
+        .error
+        .clone()
+        .unwrap_or_else(|| "the program failed with no message".to_string());
     ExecutedTool {
-        output: if body.is_empty() { error } else { format!("{body}\n\n{error}") },
+        output: if body.is_empty() {
+            error
+        } else {
+            format!("{body}\n\n{error}")
+        },
         is_error: true,
         interrupted: result.interrupted.unwrap_or(false),
     }
@@ -1642,14 +1832,22 @@ fn fold_usage(total: &mut Usage, round: &Usage) {
 /// a stop that did not work. Absent seam = say nothing, rather than claim
 /// there were none.
 fn stopped_note(session_id: &str, deps: &TurnDeps) -> String {
-    let survivors = deps.surviving_jobs.as_ref().map(|f| f(session_id)).unwrap_or_default();
+    let survivors = deps
+        .surviving_jobs
+        .as_ref()
+        .map(|f| f(session_id))
+        .unwrap_or_default();
     if survivors.is_empty() {
         return STOPPED_NOTE.to_string();
     }
     format!(
         "{STOPPED_NOTE}\n{} still running — {} the interrupt.",
         survivors.join(", "),
-        if survivors.len() == 1 { "it survives" } else { "they survive" }
+        if survivors.len() == 1 {
+            "it survives"
+        } else {
+            "they survive"
+        }
     )
 }
 
@@ -1682,8 +1880,10 @@ pub fn friendly_turn_error(msg: &str, model: &str) -> String {
     static NO_CF_ACCOUNT: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"CLOUDFLARE_ACCOUNT_ID is not set").unwrap());
     static MISSING_KEY: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)Could not resolve authentication method|apiKey or authToken|API_KEY is not set")
-            .unwrap()
+        Regex::new(
+            r"(?i)Could not resolve authentication method|apiKey or authToken|API_KEY is not set",
+        )
+        .unwrap()
     });
     static REJECTED_KEY: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)invalid x-api-key|authentication_error|Incorrect API key").unwrap()
@@ -1713,13 +1913,20 @@ pub fn friendly_turn_error(msg: &str, model: &str) -> String {
     }
 
     if MISSING_KEY.is_match(msg) {
-        return format!("No {provider} API key set — export {env_var} and restart the bough server.");
+        return format!(
+            "No {provider} API key set — export {env_var} and restart the bough server."
+        );
     }
     if REJECTED_KEY.is_match(msg) {
-        return format!("{provider} rejected the key in {env_var} — fix it and restart the bough server.");
+        return format!(
+            "{provider} rejected the key in {env_var} — fix it and restart the bough server."
+        );
     }
     if let Some(caps) = HTTP_TAIL.captures(msg) {
-        let status: u16 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        let status: u16 = caps
+            .get(1)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0);
         let body = caps.get(2).map(|m| m.as_str()).unwrap_or("");
         if TOOL_FORMAT_400.is_match(body) {
             return format!(
@@ -1728,7 +1935,10 @@ pub fn friendly_turn_error(msg: &str, model: &str) -> String {
             );
         }
         if status >= 400 {
-            return format!("{provider} error {status}: {}", short_reason_text(body, 120));
+            return format!(
+                "{provider} error {status}: {}",
+                short_reason_text(body, 120)
+            );
         }
     }
     msg.to_string()
@@ -1739,12 +1949,16 @@ fn locale(n: i64) -> String {
     let raw = n.abs().to_string();
     let mut out = String::new();
     for (i, c) in raw.chars().enumerate() {
-        if i > 0 && (raw.len() - i) % 3 == 0 {
+        if i > 0 && (raw.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
     }
-    if n < 0 { format!("-{out}") } else { out }
+    if n < 0 {
+        format!("-{out}")
+    } else {
+        out
+    }
 }
 
 fn parse_effort(s: &str) -> Option<Effort> {
@@ -1760,7 +1974,11 @@ fn with_db<R>(db: &SharedDb, f: impl FnOnce(&dyn Db) -> R) -> R {
 }
 
 fn event(r#type: EventType, session_id: &str, data: Value) -> EventInput {
-    EventInput { r#type, session_id: Some(session_id.to_string()), data }
+    EventInput {
+        r#type,
+        session_id: Some(session_id.to_string()),
+        data,
+    }
 }
 
 /// `turn.finished` data — the `error` key omitted entirely when absent, not
@@ -1791,8 +2009,11 @@ fn append_part(
     bus.publish(event(
         EventType::MessagePart,
         session_id,
-        serde_json::to_value(MessagePartData { message_id: message_id.to_string(), part })
-            .unwrap_or_default(),
+        serde_json::to_value(MessagePartData {
+            message_id: message_id.to_string(),
+            part,
+        })
+        .unwrap_or_default(),
     ));
     Ok(())
 }
@@ -1820,10 +2041,8 @@ mod tests {
     use super::*;
     use crate::schema::events::BoughEvent;
     use crate::schema::parts::TurnStatus;
-    use crate::turn::testkit::{
-        reasoning, run_steps, scripted_llm, stop, text, ScriptedLlm, ScriptedRound,
-    };
-    use crate::types::LlmResult;
+    use crate::turn::testkit::{reasoning, run_steps, scripted_llm, stop, text, ScriptedRound};
+
     use std::sync::Mutex;
 
     // ---- fixtures ----------------------------------------------------------
@@ -1851,7 +2070,12 @@ mod tests {
         Arc<dyn Fn(ProgramRun) -> BoxFuture<'static, ProgramResult> + Send + Sync>;
 
     fn ok_result() -> ProgramResult {
-        ProgramResult { ok: true, logs: vec![], error: None, interrupted: None }
+        ProgramResult {
+            ok: true,
+            logs: vec![],
+            error: None,
+            interrupted: None,
+        }
     }
 
     fn logs_result(lines: &[&str]) -> ProgramResult {
@@ -1871,14 +2095,20 @@ mod tests {
     }
 
     fn opts(llm: Arc<dyn LlmClient>) -> FixtureOpts {
-        FixtureOpts { llm, program: None, kind: SessionKind::Root, model: Some("claude-opus-4-8".into()) }
+        FixtureOpts {
+            llm,
+            program: None,
+            kind: SessionKind::Root,
+            model: Some("claude-opus-4-8".into()),
+        }
     }
 
     fn fixture(o: FixtureOpts) -> Fixture {
         use crate::db::sqlite_db::{DbOptions, SqliteDb};
 
-        let db: SharedDb =
-            Arc::new(Mutex::new(SqliteDb::new(":memory:", DbOptions::default()).unwrap()));
+        let db: SharedDb = Arc::new(Mutex::new(
+            SqliteDb::new(":memory:", DbOptions::default()).unwrap(),
+        ));
         let bus = Arc::new(Bus::new(crate::types::system_clock()));
         let events: Arc<Mutex<Vec<BoughEvent>>> = Arc::new(Mutex::new(vec![]));
         let sink = events.clone();
@@ -1911,14 +2141,15 @@ mod tests {
         let programs: Arc<Mutex<Vec<ProgramCall>>> = Arc::new(Mutex::new(vec![]));
         let reported: Arc<Mutex<Vec<BoughError>>> = Arc::new(Mutex::new(vec![]));
 
-        let behavior: ProgramBehavior =
-            o.program.unwrap_or_else(|| Arc::new(|_run| async { ok_result() }.boxed()));
+        let behavior: ProgramBehavior = o
+            .program
+            .unwrap_or_else(|| Arc::new(|_run| async { ok_result() }.boxed()));
         let recorded = programs.clone();
         let program: ProgramRunner = Arc::new(move |run: ProgramRun| {
-            recorded
-                .lock()
-                .unwrap()
-                .push(ProgramCall { code: run.code.clone(), call_id: run.call_id.clone() });
+            recorded.lock().unwrap().push(ProgramCall {
+                code: run.code.clone(),
+                call_id: run.call_id.clone(),
+            });
             behavior(run)
         });
 
@@ -1927,7 +2158,9 @@ mod tests {
             registry: Some(registry.clone()),
             // Collected rather than logged: an intentional failure should not
             // print a stack, and the reporting itself is worth asserting.
-            report_error: Some(Arc::new(move |err, _sid| r.lock().unwrap().push(err.clone()))),
+            report_error: Some(Arc::new(move |err, _sid| {
+                r.lock().unwrap().push(err.clone())
+            })),
             // A stub prompt: what assembly produces is the prompt suite's
             // subject, and reading twenty markdown files here would only
             // couple this test to their text.
@@ -1956,7 +2189,16 @@ mod tests {
             model_defaults_path: None,
         };
 
-        Fixture { db, ctx, events, session, registry, programs, reported, deps }
+        Fixture {
+            db,
+            ctx,
+            events,
+            session,
+            registry,
+            programs,
+            reported,
+            deps,
+        }
     }
 
     fn user_message(db: &SharedDb, session_id: &str, body: &str, at: i64) -> Message {
@@ -1965,7 +2207,9 @@ mod tests {
                 id: Uuid::new_v4().to_string(),
                 session_id: session_id.to_string(),
                 role: Role::User,
-                parts: vec![Part::Text { text: body.to_string() }],
+                parts: vec![Part::Text {
+                    text: body.to_string(),
+                }],
                 pending: false,
                 created_at: at,
             })
@@ -1983,7 +2227,10 @@ mod tests {
     }
 
     fn parts_of(db: &SharedDb, message_id: &str) -> Vec<Part> {
-        with_db(db, |d| d.get_message(message_id)).unwrap().unwrap().parts
+        with_db(db, |d| d.get_message(message_id))
+            .unwrap()
+            .unwrap()
+            .parts
     }
 
     fn part_types(parts: &[Part]) -> Vec<&'static str> {
@@ -2021,7 +2268,10 @@ mod tests {
             // Round 1: thinks, narrates, runs a program.
             ScriptedRound {
                 content: vec![
-                    reasoning("weighing two approaches", Some(json!({"signature": "sig-1"}))),
+                    reasoning(
+                        "weighing two approaches",
+                        Some(json!({"signature": "sig-1"})),
+                    ),
                     text("Looking at the file now."),
                     run_steps("call-1", "console.log(await bash('ls'))"),
                 ],
@@ -2037,12 +2287,18 @@ mod tests {
             // Round 2: reports and stops, in the same response.
             ScriptedRound {
                 content: vec![text("Listed the directory: three files."), stop("stop-1")],
-                usage: Some(Usage { input_tokens: 1_200, output_tokens: 20, ..Default::default() }),
+                usage: Some(Usage {
+                    input_tokens: 1_200,
+                    output_tokens: 20,
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
         ]);
         let mut o = opts(llm.clone());
-        o.program = Some(Arc::new(|_| async { logs_result(&["a.ts", "b.ts", "c.ts"]) }.boxed()));
+        o.program = Some(Arc::new(|_| {
+            async { logs_result(&["a.ts", "b.ts", "c.ts"]) }.boxed()
+        }));
         let f = fixture(o);
 
         // A previous turn's transcript, including a reasoning part. This is
@@ -2058,7 +2314,9 @@ mod tests {
                         meta: None,
                         model: None,
                     },
-                    Part::Text { text: "Earlier answer.".into() },
+                    Part::Text {
+                        text: "Earlier answer.".into(),
+                    },
                     Part::ToolCall {
                         id: "old-1".into(),
                         name: RUN_STEPS.into(),
@@ -2095,15 +2353,17 @@ mod tests {
 
         // ── the transcript ──
         let parts = parts_of(&f.db, &message.id);
-        assert_eq!(part_types(&parts), vec![
-            "reasoning",
-            "text",
-            "tool_call",
-            "tool_result",
-            "text"
-        ]);
+        assert_eq!(
+            part_types(&parts),
+            vec!["reasoning", "text", "tool_call", "tool_result", "text"]
+        );
         match &parts[3] {
-            Part::ToolResult { output, is_error, interrupted, .. } => {
+            Part::ToolResult {
+                output,
+                is_error,
+                interrupted,
+                ..
+            } => {
                 assert_eq!(output, &json!("a.ts\nb.ts\nc.ts"));
                 assert!(!is_error);
                 assert_eq!(*interrupted, None);
@@ -2111,16 +2371,24 @@ mod tests {
             other => panic!("expected tool_result, got {other:?}"),
         }
         assert!(
-            !with_db(&f.db, |d| d.get_message(&message.id)).unwrap().unwrap().pending,
+            !with_db(&f.db, |d| d.get_message(&message.id))
+                .unwrap()
+                .unwrap()
+                .pending,
             "the message is closed"
         );
         // `stop` is loop control: it is never persisted, so it can never replay.
-        assert!(!parts.iter().any(|p| matches!(p, Part::ToolCall { name, .. } if name == STOP)));
+        assert!(!parts
+            .iter()
+            .any(|p| matches!(p, Part::ToolCall { name, .. } if name == STOP)));
 
         // ── round 1's payload: the prior turn's reasoning is gone ──
         let round1 = all_blocks(&calls[0].messages);
         assert_eq!(
-            round1.iter().filter(|b| matches!(b, LlmContentBlock::Reasoning { .. })).count(),
+            round1
+                .iter()
+                .filter(|b| matches!(b, LlmContentBlock::Reasoning { .. }))
+                .count(),
             0,
             "a persisted reasoning part must not reach the provider"
         );
@@ -2133,7 +2401,9 @@ mod tests {
         assert!(round1
             .iter()
             .any(|b| matches!(b, LlmContentBlock::Text { text } if text == "Earlier answer.")));
-        assert!(round1.iter().any(|b| matches!(b, LlmContentBlock::ToolUse { id, .. } if id == "old-1")));
+        assert!(round1
+            .iter()
+            .any(|b| matches!(b, LlmContentBlock::ToolUse { id, .. } if id == "old-1")));
         assert!(round1
             .iter()
             .any(|b| matches!(b, LlmContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "old-1")));
@@ -2161,13 +2431,22 @@ mod tests {
 
         // ── the tools the model saw ──
         assert_eq!(
-            calls[0].tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+            calls[0]
+                .tools
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
             vec![RUN_STEPS, STOP]
         );
-        assert_eq!(calls[0].tools, *TOOLS, "byte-stable across rounds and sessions");
+        assert_eq!(
+            calls[0].tools, *TOOLS,
+            "byte-stable across rounds and sessions"
+        );
 
         // ── usage ──
-        let turn = with_db(&f.db, |d| d.turn_for_message(&message.id)).unwrap().unwrap();
+        let turn = with_db(&f.db, |d| d.turn_for_message(&message.id))
+            .unwrap()
+            .unwrap();
         assert_eq!(turn.status, TurnStatus::Done);
         assert_eq!(turn.usage.as_ref().unwrap().input_tokens, 2_200);
         assert_eq!(turn.usage.as_ref().unwrap().output_tokens, 60);
@@ -2182,8 +2461,14 @@ mod tests {
             assert!(types.contains(&"message.started"));
             assert!(types.contains(&"message.delta"));
             assert!(types.contains(&"message.part"));
-            assert_eq!(types.iter().filter(|t| **t == "message.finished").count(), 1);
-            let finished = events.iter().find(|e| e.r#type == EventType::TurnFinished).unwrap();
+            assert_eq!(
+                types.iter().filter(|t| **t == "message.finished").count(),
+                1
+            );
+            let finished = events
+                .iter()
+                .find(|e| e.r#type == EventType::TurnFinished)
+                .unwrap();
             assert_eq!(
                 finished.data,
                 json!({ "turnId": turn.id, "sessionId": f.session.id, "status": "done" })
@@ -2206,9 +2491,15 @@ mod tests {
 
         let calls2 = llm2.calls();
         let replayed = all_blocks(&calls2[0].messages);
-        let replayed_thinking: Vec<&&LlmContentBlock> =
-            replayed.iter().filter(|b| matches!(b, LlmContentBlock::Reasoning { .. })).collect();
-        assert_eq!(replayed_thinking.len(), 1, "the signed block from the previous turn replays");
+        let replayed_thinking: Vec<&&LlmContentBlock> = replayed
+            .iter()
+            .filter(|b| matches!(b, LlmContentBlock::Reasoning { .. }))
+            .collect();
+        assert_eq!(
+            replayed_thinking.len(),
+            1,
+            "the signed block from the previous turn replays"
+        );
         match **replayed_thinking[0] {
             LlmContentBlock::Reasoning { ref meta, .. } => assert_eq!(
                 meta,
@@ -2284,13 +2575,21 @@ mod tests {
         assert_eq!(finish(started).await.status, TurnOutcomeStatus::Done);
 
         let calls = llm.calls();
-        assert_eq!(calls.len(), 2, "the stop was not honored while the turn was mute");
+        assert_eq!(
+            calls.len(),
+            2,
+            "the stop was not honored while the turn was mute"
+        );
         // The nudge rides inside the tool_result message, never as a separate
         // turn.
         let second = calls[1].messages.last().unwrap();
         assert_eq!(second.role, LlmRole::User);
         assert_eq!(
-            second.content.iter().filter(|b| matches!(b, LlmContentBlock::ToolResult { .. })).count(),
+            second
+                .content
+                .iter()
+                .filter(|b| matches!(b, LlmContentBlock::ToolResult { .. }))
+                .count(),
             1
         );
         assert!(second
@@ -2313,9 +2612,15 @@ mod tests {
             },
             // Answers the nudge with empty thinking and another stop — the
             // observed failure.
-            ScriptedRound { content: vec![reasoning("", None), stop("stop-2")], ..Default::default() },
+            ScriptedRound {
+                content: vec![reasoning("", None), stop("stop-2")],
+                ..Default::default()
+            },
             // The forced round has tools forbidden, so it can only speak.
-            ScriptedRound { content: vec![text("I printed 1.")], ..Default::default() },
+            ScriptedRound {
+                content: vec![text("I printed 1.")],
+                ..Default::default()
+            },
         ]);
         let mut o = opts(llm.clone());
         o.program = Some(Arc::new(|_| async { logs_result(&["1"]) }.boxed()));
@@ -2331,7 +2636,9 @@ mod tests {
         let parts = parts_of(&f.db, &message.id);
         assert_eq!(
             parts.last(),
-            Some(&Part::Text { text: "I printed 1.".into() })
+            Some(&Part::Text {
+                text: "I printed 1.".into()
+            })
         );
     }
 
@@ -2339,7 +2646,10 @@ mod tests {
     async fn a_turn_that_trails_off_without_stop_is_nudged_and_the_nudges_are_bounded() {
         // Never calls stop, never calls a tool: the runaway shape.
         let rounds: Vec<ScriptedRound> = (0..8)
-            .map(|_| ScriptedRound { content: vec![text("...thinking out loud")], ..Default::default() })
+            .map(|_| ScriptedRound {
+                content: vec![text("...thinking out loud")],
+                ..Default::default()
+            })
             .collect();
         let llm = scripted_llm(rounds);
         let f = fixture(opts(llm.clone()));
@@ -2356,11 +2666,13 @@ mod tests {
         let calls = llm.calls();
         assert_eq!(calls.len() as u32, MAX_STOP_NUDGES + 1);
         // Every nudge lived in memory only.
-        assert!(!serde_json::to_string(&parts_of(&f.db, &message.id)).unwrap().contains("[harness]"));
+        assert!(!serde_json::to_string(&parts_of(&f.db, &message.id))
+            .unwrap()
+            .contains("[harness]"));
         assert!(calls[1].messages.iter().any(|m| m.role == LlmRole::User
-            && m.content
-                .iter()
-                .any(|b| matches!(b, LlmContentBlock::Text { text } if text.contains("still open")))));
+            && m.content.iter().any(
+                |b| matches!(b, LlmContentBlock::Text { text } if text.contains("still open"))
+            )));
     }
 
     #[tokio::test]
@@ -2375,9 +2687,18 @@ mod tests {
         let message = started.message.clone();
         finish(started).await;
 
-        assert_eq!(llm.calls().len(), 1, "the sentinel is honored as a stop, not nudged");
+        assert_eq!(
+            llm.calls().len(),
+            1,
+            "the sentinel is honored as a stop, not nudged"
+        );
         let parts = parts_of(&f.db, &message.id);
-        assert_eq!(parts[0], Part::Text { text: "All done.".into() });
+        assert_eq!(
+            parts[0],
+            Part::Text {
+                text: "All done.".into()
+            }
+        );
     }
 
     // ---- failure paths -----------------------------------------------------
@@ -2385,7 +2706,10 @@ mod tests {
     #[tokio::test]
     async fn a_failing_program_is_a_tool_result_the_next_round_can_act_on_not_a_turn_error() {
         let llm = scripted_llm(vec![
-            ScriptedRound { content: vec![run_steps("c1", "boom()")], ..Default::default() },
+            ScriptedRound {
+                content: vec![run_steps("c1", "boom()")],
+                ..Default::default()
+            },
             ScriptedRound {
                 content: vec![text("That threw; I will try another way."), stop("stop-1")],
                 ..Default::default()
@@ -2410,8 +2734,14 @@ mod tests {
         assert_eq!(finish(started).await.status, TurnOutcomeStatus::Done);
 
         let parts = parts_of(&f.db, &message.id);
-        match parts.iter().find(|p| matches!(p, Part::ToolResult { .. })).unwrap() {
-            Part::ToolResult { output, is_error, .. } => {
+        match parts
+            .iter()
+            .find(|p| matches!(p, Part::ToolResult { .. }))
+            .unwrap()
+        {
+            Part::ToolResult {
+                output, is_error, ..
+            } => {
                 assert!(is_error);
                 // Partial output leads: the lines it printed are most of what
                 // the model needs.
@@ -2446,11 +2776,23 @@ mod tests {
 
         assert_eq!(f.programs.lock().unwrap().len(), 0, "nothing was executed");
         let parts = parts_of(&f.db, &message.id);
-        match parts.iter().find(|p| matches!(p, Part::ToolResult { .. })).unwrap() {
-            Part::ToolResult { output, is_error, .. } => {
+        match parts
+            .iter()
+            .find(|p| matches!(p, Part::ToolResult { .. }))
+            .unwrap()
+        {
+            Part::ToolResult {
+                output, is_error, ..
+            } => {
                 assert!(is_error);
-                assert!(output.as_str().unwrap().contains("invalid input for run_steps"));
-                assert!(output.as_str().unwrap().contains("It takes {code: string, done?: boolean}."));
+                assert!(output
+                    .as_str()
+                    .unwrap()
+                    .contains("invalid input for run_steps"));
+                assert!(output
+                    .as_str()
+                    .unwrap()
+                    .contains("It takes {code: string, done?: boolean}."));
             }
             _ => unreachable!(),
         }
@@ -2479,7 +2821,11 @@ mod tests {
         finish(started).await;
         assert_eq!(f.programs.lock().unwrap().len(), 0);
         let parts = parts_of(&f.db, &message.id);
-        match parts.iter().find(|p| matches!(p, Part::ToolResult { .. })).unwrap() {
+        match parts
+            .iter()
+            .find(|p| matches!(p, Part::ToolResult { .. }))
+            .unwrap()
+        {
             Part::ToolResult { output, .. } => {
                 assert!(output.as_str().unwrap().contains("unknown tool: read_file"));
             }
@@ -2504,7 +2850,10 @@ mod tests {
                 ..Default::default()
             },
             ScriptedRound {
-                content: vec![text("Right, view is a function inside the program."), stop("stop-1")],
+                content: vec![
+                    text("Right, view is a function inside the program."),
+                    stop("stop-1"),
+                ],
                 ..Default::default()
             },
         ]);
@@ -2515,7 +2864,11 @@ mod tests {
         finish(started).await;
         assert_eq!(f.programs.lock().unwrap().len(), 0);
         let parts = parts_of(&f.db, &message.id);
-        let out = match parts.iter().find(|p| matches!(p, Part::ToolResult { .. })).unwrap() {
+        let out = match parts
+            .iter()
+            .find(|p| matches!(p, Part::ToolResult { .. }))
+            .unwrap()
+        {
             Part::ToolResult { output, .. } => output.as_str().unwrap().to_string(),
             _ => unreachable!(),
         };
@@ -2540,18 +2893,28 @@ mod tests {
         let outcome = finish(started).await;
 
         assert_eq!(outcome.status, TurnOutcomeStatus::Error);
-        let stored = with_db(&f.db, |d| d.get_message(&message.id)).unwrap().unwrap();
+        let stored = with_db(&f.db, |d| d.get_message(&message.id))
+            .unwrap()
+            .unwrap();
         assert!(!stored.pending, "a failed turn still closes its message");
         match stored.parts.last().unwrap() {
             Part::Text { text } => assert!(text.contains("⚠︎ Turn failed"), "{text}"),
             other => panic!("expected text, got {other:?}"),
         }
-        let turn = with_db(&f.db, |d| d.turn_for_message(&message.id)).unwrap().unwrap();
+        let turn = with_db(&f.db, |d| d.turn_for_message(&message.id))
+            .unwrap()
+            .unwrap();
         assert_eq!(turn.status, TurnStatus::Error);
         assert!(turn.error.is_some());
-        assert_eq!(f.reported.lock().unwrap().len(), 1, "the raw error reached the server log, once");
+        assert_eq!(
+            f.reported.lock().unwrap().len(),
+            1,
+            "the raw error reached the server log, once"
+        );
         assert!(
-            !with_db(&f.db, |d| d.busy_session_ids()).unwrap().contains(&f.session.id),
+            !with_db(&f.db, |d| d.busy_session_ids())
+                .unwrap()
+                .contains(&f.session.id),
             "the session is free again"
         );
     }
@@ -2587,7 +2950,10 @@ mod tests {
         };
         assert!(note.contains("context window"), "{note}");
         assert!(note.contains("claude-opus-4-8"), "{note}");
-        assert!(note.contains("Compact or fork"), "it names the move that resolves it: {note}");
+        assert!(
+            note.contains("Compact or fork"),
+            "it names the move that resolves it: {note}"
+        );
     }
 
     // ---- the server seam ---------------------------------------------------
@@ -2595,8 +2961,14 @@ mod tests {
     #[tokio::test]
     async fn create_turn_starter_runs_a_turn_when_idle_and_only_queues_when_busy() {
         let llm = scripted_llm(vec![
-            ScriptedRound { content: vec![text("first answer"), stop("s1")], ..Default::default() },
-            ScriptedRound { content: vec![text("second answer"), stop("s2")], ..Default::default() },
+            ScriptedRound {
+                content: vec![text("first answer"), stop("s1")],
+                ..Default::default()
+            },
+            ScriptedRound {
+                content: vec![text("second answer"), stop("s2")],
+                ..Default::default()
+            },
         ]);
         let f = fixture(opts(llm.clone()));
         let start = create_turn_starter(f.deps.clone());
@@ -2613,7 +2985,9 @@ mod tests {
         let second = user_message(&f.db, &f.session.id, "two", now_ms());
         start.start_turn(&f.ctx, &f.session, &second);
         assert_eq!(
-            with_db(&f.db, |d| d.turns_for_session(&f.session.id)).unwrap().len(),
+            with_db(&f.db, |d| d.turns_for_session(&f.session.id))
+                .unwrap()
+                .len(),
             1,
             "the busy session started nothing"
         );
@@ -2628,7 +3002,12 @@ mod tests {
             }
         }
         assert_eq!(llm.calls().len(), 2);
-        assert_eq!(with_db(&f.db, |d| d.turns_for_session(&f.session.id)).unwrap().len(), 2);
+        assert_eq!(
+            with_db(&f.db, |d| d.turns_for_session(&f.session.id))
+                .unwrap()
+                .len(),
+            2
+        );
         assert_eq!(with_db(&f.db, |d| d.busy_session_ids()).unwrap().len(), 0);
     }
 
@@ -2644,7 +3023,10 @@ mod tests {
         user_message(&f.db, &f.session.id, "do the thing", 2_000);
         finish(begin_turn(&f.ctx, &f.session.id, f.deps.clone()).unwrap()).await;
         assert_eq!(
-            with_db(&f.db, |d| d.get_session(&f.session.id)).unwrap().unwrap().outcome_ok,
+            with_db(&f.db, |d| d.get_session(&f.session.id))
+                .unwrap()
+                .unwrap()
+                .outcome_ok,
             Some(true)
         );
     }
@@ -2661,14 +3043,20 @@ mod tests {
             ..Default::default()
         }]);
         let f = fixture(opts(llm.clone()));
-        with_db(&f.db, |d| d.set_session_model(&f.session.id, Some("claude-sonnet-4-5"))).unwrap();
+        with_db(&f.db, |d| {
+            d.set_session_model(&f.session.id, Some("claude-sonnet-4-5"))
+        })
+        .unwrap();
         with_db(&f.db, |d| d.set_session_effort(&f.session.id, Some("high"))).unwrap();
         user_message(&f.db, &f.session.id, "hi", 2_000);
 
         finish(begin_turn(&f.ctx, &f.session.id, f.deps.clone()).unwrap()).await;
 
         let calls = llm.calls();
-        assert_eq!(calls[0].model, "claude-sonnet-4-5", "the pin, not the ctx default");
+        assert_eq!(
+            calls[0].model, "claude-sonnet-4-5",
+            "the pin, not the ctx default"
+        );
         assert_eq!(calls[0].effort, Some(Effort::High));
     }
 
@@ -2709,7 +3097,10 @@ mod tests {
             ..Default::default()
         }]);
         let f = fixture(opts(llm));
-        with_db(&f.db, |d| d.set_session_workspace(&f.session.id, "/checkouts/acme")).unwrap();
+        with_db(&f.db, |d| {
+            d.set_session_workspace(&f.session.id, "/checkouts/acme")
+        })
+        .unwrap();
 
         let seen: Arc<Mutex<Option<PromptInput>>> = Arc::new(Mutex::new(None));
         let s = seen.clone();
@@ -2727,7 +3118,10 @@ mod tests {
         finish(begin_turn(&f.ctx, &f.session.id, deps).unwrap()).await;
 
         let notes = seen.lock().unwrap().as_ref().unwrap().notes.clone();
-        assert!(!notes.is_empty(), "the turn must supply at least the workspace note");
+        assert!(
+            !notes.is_empty(),
+            "the turn must supply at least the workspace note"
+        );
         assert!(
             notes[0].contains("/checkouts/acme"),
             "the workspace note must name the session's checkout, got: {}",
@@ -2742,7 +3136,10 @@ mod tests {
             ..Default::default()
         }]);
         let f = fixture(opts(llm));
-        with_db(&f.db, |d| d.set_session_workspace(&f.session.id, "/checkouts/acme")).unwrap();
+        with_db(&f.db, |d| {
+            d.set_session_workspace(&f.session.id, "/checkouts/acme")
+        })
+        .unwrap();
 
         let seen: Arc<Mutex<Option<PromptInput>>> = Arc::new(Mutex::new(None));
         let s = seen.clone();
@@ -2766,8 +3163,14 @@ mod tests {
         // where the real work goes, then where the throwaway files go.
         assert!(notes[0].starts_with("## Workspace"));
         assert!(notes[1].starts_with("## Scratchpad"));
-        assert!(notes[1].contains(&f.session.id), "the scratchpad note names THIS session's dir");
-        assert!(notes[2].contains("no emoji"), "a caller's notes must survive");
+        assert!(
+            notes[1].contains(&f.session.id),
+            "the scratchpad note names THIS session's dir"
+        );
+        assert!(
+            notes[2].contains("no emoji"),
+            "a caller's notes must survive"
+        );
     }
 
     // ---- the tag-history memory wiring (rows 2.9–2.12) ---------------------
@@ -2804,8 +3207,14 @@ mod tests {
     #[tokio::test]
     async fn the_tag_priming_note_rides_the_volatile_tier_between_scratch_and_caller_notes() {
         let llm = scripted_llm(vec![
-            ScriptedRound { content: vec![text("done"), stop("c1")], ..Default::default() },
-            ScriptedRound { content: vec![text("done"), stop("c2")], ..Default::default() },
+            ScriptedRound {
+                content: vec![text("done"), stop("c1")],
+                ..Default::default()
+            },
+            ScriptedRound {
+                content: vec![text("done"), stop("c2")],
+                ..Default::default()
+            },
         ]);
         let f = fixture(opts(llm));
         let ws = temp_workspace("note");
@@ -2927,16 +3336,16 @@ mod tests {
             "the dir hint must ride the tool result: {result_text}"
         );
         assert!(result_text.contains("psql"), "{result_text}");
-        assert!(!result_text.contains("bun"), "primed tags never repeat in a hint");
+        assert!(
+            !result_text.contains("bun"),
+            "primed tags never repeat in a hint"
+        );
         // …and never on the prompt.
         let notes = seen.lock().unwrap().as_ref().unwrap().notes.clone();
         assert!(notes.iter().all(|n| !n.contains("[history]")), "{notes:?}");
 
         // The recorder wrote the command, tags normalized, dir attributed.
-        let recorded = with_db(&f.db, |d| {
-            d.commands_for_tag("ls", Some(&ws_s), None)
-        })
-        .unwrap();
+        let recorded = with_db(&f.db, |d| d.commands_for_tag("ls", Some(&ws_s), None)).unwrap();
         assert_eq!(recorded.len(), 1, "one live bash row");
         assert_eq!(recorded[0].cmd, "ls migrations/");
         assert_eq!(recorded[0].tags, "ls:list");
@@ -2976,9 +3385,19 @@ mod tests {
         // printed nothing)", and the model then narrated an invented mechanism
         // — "bash() threw on the non-zero exit code" — which the shell layer
         // explicitly does not do. The harness knew the code the whole time.
-        let silent = ProgramResult { ok: true, logs: vec![], error: None, interrupted: None };
-        let noted =
-            with_exit_notes(silent, &[ExitNote { command: "exit 3".into(), code: 3 }]);
+        let silent = ProgramResult {
+            ok: true,
+            logs: vec![],
+            error: None,
+            interrupted: None,
+        };
+        let noted = with_exit_notes(
+            silent,
+            &[ExitNote {
+                command: "exit 3".into(),
+                code: 3,
+            }],
+        );
         assert_eq!(noted.logs, vec!["[exit code 3] exit 3"]);
 
         // A program that DID print it is left alone — saying it twice is its
@@ -2990,21 +3409,44 @@ mod tests {
             interrupted: None,
         };
         assert_eq!(
-            with_exit_notes(printed.clone(), &[ExitNote { command: "exit 3".into(), code: 3 }]).logs,
+            with_exit_notes(
+                printed.clone(),
+                &[ExitNote {
+                    command: "exit 3".into(),
+                    code: 3
+                }]
+            )
+            .logs,
             printed.logs
         );
 
         // Nothing failed, nothing appended.
-        let fine = ProgramResult { ok: true, logs: vec!["fine".into()], error: None, interrupted: None };
+        let fine = ProgramResult {
+            ok: true,
+            logs: vec!["fine".into()],
+            error: None,
+            interrupted: None,
+        };
         assert_eq!(with_exit_notes(fine, &[]).logs, vec!["fine"]);
 
         // Several failures are each named, and a long command is clipped onto
         // one line.
         let many = with_exit_notes(
-            ProgramResult { ok: true, logs: vec![], error: None, interrupted: None },
+            ProgramResult {
+                ok: true,
+                logs: vec![],
+                error: None,
+                interrupted: None,
+            },
             &[
-                ExitNote { command: "false".into(), code: 1 },
-                ExitNote { command: format!("echo {}", "x".repeat(200)), code: 2 },
+                ExitNote {
+                    command: "false".into(),
+                    code: 1,
+                },
+                ExitNote {
+                    command: format!("echo {}", "x".repeat(200)),
+                    code: 2,
+                },
             ],
         );
         assert_eq!(many.logs.len(), 2);
@@ -3017,7 +3459,10 @@ mod tests {
     #[tokio::test]
     async fn interrupting_mid_program_leaves_a_well_formed_replayable_transcript() {
         let llm = scripted_llm(vec![ScriptedRound {
-            content: vec![text("Starting the build."), run_steps("c1", "await bash('make')")],
+            content: vec![
+                text("Starting the build."),
+                run_steps("c1", "await bash('make')"),
+            ],
             ..Default::default()
         }]);
         let (reached_tx, reached_rx) = tokio::sync::oneshot::channel::<()>();
@@ -3059,9 +3504,17 @@ mod tests {
         let outcome = finish(started).await;
         assert_eq!(outcome.status, TurnOutcomeStatus::Interrupted);
 
-        let stored = with_db(&f.db, |d| d.get_message(&message.id)).unwrap().unwrap();
-        assert!(!stored.pending, "an interrupted message is closed, not left pending");
-        assert_eq!(part_types(&stored.parts), vec!["text", "tool_call", "tool_result", "text"]);
+        let stored = with_db(&f.db, |d| d.get_message(&message.id))
+            .unwrap()
+            .unwrap();
+        assert!(
+            !stored.pending,
+            "an interrupted message is closed, not left pending"
+        );
+        assert_eq!(
+            part_types(&stored.parts),
+            vec!["text", "tool_call", "tool_result", "text"]
+        );
 
         // Every tool_call has its tool_result — the thing that keeps the
         // thread valid.
@@ -3083,9 +3536,22 @@ mod tests {
             .collect();
         assert_eq!(calls, results);
 
-        match stored.parts.iter().find(|p| matches!(p, Part::ToolResult { .. })).unwrap() {
-            Part::ToolResult { interrupted, output, .. } => {
-                assert_eq!(*interrupted, Some(true), "stopped, which is not the same as failed");
+        match stored
+            .parts
+            .iter()
+            .find(|p| matches!(p, Part::ToolResult { .. }))
+            .unwrap()
+        {
+            Part::ToolResult {
+                interrupted,
+                output,
+                ..
+            } => {
+                assert_eq!(
+                    *interrupted,
+                    Some(true),
+                    "stopped, which is not the same as failed"
+                );
                 let out = output.as_str().unwrap();
                 assert!(out.contains("compiling…"), "partial output survived: {out}");
                 assert!(out.contains("interrupted by the user"), "{out}");
@@ -3094,12 +3560,23 @@ mod tests {
         }
 
         // The closing note is the stop marker, not a failure marker.
-        assert_eq!(stored.parts.last(), Some(&Part::Text { text: "⏹ Stopped.".into() }));
+        assert_eq!(
+            stored.parts.last(),
+            Some(&Part::Text {
+                text: "⏹ Stopped.".into()
+            })
+        );
 
-        let turn = with_db(&f.db, |d| d.turn_for_message(&message.id)).unwrap().unwrap();
+        let turn = with_db(&f.db, |d| d.turn_for_message(&message.id))
+            .unwrap()
+            .unwrap();
         assert_eq!(turn.status, TurnStatus::Interrupted);
         assert_eq!(turn.error, None, "an interrupt is not an error");
-        assert_eq!(with_db(&f.db, |d| d.busy_session_ids()).unwrap().len(), 0, "the session is free");
+        assert_eq!(
+            with_db(&f.db, |d| d.busy_session_ids()).unwrap().len(),
+            0,
+            "the session is free"
+        );
         assert!(!f.registry.is_running(&f.session.id));
 
         // No further round was asked for: stop means stop.
@@ -3188,11 +3665,15 @@ mod tests {
         // The second message lands while turn 1 is in flight: persisted like
         // any other, and NOT started — the server sees a busy session and
         // 202s.
-        assert!(with_db(&f.db, |d| d.busy_session_ids()).unwrap().contains(&f.session.id));
+        assert!(with_db(&f.db, |d| d.busy_session_ids())
+            .unwrap()
+            .contains(&f.session.id));
         user_message(&f.db, &f.session.id, "second", now_ms());
-        assert!(
-            with_db(&f.db, |d| crate::turn::queue::has_unanswered_input(d, &f.session.id)).unwrap()
-        );
+        assert!(with_db(&f.db, |d| crate::turn::queue::has_unanswered_input(
+            d,
+            &f.session.id
+        ))
+        .unwrap());
 
         finish(first).await;
         // The drain fires with the first turn's release; let the second turn
@@ -3222,12 +3703,10 @@ mod tests {
 
         // The transcript alternates and nothing was dropped.
         let own = with_db(&f.db, |d| d.messages_for(&f.session.id)).unwrap();
-        assert_eq!(own.iter().map(|m| m.role).collect::<Vec<_>>(), vec![
-            Role::User,
-            Role::Supervisor,
-            Role::User,
-            Role::Supervisor
-        ]);
+        assert_eq!(
+            own.iter().map(|m| m.role).collect::<Vec<_>>(),
+            vec![Role::User, Role::Supervisor, Role::User, Role::Supervisor]
+        );
         let first_texts: Vec<String> = own
             .iter()
             .map(|m| match &m.parts[0] {
@@ -3235,19 +3714,25 @@ mod tests {
                 other => panic!("expected text, got {other:?}"),
             })
             .collect();
-        assert_eq!(first_texts, vec![
-            "first",
-            "Answering the first.",
-            "second",
-            "Answering the second."
-        ]);
+        assert_eq!(
+            first_texts,
+            vec![
+                "first",
+                "Answering the first.",
+                "second",
+                "Answering the second."
+            ]
+        );
         assert!(own.iter().all(|m| !m.pending));
 
         // Turn 2 saw the queued message; turn 1 could not have.
         let round1 = messages_json(&calls[0]);
         let round2 = messages_json(&calls[1]);
         assert!(round1.contains("first"));
-        assert!(!round1.contains("second"), "the queued message did not race into the live turn");
+        assert!(
+            !round1.contains("second"),
+            "the queued message did not race into the live turn"
+        );
         assert!(round2.contains("first") && round2.contains("second"));
         assert!(
             round2.find("Answering the first.").unwrap() < round2.find("second").unwrap(),
@@ -3256,8 +3741,11 @@ mod tests {
 
         // And it stops: nothing is left unanswered, so no third turn starts.
         assert!(
-            !with_db(&f.db, |d| crate::turn::queue::has_unanswered_input(d, &f.session.id))
-                .unwrap()
+            !with_db(&f.db, |d| crate::turn::queue::has_unanswered_input(
+                d,
+                &f.session.id
+            ))
+            .unwrap()
         );
     }
 
@@ -3273,16 +3761,24 @@ mod tests {
         };
 
         let llm = scripted_llm(vec![
-            ScriptedRound { throws: Some(truncation()), ..Default::default() },
+            ScriptedRound {
+                throws: Some(truncation()),
+                ..Default::default()
+            },
             // The re-streamed round lands intact.
             ScriptedRound {
                 content: vec![run_steps("c1", "await bash('git status')")],
                 ..Default::default()
             },
-            ScriptedRound { content: vec![text("Clean tree."), stop("stop-1")], ..Default::default() },
+            ScriptedRound {
+                content: vec![text("Clean tree."), stop("stop-1")],
+                ..Default::default()
+            },
         ]);
         let mut o = opts(llm.clone());
-        o.program = Some(Arc::new(|_| async { logs_result(&["nothing to commit"]) }.boxed()));
+        o.program = Some(Arc::new(|_| {
+            async { logs_result(&["nothing to commit"]) }.boxed()
+        }));
         let f = fixture(o);
         user_message(&f.db, &f.session.id, "check the tree", now_ms());
 
@@ -3303,15 +3799,22 @@ mod tests {
         // buffered.
         {
             let events = f.events.lock().unwrap();
-            let retries: Vec<&BoughEvent> =
-                events.iter().filter(|e| e.r#type == EventType::MessageRetry).collect();
+            let retries: Vec<&BoughEvent> = events
+                .iter()
+                .filter(|e| e.r#type == EventType::MessageRetry)
+                .collect();
             assert_eq!(retries.len(), 1);
             let data: MessageRetryData = serde_json::from_value(retries[0].data.clone()).unwrap();
             assert_eq!(data.message_id, message.id);
             assert_eq!(data.attempt, 1);
-            assert!(data.reason.contains("cut off mid-stream"), "{}", data.reason);
             assert!(
-                data.reason.contains("rather than executing a truncated program"),
+                data.reason.contains("cut off mid-stream"),
+                "{}",
+                data.reason
+            );
+            assert!(
+                data.reason
+                    .contains("rather than executing a truncated program"),
                 "{}",
                 data.reason
             );
@@ -3326,15 +3829,25 @@ mod tests {
     #[tokio::test]
     async fn an_exhausted_retry_surfaces_as_a_turn_error_rather_than_an_executed_guess() {
         let truncation = || {
-            BoughError::llm(
-                "openai: run_steps call has malformed arguments (truncated mid-call)",
-            )
+            BoughError::llm("openai: run_steps call has malformed arguments (truncated mid-call)")
         };
         let llm = scripted_llm(vec![
-            ScriptedRound { throws: Some(truncation()), ..Default::default() },
-            ScriptedRound { throws: Some(truncation()), ..Default::default() },
-            ScriptedRound { throws: Some(truncation()), ..Default::default() },
-            ScriptedRound { throws: Some(truncation()), ..Default::default() },
+            ScriptedRound {
+                throws: Some(truncation()),
+                ..Default::default()
+            },
+            ScriptedRound {
+                throws: Some(truncation()),
+                ..Default::default()
+            },
+            ScriptedRound {
+                throws: Some(truncation()),
+                ..Default::default()
+            },
+            ScriptedRound {
+                throws: Some(truncation()),
+                ..Default::default()
+            },
         ]);
         let f = fixture(opts(llm.clone()));
         user_message(&f.db, &f.session.id, "go", now_ms());

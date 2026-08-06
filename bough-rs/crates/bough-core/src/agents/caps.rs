@@ -105,7 +105,11 @@ struct LeaseSt {
 }
 
 enum LeaseKind {
-    Real { ledger: Arc<Mutex<CapsState>>, tree_id: String, turn_id: String },
+    Real {
+        ledger: Arc<Mutex<CapsState>>,
+        tree_id: String,
+        turn_id: String,
+    },
     /// The lease a cap-exempt launch carries (workflows, spec §8). A distinct
     /// no-op object rather than an Option, so every call site binds and
     /// releases unconditionally — the branch that forgets to release is the
@@ -205,7 +209,10 @@ impl SpawnLease {
             st.released = true;
             st.bound.clone()
         };
-        if let LeaseKind::Real { ledger, tree_id, .. } = &self.inner.kind {
+        if let LeaseKind::Real {
+            ledger, tree_id, ..
+        } = &self.inner.kind
+        {
             let mut lg = ledger.lock().unwrap();
             let held = lg.running.get(tree_id).copied().unwrap_or(0);
             // `- 1` guarded rather than assumed: a count that went negative
@@ -228,14 +235,21 @@ pub fn exempt_lease() -> SpawnLease {
     SpawnLease {
         inner: Arc::new(LeaseInner {
             kind: LeaseKind::Exempt,
-            st: Mutex::new(LeaseSt { released: false, bound: None }),
+            st: Mutex::new(LeaseSt {
+                released: false,
+                bound: None,
+            }),
         }),
     }
 }
 
 fn unbind(state: &mut CapsState, session_id: &str, lease: &Arc<LeaseInner>) {
     if let Some(set) = state.bound.get_mut(session_id) {
-        set.retain(|w| w.upgrade().map(|a| !Arc::ptr_eq(&a, lease)).unwrap_or(false));
+        set.retain(|w| {
+            w.upgrade()
+                .map(|a| !Arc::ptr_eq(&a, lease))
+                .unwrap_or(false)
+        });
         if set.is_empty() {
             state.bound.remove(session_id);
         }
@@ -333,7 +347,10 @@ impl SpawnCaps {
                     tree_id: tree_id.to_string(),
                     turn_id: turn_id.to_string(),
                 },
-                st: Mutex::new(LeaseSt { released: false, bound: None }),
+                st: Mutex::new(LeaseSt {
+                    released: false,
+                    bound: None,
+                }),
             }),
         })
     }
@@ -349,7 +366,13 @@ impl SpawnCaps {
 
     /// Launches charged to one turn.
     pub fn spawned_in_turn(&self, turn_id: &str) -> u32 {
-        self.ledger.lock().unwrap().spawns.get(turn_id).copied().unwrap_or(0)
+        self.ledger
+            .lock()
+            .unwrap()
+            .spawns
+            .get(turn_id)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Wire the ledger to the event stream. Returns the unsubscribe thunk;
@@ -467,10 +490,16 @@ pub struct ReserveOptions {
 
 impl ReserveOptions {
     pub fn blocking() -> Self {
-        ReserveOptions { mode: Some(DelegationMode::Blocking), ..Default::default() }
+        ReserveOptions {
+            mode: Some(DelegationMode::Blocking),
+            ..Default::default()
+        }
     }
     pub fn detached() -> Self {
-        ReserveOptions { mode: Some(DelegationMode::Detached), ..Default::default() }
+        ReserveOptions {
+            mode: Some(DelegationMode::Detached),
+            ..Default::default()
+        }
     }
 }
 
@@ -485,7 +514,10 @@ pub fn reserve_spawn(ctx: &TurnCtx, opts: &ReserveOptions) -> Result<SpawnLease,
     if opts.exempt {
         return Ok(exempt_lease());
     }
-    let caps = opts.caps.clone().unwrap_or_else(|| ctx.app.host.caps.clone());
+    let caps = opts
+        .caps
+        .clone()
+        .unwrap_or_else(|| ctx.app.host.caps.clone());
     let tree_id = {
         let guard = ctx.app.db.lock().unwrap_or_else(|p| p.into_inner());
         tree_root_of(&*guard, &ctx.session_id)
@@ -566,7 +598,9 @@ mod tests {
 
     impl std::fmt::Debug for FakeLaunch {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_struct("FakeLaunch").field("sid", &self.sid).finish()
+            f.debug_struct("FakeLaunch")
+                .field("sid", &self.sid)
+                .finish()
         }
     }
 
@@ -576,13 +610,16 @@ mod tests {
         }
         fn settled(&self) -> BoxFuture<'static, ()> {
             let s = self.settled.clone();
-            async move { s.await }.boxed()
+            s.boxed()
         }
     }
 
     /// A launch whose child has already finished — the slot comes straight back.
     fn instant_launch(id: &str) -> FakeLaunch {
-        FakeLaunch { sid: id.to_string(), settled: futures::future::ready(()).boxed().shared() }
+        FakeLaunch {
+            sid: id.to_string(),
+            settled: futures::future::ready(()).boxed().shared(),
+        }
     }
 
     /// A launch whose child is still running until the test says otherwise.
@@ -593,7 +630,13 @@ mod tests {
         }
         .boxed()
         .shared();
-        (FakeLaunch { sid: id.to_string(), settled }, tx)
+        (
+            FakeLaunch {
+                sid: id.to_string(),
+                settled,
+            },
+            tx,
+        )
     }
 
     /// Let the spawned release tasks run.
@@ -608,7 +651,11 @@ mod tests {
     }
 
     fn opts_with(mode: DelegationMode, caps: &Arc<SpawnCaps>) -> ReserveOptions {
-        ReserveOptions { mode: Some(mode), caps: Some(caps.clone()), ..Default::default() }
+        ReserveOptions {
+            mode: Some(mode),
+            caps: Some(caps.clone()),
+            ..Default::default()
+        }
     }
 
     fn turn_finished(bus: &Bus, session_id: &str, turn_id: &str, status: &str) {
@@ -643,29 +690,53 @@ mod tests {
 
         let fulfilled: Vec<&String> = outcomes.iter().filter_map(|r| r.as_ref().ok()).collect();
         let rejected: Vec<&BoughError> = outcomes.iter().filter_map(|r| r.as_ref().err()).collect();
-        assert_eq!(fulfilled.len() as u32, MAX_SPAWNS_PER_TURN, "eight launches went through");
+        assert_eq!(
+            fulfilled.len() as u32,
+            MAX_SPAWNS_PER_TURN,
+            "eight launches went through"
+        );
         assert_eq!(rejected.len(), 4, "four were refused");
 
         // The successes are intact: the FIRST eight, each with its own child's
         // own report. A refusal that had unwound a sibling would show as a hole.
-        let heads: Vec<String> =
-            outcomes[..8].iter().map(|r| r.as_ref().unwrap().clone()).collect();
+        let heads: Vec<String> = outcomes[..8]
+            .iter()
+            .map(|r| r.as_ref().unwrap().clone())
+            .collect();
         assert_eq!(
             heads,
-            (0..8).map(|i| format!("report from c{i}")).collect::<Vec<_>>()
+            (0..8)
+                .map(|i| format!("report from c{i}"))
+                .collect::<Vec<_>>()
         );
         assert!(
-            outcomes[8..].iter().all(|r| r.as_ref().err().map(is_cap_error).unwrap_or(false)),
+            outcomes[8..]
+                .iter()
+                .all(|r| r.as_ref().err().map(is_cap_error).unwrap_or(false)),
             "the refusals are SpawnCapErrors, and they are the LAST four"
         );
         for err in &rejected {
             assert_eq!(err.status(), 429);
-            assert!(err.to_string().contains("per-turn limit (8)"), "names WHICH cap: {err}");
-            assert!(err.to_string().contains("workflow"), "and the move that resolves it");
+            assert!(
+                err.to_string().contains("per-turn limit (8)"),
+                "names WHICH cap: {err}"
+            );
+            assert!(
+                err.to_string().contains("workflow"),
+                "and the move that resolves it"
+            );
         }
 
-        assert_eq!(caps.spawned_in_turn("turn-1"), 8, "only the launches that happened were charged");
-        assert_eq!(caps.running(None), 0, "every slot came back when its child finished");
+        assert_eq!(
+            caps.spawned_in_turn("turn-1"),
+            8,
+            "only the launches that happened were charged"
+        );
+        assert_eq!(
+            caps.running(None),
+            0,
+            "every slot came back when its child finished"
+        );
     }
 
     #[tokio::test]
@@ -697,23 +768,41 @@ mod tests {
         assert_eq!(outcomes.iter().filter(|r| r.is_err()).count(), 8);
         let heads: Vec<String> = outcomes[..4].iter().map(|r| r.clone().unwrap()).collect();
         assert_eq!(heads, vec!["c0", "c1", "c2", "c3"]);
-        assert_eq!(started.len(), 4, "a refused launch never ran the launch body at all");
+        assert_eq!(
+            started.len(),
+            4,
+            "a refused launch never ran the launch body at all"
+        );
 
         let refusal = outcomes[4].as_ref().unwrap_err();
         assert!(is_cap_error(refusal));
         assert!(refusal.to_string().contains("concurrency cap reached"));
-        assert!(refusal.to_string().contains("tree-wide limit (4)"), "names WHICH cap");
-        assert!(refusal.to_string().contains("join()"), "and the move that resolves it");
+        assert!(
+            refusal.to_string().contains("tree-wide limit (4)"),
+            "names WHICH cap"
+        );
+        assert!(
+            refusal.to_string().contains("join()"),
+            "and the move that resolves it"
+        );
 
         // The four in flight are untouched by the eight refusals.
         assert_eq!(caps.running(Some(&root.id)), 4);
-        assert_eq!(caps.spawned_in_turn("turn-1"), 4, "refusals charged nothing to the turn");
+        assert_eq!(
+            caps.spawned_in_turn("turn-1"),
+            4,
+            "refusals charged nothing to the turn"
+        );
 
         for tx in started {
             let _ = tx.send(());
         }
         settle().await;
-        assert_eq!(caps.running(None), 0, "the slots come back as the children finish");
+        assert_eq!(
+            caps.running(None),
+            0,
+            "the slots come back as the children finish"
+        );
     }
 
     #[tokio::test]
@@ -744,7 +833,11 @@ mod tests {
 
         // Neither budget moved: the refusals did not free a sibling's slot,
         // and they did not spend the per-turn allowance either.
-        assert_eq!(caps.running(Some(&root.id)), 4, "the four in flight still hold their slots");
+        assert_eq!(
+            caps.running(Some(&root.id)),
+            4,
+            "the four in flight still hold their slots"
+        );
         assert_eq!(caps.spawned_in_turn("turn-1"), 4);
 
         for tx in held {
@@ -786,7 +879,11 @@ mod tests {
                 std::thread::spawn(move || caps.reserve(&format!("turn-{i}"), "tree").is_ok())
             })
             .collect();
-        let takes = handles.into_iter().map(|h| h.join().unwrap()).filter(|took| *took).count();
+        let takes = handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .filter(|took| *took)
+            .count();
         assert_eq!(takes, 4, "exactly the tree budget, never more");
         assert_eq!(caps.running(Some("tree")), 4);
     }
@@ -820,10 +917,18 @@ mod tests {
         reserve_spawn(&from_root, &opts_with(DelegationMode::Detached, &caps)).unwrap();
         reserve_spawn(&from_root, &opts_with(DelegationMode::Detached, &caps)).unwrap();
         reserve_spawn(&from_child, &opts_with(DelegationMode::Blocking, &caps)).unwrap();
-        reserve_spawn(&from_grandchild, &opts_with(DelegationMode::Blocking, &caps)).unwrap();
+        reserve_spawn(
+            &from_grandchild,
+            &opts_with(DelegationMode::Blocking, &caps),
+        )
+        .unwrap();
 
         assert_eq!(caps.running(Some(&root.id)), 4);
-        assert_eq!(caps.spawned_in_turn("turn-root"), 2, "per-turn counts stay per turn");
+        assert_eq!(
+            caps.spawned_in_turn("turn-root"),
+            2,
+            "per-turn counts stay per turn"
+        );
         assert_eq!(caps.spawned_in_turn("turn-child"), 1);
 
         // The fifth is refused wherever in the tree it is launched from —
@@ -841,7 +946,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(caps.running(Some(&other.id)), 1);
-        assert_eq!(caps.running(None), 5, "five running overall, four of them in one tree");
+        assert_eq!(
+            caps.running(None),
+            5,
+            "five running overall, four of them in one tree"
+        );
         lease.release();
         assert_eq!(caps.running(Some(&other.id)), 0);
         assert_eq!(
@@ -855,21 +964,31 @@ mod tests {
     fn a_fork_is_its_own_tree_and_a_dangling_origin_does_not_hang_the_walk() {
         let db = shared_db();
         let root = seed_session(&db, SeedOpts::default());
-        let fork = seed_session(&db, SeedOpts {
-            kind: Some(SessionKind::Fork),
-            origin_id: Some(root.id.clone()),
-        });
-        let orphan = seed_session(&db, SeedOpts {
-            kind: Some(SessionKind::Subagent),
-            origin_id: Some("gone-with-the-database".to_string()),
-        });
+        let fork = seed_session(
+            &db,
+            SeedOpts {
+                kind: Some(SessionKind::Fork),
+                origin_id: Some(root.id.clone()),
+            },
+        );
+        let orphan = seed_session(
+            &db,
+            SeedOpts {
+                kind: Some(SessionKind::Subagent),
+                origin_id: Some("gone-with-the-database".to_string()),
+            },
+        );
         let mut cur = root.clone();
         for _ in 0..10 {
             cur = seed_session(&db, SeedOpts::subagent_of(&cur.id));
         }
 
         let guard = db.lock().unwrap();
-        assert_eq!(tree_root_of(&*guard, &fork.id), fork.id, "a fork is a branch, not a delegation");
+        assert_eq!(
+            tree_root_of(&*guard, &fork.id),
+            fork.id,
+            "a fork is a branch, not a delegation"
+        );
         assert_eq!(tree_root_of(&*guard, &orphan.id), orphan.id);
         // A ten-deep subagent chain still resolves, and resolves to the top.
         assert_eq!(tree_root_of(&*guard, &cur.id), root.id);
@@ -892,7 +1011,11 @@ mod tests {
         first.release();
         first.release();
         assert!(first.released());
-        assert_eq!(caps.running(Some(&root.id)), 1, "the second lease still holds its slot");
+        assert_eq!(
+            caps.running(Some(&root.id)),
+            1,
+            "the second lease still holds its slot"
+        );
     }
 
     #[tokio::test]
@@ -902,15 +1025,22 @@ mod tests {
         let root = seed_session(&db, SeedOpts::default());
         let ctx = turn_ctx_for(&db, &root.id, "turn-1", 0);
 
-        let err = capped_launch::<FakeLaunch>(
-            &ctx,
-            &opts_with(DelegationMode::Detached, &caps),
-            || Err(BoughError::http(400, ErrorKind::Agent, "task must be a non-empty string")),
-        )
-        .unwrap_err();
+        let err =
+            capped_launch::<FakeLaunch>(&ctx, &opts_with(DelegationMode::Detached, &caps), || {
+                Err(BoughError::http(
+                    400,
+                    ErrorKind::Agent,
+                    "task must be a non-empty string",
+                ))
+            })
+            .unwrap_err();
         assert_eq!(err.name(), "AgentError");
 
-        assert_eq!(caps.running(Some(&root.id)), 0, "nothing is running, so nothing is held");
+        assert_eq!(
+            caps.running(Some(&root.id)),
+            0,
+            "nothing is running, so nothing is held"
+        );
         // The per-turn budget IS charged: the model asked for a launch and the
         // answer it gets back is about its own bad call, not about a cap.
         assert_eq!(caps.spawned_in_turn("turn-1"), 1);
@@ -931,8 +1061,10 @@ mod tests {
         // A launch whose result nobody will ever settle — a detached child the
         // holder forgot about. Without the backstop this slot is gone forever.
         let (never, _keep) = pending_launch(&child.id);
-        let launch = capped_launch(&ctx, &opts_with(DelegationMode::Detached, &caps), || Ok(never))
-            .unwrap();
+        let launch = capped_launch(&ctx, &opts_with(DelegationMode::Detached, &caps), || {
+            Ok(never)
+        })
+        .unwrap();
         assert_eq!(caps.running(Some(&root.id)), 1);
         assert_eq!(launch.sid, child.id);
 
@@ -941,7 +1073,11 @@ mod tests {
         assert_eq!(caps.running(Some(&root.id)), 1);
 
         turn_finished(&bus, &child.id, "t-child", "interrupted");
-        assert_eq!(caps.running(Some(&root.id)), 0, "the child's turn ended, slot came back");
+        assert_eq!(
+            caps.running(Some(&root.id)),
+            0,
+            "the child's turn ended, slot came back"
+        );
 
         // And the spawning turn's own end clears its per-turn tally.
         assert_eq!(caps.spawned_in_turn("turn-1"), 1);
@@ -979,7 +1115,11 @@ mod tests {
         turn_finished(&bus, &kids[0].id, "t0", "done");
         settle().await;
 
-        assert_eq!(caps.running(Some(&root.id)), 1, "one child ended, one slot back");
+        assert_eq!(
+            caps.running(Some(&root.id)),
+            1,
+            "one child ended, one slot back"
+        );
         let _ = finishes.remove(0).send(());
         settle().await;
         assert_eq!(caps.running(Some(&root.id)), 0);
@@ -1012,13 +1152,29 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.name(), "AgentError");
-        assert!(!is_cap_error(&err), "a nesting refusal is not a cap to retry later");
+        assert!(
+            !is_cap_error(&err),
+            "a nesting refusal is not a cap to retry later"
+        );
         assert_eq!(err.status(), 400);
-        assert!(err.to_string().contains("spawn() is not available inside a subagent"));
-        assert!(err.to_string().contains("agent(task, {name})"), "names the verb that does work");
+        assert!(err
+            .to_string()
+            .contains("spawn() is not available inside a subagent"));
+        assert!(
+            err.to_string().contains("agent(task, {name})"),
+            "names the verb that does work"
+        );
 
-        assert_eq!(caps.running(Some(&root.id)), 0, "a refused nesting took no slot");
-        assert_eq!(caps.spawned_in_turn("turn-child"), 0, "and no per-turn budget");
+        assert_eq!(
+            caps.running(Some(&root.id)),
+            0,
+            "a refused nesting took no slot"
+        );
+        assert_eq!(
+            caps.spawned_in_turn("turn-child"),
+            0,
+            "and no per-turn budget"
+        );
 
         // The blocking form from the same session goes through.
         reserve_spawn(&nested, &opts_with(DelegationMode::Blocking, &caps)).unwrap();
@@ -1046,7 +1202,11 @@ mod tests {
             )
             .unwrap();
         }
-        assert_eq!(caps.running(Some(&root.id)), 0, "an exempt launch is not in the ledger");
+        assert_eq!(
+            caps.running(Some(&root.id)),
+            0,
+            "an exempt launch is not in the ledger"
+        );
         assert_eq!(caps.spawned_in_turn("turn-1"), 0);
 
         // The exempt lease is still a lease: bindable, releasable, idempotent.
@@ -1057,7 +1217,11 @@ mod tests {
         lease.release();
         assert!(lease.released());
         lease.bind("child-2");
-        assert_eq!(lease.session_id().as_deref(), Some("child-1"), "bind after release no-ops");
+        assert_eq!(
+            lease.session_id().as_deref(),
+            Some("child-1"),
+            "bind after release no-ops"
+        );
     }
 
     // ---- injectable limits --------------------------------------------------
@@ -1071,7 +1235,10 @@ mod tests {
         assert_eq!(caps.per_turn, 8);
         assert_eq!(caps.concurrent, 4);
 
-        let tiny = SpawnCaps::with_limits(CapLimits { per_turn: Some(2), concurrent: Some(1) });
+        let tiny = SpawnCaps::with_limits(CapLimits {
+            per_turn: Some(2),
+            concurrent: Some(1),
+        });
         let lease = tiny.reserve("t", "tree").unwrap();
         assert!(is_cap_error(&tiny.reserve("t", "tree").unwrap_err()));
         lease.release();

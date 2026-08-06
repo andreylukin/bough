@@ -109,7 +109,11 @@ pub fn render_ask_card(p: &AskCardProps, area: Rect, buf: &mut Buffer) {
     rows.push(Line::from(Span::styled(
         format!(
             "{}type an answer · ⏎ send · esc decline",
-            if p.options.is_empty() { "" } else { "1-9 pick · " }
+            if p.options.is_empty() {
+                ""
+            } else {
+                "1-9 pick · "
+            }
         ),
         dim,
     )));
@@ -135,7 +139,10 @@ mod tests {
     fn draw_in(p: &AskCardProps, cols: u16, card_rows: u16, frame_rows: u16) -> String {
         let mut term = Terminal::new(TestBackend::new(cols, frame_rows)).unwrap();
         term.draw(|f| {
-            let area = Rect { height: card_rows, ..f.area() };
+            let area = Rect {
+                height: card_rows,
+                ..f.area()
+            };
             render_ask_card(p, area, f.buffer_mut());
         })
         .unwrap();
@@ -158,10 +165,17 @@ mod tests {
     /// of overflowing".
     #[test]
     fn a_multi_line_ask_reports_every_line_and_clips_instead_of_overflowing() {
-        assert_eq!(ask_prompt_lines("one line?", 46, 80), vec!["one line?".to_string()]);
+        assert_eq!(
+            ask_prompt_lines("one line?", 46, 80),
+            vec!["one line?".to_string()]
+        );
 
         let three = ask_prompt_lines("Run it?\n\n  1. describe\n  2. summarize", 46, 80);
-        assert_eq!(three.len(), 4, "blank lines are rows too — they are what spaces the card");
+        assert_eq!(
+            three.len(),
+            4,
+            "blank lines are rows too — they are what spaces the card"
+        );
 
         // A question taller than a third of the screen is clipped, and says so:
         // silently dropping the tail of a spend confirmation is the one thing
@@ -208,7 +222,11 @@ mod tests {
         // Every row the card claims is painted, and nothing spills past it: the
         // last body row is the legend, and the row under the card is untouched.
         let frame = draw_in(
-            &AskCardProps { lines: &lines, options: &options, typed: "" },
+            &AskCardProps {
+                lines: &lines,
+                options: &options,
+                typed: "",
+            },
             70,
             height as u16,
             height as u16 + 1,
@@ -222,7 +240,10 @@ mod tests {
             rows[height - 1].contains("╰"),
             "the last row of the budget is the border: {frame}"
         );
-        assert!(rows[height].trim().is_empty(), "the card must not paint below its budget");
+        assert!(
+            rows[height].trim().is_empty(),
+            "the card must not paint below its budget"
+        );
     }
 
     #[test]
@@ -230,7 +251,11 @@ mod tests {
         let lines = ask_prompt_lines("prod or staging?", 46, 60);
         let options = vec!["prod".to_string(), "staging".to_string()];
         let frame = draw(
-            &AskCardProps { lines: &lines, options: &options, typed: "neither, wait" },
+            &AskCardProps {
+                lines: &lines,
+                options: &options,
+                typed: "neither, wait",
+            },
             60,
             ask_card_height(lines.len(), options.len()) as u16,
         );
@@ -244,11 +269,21 @@ mod tests {
     fn free_text_only_holds_drop_the_pick_half_of_the_legend() {
         let lines = ask_prompt_lines("what should it be called?", 46, 60);
         let frame = draw(
-            &AskCardProps { lines: &lines, options: &[], typed: "" },
+            &AskCardProps {
+                lines: &lines,
+                options: &[],
+                typed: "",
+            },
             60,
             ask_card_height(lines.len(), 0) as u16,
         );
-        assert!(frame.contains("type an answer · ⏎ send · esc decline"), "{frame}");
-        assert!(!frame.contains("1-9 pick"), "no options, no pick legend: {frame}");
+        assert!(
+            frame.contains("type an answer · ⏎ send · esc decline"),
+            "{frame}"
+        );
+        assert!(
+            !frame.contains("1-9 pick"),
+            "no options, no pick legend: {frame}"
+        );
     }
 }

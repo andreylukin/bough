@@ -50,9 +50,8 @@ pub type StartFuture = BoxFuture<'static, Result<(), BoughError>>;
 /// session between the check and this call" (→ the note rides the queue); an
 /// `Ok` future that later rejects is only reported. The production default
 /// adapts `AppCtx::turn_starter`, which never fails synchronously.
-pub type NoteStarter = Arc<
-    dyn Fn(&AppCtx, &Session, &Message) -> Result<StartFuture, BoughError> + Send + Sync,
->;
+pub type NoteStarter =
+    Arc<dyn Fn(&AppCtx, &Session, &Message) -> Result<StartFuture, BoughError> + Send + Sync>;
 
 /// What the post did about the note, beyond persisting it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,11 +120,18 @@ pub fn post_system_note(
 ) -> NoteDelivery {
     let session = match with_db(&ctx.db, |d| d.get_session(session_id)) {
         Ok(Some(s)) => s,
-        _ => return NoteDelivery { message: None, wake: WakeOutcome::Dropped },
+        _ => {
+            return NoteDelivery {
+                message: None,
+                wake: WakeOutcome::Dropped,
+            }
+        }
     };
 
     let now: Clock = deps.now.clone().unwrap_or_else(|| ctx.now.clone());
-    let mut parts = vec![Part::Text { text: text.to_string() }];
+    let mut parts = vec![Part::Text {
+        text: text.to_string(),
+    }];
     parts.extend(deps.extra.iter().cloned());
     let message = match with_db(&ctx.db, |d| {
         d.create_message(Message {
@@ -142,7 +148,10 @@ pub fn post_system_note(
         Ok(m) => m,
         Err(err) => {
             tracing::error!("failed to write a system note into {session_id}: {err}");
-            return NoteDelivery { message: None, wake: WakeOutcome::Dropped };
+            return NoteDelivery {
+                message: None,
+                wake: WakeOutcome::Dropped,
+            };
         }
     };
     index_quietly(ctx, &message);
@@ -153,7 +162,10 @@ pub fn post_system_note(
     });
 
     let wake = wake_for(ctx, &session, &message, deps);
-    NoteDelivery { message: Some(message), wake }
+    NoteDelivery {
+        message: Some(message),
+        wake,
+    }
 }
 
 /// The wake rule, and the only place it is decided.
@@ -167,7 +179,10 @@ fn wake_for(ctx: &AppCtx, session: &Session, message: &Message, deps: &NoteDeps)
         return WakeOutcome::Recorded;
     }
 
-    let registry = deps.registry.clone().unwrap_or_else(|| ctx.turn_registry.clone());
+    let registry = deps
+        .registry
+        .clone()
+        .unwrap_or_else(|| ctx.turn_registry.clone());
     if registry.is_running(&session.id) {
         // The derived check would find this note on its own. The explicit
         // nudge is belt and braces for the case the derivation cannot see: a
@@ -309,7 +324,12 @@ pub fn deliver_subagent_note(
     result: &SubagentResult,
     deps: &NoteDeps,
 ) -> NoteDelivery {
-    post_system_note(&ctx.app, &ctx.session_id, &format_subagent_note(result), deps)
+    post_system_note(
+        &ctx.app,
+        &ctx.session_id,
+        &format_subagent_note(result),
+        deps,
+    )
 }
 
 /// The `deliver` seam `hostfn/delegate` takes, deps bound.
@@ -328,10 +348,7 @@ pub fn create_note_deliverer(
 /// The poster the job registry calls when a background shell exits. The
 /// registry formats its own text and posts through here so a job exit and a
 /// subagent report obey exactly one wake rule.
-pub fn create_job_notifier(
-    ctx: AppCtx,
-    deps: NoteDeps,
-) -> Arc<dyn Fn(&str, &str) + Send + Sync> {
+pub fn create_job_notifier(ctx: AppCtx, deps: NoteDeps) -> Arc<dyn Fn(&str, &str) + Send + Sync> {
     Arc::new(move |session_id, text| {
         post_system_note(&ctx, session_id, text, &deps);
     })
@@ -359,12 +376,22 @@ pub async fn note_orphaned_subagent(
     let Some(origin_id) = child.origin_id.clone() else {
         return Ok(None);
     };
-    let result =
-        build_result(&ctx.db, &orphan.session_id, &orphan.message_id, None, Default::default())
-            .await;
+    let result = build_result(
+        &ctx.db,
+        &orphan.session_id,
+        &orphan.message_id,
+        None,
+        Default::default(),
+    )
+    .await;
     let mut never = deps.clone();
     never.wake = WakeMode::Never;
-    Ok(Some(post_system_note(ctx, &origin_id, &format_subagent_note(&result), &never)))
+    Ok(Some(post_system_note(
+        ctx,
+        &origin_id,
+        &format_subagent_note(&result),
+        &never,
+    )))
 }
 
 /// The whole recovered batch. One failure must not abandon the rest — a
@@ -413,8 +440,7 @@ mod tests {
     use super::*;
     use crate::agents::testkit::{
         gated_llm, recording_llm, seed_idle_session, seed_spawner, spawner_turn_ctx, until,
-        watch_turns,
-        AgentsFixture,
+        watch_turns, AgentsFixture,
     };
     use crate::schema::parts::Turn;
     use crate::turn::queue::has_unanswered_input;
@@ -439,12 +465,18 @@ mod tests {
     }
 
     fn deps_of(f: &AgentsFixture) -> NoteDeps {
-        NoteDeps { registry: Some(f.registry.clone()), ..Default::default() }
+        NoteDeps {
+            registry: Some(f.registry.clone()),
+            ..Default::default()
+        }
     }
 
     /// The fixture's turn deps, wired the way boot wires them (starter on ctx).
     fn wire_starter(f: &AgentsFixture) -> TurnDeps {
-        let deps = TurnDeps { registry: Some(f.registry.clone()), ..stub_deps() };
+        let deps = TurnDeps {
+            registry: Some(f.registry.clone()),
+            ..stub_deps()
+        };
         *f.ctx.starter.write().unwrap() = Some(create_turn_starter(deps.clone()));
         deps
     }
@@ -506,11 +538,13 @@ mod tests {
 
         // Each failure says what survived.
         for note in [&errored, &stopped, &orphaned] {
-            assert!(note.contains("already written is in the checkout"), "{note}");
+            assert!(
+                note.contains("already written is in the checkout"),
+                "{note}"
+            );
         }
 
-        assert!(format_subagent_note(&result_with(|_| {}))
-            .contains("Changed files: not reported."));
+        assert!(format_subagent_note(&result_with(|_| {})).contains("Changed files: not reported."));
         assert!(format_subagent_note(&result_with(|r| {
             r.changed_files = vec!["a.ts".to_string(), "b.ts".to_string()];
         }))
@@ -531,13 +565,23 @@ mod tests {
         let delivery = post_system_note(
             &f.ctx,
             &session.id,
-            &format_subagent_note(&result_with(|r| r.report = "the audit found two gaps".into())),
+            &format_subagent_note(&result_with(|r| {
+                r.report = "the audit found two gaps".into()
+            })),
             &deps_of(&f),
         );
-        assert_eq!(delivery.wake, WakeOutcome::Started, "an idle spawner is woken");
+        assert_eq!(
+            delivery.wake,
+            WakeOutcome::Started,
+            "an idle spawner is woken"
+        );
 
         until(|| watch.turns_for(&session.id) >= 1, "the woken turn").await;
-        until(|| !f.registry.is_running(&session.id), "the woken turn to finish").await;
+        until(
+            || !f.registry.is_running(&session.id),
+            "the woken turn to finish",
+        )
+        .await;
         assert_eq!(watch.turns_for(&session.id), 1, "exactly one fresh turn");
 
         // The note is in the spawner's own thread, as a system message…
@@ -551,7 +595,10 @@ mod tests {
         let last = serde_json::to_string(&calls.last().unwrap().messages).unwrap();
         assert!(last.contains("subagent finished"), "{last}");
 
-        assert!(watch.violations().is_empty(), "no session ever ran two turns at once");
+        assert!(
+            watch.violations().is_empty(),
+            "no session ever ran two turns at once"
+        );
     }
 
     // ---- wake path 2: the busy spawner --------------------------------------
@@ -563,12 +610,18 @@ mod tests {
         let session = seed_idle_session(&f);
         let (llm, release, mut started) = gated_llm("first turn's answer");
         let f = f.with_llm(llm);
-        let deps = TurnDeps { registry: Some(f.registry.clone()), ..stub_deps() };
+        let deps = TurnDeps {
+            registry: Some(f.registry.clone()),
+            ..stub_deps()
+        };
         *f.ctx.starter.write().unwrap() = Some(create_turn_starter(deps.clone()));
 
         let first = begin_turn(&f.ctx, &session.id, deps).unwrap();
         started.changed().await.unwrap();
-        assert!(f.registry.is_running(&session.id), "a turn is provably in flight");
+        assert!(
+            f.registry.is_running(&session.id),
+            "a turn is provably in flight"
+        );
 
         let delivery = post_system_note(
             &f.ctx,
@@ -576,12 +629,23 @@ mod tests {
             &format_subagent_note(&result_with(|r| r.session_id = "child-9".into())),
             &deps_of(&f),
         );
-        assert_eq!(delivery.wake, WakeOutcome::Queued, "a busy session never gets a second turn");
-        assert_eq!(watch.turns_for(&session.id), 1, "and none was started behind its back");
+        assert_eq!(
+            delivery.wake,
+            WakeOutcome::Queued,
+            "a busy session never gets a second turn"
+        );
+        assert_eq!(
+            watch.turns_for(&session.id),
+            1,
+            "and none was started behind its back"
+        );
         // Persisted and announced immediately all the same.
         let note = delivery.message.unwrap();
         assert_eq!(
-            with_db(&f.db, |d| d.get_message(&note.id)).unwrap().unwrap().role,
+            with_db(&f.db, |d| d.get_message(&note.id))
+                .unwrap()
+                .unwrap()
+                .role,
             Role::System
         );
 
@@ -590,8 +654,16 @@ mod tests {
 
         // The drain: the running turn ends and the note it queued behind
         // becomes the next turn — one, not one per note and not none.
-        until(|| watch.turns_for(&session.id) == 2, "the queued drain to start a turn").await;
-        until(|| !f.registry.is_running(&session.id), "the drained turn to finish").await;
+        until(
+            || watch.turns_for(&session.id) == 2,
+            "the queued drain to start a turn",
+        )
+        .await;
+        until(
+            || !f.registry.is_running(&session.id),
+            "the drained turn to finish",
+        )
+        .await;
         assert_eq!(watch.turns_for(&session.id), 2);
 
         let roles: Vec<Role> = with_db(&f.db, |d| d.messages_for(&session.id))
@@ -614,7 +686,10 @@ mod tests {
         let session = seed_idle_session(&f);
         let (llm, release, mut started) = gated_llm("first turn's answer");
         let f = f.with_llm(llm);
-        let deps = TurnDeps { registry: Some(f.registry.clone()), ..stub_deps() };
+        let deps = TurnDeps {
+            registry: Some(f.registry.clone()),
+            ..stub_deps()
+        };
         *f.ctx.starter.write().unwrap() = Some(create_turn_starter(deps.clone()));
 
         let first = begin_turn(&f.ctx, &session.id, deps).unwrap();
@@ -639,7 +714,11 @@ mod tests {
         until(|| watch.turns_for(&session.id) == 2, "one drained turn").await;
         until(|| !f.registry.is_running(&session.id), "it to finish").await;
 
-        assert_eq!(watch.turns_for(&session.id), 2, "four notes, one turn — not four");
+        assert_eq!(
+            watch.turns_for(&session.id),
+            2,
+            "four notes, one turn — not four"
+        );
         assert_eq!(system_notes(&f, &session.id).len(), 4);
         assert!(watch.violations().is_empty());
     }
@@ -668,14 +747,29 @@ mod tests {
             .collect();
         assert_eq!(
             wakes,
-            vec![WakeOutcome::Started, WakeOutcome::Queued, WakeOutcome::Queued]
+            vec![
+                WakeOutcome::Started,
+                WakeOutcome::Queued,
+                WakeOutcome::Queued
+            ]
         );
 
-        until(|| watch.turns_for(&session.id) == 2, "the drain for the two queued notes").await;
-        until(|| !f.registry.is_running(&session.id), "the drained turn to finish").await;
+        until(
+            || watch.turns_for(&session.id) == 2,
+            "the drain for the two queued notes",
+        )
+        .await;
+        until(
+            || !f.registry.is_running(&session.id),
+            "the drained turn to finish",
+        )
+        .await;
 
         assert_eq!(watch.turns_for(&session.id), 2);
-        assert!(watch.violations().is_empty(), "no session ever ran two turns at once");
+        assert!(
+            watch.violations().is_empty(),
+            "no session ever ran two turns at once"
+        );
     }
 
     // ---- the two deliberate non-wakes ---------------------------------------
@@ -692,7 +786,9 @@ mod tests {
                 id: Uuid::new_v4().to_string(),
                 session_id: session.id.clone(),
                 role: Role::Supervisor,
-                parts: vec![Part::Text { text: "⏹ Stopped.".to_string() }],
+                parts: vec![Part::Text {
+                    text: "⏹ Stopped.".to_string(),
+                }],
                 pending: false,
                 created_at: 1_002,
             })
@@ -725,9 +821,20 @@ mod tests {
             &deps_of(&f),
         );
 
-        assert_eq!(delivery.wake, WakeOutcome::Recorded, "the stop is still in force");
-        assert!(delivery.message.is_some(), "but the report is still written into the thread");
-        assert_eq!(watch.turns_for(&session.id), 0, "nothing restarted the stopped work");
+        assert_eq!(
+            delivery.wake,
+            WakeOutcome::Recorded,
+            "the stop is still in force"
+        );
+        assert!(
+            delivery.message.is_some(),
+            "but the report is still written into the thread"
+        );
+        assert_eq!(
+            watch.turns_for(&session.id),
+            0,
+            "nothing restarted the stopped work"
+        );
         assert!(watch.violations().is_empty());
     }
 
@@ -765,11 +872,21 @@ mod tests {
                 format!("a turn is already running for session {}", s.id),
             ))
         }));
-        deps.report_error = Some(Arc::new(move |err, _sid| sink.lock().unwrap().push(err.clone())));
+        deps.report_error = Some(Arc::new(move |err, _sid| {
+            sink.lock().unwrap().push(err.clone())
+        }));
 
         let delivery = post_system_note(&f.ctx, &session.id, "late note", &deps);
-        assert_eq!(delivery.wake, WakeOutcome::Queued, "persisted, nudged, never lost");
-        assert_eq!(reported.lock().unwrap().len(), 1, "and the race is reported");
+        assert_eq!(
+            delivery.wake,
+            WakeOutcome::Queued,
+            "persisted, nudged, never lost"
+        );
+        assert_eq!(
+            reported.lock().unwrap().len(),
+            1,
+            "and the race is reported"
+        );
         assert!(f.registry.drain(&session.id), "the drain nudge is armed");
         // The derived queue would find it anyway: the note is in the DB.
         assert!(with_db(&f.db, |d| has_unanswered_input(d, &session.id)).unwrap());
@@ -787,12 +904,21 @@ mod tests {
         deps.start = Some(Arc::new(|_c, _s, _m| {
             Ok(async { Err(BoughError::bad_request("async wake failure")) }.boxed())
         }));
-        deps.report_error = Some(Arc::new(move |err, _sid| sink.lock().unwrap().push(err.clone())));
+        deps.report_error = Some(Arc::new(move |err, _sid| {
+            sink.lock().unwrap().push(err.clone())
+        }));
 
         let delivery = post_system_note(&f.ctx, &session.id, "a note", &deps);
         assert_eq!(delivery.wake, WakeOutcome::Started);
-        until(|| !reported.lock().unwrap().is_empty(), "the async rejection to be reported").await;
-        assert!(!f.registry.drain(&session.id), "an async rejection queues nothing");
+        until(
+            || !reported.lock().unwrap().is_empty(),
+            "the async rejection to be reported",
+        )
+        .await;
+        assert!(
+            !f.registry.drain(&session.id),
+            "an async rejection queues nothing"
+        );
     }
 
     // ---- the failure matrix: orphaned by a restart --------------------------
@@ -807,7 +933,9 @@ mod tests {
                 id: Uuid::new_v4().to_string(),
                 session_id: spawner.id.clone(),
                 role: Role::Supervisor,
-                parts: vec![Part::Text { text: "spawning the audit".to_string() }],
+                parts: vec![Part::Text {
+                    text: "spawning the audit".to_string(),
+                }],
                 pending: false,
                 created_at: 1_002,
             })
@@ -871,13 +999,23 @@ mod tests {
         };
         let posted = note_orphaned_subagents(&f.ctx, &orphans, &deps_of(&f)).await;
 
-        assert_eq!(posted.len(), 1, "the stranded child owes its spawner exactly one note");
+        assert_eq!(
+            posted.len(),
+            1,
+            "the stranded child owes its spawner exactly one note"
+        );
         let note = &posted[0];
         let message = note.message.as_ref().unwrap();
-        assert_eq!(message.session_id, spawner.id, "posted to the SPAWNER, not the child");
+        assert_eq!(
+            message.session_id, spawner.id,
+            "posted to the SPAWNER, not the child"
+        );
         let text = first_text(message);
         assert!(text.contains("ORPHANED — the server restarted"), "{text}");
-        assert!(text.contains(&child.id), "names the branch, so the user can open it");
+        assert!(
+            text.contains(&child.id),
+            "names the branch, so the user can open it"
+        );
 
         // Recorded, not woken: recovery surfaces a restart, never resumes it.
         assert_eq!(note.wake, WakeOutcome::Recorded);
@@ -921,7 +1059,11 @@ mod tests {
         assert_eq!(notes.len(), 1, "the seam posts into the spawner's session");
         assert!(first_text(&notes[0]).contains(r#"[subagent finished] "the audit""#));
 
-        until(|| !f.registry.is_running(&seeded.session.id), "the woken turn to finish").await;
+        until(
+            || !f.registry.is_running(&seeded.session.id),
+            "the woken turn to finish",
+        )
+        .await;
         assert_eq!(watch.turns_for(&seeded.session.id), 1);
         assert!(watch.violations().is_empty());
     }
@@ -935,7 +1077,10 @@ mod tests {
         wire_starter(&f);
 
         let notify = create_job_notifier(f.ctx.clone(), deps_of(&f));
-        notify(&session.id, "[background] bg_1 \"failing job\" finished (exit 3), 0 lines");
+        notify(
+            &session.id,
+            "[background] bg_1 \"failing job\" finished (exit 3), 0 lines",
+        );
 
         let notes = system_notes(&f, &session.id);
         assert_eq!(notes.len(), 1);
@@ -944,7 +1089,11 @@ mod tests {
         // It woke the idle session exactly once — the same rule the subagent
         // note obeys, because both go through `post_system_note`.
         until(|| watch.turns_for(&session.id) == 1, "the woken turn").await;
-        until(|| !f.registry.is_running(&session.id), "the woken turn to finish").await;
+        until(
+            || !f.registry.is_running(&session.id),
+            "the woken turn to finish",
+        )
+        .await;
         assert_eq!(watch.turns_for(&session.id), 1);
         assert!(watch.violations().is_empty());
     }

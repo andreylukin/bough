@@ -100,8 +100,7 @@ pub fn title_of(s: &SessionRow) -> String {
         .unwrap_or("")
         .trim_end_matches('/')
         .split('/')
-        .filter(|p| !p.is_empty())
-        .next_back()
+        .rfind(|p| !p.is_empty())
         .unwrap_or("");
     if dir.is_empty() {
         "(untitled)".to_string()
@@ -157,13 +156,24 @@ pub fn mark_legend(rows: &[ForestRow]) -> Vec<String> {
         ("◆", "subagent"),
         ("◷", "scheduled run"),
     ];
-    const STATUSES: [(&str, &str); 4] =
-        [("⋯", "running"), ("✓", "done"), ("✗", "failed"), ("◼", "stopped")];
+    const STATUSES: [(&str, &str); 4] = [
+        ("⋯", "running"),
+        ("✓", "done"),
+        ("✗", "failed"),
+        ("◼", "stopped"),
+    ];
     let mut seen_kind: Vec<&str> = Vec::new();
     let mut seen_status: Vec<&str> = Vec::new();
     // Only `session` rows carry marks — a caption and a turn row do not.
     for r in rows {
-        let ForestRow::Session { session, busy_below, .. } = r else { continue };
+        let ForestRow::Session {
+            session,
+            busy_below,
+            ..
+        } = r
+        else {
+            continue;
+        };
         let g = kind_glyph(session);
         if !seen_kind.contains(&g) {
             seen_kind.push(g);
@@ -222,7 +232,11 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
 
     if p.filtering || p.filter.is_some() {
         out.push(Line::from(Span::styled(
-            format!("/ {}{}", p.filter.unwrap_or(""), if p.filtering { "▌" } else { "" }),
+            format!(
+                "/ {}{}",
+                p.filter.unwrap_or(""),
+                if p.filtering { "▌" } else { "" }
+            ),
             dim,
         )));
     }
@@ -245,7 +259,11 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
         let idx = start + i;
         let sel = idx == p.selected;
         let cursor = if sel { "❯ " } else { "  " };
-        let cursor_style = if sel { Style::default().fg(Color::Cyan) } else { Style::default() };
+        let cursor_style = if sel {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
         let indent = "  ".repeat(item.depth());
         let mut spans: Vec<Span<'static>> = vec![Span::styled(cursor, cursor_style)];
         match item {
@@ -255,7 +273,15 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
                     dim,
                 ));
             }
-            ForestRow::Message { depth, role, gist, matched, active, last, .. } => {
+            ForestRow::Message {
+                depth,
+                role,
+                gist,
+                matched,
+                active,
+                last,
+                ..
+            } => {
                 // A turn: the connector, who said it, the gist. `← active`
                 // marks where the next turn would append, which is what makes
                 // "go back to here" concrete.
@@ -290,7 +316,14 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
                 )];
             }
             ForestRow::Session {
-                session, depth, open, delegated, current, busy_below, expandable, ..
+                session,
+                depth,
+                open,
+                delegated,
+                current,
+                busy_below,
+                expandable,
+                ..
             } => {
                 spans.push(Span::raw(indent.clone()));
                 // The disclosure comes FIRST and is present on every
@@ -310,20 +343,35 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
                 ));
                 spans.push(Span::styled(
                     kind_glyph(session),
-                    if is_delegated(session.session.kind) { Style::default() } else { dim },
+                    if is_delegated(session.session.kind) {
+                        Style::default()
+                    } else {
+                        dim
+                    },
                 ));
                 match status_mark(session, *busy_below) {
-                    Some((glyph, color)) => {
-                        spans.push(Span::styled(format!(" {glyph}"), Style::default().fg(color)))
-                    }
+                    Some((glyph, color)) => spans.push(Span::styled(
+                        format!(" {glyph}"),
+                        Style::default().fg(color),
+                    )),
                     None => spans.push(Span::raw("  ")),
                 }
-                let mut title_style = if sel || *current { bold } else { Style::default() };
+                let mut title_style = if sel || *current {
+                    bold
+                } else {
+                    Style::default()
+                };
                 if *current {
                     title_style = title_style.fg(Color::Green);
                 }
                 spans.push(Span::styled(
-                    format!(" {}", clip(&title_of(session), 12.max(46usize.saturating_sub(depth * 2)))),
+                    format!(
+                        " {}",
+                        clip(
+                            &title_of(session),
+                            12.max(46usize.saturating_sub(depth * 2))
+                        )
+                    ),
                     title_style,
                 ));
                 if *delegated > 0 {
@@ -357,7 +405,10 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
 
     // The marks first, then the keys: the glyphs are what the reader is
     // looking at, and the keys are what they do next.
-    out.push(Line::from(Span::styled(legend_line(&mark_legend(window), p.cols), dim)));
+    out.push(Line::from(Span::styled(
+        legend_line(&mark_legend(window), p.cols),
+        dim,
+    )));
     let mut keys: Vec<String> = Vec::new();
     if p.rows.len() > shown {
         keys.push(format!("{}/{}", p.selected + 1, p.rows.len()));
@@ -409,20 +460,26 @@ mod tests {
     }
 
     fn rendered(p: &TreeProps) -> String {
-        tree_lines(p).iter().map(text_of).collect::<Vec<_>>().join("\n")
+        tree_lines(p)
+            .iter()
+            .map(text_of)
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     // ---- outcome markers --------------------------------------------------
 
     #[test]
     fn a_session_that_never_ran_a_turn_gets_no_marker() {
-        assert_eq!(status_mark(&session_row("x", SessionKind::Root, 1), 0), None);
+        assert_eq!(
+            status_mark(&session_row("x", SessionKind::Root, 1), 0),
+            None
+        );
     }
 
     #[test]
     fn a_failed_delegation_is_marked_even_when_its_turn_ended_cleanly() {
-        let mut failed =
-            with_status(session_row("x", SessionKind::Subagent, 1), TurnStatus::Done);
+        let mut failed = with_status(session_row("x", SessionKind::Subagent, 1), TurnStatus::Done);
         failed.session.outcome_ok = Some(false);
         assert_eq!(status_mark(&failed, 0), Some(("✗", Color::Red)));
         let mut ok = with_status(session_row("y", SessionKind::Subagent, 2), TurnStatus::Done);
@@ -479,14 +536,29 @@ mod tests {
     #[test]
     fn a_root_that_came_from_another_conversation_is_marked_as_derived() {
         assert_eq!(kind_glyph(&session_row("a", SessionKind::Root, 1)), "●");
-        assert_eq!(kind_glyph(&with_origin(session_row("b", SessionKind::Root, 2), "a")), "↦");
-        // The mark distinguishes; it does not replace the kinds that have one.
-        assert_eq!(kind_glyph(&with_origin(session_row("c", SessionKind::Fork, 3), "a")), "⑂");
         assert_eq!(
-            kind_glyph(&with_origin(session_row("d", SessionKind::Compaction, 4), "a")),
+            kind_glyph(&with_origin(session_row("b", SessionKind::Root, 2), "a")),
+            "↦"
+        );
+        // The mark distinguishes; it does not replace the kinds that have one.
+        assert_eq!(
+            kind_glyph(&with_origin(session_row("c", SessionKind::Fork, 3), "a")),
+            "⑂"
+        );
+        assert_eq!(
+            kind_glyph(&with_origin(
+                session_row("d", SessionKind::Compaction, 4),
+                "a"
+            )),
             "≣"
         );
-        assert_eq!(kind_glyph(&with_origin(session_row("e", SessionKind::Subagent, 5), "a")), "◆");
+        assert_eq!(
+            kind_glyph(&with_origin(
+                session_row("e", SessionKind::Subagent, 5),
+                "a"
+            )),
+            "◆"
+        );
     }
 
     // ---- the mark legend ---------------------------------------------------
@@ -507,7 +579,10 @@ mod tests {
     #[test]
     fn the_mark_legend_explains_what_is_on_screen_and_only_that() {
         let legend = mark_legend(&[
-            forest_session(with_status(session_row("a", SessionKind::Root, 1), TurnStatus::Done), 0),
+            forest_session(
+                with_status(session_row("a", SessionKind::Root, 1), TurnStatus::Done),
+                0,
+            ),
             forest_session(
                 with_status(session_row("b", SessionKind::Fork, 2), TurnStatus::Error),
                 0,
@@ -520,8 +595,10 @@ mod tests {
 
     #[test]
     fn a_derived_root_reads_as_a_handoff_not_as_one_you_started() {
-        let legend =
-            mark_legend(&[forest_session(with_origin(session_row("h", SessionKind::Root, 1), "x"), 0)]);
+        let legend = mark_legend(&[forest_session(
+            with_origin(session_row("h", SessionKind::Root, 1), "x"),
+            0,
+        )]);
         assert_eq!(legend, vec!["↦ handoff"]);
     }
 
@@ -588,7 +665,10 @@ mod tests {
                 s
             })
             .collect();
-        let items = forest_rows(&ForestInput { sessions: &sessions, ..Default::default() });
+        let items = forest_rows(&ForestInput {
+            sessions: &sessions,
+            ..Default::default()
+        });
         for h in [4usize, 6, 8, 12, 20] {
             let body = PanelBody::Tree(TreeProps {
                 rows: &items,
@@ -600,11 +680,13 @@ mod tests {
             let painted = draw_panel(PanelTab::Tree, &body, 100, h);
             let last = painted
                 .iter()
-                .filter(|r| r.contains('│'))
-                .next_back()
+                .rfind(|r| r.contains('│'))
                 .cloned()
                 .unwrap_or_default();
-            assert!(last.contains("↑↓ move"), "@{h}: the last row is not the legend: {last}");
+            assert!(
+                last.contains("↑↓ move"),
+                "@{h}: the last row is not the legend: {last}"
+            );
         }
     }
 
@@ -620,7 +702,11 @@ mod tests {
             filtered.contains("nothing matches \"compound\" — titles, paths or messages"),
             "{filtered}"
         );
-        let empty = rendered(&TreeProps { rows: &[], height: 6, ..Default::default() });
+        let empty = rendered(&TreeProps {
+            rows: &[],
+            height: 6,
+            ..Default::default()
+        });
         assert!(empty.contains("no conversations yet"), "{empty}");
     }
 
@@ -629,8 +715,15 @@ mod tests {
         let sessions: Vec<crate::api::SessionRow> = (0..20)
             .map(|i| session_row(&format!("s{i}"), SessionKind::Root, i))
             .collect();
-        let items = forest_rows(&ForestInput { sessions: &sessions, ..Default::default() });
-        let plain = tree_lines(&TreeProps { rows: &items, height: 10, ..Default::default() });
+        let items = forest_rows(&ForestInput {
+            sessions: &sessions,
+            ..Default::default()
+        });
+        let plain = tree_lines(&TreeProps {
+            rows: &items,
+            height: 10,
+            ..Default::default()
+        });
         assert_eq!(plain.len(), 10);
         let with_both = tree_lines(&TreeProps {
             rows: &items,
@@ -650,7 +743,10 @@ mod tests {
         let sessions = vec![session_row("root", SessionKind::Root, 1)];
         let threads = HashMap::from([(
             "root".to_string(),
-            vec![msg("m1", Role::User, "add a discount"), msg("m2", Role::Supervisor, "done")],
+            vec![
+                msg("m1", Role::User, "add a discount"),
+                msg("m2", Role::Supervisor, "done"),
+            ],
         )]);
         let expanded: HashSet<String> = HashSet::from(["root".to_string()]);
         let items = forest_rows(&ForestInput {
@@ -659,7 +755,11 @@ mod tests {
             expanded: &expanded,
             ..Default::default()
         });
-        let frame = rendered(&TreeProps { rows: &items, height: 8, ..Default::default() });
+        let frame = rendered(&TreeProps {
+            rows: &items,
+            height: 8,
+            ..Default::default()
+        });
         assert!(frame.contains("├─ you add a discount"), "{frame}");
         assert!(frame.contains("└─ bough done  ← active"), "{frame}");
     }

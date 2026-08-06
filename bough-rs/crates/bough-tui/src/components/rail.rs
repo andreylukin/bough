@@ -69,7 +69,11 @@ pub fn rail_hint(units: &[LiveUnit]) -> String {
     // — a schedule row is a countdown, not work in flight.
     let scheduled = count(LiveUnitKind::Schedule, "scheduled", "scheduled");
     let bits: Vec<String> = [
-        if live.is_empty() { String::new() } else { format!("{} running", live.join(" · ")) },
+        if live.is_empty() {
+            String::new()
+        } else {
+            format!("{} running", live.join(" · "))
+        },
         scheduled,
     ]
     .into_iter()
@@ -134,7 +138,8 @@ pub fn unit_line(u: &LiveUnit, cols: usize) -> String {
     let tail = bits.join(" · ");
     // Two spaces separate the name from the numbers; the detail takes whatever
     // is left and is dropped entirely rather than rendered as an ellipsis.
-    let room = cols as isize - width(&format!("{glyph} {name}")) as isize - width(&tail) as isize - 6;
+    let room =
+        cols as isize - width(&format!("{glyph} {name}")) as isize - width(&tail) as isize - 6;
     // A DETAIL THAT REPEATS THE NAME IS NOT CONTEXT: a background shell's title
     // and detail are both its command line, so the row read `⚙ sleep 120  5s ·
     // sleep 120`. Compared against the UNCLIPPED title, since `name` may carry
@@ -188,7 +193,11 @@ pub fn rail_rows(
         } else {
             String::new()
         };
-        let head = if on { bold(&info("❯")) } else { " ".to_string() };
+        let head = if on {
+            bold(&info("❯"))
+        } else {
+            " ".to_string()
+        };
         let text = format!("{head} {}{hint}", unit_line(u, w.saturating_sub(2)));
         rows.push(pad_row_ansi(&truncate_ansi(&text, w, "…"), w));
     }
@@ -233,15 +242,23 @@ mod tests {
     fn only_running_delegated_sessions_reach_the_rail() {
         let children = vec![
             busy("busy-sub", SessionKind::Subagent, 1),
-            with_status(session_row("done-sub", SessionKind::Subagent, 2), TurnStatus::Done),
+            with_status(
+                session_row("done-sub", SessionKind::Subagent, 2),
+                TurnStatus::Done,
+            ),
             busy("busy-wf", SessionKind::WorkflowAgent, 3),
-            with_status(session_row("failed-sub", SessionKind::Subagent, 4), TurnStatus::Error),
+            with_status(
+                session_row("failed-sub", SessionKind::Subagent, 4),
+                TurnStatus::Error,
+            ),
             // A fork can be busy too, and it is not delegated work — it is a
             // sibling conversation, and it belongs in the tree.
             busy("busy-fork", SessionKind::Fork, 5),
         ];
-        let ids: Vec<String> =
-            live_subagents(&children).iter().map(|s| s.session.id.clone()).collect();
+        let ids: Vec<String> = live_subagents(&children)
+            .iter()
+            .map(|s| s.session.id.clone())
+            .collect();
         assert_eq!(ids, vec!["busy-sub", "busy-wf"]);
     }
 
@@ -287,7 +304,10 @@ mod tests {
 
     #[test]
     fn the_hint_counts_by_kind_three_shells_and_three_agents_are_different_news() {
-        assert_eq!(rail_hint(&[unit(LiveUnitKind::Shell, "bg_1")]), "↓ 1 shell running");
+        assert_eq!(
+            rail_hint(&[unit(LiveUnitKind::Shell, "bg_1")]),
+            "↓ 1 shell running"
+        );
         assert_eq!(
             rail_hint(&[
                 unit(LiveUnitKind::Shell, "bg_1"),
@@ -296,17 +316,26 @@ mod tests {
             ]),
             "↓ 2 shells · 1 agent running"
         );
-        assert_eq!(rail_hint(&[unit(LiveUnitKind::Workflow, "run")]), "↓ 1 run running");
+        assert_eq!(
+            rail_hint(&[unit(LiveUnitKind::Workflow, "run")]),
+            "↓ 1 run running"
+        );
     }
 
     #[test]
     fn schedules_are_counted_apart_running_would_be_a_lie_about_a_countdown() {
         assert_eq!(
-            rail_hint(&[unit(LiveUnitKind::Schedule, "s1"), unit(LiveUnitKind::Schedule, "s2")]),
+            rail_hint(&[
+                unit(LiveUnitKind::Schedule, "s1"),
+                unit(LiveUnitKind::Schedule, "s2")
+            ]),
             "↓ 2 scheduled"
         );
         assert_eq!(
-            rail_hint(&[unit(LiveUnitKind::Shell, "bg_1"), unit(LiveUnitKind::Schedule, "s1")]),
+            rail_hint(&[
+                unit(LiveUnitKind::Shell, "bg_1"),
+                unit(LiveUnitKind::Schedule, "s1")
+            ]),
             "↓ 1 shell running · 1 scheduled"
         );
     }
@@ -325,8 +354,15 @@ mod tests {
         assert_eq!(rows.len(), 2);
         for row in &rows {
             let plain = strip_ansi(row);
-            assert!(!plain.contains('\n'), "a rail row painted two rows: {plain:?}");
-            assert_eq!(width(row), 80, "row not padded to the full width: {plain:?}");
+            assert!(
+                !plain.contains('\n'),
+                "a rail row painted two rows: {plain:?}"
+            );
+            assert_eq!(
+                width(row),
+                80,
+                "row not padded to the full width: {plain:?}"
+            );
         }
     }
 
@@ -336,7 +372,10 @@ mod tests {
         shell.title = "build".into();
         let selected = strip_ansi(&rail_rows(std::slice::from_ref(&shell), Some(0), 90, None)[0]);
         assert!(selected.starts_with("❯ "), "{selected}");
-        assert!(selected.contains("⏎ open · x stop · esc composer"), "{selected}");
+        assert!(
+            selected.contains("⏎ open · x stop · esc composer"),
+            "{selected}"
+        );
         let armed =
             strip_ansi(&rail_rows(std::slice::from_ref(&shell), Some(0), 90, Some("bg_1"))[0]);
         assert!(armed.contains("x again stops it · esc cancels"), "{armed}");
@@ -346,18 +385,29 @@ mod tests {
         let mut schedule = unit(LiveUnitKind::Schedule, "s1");
         schedule.title = "nightly bench".into();
         let row = strip_ansi(&rail_rows(std::slice::from_ref(&schedule), Some(0), 90, None)[0]);
-        assert!(row.contains("⏎ details · x disable · esc composer"), "{row}");
+        assert!(
+            row.contains("⏎ details · x disable · esc composer"),
+            "{row}"
+        );
         let armed =
             strip_ansi(&rail_rows(std::slice::from_ref(&schedule), Some(0), 90, Some("s1"))[0]);
-        assert!(armed.contains("x again disables it · esc cancels"), "{armed}");
+        assert!(
+            armed.contains("x again disables it · esc cancels"),
+            "{armed}"
+        );
     }
 
     #[test]
     fn with_the_composer_focused_the_last_row_is_the_counting_hint() {
-        let units = [unit(LiveUnitKind::Shell, "bg_1"), unit(LiveUnitKind::Subagent, "a")];
+        let units = [
+            unit(LiveUnitKind::Shell, "bg_1"),
+            unit(LiveUnitKind::Subagent, "a"),
+        ];
         let rows = rail_rows(&units, None, 80, None);
         assert_eq!(rows.len(), 3);
-        assert!(strip_ansi(&rows[2]).trim_end().ends_with("↓ 1 shell · 1 agent running"));
+        assert!(strip_ansi(&rows[2])
+            .trim_end()
+            .ends_with("↓ 1 shell · 1 agent running"));
         // …and no row carries a cursor.
         assert!(!rows.iter().any(|r| strip_ansi(r).starts_with('❯')));
     }

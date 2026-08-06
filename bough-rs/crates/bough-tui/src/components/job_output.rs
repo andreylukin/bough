@@ -56,7 +56,11 @@ fn status_text(job: &BackgroundJob, now: i64) -> String {
         );
     }
     let code = job.exit_code.unwrap_or(0);
-    let verdict = if code == 0 { accent("✓ done") } else { danger(&format!("✗ exit {code}")) };
+    let verdict = if code == 0 {
+        accent("✓ done")
+    } else {
+        danger(&format!("✗ exit {code}"))
+    };
     format!("{verdict} {}", dim(&format!("· ran {took}")))
 }
 
@@ -74,7 +78,11 @@ pub fn job_sub_lines(
     let Some(job) = job else { return vec![dim(id)] };
     let w = width.max(1);
     let lines = wrap_line(
-        &format!("{} {}", dim(&format!("{id} · pid {} ·", job.pid)), one_line(&job.command)),
+        &format!(
+            "{} {}",
+            dim(&format!("{id} · pid {} ·", job.pid)),
+            one_line(&job.command)
+        ),
         w,
     );
     let cap = (((height as isize - 3) / 2).max(1)) as usize;
@@ -82,7 +90,11 @@ pub fn job_sub_lines(
         return lines;
     }
     let mut kept: Vec<String> = lines[..cap].to_vec();
-    kept[cap - 1] = format!("{}{}", truncate_ansi(&kept[cap - 1], w.saturating_sub(2), "…"), dim(" …"));
+    kept[cap - 1] = format!(
+        "{}{}",
+        truncate_ansi(&kept[cap - 1], w.saturating_sub(2), "…"),
+        dim(" …")
+    );
     kept
 }
 
@@ -128,11 +140,13 @@ pub fn job_output_rows(p: &JobOutputProps) -> Vec<String> {
             .collect(),
     };
     let lines: Vec<String> = if all.len() == 1 && all[0].is_empty() {
-        vec![dim(if p.job.map(|j| j.status) == Some(JobStatus::Running) {
-            "(no output yet)"
-        } else {
-            "(no output)"
-        })]
+        vec![dim(
+            if p.job.map(|j| j.status) == Some(JobStatus::Running) {
+                "(no output yet)"
+            } else {
+                "(no output)"
+            },
+        )]
     } else {
         all
     };
@@ -156,15 +170,25 @@ pub fn job_output_rows(p: &JobOutputProps) -> Vec<String> {
             "{behind}{} line{} · ↑↓ scroll · {}esc back",
             lines.len(),
             if lines.len() == 1 { "" } else { "s" },
-            if p.job.map(|j| j.status) == Some(JobStatus::Running) { "x stop · " } else { "" },
+            if p.job.map(|j| j.status) == Some(JobStatus::Running) {
+                "x stop · "
+            } else {
+                ""
+            },
         ))
     };
 
     let mut out: Vec<String> = vec![pad_row_ansi(&truncate_ansi(&head, w, "…"), w)];
-    out.extend(sub.iter().map(|s| pad_row_ansi(&truncate_ansi(s, w, "…"), w)));
+    out.extend(
+        sub.iter()
+            .map(|s| pad_row_ansi(&truncate_ansi(s, w, "…"), w)),
+    );
     out.extend((0..pad).map(|_| pad_row_ansi(" ", w)));
     out.extend(rows.iter().map(|r| {
-        pad_row_ansi(&truncate_ansi(if r.is_empty() { " " } else { r }, w, "…"), w)
+        pad_row_ansi(
+            &truncate_ansi(if r.is_empty() { " " } else { r }, w, "…"),
+            w,
+        )
     }));
     out.push(pad_row_ansi(" ", w));
     out.push(pad_row_ansi(&truncate_ansi(&footer, w, "…"), w));
@@ -172,7 +196,11 @@ pub fn job_output_rows(p: &JobOutputProps) -> Vec<String> {
 }
 
 pub fn render_job_output(p: &JobOutputProps, area: Rect, buf: &mut Buffer) {
-    for (i, row) in job_output_rows(p).iter().take(area.height as usize).enumerate() {
+    for (i, row) in job_output_rows(p)
+        .iter()
+        .take(area.height as usize)
+        .enumerate()
+    {
         let line: Line = line_from_ansi(row);
         buf.set_line(area.x, area.y + i as u16, &line, area.width);
     }
@@ -220,7 +248,11 @@ mod tests {
     fn a_short_command_stays_on_one_row() {
         let lines = job_sub_lines(Some(&job("bun test")), "job-1", 80, 20);
         assert_eq!(lines.len(), 1);
-        assert!(strip_ansi(&lines[0]).contains("job-1 · pid 4242 · bun test"), "{:?}", lines[0]);
+        assert!(
+            strip_ansi(&lines[0]).contains("job-1 · pid 4242 · bun test"),
+            "{:?}",
+            lines[0]
+        );
     }
 
     #[test]
@@ -233,7 +265,12 @@ mod tests {
         }
         // Nothing was lost: the rows joined back together hold the command.
         let joined: String = lines.iter().map(|l| strip_ansi(l)).collect();
-        assert!(joined.replace([' ', '\n'], "").contains("deploy@host:/srv/app/"), "{joined}");
+        assert!(
+            joined
+                .replace([' ', '\n'], "")
+                .contains("deploy@host:/srv/app/"),
+            "{joined}"
+        );
     }
 
     #[test]
@@ -257,32 +294,56 @@ mod tests {
     #[test]
     fn the_view_paints_exactly_its_height_and_hangs_the_output_from_the_bottom() {
         let j = job("bun test");
-        let output = (0..40).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let output = (0..40)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let rows = job_output_rows(&props(Some(&j), &output));
         assert_eq!(rows.len(), 12);
         let plain: Vec<String> = rows.iter().map(|r| strip_ansi(r)).collect();
         assert!(plain[0].contains("⚙ dev server"), "{:?}", plain[0]);
         assert!(plain[0].contains("⋯ running"), "{:?}", plain[0]);
         // The tail is what it shows by default.
-        assert!(plain[rows.len() - 3].trim_end().ends_with("line 39"), "{plain:?}");
-        assert!(plain.last().unwrap().contains("40 lines · ↑↓ scroll · x stop · esc back"));
+        assert!(
+            plain[rows.len() - 3].trim_end().ends_with("line 39"),
+            "{plain:?}"
+        );
+        assert!(plain
+            .last()
+            .unwrap()
+            .contains("40 lines · ↑↓ scroll · x stop · esc back"));
     }
 
     #[test]
     fn scroll_counts_up_from_the_tail_and_says_how_much_is_below() {
         let j = job("bun test");
-        let output = (0..40).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
-        let rows = job_output_rows(&JobOutputProps { scroll: 5, ..props(Some(&j), &output) });
+        let output = (0..40)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rows = job_output_rows(&JobOutputProps {
+            scroll: 5,
+            ..props(Some(&j), &output)
+        });
         let plain: Vec<String> = rows.iter().map(|r| strip_ansi(r)).collect();
-        assert!(plain[rows.len() - 3].trim_end().ends_with("line 34"), "{plain:?}");
-        assert!(plain.last().unwrap().contains("5 lines below · 40 lines"), "{plain:?}");
+        assert!(
+            plain[rows.len() - 3].trim_end().ends_with("line 34"),
+            "{plain:?}"
+        );
+        assert!(
+            plain.last().unwrap().contains("5 lines below · 40 lines"),
+            "{plain:?}"
+        );
     }
 
     #[test]
     fn a_progress_bar_rewrite_shows_its_last_segment_only() {
         let j = job("bun test");
         let rows = job_output_rows(&props(Some(&j), "10%\r50%\r100%\ndone"));
-        let plain: Vec<String> = rows.iter().map(|r| strip_ansi(r).trim_end().to_string()).collect();
+        let plain: Vec<String> = rows
+            .iter()
+            .map(|r| strip_ansi(r).trim_end().to_string())
+            .collect();
         assert!(plain.contains(&"100%".to_string()), "{plain:?}");
         assert!(!plain.iter().any(|l| l.contains("10%50%")), "{plain:?}");
         assert!(plain.contains(&"done".to_string()), "{plain:?}");
@@ -292,7 +353,9 @@ mod tests {
     fn an_empty_buffer_says_which_kind_of_empty_it_is() {
         let mut j = job("bun test");
         let running = job_output_rows(&props(Some(&j), ""));
-        assert!(running.iter().any(|r| strip_ansi(r).contains("(no output yet)")));
+        assert!(running
+            .iter()
+            .any(|r| strip_ansi(r).contains("(no output yet)")));
         j.status = JobStatus::Exited;
         j.exit_code = Some(0);
         j.exited_at = Some(1_700_000_030_000);
@@ -318,9 +381,15 @@ mod tests {
     #[test]
     fn the_armed_footer_says_what_the_next_press_does_and_how_to_back_out() {
         let j = job("bun test");
-        let rows = job_output_rows(&JobOutputProps { armed: true, ..props(Some(&j), "x") });
+        let rows = job_output_rows(&JobOutputProps {
+            armed: true,
+            ..props(Some(&j), "x")
+        });
         let footer = strip_ansi(rows.last().unwrap());
-        assert!(footer.starts_with("x again kills it · esc cancels"), "{footer}");
+        assert!(
+            footer.starts_with("x again kills it · esc cancels"),
+            "{footer}"
+        );
     }
 
     #[test]
@@ -332,6 +401,9 @@ mod tests {
         let plain: Vec<String> = rows.iter().map(|r| strip_ansi(r)).collect();
         assert!(plain[0].contains("⚙ job-1"), "{:?}", plain[0]);
         assert!(plain[0].contains("(job not found)"), "{:?}", plain[0]);
-        assert!(plain.iter().any(|l| l.contains("job not found")), "{plain:?}");
+        assert!(
+            plain.iter().any(|l| l.contains("job not found")),
+            "{plain:?}"
+        );
     }
 }

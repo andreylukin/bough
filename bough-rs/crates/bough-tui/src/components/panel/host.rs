@@ -17,15 +17,22 @@ use std::collections::{HashMap, HashSet};
 
 use bough_core::schema::parts::Message;
 
-use crate::api::SessionRow;
-use crate::forest::{
-    forest_rows, reveal_path, selection_for, ForestInput, ForestRow, Selection,
+use crate::api::{
+    McpStatus, ModelRow, SessionRow, SkillSourceRow, WorkflowDetail, WorkflowSummary,
 };
+use crate::forest::{forest_rows, reveal_path, selection_for, ForestInput, ForestRow, Selection};
 use crate::keys::{Command, PanelTab};
 use crate::store::state::SessionChangeSet;
 
 use super::changes::{change_items, ChangeItem, PendingRevert};
+use super::mcp::mcp_names;
+use super::model::{
+    display_rows, model_entries, model_window, visible_entries, ModelConfig, ModelEntry,
+    ModelFilters, Tier,
+};
+use super::skills::SkillRow;
 use super::tree::forest_window;
+use super::workflows::{phase_groups, visible_agents, wf_runs_height, WfLevel, WF_FILTERS};
 use super::{panel_action_for, PanelAction, PanelState, INITIAL_PANEL};
 
 /// What the panel needs the app to do. Every one is a REST call the loop owns;
@@ -46,6 +53,58 @@ pub enum HostRequest {
     /// Persist the kept palette. The verb is decided by
     /// `theme::persist_request`, never here.
     SaveTheme(crate::theme::ThemeWrite),
+    // ---- the workflows tab -------------------------------------------------
+    /// `GET /workflows?session=` — the run list, on entry.
+    LoadWorkflows,
+    /// `GET /workflows/:id` — one run's whole view, on open and on refresh.
+    LoadWorkflow(String),
+    /// `POST /workflows/:id/{pause,resume,stop,rerun}`.
+    SteerWorkflow { id: String, action: WorkflowAction },
+    /// `POST /workflows/:id/save` — store the script to run again by name.
+    SaveWorkflow(String),
+    // ---- the mcp tab -------------------------------------------------------
+    /// `GET /mcp/servers` — RE-FETCHED on every entry, never cached.
+    LoadMcp,
+    /// `POST /mcp/servers/:name/{enable,disable}` — the grant.
+    SetMcpEnabled { name: String, enabled: bool },
+    /// `PUT /mcp/servers/:name` — register a remote server by URL.
+    AddMcpServer { name: String, url: String },
+    /// `DELETE /mcp/servers/:name` — drop the registration itself.
+    DeleteMcpServer(String),
+    /// `POST /mcp/servers/:name/connect` — the `c` test.
+    ConnectMcpServer(String),
+    /// `POST /mcp/servers/:name/restart`.
+    RestartMcpServer(String),
+    /// `POST /mcp/servers/:name/auth` — begin the flow; the answer carries the
+    /// URL the tab prints.
+    BeginMcpAuth(String),
+    /// `DELETE /mcp/servers/:name/auth` — forget the stored credentials.
+    ClearMcpAuth(String),
+    // ---- the skills tab ----------------------------------------------------
+    /// `GET /skills` — the listing AND the directories that were walked.
+    LoadSkillRows,
+    // ---- the model tab -----------------------------------------------------
+    /// `GET /models` — the catalog, answered server-side because the server is
+    /// the process that holds the credential.
+    LoadModels,
+    /// `GET /model-settings` — what a NEW conversation runs on, both tiers.
+    LoadModelSettings,
+    /// `PUT /model-settings` + the session pin. The whole config travels, so a
+    /// caller cannot perform half of spec §12's "pins this session AND moves
+    /// the default".
+    SaveModel(ModelConfig),
+    /// Open this agent's backing session (`o` in the workflows tab).
+    OpenAgentSession(String),
+}
+
+/// The four steering verbs, so the request carries one enum rather than a
+/// stringly-typed path fragment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkflowAction {
+    Pause,
+    Resume,
+    Stop,
+    Rerun,
 }
 
 /// The concrete preview, seen through the panel's own trait. The widths differ
@@ -76,6 +135,19 @@ pub struct PanelHost {
     pub drilled: HashSet<String>,
     pub current_id: Option<String>,
     pub workspace: Option<String>,
+    /// The `/` buffer. In the tree it is a FULL-TEXT search of every message,
+    /// which is what the keymap has always claimed it was.
+    pub filter: String,
+    /// Does the buffer have the text keyboard? (`panelFiltering`.)
+    pub filtering: bool,
+    /// Conversations whose MESSAGES matched, from `GET /search` — a row is
+    /// either reachable or it is not, and that is what the switcher is asking.
+    pub matched_sessions: Vec<String>,
+    /// The matched message ids, so the row that said the word is marked.
+    pub matched_messages: Vec<String>,
+    /// Topic headers per conversation, from `POST /sessions/:id/sections`.
+    /// Absent = not fetched, which is NOT the same as "no topics".
+    pub sections: HashMap<String, Vec<crate::forest::SectionRange>>,
     // ---- the changes tab ---------------------------------------------------
     pub changes: Option<SessionChangeSet>,
     pub items: Vec<ChangeItem>,
@@ -89,6 +161,44 @@ pub struct PanelHost {
     /// It is NOT rebuilt on every arrival: a preview rebuilt per entry would
     /// forget the baseline it owes a revert to.
     pub theme: Option<crate::theme::ThemePreview>,
+    // ---- the workflows tab -------------------------------------------------
+    pub runs: Vec<WorkflowSummary>,
+    /// `GET /workflows/:id` for the opened run. `None` at level 0, and while
+    /// the fetch is in flight — the view falls back to the run list rather
+    /// than painting a header full of zeroes.
+    pub run_detail: Option<WorkflowDetail>,
+    /// 0 runs · 1 phases · 2 a phase's agents · 3 one agent · 4 the script.
+    pub wf_level: WfLevel,
+    pub phase_sel: usize,
+    pub agent_sel: usize,
+    pub wf_scroll: usize,
+    /// Index into [`WF_FILTERS`]; `f` cycles it.
+    pub wf_filter: usize,
+    pub prompt_open: bool,
+    /// The run's last log line, for the header's `▸` row.
+    pub last_log: Option<String>,
+    // ---- the mcp tab -------------------------------------------------------
+    /// NEVER CACHED: re-fetched on every entry, because grants and connections
+    /// change between turns and a panel showing last minute's MCP state is
+    /// worse than one showing none.
+    pub mcp: Option<McpStatus>,
+    /// The server URL being typed (`n`), or `None` when the buffer is closed.
+    pub mcp_entry: Option<String>,
+    /// A registration `d` armed. A second `d` performs it.
+    pub mcp_pending_delete: Option<String>,
+    // ---- the skills tab ----------------------------------------------------
+    /// `None` = nothing has answered yet. Never rendered as "no skills
+    /// installed", which is a claim about a directory this client never read.
+    pub skills: Option<Vec<SkillRow>>,
+    pub skill_sources: Vec<SkillSourceRow>,
+    /// Why the listing is absent, when it is.
+    pub skills_note: Option<String>,
+    // ---- the model tab -----------------------------------------------------
+    pub models: Vec<ModelRow>,
+    pub model_cfg: ModelConfig,
+    pub model_filters: ModelFilters,
+    /// Which search box has the keyboard, or `None` when neither does.
+    pub model_focus: Option<Tier>,
 }
 
 impl Default for PanelHost {
@@ -103,12 +213,36 @@ impl Default for PanelHost {
             drilled: HashSet::new(),
             current_id: None,
             workspace: None,
+            filter: String::new(),
+            filtering: false,
+            matched_sessions: Vec::new(),
+            matched_messages: Vec::new(),
+            sections: HashMap::new(),
             changes: None,
             items: Vec::new(),
             diff_focused: false,
             diff_scroll: 0,
             pending: None,
             theme: None,
+            runs: Vec::new(),
+            run_detail: None,
+            wf_level: 0,
+            phase_sel: 0,
+            agent_sel: 0,
+            wf_scroll: 0,
+            wf_filter: 0,
+            prompt_open: false,
+            last_log: None,
+            mcp: None,
+            mcp_entry: None,
+            mcp_pending_delete: None,
+            skills: None,
+            skill_sources: Vec::new(),
+            skills_note: None,
+            models: Vec::new(),
+            model_cfg: ModelConfig::default(),
+            model_filters: ModelFilters::default(),
+            model_focus: None,
         }
     }
 }
@@ -133,6 +267,13 @@ impl PanelHost {
             expanded: &self.expanded,
             drilled: &self.drilled,
             current_id: self.current_id.as_deref(),
+            // Only when the buffer belongs to THIS tab: an MCP URL half-typed
+            // must never narrow the conversation list underneath it.
+            filter: (self.state.tab == PanelTab::Tree && !self.filter.is_empty())
+                .then_some(self.filter.as_str()),
+            matched_sessions: &self.matched_sessions,
+            matched_messages: &self.matched_messages,
+            sections: Some(&self.sections),
             ..Default::default()
         })
     }
@@ -187,8 +328,131 @@ impl PanelHost {
             // The cursor is the PREVIEW's, not the panel's: it starts on the
             // theme in force, so `sel` is left at 0 and never read here.
             PanelTab::Theme => vec![HostRequest::LoadTheme],
-            _ => Vec::new(),
+            // A run view opens on the LIST, never on whatever run was last
+            // drilled into: a level that outlives its tab shows a run's header
+            // over another conversation's list.
+            PanelTab::Workflows => {
+                self.wf_level = 0;
+                self.run_detail = None;
+                self.phase_sel = 0;
+                self.agent_sel = 0;
+                self.wf_scroll = 0;
+                self.prompt_open = false;
+                vec![HostRequest::LoadWorkflows]
+            }
+            // NOTHING HERE IS CACHED. Grants and connections change between
+            // turns, and a panel showing last minute's MCP state is worse than
+            // one showing none.
+            PanelTab::Mcp => {
+                self.mcp_entry = None;
+                self.mcp_pending_delete = None;
+                vec![HostRequest::LoadMcp]
+            }
+            PanelTab::Skills => vec![HostRequest::LoadSkillRows],
+            // Two fetches, because they answer two different questions: what
+            // this install can route to, and what it is set to right now.
+            PanelTab::Model => {
+                self.model_focus = None;
+                vec![HostRequest::LoadModels, HostRequest::LoadModelSettings]
+            }
         }
+    }
+
+    // ---- what the fetches answer with --------------------------------------
+
+    pub fn set_workflows(&mut self, runs: Vec<WorkflowSummary>) {
+        self.runs = runs;
+        if self.state.tab == PanelTab::Workflows && self.wf_level == 0 {
+            self.sel = self.sel.min(self.runs.len().saturating_sub(1));
+        }
+    }
+
+    /// One run's detail. Clamps the two pane cursors, because a refresh that
+    /// arrives after an agent settles can shorten the list under them.
+    pub fn set_workflow_detail(&mut self, detail: Option<WorkflowDetail>) {
+        self.run_detail = detail;
+        let Some(detail) = &self.run_detail else {
+            return;
+        };
+        let groups = phase_groups(&detail.workflow, &detail.agents);
+        self.phase_sel = self.phase_sel.min(groups.len().saturating_sub(1));
+        let shown = groups
+            .get(self.phase_sel)
+            .map(|g| visible_agents(&g.agents, self.wf_filter()).len())
+            .unwrap_or(0);
+        self.agent_sel = self.agent_sel.min(shown.saturating_sub(1));
+    }
+
+    pub fn set_mcp(&mut self, status: Option<McpStatus>) {
+        self.mcp = status;
+        let count = self.mcp.as_ref().map(|s| mcp_names(s).len()).unwrap_or(0);
+        self.sel = self.sel.min(count.saturating_sub(1));
+    }
+
+    /// The skills listing AND the directories that were walked. `None` is "the
+    /// fetch failed" and carries its reason; it is never an empty list, which
+    /// would be a claim about the user's `~/.bough/skills`.
+    pub fn set_skills(
+        &mut self,
+        skills: Option<Vec<SkillRow>>,
+        sources: Vec<SkillSourceRow>,
+        note: Option<String>,
+    ) {
+        self.skills = skills;
+        self.skill_sources = sources;
+        self.skills_note = note;
+        let count = self.filtered_skills().len();
+        self.sel = self.sel.min(count.saturating_sub(1));
+    }
+
+    pub fn set_models(&mut self, models: Vec<ModelRow>) {
+        self.models = models;
+    }
+
+    pub fn set_model_config(&mut self, cfg: ModelConfig) {
+        self.model_cfg = cfg;
+    }
+
+    // ---- derived lists, shared by the renderer and the cursor ---------------
+
+    /// The filter in force for this tab, or `None`. A `/` buffer belongs to ONE
+    /// tab: an MCP URL half-typed must never narrow the skills list underneath.
+    fn skills_filter(&self) -> &str {
+        if self.state.tab == PanelTab::Skills {
+            self.filter.trim()
+        } else {
+            ""
+        }
+    }
+
+    /// The skills the tab paints — the SAME list the cursor and the digits
+    /// address. Two derivations of "which rows are visible" is how a digit comes
+    /// to select a row nobody can see.
+    pub fn filtered_skills(&self) -> Vec<SkillRow> {
+        let Some(skills) = &self.skills else {
+            return Vec::new();
+        };
+        let q = self.skills_filter().to_lowercase();
+        if q.is_empty() {
+            return skills.clone();
+        }
+        skills
+            .iter()
+            .filter(|s| {
+                s.name.to_lowercase().contains(&q) || s.description.to_lowercase().contains(&q)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// The `f` cycle's current value.
+    pub fn wf_filter(&self) -> Option<&'static str> {
+        WF_FILTERS[self.wf_filter % WF_FILTERS.len()]
+    }
+
+    /// The picker's flat entry list, narrowed per tier by its own box.
+    pub fn model_entries(&self) -> Vec<ModelEntry> {
+        model_entries(&self.models, None, &self.model_filters)
     }
 
     /// Seed the browsing session from `GET /theme`. Re-entering the tab must
@@ -211,6 +475,26 @@ impl PanelHost {
             self.diff_focused = false;
             return true;
         }
+        // The URL buffer and the armed delete are nearer than the run level.
+        if self.state.tab == PanelTab::Mcp {
+            if self.mcp_entry.take().is_some() {
+                return true;
+            }
+            if self.mcp_pending_delete.take().is_some() {
+                return true;
+            }
+        }
+        // The Miller columns unwind ONE at a time, so escape from an agent
+        // lands on its phase rather than on the chat.
+        if self.state.tab == PanelTab::Workflows && self.wf_level > 0 {
+            self.wf_level -= 1;
+            self.wf_scroll = 0;
+            self.prompt_open = false;
+            if self.wf_level == 0 {
+                self.run_detail = None;
+            }
+            return true;
+        }
         false
     }
 
@@ -218,15 +502,68 @@ impl PanelHost {
         match self.state.tab {
             PanelTab::Tree => self.rows().len(),
             PanelTab::Changes => self.items.len(),
-            _ => 0,
+            PanelTab::Workflows => self.runs.len(),
+            PanelTab::Mcp => self.mcp.as_ref().map(|s| mcp_names(s).len()).unwrap_or(0),
+            PanelTab::Skills => self.filtered_skills().len(),
+            PanelTab::Model => self.model_entries().len(),
+            PanelTab::Theme => 0,
         }
+    }
+
+    /// The agents visible at levels 2–3: the selected phase's, through the `f`
+    /// filter. One derivation, used by the cursor AND the renderer.
+    fn shown_agents(&self) -> Vec<bough_core::workflow::control::WorkflowAgentView> {
+        let Some(detail) = &self.run_detail else {
+            return Vec::new();
+        };
+        let groups = phase_groups(&detail.workflow, &detail.agents);
+        let Some(group) = groups.get(self.phase_sel.min(groups.len().saturating_sub(1))) else {
+            return Vec::new();
+        };
+        visible_agents(&group.agents, self.wf_filter())
+    }
+
+    /// Cursor movement INSIDE the workflow view, which has three of them —
+    /// the run list at level 0, the phase column, the agent column — plus a
+    /// scroll at levels 3 and 4. Returns whether it took the keypress.
+    fn move_workflow(&mut self, delta: isize) -> bool {
+        if self.state.tab != PanelTab::Workflows {
+            return false;
+        }
+        let clamp = |at: isize, len: usize| -> usize {
+            at.clamp(0, len.saturating_sub(1) as isize).max(0) as usize
+        };
+        match self.wf_level {
+            0 => return false, // the panel's own `sel`
+            1 => {
+                let groups = self
+                    .run_detail
+                    .as_ref()
+                    .map(|d| phase_groups(&d.workflow, &d.agents).len())
+                    .unwrap_or(0);
+                self.phase_sel = clamp(self.phase_sel as isize + delta, groups);
+                // A phase change retargets the agent column: leaving the cursor
+                // on row 9 of a phase with two agents is a cursor on nothing.
+                self.agent_sel = 0;
+            }
+            2 => {
+                let shown = self.shown_agents().len();
+                self.agent_sel = clamp(self.agent_sel as isize + delta, shown);
+            }
+            // The agent detail and the script SCROLL rather than select.
+            _ => self.wf_scroll = (self.wf_scroll as isize + delta).max(0) as usize,
+        }
+        true
     }
 
     /// `reduce_panel` with the preview attached. The preview travels WITH
     /// every state change because that function is the ONE place that knows
     /// you left the theme tab, and there are five ways to leave it.
     fn reduce_with_theme(&mut self, action: PanelAction) -> PanelState {
-        let theme = self.theme.as_mut().map(|t| t as &mut dyn super::ThemePreview);
+        let theme = self
+            .theme
+            .as_mut()
+            .map(|t| t as &mut dyn super::ThemePreview);
         super::reduce_panel(self.state, action, theme)
     }
 
@@ -260,14 +597,16 @@ impl PanelHost {
             match action {
                 PanelAction::Move(delta) => {
                     if self.state.tab == PanelTab::Changes && self.diff_focused {
-                        self.diff_scroll =
-                            (self.diff_scroll as isize + delta).max(0) as usize;
+                        self.diff_scroll = (self.diff_scroll as isize + delta).max(0) as usize;
                     } else if self.state.tab == PanelTab::Theme {
                         // Moving here PAINTS, and `reduce_panel` is where that
                         // is written — the preview owns its own cursor
                         // (clamped, never wrapping), so the panel's `sel` is
                         // deliberately not advanced beside it.
                         self.state = self.reduce_with_theme(PanelAction::Move(delta));
+                    } else if self.move_workflow(delta) {
+                        // Levels 1–4 have their own cursors; level 0 falls
+                        // through to the panel's.
                     } else {
                         self.move_to(self.sel as isize + delta);
                     }
@@ -340,7 +679,11 @@ impl PanelHost {
             }
             Command::MovePageUp | Command::MovePageDown => {
                 let page = body_rows.saturating_sub(2).max(1) as isize;
-                let delta = if command == Command::MovePageUp { -page } else { page };
+                let delta = if command == Command::MovePageUp {
+                    -page
+                } else {
+                    page
+                };
                 if self.state.tab == PanelTab::Changes && self.diff_focused {
                     // The DIFF pages, not the file cursor: paging used to move
                     // the cursor and silently retarget `x`.
@@ -382,6 +725,130 @@ impl PanelHost {
                 }
                 Vec::new()
             }
+            // ---- the workflows tab's steering (spec §8) --------------------
+            //
+            // The verbs act on the run in view — the opened one at levels 1–4,
+            // the SELECTED row at level 0 — so a verb that works and is never
+            // reachable from the list is a verb nobody has.
+            Command::WfPause | Command::WfResume | Command::WfStop | Command::WfRerun => {
+                let Some(id) = self.wf_target() else {
+                    return Vec::new();
+                };
+                let action = match command {
+                    Command::WfPause => WorkflowAction::Pause,
+                    Command::WfResume => WorkflowAction::Resume,
+                    Command::WfStop => WorkflowAction::Stop,
+                    _ => WorkflowAction::Rerun,
+                };
+                vec![HostRequest::SteerWorkflow { id, action }]
+            }
+            Command::WfSave => match self.wf_target() {
+                Some(id) => vec![HostRequest::SaveWorkflow(id)],
+                None => Vec::new(),
+            },
+            // `e` is the script LEVEL, and it needs the run's body — the level
+            // is refused rather than opened over a header full of nothing.
+            Command::WfScript => {
+                if self.state.tab == PanelTab::Workflows {
+                    match (self.run_detail.is_some(), self.wf_target()) {
+                        (true, _) => {
+                            self.wf_level = 4;
+                            self.wf_scroll = 0;
+                        }
+                        (false, Some(id)) => return vec![HostRequest::LoadWorkflow(id)],
+                        (false, None) => self.message = Some(NO_RUN_SELECTED.to_string()),
+                    }
+                }
+                Vec::new()
+            }
+            Command::WfFilter => {
+                if self.state.tab == PanelTab::Workflows {
+                    self.wf_filter = (self.wf_filter + 1) % WF_FILTERS.len();
+                    // The filter shortens the list under the cursor.
+                    self.agent_sel = 0;
+                }
+                Vec::new()
+            }
+            // `o` opens the agent's BACKING SESSION — the drill-in that makes a
+            // fan-out's work readable rather than summarised.
+            Command::WfOpenAgent => {
+                if self.state.tab != PanelTab::Workflows || self.wf_level < 2 {
+                    return Vec::new();
+                }
+                let shown = self.shown_agents();
+                match shown
+                    .get(self.agent_sel)
+                    .and_then(|a| a.agent.session_id.clone())
+                {
+                    Some(id) => {
+                        self.state.open = false;
+                        vec![HostRequest::OpenAgentSession(id)]
+                    }
+                    None => {
+                        self.message = Some(NO_AGENT_SESSION.to_string());
+                        Vec::new()
+                    }
+                }
+            }
+            // ---- the mcp tab's verbs ---------------------------------------
+            Command::McpAdd => {
+                if self.state.tab == PanelTab::Mcp {
+                    // An empty buffer, opened. The name is derived from the URL
+                    // at registration time, never typed.
+                    self.mcp_entry = Some(String::new());
+                    self.mcp_pending_delete = None;
+                }
+                Vec::new()
+            }
+            Command::McpConnect => match self.mcp_selected() {
+                Some(name) => vec![HostRequest::ConnectMcpServer(name)],
+                None => Vec::new(),
+            },
+            Command::McpRestart => match self.mcp_selected() {
+                Some(name) => vec![HostRequest::RestartMcpServer(name)],
+                None => Vec::new(),
+            },
+            Command::McpAuth => match self.mcp_selected() {
+                Some(name) => vec![HostRequest::BeginMcpAuth(name)],
+                None => Vec::new(),
+            },
+            Command::McpForget => match self.mcp_selected() {
+                Some(name) => vec![HostRequest::ClearMcpAuth(name)],
+                None => Vec::new(),
+            },
+            // Two keypresses, like every destructive verb here: `d` arms and
+            // names what it will drop, `d` again performs it.
+            Command::McpRemove => {
+                let Some(name) = self.mcp_selected() else {
+                    return Vec::new();
+                };
+                match self.mcp_pending_delete.take() {
+                    Some(armed) if armed == name => {
+                        self.message = None;
+                        vec![HostRequest::DeleteMcpServer(name)]
+                    }
+                    _ => {
+                        self.message = Some(format!(
+                            "d again deletes the registration for {name} — credentials are kept; F forgets those"
+                        ));
+                        self.mcp_pending_delete = Some(name);
+                        Vec::new()
+                    }
+                }
+            }
+            // ---- the model tab ---------------------------------------------
+            //
+            // ⇥ between the two boxes. Two boxes and not one, because picking a
+            // frontier model and a cheap one is a single decision about a pair.
+            Command::PanelFilterTier => {
+                if self.state.tab == PanelTab::Model {
+                    self.model_focus = Some(match self.model_focus {
+                        Some(Tier::Frontier) => Tier::Cheap,
+                        _ => Tier::Frontier,
+                    });
+                }
+                Vec::new()
+            }
             // 3./4. The surgery verbs, refused out loud rather than faked.
             Command::TreeExtract => {
                 if self.state.tab == PanelTab::Tree {
@@ -401,8 +868,130 @@ impl PanelHost {
                 }
                 Vec::new()
             }
+            // 12. The `/` buffer (row 3.21). In the tree it is a full-text
+            // search of every message; the debounced fetch is the app's, and
+            // the panel only owns the text.
+            Command::PanelFilter => {
+                self.filtering = true;
+                // The model tab has TWO boxes; `/` lands on the frontier one and
+                // ⇥ crosses. Every other filtering tab has one.
+                if self.state.tab == PanelTab::Model && self.model_focus.is_none() {
+                    self.model_focus = Some(Tier::Frontier);
+                }
+                Vec::new()
+            }
+            Command::PanelFilterBack => {
+                match self.model_box() {
+                    Some(buffer) => {
+                        buffer.pop();
+                    }
+                    None => {
+                        self.filter.pop();
+                    }
+                }
+                self.move_to(0);
+                Vec::new()
+            }
+            // esc CLEARS: a narrowed list nobody can see the query for is a
+            // list that looks broken.
+            Command::PanelFilterExit => {
+                self.filtering = false;
+                match self.model_box() {
+                    Some(buffer) => buffer.clear(),
+                    None => self.filter.clear(),
+                }
+                self.model_focus = None;
+                self.matched_sessions.clear();
+                self.matched_messages.clear();
+                self.move_to(0);
+                Vec::new()
+            }
             _ => Vec::new(),
         }
+    }
+
+    /// The run a steering verb acts on: the OPENED one at levels 1–4, the
+    /// selected row at level 0. `None` outside the tab, or with an empty list.
+    fn wf_target(&self) -> Option<String> {
+        if self.state.tab != PanelTab::Workflows {
+            return None;
+        }
+        if let Some(detail) = self.run_detail.as_ref().filter(|_| self.wf_level > 0) {
+            return Some(detail.workflow.id.clone());
+        }
+        self.runs.get(self.sel).map(|r| r.id.clone())
+    }
+
+    /// The registered server under the cursor. `None` outside the tab.
+    fn mcp_selected(&self) -> Option<String> {
+        if self.state.tab != PanelTab::Mcp {
+            return None;
+        }
+        mcp_names(self.mcp.as_ref()?).get(self.sel).cloned()
+    }
+
+    /// The tier box the keyboard is typing into, if any. Returned as a mutable
+    /// borrow so `/`'s three commands each edit exactly one buffer.
+    fn model_box(&mut self) -> Option<&mut String> {
+        if self.state.tab != PanelTab::Model {
+            return None;
+        }
+        match self.model_focus? {
+            Tier::Cheap => Some(&mut self.model_filters.cheap),
+            _ => Some(&mut self.model_filters.frontier),
+        }
+    }
+
+    /// One printable character into the `/` buffer. Unbound keys reach here
+    /// only while [`Self::filtering`], which is what the keymap's
+    /// `panelFiltering` guard is for.
+    pub fn type_filter(&mut self, c: char) {
+        if !self.filtering {
+            // The MCP URL buffer is its OWN modal buffer and is not the `/`
+            // filter: it takes text while it is open, and the filter guard
+            // never applies to this tab.
+            if self.state.tab == PanelTab::Mcp {
+                if let Some(entry) = self.mcp_entry.as_mut() {
+                    entry.push(c);
+                }
+            }
+            return;
+        }
+        match self.model_box() {
+            Some(buffer) => buffer.push(c),
+            None => self.filter.push(c),
+        }
+        self.move_to(0);
+    }
+
+    /// ⌫ inside the MCP URL buffer, which the `/` filter's own backspace does
+    /// not reach (the two buffers are never open at once, and the guard that
+    /// routes the filter's keys is off in this tab).
+    pub fn mcp_entry_back(&mut self) -> bool {
+        match self.mcp_entry.as_mut() {
+            Some(entry) => {
+                entry.pop();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// What `GET /search` answered for `q`, ignored when the buffer has moved
+    /// on — a reply for a query the user has already typed past must not mark
+    /// rows against words that are no longer on screen.
+    pub fn set_search_hits(&mut self, q: &str, sessions: Vec<String>, messages: Vec<String>) {
+        if q != self.filter.trim() {
+            return;
+        }
+        // EXPAND each hit: a conversation's turns only render when it is open,
+        // so marking the matching turn and leaving the row collapsed would be
+        // marking something nobody can see.
+        for id in &sessions {
+            self.expanded.insert(id.clone());
+        }
+        self.matched_sessions = sessions;
+        self.matched_messages = messages;
     }
 
     /// The row a digit names, resolved against the SAME window the tab paints.
@@ -415,6 +1004,48 @@ impl PanelHost {
                 let at = start + digit - 1;
                 (digit <= shown && at < rows.len()).then_some(at)
             }
+            // The run LIST only: at a detail level a digit would open a run
+            // other than the one on screen.
+            PanelTab::Workflows if self.wf_level == 0 => {
+                let height = wf_runs_height(body_rows);
+                let (_, from) = super::workflows::windowed(&self.runs, self.sel, height);
+                let at = from + digit - 1;
+                (digit <= height && at < self.runs.len()).then_some(at)
+            }
+            PanelTab::Mcp => {
+                let names = self.mcp.as_ref().map(mcp_names).unwrap_or_default();
+                let chrome =
+                    usize::from(self.message.is_some()) + usize::from(self.mcp_entry.is_some());
+                let (start, _, height, _) =
+                    super::mcp::mcp_window(names.len(), self.sel, body_rows, chrome);
+                let at = start + digit - 1;
+                (digit <= height && at < names.len()).then_some(at)
+            }
+            PanelTab::Skills => {
+                let skills = self.filtered_skills();
+                let chrome = usize::from(self.filtering || !self.skills_filter().is_empty())
+                    + usize::from(!self.skill_sources.is_empty());
+                let (start, height, _) =
+                    super::skills::skills_window(skills.len(), self.sel, body_rows, chrome);
+                let at = start + digit - 1;
+                (digit <= height && at < skills.len()).then_some(at)
+            }
+            // The digits address ENTRIES, not the headers and hints between
+            // them — resolved against the same window the picker paints.
+            PanelTab::Model => {
+                let entries = self.model_entries();
+                let display = display_rows(
+                    &entries,
+                    self.model_cfg.cheap_model.is_none(),
+                    &self.model_filters,
+                    self.model_focus,
+                );
+                let chrome = usize::from(self.message.is_some());
+                let (start, end, _, _) = model_window(&display, self.sel, body_rows, chrome);
+                visible_entries(&display, start, end)
+                    .get(digit - 1)
+                    .copied()
+            }
             // changes/theme: none — a digit that jumped-and-affirmed would
             // revert a file you never saw.
             _ => None,
@@ -426,7 +1057,9 @@ impl PanelHost {
         match self.state.tab {
             PanelTab::Tree => {
                 let rows = self.rows();
-                let Some(row) = rows.get(at) else { return Vec::new() };
+                let Some(row) = rows.get(at) else {
+                    return Vec::new();
+                };
                 match selection_for(row, &self.threads) {
                     Selection::Open(id) => {
                         self.state.open = false;
@@ -466,26 +1099,195 @@ impl PanelHost {
             // because a pure reducer cannot post one.
             PanelTab::Theme => {
                 self.state = self.reduce_with_theme(PanelAction::Confirm);
-                let Some(state) = self.theme.as_ref().and_then(|p| p.baseline().cloned())
-                else {
+                let Some(state) = self.theme.as_ref().and_then(|p| p.baseline().cloned()) else {
                     return Vec::new();
                 };
-                vec![HostRequest::SaveTheme(crate::theme::persist_request(&state))]
+                vec![HostRequest::SaveTheme(crate::theme::persist_request(
+                    &state,
+                ))]
             }
-            _ => Vec::new(),
+            // ⏎ DESCENDS one Miller column: runs → phases → agents → one
+            // agent, and on an open agent it toggles the prompt fold.
+            PanelTab::Workflows => match self.wf_level {
+                0 => match self.runs.get(at) {
+                    Some(run) => {
+                        self.wf_level = 1;
+                        self.phase_sel = 0;
+                        self.agent_sel = 0;
+                        self.wf_scroll = 0;
+                        vec![HostRequest::LoadWorkflow(run.id.clone())]
+                    }
+                    None => Vec::new(),
+                },
+                1 => {
+                    self.wf_level = 2;
+                    self.agent_sel = 0;
+                    Vec::new()
+                }
+                2 => {
+                    if !self.shown_agents().is_empty() {
+                        self.wf_level = 3;
+                        self.wf_scroll = 0;
+                        self.prompt_open = false;
+                    }
+                    Vec::new()
+                }
+                // The prompt is COLLAPSED by default — it is the one thing you
+                // already know, you wrote the workflow.
+                3 => {
+                    self.prompt_open = !self.prompt_open;
+                    Vec::new()
+                }
+                _ => Vec::new(),
+            },
+            // ⏎ GRANTS, or registers what the URL buffer holds. The buffer
+            // takes ⏎ before the list does — see the tab's own legend.
+            PanelTab::Mcp => {
+                if let Some(url) = self.mcp_entry.take() {
+                    let url = url.trim().to_string();
+                    if url.is_empty() {
+                        return Vec::new();
+                    }
+                    let taken = self.mcp.as_ref().map(mcp_names).unwrap_or_default();
+                    let name = name_from_url(&url, &taken);
+                    if name.is_empty() {
+                        self.message = Some(NOT_A_SERVER_URL.to_string());
+                        return Vec::new();
+                    }
+                    return vec![HostRequest::AddMcpServer { name, url }];
+                }
+                let names = self.mcp.as_ref().map(mcp_names).unwrap_or_default();
+                let Some(name) = names.get(at) else {
+                    return Vec::new();
+                };
+                let granted = self
+                    .mcp
+                    .as_ref()
+                    .map(|s| s.active.contains(name))
+                    .unwrap_or(false);
+                vec![HostRequest::SetMcpEnabled {
+                    name: name.clone(),
+                    enabled: !granted,
+                }]
+            }
+            // A skill is loaded by NAMING it in the composer, which is what the
+            // legend says; ⏎ here says so rather than pretending to run one.
+            PanelTab::Skills => {
+                if let Some(skill) = self.filtered_skills().get(at) {
+                    self.message = Some(format!("type /{} in the composer to load it", skill.name));
+                }
+                Vec::new()
+            }
+            // ⏎ CHOOSES. `choose_entry` is spec §12 in code: a frontier pick
+            // pins this session AND moves the default for new sessions; nothing
+            // else moves. The write is one request carrying the whole config,
+            // so a caller cannot perform half of it.
+            PanelTab::Model => {
+                let entries = self.model_entries();
+                let Some(entry) = entries.get(at) else {
+                    return Vec::new();
+                };
+                let cheap = entry.tier() == Tier::Cheap;
+                self.model_cfg = super::model::choose_entry(&self.model_cfg, entry);
+                // KNOWN GAP, said out loud rather than faked: `PUT
+                // /model-settings` carries the frontier model and the effort
+                // only — the cheap tier is resolved server-side from the
+                // environment and has no write route. A ● that moved while
+                // nothing was written is the dead-control shape this codebase
+                // refuses, so the pick is refused in words instead.
+                if cheap {
+                    self.message = Some(CHEAP_TIER_NOT_WRITABLE.to_string());
+                    return Vec::new();
+                }
+                vec![HostRequest::SaveModel(self.model_cfg.clone())]
+            }
         }
     }
 }
 
+/// A registry name derived from the server's URL — the user types the URL and
+/// nothing else, so the name is this function's job.
+///
+/// The `mcp.`/`www.`/`api.` prefixes carry no information (every third MCP
+/// endpoint is `mcp.something`), and the TLD carries less. A `co.uk`-shaped
+/// suffix loses BOTH parts, or "taking the part before the TLD" would name the
+/// server `co`. A collision gets a `-2` suffix rather than overwriting:
+/// silently replacing a registration that may already hold credentials is the
+/// one outcome worse than asking.
+pub fn name_from_url(raw: &str, taken: &[String]) -> String {
+    let Some(host) = url_host(raw) else {
+        return String::new();
+    };
+    let parts: Vec<&str> = host
+        .split('.')
+        .filter(|p| !p.is_empty() && *p != "mcp" && *p != "www" && *p != "api")
+        .collect();
+    let kept: &[&str] = if parts.len() > 2 && parts[parts.len() - 2].len() <= 3 {
+        &parts[..parts.len() - 2]
+    } else if parts.is_empty() {
+        &[]
+    } else {
+        &parts[..parts.len() - 1]
+    };
+    let base = kept
+        .last()
+        .copied()
+        .or_else(|| parts.first().copied())
+        .unwrap_or(&host);
+    let slug: String = base
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        return String::new();
+    }
+    if !taken.contains(&slug) {
+        return slug;
+    }
+    for i in 2..100 {
+        let candidate = format!("{slug}-{i}");
+        if !taken.contains(&candidate) {
+            return candidate;
+        }
+    }
+    slug
+}
+
+/// The hostname of an absolute URL, or `None` — a scheme is required, so
+/// `"linear"` is not a URL and names nothing.
+fn url_host(raw: &str) -> Option<String> {
+    let (scheme, rest) = raw.split_once("://")?;
+    if scheme.is_empty() || rest.is_empty() {
+        return None;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    // Strip userinfo, then the port.
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    let host = authority.split(':').next().unwrap_or("");
+    (!host.is_empty()).then(|| host.to_lowercase())
+}
+
 /// The refusals, verbatim. Every one names the gesture that WOULD work.
-pub const EXTRACT_NEEDS_A_TURN: &str =
-    "e splits a conversation at a TURN — move onto one first";
+pub const NO_RUN_SELECTED: &str = "no run selected — ⏎ opens one first";
+pub const NO_AGENT_SESSION: &str =
+    "no session — this call was replayed from the journal, so there is nothing to open";
+pub const NOT_A_SERVER_URL: &str = "that is not a URL bough can name a server from";
+pub const CHEAP_TIER_NOT_WRITABLE: &str =
+    "the cheap tier is set by BOUGH_CHEAP_MODEL and has no write route yet — nothing was saved";
+pub const EXTRACT_NEEDS_A_TURN: &str = "e splits a conversation at a TURN — move onto one first";
 pub const MOVE_NEEDS_A_TURN: &str = "m brings a TURN here — move onto one first";
 pub const NOT_WIRED_EXTRACT: &str = "splitting a conversation is not wired into this client yet";
 pub const NOT_WIRED_MOVE_INTO: &str = "bringing a turn here is not wired into this client yet";
 pub const NOT_WIRED_FORK: &str = "forking a turn is not wired into this client yet";
-pub const NOT_WIRED_SUMMARIZE: &str =
-    "branching with a summary is not wired into this client yet";
+pub const NOT_WIRED_SUMMARIZE: &str = "branching with a summary is not wired into this client yet";
 pub const NOTHING_TO_REVERT: &str = "nothing to revert here";
 
 #[cfg(test)]
@@ -496,14 +1298,19 @@ mod tests {
     use serde_json::json;
 
     fn host() -> PanelHost {
-        let mut h = PanelHost::default();
-        h.sessions = vec![
-            session_row("a", SessionKind::Root, 1),
-            session_row("b", SessionKind::Root, 2),
-        ];
+        let mut h = PanelHost {
+            sessions: vec![
+                session_row("a", SessionKind::Root, 1),
+                session_row("b", SessionKind::Root, 2),
+            ],
+            ..Default::default()
+        };
         h.threads = HashMap::from([(
             "a".to_string(),
-            vec![msg("m1", Role::User, "go"), msg("m2", Role::Supervisor, "done")],
+            vec![
+                msg("m1", Role::User, "go"),
+                msg("m2", Role::Supervisor, "done"),
+            ],
         )]);
         h
     }
@@ -600,7 +1407,10 @@ mod tests {
         // pending revert → armed nothing → diff focus → the panel.
         h.handle(Command::PanelClose, None, 10);
         assert!(h.pending.is_none());
-        assert!(h.diff_focused, "the focus must survive cancelling the revert");
+        assert!(
+            h.diff_focused,
+            "the focus must survive cancelling the revert"
+        );
         assert!(h.open());
         h.handle(Command::PanelClose, None, 10);
         assert!(!h.diff_focused);
@@ -632,7 +1442,10 @@ mod tests {
         assert!(h.diff_focused);
         h.handle(Command::MoveDown, None, 10);
         assert_eq!(h.diff_scroll, 1);
-        assert_eq!(h.sel, 0, "the file cursor must not move under a focused diff");
+        assert_eq!(
+            h.sel, 0,
+            "the file cursor must not move under a focused diff"
+        );
         h.handle(Command::MovePageDown, None, 10);
         assert_eq!(h.diff_scroll, 9);
         assert_eq!(h.sel, 0);
@@ -671,8 +1484,11 @@ mod tests {
         h.expanded.insert("root".into());
         h.threads.insert("root".into(), vec![]);
         h.handle(Command::PanelToggle, None, 10);
-        let collapsed =
-            h.rows().iter().position(|r| matches!(r, ForestRow::Collapsed { .. })).unwrap();
+        let collapsed = h
+            .rows()
+            .iter()
+            .position(|r| matches!(r, ForestRow::Collapsed { .. }))
+            .unwrap();
         h.move_to(collapsed as isize);
         assert!(h.handle(Command::PanelConfirm, None, 10).is_empty());
         assert!(h.drilled.contains("root"));
@@ -684,7 +1500,10 @@ mod tests {
         let mut h = host();
         h.handle(Command::PanelToggle, None, 10);
         // Row 2 of the window is `a` (newest first: b, a).
-        assert_eq!(h.handle(Command::PanelPick, Some(2), 10), vec![HostRequest::Open("a".into())]);
+        assert_eq!(
+            h.handle(Command::PanelPick, Some(2), 10),
+            vec![HostRequest::Open("a".into())]
+        );
         // A digit past the window does nothing — no clamp, no nearest row.
         let mut h = host();
         h.handle(Command::PanelToggle, None, 10);
@@ -717,7 +1536,10 @@ mod tests {
         let mut h = host();
         h.handle(Command::Tab(PanelTab::Changes), None, 10);
         h.handle(Command::PanelConfirmSummarize, None, 10);
-        assert_eq!(h.message, None, "`s` outside the tree must not affirm anything");
+        assert_eq!(
+            h.message, None,
+            "`s` outside the tree must not affirm anything"
+        );
         h.handle(Command::Tab(PanelTab::Tree), None, 10);
         h.handle(Command::PanelConfirmSummarize, None, 10);
         assert_eq!(h.message.as_deref(), Some(NOT_WIRED_SUMMARIZE));
@@ -725,13 +1547,18 @@ mod tests {
 
     #[test]
     fn the_reveal_path_seeds_the_expansion_so_the_open_conversation_is_on_screen() {
-        let mut h = PanelHost::default();
-        h.current_id = Some("hand".into());
+        let mut h = PanelHost {
+            current_id: Some("hand".into()),
+            ..Default::default()
+        };
         let root = session_row("root", SessionKind::Root, 1);
         let hand = with_origin(session_row("hand", SessionKind::Root, 2), "root");
         h.handle(Command::PanelToggle, None, 10);
         h.set_sessions(vec![root, hand]);
-        assert!(h.expanded.contains("root"), "the origin must be opened to reach the current row");
+        assert!(
+            h.expanded.contains("root"),
+            "the origin must be opened to reach the current row"
+        );
         assert_eq!(h.rows()[h.sel].id(), "hand");
     }
 
@@ -743,8 +1570,10 @@ mod tests {
     fn themed() -> PanelHost {
         let mut h = PanelHost::default();
         h.handle(Command::Tab(PanelTab::Theme), None, 10);
-        h.theme =
-            Some(crate::theme::ThemePreview::with_apply(None, Box::new(|_| {})));
+        h.theme = Some(crate::theme::ThemePreview::with_apply(
+            None,
+            Box::new(|_| {}),
+        ));
         h
     }
 
@@ -798,7 +1627,11 @@ mod tests {
             h.handle(leave, None, 10);
             let preview = h.theme.as_ref().unwrap();
             assert!(!preview.previewing(), "{leave:?} must revert");
-            assert_eq!(preview.index(), 0, "{leave:?} must restore the baseline row");
+            assert_eq!(
+                preview.index(),
+                0,
+                "{leave:?} must restore the baseline row"
+            );
         }
     }
 
@@ -815,7 +1648,11 @@ mod tests {
             })]
         );
         h.handle(Command::PanelClose, None, 10);
-        assert_eq!(h.theme.as_ref().unwrap().index(), 1, "a kept palette survives leaving");
+        assert_eq!(
+            h.theme.as_ref().unwrap().index(),
+            1,
+            "a kept palette survives leaving"
+        );
     }
 
     #[test]
@@ -836,6 +1673,578 @@ mod tests {
         let mut h = themed();
         let requests = h.handle(Command::PanelPick, Some(3), 10);
         assert!(requests.is_empty());
-        assert_eq!(h.theme.as_ref().unwrap().index(), 0, "1-9 is not a theme gesture");
+        assert_eq!(
+            h.theme.as_ref().unwrap().index(),
+            0,
+            "1-9 is not a theme gesture"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests — row 3.20: the four remaining tabs, through the controller
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tab_tests {
+    use super::super::mcp::fixtures as mcp_fx;
+    use super::super::model::fixtures as model_fx;
+    use super::super::workflows::fixtures as wf_fx;
+    use super::*;
+    use crate::api::{WorkflowAgentCounts, WorkflowSummary};
+
+    fn open_on(tab: PanelTab) -> PanelHost {
+        let mut h = PanelHost::default();
+        h.handle(Command::PanelToggle, None, 20);
+        h.handle(Command::Tab(tab), None, 20);
+        h
+    }
+
+    fn run(id: &str, status: &str) -> WorkflowSummary {
+        WorkflowSummary {
+            id: id.into(),
+            name: id.into(),
+            description: "a run".into(),
+            status: status.into(),
+            current_phase: None,
+            agents: WorkflowAgentCounts::default(),
+            created_at: 0,
+            finished_at: None,
+        }
+    }
+
+    // ---- the workflows tab -------------------------------------------------
+
+    /// A drilled level must not outlive its tab: a header for `run-2` over
+    /// another conversation's list is the shape of "the panel remembered a
+    /// state nobody can see".
+    #[test]
+    fn leaving_and_returning_lands_on_the_run_list_not_on_the_last_drill() {
+        let mut h = open_on(PanelTab::Workflows);
+        h.set_workflows(vec![run("run-2", "running")]);
+        h.handle(Command::PanelConfirm, None, 20);
+        h.set_workflow_detail(Some(wf_fx::detail()));
+        h.handle(Command::PanelConfirm, None, 20);
+        assert_eq!(h.wf_level, 2);
+        h.handle(Command::Tab(PanelTab::Tree), None, 20);
+        assert_eq!(
+            h.handle(Command::Tab(PanelTab::Workflows), None, 20),
+            vec![HostRequest::LoadWorkflows]
+        );
+        assert_eq!(h.wf_level, 0);
+        assert!(h.run_detail.is_none());
+    }
+
+    #[test]
+    fn arrival_asks_for_the_run_list() {
+        let mut h = PanelHost::default();
+        h.handle(Command::PanelToggle, None, 20);
+        let requests = h.handle(Command::Tab(PanelTab::Workflows), None, 20);
+        assert_eq!(requests, vec![HostRequest::LoadWorkflows]);
+    }
+
+    #[test]
+    fn enter_descends_the_miller_columns_and_esc_climbs_back_one_at_a_time() {
+        let mut h = open_on(PanelTab::Workflows);
+        h.set_workflows(vec![run("run-2", "running")]);
+        // ⏎ on a run opens it — and asks for the body that carries the replay
+        // accounting.
+        let requests = h.handle(Command::PanelConfirm, None, 20);
+        assert_eq!(requests, vec![HostRequest::LoadWorkflow("run-2".into())]);
+        assert_eq!(h.wf_level, 1);
+        h.set_workflow_detail(Some(wf_fx::detail()));
+        h.handle(Command::PanelConfirm, None, 20);
+        assert_eq!(h.wf_level, 2, "phases → that phase's agents");
+        h.handle(Command::PanelConfirm, None, 20);
+        assert_eq!(h.wf_level, 3, "an agent → its detail");
+        // ⏎ at the agent level folds the prompt rather than descending.
+        h.handle(Command::PanelConfirm, None, 20);
+        assert!(h.prompt_open);
+        // esc unwinds ONE level per press, never straight to the chat.
+        for expected in [2u8, 1, 0] {
+            h.handle(Command::PanelClose, None, 20);
+            assert_eq!(h.wf_level, expected);
+        }
+        assert!(h.open(), "the panel is still open — the levels went first");
+    }
+
+    #[test]
+    fn the_steering_verbs_act_on_the_run_in_view() {
+        let mut h = open_on(PanelTab::Workflows);
+        h.set_workflows(vec![run("run-a", "running"), run("run-b", "running")]);
+        // At level 0 they act on the SELECTED row: a verb that works only after
+        // opening a run is a verb the list advertises and does not have.
+        h.handle(Command::MoveDown, None, 20);
+        assert_eq!(
+            h.handle(Command::WfPause, None, 20),
+            vec![HostRequest::SteerWorkflow {
+                id: "run-b".into(),
+                action: WorkflowAction::Pause
+            }]
+        );
+        assert_eq!(
+            h.handle(Command::WfStop, None, 20),
+            vec![HostRequest::SteerWorkflow {
+                id: "run-b".into(),
+                action: WorkflowAction::Stop
+            }]
+        );
+        assert_eq!(
+            h.handle(Command::WfRerun, None, 20),
+            vec![HostRequest::SteerWorkflow {
+                id: "run-b".into(),
+                action: WorkflowAction::Rerun
+            }]
+        );
+        assert_eq!(
+            h.handle(Command::WfSave, None, 20),
+            vec![HostRequest::SaveWorkflow("run-b".into())]
+        );
+        // Opened, they act on the OPEN run rather than on whatever row the list
+        // cursor was left on.
+        h.handle(Command::PanelConfirm, None, 20);
+        h.set_workflow_detail(Some(wf_fx::detail()));
+        assert_eq!(
+            h.handle(Command::WfStop, None, 20),
+            vec![HostRequest::SteerWorkflow {
+                id: "run-2".into(),
+                action: WorkflowAction::Stop
+            }]
+        );
+    }
+
+    #[test]
+    fn the_filter_cycles_and_the_done_filter_folds_in_replays() {
+        let mut h = open_on(PanelTab::Workflows);
+        h.set_workflows(vec![run("run-2", "running")]);
+        h.handle(Command::PanelConfirm, None, 20);
+        h.set_workflow_detail(Some(wf_fx::detail()));
+        h.wf_level = 2;
+        assert_eq!(h.shown_agents().len(), 4, "the Review phase, unfiltered");
+        for expected in ["running", "queued", "done", "error"] {
+            h.handle(Command::WfFilter, None, 20);
+            assert_eq!(h.wf_filter(), Some(expected));
+        }
+        // "done" folded in the two cached calls when it came round.
+        h.wf_filter = 3;
+        assert_eq!(h.shown_agents().len(), 3, "1 done + 2 cached");
+        h.handle(Command::WfFilter, None, 20);
+        h.handle(Command::WfFilter, None, 20);
+        assert_eq!(h.wf_filter(), None, "the cycle comes back round to all");
+    }
+
+    #[test]
+    fn o_opens_an_agents_session_and_refuses_when_the_call_was_replayed() {
+        let mut h = open_on(PanelTab::Workflows);
+        h.set_workflows(vec![run("run-2", "running")]);
+        h.handle(Command::PanelConfirm, None, 20);
+        h.set_workflow_detail(Some(wf_fx::detail()));
+        h.wf_level = 2;
+        // Agent `a` is a REPLAY: no session, and the refusal says why rather
+        // than opening nothing.
+        assert!(h.handle(Command::WfOpenAgent, None, 20).is_empty());
+        assert_eq!(h.message.as_deref(), Some(NO_AGENT_SESSION));
+        h.agent_sel = 2; // `c`, a live call
+        assert_eq!(
+            h.handle(Command::WfOpenAgent, None, 20),
+            vec![HostRequest::OpenAgentSession("sess-c".into())]
+        );
+        assert!(!h.open(), "opening a session closes the panel");
+    }
+
+    #[test]
+    fn a_digit_opens_a_run_from_the_list_and_never_from_a_detail_level() {
+        let mut h = open_on(PanelTab::Workflows);
+        h.set_workflows(vec![
+            run("r0", "done"),
+            run("r1", "done"),
+            run("r2", "done"),
+        ]);
+        assert_eq!(
+            h.handle(Command::PanelPick, Some(3), 20),
+            vec![HostRequest::LoadWorkflow("r2".into())]
+        );
+        assert_eq!(h.sel, 2);
+        // Opened, a digit would open a run other than the one on screen.
+        h.set_workflow_detail(Some(wf_fx::detail()));
+        h.wf_level = 1;
+        assert!(h.handle(Command::PanelPick, Some(1), 20).is_empty());
+        assert_eq!(h.wf_level, 1);
+    }
+
+    // ---- the mcp tab -------------------------------------------------------
+
+    fn mcp_host() -> PanelHost {
+        let mut h = PanelHost::default();
+        h.handle(Command::PanelToggle, None, 20);
+        h.handle(Command::Tab(PanelTab::Mcp), None, 20);
+        h.set_mcp(Some(mcp_fx::status(
+            &[
+                ("alpha", mcp_fx::stdio("alpha-server")),
+                ("beta", mcp_fx::remote("https://b.example/mcp")),
+            ],
+            &["alpha"],
+            &[("beta", false)],
+            vec![],
+        )));
+        h
+    }
+
+    #[test]
+    fn entering_the_mcp_tab_refetches_it_every_time_never_from_a_cache() {
+        let mut h = PanelHost::default();
+        h.handle(Command::PanelToggle, None, 20);
+        assert_eq!(
+            h.handle(Command::Tab(PanelTab::Mcp), None, 20),
+            vec![HostRequest::LoadMcp]
+        );
+        h.set_mcp(Some(mcp_fx::status(&[], &[], &[], vec![])));
+        h.handle(Command::Tab(PanelTab::Tree), None, 20);
+        // Leaving and returning asks AGAIN: grants and connections change
+        // between turns, and last minute's state is worse than none.
+        assert_eq!(
+            h.handle(Command::Tab(PanelTab::Mcp), None, 20),
+            vec![HostRequest::LoadMcp]
+        );
+    }
+
+    #[test]
+    fn enter_toggles_the_grant_in_the_direction_the_row_is_not() {
+        let mut h = mcp_host();
+        // `alpha` is granted → ⏎ revokes.
+        assert_eq!(
+            h.handle(Command::PanelConfirm, None, 20),
+            vec![HostRequest::SetMcpEnabled {
+                name: "alpha".into(),
+                enabled: false
+            }]
+        );
+        h.handle(Command::MoveDown, None, 20);
+        // `beta` is not → ⏎ grants.
+        assert_eq!(
+            h.handle(Command::PanelConfirm, None, 20),
+            vec![HostRequest::SetMcpEnabled {
+                name: "beta".into(),
+                enabled: true
+            }]
+        );
+    }
+
+    #[test]
+    fn every_mcp_verb_reaches_its_route_for_the_row_under_the_cursor() {
+        let mut h = mcp_host();
+        h.handle(Command::MoveDown, None, 20); // beta
+        assert_eq!(
+            h.handle(Command::McpConnect, None, 20),
+            vec![HostRequest::ConnectMcpServer("beta".into())]
+        );
+        assert_eq!(
+            h.handle(Command::McpRestart, None, 20),
+            vec![HostRequest::RestartMcpServer("beta".into())]
+        );
+        assert_eq!(
+            h.handle(Command::McpAuth, None, 20),
+            vec![HostRequest::BeginMcpAuth("beta".into())]
+        );
+        assert_eq!(
+            h.handle(Command::McpForget, None, 20),
+            vec![HostRequest::ClearMcpAuth("beta".into())]
+        );
+    }
+
+    #[test]
+    fn deleting_a_registration_takes_two_presses_and_names_what_it_drops() {
+        let mut h = mcp_host();
+        assert!(
+            h.handle(Command::McpRemove, None, 20).is_empty(),
+            "the first press only arms"
+        );
+        let armed = h.message.clone().unwrap_or_default();
+        assert!(armed.contains("d again deletes"), "{armed}");
+        assert!(armed.contains("credentials are kept"), "{armed}");
+        assert_eq!(
+            h.handle(Command::McpRemove, None, 20),
+            vec![HostRequest::DeleteMcpServer("alpha".into())]
+        );
+        // …and moving the cursor drops the arm rather than retargeting it.
+        let mut h = mcp_host();
+        h.handle(Command::McpRemove, None, 20);
+        h.handle(Command::MoveDown, None, 20);
+        assert!(h.handle(Command::McpRemove, None, 20).is_empty());
+        assert_eq!(h.mcp_pending_delete.as_deref(), Some("beta"));
+    }
+
+    #[test]
+    fn n_opens_a_url_buffer_and_enter_registers_a_name_derived_from_it() {
+        let mut h = mcp_host();
+        h.handle(Command::McpAdd, None, 20);
+        assert_eq!(h.mcp_entry.as_deref(), Some(""));
+        for c in "https://mcp.linear.app/sse".chars() {
+            h.type_filter(c);
+        }
+        assert_eq!(
+            h.confirm(0),
+            vec![HostRequest::AddMcpServer {
+                name: "linear".into(),
+                url: "https://mcp.linear.app/sse".into()
+            }]
+        );
+        // Something that is not a URL registers nothing and says so.
+        let mut h = mcp_host();
+        h.handle(Command::McpAdd, None, 20);
+        for c in "linear".chars() {
+            h.type_filter(c);
+        }
+        assert!(h.confirm(0).is_empty());
+        assert_eq!(h.message.as_deref(), Some(NOT_A_SERVER_URL));
+        // esc closes the buffer without registering.
+        let mut h = mcp_host();
+        h.handle(Command::McpAdd, None, 20);
+        h.handle(Command::PanelClose, None, 20);
+        assert!(h.mcp_entry.is_none());
+        assert!(h.open(), "the buffer went, not the panel");
+    }
+
+    #[test]
+    fn a_server_name_is_derived_from_its_url_without_the_mcp_and_the_tld() {
+        assert_eq!(name_from_url("https://mcp.linear.app/sse", &[]), "linear");
+        assert_eq!(name_from_url("https://mcp.notion.com/mcp", &[]), "notion");
+        assert_eq!(
+            name_from_url("https://api.githubcopilot.com/mcp/", &[]),
+            "githubcopilot"
+        );
+        assert_eq!(name_from_url("https://example.com", &[]), "example");
+        // A port and a path change nothing — the host is the whole answer.
+        assert_eq!(name_from_url("http://localhost:3000/mcp", &[]), "localhost");
+        // Taking "the part before the TLD" naively would call this one "co".
+        assert_eq!(name_from_url("https://mcp.acme.co.uk/sse", &[]), "acme");
+        // Overwriting silently would replace a registration that may already
+        // hold credentials — the one outcome worse than asking.
+        assert_eq!(
+            name_from_url("https://mcp.linear.app/sse", &["linear".into()]),
+            "linear-2"
+        );
+        assert_eq!(
+            name_from_url(
+                "https://mcp.linear.app/sse",
+                &["linear".into(), "linear-2".into()]
+            ),
+            "linear-3"
+        );
+        // Not a URL: no name, so nothing is registered.
+        assert_eq!(name_from_url("linear", &[]), "");
+        assert_eq!(name_from_url("", &[]), "");
+        assert_eq!(name_from_url("https://", &[]), "");
+    }
+
+    // ---- the skills tab ----------------------------------------------------
+
+    fn skill(name: &str, description: &str) -> SkillRow {
+        SkillRow {
+            name: name.into(),
+            description: description.into(),
+            error: None,
+            mcp: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn entering_the_skills_tab_fetches_the_full_rows() {
+        let mut h = PanelHost::default();
+        h.handle(Command::PanelToggle, None, 20);
+        assert_eq!(
+            h.handle(Command::Tab(PanelTab::Skills), None, 20),
+            vec![HostRequest::LoadSkillRows]
+        );
+    }
+
+    #[test]
+    fn a_failed_skills_fetch_is_none_with_a_reason_never_an_empty_list() {
+        let mut h = open_on(PanelTab::Skills);
+        h.set_skills(None, Vec::new(), Some("the server did not answer".into()));
+        assert!(h.skills.is_none());
+        assert_eq!(h.skills_note.as_deref(), Some("the server did not answer"));
+        assert!(h.filtered_skills().is_empty());
+    }
+
+    #[test]
+    fn the_slash_filter_narrows_the_same_list_the_digits_address() {
+        let mut h = open_on(PanelTab::Skills);
+        h.set_skills(
+            Some(vec![
+                skill("history", "query the db"),
+                skill("wiki", "the personal wiki"),
+            ]),
+            Vec::new(),
+            None,
+        );
+        h.handle(Command::PanelFilter, None, 20);
+        for c in "wik".chars() {
+            h.type_filter(c);
+        }
+        let shown = h.filtered_skills();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].name, "wiki");
+        // …and a digit affirms the row that is on screen, not the one that was.
+        h.handle(Command::PanelPick, Some(1), 20);
+        assert_eq!(
+            h.message.as_deref(),
+            Some("type /wiki in the composer to load it")
+        );
+        // esc clears the buffer and the narrowing with it.
+        h.handle(Command::PanelFilterExit, None, 20);
+        assert_eq!(h.filtered_skills().len(), 2);
+    }
+
+    // ---- the model tab -----------------------------------------------------
+
+    fn model_host() -> PanelHost {
+        let mut h = PanelHost::default();
+        h.handle(Command::PanelToggle, None, 20);
+        h.handle(Command::Tab(PanelTab::Model), None, 20);
+        h.set_models(model_fx::catalog());
+        h.set_model_config(model_fx::cfg());
+        h
+    }
+
+    #[test]
+    fn entering_the_model_tab_asks_for_the_catalog_and_the_settings() {
+        let mut h = PanelHost::default();
+        h.handle(Command::PanelToggle, None, 20);
+        assert_eq!(
+            h.handle(Command::Tab(PanelTab::Model), None, 20),
+            vec![HostRequest::LoadModels, HostRequest::LoadModelSettings]
+        );
+    }
+
+    #[test]
+    fn choosing_a_frontier_row_pins_this_session_and_moves_the_default() {
+        let mut h = model_host();
+        // Row 2 is `openai:gpt-5-mini` in the frontier section.
+        let requests = h.handle(Command::PanelPick, Some(2), 30);
+        assert_eq!(
+            h.model_cfg.session_model.as_deref(),
+            Some("openai:gpt-5-mini")
+        );
+        assert_eq!(h.model_cfg.default_model, "openai:gpt-5-mini");
+        assert_eq!(requests, vec![HostRequest::SaveModel(h.model_cfg.clone())]);
+    }
+
+    #[test]
+    fn a_cheap_pick_is_refused_in_words_rather_than_moving_a_dot_over_nothing() {
+        let mut h = model_host();
+        let entries = h.model_entries();
+        let at = entries
+            .iter()
+            .position(|e| e.tier() == crate::components::panel::model::Tier::Cheap)
+            .expect("a cheap row");
+        assert!(
+            h.confirm(at).is_empty(),
+            "there is no write route for the cheap tier"
+        );
+        assert_eq!(h.message.as_deref(), Some(CHEAP_TIER_NOT_WRITABLE));
+    }
+
+    #[test]
+    fn choosing_an_effort_row_never_writes_itself_into_a_model_field() {
+        let mut h = model_host();
+        let entries = h.model_entries();
+        let at = entries
+            .iter()
+            .position(|e| e.tier() == crate::components::panel::model::Tier::Effort)
+            .expect("an effort row")
+            + 4; // "xhigh"
+        h.confirm(at);
+        assert_eq!(
+            h.model_cfg.default_model, "claude-opus-5",
+            "the model field is untouched"
+        );
+        assert_eq!(h.model_cfg.session_effort.map(|e| e.id()), Some("xhigh"));
+    }
+
+    #[test]
+    fn the_two_search_boxes_narrow_their_own_tier_and_tab_crosses_between_them() {
+        let mut h = model_host();
+        h.handle(Command::PanelFilter, None, 30);
+        assert_eq!(h.model_focus, Some(Tier::Frontier));
+        for c in "mini".chars() {
+            h.type_filter(c);
+        }
+        assert_eq!(h.model_filters.frontier, "mini");
+        assert_eq!(h.model_filters.cheap, "", "the other box is untouched");
+        h.handle(Command::PanelFilterTier, None, 30);
+        assert_eq!(h.model_focus, Some(Tier::Cheap));
+        for c in "opus".chars() {
+            h.type_filter(c);
+        }
+        assert_eq!(h.model_filters.cheap, "opus");
+        assert_eq!(h.model_filters.frontier, "mini");
+        // ⌫ edits the FOCUSED box only.
+        h.handle(Command::PanelFilterBack, None, 30);
+        assert_eq!(h.model_filters.cheap, "opu");
+        assert_eq!(h.model_filters.frontier, "mini");
+    }
+
+    #[test]
+    fn a_filter_buffer_belongs_to_one_tab_and_narrows_nothing_else() {
+        // An MCP URL half-typed must never narrow the conversation list
+        // underneath it, and a skills query must not narrow the tree.
+        let mut h = open_on(PanelTab::Skills);
+        h.set_skills(Some(vec![skill("history", "x")]), Vec::new(), None);
+        h.handle(Command::PanelFilter, None, 20);
+        for c in "zzz".chars() {
+            h.type_filter(c);
+        }
+        assert!(h.filtered_skills().is_empty());
+        h.handle(Command::Tab(PanelTab::Model), None, 20);
+        // The tree's buffer is not the model's boxes.
+        assert_eq!(h.model_filters.frontier, "");
+        assert_eq!(h.model_filters.cheap, "");
+    }
+
+    // ---- the tabs' letters are disjoint ------------------------------------
+
+    /// The gate the keymap's own `dead_bindings` proves structurally, asserted
+    /// here from the TAB's side: two tabs may share a letter only because the
+    /// keymap scopes each row to its own tab. A letter bound in a tab is
+    /// delivered to THAT tab and to no other.
+    #[test]
+    fn a_bare_letter_reaches_only_the_tab_that_claims_it() {
+        // `r` is `wf.rerun` in workflows and `mcp.restart` in mcp.
+        let mut wf = open_on(PanelTab::Workflows);
+        wf.set_workflows(vec![run("run-1", "done")]);
+        assert_eq!(
+            wf.handle(Command::WfRerun, None, 20),
+            vec![HostRequest::SteerWorkflow {
+                id: "run-1".into(),
+                action: WorkflowAction::Rerun
+            }]
+        );
+        // …and the MCP verb, delivered while the workflows tab is open, does
+        // nothing rather than acting on a row of another tab's list.
+        assert!(wf.handle(Command::McpRestart, None, 20).is_empty());
+        let mut mcp = mcp_host();
+        assert_eq!(
+            mcp.handle(Command::McpRestart, None, 20),
+            vec![HostRequest::RestartMcpServer("alpha".into())]
+        );
+        assert!(mcp.handle(Command::WfRerun, None, 20).is_empty());
+        // `x` is `wf.stop` and `changes.revert`; `e` is `wf.script` and
+        // `tree.extract`.
+        let mut tree = open_on(PanelTab::Tree);
+        assert!(tree.handle(Command::WfStop, None, 20).is_empty());
+        assert!(tree.handle(Command::WfScript, None, 20).is_empty());
+    }
+
+    #[test]
+    fn every_tab_answers_its_own_row_count_so_the_cursor_has_something_to_clamp_to() {
+        for tab in crate::keys::PANEL_TABS {
+            let mut h = open_on(tab);
+            // Moving on an empty tab is a no-op, never a panic or a cursor past
+            // the end.
+            h.handle(Command::MoveDown, None, 20);
+            h.handle(Command::MoveUp, None, 20);
+            assert_eq!(h.sel, 0, "{tab:?}");
+        }
     }
 }

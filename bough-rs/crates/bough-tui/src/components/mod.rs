@@ -54,7 +54,11 @@ pub const SPINNER_MS: u64 = 120;
 pub(crate) fn fmt_tokens(n: i64) -> String {
     if n >= 1000 {
         let k = n as f64 / 1000.0;
-        if n >= 10_000 { format!("{k:.0}k") } else { format!("{k:.1}k") }
+        if n >= 10_000 {
+            format!("{k:.0}k")
+        } else {
+            format!("{k:.1}k")
+        }
     } else {
         format!("{n}")
     }

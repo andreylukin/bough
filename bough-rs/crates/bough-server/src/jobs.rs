@@ -115,7 +115,10 @@ pub fn run_shell() -> Handler {
         let started = ctx.host.jobs.bash_bg(
             &name,
             &body.command,
-            &JobCtx { session_id: id, workspace },
+            &JobCtx {
+                session_id: id,
+                workspace,
+            },
             false,
         )?;
         let parsed: serde_json::Value = serde_json::from_str(&started)
@@ -202,10 +205,15 @@ mod tests {
         let res = call(&fx).call(testutil::get("/sessions/nope/jobs")).await;
         assert_eq!(res.status(), 404);
         let body = testutil::body_json(res).await;
-        assert!(body["error"].as_str().unwrap().contains("jobs are listed per session"));
+        assert!(body["error"]
+            .as_str()
+            .unwrap()
+            .contains("jobs are listed per session"));
 
         let id = seed(&fx, SessionKind::Root, None);
-        let res = call(&fx).call(testutil::get(&format!("/sessions/{id}/jobs"))).await;
+        let res = call(&fx)
+            .call(testutil::get(&format!("/sessions/{id}/jobs")))
+            .await;
         assert_eq!(res.status(), 200);
         assert_eq!(testutil::body_json(res).await, j!({"jobs": []}));
     }
@@ -232,23 +240,37 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             let res = call(&fx)
-                .call(testutil::get(&format!("/sessions/{id}/jobs/{job_id}/output")))
+                .call(testutil::get(&format!(
+                    "/sessions/{id}/jobs/{job_id}/output"
+                )))
                 .await;
             assert_eq!(res.status(), 200);
             let body = testutil::body_json(res).await;
             assert_eq!(body["job"]["sessionId"], id.as_str());
-            if body["output"].as_str().unwrap().contains("user-shell-output") {
+            if body["output"]
+                .as_str()
+                .unwrap()
+                .contains("user-shell-output")
+            {
                 break;
             }
-            assert!(std::time::Instant::now() < deadline, "output never arrived: {body}");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "output never arrived: {body}"
+            );
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }
-        let res = call(&fx).call(testutil::get(&format!("/sessions/{id}/jobs"))).await;
+        let res = call(&fx)
+            .call(testutil::get(&format!("/sessions/{id}/jobs")))
+            .await;
         let body = testutil::body_json(res).await;
         let jobs = body["jobs"].as_array().unwrap();
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0]["id"], job_id.as_str());
-        assert!(jobs[0]["tail"].is_array(), "tail merged into the card row: {body}");
+        assert!(
+            jobs[0]["tail"].is_array(),
+            "tail merged into the card row: {body}"
+        );
     }
 
     #[tokio::test]
@@ -292,7 +314,9 @@ mod tests {
                 .unwrap();
         }
 
-        let res = call(&fx).call(testutil::get(&format!("/sessions/{root}/jobs"))).await;
+        let res = call(&fx)
+            .call(testutil::get(&format!("/sessions/{root}/jobs")))
+            .await;
         let body = testutil::body_json(res).await;
         let owners: Vec<&str> = body["jobs"]
             .as_array()
@@ -300,9 +324,18 @@ mod tests {
             .iter()
             .map(|jb| jb["sessionId"].as_str().unwrap())
             .collect();
-        assert!(owners.contains(&sub.as_str()), "subagent's job listed: {owners:?}");
-        assert!(owners.contains(&subsub.as_str()), "transitive: sub-subagent listed");
-        assert!(!owners.contains(&fork.as_str()), "a fork is a sibling, not delegated work");
+        assert!(
+            owners.contains(&sub.as_str()),
+            "subagent's job listed: {owners:?}"
+        );
+        assert!(
+            owners.contains(&subsub.as_str()),
+            "transitive: sub-subagent listed"
+        );
+        assert!(
+            !owners.contains(&fork.as_str()),
+            "a fork is a sibling, not delegated work"
+        );
 
         // Kill resolves a subagent's job via the spawner's URL.
         let sub_job = body["jobs"]

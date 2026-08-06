@@ -82,7 +82,9 @@ pub(crate) mod test_support {
                 _c: CancellationToken,
             ) -> Result<LlmResult, BoughError> {
                 Ok(LlmResult {
-                    content: vec![LlmBlock::Text { text: self.0.clone() }],
+                    content: vec![LlmBlock::Text {
+                        text: self.0.clone(),
+                    }],
                     stop_reason: "end_turn".into(),
                     usage: None,
                 })
@@ -244,17 +246,25 @@ pub(crate) mod test_support {
     }
 
     pub fn test_db() -> SharedDb {
-        Arc::new(Mutex::new(SqliteDb::new(":memory:", DbOptions::default()).unwrap()))
+        Arc::new(Mutex::new(
+            SqliteDb::new(":memory:", DbOptions::default()).unwrap(),
+        ))
     }
 
     pub fn test_title_ctx(cheap: Option<Arc<dyn CheapTier>>) -> TitleCtx {
-        TitleCtx { db: test_db(), bus: Arc::new(Bus::new(system_clock())), cheap }
+        TitleCtx {
+            db: test_db(),
+            bus: Arc::new(Bus::new(system_clock())),
+            cheap,
+        }
     }
 
     pub fn collect_events(bus: &Bus) -> Arc<Mutex<Vec<BoughEvent>>> {
         let events = Arc::new(Mutex::new(Vec::new()));
         let sink = events.clone();
-        bus.subscribe(Arc::new(move |e: &BoughEvent| sink.lock().unwrap().push(e.clone())));
+        bus.subscribe(Arc::new(move |e: &BoughEvent| {
+            sink.lock().unwrap().push(e.clone())
+        }));
         events
     }
 
@@ -298,6 +308,9 @@ pub(crate) mod test_support {
             llm: Some(hanging_client()),
             ..Default::default()
         };
-        assert_eq!(crate::worker::titles::cheap_text("s", "p", 8, &opts).await, None);
+        assert_eq!(
+            crate::worker::titles::cheap_text("s", "p", 8, &opts).await,
+            None
+        );
     }
 }

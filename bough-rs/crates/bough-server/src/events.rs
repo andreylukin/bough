@@ -115,7 +115,9 @@ impl Stream for SseStream {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        self.rx.poll_recv(cx).map(|opt| opt.map(|s| Ok(Bytes::from(s))))
+        self.rx
+            .poll_recv(cx)
+            .map(|opt| opt.map(|s| Ok(Bytes::from(s))))
     }
 }
 
@@ -191,7 +193,13 @@ pub fn create_events_handler(options: EventsOptions) -> Handler {
                 });
             }
 
-            let stream = SseStream { rx, _unsub: Unsubscriber { bus: ctx.bus.clone(), id } };
+            let stream = SseStream {
+                rx,
+                _unsub: Unsubscriber {
+                    bus: ctx.bus.clone(),
+                    id,
+                },
+            };
             let res: HandlerResult = Ok(Response::builder()
                 .status(200)
                 .header("content-type", "text/event-stream")
@@ -235,7 +243,10 @@ mod tests {
 
     impl Sse {
         fn new(res: Response) -> Sse {
-            Sse { stream: res.into_body().into_data_stream(), buffer: String::new() }
+            Sse {
+                stream: res.into_body().into_data_stream(),
+                buffer: String::new(),
+            }
         }
 
         /// The next complete frame, delimiter included. Panics if the stream
@@ -260,13 +271,18 @@ mod tests {
 
     async fn open(fx: &testutil::Fixture, opts: EventsOptions, path: &str) -> Sse {
         let h = create_events_handler(opts);
-        let res = h(testutil::get(path), fx.ctx.clone(), Default::default()).await.unwrap();
+        let res = h(testutil::get(path), fx.ctx.clone(), Default::default())
+            .await
+            .unwrap();
         assert_eq!(res.status(), 200);
         Sse::new(res)
     }
 
     fn no_heartbeat() -> EventsOptions {
-        EventsOptions { heartbeat_ms: Some(0), on_stream_error: None }
+        EventsOptions {
+            heartbeat_ms: Some(0),
+            on_stream_error: None,
+        }
     }
 
     #[tokio::test]
@@ -277,7 +293,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), 200);
-        assert_eq!(res.headers().get("content-type").unwrap(), "text/event-stream");
+        assert_eq!(
+            res.headers().get("content-type").unwrap(),
+            "text/event-stream"
+        );
         assert!(res
             .headers()
             .get("cache-control")
@@ -308,8 +327,7 @@ mod tests {
         // The payload is the whole stamped envelope, seq and ts included.
         let lines: Vec<&str> = got.trim_end().split('\n').collect();
         assert_eq!(lines[0], "event: message.delta");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&lines[1]["data: ".len()..]).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&lines[1]["data: ".len()..]).unwrap();
         assert_eq!(parsed["type"], "message.delta");
         assert_eq!(parsed["sessionId"], "s1");
         assert_eq!(parsed["seq"], published.seq);
@@ -347,8 +365,7 @@ mod tests {
         let got = sse.next().await;
         let lines: Vec<&str> = got.trim_end().split('\n').collect();
         assert_eq!(lines.len(), 2, "frame split across lines: {got:?}");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&lines[1]["data: ".len()..]).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&lines[1]["data: ".len()..]).unwrap();
         assert_eq!(parsed["data"]["line"], "line one\nline two\n\nline three");
     }
 
@@ -431,7 +448,10 @@ mod tests {
         let fx = testutil::fixture_bare();
         let mut sse = open(
             &fx,
-            EventsOptions { heartbeat_ms: Some(15_000), on_stream_error: None },
+            EventsOptions {
+                heartbeat_ms: Some(15_000),
+                on_stream_error: None,
+            },
             "/events",
         )
         .await;
@@ -449,7 +469,10 @@ mod tests {
         let base = fx.ctx.bus.size(); // the fixture's own event collector
         let sse = open(
             &fx,
-            EventsOptions { heartbeat_ms: Some(15_000), on_stream_error: None },
+            EventsOptions {
+                heartbeat_ms: Some(15_000),
+                on_stream_error: None,
+            },
             "/events",
         )
         .await;
@@ -467,13 +490,21 @@ mod tests {
         for i in 0..50 {
             let mut sse = open(&fx, no_heartbeat(), "/events").await;
             sse.next().await;
-            assert_eq!(fx.ctx.bus.size(), 2, "cycle {i}: exactly one subscriber while open");
+            assert_eq!(
+                fx.ctx.bus.size(),
+                2,
+                "cycle {i}: exactly one subscriber while open"
+            );
 
             fx.ctx.bus.publish(sample(Some("s1")));
             sse.next().await;
 
             drop(sse);
-            assert_eq!(fx.ctx.bus.size(), 1, "cycle {i}: the subscriber must be released");
+            assert_eq!(
+                fx.ctx.bus.size(),
+                1,
+                "cycle {i}: the subscriber must be released"
+            );
         }
 
         // Publishing with every client gone neither panics nor delivers anywhere.
@@ -532,7 +563,10 @@ mod tests {
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let res = call.call(testutil::get("/events?sessionId=s1")).await;
         assert_eq!(res.status(), 200);
-        assert_eq!(res.headers().get("content-type").unwrap(), "text/event-stream");
+        assert_eq!(
+            res.headers().get("content-type").unwrap(),
+            "text/event-stream"
+        );
 
         let base = fx.ctx.bus.size() - 1; // this stream's own subscription
         let mut sse = Sse::new(res);
@@ -541,6 +575,10 @@ mod tests {
         assert_eq!(sse.next().await, frame(&published).unwrap());
 
         drop(sse);
-        assert_eq!(fx.ctx.bus.size(), base, "the production handler must release too");
+        assert_eq!(
+            fx.ctx.bus.size(),
+            base,
+            "the production handler must release too"
+        );
     }
 }

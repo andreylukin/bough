@@ -193,13 +193,48 @@ pub struct TabDef {
 /// cannot add a mode, an open flag, or an escape path, and it cannot ship
 /// without a key.
 pub const TABS: [TabDef; 7] = [
-    TabDef { id: PanelTab::Tree, title: "tree", chord: "ctrl+f", desc: "conversations, turns, branches" },
-    TabDef { id: PanelTab::Changes, title: "changes", chord: "ctrl+d", desc: "what this session changed" },
-    TabDef { id: PanelTab::Workflows, title: "workflows", chord: "ctrl+w", desc: "workflow runs" },
-    TabDef { id: PanelTab::Model, title: "model", chord: "ctrl+o", desc: "frontier · cheap · thinking depth" },
-    TabDef { id: PanelTab::Mcp, title: "mcp", chord: "ctrl+p", desc: "servers, grants, authorization" },
-    TabDef { id: PanelTab::Skills, title: "skills", chord: "ctrl+k", desc: "installed /skills" },
-    TabDef { id: PanelTab::Theme, title: "theme", chord: "ctrl+y", desc: "browse live; leaving reverts" },
+    TabDef {
+        id: PanelTab::Tree,
+        title: "tree",
+        chord: "ctrl+f",
+        desc: "conversations, turns, branches",
+    },
+    TabDef {
+        id: PanelTab::Changes,
+        title: "changes",
+        chord: "ctrl+d",
+        desc: "what this session changed",
+    },
+    TabDef {
+        id: PanelTab::Workflows,
+        title: "workflows",
+        chord: "ctrl+w",
+        desc: "workflow runs",
+    },
+    TabDef {
+        id: PanelTab::Model,
+        title: "model",
+        chord: "ctrl+o",
+        desc: "frontier · cheap · thinking depth",
+    },
+    TabDef {
+        id: PanelTab::Mcp,
+        title: "mcp",
+        chord: "ctrl+p",
+        desc: "servers, grants, authorization",
+    },
+    TabDef {
+        id: PanelTab::Skills,
+        title: "skills",
+        chord: "ctrl+k",
+        desc: "installed /skills",
+    },
+    TabDef {
+        id: PanelTab::Theme,
+        title: "theme",
+        chord: "ctrl+y",
+        desc: "browse live; leaving reverts",
+    },
 ];
 
 /// Tab ids in bar order. Derived, so the bar and the keymap cannot disagree.
@@ -254,22 +289,62 @@ pub struct SlashCommand {
 pub static SLASH_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
     let mut out: Vec<SlashCommand> = TABS
         .iter()
-        .map(|t| SlashCommand { name: t.id.id(), command: Command::Tab(t.id), desc: t.desc, takes_arg: false })
+        .map(|t| SlashCommand {
+            name: t.id.id(),
+            command: Command::Tab(t.id),
+            desc: t.desc,
+            takes_arg: false,
+        })
         .collect();
     out.extend([
-        SlashCommand { name: "new", command: Command::SessionNew, desc: "start a fresh conversation", takes_arg: false },
+        SlashCommand {
+            name: "new",
+            command: Command::SessionNew,
+            desc: "start a fresh conversation",
+            takes_arg: false,
+        },
         SlashCommand {
             name: "compact",
             command: Command::SessionCompact,
             desc: "hand off to a fresh conversation · /compact <goal>",
             takes_arg: true,
         },
-        SlashCommand { name: "rewind", command: Command::TreeRewind, desc: "go back to a turn and say it differently", takes_arg: false },
-        SlashCommand { name: "schedules", command: Command::SchedulesShow, desc: "the recurring runs and when they fire", takes_arg: false },
-        SlashCommand { name: "saved", command: Command::SavedShow, desc: "workflows saved to run again by name", takes_arg: false },
-        SlashCommand { name: "artifacts", command: Command::ArtifactsShow, desc: "pages this conversation published", takes_arg: false },
-        SlashCommand { name: "rules", command: Command::RulesShow, desc: "the AGENTS.md files injected into every turn", takes_arg: false },
-        SlashCommand { name: "help", command: Command::HelpOpen, desc: "every key, by section", takes_arg: false },
+        SlashCommand {
+            name: "rewind",
+            command: Command::TreeRewind,
+            desc: "go back to a turn and say it differently",
+            takes_arg: false,
+        },
+        SlashCommand {
+            name: "schedules",
+            command: Command::SchedulesShow,
+            desc: "the recurring runs and when they fire",
+            takes_arg: false,
+        },
+        SlashCommand {
+            name: "saved",
+            command: Command::SavedShow,
+            desc: "workflows saved to run again by name",
+            takes_arg: false,
+        },
+        SlashCommand {
+            name: "artifacts",
+            command: Command::ArtifactsShow,
+            desc: "pages this conversation published",
+            takes_arg: false,
+        },
+        SlashCommand {
+            name: "rules",
+            command: Command::RulesShow,
+            desc: "the AGENTS.md files injected into every turn",
+            takes_arg: false,
+        },
+        SlashCommand {
+            name: "help",
+            command: Command::HelpOpen,
+            desc: "every key, by section",
+            takes_arg: false,
+        },
     ]);
     out
 });
@@ -300,7 +375,10 @@ fn lone_slash_word(draft: &str, allow_leading_digit: bool) -> Option<String> {
 /// `Tab(Model)`. EXACT AND WHOLE, deliberately: `/help me name this` is prose.
 pub fn slash_command_for(draft: &str) -> Option<Command> {
     let name = lone_slash_word(draft, false)?;
-    SLASH_COMMANDS.iter().find(|c| c.name == name).map(|c| c.command)
+    SLASH_COMMANDS
+        .iter()
+        .find(|c| c.name == name)
+        .map(|c| c.command)
 }
 
 /// A draft as an INVOCATION: the command it names plus its argument.
@@ -318,7 +396,9 @@ pub fn slash_invocation(draft: &str) -> Option<(Command, String)> {
     if !word.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return None;
     }
-    let spec = SLASH_COMMANDS.iter().find(|c| c.name == word.to_lowercase())?;
+    let spec = SLASH_COMMANDS
+        .iter()
+        .find(|c| c.name == word.to_lowercase())?;
     if !spec.takes_arg || arg.trim().is_empty() {
         return None;
     }
@@ -352,7 +432,11 @@ pub fn unknown_command(draft: &str, skills: &[&str]) -> Option<(String, Option<S
         return None;
     }
     if let Some((_, foreign)) = FOREIGN_COMMANDS.iter().find(|(k, _)| *k == name) {
-        let suggestion = if foreign.is_empty() { None } else { Some(foreign.to_string()) };
+        let suggestion = if foreign.is_empty() {
+            None
+        } else {
+            Some(foreign.to_string())
+        };
         return Some((name, suggestion));
     }
     // Nearest command by prefix, then by containment. Skills are candidates too.
@@ -659,7 +743,9 @@ fn panel_chords() -> Vec<Binding> {
     for mode in [UiMode::Chat, UiMode::Panel, UiMode::Rail, UiMode::Ask] {
         let mut row = b(Some(mode), SESSIONS_ALIAS, Command::Tab(PanelTab::Tree));
         if mode == UiMode::Chat {
-            row = row.when(&[Guard::EmptyDraft]).doc(PANEL_SECTION, "the tree, too");
+            row = row
+                .when(&[Guard::EmptyDraft])
+                .doc(PANEL_SECTION, "the tree, too");
         }
         rows.push(row);
     }
@@ -667,7 +753,13 @@ fn panel_chords() -> Vec<Binding> {
 }
 
 /// `1`…`9`, one row each, documented once as `1-9`.
-fn digits(mode: UiMode, command: Command, section: &'static str, desc: &'static str, not: &[Guard]) -> Vec<Binding> {
+fn digits(
+    mode: UiMode,
+    command: Command,
+    section: &'static str,
+    desc: &'static str,
+    not: &[Guard],
+) -> Vec<Binding> {
     (1..=9)
         .map(|i| {
             let mut row = b(Some(mode), &i.to_string(), command).not(not);
@@ -681,6 +773,11 @@ fn digits(mode: UiMode, command: Command, section: &'static str, desc: &'static 
 
 /// Every binding in the TUI, in resolution order within a mode. Ordering is
 /// only ever used to put a GUARDED row ahead of its unguarded fallback.
+// The table is built by pushing in order because the ORDER is the semantics
+// (first match wins, guarded rows ahead of their fallbacks) and the rows are
+// grouped by comments explaining each block. A single `vec![]` literal would
+// read as one 120-element expression.
+#[allow(clippy::vec_init_then_push)]
 pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
     use Command as C;
     use Guard as G;
@@ -699,7 +796,11 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
     rows.push(b(None, "ctrl+c", C::QuitArm));
 
     // -- chat --
-    rows.push(b(Some(M::Chat), "?", C::HelpOpen).when(&[G::EmptyDraft]).doc("leaving", "this overlay"));
+    rows.push(
+        b(Some(M::Chat), "?", C::HelpOpen)
+            .when(&[G::EmptyDraft])
+            .doc("leaving", "this overlay"),
+    );
 
     // The popup owns ⏎ while it is open, so it sits AHEAD of `send`.
     rows.push(
@@ -708,14 +809,22 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
             .doc("compose", "accept the @ or / suggestion")
             .label("⏎ ⇥"),
     );
-    rows.push(b(Some(M::Chat), "enter", C::Send).doc("compose", "send · interjects while a turn runs"));
-    rows.push(b(Some(M::Chat), "meta+enter", C::SendQueue).doc("compose", "queue for after this turn"));
+    rows.push(
+        b(Some(M::Chat), "enter", C::Send).doc("compose", "send · interjects while a turn runs"),
+    );
+    rows.push(
+        b(Some(M::Chat), "meta+enter", C::SendQueue).doc("compose", "queue for after this turn"),
+    );
     rows.push(b(Some(M::Chat), "ctrl+j", C::Newline).doc("compose", "newline"));
     rows.push(b(Some(M::Chat), "ctrl+v", C::ImagePaste).doc("compose", "attach clipboard image"));
     rows.push(b(Some(M::Chat), "super+v", C::ImagePaste).label("⌘v"));
     rows.push(b(Some(M::Chat), "meta+v", C::ImagePaste));
-    rows.push(b(Some(M::Chat), "ctrl+n", C::SessionNew).doc("compose", "start a fresh conversation"));
-    rows.push(b(Some(M::Chat), "ctrl+g", C::SessionCopyId).doc("compose", "copy this conversation's id"));
+    rows.push(
+        b(Some(M::Chat), "ctrl+n", C::SessionNew).doc("compose", "start a fresh conversation"),
+    );
+    rows.push(
+        b(Some(M::Chat), "ctrl+g", C::SessionCopyId).doc("compose", "copy this conversation's id"),
+    );
     // `not: [emptyDraft]` is not decoration: an empty-draft double-tap must
     // fall through to the stop, not be swallowed.
     rows.push(
@@ -770,7 +879,9 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
     rows.push(b(Some(M::Chat), "up", C::AttachmentUp).when(&[G::EmptyDraft, G::HasAttachments]));
     rows.push(b(Some(M::Chat), "up", C::HistoryPrev));
     rows.push(b(Some(M::Chat), "down", C::CursorDown).when(&[G::Multiline]));
-    rows.push(b(Some(M::Chat), "down", C::AttachmentDown).when(&[G::EmptyDraft, G::HasAttachments]));
+    rows.push(
+        b(Some(M::Chat), "down", C::AttachmentDown).when(&[G::EmptyDraft, G::HasAttachments]),
+    );
     rows.push(
         b(Some(M::Chat), "down", C::RailEnter)
             .when(&[G::EmptyDraft, G::RailLive])
@@ -849,9 +960,15 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
     rows.push(b(Some(M::Chat), "backspace", C::DeleteBack));
 
     // -- the live subagent rail --
-    rows.push(b(Some(M::Rail), "up", C::RailUp).doc("the rail", "move").label("↑/↓"));
+    rows.push(
+        b(Some(M::Rail), "up", C::RailUp)
+            .doc("the rail", "move")
+            .label("↑/↓"),
+    );
     rows.push(b(Some(M::Rail), "down", C::RailDown));
-    rows.push(b(Some(M::Rail), "enter", C::RailOpen).doc("the rail", "open this agent / shell output"));
+    rows.push(
+        b(Some(M::Rail), "enter", C::RailOpen).doc("the rail", "open this agent / shell output"),
+    );
     rows.push(b(Some(M::Rail), "esc", C::RailExit).doc("the rail", "back to the composer"));
     rows.push(
         b(Some(M::Rail), "x", C::RailStop)
@@ -860,12 +977,25 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
     );
 
     // -- a question hold --
-    rows.extend(digits(M::Ask, C::AskPick, "when bough asks", "pick an option", &[]));
+    rows.extend(digits(
+        M::Ask,
+        C::AskPick,
+        "when bough asks",
+        "pick an option",
+        &[],
+    ));
     rows.push(b(Some(M::Ask), "enter", C::AskSend).doc("when bough asks", "send what you typed"));
-    rows.push(b(Some(M::Ask), "esc", C::AskDecline).doc("when bough asks", "decline (the program catches it)"));
+    rows.push(
+        b(Some(M::Ask), "esc", C::AskDecline)
+            .doc("when bough asks", "decline (the program catches it)"),
+    );
 
     // -- inside the panel --
-    rows.push(b(Some(M::Panel), "up", C::MoveUp).doc("inside the panel", "move").label("↑↓ j/k"));
+    rows.push(
+        b(Some(M::Panel), "up", C::MoveUp)
+            .doc("inside the panel", "move")
+            .label("↑↓ j/k"),
+    );
     rows.push(b(Some(M::Panel), "down", C::MoveDown));
     // Bare letters, so they are text while the filter buffer has the keyboard.
     rows.push(b(Some(M::Panel), "k", C::MoveUp).not(&[G::PanelFiltering]));
@@ -880,7 +1010,10 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
         b(Some(M::Panel), "tab", C::PanelFilterTier)
             .tabs(&[T::Model])
             .when(&[G::PanelFiltering])
-            .doc("inside the panel", "switch between the frontier and cheap search boxes"),
+            .doc(
+                "inside the panel",
+                "switch between the frontier and cheap search boxes",
+            ),
     );
     // AHEAD of `panel.next`: while a search box has the keyboard, ⇥ belongs to
     // the box.
@@ -890,10 +1023,10 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
             .label("⇥ ⇧⇥"),
     );
     rows.push(b(Some(M::Panel), "shift+tab", C::PanelPrev));
-    rows.push(
-        b(Some(M::Panel), "enter", C::PanelConfirm)
-            .doc("inside the panel", "open · grant · keep — what the tab affirms"),
-    );
+    rows.push(b(Some(M::Panel), "enter", C::PanelConfirm).doc(
+        "inside the panel",
+        "open · grant · keep — what the tab affirms",
+    ));
     rows.push(
         b(Some(M::Panel), "right", C::MoveIn)
             .doc("inside the panel", "drill into delegated work (tree)")
@@ -911,7 +1044,10 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
         b(Some(M::Panel), "s", C::PanelConfirmSummarize)
             .tabs(&[T::Tree])
             .not(&[G::PanelFiltering])
-            .doc("inside the panel", "tree: branch, carrying a summary of what you left"),
+            .doc(
+                "inside the panel",
+                "tree: branch, carrying a summary of what you left",
+            ),
     );
 
     // -- type-to-filter, the panel's one modal buffer --
@@ -919,7 +1055,10 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
         b(Some(M::Panel), "/", C::PanelFilter)
             .tabs(&FILTER_TABS)
             .not(&[G::PanelFiltering])
-            .doc("inside the panel", "filter this list — in the tree, searches every message · esc clears"),
+            .doc(
+                "inside the panel",
+                "filter this list — in the tree, searches every message · esc clears",
+            ),
     );
     rows.push(b(Some(M::Panel), "backspace", C::PanelFilterBack).when(&[G::PanelFiltering]));
     // Ahead of `panel.close`: escape unwinds exactly ONE level.
@@ -949,7 +1088,10 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
         b(Some(M::Panel), "c", C::McpConnect)
             .tabs(&[T::Mcp])
             .not(&[G::PanelFiltering])
-            .doc("the mcp tab", "test the connection · names the tools, or the error"),
+            .doc(
+                "the mcp tab",
+                "test the connection · names the tools, or the error",
+            ),
     );
     rows.push(
         b(Some(M::Panel), "r", C::McpRestart)
@@ -1005,7 +1147,10 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
         b(Some(M::Panel), "f", C::WfFilter)
             .tabs(&[T::Workflows])
             .not(&[G::PanelFiltering])
-            .doc("the workflows tab", "cycle agents: all/running/queued/done/error"),
+            .doc(
+                "the workflows tab",
+                "cycle agents: all/running/queued/done/error",
+            ),
     );
     rows.push(
         b(Some(M::Panel), "o", C::WfOpenAgent)
@@ -1019,13 +1164,19 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
         b(Some(M::Panel), "e", C::TreeExtract)
             .tabs(&[T::Tree])
             .not(&[G::PanelFiltering])
-            .doc("the tree tab", "split here — this turn on becomes its own conversation"),
+            .doc(
+                "the tree tab",
+                "split here — this turn on becomes its own conversation",
+            ),
     );
     rows.push(
         b(Some(M::Panel), "m", C::TreeMoveInto)
             .tabs(&[T::Tree])
             .not(&[G::PanelFiltering])
-            .doc("the tree tab", "bring this turn on into the open conversation"),
+            .doc(
+                "the tree tab",
+                "bring this turn on into the open conversation",
+            ),
     );
 
     // -- the changes tab --
@@ -1044,7 +1195,8 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
 
     // -- one job's output --
     rows.push(
-        b(Some(M::Job), "esc", C::JobClose).doc("a background job (⏎ on a rail row)", "back to the rail"),
+        b(Some(M::Job), "esc", C::JobClose)
+            .doc("a background job (⏎ on a rail row)", "back to the rail"),
     );
     rows.push(b(Some(M::Job), "q", C::JobClose));
     rows.push(b(Some(M::Job), "left", C::JobClose));
@@ -1144,8 +1296,14 @@ pub fn limits_section() -> HelpSection {
         keys: vec![
             (String::new(), "^c ^c quits; subagents keep running".into()),
             (String::new(), "programs run as you — no sandbox".into()),
-            (String::new(), "changes land in your checkout as they happen".into()),
-            (String::new(), "a running workflow takes no input — stop, edit, relaunch".into()),
+            (
+                String::new(),
+                "changes land in your checkout as they happen".into(),
+            ),
+            (
+                String::new(),
+                "a running workflow takes no input — stop, edit, relaunch".into(),
+            ),
         ],
         ..Default::default()
     }
@@ -1157,10 +1315,16 @@ pub fn unavailable_section() -> HelpSection {
         section: "not bound".into(),
         unavailable: true,
         keys: vec![
-            ("^r".into(), "no reverse search · ^f then / searches every message".into()),
+            (
+                "^r".into(),
+                "no reverse search · ^f then / searches every message".into(),
+            ),
             ("^z".into(), "no suspend · ^c ^c quits".into()),
             ("⌥d".into(), "use ^k".into()),
-            ("home end".into(), "not delivered by the terminal layer · use pgup/pgdn".into()),
+            (
+                "home end".into(),
+                "not delivered by the terminal layer · use pgup/pgdn".into(),
+            ),
         ],
         ..Default::default()
     }
@@ -1170,7 +1334,9 @@ pub fn unavailable_section() -> HelpSection {
 pub fn help_sections(bindings: &[Binding]) -> Vec<HelpSection> {
     let mut out: Vec<HelpSection> = Vec::new();
     for b in bindings {
-        let (Some(section), Some(desc)) = (b.section, b.desc) else { continue };
+        let (Some(section), Some(desc)) = (b.section, b.desc) else {
+            continue;
+        };
         // A GUARDED row must say it is guarded, both ways round.
         let desc = if b.when.contains(&Guard::EmptyDraft) {
             format!("{desc} · empty draft")
@@ -1179,7 +1345,10 @@ pub fn help_sections(bindings: &[Binding]) -> Vec<HelpSection> {
         } else {
             desc.to_string()
         };
-        let label = b.label.map(str::to_string).unwrap_or_else(|| chord_label(&b.chord));
+        let label = b
+            .label
+            .map(str::to_string)
+            .unwrap_or_else(|| chord_label(&b.chord));
         match out.iter_mut().find(|s| s.section == section) {
             Some(s) => s.keys.push((label, desc)),
             None => out.push(HelpSection {
@@ -1194,13 +1363,21 @@ pub fn help_sections(bindings: &[Binding]) -> Vec<HelpSection> {
         section: "typed at the prompt".into(),
         commands: true,
         keys: vec![
-            ("!cmd".into(), "run it in your shell — not a message, not billed; output in the rail".into()),
-            ("@path".into(), "complete a file or directory into the message".into()),
+            (
+                "!cmd".into(),
+                "run it in your shell — not a message, not billed; output in the rail".into(),
+            ),
+            (
+                "@path".into(),
+                "complete a file or directory into the message".into(),
+            ),
         ],
         ..Default::default()
     };
     for c in SLASH_COMMANDS.iter() {
-        typed.keys.push((format!("/{}", c.name), c.desc.to_string()));
+        typed
+            .keys
+            .push((format!("/{}", c.name), c.desc.to_string()));
     }
     out.push(typed);
     // WHAT THE TREE'S MARKS MEAN.
@@ -1209,11 +1386,26 @@ pub fn help_sections(bindings: &[Binding]) -> Vec<HelpSection> {
         commands: true,
         keys: vec![
             ("●".into(), "a conversation you started".into()),
-            ("↦".into(), "a fresh conversation handed off from another".into()),
-            ("⑂".into(), "a fork — the same thread, cut at one turn".into()),
-            ("≣".into(), "a compaction — a span replaced by a summary".into()),
-            ("◆".into(), "a subagent — including a workflow's own agents".into()),
-            ("⋯ ✓ ✗ ◼".into(), "running · finished · failed · stopped by a restart".into()),
+            (
+                "↦".into(),
+                "a fresh conversation handed off from another".into(),
+            ),
+            (
+                "⑂".into(),
+                "a fork — the same thread, cut at one turn".into(),
+            ),
+            (
+                "≣".into(),
+                "a compaction — a span replaced by a summary".into(),
+            ),
+            (
+                "◆".into(),
+                "a subagent — including a workflow's own agents".into(),
+            ),
+            (
+                "⋯ ✓ ✗ ◼".into(),
+                "running · finished · failed · stopped by a restart".into(),
+            ),
         ],
         ..Default::default()
     });
@@ -1335,7 +1527,10 @@ pub struct LineState {
     pub cursor: usize,
 }
 
-pub const EMPTY_LINE: LineState = LineState { text: String::new(), cursor: 0 };
+pub const EMPTY_LINE: LineState = LineState {
+    text: String::new(),
+    cursor: 0,
+};
 
 fn chars(s: &str) -> Vec<char> {
     s.chars().collect()
@@ -1347,7 +1542,10 @@ fn from_chars(c: &[char]) -> String {
 
 fn clamp(text: Vec<char>, cursor: usize) -> LineState {
     let len = text.len();
-    LineState { text: from_chars(&text), cursor: cursor.min(len) }
+    LineState {
+        text: from_chars(&text),
+        cursor: cursor.min(len),
+    }
 }
 
 /// Start of the logical line the cursor sits on (char index).
@@ -1463,7 +1661,10 @@ pub fn edit_line(s: &LineState, command: Command) -> LineState {
             }
             let mut t = text;
             t.remove(s.cursor - 1);
-            LineState { text: from_chars(&t), cursor: s.cursor - 1 }
+            LineState {
+                text: from_chars(&t),
+                cursor: s.cursor - 1,
+            }
         }
         Command::DeleteForward => {
             if s.cursor >= text.len() {
@@ -1471,7 +1672,10 @@ pub fn edit_line(s: &LineState, command: Command) -> LineState {
             }
             let mut t = text;
             t.remove(s.cursor);
-            LineState { text: from_chars(&t), cursor: s.cursor }
+            LineState {
+                text: from_chars(&t),
+                cursor: s.cursor,
+            }
         }
         Command::DeleteWordBack => {
             let from = word_left(&s.text, s.cursor);
@@ -1481,7 +1685,10 @@ pub fn edit_line(s: &LineState, command: Command) -> LineState {
             let mut t: Vec<char> = Vec::with_capacity(text.len());
             t.extend_from_slice(&text[..from]);
             t.extend_from_slice(&text[s.cursor..]);
-            LineState { text: from_chars(&t), cursor: from }
+            LineState {
+                text: from_chars(&t),
+                cursor: from,
+            }
         }
         Command::DeleteToEnd => {
             let end = line_end(&text, s.cursor);
@@ -1491,7 +1698,10 @@ pub fn edit_line(s: &LineState, command: Command) -> LineState {
             let mut t: Vec<char> = Vec::with_capacity(text.len());
             t.extend_from_slice(&text[..s.cursor]);
             t.extend_from_slice(&text[end..]);
-            LineState { text: from_chars(&t), cursor: s.cursor }
+            LineState {
+                text: from_chars(&t),
+                cursor: s.cursor,
+            }
         }
         Command::DeleteToStart => {
             let start = line_start(&text, s.cursor);
@@ -1501,7 +1711,10 @@ pub fn edit_line(s: &LineState, command: Command) -> LineState {
             let mut t: Vec<char> = Vec::with_capacity(text.len());
             t.extend_from_slice(&text[..start]);
             t.extend_from_slice(&text[s.cursor..]);
-            LineState { text: from_chars(&t), cursor: start }
+            LineState {
+                text: from_chars(&t),
+                cursor: start,
+            }
         }
         Command::DeleteLine => {
             if s.text.is_empty() {
@@ -1527,7 +1740,10 @@ pub fn insert_text(s: &LineState, text: &str) -> LineState {
     out.extend_from_slice(&t[..s.cursor]);
     out.extend_from_slice(&add);
     out.extend_from_slice(&t[s.cursor..]);
-    LineState { text: from_chars(&out), cursor: s.cursor + add.len() }
+    LineState {
+        text: from_chars(&out),
+        cursor: s.cursor + add.len(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1623,7 +1839,11 @@ pub fn strip_ctl(s: &str) -> String {
 /// literal newline. The old tree shipped the other rule and sent half messages.
 pub fn chunk_input(chunk: &str) -> (String, bool) {
     let send = chunk.ends_with('\r');
-    let body = if send { &chunk[..chunk.len() - 1] } else { chunk };
+    let body = if send {
+        &chunk[..chunk.len() - 1]
+    } else {
+        chunk
+    };
     // `\r\n?` → `\n`
     let mut normalized = String::with_capacity(body.len());
     let mut it = body.chars().peekable();
@@ -1673,32 +1893,127 @@ mod tests {
     }
 
     fn line(text: &str, cursor: usize) -> LineState {
-        LineState { text: text.to_string(), cursor }
+        LineState {
+            text: text.to_string(),
+            cursor,
+        }
     }
 
     // ---- chords ----
 
     #[test]
     fn chord_of_canonicalizes_modifiers_named_keys_and_plain_characters() {
-        assert_eq!(chord_of("p", KeyFlags { ctrl: true, ..Default::default() }), "ctrl+p");
-        assert_eq!(chord_of("", KeyFlags { r#return: true, meta: true, ..Default::default() }), "meta+enter");
-        assert_eq!(chord_of("", KeyFlags { escape: true, ..Default::default() }), "esc");
+        assert_eq!(
+            chord_of(
+                "p",
+                KeyFlags {
+                    ctrl: true,
+                    ..Default::default()
+                }
+            ),
+            "ctrl+p"
+        );
+        assert_eq!(
+            chord_of(
+                "",
+                KeyFlags {
+                    r#return: true,
+                    meta: true,
+                    ..Default::default()
+                }
+            ),
+            "meta+enter"
+        );
+        assert_eq!(
+            chord_of(
+                "",
+                KeyFlags {
+                    escape: true,
+                    ..Default::default()
+                }
+            ),
+            "esc"
+        );
         assert_eq!(chord_of("?", KeyFlags::default()), "?");
         assert_eq!(chord_of(" ", KeyFlags::default()), "space");
-        assert_eq!(chord_of("", KeyFlags { up_arrow: true, ..Default::default() }), "up");
-        assert_eq!(chord_of("", KeyFlags { tab: true, shift: true, ..Default::default() }), "shift+tab");
+        assert_eq!(
+            chord_of(
+                "",
+                KeyFlags {
+                    up_arrow: true,
+                    ..Default::default()
+                }
+            ),
+            "up"
+        );
+        assert_eq!(
+            chord_of(
+                "",
+                KeyFlags {
+                    tab: true,
+                    shift: true,
+                    ..Default::default()
+                }
+            ),
+            "shift+tab"
+        );
         // Backspace and delete flags both mean backspace.
-        assert_eq!(chord_of("", KeyFlags { backspace: true, ..Default::default() }), "backspace");
-        assert_eq!(chord_of("", KeyFlags { delete: true, ..Default::default() }), "backspace");
-        assert_eq!(chord_of("v", KeyFlags { super_: true, ..Default::default() }), "super+v");
+        assert_eq!(
+            chord_of(
+                "",
+                KeyFlags {
+                    backspace: true,
+                    ..Default::default()
+                }
+            ),
+            "backspace"
+        );
+        assert_eq!(
+            chord_of(
+                "",
+                KeyFlags {
+                    delete: true,
+                    ..Default::default()
+                }
+            ),
+            "backspace"
+        );
+        assert_eq!(
+            chord_of(
+                "v",
+                KeyFlags {
+                    super_: true,
+                    ..Default::default()
+                }
+            ),
+            "super+v"
+        );
     }
 
     #[test]
     fn ctrl_j_is_one_chord_however_the_terminal_spells_it() {
         assert_eq!(chord_of("\n", KeyFlags::default()), "ctrl+j");
-        assert_eq!(chord_of("\n", KeyFlags { ctrl: true, ..Default::default() }), "ctrl+j");
+        assert_eq!(
+            chord_of(
+                "\n",
+                KeyFlags {
+                    ctrl: true,
+                    ..Default::default()
+                }
+            ),
+            "ctrl+j"
+        );
         // \r with the return flag is enter, never ^j.
-        assert_eq!(chord_of("\r", KeyFlags { r#return: true, ..Default::default() }), "enter");
+        assert_eq!(
+            chord_of(
+                "\r",
+                KeyFlags {
+                    r#return: true,
+                    ..Default::default()
+                }
+            ),
+            "enter"
+        );
     }
 
     #[test]
@@ -1730,7 +2045,10 @@ mod tests {
         use Command as C;
         use UiMode as M;
         // Identical guards: the second row is dead.
-        let dup = vec![b(Some(M::Chat), "x", C::Send), b(Some(M::Chat), "x", C::Cancel)];
+        let dup = vec![
+            b(Some(M::Chat), "x", C::Send),
+            b(Some(M::Chat), "x", C::Cancel),
+        ];
         assert_eq!(dead_bindings(&dup).len(), 1);
         // An unguarded row ahead of a guarded one: the guarded one is dead.
         let shadowed = vec![
@@ -1761,31 +2079,59 @@ mod tests {
     #[test]
     fn the_same_chord_means_two_things_and_the_guard_decides_which() {
         let empty = ctx();
-        let typing = KeyContext { empty_draft: false, ..ctx() };
+        let typing = KeyContext {
+            empty_draft: false,
+            ..ctx()
+        };
         assert_eq!(lookup(&empty, "ctrl+f"), Some(Command::Tab(PanelTab::Tree)));
         assert_eq!(lookup(&typing, "ctrl+f"), Some(Command::CursorRight));
         assert_eq!(lookup(&empty, "ctrl+e"), Some(Command::FoldAll));
         assert_eq!(lookup(&typing, "ctrl+e"), Some(Command::CursorEnd));
-        let multi = KeyContext { multiline: true, empty_draft: false, ..ctx() };
+        let multi = KeyContext {
+            multiline: true,
+            empty_draft: false,
+            ..ctx()
+        };
         assert_eq!(lookup(&multi, "up"), Some(Command::CursorUp));
         assert_eq!(lookup(&ctx(), "up"), Some(Command::HistoryPrev));
     }
 
     #[test]
     fn down_enters_the_rail_only_when_a_subagent_is_actually_working() {
-        let live = KeyContext { rail_live: true, ..ctx() };
+        let live = KeyContext {
+            rail_live: true,
+            ..ctx()
+        };
         assert_eq!(lookup(&live, "down"), Some(Command::RailEnter));
         assert_eq!(lookup(&ctx(), "down"), Some(Command::HistoryNext));
-        let typing = KeyContext { empty_draft: false, rail_live: true, ..ctx() };
+        let typing = KeyContext {
+            empty_draft: false,
+            rail_live: true,
+            ..ctx()
+        };
         assert_eq!(lookup(&typing, "down"), Some(Command::HistoryNext));
     }
 
     #[test]
     fn a_single_ctrl_c_arms_a_second_quits_in_every_mode() {
-        for mode in [UiMode::Chat, UiMode::Panel, UiMode::Help, UiMode::Rail, UiMode::Ask] {
+        for mode in [
+            UiMode::Chat,
+            UiMode::Panel,
+            UiMode::Help,
+            UiMode::Rail,
+            UiMode::Ask,
+        ] {
             let unarmed = KeyContext { mode, ..ctx() };
-            assert_eq!(lookup(&unarmed, "ctrl+c"), Some(Command::QuitArm), "{mode:?}");
-            let armed = KeyContext { mode, quit_armed: true, ..ctx() };
+            assert_eq!(
+                lookup(&unarmed, "ctrl+c"),
+                Some(Command::QuitArm),
+                "{mode:?}"
+            );
+            let armed = KeyContext {
+                mode,
+                quit_armed: true,
+                ..ctx()
+            };
             assert_eq!(lookup(&armed, "ctrl+c"), Some(Command::Quit), "{mode:?}");
         }
     }
@@ -1793,50 +2139,96 @@ mod tests {
     #[test]
     fn esc_alone_cancels_esc_esc_clears_the_draft() {
         assert_eq!(lookup(&ctx(), "esc"), Some(Command::Cancel));
-        let double_typed = KeyContext { double_esc: true, empty_draft: false, ..ctx() };
+        let double_typed = KeyContext {
+            double_esc: true,
+            empty_draft: false,
+            ..ctx()
+        };
         assert_eq!(lookup(&double_typed, "esc"), Some(Command::DraftClear));
         // With nothing typed there is nothing to clear: the double-tap must
         // FALL THROUGH rather than swallow the gesture.
-        let double_busy = KeyContext { double_esc: true, busy: true, ..ctx() };
+        let double_busy = KeyContext {
+            double_esc: true,
+            busy: true,
+            ..ctx()
+        };
         assert_eq!(lookup(&double_busy, "esc"), Some(Command::TurnInterrupt));
     }
 
     #[test]
     fn esc_unwinds_exactly_one_level_popup_then_turn_then_notice() {
         // The picker's own legend says `esc closes`, so it must — even mid-turn.
-        let popup = KeyContext { completing: true, busy: true, ..ctx() };
+        let popup = KeyContext {
+            completing: true,
+            busy: true,
+            ..ctx()
+        };
         assert_eq!(lookup(&popup, "esc"), Some(Command::CompleteDismiss));
-        let busy = KeyContext { busy: true, ..ctx() };
+        let busy = KeyContext {
+            busy: true,
+            ..ctx()
+        };
         assert_eq!(lookup(&busy, "esc"), Some(Command::TurnInterrupt));
         assert_eq!(lookup(&ctx(), "esc"), Some(Command::Cancel));
     }
 
     #[test]
     fn esc_inside_the_take_back_window_unsends_outside_it_it_stops_the_turn() {
-        let sent_busy = KeyContext { just_sent: true, busy: true, ..ctx() };
+        let sent_busy = KeyContext {
+            just_sent: true,
+            busy: true,
+            ..ctx()
+        };
         assert_eq!(lookup(&sent_busy, "esc"), Some(Command::MessageUnsend));
-        let busy = KeyContext { busy: true, ..ctx() };
+        let busy = KeyContext {
+            busy: true,
+            ..ctx()
+        };
         assert_eq!(lookup(&busy, "esc"), Some(Command::TurnInterrupt));
         // A queued send arms it with no turn of this client's running.
-        let sent_idle = KeyContext { just_sent: true, ..ctx() };
+        let sent_idle = KeyContext {
+            just_sent: true,
+            ..ctx()
+        };
         assert_eq!(lookup(&sent_idle, "esc"), Some(Command::MessageUnsend));
     }
 
     #[test]
     fn the_take_back_never_costs_a_draft_and_never_outranks_a_popup() {
-        let typed_busy = KeyContext { just_sent: true, busy: true, empty_draft: false, ..ctx() };
+        let typed_busy = KeyContext {
+            just_sent: true,
+            busy: true,
+            empty_draft: false,
+            ..ctx()
+        };
         assert_eq!(lookup(&typed_busy, "esc"), Some(Command::TurnInterrupt));
-        let typed_idle = KeyContext { just_sent: true, empty_draft: false, ..ctx() };
+        let typed_idle = KeyContext {
+            just_sent: true,
+            empty_draft: false,
+            ..ctx()
+        };
         assert_eq!(lookup(&typed_idle, "esc"), Some(Command::Cancel));
-        let with_popup = KeyContext { just_sent: true, busy: true, completing: true, ..ctx() };
+        let with_popup = KeyContext {
+            just_sent: true,
+            busy: true,
+            completing: true,
+            ..ctx()
+        };
         assert_eq!(lookup(&with_popup, "esc"), Some(Command::CompleteDismiss));
     }
 
     #[test]
     fn enter_commits_the_highlighted_completion_before_it_sends() {
-        let popup = KeyContext { completing: true, empty_draft: false, ..ctx() };
+        let popup = KeyContext {
+            completing: true,
+            empty_draft: false,
+            ..ctx()
+        };
         assert_eq!(lookup(&popup, "enter"), Some(Command::CompleteAccept));
-        let typing = KeyContext { empty_draft: false, ..ctx() };
+        let typing = KeyContext {
+            empty_draft: false,
+            ..ctx()
+        };
         assert_eq!(lookup(&typing, "enter"), Some(Command::Send));
         assert_eq!(lookup(&popup, "tab"), Some(Command::CompleteAccept));
         assert_eq!(lookup(&typing, "tab"), Some(Command::GhostAccept));
@@ -1844,7 +2236,11 @@ mod tests {
 
     #[test]
     fn the_panel_binds_its_own_keys_and_nothing_from_chat() {
-        let panel = KeyContext { mode: UiMode::Panel, tab: Some(PanelTab::Model), ..ctx() };
+        let panel = KeyContext {
+            mode: UiMode::Panel,
+            tab: Some(PanelTab::Model),
+            ..ctx()
+        };
         assert_eq!(lookup(&panel, "up"), Some(Command::MoveUp));
         assert_eq!(lookup(&panel, "j"), Some(Command::MoveDown));
         assert_eq!(lookup(&panel, "k"), Some(Command::MoveUp));
@@ -1858,27 +2254,51 @@ mod tests {
 
     #[test]
     fn a_bare_letter_means_what_the_open_tab_says_it_means() {
-        let wf = KeyContext { mode: UiMode::Panel, tab: Some(PanelTab::Workflows), ..ctx() };
+        let wf = KeyContext {
+            mode: UiMode::Panel,
+            tab: Some(PanelTab::Workflows),
+            ..ctx()
+        };
         assert_eq!(lookup(&wf, "p"), Some(Command::WfPause));
         assert_eq!(lookup(&wf, "P"), Some(Command::WfResume));
         assert_eq!(lookup(&wf, "x"), Some(Command::WfStop));
         assert_eq!(lookup(&wf, "r"), Some(Command::WfRerun));
-        let changes = KeyContext { mode: UiMode::Panel, tab: Some(PanelTab::Changes), ..ctx() };
+        let changes = KeyContext {
+            mode: UiMode::Panel,
+            tab: Some(PanelTab::Changes),
+            ..ctx()
+        };
         assert_eq!(lookup(&changes, "x"), Some(Command::ChangesRevert));
         assert_eq!(lookup(&changes, "X"), Some(Command::ChangesRevertAll));
         // Outside its tab a letter is nothing at all — including with no tab.
-        let model = KeyContext { mode: UiMode::Panel, tab: Some(PanelTab::Model), ..ctx() };
+        let model = KeyContext {
+            mode: UiMode::Panel,
+            tab: Some(PanelTab::Model),
+            ..ctx()
+        };
         assert_eq!(lookup(&model, "p"), None);
         assert_eq!(lookup(&model, "x"), None);
-        let closed = KeyContext { mode: UiMode::Panel, tab: None, ..ctx() };
+        let closed = KeyContext {
+            mode: UiMode::Panel,
+            tab: None,
+            ..ctx()
+        };
         assert_eq!(lookup(&closed, "x"), None);
         // The tree's letters.
-        let tree = KeyContext { mode: UiMode::Panel, tab: Some(PanelTab::Tree), ..ctx() };
+        let tree = KeyContext {
+            mode: UiMode::Panel,
+            tab: Some(PanelTab::Tree),
+            ..ctx()
+        };
         assert_eq!(lookup(&tree, "s"), Some(Command::PanelConfirmSummarize));
         assert_eq!(lookup(&tree, "e"), Some(Command::TreeExtract));
         assert_eq!(lookup(&tree, "m"), Some(Command::TreeMoveInto));
         // The mcp tab's.
-        let mcp = KeyContext { mode: UiMode::Panel, tab: Some(PanelTab::Mcp), ..ctx() };
+        let mcp = KeyContext {
+            mode: UiMode::Panel,
+            tab: Some(PanelTab::Mcp),
+            ..ctx()
+        };
         assert_eq!(lookup(&mcp, "a"), Some(Command::McpAuth));
         assert_eq!(lookup(&mcp, "n"), Some(Command::McpAdd));
         assert_eq!(lookup(&mcp, "F"), Some(Command::McpForget));
@@ -1889,7 +2309,11 @@ mod tests {
 
     #[test]
     fn the_workflow_verbs_the_run_view_prints_are_all_bound() {
-        let wf = KeyContext { mode: UiMode::Panel, tab: Some(PanelTab::Workflows), ..ctx() };
+        let wf = KeyContext {
+            mode: UiMode::Panel,
+            tab: Some(PanelTab::Workflows),
+            ..ctx()
+        };
         assert_eq!(lookup(&wf, "e"), Some(Command::WfScript));
         assert_eq!(lookup(&wf, "f"), Some(Command::WfFilter));
         assert_eq!(lookup(&wf, "o"), Some(Command::WfOpenAgent));
@@ -1898,7 +2322,11 @@ mod tests {
 
     #[test]
     fn digits_address_panel_rows_and_pgup_pgdn_page_them() {
-        let panel = KeyContext { mode: UiMode::Panel, tab: Some(PanelTab::Model), ..ctx() };
+        let panel = KeyContext {
+            mode: UiMode::Panel,
+            tab: Some(PanelTab::Model),
+            ..ctx()
+        };
         for d in ["1", "5", "9"] {
             assert_eq!(lookup(&panel, d), Some(Command::PanelPick));
         }
@@ -1910,10 +2338,18 @@ mod tests {
     fn the_filter_buffer_takes_the_keyboard_and_gives_every_letter_back_as_text() {
         // `/` opens it, but only where a list is long enough to need narrowing.
         for tab in FILTER_TABS {
-            let c = KeyContext { mode: UiMode::Panel, tab: Some(tab), ..ctx() };
+            let c = KeyContext {
+                mode: UiMode::Panel,
+                tab: Some(tab),
+                ..ctx()
+            };
             assert_eq!(lookup(&c, "/"), Some(Command::PanelFilter), "{tab:?}");
         }
-        let changes = KeyContext { mode: UiMode::Panel, tab: Some(PanelTab::Changes), ..ctx() };
+        let changes = KeyContext {
+            mode: UiMode::Panel,
+            tab: Some(PanelTab::Changes),
+            ..ctx()
+        };
         assert_eq!(lookup(&changes, "/"), None);
         // While it is open, every bare letter and digit in the panel is unbound.
         let filtering = KeyContext {
@@ -1937,16 +2373,26 @@ mod tests {
         assert_eq!(lookup(&filtering, "enter"), Some(Command::PanelConfirm));
         // Escape unwinds ONE level — the buffer, not the panel.
         assert_eq!(lookup(&filtering, "esc"), Some(Command::PanelFilterExit));
-        let plain = KeyContext { mode: UiMode::Panel, tab: Some(PanelTab::Model), ..ctx() };
+        let plain = KeyContext {
+            mode: UiMode::Panel,
+            tab: Some(PanelTab::Model),
+            ..ctx()
+        };
         assert_eq!(lookup(&plain, "esc"), Some(Command::PanelClose));
-        assert_eq!(lookup(&filtering, "backspace"), Some(Command::PanelFilterBack));
+        assert_eq!(
+            lookup(&filtering, "backspace"),
+            Some(Command::PanelFilterBack)
+        );
         // The model tab's ⇥ while filtering reaches the OTHER search box.
         assert_eq!(lookup(&filtering, "tab"), Some(Command::PanelFilterTier));
     }
 
     #[test]
     fn the_rail_can_stop_what_it_lists() {
-        let rail = KeyContext { mode: UiMode::Rail, ..ctx() };
+        let rail = KeyContext {
+            mode: UiMode::Rail,
+            ..ctx()
+        };
         assert_eq!(lookup(&rail, "x"), Some(Command::RailStop));
         // …and only there: `x` in the composer is a character.
         assert_eq!(lookup(&ctx(), "x"), None);
@@ -1974,19 +2420,36 @@ mod tests {
     fn sessions_alias_lands_on_the_tree_in_all_four_modes() {
         for mode in [UiMode::Chat, UiMode::Panel, UiMode::Rail, UiMode::Ask] {
             let c = KeyContext { mode, ..ctx() };
-            assert_eq!(lookup(&c, SESSIONS_ALIAS), Some(Command::Tab(PanelTab::Tree)), "{mode:?}");
+            assert_eq!(
+                lookup(&c, SESSIONS_ALIAS),
+                Some(Command::Tab(PanelTab::Tree)),
+                "{mode:?}"
+            );
         }
     }
 
     #[test]
     fn resolve_is_lookup_straight_off_a_keypress() {
-        assert_eq!(resolve(&ctx(), "", KeyFlags { escape: true, ..Default::default() }), Some(Command::Cancel));
+        assert_eq!(
+            resolve(
+                &ctx(),
+                "",
+                KeyFlags {
+                    escape: true,
+                    ..Default::default()
+                }
+            ),
+            Some(Command::Cancel)
+        );
         assert_eq!(resolve(&ctx(), "hello world", KeyFlags::default()), None);
     }
 
     #[test]
     fn job_mode_closes_back_to_the_rail_and_kills_with_x() {
-        let job = KeyContext { mode: UiMode::Job, ..ctx() };
+        let job = KeyContext {
+            mode: UiMode::Job,
+            ..ctx()
+        };
         assert_eq!(lookup(&job, "esc"), Some(Command::JobClose));
         assert_eq!(lookup(&job, "q"), Some(Command::JobClose));
         assert_eq!(lookup(&job, "left"), Some(Command::JobClose));
@@ -2010,8 +2473,19 @@ mod tests {
     fn the_not_bound_section_is_true_none_of_those_chords_is_bound() {
         // ^r, ^z are not bound anywhere.
         for chord in ["ctrl+r", "ctrl+z", "meta+d"] {
-            for mode in [UiMode::Chat, UiMode::Panel, UiMode::Rail, UiMode::Ask, UiMode::Help, UiMode::Job] {
-                let c = KeyContext { mode, empty_draft: false, ..ctx() };
+            for mode in [
+                UiMode::Chat,
+                UiMode::Panel,
+                UiMode::Rail,
+                UiMode::Ask,
+                UiMode::Help,
+                UiMode::Job,
+            ] {
+                let c = KeyContext {
+                    mode,
+                    empty_draft: false,
+                    ..ctx()
+                };
                 assert_eq!(lookup(&c, chord), None, "{chord} in {mode:?}");
             }
         }
@@ -2021,8 +2495,11 @@ mod tests {
     fn every_section_header_survives_flattening_and_carries_its_rows() {
         let sections = help_sections(&BINDINGS);
         let lines = help_lines(&sections);
-        let headers: Vec<&str> =
-            lines.iter().filter(|l| l.kind == HelpLineKind::Header).map(|l| l.desc.as_str()).collect();
+        let headers: Vec<&str> = lines
+            .iter()
+            .filter(|l| l.kind == HelpLineKind::Header)
+            .map(|l| l.desc.as_str())
+            .collect();
         for s in &sections {
             assert!(headers.contains(&s.section.as_str()), "{}", s.section);
         }
@@ -2067,7 +2544,10 @@ mod tests {
         assert_eq!(edit_line(&start, Command::CursorLeft), start);
         let end = line("abc", 3);
         assert_eq!(edit_line(&end, Command::CursorRight), end);
-        assert_eq!(edit_line(&line("abc", 1), Command::CursorRight), line("abc", 2));
+        assert_eq!(
+            edit_line(&line("abc", 1), Command::CursorRight),
+            line("abc", 2)
+        );
     }
 
     #[test]
@@ -2094,21 +2574,36 @@ mod tests {
         let s = line("alpha beta gamma", 16);
         let back = edit_line(&s, Command::CursorWordLeft);
         assert_eq!(back.cursor, 11);
-        assert_eq!(edit_line(&s, Command::DeleteWordBack), line("alpha beta ", 11));
+        assert_eq!(
+            edit_line(&s, Command::DeleteWordBack),
+            line("alpha beta ", 11)
+        );
     }
 
     #[test]
     fn the_kill_keys_cut_to_the_ends_of_the_current_line_only() {
         let s = line("first\nsecond half", 12); // inside "second half"
-        assert_eq!(edit_line(&s, Command::DeleteToEnd), line("first\nsecond", 12));
-        assert_eq!(edit_line(&s, Command::DeleteToStart), line("first\n half", 6));
+        assert_eq!(
+            edit_line(&s, Command::DeleteToEnd),
+            line("first\nsecond", 12)
+        );
+        assert_eq!(
+            edit_line(&s, Command::DeleteToStart),
+            line("first\n half", 6)
+        );
         assert_eq!(edit_line(&s, Command::DeleteLine), EMPTY_LINE);
     }
 
     #[test]
     fn backspace_and_delete_forward_move_the_cursor_the_way_each_should() {
-        assert_eq!(edit_line(&line("abc", 2), Command::DeleteBack), line("ac", 1));
-        assert_eq!(edit_line(&line("abc", 1), Command::DeleteForward), line("ac", 1));
+        assert_eq!(
+            edit_line(&line("abc", 2), Command::DeleteBack),
+            line("ac", 1)
+        );
+        assert_eq!(
+            edit_line(&line("abc", 1), Command::DeleteForward),
+            line("ac", 1)
+        );
         let at_start = line("abc", 0);
         assert_eq!(edit_line(&at_start, Command::DeleteBack), at_start);
         let at_end = line("abc", 3);
@@ -2128,7 +2623,10 @@ mod tests {
         assert_eq!(chunk_input("hello\r"), ("hello".to_string(), true));
         // ^j after fast typing arrives in the same read and must NOT send.
         assert_eq!(chunk_input("hello\n"), ("hello\n".to_string(), false));
-        assert_eq!(chunk_input("two\r\nlines\r"), ("two\nlines".to_string(), true));
+        assert_eq!(
+            chunk_input("two\r\nlines\r"),
+            ("two\nlines".to_string(), true)
+        );
     }
 
     #[test]
@@ -2141,9 +2639,27 @@ mod tests {
     #[test]
     fn is_text_input_tells_typing_from_a_chord() {
         assert!(is_text_input("a", KeyFlags::default()));
-        assert!(!is_text_input("a", KeyFlags { ctrl: true, ..Default::default() }));
-        assert!(!is_text_input("", KeyFlags { up_arrow: true, ..Default::default() }));
-        assert!(!is_text_input("\r", KeyFlags { r#return: true, ..Default::default() }));
+        assert!(!is_text_input(
+            "a",
+            KeyFlags {
+                ctrl: true,
+                ..Default::default()
+            }
+        ));
+        assert!(!is_text_input(
+            "",
+            KeyFlags {
+                up_arrow: true,
+                ..Default::default()
+            }
+        ));
+        assert!(!is_text_input(
+            "\r",
+            KeyFlags {
+                r#return: true,
+                ..Default::default()
+            }
+        ));
         assert!(!is_text_input("", KeyFlags::default()));
     }
 
@@ -2156,7 +2672,7 @@ mod tests {
         assert_eq!(strip_ctl("\u{1b}OP"), ""); // SS3, F1
         assert_eq!(strip_ctl("\u{1b}[200~pasted\u{1b}[201~"), "pasted"); // bracketed paste
         assert_eq!(strip_ctl("\u{1b}[31mred\u{1b}[39m"), "red"); // SGR from a paste
-        // Ordinary text, including punctuation that merely LOOKS like a sequence.
+                                                                 // Ordinary text, including punctuation that merely LOOKS like a sequence.
         assert_eq!(strip_ctl("a[27;3;13~b"), "a[27;3;13~b");
         assert_eq!(strip_ctl("emoji 🎉 and 日本語"), "emoji 🎉 and 日本語");
         // Newlines and tabs are content, not control noise.
@@ -2167,8 +2683,14 @@ mod tests {
 
     #[test]
     fn slash_command_for_a_draft_that_is_a_command_and_nothing_looser() {
-        assert_eq!(slash_command_for("/model"), Some(Command::Tab(PanelTab::Model)));
-        assert_eq!(slash_command_for("  /tree "), Some(Command::Tab(PanelTab::Tree)));
+        assert_eq!(
+            slash_command_for("/model"),
+            Some(Command::Tab(PanelTab::Model))
+        );
+        assert_eq!(
+            slash_command_for("  /tree "),
+            Some(Command::Tab(PanelTab::Tree))
+        );
         assert_eq!(slash_command_for("/HELP"), Some(Command::HelpOpen));
         assert_eq!(slash_command_for("/new"), Some(Command::SessionNew));
         assert_eq!(slash_command_for("/rewind"), Some(Command::TreeRewind));
@@ -2185,7 +2707,10 @@ mod tests {
             slash_invocation("/compact focus on the parser"),
             Some((Command::SessionCompact, "focus on the parser".to_string()))
         );
-        assert_eq!(slash_invocation("/compact"), Some((Command::SessionCompact, String::new())));
+        assert_eq!(
+            slash_invocation("/compact"),
+            Some((Command::SessionCompact, String::new()))
+        );
         // A no-arg command with trailing text is NOT an invocation.
         assert_eq!(slash_invocation("/help me name this"), None);
         assert_eq!(slash_invocation("plain prose"), None);
@@ -2194,9 +2719,18 @@ mod tests {
     #[test]
     fn a_bare_slash_word_that_is_not_a_command_is_caught_with_the_nearest_name() {
         // Foreign commands map to the bough name, never silently alias.
-        assert_eq!(unknown_command("/clear", &[]), Some(("clear".into(), Some("new".into()))));
-        assert_eq!(unknown_command("/resume", &[]), Some(("resume".into(), Some("tree".into()))));
-        assert_eq!(unknown_command("/cost", &[]), Some(("cost".into(), Some("model".into()))));
+        assert_eq!(
+            unknown_command("/clear", &[]),
+            Some(("clear".into(), Some("new".into())))
+        );
+        assert_eq!(
+            unknown_command("/resume", &[]),
+            Some(("resume".into(), Some("tree".into())))
+        );
+        assert_eq!(
+            unknown_command("/cost", &[]),
+            Some(("cost".into(), Some("model".into())))
+        );
         assert_eq!(unknown_command("/quit", &[]), Some(("quit".into(), None)));
         // A real command or a skill passes through untouched.
         assert_eq!(unknown_command("/model", &[]), None);

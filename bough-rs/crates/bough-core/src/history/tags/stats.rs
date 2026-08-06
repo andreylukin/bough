@@ -83,9 +83,15 @@ pub fn tag_weights(rows: &[CommandTagRow], now: i64) -> HashMap<String, f64> {
 fn top(weights: &HashMap<String, f64>, limit: usize) -> Vec<String> {
     let mut entries: Vec<(&String, &f64)> = weights.iter().collect();
     entries.sort_by(|a, b| {
-        b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(b.0))
+        b.1.partial_cmp(a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(b.0))
     });
-    entries.into_iter().take(limit).map(|(tag, _)| tag.clone()).collect()
+    entries
+        .into_iter()
+        .take(limit)
+        .map(|(tag, _)| tag.clone())
+        .collect()
 }
 
 /// One tag as the priming note ranks it. Exported for `bough tags`, which
@@ -182,7 +188,10 @@ fn top_tags(
 ) -> Result<Vec<String>, BoughError> {
     let rows = db.command_tag_rows(
         repo,
-        CommandTagOpts { dir: dir.map(str::to_string), since_ts: Some(now - LOOKBACK_MS) },
+        CommandTagOpts {
+            dir: dir.map(str::to_string),
+            since_ts: Some(now - LOOKBACK_MS),
+        },
     )?;
     Ok(top(&tag_weights(&rows, now), limit))
 }
@@ -195,10 +204,12 @@ pub fn top_repo_tags(
     now: i64,
     limit: usize,
 ) -> Result<Vec<String>, BoughError> {
-    Ok(ranked_repo_tags(db, &workspace_repo(workspace), now, limit)?
-        .into_iter()
-        .map(|r| r.tag)
-        .collect())
+    Ok(
+        ranked_repo_tags(db, &workspace_repo(workspace), now, limit)?
+            .into_iter()
+            .map(|r| r.tag)
+            .collect(),
+    )
 }
 
 /// The same ranking with its arithmetic attached, for `bough tags` to show.
@@ -209,14 +220,24 @@ pub fn ranked_repo_tags(
     limit: usize,
 ) -> Result<Vec<RankedTag>, BoughError> {
     let since = now - LOOKBACK_MS;
-    let rows =
-        db.command_tag_rows(repo, CommandTagOpts { dir: None, since_ts: Some(since) })?;
+    let rows = db.command_tag_rows(
+        repo,
+        CommandTagOpts {
+            dir: None,
+            since_ts: Some(since),
+        },
+    )?;
     let mut uses: HashMap<String, i64> = HashMap::new();
     for r in &rows {
         *uses.entry(r.tag.clone()).or_insert(0) += 1;
     }
     let (repos, by_tag) = db.tag_spread(Some(since))?;
-    Ok(rank_tags(&tag_weights(&rows, now), &TagSpread { repos, by_tag }, limit, Some(&uses)))
+    Ok(rank_tags(
+        &tag_weights(&rows, now),
+        &TagSpread { repos, by_tag },
+        limit,
+        Some(&uses),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -321,7 +342,11 @@ pub fn tags_note_for(
 
 /// The tag set the session was primed with; empty when priming never ran.
 pub fn primed_tags(memo: &StatsMemo, session_id: &str) -> HashSet<String> {
-    memo.primed.lock().ok().and_then(|m| m.get(session_id).cloned()).unwrap_or_default()
+    memo.primed
+        .lock()
+        .ok()
+        .and_then(|m| m.get(session_id).cloned())
+        .unwrap_or_default()
 }
 
 /// The primed tags as an ordered list, computing (and freezing) them when
@@ -393,8 +418,7 @@ pub fn dir_tag_hints(
         }
         // Same contract as everything here: hints never hurt a round — a
         // failed lookup is a skipped dir.
-        let Ok(fresh) = top_tags(db, &repo, now, 5, if at_root { None } else { Some(&rel) })
-        else {
+        let Ok(fresh) = top_tags(db, &repo, now, 5, if at_root { None } else { Some(&rel) }) else {
             continue;
         };
         let fresh: Vec<String> = fresh.into_iter().filter(|t| !primed.contains(t)).collect();
@@ -438,14 +462,22 @@ mod tests {
     const DAY: i64 = 24 * 60 * 60 * 1000;
 
     fn row(tag: &str, ts: i64, exit_code: Option<i64>) -> CommandTagRow {
-        CommandTagRow { tag: tag.to_string(), ts, exit_code }
+        CommandTagRow {
+            tag: tag.to_string(),
+            ts,
+            exit_code,
+        }
     }
 
     #[test]
     fn a_failing_commands_tag_weighs_a_quarter_of_a_passing_one() {
         let now = 1_000_000;
         let w = tag_weights(
-            &[row("ok", now, Some(0)), row("bad", now, Some(1)), row("unknown", now, None)],
+            &[
+                row("ok", now, Some(0)),
+                row("bad", now, Some(1)),
+                row("unknown", now, None),
+            ],
             now,
         );
         // Ratios, not absolutes: the magnitude of a fresh use is the recency
@@ -471,21 +503,33 @@ mod tests {
         // the 40-day tag an order of magnitude deeper.
         let r1 = w["d20"] / w["d10"];
         let r2 = w["d40"] / w["d20"];
-        assert!((r1 - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-9, "20d/10d = {r1}");
-        assert!((r2 - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-9, "40d/20d = {r2}");
+        assert!(
+            (r1 - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-9,
+            "20d/10d = {r1}"
+        );
+        assert!(
+            (r2 - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-9,
+            "40d/20d = {r2}"
+        );
     }
 
     #[test]
     fn frequency_and_recency_trade_off_four_old_uses_beat_one_recent_one() {
         let now = 400 * DAY;
-        let mut rows: Vec<CommandTagRow> =
-            (0..4).map(|_| row("habit", now - 40 * DAY, Some(0))).collect();
+        let mut rows: Vec<CommandTagRow> = (0..4)
+            .map(|_| row("habit", now - 40 * DAY, Some(0)))
+            .collect();
         rows.push(row("novelty", now - 8 * DAY, Some(0)));
         let w = tag_weights(&rows, now);
         // 4×40^-0.5 = 0.632 against 8^-0.5 = 0.354. Activation is a SUM over
         // uses, which is what keeps a long-standing habit visible against
         // whatever happened lately.
-        assert!(w["habit"] > w["novelty"], "{} vs {}", w["habit"], w["novelty"]);
+        assert!(
+            w["habit"] > w["novelty"],
+            "{} vs {}",
+            w["habit"],
+            w["novelty"]
+        );
     }
 
     #[test]
@@ -499,17 +543,24 @@ mod tests {
             by_tag: [("git".to_string(), 12), ("composer".to_string(), 1)].into(),
         };
         let ranked = rank_tags(&weights, &spread, 5, None);
-        assert_eq!(ranked.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(), [
-            "composer", "git"
-        ]);
+        assert_eq!(
+            ranked.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),
+            ["composer", "git"]
+        );
         assert_eq!(ranked[0].repos, 1);
         assert_eq!(ranked[0].weight, 4.0);
-        assert!(ranked[0].score > ranked[1].score, "the score is what the order is by");
+        assert!(
+            ranked[0].score > ranked[1].score,
+            "the score is what the order is by"
+        );
         // A tag the spread has never seen is treated as this project's alone,
         // not as ubiquitous — an unknown must not be damped into last place.
         let unknown = rank_tags(
             &[("new".to_string(), 1.0)].into(),
-            &TagSpread { repos: 4, by_tag: HashMap::new() },
+            &TagSpread {
+                repos: 4,
+                by_tag: HashMap::new(),
+            },
             5,
             None,
         );
@@ -518,11 +569,20 @@ mod tests {
 
     #[test]
     fn references_never_rank_but_singleton_demotion_needs_uses() {
-        let weights: HashMap<String, f64> =
-            [("linear.eng-1234".to_string(), 50.0), ("composer".to_string(), 1.0)].into();
-        let spread = TagSpread { repos: 12, by_tag: HashMap::new() };
+        let weights: HashMap<String, f64> = [
+            ("linear.eng-1234".to_string(), 50.0),
+            ("composer".to_string(), 1.0),
+        ]
+        .into();
+        let spread = TagSpread {
+            repos: 12,
+            by_tag: HashMap::new(),
+        };
         let ranked = rank_tags(&weights, &spread, 5, None);
-        assert_eq!(ranked.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(), ["composer"]);
+        assert_eq!(
+            ranked.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),
+            ["composer"]
+        );
         // With `uses`, a once-used word is demoted; without, it is not.
         let uses: HashMap<String, i64> = [("composer".to_string(), 1)].into();
         assert!(rank_tags(&weights, &spread, 5, Some(&uses)).is_empty());
@@ -620,12 +680,10 @@ mod tests {
                 f.seed(&format!("repo-{i}"), "bun", now, None);
             }
         }
-        assert_eq!(top_repo_tags(&f.db, &ws, now, 4).unwrap(), [
-            "composer",
-            "retention",
-            "bun",
-            "git"
-        ]);
+        assert_eq!(
+            top_repo_tags(&f.db, &ws, now, 4).unwrap(),
+            ["composer", "retention", "bun", "git"]
+        );
     }
 
     #[test]
@@ -660,7 +718,10 @@ mod tests {
         let memo = StatsMemo::new();
         let first = tags_note_for(&f.db, &memo, "sess", &ws, now).expect("a note");
         assert!(first.contains("git") && first.contains("bun"), "{first}");
-        assert!(!first.contains("loner"), "a singleton is demoted out of the note: {first}");
+        assert!(
+            !first.contains("loner"),
+            "a singleton is demoted out of the note: {first}"
+        );
         // A session's note never drifts, even when the stats underneath it
         // change.
         for _ in 0..10 {
@@ -697,20 +758,29 @@ mod tests {
         tags_note_for(&f.db, &memo, "sess", &ws, now);
         let migrations = format!("{ws}/migrations");
         let tui = format!("{ws}/src/tui");
-        let lines =
-            dir_tag_hints(&f.db, &memo, "sess", &ws, &[migrations.clone(), tui], now);
+        let lines = dir_tag_hints(&f.db, &memo, "sess", &ws, &[migrations.clone(), tui], now);
         // migrations diverges (psql); src/tui is covered by the primed set —
         // silent.
         assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(lines[0].contains("migrations/") && lines[0].contains("psql"), "{}", lines[0]);
-        assert!(!lines[0].contains("bun"), "already-primed tags never repeat in a hint");
+        assert!(
+            lines[0].contains("migrations/") && lines[0].contains("psql"),
+            "{}",
+            lines[0]
+        );
+        assert!(
+            !lines[0].contains("bun"),
+            "already-primed tags never repeat in a hint"
+        );
         assert!(
             lines[0].contains("run `bough tags show <tag>` for the commands behind them"),
             "{}",
             lines[0]
         );
         // Once per directory, ever.
-        assert_eq!(dir_tag_hints(&f.db, &memo, "sess", &ws, &[migrations], now).len(), 0);
+        assert_eq!(
+            dir_tag_hints(&f.db, &memo, "sess", &ws, &[migrations], now).len(),
+            0
+        );
     }
 
     #[test]
@@ -742,13 +812,31 @@ mod tests {
         let memo = StatsMemo::new();
         // The workspace (home) has no history of its own — priming is empty.
         tags_note_for(&f.db, &memo, "sess", &home, now);
-        let lines = dir_tag_hints(&f.db, &memo, "sess", &home, &[proj.clone()], now);
+        let lines = dir_tag_hints(
+            &f.db,
+            &memo,
+            "sess",
+            &home,
+            std::slice::from_ref(&proj),
+            now,
+        );
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].contains("repos/proj/"), "{}", lines[0]);
         assert!(lines[0].contains("docs:read"), "{}", lines[0]);
         // The workspace's OWN root never hints — its profile is the priming
         // set.
-        assert_eq!(dir_tag_hints(&f.db, &memo, "sess", &home, &[home.clone()], now).len(), 0);
+        assert_eq!(
+            dir_tag_hints(
+                &f.db,
+                &memo,
+                "sess",
+                &home,
+                std::slice::from_ref(&home),
+                now
+            )
+            .len(),
+            0
+        );
     }
 
     #[test]

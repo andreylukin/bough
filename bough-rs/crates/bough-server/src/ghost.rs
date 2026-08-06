@@ -35,9 +35,13 @@ pub fn ghost_text() -> Handler {
             return Err(BoughError::not_found(format!("session {id} not found")));
         }
         let body: GhostBody = parse_body(req, Some(json!({}))).await?;
-        let ghost =
-            ghost_for(&ctx.db, ctx.cheap.as_ref(), &id, body.prefix.as_deref().unwrap_or(""))
-                .await?;
+        let ghost = ghost_for(
+            &ctx.db,
+            ctx.cheap.as_ref(),
+            &id,
+            body.prefix.as_deref().unwrap_or(""),
+        )
+        .await?;
         Ok(json_res(&json!({ "ghost": ghost }), 200))
     })
 }
@@ -137,13 +141,25 @@ mod tests {
         fx.ctx.cheap = Some(Tier::new(Some("run the tests")));
         let id = seed_session(&fx);
         say(&fx, &id, Role::User, "add the theme route");
-        say(&fx, &id, Role::Supervisor, "added it; the tests are not run yet");
+        say(
+            &fx,
+            &id,
+            Role::Supervisor,
+            "added it; the tests are not run yet",
+        );
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let res = call
-            .call(testutil::req("POST", &format!("/sessions/{id}/ghost"), None))
+            .call(testutil::req(
+                "POST",
+                &format!("/sessions/{id}/ghost"),
+                None,
+            ))
             .await;
         assert_eq!(res.status(), 200);
-        assert_eq!(testutil::body_json(res).await, j!({"ghost": "run the tests"}));
+        assert_eq!(
+            testutil::body_json(res).await,
+            j!({"ghost": "run the tests"})
+        );
     }
 
     #[tokio::test]
@@ -154,10 +170,18 @@ mod tests {
         let id = seed_session(&fx);
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let res = call
-            .call(testutil::req("POST", &format!("/sessions/{id}/ghost"), None))
+            .call(testutil::req(
+                "POST",
+                &format!("/sessions/{id}/ghost"),
+                None,
+            ))
             .await;
         assert_eq!(testutil::body_json(res).await, j!({"ghost": null}));
-        assert_eq!(tier.calls.load(Ordering::SeqCst), 0, "there is nothing to predict from");
+        assert_eq!(
+            tier.calls.load(Ordering::SeqCst),
+            0,
+            "there is nothing to predict from"
+        );
     }
 
     #[tokio::test]
@@ -196,7 +220,11 @@ mod tests {
         assert_eq!(testutil::body_json(res).await, j!({"ghost": null}));
         // …and with no body at all (the parse falls back to `{}`).
         let res = call
-            .call(testutil::req("POST", &format!("/sessions/{id}/ghost"), None))
+            .call(testutil::req(
+                "POST",
+                &format!("/sessions/{id}/ghost"),
+                None,
+            ))
             .await;
         assert_eq!(res.status(), 200);
         assert_eq!(testutil::body_json(res).await, j!({"ghost": null}));
@@ -223,7 +251,11 @@ mod tests {
         say(&fx, &id, Role::User, "add the theme route");
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let res = call
-            .call(testutil::req("POST", &format!("/sessions/{id}/ghost"), None))
+            .call(testutil::req(
+                "POST",
+                &format!("/sessions/{id}/ghost"),
+                None,
+            ))
             .await;
         assert_eq!(res.status(), 200);
         assert_eq!(testutil::body_json(res).await, j!({"ghost": null}));
@@ -234,7 +266,11 @@ mod tests {
         let fx = testutil::fixture();
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let res = call
-            .call(testutil::req("POST", "/sessions/nope/ghost", Some(j!({"prefix": "x"}))))
+            .call(testutil::req(
+                "POST",
+                "/sessions/nope/ghost",
+                Some(j!({"prefix": "x"})),
+            ))
             .await;
         assert_eq!(res.status(), 404);
         assert_eq!(

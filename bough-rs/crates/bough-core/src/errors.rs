@@ -131,7 +131,11 @@ pub enum BoughError {
 
 impl BoughError {
     pub fn http(status: u16, kind: ErrorKind, message: impl Into<String>) -> Self {
-        BoughError::Http { status, kind, message: message.into() }
+        BoughError::Http {
+            status,
+            kind,
+            message: message.into(),
+        }
     }
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::http(400, ErrorKind::BadRequest, message)
@@ -159,23 +163,31 @@ impl BoughError {
     }
     /// `LlmError` with the TS constructor defaults (`status = 502`).
     pub fn llm(message: impl Into<String>) -> Self {
-        BoughError::Llm { status: 502, retry_after_ms: None, message: message.into() }
+        BoughError::Llm {
+            status: 502,
+            retry_after_ms: None,
+            message: message.into(),
+        }
     }
     /// `LlmError` with an explicit status and optional Retry-After hint (ms).
-    pub fn llm_with(
-        message: impl Into<String>,
-        status: u16,
-        retry_after_ms: Option<u64>,
-    ) -> Self {
-        BoughError::Llm { status, retry_after_ms, message: message.into() }
+    pub fn llm_with(message: impl Into<String>, status: u16, retry_after_ms: Option<u64>) -> Self {
+        BoughError::Llm {
+            status,
+            retry_after_ms,
+            message: message.into(),
+        }
     }
     /// 429 — the message says WHICH cap: per-turn 8 or concurrent tree-wide 4.
     pub fn spawn_cap(message: impl Into<String>) -> Self {
-        BoughError::SpawnCap { message: message.into() }
+        BoughError::SpawnCap {
+            message: message.into(),
+        }
     }
     /// 413 — the message NAMES the limit.
     pub fn context_overflow(message: impl Into<String>) -> Self {
-        BoughError::ContextOverflow { message: message.into() }
+        BoughError::ContextOverflow {
+            message: message.into(),
+        }
     }
 
     /// The HTTP status this error should become.
@@ -308,15 +320,24 @@ mod tests {
     fn dedicated_variants_have_their_ts_class_names() {
         assert_eq!(BoughError::llm("x").name(), "LlmError");
         assert_eq!(BoughError::spawn_cap("x").name(), "SpawnCapError");
-        assert_eq!(BoughError::context_overflow("x").name(), "ContextOverflowError");
+        assert_eq!(
+            BoughError::context_overflow("x").name(),
+            "ContextOverflowError"
+        );
     }
 
     #[test]
     fn display_is_the_message() {
         // Error text is a product surface: Display must be the message alone —
         // the model catches it as the exception a program sees.
-        assert_eq!(BoughError::bad_request("what failed").to_string(), "what failed");
-        assert_eq!(BoughError::llm("stream stalled").to_string(), "stream stalled");
+        assert_eq!(
+            BoughError::bad_request("what failed").to_string(),
+            "what failed"
+        );
+        assert_eq!(
+            BoughError::llm("stream stalled").to_string(),
+            "stream stalled"
+        );
         assert_eq!(
             BoughError::spawn_cap("per-turn spawn cap (8) reached").to_string(),
             "per-turn spawn cap (8) reached"
