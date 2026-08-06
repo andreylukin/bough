@@ -529,17 +529,36 @@ cmd_update() {
   require_bun
   (cd "$ROOT" && bun install)
 
-  # The Rust build is what `run` and `tui` actually exec by default, so an update
-  # that refreshed only the TypeScript tree would restart the server on the OLD
-  # binary and report success. Built before the restart below, and a failure is
-  # fatal: silently falling back to TypeScript would make `bough update` change
-  # which implementation you are running, which is not what it was asked to do.
-  if impl_is_rust; then
-    echo "==> building the Rust server + TUI (cargo build --release) — this is what will run"
-    (cd "$ROOT/bough-rs" && cargo build --release)
-  else
-    echo "==> BOUGH_IMPL=ts — skipping the Rust build; the TypeScript tree will run"
-  fi
+  # BUILD IT — do not ask `impl_is_rust` whether to. That function answers "what
+  # runs right now", which on a machine that has never built the binary is
+  # "TypeScript"; gating the build on it means the binary is never created, so
+  # such a machine pulls the Rust code and stays on TypeScript through every
+  # future update. The fallback is for RUNNING (a fresh clone must still start),
+  # never for updating: `update` is precisely when the binary should come into
+  # existence.
+  #
+  # A build failure is fatal rather than falling back, because silently running
+  # the other implementation is not what `bough update` was asked to do.
+  case "${BOUGH_IMPL:-}" in
+    ts | typescript)
+      echo "==> BOUGH_IMPL=ts — skipping the Rust build; the TypeScript tree will run"
+      ;;
+    *)
+      if command -v cargo >/dev/null; then
+        if [ -x "$RS_BIN" ]; then
+          echo "==> building the Rust server + TUI (cargo build --release) — this is what will run"
+        else
+          echo "==> first Rust build on this machine (cargo build --release) — this may take a few minutes"
+        fi
+        (cd "$ROOT/bough-rs" && cargo build --release)
+      else
+        # Said loudly: this is the one path that leaves a machine on the older
+        # implementation, and it is silent otherwise.
+        echo "==> cargo not found — NOT building the Rust server; this machine will keep running TypeScript" >&2
+        echo "    install Rust (https://rustup.rs), then re-run: bough update" >&2
+      fi
+      ;;
+  esac
 
   # ast-grep: structural search (`prompt/searching.md`). Ensured on update, not just
   # on fresh setup, because the prompt names it unconditionally — an update that left
