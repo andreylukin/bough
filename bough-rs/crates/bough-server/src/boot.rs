@@ -240,6 +240,49 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
         }));
     }
 
+    // 6a3. The workflow submit boundary (row 3.10). The engine takes its
+    // `AgentRunner` as a parameter so it is drivable offline; THIS is where a
+    // real subagent goes behind it, and without this line `POST /workflows`
+    // would either refuse or — far worse — answer 201 for a run with nothing
+    // driving it.
+    //
+    // Production could fall back to `control.rs`'s own defaults for everything
+    // here, but the child seam is worth stating: a workflow agent's turn is a
+    // turn like any other, so its background shells must be reportable by the
+    // same registry as everyone else's, and it is given the `none` delegation
+    // tier — a workflow agent gets its prompt string and nothing else, and must
+    // not fan out further (spec §8, "workflows do not nest").
+    {
+        use bough_core::hostfn::delegate::{
+            delegation_turn_deps, DelegationTier, DelegationWiring,
+        };
+        use bough_core::turn::runner::TurnDeps;
+        use bough_core::workflow::control::{set_workflow_control, WorkflowControlDeps};
+
+        let jobs = ctx.host.jobs.clone();
+        set_workflow_control(WorkflowControlDeps {
+            child: Some(Arc::new(move |_turn_ctx| {
+                let jobs = jobs.clone();
+                bough_core::agents::subagent::LaunchDeps {
+                    turn: Some(delegation_turn_deps(
+                        DelegationTier::None,
+                        DelegationWiring {
+                            base: TurnDeps {
+                                surviving_jobs: Some(Arc::new(move |session_id: &str| {
+                                    jobs.running_ids(session_id)
+                                })),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                    )),
+                    ..Default::default()
+                }
+            })),
+            ..Default::default()
+        });
+    }
+
     // 6b. The cheap tier's two watchers (T10.1): auto titles and activity
     // blurbs, both bus listeners that start a task nobody holds. The
     // unsubscribes are discarded deliberately — both watchers live for the

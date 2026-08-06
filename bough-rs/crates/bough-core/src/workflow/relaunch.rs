@@ -49,10 +49,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::errors::BoughError;
-use crate::schema::parts::WorkflowStatus;
-use crate::types::SharedDb;
+use crate::errors::{BoughError, ErrorKind};
+use crate::schema::parts::{WorkflowRun, WorkflowStatus};
+use crate::types::{AppCtx, SharedDb};
 
+use super::control::{workflow_control, workflow_ctx_for, workflow_effective_model};
+use super::engine::{is_workflow_live, start_workflow, StartOpts};
+use super::journal_fs::{resolve_rerun_script, ScriptSource};
+use super::meta::extract_meta;
 use super::pos::CallPos;
 use super::replay::{empty_replay_plan, replay_audit, replay_plan, replayable_prefix};
 use super::report::{bucket_of, Bucket, DivergenceView};
@@ -91,6 +95,116 @@ pub fn relaunch_preview(db: &SharedDb, source_id: &str) -> Result<RelaunchPrevie
         answers: plan.steps.iter().filter(|s| s.result.is_some()).count(),
         replayable_prefix: replayable_prefix(&plan),
     })
+}
+
+// ---------------------------------------------------------------------------
+// The operation
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Default)]
+pub struct RelaunchOpts {
+    /// The edited script. Absent = the `~/.bough/workflows/<id>.js` mirror the
+    /// user may have edited, then the stored row — which makes "edit the file,
+    /// relaunch" the whole loop and a rerun the case where the file is
+    /// untouched.
+    pub script: Option<String>,
+    /// Absent = the source run's input, verbatim.
+    pub args: Option<serde_json::Value>,
+}
+
+pub struct RelaunchResult {
+    /// The NEW run. Its `resume_of` points at the source; the source is
+    /// untouched.
+    pub run: WorkflowRun,
+    pub source: WorkflowRun,
+    /// Where the script came from — it decides what actually runs, so it is
+    /// reported.
+    pub script: ScriptSource,
+    pub replay: RelaunchPreview,
+}
+
+/// Stop-edit-relaunch, the second half: start a new run seeded from `source_id`'s
+/// journal.
+///
+/// A source that is still live is REFUSED rather than raced. Its journal is
+/// still being written, so the prefix a relaunch would replay is not yet a fact
+/// — and the two runs would then be driving agents against one checkout with no
+/// idea about each other. The error says to stop it first, and pausing before
+/// stopping is what preserves the most work: a dispatched agent that finishes is
+/// journaled and replays, one killed in flight is not and starts over (spec §8).
+///
+/// `meta` is extracted from the EDITED script, at this boundary, so a script
+/// whose meta was broken by the edit is refused before a worker spawns or a row
+/// is written — and so a renamed run is named after the script actually running.
+///
+/// RUST DELTA. TS injects `ctxFor` through `ctx.relaunch` because importing
+/// `workflow/control.ts` would close a module cycle through `server/app.ts`.
+/// There is no such cycle here — both modules are in one crate and the route
+/// table lives in another — so [`workflow_ctx_for`] is called directly, and
+/// with it the "unwired boot seam" 500 that only existed to catch a wiring
+/// mistake this spelling cannot make.
+pub async fn relaunch_workflow(
+    ctx: &AppCtx,
+    source_id: &str,
+    opts: RelaunchOpts,
+) -> Result<RelaunchResult, BoughError> {
+    let source = ctx
+        .db
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_workflow(source_id)?
+        .ok_or_else(|| BoughError::not_found(format!("workflow {source_id} not found")))?;
+    if is_workflow_live(source_id) {
+        return Err(BoughError::http(
+            409,
+            ErrorKind::Conflict,
+            format!(
+                "workflow {source_id} is still running — stop it first, then relaunch. A \
+                 relaunch replays the journal of a run that has finished writing one; \
+                 seeding from a run that is still journaling would replay a prefix that is \
+                 still moving. Pause before you stop: agents already dispatched finish and \
+                 are journaled, so they replay instead of starting over."
+            ),
+        ));
+    }
+
+    let (script, from) = resolve_rerun_script(&source, opts.script.as_deref()).await;
+    let meta = extract_meta(&script)?;
+    let preview = relaunch_preview(&ctx.db, source_id)?;
+    let deps = workflow_control();
+    let (workflow_ctx, binding) = workflow_ctx_for(ctx, &source.session_id, &deps, None)?;
+    let started = start_workflow(
+        &workflow_ctx,
+        StartOpts {
+            session_id: source.session_id.clone(),
+            script,
+            meta: Some(meta),
+            // `None` means "keep the source run's input" — the engine reads it
+            // off the source row. `Some(null)` would silently blank it.
+            args: opts.args,
+            resume_of: Some(source_id.to_string()),
+            effective_model: Some(workflow_effective_model(ctx, &source.session_id)),
+            ..Default::default()
+        },
+    )
+    .await;
+    match started {
+        Ok(run) => {
+            binding.bind(Some(run.id.clone()));
+            Ok(RelaunchResult {
+                run,
+                source,
+                script: from,
+                replay: preview,
+            })
+        }
+        Err(err) => {
+            // Nothing started, so nothing can claim: settle the binding rather
+            // than leaving a wait nobody will ever release.
+            binding.bind(None);
+            Err(err)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

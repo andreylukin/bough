@@ -65,8 +65,7 @@ pub fn routes() -> Vec<Route> {
         ),
         // ── row 1.31: the remaining route families (v1 stubs are marked in
         //    their own modules; the table keeps the TS append order) ──
-        // workflows (rows 3.9–3.12; the engine-backed verbs answer the
-        // unknown-run 404 until row 3.9 lands — see workflows.rs)
+        // workflows (rows 3.9–3.12), engine-backed and live
         route("GET", "/workflows", workflows::list_workflows()),
         route("POST", "/workflows", workflows::create_workflow()),
         route("GET", "/workflows/:id", workflows::get_workflow()),
@@ -88,7 +87,7 @@ pub fn routes() -> Vec<Route> {
         route(
             "POST",
             "/workflows/:id/rerun",
-            workflows::workflow_not_found(),
+            workflows::rerun_workflow_route(),
         ),
         route(
             "POST",
@@ -128,7 +127,7 @@ pub fn routes() -> Vec<Route> {
         route(
             "POST",
             "/workflows/:id/relaunch",
-            workflows::workflow_not_found(),
+            workflows::relaunch_workflow_route(),
         ),
         route("GET", "/workflows/:id/replay", workflows::workflow_replay()),
         route(

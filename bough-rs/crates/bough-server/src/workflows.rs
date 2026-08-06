@@ -17,27 +17,30 @@
 //! would be swallowed by `/workflows/:id` above it and answer 404 for a run id
 //! of "saved". The same reasoning puts the guideline at `/workflow-settings`.
 //!
-//! PORT STATUS (rows 3.10 + 3.12). Live for real: the whole saved-workflow
-//! surface, `GET /workflows/:id/replay`, and `/workflow-settings`. Still
-//! answering the unknown-run 404: everything that needs
-//! `workflow::engine::start_workflow` / `stop_workflow` / `workflow_summary`
-//! (row 3.9), which is not landed. Those are NOT faked — a 201 for a run that
-//! was never started is the exact failure the replay accounting exists to
-//! prevent — and no run can exist in this process, so the 404 is the honest
-//! answer rather than a placeholder.
+//! PORT STATUS (rows 3.9–3.12). Every route here is live: starting, rerunning
+//! and relaunching go through `workflow::control`'s submit boundary, which puts
+//! REAL subagents behind the run, and the accounting each of them answers with
+//! is the fold over real rows. Nothing in this file fabricates a 201 — a start
+//! that started nothing is the exact failure the replay accounting exists to
+//! expose.
 
 use serde::Deserialize;
 use serde_json::json;
 
 use bough_core::errors::BoughError;
+use bough_core::schema::requests::{CreateWorkflowBody, RerunWorkflowBody};
 use bough_core::types::AppCtx;
-use bough_core::workflow::control::workflow_detail;
+use bough_core::workflow::control::{
+    control_workflow_agent as control_agent, rerun_workflow_run, start_workflow_run,
+    workflow_agents, workflow_control, workflow_detail, RerunRunOpts, StartRunOpts,
+};
 use bough_core::workflow::engine::{
     pause_workflow, resume_workflow, stop_workflow, workflow_summary,
 };
-use bough_core::workflow::relaunch::relaunch_report;
+use bough_core::workflow::relaunch::{relaunch_report, relaunch_workflow, RelaunchOpts};
 use bough_core::workflow::report::{
-    active_guideline, guideline_advice, set_guideline, token_warn_threshold, SizeGuideline,
+    active_guideline, guideline_advice, replay_summary, set_guideline, token_warn_threshold,
+    SizeGuideline,
 };
 use bough_core::workflow::saved::{
     list_saved_workflows, read_saved_workflow, save_run_as, save_workflow,
@@ -53,11 +56,6 @@ fn require_workflow(ctx: &AppCtx, id: &str) -> Result<(), BoughError> {
         .get_workflow(id)?
         .map(|_| ())
         .ok_or_else(|| BoughError::not_found(format!("workflow {id} not found")))
-}
-
-fn no_run(params: &Params) -> BoughError {
-    let id = params.get("id").map(String::as_str).unwrap_or("");
-    BoughError::not_found(format!("workflow {id} not found"))
 }
 
 fn name_of(params: &Params) -> String {
@@ -102,11 +100,12 @@ pub fn get_workflow() -> Handler {
             .unwrap()
             .get_workflow(&id)?
             .ok_or_else(|| BoughError::not_found(format!("workflow {id} not found")))?;
-        // The live-agent registry is `control.rs`'s un-ported half (row 3.10);
-        // an empty set means every row reads `live: false`, which is the truth
-        // in a process holding no control handles.
+        // The live-agent registry answers which rows a control verb can still
+        // reach in THIS process; after a restart it is empty and every row
+        // reads `live: false`, which is the truth.
+        let live = workflow_agents().live_ids(&id);
         Ok(json_res(
-            &workflow_detail(&ctx.db, &run, &[], (ctx.now)())?,
+            &workflow_detail(&ctx.db, &run, &live, (ctx.now)())?,
             200,
         ))
     })
@@ -158,25 +157,108 @@ pub fn resume_workflow_route() -> Handler {
     })
 }
 
-/// `POST /workflows` — 400 "not yet ported" (the only way a run could exist).
+/// `POST /workflows` — start a run and answer 201 with its row.
+///
+/// The receipt, not the result: the script is detached from this request the
+/// moment the worker is launched, and everything after this point is events and,
+/// at the end, a system note.
 pub fn create_workflow() -> Handler {
-    handler(|_req, _ctx, _params| async move {
-        Err::<axum::response::Response, _>(BoughError::bad_request(
-            "workflows are not yet ported in this build",
+    handler(|req, ctx, _params| async move {
+        let body: CreateWorkflowBody = parse_body(req, None).await?;
+        body.validate()?;
+        let run = start_workflow_run(
+            &ctx,
+            StartRunOpts {
+                session_id: body.session_id,
+                script: body.script,
+                args: body.args,
+                ..Default::default()
+            },
+            &workflow_control(),
+        )
+        .await?;
+        Ok(json_res(&run, 201))
+    })
+}
+
+/// `POST /workflows/:id/rerun` — a NEW run that replays this one's journal.
+///
+/// Never an edit of the run it replays. With no `script` the edited
+/// `~/.bough/workflows/<id>.js` mirror wins, which is what makes "edit the file,
+/// press r" the whole iteration loop; unchanged `agent()` calls replay instantly
+/// and only the calls whose key changed cost anything.
+///
+/// The body carries the replay block because spec §8 requires any operation that
+/// replays to say how many calls were served from the journal and how many ran
+/// live. The run is detached, so the live counts here are the counts SO FAR —
+/// zero at this instant — and `replay.available` is the number that carries
+/// information now: it is the ceiling the new run's keys will be measured
+/// against, and it is what makes a later `replayed: 0` legible as a key defect
+/// rather than as a first run.
+pub fn rerun_workflow_route() -> Handler {
+    handler(|req, ctx, params| async move {
+        let id = params.get("id").cloned().unwrap_or_default();
+        require_workflow(&ctx, &id)?;
+        let body: RerunWorkflowBody = parse_body(req, Some(json!({}))).await?;
+        body.validate()?;
+        let run = rerun_workflow_run(
+            &ctx,
+            &id,
+            RerunRunOpts {
+                script: body.script,
+                args: body.args,
+            },
+            &workflow_control(),
+        )
+        .await?;
+        let mut value = serde_json::to_value(&run).unwrap_or(json!({}));
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "replay".to_string(),
+                serde_json::to_value(replay_summary(&ctx.db, &run.id)?).unwrap_or(json!(null)),
+            );
+        }
+        Ok(json_res(&value, 201))
+    })
+}
+
+/// `POST /workflows/:id/relaunch` — a NEW run seeded from this one's journal.
+///
+/// 201, immediately: the script is detached from this request the moment the
+/// worker is launched, so the body is a receipt and not a result. It carries the
+/// replay PREVIEW — what the source journal has on offer — because the counts of
+/// what was actually claimed do not exist yet. `GET /workflows/:id/replay` has
+/// those, and the completion note carries them into the session unasked.
+pub fn relaunch_workflow_route() -> Handler {
+    handler(|req, ctx, params| async move {
+        let id = params.get("id").cloned().unwrap_or_default();
+        let body: RerunWorkflowBody = parse_body(req, Some(json!({}))).await?;
+        body.validate()?;
+        let result = relaunch_workflow(
+            &ctx,
+            &id,
+            RelaunchOpts {
+                script: body.script,
+                args: body.args,
+            },
+        )
+        .await?;
+        Ok(json_res(
+            &json!({
+                "workflow": result.run,
+                "source": result.source.id,
+                "script": result.script.as_str(),
+                "replay": result.replay,
+            }),
+            201,
         ))
     })
 }
 
-/// The `/workflows/:id`-scoped verbs that still need `control.rs`'s submit
-/// boundary (`start_workflow_run` / `rerun_workflow_run`): rerun and relaunch.
-pub fn workflow_not_found() -> Handler {
-    handler(|_req, _ctx, params| async move { Err::<axum::response::Response, _>(no_run(&params)) })
-}
-
 /// `POST /workflows/:id/agents/:agentId/:action` — the action is validated
-/// first (a typo must not silently become `stop`), then the run lookup 404s.
+/// first (a typo must not silently become `stop`), then the run and the row.
 pub fn control_workflow_agent() -> Handler {
-    handler(|_req, _ctx, params| async move {
+    handler(|_req, ctx, params| async move {
         let action = params.get("action").map(String::as_str).unwrap_or("");
         if action != "stop" && action != "restart" {
             return Err(BoughError::bad_request(format!(
@@ -185,7 +267,10 @@ pub fn control_workflow_agent() -> Handler {
                  session)",
             )));
         }
-        Err::<axum::response::Response, _>(no_run(&params))
+        let id = params.get("id").cloned().unwrap_or_default();
+        let agent_id = params.get("agentId").cloned().unwrap_or_default();
+        let row = control_agent(&ctx.db, &id, &agent_id, action, &workflow_control())?;
+        Ok(json_res(&row, 200))
     })
 }
 
@@ -226,9 +311,6 @@ struct PutSavedBody {
 /// `POST /saved-workflows/:name/runs` — invoke a saved workflow, parameterized.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-#[allow(dead_code)] // both fields are read by `start_workflow` (row 3.9); today
-                    // they are the request VALIDATION — a body with no
-                    // `sessionId` must be a 400 before the name is resolved.
 struct RunSavedBody {
     session_id: String,
     #[serde(default)]
@@ -308,13 +390,26 @@ pub fn put_saved_workflow() -> Handler {
 /// that is ported: an unknown name is a 404 naming it, and only a name that
 /// resolves reaches the engine (row 3.9) that is not here yet.
 pub fn run_saved_workflow() -> Handler {
-    handler(|req, _ctx, params| async move {
+    handler(|req, ctx, params| async move {
         let name = name_of(&params);
-        let _body: RunSavedBody = parse_body(req, None).await?;
-        let _saved = read_saved_workflow(&name)?;
-        Err::<axum::response::Response, _>(BoughError::bad_request(
-            "workflows are not yet ported in this build",
-        ))
+        let body: RunSavedBody = parse_body(req, None).await?;
+        let saved = read_saved_workflow(&name)?;
+        let run = start_workflow_run(
+            &ctx,
+            StartRunOpts {
+                session_id: body.session_id,
+                script: saved.script,
+                args: body.args,
+                ..Default::default()
+            },
+            &workflow_control(),
+        )
+        .await?;
+        let mut value = serde_json::to_value(&run).unwrap_or(json!({}));
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("savedAs".to_string(), json!(saved.name));
+        }
+        Ok(json_res(&value, 201))
     })
 }
 
@@ -784,11 +879,17 @@ mod tests {
         assert_eq!(
             res.status(),
             400,
-            "the name resolved; the ENGINE is what is missing"
+            "the name resolved; the SCRIPT is what the submit boundary refuses"
         );
-        assert_eq!(
-            testutil::body_json(res).await["error"],
-            "workflows are not yet ported in this build"
+        // Refused at the submit boundary, before a worker spawns or a row is
+        // written — a saved script with no `meta` never costs an agent.
+        let msg = testutil::body_json(res).await["error"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            msg.starts_with("workflow script must declare `export const meta ="),
+            "{msg}"
         );
     }
 
@@ -1029,7 +1130,7 @@ mod tests {
     /// The verbs that still need `control.rs`'s submit boundary answer the
     /// unknown-run 404, and the agent-action typo is caught BEFORE the lookup.
     #[tokio::test]
-    async fn unported_verbs_404_and_an_action_typo_is_a_400_first() {
+    async fn an_unknown_run_404s_and_an_action_typo_is_a_400_first() {
         let fx = testutil::fixture();
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         for (method, path) in [
