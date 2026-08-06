@@ -5,6 +5,9 @@
 # changes only land on an explicit `bough restart` or `bough update`. Sources
 # ~/.bough/env for ANTHROPIC_API_KEY / BOUGH_* settings. Installed onto PATH as
 # a symlink by scripts/setup.sh.
+#
+# Runs the RUST implementation (`bough-rs/`) by default; `BOUGH_IMPL=ts` runs the
+# TypeScript tree instead. See "WHICH IMPLEMENTATION" below.
 set -euo pipefail
 
 # Resolve the repo root through the ~/.local/bin symlink (bash 3.2 compatible).
@@ -52,6 +55,41 @@ require_bun() {
     echo "  install it with:  curl -fsSL https://bun.sh/install | bash" >&2
   fi
   echo "  then re-run: $ROOT/scripts/setup.sh" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# WHICH IMPLEMENTATION. The Rust rewrite (`bough-rs/`) is the default; the
+# TypeScript tree is still here and still works, and `BOUGH_IMPL=ts` returns to
+# it for one command or for a shell.
+#
+# The switch lives HERE, not in the symlink on PATH, because this script is the
+# service manager: `start`, `kill`, `restart`, `status`, `logs` and `update` are
+# launchd/systemd verbs the Rust binary has no equivalent for. Pointing PATH at
+# the binary would swap the runtime and throw the lifecycle away. So every
+# `exec` site below asks `impl_is_rust` and nothing else changes.
+#
+# Falls back to TypeScript when the binary is missing rather than failing: a
+# fresh clone has no `target/`, and "bough does not start after git clone" would
+# be a worse answer than running the tree that is definitely there. `make
+# rs-release` builds it.
+RS_BIN="$ROOT/bough-rs/target/release/bough"
+
+impl_is_rust() {
+  case "${BOUGH_IMPL:-}" in
+    ts | typescript) return 1 ;;
+    rust | rs) return 0 ;;              # asked for explicitly: honour it even if unbuilt
+    *) [ -x "$RS_BIN" ] ;;              # the default: Rust when it is built
+  esac
+}
+
+# `require_bun` for the Rust path. Says which binary is missing and how to get
+# it, rather than failing as "no such file or directory".
+require_rust() {
+  [ -x "$RS_BIN" ] && return 0
+  echo "error: the Rust build is missing at $RS_BIN" >&2
+  echo "  build it with:  make -C $ROOT rs-release" >&2
+  echo "  or run the TypeScript tree instead:  BOUGH_IMPL=ts bough ..." >&2
   exit 1
 }
 
@@ -330,13 +368,17 @@ wait_up() {
 # handled at the top of this file, for every subcommand rather than just this one.
 cmd_run() {
   export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-  require_bun
-  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${OPENROUTER_API_KEY:-}" ]; then
     # Exit 0 so launchd doesn't relaunch-loop while the machine is unconfigured.
-    echo "ANTHROPIC_API_KEY is not set — put it in $ENV_FILE; not starting"
+    echo "no ANTHROPIC_API_KEY or OPENROUTER_API_KEY — put one in $ENV_FILE; not starting"
     exit 0
   fi
   cd "$ROOT"
+  if impl_is_rust; then
+    require_rust
+    exec "$RS_BIN" start
+  fi
+  require_bun
   exec bun src/server/main.ts
 }
 
@@ -467,6 +509,16 @@ cmd_update() {
   echo "==> refreshing dependencies"
   require_bun
   (cd "$ROOT" && bun install)
+
+  # The Rust build is what `run` and `tui` actually exec by default, so an update
+  # that refreshed only the TypeScript tree would restart the server on the OLD
+  # binary and report success. Built before the restart below, and a failure is
+  # fatal: silently falling back to TypeScript would make `bough update` change
+  # which implementation you are running, which is not what it was asked to do.
+  if impl_is_rust; then
+    echo "==> building bough-rs (cargo --release)"
+    (cd "$ROOT/bough-rs" && cargo build --release)
+  fi
 
   # ast-grep: structural search (`prompt/searching.md`). Ensured on update, not just
   # on fresh setup, because the prompt names it unconditionally — an update that left
@@ -601,7 +653,19 @@ cmd_status() {
     return 1
   fi
   if is_up; then
-    echo "running (pid $pid) — http://127.0.0.1:$PORT (service: $svc)"
+    # Name the implementation of the process that is ACTUALLY SERVING, read from
+    # its own command path — not what `impl_is_rust` says this invocation would
+    # launch. Those two disagree exactly when it matters most (`BOUGH_IMPL=ts
+    # bough status` against a running Rust server), and a status line that
+    # reports the wrong runtime is worse than one that reports none.
+    local impl exe
+    exe="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
+    case "$exe" in
+      *bough-rs/target/*) impl="rust" ;;
+      *bun*) impl="typescript (bun)" ;;
+      *) impl="unknown (${exe:-?})" ;;
+    esac
+    echo "running (pid $pid) — http://127.0.0.1:$PORT (service: $svc, impl: $impl)"
   else
     echo "process alive (pid $pid) but not answering on port $PORT — check $LOG_FILE"
     return 1
@@ -631,11 +695,15 @@ ensure_up() {
 }
 
 cmd_tui() {
-  require_bun
   ensure_up
   # The TUI defaults new conversations to the directory bough was launched from.
   export BOUGH_TUI_CWD="$PWD"
   cd "$ROOT"
+  if impl_is_rust; then
+    require_rust
+    exec "$RS_BIN" tui "$@"
+  fi
+  require_bun
   exec bun src/tui/main.tsx "$@"
 }
 
@@ -693,8 +761,12 @@ case "${1:-}" in
     shift
     # Auto-start the default server like the TUI does; an explicit --port means
     # the caller manages that server (e.g. the bench), so leave it alone.
-    require_bun
     case " $* " in *" --port "*) ;; *) ensure_up ;; esac
+    if impl_is_rust; then
+      require_rust
+      exec "$RS_BIN" exec "$@"
+    fi
+    require_bun
     exec bun "$ROOT/src/cli/exec.ts" "$@"
     ;;
   mcp)
@@ -702,8 +774,12 @@ case "${1:-}" in
     # Needs a server, unlike `sync-mcp`: every verb here drives a route, because
     # connecting and authorizing are things the running process does — its manager
     # owns the connections and its OAuth callback is what the browser comes back to.
-    require_bun
     case " $* " in *" --port "*) ;; *) ensure_up ;; esac
+    if impl_is_rust; then
+      require_rust
+      exec "$RS_BIN" mcp "$@"
+    fi
+    require_bun
     exec bun "$ROOT/src/cli/mcp.ts" "$@"
     ;;
   sync-mcp)
@@ -711,6 +787,10 @@ case "${1:-}" in
     # No server needed: this reads two config files and writes the registry, which
     # is a file. The server re-reads it per turn (MCP state is never cached), so a
     # running bough picks the new entries up without a restart.
+    if impl_is_rust; then
+      require_rust
+      exec "$RS_BIN" sync-mcp "$@"
+    fi
     require_bun
     exec bun "$ROOT/src/cli/sync_mcp.ts" "$@"
     ;;
@@ -720,6 +800,10 @@ case "${1:-}" in
     # discipline — every query it runs is a SELECT — so it is safe against the file a
     # running server has open, and it is exactly what you want when the question is
     # "what did I run before this broke".
+    if impl_is_rust; then
+      require_rust
+      exec "$RS_BIN" tags "$@"
+    fi
     require_bun
     exec bun "$ROOT/src/cli/tags.ts" "$@"
     ;;
@@ -729,6 +813,10 @@ case "${1:-}" in
     # the one subcommand that is useful with bough stopped — which matters, because
     # "why did the server not come up" is answered by reading its log, and needing
     # the server to read the log would be a circle.
+    if impl_is_rust; then
+      require_rust
+      exec "$RS_BIN" patterns "$@"
+    fi
     require_bun
     exec bun "$ROOT/src/cli/patterns.ts" "$@"
     ;;
