@@ -1177,40 +1177,142 @@ impl Db for SqliteDb {
         })
     }
 
-    /// v1 stub (row 1.6c): the CLI wave un-stubs. Empty return per contract.
+    /// How many distinct repos the memory holds, and how many of them use
+    /// each tag.
+    ///
+    /// The contrast the priming note is ranked against: a tag every project
+    /// uses names a TOOL (`git`, `bun`, `rg`) and reusing it was never in
+    /// question, while a tag only this project uses names its subject and is
+    /// the vocabulary worth sharing.
     fn tag_spread(
         &self,
-        _since_ts: Option<i64>,
+        since_ts: Option<i64>,
     ) -> Result<(i64, HashMap<String, i64>), BoughError> {
-        Ok((0, HashMap::new()))
+        let since = since_ts.unwrap_or(i64::MIN);
+        let repos: i64 = self
+            .one(
+                "SELECT COUNT(DISTINCT h.repo) AS n FROM command_history h WHERE h.ts >= ?",
+                params![since],
+                |row| row.get(0),
+            )?
+            .unwrap_or(0);
+        let rows: Vec<(String, i64)> = self.all(
+            "SELECT t.tag AS tag, COUNT(DISTINCT h.repo) AS repos
+               FROM command_history h JOIN command_tags t ON t.command_id = h.id
+              WHERE h.ts >= ? GROUP BY t.tag",
+            params![since],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok((repos, rows.into_iter().collect()))
     }
 
-    /// v1 stub (row 1.6c): the CLI wave un-stubs. Empty return per contract.
+    /// Tag diversity per day — what `bough tags stats` reports. Grouped in
+    /// SQLite's LOCAL time, because the question is "what did I do on
+    /// Tuesday" and a UTC day boundary answers a different one. References
+    /// (`instr(tag, '.') > 0`) are counted apart from coined words.
     fn tag_diversity_by_day(
         &self,
-        _since_ts: i64,
-        _repo: Option<&str>,
+        since_ts: i64,
+        repo: Option<&str>,
     ) -> Result<Vec<TagDiversityDay>, BoughError> {
-        Ok(Vec::new())
+        let scope = if repo.is_some() { " AND h.repo = ?" } else { "" };
+        let sql = format!(
+            "WITH d AS (
+               SELECT h.id AS id, h.session_id AS session_id, h.tags AS tags,
+                      date(h.ts / 1000, 'unixepoch', 'localtime') AS day
+                 FROM command_history h WHERE h.ts >= ?{scope}
+             )
+             SELECT d.day AS day,
+                    COUNT(DISTINCT d.session_id) AS sessions,
+                    COUNT(DISTINCT d.id) AS commands,
+                    COUNT(DISTINCT CASE WHEN d.tags <> '' THEN d.id END) AS tagged,
+                    COUNT(DISTINCT CASE WHEN instr(t.tag, '.') = 0 THEN t.tag END) AS distinct_tags,
+                    COUNT(DISTINCT CASE WHEN instr(t.tag, '.') > 0 THEN t.tag END) AS distinct_refs,
+                    COUNT(t.tag) AS tag_uses,
+                    (SELECT COUNT(*) FROM (
+                       SELECT t2.tag FROM d d2 JOIN command_tags t2 ON t2.command_id = d2.id
+                        WHERE d2.day = d.day AND instr(t2.tag, '.') = 0
+                        GROUP BY t2.tag HAVING COUNT(*) = 1
+                     )) AS singletons
+               FROM d LEFT JOIN command_tags t ON t.command_id = d.id
+              GROUP BY d.day ORDER BY d.day DESC"
+        );
+        let to_row = |row: &Row| -> rusqlite::Result<TagDiversityDay> {
+            Ok(TagDiversityDay {
+                day: row.get("day")?,
+                sessions: row.get("sessions")?,
+                commands: row.get("commands")?,
+                tagged: row.get("tagged")?,
+                distinct_tags: row.get("distinct_tags")?,
+                distinct_refs: row.get("distinct_refs")?,
+                tag_uses: row.get("tag_uses")?,
+                singletons: row.get("singletons")?,
+            })
+        };
+        match repo {
+            Some(r) => self.all(&sql, params![since_ts, r], to_row),
+            None => self.all(&sql, params![since_ts], to_row),
+        }
     }
 
-    /// v1 stub (row 1.6c): the CLI wave un-stubs. Empty return per contract.
+    /// Commands recorded under one tag, newest first — `bough tags show`.
+    /// The limit keeps the TS clamp (`Math.max(1, Math.trunc(limit))`),
+    /// bound rather than interpolated (db.md §37).
     fn commands_for_tag(
         &self,
-        _tag: &str,
-        _repo: Option<&str>,
-        _limit: Option<i64>,
+        tag: &str,
+        repo: Option<&str>,
+        limit: Option<i64>,
     ) -> Result<Vec<TaggedCommand>, BoughError> {
-        Ok(Vec::new())
+        let scope = if repo.is_some() { " AND h.repo = ?" } else { "" };
+        let sql = format!(
+            "SELECT h.ts AS ts, h.repo AS repo, h.cmd AS cmd, h.tags AS tags,
+                    h.exit_code AS exit_code, h.duration_ms AS duration_ms,
+                    h.session_id AS session_id, h.message_id AS message_id
+               FROM command_history h JOIN command_tags t ON t.command_id = h.id
+              WHERE t.tag = ?{scope}
+              ORDER BY h.ts DESC LIMIT ?"
+        );
+        let cap = limit.unwrap_or(20).max(1);
+        let to_row = |row: &Row| -> rusqlite::Result<TaggedCommand> {
+            Ok(TaggedCommand {
+                ts: row.get("ts")?,
+                repo: row.get("repo")?,
+                cmd: row.get("cmd")?,
+                tags: row.get("tags")?,
+                exit_code: row.get("exit_code")?,
+                duration_ms: row.get("duration_ms")?,
+                session_id: row.get("session_id")?,
+                message_id: row.get("message_id")?,
+            })
+        };
+        match repo {
+            Some(r) => self.all(&sql, params![tag, r, cap], to_row),
+            None => self.all(&sql, params![tag, cap], to_row),
+        }
     }
 
-    /// v1 stub (row 1.6c): the CLI wave un-stubs. Empty return per contract.
+    /// This repo's coined vocabulary and how often each word was used — the
+    /// input to write-time tag hygiene (`history/tags/hygiene.rs`), which
+    /// needs to know what is already a word here before it can tell a novel
+    /// one from a typo of one.
+    ///
+    /// References are excluded: they are keys, never vocabulary, and nothing
+    /// may snap onto or away from `linear.eng-1234`.
     fn repo_tag_counts(
         &self,
-        _repo: &str,
-        _since_ts: i64,
+        repo: &str,
+        since_ts: i64,
     ) -> Result<HashMap<String, i64>, BoughError> {
-        Ok(HashMap::new())
+        let rows: Vec<(String, i64)> = self.all(
+            "SELECT t.tag AS tag, count(*) AS uses
+               FROM command_history h JOIN command_tags t ON t.command_id = h.id
+              WHERE h.repo = ? AND h.ts >= ? AND instr(t.tag, '.') = 0
+              GROUP BY t.tag",
+            params![repo, since_ts],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok(rows.into_iter().collect())
     }
 
     /// How this EXACT command has failed here before. One row, or None when
@@ -2687,6 +2789,108 @@ mod tests {
         // A part list that will not parse is a corrupt row, not a crash.
         db.conn.execute("UPDATE messages SET parts = 'not json' WHERE id = 'm'", []).unwrap();
         assert_eq!(db.program_for_message("m").unwrap(), None);
+    }
+
+    /// One row under `repo` with the given tag list.
+    fn seed_tagged(db: &SqliteDb, repo: &str, cmd: &str, tags: &[&str], ts: i64) {
+        let mut r = cmd_record();
+        r.repo = repo.into();
+        r.cmd = cmd.into();
+        r.tags = tags.join(":");
+        r.tag_list = tags.iter().map(|t| t.to_string()).collect();
+        r.ts = ts;
+        db.record_command(&r).unwrap();
+    }
+
+    #[test]
+    fn tag_spread_counts_distinct_repos_overall_and_per_tag() {
+        let db = mem();
+        db.create_session(session("s1")).unwrap();
+        seed_tagged(&db, "r1", "git status", &["git"], 1_000);
+        seed_tagged(&db, "r2", "git push", &["git", "push"], 1_000);
+        seed_tagged(&db, "r2", "git pull", &["git"], 1_000);
+        seed_tagged(&db, "r3", "bun test", &["bun"], 50);
+        let (repos, by_tag) = db.tag_spread(None).unwrap();
+        assert_eq!(repos, 3);
+        assert_eq!(by_tag.get("git"), Some(&2), "two repos use git, not three uses");
+        assert_eq!(by_tag.get("push"), Some(&1));
+        assert_eq!(by_tag.get("bun"), Some(&1));
+        // The window filters both halves from the same scan.
+        let (recent_repos, recent_by_tag) = db.tag_spread(Some(100)).unwrap();
+        assert_eq!(recent_repos, 2);
+        assert_eq!(recent_by_tag.get("bun"), None);
+    }
+
+    #[test]
+    fn repo_tag_counts_is_coined_words_only_references_are_keys() {
+        let db = mem();
+        db.create_session(session("s1")).unwrap();
+        seed_tagged(&db, "repo", "gh pr view 19", &["gh", "pr.19"], 1_000);
+        seed_tagged(&db, "repo", "gh pr list", &["gh"], 1_000);
+        seed_tagged(&db, "other", "gh api", &["gh"], 1_000);
+        seed_tagged(&db, "repo", "old cmd", &["stale"], 10);
+        let counts = db.repo_tag_counts("repo", 100).unwrap();
+        assert_eq!(counts.get("gh"), Some(&2), "scoped to the repo");
+        assert_eq!(counts.get("pr.19"), None, "a reference is never vocabulary");
+        assert_eq!(counts.get("stale"), None, "the window floors the lookback");
+    }
+
+    #[test]
+    fn commands_for_tag_is_newest_first_repo_scoped_and_the_limit_clamps_to_one() {
+        let db = mem();
+        db.create_session(session("s1")).unwrap();
+        seed_tagged(&db, "repo", "first", &["t"], 100);
+        seed_tagged(&db, "repo", "second", &["t"], 200);
+        seed_tagged(&db, "other", "elsewhere", &["t"], 300);
+        let all = db.commands_for_tag("t", None, None).unwrap();
+        assert_eq!(
+            all.iter().map(|c| c.cmd.as_str()).collect::<Vec<_>>(),
+            ["elsewhere", "second", "first"]
+        );
+        assert_eq!(all[0].repo, "other");
+        assert_eq!(all[0].session_id, "s1");
+        let scoped = db.commands_for_tag("t", Some("repo"), None).unwrap();
+        assert_eq!(scoped.iter().map(|c| c.cmd.as_str()).collect::<Vec<_>>(), [
+            "second", "first"
+        ]);
+        // The TS `Math.max(1, trunc)` clamp: a zero limit still returns one.
+        assert_eq!(db.commands_for_tag("t", None, Some(0)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn tag_diversity_by_day_partitions_coined_words_refs_and_singletons() {
+        let db = mem();
+        db.create_session(session("s1")).unwrap();
+        db.create_session(session("s2")).unwrap();
+        // One local day: three commands, one untagged, one ref, one
+        // twice-used coined tag and one singleton.
+        let t = 1_700_000_000_000i64;
+        seed_tagged(&db, "repo", "git status", &["git"], t);
+        seed_tagged(&db, "repo", "git push", &["git", "pr.19"], t + 1_000);
+        let mut untagged = cmd_record();
+        untagged.cmd = "sh leg".into();
+        untagged.ts = t + 2_000;
+        db.record_command(&untagged).unwrap();
+        let mut other_session = cmd_record();
+        other_session.session_id = "s2".into();
+        other_session.cmd = "bun test".into();
+        other_session.tags = "loner".into();
+        other_session.tag_list = vec!["loner".into()];
+        other_session.ts = t + 3_000;
+        db.record_command(&other_session).unwrap();
+
+        let days = db.tag_diversity_by_day(0, None).unwrap();
+        assert_eq!(days.len(), 1, "one local day: {days:?}");
+        let d = &days[0];
+        assert_eq!(d.sessions, 2);
+        assert_eq!(d.commands, 4);
+        assert_eq!(d.tagged, 3, "the bare sh leg costs coverage");
+        assert_eq!(d.distinct_tags, 2, "git + loner; pr.19 is a ref");
+        assert_eq!(d.distinct_refs, 1);
+        assert_eq!(d.tag_uses, 4);
+        assert_eq!(d.singletons, 1, "loner; git has two uses, refs never count");
+        // Repo scoping drops the day when nothing matches.
+        assert!(db.tag_diversity_by_day(0, Some("nope")).unwrap().is_empty());
     }
 
     // ---- the 3 migrate reshapes against fabricated old files ----------------

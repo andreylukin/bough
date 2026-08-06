@@ -11,6 +11,7 @@ tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 futures = { workspace = true }
+async-trait = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 dirs = { workspace = true }
@@ -19,3 +20,6 @@ dirs = { workspace = true }
 tower = { workspace = true }
 # `start_paused` heartbeat tests (events.rs) advance tokio's clock manually.
 tokio = { workspace = true, features = ["test-util"] }
+# search.rs breaks `messages_fts` through a SECOND connection, so the failure
+# under test is the real SQLite error, not what a stub says it would be.
+rusqlite = { workspace = true }

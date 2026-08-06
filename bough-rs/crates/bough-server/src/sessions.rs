@@ -301,7 +301,7 @@ pub fn create_session() -> Handler {
             outcome_ok: None,
         };
 
-        let stored = {
+        {
             let db = ctx.db.lock().unwrap();
             db.create_session(session.clone())?;
 
@@ -318,13 +318,33 @@ pub fn create_session() -> Handler {
             if let Some(effort) = &effort {
                 db.set_session_effort(&session.id, Some(effort))?;
             }
+        }
 
-            // T8.5 — the git base sha for the Changes rail is recorded here in
-            // TS (`vcs/repodiff.ts::recordBase`, best-effort by construction).
-            // repodiff is a wave-2 stub (row 2.14); until it lands no base is
-            // recorded and the rail reports "not a repository" — the
-            // documented degraded answer, never a failed create.
+        // T8.5 — the sha this session starts from, which is the whole of the
+        // Changes rail's state (the working tree is the tip, `base` is where
+        // the session began, and `git diff <base>` plus untracked files is
+        // the change set).
+        //
+        // Recorded HERE, at creation, rather than on the first turn:
+        // everything that runs in the workspace moves the tree, so a base
+        // captured any later attributes work already done to the commit it
+        // started from and hides it from review.
+        //
+        // Only for an EXPLICIT workspace. A session that named none runs in
+        // the server's own directory, and recording that repository's HEAD
+        // would give the session a change set full of somebody else's
+        // uncommitted work — with a revert button on it.
+        //
+        // Best-effort by construction (`vcs/repodiff.rs`): a non-repo
+        // workspace stores nothing and the rail reports "not a repository"
+        // rather than an empty diff, and a git failure costs the diff, never
+        // the session.
+        if let Some(workspace) = &workspace {
+            let _ = bough_core::vcs::repodiff::record_base(&ctx.db, &session.id, workspace).await;
+        }
 
+        let stored = {
+            let db = ctx.db.lock().unwrap();
             db.get_session(&session.id)?
                 .ok_or_else(|| BoughError::not_found(format!("session {} not found", session.id)))?
         };

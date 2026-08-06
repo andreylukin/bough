@@ -17,8 +17,9 @@
 //!   `[DONE]`/finish_reason was cut mid-response, and returning the partial
 //!   round would run half-assembled tool calls.
 //!
-//! Cloudflare Workers AI is a config of this family (account-scoped URL); it
-//! ships as a trait-shaped stub in v1 (plan row 1.12).
+//! Cloudflare Workers AI is a config of this family: the only thing that
+//! differs is that the account id lives in the URL path, which is why the URL
+//! is a function of the env resolved per `run()` (plan row 2.16).
 
 use std::sync::Arc;
 
@@ -26,7 +27,9 @@ use serde_json::{json, Map, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::errors::BoughError;
-use crate::llm::routing::{joined_system, require_key, Provider, ProviderOpts};
+use crate::llm::routing::{
+    joined_system, require_key, Env, Provider, ProviderOpts, CLOUDFLARE_ACCOUNT_ENV,
+};
 use crate::llm::sse::{aborted, fetch_cancellable, http_error, parse_tool_args, SseEvents};
 use crate::schema::parts::Usage;
 use crate::types::{LlmBlock, LlmClient, LlmContentBlock, LlmMessage, LlmParams, LlmResult, LlmRole, OnText};
@@ -383,25 +386,44 @@ pub(crate) fn openrouter_client_with_stall(opts: ProviderOpts, stall_ms: u64) ->
     })
 }
 
-/// Cloudflare Workers AI — v1 stub (plan row 1.12). Routing still resolves;
-/// running answers a non-retryable 401 until wave 2 configures the compat
-/// family with the account-scoped URL.
-struct CloudflareStub;
-
-#[async_trait::async_trait]
-impl LlmClient for CloudflareStub {
-    async fn run(
-        &self,
-        _params: LlmParams,
-        _on_text: OnText,
-        _cancel: CancellationToken,
-    ) -> Result<LlmResult, BoughError> {
-        Err(BoughError::llm_with("cloudflare: provider not configured", 401, None))
-    }
+/// The account-scoped Workers AI base, overridable for a gateway or a test
+/// server. 401 for the same reason a missing key is: a missing account id
+/// will still be missing in 15 seconds, so six backed-off attempts would only
+/// delay the message that fixes it.
+fn cloudflare_base(env: &Env) -> Result<String, BoughError> {
+    let account = env(CLOUDFLARE_ACCOUNT_ENV)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let Some(account) = account else {
+        return Err(BoughError::llm_with(
+            format!("cloudflare: {CLOUDFLARE_ACCOUNT_ENV} is not set"),
+            401,
+            None,
+        ));
+    };
+    let base = env("CLOUDFLARE_API_BASE")
+        .unwrap_or_else(|| "https://api.cloudflare.com/client/v4".to_string());
+    Ok(format!("{base}/accounts/{account}/ai"))
 }
 
-pub fn cloudflare_client(_opts: ProviderOpts) -> Arc<dyn LlmClient> {
-    Arc::new(CloudflareStub)
+/// Workers AI over its OpenAI-compatible endpoint.
+///
+/// Cloudflare serves `/ai/v1/chat/completions` in the chat-completions shape,
+/// so it reuses the OpenRouter family wholesale; the only thing that differs
+/// is that the account id lives in the path, which is why the URL is a
+/// function of the env — a value set through the running server applies
+/// without a restart.
+pub fn cloudflare_client(opts: ProviderOpts) -> Arc<dyn LlmClient> {
+    Arc::new(OpenAICompatClient {
+        opts,
+        provider: Provider::Cloudflare,
+        url: Arc::new(|env| cloudflare_base(env).map(|base| format!("{base}/v1/chat/completions"))),
+        extra_headers: vec![],
+        // Cloudflare's own docs and dashboard call it a token, so accept that
+        // spelling.
+        key_alternatives: vec!["CLOUDFLARE_API_TOKEN"],
+        stall_ms: crate::llm::sse::STALL_TIMEOUT_MS,
+    })
 }
 
 #[cfg(test)]
@@ -695,9 +717,88 @@ mod tests {
         assert_eq!(*input, json!({}));
     }
 
+    /// Key and account id, the pair Cloudflare needs; no `_API_BASE` so the
+    /// URL is real.
+    fn cf_env() -> crate::llm::routing::Env {
+        Arc::new(|k| match k {
+            "CLOUDFLARE_API_KEY" => Some("cf-key".to_string()),
+            "CLOUDFLARE_ACCOUNT_ID" => Some("acct-1".to_string()),
+            _ => None,
+        })
+    }
+
     #[tokio::test]
-    async fn the_cloudflare_stub_answers_provider_not_configured_401() {
-        let client = cloudflare_client(ProviderOpts::default());
+    async fn cloudflare_the_account_id_lands_in_the_url_and_the_round_decodes() {
+        let transport = Arc::new(CannedTransport::sse(vec![vec![
+            chunk(json!({ "content": "hi" }), None),
+            chunk(json!({}), Some("stop")),
+            "[DONE]".to_string(),
+        ]]));
+        let client = cloudflare_client(ProviderOpts {
+            env: Some(cf_env()),
+            transport: Some(transport.clone()),
+        });
+        let result = client
+            .run(
+                params_over("@cf/zai-org/glm-5.2", &TOOLS, |_| {}),
+                Arc::new(|_| {}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(
+            requests[0].url,
+            "https://api.cloudflare.com/client/v4/accounts/acct-1/ai/v1/chat/completions"
+        );
+        assert!(requests[0]
+            .headers
+            .iter()
+            .any(|(k, v)| k == "authorization" && v == "Bearer cf-key"));
+        let body: Value = serde_json::from_str(requests[0].body.as_ref().unwrap()).unwrap();
+        assert_eq!(body["model"], "@cf/zai-org/glm-5.2", "full id incl. @cf/");
+        assert_eq!(result.content, vec![LlmBlock::Text { text: "hi".into() }]);
+    }
+
+    #[tokio::test]
+    async fn cloudflare_the_endpoint_comes_from_the_env_read_per_run() {
+        // A key or a base set through the running server must apply without a
+        // restart, so both are read at run() time — not when the client was
+        // constructed.
+        let account = Arc::new(Mutex::new("first".to_string()));
+        let account2 = account.clone();
+        let env: crate::llm::routing::Env = Arc::new(move |k| match k {
+            "CLOUDFLARE_API_TOKEN" => Some("tok".to_string()),
+            "CLOUDFLARE_ACCOUNT_ID" => Some(account2.lock().unwrap().clone()),
+            "CLOUDFLARE_API_BASE" => Some("http://127.0.0.1:9/v4".to_string()),
+            _ => None,
+        });
+        let done = || vec![chunk(json!({}), Some("stop")), "[DONE]".to_string()];
+        let transport = Arc::new(CannedTransport::sse(vec![done(), done()]));
+        let client = cloudflare_client(ProviderOpts {
+            env: Some(env),
+            transport: Some(transport.clone()),
+        });
+        let p = || params_over("@cf/openai/gpt-oss-120b", &TOOLS, |_| {});
+        client.run(p(), Arc::new(|_| {}), CancellationToken::new()).await.unwrap();
+        *account.lock().unwrap() = "second".to_string();
+        client.run(p(), Arc::new(|_| {}), CancellationToken::new()).await.unwrap();
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests[0].url, "http://127.0.0.1:9/v4/accounts/first/ai/v1/chat/completions");
+        assert_eq!(requests[1].url, "http://127.0.0.1:9/v4/accounts/second/ai/v1/chat/completions");
+        // CLOUDFLARE_API_TOKEN is accepted as the key — it is Cloudflare's
+        // own spelling.
+        assert!(requests[0].headers.iter().any(|(k, v)| k == "authorization" && v == "Bearer tok"));
+    }
+
+    #[tokio::test]
+    async fn cloudflare_a_key_with_no_account_id_fails_fast_naming_the_missing_var() {
+        // The transport has NOTHING queued — a fetch would fail loudly, so a
+        // passing test proves the endpoint was never formed.
+        let transport = Arc::new(CannedTransport::sse(vec![]));
+        let env: crate::llm::routing::Env =
+            Arc::new(|k| (k == "CLOUDFLARE_API_KEY").then(|| "cf-key".to_string()));
+        let client = cloudflare_client(ProviderOpts { env: Some(env), transport: Some(transport.clone()) });
         let err = client
             .run(
                 params_over("@cf/zai-org/glm-5.2", &TOOLS, |_| {}),
@@ -706,8 +807,9 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert_eq!(err.status(), 401, "must not be retried");
-        assert_eq!(err.to_string(), "cloudflare: provider not configured");
+        assert_eq!(err.status(), 401, "a missing account id must not be retried");
+        assert!(err.to_string().contains("CLOUDFLARE_ACCOUNT_ID"), "{err}");
         assert!(!crate::llm::retry::is_retryable(&err));
+        assert!(transport.requests.lock().unwrap().is_empty(), "must not be called");
     }
 }

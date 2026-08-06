@@ -22,6 +22,7 @@ dirs = { workspace = true }
 nix = { workspace = true }
 tracing = { workspace = true }
 libc = { workspace = true }
+include_dir = { workspace = true }
 
 [dev-dependencies]
 chrono-tz = { workspace = true }

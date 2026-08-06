@@ -7,16 +7,15 @@
 //! scoped by session id AND question id so a client cannot answer another
 //! session's hold by guessing a uuid.
 //!
-//! v1: the `AskRegistry` on `HostState` is the wave-2 stub whose `pending()`
-//! is always empty (the `ask()` host fn lands with row 2.5), so the honest
-//! answers are the TS restart-state ones: an empty list, and a 404 whose
-//! message explains that holds are memory-only. The settle verbs (answer /
-//! decline / the 409 settled-race) un-stub with the registry.
+//! Both handlers are thin translations over the `hostfn/ask` registry: no
+//! hold logic lives here, and no HTTP lives there. A question that settled
+//! between the read and the write is a 409 rather than a silent success.
 
 use bough_core::errors::BoughError;
 use bough_core::schema::parts::AskQuestion;
+use bough_core::schema::requests::AnswerQuestionBody;
 
-use crate::http::{handler, json, Handler};
+use crate::http::{handler, json, parse_body, Handler};
 
 /// `GET /questions[?sessionId=]` — every question awaiting an answer, oldest
 /// first. A bare array, like `GET /sessions`: the list IS the resource.
@@ -28,42 +27,62 @@ pub fn list_questions() -> Handler {
             .find_map(|kv| kv.strip_prefix("sessionId="))
             .filter(|v| !v.is_empty())
             .map(str::to_string);
-        let pending: Vec<AskQuestion> = ctx
-            .host
-            .asks
-            .pending()
-            .into_iter()
-            .filter(|q| session_id.as_deref().is_none_or(|s| q.session_id == s))
-            .collect();
+        let pending: Vec<AskQuestion> = ctx.host.asks.list(session_id.as_deref());
         Ok(json(&pending, 200))
     })
 }
 
-/// `POST /sessions/:id/questions/:qid` — settle one hold.
+/// `POST /sessions/:id/questions/:qid` — `{answer}` resolves the program's
+/// `ask()`; `{decline: true}` rejects it with a catchable "user declined".
 ///
-/// v1: nothing is ever held (see the header), so every qid is the 404 whose
-/// message explains memory-only holds — the same answer TS gives for a hold
-/// that settled, was interrupted, or predates a restart.
+/// The empty-answer check is not pedantry. An empty string would resolve
+/// `ask()` with nothing, and the program would branch on "" as though the user
+/// had chosen it — a dismissal is what "I am not answering this" means, and it
+/// has its own flag.
 pub fn answer_question() -> Handler {
-    handler(|_req, ctx, params| async move {
+    handler(|req, ctx, params| async move {
         let id = params.get("id").cloned().unwrap_or_default();
         let qid = params.get("qid").cloned().unwrap_or_default();
-        let held = ctx.host.asks.pending().into_iter().any(|q| q.id == qid && q.session_id == id);
-        if !held {
+        let question = ctx.host.asks.get(&qid);
+        if !question.is_some_and(|q| q.session_id == id) {
             return Err(BoughError::not_found(format!(
                 "no question awaiting an answer for {qid} in session {id} — holds are \
                  memory-only, so one that was already settled, interrupted, or raised before \
                  a restart is gone. GET /questions lists the live ones.",
             )));
         }
-        // Unreachable in v1: `pending()` is empty until the ask() host fn
-        // lands (wave 2, row 2.5) — the registry has no settle verbs yet.
-        Err(BoughError::not_found(format!(
-            "no question awaiting an answer for {qid} in session {id} — holds are \
-             memory-only, so one that was already settled, interrupted, or raised before \
-             a restart is gone. GET /questions lists the live ones.",
-        )))
+
+        let body: AnswerQuestionBody =
+            parse_body(req, Some(serde_json::json!({}))).await?;
+
+        if body.decline == Some(true) {
+            if !ctx.host.asks.decline(&qid) {
+                return Err(settled_meanwhile(&qid));
+            }
+            return Ok(json(&serde_json::json!({ "ok": true, "id": qid, "status": "declined" }), 200));
+        }
+
+        let answer = body.answer.as_deref().unwrap_or("");
+        if answer.trim().is_empty() {
+            return Err(BoughError::bad_request(
+                "body must be {answer: \"…\"} with non-empty text, or {decline: true} to dismiss \
+                 the question"
+                    .to_string(),
+            ));
+        }
+        if !ctx.host.asks.answer(&qid, answer) {
+            return Err(settled_meanwhile(&qid));
+        }
+        Ok(json(&serde_json::json!({ "ok": true, "id": qid, "status": "answered" }), 200))
     })
+}
+
+/// The read-then-write race: someone else settled it in between.
+fn settled_meanwhile(qid: &str) -> BoughError {
+    BoughError::conflict(format!(
+        "question {qid} settled before this answer arrived — it was answered, declined, \
+         or its turn ended. Nothing was applied.",
+    ))
 }
 
 #[cfg(test)]

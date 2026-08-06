@@ -56,6 +56,10 @@ pub enum ErrorKind {
     /// A non-2xx response is DATA, not an exception.
     Net,
     Skill,
+    /// 503 — the index is gone, not the query. Named separately from a 400
+    /// because the fix is different in kind: nothing the user retypes will
+    /// help (`server/search.rs`).
+    SearchIndexUnavailable,
 }
 
 impl ErrorKind {
@@ -88,6 +92,7 @@ impl ErrorKind {
             ErrorKind::Lsp => "LspError",
             ErrorKind::Net => "NetError",
             ErrorKind::Skill => "SkillError",
+            ErrorKind::SearchIndexUnavailable => "SearchIndexUnavailableError",
         }
     }
 }

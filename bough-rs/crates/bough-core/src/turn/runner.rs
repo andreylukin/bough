@@ -61,7 +61,11 @@ use crate::bus::Bus;
 use crate::errors::{BoughError, ErrorKind};
 use crate::harness::protocol::{HostFnName, ProgramResult};
 use crate::harness::vm::{run_program, RunProgramOptions};
+use crate::history::tags::echo::{create_command_echo, EchoCtx};
+use crate::history::tags::record::{create_command_recorder, RecorderCtx};
+use crate::history::tags::stats::{dir_tag_hints, stats_memo, tags_note_for};
 use crate::hostfn::files::{create_file_host_fns, FileCtx};
+use crate::hostfn::shell::{create_shell_host_fns, EchoHooks, ShellCtx, ShellOptions};
 use crate::llm::pricing::context_window_for;
 use crate::llm::retry::{RetryInfo, RetryOpts};
 use crate::llm::routing::{api_key_env, provider_for, Provider};
@@ -227,15 +231,45 @@ pub const BASE_HOST_FNS: [HostFnName; 9] = [
     HostFnName::Write,
 ];
 
+/// The per-turn command recorder over the turn's own seams — one vocabulary
+/// read per repo per turn, absolute touched dirs pushed onto `ctx.touched`
+/// (the dir-hint trigger), every failure swallowed.
+fn recorder_for(ctx: &TurnCtx) -> crate::types::CommandRecorder {
+    create_command_recorder(RecorderCtx {
+        db: ctx.app.db.clone(),
+        session_id: ctx.session_id.clone(),
+        workspace: ctx.workspace.clone(),
+        message_id: Some(ctx.message_id.clone()),
+        now: Some(ctx.app.now.clone()),
+        touched: Some(ctx.touched.clone()),
+    })
+}
+
+/// The failure echo + loop guard, in the closure shape `ShellCtx` carries.
+fn echo_hooks_for(ctx: &TurnCtx) -> EchoHooks {
+    let echo = Arc::new(create_command_echo(EchoCtx {
+        db: ctx.app.db.clone(),
+        session_id: ctx.session_id.clone(),
+        workspace: ctx.workspace.clone(),
+        now: Some(ctx.app.now.clone()),
+    }));
+    let note_echo = echo.clone();
+    EchoHooks {
+        note: Arc::new(move |command, exit_code, output| {
+            note_echo.note(command, exit_code, output)
+        }),
+        guard: Arc::new(move |command| echo.guard(command)),
+    }
+}
+
 /// Build the always-wired host functions for one turn.
 ///
 /// The shared trails live ON the ctx (`exits`, `reads`, `touched`) precisely
 /// because host fns are built from it in more than one place — a
-/// closure-local array shipped green tests while doing nothing live.
-///
-/// v1: the file verbs are wired; the shell verbs arrive with their own row
-/// (hostfn/shell is still a stub) and their absence is the documented
-/// capability denial in the program bridge.
+/// closure-local array shipped green tests while doing nothing live. Same
+/// rule for the memory seams: `prepare_turn` puts ONE recorder on the ctx so
+/// every construction path shares it; the fallback here covers a caller-built
+/// ctx that never went through it.
 pub fn base_host_fns(ctx: &TurnCtx) -> HostFns {
     let files = Arc::new(create_file_host_fns(
         FileCtx {
@@ -247,7 +281,65 @@ pub fn base_host_fns(ctx: &TurnCtx) -> HostFns {
         ctx.app.host.writes.clone(),
     ));
 
+    let shell = Arc::new(create_shell_host_fns(
+        ShellCtx {
+            session_id: ctx.session_id.clone(),
+            workspace: ctx.workspace.clone(),
+            exits: Some(ctx.exits.clone()),
+            cancel: Some(ctx.cancel.clone()),
+            scratch: Some(ensure_scratch_dir(&ctx.session_id).to_string_lossy().into_owned()),
+            record: Some(ctx.record.clone().unwrap_or_else(|| recorder_for(ctx))),
+            echo: Some(echo_hooks_for(ctx)),
+        },
+        ShellOptions::new(ctx.app.host.jobs.clone()),
+    ));
+
     let mut fns = HostFns::default();
+    let s = shell.clone();
+    fns.bash = Some(Arc::new(move |args: Vec<String>| {
+        let s = s.clone();
+        async move {
+            s.bash(
+                args.first().map(String::as_str).unwrap_or_default(),
+                args.get(1).map(String::as_str),
+            )
+            .await
+        }
+        .boxed()
+    }));
+    let s = shell.clone();
+    fns.sh = Some(Arc::new(move |args: Vec<String>| {
+        let s = s.clone();
+        async move { s.sh(args.first().map(String::as_str).unwrap_or("[]")).await }.boxed()
+    }));
+    let s = shell.clone();
+    fns.bash_bg = Some(Arc::new(move |args: Vec<String>| {
+        let s = s.clone();
+        async move {
+            s.bash_bg(
+                args.first().map(String::as_str).unwrap_or_default(),
+                args.get(1).map(String::as_str).unwrap_or_default(),
+            )
+        }
+        .boxed()
+    }));
+    let s = shell.clone();
+    fns.bash_output = Some(Arc::new(move |args: Vec<String>| {
+        let s = s.clone();
+        async move { s.bash_output(args.first().map(String::as_str).unwrap_or_default()) }.boxed()
+    }));
+    let s = shell.clone();
+    fns.bash_wait = Some(Arc::new(move |args: Vec<String>| {
+        let s = s.clone();
+        async move { s.bash_wait(args.first().map(String::as_str).unwrap_or_default()).await }
+            .boxed()
+    }));
+    let s = shell;
+    fns.bash_kill = Some(Arc::new(move |args: Vec<String>| {
+        let s = s.clone();
+        async move { s.bash_kill(args.first().map(String::as_str).unwrap_or_default()).await }
+            .boxed()
+    }));
     let f = files.clone();
     fns.view = Some(Arc::new(move |args: Vec<String>| {
         let f = f.clone();
@@ -276,20 +368,29 @@ pub fn base_host_fns(ctx: &TurnCtx) -> HostFns {
 /// host functions bridged and the turn's interrupt wired into the wind-down.
 ///
 /// Reads the ctx trails **by index from a per-round snapshot** so a round
-/// reports only its own exits. v1: the dir-tag-hint and project-rule result
-/// notes are deferred with the rest of the tag-history memory; the exit notes
-/// stay — they are cheap and they prevented a documented model-confabulation
-/// bug.
+/// reports only its own exits, its own `view()` reads and its own touched
+/// dirs. The exit notes, the per-directory tag hints and the project-rule
+/// report all land on the round's RESULT, never the prompt — a mid-session
+/// prompt edit would bust the volatile-tier cache (`llm/client`).
 pub fn default_program_runner(ctx: &TurnCtx, host: Option<HostFns>) -> ProgramRunner {
     let fns = host.unwrap_or_else(|| base_host_fns(ctx));
     // Per TURN on the ctx, read per ROUND by index: the host functions may
-    // have been built by the caller, so the array cannot live in this closure.
+    // have been built by the caller, so the arrays cannot live in this
+    // closure.
     let exits = ctx.exits.clone();
+    let reads = ctx.reads.clone();
+    let touched = ctx.touched.clone();
+    let hint_ctx = ctx.clone();
     Arc::new(move |run: ProgramRun| {
         let fns = fns.clone();
         let exits = exits.clone();
+        let reads = reads.clone();
+        let touched = touched.clone();
+        let hint_ctx = hint_ctx.clone();
         async move {
             let from = exits.lock().unwrap().len();
+            let from_reads = reads.lock().unwrap().len();
+            let from_touched = touched.lock().unwrap().len();
             let on_log = run.on_log.clone();
             let result = run_program(RunProgramOptions {
                 code: run.code,
@@ -303,10 +404,77 @@ pub fn default_program_runner(ctx: &TurnCtx, host: Option<HostFns>) -> ProgramRu
                 let guard = exits.lock().unwrap();
                 guard[from.min(guard.len())..].to_vec()
             };
-            with_exit_notes(result, &round_exits)
+            let round_dirs: Vec<String> = {
+                let reads = reads.lock().unwrap();
+                let touched = touched.lock().unwrap();
+                reads[from_reads.min(reads.len())..]
+                    .iter()
+                    .filter_map(|p| {
+                        Path::new(p).parent().map(|d| d.to_string_lossy().into_owned())
+                    })
+                    .chain(touched[from_touched.min(touched.len())..].iter().cloned())
+                    .collect()
+            };
+            with_project_rule_notes(
+                with_dir_tag_hint_notes(
+                    with_exit_notes(result, &round_exits),
+                    &hint_ctx,
+                    &round_dirs,
+                ),
+                &hint_ctx,
+            )
         }
         .boxed()
     })
+}
+
+/// Append the `AGENTS.md` report queued when this turn's prompt was
+/// assembled.
+///
+/// Same carrier as the tag hints and for the same reason — the round's
+/// RESULT, not the prompt, because a per-turn prompt edit would bust the
+/// volatile tier's cache. The queue drains on the first round of the turn, so
+/// a multi-round turn says it once. `prompt/project.rs` owns what is worth
+/// saying.
+fn with_project_rule_notes(result: ProgramResult, ctx: &TurnCtx) -> ProgramResult {
+    let lines = crate::prompt::project::drain_project_rule_notes(&ctx.session_id);
+    if lines.is_empty() {
+        return result;
+    }
+    let mut logs = result.logs.clone();
+    logs.extend(lines);
+    ProgramResult { logs, ..result }
+}
+
+/// Append the per-directory tag hints for directories this round newly
+/// touched — by `view()` reads or by the paths its shell commands named —
+/// the mid-turn half of the tag-history memory. Appended to the round's
+/// RESULT, never to the prompt. `history/tags/stats.rs` owns per-dir repo
+/// resolution, the divergence rule and the caps; the dirs here are absolute.
+fn with_dir_tag_hint_notes(
+    result: ProgramResult,
+    ctx: &TurnCtx,
+    abs_dirs: &[String],
+) -> ProgramResult {
+    let mut dirs: Vec<String> = Vec::new();
+    for d in abs_dirs {
+        if Path::new(d).is_absolute() && !dirs.contains(d) {
+            dirs.push(d.clone());
+        }
+    }
+    if dirs.is_empty() {
+        return result;
+    }
+    let now = (ctx.app.now)();
+    let lines = with_db(&ctx.app.db, |d| {
+        dir_tag_hints(d, stats_memo(), &ctx.session_id, &ctx.workspace, &dirs, now)
+    });
+    if lines.is_empty() {
+        return result;
+    }
+    let mut logs = result.logs.clone();
+    logs.extend(lines);
+    ProgramResult { logs, ..result }
 }
 
 /// Append the commands that exited non-zero, when the program did not print
@@ -680,7 +848,7 @@ fn prepare_turn(
     };
     let delegated = depth == 1;
 
-    let turn_ctx = TurnCtx {
+    let mut turn_ctx = TurnCtx {
         app: ctx.clone(),
         session_id: session_id.clone(),
         turn_id: turn.id.clone(),
@@ -695,6 +863,11 @@ fn prepare_turn(
         mcp_grant: None,
         depth,
     };
+    // ONE recorder per turn, shared by every construction path (the TS
+    // `ctx.record ??=` rule): the vocabulary a turn is judged against must be
+    // stable across the turn, and the touch trail must exist before the
+    // recorder closes over it.
+    turn_ctx.record = Some(recorder_for(&turn_ctx));
 
     let program: ProgramRunner = match (&deps.program, &deps.program_for) {
         (Some(p), _) => p.clone(),
@@ -743,11 +916,21 @@ fn prepare_turn(
     // here, per session — boot cannot supply a per-session fact.
     let rule_files = find_project_rules(Path::new(&workspace), Some(&bough_home()));
     let rules_note = project_rules_note(&rule_files, Path::new(&workspace));
-    // What went in is reported, from the SAME read the prompt was built from.
-    // (The drain onto the round result is deferred with the tag-history memory.)
+    // What went in is reported, from the SAME read the prompt was built from —
+    // drained onto the round's result by `with_project_rule_notes`.
     note_project_rules(&session_id, &rule_files, Path::new(&workspace));
+    // Frozen per session even though this runs per turn — the memo in
+    // `history/tags/stats.rs` — because the volatile tier caches per session
+    // and a note whose text drifts mid-session would bust it. None for a
+    // project with no command history yet, and then simply omitted.
+    let tags_note = with_db(&db, |d| {
+        tags_note_for(d, stats_memo(), &session_id, &workspace, now())
+    });
     let mut notes: Vec<String> =
         vec![workspace_note(&workspace), scratch_note(&scratch.to_string_lossy())];
+    if let Some(n) = tags_note {
+        notes.push(n);
+    }
     if let Some(n) = rules_note {
         notes.push(n);
     }
@@ -2585,6 +2768,182 @@ mod tests {
         assert!(notes[1].starts_with("## Scratchpad"));
         assert!(notes[1].contains(&f.session.id), "the scratchpad note names THIS session's dir");
         assert!(notes[2].contains("no emoji"), "a caller's notes must survive");
+    }
+
+    // ---- the tag-history memory wiring (rows 2.9–2.12) ---------------------
+
+    /// Seed one command-history row so the workspace repo has a vocabulary.
+    fn seed_history(db: &SharedDb, session_id: &str, repo: &str, tag: &str, dir: Option<&str>) {
+        let ts = crate::types::system_clock()();
+        with_db(db, |d| {
+            d.record_command(&crate::types::CommandRecord {
+                session_id: session_id.to_string(),
+                ts,
+                repo: repo.to_string(),
+                cmd: format!("seeded-{tag}-{ts}-{}", Uuid::new_v4()),
+                tags: tag.to_string(),
+                tag_list: vec![tag.to_string()],
+                dirs: dir.map(|d| vec![d.to_string()]).unwrap_or_default(),
+                exit_code: Some(0),
+                duration_ms: Some(1),
+                output_head: String::new(),
+                spill_path: None,
+                source: "live".into(),
+                message_id: None,
+            })
+        })
+        .unwrap();
+    }
+
+    fn temp_workspace(tag: &str) -> std::path::PathBuf {
+        let ws = std::env::temp_dir().join(format!("bough-runner-{tag}-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&ws).unwrap();
+        ws
+    }
+
+    #[tokio::test]
+    async fn the_tag_priming_note_rides_the_volatile_tier_between_scratch_and_caller_notes() {
+        let llm = scripted_llm(vec![
+            ScriptedRound { content: vec![text("done"), stop("c1")], ..Default::default() },
+            ScriptedRound { content: vec![text("done"), stop("c2")], ..Default::default() },
+        ]);
+        let f = fixture(opts(llm));
+        let ws = temp_workspace("note");
+        let ws_s = ws.to_string_lossy().into_owned();
+        with_db(&f.db, |d| d.set_session_workspace(&f.session.id, &ws_s)).unwrap();
+        // Two uses each — a singleton would be demoted out of the note.
+        for _ in 0..2 {
+            seed_history(&f.db, &f.session.id, &ws_s, "composer", None);
+            seed_history(&f.db, &f.session.id, &ws_s, "retention", None);
+        }
+
+        let seen: Arc<Mutex<Option<PromptInput>>> = Arc::new(Mutex::new(None));
+        let s = seen.clone();
+        let mut deps = f.deps.clone();
+        deps.assemble = Some(Arc::new(move |input: &PromptInput| {
+            *s.lock().unwrap() = Some(input.clone());
+            AssembledPrompt {
+                system: "SYSTEM".into(),
+                system_volatile: "".into(),
+                sections: vec![],
+                shas: vec![],
+            }
+        }));
+        user_message(&f.db, &f.session.id, "hi", 2_000);
+        finish(begin_turn(&f.ctx, &f.session.id, deps.clone()).unwrap()).await;
+
+        let notes = seen.lock().unwrap().as_ref().unwrap().notes.clone();
+        assert_eq!(notes.len(), 3, "workspace, scratchpad, tags: {notes:?}");
+        assert!(notes[0].starts_with("## Workspace"));
+        assert!(notes[1].starts_with("## Scratchpad"));
+        assert!(
+            notes[2].starts_with("This project's own tag vocabulary"),
+            "the priming note rides the volatile tier: {}",
+            notes[2]
+        );
+        assert!(notes[2].contains("composer") && notes[2].contains("retention"));
+        // Hints are result-carried, never prompt-carried.
+        assert!(
+            notes.iter().all(|n| !n.contains("[history]")),
+            "no dir hint may reach the prompt: {notes:?}"
+        );
+
+        // The note froze per session at first computation: new stats do not
+        // drift a later turn of the SAME session.
+        for _ in 0..3 {
+            seed_history(&f.db, &f.session.id, &ws_s, "drifted", None);
+        }
+        user_message(&f.db, &f.session.id, "again", 3_000);
+        finish(begin_turn(&f.ctx, &f.session.id, deps).unwrap()).await;
+        let notes2 = seen.lock().unwrap().as_ref().unwrap().notes.clone();
+        assert_eq!(notes2[2], notes[2], "a session's note never drifts");
+
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[tokio::test]
+    async fn a_live_round_records_bash_into_the_memory_and_hints_land_on_the_round_result() {
+        // The full wiring, through the REAL sidecar and a REAL shell: the
+        // model's program runs `bash("ls migrations", …)`, the recorder
+        // writes the row, the touched dir triggers a divergence hint, and the
+        // hint lands on the round's RESULT (the tool_result output) — never
+        // on the prompt.
+        let ws = temp_workspace("hints");
+        std::fs::create_dir_all(ws.join("migrations")).unwrap();
+        let ws_s = ws.to_string_lossy().into_owned();
+
+        let llm = scripted_llm(vec![
+            ScriptedRound {
+                content: vec![run_steps(
+                    "call-1",
+                    r#"await bash("ls migrations/", "ls:list")"#,
+                )],
+                ..Default::default()
+            },
+            ScriptedRound {
+                content: vec![text("done"), stop("stop-1")],
+                ..Default::default()
+            },
+        ]);
+        let f = fixture(opts(llm));
+        with_db(&f.db, |d| d.set_session_workspace(&f.session.id, &ws_s)).unwrap();
+        // The priming set is {bun}; migrations/ knows a word the session was
+        // not primed with.
+        for _ in 0..2 {
+            seed_history(&f.db, &f.session.id, &ws_s, "bun", None);
+        }
+        seed_history(&f.db, &f.session.id, &ws_s, "psql", Some("migrations"));
+
+        let seen: Arc<Mutex<Option<PromptInput>>> = Arc::new(Mutex::new(None));
+        let s = seen.clone();
+        let mut deps = f.deps.clone();
+        deps.program = None;
+        deps.assemble = Some(Arc::new(move |input: &PromptInput| {
+            *s.lock().unwrap() = Some(input.clone());
+            AssembledPrompt {
+                system: "SYSTEM".into(),
+                system_volatile: "".into(),
+                sections: vec![],
+                shas: vec![],
+            }
+        }));
+        user_message(&f.db, &f.session.id, "look around", 2_000);
+        let started = begin_turn(&f.ctx, &f.session.id, deps).unwrap();
+        let message = started.message.clone();
+        let outcome = finish(started).await;
+        assert_eq!(outcome.status, TurnOutcomeStatus::Done);
+
+        // The hint is on the round RESULT…
+        let parts = parts_of(&f.db, &message.id);
+        let result_text = parts
+            .iter()
+            .find_map(|p| match p {
+                Part::ToolResult { output, .. } => output.as_str().map(str::to_string),
+                _ => None,
+            })
+            .expect("a tool_result part");
+        assert!(
+            result_text.contains("[history] tags previously used in migrations/"),
+            "the dir hint must ride the tool result: {result_text}"
+        );
+        assert!(result_text.contains("psql"), "{result_text}");
+        assert!(!result_text.contains("bun"), "primed tags never repeat in a hint");
+        // …and never on the prompt.
+        let notes = seen.lock().unwrap().as_ref().unwrap().notes.clone();
+        assert!(notes.iter().all(|n| !n.contains("[history]")), "{notes:?}");
+
+        // The recorder wrote the command, tags normalized, dir attributed.
+        let recorded = with_db(&f.db, |d| {
+            d.commands_for_tag("ls", Some(&ws_s), None)
+        })
+        .unwrap();
+        assert_eq!(recorded.len(), 1, "one live bash row");
+        assert_eq!(recorded[0].cmd, "ls migrations/");
+        assert_eq!(recorded[0].tags, "ls:list");
+        assert_eq!(recorded[0].exit_code, Some(0));
+        assert_eq!(recorded[0].session_id, f.session.id);
+
+        let _ = std::fs::remove_dir_all(&ws);
     }
 
     #[test]

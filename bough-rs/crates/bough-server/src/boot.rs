@@ -11,8 +11,9 @@
 //! 4. recover orphaned turns — BEFORE the listener binds (a client that
 //!    connected first would fetch a session that looks busy forever); orphaned
 //!    WORKFLOW recovery arrives with the workflow subsystem (wave 2, row 2.x)
-//! 5. install the `SearchSafeDb` wrapper on ctx.db — arrives with the search
-//!    module (wave 2, row 2.15); until FTS-on-ctx lands the raw handle serves
+//! 5. install the `SearchSafeDb` wrapper on ctx.db — AFTER recovery used the
+//!    raw handle; everything served goes through the wrapper, which is what
+//!    keeps an FTS failure from failing a message insert
 //! 6. wire the ONE composed turn starter (runner production defaults; wave 2
 //!    layers skills/grants/notes); without it a posted message
 //!    lands + announces without starting a turn (the documented M1 shape)
@@ -39,6 +40,7 @@ use bough_core::turn::state::{recover_orphaned_turns, OrphanedTurn, RecoverOptio
 use bough_core::types::{system_clock, AppCtx, HostState, SharedDb};
 
 use crate::app::build_router;
+use crate::search::{index_recovered_messages, SearchSafeDb, SearchSafeOptions};
 
 /// The default port, shared with the TS server so cutover changes nothing.
 pub const DEFAULT_PORT: u16 = 4321;
@@ -60,36 +62,16 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
     enable_sqlite_extensions();
 
     // 2. Open + migrate. Refuses a newer `user_version` rather than guessing.
-    let db: SharedDb = Arc::new(Mutex::new(open_db(db_file, DbOptions::default())?));
+    let raw = open_db(db_file, DbOptions::default())?;
 
-    // 3. The one bus, the one host state, the one ctx.
+    // 3. The one bus (the ctx comes after recovery, over the wrapped handle).
     let bus = Arc::new(Bus::new(system_clock()));
-    let host = Arc::new(HostState::new());
-    // Background shells publish `job.spawned`/`job.exited` through the bus.
-    // The registry outlives any turn, so it is wired here, not at construction.
-    host.jobs.attach_bus(bus.clone());
-    let ctx = AppCtx {
-        db,
-        bus,
-        llm: None,
-        model: std::env::var("BOUGH_MODEL").ok().filter(|m| !m.is_empty()),
-        effort: None,
-        now: system_clock(),
-        cheap: None, // v1 ships no cheap tier — every reader degrades on absence
-        host,
-        starter: Arc::new(RwLock::new(None)),
-        turn_registry: Arc::new(TurnRegistry::new()),
-        model_defaults_path: None, // None = the real ~/.bough/model.json
-    };
 
     // 4. Before the listener binds, never after: a client that connected first
     // would fetch a session that still looks busy and render a turn that died
     // with the previous process. Uses the RAW db handle by design — the
     // search-safe wrapper (step 5) is installed after recovery.
-    let recovered = {
-        let db = ctx.db.lock().unwrap();
-        recover_orphaned_turns(&*db, &*ctx.bus, RecoverOptions::default())?
-    };
+    let recovered = recover_orphaned_turns(&raw, &*bus, RecoverOptions::default())?;
     if !recovered.is_empty() {
         println!(
             "recovered {} turn(s) orphaned by the previous process: {}",
@@ -104,8 +86,52 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
     // Orphaned WORKFLOW recovery belongs here too (same reason, same timing);
     // it arrives with the workflow subsystem (wave 2).
 
-    // 5. `SearchSafeDb` wrapper on ctx.db — wave 2 (row 2.15). Mandatory once
-    // FTS indexing rides the message write path over HTTP.
+    // 5. The `SearchSafeDb` wrapper — everything downstream serves with this
+    // handle, which is the whole write path the wrapper protects: an FTS
+    // failure must never fail a message insert. Mandatory now that FTS
+    // indexing rides the message write path over HTTP.
+    let db: SharedDb =
+        Arc::new(Mutex::new(SearchSafeDb::new(raw, SearchSafeOptions::default())));
+
+    // Then the messages boot recovery just closed. A turn that died
+    // mid-stream never reached the finish path that indexes its message, so
+    // everything the supervisor had already said in it would be unsearchable
+    // forever — and this is the one moment those messages are known, closed
+    // and enumerated. Idempotent, like every other index write.
+    if !recovered.is_empty() {
+        let ids: Vec<String> = recovered.iter().map(|o| o.message_id.clone()).collect();
+        let reindexed = {
+            let db = db.lock().unwrap();
+            index_recovered_messages(&*db, &ids)
+        };
+        if reindexed > 0 {
+            println!("re-indexed {reindexed} message(s) closed by turn recovery");
+        }
+    }
+
+    let host = Arc::new(HostState::new());
+    // Background shells publish `job.spawned`/`job.exited` through the bus.
+    // The registry outlives any turn, so it is wired here, not at construction.
+    host.jobs.attach_bus(bus.clone());
+    let ctx = AppCtx {
+        db,
+        bus,
+        llm: None,
+        model: std::env::var("BOUGH_MODEL").ok().filter(|m| !m.is_empty()),
+        effort: None,
+        now: system_clock(),
+        // The cheap tier (wave 2, row 2.19): auto titles, composer ghost
+        // text, live activity blurbs. Always installed — the gate is per
+        // call: a missing key, a provider error and a hung connection are
+        // the same silent `None`, and `BOUGH_CHEAP_MODEL` is re-read on
+        // every call so a picker change needs no restart. Every reader
+        // still degrades when a test ctx leaves it absent.
+        cheap: bough_core::worker::create_cheap_tier(),
+        host,
+        starter: Arc::new(RwLock::new(None)),
+        turn_registry: Arc::new(TurnRegistry::new()),
+        model_defaults_path: None, // None = the real ~/.bough/model.json
+    };
 
     // 6. The ONE composed turn starter (row 1.23). Wave-1 composition is the
     // runner's own production defaults — real program runner, real prompt
@@ -115,6 +141,30 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
         Some(bough_core::turn::runner::create_turn_starter(
             bough_core::turn::runner::TurnDeps::default(),
         ));
+
+    // 6b. The cheap tier's two watchers (T10.1): auto titles and activity
+    // blurbs, both bus listeners that start a task nobody holds. The
+    // unsubscribes are discarded deliberately — both watchers live for the
+    // life of the process, and holding a thunk nobody calls would only imply
+    // otherwise. Ghost text is its own HTTP request and needs no watcher.
+    let _ = bough_core::worker::titles::watch_titles(&bough_core::worker::titles::TitleCtx {
+        db: ctx.db.clone(),
+        bus: ctx.bus.clone(),
+        cheap: ctx.cheap.clone(),
+    });
+    let _ = bough_core::worker::activity::watch_activity(
+        &bough_core::worker::activity::ActivityCtx {
+            bus: ctx.bus.clone(),
+            cheap: ctx.cheap.clone(),
+        },
+    );
+    println!(
+        "cheap tier: {} ({}) — auto titles, composer ghost text (POST /sessions/:id/ghost), \
+         live activity blurbs. Fire-and-forget: every failure is silent and none of them \
+         can delay a turn.",
+        bough_core::worker::cheap_model(),
+        bough_core::worker::CHEAP_MODEL_ENV,
+    );
 
     // 7. The scratchpad sweep, best-effort: a scratch root that cannot be
     // read is not a reason to refuse to start. (v1 stub: sweeps nothing.)
@@ -292,13 +342,27 @@ mod tests {
     }
 
     #[test]
-    fn boot_wires_the_starter_but_no_cheap_tier_in_wave_1() {
+    fn boot_installs_the_search_safe_wrapper_on_the_served_handle() {
+        let (path, _) = crashed_db();
+        let boot = boot_ctx(path.to_str()).unwrap();
+        // The raw handle answers None; only the wrapper carries a health
+        // record. Recovery above ran on the raw handle by construction (the
+        // wrapper is built after it), and everything served goes through the
+        // wrapped one.
+        assert!(boot.ctx.db.lock().unwrap().index_health().is_some());
+    }
+
+    #[test]
+    fn boot_wires_the_starter_and_the_cheap_tier() {
         let (path, _) = crashed_db();
         let boot = boot_ctx(path.to_str()).unwrap();
         // A posted message must START a turn — the wave-1 exit criterion is a
         // live end-to-end turn, so a boot without a starter is a dead loop.
         assert!(boot.ctx.turn_starter().is_some());
-        assert!(boot.ctx.cheap.is_none());
+        // Wave 2 (row 2.19) flips the wave-1 `cheap: None` to the real tier.
+        // Installing it is safe offline: every call degrades to a silent
+        // `None`, and nothing in boot itself ever invokes it.
+        assert!(boot.ctx.cheap.is_some());
         // The real model.json path (None sentinel), not a test seam.
         assert!(boot.ctx.model_defaults_path.is_none());
     }

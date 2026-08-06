@@ -91,7 +91,7 @@ pub fn routes() -> Vec<Route> {
         route("GET", "/saved-workflows/:name", workflows::saved_workflow_not_found()),
         route("PUT", "/saved-workflows/:name", workflows::workflow_not_yet()),
         route("POST", "/saved-workflows/:name/runs", workflows::saved_workflow_not_found()),
-        // the picker's catalog (static table in v1)
+        // the picker's catalog (static table + discovered rows, 2.5s deadline)
         route("GET", "/models", models::get_models()),
         // the composer's `@` completion
         route("GET", "/sessions/:id/files", fs::list_files()),
@@ -123,12 +123,14 @@ pub fn routes() -> Vec<Route> {
         route("POST", "/sessions/:id/handoff", history_ops::handoff()),
         // the Changes rail
         route("GET", "/sessions/:id/changes", changes::get_changes()),
-        route("POST", "/sessions/:id/changes/revert", changes::revert_changes()),
+        route("POST", "/sessions/:id/changes/revert", changes::revert_changes_h()),
         // transcript search
         route("GET", "/search", search::search()),
         route("POST", "/search/reindex", search::reindex()),
-        // theming (GET only in wave 1 — the stub serves the default palette)
+        // theming
         route("GET", "/theme", theme::get_theme()),
+        route("PUT", "/theme", theme::put_theme()),
+        route("DELETE", "/theme", theme::delete_theme()),
         // composer ghost text
         route("POST", "/sessions/:id/ghost", ghost::ghost_text()),
         // skills

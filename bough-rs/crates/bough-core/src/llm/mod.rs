@@ -379,13 +379,13 @@ mod tests {
     async fn client_for_routes_without_a_key_and_only_fails_when_asked_to_run() {
         // Construction must not read a key or touch the network — the server
         // builds a client per model id long before anyone runs a round. The
-        // two ported routes fail 401 naming the env var; the two stubbed
-        // routes fail 401 "provider not configured". Neither is retried.
+        // ported routes fail 401 naming the env var(s); the stubbed OpenAI
+        // route fails 401 "provider not configured". Neither is retried.
         let cases: &[(&str, &str)] = &[
             ("claude-opus-5", "ANTHROPIC_API_KEY"),
             ("openai/gpt-5", "OPENROUTER_API_KEY"),
             ("openai:gpt-5", "provider not configured"),
-            ("@cf/zai-org/glm-5.2", "provider not configured"),
+            ("@cf/zai-org/glm-5.2", "CLOUDFLARE_API_KEY / CLOUDFLARE_API_TOKEN"),
         ];
         for (model, needle) in cases {
             let client = client_for(

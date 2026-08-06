@@ -164,6 +164,18 @@ pub struct SearchHit {
     pub created_at: i64,
 }
 
+/// What the search index has swallowed in this process. All-zero/None means a
+/// healthy run. Lives here (beside [`SearchHit`]) because the search-safe
+/// wrapper is reached through the [`Db`] port: [`Db::index_health`] is how
+/// `GET /search` reads the record off the one shared handle.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexHealth {
+    pub failures: u64,
+    pub last_error: Option<String>,
+    pub last_failure_at: Option<i64>,
+}
+
 /// One finished shell command entering the tag-history memory.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CommandRecord {
@@ -513,6 +525,17 @@ pub trait Db: Send {
     ) -> Result<Vec<SearchHit>, BoughError>;
     /// Must produce results identical to incremental indexing.
     fn rebuild_search_index(&self) -> Result<(), BoughError>;
+
+    /// The swallowed-index-error record, when this handle is the search-safe
+    /// wrapper (`bough-server::search::SearchSafeDb`). The raw handle answers
+    /// `None` — a healthy default, which is also what keeps the wrapper
+    /// installable at boot without anything downstream telling the difference.
+    fn index_health(&self) -> Option<IndexHealth> {
+        None
+    }
+    /// Clear the swallowed-error record — called after a rebuild has actually
+    /// repaired the drift. No-op on the raw handle.
+    fn heal_search_index(&self) {}
 
     fn close(&self);
 }
