@@ -8,11 +8,16 @@
 //! whole loop is scriptable in tests with no terminal and no server attached.
 //!
 //! SCOPE (kept honest, per PORT_PLAN and spec §8 v1 cut): chat, the one
-//! tabbed panel (tree + changes; the other tabs say so) and the help overlay
-//! are wired. STILL UNWIRED HERE, and each is a component that exists and is
-//! tested rather than a surface that pretends: the live-work rail and the job
-//! view (`components/rail.rs`, `components/job_output.rs`) need the jobs poll
-//! and their own modes on this loop. Ghost absent (cheap tier is `None`);
+//! tabbed panel (tree + changes; the other tabs say so), the help overlay, the
+//! live-work rail (`components/rail.rs`) and the job view
+//! (`components/job_output.rs`) behind it, the ask card
+//! (`components/ask.rs`) and the take-back window (`store/lifecycle.rs`) are
+//! wired. The rail's feed is the jobs poll, which rides the spinner timer:
+//! the loop's idle-tick skip therefore asks [`App::animating`], not
+//! `busy()` — under `busy()` alone a shell that outlives its turn could never
+//! repaint. STILL UNWIRED: workflow and schedule rail rows (no feed for them
+//! in this client yet — `live_units` renders their absence as no rows).
+//! Ghost absent (cheap tier is `None`);
 //! mouse = wheel scroll + click; the `!` shell answers "not wired into this
 //! client" and keeps the draft rather than billing the model. The
 //! transcript builder below is a deliberate v1 miniature of `lines.rs`
@@ -28,7 +33,9 @@ use bough_core::schema::events::{
     BoughEvent, EventType, MessageDeltaData, MessageFinishedData, MessagePartData,
     MessageRetryData, SessionActivityData, TurnFinishedData,
 };
-use bough_core::schema::parts::{Message, Part, Role};
+use bough_core::schema::parts::{
+    AskQuestion, AskQuestionStatus, BackgroundJob, Message, Part, Role,
+};
 use crossterm::event::{
     Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
     MouseEventKind,
@@ -38,7 +45,12 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use crate::components::ask::{ask_card_height, ask_prompt_lines, render_ask_card, AskCardProps};
 use crate::components::chat::{render_chat, ChatProps, CHAT_PLACEHOLDER};
+use crate::components::job_output::{
+    job_body_rows, job_sub_lines, render_job_output, JobOutputProps,
+};
+use crate::components::rail::{live_subagents, rail_rows, render_rail};
 use crate::components::composer::{
     completion_popup_height, composer_height, render_completion_popup, render_composer,
     CompletionPopupProps, ComposerProps,
@@ -59,6 +71,7 @@ use crate::keys::{
 use crate::selection::{
     is_empty_selection, link_at, row_content, selected_copy, url_at, CopyRow, Point, Selection,
 };
+use crate::store::selectors::{live_units, LiveUnit, LiveUnitKind};
 
 /// App.tsx::DOUBLE_ESC_MS — the double-tap window.
 pub const DOUBLE_ESC_MS: i64 = 600;
@@ -109,6 +122,23 @@ pub enum Action {
     /// dispatches as an [`Effect`] so the send path stays one funnel; the ones
     /// the client answers itself return here.
     Run(Command),
+    /// `GET /sessions/:id/jobs` — the shells running on this conversation's
+    /// behalf (its subagents' included). The rail is built from these.
+    Jobs(Vec<BackgroundJob>),
+    /// One job's whole retained buffer, from the open job view's own poll.
+    /// `error` replaces the buffer rather than closing the view: a job whose
+    /// row went away still has an id worth saying.
+    JobOutput {
+        id: String,
+        output: String,
+        job: Option<BackgroundJob>,
+        error: Option<String>,
+    },
+    /// The live `ask()` holds (`GET /questions`), for a client that attached
+    /// after the hold was raised — the server keeps them in memory only.
+    Asks(Vec<AskQuestion>),
+    /// A posted take-back came back: the text returns to the composer.
+    TookBack(String),
 }
 
 /// Outbound calls. The loop never does I/O itself; the transport does.
@@ -142,6 +172,23 @@ pub enum Effect {
     LoadTheme,
     /// Persist the kept palette — PUT or DELETE, as `persist_request` decided.
     SaveTheme(crate::theme::ThemeWrite),
+    /// GET the jobs for the open conversation — the rail's whole feed.
+    PollJobs,
+    /// GET one job's retained buffer (non-destructive: watching a job never
+    /// eats output the model's next `bashOutput` was owed).
+    LoadJobOutput(String),
+    /// POST the kill for one job.
+    KillJob(String),
+    /// Stop one delegated session (a rail row that is an agent, not a shell).
+    StopSession(String),
+    /// GET the live `ask()` holds, on attach and on session switch.
+    LoadQuestions,
+    /// Answer / decline the hold the card is showing.
+    AnswerAsk { session_id: String, id: String, answer: String },
+    DeclineAsk { session_id: String, id: String },
+    /// The posted take-back: delete this message (and what followed) and stop
+    /// the turn it started, in ONE call.
+    Unsend(String),
 }
 
 /// The transport seam — scripted in tests; wired to `api.rs` when row 1.32 lands.
@@ -159,6 +206,30 @@ struct TurnClock {
     started_at: i64,
     ended: bool,
 }
+
+/// The open job view's own state. The buffer is a prop the poll refreshes;
+/// nothing here is derived from the rail, because a job that EXITS while you
+/// are reading it must not close the view under you.
+struct JobView {
+    id: String,
+    output: String,
+    job: Option<BackgroundJob>,
+    error: Option<String>,
+    /// Lines up from the tail; 0 follows live output.
+    scroll: usize,
+    /// `x` armed a kill — the footer says what the next press does.
+    armed: bool,
+}
+
+/// How often the rail re-reads what is running, in spinner ticks
+/// (`SPINNER_MS` = 120ms → ~1s). The rail redraws every second in the TS, and
+/// this is the same cadence expressed in the one timer this loop already has.
+const POLL_TICKS: u64 = 8;
+
+/// The take-back's on-screen affordance. The TS gesture is keymap-only, which
+/// makes a three-second window that nothing announces; this row is the window,
+/// said out loud, and it expires with it.
+pub const TAKE_BACK_HINT: &str = "esc takes that back";
 
 /// The whole UI state, mutated only by [`App::apply`] on the loop task.
 pub struct App<T: Transport> {
@@ -224,6 +295,27 @@ pub struct App<T: Transport> {
     /// The help overlay is the ONE surface that displaces everything.
     help_open: bool,
     help_off: usize,
+    // ---- the live-work rail and the job view (row 2.19) --------------------
+    /// The shells running for this conversation and its delegates.
+    jobs: Vec<BackgroundJob>,
+    /// The rail's cursor. `None` = the composer has the keyboard and the rail
+    /// still renders — ↓ into it is reversible, not a mode switch.
+    rail_sel: Option<usize>,
+    /// The unit `x` has armed. Consent is never inferred.
+    rail_armed: Option<String>,
+    /// The open job, if any.
+    job: Option<JobView>,
+    /// Ticks since the last poll; the rail's feed rides the spinner timer.
+    poll_tick: u64,
+    // ---- the ask card and the take-back window (row 2.21) ------------------
+    /// The hold the card is showing. A pending `ask()` OWNS the keyboard.
+    ask: Option<AskQuestion>,
+    /// The free-text answer, as typed.
+    ask_typed: String,
+    /// When the last message left this client — the take-back window's clock.
+    /// Read at the keystroke rather than held as a flag: the window expires on
+    /// the clock, and a flag would need a timer that can be missed.
+    last_send_at: Option<i64>,
 }
 
 impl<T: Transport> App<T> {
@@ -263,12 +355,108 @@ impl<T: Transport> App<T> {
             panel: PanelHost::default(),
             help_open: false,
             help_off: 0,
+            jobs: Vec::new(),
+            rail_sel: None,
+            rail_armed: None,
+            job: None,
+            poll_tick: 0,
+            ask: None,
+            ask_typed: String::new(),
+            last_send_at: None,
         }
     }
 
     /// A turn is in flight iff any message is pending (store.ts::isBusy).
     pub fn busy(&self) -> bool {
         self.thread.iter().any(|m| m.pending)
+    }
+
+    /// Anything on screen that moves on its own — what an idle tick may repaint
+    /// for. The busy check alone made the jobs poll unpaintable: a shell that
+    /// starts while the turn is over has nothing else to bring it on screen.
+    pub fn animating(&self) -> bool {
+        self.busy() || !self.jobs.is_empty() || self.job.is_some() || self.just_sent()
+    }
+
+    /// Is a send still inside the take-back window? Decided by the ported rule
+    /// (`store::lifecycle::just_sent`) over the one field it reads, so the
+    /// window's length lives in exactly one place (`keys::UNSEND_MS`).
+    pub fn just_sent(&self) -> bool {
+        let probe = crate::store::state::TuiState {
+            last_send_at: self.last_send_at,
+            ..crate::store::state::initial_state()
+        };
+        crate::store::lifecycle::just_sent(&probe, self.now_ms)
+    }
+
+    // ---- the live-work rail (row 2.19) -------------------------------------
+
+    /// Everything running on this conversation's behalf, as rows. Rebuilt per
+    /// read from the polled facts — the numbers a stop acts on are the numbers
+    /// on screen. Workflows and schedules are absent from this client (no feed
+    /// for them yet), and `live_units` renders their absence as no rows.
+    fn units(&self) -> Vec<LiveUnit> {
+        let Some(current) = self.session_id.as_deref() else {
+            return Vec::new();
+        };
+        let children: Vec<crate::api::SessionRow> = self
+            .panel
+            .sessions
+            .iter()
+            .filter(|s| {
+                s.session.parent_id.as_deref() == Some(current)
+                    || s.session.origin_id.as_deref() == Some(current)
+            })
+            .cloned()
+            .collect();
+        // `rail.rs` was ported against `api::SessionRow` and `selectors.rs`
+        // against `store::state::SessionRow` — the same wire shape declared
+        // twice (state.rs's header says api.rs should absorb it). Adapting at
+        // the call site rather than editing either module: the field list is
+        // written out, so a divergence is a compile error here.
+        let subagents: Vec<crate::store::state::SessionRow> = live_subagents(&children)
+            .into_iter()
+            .map(|s| crate::store::state::SessionRow {
+                session: s.session,
+                busy: s.busy,
+                last_turn_status: s.last_turn_status,
+                cost_usd: s.cost_usd,
+                tokens: s.tokens,
+            })
+            .collect();
+        live_units(&self.jobs, &subagents, &[], &[], self.now_ms)
+    }
+
+    /// The cursor must never point past a rail that just got shorter — a job
+    /// exits while you are on its row, and `x` must not then stop its neighbour.
+    fn clamp_rail(&mut self) {
+        let len = self.units().len();
+        match self.rail_sel {
+            Some(_) if len == 0 => {
+                self.rail_sel = None;
+                self.rail_armed = None;
+            }
+            Some(at) if at >= len => self.rail_sel = Some(len - 1),
+            _ => {}
+        }
+    }
+
+    /// The rows the rail paints, capped at a third of the screen: the rail is
+    /// pinned under the composer and must never push it off.
+    fn rail_lines(&self) -> Vec<String> {
+        let units = self.units();
+        if units.is_empty() {
+            return Vec::new();
+        }
+        let cap = ((self.rows as usize) / 3).max(1);
+        let mut rows = rail_rows(
+            &units,
+            self.rail_sel,
+            self.cols.max(20) as usize,
+            self.rail_armed.as_deref(),
+        );
+        rows.truncate(cap);
+        rows
     }
 
     // ---- reducer -----------------------------------------------------------
@@ -282,6 +470,45 @@ impl<T: Transport> App<T> {
                 if self.busy() {
                     self.tick = self.tick.wrapping_add(1);
                 }
+                // The take-back row is the window: it goes when the window does.
+                if self.notice.as_deref() == Some(TAKE_BACK_HINT) && !self.just_sent() {
+                    self.notice = None;
+                }
+                self.poll_tick = self.poll_tick.wrapping_add(1);
+                if self.poll_tick % POLL_TICKS == 0 && self.session_id.is_some() {
+                    self.transport.effect(Effect::PollJobs);
+                    // The rail's agent rows come from the listing, and a fan-out
+                    // that started since the last read is exactly what it is for.
+                    self.transport.effect(Effect::LoadSessions);
+                    if let Some(job) = &self.job {
+                        self.transport.effect(Effect::LoadJobOutput(job.id.clone()));
+                    }
+                }
+            }
+            Action::Jobs(jobs) => {
+                self.jobs = jobs;
+                self.clamp_rail();
+            }
+            Action::JobOutput { id, output, job, error } => {
+                if let Some(view) = self.job.as_mut() {
+                    if view.id == id {
+                        view.output = output;
+                        view.job = job;
+                        view.error = error;
+                    }
+                }
+            }
+            Action::Asks(asks) => {
+                self.ask = asks
+                    .into_iter()
+                    .find(|q| q.status == AskQuestionStatus::Pending);
+            }
+            Action::TookBack(text) => {
+                self.notice = Some(crate::store::lifecycle::take_back_notice(self.busy()).to_string());
+                self.cursor = text.chars().count();
+                self.draft = text;
+                self.scroll_off = 0;
+                self.last_send_at = None;
             }
             Action::Connected(up) => self.connected = up,
             Action::SessionOpened(id) => {
@@ -293,6 +520,18 @@ impl<T: Transport> App<T> {
                 self.files_requested = false;
                 // …and the change set, which is that conversation's checkout.
                 self.panel.set_changes(None);
+                // …and everything the rail and the card were showing FOR the
+                // conversation being left: another session's shells and holds
+                // pinned under this composer would be a claim about work that
+                // is not this screen's.
+                self.jobs.clear();
+                self.rail_sel = None;
+                self.rail_armed = None;
+                self.job = None;
+                self.ask = None;
+                self.ask_typed.clear();
+                self.transport.effect(Effect::PollJobs);
+                self.transport.effect(Effect::LoadQuestions);
             }
             Action::Thread(thread) => {
                 self.thread = thread;
@@ -599,11 +838,22 @@ impl<T: Transport> App<T> {
     /// a second derivation of "how many rows are visible" is how a digit comes
     /// to affirm a row nobody can see.
     fn chat_height(&self, cols: u16, rows: u16, popup_h: u16) -> u16 {
-        let composer_rows = ((rows as usize) / 4).clamp(3, 8);
-        let input_h =
-            composer_height(&self.draft, "", self.busy(), cols, composer_rows, 0) as u16;
-        let rail_h = 0u16; // the rail's rows land with its own wiring
+        let input_h = self.input_height(cols, rows);
+        let rail_h = self.rail_lines().len() as u16;
         (rows as i32 - 1 - rail_h as i32 - popup_h as i32 - input_h as i32 - 1).max(1) as u16
+    }
+
+    /// The bottom box: the composer, or the ask card that REPLACES it. Sized
+    /// from `ask_card_height` over the same wrapped lines the card renders, so
+    /// the frame reserved and the rows drawn are the same number.
+    fn input_height(&self, cols: u16, rows: u16) -> u16 {
+        if let Some(ask) = &self.ask {
+            let lines = ask_prompt_lines(&ask.question, rows, cols);
+            let options = ask.options.as_ref().map(|o| o.len()).unwrap_or(0);
+            return ask_card_height(lines.len(), options) as u16;
+        }
+        let composer_rows = ((rows as usize) / 4).clamp(3, 8);
+        composer_height(&self.draft, "", self.busy(), cols, composer_rows, 0) as u16
     }
 
     /// Rows the open tab may paint. The panel's own box takes two of the
@@ -618,8 +868,18 @@ impl<T: Transport> App<T> {
     fn ui_mode(&self) -> UiMode {
         if self.help_open {
             UiMode::Help
+        } else if self.job.is_some() {
+            // The job view is opened FROM the rail and returns to it, so it
+            // outranks it; the overlay still outranks both.
+            UiMode::Job
+        } else if self.rail_sel.is_some() {
+            UiMode::Rail
         } else if self.panel.open() {
             UiMode::Panel
+        } else if self.ask.is_some() {
+            // A held ask() replaces the composer and owns the keyboard — the
+            // turn is parked until it is answered.
+            UiMode::Ask
         } else {
             UiMode::Chat
         }
@@ -639,6 +899,11 @@ impl<T: Transport> App<T> {
             // surface: naming it here keeps this lookup from claiming keys the
             // composer is about to answer.
             completing: self.trigger().is_some(),
+            // ↓ from an empty composer enters the rail only when there IS one.
+            rail_live: !self.units().is_empty(),
+            // Inside the window Escape means the take-back, and it outranks the
+            // stop — nobody takes a message back and still wants the answer.
+            just_sent: self.just_sent(),
             ..Default::default()
         };
         lookup(&ctx, &crate::keys::chord_of(&input, flags))
@@ -681,9 +946,16 @@ impl<T: Transport> App<T> {
             _ => None,
         };
         let Some(command) = self.resolve(k) else {
+            // The ask card is the ONE keyboard-owning surface that still takes
+            // text: free text is always a possible answer, so an unbound key is
+            // typed into the card rather than eaten.
+            if self.ui_mode() == UiMode::Ask {
+                return self.type_into_ask(k);
+            }
             // In a surface that owns the keyboard, an unbound key is eaten
             // rather than typed into a composer nobody can see.
-            return self.help_open || self.panel.open();
+            return self.help_open || self.panel.open() || self.job.is_some()
+                || self.rail_sel.is_some();
         };
         // `^c` is bound in EVERY mode and is the one way out of a wedged
         // terminal: no surface may swallow it, so it falls through to the
@@ -712,6 +984,18 @@ impl<T: Transport> App<T> {
                 }
                 true
             }
+            UiMode::Job => {
+                self.on_job_command(command);
+                true
+            }
+            UiMode::Rail => {
+                self.on_rail_command(command, digit);
+                true
+            }
+            UiMode::Ask => {
+                self.on_ask_command(command, digit, k);
+                true
+            }
             UiMode::Panel => {
                 // `^t` and the tab chords resolve in panel mode too, so the
                 // panel closes itself and a jump lands without a round trip.
@@ -732,8 +1016,201 @@ impl<T: Transport> App<T> {
                     self.serve(requests);
                     true
                 }
+                // ↓ from an empty composer moves INTO the rail (guarded on
+                // there being one), and it is reversible with esc.
+                Command::RailEnter => {
+                    self.rail_sel = Some(0);
+                    true
+                }
+                // The take-back window's Escape. The keymap decided this
+                // outranks the stop; this arm is only the gesture.
+                Command::MessageUnsend => {
+                    self.take_back();
+                    true
+                }
                 _ => false,
             },
+        }
+    }
+
+    // ---- the rail's keys ---------------------------------------------------
+
+    fn on_rail_command(&mut self, command: Command, _digit: Option<usize>) {
+        let units = self.units();
+        let at = self.rail_sel.unwrap_or(0).min(units.len().saturating_sub(1));
+        match command {
+            Command::RailUp => {
+                self.rail_armed = None;
+                self.rail_sel = Some(at.saturating_sub(1));
+            }
+            Command::RailDown => {
+                self.rail_armed = None;
+                self.rail_sel = Some((at + 1).min(units.len().saturating_sub(1)));
+            }
+            Command::RailExit => {
+                self.rail_sel = None;
+                self.rail_armed = None;
+            }
+            Command::RailOpen => {
+                let Some(unit) = units.get(at) else { return };
+                match unit.kind {
+                    // The whole point of the job view: what a shell printed is
+                    // already in the server's memory, and reading it must not
+                    // cost a turn.
+                    LiveUnitKind::Shell => {
+                        self.job = Some(JobView {
+                            id: unit.id.clone(),
+                            output: String::new(),
+                            job: self.jobs.iter().find(|j| j.id == unit.id).cloned(),
+                            error: None,
+                            scroll: 0,
+                            armed: false,
+                        });
+                        self.transport.effect(Effect::LoadJobOutput(unit.id.clone()));
+                    }
+                    LiveUnitKind::Subagent => {
+                        self.transport.effect(Effect::OpenSession(unit.id.clone()))
+                    }
+                    LiveUnitKind::Workflow | LiveUnitKind::Schedule => {
+                        self.notice =
+                            Some("that surface is not wired into this client yet".to_string())
+                    }
+                }
+            }
+            Command::RailStop => {
+                let Some(unit) = units.get(at) else { return };
+                // Two presses, always: the first says what the second destroys.
+                if self.rail_armed.as_deref() != Some(unit.id.as_str()) {
+                    self.rail_armed = Some(unit.id.clone());
+                    return;
+                }
+                self.rail_armed = None;
+                match unit.kind {
+                    LiveUnitKind::Shell => {
+                        self.transport.effect(Effect::KillJob(unit.id.clone()))
+                    }
+                    LiveUnitKind::Subagent => {
+                        self.transport.effect(Effect::StopSession(unit.id.clone()))
+                    }
+                    LiveUnitKind::Workflow | LiveUnitKind::Schedule => {
+                        self.notice =
+                            Some("stopping that is not wired into this client yet".to_string())
+                    }
+                }
+            }
+            // esc cancels the arm before it leaves the rail.
+            Command::Cancel => self.rail_armed = None,
+            _ => {}
+        }
+    }
+
+    // ---- the job view's keys -----------------------------------------------
+
+    fn on_job_command(&mut self, command: Command) {
+        let page = self.page();
+        let Some(view) = self.job.as_mut() else { return };
+        match command {
+            Command::JobClose => self.job = None,
+            Command::ScrollUp => view.scroll += 1,
+            Command::ScrollDown => view.scroll = view.scroll.saturating_sub(1),
+            Command::ScrollPageUp => view.scroll += page,
+            Command::ScrollPageDown => view.scroll = view.scroll.saturating_sub(page),
+            Command::JobStop => {
+                if !view.armed {
+                    view.armed = true;
+                    return;
+                }
+                view.armed = false;
+                let id = view.id.clone();
+                self.transport.effect(Effect::KillJob(id));
+            }
+            Command::Cancel => view.armed = false,
+            _ => {}
+        }
+    }
+
+    // ---- the ask card's keys -----------------------------------------------
+
+    fn on_ask_command(&mut self, command: Command, digit: Option<usize>, k: &KeyEvent) {
+        let Some(ask) = self.ask.clone() else { return };
+        match command {
+            Command::AskPick => {
+                // A digit picks an option; the card numbers them from 1.
+                let Some(d) = digit.filter(|d| *d > 0) else { return };
+                let Some(option) =
+                    ask.options.as_ref().and_then(|o| o.get(d - 1)).cloned()
+                else {
+                    return;
+                };
+                self.answer_ask(&ask, option);
+            }
+            Command::AskSend => {
+                // An empty ⏎ is not an answer: the hold stays and the card says
+                // so by simply not moving.
+                if self.ask_typed.trim().is_empty() {
+                    return;
+                }
+                let text = self.ask_typed.clone();
+                self.answer_ask(&ask, text);
+            }
+            Command::AskDecline => {
+                self.ask = None;
+                self.ask_typed.clear();
+                self.transport.effect(Effect::DeclineAsk {
+                    session_id: ask.session_id.clone(),
+                    id: ask.id.clone(),
+                });
+            }
+            // Backspace is bound to nothing in Ask mode, so it arrives here
+            // only if a future binding claims it; typing is `type_into_ask`.
+            _ => {
+                self.type_into_ask(k);
+            }
+        }
+    }
+
+    /// Free text into the card. Returns true always — the card owns the keys.
+    fn type_into_ask(&mut self, k: &KeyEvent) -> bool {
+        match k.code {
+            KeyCode::Backspace => {
+                self.ask_typed.pop();
+            }
+            KeyCode::Char(c)
+                if !c.is_control()
+                    && !k.modifiers.contains(KeyModifiers::ALT)
+                    && !k.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.ask_typed.push(c)
+            }
+            _ => {}
+        }
+        true
+    }
+
+    fn answer_ask(&mut self, ask: &AskQuestion, answer: String) {
+        self.ask = None;
+        self.ask_typed.clear();
+        self.transport.effect(Effect::AnswerAsk {
+            session_id: ask.session_id.clone(),
+            id: ask.id.clone(),
+            answer,
+        });
+    }
+
+    // ---- the take-back -----------------------------------------------------
+
+    /// The gesture, decided as data by the ported rule and performed here.
+    /// Nothing to take back does NOTHING — falling through to a stop would be
+    /// an action the user did not ask for, and the next Escape is outside the
+    /// window and stops it.
+    fn take_back(&mut self) {
+        match crate::forest::take_back_target(&[], &self.thread) {
+            crate::forest::TakeBack::Sent { at_message_id, .. } => {
+                self.transport.effect(Effect::Unsend(at_message_id))
+            }
+            // This client has no queue (nothing is held while busy), so a
+            // queued take-back cannot arise; `None` is the honest no-op.
+            crate::forest::TakeBack::Queued | crate::forest::TakeBack::None => {}
         }
     }
 
@@ -930,7 +1407,10 @@ impl<T: Transport> App<T> {
         }
         self.clear_draft();
         self.scroll_off = 0;
-        self.notice = None;
+        // The take-back window opens here, and it SAYS so: three seconds that
+        // nothing announces is a gesture only the keymap knows about.
+        self.last_send_at = Some(self.now_ms);
+        self.notice = Some(TAKE_BACK_HINT.to_string());
         // Optimistic local echo; the snapshot/SSE merge reconciles by id later.
         self.sent_seq += 1;
         self.thread.push(Message {
@@ -1036,9 +1516,29 @@ impl<T: Transport> App<T> {
                     self.activity = None;
                 }
             }
-            EventType::AskQuestion => {}
-            EventType::JobSpawned => {}
-            EventType::JobExited => {}
+            // A hold is raised AND settled on this event: the payload carries
+            // the status, so an answered/declined/interrupted hold takes the
+            // card down rather than leaving a question nobody can still answer.
+            EventType::AskQuestion => {
+                let Ok(q) = serde_json::from_value::<AskQuestion>(event.data) else {
+                    return;
+                };
+                if q.status == AskQuestionStatus::Pending {
+                    self.ask_typed.clear();
+                    self.ask = Some(q);
+                } else if self.ask.as_ref().is_some_and(|open| open.id == q.id) {
+                    self.ask = None;
+                    self.ask_typed.clear();
+                }
+            }
+            // The rail's feed is the LISTING, not the event: a spawn/exit says
+            // "re-read", so one shape (`GET /jobs`) decides what is running and
+            // an event that arrives out of order cannot invent a row.
+            EventType::JobSpawned | EventType::JobExited => {
+                if self.session_id.is_some() {
+                    self.transport.effect(Effect::PollJobs);
+                }
+            }
             EventType::WorkflowUpdated => {}
             EventType::WorkflowAgent => {}
             EventType::WorkflowLog => {}
@@ -1154,8 +1654,7 @@ impl<T: Transport> App<T> {
         let busy = self.busy();
         // App.tsx: composerRows = min(8, max(3, rows/4)).
         let composer_rows = ((rows as usize) / 4).clamp(3, 8);
-        let input_h =
-            composer_height(&self.draft, "", busy, cols, composer_rows, 0) as u16;
+        let input_h = self.input_height(cols, rows);
         // The popup is drawn ABOVE the box and takes its rows from the
         // transcript, exactly as `completionPopupHeight` mirrors `Composer`'s
         // render (App.tsx). A trigger that matched nothing still draws — a
@@ -1195,7 +1694,35 @@ impl<T: Transport> App<T> {
         // The growing region is the transcript OR the panel — the panel
         // DISPLACES it rather than floating over it, which is what makes
         // "there is exactly one place that is not the chat" true on screen.
-        if self.panel.open() {
+        if let Some(view) = &self.job {
+            // The open job takes the growing region: it is a reading surface,
+            // and it returns to the rail it was opened from.
+            let sub = job_sub_lines(
+                view.job.as_ref(),
+                &view.id,
+                cols as usize,
+                chat_h as usize,
+            );
+            render_job_output(
+                &JobOutputProps {
+                    id: &view.id,
+                    job: view.job.as_ref(),
+                    output: &view.output,
+                    scroll: view
+                        .scroll
+                        .min(view.output.lines().count().saturating_sub(
+                            job_body_rows(chat_h as usize, sub.len()),
+                        )),
+                    width: cols as usize,
+                    height: chat_h as usize,
+                    now: self.now_ms,
+                    error: view.error.as_deref(),
+                    armed: view.armed,
+                },
+                growing,
+                buf,
+            );
+        } else if self.panel.open() {
             self.draw_panel(growing, buf);
         } else {
             render_chat(
@@ -1231,28 +1758,55 @@ impl<T: Transport> App<T> {
             );
         }
 
-        render_composer(
-            &ComposerProps {
-                input: &self.draft,
-                cursor: self.cursor,
-                busy,
-                width: cols,
-                max_rows: composer_rows,
-                ghost: "", // ghost absent by contract in v1
-                attachments: &[],
-                // While the panel is open the keyboard is ITS own, and the box
-                // says so: a block cursor is the strongest claim a terminal UI
-                // can make about where typing goes.
-                keyboard_owner: self.panel.open().then(|| panel_owner(self.panel.tab())),
-            },
-            Rect {
-                x: area.x,
-                y: area.y + 1 + chat_h + popup_h,
-                width: cols,
-                height: input_h,
-            },
-            buf,
-        );
+        // The rail sits between the transcript and the composer: pinned, one
+        // screen row per unit, and NOTHING at all when nothing is running.
+        let rail = self.rail_lines();
+        let rail_h = rail.len() as u16;
+        if rail_h > 0 {
+            render_rail(
+                &self.units(),
+                self.rail_sel,
+                self.rail_armed.as_deref(),
+                Rect { x: area.x, y: area.y + 1 + chat_h + popup_h, width: cols, height: rail_h },
+                buf,
+            );
+        }
+
+        let input_at = Rect {
+            x: area.x,
+            y: area.y + 1 + chat_h + popup_h + rail_h,
+            width: cols,
+            height: input_h,
+        };
+        // A held ask() REPLACES the composer — the turn is parked on it, and a
+        // composer beside the card would invite typing that goes nowhere.
+        if let Some(ask) = &self.ask {
+            let lines = ask_prompt_lines(&ask.question, rows, cols);
+            let options = ask.options.clone().unwrap_or_default();
+            render_ask_card(
+                &AskCardProps { lines: &lines, options: &options, typed: &self.ask_typed },
+                input_at,
+                buf,
+            );
+        } else {
+            render_composer(
+                &ComposerProps {
+                    input: &self.draft,
+                    cursor: self.cursor,
+                    busy,
+                    width: cols,
+                    max_rows: composer_rows,
+                    ghost: "", // ghost absent by contract in v1
+                    attachments: &[],
+                    // While the panel is open the keyboard is ITS own, and the box
+                    // says so: a block cursor is the strongest claim a terminal UI
+                    // can make about where typing goes.
+                    keyboard_owner: self.panel.open().then(|| panel_owner(self.panel.tab())),
+                },
+                input_at,
+                buf,
+            );
+        }
 
         render_status(
             &ChatMeter {
@@ -1262,7 +1816,7 @@ impl<T: Transport> App<T> {
             },
             Rect {
                 x: area.x,
-                y: (area.y + 1 + chat_h + popup_h + input_h).min(area.y + rows - 1),
+                y: (area.y + 1 + chat_h + popup_h + rail_h + input_h).min(area.y + rows - 1),
                 width: cols,
                 height: 1,
             },
@@ -1460,8 +2014,10 @@ pub async fn run_loop<T: Transport>(
         }
         // An idle tick changes nothing on screen — repainting on it would put
         // an 8fps write loop under every idle terminal (TS: no timer at all
-        // when nothing is live).
-        if is_tick && !app.busy() {
+        // when nothing is live). `busy()` alone was too narrow: the jobs poll
+        // rides this timer, so a shell that outlives its turn could never
+        // repaint the rail it belongs on.
+        if is_tick && !app.animating() {
             continue;
         }
         if let Err(e) = terminal.draw(|f| {
@@ -1679,6 +2235,112 @@ impl Transport for LiveTransport {
                     }
                 });
             }
+            Effect::PollJobs => {
+                tokio::spawn(async move {
+                    let Some(sid) = session.lock().expect("session lock").clone() else { return };
+                    // A poll that fails is a beat with no news, never a modal:
+                    // the rail keeps the rows it had and the next tick retries.
+                    if let Ok(list) = api.list_jobs(&sid).await {
+                        let _ = tx
+                            .send(Action::Jobs(list.jobs.into_iter().map(|r| r.job).collect()));
+                    }
+                });
+            }
+            Effect::LoadJobOutput(job_id) => {
+                tokio::spawn(async move {
+                    let Some(sid) = session.lock().expect("session lock").clone() else { return };
+                    match api.job_output(&sid, &job_id).await {
+                        Ok(out) => {
+                            let _ = tx.send(Action::JobOutput {
+                                id: job_id,
+                                output: out.output,
+                                job: Some(out.job),
+                                error: None,
+                            });
+                        }
+                        // The view stays open and says WHY there is no buffer.
+                        Err(e) => {
+                            let _ = tx.send(Action::JobOutput {
+                                id: job_id,
+                                output: String::new(),
+                                job: None,
+                                error: Some(e.to_string()),
+                            });
+                        }
+                    }
+                });
+            }
+            Effect::KillJob(job_id) => {
+                tokio::spawn(async move {
+                    let Some(sid) = session.lock().expect("session lock").clone() else { return };
+                    match api.kill_job(&sid, &job_id).await {
+                        // The server's own sentence, and then a re-read: the
+                        // rail row it was killed from is stale immediately.
+                        Ok(ack) => {
+                            let _ = tx.send(Action::Notice(ack.message));
+                            if let Ok(list) = api.list_jobs(&sid).await {
+                                let _ = tx.send(Action::Jobs(
+                                    list.jobs.into_iter().map(|r| r.job).collect(),
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                });
+            }
+            Effect::StopSession(id) => {
+                tokio::spawn(async move {
+                    // Addressed to the DELEGATE's own session, not this screen's.
+                    if let Err(e) = api.interrupt(&id).await {
+                        let _ = tx.send(Action::Notice(e.to_string()));
+                    }
+                });
+            }
+            Effect::LoadQuestions => {
+                tokio::spawn(async move {
+                    let Some(sid) = session.lock().expect("session lock").clone() else { return };
+                    if let Ok(asks) = api.list_questions(Some(&sid)).await {
+                        let _ = tx.send(Action::Asks(asks));
+                    }
+                });
+            }
+            Effect::AnswerAsk { session_id, id, answer } => {
+                tokio::spawn(async move {
+                    // The hold belongs to the session that RAISED it — a
+                    // delegate's question is answered on the delegate.
+                    if let Err(e) = api.answer_question(&session_id, &id, &answer).await {
+                        let _ = tx.send(Action::Notice(e.to_string()));
+                    }
+                });
+            }
+            Effect::DeclineAsk { session_id, id } => {
+                tokio::spawn(async move {
+                    if let Err(e) = api.decline_question(&session_id, &id).await {
+                        let _ = tx.send(Action::Notice(e.to_string()));
+                    }
+                });
+            }
+            Effect::Unsend(at_message_id) => {
+                tokio::spawn(async move {
+                    let Some(sid) = session.lock().expect("session lock").clone() else { return };
+                    match api.unsend(&sid, &at_message_id).await {
+                        Ok(result) => {
+                            let _ = tx.send(Action::TookBack(result.text));
+                            // The thread is now shorter: re-read it, once,
+                            // authoritatively rather than patching locally.
+                            if let Ok(snapshot) = api.get_session(&sid).await {
+                                let _ = tx.send(Action::Thread(snapshot.thread));
+                            }
+                        }
+                        // A refusal is an answer: the server has said why.
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                });
+            }
             Effect::Interrupt => {
                 tokio::spawn(async move {
                     let known = session.lock().expect("session lock").clone();
@@ -1771,7 +2433,13 @@ mod tests {
             .filter(|e| {
                 !matches!(
                     e,
-                    Effect::LoadFiles | Effect::LoadSkills | Effect::LoadDirEntries(_)
+                    Effect::LoadFiles
+                        | Effect::LoadSkills
+                        | Effect::LoadDirEntries(_)
+                        // The rail's feed is bookkeeping too: it says nothing
+                        // about what the user asked this client to do.
+                        | Effect::PollJobs
+                        | Effect::LoadQuestions
                 )
             })
             .cloned()
@@ -1845,7 +2513,7 @@ mod tests {
 
         // -- send --
         app.apply(key(KeyCode::Enter), 20);
-        assert_eq!(effects.borrow().as_slice(), &[Effect::Send("add a test".into())]);
+        assert_eq!(sends(&effects), vec![Effect::Send("add a test".into())]);
         let sent = frame_of(&app, 80, 24);
         assert!(sent.contains("you"), "{sent}");
         assert!(sent.contains("type a message · enter sends"), "composer cleared: {sent}");
@@ -1877,10 +2545,13 @@ mod tests {
         assert!(streaming.contains("bough"), "{streaming}");
 
         // -- interrupt (esc while busy fires immediately, never held) --
-        app.apply(key(KeyCode::Esc), 2_000);
+        // OUTSIDE the take-back window, deliberately: inside it Escape is the
+        // take-back, which stops the turn on its way out (keys.rs) — that
+        // ordering has its own test below.
+        app.apply(key(KeyCode::Esc), 20 + crate::keys::UNSEND_MS + 1);
         assert_eq!(
-            effects.borrow().as_slice(),
-            &[Effect::Send("add a test".into()), Effect::Interrupt]
+            sends(&effects),
+            vec![Effect::Send("add a test".into()), Effect::Interrupt]
         );
         app.apply(
             event(
@@ -2004,8 +2675,161 @@ mod tests {
             500,
         );
         app.apply(key(KeyCode::Esc), 600);
-        assert_eq!(effects.borrow().as_slice(), &[Effect::Interrupt]);
+        assert_eq!(sends(&effects), vec![Effect::Interrupt]);
         assert_eq!(app.draft, "draft2", "the draft survives a stop");
+    }
+
+    // ---- the rail, the job view, the ask card, the take-back ------------
+
+    fn job(id: &str, command: &str) -> BackgroundJob {
+        BackgroundJob {
+            id: id.into(),
+            name: id.into(),
+            session_id: "s1".into(),
+            pid: 4242,
+            command: command.into(),
+            status: bough_core::schema::parts::JobStatus::Running,
+            exit_code: None,
+            signal: None,
+            started_at: 0,
+            exited_at: None,
+        }
+    }
+
+    /// The rail is FED — a poll's rows reach the screen, and the job's own
+    /// view opens on it. This is the wiring the components were missing.
+    #[test]
+    fn a_polled_job_reaches_the_rail_and_enter_opens_its_output() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(Action::Jobs(vec![job("job-1", "sleep 30")]), 5_000);
+        let railed = frame_of(&app, 80, 24);
+        assert!(railed.contains("sleep 30"), "the rail shows the shell: {railed}");
+
+        // ↓ from an empty composer enters the rail; ⏎ opens the job.
+        app.apply(key(KeyCode::Down), 5_100);
+        assert_eq!(app.rail_sel, Some(0));
+        app.apply(key(KeyCode::Enter), 5_200);
+        assert!(sends(&effects).contains(&Effect::LoadJobOutput("job-1".into())));
+        app.apply(
+            Action::JobOutput {
+                id: "job-1".into(),
+                output: "hello from the shell\n".into(),
+                job: Some(job("job-1", "sleep 30")),
+                error: None,
+            },
+            5_300,
+        );
+        let opened = frame_of(&app, 80, 24);
+        assert!(opened.contains("hello from the shell"), "{opened}");
+        // x arms, x again kills — consent is never inferred.
+        app.apply(key(KeyCode::Char('x')), 5_400);
+        assert!(sends(&effects).iter().all(|e| *e != Effect::KillJob("job-1".into())));
+        app.apply(key(KeyCode::Char('x')), 5_500);
+        assert!(sends(&effects).contains(&Effect::KillJob("job-1".into())));
+        // esc returns to the rail, not to the composer.
+        app.apply(key(KeyCode::Esc), 5_600);
+        assert!(app.job.is_none());
+        assert_eq!(app.rail_sel, Some(0));
+    }
+
+    /// A pending hold renders with its options and is answerable.
+    #[test]
+    fn a_pending_ask_renders_a_card_and_a_digit_answers_it() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(
+            event(
+                EventType::AskQuestion,
+                1_000,
+                json!({
+                    "id": "q1", "sessionId": "s1", "messageId": "m1",
+                    "question": "which colour do you prefer?",
+                    "options": ["blue", "green"],
+                    "status": "pending", "ts": 1000
+                }),
+            ),
+            1_000,
+        );
+        let card = frame_of(&app, 80, 24);
+        assert!(card.contains("which colour do you prefer?"), "{card}");
+        assert!(card.contains("blue") && card.contains("green"), "{card}");
+        // The card owns the keyboard: typing goes into IT, not the composer.
+        type_text(&mut app, "teal", 1_100);
+        assert_eq!(app.ask_typed, "teal");
+        assert_eq!(app.draft, "");
+        // …and a digit picks the option it is numbered with.
+        app.apply(key(KeyCode::Char('2')), 1_200);
+        assert!(sends(&effects).contains(&Effect::AnswerAsk {
+            session_id: "s1".into(),
+            id: "q1".into(),
+            answer: "green".into(),
+        }));
+        assert!(app.ask.is_none(), "the card comes down when it is answered");
+    }
+
+    /// The gate: INSIDE the window Escape takes the message back rather than
+    /// stopping the turn — and outside it, it stops.
+    #[test]
+    fn inside_the_window_the_take_back_outranks_the_stop() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        type_text(&mut app, "ship it", 0);
+        app.apply(key(KeyCode::Enter), 1_000);
+        // The window is on screen, said out loud.
+        let armed = frame_of(&app, 80, 24);
+        assert!(armed.contains(TAKE_BACK_HINT), "{armed}");
+        // The server's copy of the message, so there is something to unsend.
+        app.apply(
+            event(
+                EventType::MessageStarted,
+                1_010,
+                json!({
+                    "id": "u1", "sessionId": "s1", "role": "user",
+                    "parts": [{"type": "text", "text": "ship it"}],
+                    "pending": false, "createdAt": 1010
+                }),
+            ),
+            1_010,
+        );
+        app.apply(
+            event(
+                EventType::MessageStarted,
+                1_020,
+                json!({
+                    "id": "m1", "sessionId": "s1", "role": "supervisor",
+                    "parts": [], "pending": true, "createdAt": 1020
+                }),
+            ),
+            1_020,
+        );
+        app.apply(key(KeyCode::Esc), 1_000 + crate::keys::UNSEND_MS - 1);
+        assert_eq!(sends(&effects).last(), Some(&Effect::Unsend("u1".into())));
+        // The text comes back to the composer, with the notice that says so.
+        app.apply(Action::TookBack("ship it".into()), 1_100);
+        assert_eq!(app.draft, "ship it");
+        assert_eq!(app.cursor, 7);
+        let back = frame_of(&app, 80, 24);
+        assert!(back.contains("took that back"), "{back}");
+
+        // Outside the window the same key is the stop.
+        app.apply(key(KeyCode::Esc), 1_000 + crate::keys::UNSEND_MS + 1);
+        assert_eq!(sends(&effects).last(), Some(&Effect::Interrupt));
+    }
+
+    /// The idle-tick skip must not swallow the poll's repaint.
+    #[test]
+    fn a_live_job_keeps_the_screen_repainting_when_no_turn_is_running() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        assert!(!app.animating(), "an idle screen still stops the redraw loop");
+        app.apply(Action::Jobs(vec![job("job-1", "sleep 30")]), 1_000);
+        assert!(!app.busy());
+        assert!(app.animating(), "a running shell is a reason to repaint");
     }
 
     #[test]

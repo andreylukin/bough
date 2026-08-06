@@ -133,14 +133,75 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
         model_defaults_path: None, // None = the real ~/.bough/model.json
     };
 
-    // 6. The ONE composed turn starter (row 1.23). Wave-1 composition is the
-    // runner's own production defaults — real program runner, real prompt
-    // assembly, drain via start_detached. Wave 2 layers skills, tier-graded
-    // grants and the note deliverer onto these deps.
-    *ctx.starter.write().unwrap() =
-        Some(bough_core::turn::runner::create_turn_starter(
-            bough_core::turn::runner::TurnDeps::default(),
-        ));
+    // 6. The ONE composed turn starter — the FINAL composition, not the base
+    // one. Port of the last `ctx.startTurn = createDelegatingTurnStarter(…)`
+    // in `server/main.ts`; the TS file rebuilds that starter seven times as
+    // each milestone lands, and only the last one is the product.
+    //
+    // BOTH HALVES ARE REQUIRED AND NEITHER IS SUFFICIENT (spec §6): `extend`
+    // bridges the verb host functions into the turn, and `granted` is what
+    // makes `prompt/assemble` include their sections. A turn told about
+    // `ask()` that cannot call it wastes a round; a turn that can call one it
+    // was never told about will not call it at all. Wiring only `extend` is
+    // therefore indistinguishable from wiring nothing.
+    //
+    // `workflow` is tier-gated (top-level turns only — a subagent that could
+    // start a workflow could fan out past every cap); the rest are granted at
+    // every tier, because a subagent that renders a comparison should be able
+    // to publish it and the artifact store is per-session anyway.
+    {
+        use bough_core::hostfn::delegate::{create_delegating_turn_starter, DelegationWiring};
+        use bough_core::harness::protocol::HostFnName;
+        use bough_core::turn::runner::{TurnDeps, BASE_HOST_FNS};
+        use bough_core::types::HostFns;
+
+        // NOT `workflow`: its engine is wave 3, and granting a verb whose
+        // host function is absent is the exact failure this comment block
+        // warns about — the prompt would teach a capability every call to
+        // which fails.
+        let mut granted = BASE_HOST_FNS.to_vec();
+        granted.extend_from_slice(&[
+            HostFnName::Schedule,
+            HostFnName::Ask,
+            HostFnName::State,
+            HostFnName::Artifact,
+        ]);
+
+        let jobs = ctx.host.jobs.clone();
+        *ctx.starter.write().unwrap() = Some(create_delegating_turn_starter(DelegationWiring {
+            base: TurnDeps {
+                granted: Some(granted),
+                // Background shells outlive an interrupt on purpose, so the
+                // stop note can name them instead of implying there were none.
+                surviving_jobs: Some(Arc::new(move |session_id: &str| {
+                    jobs.running_ids(session_id)
+                })),
+                ..Default::default()
+            },
+            deliver: Some(bough_core::agents::notes::create_note_deliverer(Default::default())),
+            extend: Some(Arc::new(|turn_ctx: &bough_core::types::TurnCtx| {
+                let mut fns = HostFns::default();
+                fns.schedule = Some(bough_core::hostfn::schedule::create_schedule_host_fn(
+                    turn_ctx,
+                    Default::default(),
+                ));
+                fns.ask = Some(
+                    bough_core::hostfn::ask::create_ask_host_fn(turn_ctx, Default::default())
+                        .into_host_fn(),
+                );
+                fns.state = Some(
+                    bough_core::hostfn::state::create_state_host_fn(turn_ctx, Default::default())
+                        .into_host_fn(),
+                );
+                fns.artifact = Some(bough_core::hostfn::artifact::create_artifact_host_fn(
+                    turn_ctx,
+                    Default::default(),
+                ));
+                fns
+            })),
+            ..Default::default()
+        }));
+    }
 
     // 6b. The cheap tier's two watchers (T10.1): auto titles and activity
     // blurbs, both bus listeners that start a task nobody holds. The
