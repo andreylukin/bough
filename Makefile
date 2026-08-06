@@ -4,7 +4,7 @@
 RS_DIR := bough-rs
 SMOKE_PORT ?= 43219
 
-.PHONY: help check test dev tui gates \
+.PHONY: help check test dev serve tui gates \
         rs-check rs-build rs-test rs-lint rs-release rs-server rs-tui rs-smoke rs-gates all
 
 help: ## list targets
@@ -16,9 +16,12 @@ check: ## typecheck (tsc --noEmit)
 
 test: ## bun unit + integration suite
 	bun test
+	bun test ./ahe   # bunfig pins the runner's root to ./src (see bunfig.toml)
 
 dev: ## TS server with --watch
 	bun run dev
+
+serve: dev ## alias kept from the old Makefile
 
 tui: ## TS TUI against the local server
 	bun run tui
