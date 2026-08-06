@@ -27,9 +27,12 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 
-use bough_core::schema::parts::{AskQuestion, BackgroundJob, Message, Session, TurnStatus};
+use bough_core::schema::parts::{
+    AskQuestion, BackgroundJob, Message, Schedule, Session, TurnStatus,
+};
 use bough_core::schema::requests::{
-    CreateSessionBody, PatchSessionBody, PostMessageBody, PutModelSettingsBody, UnsendBody,
+    CreateSessionBody, ExtractBody, ForkBody, HandoffBody, MoveBody, PartPick, PatchSessionBody,
+    PostMessageBody, PutModelSettingsBody, UnsendBody,
 };
 use bough_core::types::{Effort, UsageTotals};
 
@@ -300,6 +303,38 @@ pub struct UnsendResult {
     pub removed: Vec<String>,
     /// True when a turn was running and has been signalled to stop.
     pub interrupted: bool,
+}
+
+/// What `fork` and `extract` answer with (201): the branch AND its thread. The
+/// thread rides along for the same reason `GET /sessions/:id` carries it — the
+/// client is about to switch to this branch and would otherwise fetch again to
+/// render anything at all.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchResult {
+    pub session: Session,
+    #[serde(default)]
+    pub thread: Vec<Message>,
+}
+
+/// `POST /sessions/:id/move-into` (200 — it creates no session). `appended` is
+/// the server's count, not the caller's: duplicate picks of one message merge.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveResult {
+    pub session: Session,
+    #[serde(default)]
+    pub thread: Vec<Message>,
+    #[serde(default)]
+    pub appended: usize,
+}
+
+/// `POST /sessions/:id/handoff` — the new root alone. No thread: a handoff
+/// seeds no messages, so sending one would suggest there is something to read.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HandoffResult {
+    pub session: Session,
 }
 
 /// `POST /sessions/:id/changes/revert` — what actually happened, per path.
@@ -766,6 +801,83 @@ impl Api {
             Some(to_value(&UnsendBody {
                 at_message_id: at_message_id.to_string(),
             })?),
+        )
+        .await
+    }
+
+    /// `POST /sessions/:id/fork` — branch at a turn. The thread rides along so
+    /// the client that is about to switch does not need a second fetch.
+    pub async fn fork(&self, id: &str, body: &ForkBody) -> Result<BranchResult, ApiFailure> {
+        self.post(
+            &format!("/sessions/{}/fork", seg(id)),
+            Some(to_value(body)?),
+        )
+        .await
+    }
+
+    /// `POST /sessions/:id/extract` — the picked turns become a fresh ROOT.
+    /// Nothing is destroyed: the source keeps every turn.
+    pub async fn extract(&self, id: &str, picks: &[PartPick]) -> Result<BranchResult, ApiFailure> {
+        self.post(
+            &format!("/sessions/{}/extract", seg(id)),
+            Some(to_value(&ExtractBody {
+                picks: picks.to_vec(),
+            })?),
+        )
+        .await
+    }
+
+    /// `POST /sessions/:id/move-into` — extract's mirror: copies land on the
+    /// TAIL of `target_id`. The `:id` in the path is the TARGET; the source is
+    /// the argument, which is why it travels in the body.
+    pub async fn move_into(
+        &self,
+        target_id: &str,
+        source_id: &str,
+        picks: &[PartPick],
+    ) -> Result<MoveResult, ApiFailure> {
+        self.post(
+            &format!("/sessions/{}/move-into", seg(target_id)),
+            Some(to_value(&MoveBody {
+                source_id: source_id.to_string(),
+                picks: picks.to_vec(),
+            })?),
+        )
+        .await
+    }
+
+    /// `POST /sessions/:id/handoff` — `/compact`'s route. A fresh ROOT with the
+    /// distilled prompt attached as its DRAFT: nothing is sent, and the old
+    /// thread is untouched. No `thread` comes back, because a handoff inherits
+    /// none.
+    pub async fn handoff(&self, id: &str, goal: &str) -> Result<HandoffResult, ApiFailure> {
+        self.post(
+            &format!("/sessions/{}/handoff", seg(id)),
+            Some(to_value(&HandoffBody {
+                goal: goal.to_string(),
+            })?),
+        )
+        .await
+    }
+
+    // -- schedules ------------------------------------------------------------
+
+    /// `GET /schedules` — a bare array, disabled rows included (that is how one
+    /// is re-enabled). The rail filters to the enabled ones.
+    pub async fn list_schedules(&self) -> Result<Vec<Schedule>, ApiFailure> {
+        self.get("/schedules").await
+    }
+
+    /// `PATCH /schedules/:id` — the rail's stop is a DISABLE, not a delete: the
+    /// row leaves the rail and the schedule keeps its spec and its prompt.
+    pub async fn set_schedule_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<Schedule, ApiFailure> {
+        self.patch(
+            &format!("/schedules/{}", seg(id)),
+            Some(serde_json::json!({ "enabled": enabled })),
         )
         .await
     }

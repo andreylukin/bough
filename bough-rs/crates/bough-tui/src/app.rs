@@ -125,8 +125,11 @@ pub enum Action {
     /// A built-in `/command` coming back from the transport, for the surfaces
     /// this client owns (the panel's tabs, the help overlay). A slash command
     /// dispatches as an [`Effect`] so the send path stays one funnel; the ones
-    /// the client answers itself return here.
-    Run(Command),
+    /// the client answers itself return here. The argument travels with it:
+    /// `/compact <goal>` is the one command whose trailing text is an ARGUMENT
+    /// rather than prose, and dropping it here would silently discard the
+    /// steer the user typed.
+    Run(Command, String),
     /// `GET /sessions/:id/jobs` — the shells running on this conversation's
     /// behalf (its subagents' included). The rail is built from these.
     Jobs(Vec<BackgroundJob>),
@@ -144,6 +147,12 @@ pub enum Action {
     Asks(Vec<AskQuestion>),
     /// A posted take-back came back: the text returns to the composer.
     TookBack(String),
+    /// Text the server wrote FOR the composer: a handoff's distilled prompt, a
+    /// forked user turn's own words. It is placed, never sent — the user reads
+    /// what was carried over and edits it before any of it goes anywhere.
+    Draft(String),
+    /// `GET /schedules` — the rail's standing promises, disabled rows included.
+    Schedules(Vec<bough_core::schema::parts::Schedule>),
     /// `POST /sessions/:id/ghost` — the cheap tier's guess at the next message,
     /// or the empty string for every failure there is.
     Ghost(String),
@@ -284,6 +293,41 @@ pub enum Effect {
     LoadModelSettings,
     /// `PUT /model-settings` + this session's pin, as one config.
     SaveModel(crate::components::panel::model::ModelConfig),
+    // ---- the verbs this client used to refuse ------------------------------
+    /// Start a fresh conversation: nothing is posted, but the TRANSPORT has to
+    /// forget the session it was reusing or the next send lands in the old one.
+    NewConversation,
+    /// `/compact` — `POST /sessions/:id/handoff`. The distilled prompt lands in
+    /// the COMPOSER of a fresh root: the user reads what was carried over and
+    /// edits it before any of it is sent.
+    Compact(String),
+    /// The composer's `!` sigil: a background shell in this conversation's
+    /// workspace. NOT A TURN — nothing is billed and nothing enters the thread.
+    RunShell(String),
+    /// `POST /sessions/:id/fork` — ⏎ (or `s`) on a turn in the tree.
+    Fork {
+        session_id: String,
+        at_message_id: String,
+        exclusive: bool,
+        summarize_abandoned: bool,
+        editor_text: Option<String>,
+    },
+    /// `POST /sessions/:id/extract` — `e` in the tree.
+    Extract {
+        session_id: String,
+        picks: Vec<bough_core::schema::requests::PartPick>,
+    },
+    /// `POST /sessions/:id/move-into` — `m` in the tree.
+    MoveInto {
+        target_id: String,
+        source_id: String,
+        picks: Vec<bough_core::schema::requests::PartPick>,
+    },
+    /// `GET /schedules` — the rail's standing promises.
+    LoadSchedules,
+    /// `PATCH /schedules/:id {enabled:false}` — the rail's stop on a schedule
+    /// DISABLES it: the row leaves, the spec and prompt are kept.
+    DisableSchedule(String),
 }
 
 /// The transport seam — scripted in tests; wired to `api.rs` when row 1.32 lands.
@@ -357,6 +401,101 @@ fn turn_gist(m: &Message) -> String {
 /// said out loud, and it expires with it.
 pub const TAKE_BACK_HINT: &str = "esc takes that back";
 
+/// The `/commands` this client answers ITSELF, beside the tab-openers. Every
+/// one of these is state the reducer owns (or an effect it dispatches), so they
+/// come back over the mpsc rather than being refused at the transport.
+fn is_client_command(command: Command) -> bool {
+    matches!(
+        command,
+        Command::HelpOpen
+            | Command::SessionNew
+            | Command::SessionCompact
+            | Command::TreeRewind
+            | Command::SchedulesShow
+    )
+}
+
+/// The wire's status string as the selectors' enum. An unknown one is
+/// `orphaned`: the rail filters to running/paused, and a status this client
+/// cannot name must not be shown as live work.
+fn workflow_status(s: &str) -> bough_core::schema::parts::WorkflowStatus {
+    use bough_core::schema::parts::WorkflowStatus as W;
+    match s {
+        "running" => W::Running,
+        "paused" => W::Paused,
+        "done" => W::Done,
+        "error" => W::Error,
+        "stopped" => W::Stopped,
+        _ => W::Orphaned,
+    }
+}
+
+/// Every schedule as ONE line — the rail's ⏎ on a timer, and `/schedules`.
+///
+/// A NOTICE, not a tab. `schedule.*` shipped with no TUI surface at all, so the
+/// agent could create a recurring run that fires daily and spends money and the
+/// user had no way to see it. This turns "invisible" into "visible", which is
+/// the part that matters; it says how to change one, since only the agent can.
+/// The TS prints a `MM-DD HH:MM` wall clock here. This crate may not link a
+/// calendar (ARCHITECTURE.md §1 keeps it to `bough_core::{schema, errors,
+/// types}`), so the same fact is said as the countdown the rail already shows —
+/// `next in 4h02m`, or `due` for one that is past its time.
+pub fn describe_schedules(rows: &[bough_core::schema::parts::Schedule], now: i64) -> String {
+    use crate::store::selectors::{clip, fmt_duration, one_line, plural};
+    if rows.is_empty() {
+        return "no schedules — ask the agent to add one".to_string();
+    }
+    let list: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            format!(
+                "{}{} {} → next {}",
+                if r.enabled { "" } else { "(off) " },
+                r.spec,
+                clip(
+                    &one_line(if r.title.is_empty() {
+                        &r.prompt
+                    } else {
+                        &r.title
+                    }),
+                    32
+                ),
+                if r.next_run_at <= now {
+                    "due".to_string()
+                } else {
+                    format!("in {}", fmt_duration(r.next_run_at - now))
+                },
+            )
+        })
+        .collect();
+    format!(
+        "{}: {} — ask the agent to change one",
+        plural(rows.len() as i64, "schedule"),
+        list.join(" · "),
+    )
+}
+
+/// `/compact`'s sentences, verbatim.
+pub const NOTHING_TO_HAND_OFF: &str = "nothing to hand off yet — this conversation is empty";
+pub const DISTILLING: &str = "distilling this conversation into a fresh one…";
+/// `^t`, NOT `^f`. The composer-owned chords (^f ^d ^w ^k) are guarded on an
+/// empty draft because they are also line-editing keys — and a handoff ALWAYS
+/// lands with a draft in the composer, so naming one of those would be naming
+/// the one key that cannot work at the one moment the notice is shown.
+pub const HANDED_OFF: &str =
+    "handed off to a fresh conversation — read the draft, edit it, then send. \
+The old thread is untouched: ^t opens the tree";
+/// With no goal stated, what "keep going" means.
+pub const DEFAULT_HANDOFF_GOAL: &str =
+    "continue this work from where it stands, keeping whatever is still needed";
+/// The `!` sigil with no conversation to attach a job to. Reached only if the
+/// transport did not create one first, which it does.
+pub const SHELL_NEEDS_A_CONVERSATION: &str = "! needs a conversation to run in — none is open";
+/// ONE shell conversation per workspace, reused — not one per command. It
+/// carries a `kind` rather than a title convention, because that is what lets
+/// it be found again after a restart.
+pub const SHELL_SESSION_TITLE: &str = "shell";
+
 /// The whole UI state, mutated only by [`App::apply`] on the loop task.
 pub struct App<T: Transport> {
     transport: T,
@@ -424,6 +563,15 @@ pub struct App<T: Transport> {
     // ---- the live-work rail and the job view (row 2.19) --------------------
     /// The shells running for this conversation and its delegates.
     jobs: Vec<BackgroundJob>,
+    /// The standing promises the rail counts down (`GET /schedules`). Kept
+    /// whole, disabled rows included: `/schedules` names those too, and it is
+    /// how one is re-enabled.
+    schedules: Vec<bough_core::schema::parts::Schedule>,
+    /// The runs the rail shows, from the same `GET /workflows` the tab reads.
+    workflows: Vec<crate::api::WorkflowSummary>,
+    /// `/schedules` is waiting on the listing it asked for. The answer must be
+    /// taken NOW rather than read off whatever the rail last cached.
+    describe_schedules: bool,
     /// The rail's cursor. `None` = the composer has the keyboard and the rail
     /// still renders — ↓ into it is reversible, not a mode switch.
     rail_sel: Option<usize>,
@@ -506,6 +654,9 @@ impl<T: Transport> App<T> {
             help_open: false,
             help_off: 0,
             jobs: Vec::new(),
+            schedules: Vec::new(),
+            workflows: Vec::new(),
+            describe_schedules: false,
             rail_sel: None,
             rail_armed: None,
             job: None,
@@ -574,7 +725,39 @@ impl<T: Transport> App<T> {
                 tokens: s.tokens,
             })
             .collect();
-        live_units(&self.jobs, &subagents, &[], &[], self.now_ms)
+        // Same adaptation as the rows above, for the same reason: the run list
+        // is declared in `api.rs` (what the wire carries) and in `state.rs`
+        // (what the selectors take). The field list is written out, so a
+        // divergence is a compile error here.
+        let runs: Vec<crate::store::state::WorkflowSummary> = self
+            .workflows
+            .iter()
+            .map(|w| crate::store::state::WorkflowSummary {
+                id: w.id.clone(),
+                name: w.name.clone(),
+                description: w.description.clone(),
+                status: workflow_status(&w.status),
+                current_phase: w.current_phase.clone(),
+                // Not on the summary wire shape, and the rail reads none of
+                // them: a row is a title, a phase and a progress bar.
+                phases: Vec::new(),
+                agents: crate::store::state::WorkflowAgentCounts {
+                    total: w.agents.total as i64,
+                    done: w.agents.done as i64,
+                    cached: w.agents.cached as i64,
+                    running: w.agents.running as i64,
+                    queued: w.agents.queued as i64,
+                    failed: w.agents.failed as i64,
+                },
+                result: None,
+                error: None,
+                resume_of: None,
+                created_at: w.created_at,
+                finished_at: w.finished_at,
+                script_file: String::new(),
+            })
+            .collect();
+        live_units(&self.jobs, &subagents, &runs, &self.schedules, self.now_ms)
     }
 
     /// The cursor must never point past a rail that just got shorter — a job
@@ -693,6 +876,17 @@ impl<T: Transport> App<T> {
                 self.scroll_off = 0;
                 self.last_send_at = None;
             }
+            Action::Draft(text) => {
+                self.cursor = text.chars().count();
+                self.draft = text;
+                self.scroll_off = 0;
+            }
+            Action::Schedules(rows) => {
+                self.schedules = rows;
+                if std::mem::take(&mut self.describe_schedules) {
+                    self.notice = Some(describe_schedules(&self.schedules, self.now_ms));
+                }
+            }
             Action::Connected(up) => self.connected = up,
             Action::SessionOpened(id) => {
                 self.panel.current_id = Some(id.clone());
@@ -715,6 +909,11 @@ impl<T: Transport> App<T> {
                 self.ask_typed.clear();
                 self.transport.effect(Effect::PollJobs);
                 self.transport.effect(Effect::LoadQuestions);
+                // …and the rest of the rail's feed. Both are then kept fresh by
+                // events rather than by a poll (`reduce_event`), which is the
+                // TS's policy and the reason neither has a timer.
+                self.transport.effect(Effect::LoadWorkflows);
+                self.transport.effect(Effect::LoadSchedules);
             }
             Action::Thread(thread) => {
                 self.thread = thread;
@@ -746,7 +945,13 @@ impl<T: Transport> App<T> {
             }
             Action::Changes(set) => self.panel.set_changes(set),
             Action::Theme(state) => self.panel.set_theme(state),
-            Action::Workflows(runs) => self.panel.set_workflows(runs),
+            Action::Workflows(runs) => {
+                // The rail and the tab read ONE list: two fetches of the same
+                // shape is how a row comes to be live in one surface and
+                // finished in the other.
+                self.workflows = runs.clone();
+                self.panel.set_workflows(runs);
+            }
             Action::Workflow(detail) => {
                 // A failed fetch drops back to the list: a detail level with no
                 // detail is a header full of zeroes over a run that may not
@@ -784,7 +989,7 @@ impl<T: Transport> App<T> {
                 };
                 self.panel.set_model_config(cfg);
             }
-            Action::Run(command) => self.run_client_command(command),
+            Action::Run(command, arg) => self.run_client_command(command, &arg),
             Action::Files(files) => self.files = files,
             Action::DirEntries { prefix, entries } => self.browsed = (prefix, entries),
             Action::Skills(skills) => self.skills = skills,
@@ -1318,14 +1523,73 @@ impl<T: Transport> App<T> {
         lookup(&ctx, &crate::keys::chord_of(&input, flags))
     }
 
-    /// A `/command` this client answers itself (a tab, the overlay).
-    fn run_client_command(&mut self, command: Command) {
+    /// A `/command` this client answers itself (a tab, the overlay, the
+    /// session verbs). `arg` is empty for every command but `/compact`.
+    fn run_client_command(&mut self, command: Command, arg: &str) {
         match command {
             Command::HelpOpen => {
                 self.help_open = true;
                 self.help_off = 0;
             }
             Command::HelpClose => self.help_open = false,
+            // The DRAFT goes too: it was written for the conversation being
+            // left, and carrying it into a fresh one is how you send the wrong
+            // thing to the wrong thread.
+            Command::SessionNew => {
+                self.clear_draft();
+                self.scroll_off = 0;
+                self.session_id = None;
+                self.panel.current_id = None;
+                self.thread.clear();
+                self.streaming.clear();
+                self.turn = None;
+                self.activity = None;
+                self.notice = None;
+                self.last_send_at = None;
+                // Another conversation's shells and holds pinned under this
+                // composer would be a claim about work this screen is not doing.
+                self.jobs.clear();
+                self.rail_sel = None;
+                self.rail_armed = None;
+                self.job = None;
+                self.ask = None;
+                self.ask_typed.clear();
+                self.help_open = false;
+                self.panel.state.open = false;
+                // The transport is reusing a session id of its own; without
+                // this the next send would land back in the old conversation.
+                self.transport.effect(Effect::NewConversation);
+            }
+            // The old conversation is neither mutated nor inherited, so there
+            // is nothing to confirm — but it does call the model, which is why
+            // this announces itself before it starts.
+            Command::SessionCompact => {
+                if self.session_id.is_none() {
+                    return;
+                }
+                if self.thread.is_empty() {
+                    self.notice = Some(NOTHING_TO_HAND_OFF.to_string());
+                    return;
+                }
+                // The goal steers what survives. With none stated the
+                // instruction has to say what "keep going" means, or the
+                // summarizer is left guessing which of two finished threads of
+                // work the next message is about.
+                let goal = arg.trim();
+                let stated = if goal.is_empty() {
+                    DEFAULT_HANDOFF_GOAL
+                } else {
+                    goal
+                };
+                self.notice = Some(DISTILLING.to_string());
+                self.transport.effect(Effect::Compact(stated.to_string()));
+            }
+            // The rows the rail already counts down, said in full. Re-read
+            // first: the answer must be taken NOW, not off a cached list.
+            Command::SchedulesShow => {
+                self.describe_schedules = true;
+                self.transport.effect(Effect::LoadSchedules);
+            }
             other => {
                 let requests = self.panel.handle(other, None, self.panel_body_budget());
                 self.serve(requests);
@@ -1376,6 +1640,31 @@ impl<T: Transport> App<T> {
                 HostRequest::LoadModels => self.transport.effect(Effect::LoadModels),
                 HostRequest::LoadModelSettings => self.transport.effect(Effect::LoadModelSettings),
                 HostRequest::SaveModel(cfg) => self.transport.effect(Effect::SaveModel(cfg)),
+                HostRequest::Fork {
+                    session_id,
+                    at_message_id,
+                    exclusive,
+                    summarize_abandoned,
+                    editor_text,
+                } => self.transport.effect(Effect::Fork {
+                    session_id,
+                    at_message_id,
+                    exclusive,
+                    summarize_abandoned,
+                    editor_text,
+                }),
+                HostRequest::Extract { session_id, picks } => {
+                    self.transport.effect(Effect::Extract { session_id, picks })
+                }
+                HostRequest::MoveInto {
+                    target_id,
+                    source_id,
+                    picks,
+                } => self.transport.effect(Effect::MoveInto {
+                    target_id,
+                    source_id,
+                    picks,
+                }),
             }
         }
     }
@@ -1541,9 +1830,18 @@ impl<T: Transport> App<T> {
                     LiveUnitKind::Subagent => {
                         self.transport.effect(Effect::OpenSession(unit.id.clone()))
                     }
-                    LiveUnitKind::Workflow | LiveUnitKind::Schedule => {
-                        self.notice =
-                            Some("that surface is not wired into this client yet".to_string())
+                    // A run's surface is the workflows tab, drilled in.
+                    LiveUnitKind::Workflow => {
+                        let id = unit.id.clone();
+                        self.rail_sel = None;
+                        let requests = self.panel.open_run(&id);
+                        self.serve(requests);
+                    }
+                    // A schedule has no session to open and no buffer to show —
+                    // ⏎ says what it is and when it next fires. The cursor
+                    // stays on the rail: you glanced, you did not leave.
+                    LiveUnitKind::Schedule => {
+                        self.notice = Some(describe_schedules(&self.schedules, self.now_ms));
                     }
                 }
             }
@@ -1560,10 +1858,16 @@ impl<T: Transport> App<T> {
                     LiveUnitKind::Subagent => {
                         self.transport.effect(Effect::StopSession(unit.id.clone()))
                     }
-                    LiveUnitKind::Workflow | LiveUnitKind::Schedule => {
-                        self.notice =
-                            Some("stopping that is not wired into this client yet".to_string())
-                    }
+                    LiveUnitKind::Workflow => self.transport.effect(Effect::SteerWorkflow {
+                        id: unit.id.clone(),
+                        action: crate::components::panel::host::WorkflowAction::Stop,
+                    }),
+                    // Stopping a schedule is DISABLING it, not deleting: the
+                    // row leaves the rail, the schedule keeps its spec and its
+                    // prompt, and the agent can turn it back on.
+                    LiveUnitKind::Schedule => self
+                        .transport
+                        .effect(Effect::DisableSchedule(unit.id.clone())),
                 }
             }
             // esc cancels the arm before it leaves the rail.
@@ -1767,6 +2071,22 @@ impl<T: Transport> App<T> {
             }
             return;
         }
+        // esc esc with NOTHING typed and NOTHING running: the tree, opened on
+        // your last turn.
+        //
+        // The gesture already meant "undo the thing I am in the middle of" — it
+        // cleared a draft, it stopped a turn. With an empty composer and an
+        // idle session it meant "dismiss a notice", which is nothing at all,
+        // while the actual undo one reaches for at that moment — go back a
+        // message and say it differently — was four keypresses into a panel tab.
+        if self
+            .last_esc_at
+            .is_some_and(|at| now_ms - at < DOUBLE_ESC_MS)
+        {
+            self.last_esc_at = None;
+            self.run_client_command(Command::TreeRewind, "");
+            return;
+        }
         // cancel: reset scroll, dismiss notice.
         self.scroll_off = 0;
         self.notice = None;
@@ -1838,13 +2158,20 @@ impl<T: Transport> App<T> {
         if text.is_empty() {
             return;
         }
-        // The `!` shell and the `/` commands are store/keymap territory
-        // (rows 1.35/1.36); until they land the sigils must not reach the
-        // model — a `!echo hi` billed as a prompt is the exact TS bug the
-        // sigil handling fixed. Absent capability is stated, never faked.
-        if text.starts_with('!') {
-            self.notice = Some("the ! shell is not wired into this client yet".to_string());
-            return; // draft kept for editing
+        // `!command` IS THE USER'S OWN SHELL, not a message. Every comparable
+        // harness honours the sigil; bough printed "! is not a shell — this
+        // goes to the model" and made the user ask the agent to run `ls`. It is
+        // NOT A TURN: nothing is billed, nothing enters the thread, and the job
+        // lands in the rail where its output is already readable on ⏎.
+        if text.starts_with('!') && !text[1..].trim().is_empty() {
+            let command = text[1..].trim().to_string();
+            self.clear_draft();
+            self.scroll_off = 0;
+            // (The TS also pushes the line, sigil and all, onto the ↑ history
+            // so re-running is ↑⏎. This client has no history ring yet, so
+            // there is nothing to push it onto.)
+            self.transport.effect(Effect::RunShell(command));
+            return;
         }
         // SLASH DISPATCH RUNS AT SEND TIME, not only from the popup: the popup
         // opens as you type, so text that arrives faster than a render — a
@@ -1901,6 +2228,20 @@ impl<T: Transport> App<T> {
         // reduces per session); this v1 screen shows one conversation, so
         // another session's events must not stream into its thread. Un-scoped
         // events pass regardless.
+        // Schedules have no events of their own. The agent edits one during a
+        // turn (so the turn finishing is when the edit is final), and a FIRE
+        // announces itself as the fired root's `session.created` — between
+        // them, every change to `next_run_at` has a signal, so the rail's
+        // countdown needs no poll of its own.
+        if matches!(
+            event.r#type,
+            EventType::TurnFinished | EventType::SessionCreated
+        ) {
+            self.transport.effect(Effect::LoadSchedules);
+        }
+
+        // (Ahead of the per-session filter: a schedule FIRES into a session
+        // that is not this one, and that event is exactly the news.)
         if let Some(sid) = &event.session_id {
             if self.session_id.as_ref() != Some(sid) {
                 return;
@@ -2021,8 +2362,12 @@ impl<T: Transport> App<T> {
             // tab is open — a closed panel polling a fan-out is a background
             // request nobody asked for.
             EventType::WorkflowUpdated | EventType::WorkflowAgent => {
+                // The RAIL shows runs too, and it is visible with the panel
+                // shut — so the list is re-read either way. Only the open run's
+                // detail is gated on the tab, which is the request nobody asked
+                // for when the panel is closed.
+                self.transport.effect(Effect::LoadWorkflows);
                 if self.panel.open() && self.panel.tab() == crate::keys::PanelTab::Workflows {
-                    self.transport.effect(Effect::LoadWorkflows);
                     if let Some(id) = self
                         .panel
                         .run_detail
@@ -2906,12 +3251,12 @@ impl Transport for LiveTransport {
                     }
                 });
             }
-            Effect::Run(command, _arg) => {
+            Effect::Run(command, arg) => {
                 // The surfaces this client owns answer themselves, back over
                 // the same mpsc; the rest are honest about what they cannot do
                 // — and, crucially, the command still never reaches the model.
-                if tab_for_command(command).is_some() || command == Command::HelpOpen {
-                    let _ = self.tx.send(Action::Run(command));
+                if tab_for_command(command).is_some() || is_client_command(command) {
+                    let _ = self.tx.send(Action::Run(command, arg));
                     return;
                 }
                 let name = SLASH_COMMANDS
@@ -3478,6 +3823,245 @@ impl Transport for LiveTransport {
                     }
                 });
             }
+            // No I/O AT ALL: the reducer has already cleared the screen state,
+            // and the only thing out here that remembers the old conversation
+            // is the id this transport reuses on the next send. Forgetting it
+            // IS starting a fresh one — the conversation itself is created by
+            // whatever is sent next, exactly as it is on a cold launch.
+            Effect::NewConversation => {
+                *self.session.lock().expect("session lock") = None;
+            }
+            Effect::Compact(goal) => {
+                tokio::spawn(async move {
+                    let known = session.lock().expect("session lock").clone();
+                    let Some(sid) = known else { return };
+                    match api.handoff(&sid, &goal).await {
+                        Ok(res) => {
+                            // The new root is opened FIRST and the draft lands
+                            // after it: `SessionOpened` clears the screen's
+                            // per-conversation state, and a draft placed before
+                            // it would be cleared by the switch it arrived for.
+                            *session.lock().expect("session lock") = Some(res.session.id.clone());
+                            let _ = tx.send(Action::SessionOpened(res.session.id.clone()));
+                            let _ = tx.send(Action::Thread(Vec::new()));
+                            if let Some(draft) = res.session.draft.clone() {
+                                let _ = tx.send(Action::Draft(draft));
+                            }
+                            let _ = tx.send(Action::Notice(HANDED_OFF.to_string()));
+                            // The tree's rows are now wrong — a branch was
+                            // created (or a tail grew) — so they are re-read.
+                            if let Ok(rows) = api.list_sessions(None).await {
+                                let _ = tx.send(Action::Sessions(rows));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                });
+            }
+            // A job belongs to a session, and on a fresh screen there is none —
+            // so `!git status`, the first thing a user types on arriving, used
+            // to hit "send a message first" and do nothing. The workspace is
+            // what a shell actually needs and the TUI already knows it.
+            //
+            // ONE shell conversation per workspace, REUSED. Minting one per
+            // command left a switcher full of one-line conversations nobody
+            // opened twice. It is still a real conversation — visible, openable,
+            // and where the job's output is watched — and it carries a `kind`
+            // rather than a title convention, which is what lets it be found
+            // again after a restart.
+            Effect::RunShell(command) => {
+                tokio::spawn(async move {
+                    let known = session.lock().expect("session lock").clone();
+                    let sid = match known {
+                        Some(sid) => sid,
+                        None => {
+                            let existing = api.list_sessions(None).await.ok().and_then(|rows| {
+                                rows.into_iter()
+                                    .find(|r| {
+                                        r.session.kind
+                                            == bough_core::schema::parts::SessionKind::Shell
+                                            && r.session.workspace == workspace
+                                    })
+                                    .map(|r| r.session.id)
+                            });
+                            let opened = match existing {
+                                Some(id) => Some(id),
+                                None => {
+                                    let body = bough_core::schema::requests::CreateSessionBody {
+                                        workspace: workspace.clone(),
+                                        title: Some(SHELL_SESSION_TITLE.to_string()),
+                                        kind: Some(bough_core::schema::parts::SessionKind::Shell),
+                                        ..Default::default()
+                                    };
+                                    match api.create_session(&body).await {
+                                        Ok(s) => Some(s.id),
+                                        Err(e) => {
+                                            let _ = tx.send(Action::Notice(e.to_string()));
+                                            None
+                                        }
+                                    }
+                                }
+                            };
+                            let Some(id) = opened else { return };
+                            // Through the same path a tree row takes, so the
+                            // thread and the rail arrive with the switch.
+                            match api.get_session(&id).await {
+                                Ok(snapshot) => {
+                                    *session.lock().expect("session lock") = Some(id.clone());
+                                    let _ = tx.send(Action::SessionOpened(id.clone()));
+                                    let _ = tx.send(Action::Thread(snapshot.thread));
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Action::Notice(e.to_string()));
+                                    return;
+                                }
+                            }
+                            id
+                        }
+                    };
+                    if let Err(e) = api.run_shell(&sid, &command).await {
+                        let _ = tx.send(Action::Notice(e.to_string()));
+                        return;
+                    }
+                    // The rail is the shell's whole UI, so it is re-read here
+                    // rather than waited for: `job.spawned` also asks for this,
+                    // and one extra listing beats a row that appears a second
+                    // late on the screen the user is watching.
+                    if let Ok(list) = api.list_jobs(&sid).await {
+                        let _ =
+                            tx.send(Action::Jobs(list.jobs.into_iter().map(|r| r.job).collect()));
+                    }
+                });
+            }
+            Effect::Fork {
+                session_id,
+                at_message_id,
+                exclusive,
+                summarize_abandoned,
+                editor_text,
+            } => {
+                tokio::spawn(async move {
+                    let body = bough_core::schema::requests::ForkBody {
+                        at_message_id,
+                        at_part: None,
+                        edited_text: None,
+                        exclusive: exclusive.then_some(true),
+                        summarize_abandoned: summarize_abandoned.then_some(true),
+                    };
+                    match api.fork(&session_id, &body).await {
+                        Ok(res) => {
+                            *session.lock().expect("session lock") = Some(res.session.id.clone());
+                            let _ = tx.send(Action::SessionOpened(res.session.id.clone()));
+                            let _ = tx.send(Action::Thread(res.thread));
+                            // A user turn's own text goes back to the composer:
+                            // editing it and pressing ⏎ IS the new branch.
+                            if let Some(text) = editor_text {
+                                let _ = tx.send(Action::Draft(text));
+                            }
+                            // The tree's rows are now wrong — a branch was
+                            // created (or a tail grew) — so they are re-read.
+                            if let Ok(rows) = api.list_sessions(None).await {
+                                let _ = tx.send(Action::Sessions(rows));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                });
+            }
+            Effect::Extract { session_id, picks } => {
+                tokio::spawn(async move {
+                    let n = picks.len();
+                    match api.extract(&session_id, &picks).await {
+                        Ok(res) => {
+                            *session.lock().expect("session lock") = Some(res.session.id.clone());
+                            let _ = tx.send(Action::SessionOpened(res.session.id.clone()));
+                            let _ = tx.send(Action::Thread(res.thread));
+                            // Said out loud because the source is UNTOUCHED and
+                            // the screen has just changed conversations:
+                            // without it, `e` looks like it MOVED the turns out.
+                            let _ = tx.send(Action::Notice(format!(
+                                "split into a new conversation — {} copied, the original kept its own",
+                                crate::store::selectors::plural(n as i64, "turn"),
+                            )));
+                            // The tree's rows are now wrong — a branch was
+                            // created (or a tail grew) — so they are re-read.
+                            if let Ok(rows) = api.list_sessions(None).await {
+                                let _ = tx.send(Action::Sessions(rows));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                });
+            }
+            Effect::MoveInto {
+                target_id,
+                source_id,
+                picks,
+            } => {
+                tokio::spawn(async move {
+                    match api.move_into(&target_id, &source_id, &picks).await {
+                        Ok(res) => {
+                            *session.lock().expect("session lock") = Some(target_id.clone());
+                            let _ = tx.send(Action::SessionOpened(target_id));
+                            let _ = tx.send(Action::Thread(res.thread));
+                            // The SERVER's count, not the caller's: duplicate
+                            // picks of one message merge.
+                            let _ = tx.send(Action::Notice(format!(
+                                "{} copied in — the other conversation kept its own",
+                                crate::store::selectors::plural(res.appended as i64, "turn"),
+                            )));
+                            // The tree's rows are now wrong — a branch was
+                            // created (or a tail grew) — so they are re-read.
+                            if let Ok(rows) = api.list_sessions(None).await {
+                                let _ = tx.send(Action::Sessions(rows));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                });
+            }
+            // Silent on failure, like every other rail fetch: a stale rail is a
+            // stale rail, never an error card over the conversation.
+            Effect::LoadSchedules => {
+                tokio::spawn(async move {
+                    if let Ok(rows) = api.list_schedules().await {
+                        let _ = tx.send(Action::Schedules(rows));
+                    }
+                });
+            }
+            Effect::DisableSchedule(id) => {
+                tokio::spawn(async move {
+                    match api.set_schedule_enabled(&id, false).await {
+                        Ok(row) => {
+                            // The scope, in the past tense and in full: a
+                            // destructive act says what it did.
+                            let _ = tx.send(Action::Notice(format!(
+                                "disabled schedule {} — ask the agent to re-enable it",
+                                crate::store::selectors::one_line(if row.title.is_empty() {
+                                    &row.prompt
+                                } else {
+                                    &row.title
+                                }),
+                            )));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                            return;
+                        }
+                    }
+                    if let Ok(rows) = api.list_schedules().await {
+                        let _ = tx.send(Action::Schedules(rows));
+                    }
+                });
+            }
         }
     }
 }
@@ -3567,6 +4151,9 @@ mod tests {
                         // about what the user asked this client to do.
                         | Effect::PollJobs
                         | Effect::LoadQuestions
+                        // …and so are the other two feeds it is built from.
+                        | Effect::LoadWorkflows
+                        | Effect::LoadSchedules
                 )
             })
             .cloned()
@@ -3752,12 +4339,18 @@ mod tests {
         assert_eq!(app.panel.last_log.as_deref(), Some("dispatching Verify"));
         assert!(frame_of(&app, 110, 30).contains("▸ dispatching Verify"));
 
-        // A CLOSED panel does not poll a fan-out nobody is watching.
+        // A CLOSED panel re-reads the LIST — the rail shows runs and is
+        // visible with the panel shut — but not the detail nobody is watching.
         app.apply(ctrl('t'), 5);
         assert!(!app.panel.open());
         effects.borrow_mut().clear();
         app.apply(event(EventType::WorkflowAgent, 6, serde_json::json!({})), 6);
-        assert!(effects.borrow().is_empty(), "{:?}", effects.borrow());
+        assert_eq!(
+            effects.borrow().clone(),
+            vec![Effect::LoadWorkflows],
+            "{:?}",
+            effects.borrow()
+        );
     }
 
     #[test]
@@ -3831,6 +4424,207 @@ mod tests {
         assert!(
             frame.contains("read from user /home/u/.bough/skills"),
             "{frame}"
+        );
+    }
+
+    /// `/new` — a fresh conversation. Everything on this screen belonged to the
+    /// one being left, the DRAFT included: carrying it over is how you send the
+    /// wrong thing to the wrong thread.
+    #[test]
+    fn session_new_drops_the_open_conversation_and_everything_shown_for_it() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        app.apply(
+            Action::Thread(vec![crate::forest::fixtures::msg("m1", Role::User, "go")]),
+            1,
+        );
+        app.apply(Action::Jobs(vec![job("j1", "sleep 100")]), 2);
+        type_text(&mut app, "half a thought", 3);
+        effects.borrow_mut().clear();
+
+        app.apply(Action::Run(Command::SessionNew, String::new()), 4);
+        assert_eq!(app.session_id, None);
+        assert!(app.thread.is_empty(), "the transcript is the old one's");
+        assert_eq!(app.draft, "");
+        assert!(app.jobs.is_empty(), "another conversation's shells");
+        // The TRANSPORT is told too: it holds the id the next send would reuse,
+        // and without this the fresh conversation would be the old one.
+        assert_eq!(sends(&effects), vec![Effect::NewConversation]);
+        let frame = frame_of(&app, 100, 24);
+        assert!(frame.contains("type a message · enter sends"), "{frame}");
+    }
+
+    /// `esc esc` on an idle, empty composer: the tree, ON the turn you would go
+    /// back to. A running turn still resolves to the STOP — that meaning may
+    /// not be lost to the rewind.
+    #[test]
+    fn double_esc_on_an_empty_composer_opens_the_tree_on_your_last_turn() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 30);
+        open_s1(&mut app);
+        app.apply(
+            Action::Thread(vec![
+                crate::forest::fixtures::msg("m1", Role::User, "go"),
+                crate::forest::fixtures::msg("m2", Role::Supervisor, "done"),
+            ]),
+            1,
+        );
+        app.apply(
+            Action::Sessions(vec![crate::forest::fixtures::session_row(
+                "s1",
+                bough_core::schema::parts::SessionKind::Root,
+                0,
+            )]),
+            1,
+        );
+        effects.borrow_mut().clear();
+        app.apply(key(KeyCode::Esc), 10);
+        assert!(!app.panel.open(), "one esc is still just a cancel");
+        app.apply(key(KeyCode::Esc), 20);
+        assert!(app.panel.open() && app.panel.tab() == crate::keys::PanelTab::Tree);
+        assert!(app.panel.expanded.contains("s1"));
+        assert_eq!(
+            app.panel.rows()[app.panel.sel].id(),
+            "m1",
+            "the last USER turn, not the top of the forest"
+        );
+        assert!(sends(&effects).contains(&Effect::LoadSessions));
+    }
+
+    /// `/compact` — the handoff. It calls the model, so it announces itself
+    /// before it starts; the distilled prompt lands in the COMPOSER, where it
+    /// is read and edited before any of it is sent.
+    #[test]
+    fn compact_hands_off_and_the_distilled_prompt_lands_in_the_composer() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        // An EMPTY conversation has nothing to distil, and says so rather than
+        // paying for a summary of nothing.
+        effects.borrow_mut().clear();
+        app.apply(Action::Run(Command::SessionCompact, String::new()), 1);
+        assert_eq!(app.notice.as_deref(), Some(NOTHING_TO_HAND_OFF));
+        assert!(sends(&effects).is_empty(), "{:?}", effects.borrow());
+
+        app.apply(
+            Action::Thread(vec![crate::forest::fixtures::msg("m1", Role::User, "go")]),
+            2,
+        );
+        app.apply(
+            Action::Run(Command::SessionCompact, "focus on the parser".into()),
+            3,
+        );
+        assert_eq!(app.notice.as_deref(), Some(DISTILLING));
+        assert_eq!(
+            sends(&effects),
+            vec![Effect::Compact("focus on the parser".into())]
+        );
+        // With NO goal stated the instruction has to say what "keep going"
+        // means, or the summarizer guesses which thread of work it is about.
+        effects.borrow_mut().clear();
+        app.apply(Action::Run(Command::SessionCompact, "   ".into()), 4);
+        assert_eq!(
+            sends(&effects),
+            vec![Effect::Compact(DEFAULT_HANDOFF_GOAL.into())]
+        );
+
+        // What the transport posts back: the new root, then its draft.
+        app.apply(Action::SessionOpened("s2".into()), 5);
+        app.apply(Action::Thread(Vec::new()), 5);
+        app.apply(Action::Draft("carry on with the parser".into()), 5);
+        app.apply(Action::Notice(HANDED_OFF.to_string()), 5);
+        assert_eq!(app.draft, "carry on with the parser");
+        assert_eq!(app.cursor, app.draft.chars().count());
+        let frame = frame_of(&app, 100, 24);
+        assert!(frame.contains("carry on with the parser"), "{frame}");
+        assert!(frame.contains("handed off to a fresh"), "{frame}");
+    }
+
+    /// The rail's two verbs on the two rows that used to refuse them.
+    #[test]
+    fn the_rail_opens_a_run_and_stops_a_run_or_a_schedule() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        app.apply(
+            Action::Workflows(vec![crate::api::WorkflowSummary {
+                id: "run-1".into(),
+                name: "verify".into(),
+                description: String::new(),
+                status: "running".into(),
+                current_phase: Some("build".into()),
+                agents: Default::default(),
+                created_at: 0,
+                finished_at: None,
+            }]),
+            1,
+        );
+        app.apply(
+            Action::Schedules(vec![schedule("sch-1", "nightly", "daily@03:00", 60_000)]),
+            1,
+        );
+        // Both rows are IN the rail — until now the app passed empty slices, so
+        // neither kind could appear at all.
+        let units = app.units();
+        assert_eq!(units.len(), 2, "{units:?}");
+        let frame = frame_of(&app, 100, 24);
+        assert!(frame.contains("verify"), "{frame}");
+        assert!(frame.contains("nightly"), "{frame}");
+
+        // ⏎ on the run: the workflows tab, drilled in on it.
+        app.apply(key(KeyCode::Down), 2); // into the rail
+        effects.borrow_mut().clear();
+        app.apply(key(KeyCode::Enter), 3);
+        assert!(app.panel.open() && app.panel.tab() == crate::keys::PanelTab::Workflows);
+        assert!(
+            sends(&effects).contains(&Effect::LoadWorkflow("run-1".into())),
+            "{:?}",
+            effects.borrow()
+        );
+
+        // `x x` on the run STOPS it, and on the schedule DISABLES it.
+        app.apply(ctrl('t'), 4); // close the panel, back to the rail
+        app.rail_sel = Some(0);
+        effects.borrow_mut().clear();
+        app.apply(key(KeyCode::Char('x')), 5);
+        assert!(sends(&effects).is_empty(), "one press only arms");
+        app.apply(key(KeyCode::Char('x')), 6);
+        assert_eq!(
+            sends(&effects),
+            vec![Effect::SteerWorkflow {
+                id: "run-1".into(),
+                action: crate::components::panel::host::WorkflowAction::Stop,
+            }]
+        );
+        app.rail_sel = Some(1);
+        effects.borrow_mut().clear();
+        app.apply(key(KeyCode::Char('x')), 7);
+        app.apply(key(KeyCode::Char('x')), 8);
+        assert_eq!(
+            sends(&effects),
+            vec![Effect::DisableSchedule("sch-1".into())]
+        );
+    }
+
+    /// The `/schedules` line — and the rail's ⏎ on a timer, which is the same
+    /// sentence. `schedule.*` shipped with NO surface at all, so an agent could
+    /// create a recurring run that spends money and nobody could see it.
+    #[test]
+    fn every_schedule_is_named_with_its_spec_and_when_it_next_fires() {
+        assert_eq!(
+            describe_schedules(&[], 0),
+            "no schedules — ask the agent to add one"
+        );
+        let rows = vec![schedule("a", "nightly build", "daily@03:00", 3_600_000), {
+            let mut off = schedule("b", "weekly sweep", "every:7d", -1);
+            off.enabled = false;
+            off
+        }];
+        assert_eq!(
+            describe_schedules(&rows, 0),
+            "2 schedules: daily@03:00 nightly build → next in 1h00m · \
+             (off) every:7d weekly sweep → next due — ask the agent to change one"
         );
     }
 
@@ -4088,6 +4882,26 @@ mod tests {
 
     // ---- the rail, the job view, the ask card, the take-back ------------
 
+    fn schedule(
+        id: &str,
+        title: &str,
+        spec: &str,
+        next_in_ms: i64,
+    ) -> bough_core::schema::parts::Schedule {
+        bough_core::schema::parts::Schedule {
+            id: id.into(),
+            title: title.into(),
+            prompt: "do the thing".into(),
+            workspace: None,
+            session_id: None,
+            spec: spec.into(),
+            enabled: true,
+            created_at: 0,
+            last_run_at: None,
+            next_run_at: next_in_ms,
+        }
+    }
+
     fn job(id: &str, command: &str) -> BackgroundJob {
         BackgroundJob {
             id: id.into(),
@@ -4269,18 +5083,25 @@ mod tests {
     fn sigils_never_reach_the_model_and_keep_the_draft() {
         let (effects, sink) = scripted();
         let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        // `!` IS THE USER'S OWN SHELL: a background job, never a turn. Nothing
+        // is billed, nothing enters the thread, and the composer is cleared
+        // because the line went somewhere.
         type_text(&mut app, "!echo hi", 0);
         app.apply(key(KeyCode::Enter), 10);
-        assert!(
-            effects.borrow().is_empty(),
+        assert_eq!(
+            sends(&effects),
+            vec![Effect::RunShell("echo hi".into())],
             "a ! line must not bill the model"
         );
-        assert_eq!(app.draft, "!echo hi");
-
+        assert_eq!(app.draft, "");
+        // (The composer is already empty, so this double-tap is the rewind —
+        // its own test — and the panel it opens is closed again here.)
         app.apply(key(KeyCode::Esc), 20);
-        app.apply(key(KeyCode::Esc), 30); // clear
-                                          // An unrecognised `/word` is a command ATTEMPT, never prose: it is
-                                          // intercepted with the teaching error and the draft is kept.
+        app.apply(key(KeyCode::Esc), 30);
+        app.apply(Action::Run(Command::PanelClose, String::new()), 31);
+        effects.borrow_mut().clear();
+        // An unrecognised `/word` is a command ATTEMPT, never prose: it is
+        // intercepted with the teaching error and the draft is kept.
         type_text(&mut app, "/zzz", 40);
         app.apply(key(KeyCode::Enter), 50);
         assert!(sends(&effects).is_empty(), "{:?}", effects.borrow());
@@ -4822,7 +5643,10 @@ mod tests {
         );
         assert!(!app.panel.open());
         // …and the transport hands the client-owned ones straight back.
-        app.apply(Action::Run(Command::Tab(crate::keys::PanelTab::Tree)), 0);
+        app.apply(
+            Action::Run(Command::Tab(crate::keys::PanelTab::Tree), String::new()),
+            0,
+        );
         assert!(app.panel.open());
         assert_eq!(app.panel.tab(), crate::keys::PanelTab::Tree);
     }

@@ -16,6 +16,7 @@
 use std::collections::{HashMap, HashSet};
 
 use bough_core::schema::parts::Message;
+use bough_core::schema::requests::PartPick;
 
 use crate::api::{
     McpStatus, ModelRow, SessionRow, SkillSourceRow, WorkflowDetail, WorkflowSummary,
@@ -37,7 +38,9 @@ use super::{panel_action_for, PanelAction, PanelState, INITIAL_PANEL};
 
 /// What the panel needs the app to do. Every one is a REST call the loop owns;
 /// the host itself performs no I/O.
-#[derive(Clone, Debug, PartialEq, Eq)]
+// Not `Eq`: the surgery verbs carry `PartPick`, which is a wire body and only
+// `PartialEq`. Nothing compares these for identity.
+#[derive(Clone, Debug, PartialEq)]
 pub enum HostRequest {
     /// `GET /sessions` — the tree's rows, on entry.
     LoadSessions,
@@ -95,6 +98,40 @@ pub enum HostRequest {
     SaveModel(ModelConfig),
     /// Open this agent's backing session (`o` in the workflows tab).
     OpenAgentSession(String),
+    // ---- the tree's surgery verbs ------------------------------------------
+    /// `POST /sessions/:id/fork` — ⏎ on a turn. Addressed to the ROW's own
+    /// conversation, never to the open one: the forest shows every
+    /// conversation's turns, so ⏎ on a branch's turn branches that branch.
+    /// `editor_text` is a user turn's own text, which goes back to the composer
+    /// so the re-send IS the new branch.
+    Fork {
+        session_id: String,
+        at_message_id: String,
+        exclusive: bool,
+        summarize_abandoned: bool,
+        editor_text: Option<String>,
+    },
+    /// `POST /sessions/:id/extract` — `e`. The turn under the cursor and every
+    /// later turn of ITS conversation become a fresh root, and it opens.
+    Extract {
+        session_id: String,
+        picks: Vec<PartPick>,
+    },
+    /// `POST /sessions/:id/move-into` — `m`, extract's mirror: the same turns
+    /// copied onto the tail of the conversation that is OPEN.
+    MoveInto {
+        target_id: String,
+        source_id: String,
+        picks: Vec<PartPick>,
+    },
+}
+
+/// Where the tree's arrival puts the cursor: on the open conversation (the
+/// switcher's "you are here") or on the turn a rewind is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Land {
+    Current,
+    Rewind,
 }
 
 /// The four steering verbs, so the request carries one enum rather than a
@@ -134,6 +171,10 @@ pub struct PanelHost {
     pub expanded: HashSet<String>,
     pub drilled: HashSet<String>,
     pub current_id: Option<String>,
+    /// Where the cursor should land when the tree's arrival fetch answers, and
+    /// on THAT answer only. `None` = the listing is a refresh and the cursor
+    /// belongs to whoever moved it last (the user).
+    land: Option<Land>,
     pub workspace: Option<String>,
     /// The `/` buffer. In the tree it is a FULL-TEXT search of every message,
     /// which is what the keymap has always claimed it was.
@@ -212,6 +253,7 @@ impl Default for PanelHost {
             expanded: HashSet::new(),
             drilled: HashSet::new(),
             current_id: None,
+            land: None,
             workspace: None,
             filter: String::new(),
             filtering: false,
@@ -296,8 +338,20 @@ impl PanelHost {
             self.expanded.insert(id);
         }
         self.sessions = sessions;
-        if self.state.open && self.state.tab == PanelTab::Tree {
-            self.land_on_current();
+        // ONCE, on the listing the ARRIVAL asked for — never on every refresh.
+        //
+        // The tree re-reads `GET /sessions` on the rail's beat, and landing on
+        // every answer re-parked the cursor about once a second: ↓ moved a row
+        // and the next poll pulled it straight back to "you are here", which
+        // made every verb below (⏎ to fork, `e`, `m`) unreachable by hand.
+        // Arrival is the moment the landing is about, and `take` is what makes
+        // it that moment only.
+        match self.land.take() {
+            Some(Land::Current) => self.land_on_current(),
+            Some(Land::Rewind) => {
+                self.sel = crate::forest::rewind_index(&self.rows(), self.current_id.as_deref());
+            }
+            None => {}
         }
     }
 
@@ -308,6 +362,97 @@ impl PanelHost {
             .iter()
             .position(|r| matches!(r, ForestRow::Session { current: true, .. }))
             .unwrap_or(0);
+    }
+
+    /// Open the workflows tab ON one run — the rail's ⏎ on a workflow row.
+    ///
+    /// The TS opens `unit.sessionId`, which for a run IS THE RUN ID (the rail
+    /// builds it that way), so it asked `GET /sessions/<run id>` and the row
+    /// did nothing but print a 404. A run's surface is the workflows tab, and
+    /// this lands on it drilled in, which is what the row is about.
+    pub fn open_run(&mut self, id: &str) -> Vec<HostRequest> {
+        self.state.open = true;
+        self.state.tab = PanelTab::Workflows;
+        self.wf_level = 1;
+        self.phase_sel = 0;
+        self.agent_sel = 0;
+        self.wf_scroll = 0;
+        self.prompt_open = false;
+        self.message = None;
+        vec![
+            HostRequest::LoadWorkflows,
+            HostRequest::LoadWorkflow(id.to_string()),
+        ]
+    }
+
+    /// The row under the cursor, as `(message id, its conversation)` — `None`
+    /// for anything that is not a TURN, which is what both `e` and `m` refuse.
+    fn turn_row(&self) -> Option<(String, String)> {
+        match self.rows().get(self.sel) {
+            Some(ForestRow::Message { id, session_id, .. }) => {
+                Some((id.clone(), session_id.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// That turn and every LATER turn of its own conversation — what both `e`
+    /// and `m` copy. `None` when the turn is no longer in the thread the tree
+    /// was built from, which is a stale row rather than an error.
+    fn picks_from(&self, session_id: &str, at_message_id: &str) -> Option<Vec<PartPick>> {
+        let thread = self.threads.get(session_id)?;
+        let at = thread.iter().position(|m| m.id == at_message_id)?;
+        Some(
+            thread[at..]
+                .iter()
+                .map(|m| PartPick {
+                    message_id: m.id.clone(),
+                    parts: None,
+                })
+                .collect(),
+        )
+    }
+
+    /// `esc esc` — the tree, opened ON the turn you would go back to.
+    ///
+    /// The landing row is the entire difference between this and `^t`: the open
+    /// conversation is EXPANDED (so its turns are rows at all) and the cursor is
+    /// put on its last user turn, where ⏎ means "edit this and branch".
+    /// Arriving at the top of a forest of forty conversations would make the
+    /// commonest correction in the product a scroll.
+    fn rewind(&mut self) -> Vec<HostRequest> {
+        let id = self.current_id.clone();
+        if let Some(id) = &id {
+            self.expanded.insert(id.clone());
+        }
+        let was_open = self.state.open && self.state.tab == PanelTab::Tree;
+        self.state.open = true;
+        self.state.tab = PanelTab::Tree;
+        // Computed AFTER the expand, against the rows as they will be WITH this
+        // conversation open: the index is meaningless against the collapsed
+        // forest, where the turn is not a row at all.
+        self.sel = crate::forest::rewind_index(&self.rows(), id.as_deref());
+        // The arrival fetch still runs when the tree was NOT already open — and
+        // `arrive` resets the cursor AND the message, so both are restored
+        // after it.
+        // The tree may not have its rows yet on a cold open — park the intent
+        // so the arrival's own listing lands on the turn rather than on the
+        // switcher's row.
+        self.land = Some(Land::Rewind);
+        let requests = if was_open {
+            Vec::new()
+        } else {
+            let sel = self.sel;
+            let requests = self.arrive(PanelTab::Tree);
+            self.sel = sel;
+            // `arrive` parked its own; the rewind's outranks it.
+            self.land = Some(Land::Rewind);
+            requests
+        };
+        if id.is_none() {
+            self.message = Some(REWIND_NEEDS_A_CONVERSATION.to_string());
+        }
+        requests
     }
 
     /// Arrival: one cursor, reset — and everything a previous tab armed,
@@ -321,6 +466,10 @@ impl PanelHost {
         self.pending = None;
         match tab {
             PanelTab::Tree => {
+                // Now, against the rows already in hand, AND again when the
+                // arrival fetch answers — the listing is what makes the row
+                // exist, and on a cold open there is nothing here to land on.
+                self.land = Some(Land::Current);
                 self.land_on_current();
                 vec![HostRequest::LoadSessions]
             }
@@ -592,6 +741,11 @@ impl PanelHost {
         if command == Command::PanelClose && self.back() {
             return Vec::new();
         }
+        // 2. `esc esc`, ahead of `panel_action_for` for the same reason `e` and
+        // `m` are: it is about the landing ROW, which lives here.
+        if command == Command::TreeRewind {
+            return self.rewind();
+        }
         if let Some(action) = panel_action_for(command) {
             let before = self.state;
             match action {
@@ -617,7 +771,7 @@ impl PanelHost {
                     // Elsewhere it must NOT run the ordinary commit — `s` in
                     // the model picker used to silently pin a model.
                     if self.state.tab == PanelTab::Tree {
-                        self.message = Some(NOT_WIRED_SUMMARIZE.to_string());
+                        return self.confirm_at(self.sel, true);
                     }
                     return Vec::new();
                 }
@@ -849,24 +1003,56 @@ impl PanelHost {
                 }
                 Vec::new()
             }
-            // 3./4. The surgery verbs, refused out loud rather than faked.
+            // 3./4. The surgery verbs. Nothing is destroyed by either — the
+            // source keeps every turn — so neither needs the arm-and-confirm
+            // that `changes.revert` does.
             Command::TreeExtract => {
-                if self.state.tab == PanelTab::Tree {
-                    self.message = Some(match self.rows().get(self.sel) {
-                        Some(ForestRow::Message { .. }) => NOT_WIRED_EXTRACT.to_string(),
-                        _ => EXTRACT_NEEDS_A_TURN.to_string(),
-                    });
+                if self.state.tab != PanelTab::Tree {
+                    return Vec::new();
                 }
-                Vec::new()
+                let Some((id, session_id)) = self.turn_row() else {
+                    self.message = Some(EXTRACT_NEEDS_A_TURN.to_string());
+                    return Vec::new();
+                };
+                let Some(picks) = self.picks_from(&session_id, &id) else {
+                    self.message = Some(TURN_IS_GONE.to_string());
+                    return Vec::new();
+                };
+                self.state.open = false;
+                vec![HostRequest::Extract { session_id, picks }]
             }
             Command::TreeMoveInto => {
-                if self.state.tab == PanelTab::Tree {
-                    self.message = Some(match self.rows().get(self.sel) {
-                        Some(ForestRow::Message { .. }) => NOT_WIRED_MOVE_INTO.to_string(),
-                        _ => MOVE_NEEDS_A_TURN.to_string(),
-                    });
+                if self.state.tab != PanelTab::Tree {
+                    return Vec::new();
                 }
-                Vec::new()
+                let Some((id, session_id)) = self.turn_row() else {
+                    self.message = Some(MOVE_NEEDS_A_TURN.to_string());
+                    return Vec::new();
+                };
+                let Some(target_id) = self.current_id.clone() else {
+                    self.message = Some(MOVE_NEEDS_A_TARGET.to_string());
+                    return Vec::new();
+                };
+                if session_id == target_id {
+                    // Said locally rather than as a 400: this is the likely
+                    // slip, and "a session cannot append its own turns to its
+                    // own tail" reads as a fault when it is really the wrong
+                    // row. The server's three unsound-target refusals (itself,
+                    // a session mid-turn, an ancestor of the source) still
+                    // arrive as sentences.
+                    self.message = Some(MOVE_IS_THE_SAME_CONVERSATION.to_string());
+                    return Vec::new();
+                }
+                let Some(picks) = self.picks_from(&session_id, &id) else {
+                    self.message = Some(TURN_IS_GONE.to_string());
+                    return Vec::new();
+                };
+                self.state.open = false;
+                vec![HostRequest::MoveInto {
+                    target_id,
+                    source_id: session_id,
+                    picks,
+                }]
             }
             // 12. The `/` buffer (row 3.21). In the tree it is a full-text
             // search of every message; the debounced fetch is the app's, and
@@ -1054,6 +1240,14 @@ impl PanelHost {
 
     /// What ⏎ affirms, per tab.
     pub fn confirm(&mut self, at: usize) -> Vec<HostRequest> {
+        self.confirm_at(at, false)
+    }
+
+    /// ⏎ (`summarize = false`) and the tree's `s` (`summarize = true`), which
+    /// differ only in whether the branch carries a summary of the path it left
+    /// behind. One body, because `s` IS the ordinary commit on the tree and
+    /// must not become a second one that drifts from it.
+    pub fn confirm_at(&mut self, at: usize, summarize: bool) -> Vec<HostRequest> {
         match self.state.tab {
             PanelTab::Tree => {
                 let rows = self.rows();
@@ -1073,9 +1267,20 @@ impl PanelHost {
                         self.drilled.insert(id);
                         Vec::new()
                     }
-                    Selection::Fork { .. } => {
-                        self.message = Some(NOT_WIRED_FORK.to_string());
-                        Vec::new()
+                    Selection::Fork {
+                        session_id,
+                        at_message_id,
+                        exclusive,
+                        editor_text,
+                    } => {
+                        self.state.open = false;
+                        vec![HostRequest::Fork {
+                            session_id,
+                            at_message_id,
+                            exclusive,
+                            summarize_abandoned: summarize,
+                            editor_text,
+                        }]
                     }
                     Selection::None => Vec::new(),
                 }
@@ -1284,10 +1489,11 @@ pub const CHEAP_TIER_NOT_WRITABLE: &str =
     "the cheap tier is set by BOUGH_CHEAP_MODEL and has no write route yet — nothing was saved";
 pub const EXTRACT_NEEDS_A_TURN: &str = "e splits a conversation at a TURN — move onto one first";
 pub const MOVE_NEEDS_A_TURN: &str = "m brings a TURN here — move onto one first";
-pub const NOT_WIRED_EXTRACT: &str = "splitting a conversation is not wired into this client yet";
-pub const NOT_WIRED_MOVE_INTO: &str = "bringing a turn here is not wired into this client yet";
-pub const NOT_WIRED_FORK: &str = "forking a turn is not wired into this client yet";
-pub const NOT_WIRED_SUMMARIZE: &str = "branching with a summary is not wired into this client yet";
+pub const MOVE_NEEDS_A_TARGET: &str = "no conversation is open to bring these turns into";
+pub const MOVE_IS_THE_SAME_CONVERSATION: &str = "those turns are already in this conversation";
+pub const TURN_IS_GONE: &str = "that turn is no longer in the thread";
+pub const REWIND_NEEDS_A_CONVERSATION: &str =
+    "no conversation is open — there is no turn to go back to";
 pub const NOTHING_TO_REVERT: &str = "nothing to revert here";
 
 #[cfg(test)]
@@ -1511,38 +1717,191 @@ mod tests {
         assert!(h.open());
     }
 
+    /// The tree re-reads `GET /sessions` on the rail's beat. Landing on every
+    /// answer re-parked the cursor about once a second — ↓ moved a row and the
+    /// next poll pulled it back to "you are here" — which put every verb below
+    /// the current conversation (⏎ to fork, `e`, `m`) out of reach by hand.
+    #[test]
+    fn a_refreshed_listing_does_not_move_a_cursor_the_user_placed() {
+        let mut h = host();
+        h.current_id = Some("a".into());
+        h.handle(Command::PanelToggle, None, 10);
+        // The ARRIVAL's own listing lands on you-are-here.
+        h.set_sessions(vec![
+            session_row("a", SessionKind::Root, 1),
+            session_row("b", SessionKind::Root, 2),
+        ]);
+        assert_eq!(h.rows()[h.sel].id(), "a");
+        h.handle(Command::MoveDown, None, 10);
+        let moved = h.sel;
+        assert_ne!(moved, 0, "the cursor moved");
+        // …and the next poll leaves it exactly where the user put it.
+        h.set_sessions(vec![
+            session_row("a", SessionKind::Root, 1),
+            session_row("b", SessionKind::Root, 2),
+        ]);
+        assert_eq!(h.sel, moved);
+    }
+
+    /// Move the cursor onto `a`'s first turn, which every surgery test needs.
+    fn on_a_turn(h: &mut PanelHost) {
+        h.expanded.insert("a".into());
+        let turn = h.rows().iter().position(|r| r.id() == "m1").unwrap();
+        h.move_to(turn as isize);
+    }
+
     #[test]
     fn the_surgery_verbs_refuse_out_loud_and_name_the_gesture_that_would_work() {
         let mut h = host();
         h.handle(Command::PanelToggle, None, 10);
         // On a conversation row: `e` says what it needs.
-        h.handle(Command::TreeExtract, None, 10);
+        assert!(h.handle(Command::TreeExtract, None, 10).is_empty());
         assert_eq!(h.message.as_deref(), Some(EXTRACT_NEEDS_A_TURN));
-        h.handle(Command::TreeMoveInto, None, 10);
+        assert!(h.handle(Command::TreeMoveInto, None, 10).is_empty());
         assert_eq!(h.message.as_deref(), Some(MOVE_NEEDS_A_TURN));
-        // On a turn: the honest "not wired yet".
-        h.expanded.insert("a".into());
-        let turn = h.rows().iter().position(|r| r.id() == "m1").unwrap();
-        h.move_to(turn as isize);
-        h.handle(Command::TreeExtract, None, 10);
-        assert_eq!(h.message.as_deref(), Some(NOT_WIRED_EXTRACT));
-        // ⏎ on a turn is a fork, and says so rather than doing nothing.
-        h.handle(Command::PanelConfirm, None, 10);
-        assert_eq!(h.message.as_deref(), Some(NOT_WIRED_FORK));
+    }
+
+    /// `e` — the turn under the cursor and every LATER turn of ITS conversation
+    /// become a fresh root. The source keeps its own, so nothing is armed.
+    #[test]
+    fn extract_picks_that_turn_and_every_later_turn_of_its_own_thread() {
+        let mut h = host();
+        h.handle(Command::PanelToggle, None, 10);
+        on_a_turn(&mut h);
+        assert_eq!(
+            h.handle(Command::TreeExtract, None, 10),
+            vec![HostRequest::Extract {
+                session_id: "a".into(),
+                picks: vec![
+                    PartPick {
+                        message_id: "m1".into(),
+                        parts: None
+                    },
+                    PartPick {
+                        message_id: "m2".into(),
+                        parts: None
+                    },
+                ],
+            }]
+        );
+        assert!(!h.open(), "the panel closes onto the conversation it made");
+    }
+
+    /// `m` — extract's mirror. Three local refusals, then the copy.
+    #[test]
+    fn move_into_refuses_locally_before_it_asks_the_server() {
+        let mut h = host();
+        h.handle(Command::PanelToggle, None, 10);
+        on_a_turn(&mut h);
+        // No conversation open to receive them.
+        assert!(h.handle(Command::TreeMoveInto, None, 10).is_empty());
+        assert_eq!(h.message.as_deref(), Some(MOVE_NEEDS_A_TARGET));
+        // The row's OWN conversation is the open one.
+        h.current_id = Some("a".into());
+        assert!(h.handle(Command::TreeMoveInto, None, 10).is_empty());
+        assert_eq!(h.message.as_deref(), Some(MOVE_IS_THE_SAME_CONVERSATION));
+        // A real target: the same picks, landing on `b`'s tail.
+        h.current_id = Some("b".into());
+        assert_eq!(
+            h.handle(Command::TreeMoveInto, None, 10),
+            vec![HostRequest::MoveInto {
+                target_id: "b".into(),
+                source_id: "a".into(),
+                picks: vec![
+                    PartPick {
+                        message_id: "m1".into(),
+                        parts: None
+                    },
+                    PartPick {
+                        message_id: "m2".into(),
+                        parts: None
+                    },
+                ],
+            }]
+        );
+        assert!(!h.open());
+    }
+
+    /// ⏎ on a turn FORKS — and a USER turn cuts BEFORE itself, handing its text
+    /// to the composer so the re-send IS the new branch.
+    #[test]
+    fn confirm_on_a_turn_forks_the_rows_own_conversation() {
+        let mut h = host();
+        h.handle(Command::PanelToggle, None, 10);
+        on_a_turn(&mut h);
+        assert_eq!(
+            h.confirm(h.sel),
+            vec![HostRequest::Fork {
+                session_id: "a".into(),
+                at_message_id: "m1".into(),
+                exclusive: true,
+                summarize_abandoned: false,
+                editor_text: Some("go".into()),
+            }]
+        );
+        assert!(!h.open());
     }
 
     #[test]
     fn summarize_fork_acts_on_the_tree_and_nowhere_else() {
         let mut h = host();
         h.handle(Command::Tab(PanelTab::Changes), None, 10);
-        h.handle(Command::PanelConfirmSummarize, None, 10);
+        assert!(h
+            .handle(Command::PanelConfirmSummarize, None, 10)
+            .is_empty());
         assert_eq!(
             h.message, None,
             "`s` outside the tree must not affirm anything"
         );
         h.handle(Command::Tab(PanelTab::Tree), None, 10);
-        h.handle(Command::PanelConfirmSummarize, None, 10);
-        assert_eq!(h.message.as_deref(), Some(NOT_WIRED_SUMMARIZE));
+        on_a_turn(&mut h);
+        // The SAME fork, with the abandoned path carried onto the branch.
+        assert_eq!(
+            h.handle(Command::PanelConfirmSummarize, None, 10),
+            vec![HostRequest::Fork {
+                session_id: "a".into(),
+                at_message_id: "m1".into(),
+                exclusive: true,
+                summarize_abandoned: true,
+                editor_text: Some("go".into()),
+            }]
+        );
+    }
+
+    /// `esc esc` — the tree, opened ON the turn you would go back to.
+    #[test]
+    fn rewind_opens_the_tree_on_the_open_conversations_last_user_turn() {
+        let mut h = host();
+        h.current_id = Some("a".into());
+        let requests = h.handle(Command::TreeRewind, None, 10);
+        assert!(h.open() && h.tab() == PanelTab::Tree);
+        assert!(requests.contains(&HostRequest::LoadSessions));
+        assert!(
+            h.expanded.contains("a"),
+            "the conversation must be expanded, or its turns are not rows at all"
+        );
+        assert_eq!(h.rows()[h.sel].id(), "m1", "the last USER turn");
+        // With no conversation open there is nothing to go back to, and the
+        // tree still opens — at the top, where the switcher lives.
+        let mut h = host();
+        h.handle(Command::TreeRewind, None, 10);
+        assert_eq!(h.message.as_deref(), Some(REWIND_NEEDS_A_CONVERSATION));
+        assert!(h.open());
+    }
+
+    /// The rail's ⏎ on a run: the workflows tab, drilled in on THAT run.
+    #[test]
+    fn open_run_lands_the_workflows_tab_on_one_run() {
+        let mut h = host();
+        assert_eq!(
+            h.open_run("w1"),
+            vec![
+                HostRequest::LoadWorkflows,
+                HostRequest::LoadWorkflow("w1".into()),
+            ]
+        );
+        assert!(h.open() && h.tab() == PanelTab::Workflows);
+        assert_eq!(h.wf_level, 1);
     }
 
     #[test]
