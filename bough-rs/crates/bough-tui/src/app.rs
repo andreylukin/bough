@@ -4319,6 +4319,24 @@ pub async fn run_loop<T: Transport>(
     // Focus reporting: `notify_desktop` is silent while focused, and it can
     // only know that if the terminal says so.
     let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableFocusChange);
+    // BRACKETED PASTE — the mode that makes a paste ONE event instead of N
+    // keystrokes. Without it a real terminal delivers pasted text as ordinary
+    // key presses, so every newline in it is Enter: a multi-line paste SENDS,
+    // line by line, and `Event::Paste` never arrives at all no matter how
+    // correctly the handler is wired.
+    //
+    // `input.rs::enter_tui` sets this (and mouse, and focus) in one sequence
+    // and is dead code — nothing ever called it, which is exactly how this
+    // went missing while its two neighbours above were enabled by hand. The
+    // modes are set here, next to the others, rather than by resurrecting that
+    // function: two places that both claim to own terminal mode is how they
+    // drift apart in the first place.
+    //
+    // NOT catchable by the shell-use suite: that harness writes whatever bytes
+    // the test asks for, including `\e[200~…\e[201~`, whether or not the
+    // program ever requested the mode — so paste "passed" against a terminal
+    // no user has.
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
     // The terminal's own chrome: window/tab title, taskbar progress, the
     // desktop banner. Every one is capability-gated inside `Term` and every one
     // degrades to nothing where the terminal cannot do it (term.rs).
@@ -4452,6 +4470,9 @@ pub async fn run_loop<T: Transport>(
     // any tab tint. Left behind, they outlive the program in the user's tab.
     term.cleanup();
     let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableFocusChange);
+    // Paste mode off with the rest: left on, the shell that follows receives
+    // its own pastes wrapped in `\e[200~` markers it will happily type out.
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
     // The terminal is restored on every exit path (main.tsx contract; the
     // panic-hook half is term.rs, row 1.38).
     let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);

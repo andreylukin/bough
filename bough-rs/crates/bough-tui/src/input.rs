@@ -282,6 +282,37 @@ mod tests {
         );
     }
 
+    /// EVERY MODE THE TUI NEEDS IS ACTUALLY REQUESTED AT STARTUP.
+    ///
+    /// This exists because bracketed paste was NOT. `enter_tui` below sets
+    /// mouse + paste + focus in one sequence and was never called by anything;
+    /// `run_loop` enabled mouse and focus by hand through crossterm and simply
+    /// omitted paste. A real terminal therefore delivered a paste as ordinary
+    /// keystrokes — every newline an Enter, so a multi-line paste sent itself
+    /// line by line — and `Event::Paste` never arrived, no matter how correctly
+    /// the handler was wired.
+    ///
+    /// No screen-driving test can catch that: a PTY harness writes whatever
+    /// bytes the test asks for, `\e[200~…\e[201~` included, whether or not the
+    /// program ever asked the terminal for that mode. So the assertion has to
+    /// be about what we REQUEST, not about what we can be fed.
+    #[test]
+    fn the_startup_sequence_requests_paste_mouse_and_focus() {
+        for (mode, what) in [
+            ("?2004h", "bracketed paste — without it a paste is N keystrokes"),
+            ("?1006h", "SGR mouse encoding"),
+            ("?1002h", "drag tracking, which selection needs"),
+            ("?1004h", "focus reporting"),
+        ] {
+            assert!(ENTER_SEQ.contains(mode), "ENTER_SEQ must request {mode}: {what}");
+        }
+        // Whatever is switched on must be switched off, or it outlives the
+        // process in the user's shell.
+        for mode in ["?2004l", "?1006l", "?1002l", "?1000l", "?1004l"] {
+            assert!(LEAVE_SEQ.contains(mode), "LEAVE_SEQ must clear {mode}");
+        }
+    }
+
     #[test]
     fn leave_tui_swallows_a_throwing_cleanup() {
         // Must not panic.
