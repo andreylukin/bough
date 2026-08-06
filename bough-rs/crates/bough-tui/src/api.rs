@@ -27,6 +27,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 
+use bough_core::hostfn::artifact::Artifact;
 use bough_core::schema::parts::{
     AskQuestion, BackgroundJob, Message, Schedule, Session, TurnStatus,
 };
@@ -35,6 +36,7 @@ use bough_core::schema::requests::{
     PostMessageBody, PutModelSettingsBody, UnsendBody,
 };
 use bough_core::types::{Effort, UsageTotals};
+use bough_core::workflow::saved::SavedWorkflow;
 
 use crate::store::state::SessionChangeSet;
 
@@ -1139,6 +1141,36 @@ impl Api {
             Some(serde_json::json!({ "name": name })),
         )
         .await
+    }
+
+    /// `GET /saved-workflows` — the scripts saved by name, newest first as the
+    /// server ordered them. The envelope is unwrapped here so no caller has to
+    /// know the route answers `{saved: […]}`.
+    pub async fn list_saved_workflows(&self) -> Result<Vec<SavedWorkflow>, ApiFailure> {
+        #[derive(Deserialize)]
+        struct Envelope {
+            #[serde(default)]
+            saved: Vec<SavedWorkflow>,
+        }
+        let wrapped: Envelope = self.get("/saved-workflows").await?;
+        Ok(wrapped.saved)
+    }
+
+    // -- artifacts ------------------------------------------------------------
+
+    /// `GET /sessions/:id/artifacts` — what this conversation has published.
+    /// Answered from the filesystem, so a session with no row still lists the
+    /// files that are demonstrably on disk.
+    pub async fn list_artifacts(&self, session_id: &str) -> Result<Vec<Artifact>, ApiFailure> {
+        #[derive(Deserialize)]
+        struct Envelope {
+            #[serde(default)]
+            artifacts: Vec<Artifact>,
+        }
+        let wrapped: Envelope = self
+            .get(&format!("/sessions/{}/artifacts", seg(session_id)))
+            .await?;
+        Ok(wrapped.artifacts)
     }
 
     // -- the cheap-tier cosmetics (row 3.21) ----------------------------------

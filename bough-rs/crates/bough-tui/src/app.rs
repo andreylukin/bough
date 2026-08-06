@@ -153,6 +153,14 @@ pub enum Action {
     Draft(String),
     /// `GET /schedules` — the rail's standing promises, disabled rows included.
     Schedules(Vec<bough_core::schema::parts::Schedule>),
+    /// `GET /saved-workflows` — the scripts saved by name, for `/saved`.
+    Saved(Vec<bough_core::workflow::saved::SavedWorkflow>),
+    /// `GET /sessions/:id/artifacts` — what this conversation published, for
+    /// `/artifacts`.
+    Artifacts(Vec<bough_core::hostfn::artifact::Artifact>),
+    /// The `AGENTS.md` files the next turn will inject, RE-READ for `/rules`
+    /// rather than taken off the snapshot this screen was opened with.
+    ProjectRules(Vec<crate::api::ProjectRuleSummary>),
     /// `POST /sessions/:id/ghost` — the cheap tier's guess at the next message,
     /// or the empty string for every failure there is.
     Ghost(String),
@@ -328,6 +336,15 @@ pub enum Effect {
     /// `PATCH /schedules/:id {enabled:false}` — the rail's stop on a schedule
     /// DISABLES it: the row leaves, the spec and prompt are kept.
     DisableSchedule(String),
+    /// `GET /saved-workflows` — `/saved`.
+    LoadSaved,
+    /// `GET /sessions/:id/artifacts` — `/artifacts`.
+    LoadArtifacts,
+    /// `GET /sessions/:id` for its `projectRules` alone — `/rules`. Re-read on
+    /// purpose: the files are read from disk per turn, so an answer off the
+    /// snapshot this screen opened with is exactly the stale reassurance the
+    /// command exists to avoid.
+    LoadProjectRules,
 }
 
 /// The transport seam — scripted in tests; wired to `api.rs` when row 1.32 lands.
@@ -412,6 +429,9 @@ fn is_client_command(command: Command) -> bool {
             | Command::SessionCompact
             | Command::TreeRewind
             | Command::SchedulesShow
+            | Command::SavedShow
+            | Command::ArtifactsShow
+            | Command::RulesShow
     )
 }
 
@@ -474,6 +494,86 @@ pub fn describe_schedules(rows: &[bough_core::schema::parts::Schedule], now: i64
         list.join(" · "),
     )
 }
+
+/// `/saved` — the scripts saved by name (store.ts::describeSavedWorkflows).
+///
+/// The empty sentence points at the ONE gesture that creates one. The non-empty
+/// one deliberately does not say "ask the agent to run one by name": no host
+/// function does that, and naming an action that cannot be taken is the same
+/// defect as a panel that does not exist. `r` in the workflows tab is the verb.
+pub fn describe_saved_workflows(rows: &[bough_core::workflow::saved::SavedWorkflow]) -> String {
+    use crate::store::selectors::plural;
+    if rows.is_empty() {
+        return "no saved workflows — open a run in ^w and press s to save its script".to_string();
+    }
+    format!(
+        "{}: {} — open a run in ^w and press r to re-run its script",
+        plural(rows.len() as i64, "saved workflow"),
+        rows.iter()
+            .map(|r| r.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" · "),
+    )
+}
+
+/// `/artifacts` — NAMES, NOT URLS (store.ts::describeArtifacts).
+///
+/// A notice is ONE line, and one artifact's name plus its
+/// `http://127.0.0.1:4325/artifacts/<uuid>/<file>` href is 111 characters — so
+/// a list of hrefs was clipped mid-URL on a 100-column screen and the clipped
+/// half was the only part the reader wanted. The full link is already in the
+/// transcript on the turn that published it, wrapped and clickable; this says
+/// WHAT exists and where the links are.
+pub fn describe_artifacts(rows: &[bough_core::hostfn::artifact::Artifact]) -> String {
+    use crate::store::selectors::plural;
+    if rows.is_empty() {
+        return "this conversation has published no artifacts".to_string();
+    }
+    format!(
+        "{}: {} — the link is on the turn that published each one",
+        plural(rows.len() as i64, "artifact"),
+        rows.iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+/// `/rules` — which `AGENTS.md` files the next turn will inject, in prompt
+/// order (store.ts::describeProjectRules).
+pub fn describe_project_rules(rows: &[crate::api::ProjectRuleSummary]) -> String {
+    use crate::store::selectors::plural;
+    if rows.is_empty() {
+        return "no AGENTS.md applies here — write one in the workspace, or in $BOUGH_HOME for every project"
+            .to_string();
+    }
+    format!(
+        "{} in every turn's prompt, in this order: {}{}",
+        plural(rows.len() as i64, "AGENTS.md"),
+        rows.iter()
+            .map(|r| format!("{} ({} chars)", r.path, r.bytes))
+            .collect::<Vec<_>>()
+            .join(" → "),
+        if rows.len() > 1 {
+            " — the last one wins where two disagree"
+        } else {
+            ""
+        },
+    )
+}
+
+/// The two sentences the id-copy answers with, and the one it refuses with.
+/// `^g`: the id is the handle every out-of-band route to this conversation
+/// needs — a `session_id =` filter over the history tables, a `bough`
+/// subcommand, a bug report naming the run — and the TUI never showed it, so it
+/// was read off the database by hand. The copy path is the same OSC 52 a drag
+/// uses, so it survives ssh and tmux; the id is in the notice either way, which
+/// is readable and selectable rather than a gesture that silently did nothing.
+pub const NO_CONVERSATION_TO_COPY: &str = "no conversation is open yet";
+/// `/artifacts` and `/rules` before the first turn: neither has an answer that
+/// is about anything, and both say WHY rather than showing an empty list.
+pub const NO_CONVERSATION_ARTIFACTS: &str = "no conversation is open, so it has no artifacts";
+pub const NO_CONVERSATION_RULES: &str = "no conversation is open, so nothing is injected yet";
 
 /// `/compact`'s sentences, verbatim.
 pub const NOTHING_TO_HAND_OFF: &str = "nothing to hand off yet — this conversation is empty";
@@ -887,6 +987,11 @@ impl<T: Transport> App<T> {
                     self.notice = Some(describe_schedules(&self.schedules, self.now_ms));
                 }
             }
+            // The three one-shot listings. None of them is state: they are read
+            // when asked for and said once, so nothing is cached to go stale.
+            Action::Saved(rows) => self.notice = Some(describe_saved_workflows(&rows)),
+            Action::Artifacts(rows) => self.notice = Some(describe_artifacts(&rows)),
+            Action::ProjectRules(rows) => self.notice = Some(describe_project_rules(&rows)),
             Action::Connected(up) => self.connected = up,
             Action::SessionOpened(id) => {
                 self.panel.current_id = Some(id.clone());
@@ -1590,6 +1695,26 @@ impl<T: Transport> App<T> {
                 self.describe_schedules = true;
                 self.transport.effect(Effect::LoadSchedules);
             }
+            // The scripts saved by name. Not session-scoped: saved workflows
+            // live in `$BOUGH_HOME`, so this answers before the first turn too.
+            Command::SavedShow => self.transport.effect(Effect::LoadSaved),
+            // Both of the next two are ABOUT a conversation, so with none open
+            // they say why rather than showing an empty list that reads as "you
+            // have published nothing" / "no rules apply".
+            Command::ArtifactsShow => {
+                if self.session_id.is_none() {
+                    self.notice = Some(NO_CONVERSATION_ARTIFACTS.to_string());
+                    return;
+                }
+                self.transport.effect(Effect::LoadArtifacts);
+            }
+            Command::RulesShow => {
+                if self.session_id.is_none() {
+                    self.notice = Some(NO_CONVERSATION_RULES.to_string());
+                    return;
+                }
+                self.transport.effect(Effect::LoadProjectRules);
+            }
             other => {
                 let requests = self.panel.handle(other, None, self.panel_body_budget());
                 self.serve(requests);
@@ -1764,6 +1889,21 @@ impl<T: Transport> App<T> {
                 // there being one), and it is reversible with esc.
                 Command::RailEnter => {
                     self.rail_sel = Some(0);
+                    true
+                }
+                // ^g: the open conversation's id, on the clipboard AND in the
+                // notice. The id goes through the same OSC 52 path a drag uses,
+                // so it survives ssh and tmux; saying it as well means a
+                // terminal with no clipboard still leaves it selectable on
+                // screen rather than the gesture silently doing nothing.
+                Command::SessionCopyId => {
+                    match self.session_id.clone() {
+                        Some(id) => {
+                            (self.copy)(&id);
+                            self.notice = Some(format!("copied {id}"));
+                        }
+                        None => self.notice = Some(NO_CONVERSATION_TO_COPY.to_string()),
+                    }
                     true
                 }
                 // The take-back window's Escape. The keymap decided this
@@ -4062,6 +4202,58 @@ impl Transport for LiveTransport {
                     }
                 });
             }
+            // The three one-shot listings. Each was ASKED for out loud, so
+            // unlike the rail's feeds a failure is said rather than swallowed:
+            // silence after `/saved` is indistinguishable from "none".
+            Effect::LoadSaved => {
+                tokio::spawn(async move {
+                    match api.list_saved_workflows().await {
+                        Ok(rows) => {
+                            let _ = tx.send(Action::Saved(rows));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                });
+            }
+            Effect::LoadArtifacts => {
+                tokio::spawn(async move {
+                    let Some(sid) = session.lock().expect("session lock").clone() else {
+                        let _ = tx.send(Action::Notice(NO_CONVERSATION_ARTIFACTS.to_string()));
+                        return;
+                    };
+                    match api.list_artifacts(&sid).await {
+                        Ok(rows) => {
+                            let _ = tx.send(Action::Artifacts(rows));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                });
+            }
+            Effect::LoadProjectRules => {
+                tokio::spawn(async move {
+                    let Some(sid) = session.lock().expect("session lock").clone() else {
+                        let _ = tx.send(Action::Notice(NO_CONVERSATION_RULES.to_string()));
+                        return;
+                    };
+                    // The whole snapshot, for one field: `projectRules` has no
+                    // route of its own, and the files are re-read per turn
+                    // server-side, so this IS the fresh answer.
+                    match api.get_session(&sid).await {
+                        Ok(snapshot) => {
+                            let _ = tx.send(Action::ProjectRules(
+                                snapshot.project_rules.unwrap_or_default(),
+                            ));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
+                    }
+                });
+            }
         }
     }
 }
@@ -4626,6 +4818,166 @@ mod tests {
             "2 schedules: daily@03:00 nightly build → next in 1h00m · \
              (off) every:7d weekly sweep → next due — ask the agent to change one"
         );
+    }
+
+    // ---- the last four client verbs: /saved, /artifacts, /rules, ^g --------
+
+    fn saved(name: &str) -> bough_core::workflow::saved::SavedWorkflow {
+        bough_core::workflow::saved::SavedWorkflow {
+            name: name.into(),
+            path: format!("/tmp/{name}.ts"),
+            description: String::new(),
+            bytes: 10,
+            updated_at: 0,
+        }
+    }
+
+    fn artifact(name: &str, id: &str) -> bough_core::hostfn::artifact::Artifact {
+        bough_core::hostfn::artifact::Artifact {
+            name: name.into(),
+            url: format!("/artifacts/{id}/{name}"),
+            href: format!("http://127.0.0.1:4325/artifacts/{id}/{name}"),
+            bytes: 512,
+            ts: 1,
+        }
+    }
+
+    fn rule(path: &str, bytes: i64) -> crate::api::ProjectRuleSummary {
+        crate::api::ProjectRuleSummary {
+            label: path.into(),
+            path: path.into(),
+            bytes,
+        }
+    }
+
+    /// `/saved` asks the server and says what came back. The empty sentence
+    /// names the ONE gesture that makes a saved workflow; the full one names
+    /// re-running, because no host function runs one by name.
+    #[test]
+    fn saved_lists_the_scripts_and_names_a_gesture_that_exists() {
+        assert_eq!(
+            describe_saved_workflows(&[]),
+            "no saved workflows — open a run in ^w and press s to save its script"
+        );
+        assert_eq!(
+            describe_saved_workflows(&[saved("nightly"), saved("triage")]),
+            "2 saved workflows: nightly · triage — open a run in ^w and press r to re-run its script"
+        );
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        // No conversation open: saved workflows live in $BOUGH_HOME, so this
+        // one answers before the first turn rather than refusing.
+        app.apply(Action::Run(Command::SavedShow, String::new()), 0);
+        assert_eq!(sends(&effects), vec![Effect::LoadSaved]);
+        app.apply(Action::Saved(vec![saved("nightly")]), 1);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("1 saved workflow: nightly — open a run in ^w and press r to re-run its script")
+        );
+    }
+
+    /// Port of store.test.ts "the artifact list names them and does not try to
+    /// fit their URLs". A notice is ONE line, and one artifact's href is 111
+    /// characters — the list used to be clipped mid-URL, losing the only half
+    /// the reader wanted.
+    #[test]
+    fn the_artifact_list_names_them_and_does_not_try_to_fit_their_urls() {
+        let rows = vec![
+            artifact("line_counts.html", &"a".repeat(36)),
+            artifact("report.html", &"b".repeat(36)),
+        ];
+        let notice = describe_artifacts(&rows);
+        assert!(
+            notice.starts_with("2 artifacts: line_counts.html, report.html"),
+            "{notice}"
+        );
+        assert!(!notice.contains("http://"), "{notice}");
+        assert!(notice.chars().count() <= 100, "{}: {notice}", notice.len());
+        assert_eq!(
+            describe_artifacts(&[]),
+            "this conversation has published no artifacts"
+        );
+    }
+
+    /// Both conversation-scoped verbs say WHY before the first turn instead of
+    /// showing an empty list, which reads as a fact about this conversation.
+    #[test]
+    fn artifacts_and_rules_refuse_with_a_reason_when_no_conversation_is_open() {
+        for (command, sentence) in [
+            (Command::ArtifactsShow, NO_CONVERSATION_ARTIFACTS),
+            (Command::RulesShow, NO_CONVERSATION_RULES),
+        ] {
+            let (effects, sink) = scripted();
+            let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+            app.apply(Action::Run(command, String::new()), 0);
+            assert_eq!(app.notice.as_deref(), Some(sentence));
+            assert!(sends(&effects).is_empty(), "nothing to ask the server for");
+        }
+    }
+
+    #[test]
+    fn artifacts_and_rules_ask_for_their_own_listing_once_a_conversation_is_open() {
+        for (command, effect, action, expected) in [
+            (
+                Command::ArtifactsShow,
+                Effect::LoadArtifacts,
+                Action::Artifacts(vec![artifact("report.html", "s1")]),
+                "1 artifact: report.html — the link is on the turn that published each one",
+            ),
+            (
+                Command::RulesShow,
+                Effect::LoadProjectRules,
+                Action::ProjectRules(vec![rule("AGENTS.md", 120)]),
+                "1 AGENTS.md in every turn's prompt, in this order: AGENTS.md (120 chars)",
+            ),
+        ] {
+            let (effects, sink) = scripted();
+            let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+            open_s1(&mut app);
+            app.apply(Action::Run(command, String::new()), 0);
+            assert_eq!(sends(&effects), vec![effect]);
+            app.apply(action, 1);
+            assert_eq!(app.notice.as_deref(), Some(expected));
+        }
+    }
+
+    /// The rules line is ORDERED, and says so: two files are a precedence
+    /// question, and the answer is the one that ships in the prompt last.
+    #[test]
+    fn the_rules_line_is_in_prompt_order_and_names_the_winner() {
+        assert_eq!(
+            describe_project_rules(&[]),
+            "no AGENTS.md applies here — write one in the workspace, \
+             or in $BOUGH_HOME for every project"
+        );
+        assert_eq!(
+            describe_project_rules(&[rule("AGENTS.md", 120), rule("packages/api/AGENTS.md", 40)]),
+            "2 AGENTS.mds in every turn's prompt, in this order: AGENTS.md (120 chars) → \
+             packages/api/AGENTS.md (40 chars) — the last one wins where two disagree"
+        );
+    }
+
+    /// Port of App.test.tsx "^g copies the OPEN conversation's id, and says
+    /// so" — and its no-conversation twin. The id is the handle every
+    /// out-of-band route back to this run needs.
+    #[test]
+    fn ctrl_g_copies_the_open_conversations_id_and_says_so() {
+        let copied: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        {
+            let sink = copied.clone();
+            app.set_copy(Box::new(move |t| sink.lock().unwrap().push(t.to_string())));
+        }
+        // With nothing open there is no id to copy, and it says why.
+        app.apply(ctrl('g'), 0);
+        assert!(copied.lock().unwrap().is_empty(), "there is no id to copy");
+        assert_eq!(app.notice.as_deref(), Some(NO_CONVERSATION_TO_COPY));
+
+        open_s1(&mut app);
+        app.apply(ctrl('g'), 1);
+        assert_eq!(copied.lock().unwrap().as_slice(), ["s1".to_string()]);
+        assert_eq!(app.notice.as_deref(), Some("copied s1"));
     }
 
     #[test]
