@@ -5,7 +5,7 @@ RS_DIR := bough-rs
 SMOKE_PORT ?= 43219
 
 .PHONY: help check test dev serve tui gates \
-        rs-check rs-build rs-test rs-lint rs-release rs-server rs-tui rs-smoke rs-gates all
+        rs-check rs-build rs-test rs-lint rs-release rs-server rs-tui rs-smoke rs-parity rs-gates all
 
 help: ## list targets
 	@grep -E '^[a-z][a-zA-Z_-]*:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -52,6 +52,9 @@ rs-tui: ## run the Rust TUI against BOUGH_PORT (default live 4321)
 
 rs-smoke: rs-release ## boot Rust server + drive the TUI via shell-use; SMOKE_MODEL=openai/gpt-5.6-luna for a live turn
 	$(RS_DIR)/smoke.sh
+
+rs-parity: rs-release ## diff the TS and Rust servers route by route (status + JSON shape)
+	$(RS_DIR)/parity.sh
 
 rs-gates: rs-build rs-test ## the Rust pre-commit gates
 
