@@ -48,6 +48,15 @@ pub enum HostRequest {
     LoadChanges,
     /// Open this conversation and close the panel.
     Open(String),
+    /// `GET /sessions/:id` — the turns of a conversation that is NOT the open
+    /// one, asked for the first time its row is expanded. Lazy and deduped:
+    /// `panel.threads` was only ever filled from the open session, so every
+    /// other row expanded to nothing and ⏎-fork / `e` / `m` were unreachable
+    /// there.
+    LoadThread(String),
+    /// `GET /sessions?originId=:id` — the drill-in, asked the first time a row
+    /// is expanded. The plain listing excludes the collapsing kinds.
+    LoadChildSessions(String),
     /// `POST /sessions/:id/changes/revert`. `None` = the whole set; the server
     /// refuses `[]`, so an empty list is never sent.
     Revert(Option<Vec<String>>),
@@ -167,6 +176,12 @@ pub struct PanelHost {
     pub message: Option<String>,
     // ---- the tree ----------------------------------------------------------
     pub sessions: Vec<SessionRow>,
+    /// The drill-in rows, per origin id. `GET /sessions` DELIBERATELY excludes
+    /// the collapsing kinds (subagent, workflow_agent, schedule_run) — they
+    /// surface only via `GET /sessions?originId=`. Without this map every such
+    /// row is invisible on every surface at once: no rail row while it runs, no
+    /// branch card when it finishes, no node in the tree.
+    pub children_by_origin: HashMap<String, Vec<SessionRow>>,
     pub threads: HashMap<String, Vec<Message>>,
     pub expanded: HashSet<String>,
     pub drilled: HashSet<String>,
@@ -251,6 +266,7 @@ impl Default for PanelHost {
             sessions: Vec::new(),
             threads: HashMap::new(),
             expanded: HashSet::new(),
+            children_by_origin: HashMap::new(),
             drilled: HashSet::new(),
             current_id: None,
             land: None,
@@ -301,10 +317,9 @@ impl PanelHost {
     /// The forest, rebuilt from what has been fetched. Cheap enough to do per
     /// frame, and it must be the SAME list the digit resolver walks.
     pub fn rows(&self) -> Vec<ForestRow> {
-        let no_children: HashMap<String, Vec<SessionRow>> = HashMap::new();
         forest_rows(&ForestInput {
             sessions: &self.sessions,
-            children_by_origin: &no_children,
+            children_by_origin: &self.children_by_origin,
             threads: &self.threads,
             expanded: &self.expanded,
             drilled: &self.drilled,
@@ -333,8 +348,11 @@ impl PanelHost {
     /// under what they came from, so without this the tree shows everything
     /// except where you are.
     pub fn set_sessions(&mut self, sessions: Vec<SessionRow>) {
-        let no_children: HashMap<String, Vec<SessionRow>> = HashMap::new();
-        for id in reveal_path(&sessions, &no_children, self.current_id.as_deref()) {
+        for id in reveal_path(
+            &sessions,
+            &self.children_by_origin,
+            self.current_id.as_deref(),
+        ) {
             self.expanded.insert(id);
         }
         self.sessions = sessions;
@@ -353,6 +371,31 @@ impl PanelHost {
             }
             None => {}
         }
+    }
+
+    /// The drill-in answer for one origin. Replaces that origin's list only —
+    /// the plain listing and every OTHER origin's children are untouched, so a
+    /// poll for the open conversation cannot erase what an expanded row fetched.
+    pub fn set_children(&mut self, origin_id: String, rows: Vec<SessionRow>) {
+        // An EMPTY answer is stored, not dropped: "nothing branched from it" is
+        // a fact worth remembering, and it is what stops the expand from
+        // re-asking on every keypress.
+        self.children_by_origin.insert(origin_id, rows);
+    }
+
+    /// What expanding a row must fetch, ONCE. Both answers land in maps keyed
+    /// by the id, so "have we asked" is "is the key present" — no request is
+    /// repeated while the row stays open, and nothing is fetched for rows
+    /// nobody expanded (the N+1 the tree would otherwise pay on every poll).
+    fn fetch_on_expand(&self, id: &str) -> Vec<HostRequest> {
+        let mut out = Vec::new();
+        if !self.threads.contains_key(id) {
+            out.push(HostRequest::LoadThread(id.to_string()));
+        }
+        if !self.children_by_origin.contains_key(id) {
+            out.push(HostRequest::LoadChildSessions(id.to_string()));
+        }
+        out
     }
 
     /// The switcher lands on you-are-here.
@@ -798,10 +841,14 @@ impl PanelHost {
                 if self.state.tab == PanelTab::Tree {
                     match self.rows().get(self.sel) {
                         Some(ForestRow::Session { id, .. }) => {
+                            let id = id.clone();
                             self.expanded.insert(id.clone());
+                            return self.fetch_on_expand(&id);
                         }
                         Some(ForestRow::Collapsed { origin_id, .. }) => {
+                            let origin_id = origin_id.clone();
                             self.drilled.insert(origin_id.clone());
+                            return self.fetch_on_expand(&origin_id);
                         }
                         _ => {}
                     }
@@ -2036,6 +2083,117 @@ mod tests {
             h.theme.as_ref().unwrap().index(),
             0,
             "1-9 is not a theme gesture"
+        );
+    }
+
+    /// DEFECT 2. `panel.threads` was filled exclusively from the OPEN session,
+    /// and `→` on any other row just inserted the id into `expanded` — no fetch.
+    /// So every other conversation expanded to zero turns and ⏎-fork, `e` and
+    /// `m` were unreachable there.
+    #[test]
+    fn expanding_another_conversation_fetches_its_turns() {
+        let mut h = host();
+        h.state.open = true;
+        h.state.tab = PanelTab::Tree;
+        // `b` has no thread in the fixture — it is the unopened conversation.
+        h.sel = h
+            .rows()
+            .iter()
+            .position(|r| matches!(r, ForestRow::Session { id, .. } if id == "b"))
+            .expect("b is on screen");
+
+        let requests = h.handle(Command::MoveIn, None, 20);
+        assert!(h.expanded.contains("b"), "the caret flipped ▸→▾");
+        assert!(
+            requests.contains(&HostRequest::LoadThread("b".into())),
+            "…and something must go and get the turns: {requests:?}"
+        );
+        assert!(
+            requests.contains(&HostRequest::LoadChildSessions("b".into())),
+            "…including whatever collapsed under it: {requests:?}"
+        );
+
+        // The answers land, and the turns are now rows under `b`.
+        h.threads.insert(
+            "b".into(),
+            vec![
+                msg("b1", Role::User, "ask"),
+                msg("b2", Role::Supervisor, "answer"),
+            ],
+        );
+        h.set_children("b".into(), Vec::new());
+        let under_b = h
+            .rows()
+            .iter()
+            .filter(|r| matches!(r, ForestRow::Message { session_id, .. } if session_id == "b"))
+            .count();
+        assert_eq!(
+            under_b, 2,
+            "a conversation that expands to nothing has no verbs"
+        );
+    }
+
+    /// …and it asks ONCE. The tree re-renders every frame and the rail re-polls
+    /// every second; a fetch per expanded row per beat is the N+1 this must not
+    /// become.
+    #[test]
+    fn a_second_expand_of_the_same_row_asks_for_nothing() {
+        let mut h = host();
+        h.state.open = true;
+        h.state.tab = PanelTab::Tree;
+        h.sel = h
+            .rows()
+            .iter()
+            .position(|r| matches!(r, ForestRow::Session { id, .. } if id == "b"))
+            .expect("b is on screen");
+        assert!(!h.handle(Command::MoveIn, None, 20).is_empty());
+        // The answers arrive — an EMPTY drill-in is still an answer.
+        h.threads.insert("b".into(), Vec::new());
+        h.set_children("b".into(), Vec::new());
+        assert!(
+            h.handle(Command::MoveIn, None, 20).is_empty(),
+            "both facts are known; asking again would be a poll"
+        );
+    }
+
+    /// The open conversation is already mirrored, so expanding it fetches
+    /// nothing — the row the user is most likely to press `→` on.
+    #[test]
+    fn expanding_the_open_conversation_asks_only_for_its_drill_in() {
+        let mut h = host();
+        h.state.open = true;
+        h.state.tab = PanelTab::Tree;
+        h.current_id = Some("a".into());
+        h.sel = h
+            .rows()
+            .iter()
+            .position(|r| matches!(r, ForestRow::Session { id, .. } if id == "a"))
+            .expect("a is on screen");
+        let requests = h.handle(Command::MoveIn, None, 20);
+        assert!(!requests.contains(&HostRequest::LoadThread("a".into())));
+        assert_eq!(requests, vec![HostRequest::LoadChildSessions("a".into())]);
+    }
+
+    /// The drill-in rows reach the forest — a subagent is a NODE in the tree,
+    /// not only a rail row.
+    #[test]
+    fn a_drilled_in_subagent_becomes_a_tree_row() {
+        let mut h = host();
+        h.expanded.insert("a".into());
+        h.set_children(
+            "a".into(),
+            vec![with_origin(
+                session_row("sub-1", SessionKind::Subagent, 3),
+                "a",
+            )],
+        );
+        h.drilled.insert("a".into());
+        assert!(
+            h.rows()
+                .iter()
+                .any(|r| matches!(r, ForestRow::Session { id, .. } if id == "sub-1")),
+            "the tree showed zero subagent nodes: {:?}",
+            h.rows()
         );
     }
 }

@@ -379,7 +379,102 @@ if [ -n "$MODEL" ]; then
   check "the margin row names the project rules"            expect text "# rules:" --no-strict
   check "still no escape sequence on a rich screen"         expect text "[0m" --not
   clear_composer
+
+  # ---- the drill-in: a subagent must be VISIBLE ---------------------------
+  #
+  # `GET /sessions` DELIBERATELY excludes the collapsing kinds (subagent,
+  # workflow_agent, schedule_run) — they surface only via `?originId=`. This
+  # client only ever asked for the plain listing, so a running subagent got no
+  # rail row, a finished one got no card, and the tree showed zero agent nodes:
+  # invisible on every surface at once, while the server said it was busy.
+  echo "── a spawned subagent, on every surface ─────────"
+  SU type 'Use spawn() to start ONE detached subagent named "railcheck" whose task is: run bash '"'"'sleep 90'"'"' then report OK. Do not join it.' >/dev/null
+  SU press Enter >/dev/null
+  SU wait text "railcheck" --timeout 180000 >/dev/null 2>&1
+  sleep 6
+  # The server's own view first, so a green rail cannot be green over nothing.
+  ROOT=$(curl -sf "http://127.0.0.1:$PORT/sessions" | jq -r '[.[]|select(.kind=="root")][0].id')
+  check_cmd "the server has a busy subagent under the root" \
+    bash -c "curl -sf 'http://127.0.0.1:$PORT/sessions?originId=$ROOT' | jq -e '[.[]|select(.kind==\"subagent\")]|length >= 1'"
+  check_cmd "…and the plain listing still excludes it (derived visibility)" \
+    bash -c "curl -sf 'http://127.0.0.1:$PORT/sessions' | jq -e '[.[]|select(.kind==\"subagent\")]|length == 0'"
+  check "the running subagent takes a rail row"        expect text "railcheck" --no-strict
+  check "…and the rail says how to reach it"           expect text "agent running" --no-strict
+  check "…and the status bar counts it"                expect text "1 agent" --no-strict
+
+  # ⏎ opens it, ← comes back. Both are printed in the `?` overlay and both were
+  # unreachable: the rail had no row to stand on, and `SessionOut` had no
+  # handler and a guard nothing ever set.
+  SU press Down >/dev/null; sleep 1
+  check "↓ enters the rail and offers the verbs"       expect text "stop" --no-strict
+  SU press Enter >/dev/null; sleep 4
+  check "⏎ opens the agent's own conversation"         expect text "back" --no-strict
+  SU press Left >/dev/null; sleep 4
+  check "← returns to the session that spawned it"     expect text "agent running" --no-strict
+
+  # `x x` stops it, and the SERVER agrees — a rail that lies about stopping is
+  # worse than a rail with no stop on it.
+  SU press Down >/dev/null; sleep 1
+  SU type "x" >/dev/null; sleep 1
+  check "x arms the stop rather than firing it"        expect text "x again stops it" --no-strict
+  SU type "x" >/dev/null; sleep 6
+  check_cmd "…and x x actually interrupted it at the server" \
+    bash -c "curl -sf 'http://127.0.0.1:$PORT/sessions?originId=$ROOT' | jq -e '[.[]|select(.kind==\"subagent\" and .busy==false)]|length >= 1'"
+  clear_composer
+
+  # ---- the tree can expand a conversation it did not open ------------------
+  #
+  # `panel.threads` was filled exclusively from the OPEN session and `→` on any
+  # other row inserted an id and fetched nothing, so every other conversation
+  # expanded to zero turns — and ⏎-fork, `e` split and `m` were unreachable
+  # there. The caret flipped and the next row was the legend.
+  echo "── the tree expands any conversation ────────────"
+  SU keys "Control+f" >/dev/null; sleep 2
+  SU press Down >/dev/null; sleep 1
+  SU press Right >/dev/null; sleep 3
+  check "a row that is not the open conversation expands to its turns" \
+    expect text "├─" --no-strict
+  # …and a subagent is a NODE in it, not only a rail row.
+  check "the collapsed fan-out is offered"             expect text "spawned" --no-strict
+  SU press Escape >/dev/null; sleep 1
+  clear_composer
+
+  # ---- a streaming message reaches the tree --------------------------------
+  #
+  # `mirror_thread` refreshed only when the LENGTH differed, and a streaming
+  # message is already in the thread with empty parts — so arriving text never
+  # changed the count and the tree printed `bough (no text)` over a turn full
+  # of words.
+  echo "── the tree shows text that streamed in ─────────"
+  SU type "Say the word PEBBLE and nothing else." >/dev/null
+  SU press Enter >/dev/null
+  SU wait text "PEBBLE" --timeout 150000 >/dev/null 2>&1
+  sleep 3
+  SU keys "Control+f" >/dev/null; sleep 2
+  SU press Right >/dev/null; sleep 2
+  check "an assistant turn in the tree never reads (no text)" expect text "(no text)" --not
+  SU press Escape >/dev/null; sleep 1
+  clear_composer
 fi
+
+# ---- notices expire, and the quit row retracts with the confirm ------------
+#
+# `NOTICE_TTL_MS` has been defined in the ported store all along and nothing
+# used it: `notice` was set-only, so every row leaked forever and rode a
+# session switch into a conversation it said nothing about.
+echo "── a notice is a flash, not a fixture ───────────"
+SU keys "Control+c" >/dev/null; sleep 1
+check "^c arms the quit and says so"                   expect text "again to quit" --no-strict
+SU type "a" >/dev/null; sleep 1
+check "…and typing retracts what the confirm promised" expect text "again to quit" --not
+clear_composer
+SU type "/nosuchthing" >/dev/null
+SU press Enter >/dev/null; sleep 2
+check "an unknown command explains itself"             expect text "there is no /nosuchthing" --no-strict
+sleep 12
+check "…and the row retires on its own ten seconds later" \
+  expect text "there is no /nosuchthing" --not
+clear_composer
 
 SU screenshot "$RS_DIR/target/tui-test.svg" >/dev/null 2>&1 \
   && echo "(screenshot: $RS_DIR/target/tui-test.svg)"

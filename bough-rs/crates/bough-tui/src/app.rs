@@ -114,6 +114,14 @@ pub enum Action {
     Attached(bough_core::schema::requests::PostMessageImage),
     /// A transport failure worth a row (an `ApiFailure`'s own sentence).
     Notice(String),
+    /// The POST for this optimistic echo never landed. The bubble comes back
+    /// OUT of the transcript and the words go back into the composer — a `you`
+    /// row for a message the server never saw is the one thing the screen must
+    /// never show, and it used to sit there forever.
+    SendFailed {
+        local_id: String,
+        text: String,
+    },
     /// The `@` candidate list for this conversation's workspace, gitignore-
     /// filtered at the source (`git ls-files`).
     Files(Vec<String>),
@@ -128,6 +136,19 @@ pub enum Action {
     Skills(Vec<(String, String)>),
     /// `GET /sessions` — the tree tab's rows.
     Sessions(Vec<crate::api::SessionRow>),
+    /// `GET /sessions?originId=` — the drill-in for ONE origin. The plain
+    /// listing excludes the collapsing kinds, so this is the only wire a
+    /// subagent, a workflow agent or a schedule run ever arrives on.
+    ChildSessions {
+        origin_id: String,
+        rows: Vec<crate::api::SessionRow>,
+    },
+    /// `GET /sessions/:id` reduced to its thread, for a tree row that is NOT
+    /// the open conversation.
+    ForeignThread {
+        session_id: String,
+        thread: Vec<Message>,
+    },
     /// `GET /sessions/:id/changes`. `None` is a failed fetch, not an empty set.
     Changes(Option<crate::store::state::SessionChangeSet>),
     /// `GET /theme` — the palette in force, seeding the theme tab's baseline.
@@ -247,6 +268,11 @@ pub enum Effect {
     Send {
         text: String,
         images: Vec<bough_core::schema::requests::PostMessageImage>,
+        /// The optimistic echo this send is for. If the POST never lands, that
+        /// bubble is a LIE — an ordinary `you` row, between two real turns, for
+        /// a message the server never received — so the failure path names it
+        /// and the reducer takes it back out.
+        local_id: String,
     },
     /// ⌃v: read the pasteboard, and attach or insert whatever it holds.
     /// The read and the upload are I/O; the DECISION is the reducer's
@@ -282,6 +308,16 @@ pub enum Effect {
     Run(Command, String),
     /// GET the conversations for the tree tab.
     LoadSessions,
+    /// GET `/sessions?originId=` — the drill-in for one conversation. Fired for
+    /// the OPEN conversation on the rail's beat (a subagent is live work and
+    /// the rail is where live work goes) and lazily for any row expanded in the
+    /// tree.
+    LoadChildSessions(String),
+    /// GET `/sessions/:id`, kept as a foreign thread — a tree row's turns.
+    LoadForeignThread(String),
+    /// Re-read the OPEN conversation's thread from the server and replace what
+    /// is on screen with it. The reconnect's reconciliation.
+    ReloadThread,
     /// GET the open conversation's change set for the changes tab.
     LoadChanges,
     /// Open this conversation (⏎ on a tree row): the switcher's whole point.
@@ -497,6 +533,10 @@ fn turn_gist(m: &Message) -> String {
 /// makes a three-second window that nothing announces; this row is the window,
 /// said out loud, and it expires with it.
 pub const TAKE_BACK_HINT: &str = "esc takes that back";
+
+/// The armed-quit row. Named because two places must agree on it: the one that
+/// raises it and the one that retracts it when typing disarms the confirm.
+pub const QUIT_CONFIRM: &str = "^c again to quit — subagents and workflows keep running";
 
 /// The optimistic echo's id prefix. A message wearing one has been POSTED but
 /// not yet read back, so the server has never heard this name and no route may
@@ -729,6 +769,10 @@ pub struct App<T: Transport> {
     open_keys: HashSet<String>,
     full_keys: HashSet<String>,
     notice: Option<String>,
+    /// The text the expiry timer is armed for, and the moment it was armed.
+    /// Changing the sentence re-arms; leaving it alone lets it run out.
+    notice_armed: Option<String>,
+    notice_at: Option<i64>,
     quit_armed: bool,
     pub quit: bool,
     thread: Vec<Message>,
@@ -900,6 +944,8 @@ impl<T: Transport> App<T> {
             open_keys: HashSet::new(),
             full_keys: HashSet::new(),
             notice: None,
+            notice_armed: None,
+            notice_at: None,
             quit_armed: false,
             quit: false,
             thread: Vec::new(),
@@ -971,7 +1017,16 @@ impl<T: Transport> App<T> {
     /// for. The busy check alone made the jobs poll unpaintable: a shell that
     /// starts while the turn is over has nothing else to bring it on screen.
     pub fn animating(&self) -> bool {
-        self.busy() || !self.jobs.is_empty() || self.job.is_some() || self.just_sent()
+        self.busy()
+            || !self.jobs.is_empty()
+            || self.job.is_some()
+            || self.just_sent()
+            // A NOTICE PENDING EXPIRY IS SOMETHING THAT MOVES. The tick is what
+            // retires it, and on an idle screen there is nothing else to make
+            // one happen — so without this the ten-second life is only ever
+            // served to a user who was already typing, and everyone else keeps
+            // the row forever, which is the bug it was meant to fix.
+            || self.notice_at.is_some()
     }
 
     /// Is a send still inside the take-back window? Decided by the ported rule
@@ -1049,7 +1104,13 @@ impl<T: Transport> App<T> {
         let Some(current) = self.session_id.as_deref() else {
             return Vec::new();
         };
-        let children: Vec<crate::api::SessionRow> = self
+        // BOTH lists, deduped by id. The plain listing carries forks and
+        // handoffs; the drill-in carries the collapsing kinds — subagents among
+        // them — which `GET /sessions` excludes by design (server sessions.rs's
+        // "derived visibility"). Reading only the first is what made a running
+        // subagent invisible on the rail, in the transcript and in the tree at
+        // once.
+        let mut children: Vec<crate::api::SessionRow> = self
             .panel
             .sessions
             .iter()
@@ -1059,6 +1120,13 @@ impl<T: Transport> App<T> {
             })
             .cloned()
             .collect();
+        if let Some(drilled) = self.panel.children_by_origin.get(current) {
+            for row in drilled {
+                if !children.iter().any(|c| c.session.id == row.session.id) {
+                    children.push(row.clone());
+                }
+            }
+        }
         // `rail.rs` was ported against `api::SessionRow` and `selectors.rs`
         // against `store::state::SessionRow` — the same wire shape declared
         // twice (state.rs's header says api.rs should absorb it). Adapting at
@@ -1111,6 +1179,40 @@ impl<T: Transport> App<T> {
         // the adaptation happens here rather than in the selector.
         let shells: Vec<BackgroundJob> = self.jobs.iter().map(|r| r.job.clone()).collect();
         live_units(&shells, &subagents, &runs, &self.schedules, self.now_ms)
+    }
+
+    /// A NOTICE IS A FLASH, NOT A FIXTURE. The ported store already decided how
+    /// long one lives (`store::shell::NOTICE_TTL_MS`, armed from the state
+    /// transition) and this client never used it: `self.notice` was set-only,
+    /// cleared by `/new`, `^t` and the take-back tick alone. Everything else
+    /// stayed on screen forever and rode a session switch into a conversation it
+    /// said nothing about.
+    ///
+    /// Arming happens HERE rather than at the ~18 assignment sites: the compare
+    /// against the last armed text runs after every action, so a write from any
+    /// arm — including one that took an early `return` — is stamped without the
+    /// site knowing about it.
+    fn arm_notice(&mut self, now_ms: i64) {
+        if self.notice != self.notice_armed {
+            self.notice_armed = self.notice.clone();
+            self.notice_at = self.notice.as_ref().map(|_| now_ms);
+        }
+    }
+
+    fn expire_notice(&mut self, now_ms: i64) {
+        if let Some(at) = self.notice_at {
+            if now_ms.saturating_sub(at) >= crate::store::shell::NOTICE_TTL_MS as i64 {
+                self.clear_notice();
+            }
+        }
+    }
+
+    /// Drop the row AND its timer together — a stale `notice_at` under a fresh
+    /// notice would expire it early.
+    fn clear_notice(&mut self) {
+        self.notice = None;
+        self.notice_armed = None;
+        self.notice_at = None;
     }
 
     /// The cursor must never point past a rail that just got shorter — a job
@@ -1177,6 +1279,16 @@ impl<T: Transport> App<T> {
     /// Apply one action. `now_ms` is injected (main.tsx injects `now` for the
     /// double-esc tests) — the reducer never reads a wall clock.
     pub fn apply(&mut self, action: Action, now_ms: i64) {
+        // The notice's clock brackets the action rather than sitting inside it:
+        // expire what is stale BEFORE the action reads it, arm whatever the
+        // action wrote AFTER it. Any arm may `return` early, so neither half can
+        // live in the body — and a path added later cannot forget to stamp.
+        self.expire_notice(now_ms);
+        self.apply_inner(action, now_ms);
+        self.arm_notice(now_ms);
+    }
+
+    fn apply_inner(&mut self, action: Action, now_ms: i64) {
         self.now_ms = now_ms;
         match action {
             Action::Tick => {
@@ -1220,6 +1332,12 @@ impl<T: Transport> App<T> {
                     // The rail's agent rows come from the listing, and a fan-out
                     // that started since the last read is exactly what it is for.
                     self.transport.effect(Effect::LoadSessions);
+                    // …and the drill-in beside it, because that listing is the
+                    // ONLY wire a subagent arrives on. One extra request per
+                    // beat, for the open conversation alone — not per row.
+                    if let Some(sid) = self.session_id.clone() {
+                        self.transport.effect(Effect::LoadChildSessions(sid));
+                    }
                     if let Some(job) = &self.job {
                         self.transport.effect(Effect::LoadJobOutput(job.id.clone()));
                     }
@@ -1261,6 +1379,25 @@ impl<T: Transport> App<T> {
                 self.draft = text;
                 self.scroll_off = 0;
             }
+            Action::SendFailed { local_id, text } => {
+                let before = self.thread.len();
+                self.thread.retain(|m| m.id != local_id);
+                if self.thread.len() == before {
+                    // Already reconciled — the id was renamed by a snapshot, so
+                    // the message DID land and there is nothing to take back.
+                    return;
+                }
+                self.mirror_thread();
+                // The take-back window is over the moment there is nothing to
+                // take back, and the words are handed back rather than lost:
+                // the user typed them, and the server never got them.
+                self.last_send_at = None;
+                if self.draft.is_empty() {
+                    self.cursor = text.chars().count();
+                    self.draft = text;
+                }
+                self.scroll_off = 0;
+            }
             Action::Schedules(rows) => {
                 self.schedules = rows;
                 if std::mem::take(&mut self.describe_schedules) {
@@ -1272,7 +1409,24 @@ impl<T: Transport> App<T> {
             Action::Saved(rows) => self.notice = Some(describe_saved_workflows(&rows)),
             Action::Artifacts(rows) => self.notice = Some(describe_artifacts(&rows)),
             Action::ProjectRules(rows) => self.notice = Some(describe_project_rules(&rows)),
-            Action::Connected(up) => self.connected = up,
+            Action::Connected(up) => {
+                // RECONNECTING IS A RECONCILIATION. Nothing else closes the
+                // gap: the events that would have finished a turn were emitted
+                // while this client was not listening, so a turn that died with
+                // the server left `⠋ working · Nm` counting up forever — and
+                // neither esc nor the stream coming back cleared it.
+                //
+                // The server marks orphaned turns at boot (bough-server
+                // boot.rs's recovery), so its snapshot is the truth about what
+                // is still running. Re-reading it is the whole fix.
+                let was_down = !self.connected;
+                self.connected = up;
+                if up && was_down && self.session_id.is_some() {
+                    self.transport.effect(Effect::ReloadThread);
+                    self.transport.effect(Effect::LoadSessionMeta);
+                    self.transport.effect(Effect::PollJobs);
+                }
+            }
             Action::ShellSessionOpened(id) => {
                 self.apply(Action::SessionOpened(id), now_ms);
                 self.shell_session = true;
@@ -1371,6 +1525,20 @@ impl<T: Transport> App<T> {
                 self.branch_dir = Some(dir);
             }
             Action::Sessions(sessions) => self.panel.set_sessions(sessions),
+            Action::ChildSessions { origin_id, rows } => {
+                self.panel.set_children(origin_id, rows);
+                // The rail is built from these, and a fan-out that just ended
+                // must not leave the cursor past the last row.
+                self.clamp_rail();
+            }
+            Action::ForeignThread { session_id, thread } => {
+                // NEVER over the open conversation: `mirror_thread` owns that
+                // key, and a snapshot landing late would roll back a streaming
+                // turn to whatever the server had when the fetch left.
+                if self.session_id.as_deref() != Some(session_id.as_str()) {
+                    self.panel.threads.insert(session_id, thread);
+                }
+            }
             Action::Ghost(ghost) => {
                 // Late is the same as never for a prediction: if the composer
                 // is no longer empty and idle, the row it would paint on is
@@ -1521,7 +1689,11 @@ impl<T: Transport> App<T> {
         let Some(id) = self.session_id.clone() else {
             return;
         };
-        if self.panel.threads.get(&id).map(Vec::len) != Some(self.thread.len()) {
+        // COMPARE THE CONTENT, NOT THE COUNT. A streaming assistant message is
+        // already in the thread with empty parts, so the text arriving into it
+        // never changes the length — and the tree went on printing
+        // `bough (no text)` over a turn that had plenty.
+        if self.panel.threads.get(&id) != Some(&self.thread) {
             self.panel.threads.insert(id, self.thread.clone());
         }
     }
@@ -2120,6 +2292,12 @@ impl<T: Transport> App<T> {
             // `cursor.up`/`cursor.down`. Left at the default `false` these two
             // rows could never fire, so a newline'd draft had no way up.
             multiline: self.draft.contains('\n'),
+            // ← is `back to the session that spawned this one` and a cursor
+            // move everywhere else. Left at the default `false` the guard never
+            // held, so the binding the `?` overlay prints could not fire — and
+            // a drilled-into subagent was a room with no door. The fact is the
+            // meter's own: there is an origin to go back to.
+            in_subagent: self.session.as_ref().is_some_and(|s| s.origin_id.is_some()),
             ..Default::default()
         };
         lookup(&ctx, &crate::keys::chord_of(&input, flags))
@@ -2206,6 +2384,10 @@ impl<T: Transport> App<T> {
                 HostRequest::LoadSessions => self.transport.effect(Effect::LoadSessions),
                 HostRequest::LoadChanges => self.transport.effect(Effect::LoadChanges),
                 HostRequest::Open(id) => self.transport.effect(Effect::OpenSession(id)),
+                HostRequest::LoadThread(id) => self.transport.effect(Effect::LoadForeignThread(id)),
+                HostRequest::LoadChildSessions(id) => {
+                    self.transport.effect(Effect::LoadChildSessions(id))
+                }
                 HostRequest::Revert(paths) => self.transport.effect(Effect::Revert(paths)),
                 HostRequest::LoadTheme => self.transport.effect(Effect::LoadTheme),
                 HostRequest::SaveTheme(write) => self.transport.effect(Effect::SaveTheme(write)),
@@ -2407,6 +2589,20 @@ impl<T: Transport> App<T> {
                 // `/new` reaches the same body; this is the chord for it.
                 Command::SessionNew => {
                     self.run_client_command(Command::SessionNew, "");
+                    true
+                }
+                // ←. THE DOOR OUT OF A DRILLED-INTO AGENT. The `?` overlay has
+                // printed "back to the session that spawned this one" all
+                // along, and nothing answered the command — you could ⏎ into a
+                // subagent from the rail and then only leave it through the
+                // switcher. The guard (`in_subagent`) is what keeps this off
+                // the cursor's ←, and the origin is the same one the `← back`
+                // chip is drawn from, so chip, binding and destination cannot
+                // disagree.
+                Command::SessionOut => {
+                    if let Some(origin) = self.session.as_ref().and_then(|s| s.origin_id.clone()) {
+                        self.transport.effect(Effect::OpenSession(origin));
+                    }
                     true
                 }
                 // ↑/↓ recall. The keymap guards these: ↑ is a CURSOR move in a
@@ -2663,24 +2859,34 @@ impl<T: Transport> App<T> {
         }
     }
 
+    /// Disarm the quit AND retract what it said. Clearing the flag alone left
+    /// `^c again to quit` on screen over a confirm that no longer existed —
+    /// a promise the next `^c` would not keep.
+    fn disarm_quit(&mut self) {
+        self.quit_armed = false;
+        if self.notice.as_deref() == Some(QUIT_CONFIRM) {
+            self.clear_notice();
+        }
+    }
+
     fn on_key(&mut self, k: KeyEvent, now_ms: i64) {
         if k.kind == KeyEventKind::Release {
             return;
         }
         if self.on_surface_key(&k) {
             // Any chord other than ^c disarms the quit (App.tsx).
-            self.quit_armed = false;
+            self.disarm_quit();
             return;
         }
         if self.on_completion_key(&k) {
-            self.quit_armed = false;
+            self.disarm_quit();
             return;
         }
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         // Any chord other than ^c disarms the quit (App.tsx).
         let is_ctrl_c = ctrl && matches!(k.code, KeyCode::Char('c'));
         if !is_ctrl_c {
-            self.quit_armed = false;
+            self.disarm_quit();
         }
         // THE LINE EDITOR IS keys.rs'S, not a second one grown here. The chords
         // the table already declares — ⌥b/⌥f, ^w, ⌥⌫, ^k/^u, ↑/↓ in a multi-line
@@ -2699,8 +2905,7 @@ impl<T: Transport> App<T> {
                     self.quit = true;
                 } else {
                     self.quit_armed = true;
-                    self.notice =
-                        Some("^c again to quit — subagents and workflows keep running".to_string());
+                    self.notice = Some(QUIT_CONFIRM.to_string());
                 }
             }
             (KeyCode::Esc, _) => self.on_escape(now_ms),
@@ -3011,8 +3216,19 @@ impl<T: Transport> App<T> {
         self.marks.clear();
         self.turn = None;
         self.activity = None;
-        self.notice = None;
+        self.clear_notice();
         self.last_send_at = None;
+        // …and every fact the STATUS BAR was stating about the conversation
+        // being left. `SessionOpened` already clears exactly these on a switch;
+        // `/new` did not, so a fresh screen kept the old thread's `$cost`,
+        // `% ctx left` and `← back` — a bar describing a conversation that is
+        // no longer on it. Same list, same reason: re-read, never carried.
+        self.session = None;
+        self.usage = None;
+        self.effective_model = None;
+        self.context_limit = None;
+        self.primed_tags.clear();
+        self.project_rules.clear();
         // Another conversation's shells and holds pinned under this composer
         // would be a claim about work this screen is not doing.
         self.jobs.clear();
@@ -3107,8 +3323,9 @@ impl<T: Transport> App<T> {
         self.notice = Some(TAKE_BACK_HINT.to_string());
         // Optimistic local echo; the snapshot/SSE merge reconciles by id later.
         self.sent_seq += 1;
+        let local_id = format!("{LOCAL_ID_PREFIX}{}", self.sent_seq);
         self.thread.push(Message {
-            id: format!("{LOCAL_ID_PREFIX}{}", self.sent_seq),
+            id: local_id.clone(),
             session_id: String::new(),
             role: Role::User,
             parts: vec![Part::Text {
@@ -3120,6 +3337,7 @@ impl<T: Transport> App<T> {
         self.transport.effect(Effect::Send {
             text: message,
             images,
+            local_id,
         });
     }
 
@@ -4172,6 +4390,12 @@ pub async fn run_loop<T: Transport>(
         };
         let Some(action) = action else { break Ok(()) };
         let is_tick = matches!(action, Action::Tick);
+        // Was there something moving BEFORE this action? The tick that RETIRES
+        // the last moving thing must still be drawn, or the screen keeps
+        // painting what the state no longer holds: an expired notice cleared
+        // itself, `animating()` went false on the same tick, the draw was
+        // skipped — and the row stayed on screen forever anyway.
+        let was_animating = app.animating();
         let now = now_ms();
         // Focus is the terminal's own report, not a keypress: it decides
         // whether a finished turn is worth a desktop banner.
@@ -4211,7 +4435,7 @@ pub async fn run_loop<T: Transport>(
         // when nothing is live). `busy()` alone was too narrow: the jobs poll
         // rides this timer, so a shell that outlives its turn could never
         // repaint the rail it belongs on.
-        if is_tick && !app.animating() {
+        if is_tick && !app.animating() && !was_animating {
             continue;
         }
         if let Err(e) = terminal.draw(|f| {
@@ -4262,7 +4486,11 @@ impl Transport for LiveTransport {
         let session = self.session.clone();
         let workspace = self.workspace.clone();
         match effect {
-            Effect::Send { text, images } => {
+            Effect::Send {
+                text,
+                images,
+                local_id,
+            } => {
                 tokio::spawn(async move {
                     let known = session.lock().expect("session lock").clone();
                     let sid = match known {
@@ -4283,17 +4511,22 @@ impl Transport for LiveTransport {
                                 }
                                 Err(e) => {
                                     let _ = tx.send(Action::Notice(e.to_string()));
+                                    let _ = tx.send(Action::SendFailed {
+                                        local_id,
+                                        text: text.clone(),
+                                    });
                                     return;
                                 }
                             }
                         }
                     };
                     let body = bough_core::schema::requests::PostMessageBody {
-                        text,
+                        text: text.clone(),
                         images: (!images.is_empty()).then_some(images),
                     };
                     if let Err(e) = api.post_message(&sid, &body).await {
                         let _ = tx.send(Action::Notice(e.to_string()));
+                        let _ = tx.send(Action::SendFailed { local_id, text });
                     }
                 });
             }
@@ -4450,6 +4683,35 @@ impl Transport for LiveTransport {
                     // says "no conversations yet" and stays usable.
                     if let Ok(rows) = api.list_sessions(None).await {
                         let _ = tx.send(Action::Sessions(rows));
+                    }
+                });
+            }
+            Effect::LoadChildSessions(origin_id) => {
+                tokio::spawn(async move {
+                    // A failed drill-in stays silent: the plain listing is
+                    // already on screen and a notice per poll would be noise.
+                    if let Ok(rows) = api.list_sessions(Some(&origin_id)).await {
+                        let _ = tx.send(Action::ChildSessions { origin_id, rows });
+                    }
+                });
+            }
+            Effect::ReloadThread => {
+                tokio::spawn(async move {
+                    let Some(sid) = session.lock().expect("session lock").clone() else {
+                        return;
+                    };
+                    if let Ok(snap) = api.get_session(&sid).await {
+                        let _ = tx.send(Action::Thread(snap.thread));
+                    }
+                });
+            }
+            Effect::LoadForeignThread(session_id) => {
+                tokio::spawn(async move {
+                    if let Ok(snap) = api.get_session(&session_id).await {
+                        let _ = tx.send(Action::ForeignThread {
+                            session_id,
+                            thread: snap.thread,
+                        });
                     }
                 });
             }
@@ -4994,6 +5256,24 @@ impl Transport for LiveTransport {
                     if let Ok(settings) = api.get_model_settings().await {
                         let _ = tx.send(Action::ModelSettings(settings));
                     }
+                    // …and the SESSION's own meta beside it, because that is
+                    // where `effective_model` comes from. Re-reading only the
+                    // install-wide settings left the status bar naming the old
+                    // model until the next restart — the one surface that is
+                    // supposed to confirm the pin took.
+                    let open = session.lock().expect("session lock").clone();
+                    if let Some(sid) = open {
+                        if let Ok(s) = api.get_session(&sid).await {
+                            let _ = tx.send(Action::SessionMeta(Box::new(SessionMeta {
+                                session: s.session,
+                                usage: s.usage,
+                                effective_model: s.effective_model,
+                                context_limit: s.context_limit,
+                                primed_tags: s.primed_tags.unwrap_or_default(),
+                                project_rules: s.project_rules.unwrap_or_default(),
+                            })));
+                        }
+                    }
                 });
             }
             // No I/O AT ALL: the reducer has already cleared the screen state,
@@ -5418,6 +5698,10 @@ mod tests {
         Effect::Send {
             text,
             images: Vec::new(),
+            // Normalized away by `sends` — the echo's id is bookkeeping, and a
+            // test about WHAT was sent must not be about how many sends
+            // preceded it.
+            local_id: String::new(),
         }
     }
 
@@ -5447,6 +5731,14 @@ mod tests {
                 )
             })
             .cloned()
+            .map(|e| match e {
+                Effect::Send { text, images, .. } => Effect::Send {
+                    text,
+                    images,
+                    local_id: String::new(),
+                },
+                other => other,
+            })
             .collect()
     }
 
@@ -8348,7 +8640,6 @@ mod tests {
         "CompletePrev",
         "CompleteNext",
         "CompleteDismiss",
-        "SessionOut",
     ];
 
     /// Every `.rs` in this crate except the binding table itself — the table is
@@ -8782,7 +9073,7 @@ mod tests {
         type_text(&mut app, "what is this", 0);
         app.apply(key(KeyCode::Enter), 0);
         match sends(&effects).last() {
-            Some(Effect::Send { text, images }) => {
+            Some(Effect::Send { text, images, .. }) => {
                 assert_eq!(text, "what is this");
                 assert_eq!(images.len(), 1);
                 assert_eq!(images[0].name, "clipboard.png");
@@ -8878,5 +9169,414 @@ mod tests {
             vec![Effect::RunShell("ls".into()), a_send("and now this".into())],
             "an ordinary conversation is not left just because a shell ran in it"
         );
+    }
+
+    // ---- the seven confirmed defects ---------------------------------------
+
+    use crate::forest::fixtures::{msg, session_row};
+    use bough_core::schema::parts::SessionKind;
+
+    /// A drill-in row, the shape `GET /sessions?originId=` answers with.
+    fn child(id: &str, origin: &str, kind: SessionKind, busy: bool) -> crate::api::SessionRow {
+        let mut row = session_row(id, kind, 1);
+        row.session.origin_id = Some(origin.to_string());
+        row.session.parent_id = Some(origin.to_string());
+        row.busy = busy;
+        row
+    }
+
+    /// DEFECT 1. `GET /sessions` excludes the collapsing kinds by design, so a
+    /// running subagent reached this client on no wire at all: the rail stayed
+    /// blank while the server said it was busy.
+    #[test]
+    fn a_running_subagent_arrives_on_the_drill_in_and_takes_a_rail_row() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+
+        // The plain listing is what it has always been: the root alone.
+        app.apply(
+            Action::Sessions(vec![session_row("s1", SessionKind::Root, 1)]),
+            1,
+        );
+        assert!(
+            app.units().is_empty(),
+            "nothing has been drilled into yet, so there is nothing to show"
+        );
+
+        app.apply(
+            Action::ChildSessions {
+                origin_id: "s1".into(),
+                rows: vec![child("sub-1", "s1", SessionKind::Subagent, true)],
+            },
+            2,
+        );
+        let units = app.units();
+        assert_eq!(
+            units.len(),
+            1,
+            "the busy subagent is a live unit: {units:?}"
+        );
+        assert_eq!(
+            units[0].kind,
+            crate::store::selectors::LiveUnitKind::Subagent
+        );
+        assert_eq!(units[0].id, "sub-1");
+        // …and the status bar's own count agrees with the rail, rather than
+        // reading zero while a row is on screen.
+        assert_eq!(app.meter().agents, Some(1));
+    }
+
+    /// …and the poll ASKS for it. Without this effect the drill-in never
+    /// arrives and the fix above is unreachable in the running client.
+    #[test]
+    fn the_rails_beat_asks_for_the_drill_in_beside_the_listing() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        effects.borrow_mut().clear();
+        for i in 0..=POLL_TICKS {
+            app.apply(Action::Tick, 100 + i as i64);
+        }
+        let asked = effects.borrow().clone();
+        assert!(
+            asked.contains(&Effect::LoadChildSessions("s1".into())),
+            "the only wire a subagent arrives on: {asked:?}"
+        );
+    }
+
+    /// A FINISHED subagent must reach the transcript's branch-card feed too —
+    /// same list, same fix.
+    #[test]
+    fn a_finished_subagent_is_still_a_child_of_the_open_conversation() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(
+            Action::ChildSessions {
+                origin_id: "s1".into(),
+                rows: vec![child("sub-1", "s1", SessionKind::Subagent, false)],
+            },
+            2,
+        );
+        assert!(
+            app.units().is_empty(),
+            "a finished agent is not LIVE work — it belongs to the card feed"
+        );
+        assert!(
+            app.panel
+                .children_by_origin
+                .get("s1")
+                .is_some_and(|rows| rows.iter().any(|r| r.session.id == "sub-1")),
+            "…and the tree can still find it"
+        );
+    }
+
+    /// The drill-in for one origin must not be erased by the drill-in for
+    /// another — the tree fetches per expanded row.
+    #[test]
+    fn one_origins_children_do_not_clobber_anothers() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        app.apply(
+            Action::ChildSessions {
+                origin_id: "a".into(),
+                rows: vec![child("sub-a", "a", SessionKind::Subagent, true)],
+            },
+            1,
+        );
+        app.apply(
+            Action::ChildSessions {
+                origin_id: "b".into(),
+                rows: vec![child("sub-b", "b", SessionKind::Subagent, true)],
+            },
+            2,
+        );
+        assert_eq!(app.panel.children_by_origin.len(), 2);
+        // …and an EMPTY answer is remembered as an answer, so the expand does
+        // not re-ask forever.
+        app.apply(
+            Action::ChildSessions {
+                origin_id: "c".into(),
+                rows: Vec::new(),
+            },
+            3,
+        );
+        assert!(app.panel.children_by_origin.contains_key("c"));
+    }
+
+    /// DEFECT 3. A send that never landed left an ordinary `you` bubble in the
+    /// transcript forever, between two real turns, for a message the server
+    /// never received.
+    #[test]
+    fn a_send_that_never_landed_takes_its_bubble_back_out() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(Action::Thread(vec![msg("m1", Role::User, "real")]), 1);
+        type_text(&mut app, "hello while dead", 2);
+        app.apply(key(KeyCode::Enter), 3);
+        assert_eq!(app.thread.len(), 2, "the optimistic echo is on screen");
+        let local = app.thread.last().unwrap().id.clone();
+        assert!(local.starts_with(LOCAL_ID_PREFIX));
+
+        app.apply(
+            Action::SendFailed {
+                local_id: local,
+                text: "hello while dead".into(),
+            },
+            4,
+        );
+        assert_eq!(
+            app.thread.len(),
+            1,
+            "a bubble the server never saw is a lie: {:?}",
+            app.thread
+        );
+        assert_eq!(app.thread[0].id, "m1", "the REAL turn is untouched");
+        // …and the words come back rather than being lost with it.
+        assert_eq!(app.draft, "hello while dead");
+        assert_eq!(app.last_send_at, None, "nothing left to take back");
+    }
+
+    /// …and a failure that arrives AFTER the snapshot reconciled the id must
+    /// not delete a real message.
+    #[test]
+    fn a_late_send_failure_over_a_reconciled_id_removes_nothing() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        type_text(&mut app, "hi", 1);
+        app.apply(key(KeyCode::Enter), 2);
+        // The server's own name for it arrives first.
+        app.apply(Action::Thread(vec![msg("m9", Role::User, "hi")]), 3);
+        app.apply(
+            Action::SendFailed {
+                local_id: format!("{LOCAL_ID_PREFIX}1"),
+                text: "hi".into(),
+            },
+            4,
+        );
+        assert_eq!(app.thread.len(), 1);
+        assert_eq!(app.thread[0].id, "m9");
+        assert_eq!(app.draft, "", "nothing was taken back, so nothing returns");
+    }
+
+    /// DEFECT 4. A turn that died with the server left the spinner counting up
+    /// forever; nothing reconciled when the stream came back.
+    #[test]
+    fn the_stream_coming_back_re_reads_what_is_actually_running() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(Action::Connected(true), 1);
+        // A turn is in flight, then the server dies under it.
+        app.apply(
+            Action::Thread(vec![Message {
+                pending: true,
+                ..msg("m1", Role::Supervisor, "")
+            }]),
+            2,
+        );
+        assert!(app.busy(), "the spinner is running");
+        app.apply(Action::Connected(false), 3);
+        assert!(app.busy(), "…and a dropped stream alone cannot end a turn");
+
+        effects.borrow_mut().clear();
+        app.apply(Action::Connected(true), 4);
+        let asked = effects.borrow().clone();
+        assert!(
+            asked.contains(&Effect::ReloadThread),
+            "the server marks orphaned turns at boot, so its snapshot is the truth: {asked:?}"
+        );
+
+        // …and that snapshot is what stops the spinner.
+        app.apply(Action::Thread(vec![msg("m1", Role::Supervisor, "died")]), 5);
+        assert!(!app.busy(), "the turn is over and the screen says so");
+    }
+
+    /// A stream that was never down must not re-fetch on every frame.
+    #[test]
+    fn a_stream_that_stayed_up_reconciles_nothing() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(Action::Connected(true), 1);
+        effects.borrow_mut().clear();
+        app.apply(Action::Connected(true), 2);
+        assert!(!effects.borrow().contains(&Effect::ReloadThread));
+    }
+
+    /// DEFECT 5. A notice is a flash, not a fixture.
+    #[test]
+    fn a_notice_expires_and_does_not_ride_into_the_next_conversation() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(Action::Notice("something went wrong".into()), 1_000);
+        app.apply(Action::Tick, 2_000);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("something went wrong"),
+            "well inside the window"
+        );
+        app.apply(
+            Action::Tick,
+            1_000 + crate::store::shell::NOTICE_TTL_MS as i64,
+        );
+        assert_eq!(app.notice, None, "ten seconds is the whole life of one");
+    }
+
+    /// …and typing retracts the armed-quit row, which promised something the
+    /// next `^c` would no longer do.
+    #[test]
+    fn typing_after_ctrl_c_retracts_what_the_confirm_said() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(ctrl('c'), 1);
+        assert_eq!(app.notice.as_deref(), Some(QUIT_CONFIRM));
+        assert!(app.quit_armed);
+        type_text(&mut app, "x", 2);
+        assert!(!app.quit_armed, "typing disarms the quit");
+        assert_eq!(app.notice, None, "…and the row must go with the confirm");
+    }
+
+    /// DEFECT 6a. `/new` kept the previous conversation's `$cost`, `% ctx left`
+    /// and `← back` — a status bar describing a conversation no longer on it.
+    #[test]
+    fn a_new_conversation_drops_the_old_ones_status_bar() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        let mut row = session_row("s1", SessionKind::Root, 1);
+        row.session.origin_id = Some("root-0".into());
+        app.apply(
+            Action::SessionMeta(Box::new(SessionMeta {
+                session: row.session,
+                usage: crate::api::SnapshotUsage {
+                    totals: bough_core::types::UsageTotals {
+                        cost_usd: 1.25,
+                        ..Default::default()
+                    },
+                    tree: bough_core::types::UsageTotals {
+                        cost_usd: 1.25,
+                        ..Default::default()
+                    },
+                },
+                effective_model: Some("openai/gpt-5.6-luna".into()),
+                context_limit: Some(200_000),
+                primed_tags: Vec::new(),
+                project_rules: Vec::new(),
+            })),
+            2,
+        );
+        assert!(app.meter().out, "there IS somewhere to go back to");
+        assert_eq!(app.effective_model.as_deref(), Some("openai/gpt-5.6-luna"));
+
+        app.apply(Action::Run(Command::SessionNew, String::new()), 3);
+        assert!(app.session.is_none());
+        assert!(app.usage.is_none());
+        assert_eq!(app.effective_model, None);
+        assert_eq!(app.context_limit, None);
+        let bar = app.meter();
+        assert!(!bar.out, "`← back` pointed at the conversation you left");
+        assert_eq!(bar.cost_usd, None);
+        assert_eq!(bar.context_limit, None);
+    }
+
+    /// DEFECT 7. A streaming message is already in the thread with empty parts,
+    /// so the arriving text never changed the LENGTH — and the tree went on
+    /// printing `bough (no text)` over a turn full of it.
+    #[test]
+    fn text_arriving_into_a_streaming_message_reaches_the_tree() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(Action::Thread(vec![msg("m1", Role::Supervisor, "")]), 1);
+        assert_eq!(
+            app.panel.threads.get("s1").map(|t| t.len()),
+            Some(1),
+            "the empty shell is mirrored"
+        );
+        // The same COUNT, different content — exactly the case the old
+        // length-compare could not see.
+        app.apply(
+            Action::Thread(vec![msg("m1", Role::Supervisor, "here is the answer")]),
+            2,
+        );
+        let mirrored = app.panel.threads.get("s1").expect("mirrored");
+        assert_eq!(mirrored.len(), 1);
+        assert!(
+            !mirrored[0].parts.is_empty(),
+            "the tree must not say `(no text)` over a turn that has text"
+        );
+    }
+
+    /// ← is the door out of a drilled-into agent, and it was painted on a wall:
+    /// the `?` overlay printed the binding, the guard it needs was never fed,
+    /// and no arm answered the command.
+    #[test]
+    fn left_leaves_a_subagent_for_the_session_that_spawned_it() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        app.apply(Action::SessionOpened("sub-1".into()), 1);
+        let mut row = session_row("sub-1", SessionKind::Subagent, 1);
+        row.session.origin_id = Some("s1".into());
+        app.apply(
+            Action::SessionMeta(Box::new(SessionMeta {
+                session: row.session,
+                usage: crate::api::SnapshotUsage {
+                    totals: Default::default(),
+                    tree: Default::default(),
+                },
+                effective_model: None,
+                context_limit: None,
+                primed_tags: Vec::new(),
+                project_rules: Vec::new(),
+            })),
+            2,
+        );
+        assert!(app.meter().out, "the `← back` chip is drawn");
+        effects.borrow_mut().clear();
+        app.apply(key(KeyCode::Left), 3);
+        assert!(
+            effects.borrow().contains(&Effect::OpenSession("s1".into())),
+            "the chip and the key must agree on the destination: {:?}",
+            effects.borrow()
+        );
+    }
+
+    /// …and ← is still the cursor everywhere else. A root conversation has no
+    /// spawner, and a draft under the cursor outranks the door.
+    #[test]
+    fn left_is_still_the_cursor_when_there_is_nowhere_to_go_out_to() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        type_text(&mut app, "abc", 1);
+        effects.borrow_mut().clear();
+        app.apply(key(KeyCode::Left), 2);
+        assert_eq!(app.cursor, 2, "the caret moved, nothing was opened");
+        assert!(effects.borrow().is_empty());
+    }
+
+    /// …and the tick that retires it must actually be asked for. On an idle
+    /// screen nothing else moves, so a notice nobody is animating for is a
+    /// notice that never expires.
+    #[test]
+    fn a_pending_notice_keeps_the_screen_animating_until_it_retires() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        assert!(!app.animating(), "an idle screen is idle");
+        app.apply(Action::Notice("something went wrong".into()), 1_000);
+        assert!(app.animating(), "…until there is a row waiting to go");
+        app.apply(
+            Action::Tick,
+            1_000 + crate::store::shell::NOTICE_TTL_MS as i64,
+        );
+        assert_eq!(app.notice, None);
+        assert!(!app.animating(), "…and idle again once it has gone");
     }
 }
