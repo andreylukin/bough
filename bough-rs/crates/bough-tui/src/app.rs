@@ -195,6 +195,34 @@ pub enum Action {
     Models(Vec<crate::api::ModelRow>),
     /// `GET /model-settings` — what a NEW conversation runs on, both tiers.
     ModelSettings(crate::api::ModelSettings),
+    /// Everything on `GET /sessions/:id` that is NOT the thread: the session
+    /// row the meter reads, the model the next turn will call, its context
+    /// window, the primed tags and the injected `AGENTS.md` files. Carried
+    /// apart from [`Action::Thread`] because it refreshes on a different beat
+    /// (store.ts folds both out of one snapshot; here the thread arrives from
+    /// the event stream and this is polled).
+    SessionMeta(Box<SessionMeta>),
+    /// `GET /sessions/:id/usage` — spend, without the thread. Polled, so the
+    /// meter's cost is live DURING a turn rather than only after it.
+    Usage(crate::api::SnapshotUsage),
+    /// `GET /fs/branch?dir=` — the branch the meter's `dir@branch` names. The
+    /// directory travels back with it: a reply for the checkout the screen has
+    /// already left must not label the one it moved to.
+    Branch {
+        dir: String,
+        branch: String,
+    },
+}
+
+/// The meter's half of a session snapshot (store.ts::"snapshot").
+#[derive(Clone, Debug)]
+pub struct SessionMeta {
+    pub session: bough_core::schema::parts::Session,
+    pub usage: crate::api::SnapshotUsage,
+    pub effective_model: Option<String>,
+    pub context_limit: Option<i64>,
+    pub primed_tags: Vec<String>,
+    pub project_rules: Vec<crate::api::ProjectRuleSummary>,
 }
 
 /// Outbound calls. The loop never does I/O itself; the transport does.
@@ -345,6 +373,15 @@ pub enum Effect {
     /// snapshot this screen opened with is exactly the stale reassurance the
     /// command exists to avoid.
     LoadProjectRules,
+    /// `GET /sessions/:id` for everything on it EXCEPT the thread — the model,
+    /// the context window, the tags, the rules. The thread is the event
+    /// stream's business, and re-seating it from a poll would fight the text
+    /// still streaming into it (`Action::SessionMeta`).
+    LoadSessionMeta,
+    /// `GET /sessions/:id/usage` — the spend meter, live between rounds.
+    PollUsage,
+    /// `GET /fs/branch?dir=` for the workspace the meter names.
+    LoadBranch(String),
 }
 
 /// The transport seam — scripted in tests; wired to `api.rs` when row 1.32 lands.
@@ -381,6 +418,12 @@ struct JobView {
 /// (`SPINNER_MS` = 120ms → ~1s). The rail redraws every second in the TS, and
 /// this is the same cadence expressed in the one timer this loop already has.
 const POLL_TICKS: u64 = 8;
+
+/// How often the meter re-reads the workspace's branch, in spinner ticks
+/// (~10s, App.tsx::BRANCH_POLL_MS). Slow on purpose: a branch changes when a
+/// human checks one out in another terminal, which is minutes apart, not
+/// seconds, and this is one `git rev-parse`.
+const BRANCH_POLL_TICKS: u64 = 83;
 
 /// How long the composer waits before asking the cheap tier what comes next.
 const GHOST_DEBOUNCE_MS: i64 = 400;
@@ -610,6 +653,18 @@ pub struct App<T: Transport> {
     cursor: usize,
     /// Lines up from the live tail; 0 follows output.
     scroll_off: usize,
+    // ---- reading: the folds (App.tsx `foldAll`/`openKeys`/`fullKeys`) ------
+    /// `^e`: every tool call and every thinking block, open at once.
+    fold_all: bool,
+    /// Groups the reader opened ONE AT A TIME, and blocks whose line cap they
+    /// lifted. `build_lines` has always taken `is_expanded(key)`/`is_full(key)`
+    /// per group and every `click` target `lines.rs` emits resolves to one of
+    /// these; without them the only fold control in the product was
+    /// all-or-nothing and a row that said "click to expand" was an instruction
+    /// to do something impossible. `^e` still flips everything at once; it also
+    /// clears these, so the global toggle stays the thing that wins.
+    open_keys: HashSet<String>,
+    full_keys: HashSet<String>,
     notice: Option<String>,
     quit_armed: bool,
     pub quit: bool,
@@ -707,6 +762,34 @@ pub struct App<T: Transport> {
     /// Read at the keystroke rather than held as a flag: the window expires on
     /// the clock, and a flag would need a timer that can be missed.
     last_send_at: Option<i64>,
+    // ---- what the status bar and the margin rows are made of ---------------
+    /// The open conversation's row: its model pin, its effort, its context
+    /// tokens, and whether another conversation spawned it. None until the
+    /// first snapshot lands, and every field of the meter it feeds degrades to
+    /// silence rather than to a zero.
+    session: Option<bough_core::schema::parts::Session>,
+    /// Session totals, refreshed by the usage poll AND by every snapshot — a
+    /// path that updated one and not the other reported a turn as free.
+    usage: Option<crate::api::SnapshotUsage>,
+    /// The model the NEXT turn will actually call, when the session pins none.
+    effective_model: Option<String>,
+    /// What a NEW conversation would run on: the meter's model before a
+    /// session exists, which is the one screen where you are about to commit
+    /// to spending and the only one that would otherwise not say on what.
+    default_model: Option<String>,
+    /// The effective model's context window. None = unknown, and the chip then
+    /// says tokens rather than an invented percentage.
+    context_limit: Option<i64>,
+    /// The `#` margin rows' contents — the transcript's first rows.
+    primed_tags: Vec<String>,
+    project_rules: Vec<String>,
+    /// The branch the workspace is checked out on, for `dir@branch`, and the
+    /// directory it was read FOR. A branch kept across a switch to another
+    /// checkout is a claim about a directory that is no longer on screen.
+    branch: Option<String>,
+    branch_dir: Option<String>,
+    /// One `GET /model-settings` per process, like the TS's.
+    model_settings_requested: bool,
 }
 
 impl<T: Transport> App<T> {
@@ -721,6 +804,9 @@ impl<T: Transport> App<T> {
             draft: String::new(),
             cursor: 0,
             scroll_off: 0,
+            fold_all: false,
+            open_keys: HashSet::new(),
+            full_keys: HashSet::new(),
             notice: None,
             quit_armed: false,
             quit: false,
@@ -764,6 +850,16 @@ impl<T: Transport> App<T> {
             ask: None,
             ask_typed: String::new(),
             last_send_at: None,
+            session: None,
+            usage: None,
+            effective_model: None,
+            default_model: None,
+            context_limit: None,
+            primed_tags: Vec::new(),
+            project_rules: Vec::new(),
+            branch: None,
+            branch_dir: None,
+            model_settings_requested: false,
         }
     }
 
@@ -788,6 +884,60 @@ impl<T: Transport> App<T> {
             ..crate::store::state::initial_state()
         };
         crate::store::lifecycle::just_sent(&probe, self.now_ms)
+    }
+
+    // ---- the status bar's facts --------------------------------------------
+
+    /// The checkout the meter names and the branch is read for: the open
+    /// session's own, else the one this client was launched on (App.tsx's
+    /// `state.session?.workspace ?? defaultWorkspace`).
+    fn meter_workspace(&self) -> Option<String> {
+        self.session
+            .as_ref()
+            .and_then(|s| s.workspace.clone())
+            .or_else(|| self.options.workspace.clone())
+    }
+
+    /// The status line's whole content (App.tsx's `<StatusLine meter=…>`).
+    /// Every field is what is KNOWN — nothing here invents a number, and the
+    /// renderer turns each absence into silence.
+    fn meter(&self) -> ChatMeter {
+        let session = self.session.as_ref();
+        let units = self.units();
+        let count = |kind: crate::store::selectors::LiveUnitKind| -> Option<i64> {
+            Some(units.iter().filter(|u| u.kind == kind).count() as i64)
+        };
+        ChatMeter {
+            // The session's own pin first, then what the next turn would
+            // actually call, then what a NEW conversation would run on.
+            model: session
+                .and_then(|s| s.model.clone())
+                .or_else(|| self.effective_model.clone())
+                .or_else(|| self.default_model.clone()),
+            effort: session.and_then(|s| s.effort.clone()),
+            // The tree total when there is one: a delegated turn's spend is
+            // this conversation's spend.
+            cost_usd: self
+                .usage
+                .as_ref()
+                .map(|u| u.tree.cost_usd)
+                .filter(|c| *c > 0.0)
+                .or_else(|| self.usage.as_ref().map(|u| u.totals.cost_usd)),
+            context_tokens: session.and_then(|s| s.context_tokens),
+            context_limit: self.context_limit,
+            workspace: self.meter_workspace(),
+            branch: self.branch.clone(),
+            shells: count(crate::store::selectors::LiveUnitKind::Shell),
+            // The rail answers these in detail and the PANEL displaces the
+            // rail, so without them a tree-tab visit makes running subagents
+            // invisible everywhere at once.
+            agents: count(crate::store::selectors::LiveUnitKind::Subagent),
+            runs: count(crate::store::selectors::LiveUnitKind::Workflow),
+            help: true,
+            // Only when there IS somewhere to go back to — the same condition
+            // the key is guarded on, so chip and binding cannot disagree.
+            out: session.is_some_and(|s| s.origin_id.is_some()),
+        }
     }
 
     // ---- the live-work rail (row 2.19) -------------------------------------
@@ -935,8 +1085,35 @@ impl<T: Transport> App<T> {
                     self.notice = None;
                 }
                 self.poll_tick = self.poll_tick.wrapping_add(1);
+                // The install-wide facts, once per process: what a NEW
+                // conversation would run on, so the meter names a model on the
+                // one screen that has no session to name one (App.tsx).
+                if !self.model_settings_requested {
+                    self.model_settings_requested = true;
+                    self.transport.effect(Effect::LoadModelSettings);
+                }
+                // The branch, on its own slow beat: a checkout happens in
+                // ANOTHER terminal, so there is no event to hang it on, and one
+                // `git rev-parse` every ten seconds is cheaper than a status
+                // bar naming the branch you left. Fired on the first tick too —
+                // otherwise the bar reads `dir` alone for ten seconds.
+                if self.poll_tick == 1 || self.poll_tick.is_multiple_of(BRANCH_POLL_TICKS) {
+                    if let Some(dir) = self.meter_workspace() {
+                        self.transport.effect(Effect::LoadBranch(dir));
+                    }
+                }
                 if self.poll_tick.is_multiple_of(POLL_TICKS) && self.session_id.is_some() {
                     self.transport.effect(Effect::PollJobs);
+                    // Spend, without the thread — what makes the cost chip move
+                    // DURING a turn rather than only after it (store.ts's
+                    // `refreshUsage`, on the one timer this loop already has).
+                    self.transport.effect(Effect::PollUsage);
+                    // The context chip's numerator is written per round, so
+                    // while a turn runs the snapshot is the only thing that
+                    // moves it. Idle, nothing changes it and nothing is asked.
+                    if self.busy() {
+                        self.transport.effect(Effect::LoadSessionMeta);
+                    }
                     // The rail's agent rows come from the listing, and a fan-out
                     // that started since the last read is exactly what it is for.
                     self.transport.effect(Effect::LoadSessions);
@@ -1012,8 +1189,19 @@ impl<T: Transport> App<T> {
                 self.job = None;
                 self.ask = None;
                 self.ask_typed.clear();
+                // …and everything the meter and the margin rows said about the
+                // conversation being left. A model, a spend and a rule sheet
+                // belonging to another session are worse than none: they are
+                // wrong about the one on screen. Re-read, never carried.
+                self.session = None;
+                self.usage = None;
+                self.effective_model = None;
+                self.context_limit = None;
+                self.primed_tags.clear();
+                self.project_rules.clear();
                 self.transport.effect(Effect::PollJobs);
                 self.transport.effect(Effect::LoadQuestions);
+                self.transport.effect(Effect::LoadSessionMeta);
                 // …and the rest of the rail's feed. Both are then kept fresh by
                 // events rather than by a poll (`reduce_event`), which is the
                 // TS's policy and the reason neither has a timer.
@@ -1025,6 +1213,46 @@ impl<T: Transport> App<T> {
                 self.streaming.clear();
                 // A switch lands at the live tail, like every arrival.
                 self.scroll_off = 0;
+            }
+            Action::SessionMeta(meta) => {
+                // A snapshot that lost the race with a session switch says
+                // nothing about the session on screen (store.ts drops it).
+                if self.session_id.as_deref() != Some(meta.session.id.as_str()) {
+                    return;
+                }
+                let meta = *meta;
+                self.usage = Some(meta.usage);
+                // `?? state.x` and not a blind overwrite: a server older than
+                // one of these fields answers null for it, and null must leave
+                // what is known standing rather than blank the meter.
+                if meta.effective_model.is_some() {
+                    self.effective_model = meta.effective_model;
+                }
+                if meta.context_limit.is_some() {
+                    self.context_limit = meta.context_limit;
+                }
+                self.primed_tags = meta.primed_tags;
+                self.project_rules = meta.project_rules.into_iter().map(|r| r.label).collect();
+                // The workspace may have moved with the session: the branch on
+                // screen must be the branch of the checkout on screen.
+                let moved = meta.session.workspace.is_some()
+                    && meta.session.workspace != self.branch_dir
+                    && meta.session.workspace.as_deref() != self.options.workspace.as_deref();
+                self.session = Some(meta.session);
+                if moved {
+                    if let Some(dir) = self.meter_workspace() {
+                        self.transport.effect(Effect::LoadBranch(dir));
+                    }
+                }
+            }
+            Action::Usage(usage) => self.usage = Some(usage),
+            Action::Branch { dir, branch } => {
+                if self.meter_workspace().as_deref() != Some(dir.as_str()) {
+                    return; // a reply for a checkout this screen has left
+                }
+                // Empty is not a repo: silence, never an `@` with nothing after it.
+                self.branch = (!branch.is_empty()).then_some(branch);
+                self.branch_dir = Some(dir);
             }
             Action::Sessions(sessions) => self.panel.set_sessions(sessions),
             Action::Ghost(ghost) => {
@@ -1074,6 +1302,10 @@ impl<T: Transport> App<T> {
             } => self.panel.set_skills(skills, sources, note),
             Action::Models(models) => self.panel.set_models(models),
             Action::ModelSettings(settings) => {
+                // The meter's last fallback: before a session exists there is
+                // no pin and no effective model, and this is the screen where
+                // you are about to commit to spending.
+                self.default_model = Some(settings.default_model.clone());
                 // The session's OWN pin is what this screen runs on; the
                 // settings answer what a NEW conversation would.
                 let open = self
@@ -1347,6 +1579,93 @@ impl<T: Transport> App<T> {
             .and_then(|y| url_across(&contents, y, here))
         {
             self.open_link(&url);
+            return;
+        }
+        // No link under the pointer: the row's own target, if it has one. This
+        // is what makes a transcript clickable — `lines.rs` has emitted a
+        // target on every foldable group, every capped block and every branch
+        // card since it was written, and nothing read them.
+        if let Some(target) = self.transcript_click_target(at) {
+            self.click_target(&target);
+        }
+    }
+
+    /// 1-based screen row the transcript starts on: the header owns row 1.
+    const CHAT_TOP: u16 = 2;
+
+    /// The completion popup's height right now — the renderer's own derivation,
+    /// because the transcript's height is measured against it.
+    fn popup_height(&self) -> u16 {
+        match self.trigger() {
+            Some(_) => {
+                let ranked = self.completion();
+                let more = ranked.total.saturating_sub(ranked.items.len());
+                completion_popup_height(ranked.items.len(), more) as u16
+            }
+            None => 0,
+        }
+    }
+
+    /// The click target of the transcript row under `at`, if the transcript is
+    /// what is on screen there. The geometry is the RENDERER's
+    /// (`chat_height`/`chat_body_height`/`line_at_slot`), so a click cannot
+    /// land one row off the row that was drawn.
+    fn transcript_click_target(&self, at: Point) -> Option<String> {
+        // The panel, the job view and the overlay DISPLACE the transcript;
+        // a click in that region belongs to them.
+        if self.help_open || self.panel.open() || self.job.is_some() {
+            return None;
+        }
+        let chat_h = self.chat_height(self.cols.max(20), self.rows.max(8), self.popup_height());
+        let y = u16::try_from(at.y).ok()?;
+        if y < Self::CHAT_TOP || y >= Self::CHAT_TOP + chat_h {
+            return None;
+        }
+        let lines = self.transcript_vlines();
+        // `queued` is 0: this client holds no queued rows yet (the renderer
+        // passes `queued: &[]`), and the two must agree or the hit-test slides.
+        let body = crate::lines::chat_body_height(chat_h as usize, 0, self.notice.is_some());
+        crate::lines::line_at_slot(&lines, body, self.scroll_off, (y - Self::CHAT_TOP) as usize)
+            .and_then(|l| l.click.clone())
+    }
+
+    /// Act on a transcript row's click target.
+    fn click_target(&mut self, target: &str) {
+        // A branch card descends; it does not fold. Same route the rail's ⏎
+        // takes.
+        if let Some(id) = target.strip_prefix("open:") {
+            self.transport.effect(Effect::OpenSession(id.to_string()));
+            return;
+        }
+        // A job card opens that job's output — the same surface ⏎ reaches from
+        // the rail, and the only route to a job that has already exited off it.
+        if let Some(rest) = target.strip_prefix("job:") {
+            let mut bits = rest.split(':');
+            let (Some(_session), Some(job_id)) = (bits.next(), bits.next()) else {
+                return;
+            };
+            if job_id.is_empty() {
+                return;
+            }
+            self.job = Some(JobView {
+                id: job_id.to_string(),
+                output: String::new(),
+                job: self.jobs.iter().find(|j| j.id == job_id).cloned(),
+                error: None,
+                scroll: 0,
+                armed: false,
+            });
+            self.transport
+                .effect(Effect::LoadJobOutput(job_id.to_string()));
+            return;
+        }
+        // "+N more lines" lifts the cap and stays lifted — re-capping it is `^e`.
+        if let Some(base) = target.strip_suffix("!full") {
+            self.full_keys.insert(base.to_string());
+            return;
+        }
+        if !self.open_keys.remove(target) {
+            self.open_keys.insert(target.to_string());
         }
     }
 
@@ -1878,6 +2197,16 @@ impl<T: Transport> App<T> {
                 Command::HelpOpen => {
                     self.help_open = true;
                     self.help_off = 0;
+                    true
+                }
+                // `^e`: every tool call and every thinking block at once. The
+                // global toggle wins — flipping it drops the per-group state,
+                // so `^e` twice is a reset rather than a return to whatever was
+                // open before.
+                Command::FoldAll => {
+                    self.open_keys.clear();
+                    self.full_keys.clear();
+                    self.fold_all = !self.fold_all;
                     true
                 }
                 Command::PanelToggle | Command::Tab(_) => {
@@ -2471,6 +2800,12 @@ impl<T: Transport> App<T> {
                         msg.pending = false;
                     }
                     self.activity = None;
+                    // The settle: the round that just ended is the one that
+                    // moved the context and the spend, and the rules and tags
+                    // are re-read from disk per turn — so the meter's numbers
+                    // are FINAL only after this read, not before it.
+                    self.transport.effect(Effect::LoadSessionMeta);
+                    self.transport.effect(Effect::PollUsage);
                 }
             }
             // A hold is raised AND settled on this event: the payload carries
@@ -2542,13 +2877,49 @@ impl<T: Transport> App<T> {
 
     // ---- transcript (v1 miniature of lines.rs buildLines) -------------------
 
+    /// Is this group open? The global toggle wins over the per-group set, the
+    /// way App.tsx passes `(key) => foldAll || openKeys.has(key)` to
+    /// `buildLines`.
+    fn is_expanded(&self, key: &str) -> bool {
+        self.fold_all || self.open_keys.contains(key)
+    }
+    /// Has this block's line cap been lifted?
+    fn is_full(&self, key: &str) -> bool {
+        self.fold_all || self.full_keys.contains(key)
+    }
+
+    /// The transcript as PLAIN rows — what the renderer paints. The click
+    /// targets live on the same rows (`transcript_vlines`), so the hit-test and
+    /// the paint are one derivation and a click cannot land on a row that was
+    /// not drawn.
     fn transcript_lines(&self) -> Vec<String> {
+        self.transcript_vlines()
+            .into_iter()
+            .map(|l| l.copy.unwrap_or(l.text))
+            .collect()
+    }
+
+    fn transcript_vlines(&self) -> Vec<crate::lines::VLine> {
         let width = self.cols as usize;
         let body_w = width.saturating_sub(2).max(20);
-        let mut out: Vec<String> = Vec::new();
+        // The memory margin, at the TOP and in the transcript's own order:
+        // what this repo remembers, then what every turn is told. `#` is
+        // reserved across the transcript for exactly one meaning — remembered,
+        // not happening now — and these rows scroll away like anything else
+        // that already happened. (`copy` is the plain row; this surface paints
+        // raw strings, so the styled `text` would print its escapes.)
+        let mut out: Vec<crate::lines::VLine> =
+            crate::lines::margin_rows(&self.primed_tags, &self.project_rules, width);
+        let plain = |out: &mut Vec<crate::lines::VLine>, text: String| {
+            out.push(crate::lines::VLine {
+                text,
+                ..Default::default()
+            })
+        };
         for msg in &self.thread {
-            out.push(String::new());
-            out.push(
+            plain(&mut out, String::new());
+            plain(
+                &mut out,
                 match msg.role {
                     Role::User => "you",
                     Role::Supervisor => "bough",
@@ -2556,34 +2927,92 @@ impl<T: Transport> App<T> {
                 }
                 .to_string(),
             );
-            for part in &msg.parts {
+            for (i, part) in msg.parts.iter().enumerate() {
+                // The group's key. EVERY row a fold produces carries the SAME
+                // key, so clicking any row of an expanded group collapses it.
+                let key = format!("{}:{i}", msg.id);
                 match part {
                     Part::Text { text } => {
                         for line in text.split('\n') {
                             for row in hard_wrap(line, body_w) {
-                                out.push(format!("  {row}"));
+                                plain(&mut out, format!("  {row}"));
                             }
                         }
                     }
+                    // Thinking folds like a tool step: collapsed it is its own
+                    // first line, open it is the whole thing.
                     Part::Reasoning { text, .. } => {
-                        let n = text.split('\n').count();
-                        out.push(format!(
-                            "  thinking ({n} line{})",
-                            if n == 1 { "" } else { "s" }
-                        ));
+                        let logical: Vec<&str> = text.split('\n').collect();
+                        if self.is_expanded(&key) {
+                            out.push(fold_row(
+                                format!(
+                                    "  ▾ thinking ({})",
+                                    crate::store::selectors::plural(logical.len() as i64, "line")
+                                ),
+                                &key,
+                            ));
+                            push_fold_block(&mut out, &logical, body_w, &key, self.is_full(&key));
+                        } else {
+                            let gist = logical
+                                .iter()
+                                .map(|l| l.trim())
+                                .find(|l| !l.is_empty())
+                                .unwrap_or("");
+                            out.push(fold_row(
+                                format!(
+                                    "  ▸ thinking · {}",
+                                    crate::store::selectors::clip(gist, 60)
+                                ),
+                                &key,
+                            ));
+                        }
                     }
-                    Part::ToolCall { name, .. } => out.push(format!("  ⚙ {name}")),
-                    Part::ToolResult { .. } => {} // folded by default
-                    Part::Image { name, .. } => out.push(format!("  [image: {name}]")),
-                    Part::Ask { question, .. } => out.push(format!("  ? {question}")),
-                    Part::Workflow { name, .. } => out.push(format!("  ⧉ {name}")),
+                    // The tool group. Collapsed it is one row; open it is the
+                    // program that ran and what it printed.
+                    Part::ToolCall { id, name, input } => {
+                        let open = self.is_expanded(&key);
+                        out.push(fold_row(
+                            format!("  {} ⚙ {name}", if open { "▾" } else { "▸" }),
+                            &key,
+                        ));
+                        if !open {
+                            continue;
+                        }
+                        let full = self.is_full(&key);
+                        let program = call_input_text(input);
+                        if !program.is_empty() {
+                            let logical: Vec<&str> = program.split('\n').collect();
+                            push_fold_block(&mut out, &logical, body_w, &key, full);
+                        }
+                        // The result of THIS call, wherever it landed in the
+                        // message — a result part is matched by call id, not by
+                        // being the next part along.
+                        let result = msg.parts.iter().find(
+                            |p| matches!(p, Part::ToolResult { call_id, .. } if call_id == id),
+                        );
+                        match result {
+                            Some(r) => {
+                                let text = crate::lines::output_text(r);
+                                if !text.is_empty() {
+                                    out.push(fold_row("  ↳ output".to_string(), &key));
+                                    let logical: Vec<&str> = text.split('\n').collect();
+                                    push_fold_block(&mut out, &logical, body_w, &key, full);
+                                }
+                            }
+                            None => out.push(fold_row("  ⚙ running".to_string(), &key)),
+                        }
+                    }
+                    Part::ToolResult { .. } => {} // shown inside its call's fold
+                    Part::Image { name, .. } => plain(&mut out, format!("  [image: {name}]")),
+                    Part::Ask { question, .. } => plain(&mut out, format!("  ? {question}")),
+                    Part::Workflow { name, .. } => plain(&mut out, format!("  ⧉ {name}")),
                 }
             }
             if msg.pending {
                 if let Some(streamed) = self.streaming.get(&msg.id) {
                     for line in format!("{streamed}▌").split('\n') {
                         for row in hard_wrap(line, body_w) {
-                            out.push(format!("  {row}"));
+                            plain(&mut out, format!("  {row}"));
                         }
                     }
                 }
@@ -2896,11 +3325,7 @@ impl<T: Transport> App<T> {
         }
 
         render_status(
-            &ChatMeter {
-                workspace: self.options.workspace.clone(),
-                help: true,
-                ..Default::default()
-            },
+            &self.meter(),
             Rect {
                 x: area.x,
                 y: (area.y + 1 + chat_h + popup_h + rail_h + input_h).min(area.y + rows - 1),
@@ -3036,6 +3461,62 @@ fn first_text(msg: &Message) -> Option<&str> {
         Part::Text { text } => Some(text.as_str()),
         _ => None,
     })
+}
+
+/// A row of a fold. The whole visual row is ONE click target, and every row a
+/// group produces carries the same key — so clicking anywhere in an expanded
+/// group collapses it (lines.rs).
+fn fold_row(text: String, key: &str) -> crate::lines::VLine {
+    crate::lines::VLine {
+        text,
+        click: Some(key.to_string()),
+        ..Default::default()
+    }
+}
+
+/// A capped `│`-gutter block: `OUTPUT_LINES` rows unless the cap has been
+/// lifted, and a `… +N more lines` row that lifts it when clicked.
+fn push_fold_block(
+    out: &mut Vec<crate::lines::VLine>,
+    logical: &[&str],
+    width: usize,
+    key: &str,
+    full: bool,
+) {
+    let cap = if full {
+        usize::MAX
+    } else {
+        crate::lines::OUTPUT_LINES
+    };
+    let shown = &logical[..logical.len().min(cap)];
+    for line in shown {
+        for row in hard_wrap(line, width.saturating_sub(4).max(20)) {
+            out.push(crate::lines::VLine {
+                text: format!("    │ {row}"),
+                click: Some(key.to_string()),
+                copy: None,
+                // The block's own line: a copy across a wrap rejoins it and
+                // leaves the gutter behind.
+                src: Some((*line).to_string()),
+            });
+        }
+    }
+    if logical.len() > shown.len() {
+        out.push(fold_row(
+            format!("    │ … +{} more lines", logical.len() - shown.len()),
+            // Its own target: lifting the cap is not folding the group.
+            &format!("{key}!full"),
+        ));
+    }
+}
+
+/// The program as the renderer derives it: `code` verbatim, anything else JSON
+/// (lines.rs::call_input_text).
+fn call_input_text(input: &serde_json::Value) -> String {
+    match input.get("code").and_then(serde_json::Value::as_str) {
+        Some(code) => code.to_string(),
+        None => serde_json::to_string_pretty(input).unwrap_or_default(),
+    }
 }
 
 fn hard_wrap(line: &str, width: usize) -> Vec<String> {
@@ -4254,6 +4735,51 @@ impl Transport for LiveTransport {
                     }
                 });
             }
+            // The three meter feeds. Every one of them is SILENT on failure:
+            // they run on a timer, and a banner per poll would turn a missing
+            // number into a wall of banners. A stale meter says less; a modal
+            // every second says nothing at all.
+            Effect::LoadSessionMeta => {
+                tokio::spawn(async move {
+                    let Some(sid) = session.lock().expect("session lock").clone() else {
+                        return;
+                    };
+                    if let Ok(s) = api.get_session(&sid).await {
+                        let _ = tx.send(Action::SessionMeta(Box::new(SessionMeta {
+                            session: s.session,
+                            usage: s.usage,
+                            effective_model: s.effective_model,
+                            context_limit: s.context_limit,
+                            primed_tags: s.primed_tags.unwrap_or_default(),
+                            project_rules: s.project_rules.unwrap_or_default(),
+                        })));
+                    }
+                });
+            }
+            Effect::PollUsage => {
+                tokio::spawn(async move {
+                    let Some(sid) = session.lock().expect("session lock").clone() else {
+                        return;
+                    };
+                    if let Ok(u) = api.session_usage(&sid).await {
+                        let _ = tx.send(Action::Usage(crate::api::SnapshotUsage {
+                            totals: u.usage,
+                            tree: u.tree,
+                        }));
+                    }
+                });
+            }
+            Effect::LoadBranch(dir) => {
+                tokio::spawn(async move {
+                    // Not a repo, or no server: the meter simply says less.
+                    if let Ok(b) = api.branch(&dir).await {
+                        let _ = tx.send(Action::Branch {
+                            dir,
+                            branch: b.branch,
+                        });
+                    }
+                });
+            }
         }
     }
 }
@@ -4346,6 +4872,12 @@ mod tests {
                         // …and so are the other two feeds it is built from.
                         | Effect::LoadWorkflows
                         | Effect::LoadSchedules
+                        // …and so is everything the STATUS BAR is made of: a
+                        // meter feed says nothing about what was asked for.
+                        | Effect::LoadSessionMeta
+                        | Effect::PollUsage
+                        | Effect::LoadBranch(_)
+                        | Effect::LoadModelSettings
                 )
             })
             .cloned()
@@ -5022,6 +5554,260 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    // ---- the status bar and the memory margin, through the COMPOSITION ROOT --
+    //
+    // Three facts existed at both ends and in the middle not at all: the meter
+    // has carried a model, a cost and a context chip since it was written, the
+    // transcript has carried both `#` rows since IT was written, and `app.rs`
+    // passed `ChatMeter { workspace, help }` and two empty vectors. Every
+    // assertion below reads the REAL frame, so a renderer nobody feeds fails
+    // here with its own module's tests green.
+
+    fn meta(session: bough_core::schema::parts::Session) -> Action {
+        Action::SessionMeta(Box::new(SessionMeta {
+            session,
+            usage: crate::api::SnapshotUsage {
+                totals: bough_core::types::UsageTotals::default(),
+                tree: bough_core::types::UsageTotals::default(),
+            },
+            effective_model: Some("openai/gpt-5.6-luna".into()),
+            context_limit: Some(200_000),
+            primed_tags: vec!["git:push".into()],
+            project_rules: vec![crate::api::ProjectRuleSummary {
+                label: "AGENTS.md".into(),
+                path: "/w/AGENTS.md".into(),
+                bytes: 120,
+            }],
+        }))
+    }
+
+    /// A session row as `GET /sessions/:id` reports it.
+    fn snap_session(id: &str) -> bough_core::schema::parts::Session {
+        let mut s = crate::forest::fixtures::session_row(
+            id,
+            bough_core::schema::parts::SessionKind::Root,
+            0,
+        )
+        .session;
+        s.workspace = Some("/repos/bough".into());
+        s.context_tokens = Some(50_000);
+        s
+    }
+
+    #[test]
+    fn opening_a_conversation_asks_for_everything_the_status_bar_is_made_of() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(
+            TuiOptions {
+                workspace: Some("/repos/bough".into()),
+            },
+            sink,
+            100,
+            24,
+        );
+        open_s1(&mut app);
+        // The snapshot half: model, context window, tags, rules.
+        assert!(effects.borrow().contains(&Effect::LoadSessionMeta));
+        // …and the branch and the defaults, on the first tick.
+        app.apply(Action::Tick, 0);
+        assert!(effects
+            .borrow()
+            .contains(&Effect::LoadBranch("/repos/bough".into())));
+        assert!(effects.borrow().contains(&Effect::LoadModelSettings));
+    }
+
+    #[test]
+    fn the_status_bar_names_the_model_the_branch_and_what_is_left_of_the_context() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(
+            TuiOptions {
+                workspace: Some("/repos/bough".into()),
+            },
+            sink,
+            100,
+            24,
+        );
+        open_s1(&mut app);
+        app.apply(meta(snap_session("s1")), 0);
+        app.apply(
+            Action::Branch {
+                dir: "/repos/bough".into(),
+                branch: "main".into(),
+            },
+            0,
+        );
+        let frame = frame_of(&app, 100, 24);
+        let bar = frame.lines().last().unwrap().trim_end().to_string();
+        assert_eq!(
+            bar, "/repos/bough@main · openai/gpt-5.6-luna · 75% ctx left · ? help",
+            "the status bar"
+        );
+    }
+
+    #[test]
+    fn the_meter_stays_quiet_about_what_it_has_not_been_told() {
+        let (_effects, sink) = scripted();
+        let app = App::new(
+            TuiOptions {
+                workspace: Some("/repos/bough".into()),
+            },
+            sink,
+            100,
+            24,
+        );
+        // No snapshot, no branch, no defaults: the bar degrades to silence
+        // rather than to a fake model or a 0% chip.
+        let frame = frame_of(&app, 100, 24);
+        let bar = frame.lines().last().unwrap().trim_end().to_string();
+        assert_eq!(bar, "/repos/bough · ? help");
+    }
+
+    #[test]
+    fn the_cost_and_the_context_are_live_rather_than_read_once_at_open() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        app.apply(meta(snap_session("s1")), 0);
+        // A turn is running: the two feeds that move ride the poll tick.
+        app.apply(
+            event(
+                EventType::MessageStarted,
+                1,
+                json!({
+                    "id": "m1", "sessionId": "s1", "role": "user", "pending": true,
+                    "parts": [{"type": "text", "text": "go"}], "createdAt": 1
+                }),
+            ),
+            1,
+        );
+        effects.borrow_mut().clear();
+        for t in 0..POLL_TICKS {
+            app.apply(Action::Tick, 2 + t as i64);
+        }
+        assert!(effects.borrow().contains(&Effect::PollUsage), "spend");
+        assert!(
+            effects.borrow().contains(&Effect::LoadSessionMeta),
+            "context"
+        );
+        // The poll's answer moves the number on screen without a snapshot.
+        app.apply(
+            Action::Usage(crate::api::SnapshotUsage {
+                totals: bough_core::types::UsageTotals::default(),
+                tree: bough_core::types::UsageTotals {
+                    cost_usd: 0.042,
+                    ..Default::default()
+                },
+            }),
+            3,
+        );
+        assert!(frame_of(&app, 100, 24).contains("$0.042"));
+        // …and the settle re-reads both: the round that just ended is the one
+        // that moved them.
+        effects.borrow_mut().clear();
+        app.apply(
+            event(
+                EventType::TurnFinished,
+                4,
+                json!({"turnId": "t1", "sessionId": "s1", "status": "done"}),
+            ),
+            4,
+        );
+        assert!(effects.borrow().contains(&Effect::LoadSessionMeta));
+        assert!(effects.borrow().contains(&Effect::PollUsage));
+    }
+
+    #[test]
+    fn the_two_hash_rows_open_the_transcript_tags_above_rules() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        app.apply(meta(snap_session("s1")), 0);
+        app.apply(
+            Action::Thread(vec![crate::forest::fixtures::msg(
+                "m1",
+                Role::User,
+                "hello",
+            )]),
+            0,
+        );
+        let lines = app.transcript_lines();
+        assert_eq!(lines[0], "# this repo remembers: git:push");
+        assert_eq!(lines[1], "# rules: AGENTS.md · /rules");
+        // …and they are on the SCREEN, not merely in the vector.
+        let frame = frame_of(&app, 100, 24);
+        assert!(frame.contains("# rules: AGENTS.md · /rules"), "{frame}");
+    }
+
+    #[test]
+    fn a_repo_with_no_agents_md_and_no_tags_gets_no_margin_rows() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        app.apply(
+            Action::SessionMeta(Box::new(SessionMeta {
+                session: snap_session("s1"),
+                usage: crate::api::SnapshotUsage {
+                    totals: bough_core::types::UsageTotals::default(),
+                    tree: bough_core::types::UsageTotals::default(),
+                },
+                effective_model: None,
+                context_limit: None,
+                primed_tags: Vec::new(),
+                project_rules: Vec::new(),
+            })),
+            0,
+        );
+        assert!(
+            app.transcript_lines().is_empty(),
+            "no row, not an empty one"
+        );
+    }
+
+    #[test]
+    fn another_conversations_snapshot_never_relabels_this_screen() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        app.apply(meta(snap_session("s2")), 0);
+        assert!(app.primed_tags.is_empty(), "a snapshot that lost the race");
+        assert!(app.meter().model.is_none());
+        // …and a branch reply for a checkout this screen has left.
+        app.apply(
+            Action::Branch {
+                dir: "/somewhere/else".into(),
+                branch: "wip".into(),
+            },
+            0,
+        );
+        assert!(app.branch.is_none());
+    }
+
+    #[test]
+    fn a_session_switch_drops_the_meter_and_the_margin_rows_it_was_showing() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        app.apply(meta(snap_session("s1")), 0);
+        assert!(!app.project_rules.is_empty());
+        app.apply(Action::SessionOpened("s2".into()), 1);
+        assert!(app.project_rules.is_empty(), "another session's rule sheet");
+        assert!(app.primed_tags.is_empty());
+        assert!(app.meter().context_tokens.is_none());
+        assert!(app.meter().cost_usd.is_none());
+    }
+
+    #[test]
+    fn the_live_counts_on_the_bar_are_the_rails_own_rows() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        app.apply(meta(snap_session("s1")), 0);
+        app.apply(Action::Jobs(vec![job("j1", "sleep 5")]), 0);
+        let meter = app.meter();
+        assert_eq!(meter.shells, Some(1));
+        assert!(frame_of(&app, 120, 24).contains("⚙ 1 shell"));
     }
 
     /// PORT_PLAN 1.39 gate, TestBackend half: type → stream → interrupt →
@@ -6435,5 +7221,290 @@ mod tests {
         timers.clear_interval(repeat);
         timers.fire(40_000);
         assert_eq!(fired.borrow().len(), 3, "and stops when cleared");
+    }
+
+    // ---- the folds, and the transcript's own click targets -----------------
+
+    /// A message with one shell step and its output — what `run: echo hello`
+    /// puts in the thread.
+    fn tool_msg() -> Message {
+        Message {
+            id: "m-tool".into(),
+            session_id: "s1".into(),
+            role: Role::Supervisor,
+            parts: vec![
+                Part::ToolCall {
+                    id: "c1".into(),
+                    name: "run_steps".into(),
+                    input: json!({ "code": "await bash('echo hello')" }),
+                },
+                Part::ToolResult {
+                    call_id: "c1".into(),
+                    output: json!("hello"),
+                    is_error: false,
+                    interrupted: None,
+                },
+            ],
+            pending: false,
+            created_at: 1,
+        }
+    }
+
+    fn transcript(app: &App<impl FnMut(Effect)>) -> String {
+        app.transcript_lines().join("\n")
+    }
+
+    #[test]
+    fn ctrl_e_unfolds_every_tool_call_and_folds_them_back() {
+        let (mut app, _c, _o) = app_with_capture();
+        open_s1(&mut app);
+        app.thread.push(tool_msg());
+        // Folded is the resting state: the header, and nothing it did.
+        assert!(
+            transcript(&app).contains("▸ ⚙ run_steps"),
+            "{}",
+            transcript(&app)
+        );
+        assert!(!transcript(&app).contains("echo hello"));
+
+        app.apply(ctrl('e'), 0);
+        let open = transcript(&app);
+        assert!(open.contains("▾ ⚙ run_steps"), "{open}");
+        assert!(open.contains("await bash('echo hello')"), "{open}");
+        assert!(open.contains("↳ output"), "{open}");
+        assert!(open.contains("hello"), "{open}");
+
+        app.apply(ctrl('e'), 1);
+        assert!(transcript(&app).contains("▸ ⚙ run_steps"));
+        assert!(!transcript(&app).contains("↳ output"));
+    }
+
+    #[test]
+    fn ctrl_e_drops_the_per_group_state_so_the_global_toggle_wins() {
+        let (mut app, _c, _o) = app_with_capture();
+        open_s1(&mut app);
+        app.thread.push(tool_msg());
+        app.click_target("m-tool:0");
+        app.click_target("m-tool:0!full");
+        assert!(app.is_expanded("m-tool:0"));
+        // ^e once: everything opens, and the per-group state is gone.
+        app.apply(ctrl('e'), 0);
+        assert!(app.fold_all);
+        assert!(app.open_keys.is_empty() && app.full_keys.is_empty());
+        // ^e twice is a RESET, not a return to whatever was open before.
+        app.apply(ctrl('e'), 1);
+        assert!(!app.fold_all);
+        assert!(
+            !app.is_expanded("m-tool:0"),
+            "the group it had open is closed too"
+        );
+    }
+
+    #[test]
+    fn ctrl_e_with_a_draft_is_still_end_of_line() {
+        // The binding is guarded on an empty draft; with text typed, ^e must
+        // stay the composer's "end of line" and fold nothing.
+        let (mut app, _c, _o) = app_with_capture();
+        open_s1(&mut app);
+        app.thread.push(tool_msg());
+        type_text(&mut app, "hi", 0);
+        app.cursor = 0;
+        app.apply(ctrl('e'), 1);
+        assert!(!app.fold_all);
+        assert_eq!(app.cursor, 2);
+    }
+
+    /// The 1-based screen row a string is painted on.
+    fn row_of(app: &App<impl FnMut(Effect)>, needle: &str) -> u16 {
+        let painted = app.painted_rows();
+        painted
+            .iter()
+            .position(|r| r.contains(needle))
+            .map(|i| i as u16)
+            .unwrap_or_else(|| panic!("{needle:?} is not on screen:\n{}", painted.join("\n")))
+    }
+
+    fn click_row(app: &mut App<impl FnMut(Effect)>, row: u16, now: i64) {
+        app.apply(mouse(MouseEventKind::Down(MouseButton::Left), 4, row), now);
+        app.apply(
+            mouse(MouseEventKind::Up(MouseButton::Left), 4, row),
+            now + 1,
+        );
+    }
+
+    #[test]
+    fn clicking_a_tool_group_toggles_that_group_and_any_of_its_rows_folds_it() {
+        let (mut app, _c, _o) = app_with_capture();
+        open_s1(&mut app);
+        app.thread.push(tool_msg());
+        let head = row_of(&app, "▸ ⚙ run_steps");
+        click_row(&mut app, head, 0);
+        assert!(
+            app.is_expanded("m-tool:0"),
+            "the header row opened its group"
+        );
+        assert!(transcript(&app).contains("↳ output"));
+        assert!(!app.fold_all, "one group, not all of them");
+
+        // EVERY row of the fold carries the same key, so clicking the output
+        // row — not the header — collapses it again.
+        let out = row_of(&app, "↳ output");
+        click_row(&mut app, out, 2);
+        assert!(
+            !app.is_expanded("m-tool:0"),
+            "any row of the fold collapses it"
+        );
+    }
+
+    #[test]
+    fn the_more_lines_row_lifts_the_cap_and_does_not_fold_the_group() {
+        let (mut app, _c, _o) = app_with_capture();
+        open_s1(&mut app);
+        let long: Vec<String> = (0..40).map(|i| format!("line {i}")).collect();
+        let mut m = tool_msg();
+        m.parts[1] = Part::ToolResult {
+            call_id: "c1".into(),
+            output: json!(long.join("\n")),
+            is_error: false,
+            interrupted: None,
+        };
+        app.thread.push(m);
+        app.click_target("m-tool:0");
+        let capped = transcript(&app);
+        assert!(capped.contains("… +20 more lines"), "{capped}");
+        assert!(!capped.contains("line 39"), "{capped}");
+        app.click_target("m-tool:0!full");
+        let lifted = transcript(&app);
+        assert!(lifted.contains("line 39"), "{lifted}");
+        assert!(!lifted.contains("more lines"), "{lifted}");
+        assert!(app.is_expanded("m-tool:0"), "lifting a cap is not folding");
+    }
+
+    #[test]
+    fn a_thinking_block_folds_on_the_same_gesture() {
+        let (mut app, _c, _o) = app_with_capture();
+        open_s1(&mut app);
+        app.thread.push(Message {
+            id: "m-think".into(),
+            session_id: "s1".into(),
+            role: Role::Supervisor,
+            parts: vec![Part::Reasoning {
+                text: "first thought\nsecond thought".into(),
+                meta: None,
+                model: None,
+            }],
+            pending: false,
+            created_at: 1,
+        });
+        assert!(transcript(&app).contains("▸ thinking · first thought"));
+        app.click_target("m-think:0");
+        let open = transcript(&app);
+        assert!(open.contains("▾ thinking (2 lines)"), "{open}");
+        assert!(open.contains("second thought"), "{open}");
+    }
+
+    #[test]
+    fn a_branch_card_click_descends_and_a_job_card_click_opens_that_job() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.click_target("open:s2");
+        assert!(sends(&effects).contains(&Effect::OpenSession("s2".into())));
+        app.click_target("job:s1:j7");
+        assert_eq!(app.job.as_ref().map(|v| v.id.as_str()), Some("j7"));
+        assert!(sends(&effects).contains(&Effect::LoadJobOutput("j7".into())));
+    }
+
+    #[test]
+    fn a_click_where_the_panel_displaces_the_transcript_folds_nothing() {
+        let (mut app, _c, _o) = app_with_capture();
+        open_s1(&mut app);
+        app.thread.push(tool_msg());
+        let head = row_of(&app, "▸ ⚙ run_steps");
+        app.apply(ctrl('t'), 0);
+        assert!(app.panel.open());
+        click_row(&mut app, head, 1);
+        assert!(app.open_keys.is_empty(), "the panel owns that region");
+    }
+
+    // ---- the binding table is a PROMISE ------------------------------------
+
+    /// Commands that never reach a `Command::` arm because the composer answers
+    /// their keys directly (`on_key`'s raw `KeyCode` match, `input.rs`'s line
+    /// edits, `on_completion_key`). Every one of these is live on screen; this
+    /// list is what "handled somewhere else" is allowed to mean.
+    const HANDLED_BY_THE_COMPOSER: &[&str] = &[
+        "SendQueue",
+        "Newline",
+        "ImagePaste",
+        "DraftClear",
+        "AttachmentUp",
+        "AttachmentDown",
+        "HistoryPrev",
+        "HistoryNext",
+        "CompleteAccept",
+        "CompletePrev",
+        "CompleteNext",
+        "CompleteDismiss",
+        "CursorLeft",
+        "CursorRight",
+        "CursorHome",
+        "CursorEnd",
+        "CursorWordLeft",
+        "CursorWordRight",
+        "CursorUp",
+        "CursorDown",
+        "DeleteBack",
+        "DeleteForward",
+        "DeleteToEnd",
+        "DeleteToStart",
+        "DeleteLine",
+        "SessionOut",
+    ];
+
+    #[test]
+    fn every_bound_chord_is_actually_handled_not_merely_listed() {
+        // `dead_bindings` proves the TABLE is self-consistent. It cannot see
+        // the other way a row lies: `^e` was in the table, documented in the
+        // help overlay as "fold/unfold every tool call", and no arm anywhere
+        // read `Command::FoldAll` — so the overlay promised a gesture the app
+        // ignored, forever. A binding the help promises and the app drops is a
+        // lie; this is the pin.
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut sources = String::new();
+        let mut stack = vec![src];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs")
+                    // The table itself is where the commands are DECLARED;
+                    // finding a name there proves nothing about handling it.
+                    && path.file_name().is_some_and(|f| f != "keys.rs")
+                {
+                    sources.push_str(&std::fs::read_to_string(&path).unwrap());
+                }
+            }
+        }
+        let mut unhandled: Vec<String> = Vec::new();
+        for binding in crate::keys::BINDINGS.iter() {
+            // `Tab(_)` is one arm for seven rows; name the variant, not the payload.
+            let name = format!("{:?}", binding.command);
+            let name = name.split('(').next().unwrap().to_string();
+            if HANDLED_BY_THE_COMPOSER.contains(&name.as_str()) {
+                continue;
+            }
+            if !sources.contains(&format!("Command::{name}")) {
+                unhandled.push(format!("{} → {name}", binding.chord));
+            }
+        }
+        unhandled.sort();
+        unhandled.dedup();
+        assert_eq!(
+            unhandled,
+            Vec::<String>::new(),
+            "bound, documented, and dropped on the floor"
+        );
     }
 }

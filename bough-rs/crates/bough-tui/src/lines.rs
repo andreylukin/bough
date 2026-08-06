@@ -1616,6 +1616,26 @@ fn margin_row(prefix: &str, items: &[String], w: usize, suffix: &str) -> VLine {
     }
 }
 
+/// The two `#` margin rows, in the order the transcript emits them
+/// (lines.ts:1225-1240). Tags ABOVE rules: the tag set is this session's, the
+/// rule sheet is the project's, and the more static of the two sits under.
+/// An empty list is no row — never an empty one.
+pub(crate) fn margin_rows(
+    primed_tags: &[String],
+    project_rules: &[String],
+    w: usize,
+) -> Vec<VLine> {
+    let mut out = Vec::new();
+    // The memory margin: `#` means remembered, not happening now.
+    if !primed_tags.is_empty() {
+        out.push(margin_row("# this repo remembers: ", primed_tags, w, ""));
+    }
+    if !project_rules.is_empty() {
+        out.push(margin_row("# rules: ", project_rules, w, " · /rules"));
+    }
+    out
+}
+
 /// One mark as one row, two columns in. A destructive mark is amber — the
 /// only row that reports something the user cannot get back.
 fn mark_line(mark: &TranscriptMark) -> VLine {
@@ -1694,19 +1714,7 @@ pub fn build_lines(
             None => orphans.push(b),
         }
     }
-    let mut out: Vec<VLine> = Vec::new();
-    // The memory margin: `#` means remembered, not happening now.
-    if !opts.primed_tags.is_empty() {
-        out.push(margin_row(
-            "# this repo remembers: ",
-            &opts.primed_tags,
-            w,
-            "",
-        ));
-    }
-    if !opts.project_rules.is_empty() {
-        out.push(margin_row("# rules: ", &opts.project_rules, w, " · /rules"));
-    }
+    let mut out: Vec<VLine> = margin_rows(&opts.primed_tags, &opts.project_rules, w);
     // The ledger, drained in step with the thread.
     let mut marks: Vec<&TranscriptMark> = opts.marks.iter().collect();
     marks.sort_by_key(|m| m.at);

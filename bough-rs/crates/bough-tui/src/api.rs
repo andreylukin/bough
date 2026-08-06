@@ -980,6 +980,16 @@ impl Api {
         .await
     }
 
+    /// The branch a workspace is checked out on, for the meter's `dir@branch`.
+    ///
+    /// Polled rather than fetched once: a checkout happens in ANOTHER terminal,
+    /// so there is no event to hang it on, and a status bar naming the branch
+    /// you left is worse than one naming none (App.tsx::BRANCH_POLL_MS).
+    pub async fn branch(&self, dir: &str) -> Result<BranchName, ApiFailure> {
+        self.get(&format!("/fs/branch{}", query(&[("dir", Some(dir))])))
+            .await
+    }
+
     /// One directory's entries, for an `@` path that leaves the workspace.
     ///
     /// `git ls-files` cannot name anything outside the repo, so `@~/` had
@@ -1252,6 +1262,12 @@ impl Api {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct FileList {
     pub files: Vec<String>,
+}
+
+/// `GET /fs/branch?dir=` — the checked-out branch, for the meter.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BranchName {
+    pub branch: String,
 }
 
 /// `GET /fs/entries?dir=` — one directory, one level deep.
