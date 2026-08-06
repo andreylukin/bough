@@ -14,15 +14,19 @@
 //! at turn start/end. Queued rows and the notice row are counted before the
 //! transcript takes what is left (`chat_body_height`).
 //!
-//! WAVE-1 NOTE: `chat_body_height`/`visible_slice` belong to `tui/lines.rs`
-//! (row 1.37); until that port lands the math lives here, ported verbatim
-//! from `src/tui/lines.ts`, so the renderer and the (future) mouse hit-test
-//! share one copy inside the crate.
+//! THIRD INVARIANT — **the rows arrive STYLED and are parsed, never painted
+//! raw.** `lines::build_lines` bakes SGR sequences into every row (that is how
+//! the palette reaches the transcript at all); this component runs each one
+//! through `ansi::line_from_ansi`, so escapes become ratatui spans instead of
+//! printing as `[0m` litter. There is exactly ONE geometry: the window math
+//! lives in `lines.rs` and both this renderer and the mouse hit-test call it.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+
+use crate::lines::{chat_body_height, visible_slice, VLine};
 
 use super::{display_width, fmt_duration, fmt_tokens, pad_row, ACCENT, INFO, SPINNER, WARN};
 
@@ -30,8 +34,9 @@ use super::{display_width, fmt_duration, fmt_tokens, pad_row, ACCENT, INFO, SPIN
 pub const CHAT_PLACEHOLDER: &str = "type to start · the agent writes one program per round";
 
 pub struct ChatProps<'a> {
-    /// The whole transcript, pre-wrapped: one entry per physical row.
-    pub lines: &'a [String],
+    /// The whole transcript, pre-wrapped and pre-STYLED: one entry per
+    /// physical row, straight out of `lines::build_lines`.
+    pub lines: &'a [VLine],
     pub width: u16,
     /// Rows this component may occupy IN TOTAL (body + reserved strips).
     pub height: u16,
@@ -54,37 +59,20 @@ pub struct ChatProps<'a> {
     pub placeholder: &'a str,
 }
 
-/// lines.ts::chatBodyHeight — the transcript body after the reserved strips.
-pub fn chat_body_height(height: u16, queued: usize, has_notice: bool) -> usize {
-    (height as isize - (queued as isize + 2 + isize::from(has_notice))).max(1) as usize
-}
-
-pub struct VisibleSlice {
-    pub start: usize,
-    pub rows: std::ops::Range<usize>,
-    pub more: usize,
-    pub pct: usize,
-}
-
-/// lines.ts::visibleSlice — `scroll_off` counts up from the live tail; `pct`
-/// is the viewport TOP's position (fully scrolled up reads 0%).
-pub fn visible_slice(len: usize, height: usize, scroll_off: usize) -> VisibleSlice {
-    let h = height.max(1);
-    let max_off = len.saturating_sub(h);
-    let off = scroll_off.min(max_off);
-    let start = len.saturating_sub(h + off);
-    let end = (start + h).min(len);
-    let pct = if max_off == 0 {
-        100
-    } else {
-        ((start as f64 / max_off as f64) * 100.0).round() as usize
-    };
-    VisibleSlice {
-        start,
-        rows: start..end,
-        more: off,
-        pct,
+/// A styled transcript row as a ratatui line, padded to the viewport width so
+/// it clears whatever the previous frame left in those cells. THE ESCAPES DIE
+/// HERE — nothing downstream of this function has a `\x1b` in it.
+fn styled_row(text: &str, width: usize) -> Line<'static> {
+    let mut line = crate::ansi::line_from_ansi(text);
+    let painted: usize = line
+        .spans
+        .iter()
+        .map(|s| display_width(&s.content))
+        .sum::<usize>();
+    if painted < width {
+        line.spans.push(Span::raw(" ".repeat(width - painted)));
     }
+    line
 }
 
 /// The line shown while a turn is running: motion, elapsed time, and the way
@@ -115,8 +103,8 @@ pub(crate) fn busy_line(
 pub fn render_chat(p: &ChatProps, area: Rect, buf: &mut Buffer) {
     let width = p.width as usize;
     let dim = Style::default().add_modifier(Modifier::DIM);
-    let body = chat_body_height(p.height, p.queued.len(), p.notice.is_some());
-    let slice = visible_slice(p.lines.len(), body, p.scroll_off);
+    let body = chat_body_height(p.height as usize, p.queued.len(), p.notice.is_some());
+    let slice = visible_slice(p.lines, body, p.scroll_off);
     let shown = slice.rows.len();
     // Pad above, never below: the newest line stays where the eye already is.
     let pad = body.saturating_sub(shown);
@@ -138,8 +126,7 @@ pub fn render_chat(p: &ChatProps, area: Rect, buf: &mut Buffer) {
                 Line::from(Span::raw(pad_row(" ", width)))
             }
         } else if i >= pad {
-            let text = &p.lines[slice.start + (i - pad)];
-            Line::from(Span::raw(pad_row(text, width)))
+            styled_row(&slice.rows[i - pad].text, width)
         } else {
             Line::from(Span::raw(pad_row(" ", width)))
         };
@@ -245,7 +232,17 @@ mod tests {
             .join("\n")
     }
 
-    fn props<'a>(lines: &'a [String]) -> ChatProps<'a> {
+    fn rows(texts: &[&str]) -> Vec<VLine> {
+        texts
+            .iter()
+            .map(|t| VLine {
+                text: (*t).to_string(),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    fn props<'a>(lines: &'a [VLine]) -> ChatProps<'a> {
         ChatProps {
             lines,
             width: 80,
@@ -277,11 +274,12 @@ mod tests {
     }
 
     // Chat.test.tsx: "Chat renders a transcript and its scroll indicator from fixtures"
-    // (wave-1 subset: transcript + queued row + activity strip + scroll indicator;
-    // the tool-fold assertions belong to lines.rs, row 1.37).
+    // (this component's half: transcript + queued row + activity strip +
+    // scroll indicator; the tool-fold assertions belong to lines.rs).
     #[test]
     fn renders_transcript_queued_and_scroll_indicator() {
-        let lines: Vec<String> = (0..10).map(|i| format!("row {i}")).collect();
+        let owned: Vec<String> = (0..10).map(|i| format!("row {i}")).collect();
+        let lines = rows(&owned.iter().map(String::as_str).collect::<Vec<_>>());
         let queued = vec!["and fix the lint".to_string()];
         let p = ChatProps {
             activity: Some("running the test suite"),
@@ -323,26 +321,47 @@ mod tests {
         );
     }
 
+    /// THE REGRESSION THIS COMPONENT EXISTS TO PREVENT: `build_lines` bakes SGR
+    /// into every row, and a renderer that paints them raw prints `[0m` on
+    /// screen. Nothing styled may survive to the buffer as text.
     #[test]
-    fn visible_slice_bottom_hang_math() {
-        // Pinned to the tail.
-        let s = visible_slice(10, 4, 0);
-        assert_eq!((s.start, s.more, s.pct), (6, 0, 100));
-        // Scrolled up two.
-        let s = visible_slice(10, 4, 2);
-        assert_eq!((s.start, s.more), (4, 2));
-        // Clamped at the top; pct reads 0.
-        let s = visible_slice(10, 4, 99);
-        assert_eq!((s.start, s.more, s.pct), (0, 6, 0));
-        // Short list: no clamping, 100%.
-        let s = visible_slice(2, 4, 0);
-        assert_eq!((s.start, s.rows.len(), s.pct), (0, 2, 100));
+    fn styled_rows_are_parsed_not_painted_as_escape_litter() {
+        let lines = rows(&[
+            "\u{1b}[2m# rules: AGENTS.md\u{1b}[22m",
+            "\u{1b}[1mbough\u{1b}[22m",
+            "  \u{1b}[38;2;255;0;0mred\u{1b}[39m text",
+        ]);
+        let frame = draw(
+            &ChatProps {
+                width: 40,
+                height: 8,
+                ..props(&lines)
+            },
+            40,
+            8,
+        );
+        assert!(!frame.contains("[0m"), "{frame}");
+        assert!(!frame.contains("[2m"), "{frame}");
+        assert!(!frame.contains('\u{1b}'), "{frame}");
+        assert!(frame.contains("# rules: AGENTS.md"), "{frame}");
+        assert!(frame.contains("red text"), "{frame}");
     }
 
+    /// The styling is not merely stripped — it lands as ratatui style.
     #[test]
-    fn chat_body_height_reserves_the_strips() {
-        assert_eq!(chat_body_height(20, 0, false), 18);
-        assert_eq!(chat_body_height(20, 2, true), 15);
-        assert_eq!(chat_body_height(3, 5, true), 1); // floor is 1, never 0
+    fn a_bold_row_paints_bold_cells() {
+        let mut term = Terminal::new(TestBackend::new(20, 4)).unwrap();
+        let lines = rows(&["\u{1b}[1mbough\u{1b}[22m"]);
+        let p = ChatProps {
+            width: 20,
+            height: 4,
+            ..props(&lines)
+        };
+        term.draw(|f| render_chat(&p, f.area(), f.buffer_mut()))
+            .unwrap();
+        let buf = term.backend().buffer().clone();
+        let y = chat_body_height(4, 0, false) as u16 - 1;
+        assert_eq!(buf[(0, y)].symbol(), "b");
+        assert!(buf[(0, y)].modifier.contains(Modifier::BOLD));
     }
 }

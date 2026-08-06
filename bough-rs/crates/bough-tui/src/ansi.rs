@@ -507,11 +507,21 @@ pub fn truncate_ansi(text: &str, max: usize, ellipsis: &str) -> String {
     format!("{}{}", chars_to_ansi(&chars[..taken]), ellipsis)
 }
 
-/// Hard-wrap one logical line to `max` columns (the `wrap-ansi` replacement:
-/// `hard: true`, `trim: false`). A word longer than the width is split instead
-/// of overhanging; leading indentation is kept, and the space at a break stays
-/// on the upper row — both load-bearing for code blocks.
+/// Hard-wrap text to `max` columns (the `wrap-ansi` replacement: `hard: true`,
+/// `trim: false`). A word longer than the width is split instead of
+/// overhanging; leading indentation is kept, and the space at a break stays on
+/// the upper row — both load-bearing for code blocks.
+///
+/// EMBEDDED NEWLINES ARE ROW BREAKS, like the `wrapAnsi(...).split("\n")` this
+/// replaces. Missing that read a rendered markdown block — `md()` returns its
+/// lines joined by `\n` — as ONE logical line, so `- **Hello**\n- **Bough**`
+/// painted as `• Hello• Bough`: two list items welded into one row.
 pub fn wrap_line(text: &str, max: usize) -> Vec<String> {
+    if text.contains('\n') {
+        // Each line is styled and reset by its producer, so the split cannot
+        // strand an SGR run across the break.
+        return text.split('\n').flat_map(|l| wrap_line(l, max)).collect();
+    }
     let max = max.max(MIN_WRAP);
     let chars = styled_chars(text);
 
@@ -612,6 +622,20 @@ pub fn line_from_ansi(text: &str) -> ratatui::text::Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A rendered markdown block arrives as one string with newlines in it; a
+    /// wrap that does not break on them welds the list into one row.
+    #[test]
+    fn embedded_newlines_are_row_breaks() {
+        assert_eq!(
+            wrap_line("• Hello\n• Bough", 40),
+            vec!["• Hello".to_string(), "• Bough".to_string()]
+        );
+        // A blank line stays a blank row.
+        assert_eq!(wrap_line("a\n\nb", 40), vec!["a", "", "b"]);
+        // And a line with none is untouched.
+        assert_eq!(wrap_line("plain", 40), vec!["plain"]);
+    }
 
     // ---- the gate: span concat == stripped text ------------------------------
 

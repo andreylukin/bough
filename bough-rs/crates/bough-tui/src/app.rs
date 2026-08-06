@@ -19,11 +19,13 @@
 //! in this client yet — `live_units` renders their absence as no rows).
 //! Ghost absent (cheap tier is `None`);
 //! mouse = wheel scroll + click; the `!` shell answers "not wired into this
-//! client" and keeps the draft rather than billing the model. The
-//! transcript builder below is a deliberate v1 miniature of `lines.rs`
-//! (row 1.37, in flight); it renders prose, folded thinking/tool headers and
-//! the streaming `▌` cursor, and is replaced wholesale when `buildLines`
-//! lands. Behavior contracts preserved: streaming render, esc interrupts a
+//! client" and keeps the draft rather than billing the model. The transcript
+//! is `lines::build_lines` — the full port, with its tool folds and caps,
+//! thinking, live `tool.log` rows, branch/job/workflow cards, the `#` margin
+//! rows and the mark ledger — and `components/chat.rs` parses the SGR it bakes
+//! into every row. There is ONE geometry: `lines::chat_body_height` /
+//! `visible_slice` / `line_at_slot` serve both the paint and the hit-test.
+//! Behavior contracts preserved: streaming render, esc interrupts a
 //! running turn (esc esc never shadows the stop), scrollback counts up from
 //! the live tail, ^c is a two-press quit.
 
@@ -132,7 +134,7 @@ pub enum Action {
     Run(Command, String),
     /// `GET /sessions/:id/jobs` — the shells running on this conversation's
     /// behalf (its subagents' included). The rail is built from these.
-    Jobs(Vec<BackgroundJob>),
+    Jobs(Vec<crate::api::JobListRow>),
     /// One job's whole retained buffer, from the open job view's own poll.
     /// `error` replaces the buffer rather than closing the view: a job whose
     /// row went away still has an id worth saying.
@@ -671,6 +673,14 @@ pub struct App<T: Transport> {
     thread: Vec<Message>,
     /// message id → streamed-but-unfinalized text.
     streaming: HashMap<String, String>,
+    /// call id → the lines a RUNNING program has printed so far (`tool.log`).
+    /// `build_lines` renders these under a call with no result yet, and the
+    /// finalized output REPLACES them when the `tool_result` lands.
+    tool_logs: HashMap<String, Vec<String>>,
+    /// The permanent ledger this conversation's transcript interleaves: how
+    /// each turn settled. Memory-only — the server does not store it, so a
+    /// session switch is the only thing that clears it.
+    marks: Vec<crate::store::state::TranscriptMark>,
     activity: Option<String>,
     turn: Option<TurnClock>,
     tick: u64,
@@ -717,7 +727,7 @@ pub struct App<T: Transport> {
     help_off: usize,
     // ---- the live-work rail and the job view (row 2.19) --------------------
     /// The shells running for this conversation and its delegates.
-    jobs: Vec<BackgroundJob>,
+    jobs: Vec<crate::api::JobListRow>,
     /// The standing promises the rail counts down (`GET /schedules`). Kept
     /// whole, disabled rows included: `/schedules` names those too, and it is
     /// how one is re-enabled.
@@ -812,6 +822,8 @@ impl<T: Transport> App<T> {
             quit: false,
             thread: Vec::new(),
             streaming: HashMap::new(),
+            tool_logs: HashMap::new(),
+            marks: Vec::new(),
             activity: None,
             turn: None,
             tick: 0,
@@ -1007,7 +1019,11 @@ impl<T: Transport> App<T> {
                 script_file: String::new(),
             })
             .collect();
-        live_units(&self.jobs, &subagents, &runs, &self.schedules, self.now_ms)
+        // `live_units` was ported against the bare `BackgroundJob`; the rows
+        // this client holds carry the tail the transcript's job card needs, so
+        // the adaptation happens here rather than in the selector.
+        let shells: Vec<BackgroundJob> = self.jobs.iter().map(|r| r.job.clone()).collect();
+        live_units(&shells, &subagents, &runs, &self.schedules, self.now_ms)
     }
 
     /// The cursor must never point past a rail that just got shorter — a job
@@ -1211,6 +1227,7 @@ impl<T: Transport> App<T> {
             Action::Thread(thread) => {
                 self.thread = thread;
                 self.streaming.clear();
+                self.tool_logs.clear();
                 // A switch lands at the live tail, like every arrival.
                 self.scroll_off = 0;
             }
@@ -1581,6 +1598,15 @@ impl<T: Transport> App<T> {
             self.open_link(&url);
             return;
         }
+        // A markdown link in the transcript. Its address lives in an OSC 8
+        // marker, which a ratatui cell CANNOT carry — the painted row above has
+        // only the label — so it is read off the styled row instead.
+        if let Some(line) = self.transcript_line_at(at) {
+            if let Some(url) = link_at(&line.text, here) {
+                self.open_link(&url);
+                return;
+            }
+        }
         // No link under the pointer: the row's own target, if it has one. This
         // is what makes a transcript clickable — `lines.rs` has emitted a
         // target on every foldable group, every capped block and every branch
@@ -1611,6 +1637,12 @@ impl<T: Transport> App<T> {
     /// (`chat_height`/`chat_body_height`/`line_at_slot`), so a click cannot
     /// land one row off the row that was drawn.
     fn transcript_click_target(&self, at: Point) -> Option<String> {
+        self.transcript_line_at(at).and_then(|l| l.click.clone())
+    }
+
+    /// The STYLED transcript row under `at`, if the transcript is what is on
+    /// screen there.
+    fn transcript_line_at(&self, at: Point) -> Option<crate::lines::VLine> {
         // The panel, the job view and the overlay DISPLACE the transcript;
         // a click in that region belongs to them.
         if self.help_open || self.panel.open() || self.job.is_some() {
@@ -1626,7 +1658,7 @@ impl<T: Transport> App<T> {
         // passes `queued: &[]`), and the two must agree or the hit-test slides.
         let body = crate::lines::chat_body_height(chat_h as usize, 0, self.notice.is_some());
         crate::lines::line_at_slot(&lines, body, self.scroll_off, (y - Self::CHAT_TOP) as usize)
-            .and_then(|l| l.click.clone())
+            .cloned()
     }
 
     /// Act on a transcript row's click target.
@@ -1650,13 +1682,25 @@ impl<T: Transport> App<T> {
             self.job = Some(JobView {
                 id: job_id.to_string(),
                 output: String::new(),
-                job: self.jobs.iter().find(|j| j.id == job_id).cloned(),
+                job: self
+                    .jobs
+                    .iter()
+                    .find(|j| j.job.id == job_id)
+                    .map(|r| r.job.clone()),
                 error: None,
                 scroll: 0,
                 armed: false,
             });
             self.transport
                 .effect(Effect::LoadJobOutput(job_id.to_string()));
+            return;
+        }
+        // A workflow card opens that run's view. The run is detached and off
+        // the live rail the moment it ends, so the card is the only door left
+        // to its phases, its per-agent cost and its replay accounting.
+        if let Some(id) = target.strip_prefix("workflow:") {
+            self.panel.open_run(id);
+            self.transport.effect(Effect::LoadWorkflow(id.to_string()));
             return;
         }
         // "+N more lines" lifts the cap and stays lifted — re-capping it is `^e`.
@@ -1966,6 +2010,8 @@ impl<T: Transport> App<T> {
                 self.panel.current_id = None;
                 self.thread.clear();
                 self.streaming.clear();
+                self.tool_logs.clear();
+                self.marks.clear();
                 self.turn = None;
                 self.activity = None;
                 self.notice = None;
@@ -2288,7 +2334,11 @@ impl<T: Transport> App<T> {
                         self.job = Some(JobView {
                             id: unit.id.clone(),
                             output: String::new(),
-                            job: self.jobs.iter().find(|j| j.id == unit.id).cloned(),
+                            job: self
+                                .jobs
+                                .iter()
+                                .find(|j| j.job.id == unit.id)
+                                .map(|r| r.job.clone()),
                             error: None,
                             scroll: 0,
                             armed: false,
@@ -2790,11 +2840,45 @@ impl<T: Transport> App<T> {
                     self.streaming.remove(&d.message_id);
                 }
             }
-            EventType::ToolLog => {} // live tool folds land with lines.rs (row 1.37)
+            // A running program's own output, line by line. Kept per CALL —
+            // `build_lines` shows it under a call that has no result yet and
+            // drops it the moment the finalized `tool_result` arrives, so this
+            // never double-prints.
+            EventType::ToolLog => {
+                if let Ok(d) =
+                    serde_json::from_value::<bough_core::schema::events::ToolLogData>(event.data)
+                {
+                    self.tool_logs.entry(d.call_id).or_default().push(d.line);
+                }
+            }
             EventType::TurnFinished => {
-                if serde_json::from_value::<TurnFinishedData>(event.data).is_ok() {
+                if let Ok(d) = serde_json::from_value::<TurnFinishedData>(event.data) {
                     if let Some(turn) = &mut self.turn {
                         turn.ended = true;
+                    }
+                    // The settle line, into the ledger the transcript
+                    // interleaves (reduce.rs::TurnSettle). It is a MARK and not
+                    // a message: the server never stored it, and a turn that
+                    // ended is a fact the transcript must not lose when the
+                    // spinner's numbers go.
+                    if let Some(started_at) = self.turn.as_ref().map(|t| t.started_at) {
+                        let meter = crate::store::state::TurnMeter {
+                            session_id: d.session_id.clone(),
+                            started_at,
+                            base_tokens: 0,
+                            base_cost_usd: 0.0,
+                            tokens: 0,
+                            cost_usd: 0.0,
+                            ended_at: Some(event.ts),
+                            status: Some(d.status),
+                        };
+                        self.marks.push(crate::store::state::TranscriptMark {
+                            id: format!("mark:{}:{started_at}", d.session_id),
+                            session_id: d.session_id,
+                            at: event.ts,
+                            kind: crate::store::state::MarkKind::Turn,
+                            text: crate::store::selectors::settled_line(&meter, event.ts),
+                        });
                     }
                     for msg in &mut self.thread {
                         msg.pending = false;
@@ -2875,7 +2959,7 @@ impl<T: Transport> App<T> {
         }
     }
 
-    // ---- transcript (v1 miniature of lines.rs buildLines) -------------------
+    // ---- the transcript ------------------------------------------------------
 
     /// Is this group open? The global toggle wins over the per-group set, the
     /// way App.tsx passes `(key) => foldAll || openKeys.has(key)` to
@@ -2888,137 +2972,106 @@ impl<T: Transport> App<T> {
         self.fold_all || self.full_keys.contains(key)
     }
 
-    /// The transcript as PLAIN rows — what the renderer paints. The click
-    /// targets live on the same rows (`transcript_vlines`), so the hit-test and
-    /// the paint are one derivation and a click cannot land on a row that was
+    /// The transcript as PLAIN rows — the styled rows with their SGR gone.
+    /// Only tests, the scroll clamp and the copy path want this: the RENDERER
+    /// takes `transcript_vlines` and parses the escapes (`components/chat.rs`),
+    /// so there is one derivation and a click cannot land on a row that was
     /// not drawn.
     fn transcript_lines(&self) -> Vec<String> {
         self.transcript_vlines()
             .into_iter()
-            .map(|l| l.copy.unwrap_or(l.text))
+            .map(|l| crate::ansi::strip_ansi(&l.text))
             .collect()
     }
 
+    /// THE REAL TRANSCRIPT. `lines::build_lines` is the full port — tool folds
+    /// and their caps, thinking, live `tool.log` rows, branch cards, job cards,
+    /// workflow cards, the `#` margin rows, marks — and this is its only
+    /// caller. The options are assembled from state this reducer already holds;
+    /// three of them are adapted here rather than in `lines.rs`, because the
+    /// same wire shape is declared twice in this crate (`api` = what the wire
+    /// carries, `store::state` = what the ported selectors take). The field
+    /// lists are written out, so a divergence is a compile error here.
     fn transcript_vlines(&self) -> Vec<crate::lines::VLine> {
-        let width = self.cols as usize;
-        let body_w = width.saturating_sub(2).max(20);
-        // The memory margin, at the TOP and in the transcript's own order:
-        // what this repo remembers, then what every turn is told. `#` is
-        // reserved across the transcript for exactly one meaning — remembered,
-        // not happening now — and these rows scroll away like anything else
-        // that already happened. (`copy` is the plain row; this surface paints
-        // raw strings, so the styled `text` would print its escapes.)
-        let mut out: Vec<crate::lines::VLine> =
-            crate::lines::margin_rows(&self.primed_tags, &self.project_rules, width);
-        let plain = |out: &mut Vec<crate::lines::VLine>, text: String| {
-            out.push(crate::lines::VLine {
-                text,
-                ..Default::default()
-            })
+        let width = self.cols.max(20) as usize;
+        // Delegated children of THIS conversation, with their completion notes
+        // matched out of the thread: the branch-card feed.
+        let children: Vec<crate::lines::ChildRow> = match self.session_id.as_deref() {
+            Some(current) => self
+                .panel
+                .sessions
+                .iter()
+                .filter(|s| {
+                    s.session.parent_id.as_deref() == Some(current)
+                        || s.session.origin_id.as_deref() == Some(current)
+                })
+                .map(|s| crate::lines::ChildRow {
+                    id: s.session.id.clone(),
+                    title: s.session.title.clone(),
+                    kind: s.session.kind,
+                    busy: s.busy,
+                    last_turn_status: s.last_turn_status,
+                    outcome_ok: s.session.outcome_ok,
+                    origin_message_id: s.session.origin_message_id.clone(),
+                    tokens: s.tokens,
+                    cost_usd: s.cost_usd,
+                })
+                .collect(),
+            None => Vec::new(),
         };
-        for msg in &self.thread {
-            plain(&mut out, String::new());
-            plain(
-                &mut out,
-                match msg.role {
-                    Role::User => "you",
-                    Role::Supervisor => "bough",
-                    Role::System => "system",
-                }
-                .to_string(),
-            );
-            for (i, part) in msg.parts.iter().enumerate() {
-                // The group's key. EVERY row a fold produces carries the SAME
-                // key, so clicking any row of an expanded group collapses it.
-                let key = format!("{}:{i}", msg.id);
-                match part {
-                    Part::Text { text } => {
-                        for line in text.split('\n') {
-                            for row in hard_wrap(line, body_w) {
-                                plain(&mut out, format!("  {row}"));
-                            }
-                        }
-                    }
-                    // Thinking folds like a tool step: collapsed it is its own
-                    // first line, open it is the whole thing.
-                    Part::Reasoning { text, .. } => {
-                        let logical: Vec<&str> = text.split('\n').collect();
-                        if self.is_expanded(&key) {
-                            out.push(fold_row(
-                                format!(
-                                    "  ▾ thinking ({})",
-                                    crate::store::selectors::plural(logical.len() as i64, "line")
-                                ),
-                                &key,
-                            ));
-                            push_fold_block(&mut out, &logical, body_w, &key, self.is_full(&key));
-                        } else {
-                            let gist = logical
-                                .iter()
-                                .map(|l| l.trim())
-                                .find(|l| !l.is_empty())
-                                .unwrap_or("");
-                            out.push(fold_row(
-                                format!(
-                                    "  ▸ thinking · {}",
-                                    crate::store::selectors::clip(gist, 60)
-                                ),
-                                &key,
-                            ));
-                        }
-                    }
-                    // The tool group. Collapsed it is one row; open it is the
-                    // program that ran and what it printed.
-                    Part::ToolCall { id, name, input } => {
-                        let open = self.is_expanded(&key);
-                        out.push(fold_row(
-                            format!("  {} ⚙ {name}", if open { "▾" } else { "▸" }),
-                            &key,
-                        ));
-                        if !open {
-                            continue;
-                        }
-                        let full = self.is_full(&key);
-                        let program = call_input_text(input);
-                        if !program.is_empty() {
-                            let logical: Vec<&str> = program.split('\n').collect();
-                            push_fold_block(&mut out, &logical, body_w, &key, full);
-                        }
-                        // The result of THIS call, wherever it landed in the
-                        // message — a result part is matched by call id, not by
-                        // being the next part along.
-                        let result = msg.parts.iter().find(
-                            |p| matches!(p, Part::ToolResult { call_id, .. } if call_id == id),
-                        );
-                        match result {
-                            Some(r) => {
-                                let text = crate::lines::output_text(r);
-                                if !text.is_empty() {
-                                    out.push(fold_row("  ↳ output".to_string(), &key));
-                                    let logical: Vec<&str> = text.split('\n').collect();
-                                    push_fold_block(&mut out, &logical, body_w, &key, full);
-                                }
-                            }
-                            None => out.push(fold_row("  ⚙ running".to_string(), &key)),
-                        }
-                    }
-                    Part::ToolResult { .. } => {} // shown inside its call's fold
-                    Part::Image { name, .. } => plain(&mut out, format!("  [image: {name}]")),
-                    Part::Ask { question, .. } => plain(&mut out, format!("  ? {question}")),
-                    Part::Workflow { name, .. } => plain(&mut out, format!("  ⧉ {name}")),
-                }
-            }
-            if msg.pending {
-                if let Some(streamed) = self.streaming.get(&msg.id) {
-                    for line in format!("{streamed}▌").split('\n') {
-                        for row in hard_wrap(line, body_w) {
-                            plain(&mut out, format!("  {row}"));
-                        }
-                    }
-                }
-            }
-        }
-        out
+        // A RUNNING shell is on the rail, so its card in the transcript would
+        // be the same fact twice. An exited one stays: an outcome belongs in
+        // the transcript, and the card is the only door left to its output.
+        let jobs: Vec<crate::lines::JobView> = self
+            .jobs
+            .iter()
+            .filter(|r| r.job.status != bough_core::schema::parts::JobStatus::Running)
+            .map(|r| crate::lines::JobView {
+                job: r.job.clone(),
+                tail: r.tail.clone().unwrap_or_default(),
+                output_lines: r.output_lines.unwrap_or(0),
+            })
+            .collect();
+        // Every run of this session, not just the live ones: the card's whole
+        // purpose is that a finished run still reads its outcome in place.
+        let runs: Vec<crate::lines::RunCardView> = self
+            .workflows
+            .iter()
+            .map(|w| crate::lines::RunCardView {
+                id: w.id.clone(),
+                status: workflow_status(&w.status),
+                agents: crate::store::state::WorkflowAgentCounts {
+                    total: w.agents.total as i64,
+                    done: w.agents.done as i64,
+                    cached: w.agents.cached as i64,
+                    running: w.agents.running as i64,
+                    queued: w.agents.queued as i64,
+                    failed: w.agents.failed as i64,
+                },
+                created_at: w.created_at,
+                finished_at: w.finished_at,
+            })
+            .collect();
+        let opts = crate::lines::BuildOptions {
+            streaming: self.streaming.clone(),
+            branches: crate::lines::branches_from(&self.thread, &children),
+            tool_logs: Some(self.tool_logs.clone()),
+            jobs,
+            runs,
+            marks: self.marks.clone(),
+            skills: (!self.skills.is_empty())
+                .then(|| self.skills.iter().map(|(n, _)| n.clone()).collect()),
+            now: Some(self.now_ms),
+            primed_tags: self.primed_tags.clone(),
+            project_rules: self.project_rules.clone(),
+        };
+        crate::lines::build_lines(
+            &self.thread,
+            &|key| self.is_expanded(key),
+            &|key| self.is_full(key),
+            width,
+            &opts,
+        )
     }
 
     // ---- draw ---------------------------------------------------------------
@@ -3139,7 +3192,7 @@ impl<T: Transport> App<T> {
             render_help(rows as usize, self.help_off, area, buf);
             return;
         }
-        let lines = self.transcript_lines();
+        let lines = self.transcript_vlines();
         let busy = self.busy();
         // App.tsx: composerRows = min(8, max(3, rows/4)).
         let composer_rows = ((rows as usize) / 4).clamp(3, 8);
@@ -3461,71 +3514,6 @@ fn first_text(msg: &Message) -> Option<&str> {
         Part::Text { text } => Some(text.as_str()),
         _ => None,
     })
-}
-
-/// A row of a fold. The whole visual row is ONE click target, and every row a
-/// group produces carries the same key — so clicking anywhere in an expanded
-/// group collapses it (lines.rs).
-fn fold_row(text: String, key: &str) -> crate::lines::VLine {
-    crate::lines::VLine {
-        text,
-        click: Some(key.to_string()),
-        ..Default::default()
-    }
-}
-
-/// A capped `│`-gutter block: `OUTPUT_LINES` rows unless the cap has been
-/// lifted, and a `… +N more lines` row that lifts it when clicked.
-fn push_fold_block(
-    out: &mut Vec<crate::lines::VLine>,
-    logical: &[&str],
-    width: usize,
-    key: &str,
-    full: bool,
-) {
-    let cap = if full {
-        usize::MAX
-    } else {
-        crate::lines::OUTPUT_LINES
-    };
-    let shown = &logical[..logical.len().min(cap)];
-    for line in shown {
-        for row in hard_wrap(line, width.saturating_sub(4).max(20)) {
-            out.push(crate::lines::VLine {
-                text: format!("    │ {row}"),
-                click: Some(key.to_string()),
-                copy: None,
-                // The block's own line: a copy across a wrap rejoins it and
-                // leaves the gutter behind.
-                src: Some((*line).to_string()),
-            });
-        }
-    }
-    if logical.len() > shown.len() {
-        out.push(fold_row(
-            format!("    │ … +{} more lines", logical.len() - shown.len()),
-            // Its own target: lifting the cap is not folding the group.
-            &format!("{key}!full"),
-        ));
-    }
-}
-
-/// The program as the renderer derives it: `code` verbatim, anything else JSON
-/// (lines.rs::call_input_text).
-fn call_input_text(input: &serde_json::Value) -> String {
-    match input.get("code").and_then(serde_json::Value::as_str) {
-        Some(code) => code.to_string(),
-        None => serde_json::to_string_pretty(input).unwrap_or_default(),
-    }
-}
-
-fn hard_wrap(line: &str, width: usize) -> Vec<String> {
-    let w = width.max(1);
-    let chars: Vec<char> = line.chars().collect();
-    if chars.is_empty() {
-        return vec![String::new()];
-    }
-    chars.chunks(w).map(|c| c.iter().collect()).collect()
 }
 
 // ---- the live loop ----------------------------------------------------------
@@ -3981,8 +3969,7 @@ impl Transport for LiveTransport {
                     // A poll that fails is a beat with no news, never a modal:
                     // the rail keeps the rows it had and the next tick retries.
                     if let Ok(list) = api.list_jobs(&sid).await {
-                        let _ =
-                            tx.send(Action::Jobs(list.jobs.into_iter().map(|r| r.job).collect()));
+                        let _ = tx.send(Action::Jobs(list.jobs));
                     }
                 });
             }
@@ -4023,9 +4010,7 @@ impl Transport for LiveTransport {
                         Ok(ack) => {
                             let _ = tx.send(Action::Notice(ack.message));
                             if let Ok(list) = api.list_jobs(&sid).await {
-                                let _ = tx.send(Action::Jobs(
-                                    list.jobs.into_iter().map(|r| r.job).collect(),
-                                ));
+                                let _ = tx.send(Action::Jobs(list.jobs));
                             }
                         }
                         Err(e) => {
@@ -4551,8 +4536,7 @@ impl Transport for LiveTransport {
                     // and one extra listing beats a row that appears a second
                     // late on the screen the user is watching.
                     if let Ok(list) = api.list_jobs(&sid).await {
-                        let _ =
-                            tx.send(Action::Jobs(list.jobs.into_iter().map(|r| r.job).collect()));
+                        let _ = tx.send(Action::Jobs(list.jobs));
                     }
                 });
             }
@@ -6040,7 +6024,16 @@ mod tests {
         }
     }
 
-    fn job(id: &str, command: &str) -> BackgroundJob {
+    /// A running job as the listing carries it: the row, not the bare job.
+    fn job(id: &str, command: &str) -> crate::api::JobListRow {
+        crate::api::JobListRow {
+            job: bare_job(id, command),
+            tail: None,
+            output_lines: None,
+        }
+    }
+
+    fn bare_job(id: &str, command: &str) -> BackgroundJob {
         BackgroundJob {
             id: id.into(),
             name: id.into(),
@@ -6078,7 +6071,7 @@ mod tests {
             Action::JobOutput {
                 id: "job-1".into(),
                 output: "hello from the shell\n".into(),
-                job: Some(job("job-1", "sleep 30")),
+                job: Some(bare_job("job-1", "sleep 30")),
                 error: None,
             },
             5_300,
@@ -7261,21 +7254,28 @@ mod tests {
         app.thread.push(tool_msg());
         // Folded is the resting state: the header, and nothing it did.
         assert!(
-            transcript(&app).contains("▸ ⚙ run_steps"),
+            transcript(&app).contains("▸ 1 step"),
             "{}",
             transcript(&app)
         );
-        assert!(!transcript(&app).contains("echo hello"));
+        // Collapsed still says WHAT it did — the gist rides the header — but
+        // not what it printed.
+        assert!(
+            transcript(&app).contains("▸ 1 step · await bash('echo hello')"),
+            "{}",
+            transcript(&app)
+        );
+        assert!(!transcript(&app).contains("hello\n"));
 
         app.apply(ctrl('e'), 0);
         let open = transcript(&app);
-        assert!(open.contains("▾ ⚙ run_steps"), "{open}");
+        assert!(open.contains("▾ 1 step"), "{open}");
         assert!(open.contains("await bash('echo hello')"), "{open}");
         assert!(open.contains("↳ output"), "{open}");
         assert!(open.contains("hello"), "{open}");
 
         app.apply(ctrl('e'), 1);
-        assert!(transcript(&app).contains("▸ ⚙ run_steps"));
+        assert!(transcript(&app).contains("▸ 1 step"));
         assert!(!transcript(&app).contains("↳ output"));
     }
 
@@ -7337,7 +7337,7 @@ mod tests {
         let (mut app, _c, _o) = app_with_capture();
         open_s1(&mut app);
         app.thread.push(tool_msg());
-        let head = row_of(&app, "▸ ⚙ run_steps");
+        let head = row_of(&app, "▸ 1 step");
         click_row(&mut app, head, 0);
         assert!(
             app.is_expanded("m-tool:0"),
@@ -7403,6 +7403,214 @@ mod tests {
         assert!(open.contains("second thought"), "{open}");
     }
 
+    /// THE GAP THIS CLOSED. `build_lines` emits SGR into every row; painting
+    /// those rows raw prints `[0m` on screen. Nothing the transcript draws may
+    /// contain an escape.
+    #[test]
+    fn the_painted_transcript_carries_no_escape_sequences() {
+        let (mut app, _c, _o) = app_with_capture();
+        open_s1(&mut app);
+        app.primed_tags = vec!["git:push".into()];
+        app.project_rules = vec!["AGENTS.md".into()];
+        app.thread.push(tool_msg());
+        app.thread.push(Message {
+            id: "m-md".into(),
+            session_id: "s1".into(),
+            role: Role::Supervisor,
+            parts: vec![Part::Text {
+                text: "**bold** and `code` and a [link](https://bough.dev)".into(),
+            }],
+            pending: false,
+            created_at: 2,
+        });
+        let screen = app.painted_rows().join("\n");
+        assert!(!screen.contains('\u{1b}'), "{screen}");
+        assert!(!screen.contains("[0m"), "{screen}");
+        assert!(!screen.contains("[2m"), "{screen}");
+        // …and the markdown is RENDERED, not printed as source.
+        assert!(screen.contains("bold"), "{screen}");
+        assert!(!screen.contains("**bold**"), "{screen}");
+    }
+
+    /// An exited shell leaves a CARD in the transcript, and the card's own row
+    /// opens that job's output. Before the real builder was wired the card was
+    /// never emitted, so `job:` was a target nothing on screen could produce.
+    #[test]
+    fn an_exited_job_draws_a_card_whose_row_opens_it() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        let mut row = job("j7", "sleep 25");
+        row.job.status = bough_core::schema::parts::JobStatus::Exited;
+        row.job.exit_code = Some(0);
+        row.job.exited_at = Some(5_000);
+        row.tail = Some(vec!["done sleeping".into()]);
+        row.output_lines = Some(1);
+        app.apply(Action::Jobs(vec![row]), 6_000);
+
+        let lines = app.transcript_vlines();
+        let card = lines
+            .iter()
+            .find(|l| l.click.as_deref().is_some_and(|c| c.starts_with("job:")))
+            .unwrap_or_else(|| panic!("no job card: {:?}", app.transcript_lines()));
+        assert_eq!(card.click.as_deref(), Some("job:s1:j7"));
+        assert!(
+            app.transcript_lines()
+                .iter()
+                .any(|l| l.contains("sleep 25")),
+            "{:?}",
+            app.transcript_lines()
+        );
+        // And the click that row resolves to really opens the output.
+        let target = card.click.clone().unwrap();
+        app.click_target(&target);
+        assert_eq!(app.job.as_ref().map(|v| v.id.as_str()), Some("j7"));
+        assert!(sends(&effects).contains(&Effect::LoadJobOutput("j7".into())));
+    }
+
+    /// A finished subagent's report becomes a BRANCH CARD anchored under the
+    /// message that spawned it, and the card descends into that branch. The
+    /// feed is the two halves this client already had: the delegated children
+    /// polled for the rail, and the completion note in the thread.
+    #[test]
+    fn a_finished_subagents_report_becomes_a_card_that_descends() {
+        use bough_core::schema::parts::SessionKind;
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.thread.push(Message {
+            id: "m1".into(),
+            session_id: "s1".into(),
+            role: Role::User,
+            parts: vec![Part::Text {
+                text: "delegate the audit".into(),
+            }],
+            pending: false,
+            created_at: 1,
+        });
+        app.thread.push(Message {
+            id: "m2".into(),
+            session_id: "s1".into(),
+            role: Role::System,
+            parts: vec![Part::Text {
+                text: "[subagent finished] \"audit app.rs\" (sub-1) — finished.\n\
+                       Changed files: app.rs.\n\
+                       Report:\nthe hit-test was fine\n\
+                       It worked in THIS session's checkout"
+                    .into(),
+            }],
+            pending: false,
+            created_at: 2,
+        });
+        let mut child = crate::forest::fixtures::session_row("sub-1", SessionKind::Subagent, 2);
+        child.session.title = "audit app.rs".into();
+        child.session.parent_id = Some("s1".into());
+        child.session.origin_message_id = Some("m1".into());
+        child.session.outcome_ok = Some(true);
+        app.apply(Action::Sessions(vec![child]), 3);
+
+        let lines = app.transcript_vlines();
+        let card = lines
+            .iter()
+            .find(|l| l.click.as_deref() == Some("open:sub-1"))
+            .unwrap_or_else(|| panic!("no branch card: {:?}", app.transcript_lines()));
+        assert!(card.click.is_some());
+        let plain = app.transcript_lines().join("\n");
+        assert!(plain.contains("audit app.rs"), "{plain}");
+        assert!(plain.contains("the hit-test was fine"), "{plain}");
+        // The RAW note is gone: never both, never neither.
+        assert!(!plain.contains("[subagent finished]"), "{plain}");
+        app.click_target("open:sub-1");
+        assert!(sends(&effects).contains(&Effect::OpenSession("sub-1".into())));
+    }
+
+    /// A running program's console lines show WHILE it runs, and the finalized
+    /// result REPLACES them rather than printing them twice.
+    #[test]
+    fn tool_log_lines_stream_under_a_running_call_and_are_replaced_by_the_result() {
+        let (mut app, _c, _o) = app_with_capture();
+        open_s1(&mut app);
+        app.thread.push(Message {
+            id: "m-tool".into(),
+            session_id: "s1".into(),
+            role: Role::Supervisor,
+            parts: vec![Part::ToolCall {
+                id: "c1".into(),
+                name: "run_steps".into(),
+                input: json!({ "code": "await bash('echo hello')" }),
+            }],
+            pending: false,
+            created_at: 1,
+        });
+        app.apply(ctrl('e'), 0); // open every fold
+        app.apply(
+            Action::Event(BoughEvent {
+                r#type: EventType::ToolLog,
+                seq: 1,
+                ts: 1,
+                session_id: Some("s1".into()),
+                data: json!({"messageId": "m-tool", "callId": "c1", "line": "hello"}),
+            }),
+            1,
+        );
+        let live = transcript(&app);
+        assert!(live.contains("↳ output (live)"), "{live}");
+        assert_eq!(
+            live.matches("hello").count(),
+            2,
+            "the gist and the log: {live}"
+        );
+
+        // The result lands: the live block goes, the finalized one takes over.
+        app.thread[0].parts.push(Part::ToolResult {
+            call_id: "c1".into(),
+            output: json!("hello"),
+            is_error: false,
+            interrupted: None,
+        });
+        let done = transcript(&app);
+        assert!(!done.contains("(live)"), "{done}");
+        assert!(done.contains("↳ output"), "{done}");
+    }
+
+    /// A settled turn leaves a mark in the transcript's ledger — the numbers
+    /// the spinner was showing do not simply vanish when it stops.
+    #[test]
+    fn a_finished_turn_leaves_a_settled_mark_in_the_transcript() {
+        let (mut app, _c, _o) = app_with_capture();
+        open_s1(&mut app);
+        app.apply(
+            Action::Event(BoughEvent {
+                r#type: EventType::MessageStarted,
+                seq: 1,
+                ts: 1_000,
+                session_id: Some("s1".into()),
+                data: serde_json::to_value(Message {
+                    id: "m1".into(),
+                    session_id: "s1".into(),
+                    role: Role::Supervisor,
+                    parts: vec![],
+                    pending: true,
+                    created_at: 1_000,
+                })
+                .unwrap(),
+            }),
+            1_000,
+        );
+        app.apply(
+            Action::Event(BoughEvent {
+                r#type: EventType::TurnFinished,
+                seq: 2,
+                ts: 15_000,
+                session_id: Some("s1".into()),
+                data: json!({"turnId": "t1", "sessionId": "s1", "status": "done"}),
+            }),
+            15_000,
+        );
+        let plain = transcript(&app);
+        assert!(plain.contains("✓ 14s"), "{plain}");
+    }
+
     #[test]
     fn a_branch_card_click_descends_and_a_job_card_click_opens_that_job() {
         let (effects, sink) = scripted();
@@ -7420,7 +7628,7 @@ mod tests {
         let (mut app, _c, _o) = app_with_capture();
         open_s1(&mut app);
         app.thread.push(tool_msg());
-        let head = row_of(&app, "▸ ⚙ run_steps");
+        let head = row_of(&app, "▸ 1 step");
         app.apply(ctrl('t'), 0);
         assert!(app.panel.open());
         click_row(&mut app, head, 1);

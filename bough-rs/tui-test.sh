@@ -66,6 +66,11 @@ check "the composer renders its placeholder"      expect text "type a message"
 check "the status bar names the workspace"        expect text "? help"
 check "no panic reached the screen"               expect text "panicked" --not
 check "the client is not offline"                 expect text "unreachable" --not
+# THE FAILURE MODE OF THE STYLED TRANSCRIPT: `lines.rs` bakes SGR into every
+# row, so a renderer that paints them raw prints the escapes as text. These are
+# the litter that shows up first.
+check "no escape sequence is painted as text"     expect text "[0m" --not
+check "no dim escape is painted as text"          expect text "[2m" --not
 
 echo "── panels ───────────────────────────────────────"
 SU keys "Control+f" >/dev/null; SU wait text "conversations" --timeout 5000 >/dev/null 2>&1
@@ -126,6 +131,25 @@ if [ -n "$MODEL" ]; then
   SU keys "Control+f" >/dev/null; sleep 1.5
   check "the tree lists the conversation it just ran"       expect text "no conversations yet" --not
   SU press Escape >/dev/null
+  clear_composer
+
+  echo "── the transcript's folds and cards ─────────────"
+  # A turn that actually RUNS a program: the tool fold, its `↳ output` row and
+  # the per-call status are what `build_lines` renders and the v1 miniature
+  # could not draw at all.
+  SU type "run: echo FOLD-PROVEN" >/dev/null
+  SU press Enter >/dev/null
+  SU wait text "FOLD-PROVEN" --timeout 150000 >/dev/null 2>&1
+  sleep 3
+  check "the tool call renders as a collapsed fold"         expect text "1 step" --no-strict
+  SU keys "Control+e" >/dev/null; sleep 1
+  check "^e unfolds the group's program"                    expect text "output" --no-strict
+  check "the unfolded call reports its status"              expect text "done" --no-strict
+  SU keys "Control+e" >/dev/null; sleep 1
+  check "^e folds it back"                                  expect text "output" --not
+  check "the margin row names the project rules"            expect text "# rules:" --no-strict
+  check "still no escape sequence on a rich screen"         expect text "[0m" --not
+  clear_composer
 fi
 
 SU screenshot "$RS_DIR/target/tui-test.svg" >/dev/null 2>&1 \
