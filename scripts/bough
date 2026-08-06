@@ -334,7 +334,20 @@ wait_up() {
   local i
   for i in $(seq 1 30); do
     if is_up; then
-      echo "up (pid $(server_pid)) — http://127.0.0.1:$PORT"
+      # Name the implementation on the LAST line every `start`/`restart`/`update`
+      # prints. There are two servers in this tree and their logs and HTTP
+      # surfaces are deliberately identical, so this line is the only place the
+      # answer is free — and `bough update`'s `bun install` output above had
+      # already been misread as "still running bun".
+      local up_pid up_exe up_impl
+      up_pid="$(server_pid)"
+      up_exe="$(ps -p "$up_pid" -o comm= 2>/dev/null || true)"
+      case "$up_exe" in
+        *bough-rs/target/*) up_impl="rust" ;;
+        *bun*) up_impl="typescript (bun)" ;;
+        *) up_impl="unknown (${up_exe:-?})" ;;
+      esac
+      echo "up (pid $up_pid) — http://127.0.0.1:$PORT — impl: $up_impl"
       return 0
     fi
     sleep 0.5
@@ -506,7 +519,13 @@ cmd_update() {
     fi
   fi
 
-  echo "==> refreshing dependencies"
+  # NAMED for the tree it belongs to. `bun install` prints a wall of bun output,
+  # and when the server it is about to restart is the RUST one, that output reads
+  # as "I am still running bun" — it was misread exactly that way. These are the
+  # TypeScript tree's dependencies; they are still refreshed because `BOUGH_IMPL=ts`
+  # must keep working, and because model-written programs `require` from this
+  # node_modules through the JS sidecar whichever implementation is serving.
+  echo "==> refreshing TypeScript dependencies (bun install; the TS tree + the JS sidecar)"
   require_bun
   (cd "$ROOT" && bun install)
 
@@ -516,8 +535,10 @@ cmd_update() {
   # fatal: silently falling back to TypeScript would make `bough update` change
   # which implementation you are running, which is not what it was asked to do.
   if impl_is_rust; then
-    echo "==> building bough-rs (cargo --release)"
+    echo "==> building the Rust server + TUI (cargo build --release) — this is what will run"
     (cd "$ROOT/bough-rs" && cargo build --release)
+  else
+    echo "==> BOUGH_IMPL=ts — skipping the Rust build; the TypeScript tree will run"
   fi
 
   # ast-grep: structural search (`prompt/searching.md`). Ensured on update, not just
