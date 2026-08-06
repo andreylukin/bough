@@ -693,10 +693,17 @@ pub async fn run_loop<T: Transport>(
             e = events.recv() => e,
         };
         let Some(action) = action else { break Ok(()) };
+        let is_tick = matches!(action, Action::Tick);
         let now = now_ms();
         app.apply(action, now);
         if app.quit {
             break Ok(());
+        }
+        // An idle tick changes nothing on screen — repainting on it would put
+        // an 8fps write loop under every idle terminal (TS: no timer at all
+        // when nothing is live).
+        if is_tick && !app.busy() {
+            continue;
         }
         if let Err(e) = terminal.draw(|f| {
             let area = f.area();
