@@ -422,10 +422,25 @@ pub fn get_session() -> Handler {
                 // client falls back to the raw count rather than inventing a
                 // denominator.
                 "contextLimit": bough_core::llm::pricing::context_window_for(&model),
-                // The tag set this session was primed with. history/stats is a
-                // wave-2 stub (row 2.10); `[]` is the documented no-history
-                // answer, and the FIELD stays present per the v1 scope cut.
-                "primedTags": Vec::<String>::new(),
+                // The tag set this session was primed with — what the transcript's
+                // "# this repo remembers:" row names. Read from the SAME
+                // process-lifetime memo the turn runner primes through
+                // (`tags_note_for`), so this reports what was actually injected
+                // rather than recomputing a set that might differ from it.
+                //
+                // A session with no workspace has no repo to remember, and an
+                // empty set means the priming found nothing — both are `[]`, and
+                // the client renders no row for either.
+                "primedTags": session.workspace.as_deref().map_or_else(Vec::new, |ws| {
+                    let db = ctx.db.lock().unwrap();
+                    bough_core::history::tags::stats::primed_tags_for(
+                        &*db,
+                        bough_core::history::tags::stats::stats_memo(),
+                        &session.id,
+                        ws,
+                        (ctx.now)(),
+                    )
+                }),
                 "projectRules": project_rules,
             }),
             200,
@@ -1118,10 +1133,80 @@ mod tests {
         );
         assert_eq!(body["usage"]["costUsd"], 0.0);
         assert_eq!(body["usage"]["tree"]["costUsd"], 0.0);
-        // The reconnect fields are present even in v1's degraded answers.
+        // The reconnect fields are present even when they have nothing to say.
         assert_eq!(body["effectiveModel"], "test-model");
+        // Empty because this fixture's session has no workspace and no primed
+        // history — NOT because the field is stubbed. It was stubbed once, which
+        // is why the next test exists.
         assert_eq!(body["primedTags"], j!([]));
         assert_eq!(body["projectRules"], j!([]));
+    }
+
+    /// `primedTags` was hardcoded `[]` behind a comment calling history/stats a
+    /// wave-2 stub, long after `primed_tags_for` had landed — so the
+    /// transcript's "# this repo remembers:" row could never appear, and no
+    /// test noticed because the stub and the empty case look identical. This
+    /// pins the field to the real memo: prime it, and the route must report it.
+    #[tokio::test]
+    async fn primed_tags_come_from_the_memo_the_turn_runner_primes() {
+        use bough_core::history::tags::stats::{primed_tags_for, stats_memo};
+
+        let fx = testutil::fixture();
+        let ws = std::env::temp_dir().join(format!("bough-primed-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let session = {
+            let db = fx.ctx.db.lock().unwrap();
+            db.create_session(Session {
+                id: uuid::Uuid::new_v4().to_string(),
+                title: "primed".to_string(),
+                kind: SessionKind::Root,
+                created_at: (fx.ctx.now)(),
+                parent_id: None,
+                origin_id: None,
+                origin_message_id: None,
+                workspace: Some(ws.to_string_lossy().into_owned()),
+                origin_dir: None,
+                base: None,
+                model: None,
+                effort: None,
+                draft: None,
+                context_tokens: None,
+                cached_tokens: None,
+                last_llm_at: None,
+                outcome_ok: None,
+            })
+            .unwrap()
+        };
+
+        // Prime through the very function the runner calls, into the very memo
+        // it uses — if the route read a different source, this would not show up.
+        stats_memo().reset();
+        let primed = {
+            let db = fx.ctx.db.lock().unwrap();
+            primed_tags_for(
+                &*db,
+                stats_memo(),
+                &session.id,
+                &ws.to_string_lossy(),
+                (fx.ctx.now)(),
+            )
+        };
+
+        let res = call(&fx)
+            .call(testutil::get(&format!("/sessions/{}", session.id)))
+            .await;
+        assert_eq!(res.status(), 200);
+        let body = testutil::body_json(res).await;
+        let served: Vec<String> = body["primedTags"]
+            .as_array()
+            .expect("primedTags is an array")
+            .iter()
+            .map(|v| v.as_str().unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(
+            served, primed,
+            "the route must serve the memo's tag set, not a constant"
+        );
     }
 
     #[tokio::test]
