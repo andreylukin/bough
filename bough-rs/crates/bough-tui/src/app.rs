@@ -48,6 +48,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use crate::clipboard::clipboard_image_path;
 use crate::components::ask::{ask_card_height, ask_prompt_lines, render_ask_card, AskCardProps};
 use crate::components::chat::{render_chat, ChatProps, CHAT_PLACEHOLDER};
 use crate::components::composer::{
@@ -62,15 +63,16 @@ use crate::components::panel::host::{HostRequest, PanelHost};
 use crate::components::panel::{panel_body_rows, render_panel, PanelBody};
 use crate::components::rail::{live_subagents, rail_rows, render_rail};
 use crate::components::status::{render_status, ChatMeter};
-use crate::components::WARN;
+use crate::components::warn;
 use crate::format::{
     active_trigger, apply_completion, browse_prefix, rank_completions, Candidate, Ranked, Trigger,
     TriggerKind, COMPLETION_LIMIT,
 };
 use crate::keys::{
-    lookup, slash_invocation, tab_for_command, unknown_command, Command, KeyContext, KeyFlags,
-    UiMode, SLASH_COMMANDS,
+    lookup, slash_invocation, strip_ctl, tab_for_command, unknown_command, Command, KeyContext,
+    KeyFlags, UiMode, SLASH_COMMANDS,
 };
+use crate::paste::{expand_pastes, paste_mark, QUEUE_ABOVE_CHARS};
 use crate::selection::{
     is_empty_selection, link_at, row_content, selected_copy, url_across, url_at, CopyRow, Point,
     Selection,
@@ -99,6 +101,17 @@ pub enum Action {
     Tick,
     /// The transport created (or adopted) the conversation this screen shows.
     SessionOpened(String),
+    /// The same, for the ONE shell conversation per workspace that `!cmd`
+    /// borrows when there is nothing open yet. It is a real conversation — its
+    /// jobs are on the rail and its output is readable — but it is NOT the one
+    /// you are chatting in, and this is what says so: the next ordinary message
+    /// starts a fresh conversation rather than being typed into `shell`.
+    ShellSessionOpened(String),
+    /// A pasteboard/paste read that turned out to be words. The reducer decides
+    /// whether they are inlined or held (`paste.rs`).
+    PasteText(String),
+    /// An uploaded image, ready to ride the next message.
+    Attached(bough_core::schema::requests::PostMessageImage),
     /// A transport failure worth a row (an `ApiFailure`'s own sentence).
     Notice(String),
     /// The `@` candidate list for this conversation's workspace, gitignore-
@@ -230,8 +243,30 @@ pub struct SessionMeta {
 /// Outbound calls. The loop never does I/O itself; the transport does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
-    /// POST the draft as a user message.
-    Send(String),
+    /// POST the draft as a user message, with whatever ⌘v attached to it.
+    Send {
+        text: String,
+        images: Vec<bough_core::schema::requests::PostMessageImage>,
+    },
+    /// ⌃v: read the pasteboard, and attach or insert whatever it holds.
+    /// The read and the upload are I/O; the DECISION is the reducer's
+    /// ([`App::on_paste_text`]), which is why this hands its result back as an
+    /// action rather than editing the draft from a task.
+    ImagePaste,
+    /// A bracketed paste whose text names an image FILE (`clipboard.rs`): read
+    /// those bytes and upload them. A read that fails is a text paste, which is
+    /// the honest fallback — the string may be a path the user meant to type.
+    AttachPath(String),
+    /// The take-back for a message still carrying its optimistic `local-N` id.
+    ///
+    /// There is no server id to unsend yet, so the id is RESOLVED first: the
+    /// session is re-read, its last user message is compared against the text
+    /// that was sent, and only an exact match is retracted. Without the compare
+    /// a POST still in flight would retract the message BEFORE it — the wrong
+    /// one, silently.
+    UnsendLatest {
+        text: String,
+    },
     /// POST /sessions/:id/interrupt.
     Interrupt,
     /// GET the `@` candidates for this conversation (or, before one exists,
@@ -462,6 +497,32 @@ fn turn_gist(m: &Message) -> String {
 /// makes a three-second window that nothing announces; this row is the window,
 /// said out loud, and it expires with it.
 pub const TAKE_BACK_HINT: &str = "esc takes that back";
+
+/// The optimistic echo's id prefix. A message wearing one has been POSTED but
+/// not yet read back, so the server has never heard this name and no route may
+/// be handed it (see `App::take_back`).
+pub const LOCAL_ID_PREFIX: &str = "local-";
+
+/// Said when the take-back arrives before the message it is taking back does.
+/// Honest about the race and about what to do: the window is three seconds and
+/// the round trip is milliseconds, so the second press lands.
+pub const TAKE_BACK_TOO_SOON: &str =
+    "that message has not reached the conversation yet — press esc again";
+
+/// ⌃v with nothing on the pasteboard this TUI can use.
+pub const CLIPBOARD_EMPTY: &str = "clipboard has no text or supported image";
+
+/// The upload's receipt as the message body wants it: same four fields, one
+/// crate over. `POST /attachments` has already copied the bytes somewhere
+/// durable, so what rides the message is a path and never the picture again.
+fn as_image(a: crate::api::Attachment) -> bough_core::schema::requests::PostMessageImage {
+    bough_core::schema::requests::PostMessageImage {
+        path: a.path,
+        media_type: a.media_type,
+        name: a.name,
+        size: a.size,
+    }
+}
 
 /// The `/commands` this client answers ITSELF, beside the tab-openers. Every
 /// one of these is state the reducer owns (or an effect it dispatches), so they
@@ -697,7 +758,28 @@ pub struct App<T: Transport> {
     /// the prefix it answers for.
     browsed: (String, Vec<String>),
     /// Cursor within the popup rows.
+    ///
+    /// RESET WHENEVER THE CANDIDATE SET CHANGES, not only on accept. Clamping
+    /// alone (`sel_at`) is not enough: highlight row 4, type one more character
+    /// until two rows are left, and ⏎ ran the row the clamp landed on — a
+    /// `/command` the user never selected and never saw highlighted.
     completion_sel: usize,
+    // ---- paste, attachments and the ↑ history ------------------------------
+    /// Pastes held aside instead of inlined, addressed by the `[Pasted text #N]`
+    /// marks they left in the draft. The ordinal is the index here plus one and
+    /// never changes (`paste.rs`).
+    pastes: Vec<String>,
+    /// Images queued under the composer for the next message.
+    attachments: Vec<bough_core::schema::requests::PostMessageImage>,
+    /// Every line SENT from this screen, sigil and all, for ↑/↓ recall. One
+    /// ring, so `!git status` is re-run with ↑⏎ like anything else.
+    sent_history: Vec<String>,
+    /// Where ↑ has walked to in `sent_history`. `None` = not recalling, and ↓
+    /// off the end returns there with an empty draft.
+    hist_at: Option<usize>,
+    /// The open conversation is the workspace's `shell` session, borrowed by a
+    /// `!` line. See [`Action::ShellSessionOpened`].
+    shell_session: bool,
     /// Esc dismissed THIS token's popup — typing re-opens it, so esc means esc
     /// without meaning "no completion ever again".
     dismissed: bool,
@@ -834,6 +916,11 @@ impl<T: Transport> App<T> {
             skills: Vec::new(),
             browsed: (String::new(), Vec::new()),
             completion_sel: 0,
+            pastes: Vec::new(),
+            attachments: Vec::new(),
+            sent_history: Vec::new(),
+            hist_at: None,
+            shell_session: false,
             sel: None,
             copy: Box::new(osc52_copy),
             open: Box::new(open_url),
@@ -1186,7 +1273,19 @@ impl<T: Transport> App<T> {
             Action::Artifacts(rows) => self.notice = Some(describe_artifacts(&rows)),
             Action::ProjectRules(rows) => self.notice = Some(describe_project_rules(&rows)),
             Action::Connected(up) => self.connected = up,
+            Action::ShellSessionOpened(id) => {
+                self.apply(Action::SessionOpened(id), now_ms);
+                self.shell_session = true;
+                return;
+            }
             Action::SessionOpened(id) => {
+                self.shell_session = false;
+                // …and so does what the composer was holding for the one being
+                // left (see `start_fresh_conversation`). Harmless on the send
+                // path that creates a conversation: `submit` has already taken
+                // the queue with the message.
+                self.attachments.clear();
+                self.pastes.clear();
                 self.panel.current_id = Some(id.clone());
                 self.session_id = Some(id);
                 // A session switch invalidates the listing: the candidates are
@@ -1294,7 +1393,16 @@ impl<T: Transport> App<T> {
                 self.panel.set_search_hits(&q, sessions, messages);
             }
             Action::Changes(set) => self.panel.set_changes(set),
-            Action::Theme(state) => self.panel.set_theme(state),
+            Action::Theme(state) => {
+                // The BOOT fetch paints: the stored theme must be in force
+                // before the picker is ever opened, or the one theme never
+                // painted is the one the user chose. A later answer only seeds
+                // the picker — applying it would stamp on a live preview.
+                if self.panel.theme.is_none() {
+                    crate::theme::apply_theme(state.as_ref());
+                }
+                self.panel.set_theme(state);
+            }
             Action::Workflows(runs) => {
                 // The rail and the tab read ONE list: two fetches of the same
                 // shape is how a row comes to be live in one surface and
@@ -1344,9 +1452,23 @@ impl<T: Transport> App<T> {
                 self.panel.set_model_config(cfg);
             }
             Action::Run(command, arg) => self.run_client_command(command, &arg),
-            Action::Files(files) => self.files = files,
-            Action::DirEntries { prefix, entries } => self.browsed = (prefix, entries),
-            Action::Skills(skills) => self.skills = skills,
+            // A LIST THAT ARRIVES IS A LIST THAT CHANGED. The popup's cursor
+            // must not stay on the row number it held against the placeholder
+            // set, or the first ⏎ after a fetch acts on a row nobody looked at.
+            Action::Files(files) => {
+                self.files = files;
+                self.completion_sel = 0;
+            }
+            Action::DirEntries { prefix, entries } => {
+                self.browsed = (prefix, entries);
+                self.completion_sel = 0;
+            }
+            Action::Skills(skills) => {
+                self.skills = skills;
+                self.completion_sel = 0;
+            }
+            Action::PasteText(text) => self.on_paste_text(&text),
+            Action::Attached(image) => self.attachments.push(image),
             Action::Notice(text) => self.notice = Some(text),
             Action::Event(event) => self.reduce_event(event),
             Action::Term(TermEvent::Resize(w, h)) => {
@@ -1355,6 +1477,13 @@ impl<T: Transport> App<T> {
             }
             Action::Term(TermEvent::Mouse(m)) => self.on_mouse(m),
             Action::Term(TermEvent::Key(k)) => self.on_key(k, now_ms),
+            // A REAL PASTE IS ONE EVENT, NOT N KEYSTROKES. `enter_tui` turns
+            // bracketed paste on (`?2004h`) and crossterm therefore delivers a
+            // paste whole — and nothing claimed it, so every paste into this
+            // TUI was silently swallowed. It is claimed here rather than in
+            // `on_key` because it is not a key: no chord resolves, no
+            // completion arms, and the whole burst lands at the cursor at once.
+            Action::Term(TermEvent::Paste(text)) => self.on_paste(&text),
             Action::Term(_) => {}
         }
         self.cosmetics(now_ms);
@@ -1930,7 +2059,7 @@ impl<T: Transport> App<T> {
             self.busy(),
             cols,
             composer_rows,
-            0,
+            self.attachments.len(),
         ) as u16
     }
 
@@ -2010,30 +2139,9 @@ impl<T: Transport> App<T> {
             // thing to the wrong thread.
             Command::SessionNew => {
                 self.clear_draft();
-                self.scroll_off = 0;
-                self.session_id = None;
-                self.panel.current_id = None;
-                self.thread.clear();
-                self.streaming.clear();
-                self.tool_logs.clear();
-                self.marks.clear();
-                self.turn = None;
-                self.activity = None;
-                self.notice = None;
-                self.last_send_at = None;
-                // Another conversation's shells and holds pinned under this
-                // composer would be a claim about work this screen is not doing.
-                self.jobs.clear();
-                self.rail_sel = None;
-                self.rail_armed = None;
-                self.job = None;
-                self.ask = None;
-                self.ask_typed.clear();
+                self.start_fresh_conversation();
                 self.help_open = false;
                 self.panel.state.open = false;
-                // The transport is reusing a session id of its own; without
-                // this the next send would land back in the old conversation.
-                self.transport.effect(Effect::NewConversation);
             }
             // The old conversation is neither mutated nor inherited, so there
             // is nothing to confirm — but it does call the model, which is why
@@ -2292,6 +2400,34 @@ impl<T: Transport> App<T> {
                     self.take_back();
                     true
                 }
+                // ^n. The `?` overlay has promised "start a fresh conversation"
+                // since the overlay was generated from the keymap, and the
+                // chord resolved to a command NOTHING answered — so the one key
+                // the help sheet names for leaving a thread did nothing at all.
+                // `/new` reaches the same body; this is the chord for it.
+                Command::SessionNew => {
+                    self.run_client_command(Command::SessionNew, "");
+                    true
+                }
+                // ↑/↓ recall. The keymap guards these: ↑ is a CURSOR move in a
+                // multi-line draft and an attachment walk when one is queued,
+                // so by the time it resolves to `HistoryPrev` recall is
+                // unambiguously what was meant.
+                Command::HistoryPrev => {
+                    self.history_prev();
+                    true
+                }
+                Command::HistoryNext => {
+                    self.history_next();
+                    true
+                }
+                // ^v: the pasteboard's PICTURE first, its text second
+                // (`clipboard.rs`). The read and the upload are the transport's;
+                // what comes back is an attachment or a paste.
+                Command::ImagePaste => {
+                    self.transport.effect(Effect::ImagePaste);
+                    true
+                }
                 // ⇥ with no popup TAKES the prediction: it replaces the draft
                 // and is gone. Nothing happens when there is none — the key
                 // falls through rather than eating itself.
@@ -2503,6 +2639,21 @@ impl<T: Transport> App<T> {
     /// window and stops it.
     fn take_back(&mut self) {
         match crate::forest::take_back_target(&[], &self.thread) {
+            // A MESSAGE STILL WEARING ITS OPTIMISTIC ID HAS NO SERVER ID YET,
+            // and this is the documented gesture's own timing: esc immediately
+            // after Enter is exactly the moment before the snapshot comes back
+            // and renames `local-3` to the row the server wrote. Sending that
+            // name to the unsend route made the server answer "message local-3
+            // is not one of this session's own messages, so it cannot be
+            // unsent" — a refusal the user reads as the feature being broken,
+            // in the one usage the help sheet describes. The id is resolved
+            // against the server instead (`Effect::UnsendLatest`).
+            crate::forest::TakeBack::Sent {
+                at_message_id,
+                text,
+            } if at_message_id.starts_with(LOCAL_ID_PREFIX) => {
+                self.transport.effect(Effect::UnsendLatest { text })
+            }
             crate::forest::TakeBack::Sent { at_message_id, .. } => {
                 self.transport.effect(Effect::Unsend(at_message_id))
             }
@@ -2673,8 +2824,9 @@ impl<T: Transport> App<T> {
         self.draft = after.text;
         self.cursor = after.cursor.min(self.draft.chars().count());
         // Only a TEXT change can change what completes; a bare cursor move must
-        // not re-open a popup an earlier escape dismissed.
+        // not re-open a popup an earlier escape dismissed — nor move its cursor.
         if changed_text {
+            self.completion_sel = 0;
             self.ensure_candidates();
         }
         true
@@ -2695,7 +2847,64 @@ impl<T: Transport> App<T> {
         // Typing re-opens a popup an earlier esc closed: esc dismisses THIS
         // token, not completion in general.
         self.dismissed = false;
+        // …and it NARROWS the popup, which is a different list. See
+        // `completion_sel`: without this, row 4 of five becomes row 2 of two by
+        // clamping, and ⏎ runs whatever the clamp landed on.
+        self.completion_sel = 0;
         self.ensure_candidates();
+    }
+
+    /// A whole string at the cursor, as one edit. Used by every paste path.
+    fn insert_text(&mut self, text: &str) {
+        let at = self.byte_at(self.cursor);
+        self.draft.insert_str(at, text);
+        self.cursor += text.chars().count();
+        self.dismissed = false;
+        self.completion_sel = 0;
+        self.ensure_candidates();
+    }
+
+    // ---- paste --------------------------------------------------------------
+
+    /// A bracketed paste off the terminal.
+    ///
+    /// A PASTED PATH TO AN IMAGE IS A PICTURE, and this is the path ⌘v actually
+    /// takes in most terminals: the terminal keeps the keypress and hands over
+    /// the clipboard's TEXT, which for a file copied in Finder is its path. The
+    /// decision is pure and never touches disk (`clipboard::clipboard_image_path`),
+    /// so an ordinary paste pays one regex and falls straight through.
+    fn on_paste(&mut self, text: &str) {
+        // Only where a draft is being typed: a burst inserted into a composer
+        // hidden under the panel or the help overlay is text nobody can see.
+        if self.ui_mode() != UiMode::Chat {
+            return;
+        }
+        let clean = strip_ctl(text);
+        if clean.is_empty() {
+            return;
+        }
+        if clipboard_image_path(&clean).is_some() {
+            self.transport.effect(Effect::AttachPath(clean));
+            return;
+        }
+        self.on_paste_text(&clean);
+    }
+
+    /// Pasted WORDS, wherever they came from: inlined when short, and otherwise
+    /// held aside with a `[Pasted text #N]` mark left where the cursor was.
+    /// The mark is the record — deleting it drops the paste (`paste.rs`).
+    fn on_paste_text(&mut self, text: &str) {
+        let clean = strip_ctl(text);
+        if clean.is_empty() {
+            return;
+        }
+        if clean.chars().count() <= QUEUE_ABOVE_CHARS {
+            self.insert_text(&clean);
+            return;
+        }
+        self.pastes.push(clean);
+        let mark = paste_mark(self.pastes.len());
+        self.insert_text(&mark);
     }
 
     fn delete_back(&mut self) {
@@ -2705,6 +2914,7 @@ impl<T: Transport> App<T> {
         let at = self.byte_at(self.cursor - 1);
         self.draft.remove(at);
         self.cursor -= 1;
+        self.completion_sel = 0;
         self.ensure_candidates();
     }
 
@@ -2730,6 +2940,90 @@ impl<T: Transport> App<T> {
     fn clear_draft(&mut self) {
         self.draft.clear();
         self.cursor = 0;
+        // A recall that is thrown away is over: the next ↑ starts from the
+        // newest line again rather than resuming where the last walk stopped.
+        self.hist_at = None;
+    }
+
+    /// The line just sent, on the ↑ ring. Verbatim, and never twice in a row —
+    /// re-sending the same thing five times should not make ↑ walk it five
+    /// times before reaching what came before it.
+    fn remember_sent(&mut self, text: &str) {
+        if self.sent_history.last().map(String::as_str) == Some(text) {
+            self.hist_at = None;
+            return;
+        }
+        self.sent_history.push(text.to_string());
+        self.hist_at = None;
+    }
+
+    /// ↑: one line back through what this screen has sent. From a draft that is
+    /// NOT empty the keymap has already resolved ↑ to a cursor move, so this
+    /// only ever runs where recall is the thing the user meant.
+    fn history_prev(&mut self) {
+        if self.sent_history.is_empty() {
+            return;
+        }
+        let at = match self.hist_at {
+            None => self.sent_history.len() - 1,
+            Some(i) => i.saturating_sub(1),
+        };
+        self.hist_at = Some(at);
+        self.draft = self.sent_history[at].clone();
+        self.cursor = self.draft.chars().count();
+        self.completion_sel = 0;
+    }
+
+    /// ↓: forward again, and off the end back to the empty draft you started
+    /// from — not to the oldest line, which would make the ring a loop with no
+    /// way out.
+    fn history_next(&mut self) {
+        let Some(i) = self.hist_at else { return };
+        let at = i + 1;
+        if at >= self.sent_history.len() {
+            self.hist_at = None;
+            self.draft.clear();
+            self.cursor = 0;
+            return;
+        }
+        self.hist_at = Some(at);
+        self.draft = self.sent_history[at].clone();
+        self.cursor = self.draft.chars().count();
+        self.completion_sel = 0;
+    }
+
+    /// Everything this screen was showing FOR the conversation being left.
+    /// `^n`'s whole body, and what a `!`-borrowed shell session is dropped
+    /// with when an ordinary message is sent (see `submit`).
+    fn start_fresh_conversation(&mut self) {
+        self.scroll_off = 0;
+        // The composer's QUEUE goes with the conversation it was being written
+        // for. An image queued for one thread and silently sent to the next is
+        // the composer keeping something the user cannot see it keeping.
+        self.attachments.clear();
+        self.pastes.clear();
+        self.session_id = None;
+        self.shell_session = false;
+        self.panel.current_id = None;
+        self.thread.clear();
+        self.streaming.clear();
+        self.tool_logs.clear();
+        self.marks.clear();
+        self.turn = None;
+        self.activity = None;
+        self.notice = None;
+        self.last_send_at = None;
+        // Another conversation's shells and holds pinned under this composer
+        // would be a claim about work this screen is not doing.
+        self.jobs.clear();
+        self.rail_sel = None;
+        self.rail_armed = None;
+        self.job = None;
+        self.ask = None;
+        self.ask_typed.clear();
+        // The transport is reusing a session id of its own; without this the
+        // next send would land back in the old conversation.
+        self.transport.effect(Effect::NewConversation);
     }
 
     fn page(&self) -> usize {
@@ -2740,7 +3034,9 @@ impl<T: Transport> App<T> {
 
     fn submit(&mut self) {
         let text = self.draft.clone();
-        if text.is_empty() {
+        // An image with nothing said about it is still a message: the picture
+        // IS the question often enough that refusing it would be the bug.
+        if text.is_empty() && self.attachments.is_empty() {
             return;
         }
         // `!command` IS THE USER'S OWN SHELL, not a message. Every comparable
@@ -2752,9 +3048,11 @@ impl<T: Transport> App<T> {
             let command = text[1..].trim().to_string();
             self.clear_draft();
             self.scroll_off = 0;
-            // (The TS also pushes the line, sigil and all, onto the ↑ history
-            // so re-running is ↑⏎. This client has no history ring yet, so
-            // there is nothing to push it onto.)
+            // In the ↑ history WITH the sigil, so re-running the last command
+            // is ↑⏎ — the thing a shell user does constantly. One ring, kept
+            // verbatim: one history is one mental model, and `!` is visible in
+            // it.
+            self.remember_sent(&text);
             self.transport.effect(Effect::RunShell(command));
             return;
         }
@@ -2782,11 +3080,27 @@ impl<T: Transport> App<T> {
         }
         if let Some((command, arg)) = slash_invocation(&text) {
             self.clear_draft();
+            self.remember_sent(&text);
             self.transport.effect(Effect::Run(command, arg));
             return;
         }
+        // THE `shell` CONVERSATION IS NOT ONE YOU CHAT IN. `!echo hi` as the
+        // first thing typed on a fresh screen borrows (or creates) the
+        // workspace's one shell conversation so the job has somewhere to live —
+        // and this screen then WAS that conversation, so every message after it
+        // landed in a thread permanently titled "shell" and typed `kind:shell`.
+        // A message is an ordinary conversation's business, so it starts one.
+        if self.shell_session {
+            self.start_fresh_conversation();
+        }
         self.clear_draft();
         self.scroll_off = 0;
+        self.remember_sent(&text);
+        // Marks expand WHERE THEY SIT, so the message reads the way the draft
+        // did; a paste whose mark was deleted is dropped (`paste.rs`).
+        let message = expand_pastes(&text, &self.pastes);
+        let images = std::mem::take(&mut self.attachments);
+        self.pastes.clear();
         // The take-back window opens here, and it SAYS so: three seconds that
         // nothing announces is a gesture only the keymap knows about.
         self.last_send_at = Some(self.now_ms);
@@ -2794,14 +3108,19 @@ impl<T: Transport> App<T> {
         // Optimistic local echo; the snapshot/SSE merge reconciles by id later.
         self.sent_seq += 1;
         self.thread.push(Message {
-            id: format!("local-{}", self.sent_seq),
+            id: format!("{LOCAL_ID_PREFIX}{}", self.sent_seq),
             session_id: String::new(),
             role: Role::User,
-            parts: vec![Part::Text { text: text.clone() }],
+            parts: vec![Part::Text {
+                text: message.clone(),
+            }],
             pending: false,
             created_at: self.now_ms,
         });
-        self.transport.effect(Effect::Send(text));
+        self.transport.effect(Effect::Send {
+            text: message,
+            images,
+        });
     }
 
     // ---- SSE reduce ---------------------------------------------------------
@@ -3250,7 +3569,19 @@ impl<T: Transport> App<T> {
     }
 
     /// The frame: every surface, then the selection painted over all of them.
+    /// The fetches that must happen before the first frame rather than on the
+    /// tab that consumes them. The stored palette is one: a theme applied only
+    /// when the picker is opened is a theme that never paints.
+    pub fn boot(&mut self) {
+        self.transport.effect(Effect::LoadTheme);
+    }
+
     pub fn draw(&self, area: Rect, buf: &mut Buffer) {
+        // The screen background (theme.rs's third paint path). Every surface
+        // paints its own, but the gaps between them are the root box — without
+        // this a "deeper surfaces" preset recoloured the panels and left the
+        // space around them on the terminal's own background.
+        buf.set_style(area, Style::default().bg(crate::theme::colors().bg));
         self.draw_surfaces(area, buf);
         self.paint_selection(area, buf);
     }
@@ -3353,7 +3684,10 @@ impl<T: Transport> App<T> {
             Style::default().add_modifier(Modifier::BOLD),
         )];
         if !self.connected {
-            header.push(Span::styled("  · disconnected", Style::default().fg(WARN)));
+            header.push(Span::styled(
+                "  · disconnected",
+                Style::default().fg(warn()),
+            ));
         }
         buf.set_line(area.x, area.y, &Line::from(header), cols);
 
@@ -3475,6 +3809,12 @@ impl<T: Transport> App<T> {
                 buf,
             );
         } else {
+            // The queued images, by the names the server gave them. Only images
+            // get a row: a held paste's row IS its `[Pasted text #N]` mark in
+            // the draft, and drawing the same label underneath would be the
+            // same thing said twice (`paste.rs`).
+            let attachment_names: Vec<String> =
+                self.attachments.iter().map(|a| a.name.clone()).collect();
             render_composer(
                 &ComposerProps {
                     input: &self.draft,
@@ -3489,7 +3829,7 @@ impl<T: Transport> App<T> {
                     } else {
                         &self.ghost
                     },
-                    attachments: &[],
+                    attachments: &attachment_names,
                     // While the panel is open the keyboard is ITS own, and the box
                     // says so: a block cursor is the strongest claim a terminal UI
                     // can make about where typing goes.
@@ -3796,6 +4136,7 @@ pub async fn run_loop<T: Transport>(
     let mut was_busy = false;
     let size = terminal.size()?;
     let mut app = App::new(options, transport, size.width, size.height);
+    app.boot();
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Action>();
 
@@ -3921,7 +4262,7 @@ impl Transport for LiveTransport {
         let session = self.session.clone();
         let workspace = self.workspace.clone();
         match effect {
-            Effect::Send(text) => {
+            Effect::Send { text, images } => {
                 tokio::spawn(async move {
                     let known = session.lock().expect("session lock").clone();
                     let sid = match known {
@@ -3947,9 +4288,98 @@ impl Transport for LiveTransport {
                             }
                         }
                     };
-                    let body = bough_core::schema::requests::PostMessageBody { text, images: None };
+                    let body = bough_core::schema::requests::PostMessageBody {
+                        text,
+                        images: (!images.is_empty()).then_some(images),
+                    };
                     if let Err(e) = api.post_message(&sid, &body).await {
                         let _ = tx.send(Action::Notice(e.to_string()));
+                    }
+                });
+            }
+            // ⌃v. The pasteboard's image data outranks its text, because a
+            // pasteboard holding a picture almost always ALSO holds a string
+            // (`clipboard.rs`) — and a picture read as its filename put prose
+            // about an unopenable file in front of the model.
+            Effect::ImagePaste => {
+                tokio::spawn(async move {
+                    match crate::clipboard::paste_clipboard().await {
+                        None => {
+                            let _ = tx.send(Action::Notice(CLIPBOARD_EMPTY.to_string()));
+                        }
+                        Some(crate::clipboard::Clipboard::Text(text)) => {
+                            let _ = tx.send(Action::PasteText(text));
+                        }
+                        Some(crate::clipboard::Clipboard::Image { bytes, media_type }) => {
+                            match api.upload_image(bytes, &media_type).await {
+                                Ok(part) => {
+                                    let _ = tx.send(Action::Attached(as_image(part)));
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Action::Notice(e.to_string()));
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            // A pasted PATH to an image. A read that fails is a text paste:
+            // the string may be a path the user meant to type, and swallowing
+            // it would be worse than not attaching.
+            Effect::AttachPath(text) => {
+                tokio::spawn(async move {
+                    match crate::clipboard::clipboard_from_text(&text).await {
+                        crate::clipboard::Clipboard::Image { bytes, media_type } => {
+                            match api.upload_image(bytes, &media_type).await {
+                                Ok(part) => {
+                                    let _ = tx.send(Action::Attached(as_image(part)));
+                                }
+                                // The bytes are unusable, but the string is
+                                // still what the user pasted.
+                                Err(e) => {
+                                    let _ = tx.send(Action::Notice(e.to_string()));
+                                    let _ = tx.send(Action::PasteText(text));
+                                }
+                            }
+                        }
+                        crate::clipboard::Clipboard::Text(text) => {
+                            let _ = tx.send(Action::PasteText(text));
+                        }
+                    }
+                });
+            }
+            // The take-back whose message is still wearing `local-N`. The id is
+            // the SERVER's to give, so it is read back — and the text is
+            // compared before anything is deleted, because a POST still in
+            // flight would otherwise make this retract the message before it.
+            Effect::UnsendLatest { text } => {
+                tokio::spawn(async move {
+                    let Some(sid) = session.lock().expect("session lock").clone() else {
+                        return;
+                    };
+                    let snapshot = match api.get_session(&sid).await {
+                        Ok(snapshot) => snapshot,
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                            return;
+                        }
+                    };
+                    let latest = snapshot.thread.iter().rev().find(|m| m.role == Role::User);
+                    let Some(target) = latest.filter(|m| crate::forest::message_text(m) == text)
+                    else {
+                        let _ = tx.send(Action::Notice(TAKE_BACK_TOO_SOON.to_string()));
+                        return;
+                    };
+                    match api.unsend(&sid, &target.id).await {
+                        Ok(result) => {
+                            let _ = tx.send(Action::TookBack(result.text));
+                            if let Ok(snapshot) = api.get_session(&sid).await {
+                                let _ = tx.send(Action::Thread(snapshot.thread));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Notice(e.to_string()));
+                        }
                     }
                 });
             }
@@ -4653,7 +5083,13 @@ impl Transport for LiveTransport {
                             match api.get_session(&id).await {
                                 Ok(snapshot) => {
                                     *session.lock().expect("session lock") = Some(id.clone());
-                                    let _ = tx.send(Action::SessionOpened(id.clone()));
+                                    // BORROWED, NOT ADOPTED. The screen shows
+                                    // this conversation so the job's rail row
+                                    // and output are readable — but it is the
+                                    // workspace's `shell`, and the next
+                                    // ordinary message must not be typed into
+                                    // it (`App::submit`).
+                                    let _ = tx.send(Action::ShellSessionOpened(id.clone()));
                                     let _ = tx.send(Action::Thread(snapshot.thread));
                                 }
                                 Err(e) => {
@@ -4976,6 +5412,15 @@ mod tests {
 
     /// The effects that ACT — everything but the candidate fetches, which are
     /// bookkeeping behind the popup and say nothing about what was sent.
+    /// A text-only send, which is every send in these tests: images are the
+    /// ⌃v path and have their own.
+    fn a_send(text: String) -> Effect {
+        Effect::Send {
+            text,
+            images: Vec::new(),
+        }
+    }
+
     fn sends(effects: &Rc<RefCell<Vec<Effect>>>) -> Vec<Effect> {
         effects
             .borrow()
@@ -5955,7 +6400,7 @@ mod tests {
 
         // -- send --
         app.apply(key(KeyCode::Enter), 20);
-        assert_eq!(sends(&effects), vec![Effect::Send("add a test".into())]);
+        assert_eq!(sends(&effects), vec![a_send("add a test".into())]);
         let sent = frame_of(&app, 80, 24);
         assert!(sent.contains("you"), "{sent}");
         assert!(
@@ -6004,7 +6449,7 @@ mod tests {
         app.apply(key(KeyCode::Esc), 20 + crate::keys::UNSEND_MS + 1);
         assert_eq!(
             sends(&effects),
-            vec![Effect::Send("add a test".into()), Effect::Interrupt]
+            vec![a_send("add a test".into()), Effect::Interrupt]
         );
         app.apply(
             event(
@@ -6391,7 +6836,7 @@ mod tests {
         app.apply(key(KeyCode::Enter), 90);
         assert_eq!(
             sends(&effects).as_slice(),
-            &[Effect::Send("/model is the wrong word here".into())]
+            &[a_send("/model is the wrong word here".into())]
         );
     }
 
@@ -6602,7 +7047,7 @@ mod tests {
         assert!(frame.contains("no matching files"), "{frame}");
         assert!(!app.completing(), "an empty popup must not swallow ⏎");
         app.apply(key(KeyCode::Enter), 10);
-        assert_eq!(sends(&effects).as_slice(), &[Effect::Send("@zzzz".into())]);
+        assert_eq!(sends(&effects).as_slice(), &[a_send("@zzzz".into())]);
     }
 
     #[test]
@@ -7896,12 +8341,9 @@ mod tests {
     const HANDLED_BY_THE_COMPOSER: &[&str] = &[
         "SendQueue",
         "Newline",
-        "ImagePaste",
         "DraftClear",
         "AttachmentUp",
         "AttachmentDown",
-        "HistoryPrev",
-        "HistoryNext",
         "CompleteAccept",
         "CompletePrev",
         "CompleteNext",
@@ -8064,6 +8506,377 @@ mod tests {
             unhandled,
             Vec::<String>::new(),
             "bound, documented, and dropped on the floor"
+        );
+    }
+
+    // ---- the five defects a green suite let through -------------------------
+    //
+    // Every one of these passed a test run and failed on a real terminal, so
+    // each assertion below drives the same surface a hand does: the paste event
+    // the terminal actually sends, the chord the `?` overlay actually promises,
+    // the Escape a user actually presses one second after Enter.
+
+    fn paste(text: &str) -> Action {
+        Action::Term(TermEvent::Paste(text.to_string()))
+    }
+
+    /// Port of `paste.test.ts` + `App.test.tsx`'s paste rows, driven through the
+    /// event a bracketed paste really arrives as.
+    #[test]
+    fn a_paste_lands_at_the_cursor_and_is_not_swallowed() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        type_text(&mut app, "look at  please", 0);
+        for _ in 0..7 {
+            app.apply(key(KeyCode::Left), 0);
+        }
+        app.apply(paste("this bit"), 0);
+        assert_eq!(app.draft, "look at this bit please");
+        // …and the cursor came with it, or the next character typed lands
+        // inside the text that was just pasted.
+        assert_eq!(app.cursor, "look at this bit".chars().count());
+    }
+
+    #[test]
+    fn a_long_paste_is_held_aside_and_its_mark_says_where_it_goes() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        let stack = "boom\n".repeat(40);
+        type_text(&mut app, "explain  to me", 0);
+        for _ in 0.." to me".chars().count() {
+            app.apply(key(KeyCode::Left), 0);
+        }
+        app.apply(paste(&stack), 0);
+        // The composer is not buried: one compact mark, where the cursor was.
+        assert_eq!(app.draft, "explain [Pasted text #1] to me");
+        assert!(app.draft.chars().count() < QUEUE_ABOVE_CHARS + 20);
+        // …and the message that is SENT has the paste back, in that position.
+        app.apply(key(KeyCode::Enter), 0);
+        let sent = sends(&effects);
+        // `strip_ctl` keeps the newlines, so the stack trace arrives whole.
+        assert_eq!(
+            sent.first(),
+            Some(&a_send(format!(
+                "explain {} to me",
+                stack.replace('\r', "")
+            ))),
+            "the mark expanded where it sat"
+        );
+    }
+
+    #[test]
+    fn a_pasted_image_path_is_a_picture_and_ordinary_text_never_touches_disk() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        app.apply(paste("/tmp/shot.png"), 0);
+        assert_eq!(
+            sends(&effects),
+            vec![Effect::AttachPath("/tmp/shot.png".into())],
+            "an absolute image path is read as bytes, not typed as prose"
+        );
+        assert_eq!(app.draft, "", "…and nothing was inserted");
+        // Anything else is words: a relative path, a non-image, a sentence
+        // that merely mentions one (`clipboard.rs`).
+        app.apply(paste("look at /tmp/shot.png"), 0);
+        assert_eq!(app.draft, "look at /tmp/shot.png");
+        assert_eq!(sends(&effects).len(), 1, "no second disk read");
+    }
+
+    #[test]
+    fn a_paste_into_a_surface_that_owns_the_keyboard_is_not_typed_into_a_hidden_composer() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        app.apply(ctrl('t'), 0);
+        assert!(app.panel.open());
+        app.apply(paste("nope"), 0);
+        assert_eq!(app.draft, "");
+    }
+
+    /// Defect 2. The clamp is not the fix: a clamped cursor still points at a
+    /// row the user never highlighted, and ⏎ on the `/` list RUNS it.
+    #[test]
+    fn narrowing_the_popup_resets_the_highlight_instead_of_clamping_it() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        type_text(&mut app, "/", 0);
+        assert!(app.completing(), "the `/` list is up");
+        // Walk down to a row well inside the list.
+        for _ in 0..4 {
+            app.apply(key(KeyCode::Down), 0);
+        }
+        assert_eq!(app.completion_sel, 4);
+        // Now narrow it until far fewer rows remain.
+        type_text(&mut app, "the", 0);
+        assert_eq!(
+            app.completion_sel, 0,
+            "a new candidate set starts at its own first row"
+        );
+        let top = app.completion().items[0].label.clone();
+        app.apply(key(KeyCode::Enter), 0);
+        // Whatever ran, it is the row that WAS highlighted — the only row a
+        // reset can leave selected.
+        let ran = sends(&effects);
+        assert!(
+            !ran.is_empty(),
+            "the highlighted row acted: {top} · {ran:?}"
+        );
+        // …and a candidate list arriving late resets it too.
+        type_text(&mut app, "@", 0);
+        app.apply(key(KeyCode::Down), 0);
+        app.apply(Action::Files(vec!["a.rs".into(), "b.rs".into()]), 0);
+        assert_eq!(app.completion_sel, 0, "a fetched list is a new list");
+    }
+
+    /// Defect 3. The documented usage is Enter, then esc a second later — which
+    /// is precisely the window in which the message still wears `local-N`.
+    #[test]
+    fn esc_right_after_enter_takes_the_message_back_without_naming_a_local_id() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        type_text(&mut app, "wait no", 0);
+        app.apply(key(KeyCode::Enter), 0);
+        assert!(app.notice.as_deref() == Some(TAKE_BACK_HINT));
+        // One second later — inside the window, before any snapshot came back.
+        app.apply(key(KeyCode::Esc), 1000);
+        let acted = sends(&effects);
+        assert!(
+            acted.contains(&Effect::UnsendLatest {
+                text: "wait no".into()
+            }),
+            "the take-back resolves the id server-side: {acted:?}"
+        );
+        // The id the server has never heard of is NEVER handed to the route.
+        assert!(
+            !acted
+                .iter()
+                .any(|e| matches!(e, Effect::Unsend(id) if id.starts_with(LOCAL_ID_PREFIX))),
+            "a `local-N` id reached the unsend route: {acted:?}"
+        );
+    }
+
+    #[test]
+    fn a_message_the_server_has_named_is_unsent_by_that_name() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        type_text(&mut app, "wait no", 0);
+        app.apply(key(KeyCode::Enter), 0);
+        // The snapshot lands: the echo is now the server's row.
+        app.apply(
+            Action::Thread(vec![Message {
+                id: "m7".into(),
+                session_id: "s1".into(),
+                role: Role::User,
+                parts: vec![Part::Text {
+                    text: "wait no".into(),
+                }],
+                pending: false,
+                created_at: 0,
+            }]),
+            500,
+        );
+        app.apply(key(KeyCode::Esc), 1000);
+        assert!(sends(&effects).contains(&Effect::Unsend("m7".into())));
+    }
+
+    /// Defect 4. The `?` overlay is generated from the keymap, so every chord it
+    /// prints is a promise this client made.
+    #[test]
+    fn ctrl_n_starts_a_fresh_conversation_the_way_the_overlay_says() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        type_text(&mut app, "half a thought", 0);
+        app.apply(key(KeyCode::Enter), 0);
+        app.apply(ctrl('n'), 10);
+        assert_eq!(app.session_id, None, "the old conversation was left");
+        assert!(app.thread.is_empty());
+        assert_eq!(app.draft, "");
+        assert!(sends(&effects).contains(&Effect::NewConversation));
+    }
+
+    #[test]
+    fn up_and_down_walk_what_this_screen_has_sent() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        for line in ["first", "second"] {
+            type_text(&mut app, line, 0);
+            app.apply(key(KeyCode::Enter), 0);
+        }
+        app.apply(key(KeyCode::Up), 0);
+        assert_eq!(app.draft, "second");
+        assert_eq!(app.cursor, 6, "the cursor is at the end, ready to edit");
+        app.apply(key(KeyCode::Up), 0);
+        assert_eq!(app.draft, "first");
+        app.apply(key(KeyCode::Up), 0);
+        assert_eq!(app.draft, "first", "the oldest line is where ↑ stops");
+        app.apply(key(KeyCode::Down), 0);
+        assert_eq!(app.draft, "second");
+        app.apply(key(KeyCode::Down), 0);
+        assert_eq!(app.draft, "", "↓ off the end returns to the empty draft");
+    }
+
+    #[test]
+    fn a_shell_line_is_recalled_with_its_sigil_so_re_running_it_is_up_enter() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        type_text(&mut app, "!git status", 0);
+        app.apply(key(KeyCode::Enter), 0);
+        app.apply(key(KeyCode::Up), 0);
+        assert_eq!(app.draft, "!git status");
+        app.apply(key(KeyCode::Enter), 0);
+        assert_eq!(
+            sends(&effects),
+            vec![
+                Effect::RunShell("git status".into()),
+                Effect::RunShell("git status".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn up_in_a_multiline_draft_moves_between_lines_and_never_recalls() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        type_text(&mut app, "sent already", 0);
+        app.apply(key(KeyCode::Enter), 0);
+        type_text(&mut app, "one", 0);
+        app.apply(ctrl('j'), 0); // newline
+        type_text(&mut app, "two", 0);
+        assert!(app.draft.contains('\n'));
+        app.apply(key(KeyCode::Up), 0);
+        assert_eq!(app.draft, "one\ntwo", "the draft is untouched");
+        assert!(app.cursor <= 3, "the cursor moved to the first line");
+    }
+
+    #[test]
+    fn ctrl_v_asks_the_pasteboard_rather_than_doing_nothing() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        app.apply(ctrl('v'), 0);
+        assert_eq!(sends(&effects), vec![Effect::ImagePaste]);
+        // What comes back is an attachment, and it RIDES the message.
+        app.apply(
+            Action::Attached(bough_core::schema::requests::PostMessageImage {
+                path: "/x/clipboard.png".into(),
+                media_type: "image/png".into(),
+                name: "clipboard.png".into(),
+                size: 4,
+            }),
+            0,
+        );
+        assert!(
+            frame_of(&app, 100, 24).contains("[image: clipboard.png]"),
+            "the queued image has a row under the composer"
+        );
+        type_text(&mut app, "what is this", 0);
+        app.apply(key(KeyCode::Enter), 0);
+        match sends(&effects).last() {
+            Some(Effect::Send { text, images }) => {
+                assert_eq!(text, "what is this");
+                assert_eq!(images.len(), 1);
+                assert_eq!(images[0].name, "clipboard.png");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(
+            app.attachments.is_empty(),
+            "the queue emptied with the send"
+        );
+    }
+
+    #[test]
+    fn a_pasteboard_holding_words_is_a_paste_and_a_pasteboard_holding_nothing_says_so() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        app.apply(ctrl('v'), 0);
+        app.apply(Action::PasteText("some words".into()), 0);
+        assert_eq!(app.draft, "some words");
+        app.apply(Action::Notice(CLIPBOARD_EMPTY.to_string()), 0);
+        assert_eq!(app.notice.as_deref(), Some(CLIPBOARD_EMPTY));
+    }
+
+    #[test]
+    fn the_composers_queue_does_not_follow_you_into_another_conversation() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        app.apply(
+            Action::Attached(bough_core::schema::requests::PostMessageImage {
+                path: "/x/a.png".into(),
+                media_type: "image/png".into(),
+                name: "a.png".into(),
+                size: 4,
+            }),
+            0,
+        );
+        app.apply(paste(&"x".repeat(200)), 0);
+        assert_eq!(app.attachments.len(), 1);
+        assert_eq!(app.pastes.len(), 1);
+        app.apply(ctrl('n'), 0);
+        assert!(
+            app.attachments.is_empty(),
+            "an image queued for the thread you left"
+        );
+        assert!(app.pastes.is_empty());
+        assert!(!frame_of(&app, 100, 24).contains("[image: a.png]"));
+    }
+
+    /// Defect 5. `!cmd` borrows the workspace's one `shell` conversation so the
+    /// job has a home; it must not become the thread you are chatting in.
+    #[test]
+    fn a_shell_line_does_not_trap_the_next_message_in_the_shell_conversation() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        // A fresh screen: nothing open, which is where every launch starts.
+        assert_eq!(app.session_id, None);
+        type_text(&mut app, "!echo hi", 0);
+        app.apply(key(KeyCode::Enter), 0);
+        assert_eq!(sends(&effects), vec![Effect::RunShell("echo hi".into())]);
+        // The transport borrows the shell conversation and says which kind it
+        // is — the screen shows it so the job's output is readable.
+        app.apply(Action::ShellSessionOpened("shell-1".into()), 10);
+        assert_eq!(app.session_id.as_deref(), Some("shell-1"));
+        // …and the first ordinary message LEAVES it rather than being typed
+        // into a thread permanently titled "shell".
+        type_text(&mut app, "now explain that", 20);
+        app.apply(key(KeyCode::Enter), 20);
+        let acted = sends(&effects);
+        let new_at = acted.iter().position(|e| e == &Effect::NewConversation);
+        let send_at = acted
+            .iter()
+            .position(|e| e == &a_send("now explain that".into()));
+        assert!(
+            new_at.is_some() && new_at < send_at,
+            "the message started its own conversation first: {acted:?}"
+        );
+        assert!(!app.shell_session);
+    }
+
+    #[test]
+    fn a_shell_line_inside_a_real_conversation_stays_in_it() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        open_s1(&mut app);
+        type_text(&mut app, "!ls", 0);
+        app.apply(key(KeyCode::Enter), 0);
+        type_text(&mut app, "and now this", 0);
+        app.apply(key(KeyCode::Enter), 0);
+        assert_eq!(
+            sends(&effects),
+            vec![Effect::RunShell("ls".into()), a_send("and now this".into())],
+            "an ordinary conversation is not left just because a shell ran in it"
         );
     }
 }

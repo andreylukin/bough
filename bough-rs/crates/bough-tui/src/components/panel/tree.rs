@@ -15,8 +15,8 @@ use ratatui::text::{Line, Span};
 use bough_core::schema::parts::{Role, SessionKind, TurnStatus};
 
 use crate::api::SessionRow;
+use crate::components::info;
 use crate::components::panel::{legend_line, paint_rows, window_around};
-use crate::components::INFO;
 use crate::forest::{is_delegated, ForestRow};
 use crate::store::selectors::{clip, fmt_usd};
 
@@ -299,7 +299,7 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
                 ));
                 if *matched {
                     // The row that actually said the word.
-                    spans.push(Span::styled("  ◂ match", Style::default().fg(INFO)));
+                    spans.push(Span::styled("  ◂ match", Style::default().fg(info())));
                 }
                 if *active {
                     spans.push(Span::styled("  ← active", dim));
@@ -431,7 +431,7 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
     if let Some(message) = p.message {
         out.push(Line::from(Span::styled(
             message.to_string(),
-            Style::default().fg(crate::components::WARN),
+            Style::default().fg(crate::components::warn()),
         )));
     }
     out

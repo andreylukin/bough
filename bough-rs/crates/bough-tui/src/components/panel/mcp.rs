@@ -26,7 +26,7 @@ use bough_core::mcp::keychain::is_covered_host;
 
 use crate::api::McpStatus;
 use crate::components::panel::{legend_line, paint_rows, window_around};
-use crate::components::{ACCENT, WARN};
+use crate::components::{accent, warn};
 use crate::store::selectors::clip;
 
 /// The visible slice. Chrome is the message and the legend, which is always
@@ -241,7 +241,7 @@ pub fn mcp_lines(p: &McpTabProps) -> Vec<Line<'static>> {
         Line::from(vec![
             Span::styled("new server ", dim),
             Span::raw(entry.to_string()),
-            Span::styled("▌", Style::default().fg(ACCENT)),
+            Span::styled("▌", Style::default().fg(accent())),
         ])
     });
 
@@ -275,7 +275,7 @@ pub fn mcp_lines(p: &McpTabProps) -> Vec<Line<'static>> {
         } else {
             clip(message, 96)
         };
-        out.push(Line::from(Span::styled(text, Style::default().fg(WARN))));
+        out.push(Line::from(Span::styled(text, Style::default().fg(warn()))));
     }
     if height > 0 {
         for (i, name) in names[start..end.min(names.len())].iter().enumerate() {
@@ -287,9 +287,9 @@ pub fn mcp_lines(p: &McpTabProps) -> Vec<Line<'static>> {
                 .any(|c| &c.server == name && c.alive);
             let sel = idx == p.selected;
             let color = if alive {
-                Some(ACCENT)
+                Some(accent())
             } else if granted {
-                Some(WARN)
+                Some(warn())
             } else {
                 None
             };
@@ -314,7 +314,7 @@ pub fn mcp_lines(p: &McpTabProps) -> Vec<Line<'static>> {
                 Span::styled(
                     if sel { "❯ " } else { "  " },
                     if sel {
-                        Style::default().fg(ACCENT)
+                        Style::default().fg(accent())
                     } else {
                         Style::default()
                     },

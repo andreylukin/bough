@@ -144,6 +144,22 @@ fn run_tui(argv: &[String]) -> ExitCode {
                             .map(|p| p.to_string_lossy().into_owned())
                     })
             });
+            // NOT A TERMINAL: refuse in one sentence rather than panicking.
+            // ratatui's init() returns Err on a pipe ("Device not configured"),
+            // and unwrapping it printed a vendored crates.io path plus a
+            // RUST_BACKTRACE hint — the only subcommand in this binary that
+            // could panic on ordinary misuse, and the least actionable output
+            // it produces. The TS TUI renders into the pipe instead, but escape
+            // soup down a redirect is not worth reproducing; what both must
+            // share is not crashing. Exit 2 is the same code the unreachable-
+            // server preflight uses: "this cannot run here", not "it failed".
+            if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+                eprintln!(
+                    "bough tui: not a terminal — the TUI needs one.\n\
+                     Run it directly, or use `bough exec \"…\"` for a headless turn."
+                );
+                return ExitCode::from(2);
+            }
             match bough_tui::run(TuiOptions { workspace }) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {

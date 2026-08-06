@@ -41,7 +41,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Widget};
 use crate::ansi::{truncate_ansi, width};
 use crate::keys::{tab_for_command, Command, PanelTab, PANEL_TABS, TABS};
 
-use super::{ACCENT, BORDER, PANEL};
+use super::{accent, border, panel};
 
 // ---------------------------------------------------------------------------
 // The state machine (pure, but for the theme preview it must cancel)
@@ -291,7 +291,7 @@ fn strip_full_width() -> usize {
 /// text all see the same answer.
 pub fn panel_tabs_line(tab: PanelTab, width_cols: Option<usize>) -> Line<'static> {
     let dim = Style::default().add_modifier(Modifier::DIM);
-    let active = Style::default().fg(ACCENT).add_modifier(Modifier::BOLD);
+    let active = Style::default().fg(accent()).add_modifier(Modifier::BOLD);
     // A strip that does not fit is worse than no strip: truncation silently
     // drops the tabs at the end, so at 60 columns the theme tab did not appear
     // to exist and neither did the close hint.
@@ -352,11 +352,11 @@ pub fn render_panel(tab: PanelTab, body: &PanelBody, area: Rect, buf: &mut Buffe
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(BORDER))
+        .border_style(Style::default().fg(border()))
         // The panel is a RAISED surface: `panel` existed for exactly this and
         // was painted by nothing, so a preset whose whole note is "deeper
         // surfaces" changed a border colour and left the panel transparent.
-        .style(Style::default().bg(PANEL));
+        .style(Style::default().bg(panel()));
     let inner = block.inner(area);
     block.render(area, buf);
     // paddingX = 1 inside the border.
@@ -895,6 +895,58 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Previewing a palette must repaint the PRODUCT — the panel's own border
+    /// and surface — not just the swatch on the highlighted row. The picker
+    /// shipped for weeks previewing, keeping and persisting a theme that
+    /// changed no pixel, and every render test passed the whole time because
+    /// they all assert TEXT.
+    #[test]
+    fn previewing_a_palette_repaints_the_panels_own_surface() {
+        use ratatui::backend::TestBackend;
+        use ratatui::style::Color;
+        use ratatui::Terminal;
+
+        let _g = crate::theme::tests::guard();
+        let cell = |tab: PanelTab, body: &PanelBody| {
+            let mut term = Terminal::new(TestBackend::new(40, 8)).unwrap();
+            term.draw(|f| render_panel(tab, body, f.area(), f.buffer_mut()))
+                .unwrap();
+            let buf = term.backend().buffer().clone();
+            let style = buf[(0, 0)].style(); // the border's top-left corner
+            let inside = buf[(2, 3)].style();
+            (style.fg, inside.bg)
+        };
+        // The LIVE preview drives the process palette, exactly as the TUI does.
+        let mut preview = crate::theme::ThemePreview::new(None);
+        let base = cell(PanelTab::Theme, &PanelBody::Theme(Some(&preview)));
+        assert_eq!(
+            base,
+            (
+                Some(Color::Rgb(0x66, 0x6d, 0x79)),
+                Some(Color::Rgb(0x14, 0x16, 0x1a))
+            )
+        );
+
+        preview.select(7); // Midnight — deeper surfaces
+        let previewed = cell(PanelTab::Theme, &PanelBody::Theme(Some(&preview)));
+        assert_eq!(
+            previewed,
+            (
+                Some(Color::Rgb(0x63, 0x6a, 0x76)),
+                Some(Color::Rgb(0x10, 0x12, 0x16))
+            ),
+            "arrowing onto a preset must recolour the panel itself"
+        );
+
+        // …and leaving restores the baseline byte for byte.
+        preview.cancel();
+        assert_eq!(
+            cell(PanelTab::Theme, &PanelBody::Theme(Some(&preview))),
+            base
+        );
+        crate::theme::apply_theme(None);
     }
 
     #[test]

@@ -19,7 +19,7 @@ use ratatui::text::{Line, Span};
 
 use crate::keys::{help_lines, help_sections, HelpLine, HelpLineKind, BINDINGS};
 
-use super::{ACCENT, INFO};
+use super::{accent, info};
 
 /// Rows `↑`/`↓` move the overlay (App.tsx::HELP_STEP).
 pub const HELP_STEP: usize = 3;
@@ -63,7 +63,7 @@ pub fn help_view(rows: usize, offset: usize) -> Vec<Line<'static>> {
                 if l.muted {
                     dim
                 } else {
-                    Style::default().fg(ACCENT)
+                    Style::default().fg(accent())
                 },
             )),
             HelpLineKind::Row => {
@@ -78,7 +78,7 @@ pub fn help_view(rows: usize, offset: usize) -> Vec<Line<'static>> {
                             if l.muted {
                                 dim
                             } else {
-                                Style::default().fg(INFO)
+                                Style::default().fg(info())
                             },
                         ),
                         desc,

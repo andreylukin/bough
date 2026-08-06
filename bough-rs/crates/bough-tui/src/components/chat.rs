@@ -28,7 +28,7 @@ use ratatui::text::{Line, Span};
 
 use crate::lines::{chat_body_height, visible_slice, VLine};
 
-use super::{display_width, fmt_duration, fmt_tokens, pad_row, ACCENT, INFO, SPINNER, WARN};
+use super::{accent, display_width, fmt_duration, fmt_tokens, info, pad_row, warn, SPINNER};
 
 /// Default empty-transcript placeholder (Chat.tsx).
 pub const CHAT_PLACEHOLDER: &str = "type to start · the agent writes one program per round";
@@ -145,7 +145,7 @@ pub fn render_chat(p: &ChatProps, area: Rect, buf: &mut Buffer) {
         put(
             y,
             Line::from(vec![
-                Span::styled(head.clone(), Style::default().fg(INFO)),
+                Span::styled(head.clone(), Style::default().fg(info())),
                 Span::styled(
                     pad_row(&tail, width.saturating_sub(display_width(&head))),
                     dim,
@@ -177,7 +177,7 @@ pub fn render_chat(p: &ChatProps, area: Rect, buf: &mut Buffer) {
         put(
             y,
             Line::from(vec![
-                Span::styled(head, Style::default().fg(ACCENT)),
+                Span::styled(head, Style::default().fg(accent())),
                 Span::styled(pad_row(&rest, width.saturating_sub(2)), dim),
             ]),
             buf,
@@ -186,7 +186,7 @@ pub fn render_chat(p: &ChatProps, area: Rect, buf: &mut Buffer) {
         put(
             y,
             Line::from(vec![
-                Span::styled("⋯ ", Style::default().fg(ACCENT)),
+                Span::styled("⋯ ", Style::default().fg(accent())),
                 Span::styled(pad_row(activity, width.saturating_sub(2)), dim),
             ]),
             buf,
@@ -201,7 +201,7 @@ pub fn render_chat(p: &ChatProps, area: Rect, buf: &mut Buffer) {
             y,
             Line::from(Span::styled(
                 pad_row(notice, width),
-                Style::default().fg(WARN),
+                Style::default().fg(warn()),
             )),
             buf,
         );

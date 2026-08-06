@@ -32,7 +32,7 @@ use bough_core::types::Effort;
 
 use crate::api::ModelRow;
 use crate::components::panel::{paint_rows, window_around};
-use crate::components::{ACCENT, WARN};
+use crate::components::{accent, warn};
 use crate::format::fuzzy_score;
 use crate::store::selectors::clip;
 
@@ -474,7 +474,7 @@ pub fn model_lines(p: &ModelPickerProps) -> Vec<Line<'static>> {
     if let Some(message) = p.message {
         out.push(Line::from(Span::styled(
             message.to_string(),
-            Style::default().fg(WARN),
+            Style::default().fg(warn()),
         )));
     }
     // The entry ordinal within the window, so the digits run 1,2,3… down the
@@ -496,7 +496,7 @@ pub fn model_lines(p: &ModelPickerProps) -> Vec<Line<'static>> {
                     Span::styled(
                         "search ",
                         if *focused {
-                            Style::default().fg(ACCENT)
+                            Style::default().fg(accent())
                         } else {
                             Style::default()
                         },
@@ -516,7 +516,9 @@ pub fn model_lines(p: &ModelPickerProps) -> Vec<Line<'static>> {
                 if *focused {
                     spans.push(Span::styled(
                         " ",
-                        Style::default().bg(ACCENT).fg(ratatui::style::Color::Black),
+                        Style::default()
+                            .bg(accent())
+                            .fg(ratatui::style::Color::Black),
                     ));
                 }
                 out.push(Line::from(spans));
@@ -527,7 +529,7 @@ pub fn model_lines(p: &ModelPickerProps) -> Vec<Line<'static>> {
             DisplayRow::Note(note) => {
                 out.push(Line::from(vec![
                     Span::raw("    "),
-                    Span::styled("●", Style::default().fg(ACCENT)),
+                    Span::styled("●", Style::default().fg(accent())),
                     Span::styled(format!(" {}", clip(note, 88)), dim),
                 ]));
             }
@@ -537,7 +539,7 @@ pub fn model_lines(p: &ModelPickerProps) -> Vec<Line<'static>> {
             DisplayRow::Header(tier) => {
                 out.push(Line::from(Span::styled(
                     section(*tier).0.to_string(),
-                    bold.fg(ACCENT),
+                    bold.fg(accent()),
                 )));
             }
             DisplayRow::Entry { entry, index } => {
@@ -560,7 +562,7 @@ pub fn model_lines(p: &ModelPickerProps) -> Vec<Line<'static>> {
                     Span::styled(
                         if sel { "❯ " } else { "  " },
                         if sel {
-                            Style::default().fg(ACCENT)
+                            Style::default().fg(accent())
                         } else {
                             Style::default()
                         },
@@ -568,7 +570,7 @@ pub fn model_lines(p: &ModelPickerProps) -> Vec<Line<'static>> {
                     Span::styled(
                         if active { "●" } else { " " },
                         if active && !sel {
-                            Style::default().fg(ACCENT)
+                            Style::default().fg(accent())
                         } else {
                             Style::default()
                         },

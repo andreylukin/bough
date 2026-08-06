@@ -28,7 +28,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Widget};
 
 use crate::ansi::wrap_line;
 
-use super::{ACCENT, PANEL_INSET, WARN};
+use super::{accent, panel_inset, warn};
 
 /// The prompt, split on `\n` AND wrapped to `width - 4` (2 border columns +
 /// 2 paddingX, matching the card's own box), capped at a third of the screen.
@@ -80,8 +80,8 @@ pub fn render_ask_card(p: &AskCardProps, area: Rect, buf: &mut Buffer) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         // Warn, because the turn is parked until this is answered.
-        .border_style(Style::default().fg(WARN))
-        .style(Style::default().bg(PANEL_INSET));
+        .border_style(Style::default().fg(warn()))
+        .style(Style::default().bg(panel_inset()));
     let inner = block.inner(area);
     block.render(area, buf);
     // paddingX = 1 inside the border.
@@ -98,7 +98,7 @@ pub fn render_ask_card(p: &AskCardProps, area: Rect, buf: &mut Buffer) {
     }
     for (i, option) in p.options.iter().enumerate() {
         rows.push(Line::from(vec![
-            Span::styled(format!(" {} ", i + 1), Style::default().fg(ACCENT)),
+            Span::styled(format!(" {} ", i + 1), Style::default().fg(accent())),
             Span::raw(option.clone()),
         ]));
     }

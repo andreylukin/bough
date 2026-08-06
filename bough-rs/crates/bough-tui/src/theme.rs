@@ -232,6 +232,57 @@ impl TuiPalette {
     }
 }
 
+/// The palette resolved to ratatui colours ONCE per apply.
+///
+/// Every component reads its colours per span, per frame; [`palette`] clones
+/// twelve `String`s to answer that, which is the wrong shape for the render-hot
+/// path. This is the same twelve tokens, pre-parsed and `Copy`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Colors {
+    pub accent: Color,
+    pub warn: Color,
+    pub error: Color,
+    pub info: Color,
+    pub border: Color,
+    pub bg: Color,
+    pub panel: Color,
+    pub panel_inset: Color,
+    pub text: Color,
+    pub text2: Color,
+    pub muted: Color,
+    pub muted2: Color,
+}
+
+impl From<&TuiPalette> for Colors {
+    fn from(p: &TuiPalette) -> Self {
+        Colors {
+            accent: p.accent_color(),
+            warn: p.warn_color(),
+            error: p.error_color(),
+            info: p.info_color(),
+            border: p.border_color(),
+            bg: p.bg_color(),
+            panel: p.panel_color(),
+            panel_inset: p.panel_inset_color(),
+            text: p.text_color(),
+            text2: p.text2_color(),
+            muted: p.muted_color(),
+            muted2: p.muted2_color(),
+        }
+    }
+}
+
+fn colors_cell() -> &'static RwLock<Colors> {
+    static COLORS: OnceLock<RwLock<Colors>> = OnceLock::new();
+    COLORS.get_or_init(|| RwLock::new(Colors::from(&TuiPalette::default())))
+}
+
+/// The live ratatui colours. THE component read path — every surface paints
+/// from this, so a theme lands everywhere or nowhere.
+pub fn colors() -> Colors {
+    *colors_cell().read().unwrap()
+}
+
 fn palette_cell() -> &'static RwLock<TuiPalette> {
     static PALETTE: OnceLock<RwLock<TuiPalette>> = OnceLock::new();
     PALETTE.get_or_init(|| RwLock::new(TuiPalette::default()))
@@ -328,6 +379,8 @@ pub fn apply_theme(state: Option<&ThemeState>) {
         *p = TuiPalette::from_colors(&c, epoch);
         p.clone()
     };
+    // The component read path, refreshed BEFORE anything is told to redraw.
+    *colors_cell().write().unwrap() = Colors::from(&next);
     crate::format::set_colors(|params| {
         params.muted = fg_params(&next.muted);
         params.accent = fg_params(&next.accent);
@@ -794,13 +847,13 @@ pub fn render_theme_tab(preview: Option<&ThemePreview>, area: Rect, buf: &mut Bu
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
 
     /// The palette is process state; tests that apply themes serialize on this
     /// and leave it as found.
-    fn guard() -> std::sync::MutexGuard<'static, ()> {
+    pub(crate) fn guard() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()
@@ -901,6 +954,50 @@ mod tests {
         assert_eq!(live.accent_color(), Color::Rgb(0xc4, 0xa7, 0xe7));
         assert_eq!(crate::format::colors().accent, fg_params("#c4a7e7"));
         assert_eq!(crate::format::colors().surface_bg, bg_params("#393552"));
+        apply_theme(None);
+    }
+
+    #[test]
+    fn the_components_palette_moves_with_the_theme() {
+        // THE DEFECT THIS EXISTS FOR: `components/mod.rs` painted from `const`
+        // FALLBACK colours, so the picker previewed, kept and PERSISTED a
+        // palette that changed no pixel — a theme picker that was entirely
+        // decorative. Every surface reads these accessors; they must follow an
+        // apply.
+        let _g = guard();
+        apply_theme(Some(&state_of(preset("Midnight"))));
+        assert_eq!(crate::components::bg(), Color::Rgb(0x0a, 0x0b, 0x0e));
+        assert_eq!(crate::components::panel(), Color::Rgb(0x10, 0x12, 0x16));
+        apply_theme(Some(&state_of(preset("Iris"))));
+        assert_eq!(crate::components::accent(), Color::Rgb(0x9a, 0x7f, 0xd1));
+        // …and Default (the empty partial) puts the built-ins back.
+        apply_theme(None);
+        assert_eq!(crate::components::accent(), Color::Rgb(0x4e, 0xc9, 0x8f));
+        assert_eq!(crate::components::bg(), Color::Rgb(0x0e, 0x10, 0x13));
+    }
+
+    #[test]
+    fn a_theme_that_fails_to_load_degrades_to_the_fallback() {
+        // `LoadTheme` sends `None` when the server cannot answer, and a preset
+        // may carry junk hex. Neither may blank the screen.
+        let _g = guard();
+        apply_theme(None);
+        assert_eq!(colors().bg, Color::Rgb(0x0e, 0x10, 0x13));
+        apply_theme(Some(&ThemeState {
+            theme: Some(NamedTheme {
+                name: "Broken".into(),
+                colors: [("green".to_string(), "not-a-colour".to_string())]
+                    .into_iter()
+                    .collect(),
+            }),
+            defaults: ThemeColors::new(),
+        }));
+        // The broken token degrades on its own; every OTHER surface still has a
+        // real colour, which is the difference between a fallback and a
+        // half-painted screen.
+        assert_eq!(colors().accent, Color::Reset);
+        assert_eq!(colors().bg, Color::Rgb(0x0e, 0x10, 0x13));
+        assert_eq!(colors().text, Color::Rgb(0xe7, 0xe9, 0xed));
         apply_theme(None);
     }
 

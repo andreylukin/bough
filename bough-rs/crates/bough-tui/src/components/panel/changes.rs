@@ -24,7 +24,7 @@ use serde::Deserialize;
 
 use crate::ansi::wrap_line;
 use crate::components::panel::{legend_line, paint_rows, window_around};
-use crate::components::{ACCENT, ERROR, INFO, WARN};
+use crate::components::{accent, error, info, warn};
 use crate::store::selectors::{clip, plural};
 use crate::store::state::SessionChangeSet;
 
@@ -59,9 +59,9 @@ impl FileStatus {
 
     fn color(self) -> ratatui::style::Color {
         match self {
-            FileStatus::Deleted => ERROR,
-            FileStatus::Added => ACCENT,
-            FileStatus::Modified => WARN,
+            FileStatus::Deleted => error(),
+            FileStatus::Added => accent(),
+            FileStatus::Modified => warn(),
         }
     }
 }
@@ -266,7 +266,7 @@ pub fn changes_lines(p: &ChangesProps, cols: usize) -> Vec<Line<'static>> {
             .clone()
             .unwrap_or_else(|| "no change set here".to_string());
         for row in wrap_line(&reason, cols) {
-            out.push(Line::from(Span::styled(row, Style::default().fg(WARN))));
+            out.push(Line::from(Span::styled(row, Style::default().fg(warn()))));
         }
         if let Some(hint) = p.hint {
             for row in wrap_line(hint, cols) {
@@ -315,7 +315,7 @@ pub fn changes_lines(p: &ChangesProps, cols: usize) -> Vec<Line<'static>> {
     if let Some(message) = p.message {
         out.push(Line::from(Span::styled(
             message.to_string(),
-            Style::default().fg(WARN),
+            Style::default().fg(warn()),
         )));
     }
     if p.items.is_empty() {
@@ -361,7 +361,7 @@ pub fn changes_lines(p: &ChangesProps, cols: usize) -> Vec<Line<'static>> {
                 Span::styled(
                     if sel { "❯ " } else { "  " },
                     if sel {
-                        Style::default().fg(ACCENT)
+                        Style::default().fg(accent())
                     } else {
                         Style::default()
                     },
@@ -377,7 +377,7 @@ pub fn changes_lines(p: &ChangesProps, cols: usize) -> Vec<Line<'static>> {
                     if sel {
                         Style::default()
                     } else {
-                        Style::default().fg(ACCENT)
+                        Style::default().fg(accent())
                     },
                 ),
                 Span::styled(
@@ -385,7 +385,7 @@ pub fn changes_lines(p: &ChangesProps, cols: usize) -> Vec<Line<'static>> {
                     if sel {
                         Style::default()
                     } else {
-                        Style::default().fg(ERROR)
+                        Style::default().fg(error())
                     },
                 ),
             ]));
@@ -396,11 +396,11 @@ pub fn changes_lines(p: &ChangesProps, cols: usize) -> Vec<Line<'static>> {
         out.push(Line::default());
         for line in body.iter().skip(at).take(body_rows) {
             let style = if line.starts_with("@@") {
-                Style::default().fg(INFO)
+                Style::default().fg(info())
             } else if line.starts_with('+') {
-                Style::default().fg(ACCENT)
+                Style::default().fg(accent())
             } else if line.starts_with('-') {
-                Style::default().fg(ERROR)
+                Style::default().fg(error())
             } else {
                 dim
             };
@@ -481,7 +481,7 @@ fn revert_confirm(
                         "revert all {} (+{added} -{removed})?",
                         plural(items.len() as i64, "file")
                     ),
-                    bold.fg(ERROR),
+                    bold.fg(error()),
                 )),
                 Line::from(Span::styled(
                     format!(
@@ -492,7 +492,7 @@ fn revert_confirm(
                     dim,
                 )),
                 Line::from(vec![
-                    Span::styled("⏎ revert everything", Style::default().fg(ERROR)),
+                    Span::styled("⏎ revert everything", Style::default().fg(error())),
                     Span::styled(" · esc cancel", dim),
                 ]),
             ]
@@ -500,11 +500,11 @@ fn revert_confirm(
         PendingRevert::File(item) => vec![
             Line::from(Span::styled(
                 format!("revert {}?", item.file.path),
-                bold.fg(WARN),
+                bold.fg(warn()),
             )),
             Line::from(Span::styled(revert_scope(item, items.len()), dim)),
             Line::from(vec![
-                Span::styled("⏎ revert it", Style::default().fg(WARN)),
+                Span::styled("⏎ revert it", Style::default().fg(warn())),
                 Span::styled(
                     format!(
                         "{}  ·  esc cancel",

@@ -22,25 +22,47 @@ pub mod status;
 
 use ratatui::style::Color;
 
-// ---- FALLBACK palette (theme.ts::FALLBACK, contrast-checked) ---------------
-// v1 ships the fallback palette only (PORT_PLAN wave-1 stub note). Token
-// mapping follows theme.ts::palette: accent=green, warn=amber, error=red,
-// info=blue, border=hairline.
+// ---- the LIVE palette (theme.rs) -------------------------------------------
+// These were `const`s carrying the FALLBACK hexes, which is how the theme
+// picker came to preview, keep and persist a palette that changed no pixel:
+// every surface painted a hue that could not move. They are functions now, and
+// each one reads `theme::colors()` — the snapshot `apply_theme` refreshes — so
+// a preview repaints the PRODUCT and not a swatch. Token mapping follows
+// theme.rs: accent=green, warn=amber, error=red, info=blue, border=hairline.
+// A theme that fails to load leaves the palette on FALLBACK, so a bad fetch
+// degrades to the built-ins rather than to a half-painted screen.
 
-pub(crate) const ACCENT: Color = Color::Rgb(0x4e, 0xc9, 0x8f); // green #4ec98f
-pub(crate) const WARN: Color = Color::Rgb(0xd9, 0xb4, 0x5f); // amber #d9b45f
-#[allow(dead_code)] // error tone lands with the panel tabs (wave 2)
-pub(crate) const ERROR: Color = Color::Rgb(0xe2, 0x77, 0x6e); // red #e2776e
-pub(crate) const INFO: Color = Color::Rgb(0x5c, 0x88, 0xc9); // blue #5c88c9
-/// Panel borders and hairline separators (theme.ts::palette.border = hairline).
-pub(crate) const BORDER: Color = Color::Rgb(0x66, 0x6d, 0x79); // hairline #666d79
+pub(crate) fn accent() -> Color {
+    crate::theme::colors().accent
+}
+pub(crate) fn warn() -> Color {
+    crate::theme::colors().warn
+}
+pub(crate) fn error() -> Color {
+    crate::theme::colors().error
+}
+pub(crate) fn info() -> Color {
+    crate::theme::colors().info
+}
+/// Panel borders and hairline separators (theme.rs::palette.border = hairline).
+pub(crate) fn border() -> Color {
+    crate::theme::colors().border
+}
 /// Bordered containers: the panel, cards, pickers. A RAISED surface — it must
 /// be PAINTED, or a preset whose whole note is "deeper surfaces" changes a
 /// border colour and leaves the panel transparent over the transcript.
-pub(crate) const PANEL: Color = Color::Rgb(0x14, 0x16, 0x1a); // panel #14161a
-pub(crate) const BG: Color = Color::Rgb(0x0e, 0x10, 0x13); // bg #0e1013
-pub(crate) const PANEL_INSET: Color = Color::Rgb(0x1f, 0x23, 0x29); // panelInset #1f2329
-pub(crate) const MUTED: Color = Color::Rgb(0x9a, 0xa1, 0xac); // muted #9aa1ac
+pub(crate) fn panel() -> Color {
+    crate::theme::colors().panel
+}
+pub(crate) fn bg() -> Color {
+    crate::theme::colors().bg
+}
+pub(crate) fn panel_inset() -> Color {
+    crate::theme::colors().panel_inset
+}
+pub(crate) fn muted() -> Color {
+    crate::theme::colors().muted
+}
 
 // ---- number/time wording (format.ts, verbatim) ------------------------------
 

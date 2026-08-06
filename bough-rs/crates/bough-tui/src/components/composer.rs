@@ -22,7 +22,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Widget};
 
-use super::{ACCENT, BG, MUTED, PANEL_INSET, WARN};
+use super::{accent, bg, muted, panel_inset, warn};
 use crate::format::{Completion, TriggerKind};
 
 pub struct ComposerProps<'a> {
@@ -64,7 +64,7 @@ pub fn render_completion_popup(p: &CompletionPopupProps, area: Rect, buf: &mut B
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(MUTED));
+        .border_style(Style::default().fg(muted()));
     let body = block.inner(area);
     block.render(area, buf);
     let body = Rect {
@@ -104,7 +104,7 @@ pub fn render_completion_popup(p: &CompletionPopupProps, area: Rect, buf: &mut B
             // other list in the TUI uses.
             let mut spans = vec![Span::styled(
                 if selected { "❯ " } else { "  " },
-                Style::default().fg(ACCENT),
+                Style::default().fg(accent()),
             )];
             spans.extend(popup_label(&it.label, &it.hl, dim_to));
             if !it.detail.is_empty() {
@@ -117,7 +117,7 @@ pub fn render_completion_popup(p: &CompletionPopupProps, area: Rect, buf: &mut B
         // Keeps the row cap honest: without this a first-run user reads the
         // menu as the whole catalogue and never types to narrow it.
         lines.push(Line::from(vec![
-            Span::styled(format!("↓ {}", p.more), Style::default().fg(super::INFO)),
+            Span::styled(format!("↓ {}", p.more), Style::default().fg(super::info())),
             Span::styled(" more — keep typing to narrow", dim),
         ]));
     }
@@ -159,7 +159,7 @@ fn popup_label<'a>(label: &'a str, hl: &[usize], dim_to: usize) -> Vec<Span<'a>>
             if hl.contains(&i) {
                 Span::styled(
                     ch.to_string(),
-                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    Style::default().fg(accent()).add_modifier(Modifier::BOLD),
                 )
             } else if i < dim_to {
                 Span::styled(ch.to_string(), dim)
@@ -247,17 +247,17 @@ fn cursor_row(rows: &[WrapRow], cur: usize) -> usize {
 
 pub fn render_composer(p: &ComposerProps, area: Rect, buf: &mut Buffer) {
     let border_color = if p.keyboard_owner.is_some() {
-        MUTED
+        muted()
     } else if p.busy {
-        WARN
+        warn()
     } else {
-        ACCENT
+        accent()
     };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color))
-        .style(Style::default().bg(PANEL_INSET));
+        .style(Style::default().bg(panel_inset()));
     let body = block.inner(area);
     block.render(area, buf);
     // paddingX = 1 inside the border.
@@ -302,7 +302,7 @@ pub fn render_composer(p: &ComposerProps, area: Rect, buf: &mut Buffer) {
     };
 
     let dim = Style::default().add_modifier(Modifier::DIM);
-    let caret = Style::default().fg(BG).bg(ACCENT);
+    let caret = Style::default().fg(bg()).bg(accent());
     let mut lines: Vec<Line> = Vec::new();
     for (i, r) in rows.iter().enumerate().skip(top).take(shown_count) {
         // No caret when the keyboard is elsewhere: a block cursor is the single
@@ -318,7 +318,7 @@ pub fn render_composer(p: &ComposerProps, area: Rect, buf: &mut Buffer) {
         let gcol = (ghost_start.saturating_sub(r.start)).clamp(prefix, r.text.len());
         let mut spans: Vec<Span> = Vec::new();
         if prefix > 0 {
-            spans.push(Span::styled("› ", Style::default().fg(ACCENT)));
+            spans.push(Span::styled("› ", Style::default().fg(accent())));
         }
         if has_cursor {
             let col = cur - r.start;
@@ -359,7 +359,10 @@ pub fn render_composer(p: &ComposerProps, area: Rect, buf: &mut Buffer) {
     for name in p.attachments {
         lines.push(Line::from(vec![
             Span::raw("  "),
-            Span::styled(format!("[image: {name}]"), Style::default().fg(super::INFO)),
+            Span::styled(
+                format!("[image: {name}]"),
+                Style::default().fg(super::info()),
+            ),
         ]));
     }
     if clipped {

@@ -106,14 +106,39 @@ pub fn get_skill() -> Handler {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::app::{create_handler, CreateHandlerOptions};
     use crate::http::testutil;
 
     /// The bundled skills are embedded in the binary and materialized on first
     /// use, so a real install always lists some — "empty" was the wave-1 stub's
     /// answer and would now mean discovery is broken.
+    /// `BOUGH_HOME` is process-global, and `default_sources()` reads it per
+    /// call — so these tests serialize on the crate-wide lock like every other
+    /// env-touching test here (see artifacts.rs::HomeGuard).
+    ///
+    /// They also MATERIALIZE the bundled skills explicitly rather than trusting
+    /// that it has already happened: `ensure_bundled_skills()` memoizes its
+    /// destination in a `OnceLock`, so whichever test ran first decided that
+    /// path process-wide — and if that test pointed `BOUGH_HOME` at a temp dir
+    /// it then deleted, every later listing reads an absent directory and comes
+    /// back empty. That is a test-ordering landmine, not a product bug (a real
+    /// install's BOUGH_HOME does not move mid-process), and this is the cheapest
+    /// way to be immune to it.
+    fn bundled_sources() -> (std::sync::MutexGuard<'static, ()>, Vec<SkillSource>) {
+        let lock = testutil::home_lock();
+        let sources = default_sources();
+        for s in &sources {
+            if s.source == bough_core::skills::SkillSourceName::Bundled {
+                let _ = bough_core::skills::materialize_bundled_skills(&s.dir);
+            }
+        }
+        (lock, sources)
+    }
+
     #[tokio::test]
     async fn the_listing_reports_the_bundled_skills_and_the_directories_searched() {
+        let (_home, _sources) = bundled_sources();
         let fx = testutil::fixture();
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let res = call.call(testutil::get("/skills")).await;
@@ -151,6 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn one_skill_serves_its_body_with_skill_dir_resolved() {
+        let (_home, _sources) = bundled_sources();
         let fx = testutil::fixture();
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let listing = testutil::body_json(call.call(testutil::get("/skills")).await).await;
@@ -175,6 +201,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unknown_skill_is_a_404_naming_it_and_the_alternatives() {
+        let (_home, _sources) = bundled_sources();
         let fx = testutil::fixture();
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let res = call

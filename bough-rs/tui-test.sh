@@ -111,6 +111,44 @@ check "^d switches to changes"                    expect text "changes" --no-str
 SU keys "Control+y" >/dev/null; sleep 0.6
 check "^y opens the theme picker"                 expect text "Default" --no-strict
 check "the theme picker previews live"            expect text "preview"
+# THE DEFECT THIS SECTION EXISTS FOR: the picker listed palettes, previewed on
+# ↑↓ and accepted with ⏎ — and changed NO PIXEL, because every component painted
+# from `const`s. Text assertions passed the whole time, so these read COLOURS.
+# The panel is a raised surface (`panel`), and Midnight's whole note is "deeper
+# surfaces": its panel is #101216 against the built-in #14161a.
+PANEL_Y=$(SU text 2>/dev/null | grep -n "\[theme\]" | head -1 | cut -d: -f1)
+if [ -n "$PANEL_Y" ]; then
+  PY=$((PANEL_Y - 1))
+  BASE_PANEL=$(cell_bg 6 "$PY")
+  check_cmd "the panel paints the built-in surface before any preview" \
+    test "$BASE_PANEL" = "#14161a"
+  for _ in $(seq 1 7); do SU press Down >/dev/null 2>&1; done; sleep 0.8
+  PREVIEWED=$(cell_bg 6 "$PY")
+  check "↑↓ names what is being previewed"          expect text "previewing Midnight"
+  check_cmd "arrowing onto a preset repaints the product, not a swatch" \
+    test "$PREVIEWED" = "#101216"
+  SU press Escape >/dev/null; sleep 0.8
+  SU keys "Control+y" >/dev/null; sleep 0.8
+  RESTORED=$(cell_bg 6 "$PY")
+  check_cmd "leaving the tab restores the baseline byte for byte" \
+    test "$RESTORED" = "$BASE_PANEL"
+  # ⏎ keeps it, and the server is told — as a PUT, since Midnight is a theme.
+  for _ in $(seq 1 7); do SU press Down >/dev/null 2>&1; done; sleep 0.6
+  SU press Enter >/dev/null; sleep 1.2
+  check_cmd "⏎ keeps the palette it was previewing" \
+    test "$(cell_bg 6 "$PY")" = "#101216"
+  check_cmd "⏎ persists it to the server" \
+    bash -c "curl -sf http://127.0.0.1:$PORT/theme | jq -e '.theme.name == \"Midnight\"'"
+  # …and Default round-trips as a DELETE: no stored theme, not an empty PUT.
+  for _ in $(seq 1 9); do SU press Up >/dev/null 2>&1; done; sleep 0.6
+  SU press Enter >/dev/null; sleep 1.2
+  check_cmd "choosing Default repaints the built-ins" \
+    test "$(cell_bg 6 "$PY")" = "#14161a"
+  check_cmd "choosing Default persists as a DELETE, never an empty PUT" \
+    bash -c "curl -sf http://127.0.0.1:$PORT/theme | jq -e '.theme == null'"
+else
+  printf 'FAIL  the theme panel never rendered\n'; fail=$((fail + 1))
+fi
 SU keys "Control+k" >/dev/null; sleep 0.6
 check "^k opens skills"                           expect text "skills" --no-strict
 check "no tab is an empty placeholder"            expect text "nothing to show here yet" --not
@@ -223,6 +261,60 @@ else
 fi
 clear_composer
 
+echo "── paste, recall and the take-back ──────────────"
+# FIVE DEFECTS THAT PASSED A GREEN SUITE and failed on a real terminal. Every
+# check here drives the gesture a hand makes: the bracketed-paste burst the
+# terminal really sends, the chord the `?` overlay really promises.
+clear_composer
+# A real paste arrives as ONE `Event::Paste`, not as N keystrokes. Nothing
+# handled it, so every paste into this TUI was silently swallowed.
+SU write "$(printf '\033[200~pasted words\033[201~')" >/dev/null; sleep 0.8
+check "a bracketed paste lands in the composer"    expect text "pasted words"
+clear_composer
+# Over `QUEUE_ABOVE_CHARS` it is held aside and MARKED where the cursor was, so
+# a 400-line stack trace does not bury the sentence being written (`paste.rs`).
+SU write "$(printf '\033[200~a paste far longer than the fifty characters that hold one aside\033[201~')" >/dev/null; sleep 0.8
+check "a long paste is held aside behind one mark" expect text "[Pasted text #1]"
+check "…and its text is not inlined into the box"  expect text "far longer than the fifty" --not
+clear_composer
+# A pasted PATH to an image is a picture, not prose about a file the model
+# cannot open. It is read and uploaded, and the composer says so.
+printf '\211PNG\r\n\032\n' > "$HOME_DIR/pasted.png"
+SU write "$(printf '\033[200~%s\033[201~' "$HOME_DIR/pasted.png")" >/dev/null
+SU wait text "image:" --timeout 8000 >/dev/null 2>&1
+check "a pasted image path attaches instead of typing itself" expect text "[image: "
+check "…and the path was never inserted as text"   expect text "pasted.png" --not
+clear_composer
+
+# THE POPUP'S CURSOR IS RESET BY A NARROWING QUERY, not merely clamped: a
+# clamped cursor still points at a row nobody highlighted, and ⏎ on the `/` list
+# RUNS it. Walk down five rows, then narrow to a two-row list.
+SU type "/" >/dev/null; sleep 0.8
+for _ in $(seq 1 4); do SU press Down >/dev/null 2>&1; done; sleep 0.5
+check "↓ moves the popup's highlight"              expect text "❯ /mcp"
+SU type "th" >/dev/null; sleep 0.8
+check "narrowing the list resets the highlight to its first row" expect text "❯ /theme"
+SU press Escape >/dev/null; clear_composer
+
+# ^n is printed in the generated `?` overlay as "start a fresh conversation" and
+# resolved to a command NOTHING answered.
+SU type "half a thought" >/dev/null; sleep 0.4
+SU keys "Control+n" >/dev/null; sleep 1.2
+check "^n clears the screen for a fresh conversation" expect text "half a thought" --not
+check "…and the composer is back to its invitation"   expect text "type a message"
+
+# ↑ on an EMPTY draft is history recall (with a multiline draft it walks lines,
+# which the line-editing section above pins). A `!` line is in the same ring,
+# sigil and all, so re-running the last command is ↑⏎.
+SU type '!echo recall-probe' >/dev/null; SU press Enter >/dev/null
+SU wait text "recall-probe" --timeout 12000 >/dev/null 2>&1
+clear_composer
+SU press Up >/dev/null; sleep 0.8
+check "↑ on an empty draft recalls the last line sent" expect text "!echo recall-probe" --no-strict
+SU press Down >/dev/null; sleep 0.6
+check "↓ off the end returns to the empty draft"       expect text "type a message"
+clear_composer
+
 echo "── background shell ─────────────────────────────"
 SU type '!sleep 25' >/dev/null; SU press Enter >/dev/null
 SU wait text "sleep 25" --timeout 12000 >/dev/null 2>&1
@@ -244,6 +336,31 @@ if [ -n "$MODEL" ]; then
   check "the tree lists the conversation it just ran"       expect text "no conversations yet" --not
   SU press Escape >/dev/null
   clear_composer
+
+  # THE 3-SECOND TAKE-BACK, IN ITS DOCUMENTED USAGE: esc immediately after
+  # Enter. That is exactly the window in which the message still wears its
+  # optimistic `local-N` id, and handing that name to the unsend route made the
+  # server answer "message local-N is not one of this session's own messages,
+  # so it cannot be unsent" — a refusal the user reads as a broken feature.
+  clear_composer
+  SU type "this one is going straight back" >/dev/null; sleep 0.4
+  SU press Enter >/dev/null; sleep 1.0
+  SU press Escape >/dev/null; sleep 3
+  check "esc right after enter takes the message back" expect text "took that back" --no-strict
+  check "…and never names a local id at the server"    expect text "local-" --not
+  check "…and the text comes back to the composer"     expect text "this one is going straight back"
+  clear_composer
+
+  # `!cmd` BORROWS the workspace's one `shell` conversation so the job has a
+  # home; it must not become the thread you are chatting in. Typing `!echo hi`
+  # on a fresh screen used to leave every later turn in a conversation
+  # permanently titled "shell" and typed `kind:"shell"`.
+  check_cmd "the ! sigil left exactly one shell conversation" \
+    bash -c "curl -sf http://127.0.0.1:$PORT/sessions | jq -e '[.[]|select(.kind==\"shell\")]|length == 1'"
+  check_cmd "no chat turn was typed into it" \
+    bash -c "curl -sf http://127.0.0.1:$PORT/sessions | jq -e '[.[]|select(.kind==\"shell\")][0].lastTurnStatus == null'"
+  check_cmd "the conversation actually chatted in is an ordinary root" \
+    bash -c "curl -sf http://127.0.0.1:$PORT/sessions | jq -e '[.[]|select(.kind==\"root\" and .lastTurnStatus==\"done\")]|length >= 1'"
 
   echo "── the transcript's folds and cards ─────────────"
   # A turn that actually RUNS a program: the tool fold, its `↳ output` row and

@@ -24,7 +24,7 @@ use serde::Deserialize;
 
 use crate::api::SkillSourceRow;
 use crate::components::panel::{legend_line, paint_rows};
-use crate::components::{ACCENT, ERROR, INFO, WARN};
+use crate::components::{accent, error, info, warn};
 use crate::store::selectors::clip;
 
 /// One row of `GET /skills`, as this tab reads it. The composer's own
@@ -111,7 +111,7 @@ pub fn skills_lines(p: &SkillsTabProps) -> Vec<Line<'static>> {
         return match p.note {
             Some(note) => vec![Line::from(Span::styled(
                 note.to_string(),
-                Style::default().fg(WARN),
+                Style::default().fg(warn()),
             ))],
             None => vec![Line::from(Span::styled("loading…", dim))],
         };
@@ -173,11 +173,13 @@ pub fn skills_lines(p: &SkillsTabProps) -> Vec<Line<'static>> {
 
     if p.filtering {
         out.push(Line::from(vec![
-            Span::styled("/ ", Style::default().fg(ACCENT)),
+            Span::styled("/ ", Style::default().fg(accent())),
             Span::raw(p.filter.to_string()),
             Span::styled(
                 " ",
-                Style::default().bg(ACCENT).fg(ratatui::style::Color::Black),
+                Style::default()
+                    .bg(accent())
+                    .fg(ratatui::style::Color::Black),
             ),
         ]));
     } else if !p.filter.is_empty() {
@@ -200,14 +202,14 @@ pub fn skills_lines(p: &SkillsTabProps) -> Vec<Line<'static>> {
             Span::styled(
                 if on { "❯ " } else { "  " },
                 if on {
-                    Style::default().fg(ACCENT).add_modifier(Modifier::DIM)
+                    Style::default().fg(accent()).add_modifier(Modifier::DIM)
                 } else {
                     dim
                 },
             ),
             Span::styled(
                 format!("/{}", s.name),
-                bold.fg(if s.error.is_some() { ERROR } else { ACCENT }),
+                bold.fg(if s.error.is_some() { error() } else { accent() }),
             ),
             Span::styled(
                 format!(
@@ -223,7 +225,7 @@ pub fn skills_lines(p: &SkillsTabProps) -> Vec<Line<'static>> {
         if !s.mcp.is_empty() {
             spans.push(Span::styled(
                 format!("  mcp: {}", s.mcp.join(", ")),
-                Style::default().fg(INFO),
+                Style::default().fg(info()),
             ));
         }
         out.push(Line::from(spans));

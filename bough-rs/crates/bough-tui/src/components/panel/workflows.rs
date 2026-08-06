@@ -47,7 +47,7 @@ use bough_core::workflow::report::{LargeRunFlag, ReplaySummary, RunCost};
 
 use crate::api::{WorkflowDetail, WorkflowSummary};
 use crate::components::panel::{legend_line, paint_rows, window_around};
-use crate::components::{fmt_tokens, ACCENT, ERROR, INFO, MUTED, WARN};
+use crate::components::{accent, error, fmt_tokens, info, muted, warn};
 use crate::store::selectors::{clip, plural};
 
 // ---------------------------------------------------------------------------
@@ -105,11 +105,11 @@ pub fn lines_of(rows: &[Row]) -> Vec<String> {
 
 fn tone_style(tone: Option<Tone>, bold: bool) -> Style {
     let mut style = match tone {
-        Some(Tone::Accent) => Style::default().fg(ACCENT),
-        Some(Tone::Warn) => Style::default().fg(WARN),
-        Some(Tone::Error) => Style::default().fg(ERROR),
-        Some(Tone::Info) => Style::default().fg(INFO),
-        Some(Tone::Muted) => Style::default().fg(MUTED).add_modifier(Modifier::DIM),
+        Some(Tone::Accent) => Style::default().fg(accent()),
+        Some(Tone::Warn) => Style::default().fg(warn()),
+        Some(Tone::Error) => Style::default().fg(error()),
+        Some(Tone::Info) => Style::default().fg(info()),
+        Some(Tone::Muted) => Style::default().fg(muted()).add_modifier(Modifier::DIM),
         _ => Style::default(),
     };
     if bold {
