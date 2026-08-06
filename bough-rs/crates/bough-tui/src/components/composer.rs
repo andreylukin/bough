@@ -1,0 +1,340 @@
+//! The input box (port of `src/tui/components/Composer.tsx`, wave-1 subset).
+//!
+//! THE INVARIANT THIS HOLDS: **the cursor is exactly where the box says it is.**
+//! The text is wrapped here, into fixed-width chunks, rather than by the
+//! renderer — so the character→row mapping is computed, not inferred from a
+//! layout pass.
+//!
+//! SECOND INVARIANT — **the box never grows past its cap.** A large paste is
+//! windowed to `max_rows` around the cursor with a counter row saying what is
+//! above and below; the text itself is untouched.
+//!
+//! THIRD — **this component is presentational.** Props in, cells out.
+//!
+//! Wave-1 stubs kept honest: ghost text is plumbed but always empty (cheap
+//! tier is `None`), the completion popup and attachments are deferred with the
+//! rest of their plumbing (spec §8 v1 scope cut) — `attachments` stays in the
+//! height contract so the frame arithmetic does not change shape when they land.
+
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Widget};
+
+use super::{ACCENT, BG, MUTED, PANEL_INSET, WARN};
+
+pub struct ComposerProps<'a> {
+    pub input: &'a str,
+    /// Char index into `input` (keys.ts: the cursor is a char index, never bytes).
+    pub cursor: usize,
+    /// A turn is running: Enter interjects into it rather than starting a new one.
+    pub busy: bool,
+    pub width: u16,
+    pub max_rows: usize,
+    /// Dim autocomplete preview appended after the input. Wave 1: always `""`.
+    pub ghost: &'a str,
+    /// Image attachment names. Wave 1: always empty (no image paste).
+    pub attachments: &'a [String],
+    /// The surface that has the keyboard INSTEAD of this one, e.g. `"the tree"`.
+    /// None means the composer is focused.
+    pub keyboard_owner: Option<&'a str>,
+}
+
+/// Rows the box will draw, so the container can SIZE the region above it
+/// instead of guessing. **Must mirror the render exactly** — the two are
+/// edited together (Composer.tsx::composerHeight).
+pub fn composer_height(
+    input: &str,
+    ghost: &str,
+    busy: bool,
+    width: u16,
+    max_rows: usize,
+    attachments: usize,
+) -> usize {
+    let inner_w = inner_width(width);
+    let full = full_text(input, ghost);
+    let mut n = 0usize;
+    for line in full.split('\n') {
+        let len = line.chars().count();
+        n += 1.max(len.div_ceil(inner_w));
+    }
+    let cap = max_rows.max(2);
+    let clipped = n > cap;
+    let hint = usize::from((busy && !input.is_empty()) || input.starts_with('!'));
+    2 + (if clipped { cap - 1 } else { n }) + usize::from(clipped) + hint + attachments
+}
+
+fn inner_width(width: u16) -> usize {
+    (width as usize).saturating_sub(4).max(4) // border + paddingX
+}
+
+fn full_text(input: &str, ghost: &str) -> String {
+    let ghost_hint = if ghost.is_empty() { "" } else { "  ⇥ tab" };
+    format!("› {input}{ghost}{ghost_hint}")
+}
+
+/// One wrapped row: its char offset into the full text, and its chars.
+struct WrapRow {
+    start: usize,
+    text: Vec<char>,
+}
+
+/// Fixed-width chunks over the full text, char-based, exactly as the TS wraps.
+fn wrap_rows(full: &str, inner_w: usize) -> Vec<WrapRow> {
+    let mut rows = Vec::new();
+    let mut off = 0usize;
+    for line in full.split('\n') {
+        let chars: Vec<char> = line.chars().collect();
+        let mut i = 0usize;
+        loop {
+            let end = (i + inner_w).min(chars.len());
+            rows.push(WrapRow { start: off + i, text: chars[i..end].to_vec() });
+            if i + inner_w >= chars.len() {
+                break;
+            }
+            i += inner_w;
+        }
+        off += chars.len() + 1;
+    }
+    rows
+}
+
+/// The cursor's row: within `[start, start+len)`, or sitting at the row's end
+/// when nothing continues it there.
+fn cursor_row(rows: &[WrapRow], cur: usize) -> usize {
+    rows.iter()
+        .enumerate()
+        .position(|(i, r)| {
+            let end = r.start + r.text.len();
+            let next_start = rows.get(i + 1).map(|n| n.start).unwrap_or(usize::MAX);
+            cur >= r.start && (cur < end || (cur == end && next_start > end))
+        })
+        .unwrap_or(0)
+}
+
+pub fn render_composer(p: &ComposerProps, area: Rect, buf: &mut Buffer) {
+    let border_color = if p.keyboard_owner.is_some() {
+        MUTED
+    } else if p.busy {
+        WARN
+    } else {
+        ACCENT
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color))
+        .style(Style::default().bg(PANEL_INSET));
+    let body = block.inner(area);
+    block.render(area, buf);
+    // paddingX = 1 inside the border.
+    let body = Rect {
+        x: body.x + 1,
+        width: body.width.saturating_sub(2),
+        ..body
+    };
+
+    let inner_w = inner_width(p.width);
+    // An empty composer states the first action; a ghost suppresses it (the two
+    // would paint into the same cells). When another surface has the keyboard
+    // the placeholder names it instead.
+    let placeholder = match p.keyboard_owner {
+        Some(owner) => {
+            if p.input.is_empty() {
+                format!("{owner} has the keyboard · esc returns here")
+            } else {
+                String::new()
+            }
+        }
+        None => {
+            if p.input.is_empty() && p.ghost.is_empty() {
+                "type a message · enter sends".to_string()
+            } else {
+                String::new()
+            }
+        }
+    };
+    let full = full_text(p.input, p.ghost);
+    let ghost_start = 2 + p.input.chars().count();
+    let cur = p.cursor + 2;
+    let rows = wrap_rows(&full, inner_w);
+    let cur_row = cursor_row(&rows, cur);
+    let cap = p.max_rows.max(2);
+    let clipped = rows.len() > cap;
+    let shown_count = if clipped { cap - 1 } else { rows.len() }; // one row for the … counter
+    let top = if clipped {
+        (cur_row.saturating_sub(shown_count >> 1)).min(rows.len() - shown_count)
+    } else {
+        0
+    };
+
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let caret = Style::default().fg(BG).bg(ACCENT);
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, r) in rows.iter().enumerate().skip(top).take(shown_count) {
+        // No caret when the keyboard is elsewhere: a block cursor is the single
+        // strongest claim a terminal UI can make about where typing goes.
+        let has_cursor = p.keyboard_owner.is_none() && i == cur_row;
+        let prefix = if r.start == 0 { 2 } else { 0 };
+        let seg = |from: usize, to: usize| -> String { r.text[from.min(r.text.len())..to.min(r.text.len())].iter().collect() };
+        // Where this row crosses into ghost text — everything from there is dim.
+        let gcol = (ghost_start.saturating_sub(r.start)).clamp(prefix, r.text.len());
+        let mut spans: Vec<Span> = Vec::new();
+        if prefix > 0 {
+            spans.push(Span::styled("› ", Style::default().fg(ACCENT)));
+        }
+        if has_cursor {
+            let col = cur - r.start;
+            let at: Option<char> = r.text.get(col).copied();
+            spans.push(Span::raw(seg(prefix, col)));
+            spans.push(Span::styled(at.map(String::from).unwrap_or_else(|| " ".into()), caret));
+            if !placeholder.is_empty() {
+                spans.push(Span::styled(placeholder.clone(), dim));
+            }
+            if at.is_some() {
+                let rest = seg(col + 1, r.text.len());
+                let rest_style = if col + 1 >= gcol { dim } else { Style::default() };
+                spans.push(Span::styled(rest, rest_style));
+            }
+        } else if r.text.len() <= prefix {
+            // An empty first row with no caret: the placeholder lives here instead.
+            if !placeholder.is_empty() {
+                spans.push(Span::styled(placeholder.clone(), dim));
+            } else {
+                spans.push(Span::raw(" "));
+            }
+        } else {
+            spans.push(Span::raw(seg(prefix, gcol)));
+            if gcol < r.text.len() {
+                spans.push(Span::styled(seg(gcol, r.text.len()), dim));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+    // Images only — a held paste has no row of its own: its mark sits in the draft.
+    for name in p.attachments {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(format!("[image: {name}]"), Style::default().fg(super::INFO)),
+        ]));
+    }
+    if clipped {
+        let above = top;
+        let below = rows.len() - top - shown_count;
+        lines.push(Line::from(Span::styled(
+            format!("… {above} line{} above · {below} below", if above == 1 { "" } else { "s" }),
+            dim,
+        )));
+    }
+    // A context hint under the box: a plain Enter mid-turn steers the running
+    // turn rather than starting a new one; a `!` line goes to your shell.
+    let hint = if p.busy && !p.input.is_empty() {
+        "enter interjects this turn"
+    } else if p.input.starts_with('!') {
+        "runs in your shell · not a message · output lands in the rail"
+    } else {
+        ""
+    };
+    if !hint.is_empty() {
+        lines.push(Line::from(Span::styled(hint, dim)));
+    }
+
+    for (i, line) in lines.into_iter().enumerate() {
+        if i as u16 >= body.height {
+            break; // a tab body must never emit more rows than its budget
+        }
+        buf.set_line(body.x, body.y + i as u16, &line, body.width);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn draw(p: &ComposerProps, cols: u16, rows: u16) -> String {
+        let mut term = Terminal::new(TestBackend::new(cols, rows)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            render_composer(p, area, f.buffer_mut());
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn props<'a>(input: &'a str, cursor: usize, busy: bool) -> ComposerProps<'a> {
+        ComposerProps {
+            input,
+            cursor,
+            busy,
+            width: 60,
+            max_rows: 6,
+            ghost: "",
+            attachments: &[],
+            keyboard_owner: None,
+        }
+    }
+
+    // Chat.test.tsx: "Composer shows the prompt, the placeholder and the mid-turn hint"
+    #[test]
+    fn shows_prompt_placeholder_and_mid_turn_hint() {
+        let empty = draw(&props("", 0, false), 60, 8);
+        assert!(empty.contains("type a message · enter sends"), "{empty}");
+
+        let busy = draw(&props("also this", 9, true), 60, 8);
+        assert!(busy.contains("enter interjects this turn"), "{busy}");
+        assert!(busy.contains("also this"), "{busy}");
+    }
+
+    // Chat.test.tsx: "Composer caps its height on a large paste and says what is off-screen"
+    #[test]
+    fn caps_height_on_a_large_paste_and_says_what_is_off_screen() {
+        let input: String = (0..30).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let p = ComposerProps { max_rows: 5, width: 60, ..props(&input, input.chars().count(), false) };
+        let frame = draw(&p, 60, 10);
+        assert!(frame.contains("lines above ·"), "{frame}");
+        assert!(!frame.contains("line 0 "), "windowed to the cursor: {frame}");
+        assert!(frame.contains("line 29"), "{frame}");
+    }
+
+    // Chat.test.tsx: "Composer height reserves a row for each attachment"
+    #[test]
+    fn height_reserves_a_row_for_each_attachment() {
+        assert_eq!(
+            composer_height("", "", false, 60, 6, 1),
+            composer_height("", "", false, 60, 6, 0) + 1,
+        );
+    }
+
+    #[test]
+    fn height_mirrors_the_render_contract() {
+        // 2 border + 1 text row, empty idle composer.
+        assert_eq!(composer_height("", "", false, 60, 6, 0), 3);
+        // busy + non-empty adds the hint row.
+        assert_eq!(composer_height("hi", "", true, 60, 6, 0), 4);
+        // `!` line always carries its hint row.
+        assert_eq!(composer_height("!ls", "", false, 60, 6, 0), 4);
+        // clipped: cap-1 shown rows + counter row.
+        let long: String = (0..30).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        assert_eq!(composer_height(&long, "", false, 60, 5, 0), 2 + 4 + 1);
+        // a ghost widens the text ("  ⇥ tab" tail) but adds no chrome rows.
+        assert_eq!(composer_height("", "do it", false, 60, 6, 0), 3);
+    }
+
+    #[test]
+    fn keyboard_owner_names_the_owner_and_drops_the_caret() {
+        let p = ComposerProps { keyboard_owner: Some("the tree"), ..props("", 0, false) };
+        let frame = draw(&p, 60, 6);
+        assert!(frame.contains("the tree has the keyboard · esc returns here"), "{frame}");
+    }
+}

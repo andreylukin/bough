@@ -1,0 +1,10 @@
+[package]
+name = "bough"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bough-core = { workspace = true }
+bough-server = { workspace = true }
+bough-tui = { workspace = true }
+tokio = { workspace = true }

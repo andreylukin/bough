@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/bough-core",
+  "crates/bough-server",
+  "crates/bough-tui",
+  "crates/bough",
+]
+
+# Pinned per ARCHITECTURE.md §2. Minor-version drift is fine; major-version bumps
+# need a note in ARCHITECTURE.md.
+[workspace.dependencies]
+tokio        = { version = "1.47", features = ["full"] }
+tokio-util   = { version = "0.7", features = ["rt"] }   # CancellationToken
+axum         = { version = "0.8" }                       # bough-server only
+reqwest      = { version = "0.12", features = ["json", "stream"] }
+rusqlite     = { version = "0.37", features = ["bundled", "load_extension"] }
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+ratatui      = "0.29"                                    # bough-tui only
+crossterm    = { version = "0.29", features = ["event-stream"] }
+uuid         = { version = "1", features = ["v4"] }
+thiserror    = "2"
+chrono       = "0.4"                                     # daily@ local-time math (DST)
+chrono-tz    = "0.10"                                    # dev-only: pins the DST tests to a fixed zone
+regex        = "1"
+sha2         = "0.10"                                    # sectionSha, callKey inputs
+base64       = "0.22"                                    # attachments, OSC 52
+unicode-width = "0.2"                                    # display columns (bough-tui)
+futures      = "0.3"
+async-trait  = "0.1"
+dirs         = "6"                                       # home_dir
+nix          = { version = "0.29", features = ["signal", "process"] }  # kill/killpg
+tracing      = "0.1"
+tracing-subscriber = "0.3"
+libc         = "0.2"
+tower        = { version = "0.5", features = ["util"] }  # bough-server tests: ServiceExt::oneshot
+
+bough-core   = { path = "crates/bough-core" }
+bough-server = { path = "crates/bough-server" }
+bough-tui    = { path = "crates/bough-tui" }

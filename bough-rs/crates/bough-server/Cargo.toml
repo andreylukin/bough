@@ -1,0 +1,21 @@
+[package]
+name = "bough-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bough-core = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+dirs = { workspace = true }
+
+[dev-dependencies]
+tower = { workspace = true }
+# `start_paused` heartbeat tests (events.rs) advance tokio's clock manually.
+tokio = { workspace = true, features = ["test-util"] }

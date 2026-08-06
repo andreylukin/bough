@@ -1,0 +1,761 @@
+//! Oversized command output goes to a file, and the turn is told where.
+//! Port of `src/hostfn/spill.ts` (spec: hostfn.md §spill).
+//!
+//! THE PROBLEM. A shell command's output is the one thing in a turn whose size
+//! the model does not choose. Returning it all lets one noisy command consume
+//! half a context window; truncating it throws away the middle permanently —
+//! and the failing assertion in a test run is almost never in the first or
+//! last 5,000 characters. The third option: keep the output, on disk, and
+//! spend a few inline characters saying where.
+//!
+//! NO SCRATCHPAD MEANS NO SPILL, AND THEN NOTHING IS DROPPED THAT WOULD NOT
+//! HAVE BEEN. A unit test and any caller without a session have nowhere to
+//! write, and the aggressive inline budget only makes sense as a trade AGAINST
+//! a file that holds the rest. Without one, this falls back to the old
+//! generous head and tail.
+//!
+//! PURE CORE, INJECTED EDGES. `plan_spill` decides; `spill` writes. The
+//! filesystem arrives as a trait object so a test never touches a real
+//! directory.
+//!
+//! "Chars" throughout are Unicode scalar values (`char`s) — TS counted UTF-16
+//! code units. The two agree on ASCII, which shell output overwhelmingly is;
+//! what matters is self-consistency, and that a slice never lands mid-glyph.
+
+use std::path::Path;
+
+// ---------------------------------------------------------------------------
+// Deterministic truncation — the fallback, and what retention itself uses
+// ---------------------------------------------------------------------------
+
+/// Verbatim head retained per shell. Smaller than the tail on purpose: the
+/// head of a build log is the invocation and the first failure, the tail is
+/// where it ended up, and the middle is the part nobody reads.
+pub const MAX_HEAD_CHARS: usize = 100_000;
+/// Verbatim tail retained per shell.
+pub const MAX_TAIL_CHARS: usize = 300_000;
+
+/// How much output a single shell retains before the middle starts being
+/// omitted.
+pub const MAX_BUF: usize = MAX_HEAD_CHARS + MAX_TAIL_CHARS;
+
+/// Head/tail budget for one retained buffer. Injected so tests can use small
+/// ones.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TruncateLimits {
+    pub head: Option<usize>,
+    pub tail: Option<usize>,
+}
+
+/// The omission marker.
+///
+/// NOTE: spec §6 asks for head + tail verbatim, which means the marker has to
+/// name how much went missing from the *middle* — and, because error text is a
+/// product surface, name the move that avoids it next time (filter at the
+/// source).
+pub fn omission_marker(omitted: usize, total: usize) -> String {
+    format!(
+        "\n[… {omitted} chars omitted from the middle of {total} — head and tail are \
+         verbatim. Filter at the source (rg, head, tail, targeted reads) instead of dumping \
+         output …]\n"
+    )
+}
+
+/// Keep the first `head` and last `tail` characters verbatim, with an explicit
+/// marker where the middle used to be. Pure and deterministic: the same input
+/// always yields the same output, and nothing summarizes anything.
+pub fn truncate_middle(text: &str, limits: TruncateLimits) -> String {
+    let head = limits.head.unwrap_or(MAX_HEAD_CHARS);
+    let tail = limits.tail.unwrap_or(MAX_TAIL_CHARS);
+    let len = char_len(text);
+    if len <= head + tail {
+        return text.to_string();
+    }
+    let omitted = len - head - tail;
+    format!(
+        "{}{}{}",
+        take_chars(text, head),
+        omission_marker(omitted, len),
+        last_chars(text, tail)
+    )
+}
+
+/// Output longer than this is written to a file.
+///
+/// 20,000 characters is roughly 5,000 tokens — already a large thing to read,
+/// and far above what an ordinary command produces. `git status`, a targeted
+/// `rg`, a passing test run: all comfortably under, and all completely
+/// unaffected by any of this. What clears the bar is the category this exists
+/// for — a failing suite, a full build, an unfiltered log.
+pub const SPILL_OVER_CHARS: usize = 20_000;
+
+/// Verbatim head kept inline when output spills.
+pub const SPILL_HEAD_CHARS: usize = 5_000;
+
+/// Verbatim tail kept inline when output spills.
+///
+/// Equal to the head, unlike the retention buffer's 1:3 split. That asymmetry
+/// is right when the tail is ALL you keep, because a command's verdict is at
+/// the end. Here the whole output is on disk either way, so the inline extract
+/// is a preview whose only job is to let the model recognize what it is
+/// looking at and decide where to grep.
+pub const SPILL_TAIL_CHARS: usize = 5_000;
+
+/// The filesystem, injected. Failures are values (`io::Result`), never panics
+/// — a full disk must not kill a running command.
+pub trait SpillDeps {
+    fn exists(&self, path: &str) -> bool;
+    fn mkdirp(&self, dir: &str) -> std::io::Result<()>;
+    fn write(&self, path: &str, text: &str) -> std::io::Result<()>;
+    /// Append to a file, creating it if absent. Used by the streaming sink.
+    fn append(&self, path: &str, text: &str) -> std::io::Result<()>;
+}
+
+/// The real filesystem.
+pub struct RealSpillDeps;
+
+impl SpillDeps for RealSpillDeps {
+    fn exists(&self, path: &str) -> bool {
+        Path::new(path).exists()
+    }
+    fn mkdirp(&self, dir: &str) -> std::io::Result<()> {
+        std::fs::create_dir_all(dir)
+    }
+    fn write(&self, path: &str, text: &str) -> std::io::Result<()> {
+        std::fs::write(path, text)
+    }
+    fn append(&self, path: &str, text: &str) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        f.write_all(text.as_bytes())
+    }
+}
+
+/// A file that a shell's output is streamed into as it arrives.
+///
+/// WHY STREAMING RATHER THAN WRITING THE BUFFER AT THE END, which is what the
+/// TS did first and what looked correct until it was driven: the retention
+/// buffer caps at 400,000 characters and drops the middle of anything larger.
+/// Writing it out afterwards therefore saved a file that had ALREADY lost the
+/// middle — complete with the omission marker embedded in it — under a banner
+/// reading "FULL OUTPUT SAVED". `seq 1 200000` produced 1.29MB, the file held
+/// 400KB, and the marker claimed it was everything. A tool that says it kept
+/// your output and did not is worse than one that admits it truncated.
+///
+/// So the sink opens on the first chunk past the threshold and every
+/// subsequent chunk goes to disk. The in-memory buffer keeps doing its own job
+/// for the inline extract; this is a second, complete copy.
+///
+/// OPENED LAZILY, because most commands never reach the threshold and a file
+/// per `git status` would litter the scratchpad with empty logs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpillSink {
+    pub path: String,
+    /// Everything written so far, to report the true total rather than the
+    /// retained one.
+    pub chars: usize,
+    /// Newlines seen, counted as we stream — the file is never re-read to
+    /// find out.
+    pub lines: usize,
+}
+
+/// What a caller knows about where this output came from.
+#[derive(Debug, Clone, Default)]
+pub struct SpillCtx {
+    /// The session scratchpad. Absent disables spilling entirely.
+    pub scratch: Option<String>,
+    /// Base name for the file — `bash`, `sh`, `bg_3`. Defaults to `output`.
+    pub label: Option<String>,
+}
+
+/// Give this shell a sink if it has earned one, and write `text` to it.
+///
+/// `pending` is the output produced BEFORE the threshold was crossed — it
+/// lives only in the retention buffer at that moment, and without it the file
+/// would start mid-stream and miss the very beginning, which is where a build
+/// log says what it was building.
+///
+/// A write failure returns the sink unchanged (or `None` if it never opened):
+/// a full disk must not kill a running command; the inline extract then falls
+/// back to plain truncation.
+pub fn stream_spill(
+    sink: Option<SpillSink>,
+    text: &str,
+    ctx: &SpillCtx,
+    total_so_far: usize,
+    pending: impl FnOnce() -> String,
+    deps: &dyn SpillDeps,
+) -> Option<SpillSink> {
+    let scratch = ctx.scratch.as_deref()?;
+    match sink {
+        None => {
+            if total_so_far <= SPILL_OVER_CHARS {
+                return None;
+            }
+            let open = move || -> std::io::Result<SpillSink> {
+                deps.mkdirp(scratch)?;
+                let path = next_path(scratch, ctx.label.as_deref().unwrap_or("output"), deps);
+                let head = pending();
+                deps.write(&path, &head)?;
+                Ok(SpillSink { path, chars: char_len(&head), lines: count_lines(&head) })
+            };
+            // Give up on the file and let the inline extract fall back to
+            // plain truncation.
+            open().ok()
+        }
+        Some(s) => match deps.append(&s.path, text) {
+            Ok(()) => Some(SpillSink {
+                path: s.path.clone(),
+                chars: s.chars + char_len(text),
+                // -1 because `count_lines` counts a trailing partial line that
+                // the previous chunk already counted; concatenating two chunks
+                // must not invent a line.
+                lines: s.lines + count_lines(text) - 1,
+            }),
+            Err(_) => Some(s),
+        },
+    }
+}
+
+/// The first free `<label>-NNN.log` in `dir`.
+///
+/// A counter would be shorter and wrong across restarts: it resets to 1 while
+/// the scratchpad still holds a `bash-001.log` from before, and the next spill
+/// silently overwrites output some earlier turn may still be about to read.
+/// Probing costs a handful of `exists` calls on a directory that holds a
+/// handful of files.
+fn next_path(dir: &str, label: &str, deps: &dyn SpillDeps) -> String {
+    for i in 1..=999 {
+        let p = Path::new(dir).join(format!("{label}-{i:03}.log"));
+        let p = p.to_string_lossy().into_owned();
+        if !deps.exists(&p) {
+            return p;
+        }
+    }
+    // 999 spills in one session is not a real scenario, but silently
+    // overwriting would be, so the last slot is reused explicitly rather than
+    // by accident.
+    Path::new(dir).join(format!("{label}-999.log")).to_string_lossy().into_owned()
+}
+
+/// What the inline extract should say. Pure — no filesystem, no decision to
+/// write.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SpillPlan {
+    /// True when the text is over the threshold AND there is somewhere to put
+    /// it.
+    pub spilled: bool,
+    pub head: String,
+    pub tail: String,
+    pub omitted: usize,
+    pub lines: usize,
+}
+
+/// Decide whether and how to split. Pure.
+pub fn plan_spill(text: &str, can_write: bool) -> SpillPlan {
+    let len = char_len(text);
+    if !can_write || len <= SPILL_OVER_CHARS {
+        return SpillPlan::default();
+    }
+    let head = take_chars(text, SPILL_HEAD_CHARS).to_string();
+    let tail = last_chars(text, SPILL_TAIL_CHARS).to_string();
+    SpillPlan {
+        spilled: true,
+        omitted: len - char_len(&head) - char_len(&tail),
+        lines: count_lines(text),
+        head,
+        tail,
+    }
+}
+
+fn count_lines(text: &str) -> usize {
+    1 + text.bytes().filter(|&b| b == b'\n').count()
+}
+
+fn char_len(s: &str) -> usize {
+    s.chars().count()
+}
+
+/// The first `n` chars of `s`, never splitting a scalar value.
+fn take_chars(s: &str, n: usize) -> &str {
+    match s.char_indices().nth(n) {
+        Some((i, _)) => &s[..i],
+        None => s,
+    }
+}
+
+/// The last `n` chars of `s`.
+fn last_chars(s: &str, n: usize) -> &str {
+    let len = char_len(s);
+    if len <= n {
+        return s;
+    }
+    match s.char_indices().nth(len - n) {
+        Some((i, _)) => &s[i..],
+        None => s,
+    }
+}
+
+/// The marker that replaces the middle.
+///
+/// Every clause earns its characters. The PATH is the point. The SIZE tells
+/// the reader whether grepping is worth it. And the three suggested moves are
+/// spelled out as runnable commands rather than described, because an agent
+/// that has to compose the incantation from a description will sometimes
+/// compose the wrong one and conclude the file is empty — and `bough patterns`
+/// in particular is a thing it would not otherwise think to reach for on a
+/// 9,000-line log.
+pub fn spill_marker(path: &str, total: usize, lines: usize, omitted: usize) -> String {
+    let lines_clause =
+        if lines > 0 { format!(", {} lines", commafy(lines)) } else { String::new() };
+    format!(
+        "\n[… {} chars omitted from the middle. \
+         FULL OUTPUT SAVED — {} chars{}:\n   {}\n   \
+         rg -n 'error|fail' {}   — find the part you need\n   \
+         bough patterns --llm {}   — if it is log-shaped, this summarizes it\n   \
+         view({})   — read it directly\n\
+         Head and tail below are verbatim. Do not re-run the command to see the middle …]\n",
+        commafy(omitted),
+        commafy(total),
+        lines_clause,
+        path,
+        shell_quote(path),
+        shell_quote(path),
+        serde_json::to_string(path).unwrap_or_else(|_| format!("\"{path}\"")),
+    )
+}
+
+/// `toLocaleString("en-US")` — thousands separators.
+fn commafy(n: usize) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Single-quote a path for a shell word, so a space or a `$` cannot break the
+/// hint.
+fn shell_quote(p: &str) -> String {
+    format!("'{}'", p.replace('\'', "'\\''"))
+}
+
+/// Bound `text` for a tool result, writing the full copy to the scratchpad
+/// when it is large and there is a scratchpad to write it to.
+///
+/// Returns the text to show. A write failure is swallowed deliberately: a full
+/// disk or a read-only scratchpad must degrade to the old truncation, not turn
+/// a successful command into a failed host call. The model then sees the
+/// ordinary omission marker and is no worse off than before this existed.
+pub fn spill(text: &str, ctx: &SpillCtx, sink: Option<&SpillSink>, deps: &dyn SpillDeps) -> String {
+    // Already streamed to disk: use THAT file and THAT total. The `text` here
+    // came out of the retention buffer, so its length is the retained size,
+    // not the real one — reporting it would understate a 10MB command as
+    // 400KB.
+    if let Some(sink) = sink {
+        let plan = plan_spill(text, true);
+        let (head, tail) =
+            if plan.spilled { (plan.head.as_str(), plan.tail.as_str()) } else { (text, "") };
+        let omitted = sink.chars.saturating_sub(char_len(head) + char_len(tail));
+        return format!(
+            "{head}{}{tail}",
+            spill_marker(&sink.path, sink.chars, sink.lines, omitted)
+        );
+    }
+    let plan = plan_spill(text, ctx.scratch.is_some());
+    if !plan.spilled {
+        // Under the threshold, or nowhere to write. The generous head/tail is
+        // the right fallback in the second case — see the module note.
+        return truncate_middle(
+            text,
+            TruncateLimits { head: Some(MAX_HEAD_CHARS), tail: Some(MAX_TAIL_CHARS) },
+        );
+    }
+    let dir = ctx.scratch.as_deref().expect("plan.spilled implies a scratchpad");
+    let attempt = || -> std::io::Result<String> {
+        deps.mkdirp(dir)?;
+        let path = next_path(dir, ctx.label.as_deref().unwrap_or("output"), deps);
+        deps.write(&path, text)?;
+        Ok(format!(
+            "{}{}{}",
+            plan.head,
+            spill_marker(&path, char_len(text), plan.lines, plan.omitted),
+            plan.tail
+        ))
+    };
+    attempt().unwrap_or_else(|_| {
+        truncate_middle(
+            text,
+            TruncateLimits { head: Some(MAX_HEAD_CHARS), tail: Some(MAX_TAIL_CHARS) },
+        )
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Tests — ported from src/hostfn/spill.test.ts. The filesystem is injected,
+// so nothing here touches a real directory.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+
+    /// A fake filesystem recording every write.
+    #[derive(Default)]
+    struct FakeFs {
+        files: RefCell<BTreeMap<String, String>>,
+        dirs: RefCell<Vec<String>>,
+    }
+
+    impl SpillDeps for FakeFs {
+        fn exists(&self, path: &str) -> bool {
+            self.files.borrow().contains_key(path)
+        }
+        fn mkdirp(&self, dir: &str) -> std::io::Result<()> {
+            self.dirs.borrow_mut().push(dir.to_string());
+            Ok(())
+        }
+        fn write(&self, path: &str, text: &str) -> std::io::Result<()> {
+            self.files.borrow_mut().insert(path.to_string(), text.to_string());
+            Ok(())
+        }
+        fn append(&self, path: &str, text: &str) -> std::io::Result<()> {
+            let mut files = self.files.borrow_mut();
+            let entry = files.entry(path.to_string()).or_default();
+            entry.push_str(text);
+            Ok(())
+        }
+    }
+
+    /// `n` characters of recognizable filler.
+    fn big(n: usize, ch: char) -> String {
+        ch.to_string().repeat(n)
+    }
+
+    fn ctx(scratch: &str, label: &str) -> SpillCtx {
+        SpillCtx { scratch: Some(scratch.to_string()), label: Some(label.to_string()) }
+    }
+
+    fn no_label(scratch: &str) -> SpillCtx {
+        SpillCtx { scratch: Some(scratch.to_string()), label: None }
+    }
+
+    // -----------------------------------------------------------------------
+    // plan_spill — pure
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn output_at_or_under_the_threshold_does_not_spill() {
+        // The common case by a wide margin: git status, a targeted rg, a
+        // passing test run. None of them should be affected by any of this.
+        assert!(!plan_spill(&big(SPILL_OVER_CHARS, 'x'), true).spilled);
+        assert!(!plan_spill("", true).spilled);
+    }
+
+    #[test]
+    fn output_over_the_threshold_spills_keeping_head_and_tail_verbatim() {
+        let text = format!("HEAD{}TAIL", big(SPILL_OVER_CHARS * 2, 'x'));
+        let plan = plan_spill(&text, true);
+        assert!(plan.spilled);
+        assert_eq!(plan.head.len(), SPILL_HEAD_CHARS);
+        assert_eq!(plan.tail.len(), SPILL_TAIL_CHARS);
+        assert!(plan.head.starts_with("HEAD"));
+        assert!(plan.tail.ends_with("TAIL"));
+        assert_eq!(plan.omitted, text.len() - SPILL_HEAD_CHARS - SPILL_TAIL_CHARS);
+    }
+
+    #[test]
+    fn nowhere_to_write_means_no_spill_whatever_the_size() {
+        // The aggressive inline budget is only defensible as a trade against
+        // a file holding the rest. Without one it would just be destruction.
+        assert!(!plan_spill(&big(SPILL_OVER_CHARS * 10, 'x'), false).spilled);
+    }
+
+    #[test]
+    fn plan_spill_counts_lines_for_the_marker() {
+        let text: String =
+            "line\n".repeat(SPILL_OVER_CHARS / 2).chars().take(SPILL_OVER_CHARS * 2).collect();
+        let plan = plan_spill(&text, true);
+        assert!(plan.spilled);
+        assert_eq!(plan.lines, text.split('\n').count());
+    }
+
+    // -----------------------------------------------------------------------
+    // spill — the write
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn the_full_output_reaches_the_file_not_the_truncated_version() {
+        // The entire point. If the file held the extract too, nothing was
+        // gained over plain truncation.
+        let f = FakeFs::default();
+        let text = format!("START{}END", big(SPILL_OVER_CHARS * 3, 'x'));
+        let shown = spill(&text, &ctx("/scratch/s1", "bash"), None, &f);
+        assert_eq!(f.files.borrow().len(), 1);
+        let (path, contents) = {
+            let files = f.files.borrow();
+            let (p, c) = files.iter().next().unwrap();
+            (p.clone(), c.clone())
+        };
+        assert_eq!(contents, text, "the file did not receive the complete output");
+        // The invariant that matters is a CEILING, not a ratio: the inline
+        // cost is the budget plus one marker no matter how vast the command's
+        // output was.
+        assert!(
+            shown.len() <= SPILL_HEAD_CHARS + SPILL_TAIL_CHARS + 1_000,
+            "inline extract was {} chars, above the fixed budget",
+            shown.len()
+        );
+        assert!(shown.contains(&path), "the extract does not name the file it wrote");
+    }
+
+    #[test]
+    fn the_marker_names_the_size_the_path_and_the_follow_up_moves() {
+        // Each clause earns its characters; an agent that cannot compose the
+        // follow-up will conclude the file is empty and re-run the command.
+        let f = FakeFs::default();
+        let text = format!("A{}Z", big(SPILL_OVER_CHARS * 2, 'x'));
+        let shown = spill(&text, &ctx("/s", "bash"), None, &f);
+        assert!(shown.contains("FULL OUTPUT SAVED"));
+        assert!(shown.contains("chars"));
+        assert!(shown.contains("lines"));
+        assert!(shown.contains("rg "));
+        assert!(shown.contains("bough patterns"));
+        assert!(shown.contains("view("));
+        assert!(shown.contains("Do not re-run the command"));
+        // Head and tail survive around the marker.
+        assert!(shown.starts_with('A'));
+        assert!(shown.ends_with('Z'));
+    }
+
+    #[test]
+    fn the_directory_is_created_before_the_write() {
+        let f = FakeFs::default();
+        spill(&big(SPILL_OVER_CHARS * 2, 'x'), &no_label("/scratch/s9"), None, &f);
+        assert_eq!(*f.dirs.borrow(), vec!["/scratch/s9".to_string()]);
+    }
+
+    #[test]
+    fn successive_spills_never_overwrite_each_other() {
+        // A counter would reset across restarts and clobber a file an earlier
+        // turn is still about to read.
+        let f = FakeFs::default();
+        let c = ctx("/s", "bash");
+        spill(&format!("one{}", big(SPILL_OVER_CHARS * 2, 'x')), &c, None, &f);
+        spill(&format!("two{}", big(SPILL_OVER_CHARS * 2, 'x')), &c, None, &f);
+        spill(&format!("three{}", big(SPILL_OVER_CHARS * 2, 'x')), &c, None, &f);
+        let files = f.files.borrow();
+        assert_eq!(files.len(), 3);
+        let names: Vec<&String> = files.keys().collect();
+        assert_eq!(names, vec!["/s/bash-001.log", "/s/bash-002.log", "/s/bash-003.log"]);
+        assert!(files["/s/bash-001.log"].starts_with("one"));
+        assert!(files["/s/bash-003.log"].starts_with("three"));
+    }
+
+    #[test]
+    fn the_label_separates_one_verbs_spills_from_anothers() {
+        let f = FakeFs::default();
+        spill(&big(SPILL_OVER_CHARS * 2, 'x'), &ctx("/s", "bash"), None, &f);
+        spill(&big(SPILL_OVER_CHARS * 2, 'x'), &ctx("/s", "sh"), None, &f);
+        let files = f.files.borrow();
+        let names: Vec<&String> = files.keys().collect();
+        assert_eq!(names, vec!["/s/bash-001.log", "/s/sh-001.log"]);
+    }
+
+    #[test]
+    fn a_path_with_a_space_or_a_quote_survives_into_the_suggested_commands() {
+        let f = FakeFs::default();
+        let shown = spill(&big(SPILL_OVER_CHARS * 2, 'x'), &ctx("/tmp/my logs", "bash"), None, &f);
+        // Unquoted, the rg hint would silently search two different paths.
+        assert!(
+            shown.contains("rg -n 'error|fail' '/tmp/my logs/bash-001.log'"),
+            "quoted rg hint missing:\n{shown}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Fallback
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn without_a_scratchpad_it_falls_back_to_the_generous_head_and_tail() {
+        // Nothing is dropped that would not have been dropped before this
+        // existed.
+        let f = FakeFs::default();
+        let text = big(SPILL_OVER_CHARS * 5, 'x');
+        let shown = spill(&text, &SpillCtx::default(), None, &f);
+        assert_eq!(f.files.borrow().len(), 0);
+        assert_eq!(shown, text, "a 100k text fits the old budget and must be untouched");
+    }
+
+    /// A filesystem that refuses every mutation.
+    struct BrokenFs;
+    impl SpillDeps for BrokenFs {
+        fn exists(&self, _: &str) -> bool {
+            false
+        }
+        fn mkdirp(&self, _: &str) -> std::io::Result<()> {
+            Err(std::io::Error::other("EROFS: read-only file system"))
+        }
+        fn write(&self, _: &str, _: &str) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn append(&self, _: &str, _: &str) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_failed_write_degrades_to_truncation_rather_than_failing_the_command() {
+        // A full disk must not turn a successful command into a failed host
+        // call.
+        let text = big(SPILL_OVER_CHARS * 2, 'x');
+        let shown = spill(&text, &no_label("/s"), None, &BrokenFs);
+        assert!(!shown.contains("FULL OUTPUT SAVED"));
+        assert_eq!(shown, text, "within the fallback budget, so it should be intact");
+    }
+
+    #[test]
+    fn small_output_is_returned_completely_unchanged() {
+        let f = FakeFs::default();
+        let text = "ok\n";
+        assert_eq!(spill(text, &no_label("/s"), None, &f), text);
+        assert_eq!(f.files.borrow().len(), 0);
+    }
+
+    #[test]
+    fn the_inline_cost_is_bounded_no_matter_how_vast_the_output_is() {
+        // The whole promise of the feature, stated as one assertion: a
+        // command that prints ten megabytes costs the same context as one
+        // that prints thirty kilobytes.
+        let f = FakeFs::default();
+        let small = spill(&big(SPILL_OVER_CHARS * 2, 'x'), &ctx("/s", "a"), None, &f);
+        let huge = spill(&big(10_000_000, 'x'), &ctx("/s", "b"), None, &f);
+        let ceiling = SPILL_HEAD_CHARS + SPILL_TAIL_CHARS + 1_000;
+        assert!(small.len() <= ceiling);
+        assert!(huge.len() <= ceiling, "10MB of output produced {} inline chars", huge.len());
+        // And the 10MB is genuinely on disk, not discarded.
+        assert_eq!(f.files.borrow()["/s/b-001.log"].len(), 10_000_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Streaming sink
+    // -----------------------------------------------------------------------
+
+    /// Feed `chunks` through the sink the way `append` does, returning the
+    /// file.
+    fn stream(chunks: &[String], f: &FakeFs) -> (Option<SpillSink>, Option<String>) {
+        let mut sink: Option<SpillSink> = None;
+        let mut seen = String::new();
+        let c = ctx("/s", "bash");
+        for chunk in chunks {
+            seen.push_str(chunk);
+            let snapshot = seen.clone();
+            let total = snapshot.chars().count();
+            sink = stream_spill(sink, chunk, &c, total, move || snapshot, f);
+        }
+        let contents = sink.as_ref().and_then(|s| f.files.borrow().get(&s.path).cloned());
+        (sink, contents)
+    }
+
+    #[test]
+    fn the_streamed_file_holds_every_byte_including_the_chunk_that_opened_it() {
+        // The regression: opening the sink before writing the triggering
+        // chunk dropped exactly one chunk — 262,144 chars of a 1.29MB command
+        // — from a file whose banner claimed it held everything.
+        let f = FakeFs::default();
+        let chunks =
+            vec![big(9_000, 'a'), big(9_000, 'b'), big(9_000, 'c'), big(9_000, 'd')];
+        let (sink, contents) = stream(&chunks, &f);
+        let sink = sink.expect("the sink should have opened");
+        let joined = chunks.concat();
+        assert_eq!(
+            contents.as_deref(),
+            Some(joined.as_str()),
+            "the file is not byte-identical to the stream"
+        );
+        assert_eq!(sink.chars, joined.len());
+    }
+
+    #[test]
+    fn the_sink_stays_closed_while_output_is_under_the_threshold() {
+        // Otherwise every `git status` litters the scratchpad with an empty
+        // log.
+        let f = FakeFs::default();
+        let (sink, _) = stream(&[big(5_000, 'x'), big(5_000, 'x')], &f);
+        assert_eq!(sink, None);
+        assert_eq!(f.files.borrow().len(), 0);
+    }
+
+    #[test]
+    fn the_sink_survives_past_the_retention_cap_without_losing_the_middle() {
+        // The reason it streams at all: the in-memory buffer caps at 400k, so
+        // anything written from it afterwards would be missing precisely the
+        // part the marker promises is on disk.
+        let f = FakeFs::default();
+        let chunks: Vec<String> =
+            (0..12).map(|i| big(50_000, char::from(b'a' + i as u8))).collect();
+        let (_, contents) = stream(&chunks, &f);
+        let joined = chunks.concat();
+        let contents = contents.expect("the sink should have opened");
+        assert_eq!(contents.len(), joined.len());
+        assert_eq!(contents, joined);
+        assert!(
+            !contents.contains("omitted from the middle"),
+            "an omission marker got baked into the saved file"
+        );
+    }
+
+    #[test]
+    fn the_marker_reports_the_true_total_not_the_retained_size() {
+        // `spill` is handed text out of the capped buffer; reporting its
+        // length would understate a 1.29MB command as 400KB.
+        let f = FakeFs::default();
+        let chunks = vec![big(30_000, 'a'), big(30_000, 'b')];
+        let (sink, _) = stream(&chunks, &f);
+        let sink = sink.expect("the sink should have opened");
+        let retained = format!("{}{}", big(1_000, 'a'), big(1_000, 'b'));
+        let shown = spill(&retained, &ctx("/s", "bash"), Some(&sink), &f);
+        assert!(
+            shown.contains("FULL OUTPUT SAVED — 60,000 chars"),
+            "true total missing:\n{shown}"
+        );
+    }
+
+    /// Append always fails; everything else succeeds.
+    struct FlakyFs;
+    impl SpillDeps for FlakyFs {
+        fn exists(&self, _: &str) -> bool {
+            false
+        }
+        fn mkdirp(&self, _: &str) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn write(&self, _: &str, _: &str) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn append(&self, _: &str, _: &str) -> std::io::Result<()> {
+            Err(std::io::Error::other("ENOSPC"))
+        }
+    }
+
+    #[test]
+    fn a_write_failure_mid_stream_does_not_throw_at_the_caller() {
+        let c = no_label("/s");
+        let mut sink: Option<SpillSink> = None;
+        for chunk in [big(30_000, 'x'), big(30_000, 'x')] {
+            let pending = chunk.clone();
+            sink = stream_spill(sink, &chunk, &c, 60_000, move || pending, &FlakyFs);
+        }
+        // The failed append left the sink as it was, rather than killing the
+        // command.
+        let sink = sink.expect("the sink should have opened");
+        assert_eq!(sink.chars, 30_000);
+    }
+}

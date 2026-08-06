@@ -11,7 +11,7 @@ PORT="${SMOKE_PORT:-43219}"
 HOME_DIR="$(mktemp -d)"
 [ -x "$BIN" ] || { echo "smoke: $BIN missing — run make rs-release first" >&2; exit 2; }
 
-BOUGH_HOME="$HOME_DIR" BOUGH_PORT="$PORT" "$BIN" start &
+BOUGH_HOME="$HOME_DIR" BOUGH_PORT="$PORT" BOUGH_MODEL="${SMOKE_MODEL:-}" "$BIN" start &
 SERVER_PID=$!
 cleanup() { kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; }
 trap cleanup EXIT
@@ -33,19 +33,19 @@ SID="bough-rs-smoke-$$"
 SU() { shell-use --session "$SID" "$@"; }
 SU run env BOUGH_HOME="$HOME_DIR" BOUGH_PORT="$PORT" "$BIN" tui
 trap 'SU close 2>/dev/null || true; cleanup' EXIT
-SU wait idle --timeout 15000
+# wait idle never settles (the TUI repaints on timers) — wait for the boot hint.
+SU wait text "type a message" --timeout 15000
 SU expect text "panicked" --not
 SU expect text "OfflineError" --not
 echo "smoke: TUI booted and rendered"
 
 if [ -n "${SMOKE_MODEL:-}" ]; then
   : "${OPENROUTER_API_KEY:?smoke: SMOKE_MODEL set but OPENROUTER_API_KEY missing}"
-  SU type "/model $SMOKE_MODEL"
+  # The expected string must NOT appear in the prompt itself, or the wait
+  # matches the echoed user message and the smoke passes on a dead loop.
+  SU type "combine the words RUST and PARITY with a single hyphen and reply with only that"
   SU press Enter
-  SU wait idle --timeout 10000
-  SU type "reply with exactly: SMOKE-OK and nothing else"
-  SU press Enter
-  SU wait text "SMOKE-OK" --timeout 120000
+  SU wait text "RUST-PARITY" --timeout 120000
   echo "smoke: live turn on $SMOKE_MODEL completed"
 fi
 
