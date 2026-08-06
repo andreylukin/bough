@@ -23,6 +23,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Widget};
 
 use super::{ACCENT, BG, MUTED, PANEL_INSET, WARN};
+use crate::format::{Completion, TriggerKind};
 
 pub struct ComposerProps<'a> {
     pub input: &'a str,
@@ -39,6 +40,132 @@ pub struct ComposerProps<'a> {
     /// The surface that has the keyboard INSTEAD of this one, e.g. `"the tree"`.
     /// None means the composer is focused.
     pub keyboard_owner: Option<&'a str>,
+}
+
+/// Rows `render_completion_popup` will draw, for the same reason as
+/// [`composer_height`] (Composer.tsx::completionPopupHeight).
+pub fn completion_popup_height(items: usize, more: usize) -> usize {
+    2 /* border */ + items.max(1) + usize::from(more > 0) + 1 /* legend */
+}
+
+/// The `@`/`/` menu (Composer.tsx::CompletionPopup).
+pub struct CompletionPopupProps<'a> {
+    pub kind: TriggerKind,
+    pub items: &'a [Completion],
+    /// -1 = browsing; Enter then keeps the typed text rather than a listed row.
+    /// Rust carries that as `None` — an index cannot be negative.
+    pub sel: Option<usize>,
+    pub more: usize,
+}
+
+/// A filter that matches nothing still shows the box, saying so: silently
+/// hiding it reads as "the picker is broken" rather than "no such file".
+pub fn render_completion_popup(p: &CompletionPopupProps, area: Rect, buf: &mut Buffer) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(MUTED));
+    let body = block.inner(area);
+    block.render(area, buf);
+    let body = Rect { x: body.x + 1, width: body.width.saturating_sub(2), ..body }; // paddingX
+    let dim = Style::default().add_modifier(Modifier::DIM);
+
+    let mut lines: Vec<Line> = Vec::new();
+    if p.items.is_empty() {
+        lines.push(Line::from(Span::styled(
+            match p.kind {
+                TriggerKind::File => "no matching files",
+                TriggerKind::Skill => "no matching commands or skills",
+            },
+            dim,
+        )));
+    } else {
+        for (i, it) in p.items.iter().enumerate() {
+            let selected = p.sel == Some(i);
+            // File rows dim the directory prefix so basenames stand out.
+            let dim_to = match p.kind {
+                TriggerKind::File => it
+                    .label
+                    .chars()
+                    .enumerate()
+                    .filter(|(_, c)| *c == '/')
+                    .map(|(i, _)| i + 1)
+                    .last()
+                    .unwrap_or(0),
+                TriggerKind::Skill => 0,
+            };
+            // A `❯` and an accent, not a reverse-video bar: reverse renders
+            // white-on-white here, so the row Enter was about to act on was
+            // marked with nothing at all. This is the same cursor glyph every
+            // other list in the TUI uses.
+            let mut spans = vec![Span::styled(
+                if selected { "❯ " } else { "  " },
+                Style::default().fg(ACCENT),
+            )];
+            spans.extend(popup_label(&it.label, &it.hl, dim_to));
+            if !it.detail.is_empty() {
+                spans.push(Span::styled(format!("  {}", it.detail), dim));
+            }
+            lines.push(Line::from(spans));
+        }
+    }
+    if p.more > 0 {
+        // Keeps the row cap honest: without this a first-run user reads the
+        // menu as the whole catalogue and never types to narrow it.
+        lines.push(Line::from(vec![
+            Span::styled(format!("↓ {}", p.more), Style::default().fg(super::INFO)),
+            Span::styled(" more — keep typing to narrow", dim),
+        ]));
+    }
+    // ⏎ is named FIRST because it is the commit key here too. "runs or inserts"
+    // on the `/` list because a built-in command row RUNS and a skill row
+    // inserts — the legend says both rather than promising the one behaviour
+    // that would be wrong for whichever row is highlighted.
+    lines.push(Line::from(Span::styled(
+        match p.kind {
+            TriggerKind::File => "files & dirs — ↑↓ select · ⏎ or ⇥ inserts · esc closes",
+            TriggerKind::Skill => {
+                "commands & skills — ↑↓ select · ⏎ runs or inserts · esc closes"
+            }
+        },
+        dim,
+    )));
+
+    for (i, line) in lines.into_iter().enumerate() {
+        if i as u16 >= body.height {
+            break;
+        }
+        buf.set_line(body.x, body.y + i as u16, &line, body.width);
+    }
+}
+
+/// A label with the fuzzy-matched characters emphasized (Composer.tsx::PopupLabel).
+fn popup_label<'a>(label: &'a str, hl: &[usize], dim_to: usize) -> Vec<Span<'a>> {
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    if hl.is_empty() {
+        if dim_to > 0 {
+            let head: String = label.chars().take(dim_to).collect();
+            let tail: String = label.chars().skip(dim_to).collect();
+            return vec![Span::styled(head, dim), Span::raw(tail)];
+        }
+        return vec![Span::raw(label)];
+    }
+    label
+        .chars()
+        .enumerate()
+        .map(|(i, ch)| {
+            if hl.contains(&i) {
+                Span::styled(
+                    ch.to_string(),
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                )
+            } else if i < dim_to {
+                Span::styled(ch.to_string(), dim)
+            } else {
+                Span::raw(ch.to_string())
+            }
+        })
+        .collect()
 }
 
 /// Rows the box will draw, so the container can SIZE the region above it
@@ -329,6 +456,76 @@ mod tests {
         assert_eq!(composer_height(&long, "", false, 60, 5, 0), 2 + 4 + 1);
         // a ghost widens the text ("  ⇥ tab" tail) but adds no chrome rows.
         assert_eq!(composer_height("", "do it", false, 60, 6, 0), 3);
+    }
+
+    fn draw_popup(p: &CompletionPopupProps, cols: u16, rows: u16) -> String {
+        let mut term = Terminal::new(TestBackend::new(cols, rows)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            render_completion_popup(p, area, f.buffer_mut());
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    // Chat.test.tsx: "Composer renders the @ popup for the trigger under the cursor"
+    #[test]
+    fn renders_the_at_popup_for_the_trigger_under_the_cursor() {
+        let text = "look at @app";
+        let trigger = crate::format::active_trigger(text, text.chars().count()).unwrap();
+        let candidates: Vec<crate::format::Candidate> =
+            ["server/app.ts", "app.tsx", "docs/app.md"]
+                .iter()
+                .map(|n| crate::format::Candidate::file(*n))
+                .collect();
+        let ranked = crate::format::rank_completions(&candidates, &trigger, 2);
+        let frame = draw_popup(
+            &CompletionPopupProps {
+                kind: trigger.kind,
+                items: &ranked.items,
+                sel: Some(0),
+                more: ranked.total - ranked.items.len(),
+            },
+            60,
+            completion_popup_height(ranked.items.len(), ranked.total - ranked.items.len()) as u16,
+        );
+        assert!(frame.contains("@app.tsx"), "{frame}");
+        assert!(frame.contains("files & dirs"), "{frame}");
+        assert!(frame.contains("↓ 1"), "{frame}");
+        assert!(frame.contains("❯ "), "the row ⏎ acts on is marked: {frame}");
+    }
+
+    // Chat.test.tsx: "Composer's / popup says so when nothing matches, rather than vanishing"
+    #[test]
+    fn the_slash_popup_says_so_when_nothing_matches_rather_than_vanishing() {
+        let frame = draw_popup(
+            &CompletionPopupProps {
+                kind: TriggerKind::Skill,
+                items: &[],
+                sel: Some(0),
+                more: 0,
+            },
+            60,
+            completion_popup_height(0, 0) as u16,
+        );
+        assert!(frame.contains("no matching commands or skills"), "{frame}");
+        assert!(frame.contains("commands & skills"), "{frame}");
+    }
+
+    #[test]
+    fn popup_height_mirrors_the_render_contract() {
+        // border + one row (the empty-state line) + legend.
+        assert_eq!(completion_popup_height(0, 0), 4);
+        // three rows + the "↓ N more" counter.
+        assert_eq!(completion_popup_height(3, 2), 2 + 3 + 1 + 1);
     }
 
     #[test]

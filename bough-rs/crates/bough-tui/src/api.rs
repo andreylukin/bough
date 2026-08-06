@@ -31,9 +31,11 @@ use bough_core::schema::parts::{
     AskQuestion, BackgroundJob, Message, Session, TurnStatus,
 };
 use bough_core::schema::requests::{
-    CreateSessionBody, PatchSessionBody, PostMessageBody, PutModelSettingsBody,
+    CreateSessionBody, PatchSessionBody, PostMessageBody, PutModelSettingsBody, UnsendBody,
 };
 use bough_core::types::{Effort, UsageTotals};
+
+use crate::store::state::SessionChangeSet;
 
 // ---- where the server is ----------------------------------------------------
 
@@ -103,12 +105,16 @@ impl ApiFailure {
 // ---- the injected transport --------------------------------------------------
 
 /// One raw HTTP exchange, as the fetch seam sees it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct FetchRequest {
     pub method: String,
     pub url: String,
     /// JSON text. The transport sets `content-type: application/json` iff set.
     pub body: Option<String>,
+    /// A RAW body and the content-type that describes it — the attachment
+    /// upload, which posts image bytes rather than JSON (`POST /attachments`).
+    /// Set instead of `body`, never beside it.
+    pub binary: Option<(String, Vec<u8>)>,
 }
 
 #[derive(Clone, Debug)]
@@ -136,6 +142,9 @@ fn reqwest_fetch() -> FetchFn {
                 builder = builder
                     .header("content-type", "application/json")
                     .body(body);
+            }
+            if let Some((content_type, bytes)) = req.binary {
+                builder = builder.header("content-type", content_type).body(bytes);
             }
             let res = builder.send().await.map_err(|e| e.to_string())?;
             let status = res.status().as_u16();
@@ -166,6 +175,18 @@ pub struct SessionRow {
     /// This session's own tokens (input + output + reasoning). Omitted when zero.
     #[serde(default)]
     pub tokens: Option<i64>,
+}
+
+/// What `POST /attachments` answers with (201): where the bytes landed, and
+/// the label the composer shows for them. Field names verbatim from the
+/// server's handler.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Attachment {
+    pub path: String,
+    pub media_type: String,
+    pub name: String,
+    pub size: i64,
 }
 
 /// One injected `AGENTS.md`, as `GET /sessions/:id` reports it.
@@ -264,6 +285,47 @@ pub struct QuestionAck {
     pub ok: bool,
     pub id: String,
     pub status: String,
+}
+
+/// `POST /sessions/:id/unsend` — the take-back's answer.
+///
+/// `bough_core::history::ops::unsend::UnsendResult` is the same shape, but the
+/// server only ever WRITES it (Serialize-only); this is the read side. Field
+/// names verbatim.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UnsendResult {
+    pub session_id: String,
+    /// The retracted message's text, for the composer it is going back into.
+    pub text: String,
+    /// Every message id removed — the retracted one, then whatever followed it.
+    pub removed: Vec<String>,
+    /// True when a turn was running and has been signalled to stop.
+    pub interrupted: bool,
+}
+
+/// `POST /sessions/:id/changes/revert` — what actually happened, per path.
+/// Three lists and no summary: a path the server SKIPPED (not in this change
+/// set) and one that FAILED are different outcomes, and the row the user reads
+/// says which.
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RevertOutcome {
+    #[serde(default)]
+    pub reverted: Vec<String>,
+    /// Requested paths that are not the session's to revert.
+    #[serde(default)]
+    pub skipped: Vec<String>,
+    /// The session's own paths that could not be reverted, with git's reason.
+    #[serde(default)]
+    pub failed: Vec<RevertFailure>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RevertFailure {
+    pub path: String,
+    pub error: String,
 }
 
 /// A row of `GET /sessions/:id/jobs`: the job plus a short, non-destructive
@@ -424,6 +486,7 @@ impl Api {
             method: method.to_string(),
             url: format!("{}{}", self.base, path),
             body: body_text,
+            binary: None,
         };
         (self.fetch)(req).await.map_err(|cause| ApiFailure::Offline {
             base: self.base.clone(),
@@ -558,6 +621,58 @@ impl Api {
         .await
     }
 
+    /// `POST /attachments` — the pasted image, raw, with its own media type as
+    /// the content-type (row 2.26). NOT JSON and not multipart: the server
+    /// stores the bytes and answers with where they landed, and that answer is
+    /// what a message part then names.
+    ///
+    /// The failure text is the server's own sentence wherever it sends one, and
+    /// `could not attach image` where it sends none — a paste that silently did
+    /// nothing is the failure this replaces.
+    pub async fn upload_image(
+        &self,
+        bytes: Vec<u8>,
+        media_type: &str,
+    ) -> Result<Attachment, ApiFailure> {
+        let req = FetchRequest {
+            method: "POST".to_string(),
+            url: format!("{}/attachments", self.base),
+            body: None,
+            binary: Some((media_type.to_string(), bytes)),
+        };
+        let res = (self.fetch)(req)
+            .await
+            .map_err(|cause| ApiFailure::Offline { base: self.base.clone(), cause })?;
+        let parsed: Option<Value> = serde_json::from_str(&res.body).ok();
+        if !(200..300).contains(&res.status) {
+            let message = parsed
+                .as_ref()
+                .and_then(|v| v.get("error"))
+                .and_then(|e| e.as_str())
+                .map(str::to_string)
+                .filter(|m| !m.is_empty())
+                .unwrap_or_else(|| {
+                    let trimmed = res.body.trim();
+                    if trimmed.is_empty() {
+                        "could not attach image".to_string()
+                    } else {
+                        trimmed.to_string()
+                    }
+                });
+            return Err(ApiFailure::Api {
+                status: res.status,
+                message,
+                method: "POST".to_string(),
+                path: "/attachments".to_string(),
+            });
+        }
+        serde_json::from_value(parsed.unwrap_or(Value::Null)).map_err(|e| ApiFailure::Decode {
+            method: "POST".to_string(),
+            path: "/attachments".to_string(),
+            message: e.to_string(),
+        })
+    }
+
     /// `None` clears the prefilled composer text. No event — the writer is this
     /// client.
     pub async fn put_draft(
@@ -617,6 +732,26 @@ impl Api {
         .await
     }
 
+    // -- history operations ---------------------------------------------------
+
+    /// The take-back — the one history call that does NOT create a branch.
+    ///
+    /// Deletes the named message and everything after it from the session it
+    /// was sent in, stopping the turn it started on the way, and hands the text
+    /// back for the composer. Only ever called with the session's own LAST user
+    /// message: the server refuses anything else, and everything else is a fork.
+    pub async fn unsend(
+        &self,
+        id: &str,
+        at_message_id: &str,
+    ) -> Result<UnsendResult, ApiFailure> {
+        self.post(
+            &format!("/sessions/{}/unsend", seg(id)),
+            Some(to_value(&UnsendBody { at_message_id: at_message_id.to_string() })?),
+        )
+        .await
+    }
+
     // -- background jobs ------------------------------------------------------
 
     /// The session AND its subagents — the work running on its behalf. Rows
@@ -652,6 +787,32 @@ impl Api {
         .await
     }
 
+    // -- the changes rail (row 2.20) -----------------------------------------
+
+    /// What this session did to its checkout. `available: false` with a stated
+    /// `reason` is a first-class ANSWER — "this workspace is not a repository"
+    /// and "you changed nothing" are different facts — so a non-git workspace
+    /// is a 200 here, never an error.
+    pub async fn changes(&self, id: &str) -> Result<SessionChangeSet, ApiFailure> {
+        self.get(&format!("/sessions/{}/changes", seg(id))).await
+    }
+
+    /// Put paths back. `None` is the whole change set; an EMPTY selection is
+    /// refused by the server on purpose, so it is never sent — the two are
+    /// different requests and conflating them reverts everything by accident.
+    pub async fn revert_changes(
+        &self,
+        id: &str,
+        paths: Option<&[String]>,
+    ) -> Result<RevertOutcome, ApiFailure> {
+        let body = match paths {
+            Some(paths) => serde_json::json!({ "paths": paths }),
+            None => serde_json::json!({}),
+        };
+        self.post(&format!("/sessions/{}/changes/revert", seg(id)), Some(body))
+            .await
+    }
+
     // -- model settings -------------------------------------------------------
 
     /// What a NEW conversation runs on, for the picker's ● before any session
@@ -668,6 +829,97 @@ impl Api {
     ) -> Result<ModelSettings, ApiFailure> {
         self.put("/model-settings", Some(to_value(body)?)).await
     }
+
+    // -- the composer's `@` and `/` candidates ---------------------------------
+
+    /// The `@` completion's candidates for that session's workspace.
+    pub async fn list_files(&self, session_id: &str) -> Result<FileList, ApiFailure> {
+        self.get(&format!("/sessions/{}/files", seg(session_id))).await
+    }
+
+    /// The same, for a conversation that has not started and so has no session
+    /// — the screen where someone types `@` for the first time.
+    pub async fn list_files_in(&self, workspace: &str) -> Result<FileList, ApiFailure> {
+        self.get(&format!("/files{}", query(&[("workspace", Some(workspace))]))).await
+    }
+
+    /// One directory's entries, for an `@` path that leaves the workspace.
+    ///
+    /// `git ls-files` cannot name anything outside the repo, so `@~/` had
+    /// nothing to offer; this is what fills the popup once the typed path looks
+    /// absolute.
+    pub async fn list_dir_entries(
+        &self,
+        dir: &str,
+        base: Option<&str>,
+    ) -> Result<EntryList, ApiFailure> {
+        self.get(&format!("/fs/entries{}", query(&[("dir", Some(dir)), ("base", base)])))
+            .await
+    }
+
+    /// What is installed, for the `/` popup's skill rows.
+    pub async fn list_skills(&self) -> Result<SkillList, ApiFailure> {
+        self.get("/skills").await
+    }
+
+    // -- theme ----------------------------------------------------------------
+
+    /// `GET /theme` — `{theme, defaults}`. Always 200: "no theme is set" is an
+    /// ANSWER (the default palette), so this never has a not-found arm.
+    pub async fn get_theme(&self) -> Result<crate::theme::ThemeState, ApiFailure> {
+        self.get("/theme").await
+    }
+
+    /// Persist the browsed palette. The two verbs are NOT interchangeable —
+    /// `theme == null` must DELETE, because a PUT of an empty map stores a
+    /// *named* theme overriding nothing and the next boot reads it back as a
+    /// custom palette (theme.rs::persist_request owns that decision).
+    pub async fn write_theme(
+        &self,
+        write: &crate::theme::ThemeWrite,
+    ) -> Result<crate::theme::ThemeState, ApiFailure> {
+        match write {
+            crate::theme::ThemeWrite::Delete => self.json("DELETE", "/theme", None).await,
+            crate::theme::ThemeWrite::Put { name, colors } => {
+                self.put("/theme", Some(to_value(&serde_json::json!({
+                    "name": name,
+                    "colors": colors,
+                }))?))
+                .await
+            }
+        }
+    }
+}
+
+/// `GET /sessions/:id/files` and `GET /files?workspace=` — gitignore-filtered
+/// by construction (the server runs `git ls-files`), which is the contract the
+/// popup relies on and cannot enforce itself.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct FileList {
+    pub files: Vec<String>,
+}
+
+/// `GET /fs/entries?dir=` — one directory, one level deep.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct EntryList {
+    pub entries: Vec<String>,
+}
+
+/// One installed skill, as the `/` popup reads it. The listing carries more
+/// (source, dir, mcp, error); the composer needs the name and the sentence.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRow {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// `GET /skills`. `sources` is deliberately not modelled here — the skills tab
+/// (wave 3) reads it; the composer ranks names.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SkillList {
+    pub skills: Vec<SkillRow>,
 }
 
 fn to_value<T: serde::Serialize>(body: &T) -> Result<Value, ApiFailure> {
@@ -826,6 +1078,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_non_repository_change_set_is_a_200_answer_not_an_error() {
+        // `available: false` with a stated reason is a first-class answer:
+        // "not a repository" and "you changed nothing" are different facts.
+        let body = r#"{"available":false,"reason":"this workspace is not a git repository","files":[],"workspace":"/tmp/x"}"#;
+        let (fetch, seen) = scripted(vec![Ok(HttpResponse { status: 200, body: body.into() })]);
+        let set = api_with(fetch).changes("s 1").await.unwrap();
+        assert_eq!(seen.lock().unwrap()[0].url, "http://127.0.0.1:4321/sessions/s%201/changes");
+        assert!(!set.available);
+        assert_eq!(set.reason.as_deref(), Some("this workspace is not a git repository"));
+    }
+
+    #[tokio::test]
+    async fn revert_sends_no_paths_key_at_all_for_the_whole_set() {
+        // An explicit `paths: []` is REFUSED by the server on purpose, and
+        // "the whole change set" is the absence of the key — conflating the
+        // two reverts everything by accident.
+        let ack = r#"{"reverted":["a.ts"],"skipped":[],"failed":[]}"#;
+        let (fetch, seen) = scripted(vec![Ok(HttpResponse { status: 200, body: ack.into() })]);
+        let api = api_with(fetch);
+        let outcome = api.revert_changes("s1", None).await.unwrap();
+        assert_eq!(outcome.reverted, vec!["a.ts"]);
+        let req = &seen.lock().unwrap()[0];
+        assert_eq!(req.method, "POST");
+        assert_eq!(req.url, "http://127.0.0.1:4321/sessions/s1/changes/revert");
+        assert_eq!(req.body.as_deref(), Some("{}"));
+
+        let (fetch, seen) = scripted(vec![Ok(HttpResponse { status: 200, body: ack.into() })]);
+        api_with(fetch)
+            .revert_changes("s1", Some(&["a.ts".to_string()]))
+            .await
+            .unwrap();
+        assert_eq!(
+            seen.lock().unwrap()[0].body.as_deref(),
+            Some(r#"{"paths":["a.ts"]}"#)
+        );
+    }
+
+    #[tokio::test]
     async fn preflight_surfaces_the_offline_sentence_for_the_exit_2_path() {
         // The composition root prints `bough tui: <message>` and exits 2 —
         // preflight's job is to fail with the sentence, not a stack trace.
@@ -840,6 +1130,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_pasted_image_posts_raw_bytes_under_its_own_media_type_and_reads_the_201() {
+        let (fetch, seen) = scripted(vec![Ok(HttpResponse {
+            status: 201,
+            body: r#"{"path":"/home/dev/.bough/attachments/a.png","mediaType":"image/png","name":"clipboard.png","size":4}"#.into(),
+        })]);
+        let part = api_with(fetch)
+            .upload_image(vec![137, 80, 78, 71], "image/png")
+            .await
+            .expect("201 is a success");
+        assert_eq!(
+            part,
+            Attachment {
+                path: "/home/dev/.bough/attachments/a.png".into(),
+                media_type: "image/png".into(),
+                name: "clipboard.png".into(),
+                size: 4,
+            }
+        );
+        let reqs = seen.lock().unwrap();
+        assert_eq!(reqs[0].method, "POST");
+        assert_eq!(reqs[0].url, "http://127.0.0.1:4321/attachments");
+        // RAW, not JSON and not multipart: the bytes go up as themselves.
+        assert!(reqs[0].body.is_none(), "no JSON body");
+        assert_eq!(
+            reqs[0].binary.as_ref().map(|(t, b)| (t.as_str(), b.len())),
+            Some(("image/png", 4))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_attachment_keeps_the_servers_own_sentence() {
+        let (fetch, _) = scripted(vec![Ok(HttpResponse {
+            status: 400,
+            body: r#"{"error":"could not save clipboard image"}"#.into(),
+        })]);
+        let err = api_with(fetch)
+            .upload_image(vec![1, 2], "image/png")
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "could not save clipboard image");
+        assert_eq!(err.status(), Some(400));
+    }
+
+    #[tokio::test]
+    async fn an_attachment_failure_with_no_sentence_still_says_something_useful() {
+        let (fetch, _) = scripted(vec![Ok(HttpResponse { status: 500, body: String::new() })]);
+        let err = api_with(fetch)
+            .upload_image(vec![1], "image/png")
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "could not attach image");
+    }
+
+    #[tokio::test]
     async fn a_2xx_with_an_undecodable_body_is_a_decode_error_not_a_panic() {
         let (fetch, _) = scripted(vec![Ok(HttpResponse {
             status: 200,
@@ -850,5 +1194,36 @@ mod tests {
             ApiFailure::Decode { path, .. } => assert_eq!(path, "/model-settings"),
             other => panic!("expected Decode, got {other:?}"),
         }
+    }
+
+    /// The composer's candidate routes, with the path characters that break a
+    /// naive query string (`~`, `/`) actually encoded — the server decodes
+    /// `%xx`, and a bare `~/` in a query is what made `@~/` answer nothing.
+    #[tokio::test]
+    async fn the_completion_routes_carry_encoded_paths() {
+        let ok = |body: &str| {
+            Ok(HttpResponse { status: 200, body: body.to_string() })
+        };
+        let (fetch, seen) = scripted(vec![
+            ok(r#"{"files":["src/app.rs"]}"#),
+            ok(r#"{"files":[]}"#),
+            ok(r#"{"entries":["repos/"]}"#),
+            ok(r#"{"skills":[{"name":"prewalk","description":"plan first"}],"sources":[]}"#),
+        ]);
+        let api = api_with(fetch);
+        assert_eq!(api.list_files("s1").await.unwrap().files, vec!["src/app.rs"]);
+        api.list_files_in("/w/demo").await.unwrap();
+        assert_eq!(
+            api.list_dir_entries("~/", Some("/w/demo")).await.unwrap().entries,
+            vec!["repos/"]
+        );
+        let skills = api.list_skills().await.unwrap().skills;
+        assert_eq!(skills[0].name, "prewalk");
+        assert_eq!(skills[0].description, "plan first");
+        let urls: Vec<String> = seen.lock().unwrap().iter().map(|r| r.url.clone()).collect();
+        assert_eq!(urls[0], "http://127.0.0.1:4321/sessions/s1/files");
+        assert_eq!(urls[1], "http://127.0.0.1:4321/files?workspace=%2Fw%2Fdemo");
+        assert_eq!(urls[2], "http://127.0.0.1:4321/fs/entries?dir=%7E%2F&base=%2Fw%2Fdemo");
+        assert_eq!(urls[3], "http://127.0.0.1:4321/skills");
     }
 }

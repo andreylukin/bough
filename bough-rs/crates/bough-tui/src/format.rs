@@ -855,6 +855,282 @@ pub fn fmt_duration(ms: i64) -> String {
     format!("{}h{:02}m", mins / 60, mins % 60)
 }
 
+// ---- composer completion ----------------------------------------------------
+
+/// Fuzzy rank: exact prefix beats word-boundary prefix beats substring beats
+/// in-order subsequence; a non-match scores 0 and drops out.
+pub fn fuzzy_score(candidate: &str, query: &str) -> u8 {
+    if query.is_empty() {
+        return 1;
+    }
+    let c = candidate.to_lowercase();
+    let q = query.to_lowercase();
+    if c.starts_with(&q) {
+        return 4;
+    }
+    if ["-", "_", " ", "/"].iter().any(|b| c.contains(&format!("{b}{q}"))) {
+        return 3;
+    }
+    if c.contains(&q) {
+        return 2;
+    }
+    let qc: Vec<char> = q.chars().collect();
+    let mut i = 0usize;
+    for ch in c.chars() {
+        if Some(&ch) == qc.get(i) {
+            i += 1;
+        }
+        if i == qc.len() {
+            return 1;
+        }
+    }
+    0
+}
+
+/// The candidate indices [`fuzzy_score`] matched, for highlighting a popup row
+/// — same tier order, so the marked characters are the ones that made it match.
+///
+/// CHAR indices, not bytes: they index the label the popup renders glyph by
+/// glyph, and every caller (`PopupLabel`) walks it as characters.
+pub fn fuzzy_positions(candidate: &str, query: &str) -> Vec<usize> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let c: Vec<char> = candidate.to_lowercase().chars().collect();
+    let q: Vec<char> = query.to_lowercase().chars().collect();
+    let run = |start: usize| -> Vec<usize> { (start..start + q.len()).collect() };
+    let find = |needle: &[char]| -> Option<usize> {
+        if needle.len() > c.len() {
+            return None;
+        }
+        (0..=c.len() - needle.len()).find(|&i| c[i..i + needle.len()] == *needle)
+    };
+    if c.len() >= q.len() && c[..q.len()] == q[..] {
+        return run(0);
+    }
+    for b in ['-', '_', ' ', '/'] {
+        let mut needle = vec![b];
+        needle.extend_from_slice(&q);
+        if let Some(i) = find(&needle) {
+            return run(i + 1);
+        }
+    }
+    if let Some(sub) = find(&q) {
+        return run(sub);
+    }
+    let mut pos: Vec<usize> = Vec::new();
+    for (j, ch) in c.iter().enumerate() {
+        if pos.len() >= q.len() {
+            break;
+        }
+        if *ch == q[pos.len()] {
+            pos.push(j);
+        }
+    }
+    if pos.len() == q.len() {
+        pos
+    } else {
+        Vec::new()
+    }
+}
+
+/// `file` = an `@` workspace reference; `skill` = a `/` skill invocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TriggerKind {
+    File,
+    Skill,
+}
+
+/// What the composer is currently completing, if anything.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Trigger {
+    pub kind: TriggerKind,
+    /// The text between the marker and the cursor — what to rank candidates by.
+    pub query: String,
+    /// Index of the marker, and the end of the token being replaced. CHAR
+    /// indices: the composer's cursor is a char index (keys.rs contract).
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Which completion the cursor is inside.
+///
+/// THE RULE, and the reason this is a function rather than a `starts_with`
+/// check: **both markers fire at ANY word boundary** — position 0 or after
+/// whitespace — not only at the start of the input. "look at @src/x.ts"
+/// completes a path and "fix this /commit" completes a skill, because a marker
+/// mid-input is exactly where a reference belongs in a sentence. The complement
+/// matters just as much: a `/` inside a word (`a/path/b`) or an `@` inside one
+/// (`user@host`) is NOT a marker and must never swallow the token — that
+/// misfire is what makes a picker feel possessed.
+///
+/// A marker with whitespace between it and the cursor has been left behind: the
+/// user finished the reference and moved on, so nothing is being completed.
+pub fn active_trigger(text: &str, cursor: usize) -> Option<Trigger> {
+    let chars: Vec<char> = text.chars().collect();
+    let cursor = cursor.min(chars.len());
+    let end = chars[cursor..]
+        .iter()
+        .position(|c| c.is_whitespace())
+        .map(|i| cursor + i)
+        .unwrap_or(chars.len());
+    for (marker, kind) in [('/', TriggerKind::Skill), ('@', TriggerKind::File)] {
+        // lastIndexOf(marker, cursor - 1): the search starts AT that index.
+        let Some(at) = chars[..cursor].iter().rposition(|c| *c == marker) else {
+            continue;
+        };
+        if chars[at + 1..cursor].iter().any(|c| c.is_whitespace()) {
+            continue; // the reference is finished
+        }
+        if at != 0 && !chars[at - 1].is_whitespace() {
+            continue; // mid-word: not a marker
+        }
+        return Some(Trigger {
+            kind,
+            query: chars[at + 1..cursor].iter().collect(),
+            start: at,
+            end,
+        });
+    }
+    None
+}
+
+/// The directory an `@` query is browsing, when it points OUTSIDE the workspace.
+///
+/// `git ls-files` is the right candidate source for `@src/x.ts` and cannot
+/// answer `@~/notes/todo.md` at all — nothing outside the repo is tracked by it
+/// — so a path-shaped query switches the popup to a plain directory listing
+/// instead. The shapes that count as "leaving": `~`, an absolute `/`, and
+/// explicit `./` or `../`. A bare `src/` is NOT one of them; that is a repo path
+/// and stays on git.
+///
+/// Returns the literal prefix to prepend to each entry — so a completed row
+/// reads back as the same path the user was typing — and nothing when the query
+/// is a plain workspace reference.
+pub fn browse_prefix(query: &str) -> Option<String> {
+    let leaves = query.starts_with('~')
+        || query.starts_with('/')
+        || query.starts_with("./")
+        || query.starts_with("../");
+    if !leaves {
+        return None;
+    }
+    let q = if query == "~" { "~/".to_string() } else { query.to_string() };
+    let cut = q.rfind('/')?;
+    Some(q[..cut + 1].to_string())
+}
+
+/// A candidate row before ranking: a name, an optional detail, and the built-in
+/// command it DISPATCHES (skills and files carry none — they are references).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Candidate {
+    pub name: String,
+    pub detail: String,
+    pub run: Option<crate::keys::Command>,
+}
+
+impl Candidate {
+    pub fn file(name: impl Into<String>) -> Self {
+        Self { name: name.into(), detail: String::new(), run: None }
+    }
+    pub fn skill(name: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self { name: name.into(), detail: detail.into(), run: None }
+    }
+    pub fn command(
+        name: impl Into<String>,
+        detail: impl Into<String>,
+        run: crate::keys::Command,
+    ) -> Self {
+        Self { name: name.into(), detail: detail.into(), run: Some(run) }
+    }
+}
+
+/// One popup row. `insert` replaces `[trigger.start, trigger.end)` wholesale.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Completion {
+    pub label: String,
+    pub detail: String,
+    pub insert: String,
+    /// A built-in `/command` this row DISPATCHES instead of inserting — the
+    /// caller still removes `[trigger.start, trigger.end)`, but runs this rather
+    /// than leaving `/model` sitting in the draft as text. Absent on skill and
+    /// file rows, which are references and belong in the message.
+    pub run: Option<crate::keys::Command>,
+    /// Label indices the fuzzy match hit, for highlighting.
+    pub hl: Vec<usize>,
+}
+
+/// `rank_completions`'s answer: the capped rows plus the pre-cap count.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Ranked {
+    pub items: Vec<Completion>,
+    pub total: usize,
+}
+
+/// The popup's row cap. `total` is the pre-cap count so the popup can say
+/// "↓ N more" — without it a first-run user reads a six-row menu as the whole
+/// catalogue and never types to narrow.
+pub const COMPLETION_LIMIT: usize = 6;
+
+/// Rank candidates for a trigger and cap the list.
+pub fn rank_completions(candidates: &[Candidate], trigger: &Trigger, limit: usize) -> Ranked {
+    let marker = if trigger.kind == TriggerKind::Skill { '/' } else { '@' };
+    let mut ranked: Vec<(usize, u8, &Candidate)> = candidates
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (i, fuzzy_score(&c.name, &trigger.query), c))
+        .filter(|(_, score, _)| *score > 0)
+        .collect();
+    // Shorter-is-better is a statement about how WELL a name matched, so it only
+    // applies once something was typed. On a bare `/` every candidate scores the
+    // same and that tiebreak sorts the menu by name length — which interleaved
+    // the built-in commands with whatever skills happen to have short names, at
+    // exactly the moment the list is being read as "what can this thing do".
+    // With no query, source order wins, and the caller puts the commands first.
+    let typed = !trigger.query.is_empty();
+    ranked.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| {
+                if typed {
+                    a.2.name.chars().count().cmp(&b.2.name.chars().count())
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    let total = ranked.len();
+    let items = ranked
+        .iter()
+        .take(limit)
+        .map(|(_, _, c)| Completion {
+            label: format!("{marker}{}", c.name),
+            detail: c.detail.clone(),
+            insert: format!(
+                "{marker}{}{}",
+                c.name,
+                if c.name.ends_with('/') { "" } else { " " }
+            ),
+            run: c.run,
+            // Positions are against the bare name; the marker shifts them by one.
+            hl: fuzzy_positions(&c.name, &trigger.query).into_iter().map(|p| p + 1).collect(),
+        })
+        .collect();
+    Ranked { items, total }
+}
+
+/// Apply a completion to the input, returning the new text and cursor (a CHAR
+/// index, like every other cursor in the composer).
+pub fn apply_completion(text: &str, trigger: &Trigger, item: &Completion) -> (String, usize) {
+    let chars: Vec<char> = text.chars().collect();
+    let start = trigger.start.min(chars.len());
+    let end = trigger.end.min(chars.len()).max(start);
+    let head: String = chars[..start].iter().collect();
+    let tail: String = chars[end..].iter().collect();
+    let insert_len = item.insert.chars().count();
+    (format!("{head}{}{tail}", item.insert), start + insert_len)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1259,5 +1535,170 @@ mod tests {
         assert_eq!(fmt_duration(64_000), "1m04s");
         assert_eq!(fmt_duration(3_600_000), "1h00m");
         assert_eq!(fmt_duration(-5), "0s");
+    }
+
+    // ---- composer completion (format.test.ts) ------------------------------
+
+    fn trig(text: &str, cursor: usize) -> Trigger {
+        active_trigger(text, cursor).expect("a trigger under the cursor")
+    }
+
+    #[test]
+    fn fuzzy_score_prefix_beats_boundary_beats_substring_beats_subsequence() {
+        assert_eq!(fuzzy_score("exa", "ex"), 4);
+        assert_eq!(fuzzy_score("user-testing", "test"), 3);
+        assert_eq!(fuzzy_score("src/server/app.ts", "server"), 3); // "/" is a boundary too
+        assert_eq!(fuzzy_score("restish", "tish"), 2);
+        assert_eq!(fuzzy_score("wiki", "wk"), 1);
+        assert_eq!(fuzzy_score("commit", "xyz"), 0);
+        assert_eq!(fuzzy_score("anything", ""), 1);
+    }
+
+    #[test]
+    fn fuzzy_positions_marks_the_characters_that_made_it_match() {
+        assert_eq!(fuzzy_positions("exa", "ex"), vec![0, 1]);
+        assert_eq!(fuzzy_positions("user-testing", "test"), vec![5, 6, 7, 8]);
+        assert_eq!(fuzzy_positions("restish", "tish"), vec![3, 4, 5, 6]);
+        assert_eq!(fuzzy_positions("wiki", "wk"), vec![0, 2]);
+        assert!(fuzzy_positions("commit", "xyz").is_empty());
+        assert!(fuzzy_positions("anything", "").is_empty());
+    }
+
+    #[test]
+    fn active_trigger_fires_at_any_word_boundary_not_just_position_zero() {
+        assert_eq!(
+            active_trigger("@src", 4),
+            Some(Trigger { kind: TriggerKind::File, query: "src".into(), start: 0, end: 4 })
+        );
+        assert_eq!(
+            active_trigger("look at @src", 12),
+            Some(Trigger { kind: TriggerKind::File, query: "src".into(), start: 8, end: 12 })
+        );
+        assert_eq!(
+            active_trigger("/com", 4),
+            Some(Trigger { kind: TriggerKind::Skill, query: "com".into(), start: 0, end: 4 })
+        );
+        assert_eq!(
+            active_trigger("fix this /com", 13),
+            Some(Trigger { kind: TriggerKind::Skill, query: "com".into(), start: 9, end: 13 })
+        );
+        // A bare marker completes everything — the menu opens on the marker alone.
+        assert_eq!(
+            active_trigger("@", 1),
+            Some(Trigger { kind: TriggerKind::File, query: String::new(), start: 0, end: 1 })
+        );
+    }
+
+    #[test]
+    fn active_trigger_a_marker_mid_word_is_not_a_marker() {
+        assert_eq!(active_trigger("src/server/app", 14), None); // a path, not a skill
+        assert_eq!(active_trigger("user@host", 9), None); // an address, not a reference
+        // …but a real one still fires.
+        assert_eq!(active_trigger("a/b @c/d", 8).map(|t| t.kind), Some(TriggerKind::File));
+    }
+
+    #[test]
+    fn active_trigger_a_finished_reference_stops_completing() {
+        assert_eq!(active_trigger("@src/x.ts now what", 18), None);
+        assert_eq!(active_trigger("plain text", 10), None);
+        assert_eq!(active_trigger("", 0), None);
+    }
+
+    #[test]
+    fn active_trigger_replaces_the_token_under_the_cursor_whole() {
+        // Cursor sits mid-token; `end` runs to the next whitespace so accepting a
+        // completion cannot leave the tail of the old word behind.
+        let t = trig("@ser/app.ts tail", 4);
+        assert_eq!(t.query, "ser");
+        assert_eq!(t.end, 11);
+    }
+
+    #[test]
+    fn browse_prefix_only_a_path_that_leaves_the_workspace_browses_the_filesystem() {
+        assert_eq!(browse_prefix("~/repos/bo").as_deref(), Some("~/repos/"));
+        assert_eq!(browse_prefix("~").as_deref(), Some("~/")); // a bare `@~` opens home
+        assert_eq!(browse_prefix("/etc/ho").as_deref(), Some("/etc/"));
+        assert_eq!(browse_prefix("./sr").as_deref(), Some("./"));
+        assert_eq!(browse_prefix("../sibling/x").as_deref(), Some("../sibling/"));
+        // A plain repo path stays on `git ls-files` — that is where its candidates are.
+        assert_eq!(browse_prefix("src/tui/"), None);
+        assert_eq!(browse_prefix(""), None);
+    }
+
+    #[test]
+    fn browse_prefix_entries_rank_as_the_full_path_the_user_is_typing() {
+        let trigger = trig("@~/rep", 6);
+        let prefix = browse_prefix(&trigger.query).unwrap();
+        let candidates: Vec<Candidate> = ["repos/", "Desktop/", ".zshrc"]
+            .iter()
+            .map(|name| Candidate::file(format!("{prefix}{name}")))
+            .collect();
+        let Ranked { items, .. } = rank_completions(&candidates, &trigger, COMPLETION_LIMIT);
+        assert_eq!(items[0].label, "@~/repos/");
+        // A directory keeps its slash and gains no trailing space, so accepting it
+        // re-triggers and drills one level down instead of ending the reference.
+        assert_eq!(items[0].insert, "@~/repos/");
+    }
+
+    #[test]
+    fn rank_completions_replaces_the_token_and_reports_what_was_hidden() {
+        let trigger = trig("look at @app", 12);
+        let files: Vec<Candidate> = [
+            "server/app.ts",
+            "app.tsx",
+            "components/Chat.tsx",
+            "apparatus/x.ts",
+            "a/p/p.ts",
+            "docs/app.md",
+            "old/app.js",
+            "zap/app.rs",
+        ]
+        .iter()
+        .map(|n| Candidate::file(*n))
+        .collect();
+        let Ranked { items, total } = rank_completions(&files, &trigger, 3);
+        assert_eq!(items.len(), 3);
+        assert_eq!(total, 7); // "components/Chat.tsx" does not match at all
+        assert_eq!(items[0].label, "@app.tsx"); // exact prefix wins
+        assert!(!items[0].hl.is_empty());
+        let applied = apply_completion("look at @app", &trigger, &items[0]);
+        assert_eq!(applied, ("look at @app.tsx ".to_string(), 17));
+    }
+
+    #[test]
+    fn rank_completions_a_directory_candidate_inserts_without_a_trailing_space() {
+        let trigger = trig("@sr", 3);
+        let items = rank_completions(&[Candidate::file("src/")], &trigger, COMPLETION_LIMIT).items;
+        assert_eq!(items[0].insert, "@src/"); // keep typing into the directory
+    }
+
+    #[test]
+    fn rank_completions_a_skill_trigger_marks_rows_with_the_slash_it_will_insert() {
+        let trigger = trig("/his", 4);
+        let items = rank_completions(
+            &[Candidate::skill("history", "query bough's SQLite")],
+            &trigger,
+            COMPLETION_LIMIT,
+        )
+        .items;
+        assert_eq!(items[0].label, "/history");
+        assert_eq!(items[0].insert, "/history ");
+        assert_eq!(items[0].detail, "query bough's SQLite");
+    }
+
+    #[test]
+    fn rank_completions_with_no_query_keeps_source_order_so_the_built_ins_lead() {
+        // App.tsx puts the commands first; the length tiebreak must not
+        // interleave short skill names into them on a bare `/`.
+        let trigger = trig("/", 1);
+        let candidates = vec![
+            Candidate::command("model", "pick the model", crate::keys::Command::HelpOpen),
+            Candidate::skill("go", "a two-letter skill"),
+        ];
+        let items = rank_completions(&candidates, &trigger, COMPLETION_LIMIT).items;
+        assert_eq!(items[0].label, "/model");
+        assert_eq!(items[0].run, Some(crate::keys::Command::HelpOpen));
+        assert_eq!(items[1].label, "/go");
+        assert_eq!(items[1].run, None);
     }
 }

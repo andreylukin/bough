@@ -11,8 +11,13 @@
 //! without a public-API break. Wording and math are ported verbatim from
 //! `src/tui/format.ts`.
 
+pub mod ask;
 pub mod chat;
 pub mod composer;
+pub mod help;
+pub mod job_output;
+pub mod panel;
+pub mod rail;
 pub mod status;
 
 use ratatui::style::Color;
@@ -27,6 +32,12 @@ pub(crate) const WARN: Color = Color::Rgb(0xd9, 0xb4, 0x5f); // amber #d9b45f
 #[allow(dead_code)] // error tone lands with the panel tabs (wave 2)
 pub(crate) const ERROR: Color = Color::Rgb(0xe2, 0x77, 0x6e); // red #e2776e
 pub(crate) const INFO: Color = Color::Rgb(0x5c, 0x88, 0xc9); // blue #5c88c9
+/// Panel borders and hairline separators (theme.ts::palette.border = hairline).
+pub(crate) const BORDER: Color = Color::Rgb(0x66, 0x6d, 0x79); // hairline #666d79
+/// Bordered containers: the panel, cards, pickers. A RAISED surface — it must
+/// be PAINTED, or a preset whose whole note is "deeper surfaces" changes a
+/// border colour and leaves the panel transparent over the transcript.
+pub(crate) const PANEL: Color = Color::Rgb(0x14, 0x16, 0x1a); // panel #14161a
 pub(crate) const BG: Color = Color::Rgb(0x0e, 0x10, 0x13); // bg #0e1013
 pub(crate) const PANEL_INSET: Color = Color::Rgb(0x1f, 0x23, 0x29); // panelInset #1f2329
 pub(crate) const MUTED: Color = Color::Rgb(0x9a, 0xa1, 0xac); // muted #9aa1ac
@@ -86,6 +97,23 @@ pub(crate) fn display_width(s: &str) -> usize {
 pub(crate) fn pad_row(text: &str, w: usize) -> String {
     let flat = text.replace("\r\n", " ").replace('\n', " ");
     let width = display_width(&flat);
+    if width >= w {
+        flat
+    } else {
+        let mut out = flat;
+        out.push_str(&" ".repeat(w - width));
+        out
+    }
+}
+
+/// [`pad_row`] for a string that CARRIES ANSI (the rail, the job view): the
+/// escapes are zero-width, so the padding is measured over `ansi::width` and
+/// not over the bytes. Measuring the escapes as text under-pads the row, and
+/// an under-padded row keeps the tail of the longer one that was there before
+/// it — on the two surfaces that redraw every second.
+pub(crate) fn pad_row_ansi(text: &str, w: usize) -> String {
+    let flat = text.replace("\r\n", " ").replace('\n', " ");
+    let width = crate::ansi::width(&flat);
     if width >= w {
         flat
     } else {

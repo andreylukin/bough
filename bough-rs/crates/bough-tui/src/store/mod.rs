@@ -3,6 +3,7 @@
 //! Event handling matches the closed `EventType` enum exhaustively with NO
 //! default arm: a new event type must be a compile error.
 
+pub mod lifecycle;
 pub mod reduce;
 pub mod selectors;
 pub mod shell;
