@@ -63,18 +63,20 @@ use crate::agents::subagent::{
 use crate::bus::Bus;
 use crate::errors::{BoughError, ErrorKind};
 use crate::paths::workflow_script_path;
-use crate::schema::events::{EventInput, EventType};
+use crate::hostfn::ask::{AskInput, AskSettlement};
+use crate::schema::events::{EventInput, EventType, MessageFinishedData, MessagePartData};
 use crate::schema::parts::{Part, WorkflowAgent, WorkflowAgentStatus, WorkflowRun};
 use crate::turn::queue::TurnRegistry;
 use crate::turn::runner::{interrupt_turn, DEFAULT_MODEL};
 use crate::types::{AppCtx, Clock, Patch, SharedDb, TurnCtx, WorkflowAgentPatch};
 
 use super::engine::{
-    is_workflow_live, rerun_workflow, start_workflow, RerunOpts, StartOpts, WorkflowCtx,
+    is_workflow_live, pause_workflow, rerun_workflow, resume_workflow, start_workflow,
+    stop_workflow, workflow_summary, RerunOpts, StartOpts, WorkflowCtx,
 };
 use super::journal_fs::resolve_rerun_script;
 use super::key::clip;
-use super::meta::extract_meta;
+use super::meta::{extract_meta, WorkflowMeta};
 use super::pos::{compare_pos, split_journal_key};
 use super::report::{run_accounting, AccountingOpts};
 use super::runner::{AgentCall, AgentRunner, OnSpawned};
@@ -417,6 +419,11 @@ pub struct WorkflowControlDeps {
     pub decorate: Option<Arc<dyn Fn(WorkflowCtx) -> WorkflowCtx + Send + Sync>>,
     /// Injected clock. Absent = `ctx.now`.
     pub now: Option<Clock>,
+    /// Where the transcript card for a launched run goes. Absent = straight
+    /// onto the message, which is right for a REST launch and WRONG from
+    /// inside a live turn — see [`create_workflow_host_fn`], which supplies the
+    /// buffering sink.
+    pub card: Option<Arc<dyn Fn(&WorkflowRun) + Send + Sync>>,
 }
 
 static CONTROL: OnceLock<WorkflowControlDeps> = OnceLock::new();
@@ -1079,6 +1086,585 @@ pub async fn rerun_workflow_run(
 }
 
 // ---------------------------------------------------------------------------
+// The transcript card
+// ---------------------------------------------------------------------------
+
+/// Record a launched run on the message whose program launched it.
+///
+/// WHY A PART AND NOT A COLUMN. The alternative was an `anchor_message_id` on
+/// the `workflows` table, and the schema is explicitly a closed table set — "a
+/// later task that needs a column stops and asks". The part union is the
+/// extension point that IS open, and it buys the right lifetime for free: a
+/// part rides the message, so the card lands exactly where the launch
+/// happened, survives compaction into the span summary, and needs no join to
+/// find.
+///
+/// Identity only. Status, counts and elapsed time are read live from the run
+/// row by the renderer, because a run is detached and any status frozen in here
+/// would be stale before the next frame.
+///
+/// Idempotent on the run id, and it preserves `pending` rather than setting it
+/// — both for the reasons [`append_ask_part`](crate::hostfn::ask::append_ask_part)
+/// gives: the same launch must never appear twice, and a card appended as a
+/// turn dies must not flip a finished message back to streaming and leave the
+/// session busy forever.
+pub fn append_workflow_part(
+    db: &SharedDb,
+    bus: &Bus,
+    session_id: &str,
+    message_id: &str,
+    run: &WorkflowRun,
+) -> bool {
+    let guard = db.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(Some(message)) = guard.get_message(message_id) else {
+        return false;
+    };
+    let duplicate = message
+        .parts
+        .iter()
+        .any(|p| matches!(p, Part::Workflow { id, .. } if id == &run.id));
+    if duplicate {
+        return false;
+    }
+    let part = Part::Workflow {
+        id: run.id.clone(),
+        name: run.name.clone(),
+        description: run.description.clone(),
+        rerun_of: run.resume_of.clone(),
+    };
+    let mut parts = message.parts.clone();
+    parts.push(part.clone());
+    if guard
+        .update_message(message_id, &parts, message.pending)
+        .is_err()
+    {
+        return false;
+    }
+    drop(guard);
+    bus.publish(EventInput {
+        r#type: EventType::MessagePart,
+        session_id: Some(session_id.to_string()),
+        data: serde_json::to_value(MessagePartData {
+            message_id: message_id.to_string(),
+            part,
+        })
+        .unwrap_or_default(),
+    });
+    true
+}
+
+// ---------------------------------------------------------------------------
+// The program-side `workflow.*` verb
+// ---------------------------------------------------------------------------
+
+/// zod's own wording for the three shapes the verb arguments can be wrong in,
+/// so the teaching error a program catches reads the same on both runtimes.
+fn type_name(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn require_string(bag: &serde_json::Map<String, Value>, field: &str) -> Result<String, String> {
+    match bag.get(field) {
+        None | Some(Value::Null) => Err(format!("{field}: Required")),
+        Some(Value::String(s)) if s.is_empty() => Err(format!(
+            "{field}: String must contain at least 1 character(s)"
+        )),
+        Some(Value::String(s)) => Ok(s.clone()),
+        Some(other) => Err(format!(
+            "{field}: Expected string, received {}",
+            type_name(other)
+        )),
+    }
+}
+
+fn optional_string(
+    bag: &serde_json::Map<String, Value>,
+    field: &str,
+) -> Result<Option<String>, String> {
+    match bag.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) if s.is_empty() => Err(format!(
+            "{field}: String must contain at least 1 character(s)"
+        )),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(other) => Err(format!(
+            "{field}: Expected string, received {}",
+            type_name(other)
+        )),
+    }
+}
+
+/// The argument bag, or the 400 that names the shape the verb wanted.
+fn args_object(
+    verb: &str,
+    shape: &str,
+    raw: &Value,
+) -> Result<serde_json::Map<String, Value>, BoughError> {
+    match raw {
+        Value::Null => Ok(serde_json::Map::new()),
+        Value::Object(o) => Ok(o.clone()),
+        other => Err(arg_error(
+            verb,
+            shape,
+            format!("args: Expected object, received {}", type_name(other)),
+        )),
+    }
+}
+
+fn arg_error(verb: &str, shape: &str, detail: impl std::fmt::Display) -> BoughError {
+    workflow_error(400, format!("workflow.{verb}({shape}): {detail}"))
+}
+
+/// One verb-dispatched entry point for the program-side `workflow.*` methods.
+///
+/// Every verb answers with the SUMMARY, never the run row: the row carries the
+/// whole script, and a `workflow.list()` that shipped N copies of it would
+/// flood the model's context for no purpose.
+pub async fn workflow_verb(
+    ctx: &AppCtx,
+    session_id: &str,
+    verb: &str,
+    args: &Value,
+    deps: &WorkflowControlDeps,
+    anchor_message_id: Option<&str>,
+) -> Result<Value, BoughError> {
+    let now: Clock = deps.now.clone().unwrap_or_else(|| ctx.now.clone());
+    // No anchor = no card. A run launched over REST has no message to hang one
+    // on.
+    let card = |run: &WorkflowRun| {
+        if let Some(sink) = &deps.card {
+            sink(run);
+            return;
+        }
+        if let Some(message_id) = anchor_message_id {
+            append_workflow_part(&ctx.db, &ctx.bus, session_id, message_id, run);
+        }
+    };
+    match verb {
+        "start" => {
+            let bag = args_object(verb, "{script, args?}", args)?;
+            let script = require_string(&bag, "script")
+                .map_err(|d| arg_error(verb, "{script, args?}", d))?;
+            let run = start_workflow_run(
+                ctx,
+                StartRunOpts {
+                    session_id: session_id.to_string(),
+                    script,
+                    args: bag.get("args").cloned(),
+                    anchor_message_id: anchor_message_id.map(str::to_string),
+                    ..Default::default()
+                },
+                deps,
+            )
+            .await?;
+            card(&run);
+            Ok(workflow_summary(&ctx.db, &run))
+        }
+        "rerun" => {
+            let shape = "{id, script?, args?}";
+            let bag = args_object(verb, shape, args)?;
+            let id = require_string(&bag, "id").map_err(|d| arg_error(verb, shape, d))?;
+            let script =
+                optional_string(&bag, "script").map_err(|d| arg_error(verb, shape, d))?;
+            let run = rerun_workflow_run(
+                ctx,
+                &id,
+                RerunRunOpts {
+                    script,
+                    args: bag.get("args").cloned(),
+                },
+                deps,
+            )
+            .await?;
+            // A rerun is its own run with its own id, so it gets its own card:
+            // the whole point of the first one is that it records what
+            // happened, and overwriting it would erase the failed attempt the
+            // rerun exists because of.
+            card(&run);
+            // `replay` is REQUIRED on an operation that replays (spec §8). The
+            // run is detached, so at this instant the live counts are still
+            // zero and `available` is the number that matters: it is the
+            // ceiling the new run's keys will be measured against, and
+            // `available: 40` next to a later `replayed: 0` is the whole
+            // signal.
+            let mut out = workflow_summary(&ctx.db, &run);
+            let replay = super::report::summarize(&ctx.db, &run)?.to_json();
+            if let Some(o) = out.as_object_mut() {
+                o.insert("replay".to_string(), replay);
+            }
+            Ok(out)
+        }
+        "stop" | "pause" | "resume" | "status" => {
+            let bag = args_object(verb, "{id}", args)?;
+            let id = require_string(&bag, "id").map_err(|d| arg_error(verb, "{id}", d))?;
+            if verb == "status" {
+                let run = ctx
+                    .db
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get_workflow(&id)?
+                    .ok_or_else(|| BoughError::not_found(format!("workflow {id} not found")))?;
+                let registry = deps
+                    .agents
+                    .clone()
+                    .unwrap_or_else(|| workflow_agents().clone());
+                let accounting = run_accounting(&ctx.db, &run, now(), AccountingOpts::default())?;
+                let mut out = workflow_summary(&ctx.db, &run);
+                if let Some(o) = out.as_object_mut() {
+                    o.insert(
+                        "agentRows".to_string(),
+                        serde_json::to_value(workflow_agent_views(
+                            &ctx.db,
+                            &run.id,
+                            &registry.live_ids(&run.id),
+                        )?)
+                        .unwrap_or(Value::Null),
+                    );
+                    o.insert("replay".to_string(), accounting.replay.to_json());
+                    o.insert(
+                        "cost".to_string(),
+                        serde_json::to_value(&accounting.cost).unwrap_or(Value::Null),
+                    );
+                    o.insert(
+                        "warning".to_string(),
+                        serde_json::to_value(&accounting.warning).unwrap_or(Value::Null),
+                    );
+                }
+                return Ok(out);
+            }
+            let run = match verb {
+                "stop" => stop_workflow(&ctx.db, &ctx.bus, Some(&now), &id)?,
+                "pause" => pause_workflow(&ctx.db, &ctx.bus, &id)?,
+                _ => resume_workflow(&ctx.db, &ctx.bus, &id)?,
+            };
+            Ok(workflow_summary(&ctx.db, &run))
+        }
+        "list" => {
+            let runs = ctx
+                .db
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .list_workflows(Some(session_id))?;
+            Ok(Value::Array(
+                runs.iter().map(|r| workflow_summary(&ctx.db, r)).collect(),
+            ))
+        }
+        other => Err(workflow_error(
+            400,
+            format!(
+                "unknown workflow verb: {other} — it is one of \
+                 start|rerun|stop|pause|resume|status|list, called as workflow.<verb>({{…}})."
+            ),
+        )),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The confirm gate
+// ---------------------------------------------------------------------------
+
+/// Whether a program-launched run has to be approved first. Default ON.
+///
+/// `BOUGH_WORKFLOW_CONFIRM=0` turns the gate off for a session that wants the
+/// old behaviour (and for the headless `bough exec`, where there is nobody to
+/// ask).
+pub fn workflow_confirm_enabled() -> bool {
+    std::env::var("BOUGH_WORKFLOW_CONFIRM").unwrap_or_else(|_| "1".to_string()) != "0"
+}
+
+/// The approval card's text: what is about to run, before any of it bills.
+///
+/// Everything here is read from `meta` WITHOUT running the script, which is the
+/// only reason this can be shown at submit time at all. The phase list is the
+/// shape of the fan-out; the agent count is deliberately NOT guessed, because
+/// the number of `agent()` calls is a property of the script's control flow and
+/// a wrong estimate on a spend warning is worse than none.
+pub fn confirm_workflow_text(meta: &WorkflowMeta) -> String {
+    let mut lines = vec![
+        format!("Run the workflow \"{}\"?", meta.name),
+        meta.description.clone(),
+    ];
+    let phases = meta.phases.clone().unwrap_or_default();
+    if !phases.is_empty() {
+        lines.push(String::new());
+        for (i, p) in phases.iter().enumerate() {
+            let detail = p
+                .detail
+                .as_deref()
+                .filter(|d| !d.is_empty())
+                .map(|d| format!(" — {d}"))
+                .unwrap_or_default();
+            lines.push(format!("  {}. {}{}", i + 1, p.title, detail));
+        }
+    }
+    lines.push(String::new());
+    lines.push(
+        "It runs detached and fans out subagents in parallel, so it can spend a lot of \
+         tokens quickly. `x` in the workflows tab (^w) stops a run at any point."
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
+/// A refused launch, worded for the thing that was refused.
+fn refused_workflow(said: &str) -> BoughError {
+    BoughError::ask_declined(format!(
+        "the user declined to run the workflow (\"{said}\"). NOTHING was started — no run, \
+         no agents, no cost. Do not start it again. Say what it would have done and let \
+         them decide, or do the work directly if it is small enough not to need a workflow."
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// The bridged `workflow` host function
+// ---------------------------------------------------------------------------
+
+struct WorkflowFnState {
+    /// Launched runs waiting for the runner's last write.
+    buffered: Vec<WorkflowRun>,
+    /// True once the supervisor message is closed and safe to append to
+    /// directly.
+    closed: bool,
+    /// The armed bus subscription, when there is one.
+    sub: Option<u64>,
+}
+
+struct WorkflowInner {
+    ctx: TurnCtx,
+    deps: WorkflowControlDeps,
+    confirm_gate: bool,
+    st: Mutex<WorkflowFnState>,
+}
+
+impl WorkflowInner {
+    fn write(&self, run: &WorkflowRun) {
+        append_workflow_part(
+            &self.ctx.app.db,
+            &self.ctx.app.bus,
+            &self.ctx.session_id,
+            &self.ctx.message_id,
+            run,
+        );
+    }
+
+    fn flush(&self) {
+        let runs: Vec<WorkflowRun> = {
+            let mut st = self.st.lock().unwrap();
+            st.closed = true;
+            std::mem::take(&mut st.buffered)
+        };
+        for run in runs {
+            self.write(&run);
+        }
+    }
+
+    fn disarm(&self) {
+        let sub = self.st.lock().unwrap().sub.take();
+        if let Some(id) = sub {
+            self.ctx.app.bus.unsubscribe(id);
+        }
+    }
+}
+
+/// The bridged `workflow` host function for one turn.
+///
+/// Bound to the turn's session and its in-flight supervisor message: a run
+/// started from a program belongs to the session that started it, and its
+/// agents hang off the message that was streaming when the program called —
+/// which is what puts them in the right place in the tree.
+pub struct WorkflowHostFn {
+    inner: Arc<WorkflowInner>,
+}
+
+/// Build `workflow(verb, argsJson)` for one turn.
+pub fn create_workflow_host_fn(
+    ctx: &TurnCtx,
+    deps: WorkflowControlDeps,
+    confirm_gate: bool,
+) -> WorkflowHostFn {
+    WorkflowHostFn {
+        inner: Arc::new(WorkflowInner {
+            ctx: ctx.clone(),
+            deps,
+            confirm_gate,
+            st: Mutex::new(WorkflowFnState {
+                buffered: Vec::new(),
+                closed: false,
+                sub: None,
+            }),
+        }),
+    }
+}
+
+impl WorkflowHostFn {
+    /// Watch this turn's own lifecycle, from the first launch onwards.
+    ///
+    /// Armed lazily, so a turn that starts no workflow never subscribes, and
+    /// dropped on `turn.finished` — which the runner emits on success, failure
+    /// and interrupt alike, so a run launched by a turn that then died still
+    /// leaves a card.
+    fn arm(&self) {
+        let mut st = self.inner.st.lock().unwrap();
+        if st.sub.is_some() {
+            return;
+        }
+        let weak: std::sync::Weak<WorkflowInner> = Arc::downgrade(&self.inner);
+        let id = self.inner.ctx.app.bus.subscribe(Arc::new(move |event| {
+            let Some(inner) = weak.upgrade() else { return };
+            if event.r#type == EventType::MessageFinished {
+                let finished: Option<MessageFinishedData> =
+                    serde_json::from_value(event.data.clone()).ok();
+                if finished.map(|f| f.message_id) == Some(inner.ctx.message_id.clone()) {
+                    inner.disarm();
+                    inner.flush();
+                }
+                return;
+            }
+            if event.r#type == EventType::TurnFinished
+                && event.session_id.as_deref() == Some(inner.ctx.session_id.as_str())
+            {
+                inner.disarm();
+                inner.flush();
+            }
+        }));
+        st.sub = Some(id);
+    }
+
+    /// Park on the human before a fan-out starts, not after it has billed.
+    ///
+    /// Only `start` and `rerun` — the two verbs that dispatch agents. `stop`,
+    /// `pause`, `status` and `list` are reads and brakes, and a confirm on a
+    /// brake is how you teach someone to hit enter without reading.
+    ///
+    /// A decline reaches the program as `AskDeclinedError`, the same catchable
+    /// shape `ask()` raises, so a script-writing turn can say "you declined,
+    /// here is what I would have run" instead of dying. Nothing is created: the
+    /// gate is BEFORE [`start_workflow_run`], so a refused launch leaves no run
+    /// row, no journal, no mirrored script.
+    async fn confirm(&self, verb: &str, args: &Value) -> Result<(), BoughError> {
+        if !self.inner.confirm_gate || (verb != "start" && verb != "rerun") {
+            return Ok(());
+        }
+        let script = args.get("script").and_then(Value::as_str).unwrap_or("");
+        // A rerun with no inline script re-runs the source run's, which this
+        // cannot read without a db round-trip it does not own. Gate on the id
+        // it was given.
+        let meta = if script.trim().is_empty() {
+            WorkflowMeta {
+                name: "the previous script".to_string(),
+                description: "relaunched from its journal".to_string(),
+                phases: None,
+            }
+        } else {
+            extract_meta(script)?
+        };
+        let ctx = &self.inner.ctx;
+        let raised = ctx.app.host.asks.raise(
+            &ctx.app.bus,
+            AskInput {
+                session_id: ctx.session_id.clone(),
+                message_id: ctx.message_id.clone(),
+                question: confirm_workflow_text(&meta),
+                options: Some(vec!["run it".to_string(), "no".to_string()]),
+            },
+            Some(&ctx.cancel),
+        );
+        let said = match raised.settled().await {
+            (AskSettlement::Answered, ans) => ans.unwrap_or_default().trim().to_lowercase(),
+            // A dismissal arrives as `ask()`'s own decline, whose advice —
+            // "proceed on a default you state out loud" — is exactly wrong
+            // here: the default for a refused fan-out is to not run it.
+            // Re-word, keep the catchable type.
+            (AskSettlement::Declined, _) => return Err(refused_workflow("the card was dismissed")),
+            (AskSettlement::Interrupted, _) => {
+                return Err(BoughError::program(
+                    "workflow confirmation interrupted — the turn was stopped before the \
+                     launch was approved. NOTHING was started.",
+                ))
+            }
+        };
+        // Anything that is not an affirmative is a refusal. The free-text box
+        // is always open beside the options, and treating "not yet" as consent
+        // to spend is the one failure mode a spend gate may not have.
+        if said != "run it" && said != "yes" && said != "y" {
+            return Err(refused_workflow(&said));
+        }
+        Ok(())
+    }
+
+    pub async fn call(&self, verb: &str, args_json: &str) -> Result<String, BoughError> {
+        let text = args_json.trim();
+        let args: Value = if text.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_str(text).map_err(|_| {
+                workflow_error(
+                    400,
+                    format!("workflow.{verb}(…): arguments must be a JSON value"),
+                )
+            })?
+        };
+        self.confirm(verb, &args).await?;
+        let mut deps = self.inner.deps.clone();
+        // The buffering sink, per call: storing it on `inner.deps` would be a
+        // reference cycle through the Arc that owns it.
+        let sink = Arc::downgrade(&self.inner);
+        deps.card = Some(Arc::new(move |run: &WorkflowRun| {
+            let Some(inner) = sink.upgrade() else { return };
+            let closed = {
+                let mut st = inner.st.lock().unwrap();
+                if st.closed {
+                    true
+                } else {
+                    st.buffered.push(run.clone());
+                    false
+                }
+            };
+            if closed {
+                inner.write(run);
+            }
+        }));
+        // Arm BEFORE the launch, so the `message.finished` that releases the
+        // buffer cannot arrive between the sink's push and the subscription.
+        if verb == "start" || verb == "rerun" {
+            self.arm();
+        }
+        let value = workflow_verb(
+            &self.inner.ctx.app,
+            &self.inner.ctx.session_id,
+            verb,
+            &args,
+            &deps,
+            Some(&self.inner.ctx.message_id),
+        )
+        .await?;
+        Ok(serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string()))
+    }
+
+    /// The `HostFns.workflow` adapter: JSON-string args in protocol order.
+    pub fn into_host_fn(self) -> crate::types::HostFn {
+        use futures::FutureExt;
+        let this = Arc::new(self);
+        Arc::new(move |args: Vec<String>| {
+            let this = this.clone();
+            async move {
+                let verb = args.first().cloned().unwrap_or_default();
+                let bag = args.get(1).cloned().unwrap_or_else(|| "null".to_string());
+                this.call(&verb, &bag).await
+            }
+            .boxed()
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -1314,6 +1900,310 @@ mod tests {
         assert_eq!(
             gist(&json!({ "code": "x".repeat(60) }), 8),
             format!("{}…", "x".repeat(7))
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // the program-side verb, its card and its confirm gate
+    // (ported from `src/workflow/control.test.ts`)
+    // -----------------------------------------------------------------------
+
+    use crate::agents::testkit::turn_ctx_for;
+    use crate::schema::events::BoughEvent;
+    use crate::schema::parts::AskQuestion;
+
+    /// `BOUGH_HOME` is process-global, so a test that touches the script
+    /// mirror takes the crate-wide lock and runs its body on a runtime built
+    /// inside the guarded closure — the same discipline the engine tests use.
+    fn with_home<F>(f: impl FnOnce() -> F)
+    where
+        F: std::future::Future<Output = ()>,
+    {
+        let home = std::env::temp_dir().join(format!(
+            "bough-wfcontrol-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&home).expect("temp home");
+        crate::paths::test_env::with_env(&[("BOUGH_HOME", home.to_str())], || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime")
+                .block_on(f());
+        });
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A turn ctx over a real session, with a pending supervisor message to
+    /// anchor cards on.
+    fn turn_with_message(db: &SharedDb, session_id: &str, message_id: &str) -> TurnCtx {
+        session(db, session_id);
+        db.lock()
+            .unwrap()
+            .create_message(Message {
+                id: message_id.into(),
+                session_id: session_id.into(),
+                role: Role::Supervisor,
+                parts: vec![],
+                pending: true,
+                created_at: 2_000,
+            })
+            .unwrap();
+        let mut ctx = turn_ctx_for(db, session_id, "t1", 0);
+        ctx.message_id = message_id.to_string();
+        ctx
+    }
+
+    fn part_types(db: &SharedDb, message_id: &str) -> Vec<String> {
+        db.lock()
+            .unwrap()
+            .get_message(message_id)
+            .unwrap()
+            .unwrap()
+            .parts
+            .iter()
+            .map(|p| match p {
+                Part::Text { .. } => "text".to_string(),
+                Part::Workflow { .. } => "workflow".to_string(),
+                other => serde_json::to_value(other)
+                    .ok()
+                    .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(String::from))
+                    .unwrap_or_default(),
+            })
+            .collect()
+    }
+
+    /// The card must survive the turn runner, which is the whole reason it is
+    /// buffered.
+    ///
+    /// The runner keeps the supervisor message's `parts` in memory and rewrites
+    /// the row WHOLESALE on every append, so a part written from out here is
+    /// erased by the runner's very next write — and `workflow.start()` is
+    /// always called from inside a program, so that next write is the program
+    /// step's own tool_result, milliseconds later. Written directly, the card
+    /// would appear and vanish every time, which is indistinguishable from
+    /// never having been implemented.
+    #[test]
+    fn a_launch_card_survives_the_runners_next_wholesale_write() {
+        with_home(|| async {
+            let db = mem_db();
+            let ctx = turn_with_message(&db, "s1", "m1");
+            // The approval gate is off: this test is about the card surviving
+            // the runner, and a gate nobody answers would park it forever.
+            let workflow = create_workflow_host_fn(&ctx, WorkflowControlDeps::default(), false);
+            // No `agent()` call: this test is about the transcript, and a live
+            // fan-out racing the teardown is a different test's problem.
+            let script = "export const meta = {name: \"w\", description: \"d\"}\nreturn 1\n";
+            workflow
+                .call("start", &json!({ "script": script }).to_string())
+                .await
+                .expect("the run starts");
+
+            // The runner's own array has never heard of the card, and this is
+            // what it does next: one wholesale write of the parts IT is
+            // holding.
+            let text = vec![Part::Text {
+                text: "the program ran".into(),
+            }];
+            db.lock().unwrap().update_message("m1", &text, true).unwrap();
+            assert_eq!(
+                part_types(&db, "m1"),
+                ["text"],
+                "buffered, so nothing is on the row while the turn is still writing to it"
+            );
+
+            // The runner's LAST write, then the event that releases the buffer.
+            db.lock()
+                .unwrap()
+                .update_message("m1", &text, false)
+                .unwrap();
+            ctx.app.bus.publish(EventInput {
+                r#type: EventType::MessageFinished,
+                session_id: Some("s1".into()),
+                data: json!({ "messageId": "m1" }),
+            });
+
+            assert_eq!(part_types(&db, "m1"), ["text", "workflow"]);
+            let parts = db.lock().unwrap().get_message("m1").unwrap().unwrap().parts;
+            let Part::Workflow { name, .. } = &parts[1] else {
+                panic!("the card")
+            };
+            assert_eq!(name, "w");
+        });
+    }
+
+    /// The gate is BEFORE the run exists, which is the only place it is worth
+    /// anything.
+    ///
+    /// A confirm that fired after `start_workflow_run` would already have
+    /// written a run row, mirrored the script and — for a `parallel()` script —
+    /// issued every call in the first tick. Declining has to leave nothing
+    /// behind, so this asserts on the absence of a run row, not merely on the
+    /// thrown error.
+    #[test]
+    fn a_declined_workflow_starts_nothing_at_all() {
+        with_home(|| async {
+            let db = mem_db();
+            let ctx = turn_with_message(&db, "s1", "m1");
+            let workflow = create_workflow_host_fn(&ctx, WorkflowControlDeps::default(), true);
+
+            // Answer the hold the moment it is raised — the TUI's job, done
+            // inline.
+            let holds = ctx.app.host.asks.clone();
+            let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+            let sink = seen.clone();
+            let sub = ctx.app.bus.subscribe(Arc::new(move |e: &BoughEvent| {
+                if e.r#type != EventType::AskQuestion {
+                    return;
+                }
+                let Ok(q) = serde_json::from_value::<AskQuestion>(e.data.clone()) else {
+                    return;
+                };
+                if q.status != crate::schema::parts::AskQuestionStatus::Pending {
+                    return;
+                }
+                sink.lock().unwrap().push(q.question.clone());
+                holds.decline(&q.id);
+            }));
+
+            let script = "export const meta = {name: \"w\", description: \"d\", \
+                          phases: [{title: \"describe\"}]}\nreturn 1\n";
+            let err = workflow
+                .call("start", &json!({ "script": script }).to_string())
+                .await
+                .expect_err("the launch is refused");
+            ctx.app.bus.unsubscribe(sub);
+
+            assert!(
+                err.to_string().contains("declined to run the workflow"),
+                "{err}"
+            );
+            assert_eq!(
+                err.name(),
+                "AskDeclinedError",
+                "the same catchable shape ask() raises"
+            );
+            let asked = seen.lock().unwrap().clone();
+            assert_eq!(asked.len(), 1);
+            assert!(asked[0].contains("Run the workflow \"w\"?"), "{}", asked[0]);
+            assert!(
+                asked[0].contains("1. describe"),
+                "the phases are on the card, before any of it runs: {}",
+                asked[0]
+            );
+            assert_eq!(
+                db.lock().unwrap().list_workflows(Some("s1")).unwrap().len(),
+                0,
+                "no run row, no journal, no cost"
+            );
+        });
+    }
+
+    /// The brakes and the reads do NOT park on a human: a confirm on a brake is
+    /// how you teach someone to hit enter without reading.
+    #[test]
+    fn only_start_and_rerun_park_on_the_confirm_gate() {
+        with_home(|| async {
+            let db = mem_db();
+            let ctx = turn_with_message(&db, "s1", "m1");
+            let workflow = create_workflow_host_fn(&ctx, WorkflowControlDeps::default(), true);
+            // Nothing answers holds here, so a verb that raised one would hang
+            // rather than return.
+            let out = workflow.call("list", "{}").await.unwrap();
+            assert_eq!(out, "[]");
+            assert_eq!(ctx.app.host.asks.size(), 0, "no hold was raised");
+        });
+    }
+
+    /// An unknown verb teaches the whole set rather than failing anonymously,
+    /// and a malformed bag names the shape the verb wanted.
+    #[test]
+    fn the_verb_errors_name_the_verb_set_and_the_argument_shape() {
+        with_home(|| async {
+            let db = mem_db();
+            let ctx = turn_with_message(&db, "s1", "m1");
+            let workflow = create_workflow_host_fn(&ctx, WorkflowControlDeps::default(), false);
+
+            let err = workflow.call("frobnicate", "{}").await.unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "unknown workflow verb: frobnicate — it is one of \
+                 start|rerun|stop|pause|resume|status|list, called as workflow.<verb>({…})."
+            );
+
+            let err = workflow.call("start", "{}").await.unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "workflow.start({script, args?}): script: Required"
+            );
+
+            let err = workflow.call("status", "{}").await.unwrap_err();
+            assert_eq!(err.to_string(), "workflow.status({id}): id: Required");
+
+            let err = workflow.call("start", "not json").await.unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "workflow.start(…): arguments must be a JSON value"
+            );
+        });
+    }
+
+    /// The approval text is read from `meta` without running the script: what
+    /// is about to run, before any of it bills.
+    #[test]
+    fn the_confirm_text_lists_the_phases_and_the_spend_warning() {
+        let meta = WorkflowMeta {
+            name: "audit".into(),
+            description: "sweep the repo".into(),
+            phases: Some(vec![
+                crate::schema::parts::WorkflowPhase {
+                    title: "map".into(),
+                    detail: Some("one agent per crate".into()),
+                },
+                crate::schema::parts::WorkflowPhase {
+                    title: "reduce".into(),
+                    detail: None,
+                },
+            ]),
+        };
+        assert_eq!(
+            confirm_workflow_text(&meta),
+            "Run the workflow \"audit\"?\nsweep the repo\n\n  1. map — one agent per crate\n  \
+             2. reduce\n\nIt runs detached and fans out subagents in parallel, so it can spend \
+             a lot of tokens quickly. `x` in the workflows tab (^w) stops a run at any point."
+        );
+    }
+
+    /// A card is idempotent on the run id and preserves `pending` — a card
+    /// appended as a turn dies must not flip a finished message back to
+    /// streaming and leave the session busy forever.
+    #[test]
+    fn the_card_is_idempotent_and_never_reopens_a_finished_message() {
+        let db = mem_db();
+        let bus = Bus::new(crate::types::system_clock());
+        let r = run(&db, "wf");
+        db.lock()
+            .unwrap()
+            .create_message(Message {
+                id: "m1".into(),
+                session_id: r.session_id.clone(),
+                role: Role::Supervisor,
+                parts: vec![],
+                pending: false,
+                created_at: 1,
+            })
+            .unwrap();
+        assert!(append_workflow_part(&db, &bus, &r.session_id, "m1", &r));
+        assert!(
+            !append_workflow_part(&db, &bus, &r.session_id, "m1", &r),
+            "the same launch must never appear twice"
+        );
+        let message = db.lock().unwrap().get_message("m1").unwrap().unwrap();
+        assert_eq!(message.parts.len(), 1);
+        assert!(!message.pending, "preserved, never set");
+        assert!(
+            !append_workflow_part(&db, &bus, &r.session_id, "gone", &r),
+            "a message that no longer exists is not an error"
         );
     }
 }

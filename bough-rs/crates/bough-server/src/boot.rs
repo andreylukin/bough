@@ -179,12 +179,9 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
         use bough_core::turn::runner::{TurnDeps, BASE_HOST_FNS};
         use bough_core::types::HostFns;
 
-        // NOT `workflow`: its engine is wave 3, and granting a verb whose
-        // host function is absent is the exact failure this comment block
-        // warns about — the prompt would teach a capability every call to
-        // which fails.
         let mut granted = BASE_HOST_FNS.to_vec();
         granted.extend_from_slice(&[
+            HostFnName::Workflow,
             HostFnName::Schedule,
             HostFnName::Ask,
             HostFnName::State,
@@ -218,6 +215,28 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
                 Default::default(),
             )),
             extend: Some(Arc::new(|turn_ctx: &bough_core::types::TurnCtx| HostFns {
+                // Gated by TIER, not by kind: a subagent may not start a
+                // workflow (it would outlive the report its spawner is waiting
+                // on), and the prompt's workflow section is gated the same way,
+                // so the bridge and the grant agree.
+                workflow: {
+                    let tier = {
+                        let db = turn_ctx.app.db.lock().unwrap_or_else(|p| p.into_inner());
+                        bough_core::hostfn::delegate::delegation_tier(&*db, &turn_ctx.session_id)
+                    };
+                    if tier == bough_core::hostfn::delegate::DelegationTier::Top {
+                        Some(
+                            bough_core::workflow::control::create_workflow_host_fn(
+                                turn_ctx,
+                                bough_core::workflow::control::workflow_control(),
+                                bough_core::workflow::control::workflow_confirm_enabled(),
+                            )
+                            .into_host_fn(),
+                        )
+                    } else {
+                        None
+                    }
+                },
                 schedule: Some(bough_core::hostfn::schedule::create_schedule_host_fn(
                     turn_ctx,
                     Default::default(),
