@@ -252,18 +252,10 @@ export function tagsNoteFor(
     const tags = topRepoTags(db, workspace, now);
     remember(primedMemo, sessionId, new Set(tags));
     if (tags.length > 0) {
-      // NAMES THE WORDS AND ASKS FOR A READ. Until now this note only ever
-      // shaped what got WRITTEN, and writing was never the problem: 100% of
-      // commands carry tags, against a 1.5% read rate. Sen et al. (CSCW 2006)
-      // is the reason this is the place to fix that — the tag display is what
-      // moves tagging behaviour, and this is the display. A list of words is an
-      // invitation to label; a list of words with a lookup attached is an
-      // invitation to look.
       note = `This project's own tag vocabulary — the words it uses that other ` +
         `projects do not: ` + tags.join(", ") +
-        `. If the request touches one of these, open it first: ` +
-        `bough tags show ${tags[0]}. Reuse them when they fit; coin new ones ` +
-        `freely when they do not, especially for the tool and the intent.`;
+        `. Reuse these when they fit; coin new ones freely when they do not, ` +
+        `especially for the tool and the intent.`;
     }
   } catch {
     // Stats are a garnish; a failure here must not touch the turn.

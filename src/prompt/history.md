@@ -2,46 +2,18 @@
 
 Every bash() you run is remembered across sessions — command, tags, exit code,
 duration, what it printed, and the program it ran in — scoped to this project.
+Before trial-and-erroring a command someone (you, in a past session) likely
+already got right — connecting to a container, a deploy incantation, a tricky
+migration — check the memory first.
 
-**OPEN THE MEMORY FIRST when the request names something that has a name.** A
-ticket or PR (`NME-1666`, `#31`), a service, a repo, an environment, a tool with
-a fiddly invocation. One `bough tags show` costs a second and answers "has this
-been done here, and what worked" — the question you would otherwise spend three
-exploratory commands guessing at. Reconnaissance you can skip is the point of
-this memory; it is not an archive to consult when curious.
+This holds for TOPICS, not just commands: when a request names something that
+matches one of this project's tags (in the popular-tags note or a [history]
+hint), query that tag before exploring fresh. It holds for REFERENCES too — if
+the work is for a ticket or a PR, `bough tags show linear.eng-1234` is every
+command already run for it.
 
-Concretely, before you explore: the work is for NME-1666, so run
-`bough tags show linear.nme-1666` and read what the last session already did.
-
-### Picking the right lookup
-
-The three verbs answer different questions and do not substitute for each other.
-
-    you know the NAME            bough tags show TAG
-    you know a WORD it printed   bough tags sql "… command_history_fts MATCH …"
-    you know neither             bough tags similar "what you are trying to do"
-
-`show` is an EXACT match on a tag. It is the right verb for a ticket, and it is
-the only one that reliably is — `similar` scores the text of commands, and a
-ticket's commands are `git add`, `cargo test`, `gh pr edit`, whose text says
-nothing about the ticket. Asking `similar` for a ticket you can name returns
-somebody else's ticket that happens to phrase things alike.
-
-### Reference tags have a shape, and guessing it wrong finds nothing
-
-A reference is `tracker.full-id`: the NAMESPACE is the system it lives in, the
-ID is the key exactly as that system writes it, lowercased.
-
-    NME-1666 in Linear   →  linear.nme-1666     NOT nme.1666, not linear.1666
-    PR #31               →  pr.31
-    commit 3c1c78e       →  commit.3c1c78e
-
-`bough tags show nme.1666` answers "no commands tagged" even when the ticket has
-a hundred rows under `linear.nme-1666`, because it is an exact match and that is
-a different tag. A miss is worth one more attempt, not an assumption that the
-memory is empty: `bough tags sql "SELECT DISTINCT tag FROM command_tags WHERE
-tag LIKE '%1666%'"` finds the real name in one query. Tag the work with the same
-reference while you do it, and the next session finds it by name.
+When you do not know something, search the tags before exploring — and if a tag
+comes back empty, try another spelling of it before concluding the memory is.
 
 Some of it reaches you without being asked. A failing command gets a `[history]`
 line under its output when the memory has something on it — that this exact
@@ -60,7 +32,7 @@ The rest is reached through the CLI, in bash. There is no host function:
     bough tags show TAG         the commands under TAG, newest first, exit code
                                 first — add --program for the round each ran in
     bough tags sql "SELECT …"   a read-only SELECT, rows as JSON
-    bough tags similar "text"   semantic recall — for when you cannot name it
+    bough tags similar "text"   semantic recall, where the vector layer exists
 
 Add --json to any of them for parseable output, --all to cross projects, and
 --limit N to widen a list.
