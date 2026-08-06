@@ -8,3 +8,16 @@ bough-core = { workspace = true }
 bough-server = { workspace = true }
 bough-tui = { workspace = true }
 tokio = { workspace = true }
+# `bough exec` is a loopback HTTP client with a streamed SSE body.
+reqwest = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# exec's tests drive the REAL route table over an in-memory database: the
+# fake transport hands an axum Request to the server's dispatcher directly,
+# so no socket is bound and nothing reads ~/.bough.
+axum = { workspace = true }
+uuid = { workspace = true }
+tokio-util = { workspace = true }

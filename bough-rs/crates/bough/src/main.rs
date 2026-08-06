@@ -1,6 +1,7 @@
 //! `bough` — subcommand dispatch (port of `scripts/bough`'s command surface,
 //! reduced to what the Rust binary owns per ARCHITECTURE §1). Bare `bough` →
-//! TUI; `start` → server; `exec`/`mcp`/`tags`/`sync-mcp` port later;
+//! TUI; `start` → server; `exec` is ported (see `exec.rs`); `mcp`/`tags`/
+//! `sync-mcp` port later;
 //! `patterns` is a stub (exit 2). No clap — the grammar is tiny and USAGE
 //! text is product surface, ported verbatim.
 //!
@@ -12,6 +13,8 @@
 //! verbatim; its spec home is `bough-tui::args` (row 1.32, in flight) — it
 //! lives here only until that port lands, because a silently-ignored `-w` is
 //! the worst failure this flag can have and the dispatch must not ship it.
+
+mod exec;
 
 use std::process::ExitCode;
 
@@ -102,7 +105,7 @@ fn usage() -> &'static str {
     "usage: bough [tui|start|exec|mcp|sync-mcp|tags|patterns]
   (no args) open the terminal UI (bough [-w DIR], -h for flags)
   start    run the server in the foreground
-  exec     headless one-shot turn (not yet ported)
+  exec     headless one-shot turn
   mcp      inspect and repair the MCP registry (not yet ported)
   sync-mcp adopt Claude Code's MCP servers (not yet ported)
   tags     what the command memory knows (not yet ported)
@@ -160,7 +163,13 @@ fn main() -> ExitCode {
             println!("{}", usage());
             ExitCode::SUCCESS
         }
-        Some(cmd @ ("exec" | "mcp" | "sync-mcp" | "tags" | "patterns")) => {
+        Some("exec") => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            let deps = exec::real_deps();
+            let code = rt.block_on(exec::run_exec(&args[1..], &deps));
+            ExitCode::from(code as u8)
+        }
+        Some(cmd @ ("mcp" | "sync-mcp" | "tags" | "patterns")) => {
             eprintln!("bough {cmd}: not yet ported");
             ExitCode::from(2)
         }

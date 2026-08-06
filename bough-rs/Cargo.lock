@@ -126,10 +126,17 @@ dependencies = [
 name = "bough"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "bough-core",
  "bough-server",
  "bough-tui",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]
