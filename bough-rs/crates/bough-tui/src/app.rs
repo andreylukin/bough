@@ -1986,6 +1986,11 @@ impl<T: Transport> App<T> {
             // the keymap's own guard, and the reason `j`/`k` do not walk the
             // list mid-query.
             panel_filtering: self.panel.filtering,
+            // ↑/↓ walk the DRAFT's lines once there is more than one, and the
+            // history ring otherwise — the guard the table already declares on
+            // `cursor.up`/`cursor.down`. Left at the default `false` these two
+            // rows could never fire, so a newline'd draft had no way up.
+            multiline: self.draft.contains('\n'),
             ..Default::default()
         };
         lookup(&ctx, &crate::keys::chord_of(&input, flags))
@@ -2526,6 +2531,17 @@ impl<T: Transport> App<T> {
         if !is_ctrl_c {
             self.quit_armed = false;
         }
+        // THE LINE EDITOR IS keys.rs'S, not a second one grown here. The chords
+        // the table already declares — ⌥b/⌥f, ^w, ⌥⌫, ^k/^u, ↑/↓ in a multi-line
+        // draft — resolve to `Command::Cursor*`/`Command::Delete*` and were
+        // dropped on the floor by the raw `KeyCode` match below, which only ever
+        // knew about ^a/^e/home/end/backspace/←/→. Routing through
+        // `keys::edit_line` means one editor, the tested one.
+        if let Some(command) = self.resolve(&k) {
+            if self.on_edit_command(command) {
+                return;
+            }
+        }
         match (k.code, ctrl) {
             (KeyCode::Char('c'), true) => {
                 if self.quit_armed {
@@ -2612,7 +2628,57 @@ impl<T: Transport> App<T> {
         self.last_esc_at = Some(now_ms);
     }
 
-    // ---- line editing (keys.ts subset; cursor is a char index) -------------
+    // ---- line editing (keys.rs's editor; cursor is a char index) -----------
+
+    /// The composer's draft as the pure editor sees it, and back again.
+    ///
+    /// `keys::edit_line` holds the WHOLE line editor — word motion, the kills,
+    /// the multi-line up/down — and holds it as a tested pure function. This is
+    /// the adapter, and it is the only thing this file needs to own: the draft
+    /// and the cursor go in, a new `LineState` comes out.
+    ///
+    /// Returns false for any command that is not an edit, so the caller falls
+    /// through to the chords that are NOT the line editor's (send, escape, the
+    /// scrolls).
+    fn on_edit_command(&mut self, command: Command) -> bool {
+        use crate::keys::edit_line;
+        // The editing subset, named exhaustively rather than inferred: a new
+        // command must be added here deliberately, not silently swallowed by a
+        // catch-all that would eat `Command::SessionNew` as a no-op edit.
+        if !matches!(
+            command,
+            Command::CursorLeft
+                | Command::CursorRight
+                | Command::CursorHome
+                | Command::CursorEnd
+                | Command::CursorWordLeft
+                | Command::CursorWordRight
+                | Command::CursorUp
+                | Command::CursorDown
+                | Command::DeleteBack
+                | Command::DeleteForward
+                | Command::DeleteWordBack
+                | Command::DeleteToEnd
+                | Command::DeleteToStart
+                | Command::DeleteLine
+        ) {
+            return false;
+        }
+        let before = crate::keys::LineState {
+            text: std::mem::take(&mut self.draft),
+            cursor: self.cursor,
+        };
+        let after = edit_line(&before, command);
+        let changed_text = after.text != before.text;
+        self.draft = after.text;
+        self.cursor = after.cursor.min(self.draft.chars().count());
+        // Only a TEXT change can change what completes; a bare cursor move must
+        // not re-open a popup an earlier escape dismissed.
+        if changed_text {
+            self.ensure_candidates();
+        }
+        true
+    }
 
     fn byte_at(&self, char_idx: usize) -> usize {
         self.draft
@@ -3183,7 +3249,64 @@ impl<T: Transport> App<T> {
         render_panel(self.panel.tab(), &body, area, buf);
     }
 
+    /// The frame: every surface, then the selection painted over all of them.
     pub fn draw(&self, area: Rect, buf: &mut Buffer) {
+        self.draw_surfaces(area, buf);
+        self.paint_selection(area, buf);
+    }
+
+    /// The selection, drawn as ONE layer over whatever is underneath
+    /// (App.tsx::SelectionLayer).
+    ///
+    /// A drag is a gesture in SCREEN coordinates, which is why this reads the
+    /// finished buffer rather than being threaded through each component: the
+    /// first cut of the TS painted through the transcript's own decorate hook,
+    /// and the panel, the rail and the composer could then be dragged over and
+    /// copied while showing no highlight at all. One mechanism, addressed the
+    /// way the gesture already is.
+    ///
+    /// EXPLICIT COLOURS, not `Modifier::REVERSED`. Inverting needs something to
+    /// invert, and transcript cells that never set a background of their own
+    /// resolve both sides to the same colour — the TS shipped exactly that bug
+    /// and the cells reported `inverse: true` the whole time, so the attribute
+    /// being set was never proof the highlight was visible.
+    fn paint_selection(&self, area: Rect, buf: &mut Buffer) {
+        let Some(sel) = self.sel else { return };
+        if is_empty_selection(&sel) {
+            return;
+        }
+        let palette = crate::theme::palette();
+        let style = Style::default()
+            .fg(palette.bg_color())
+            .bg(palette.accent_color());
+        let (top, bottom) = crate::selection::sel_rows(&sel);
+        for y in top..=bottom {
+            // Selection rows are 1-based cells; the buffer is 0-based.
+            let Some(row) = u16::try_from(y - 1).ok().filter(|r| *r < area.height) else {
+                continue;
+            };
+            let Some(span) = crate::selection::row_span(&sel, y) else {
+                continue;
+            };
+            let from = span.from.min(area.width as usize);
+            let to = if span.to == crate::selection::EOL {
+                area.width as usize
+            } else {
+                span.to.min(area.width as usize)
+            };
+            // A drag past end-of-line selects nothing on that row. Painting it
+            // anyway would hang a bar of accent off the end of short lines.
+            let blank = (from..to).all(|x| buf[(area.x + x as u16, area.y + row)].symbol() == " ");
+            if blank {
+                continue;
+            }
+            for x in from..to {
+                buf[(area.x + x as u16, area.y + row)].set_style(style);
+            }
+        }
+    }
+
+    fn draw_surfaces(&self, area: Rect, buf: &mut Buffer) {
         let cols = area.width.max(20);
         let rows = area.height.max(8);
         // The overlay is the one surface that displaces everything, header
@@ -3619,6 +3742,20 @@ pub async fn run_loop<T: Transport>(
     use futures::StreamExt;
 
     let mut terminal = ratatui::init();
+    // TWO CROSSTERMS. `ratatui::init()` enables raw mode through the crossterm
+    // ratatui itself depends on (0.28); the `EventStream` below — the thing that
+    // actually PARSES the bytes — is the 0.29 this crate depends on, and
+    // `is_raw_mode_enabled()` is a per-crate global. 0.29 therefore believed the
+    // terminal was still cooked and decoded `\n` (0x0a) as Enter rather than as
+    // Ctrl+J, which is the one byte those two keys disagree about: `^j` SENT THE
+    // MESSAGE instead of inserting a newline, so a multi-line draft could not be
+    // typed at all and every chord that only means something in one — ↑/↓ across
+    // lines — was unreachable no matter how correctly it was wired.
+    //
+    // Enabling it again on 0.29's side is the fix and it is not a double-enable:
+    // each crate stores the prior termios once, and the terminal is already in
+    // the state this asks for.
+    let _ = crossterm::terminal::enable_raw_mode();
     // Wheel scroll is the one mouse gesture wave 1 ships.
     let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
     // Focus reporting: `notify_desktop` is silent while focused, and it can
@@ -4881,6 +5018,10 @@ mod tests {
             KeyCode::Char(c),
             KeyModifiers::CONTROL,
         )))
+    }
+
+    fn meta_key(code: KeyCode) -> Action {
+        Action::Term(TermEvent::Key(KeyEvent::new(code, KeyModifiers::ALT)))
     }
 
     fn type_text<T: Transport>(app: &mut App<T>, text: &str, now: i64) {
@@ -6561,6 +6702,104 @@ mod tests {
         assert!(app.sel.is_none(), "the highlight is dropped on release");
     }
 
+    /// A frame's cells at one row, as (symbol, bg).
+    fn cells_at(app: &App<impl FnMut(Effect)>, row: u16) -> Vec<(String, Style)> {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: app.cols.max(20),
+            height: app.rows.max(8),
+        };
+        let mut buf = Buffer::empty(area);
+        app.draw(area, &mut buf);
+        (0..area.width)
+            .map(|x| {
+                let c = &buf[(x, row)];
+                (c.symbol().to_string(), c.style())
+            })
+            .collect()
+    }
+
+    /// The bug this pins: `self.sel` was tracked by the mouse handler, the copy
+    /// worked, and NO render path ever read it — so a drag highlighted nothing
+    /// at all and the cells under it reported the default background the whole
+    /// time. The reducer being right is not the feature; being visible is.
+    #[test]
+    fn a_drag_paints_the_cells_it_covers_and_clears_them_on_release() {
+        let (mut app, _copied, _opened) = app_with_capture();
+        open_s1(&mut app);
+        type_text(&mut app, "hello selection", 0);
+        app.apply(key(KeyCode::Enter), 10);
+
+        // A row with something painted on it — find one rather than assume.
+        let row = (0..app.rows)
+            .find(|y| {
+                cells_at(&app, *y)
+                    .iter()
+                    .take(12)
+                    .any(|(s, _)| s.trim() != "")
+            })
+            .expect("some row has text on it");
+        let before = cells_at(&app, row);
+        let accent = crate::theme::palette().accent_color();
+        assert!(
+            before.iter().all(|(_, st)| st.bg != Some(accent)),
+            "nothing is highlighted before the drag"
+        );
+
+        // Press and drag across the first ten cells. Mouse reports are 0-based;
+        // a selection is 1-based, so screen row `row` is selection row `row+1`.
+        app.apply(mouse(MouseEventKind::Down(MouseButton::Left), 0, row), 20);
+        app.apply(mouse(MouseEventKind::Drag(MouseButton::Left), 9, row), 21);
+
+        let during = cells_at(&app, row);
+        let painted: Vec<usize> = (0..10)
+            .filter(|x| during[*x].1.bg == Some(accent))
+            .collect();
+        assert_eq!(
+            painted,
+            (0..10).collect::<Vec<_>>(),
+            "every dragged cell is visually distinct mid-drag"
+        );
+        // …and the highlight stops where the drag stopped.
+        assert_ne!(
+            during[10].1.bg,
+            Some(accent),
+            "the cell past the drag is untouched"
+        );
+        // The TEXT is unchanged — a highlight recolours, it does not overwrite.
+        let syms: Vec<&String> = during.iter().map(|(s, _)| s).collect();
+        assert_eq!(syms, before.iter().map(|(s, _)| s).collect::<Vec<_>>());
+
+        app.apply(mouse(MouseEventKind::Up(MouseButton::Left), 9, row), 22);
+        let after = cells_at(&app, row);
+        assert!(
+            after.iter().all(|(_, st)| st.bg != Some(accent)),
+            "the highlight is gone once the selection is dropped"
+        );
+    }
+
+    /// A drag over blank cells must not hang a bar of accent off the end of a
+    /// short line (App.tsx: `if (text.trim())`).
+    #[test]
+    fn a_drag_over_nothing_paints_nothing() {
+        let (mut app, _copied, _opened) = app_with_capture();
+        open_s1(&mut app);
+        // A row that is entirely blank in the padded region above the transcript.
+        let row = (0..app.rows)
+            .find(|y| cells_at(&app, *y).iter().all(|(s, _)| s.trim() == ""))
+            .expect("some row is blank");
+        app.apply(mouse(MouseEventKind::Down(MouseButton::Left), 0, row), 0);
+        app.apply(mouse(MouseEventKind::Drag(MouseButton::Left), 15, row), 1);
+        let accent = crate::theme::palette().accent_color();
+        assert!(
+            cells_at(&app, row)
+                .iter()
+                .all(|(_, st)| st.bg != Some(accent)),
+            "an empty run is not painted"
+        );
+    }
+
     #[test]
     fn a_press_and_release_in_place_is_a_click_not_a_copy() {
         let (mut app, copied, _opened) = app_with_capture();
@@ -7637,10 +7876,23 @@ mod tests {
 
     // ---- the binding table is a PROMISE ------------------------------------
 
-    /// Commands that never reach a `Command::` arm because the composer answers
-    /// their keys directly (`on_key`'s raw `KeyCode` match, `input.rs`'s line
-    /// edits, `on_completion_key`). Every one of these is live on screen; this
-    /// list is what "handled somewhere else" is allowed to mean.
+    /// Commands with NO `Command::` arm anywhere, because a raw `KeyCode` arm
+    /// in `on_key`/`on_completion_key` answers their keys by shape instead.
+    ///
+    /// WHAT THIS LIST IS FOR, and the one thing it must never become: it is an
+    /// escape hatch for keys the composer answers WITHOUT naming the command,
+    /// and it is only ever legitimate when there is a real raw arm behind the
+    /// entry. It shipped as a way to silence exactly the bug it was supposed to
+    /// catch — "CursorWordLeft"/"CursorWordRight"/"CursorUp"/"CursorDown" and
+    /// the kills sat here for months while `on_key`'s raw match had no arm for
+    /// ⌥b, ⌥f, ^w or ↑/↓ at all, so ⌥b moved nothing and ^w deleted nothing.
+    /// Listing a command here is a CLAIM that the composer answers it; the
+    /// entries are now routed through `keys::edit_line` and name their commands,
+    /// so they are gone from this list rather than trusted in it.
+    ///
+    /// `allowlisted_commands_are_not_secretly_handled` below is the guard: an
+    /// entry that DOES have a `Command::` arm is stale and must be deleted, so
+    /// the list can only ever shrink as commands get properly routed.
     const HANDLED_BY_THE_COMPOSER: &[&str] = &[
         "SendQueue",
         "Newline",
@@ -7654,21 +7906,136 @@ mod tests {
         "CompletePrev",
         "CompleteNext",
         "CompleteDismiss",
-        "CursorLeft",
-        "CursorRight",
-        "CursorHome",
-        "CursorEnd",
-        "CursorWordLeft",
-        "CursorWordRight",
-        "CursorUp",
-        "CursorDown",
-        "DeleteBack",
-        "DeleteForward",
-        "DeleteToEnd",
-        "DeleteToStart",
-        "DeleteLine",
         "SessionOut",
     ];
+
+    /// Every `.rs` in this crate except the binding table itself — the table is
+    /// where commands are DECLARED, so finding a name there proves nothing
+    /// about anything handling it.
+    fn crate_sources() -> String {
+        let mut sources = String::new();
+        let mut stack = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs")
+                    && path.file_name().is_some_and(|f| f != "keys.rs")
+                {
+                    sources.push_str(&std::fs::read_to_string(&path).unwrap());
+                }
+            }
+        }
+        sources
+    }
+
+    /// The teeth. An allowlist entry is a claim that the composer answers a
+    /// chord some other way; if the command HAS a `Command::` arm the claim is
+    /// stale and the entry is now hiding whatever that arm does or fails to do.
+    #[test]
+    fn allowlisted_commands_are_not_secretly_handled() {
+        let sources = crate_sources();
+        let stale: Vec<&str> = HANDLED_BY_THE_COMPOSER
+            .iter()
+            .copied()
+            .filter(|name| sources.contains(&format!("Command::{name}")))
+            .collect();
+        assert_eq!(
+            stale,
+            Vec::<&str>::new(),
+            "these are handled by a real `Command::` arm — delete them from \
+             HANDLED_BY_THE_COMPOSER so the pin can see them"
+        );
+    }
+
+    // ---- the line editor is REACHABLE ---------------------------------------
+    //
+    // Every one of these chords was in the binding table, printed in the help
+    // overlay, and dead on the real binary: `on_key`'s raw `KeyCode` match knew
+    // ^a/^e/home/end/backspace/←/→ and nothing else, so ⌥b appended at the end
+    // and ^w left the draft untouched. These drive the real keymap into the
+    // real `App` (ported from `keys.test.ts`'s editor cases, but through the
+    // app rather than through `editLine` directly — the pure function was
+    // always green, which is exactly why nobody caught this).
+
+    fn drafted(text: &str) -> (App<impl FnMut(Effect)>, ()) {
+        let (mut app, _, _) = app_with_capture();
+        open_s1(&mut app);
+        type_text(&mut app, text, 0);
+        (app, ())
+    }
+
+    #[test]
+    fn meta_b_moves_the_cursor_a_word_back_and_typing_lands_there() {
+        let (mut app, _) = drafted("hello world there");
+        app.apply(meta_key(KeyCode::Char('b')), 1);
+        app.apply(meta_key(KeyCode::Char('b')), 2);
+        assert_eq!(app.cursor, 6, "two words back from the end of the line");
+        type_text(&mut app, "X", 3);
+        assert_eq!(app.draft, "hello Xworld there");
+    }
+
+    #[test]
+    fn meta_f_moves_the_cursor_a_word_forward() {
+        let (mut app, _) = drafted("hello world there");
+        app.apply(ctrl('a'), 1);
+        app.apply(meta_key(KeyCode::Char('f')), 2);
+        assert_eq!(app.cursor, 5);
+        app.apply(meta_key(KeyCode::Right), 3);
+        assert_eq!(app.cursor, 11, "⌥→ is the same command as ⌥f");
+    }
+
+    #[test]
+    fn ctrl_w_deletes_the_word_before_the_cursor() {
+        let (mut app, _) = drafted("hello world there");
+        app.apply(ctrl('w'), 1);
+        assert_eq!(app.draft, "hello world ");
+        assert_eq!(app.cursor, 12);
+        // ⌥⌫ is the same command, and it is bound with no empty-draft guard.
+        app.apply(meta_key(KeyCode::Backspace), 2);
+        assert_eq!(app.draft, "hello ");
+    }
+
+    #[test]
+    fn ctrl_k_and_ctrl_u_kill_to_the_end_and_the_whole_line() {
+        let (mut app, _) = drafted("hello world there");
+        app.apply(meta_key(KeyCode::Char('b')), 1);
+        app.apply(ctrl('k'), 2);
+        assert_eq!(app.draft, "hello world ");
+        app.apply(ctrl('u'), 3);
+        assert_eq!(app.draft, "");
+        assert_eq!(app.cursor, 0);
+    }
+
+    #[test]
+    fn up_and_down_walk_the_lines_of_a_multiline_draft() {
+        let (mut app, _) = drafted("hello");
+        app.apply(ctrl('j'), 1); // ^j inserts the newline
+        type_text(&mut app, "world", 2);
+        assert_eq!(app.draft, "hello\nworld");
+        assert_eq!(app.cursor, 11);
+
+        app.apply(key(KeyCode::Up), 3);
+        assert_eq!(app.cursor, 5, "column 5 of the first line");
+        app.apply(key(KeyCode::Down), 4);
+        assert_eq!(app.cursor, 11, "and back down");
+
+        // Typing after ↑ lands on the FIRST line, which is the whole point.
+        app.apply(key(KeyCode::Up), 5);
+        type_text(&mut app, "!", 6);
+        assert_eq!(app.draft, "hello!\nworld");
+    }
+
+    #[test]
+    fn up_is_not_a_line_move_when_the_draft_is_a_single_line() {
+        // The `multiline` guard: with one line ↑ belongs to the history ring,
+        // not the editor, and must not silently eat the key as a no-op edit.
+        let (mut app, _) = drafted("hello");
+        app.apply(key(KeyCode::Up), 1);
+        assert_eq!(app.draft, "hello");
+        assert_eq!(app.cursor, 5, "cursor did not move");
+    }
 
     #[test]
     fn every_bound_chord_is_actually_handled_not_merely_listed() {
@@ -7678,23 +8045,7 @@ mod tests {
         // read `Command::FoldAll` — so the overlay promised a gesture the app
         // ignored, forever. A binding the help promises and the app drops is a
         // lie; this is the pin.
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut sources = String::new();
-        let mut stack = vec![src];
-        while let Some(dir) = stack.pop() {
-            for entry in std::fs::read_dir(&dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    stack.push(path);
-                } else if path.extension().is_some_and(|e| e == "rs")
-                    // The table itself is where the commands are DECLARED;
-                    // finding a name there proves nothing about handling it.
-                    && path.file_name().is_some_and(|f| f != "keys.rs")
-                {
-                    sources.push_str(&std::fs::read_to_string(&path).unwrap());
-                }
-            }
-        }
+        let sources = crate_sources();
         let mut unhandled: Vec<String> = Vec::new();
         for binding in crate::keys::BINDINGS.iter() {
             // `Tab(_)` is one arm for seven rows; name the variant, not the payload.

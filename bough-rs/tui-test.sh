@@ -51,9 +51,38 @@ check() {
     SU text 2>/dev/null | sed 's/^/        | /' | head -20
   fi
 }
-# Clear the composer between probes: the TUI has no "clear line" chord, and a
-# leftover draft changes what the next key means.
-clear_composer() { for _ in $(seq 1 40); do SU press BackSpace >/dev/null 2>&1; done; }
+# check_cmd <name> <shell command…> — same tally, for an assertion that is not
+# an `expect` (reading cell colours needs `cells` + `jq`).
+check_cmd() {
+  local name="$1"; shift
+  if "$@" >/dev/null 2>&1; then
+    printf 'ok    %s\n' "$name"; pass=$((pass + 1))
+  else
+    printf 'FAIL  %s\n' "$name"; fail=$((fail + 1))
+  fi
+}
+# Clear the composer between probes: a leftover draft changes what the next key
+# means. `End` and not `^e` for the trip to end-of-line — `^e` is `cursor.end`
+# only while something is typed, and on an ALREADY-empty draft the same chord is
+# `fold.all`, so clearing with it silently toggled every fold in the transcript
+# and the fold assertions further down failed on state this helper had flipped.
+clear_composer() {
+  SU press End >/dev/null 2>&1
+  SU press ctrl+u >/dev/null 2>&1
+  for _ in $(seq 1 40); do SU press BackSpace >/dev/null 2>&1; done
+}
+
+# The bg colour of one cell, as `#rrggbb` or `default`. NO `--json`: `cells`
+# already answers in JSON and the flag reshapes it into an envelope where
+# `.cells` is absent, so every colour read back comes out `null` and every
+# comparison between two of them trivially passes.
+cell_bg() { SU cells "$1" "$2" 1 1 2>/dev/null | jq -r '.cells[0].bg'; }
+# Left press / left-drag motion / left release as SGR reports (1-BASED cells).
+# `shell-use mouse move` sends a BUTTONLESS motion, which is `Moved` and not
+# `Drag(Left)` — dragging must be spelled out or the selection never grows.
+sgr_down() { SU write "$(printf '\033[<0;%d;%dM' "$1" "$2")" >/dev/null 2>&1; }
+sgr_drag() { SU write "$(printf '\033[<32;%d;%dM' "$1" "$2")" >/dev/null 2>&1; }
+sgr_up()   { SU write "$(printf '\033[<0;%d;%dm' "$1" "$2")" >/dev/null 2>&1; }
 
 # 100x36 so panels have room; at 80x30 the tab strip collapses by design and
 # these assertions would be testing the fallback rather than the surface.
@@ -109,6 +138,89 @@ check "/artifacts is wired"                       expect text "not wired" --not
 clear_composer
 SU type "/nonsense-command" >/dev/null; SU press Enter >/dev/null; sleep 1.0
 check "an unknown /word is intercepted, never sent" expect text "nonsense-command" --no-strict
+clear_composer
+
+echo "── line editing ─────────────────────────────────"
+# EVERY ONE OF THESE WAS DEAD ON THE REAL BINARY while the unit suite was green:
+# `app.rs` hand-rolled a raw `KeyCode` match that knew ^a/^e/home/end/backspace/
+# ←/→ and nothing else, so the word motions and the kills resolved to a command
+# and were dropped on the floor. The chords are in the binding table and printed
+# in the help overlay, which is exactly what made it a lie rather than a gap.
+clear_composer
+SU type "hello world there" >/dev/null; sleep 0.5
+SU press alt+b >/dev/null; sleep 0.3
+SU press alt+b >/dev/null; sleep 0.3
+SU type "MARK" >/dev/null; sleep 0.6
+check "⌥b moves a word back (twice), and typing lands there" \
+  expect text "hello MARKworld there"
+clear_composer
+
+SU type "alpha beta gamma" >/dev/null; sleep 0.5
+SU press ctrl+w >/dev/null; sleep 0.5
+check "^w deletes the word before the cursor"      expect text "gamma" --not
+check "^w leaves the rest of the line alone"       expect text "alpha beta"
+SU press alt+b >/dev/null; sleep 0.3
+SU type "<" >/dev/null; sleep 0.5
+check "⌥b lands inside what is left"               expect text "alpha <beta"
+clear_composer
+
+SU type "kill from here to the end" >/dev/null; sleep 0.5
+SU press alt+b >/dev/null; sleep 0.3
+SU press ctrl+k >/dev/null; sleep 0.5
+check "^k kills to end of line"                    expect text "end" --not
+check "^k keeps everything before the cursor"      expect text "kill from here to the"
+SU press ctrl+u >/dev/null; sleep 0.5
+check "^u kills the whole line"                    expect text "type a message"
+
+# ↑/↓ walk the DRAFT's lines once there is more than one — and a multi-line
+# draft needs `^j`, which was itself unreachable: ratatui enables raw mode on
+# crossterm 0.28 while this crate's 0.29 parses the bytes, and 0.29 therefore
+# decoded 0x0a as Enter and SENT the message instead of inserting a newline.
+SU type "first line" >/dev/null; sleep 0.4
+SU press ctrl+j >/dev/null; sleep 0.5
+SU type "second line" >/dev/null; sleep 0.6
+check "^j inserts a newline instead of sending"    expect text "first line"
+check "the second line is its own row"             expect text "second line"
+SU press Up >/dev/null; sleep 0.4
+SU type "<UP>" >/dev/null; sleep 0.6
+check "↑ moves to the line above in a multiline draft" expect text "first line<UP>"
+SU press Down >/dev/null; sleep 0.4
+SU type "<DOWN>" >/dev/null; sleep 0.6
+check "↓ moves back down"                          expect text "second line<DOWN>"
+clear_composer
+
+echo "── drag selection ───────────────────────────────"
+# `self.sel` was tracked by the mouse handler and the copy worked, but NO render
+# path read it — so a drag highlighted nothing and the cells under it reported
+# the untouched background the whole time. The copy passing is not the feature.
+SU type "highlight me please" >/dev/null; sleep 0.6
+COMPOSER_Y=$(SU text 2>/dev/null | grep -n "highlight me please" | head -1 | cut -d: -f1)
+if [ -n "$COMPOSER_Y" ]; then
+  Y0=$((COMPOSER_Y - 1))          # `text` is 1-based; `cells` is 0-based
+  PLAIN=$(cell_bg 4 "$Y0")
+  check_cmd "the dragged span is not highlighted before the drag" \
+    test "$PLAIN" != "#4ec98f"
+  sgr_down 5 "$COMPOSER_Y"; sleep 0.4
+  sgr_drag 20 "$COMPOSER_Y"; sleep 0.7
+  INSIDE=$(cell_bg 4 "$Y0")
+  OUTSIDE=$(cell_bg 20 "$Y0")
+  check_cmd "a cell inside the drag is repainted mid-drag" \
+    test "$INSIDE" != "$PLAIN"
+  check_cmd "the highlight is the accent, not a no-op restyle" \
+    test "$INSIDE" = "#4ec98f"
+  check_cmd "the cell past the drag is untouched" \
+    test "$OUTSIDE" = "$PLAIN"
+  check "the highlight recolours the text, never overwrites it" \
+    expect text "highlight me please"
+  sgr_up 20 "$COMPOSER_Y"; sleep 0.8
+  AFTER=$(cell_bg 4 "$Y0")
+  check_cmd "the highlight clears when the selection is dropped" \
+    test "$AFTER" = "$PLAIN"
+  check "a real drag copies on release and says how much" \
+    expect text "copied" --no-strict
+else
+  printf 'FAIL  the drag target never rendered\n'; fail=$((fail + 1))
+fi
 clear_composer
 
 echo "── background shell ─────────────────────────────"
