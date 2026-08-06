@@ -35,8 +35,12 @@ pub struct ComposerProps<'a> {
     pub max_rows: usize,
     /// Dim autocomplete preview appended after the input. Wave 1: always `""`.
     pub ghost: &'a str,
-    /// Image attachment names. Wave 1: always empty (no image paste).
+    /// Image attachment names.
     pub attachments: &'a [String],
+    /// Which attachment row is selected, if any. ↑/↓ move it on an empty
+    /// draft and Backspace deletes it — so the row has to SAY which one is
+    /// about to go (App.tsx::delete.back).
+    pub attachment_sel: Option<usize>,
     /// The surface that has the keyboard INSTEAD of this one, e.g. `"the tree"`.
     /// None means the composer is focused.
     pub keyboard_owner: Option<&'a str>,
@@ -356,12 +360,26 @@ pub fn render_composer(p: &ComposerProps, area: Rect, buf: &mut Buffer) {
         lines.push(Line::from(spans));
     }
     // Images only — a held paste has no row of its own: its mark sits in the draft.
-    for name in p.attachments {
+    for (i, name) in p.attachments.iter().enumerate() {
+        let selected = p.attachment_sel == Some(i);
+        // The cursor is the whole affordance: without it, Backspace deletes
+        // something the screen never said was chosen.
         lines.push(Line::from(vec![
-            Span::raw("  "),
+            Span::styled(
+                if selected { "❯ " } else { "  " },
+                Style::default().fg(super::accent()),
+            ),
             Span::styled(
                 format!("[image: {name}]"),
-                Style::default().fg(super::info()),
+                if selected {
+                    Style::default().fg(super::accent()).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(super::info())
+                },
+            ),
+            Span::styled(
+                if selected { "  ⌫ removes" } else { "" },
+                Style::default().fg(super::muted()),
             ),
         ]));
     }
@@ -430,6 +448,7 @@ mod tests {
             max_rows: 6,
             ghost: "",
             attachments: &[],
+            attachment_sel: None,
             keyboard_owner: None,
         }
     }

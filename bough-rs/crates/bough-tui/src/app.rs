@@ -815,6 +815,10 @@ pub struct App<T: Transport> {
     pastes: Vec<String>,
     /// Images queued under the composer for the next message.
     attachments: Vec<bough_core::schema::requests::PostMessageImage>,
+    /// Which attachment ↑/↓ have walked to, and therefore which one ⌫ deletes.
+    /// `None` = none selected, which is where every arrival and every removal
+    /// that empties the list lands (App.tsx::attachmentSel).
+    attachment_sel: Option<usize>,
     /// Every line SENT from this screen, sigil and all, for ↑/↓ recall. One
     /// ring, so `!git status` is re-run with ↑⏎ like anything else.
     sent_history: Vec<String>,
@@ -964,6 +968,7 @@ impl<T: Transport> App<T> {
             completion_sel: 0,
             pastes: Vec::new(),
             attachments: Vec::new(),
+            attachment_sel: None,
             sent_history: Vec::new(),
             hist_at: None,
             shell_session: false,
@@ -1439,6 +1444,7 @@ impl<T: Transport> App<T> {
                 // path that creates a conversation: `submit` has already taken
                 // the queue with the message.
                 self.attachments.clear();
+                self.attachment_sel = None;
                 self.pastes.clear();
                 self.panel.current_id = Some(id.clone());
                 self.session_id = Some(id);
@@ -2298,6 +2304,11 @@ impl<T: Transport> App<T> {
             // a drilled-into subagent was a room with no door. The fact is the
             // meter's own: there is an origin to go back to.
             in_subagent: self.session.as_ref().is_some_and(|s| s.origin_id.is_some()),
+            // ↑/↓ walk the ATTACHMENT rows before the history ring when there
+            // are any and the draft is empty. Left at the default `false` the
+            // two rows the table declares could never fire, so an image could
+            // be added and never selected — and therefore never deleted.
+            has_attachments: !self.attachments.is_empty(),
             ..Default::default()
         };
         lookup(&ctx, &crate::keys::chord_of(&input, flags))
@@ -2538,6 +2549,31 @@ impl<T: Transport> App<T> {
                 Command::HelpOpen => {
                     self.help_open = true;
                     self.help_off = 0;
+                    true
+                }
+                // ↑/↓ walk the attachment rows when the draft is empty and
+                // there are any — guarded in the table, so these only arrive
+                // when both hold. `up` from nothing selected stays nothing (it
+                // falls through to the history ring below it in the table);
+                // `down` from nothing selects the first. Verbatim from
+                // App.tsx::attachment.up/down.
+                Command::AttachmentUp => {
+                    self.attachment_sel = match self.attachment_sel {
+                        None | Some(0) => None,
+                        Some(at) => Some(at - 1),
+                    };
+                    true
+                }
+                Command::AttachmentDown => {
+                    let total = self.attachments.len();
+                    self.attachment_sel = if total == 0 {
+                        None
+                    } else {
+                        Some(match self.attachment_sel {
+                            None => 0,
+                            Some(at) => (at + 1).min(total - 1),
+                        })
+                    };
                     true
                 }
                 // `^e`: every tool call and every thinking block at once. The
@@ -2998,6 +3034,18 @@ impl<T: Transport> App<T> {
     /// scrolls).
     fn on_edit_command(&mut self, command: Command) -> bool {
         use crate::keys::edit_line;
+        // ⌫ ON AN EMPTY DRAFT WITH AN IMAGE SELECTED DELETES THE IMAGE, and
+        // must be answered before the line editor sees it: `edit_line` on an
+        // empty draft is a no-op that still reports it handled the key, so
+        // routing this through it silently swallowed the only way to remove an
+        // attachment (App.tsx puts the same branch ahead of its own editLine).
+        if command == Command::DeleteBack
+            && self.draft.is_empty()
+            && self.attachment_sel.is_some()
+        {
+            self.delete_back();
+            return true;
+        }
         // The editing subset, named exhaustively rather than inferred: a new
         // command must be added here deliberately, not silently swallowed by a
         // catch-all that would eat `Command::SessionNew` as a no-op edit.
@@ -3113,6 +3161,22 @@ impl<T: Transport> App<T> {
     }
 
     fn delete_back(&mut self) {
+        // IMAGES ONLY, and not by omission: this arm needs an EMPTY draft, and
+        // a held paste that is still in the message has its mark IN the draft —
+        // so the only rows reachable here are the image ones. A paste is
+        // removed by deleting its mark, which is ordinary editing and needs no
+        // branch (paste.rs / App.tsx::delete.back).
+        if self.draft.is_empty() {
+            if let Some(selected) = self.attachment_sel {
+                if selected < self.attachments.len() {
+                    self.attachments.remove(selected);
+                    let left = self.attachments.len();
+                    self.attachment_sel = (left > 0).then(|| selected.min(left - 1));
+                    return;
+                }
+                self.attachment_sel = None;
+            }
+        }
         if self.cursor == 0 {
             return;
         }
@@ -3206,6 +3270,7 @@ impl<T: Transport> App<T> {
         // for. An image queued for one thread and silently sent to the next is
         // the composer keeping something the user cannot see it keeping.
         self.attachments.clear();
+        self.attachment_sel = None;
         self.pastes.clear();
         self.session_id = None;
         self.shell_session = false;
@@ -3316,6 +3381,7 @@ impl<T: Transport> App<T> {
         // did; a paste whose mark was deleted is dropped (`paste.rs`).
         let message = expand_pastes(&text, &self.pastes);
         let images = std::mem::take(&mut self.attachments);
+        self.attachment_sel = None;
         self.pastes.clear();
         // The take-back window opens here, and it SAYS so: three seconds that
         // nothing announces is a gesture only the keymap knows about.
@@ -4048,6 +4114,7 @@ impl<T: Transport> App<T> {
                         &self.ghost
                     },
                     attachments: &attachment_names,
+                    attachment_sel: self.attachment_sel,
                     // While the panel is open the keyboard is ITS own, and the box
                     // says so: a block cursor is the strongest claim a terminal UI
                     // can make about where typing goes.
@@ -8655,8 +8722,6 @@ mod tests {
         "SendQueue",
         "Newline",
         "DraftClear",
-        "AttachmentUp",
-        "AttachmentDown",
         "CompleteAccept",
         "CompletePrev",
         "CompleteNext",
@@ -8789,6 +8854,80 @@ mod tests {
         app.apply(key(KeyCode::Up), 1);
         assert_eq!(app.draft, "hello");
         assert_eq!(app.cursor, 5, "cursor did not move");
+    }
+
+    fn app_with_images(names: &[&str]) -> App<impl FnMut(Effect)> {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 100, 24);
+        for name in names {
+            app.attachments
+                .push(bough_core::schema::requests::PostMessageImage {
+                    path: (*name).to_string(),
+                    media_type: "image/png".to_string(),
+                    name: (*name).to_string(),
+                    size: 1,
+                });
+        }
+        app
+    }
+
+    fn image_names<T: FnMut(Effect)>(app: &App<T>) -> Vec<&str> {
+        app.attachments.iter().map(|a| a.name.as_str()).collect()
+    }
+
+    /// An image can be ADDED and then REMOVED — driven with the real keys, so
+    /// this covers the guard as well as the handler.
+    ///
+    /// `AttachmentUp`/`AttachmentDown` sat on the composer allowlist claiming
+    /// the raw key path answered them (it did not), AND `has_attachments` was
+    /// never fed into `KeyContext`, so the two table rows could not fire even
+    /// once something handled them. An image was addable and undeletable: `^n`
+    /// or a session switch was the only way to be rid of one.
+    #[test]
+    fn attachments_can_be_walked_to_and_deleted() {
+        let mut app = app_with_images(&["one.png", "two.png", "three.png"]);
+        assert_eq!(app.attachment_sel, None, "nothing is selected on arrival");
+
+        app.apply(key(KeyCode::Down), 0);
+        assert_eq!(app.attachment_sel, Some(0), "↓ selects the first");
+        app.apply(key(KeyCode::Down), 0);
+        app.apply(key(KeyCode::Down), 0);
+        app.apply(key(KeyCode::Down), 0);
+        assert_eq!(app.attachment_sel, Some(2), "↓ clamps at the last row");
+        app.apply(key(KeyCode::Up), 0);
+        assert_eq!(app.attachment_sel, Some(1));
+        app.apply(key(KeyCode::Up), 0);
+        app.apply(key(KeyCode::Up), 0);
+        assert_eq!(app.attachment_sel, None, "↑ off the top deselects");
+
+        app.apply(key(KeyCode::Down), 0);
+        app.apply(key(KeyCode::Down), 0);
+        assert_eq!(app.attachment_sel, Some(1));
+        app.apply(key(KeyCode::Backspace), 0);
+        assert_eq!(
+            image_names(&app),
+            vec!["one.png", "three.png"],
+            "the SELECTED image is the one that goes"
+        );
+        assert_eq!(app.attachment_sel, Some(1));
+        app.apply(key(KeyCode::Backspace), 0);
+        assert_eq!(app.attachment_sel, Some(0), "the selection clamps down");
+        app.apply(key(KeyCode::Backspace), 0);
+        assert!(app.attachments.is_empty());
+        assert_eq!(app.attachment_sel, None, "an empty list selects nothing");
+    }
+
+    /// ⌫ with text in the draft is ordinary editing, never a delete of an
+    /// image the user cannot see is selected.
+    #[test]
+    fn backspace_with_a_draft_edits_text_and_leaves_attachments_alone() {
+        let mut app = app_with_images(&["keep.png"]);
+        app.apply(key(KeyCode::Down), 0);
+        app.apply(key(KeyCode::Char('h')), 0);
+        app.apply(key(KeyCode::Char('i')), 0);
+        app.apply(key(KeyCode::Backspace), 0);
+        assert_eq!(app.draft, "h", "the draft is what a backspace edits");
+        assert_eq!(app.attachments.len(), 1, "the image survives");
     }
 
     #[test]
