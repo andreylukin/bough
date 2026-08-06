@@ -98,8 +98,8 @@ pub fn routes() -> Vec<Route> {
         route("GET", "/files", fs::list_files_for_workspace()),
         route("GET", "/fs/entries", fs::list_dir_entries_h()),
         route("GET", "/fs/branch", fs::branch()),
-        route("GET", "/workflow-settings", workflows::workflow_not_yet()),
-        route("PUT", "/workflow-settings", workflows::workflow_not_yet()),
+        route("GET", "/workflow-settings", workflows::get_workflow_settings()),
+        route("PUT", "/workflow-settings", workflows::put_workflow_settings()),
         // MCP + OAuth (wave-3 subsystem; GET answers the empty document)
         route("GET", mcp_routes::CALLBACK_PATH, mcp_routes::mcp_not_yet()),
         route("GET", "/mcp/servers/:name/auth", mcp_routes::mcp_not_yet()),
@@ -134,7 +134,7 @@ pub fn routes() -> Vec<Route> {
         // composer ghost text
         route("POST", "/sessions/:id/ghost", ghost::ghost_text()),
         // skills
-        route("GET", "/skills", skills::list_skills()),
+        route("GET", "/skills", skills::list_skills_h()),
         route("GET", "/skills/:name", skills::get_skill()),
         // clipboard images
         route("POST", "/attachments", attachments::upload_attachment()),

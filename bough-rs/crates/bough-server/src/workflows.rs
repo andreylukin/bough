@@ -82,11 +82,194 @@ pub fn saved_workflow_not_found() -> Handler {
     })
 }
 
-/// `PUT /saved-workflows/:name`, `GET|PUT /workflow-settings` — 400 "not yet".
+/// `PUT /saved-workflows/:name` — 400 "not yet".
 pub fn workflow_not_yet() -> Handler {
     handler(|_req, _ctx, _params| async move {
         Err::<axum::response::Response, _>(not_yet())
     })
+}
+
+// ---- workflow settings ------------------------------------------------------
+//
+// These are CONSTANTS and environment reads, not the workflow engine: the size
+// guideline, the thresholds derived from it, and the advice sentence. Gating
+// them behind "not yet ported" was wrong twice over — a GET answering 400 is
+// the wrong status for a well-formed request, and the TUI reads the guideline
+// to label a run it is perfectly able to display. Engine-backed routes stay
+// stubbed; this one answers for real (parity.sh pins it against the TS server).
+
+/// `GUIDELINE_TARGET` (report.ts:355). `unrestricted` is `Infinity` in TS,
+/// which serializes as `null` — the route emits `null` for it, hence `Option`.
+fn guideline_target(guideline: &str) -> Option<i64> {
+    match guideline {
+        "small" => Some(5),
+        "large" => Some(50),
+        "unrestricted" => None,
+        _ => Some(15), // medium, the default
+    }
+}
+
+/// The stored setting, else `BOUGH_WORKFLOW_SIZE`, else `medium`. Read on every
+/// call, never cached: its readers are view functions a route renders per
+/// request, and a cache here would trade a staleness bug for nothing.
+fn active_guideline() -> String {
+    let parse = |raw: &str| -> Option<String> {
+        let word = raw.trim();
+        matches!(word, "small" | "medium" | "large" | "unrestricted")
+            .then(|| word.to_string())
+    };
+    let stored = std::fs::read_to_string(bough_core::paths::workflows_dir().join("size-guideline"))
+        .ok()
+        .and_then(|raw| parse(&raw));
+    stored
+        .or_else(|| std::env::var("BOUGH_WORKFLOW_SIZE").ok().as_deref().and_then(parse))
+        .unwrap_or_else(|| "medium".to_string())
+}
+
+/// The sentence handed to whoever writes the script (report.ts::guidelineAdvice),
+/// verbatim — phrased as a target with an explicit override clause, because a
+/// guideline the model reads as a hard cap under-fans a job that needs 200 agents.
+fn guideline_advice(guideline: &str) -> String {
+    let target = guideline_target(guideline)
+        .map_or_else(|| "Infinity".to_string(), |n| n.to_string());
+    format!(
+        "Workflow size guideline: {guideline} — aim for fewer than {target} agents in a \
+         generated script. This is advice, not a cap: if the request plainly needs a wider \
+         fan-out, write it and say why."
+    )
+}
+
+/// `BOUGH_WORKFLOW_TOKEN_WARN`, else 1_000_000 (report.ts::tokenWarnThreshold).
+fn token_warn_threshold() -> i64 {
+    std::env::var("BOUGH_WORKFLOW_TOKEN_WARN")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|n| n.is_finite() && *n > 0.0)
+        .map_or(1_000_000, |n| n as i64)
+}
+
+/// Up to 16 at once, fewer on a small machine: two cores are left for
+/// everything that is NOT a workflow agent (the turn runner, the program
+/// worker, the subagent turns those spawn). `BOUGH_WORKFLOW_CONCURRENCY` moves it.
+fn workflow_concurrency() -> i64 {
+    if let Some(n) = std::env::var("BOUGH_WORKFLOW_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|n| n.is_finite() && *n > 0.0)
+    {
+        return n as i64;
+    }
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get() as i64);
+    (cores - 2).clamp(1, 16)
+}
+
+/// A runaway-loop backstop set far above any real workflow (run.ts:163).
+const MAX_AGENTS_PER_RUN: i64 = 1000;
+
+/// `GET /workflow-settings` — the size guideline and the thresholds derived
+/// from it. `advice` rides along because a client that shows the setting
+/// without it turns a guideline into a mystery number.
+pub fn get_workflow_settings() -> Handler {
+    handler(|_req, _ctx, _params| async move {
+        let guideline = active_guideline();
+        Ok(json_res(
+            &json!({
+                "sizeGuideline": guideline,
+                "target": guideline_target(&guideline),
+                "advice": guideline_advice(&guideline),
+                "tokenWarnThreshold": token_warn_threshold(),
+                "concurrency": workflow_concurrency(),
+                "maxAgentsPerRun": MAX_AGENTS_PER_RUN,
+                "advisory": true,
+            }),
+            200,
+        ))
+    })
+}
+
+/// `PUT /workflow-settings` — persist the guideline and echo the same shape
+/// back, so a client needs no second request to refresh what it just changed.
+pub fn put_workflow_settings() -> Handler {
+    handler(|req, _ctx, _params| async move {
+        let body: serde_json::Value = crate::http::parse_body(req, None).await?;
+        let obj = body.as_object().ok_or_else(|| BoughError::bad_request("expected an object"))?;
+        if obj.len() != 1 || !obj.contains_key("sizeGuideline") {
+            return Err(BoughError::bad_request(
+                "expected { sizeGuideline } and nothing else",
+            ));
+        }
+        let value = obj["sizeGuideline"].as_str().unwrap_or_default();
+        if guideline_target(value).is_none() && value != "unrestricted" {
+            return Err(BoughError::bad_request(format!(
+                "unknown size guideline \"{value}\" — one of small, medium, large, unrestricted",
+            )));
+        }
+        let dir = bough_core::paths::workflows_dir();
+        std::fs::create_dir_all(&dir)
+            .and_then(|()| std::fs::write(dir.join("size-guideline"), format!("{value}\n")))
+            .map_err(|e| BoughError::bad_request(format!("could not store the guideline: {e}")))?;
+        Ok(json_res(
+            &json!({
+                "sizeGuideline": value,
+                "target": guideline_target(value),
+                "advice": guideline_advice(value),
+                "tokenWarnThreshold": token_warn_threshold(),
+                "concurrency": workflow_concurrency(),
+                "maxAgentsPerRun": MAX_AGENTS_PER_RUN,
+                "advisory": true,
+            }),
+            200,
+        ))
+    })
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+    use crate::app::{create_handler, CreateHandlerOptions};
+    use crate::http::testutil;
+
+    /// The shape `workflows.ts::getWorkflowSettingsH` returns, key for key —
+    /// parity.sh diffs this route against the live TS server.
+    #[tokio::test]
+    async fn the_settings_route_answers_the_guideline_and_its_derived_thresholds() {
+        let fx = testutil::fixture();
+        let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
+        let res = call.call(testutil::get("/workflow-settings")).await;
+        assert_eq!(res.status(), 200, "a well-formed GET is never a 400");
+        let body = testutil::body_json(res).await;
+        for key in [
+            "sizeGuideline",
+            "target",
+            "advice",
+            "tokenWarnThreshold",
+            "concurrency",
+            "maxAgentsPerRun",
+            "advisory",
+        ] {
+            assert!(body.get(key).is_some(), "missing {key}: {body}");
+        }
+        assert_eq!(body["advisory"], true, "the guideline is advice, never a cap");
+        assert_eq!(body["maxAgentsPerRun"], 1000);
+        let advice = body["advice"].as_str().unwrap();
+        assert!(advice.starts_with("Workflow size guideline: "), "{advice}");
+        assert!(advice.contains("advice, not a cap"), "{advice}");
+    }
+
+    #[test]
+    fn the_guideline_targets_match_the_ts_table_and_unrestricted_is_null() {
+        assert_eq!(guideline_target("small"), Some(5));
+        assert_eq!(guideline_target("medium"), Some(15));
+        assert_eq!(guideline_target("large"), Some(50));
+        // `Infinity` is not representable in JSON; TS emits null, so do we.
+        assert_eq!(guideline_target("unrestricted"), None);
+    }
+
+    #[test]
+    fn concurrency_leaves_two_cores_for_everything_that_is_not_a_workflow_agent() {
+        let n = workflow_concurrency();
+        assert!((1..=16).contains(&n), "concurrency out of range: {n}");
+    }
 }
 
 #[cfg(test)]
@@ -144,15 +327,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_and_settings_are_400_not_yet_and_saved_reads_404() {
+    async fn starting_a_run_is_400_not_yet_and_saved_reads_404() {
         let fx = testutil::fixture();
         let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
         let res = call
             .call(testutil::req("POST", "/workflows", Some(j!({"sessionId": "s", "script": "x"}))))
             .await;
         assert_eq!(res.status(), 400);
-        let res = call.call(testutil::get("/workflow-settings")).await;
-        assert_eq!(res.status(), 400);
+        // `/workflow-settings` is NOT in this list: it is constants and env
+        // reads, not the engine, and it answers for real (see settings_tests).
         let res = call.call(testutil::get("/saved-workflows/nightly")).await;
         assert_eq!(res.status(), 404);
         assert_eq!(

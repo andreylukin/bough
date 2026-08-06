@@ -1177,7 +1177,8 @@ mod tests {
         let updated: Vec<_> =
             events.iter().filter(|e| e.r#type == EventType::SessionUpdated).collect();
         assert_eq!(updated.len(), 1);
-        assert_eq!(updated[0].data.get("draft"), None, "the announced row carries no draft");
+        // Nullish, not absent — sessions.test.ts:512 asserts `draft ?? null`.
+        assert!(updated[0].data["draft"].is_null(), "the announced row carries no draft");
     }
 
     #[tokio::test]
@@ -1374,9 +1375,11 @@ mod tests {
         assert_eq!(untouched["model"], "openai:gpt-x");
         assert_eq!(untouched["effort"], "high");
 
-        // An EXPLICIT null clears it — back to the global default.
+        // An EXPLICIT null clears it — back to the global default. "Cleared"
+        // is nullish, not key-absent: `toSession` always emits the key (as
+        // `null`), and sessions.test.ts:694 asserts `cleared.model ?? null`.
         let cleared = patch(j!({"model": null})).await;
-        assert_eq!(cleared.get("model"), None);
+        assert!(cleared["model"].is_null());
         assert_eq!(cleared["effort"], "high", "clearing one override must not clear the other");
     }
 

@@ -176,6 +176,13 @@ pub struct Message {
 /// One conversation. Note what is absent: no archive, deprecate, hide or purge
 /// field. Visibility is derived from `kind` + `originId`. Parsing STRIPS unknown
 /// keys (`archivedAt` must not survive, must not reject).
+///
+/// **Every optional serializes, as `null` when empty** — no `skip_serializing_if`
+/// on this struct. `db.ts::toSession` states the invariant: "Absent optionals
+/// come back as `null`, never `undefined`: one shape per row." Omitting the key
+/// instead would give a session row two wire shapes depending on its contents,
+/// and the parity harness diffs this struct against the TS server field by
+/// field. `#[serde(default)]` keeps an absent key parsing as `None` on input.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
@@ -187,37 +194,37 @@ pub struct Session {
     /// A subagent has `parentId: null` — a fresh, task-only thread.
     pub parent_id: Option<String>,
     /// Lineage edge for the tree view: what this branched from, at which message.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub origin_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub origin_message_id: Option<String>,
     /// The checkout the session operates on, edited in place.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub workspace: Option<String>,
     /// The project directory the session was created on; never rewritten.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub origin_dir: Option<String>,
     /// The git sha the session started from. Absent for a non-git workspace.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub base: Option<String>,
     /// Per-session pins; absent = the global default.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub effort: Option<String>,
     /// Prefilled composer text, set by handoff. Cleared server-side by the first post.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub draft: Option<String>,
     /// GAUGE — last round only; the client derives cache warmth from
     /// `lastLlmAt` + TTL, not a stored boolean.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub context_tokens: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub cached_tokens: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub last_llm_at: Option<i64>,
     /// Whether the delegated TURN errored; no acceptance gate.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub outcome_ok: Option<bool>,
 }
 
