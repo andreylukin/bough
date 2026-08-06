@@ -5,7 +5,7 @@ RS_DIR := bough-rs
 SMOKE_PORT ?= 43219
 
 .PHONY: help check test dev serve tui gates \
-        rs-check rs-build rs-test rs-lint rs-release rs-server rs-tui rs-smoke rs-parity rs-event-parity rs-gates all
+        rs-check rs-build rs-test rs-lint rs-release rs-server rs-tui rs-smoke rs-parity rs-event-parity rs-cutover rs-gates all
 
 help: ## list targets
 	@grep -E '^[a-z][a-zA-Z_-]*:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -58,6 +58,9 @@ rs-parity: rs-release ## diff the TS and Rust servers route by route (status + J
 
 rs-event-parity: rs-release ## diff the SSE event streams of both servers over one live turn
 	$(RS_DIR)/event-parity.sh
+
+rs-cutover: rs-release ## rehearse serving the real ~/.bough database (on copies, never the live file)
+	$(RS_DIR)/cutover-check.sh
 
 rs-gates: rs-build rs-test ## the Rust pre-commit gates
 
