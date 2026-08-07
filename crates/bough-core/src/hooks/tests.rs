@@ -2,6 +2,7 @@
 //! in a temp directory — the same path production takes, minus `~/.bough`.
 
 use super::*;
+use std::path::PathBuf;
 
 struct Hooks {
     dir: PathBuf,
@@ -32,9 +33,43 @@ impl Drop for Hooks {
 fn dispatch(pattern: &str, data: serde_json::Value) -> HookDispatch {
     HookDispatch {
         session_id: "s1".into(),
+        workspace: String::new(),
         pattern: pattern.into(),
         data,
     }
+}
+
+fn in_workspace(pattern: &str, workspace: &Path, data: serde_json::Value) -> HookDispatch {
+    HookDispatch {
+        workspace: workspace.to_string_lossy().into_owned(),
+        ..dispatch(pattern, data)
+    }
+}
+
+/// The bundled adapters, loaded from the repository rather than from a
+/// materialized copy: these tests are about the Lua that ships, and reading it
+/// where it lives means a broken edit fails here rather than at someone's
+/// install.
+fn bundled(name: &str) -> Hooks {
+    let src = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("hooks")
+            .join(name),
+    )
+    .expect("the bundled hook exists");
+    Hooks::new(&[(name, &src)])
+}
+
+/// A workspace with files in it. Paths are relative; parents are created.
+fn workspace(files: &[(&str, &str)]) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("bough-ws-{}", uuid::Uuid::new_v4()));
+    for (rel, body) in files {
+        let path = dir.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
 }
 
 #[test]
@@ -510,4 +545,220 @@ fn json_and_fs_follow_the_value_err_pair_convention() {
         "{:?}",
         out.errors
     );
+}
+
+// ---------------------------------------------------------------------------
+// The bundled adapters. Driven over real files, through the real interpreter —
+// what is asserted is what a Claude Code or Codex user would actually get.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_claude_code_adapter_injects_claude_md_and_the_rules_directory() {
+    let ws = workspace(&[
+        ("CLAUDE.md", "project rules here"),
+        (".claude/rules/style.md", "two spaces"),
+        (".claude/rules/notes.txt", "not markdown"),
+    ]);
+    let out = bundled("claude-code.lua").host().dispatch(
+        HookEvent::TurnStart,
+        in_workspace("s1", &ws, serde_json::json!({ "prompt": "hi" })),
+    );
+    let context = out.context.join("\n");
+    assert!(context.contains("project rules here"), "{context}");
+    assert!(context.contains("two spaces"), "{context}");
+    assert!(
+        !context.contains("not markdown"),
+        "only .md files are rules: {context}"
+    );
+    // Each file is labelled, because a model handed four merged documents with
+    // no headings cannot tell which rule came from where.
+    assert!(context.contains("## CLAUDE.md"), "{context}");
+    assert!(context.contains(".claude/rules/style.md"), "{context}");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn a_claude_code_pretooluse_hook_blocks_with_exit_2_and_its_stderr_is_the_reason() {
+    let ws = workspace(&[(
+        ".claude/settings.json",
+        r#"{ "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [
+             { "type": "command", "command": "echo 'no rm here' >&2; exit 2" }
+           ] } ] } }"#,
+    )]);
+    let out = bundled("claude-code.lua").host().dispatch(
+        HookEvent::PreTool,
+        in_workspace(
+            "bash",
+            &ws,
+            serde_json::json!({ "input": { "command": "rm -rf /" } }),
+        ),
+    );
+    assert_eq!(out.decision, Some(ToolDecision::Deny), "{out:?}");
+    assert!(
+        out.reason
+            .as_deref()
+            .is_some_and(|r| r.contains("no rm here")),
+        "the hook's stderr is what the model reads: {:?}",
+        out.reason
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn a_claude_code_hook_can_rewrite_the_command_through_its_own_json_shape() {
+    let ws = workspace(&[(
+        ".claude/settings.json",
+        r#"{ "hooks": { "PreToolUse": [ { "hooks": [ { "type": "command",
+             "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"updatedInput\":{\"command\":\"ls --color=never\"},\"additionalContext\":\"rewritten by a hook\"}}'"
+           } ] } ] } }"#,
+    )]);
+    let out = bundled("claude-code.lua").host().dispatch(
+        HookEvent::PreTool,
+        in_workspace(
+            "bash",
+            &ws,
+            serde_json::json!({ "input": { "command": "ls" } }),
+        ),
+    );
+    assert_eq!(
+        out.input,
+        Some(serde_json::json!({ "command": "ls --color=never" })),
+        "{out:?}"
+    );
+    assert_eq!(out.context, ["rewritten by a hook"]);
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn a_claude_code_matcher_that_names_another_tool_does_not_fire_on_bash() {
+    let ws = workspace(&[(
+        ".claude/settings.json",
+        r#"{ "hooks": { "PreToolUse": [ { "matcher": "Write", "hooks": [
+             { "type": "command", "command": "exit 2" }
+           ] } ] } }"#,
+    )]);
+    let out = bundled("claude-code.lua").host().dispatch(
+        HookEvent::PreTool,
+        in_workspace(
+            "bash",
+            &ws,
+            serde_json::json!({ "input": { "command": "ls" } }),
+        ),
+    );
+    assert_eq!(
+        out.decision, None,
+        "a Write matcher is not a Bash hook: {out:?}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn a_missing_or_malformed_settings_file_costs_nothing() {
+    let ws = workspace(&[(".claude/settings.json", "{ not json")]);
+    let out = bundled("claude-code.lua").host().dispatch(
+        HookEvent::PreTool,
+        in_workspace(
+            "bash",
+            &ws,
+            serde_json::json!({ "input": { "command": "ls" } }),
+        ),
+    );
+    assert!(out.decision.is_none());
+    assert!(
+        out.errors.is_empty(),
+        "a broken settings file is a warning, not a failed dispatch: {:?}",
+        out.errors
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn the_codex_adapter_takes_the_nested_agents_files_and_leaves_the_root_to_bough() {
+    let ws = workspace(&[
+        ("AGENTS.md", "the root file bough already reads"),
+        ("crates/AGENTS.md", "rules for the crates directory"),
+    ]);
+    let out = bundled("codex.lua").host().dispatch(
+        HookEvent::TurnStart,
+        in_workspace("s1", &ws, serde_json::json!({ "prompt": "hi" })),
+    );
+    let context = out.context.join("\n");
+    assert!(
+        context.contains("rules for the crates directory"),
+        "{context}"
+    );
+    assert!(
+        !context.contains("the root file bough already reads"),
+        "the root AGENTS.md is native; repeating it is not emphasis: {context}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn the_codex_notify_array_is_parsed_out_of_config_toml_and_nothing_else_is() {
+    // The parse is the risky part — a wrong read here would run the wrong
+    // program — so it is pinned directly through a hook that echoes it back.
+    let h = Hooks::new(&[(
+        "probe.lua",
+        r#"
+        local function notify_argv(text)
+          if text == nil then return nil end
+          local line = string.match(text, "\n%s*notify%s*=%s*(%b[])")
+            or string.match(text, "^%s*notify%s*=%s*(%b[])")
+          if line == nil then return nil end
+          local argv = {}
+          for item in string.gmatch(line, '"([^"]*)"') do table.insert(argv, item) end
+          if #argv == 0 then return nil end
+          return argv
+        end
+        bough.api.create_autocmd("TurnStart", {
+          callback = function(ev)
+            local argv = notify_argv(ev.data.toml)
+            bough.context(argv and table.concat(argv, "|") or "none")
+          end,
+        })
+        "#,
+    )]);
+    let host = h.host();
+    let probe = |toml: &str| {
+        host.dispatch(
+            HookEvent::TurnStart,
+            dispatch("s1", serde_json::json!({ "toml": toml })),
+        )
+        .context
+        .join("")
+    };
+    assert_eq!(
+        probe("model = \"o3\"\nnotify = [\"say\", \"done\"]\n"),
+        "say|done"
+    );
+    assert_eq!(probe("notify = [\"notify-send\"]"), "notify-send");
+    assert_eq!(probe("model = \"o3\""), "none", "no notify key, no program");
+    assert_eq!(
+        probe("# notify = [\"evil\"]\nmodel = \"o3\""),
+        "none",
+        "a commented-out notify is not a notify"
+    );
+}
+
+#[test]
+fn exec_runs_a_command_feeds_it_stdin_and_kills_one_that_overruns() {
+    let h = Hooks::new(&[(
+        "exec.lua",
+        r#"
+        bough.api.create_autocmd("TurnStart", {
+          callback = function()
+            local r = bough.exec("cat; echo ' :' $?", { stdin = "fed in" })
+            bough.context(r.stdout)
+            local _, err = bough.exec("sleep 30", { timeout_ms = 300 })
+            bough.context(err and "killed" or "not killed")
+          end,
+        })
+        "#,
+    )]);
+    let out = h
+        .host()
+        .dispatch(HookEvent::TurnStart, dispatch("s1", serde_json::json!({})));
+    assert!(out.context[0].starts_with("fed in"), "{:?}", out.context);
+    assert_eq!(out.context[1], "killed");
 }

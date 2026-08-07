@@ -208,6 +208,10 @@ impl HookOutcome {
 #[derive(Clone, Debug, Default)]
 pub struct HookDispatch {
     pub session_id: String,
+    /// The checkout this turn is editing. On every event as `ev.workspace`,
+    /// because a hook that reads project configuration cannot ask for it any
+    /// other way.
+    pub workspace: String,
     /// Matched against each autocmd's `pattern`. The tool name for the tool
     /// events, the session id otherwise.
     pub pattern: String,

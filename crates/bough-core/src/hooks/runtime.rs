@@ -248,7 +248,9 @@ fn install_api(lua: &Lua, state: Shared) -> mlua::Result<()> {
             for name in string_list(&event)? {
                 // Plugin-fired events run through the same path as host ones,
                 // so a plugin can test its own listeners.
-                let _ = fire_matching(lua, &reg, &name, &pattern, data.clone());
+                // A plugin-fired event inherits the workspace of nothing —
+                // it is not the host's dispatch — so it carries the empty string.
+                let _ = fire_matching(lua, &reg, &name, &pattern, data.clone(), "");
             }
             Ok(())
         })?,
@@ -291,6 +293,18 @@ fn install_api(lua: &Lua, state: Shared) -> mlua::Result<()> {
                 r.collected.stop = Some(reason.unwrap_or_else(|| "a hook stopped the turn".into()));
             }
             Ok(())
+        })?,
+    )?;
+
+    // ---- bough.home --------------------------------------------------------
+    // The one path a hook cannot derive from the event: adopting another
+    // harness means reading ITS user-level config, which lives under $HOME.
+    bough.set(
+        "home",
+        lua.create_function(|_, ()| {
+            Ok(dirs::home_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default())
         })?,
     )?;
 
@@ -366,10 +380,113 @@ fn install_api(lua: &Lua, state: Shared) -> mlua::Result<()> {
             }
         })?,
     )?;
+    fs.set(
+        "list",
+        lua.create_function(|lua, path: String| {
+            let mut names: Vec<String> = match std::fs::read_dir(&path) {
+                Ok(entries) => entries
+                    .flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect(),
+                Err(err) => return Ok((None, Some(err.to_string()))),
+            };
+            names.sort();
+            let table = lua.create_table()?;
+            for (i, name) in names.into_iter().enumerate() {
+                table.set(i + 1, name)?;
+            }
+            Ok((Some(table), None::<String>))
+        })?,
+    )?;
     bough.set("fs", fs)?;
+
+    // ---- bough.exec --------------------------------------------------------
+    //
+    // NOT A NEW PRIVILEGE: a hook is Lua running in-process as you, and could
+    // already read and write any file you can. What this adds is the ability
+    // to bridge — the other harnesses' hooks ARE shell commands, and adopting
+    // them means running them.
+    //
+    // It does add a way to BLOCK, which the Luau interrupt cannot cut through:
+    // an interrupt cannot preempt a syscall. So the timeout is enforced here,
+    // by killing the child, and it is bounded well under the dispatch budget.
+    bough.set(
+        "exec",
+        lua.create_function(|lua, (command, opts): (String, Option<Table>)| {
+            let stdin: Option<String> = opts
+                .as_ref()
+                .and_then(|o| o.get::<Option<String>>("stdin").ok().flatten());
+            let timeout_ms: u64 = opts
+                .as_ref()
+                .and_then(|o| o.get::<Option<u64>>("timeout_ms").ok().flatten())
+                .unwrap_or(3_000)
+                .min(10_000);
+            match run_command(&command, stdin.as_deref(), timeout_ms) {
+                Ok((code, out, err)) => {
+                    let table = lua.create_table()?;
+                    table.set("code", code)?;
+                    table.set("stdout", out)?;
+                    table.set("stderr", err)?;
+                    Ok((Some(table), None::<String>))
+                }
+                Err(message) => Ok((None, Some(message))),
+            }
+        })?,
+    )?;
 
     lua.globals().set("bough", bough)?;
     Ok(())
+}
+
+/// Run one shell command with a hard deadline, returning `(code, out, err)`.
+///
+/// The child is SIGKILLed on timeout. `sh -c` may leave grandchildren behind,
+/// which is the same gap `bash()` has and the same reason the budget here is
+/// small: this exists to run someone's `.claude/hooks/*.sh`, not to host work.
+fn run_command(
+    command: &str,
+    stdin: Option<&str>,
+    timeout_ms: u64,
+) -> Result<(i64, String, String), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start command: {e}"))?;
+    let pid = child.id() as i32;
+    if let Some(text) = stdin {
+        if let Some(mut pipe) = child.stdin.take() {
+            let _ = pipe.write_all(text.as_bytes());
+        }
+    } else {
+        drop(child.stdin.take());
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    match rx.recv_timeout(std::time::Duration::from_millis(timeout_ms)) {
+        Ok(Ok(out)) => Ok((
+            out.status.code().unwrap_or(-1) as i64,
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )),
+        Ok(Err(err)) => Err(err.to_string()),
+        Err(_) => {
+            // SAFETY: a plain kill(2) on a process group this call created.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+            Err(format!("command exceeded {timeout_ms}ms and was killed"))
+        }
+    }
 }
 
 /// `"TurnEnd"` or `{"TurnStart","TurnEnd"}`.
@@ -397,6 +514,7 @@ fn fire_matching(
     event: &str,
     pattern: &str,
     data: Value,
+    workspace: &str,
 ) -> HookOutcome {
     // The list is copied out before calling anything: a callback may register
     // or remove autocmds, and iterating the live list while it mutates is how
@@ -430,7 +548,7 @@ fn fire_matching(
             .map(|a| a.file.clone())
             .unwrap_or_default();
         let before = state.borrow().collected.mark();
-        let ev = match event_table(lua, id, event, pattern, data.clone()) {
+        let ev = match event_table(lua, id, event, pattern, data.clone(), workspace) {
             Ok(t) => t,
             Err(err) => {
                 outcome.errors.push(err.to_string());
@@ -478,12 +596,20 @@ fn fire_matching(
     outcome
 }
 
-fn event_table(lua: &Lua, id: u32, event: &str, pattern: &str, data: Value) -> mlua::Result<Table> {
+fn event_table(
+    lua: &Lua,
+    id: u32,
+    event: &str,
+    pattern: &str,
+    data: Value,
+    workspace: &str,
+) -> mlua::Result<Table> {
     let ev = lua.create_table()?;
     ev.set("id", id)?;
     ev.set("event", event)?;
     ev.set("match", pattern)?;
     ev.set("data", data)?;
+    ev.set("workspace", workspace)?;
     Ok(ev)
 }
 
@@ -549,7 +675,14 @@ fn merge_return(lua: &Lua, outcome: &mut HookOutcome, returned: Value) {
 fn run_event(lua: &Lua, state: &Shared, event: &HookEvent, dispatch: &HookDispatch) -> HookOutcome {
     state.borrow_mut().collected = Collected::default();
     let data = lua.to_value(&dispatch.data).unwrap_or(Value::Nil);
-    let mut outcome = fire_matching(lua, state, event.name(), &dispatch.pattern, data);
+    let mut outcome = fire_matching(
+        lua,
+        state,
+        event.name(),
+        &dispatch.pattern,
+        data,
+        &dispatch.workspace,
+    );
     // Whatever the callbacks pushed through the imperative verbs joins what
     // they returned. Both channels exist because some things are answers
     // (deny this command) and some are announcements (add this context).

@@ -481,12 +481,19 @@ fn with_project_rule_notes(result: ProgramResult, ctx: &TurnCtx) -> ProgramResul
 /// Context from a turn-boundary hook is announced the same way, because the
 /// prompt is already assembled by the time this runs; a prompt edit here would
 /// bust the volatile tier for the next turn (`prompt/assemble.rs`).
-fn apply_turn_hooks(app: &AppCtx, session_id: &str, event: HookEvent, data: serde_json::Value) {
+fn apply_turn_hooks(
+    app: &AppCtx,
+    session_id: &str,
+    workspace: &str,
+    event: HookEvent,
+    data: serde_json::Value,
+) {
     let Some(outcome) = crate::hooks::fire_on(
         Some(&app.bus),
         event,
         HookDispatch {
             session_id: session_id.to_string(),
+            workspace: workspace.to_string(),
             pattern: session_id.to_string(),
             data,
         },
@@ -891,6 +898,8 @@ impl From<BoughError> for TurnFailure {
 struct PreparedTurn {
     db: SharedDb,
     bus: Arc<Bus>,
+    /// The checkout this turn edits, carried for the turn-boundary hooks.
+    workspace: String,
     /// Carried so the turn-boundary hooks can post an injected prompt through
     /// the same starter a user message uses (`agents/notes.rs`).
     app: AppCtx,
@@ -1090,6 +1099,7 @@ fn prepare_turn(
         HookEvent::TurnStart,
         HookDispatch {
             session_id: session_id.clone(),
+            workspace: workspace.clone(),
             pattern: session_id.clone(),
             data: serde_json::json!({
                 "prompt": crate::skills::invoking_text(std::slice::from_ref(message)),
@@ -1185,6 +1195,7 @@ fn prepare_turn(
 
     Ok(PreparedTurn {
         app,
+        workspace: workspace.clone(),
         db,
         bus,
         session_id,
@@ -1212,6 +1223,7 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
     let PreparedTurn {
         db,
         bus,
+        workspace,
         app,
         session_id,
         message_id,
@@ -1635,6 +1647,7 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
             apply_turn_hooks(
                 &app,
                 &session_id,
+                &workspace,
                 HookEvent::TurnEnd,
                 serde_json::json!({ "ok": true }),
             );
@@ -1728,6 +1741,7 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
             apply_turn_hooks(
                 &app,
                 &session_id,
+                &workspace,
                 HookEvent::TurnError,
                 serde_json::json!({ "error": friendly.clone(), "interrupted": interrupted }),
             );

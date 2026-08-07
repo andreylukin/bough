@@ -400,7 +400,13 @@ pub async fn bash(
     // The hook boundary, BEFORE anything is spawned: a hook may refuse the
     // command or rewrite it. Placed after the echo guard so a command already
     // known to be failing in a loop never reaches user code either.
-    let command = match pre_tool_hook(command, tags, &ctx.session_id, ctx.bus.as_ref()) {
+    let command = match pre_tool_hook(
+        command,
+        tags,
+        &ctx.session_id,
+        &ctx.workspace,
+        ctx.bus.as_ref(),
+    ) {
         PreTool::Run(rewritten) => rewritten,
         PreTool::Denied(reason) => return Ok(reason),
     };
@@ -522,7 +528,15 @@ pub async fn bash(
     // Applied to the RETURNED text only — the history row above already
     // recorded what the command actually printed, and a redaction hook must
     // not be able to rewrite the record of what happened.
-    result.map(|out| post_tool_hook(command, &out, &ctx.session_id, ctx.bus.as_ref()))
+    result.map(|out| {
+        post_tool_hook(
+            command,
+            &out,
+            &ctx.session_id,
+            &ctx.workspace,
+            ctx.bus.as_ref(),
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -547,6 +561,7 @@ fn pre_tool_hook(
     command: &str,
     tags: &str,
     session_id: &str,
+    workspace: &str,
     bus: Option<&Arc<crate::bus::Bus>>,
 ) -> PreTool {
     let Some(outcome) = crate::hooks::fire_on(
@@ -554,6 +569,7 @@ fn pre_tool_hook(
         crate::hooks::HookEvent::PreTool,
         crate::hooks::HookDispatch {
             session_id: session_id.to_string(),
+            workspace: workspace.to_string(),
             pattern: "bash".into(),
             data: serde_json::json!({
                 "tool": "bash",
@@ -586,6 +602,7 @@ fn post_tool_hook(
     command: &str,
     out: &str,
     session_id: &str,
+    workspace: &str,
     bus: Option<&Arc<crate::bus::Bus>>,
 ) -> String {
     let Some(outcome) = crate::hooks::fire_on(
@@ -593,6 +610,7 @@ fn post_tool_hook(
         crate::hooks::HookEvent::PostTool,
         crate::hooks::HookDispatch {
             session_id: session_id.to_string(),
+            workspace: workspace.to_string(),
             pattern: "bash".into(),
             data: serde_json::json!({ "tool": "bash", "command": command, "output": out }),
         },
