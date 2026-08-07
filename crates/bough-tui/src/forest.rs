@@ -87,6 +87,50 @@ pub enum ForestRow {
         active: bool,
         /// Drawn with `└─` rather than `├─`.
         last: bool,
+        /// When it was said, for the right-hand age column.
+        created_at: i64,
+        /// Tool calls folded into this turn's `▸ n tools` chip.
+        tools: usize,
+        /// Those calls are shown as their own rows beneath it.
+        tools_open: bool,
+        /// Conversations that branched off THIS turn.
+        branches: usize,
+        /// It sits on the path from a root to the open conversation — the green
+        /// trunk. Everything else is a sibling the eye should slide past.
+        on_path: bool,
+        /// The open conversation's last turn: where the next one appends.
+        leaf: bool,
+    },
+    /// One tool call of an expanded turn.
+    Tool {
+        id: String,
+        session_id: String,
+        depth: usize,
+        /// `read`, `edit`, `bash` — what the call DID, not the tool's name.
+        verb: String,
+        detail: String,
+    },
+    /// A conversation that branched off the turn above it, as ONE row.
+    ///
+    /// This is the flat trunk's whole trick: a branch never nests. The one the
+    /// open conversation lives on is `active` and its turns continue at the
+    /// TRUNK column right below; every sibling stays a single collapsed row.
+    Branch {
+        id: String,
+        session: SessionRow,
+        depth: usize,
+        /// Its turns are on screen, continuing the trunk.
+        active: bool,
+        /// Drawn with `└` rather than `├`.
+        last: bool,
+        /// Turns under it — `None` when its thread has not been fetched, which
+        /// is not the same as a branch with nothing in it.
+        entries: Option<usize>,
+        /// Branch points of its own, so a collapsed row still says it forks.
+        forks: usize,
+        /// Conversations running BELOW it. One row is all a branch gets, so
+        /// that row is the only place live work under it can be admitted.
+        busy_below: usize,
     },
     /// The collapsed fan-out: reachable, countable, one row.
     Collapsed {
@@ -103,6 +147,8 @@ impl ForestRow {
             ForestRow::Session { id, .. }
             | ForestRow::Section { id, .. }
             | ForestRow::Message { id, .. }
+            | ForestRow::Tool { id, .. }
+            | ForestRow::Branch { id, .. }
             | ForestRow::Collapsed { id, .. } => id,
         }
     }
@@ -112,9 +158,32 @@ impl ForestRow {
             ForestRow::Session { depth, .. }
             | ForestRow::Section { depth, .. }
             | ForestRow::Message { depth, .. }
+            | ForestRow::Tool { depth, .. }
+            | ForestRow::Branch { depth, .. }
             | ForestRow::Collapsed { depth, .. } => *depth,
         }
     }
+}
+
+/// What a tool call DID, in two columns: the verb and its object.
+///
+/// bough grants exactly one tool — `run_steps` — so the tool's NAME says
+/// nothing; the program inside it does. [`crate::lines::program_summary`] is
+/// the same derivation the transcript header uses, so a call reads identically
+/// in both places, and a program it does not recognise falls back to its first
+/// meaningful line rather than to an empty row.
+fn tool_row(part: &Part, max: usize) -> Option<(String, String)> {
+    let Part::ToolCall { name, input, .. } = part else {
+        return None;
+    };
+    let code = input.get("code").and_then(|c| c.as_str()).unwrap_or("");
+    let summary = crate::lines::program_summary(code, max, false);
+    let detail = if summary.is_empty() {
+        crate::lines::code_gist(input, max)
+    } else {
+        summary
+    };
+    Some((name.clone(), detail))
 }
 
 /// A message's text parts, VERBATIM — newlines, runs of spaces and all.
@@ -206,6 +275,12 @@ pub struct ForestInput<'a> {
     pub expanded: &'a HashSet<String>,
     /// Sessions whose delegated fan-out is drilled into.
     pub drilled: &'a HashSet<String>,
+    /// Message ids whose tool calls are shown as rows.
+    pub tools_open: &'a HashSet<String>,
+    /// View the tree from THIS conversation down — 2b's re-rooting. Its own
+    /// row is not drawn (the breadcrumb says where you are); its turns start at
+    /// the trunk. `None` = the whole forest, from the roots.
+    pub root_id: Option<&'a str>,
     /// Topic sections per session. Absent = no headers, not "no topics".
     pub sections: Option<&'a HashMap<String, Vec<SectionRange>>>,
     /// The conversation on screen, marked and never filtered out.
@@ -228,6 +303,8 @@ impl Default for ForestInput<'_> {
             threads: &NO_THREADS,
             expanded: &NO_IDS,
             drilled: &NO_IDS,
+            tools_open: &NO_IDS,
+            root_id: None,
             sections: None,
             current_id: None,
             filter: None,
@@ -242,6 +319,10 @@ struct Walk<'a> {
     input: &'a ForestInput<'a>,
     rows: Vec<ForestRow>,
     seen: HashSet<String>,
+    /// The open conversation and every origin above it. THE TRUNK: these are
+    /// the branches whose turns continue at column zero, and the guides that
+    /// are drawn in the active colour.
+    path: HashSet<String>,
 }
 
 impl Walk<'_> {
@@ -285,6 +366,31 @@ impl Walk<'_> {
         n
     }
 
+    /// This session's children that are branches, oldest first.
+    fn branches_of(&self, id: &str) -> Vec<SessionRow> {
+        let mut out: Vec<SessionRow> = self
+            .children_of(id)
+            .into_iter()
+            .filter(|c| !is_collapsed(c.session.kind))
+            .collect();
+        out.sort_by_key(|c| c.session.created_at);
+        out
+    }
+
+    /// Which of these siblings continues the trunk.
+    ///
+    /// The one the open conversation is on, if any — otherwise the NEWEST,
+    /// because a branch point you have never returned to is one you left by
+    /// making the last branch. Exactly one sibling expands, always: two would
+    /// reintroduce the diagonal this layout exists to remove.
+    fn active_branch(&self, siblings: &[SessionRow]) -> Option<String> {
+        siblings
+            .iter()
+            .find(|s| self.path.contains(&s.session.id))
+            .or_else(|| siblings.last())
+            .map(|s| s.session.id.clone())
+    }
+
     fn walk(&mut self, session: &SessionRow, depth: usize) {
         if !self.seen.insert(session.session.id.clone()) {
             return;
@@ -294,12 +400,7 @@ impl Walk<'_> {
         // COLLAPSE, not delegation: a schedule firing hangs under the
         // conversation that created the schedule exactly as a subagent hangs
         // under its spawner, even though nothing delegated it.
-        let mut branches: Vec<SessionRow> = children
-            .iter()
-            .filter(|c| !is_collapsed(c.session.kind))
-            .cloned()
-            .collect();
-        branches.sort_by_key(|c| c.session.created_at);
+        let branches = self.branches_of(&id);
         let mut delegated: Vec<SessionRow> = children
             .iter()
             .filter(|c| is_collapsed(c.session.kind))
@@ -328,7 +429,22 @@ impl Walk<'_> {
         if !open {
             return;
         }
+        self.trunk(session, depth);
+    }
 
+    /// This conversation's turns, AT THE TRUNK COLUMN, and the branches that
+    /// cut from them.
+    ///
+    /// THE ONE RULE THIS FILE IS ABOUT: `depth` does not grow as the
+    /// conversation does. A linear turn sits where the turn above it sat, no
+    /// matter how many forks deep the reader has walked, so a long
+    /// conversation stays a column instead of drifting off the right edge one
+    /// character per branch. Only the branch ROWS take `depth + 1`, and the one
+    /// that continues the trunk drops straight back to `depth`.
+    fn trunk(&mut self, session: &SessionRow, depth: usize) {
+        let id = session.session.id.clone();
+        let branches = self.branches_of(&id);
+        let thread = self.input.threads.get(&id);
         let empty: Vec<Message> = Vec::new();
         let full = thread.unwrap_or(&empty);
         let shown: Vec<&Message> = if self.input.user_only {
@@ -337,6 +453,7 @@ impl Walk<'_> {
             full.iter().collect()
         };
         let last_id = full.last().map(|m| m.id.clone());
+        let on_path = self.path.contains(&id) || self.input.current_id == Some(id.as_str());
         let mut placed: HashSet<String> = HashSet::new();
         let no_sections: Vec<SectionRange> = Vec::new();
         let sections = self
@@ -355,7 +472,7 @@ impl Walk<'_> {
                 self.rows.push(ForestRow::Section {
                     id: format!("section:{id}:{i}"),
                     session_id: id.clone(),
-                    depth: depth + 1,
+                    depth,
                     label: head.label.clone(),
                 });
             }
@@ -364,30 +481,66 @@ impl Walk<'_> {
                 .filter(|b| b.session.origin_message_id.as_deref() == Some(m.id.as_str()))
                 .cloned()
                 .collect();
+            let tools = m
+                .parts
+                .iter()
+                .filter(|p| matches!(p, Part::ToolCall { .. }))
+                .count();
+            let tools_open = self.input.tools_open.contains(&m.id);
             self.rows.push(ForestRow::Message {
                 id: m.id.clone(),
                 session_id: id.clone(),
-                depth: depth + 1,
+                depth,
                 role: m.role,
                 gist: message_gist(m, 56),
                 matched: self.input.matched_messages.iter().any(|x| x == &m.id),
                 active: Some(&m.id) == last_id.as_ref(),
                 last: i + 1 == shown_len && under.is_empty(),
+                created_at: m.created_at,
+                tools,
+                tools_open,
+                branches: under.len(),
+                on_path,
+                // The LEAF is where the next turn appends, so it is a fact
+                // about the OPEN conversation and no other: marking the last
+                // turn of every expanded thread would put four "you are here"
+                // arrows on one screen.
+                leaf: Some(&m.id) == last_id.as_ref() && self.input.current_id == Some(id.as_str()),
             });
-            for b in under {
-                placed.insert(b.session.id.clone());
-                self.walk(&b, depth + 2);
+            if tools_open {
+                for (n, part) in m.parts.iter().enumerate() {
+                    if let Some((verb, detail)) = tool_row(part, 46) {
+                        self.rows.push(ForestRow::Tool {
+                            id: format!("tool:{}:{n}", m.id),
+                            session_id: id.clone(),
+                            depth,
+                            verb,
+                            detail,
+                        });
+                    }
+                }
             }
+            for b in under.iter() {
+                placed.insert(b.session.id.clone());
+            }
+            self.fan_out(&under, depth);
         }
         // A branch whose origin turn is not in this thread (a compaction
         // dropped it, or the branch cut from an ancestor) still has to be
         // reachable, so it falls through here rather than vanishing.
-        for b in branches.clone() {
-            if !placed.contains(&b.session.id) {
-                self.walk(&b, depth + 1);
-            }
-        }
+        let orphans: Vec<SessionRow> = branches
+            .iter()
+            .filter(|b| !placed.contains(&b.session.id))
+            .cloned()
+            .collect();
+        self.fan_out(&orphans, depth);
 
+        let mut delegated: Vec<SessionRow> = self
+            .children_of(&id)
+            .into_iter()
+            .filter(|c| is_collapsed(c.session.kind))
+            .collect();
+        delegated.sort_by_key(|c| c.session.created_at);
         if delegated.is_empty() {
             return;
         }
@@ -404,15 +557,73 @@ impl Walk<'_> {
             });
         }
     }
+
+    /// The siblings of one branch point: a row each, and the active one's turns
+    /// picked straight back up at the trunk.
+    fn fan_out(&mut self, siblings: &[SessionRow], depth: usize) {
+        if siblings.is_empty() {
+            return;
+        }
+        let active = self.active_branch(siblings);
+        let n = siblings.len();
+        for (i, b) in siblings.iter().enumerate() {
+            let bid = b.session.id.clone();
+            let is_active = active.as_deref() == Some(bid.as_str());
+            if !self.seen.insert(bid.clone()) {
+                continue;
+            }
+            let kids = self.branches_of(&bid);
+            self.rows.push(ForestRow::Branch {
+                id: bid.clone(),
+                session: b.clone(),
+                depth: depth + 1,
+                active: is_active,
+                last: i + 1 == n,
+                entries: self.input.threads.get(&bid).map(|t| t.len()),
+                forks: kids.len(),
+                busy_below: self.busy_below(&bid, &mut HashSet::new()),
+            });
+            if is_active {
+                self.trunk(b, depth);
+            }
+        }
+    }
 }
 
 /// Build the rows, depth-first.
 pub fn forest_rows(input: &ForestInput) -> Vec<ForestRow> {
+    // The trunk, before any row is built: which branch expands at each fork is
+    // a question about the open conversation's ancestry, and the walk meets the
+    // forks on its way DOWN.
+    let mut path: HashSet<String> = HashSet::new();
+    if let Some(current) = input.current_id {
+        path.insert(current.to_string());
+        for id in reveal_path(input.sessions, input.children_by_origin, Some(current)) {
+            path.insert(id);
+        }
+    }
     let mut walk = Walk {
         input,
         rows: Vec::new(),
         seen: HashSet::new(),
+        path,
     };
+    // RE-ROOTED: one conversation's trunk, with no row of its own. The
+    // breadcrumb above the list carries the lineage, so the depth that would
+    // have shown it is spent on the turns instead.
+    if let Some(root) = input.root_id {
+        if let Some(s) = input
+            .sessions
+            .iter()
+            .chain(input.children_by_origin.values().flatten())
+            .find(|s| s.session.id == root)
+            .cloned()
+        {
+            walk.seen.insert(root.to_string());
+            walk.trunk(&s, 0);
+            return walk.rows;
+        }
+    }
     let mut roots: Vec<SessionRow> = input
         .sessions
         .iter()
@@ -515,7 +726,9 @@ pub fn rewind_index(rows: &[ForestRow], current_id: Option<&str>) -> usize {
     let mut last_user: Option<usize> = None;
     for (i, r) in rows.iter().enumerate() {
         match r {
-            ForestRow::Session { id, .. } if id == current => session = Some(i),
+            ForestRow::Session { id, .. } | ForestRow::Branch { id, .. } if id == current => {
+                session = Some(i)
+            }
             ForestRow::Message {
                 session_id, role, ..
             } if session_id == current => {
@@ -538,6 +751,9 @@ pub enum Selection {
     Open(String),
     Expand(String),
     Drill(String),
+    /// Show the tree FROM this conversation — 2b. Reading a sibling branch
+    /// without joining it, and the reason nothing here has to nest.
+    ReRoot(String),
     Fork {
         session_id: String,
         at_message_id: String,
@@ -579,10 +795,21 @@ pub fn selection_for(row: &ForestRow, threads: &HashMap<String, Vec<Message>>) -
         ForestRow::Collapsed { origin_id, .. } => Selection::Drill(origin_id.clone()),
         // A SECTION HEADER IS NOT A TURN: ⏎ on a caption must not ask the
         // server to fork at a message id that does not exist.
-        ForestRow::Section { .. } => Selection::None,
+        // Nor is a tool call: it is a line of evidence under a turn.
+        ForestRow::Section { .. } | ForestRow::Tool { .. } => Selection::None,
         // ⏎ on a conversation OPENS it — the switcher half of this surface
         // stays one keypress; walking into its turns is `→`.
         ForestRow::Session { id, .. } => Selection::Open(id.clone()),
+        // A COLLAPSED sibling is somewhere you have not been: ⏎ re-roots the
+        // view onto it so it can be read without joining it. The one already
+        // carrying the trunk is somewhere you can only GO, so ⏎ goes.
+        ForestRow::Branch { id, active, .. } => {
+            if *active {
+                Selection::Open(id.clone())
+            } else {
+                Selection::ReRoot(id.clone())
+            }
+        }
         ForestRow::Message { id, session_id, .. } => {
             let m = threads
                 .get(session_id)
@@ -688,6 +915,12 @@ mod tests {
                 ForestRow::Message { id, .. } => format!("·{id}"),
                 ForestRow::Section { label, .. } => format!("§{label}"),
                 ForestRow::Collapsed { origin_id, .. } => format!("⋯{origin_id}"),
+                ForestRow::Tool { id, .. } => format!("✦{id}"),
+                // The one the trunk continues on is `>id`; a collapsed sibling
+                // is `+id`. The shapes below are about exactly that difference.
+                ForestRow::Branch { id, active, .. } => {
+                    format!("{}{id}", if *active { ">" } else { "+" })
+                }
             })
             .collect()
     }
@@ -822,7 +1055,7 @@ mod tests {
         });
         assert_eq!(
             shape(&closed),
-            vec!["root", "·m1", "fork", "⋯fork", "·m2", "·m3", "⋯root"]
+            vec!["root", "·m1", ">fork", "⋯fork", "·m2", "·m3", "⋯root"]
         );
 
         let drilled = ids(&["fork"]);
@@ -836,7 +1069,7 @@ mod tests {
         });
         assert_eq!(
             shape(&opened),
-            vec!["root", "·m1", "fork", "w1", "w2", "w3", "·m2", "·m3", "⋯root"]
+            vec!["root", "·m1", ">fork", "w1", "w2", "w3", "·m2", "·m3", "⋯root"]
         );
         // The root's own fan-out stays collapsed.
         assert!(shape(&opened).contains(&"⋯root".to_string()));
@@ -855,11 +1088,13 @@ mod tests {
         });
         let forks: Vec<&ForestRow> = rows
             .iter()
-            .filter(|r| matches!(r, ForestRow::Session { id, .. } if id == "fork"))
+            .filter(|r| matches!(r, ForestRow::Branch { id, .. } if id == "fork"))
             .collect();
         assert_eq!(forks.len(), 1);
-        // root (0) → its turn (1) → the branch off that turn (2).
-        assert_eq!(forks[0].depth(), 2);
+        // THE WHOLE POINT: the turn it cut from is at the trunk (0) and the
+        // branch is one column in — not two, and not one more per fork.
+        assert_eq!(forks[0].depth(), 1);
+        assert_eq!(rows.iter().map(ForestRow::depth).max(), Some(1));
         let top = forest_rows(&ForestInput {
             sessions: &f.sessions,
             children_by_origin: &f.children,
@@ -886,7 +1121,191 @@ mod tests {
             expanded: &expanded,
             ..Default::default()
         });
-        assert_eq!(shape(&rows), vec!["root", "·m1", "·m2", "·m3", "orphan"]);
+        assert_eq!(shape(&rows), vec!["root", "·m1", "·m2", "·m3", ">orphan"]);
+    }
+
+    /// THE RULE THE WHOLE LAYOUT RESTS ON. Six forks deep, the last turn is at
+    /// the same column as the first — otherwise a day's conversation walks off
+    /// the right edge one character at a time.
+    #[test]
+    fn depth_never_exceeds_one_no_matter_how_many_forks_deep_the_path_runs() {
+        let mut sessions = vec![session_row("s0", SessionKind::Root, 0)];
+        let mut threads: HashMap<String, Vec<Message>> = HashMap::new();
+        let mut expanded: HashSet<String> = HashSet::new();
+        for i in 0..6 {
+            let id = format!("s{i}");
+            threads.insert(id.clone(), vec![msg(&format!("m{i}"), Role::User, "go")]);
+            expanded.insert(id.clone());
+            let mut next = with_origin(
+                session_row(&format!("s{}", i + 1), SessionKind::Fork, i as i64 + 1),
+                &id,
+            );
+            next.session.origin_message_id = Some(format!("m{i}"));
+            sessions.push(next);
+        }
+        threads.insert("s6".into(), vec![msg("m6", Role::User, "go")]);
+        expanded.insert("s6".into());
+        let rows = forest_rows(&ForestInput {
+            sessions: &sessions,
+            threads: &threads,
+            expanded: &expanded,
+            current_id: Some("s6"),
+            ..Default::default()
+        });
+        assert_eq!(rows.iter().map(ForestRow::depth).max(), Some(1));
+        // Every turn is at the trunk, and the branch rows are the only column.
+        for r in &rows {
+            if let ForestRow::Message { depth, .. } = r {
+                assert_eq!(*depth, 0, "a turn left the trunk");
+            }
+        }
+        // The path to the open conversation is the one that expanded — all six.
+        assert_eq!(
+            rows.iter()
+                .filter(|r| matches!(r, ForestRow::Message { .. }))
+                .count(),
+            7
+        );
+    }
+
+    #[test]
+    fn one_sibling_continues_the_trunk_and_the_rest_stay_one_row_each() {
+        let root = session_row("root", SessionKind::Root, 1);
+        let branch = |id: &str, at: i64| {
+            let mut b = with_origin(session_row(id, SessionKind::Fork, at), "root");
+            b.session.origin_message_id = Some("m1".into());
+            b
+        };
+        let a = branch("a", 2);
+        let b = branch("b", 3);
+        let c = branch("c", 4);
+        let sessions = vec![root, a.clone(), b.clone(), c.clone()];
+        let threads = HashMap::from([
+            ("root".to_string(), vec![msg("m1", Role::User, "refactor")]),
+            (
+                "b".to_string(),
+                vec![msg("mb", Role::Supervisor, "indexed")],
+            ),
+        ]);
+        let expanded = ids(&["root", "a", "b", "c"]);
+        let rows = forest_rows(&ForestInput {
+            sessions: &sessions,
+            threads: &threads,
+            expanded: &expanded,
+            // The open conversation is `b`, so `b` is the one that expands —
+            // NOT the newest, which is `c`.
+            current_id: Some("b"),
+            ..Default::default()
+        });
+        assert_eq!(shape(&rows), vec!["root", "·m1", "+a", ">b", "·mb", "+c"]);
+        // The turn they cut from says how many ways it went.
+        match &rows[1] {
+            ForestRow::Message { branches, leaf, .. } => {
+                assert_eq!(*branches, 3);
+                assert!(!*leaf, "the branch point is not where the next turn lands");
+            }
+            other => panic!("{other:?}"),
+        }
+        // The leaf belongs to the OPEN conversation and to nothing else.
+        let leaves: Vec<&str> = rows
+            .iter()
+            .filter_map(|r| match r {
+                ForestRow::Message { id, leaf: true, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(leaves, vec!["mb"]);
+        // A collapsed sibling still says how much is behind it.
+        match rows.iter().find(|r| r.id() == "a").unwrap() {
+            ForestRow::Branch {
+                entries, active, ..
+            } => {
+                assert!(!*active);
+                assert_eq!(*entries, None, "`a`'s thread was never fetched");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// With nowhere to be, the trunk follows the LAST branch made — the one the
+    /// conversation was left on.
+    #[test]
+    fn with_no_open_conversation_the_newest_branch_carries_the_trunk() {
+        let root = session_row("root", SessionKind::Root, 1);
+        let mut old = with_origin(session_row("old", SessionKind::Fork, 2), "root");
+        old.session.origin_message_id = Some("m1".into());
+        let mut new = with_origin(session_row("new", SessionKind::Fork, 9), "root");
+        new.session.origin_message_id = Some("m1".into());
+        let sessions = vec![root, old, new];
+        let threads = HashMap::from([("root".to_string(), vec![msg("m1", Role::User, "go")])]);
+        let expanded = ids(&["root"]);
+        let rows = forest_rows(&ForestInput {
+            sessions: &sessions,
+            threads: &threads,
+            expanded: &expanded,
+            ..Default::default()
+        });
+        assert_eq!(shape(&rows), vec!["root", "·m1", "+old", ">new"]);
+    }
+
+    #[test]
+    fn a_turns_tool_calls_are_a_chip_until_the_turn_is_unfolded() {
+        let sessions = vec![session_row("root", SessionKind::Root, 1)];
+        let mut m = msg("m1", Role::Supervisor, "reading it first");
+        m.parts.push(Part::ToolCall {
+            id: "c1".into(),
+            name: "run_steps".into(),
+            input: serde_json::json!({"code": "await read(\"util.ts\")"}),
+        });
+        let threads = HashMap::from([("root".to_string(), vec![m])]);
+        let expanded = ids(&["root"]);
+        let folded = forest_rows(&ForestInput {
+            sessions: &sessions,
+            threads: &threads,
+            expanded: &expanded,
+            ..Default::default()
+        });
+        assert_eq!(shape(&folded), vec!["root", "·m1"]);
+        match &folded[1] {
+            ForestRow::Message { tools, .. } => assert_eq!(*tools, 1),
+            other => panic!("{other:?}"),
+        }
+        let open = ids(&["m1"]);
+        let unfolded = forest_rows(&ForestInput {
+            sessions: &sessions,
+            threads: &threads,
+            expanded: &expanded,
+            tools_open: &open,
+            ..Default::default()
+        });
+        assert_eq!(shape(&unfolded), vec!["root", "·m1", "✦tool:m1:1"]);
+        match &unfolded[2] {
+            // The PROGRAM, named — not `run_steps`' arguments as JSON.
+            ForestRow::Tool { detail, .. } => assert!(detail.contains("util.ts"), "{detail}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_re_rooted_view_starts_at_that_conversations_turns_with_no_row_of_its_own() {
+        let root = session_row("root", SessionKind::Root, 1);
+        let mut fork = with_origin(session_row("fork", SessionKind::Fork, 2), "root");
+        fork.session.origin_message_id = Some("m1".into());
+        let sessions = vec![root, fork];
+        let threads = HashMap::from([
+            ("root".to_string(), vec![msg("m1", Role::User, "go")]),
+            ("fork".to_string(), vec![msg("mf", Role::User, "other way")]),
+        ]);
+        let rows = forest_rows(&ForestInput {
+            sessions: &sessions,
+            threads: &threads,
+            root_id: Some("fork"),
+            ..Default::default()
+        });
+        // No `fork` row: the breadcrumb above the list carries the lineage, and
+        // the column it would have cost goes to the turns.
+        assert_eq!(shape(&rows), vec!["·mf"]);
+        assert_eq!(rows[0].depth(), 0);
     }
 
     #[test]
@@ -904,7 +1323,7 @@ mod tests {
             expanded: &expanded,
             ..Default::default()
         });
-        assert_eq!(shape(&rows), vec!["a", "b"]);
+        assert_eq!(shape(&rows), vec!["a", ">b"]);
     }
 
     #[test]
@@ -946,7 +1365,7 @@ mod tests {
             expanded: &expanded,
             ..Default::default()
         });
-        assert_eq!(shape(&rows), vec!["root", "early", "late"]);
+        assert_eq!(shape(&rows), vec!["root", "+early", ">late"]);
     }
 
     #[test]
@@ -1221,8 +1640,14 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(busy_of("root"), 2);
+        // The fork is a BRANCH row now — one line, and the live work under it
+        // has to survive that flattening or a busy branch reads as an idle one.
+        let fork_busy = rows.iter().find_map(|r| match r {
+            ForestRow::Branch { id, busy_below, .. } if id == "fork" => Some(*busy_below),
+            _ => None,
+        });
         // The idle sibling reports nothing, so the count means what it says.
-        assert_eq!(busy_of("fork"), 1);
+        assert_eq!(fork_busy, Some(1));
     }
 
     #[test]

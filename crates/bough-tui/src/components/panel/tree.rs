@@ -164,8 +164,37 @@ pub fn mark_legend(rows: &[ForestRow]) -> Vec<String> {
     ];
     let mut seen_kind: Vec<&str> = Vec::new();
     let mut seen_status: Vec<&str> = Vec::new();
-    // Only `session` rows carry marks — a caption and a turn row do not.
+    // The SHAPE marks — the ones this layout is made of. They belong to turn
+    // and branch rows, which carry no kind glyph at all.
+    let mut shape: Vec<&str> = Vec::new();
     for r in rows {
+        match r {
+            ForestRow::Message { branches, leaf, .. } => {
+                if *branches > 0 && !shape.contains(&"⑂ branch point") {
+                    shape.push("⑂ branch point");
+                }
+                if *leaf && !shape.contains(&"◀ leaf") {
+                    shape.push("◀ leaf");
+                }
+                continue;
+            }
+            ForestRow::Tool { .. } => {
+                if !shape.contains(&"✦ tool") {
+                    shape.push("✦ tool");
+                }
+                continue;
+            }
+            // A branch row's kind is always a branching one, and saying "⑂
+            // fork" beside a row already drawn as a fan is a wasted column.
+            ForestRow::Branch { active, .. } => {
+                if *active && !shape.contains(&"● active branch") {
+                    shape.push("● active branch");
+                }
+                continue;
+            }
+            _ => {}
+        }
+        // Only `session` rows carry the kind marks — a caption does not.
         let ForestRow::Session {
             session,
             busy_below,
@@ -195,7 +224,49 @@ pub fn mark_legend(rows: &[ForestRow]) -> Vec<String> {
             out.push(format!("{g} {label}"));
         }
     }
+    out.extend(shape.into_iter().map(str::to_string));
     out
+}
+
+/// `2h`, `58m`, `4d` — the right-hand column. Coarse on purpose: the tree is
+/// scanned, not read, and "how long ago" at one significant figure is the whole
+/// question a row answers.
+pub fn age(now: i64, then: i64) -> String {
+    let s = ((now - then) / 1000).max(0);
+    if s < 60 {
+        format!("{s}s")
+    } else if s < 3600 {
+        format!("{}m", s / 60)
+    } else if s < 172_800 {
+        format!("{}h", s / 3600)
+    } else {
+        format!("{}d", s / 86_400)
+    }
+}
+
+/// The line, with `right` pushed against the last column.
+///
+/// The age column is what makes the tree readable as a HISTORY rather than a
+/// list, and it only works if it lines up. A row too wide to hold both keeps
+/// its content and drops the age: a truncated `5` that used to be `58m` is a
+/// worse lie than no timestamp.
+fn with_age(
+    mut spans: Vec<Span<'static>>,
+    right: Option<String>,
+    cols: Option<usize>,
+) -> Line<'static> {
+    let (Some(right), Some(cols)) = (right, cols) else {
+        return Line::from(spans);
+    };
+    let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    let want = right.chars().count();
+    if used + want + 2 > cols {
+        return Line::from(spans);
+    }
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    spans.push(Span::raw(" ".repeat(cols - used - want)));
+    spans.push(Span::styled(right, dim));
+    Line::from(spans)
 }
 
 #[derive(Default)]
@@ -215,6 +286,11 @@ pub struct TreeProps<'a> {
     pub cols: Option<usize>,
     /// A refusal or a result, from the panel host's `message` state.
     pub message: Option<&'a str>,
+    /// Now, in epoch milliseconds, for the age column. `0` = no clock was
+    /// passed and no ages are drawn — a test's rows must not print "56y".
+    pub now: i64,
+    /// The re-rooted view's lineage, outermost first. Empty = the whole forest.
+    pub crumbs: &'a [String],
 }
 
 /// The lines this tab paints, in order. Split out from the render so the row
@@ -226,10 +302,29 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
 
     // The message takes a row from the list, like the filter echo above it —
     // otherwise it is drawn on top of one, or past the tab's budget.
-    let chrome = usize::from(p.filtering || p.filter.is_some()) + usize::from(p.message.is_some());
+    let chrome = usize::from(p.filtering || p.filter.is_some())
+        + usize::from(p.message.is_some())
+        + usize::from(!p.crumbs.is_empty());
     let (start, shown) = forest_window(p.rows.len(), p.selected, p.height, chrome);
     let window: &[ForestRow] = &p.rows[start.min(p.rows.len())..(start + shown).min(p.rows.len())];
 
+    // THE CRUMB LINE IS WHERE DEPTH LIVES. Everything below it is drawn at one
+    // level, because this row already said how far in the reader has walked.
+    if !p.crumbs.is_empty() {
+        let mut crumb: Vec<Span<'static>> = vec![Span::styled("⌂", dim)];
+        for (i, c) in p.crumbs.iter().enumerate() {
+            crumb.push(Span::styled(" ▸ ", dim));
+            crumb.push(Span::styled(
+                clip(c, 28),
+                if i + 1 == p.crumbs.len() {
+                    Style::default()
+                } else {
+                    dim
+                },
+            ));
+        }
+        out.push(with_age(crumb, Some("esc up one level".into()), p.cols));
+    }
     if p.filtering || p.filter.is_some() {
         out.push(Line::from(Span::styled(
             format!(
@@ -255,6 +350,7 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
         )));
     }
 
+    let warn = Style::default().fg(crate::components::warn());
     for (i, item) in window.iter().enumerate() {
         let idx = start + i;
         let sel = idx == p.selected;
@@ -266,6 +362,7 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
         };
         let indent = "  ".repeat(item.depth());
         let mut spans: Vec<Span<'static>> = vec![Span::styled(cursor, cursor_style)];
+        let mut right: Option<String> = None;
         match item {
             ForestRow::Collapsed { count, depth, .. } => {
                 spans.push(Span::styled(
@@ -273,37 +370,162 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
                     dim,
                 ));
             }
+            ForestRow::Tool {
+                depth,
+                verb,
+                detail,
+                ..
+            } => {
+                // Evidence, not a node: it is indented past the trunk guide and
+                // it is the one row here that no key acts on.
+                spans.push(Span::styled(format!("{}    ", "  ".repeat(*depth)), dim));
+                spans.push(Span::styled(
+                    format!("✦ {verb} "),
+                    Style::default().fg(info()),
+                ));
+                spans.push(Span::styled(clip(detail, 46), dim));
+            }
+            ForestRow::Branch {
+                session,
+                depth,
+                active,
+                last,
+                entries,
+                forks,
+                busy_below,
+                ..
+            } => {
+                // ONE ROW, always. A sibling branch is a door with a label on
+                // it — how many turns are behind it, and whether it forks again
+                // — and never a subtree drawn in place.
+                spans.push(Span::styled(
+                    format!(
+                        "{}{} ",
+                        "  ".repeat(depth.saturating_sub(1)),
+                        if *last { "└" } else { "├" }
+                    ),
+                    if *active {
+                        Style::default().fg(Color::Green)
+                    } else {
+                        dim
+                    },
+                ));
+                spans.push(Span::styled(
+                    if *active { "● " } else { "▸ " }.to_string(),
+                    if *active {
+                        Style::default().fg(Color::Green)
+                    } else {
+                        dim
+                    },
+                ));
+                spans.push(Span::styled(
+                    clip(
+                        &title_of(session),
+                        12.max(44usize.saturating_sub(depth * 2)),
+                    ),
+                    if sel || *active {
+                        bold
+                    } else {
+                        Style::default()
+                    },
+                ));
+                if *active {
+                    spans.push(Span::styled("  active", Style::default().fg(Color::Green)));
+                } else if let Some(n) = entries.filter(|n| *n > 0) {
+                    spans.push(Span::styled(
+                        format!(" · {n} entr{}", if n == 1 { "y" } else { "ies" }),
+                        dim,
+                    ));
+                }
+                if *forks > 0 {
+                    spans.push(Span::styled(format!("  ⑂ {forks}"), warn));
+                }
+                // One row is all a branch gets. If it is hiding running work,
+                // this is the only place that can be said.
+                if let Some((glyph, color)) = status_mark(session, *busy_below) {
+                    spans.push(Span::styled(
+                        format!("  {glyph}"),
+                        Style::default().fg(color),
+                    ));
+                }
+                if *busy_below > 0 {
+                    spans.push(Span::styled(
+                        format!(" {busy_below} running"),
+                        Style::default().fg(Color::Cyan),
+                    ));
+                }
+                right = (p.now > 0).then(|| age(p.now, session.session.created_at));
+            }
             ForestRow::Message {
                 depth,
                 role,
                 gist,
                 matched,
                 active,
-                last,
+                created_at,
+                tools,
+                tools_open,
+                branches,
+                on_path,
+                leaf,
                 ..
             } => {
-                // A turn: the connector, who said it, the gist. `← active`
-                // marks where the next turn would append, which is what makes
-                // "go back to here" concrete.
+                // A turn rides the TRUNK: one guide character, at the same
+                // column as every other turn in the conversation. A branch
+                // point trades that guide for the fork mark, which is the only
+                // place the eye has to slow down.
                 spans.push(Span::styled(
-                    format!("{indent}{}", if *last { "└─ " } else { "├─ " }),
-                    dim,
+                    format!("{indent}{} ", if *branches > 0 { "⑂" } else { "│" }),
+                    if *branches > 0 {
+                        warn
+                    } else if *on_path {
+                        Style::default().fg(Color::Green)
+                    } else {
+                        dim
+                    },
                 ));
                 spans.push(Span::styled(
-                    role_label(*role),
-                    Style::default().fg(role_color(*role)),
+                    format!("{:<6}", role_label(*role)),
+                    Style::default()
+                        .fg(role_color(*role))
+                        .add_modifier(Modifier::BOLD),
                 ));
                 spans.push(Span::styled(
-                    format!(" {}", clip(gist, 12.max(54usize.saturating_sub(depth * 2)))),
+                    clip(gist, 12.max(50usize.saturating_sub(depth * 2))),
                     if sel { bold } else { Style::default() },
                 ));
+                if *tools > 0 {
+                    spans.push(Span::styled(
+                        format!(
+                            "  {} {tools} tool{}",
+                            if *tools_open { "▾" } else { "▸" },
+                            if *tools == 1 { "" } else { "s" }
+                        ),
+                        dim,
+                    ));
+                }
+                if *branches > 0 {
+                    spans.push(Span::styled(
+                        format!(
+                            "  {branches} branch{}",
+                            if *branches == 1 { "" } else { "es" }
+                        ),
+                        warn,
+                    ));
+                }
                 if *matched {
                     // The row that actually said the word.
                     spans.push(Span::styled("  ◂ match", Style::default().fg(info())));
                 }
-                if *active {
+                if *leaf {
+                    spans.push(Span::styled("  ◀ leaf", warn.add_modifier(Modifier::BOLD)));
+                } else if *active && *branches == 0 {
+                    // NOT on a branch point: the trunk carries on below it, so
+                    // "the next turn lands here" would be a lie about a row the
+                    // conversation has already moved past.
                     spans.push(Span::styled("  ← active", dim));
                 }
+                right = (p.now > 0 && *created_at > 0).then(|| age(p.now, *created_at));
             }
             ForestRow::Section { depth, label, .. } => {
                 // A CAPTION, not a row you act on.
@@ -398,9 +620,10 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
                 if let Some(cost) = session.cost_usd.filter(|c| *c != 0.0) {
                     spans.push(Span::styled(format!("  {}", fmt_usd(cost)), dim));
                 }
+                right = (p.now > 0).then(|| age(p.now, session.session.created_at));
             }
         }
-        out.push(Line::from(spans));
+        out.push(with_age(spans, right, p.cols));
     }
 
     // The marks first, then the keys: the glyphs are what the reader is
@@ -417,12 +640,18 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
         [
             "↑↓ move",
             "→← turns",
+            "→ on a turn shows its tools",
             "⏎ open",
+            "⏎ on a branch re-roots",
             "⏎ on a turn forks",
             "e splits",
             "m brings here",
             "/ find",
-            "esc back",
+            if p.crumbs.is_empty() {
+                "esc back"
+            } else {
+                "esc up one level"
+            },
         ]
         .iter()
         .map(|s| s.to_string()),
@@ -457,6 +686,10 @@ mod tests {
 
     fn text_of(line: &Line) -> String {
         line.spans.iter().map(|s| s.content.to_string()).collect()
+    }
+
+    fn ids(v: &[&str]) -> HashSet<String> {
+        v.iter().map(|s| s.to_string()).collect()
     }
 
     fn rendered(p: &TreeProps) -> String {
@@ -690,6 +923,199 @@ mod tests {
         }
     }
 
+    /// The 2a screen, end to end: a trunk, a branch point, one sibling
+    /// expanded inline and the others collapsed to a row each.
+    #[test]
+    fn a_branch_point_fans_out_once_and_the_trunk_picks_straight_back_up() {
+        let root = session_row("root", SessionKind::Root, 1);
+        let fork = |id: &str, title: &str, at: i64| {
+            let mut f = with_origin(session_row(id, SessionKind::Fork, at), "root");
+            f.session.origin_message_id = Some("m2".into());
+            f.session.title = title.into();
+            f
+        };
+        let sessions = vec![
+            root,
+            fork("a", "smaller blast radius", 2),
+            fork("b", "keep offsets, add an index", 3),
+            fork("c", "try a cursor-based approach", 4),
+        ];
+        let threads = HashMap::from([
+            (
+                "root".to_string(),
+                vec![
+                    msg("m1", Role::User, "add a subtract function"),
+                    msg("m2", Role::User, "refactor the offsets"),
+                ],
+            ),
+            (
+                "a".to_string(),
+                vec![msg("ma", Role::Supervisor, "patched the writer")],
+            ),
+            (
+                "b".to_string(),
+                vec![msg("mb", Role::Supervisor, "indexing alongside")],
+            ),
+        ]);
+        let expanded: HashSet<String> = ids(&["root", "a", "b", "c"]);
+        let items = forest_rows(&ForestInput {
+            sessions: &sessions,
+            threads: &threads,
+            expanded: &expanded,
+            current_id: Some("b"),
+            ..Default::default()
+        });
+        let frame = rendered(&TreeProps {
+            rows: &items,
+            height: 14,
+            cols: Some(96),
+            ..Default::default()
+        });
+        // The branch point trades its guide for the fork mark and says how
+        // many ways it went.
+        assert!(
+            frame.contains("⑂ you   refactor the offsets  3 branches"),
+            "{frame}"
+        );
+        // …and it does NOT claim to be where the next turn lands. The trunk
+        // carries on below it, through the branch that was taken.
+        assert!(
+            !frame.contains("3 branches  ← active"),
+            "a branch point is not the leaf: {frame}"
+        );
+        // The sibling nobody is on: ONE row, with what is behind it.
+        assert!(
+            frame.contains("├ ▸ smaller blast radius · 1 entry"),
+            "{frame}"
+        );
+        // The one carrying the trunk, and its turn back at the trunk column.
+        assert!(
+            frame.contains("├ ● keep offsets, add an index  active"),
+            "{frame}"
+        );
+        assert!(frame.contains("│ bough indexing alongside"), "{frame}");
+        // Its turn is the leaf: the open conversation is where the next turn
+        // appends, and that is what makes "go back to here" concrete.
+        assert!(frame.contains("◀ leaf"), "{frame}");
+        assert!(frame.contains("└ ▸ try a cursor-based approach"), "{frame}");
+        // AND THE INDENT NEVER GREW. Every turn starts at the same column.
+        let turn_cols: Vec<usize> = frame
+            .lines()
+            .filter(|l| l.contains("│ you") || l.contains("│ bough"))
+            .map(|l| l.find('│').unwrap())
+            .collect();
+        assert!(turn_cols.windows(2).all(|w| w[0] == w[1]), "{frame}");
+    }
+
+    #[test]
+    fn a_turns_tools_unfold_under_it_and_the_chip_says_how_many() {
+        let sessions = vec![session_row("root", SessionKind::Root, 1)];
+        let mut m = msg("m1", Role::Supervisor, "reading it first");
+        m.parts.push(bough_core::schema::parts::Part::ToolCall {
+            id: "c1".into(),
+            name: "run_steps".into(),
+            input: serde_json::json!({"code": "await read(\"util.ts\")"}),
+        });
+        let threads = HashMap::from([("root".to_string(), vec![m])]);
+        let expanded = ids(&["root"]);
+        let base = ForestInput {
+            sessions: &sessions,
+            threads: &threads,
+            expanded: &expanded,
+            ..Default::default()
+        };
+        let folded = rendered(&TreeProps {
+            rows: &forest_rows(&base),
+            height: 10,
+            cols: Some(96),
+            ..Default::default()
+        });
+        assert!(folded.contains("▸ 1 tool"), "{folded}");
+        assert!(!folded.contains("✦"), "{folded}");
+        let open = ids(&["m1"]);
+        let unfolded = rendered(&TreeProps {
+            rows: &forest_rows(&ForestInput {
+                tools_open: &open,
+                ..base
+            }),
+            height: 10,
+            cols: Some(96),
+            ..Default::default()
+        });
+        assert!(unfolded.contains("▾ 1 tool"), "{unfolded}");
+        assert!(unfolded.contains("✦ run_steps"), "{unfolded}");
+        assert!(unfolded.contains("util.ts"), "{unfolded}");
+    }
+
+    #[test]
+    fn the_age_column_is_right_aligned_and_dropped_rather_than_truncated() {
+        let mut s = session_row("root", SessionKind::Root, 0);
+        s.session.title = "wire the panel".into();
+        let items = forest_rows(&ForestInput {
+            sessions: std::slice::from_ref(&s),
+            ..Default::default()
+        });
+        let now = 2 * 3600 * 1000;
+        let wide = tree_lines(&TreeProps {
+            rows: &items,
+            height: 8,
+            cols: Some(60),
+            now,
+            ..Default::default()
+        });
+        let row = text_of(&wide[0]);
+        assert!(row.ends_with("2h"), "{row}");
+        assert_eq!(row.chars().count(), 60, "the age sits in the last column");
+        // Too narrow to hold both: the row keeps its words. A `2` that used to
+        // be `2h` is a worse lie than no timestamp at all.
+        let narrow = tree_lines(&TreeProps {
+            rows: &items,
+            height: 8,
+            cols: Some(22),
+            now,
+            ..Default::default()
+        });
+        assert!(
+            !text_of(&narrow[0]).ends_with("2h"),
+            "{:?}",
+            text_of(&narrow[0])
+        );
+    }
+
+    #[test]
+    fn a_re_rooted_view_says_where_it_is_instead_of_indenting_to_show_it() {
+        let sessions = vec![session_row("root", SessionKind::Root, 1)];
+        let threads = HashMap::from([(
+            "root".to_string(),
+            vec![msg("m1", Role::User, "what about resuming mid-page?")],
+        )]);
+        let items = forest_rows(&ForestInput {
+            sessions: &sessions,
+            threads: &threads,
+            root_id: Some("root"),
+            ..Default::default()
+        });
+        let crumbs = vec![
+            "refactor the offsets".to_string(),
+            "try a cursor-based approach".to_string(),
+        ];
+        let frame = rendered(&TreeProps {
+            rows: &items,
+            height: 10,
+            cols: Some(96),
+            crumbs: &crumbs,
+            ..Default::default()
+        });
+        assert!(
+            frame.contains("⌂ ▸ refactor the offsets ▸ try a cursor-based approach"),
+            "{frame}"
+        );
+        assert!(frame.contains("esc up one level"), "{frame}");
+        // Two levels in, and the turn is still at column zero.
+        assert!(frame.contains("│ you   what about resuming"), "{frame}");
+        assert_eq!(items[0].depth(), 0, "two levels in, still at column zero");
+    }
+
     #[test]
     fn an_empty_filtered_list_says_what_was_searched() {
         let filtered = rendered(&TreeProps {
@@ -760,7 +1186,8 @@ mod tests {
             height: 8,
             ..Default::default()
         });
-        assert!(frame.contains("├─ you add a discount"), "{frame}");
-        assert!(frame.contains("└─ bough done  ← active"), "{frame}");
+        // THE TRUNK: both turns at the same column, one guide character each.
+        assert!(frame.contains("│ you   add a discount"), "{frame}");
+        assert!(frame.contains("│ bough done  ← active"), "{frame}");
     }
 }

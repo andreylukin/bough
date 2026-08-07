@@ -185,6 +185,13 @@ pub struct PanelHost {
     pub threads: HashMap<String, Vec<Message>>,
     pub expanded: HashSet<String>,
     pub drilled: HashSet<String>,
+    /// Turns whose tool calls are shown as rows. Keyed by MESSAGE id, so
+    /// unfolding a turn in one conversation says nothing about any other.
+    pub tools_open: HashSet<String>,
+    /// The re-rooted views walked into, outermost first. Empty = the forest.
+    /// A STACK rather than one id, because `esc` has to walk back out the way
+    /// the reader walked in.
+    pub root_stack: Vec<String>,
     pub current_id: Option<String>,
     /// Where the cursor should land when the tree's arrival fetch answers, and
     /// on THAT answer only. `None` = the listing is a refresh and the cursor
@@ -271,6 +278,8 @@ impl Default for PanelHost {
             expanded: HashSet::new(),
             children_by_origin: HashMap::new(),
             drilled: HashSet::new(),
+            tools_open: HashSet::new(),
+            root_stack: Vec::new(),
             current_id: None,
             land: None,
             workspace: None,
@@ -327,6 +336,8 @@ impl PanelHost {
             threads: &self.threads,
             expanded: &self.expanded,
             drilled: &self.drilled,
+            tools_open: &self.tools_open,
+            root_id: self.root_stack.last().map(String::as_str),
             current_id: self.current_id.as_deref(),
             // Only when the buffer belongs to THIS tab: an MCP URL half-typed
             // must never narrow the conversation list underneath it.
@@ -337,6 +348,24 @@ impl PanelHost {
             sections: Some(&self.sections),
             ..Default::default()
         })
+    }
+
+    /// The re-rooted view's lineage, as titles. Empty when the tree is showing
+    /// the whole forest, which is what makes the crumb row conditional.
+    pub fn crumbs(&self) -> Vec<String> {
+        self.root_stack
+            .iter()
+            .map(|id| {
+                self.sessions
+                    .iter()
+                    .chain(self.children_by_origin.values().flatten())
+                    .find(|s| &s.session.id == id)
+                    .map(super::tree::title_of)
+                    // A branch whose row scrolled out of the fetched set still
+                    // gets a crumb: losing the trail is worse than a dull name.
+                    .unwrap_or_else(|| "branch".to_string())
+            })
+            .collect()
     }
 
     /// The change set the fetch answered with, folded into rows.
@@ -405,9 +434,17 @@ impl PanelHost {
     /// The switcher lands on you-are-here.
     fn land_on_current(&mut self) {
         let rows = self.rows();
+        // A conversation that branched off another is a BRANCH row, not a
+        // session row — looking only for the latter landed "you are here" on
+        // the root of every forked conversation.
+        let current = self.current_id.as_deref();
         self.sel = rows
             .iter()
-            .position(|r| matches!(r, ForestRow::Session { current: true, .. }))
+            .position(|r| match r {
+                ForestRow::Session { current: true, .. } => true,
+                ForestRow::Branch { id, .. } => Some(id.as_str()) == current,
+                _ => false,
+            })
             .unwrap_or(0);
     }
 
@@ -714,6 +751,13 @@ impl PanelHost {
                 return true;
             }
         }
+        // A re-rooted view unwinds one crumb at a time, and it unwinds BEFORE
+        // the panel closes: walking three branches in and hitting esc must
+        // retrace them, not drop the reader back into the chat.
+        if self.state.tab == PanelTab::Tree && self.root_stack.pop().is_some() {
+            self.sel = 0;
+            return true;
+        }
         // The Miller columns unwind ONE at a time, so escape from an agent
         // lands on its phase rather than on the chat.
         if self.state.tab == PanelTab::Workflows && self.wf_level > 0 {
@@ -889,6 +933,20 @@ impl PanelHost {
                             self.drilled.insert(origin_id.clone());
                             return self.fetch_on_expand(&origin_id);
                         }
+                        // `→` on a turn unfolds the work it did. The chip said
+                        // `▸ 5 tools`; this is what those five were.
+                        Some(ForestRow::Message { id, tools, .. }) if *tools > 0 => {
+                            self.tools_open.insert(id.clone());
+                        }
+                        // `→` walks INTO a branch, which is the same move as ⏎
+                        // on one — the collapsed row is a door either way.
+                        Some(ForestRow::Branch { id, active, .. }) if !*active => {
+                            let id = id.clone();
+                            self.expanded.insert(id.clone());
+                            self.root_stack.push(id.clone());
+                            self.sel = 0;
+                            return self.fetch_on_expand(&id);
+                        }
                         _ => {}
                     }
                 }
@@ -904,6 +962,13 @@ impl PanelHost {
                             let id = id.clone();
                             self.expanded.remove(&id);
                             self.drilled.remove(&id);
+                        }
+                        // An unfolded turn folds its tools back up FIRST — `←`
+                        // undoes the `→` that opened them before it undoes the
+                        // one that opened the conversation.
+                        Some(ForestRow::Message { id, tools_open, .. }) if *tools_open => {
+                            let id = id.clone();
+                            self.tools_open.remove(&id);
                         }
                         // A turn or a caption closes ITS conversation.
                         Some(ForestRow::Message { session_id, .. })
@@ -1353,6 +1418,15 @@ impl PanelHost {
                         self.drilled.insert(id);
                         Vec::new()
                     }
+                    // The view moves; nothing about the CONVERSATION does. It
+                    // is the cheap way to read a branch you did not take, and
+                    // `esc` walks straight back out of it.
+                    Selection::ReRoot(id) => {
+                        self.expanded.insert(id.clone());
+                        self.root_stack.push(id.clone());
+                        self.sel = 0;
+                        self.fetch_on_expand(&id)
+                    }
                     Selection::Fork {
                         session_id,
                         at_message_id,
@@ -1701,6 +1775,57 @@ mod tests {
         h.handle(Command::PanelClose, None, 10);
         assert!(!h.diff_focused);
         assert!(h.open());
+        h.handle(Command::PanelClose, None, 10);
+        assert!(!h.open());
+    }
+
+    /// 2b: reading a branch you did not take costs no indentation and no
+    /// commitment — the view re-roots, and `esc` retraces the way in.
+    #[test]
+    fn entering_a_collapsed_branch_re_roots_the_view_and_esc_walks_back_out() {
+        let mut h = host();
+        h.state.tab = PanelTab::Tree;
+        h.state.open = true;
+        let root = session_row("root", SessionKind::Root, 1);
+        let mut mine = with_origin(session_row("mine", SessionKind::Fork, 3), "root");
+        mine.session.origin_message_id = Some("m1".into());
+        let mut other = with_origin(session_row("other", SessionKind::Fork, 2), "root");
+        other.session.origin_message_id = Some("m1".into());
+        other.session.title = "try a cursor-based approach".into();
+        h.current_id = Some("mine".into());
+        h.threads.insert(
+            "root".into(),
+            vec![msg("m1", Role::User, "refactor the offsets")],
+        );
+        h.threads
+            .insert("other".into(), vec![msg("mo", Role::User, "cursor")]);
+        h.expanded.insert("root".into());
+        h.set_sessions(vec![root, mine, other]);
+
+        // `mine` carries the trunk, so `other` is the collapsed sibling.
+        let at = h
+            .rows()
+            .iter()
+            .position(|r| matches!(r, ForestRow::Branch { id, active: false, .. } if id == "other"))
+            .expect("the sibling must be one collapsed row");
+        h.confirm_at(at, false);
+        assert_eq!(h.root_stack, vec!["other".to_string()]);
+        assert_eq!(h.crumbs(), vec!["try a cursor-based approach".to_string()]);
+        // The re-rooted view is that branch's turns, and nothing above them.
+        assert_eq!(
+            h.rows()
+                .iter()
+                .map(|r| r.id().to_string())
+                .collect::<Vec<_>>(),
+            vec!["mo".to_string()]
+        );
+        // NOTHING MOVED but the view: re-rooting is not switching.
+        assert_eq!(h.current_id.as_deref(), Some("mine"));
+        assert!(h.open(), "and the panel is still up");
+
+        h.handle(Command::PanelClose, None, 10);
+        assert!(h.root_stack.is_empty(), "esc retraces the crumb");
+        assert!(h.open(), "…before it closes anything");
         h.handle(Command::PanelClose, None, 10);
         assert!(!h.open());
     }

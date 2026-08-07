@@ -3770,6 +3770,7 @@ impl<T: Transport> App<T> {
             .as_ref()
             .map(|_| self.panel.filtered_skills());
         let entries = self.panel.model_entries();
+        let crumbs = self.panel.crumbs();
         let body = match self.panel.tab() {
             crate::keys::PanelTab::Tree => {
                 PanelBody::Tree(crate::components::panel::tree::TreeProps {
@@ -3784,6 +3785,8 @@ impl<T: Transport> App<T> {
                     // narrowed it.
                     filter: (!self.panel.filter.is_empty()).then_some(self.panel.filter.as_str()),
                     filtering: self.panel.filtering,
+                    now: self.now_ms,
+                    crumbs: &crumbs,
                 })
             }
             crate::keys::PanelTab::Changes => {
