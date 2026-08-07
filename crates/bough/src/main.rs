@@ -20,6 +20,7 @@
 // uses, and the same reason not to hide it behind an alias.
 #![allow(clippy::type_complexity)]
 
+mod acp;
 mod exec;
 mod hooks;
 mod mcp;
@@ -159,11 +160,12 @@ async fn restart_server() -> Result<String, String> {
 fn usage() -> &'static str {
     // The launchd/systemd manager verbs (setup/kill/restart/update/status/
     // logs/run/purge) stay in the bash wrapper; this binary owns the rest.
-    "usage: bough [tui|start|exec|hooks|mcp|sync-mcp|tags|patterns]
+    "usage: bough [tui|start|exec|acp|hooks|mcp|sync-mcp|tags|patterns]
   (no args) open the terminal UI (bough [-w DIR] [-r], -h for flags)
   start    run the server in the foreground
   restart  stop the running server and start a fresh one
   exec     headless one-shot turn
+  acp      speak the Agent Client Protocol on stdio
   hooks    install and inspect hook plugins
   mcp      inspect and repair the MCP registry
   sync-mcp adopt Claude Code's MCP servers
@@ -280,6 +282,12 @@ fn main() -> ExitCode {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             let deps = exec::real_deps();
             let code = rt.block_on(exec::run_exec(&args[1..], &deps));
+            ExitCode::from(code as u8)
+        }
+        Some("acp") => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            let deps = acp::real_deps();
+            let code = rt.block_on(acp::run_acp(&args[1..], &deps));
             ExitCode::from(code as u8)
         }
         Some("hooks") => {
