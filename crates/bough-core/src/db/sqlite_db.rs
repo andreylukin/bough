@@ -1355,6 +1355,55 @@ impl Db for SqliteDb {
         }
     }
 
+    /// Commands this repo has run that MATCH a bag of words, across the
+    /// command text, its tags and what it printed — the three columns
+    /// `command_history_fts` indexes.
+    ///
+    /// The words arrive from a human sentence, so every one is QUOTED into
+    /// the FTS query: `"` , `*`, `^`, `:` and `NEAR` are operators, and a
+    /// user who writes `NEAR` means the word. Quoting also makes a malformed
+    /// query impossible, which matters because this runs on a path that must
+    /// never fail a turn. An empty word list matches nothing rather than
+    /// everything.
+    fn search_commands(
+        &self,
+        repo: &str,
+        words: &[String],
+        limit: i64,
+    ) -> Result<Vec<TaggedCommand>, BoughError> {
+        let query = words
+            .iter()
+            .filter(|w| !w.is_empty())
+            .map(|w| format!("\"{}\"", w.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.all(
+            "SELECT h.ts AS ts, h.repo AS repo, h.cmd AS cmd, h.tags AS tags,
+                    h.exit_code AS exit_code, h.duration_ms AS duration_ms,
+                    h.session_id AS session_id, h.message_id AS message_id
+               FROM command_history_fts f
+               JOIN command_history h ON h.id = f.command_id
+              WHERE command_history_fts MATCH ? AND h.repo = ?
+              ORDER BY h.ts DESC LIMIT ?",
+            params![query, repo, limit.max(1)],
+            |row| {
+                Ok(TaggedCommand {
+                    ts: row.get("ts")?,
+                    repo: row.get("repo")?,
+                    cmd: row.get("cmd")?,
+                    tags: row.get("tags")?,
+                    exit_code: row.get("exit_code")?,
+                    duration_ms: row.get("duration_ms")?,
+                    session_id: row.get("session_id")?,
+                    message_id: row.get("message_id")?,
+                })
+            },
+        )
+    }
+
     /// This repo's coined vocabulary and how often each word was used — the
     /// input to write-time tag hygiene (`history/tags/hygiene.rs`), which
     /// needs to know what is already a word here before it can tell a novel

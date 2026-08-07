@@ -21,7 +21,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::errors::BoughError;
 use crate::types::{CommandTagOpts, CommandTagRow, Db};
 
-use super::record::{find_git_root, is_ref, repo_identity};
+use super::record::{find_git_root, is_ref, repo_identity, split_tags};
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// Rows older than this contribute under a tenth of a fresh use — not worth
@@ -254,6 +254,10 @@ const MEMO_CAP: usize = 512;
 struct HintState {
     seen_dirs: HashSet<String>,
     emitted: usize,
+    /// Query-triggered hints emitted, capped separately from the directory
+    /// ones: they answer different questions and one must not starve the
+    /// other.
+    queries: usize,
 }
 
 /// The per-session memos: note text, primed tag set, hint state. All three
@@ -264,6 +268,10 @@ pub struct StatsMemo {
     notes: Mutex<HashMap<String, Option<String>>>,
     primed: Mutex<HashMap<String, HashSet<String>>>,
     hints: Mutex<HashMap<String, HintState>>,
+    /// Query-triggered hint lines computed at turn start, waiting for the
+    /// round result that carries them — see [`query_tag_hints`] for why they
+    /// cannot ride the prompt.
+    pending: Mutex<HashMap<String, Vec<String>>>,
 }
 
 impl StatsMemo {
@@ -280,6 +288,9 @@ impl StatsMemo {
             m.clear();
         }
         if let Ok(mut m) = self.hints.lock() {
+            m.clear();
+        }
+        if let Ok(mut m) = self.pending.lock() {
             m.clear();
         }
     }
@@ -443,6 +454,192 @@ pub fn dir_tag_hints(
         ));
     }
     lines
+}
+
+// ---------------------------------------------------------------------------
+// Query-triggered recall
+// ---------------------------------------------------------------------------
+
+/// Per session, ever. The priming note already covers the session-constant
+/// question; this is for the turns that arrive on a topic the session was not
+/// primed for, which is not most of them.
+const MAX_QUERY_HINTS_PER_SESSION: usize = 3;
+/// Matched rows scanned. Bounds the cost on a repo with a large memory.
+const QUERY_SCAN_LIMIT: i64 = 60;
+/// Tags one hint names. Three commands is a hint; ten is a wall.
+const QUERY_HINT_TAGS: usize = 3;
+/// A word shorter than this carries no topic — `the`, `it`, `run`, and every
+/// FTS match they would drag in.
+const MIN_WORD_CHARS: usize = 4;
+/// Words taken from one message, longest first. A pasted stack trace must not
+/// turn into a sixty-clause query.
+const MAX_QUERY_WORDS: usize = 12;
+
+/// The content words of a message, as the FTS query wants them: lowercased,
+/// split on anything that is not alphanumeric, deduped, longest first.
+///
+/// Longest-first is the whole selection rule, and it is doing the job a stop
+/// list would do without needing one to maintain: the long words in a
+/// sentence are its topic, and the short ones are English.
+pub fn content_words(text: &str) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut words: Vec<String> = Vec::new();
+    for raw in text.split(|c: char| !c.is_alphanumeric()) {
+        let w = raw.to_lowercase();
+        if w.chars().count() < MIN_WORD_CHARS || !seen.insert(w.clone()) {
+            continue;
+        }
+        words.push(w);
+    }
+    words.sort_by(|a, b| b.chars().count().cmp(&a.chars().count()).then(a.cmp(b)));
+    words.truncate(MAX_QUERY_WORDS);
+    words
+}
+
+/// What this repo has already run on the topic the user just named — the
+/// memory answering the QUESTION rather than the location.
+///
+/// WHY THIS EXISTS AND WHY IT IS NOT THE PRIMING NOTE. The priming note
+/// answers a session-constant question ("what words does this project use"),
+/// so it is computed once and frozen; freezing costs it nothing. This answers
+/// a per-message one, and freezing it would pin the first message's topic to
+/// the whole session — the failure mode, not the design. It therefore rides
+/// the round's RESULT like the directory hints, never the prompt, so a note
+/// that changes every turn cannot bust the volatile tier's cache.
+///
+/// The gates are the same three the directory hints use, for the same reason
+/// — an unhelpful hint is worse than none, because it teaches the model to
+/// skip the channel: nothing already in the primed set (it is in the prompt
+/// already), nothing without a match, and a hard cap per session.
+///
+/// Suggestion is powerful out of proportion to its size — about a third of
+/// tag applications in a live folksonomy are induced by what was suggested
+/// (Suchanek et al., CIKM'08) — so what this names is deliberately not the
+/// top tags: it is the top tags THAT MATCHED, with the most recent command
+/// that exited 0 under each. A word without a working command behind it is a
+/// suggestion the model cannot act on.
+pub fn query_tag_hints(
+    db: &dyn Db,
+    memo: &StatsMemo,
+    session_id: &str,
+    workspace: &str,
+    text: &str,
+    now: i64,
+) -> Vec<String> {
+    let words = content_words(text);
+    if words.is_empty() {
+        return Vec::new();
+    }
+    {
+        let Ok(hints) = memo.hints.lock() else {
+            return Vec::new();
+        };
+        if let Some(state) = hints.get(session_id) {
+            if state.queries >= MAX_QUERY_HINTS_PER_SESSION {
+                return Vec::new();
+            }
+        }
+    }
+    let repo = workspace_repo(workspace);
+    // Same contract as every hint here: a failed lookup is a missing hint,
+    // never a failed round.
+    let Ok(matched) = db.search_commands(&repo, &words, QUERY_SCAN_LIMIT) else {
+        return Vec::new();
+    };
+    if matched.is_empty() {
+        return Vec::new();
+    }
+    let primed = primed_tags(memo, session_id);
+    let rows: Vec<CommandTagRow> = matched
+        .iter()
+        .flat_map(|c| {
+            split_tags(&c.tags)
+                .into_iter()
+                .map(move |tag| CommandTagRow {
+                    tag,
+                    ts: c.ts,
+                    exit_code: c.exit_code,
+                })
+        })
+        // A reference never ranks, here for the same reason as in the note:
+        // it would win on weight and teach the model a ticket number.
+        .filter(|r| !is_ref(&r.tag) && !primed.contains(&r.tag))
+        .collect();
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let mut named: Vec<(String, String)> = Vec::new();
+    for tag in top(&tag_weights(&rows, now), QUERY_HINT_TAGS) {
+        // Newest first out of the search, so the first success IS the most
+        // recent one. No success under a tag means no line for it.
+        let Some(cmd) = matched
+            .iter()
+            .find(|c| c.exit_code == Some(0) && split_tags(&c.tags).contains(&tag))
+        else {
+            continue;
+        };
+        named.push((tag, cmd.cmd.clone()));
+    }
+    if named.is_empty() {
+        return Vec::new();
+    }
+    if let Ok(mut hints) = memo.hints.lock() {
+        if !hints.contains_key(session_id) {
+            remember(&mut hints, session_id, HintState::default());
+        }
+        if let Some(state) = hints.get_mut(session_id) {
+            state.queries += 1;
+        }
+    }
+    let body = named
+        .iter()
+        .map(|(tag, cmd)| format!("{tag} — `{}`", one_line(cmd)))
+        .collect::<Vec<_>>()
+        .join("; ");
+    vec![format!(
+        "[history] this repo has worked on that before: {body}. `bough tags show <tag>` \
+         for the rest."
+    )]
+}
+
+/// Compute this turn's query hints and hold them for the round that will
+/// carry them. Called where the turn's prompt is built, because that is where
+/// the user's message is in hand — but the lines go to the round's result,
+/// not into the prompt.
+pub fn note_query_tag_hints(
+    db: &dyn Db,
+    memo: &StatsMemo,
+    session_id: &str,
+    workspace: &str,
+    text: &str,
+    now: i64,
+) {
+    let lines = query_tag_hints(db, memo, session_id, workspace, text, now);
+    if lines.is_empty() {
+        return;
+    }
+    if let Ok(mut pending) = memo.pending.lock() {
+        remember(&mut pending, session_id, lines);
+    }
+}
+
+/// Take this turn's query hints. Drains, so a multi-round turn says them once.
+pub fn drain_query_tag_hints(memo: &StatsMemo, session_id: &str) -> Vec<String> {
+    memo.pending
+        .lock()
+        .ok()
+        .and_then(|mut p| p.remove(session_id))
+        .unwrap_or_default()
+}
+
+/// A command as one line of a hint: newlines folded, clipped. A heredoc in
+/// the memory must not turn a one-line note into twenty.
+fn one_line(cmd: &str) -> String {
+    let flat = cmd.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= 120 {
+        return flat;
+    }
+    format!("{}…", flat.chars().take(119).collect::<String>())
 }
 
 // ---------------------------------------------------------------------------
@@ -647,6 +844,36 @@ mod tests {
                 })
                 .unwrap();
         }
+
+        /// One history row with its text, tags, output and exit code under
+        /// the test's control — what the FTS-matched recall needs.
+        fn seed_cmd(
+            &self,
+            repo: &str,
+            cmd: &str,
+            tags: &[&str],
+            output: &str,
+            exit_code: i64,
+            ts: i64,
+        ) {
+            self.db
+                .record_command(&CommandRecord {
+                    session_id: "sess".into(),
+                    ts,
+                    repo: repo.to_string(),
+                    cmd: cmd.to_string(),
+                    tags: tags.join(":"),
+                    tag_list: tags.iter().map(|t| t.to_string()).collect(),
+                    dirs: vec![],
+                    exit_code: Some(exit_code),
+                    duration_ms: Some(1),
+                    output_head: output.to_string(),
+                    spill_path: None,
+                    source: "live".into(),
+                    message_id: None,
+                })
+                .unwrap();
+        }
     }
 
     impl Drop for Fx {
@@ -837,6 +1064,170 @@ mod tests {
             .len(),
             0
         );
+    }
+
+    // -- query-triggered recall ----------------------------------------------
+
+    #[test]
+    fn content_words_are_the_long_ones_deduped_and_longest_first() {
+        assert_eq!(
+            content_words("How does the retention pruning job work, and the job?"),
+            ["retention", "pruning", "does", "work"]
+        );
+        // FTS operators typed by a human are WORDS. The query must survive
+        // them rather than parse them.
+        assert_eq!(
+            content_words("NEAR \"quoted\" thing*"),
+            ["quoted", "thing", "near"]
+        );
+    }
+
+    #[test]
+    fn a_query_hint_names_the_matched_tag_and_the_command_that_worked() {
+        let f = Fx::new();
+        let ws = f.ws();
+        let memo = StatsMemo::new();
+        let now = 1_000 * DAY;
+        f.seed_cmd(
+            &ws,
+            "bun run scripts/retention.ts --dry-run",
+            &["bun", "retention", "prune"],
+            "",
+            0,
+            now - DAY,
+        );
+        let lines = query_tag_hints(
+            &f.db,
+            &memo,
+            "sess",
+            &ws,
+            "how does retention pruning work here?",
+            now,
+        );
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("retention"), "{}", lines[0]);
+        assert!(
+            lines[0].contains("bun run scripts/retention.ts --dry-run"),
+            "the command that worked is the point of the line: {}",
+            lines[0]
+        );
+    }
+
+    #[test]
+    fn a_command_is_matched_by_what_it_printed_not_only_by_what_it_was_called() {
+        let f = Fx::new();
+        let ws = f.ws();
+        let memo = StatsMemo::new();
+        let now = 1_000 * DAY;
+        f.seed_cmd(
+            &ws,
+            "make check",
+            &["make", "verify"],
+            "error: connection refused talking to postgres",
+            0,
+            now - DAY,
+        );
+        let lines = query_tag_hints(
+            &f.db,
+            &memo,
+            "sess",
+            &ws,
+            "postgres connection refused",
+            now,
+        );
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("make check"), "{}", lines[0]);
+    }
+
+    #[test]
+    fn a_tag_the_session_was_already_primed_with_is_not_said_twice() {
+        let f = Fx::new();
+        let ws = f.ws();
+        let memo = StatsMemo::new();
+        let now = 1_000 * DAY;
+        for i in 0..6 {
+            f.seed_cmd(
+                &ws,
+                "bun test retention",
+                &["retention"],
+                "",
+                0,
+                now - i * DAY,
+            );
+        }
+        // Priming runs first and freezes {retention}; the hint would only be
+        // repeating the prompt.
+        assert!(tags_note_for(&f.db, &memo, "sess", &ws, now).is_some());
+        assert!(query_tag_hints(&f.db, &memo, "sess", &ws, "retention policy", now).is_empty());
+    }
+
+    #[test]
+    fn a_matched_tag_with_nothing_that_worked_behind_it_is_not_suggested() {
+        let f = Fx::new();
+        let ws = f.ws();
+        let memo = StatsMemo::new();
+        let now = 1_000 * DAY;
+        f.seed_cmd(
+            &ws,
+            "bun run scripts/retention.ts",
+            &["retention"],
+            "boom",
+            1,
+            now - DAY,
+        );
+        assert!(query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now).is_empty());
+    }
+
+    #[test]
+    fn query_hints_stop_after_the_per_session_cap() {
+        let f = Fx::new();
+        let ws = f.ws();
+        let memo = StatsMemo::new();
+        let now = 1_000 * DAY;
+        f.seed_cmd(
+            &ws,
+            "bun run retention.ts",
+            &["retention"],
+            "",
+            0,
+            now - DAY,
+        );
+        for _ in 0..MAX_QUERY_HINTS_PER_SESSION {
+            assert_eq!(
+                query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now).len(),
+                1
+            );
+        }
+        assert!(query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now).is_empty());
+    }
+
+    #[test]
+    fn the_pending_hint_drains_once_so_a_multi_round_turn_says_it_once() {
+        let f = Fx::new();
+        let ws = f.ws();
+        let memo = StatsMemo::new();
+        let now = 1_000 * DAY;
+        f.seed_cmd(
+            &ws,
+            "bun run retention.ts",
+            &["retention"],
+            "",
+            0,
+            now - DAY,
+        );
+        note_query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now);
+        assert_eq!(drain_query_tag_hints(&memo, "sess").len(), 1);
+        assert!(drain_query_tag_hints(&memo, "sess").is_empty());
+    }
+
+    #[test]
+    fn a_message_with_no_content_words_and_a_repo_with_no_memory_are_both_silent() {
+        let f = Fx::new();
+        let ws = f.ws();
+        let memo = StatsMemo::new();
+        let now = 1_000 * DAY;
+        assert!(query_tag_hints(&f.db, &memo, "sess", &ws, "do it now", now).is_empty());
+        assert!(query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now).is_empty());
     }
 
     #[test]

@@ -476,6 +476,15 @@ pub trait Db: Send {
         repo: Option<&str>,
         limit: Option<i64>,
     ) -> Result<Vec<TaggedCommand>, BoughError>;
+    /// Commands whose text, tags OR printed output match an FTS query,
+    /// newest first. The query is a bag of words, not FTS syntax — the
+    /// implementation quotes them, so an operator a user typed is a word.
+    fn search_commands(
+        &self,
+        repo: &str,
+        words: &[String],
+        limit: i64,
+    ) -> Result<Vec<TaggedCommand>, BoughError>;
     /// This repo's coined tags (references excluded) and their use counts.
     fn repo_tag_counts(
         &self,

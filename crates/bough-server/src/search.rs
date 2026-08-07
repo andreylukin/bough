@@ -387,6 +387,14 @@ impl<D: Db> Db for SearchSafeDb<D> {
     ) -> Result<Vec<TaggedCommand>, BoughError> {
         self.inner.commands_for_tag(tag, repo, limit)
     }
+    fn search_commands(
+        &self,
+        repo: &str,
+        words: &[String],
+        limit: i64,
+    ) -> Result<Vec<TaggedCommand>, BoughError> {
+        self.inner.search_commands(repo, words, limit)
+    }
     fn repo_tag_counts(
         &self,
         repo: &str,
@@ -1751,6 +1759,14 @@ mod tests {
             _: &str,
             _: Option<&str>,
             _: Option<i64>,
+        ) -> Result<Vec<TaggedCommand>, BoughError> {
+            unreachable!()
+        }
+        fn search_commands(
+            &self,
+            _: &str,
+            _: &[String],
+            _: i64,
         ) -> Result<Vec<TaggedCommand>, BoughError> {
             unreachable!()
         }

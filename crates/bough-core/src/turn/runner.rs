@@ -63,7 +63,9 @@ use crate::harness::protocol::{HostFnName, ProgramResult};
 use crate::harness::vm::{run_program, RunProgramOptions};
 use crate::history::tags::echo::{create_command_echo, EchoCtx};
 use crate::history::tags::record::{create_command_recorder, RecorderCtx};
-use crate::history::tags::stats::{dir_tag_hints, stats_memo, tags_note_for};
+use crate::history::tags::stats::{
+    dir_tag_hints, drain_query_tag_hints, note_query_tag_hints, stats_memo, tags_note_for,
+};
 use crate::hostfn::files::{create_file_host_fns, FileCtx};
 use crate::hostfn::shell::{create_shell_host_fns, EchoHooks, ShellCtx, ShellOptions};
 use crate::llm::pricing::context_window_for;
@@ -431,10 +433,13 @@ pub fn default_program_runner(ctx: &TurnCtx, host: Option<HostFns>) -> ProgramRu
                     .collect()
             };
             with_project_rule_notes(
-                with_dir_tag_hint_notes(
-                    with_exit_notes(result, &round_exits),
+                with_query_tag_hint_notes(
+                    with_dir_tag_hint_notes(
+                        with_exit_notes(result, &round_exits),
+                        &hint_ctx,
+                        &round_dirs,
+                    ),
                     &hint_ctx,
-                    &round_dirs,
                 ),
                 &hint_ctx,
             )
@@ -453,6 +458,19 @@ pub fn default_program_runner(ctx: &TurnCtx, host: Option<HostFns>) -> ProgramRu
 /// saying.
 fn with_project_rule_notes(result: ProgramResult, ctx: &TurnCtx) -> ProgramResult {
     let lines = crate::prompt::project::drain_project_rule_notes(&ctx.session_id);
+    if lines.is_empty() {
+        return result;
+    }
+    let mut logs = result.logs.clone();
+    logs.extend(lines);
+    ProgramResult { logs, ..result }
+}
+
+/// Append what this repo has already run on the topic the user named, queued
+/// when the turn's prompt was built. Drains, so a multi-round turn says it on
+/// the first round and never again.
+fn with_query_tag_hint_notes(result: ProgramResult, ctx: &TurnCtx) -> ProgramResult {
+    let lines = drain_query_tag_hints(stats_memo(), &ctx.session_id);
     if lines.is_empty() {
         return result;
     }
@@ -983,6 +1001,17 @@ fn prepare_turn(
     // project with no command history yet, and then simply omitted.
     let tags_note = with_db(&db, |d| {
         tags_note_for(d, stats_memo(), &session_id, &workspace, now())
+    });
+    // The other half of the memory, matched on what the user actually asked
+    // rather than on where they are. Computed here because the message is in
+    // hand here; DELIVERED on the round's result, like the directory hints —
+    // a per-turn prompt edit would bust the volatile tier.
+    with_db(&db, |d| {
+        let text = d
+            .messages_for(&session_id)
+            .map(|m| crate::skills::invoking_text(&m))
+            .unwrap_or_default();
+        note_query_tag_hints(d, stats_memo(), &session_id, &workspace, &text, now());
     });
     let mut notes: Vec<String> = vec![
         workspace_note(&workspace),
@@ -3352,6 +3381,73 @@ mod tests {
         assert_eq!(recorded[0].tags, "ls:list");
         assert_eq!(recorded[0].exit_code, Some(0));
         assert_eq!(recorded[0].session_id, f.session.id);
+
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[tokio::test]
+    async fn what_the_user_asked_recalls_the_command_that_worked_onto_the_round_result() {
+        // The other half of the memory: the dir hints answer "where are you",
+        // this answers "what did you ask". Same carrier, same reason — the
+        // line rides the tool result, because a per-turn prompt edit would
+        // bust the volatile tier.
+        let ws = temp_workspace("query-hints");
+        let ws_s = ws.to_string_lossy().into_owned();
+
+        let llm = scripted_llm(vec![
+            ScriptedRound {
+                content: vec![run_steps("call-1", r#"await bash("pwd", "pwd:where")"#)],
+                ..Default::default()
+            },
+            ScriptedRound {
+                content: vec![text("done"), stop("stop-1")],
+                ..Default::default()
+            },
+        ]);
+        let f = fixture(opts(llm));
+        with_db(&f.db, |d| d.set_session_workspace(&f.session.id, &ws_s)).unwrap();
+        // One use, so it is demoted out of the priming note — exactly the
+        // word the static note cannot teach and this channel can.
+        seed_history(&f.db, &f.session.id, &ws_s, "retention", None);
+
+        let seen: Arc<Mutex<Option<PromptInput>>> = Arc::new(Mutex::new(None));
+        let s = seen.clone();
+        let mut deps = f.deps.clone();
+        deps.program = None;
+        deps.assemble = Some(Arc::new(move |input: &PromptInput| {
+            *s.lock().unwrap() = Some(input.clone());
+            AssembledPrompt {
+                system: "SYSTEM".into(),
+                system_volatile: "".into(),
+                sections: vec![],
+                shas: vec![],
+            }
+        }));
+        user_message(
+            &f.db,
+            &f.session.id,
+            "how does retention pruning work?",
+            2_000,
+        );
+        let started = begin_turn(&f.ctx, &f.session.id, deps).unwrap();
+        let message = started.message.clone();
+        assert_eq!(finish(started).await.status, TurnOutcomeStatus::Done);
+
+        let parts = parts_of(&f.db, &message.id);
+        let result_text = parts
+            .iter()
+            .find_map(|p| match p {
+                Part::ToolResult { output, .. } => output.as_str().map(str::to_string),
+                _ => None,
+            })
+            .expect("a tool_result part");
+        assert!(
+            result_text.contains("[history] this repo has worked on that before"),
+            "the query hint must ride the tool result: {result_text}"
+        );
+        assert!(result_text.contains("retention"), "{result_text}");
+        let notes = seen.lock().unwrap().as_ref().unwrap().notes.clone();
+        assert!(notes.iter().all(|n| !n.contains("[history]")), "{notes:?}");
 
         let _ = std::fs::remove_dir_all(&ws);
     }
