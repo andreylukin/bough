@@ -9,26 +9,26 @@
   One JavaScript program per round — loops, branching, composition — run against your real checkout.
 </p>
 
+<p align="center">
+  <img src="assets/screenshot-conversation.png" alt="bough conversation" width="820">
+</p>
+
 Most harnesses let the model emit one tool call and wait. bough gives it a single tool that takes a
 program: the model writes JavaScript with real control flow, and a harness executes it on your
-machine. A headless server owns all state and execution; the terminal UI is a view over it. History
-is a tree — any turn can be branched — and delegation is first-class: a program can spawn subagents
-or launch a detached workflow that fans work across many of them.
+machine. A headless server owns all state and execution; the terminal UI is a view over it.
 
 bough is an alternative harness **design**, not a better coding agent. That distinction is the point
 of the project, and this README tries not to blur it.
 
-## Read this before you run it
-
-**There is no isolation boundary.** Programs run as you, with your full authority — filesystem,
-network, subprocesses, `npm:` imports. There is no sandbox, no egress proxy, no credential gating,
-no confinement of any kind. Host functions are convenience and session integration, never a wall.
-
-This is a deliberate choice, not an unfinished one ([spec §2](docs/spec.md)). The harness edits your
-real files because reviewing `git diff` and pushing with your own git is the delivery mechanism.
-
-Run it only on a machine where you would be comfortable running the code it writes, because that is
-exactly what happens.
+> [!WARNING]
+> **There is no isolation boundary.** Programs run as you, with your full authority — filesystem,
+> network, subprocesses, `npm:` imports. No sandbox, no egress proxy, no credential gating. Host
+> functions are convenience and session integration, never a wall.
+>
+> This is a deliberate choice, not an unfinished one ([spec §2](docs/spec.md)): the harness edits
+> your real files because reviewing `git diff` and pushing with your own git is the delivery
+> mechanism. Run it only on a machine where you would be comfortable running the code it writes,
+> because that is exactly what happens.
 
 ## The idea
 
@@ -37,29 +37,24 @@ exactly what happens.
 - **In place.** The agent edits your own checkout — no copy, no overlay. The Changes rail is
   `git diff` against the sha the session started from; you deliver with `git commit` / `git push`.
 - **History is a tree.** Fork any turn, compact a span onto a new branch, lift messages into a fresh
-  root. Nothing is ever destructively rewritten — every operation produces a new branch.
+  root. Nothing is destructively rewritten — every operation produces a new branch.
 - **The server is the system.** State, execution, and orchestration are server-side. A client can
   crash or detach without affecting a running turn.
 - **Delegation is core.** Subagents and workflows are primary capabilities with real persistence,
   lifecycle control, and observability.
 
-## Setup
+## Install
 
-macOS or Linux. The service manager is the only platform-specific piece: launchd on macOS,
-a systemd **user** unit on Linux, and a plain background process where there is no user
-systemd (containers, WSL1). Everything else — the server, the TUI, `exec` — is the same
-code on both.
+macOS or Linux:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh)"
 ```
 
-That clones into `~/bough` (override with `BOUGH_DIR`) and hands off to `scripts/bough setup`, which
-installs the toolchain (the Rust toolchain via rustup, plus `node`, `ripgrep` and `uv` from the
-platform's package manager — Homebrew, `apt-get`, `dnf` or `pacman`), builds the binary
-(`cargo build --release`), links `bough` into `~/.local/bin`, and writes an env template to
-`~/.bough/env`. Already have a
-clone? Run `scripts/setup.sh` directly. Then:
+That clones into `~/bough` (override with `BOUGH_DIR`) and runs `scripts/bough setup`, which
+installs the toolchain (Rust via rustup, plus `node`, `ripgrep` and `uv` from Homebrew / `apt-get` /
+`dnf` / `pacman`), builds the release binary, links `bough` into `~/.local/bin`, and writes an env
+template. Already have a clone? Run `scripts/setup.sh` directly. Then:
 
 ```bash
 $EDITOR ~/.bough/env      # ANTHROPIC_API_KEY=…  (OPENAI_/OPENROUTER_/CLOUDFLARE_ keys optional)
@@ -67,27 +62,36 @@ bough start               # background service: starts at login, restarts on cra
 bough                     # the TUI (auto-starts the server if it is down)
 ```
 
-`bough` also takes `kill`, `restart`, `update` (fast-forward `origin/main` and restart), `status`,
-`logs`, `run` (foreground server), `purge`, `sync-mcp` (adopt Claude Code's MCP servers), and
-`tags` (what the command memory knows, and what it primes the model with).
+The service manager is the only platform-specific piece — launchd on macOS, a systemd **user** unit
+on Linux, a plain background process where there is no user systemd (containers, WSL1). There is no
+file watcher: editing code lands only on an explicit `bough restart`.
 
-There is no file watcher on the service: editing code lands only on an explicit `bough restart`.
+**Other commands.** `kill`, `restart`, `update` (fast-forward `origin/main` and restart), `status`,
+`logs`, `run` (foreground server), `purge`, `sync-mcp` (adopt Claude Code's MCP servers), `tags`
+(what the command memory knows).
 
 **Scripting.** `bough exec [-w dir] [-m model] [--json] "do the thing"` creates a session, streams
 the assistant's text to stdout, and exits 0 on a completed turn, 1 on an errored one, 2 on a usage
 or connection problem.
 
-**Environment.** `BOUGH_HOME` relocates the whole data root (`~/.bough` by default) and `BOUGH_PORT`
-moves the listener, so a development instance never touches a live install. `BOUGH_MODEL` and
+**Environment.** `BOUGH_HOME` relocates the whole data root (`~/.bough`) and `BOUGH_PORT` moves the
+listener, so a development instance never touches a live install. `BOUGH_MODEL` and
 `BOUGH_CHEAP_MODEL` set the default and cheap-tier models (both also settable in the picker).
 
 ## Use it
 
 Point a session at a repo and ask in plain language. bough writes a small program, runs it, and
-answers — folded reasoning, the code that ran, live cost and context in one view.
+answers — folded reasoning, the code that ran, live cost and context in one view. Unfold a step
+(`^e`) and you see the actual program and its output:
 
-**The program environment.** Host functions are pre-injected globals; the program also has the full
-JS runtime (`bun` if it is installed, else `node`) and may ignore all of them.
+<p align="center">
+  <img src="assets/screenshot-program.png" alt="an unfolded step: the program that ran, and its output" width="820">
+</p>
+
+### The program environment
+
+Host functions are pre-injected globals; the program also has the full JS runtime (`bun` if
+installed, else `node`) and may ignore all of them.
 
 | | |
 |---|---|
@@ -96,74 +100,98 @@ JS runtime (`bun` if it is installed, else `node`) and may ignore all of them.
 | Delegation | `agent` (blocking) · `spawn` (detached) · `join` · `adopt` · `workflow.*` |
 | Session | `ask` a human mid-program · `state.*` durable KV · `schedule.*` · `artifact` |
 
-**One editing idiom.** `patch` names lines instead of quoting them, so code being edited never has
-to survive the model's own string escaping. The tag pins the version that was viewed: if the file
-moved on but the patched lines are untouched, the edit rebases; if they *were* touched, it reports a
-conflict. With subagents sharing one checkout, that is the primary safeguard against silent
-clobbering.
+### One editing idiom
 
-**Memory across sessions.** Every `bash` carries tags naming what it is *for* —
-`bash("cargo test -p bough-tui", "cargo:test:composer")` — and every finished command is recorded under
-them: command, exit code, duration, the first 2k chars it *printed*, and the directories it was
+`patch` names lines instead of quoting them, so code being edited never has to survive the model's
+own string escaping. The tag pins the version that was viewed: if the file moved on but the patched
+lines are untouched, the edit rebases; if they *were* touched, it reports a conflict. With subagents
+sharing one checkout, that is the primary safeguard against silent clobbering.
+
+### Review and deliver
+
+The Changes rail (`^d`) is `git diff` against the sha the session started from — per-file, revertable
+per path, and never a staging area of its own. You commit and push with your own git.
+
+<p align="center">
+  <img src="assets/screenshot-changes.png" alt="the changes rail" width="820">
+</p>
+
+### History is a tree
+
+Rewind to any turn and send something else, and the old line survives as a branch (`^f`). Compacting
+a span or lifting messages into a fresh root works the same way — a new branch, never a rewrite.
+
+<p align="center">
+  <img src="assets/screenshot-tree.png" alt="the conversation tree with a branch point" width="820">
+</p>
+
+### Memory across sessions
+
+Every `bash` call carries tags naming what it is *for* —
+`bash("cargo test -p bough-tui", "cargo:test:composer")` — and every finished command is recorded
+under them: command, exit code, duration, the first 2k chars it *printed*, and the directories it was
 about. Labeling intent at generation time is nearly free and far more accurate than clustering
 command strings after the fact, and the exit code is the ground truth that weights the label. The
-scope key is the repo a command *touched* — git origin URL, else path — not where the session sits,
-so a session rooted at `~` still files into the right project.
+scope key is the repo a command *touched* — git origin URL, else path — so a session rooted at `~`
+still files into the right project.
 
-Recall is a COMMAND, not a verb. There is no memory host function: the program runs `bough tags`
-in the shell — `show TAG` for what worked, `sql "SELECT …"` for anything else, `similar "text"`
-where the vector layer exists — and `sql` opens the file read-only with `query_only` on, so the
-guarantee holds against the database the server is writing to. One door for the model and the
-human, and nothing to keep in step with a bridge.
+Recall runs both ways:
 
-Recall runs both ways. The harness primes: a session opens with the project's own tag vocabulary —
-weighted by success and a 30-day recency half-life, then damped by how many *other* projects use the
-same word, so the list is the subjects this repo talks about rather than the tool names every repo
-shares — and a round that reaches into a new directory gets one dim
-`[history]` line naming what past sessions tagged there. The program pulls:
-`bough tags sql` is a
-read-only SELECT over `command_history`, its tag and directory junctions, and an FTS index covering
-*output* as well as invocations — so "what did that migration actually print" is answerable without
-re-running it. It is the same `~/.bough/bough.db` that holds the transcripts, which is why the
-bundled `history` skill answers across both through the same command. `bough tags similar`
-adds KNN recall: `sqlite-vec` + `sqlite-lembed` embed with a local MiniLM *inside* SQLite, into a
-separate `~/.bough/embeddings.db` — no native module, no subprocess, no API call. SQLite is
-compiled into the binary, so the extension layer is there on every platform.
+- **The harness primes.** A session opens with the project's own tag vocabulary — weighted by
+  success and a 30-day recency half-life, then damped by how many *other* projects use the same word,
+  so the list is the subjects this repo talks about rather than the tool names every repo shares. A
+  round that reaches into a new directory gets one dim `[history]` line naming what past sessions
+  tagged there.
+- **The program pulls.** There is no memory host function — the program runs `bough tags` in the
+  shell: `show TAG` for what worked, `sql "SELECT …"` for anything else, `similar "text"` where the
+  vector layer exists. One door for the model and the human, and nothing to keep in step with a bridge.
+
+`bough tags sql` is a read-only SELECT (`query_only` on, against the live database) over
+`command_history`, its tag and directory junctions, and an FTS index covering *output* as well as
+invocations — so "what did that migration actually print" is answerable without re-running it. It is
+the same `~/.bough/bough.db` that holds the transcripts, which is why the bundled `history` skill
+answers across both through the same command. `bough tags similar` adds KNN recall: `sqlite-vec` +
+`sqlite-lembed` embed with a local MiniLM *inside* SQLite, into a separate `~/.bough/embeddings.db`
+— no native module, no subprocess, no API call.
 
 A tag with a DOT is a **reference** — `linear.eng-1234`, `pr.456`, `commit.3c1c78e` — pointing at
-something with an identity outside bough. Same table and same joins as any other tag, so a ticket
-recalls the commands run for it and the graph connects them; but references are excluded from the
-priming note, because an id lives in exactly one project and the rarity boost would float last
-week's ticket numbers above the vocabulary. Dashes survive inside a reference and nowhere else.
-Every row also points at the message whose program ran it, so recall reaches the ROUND, not just
-the incantation.
+something with an identity outside bough. Same table and joins as any other tag, so a ticket recalls
+the commands run for it; but references are excluded from the priming note, because an id lives in
+exactly one project and the rarity boost would float last week's ticket numbers above the vocabulary.
+Every row also points at the message whose program ran it, so recall reaches the ROUND, not just the
+incantation.
 
-`bough tags` is the human's door into the same memory: the project's tag vocabulary with the
-arithmetic the priming note ranked it by, `bough tags show TAG` for what worked under one, and
-`bough tags stats` for coverage and vocabulary per day — which is how you tell whether a prompt
-change made the model name more things or just repeat itself.
+For the human, `bough tags` prints the project's vocabulary with the arithmetic the priming note
+ranked it by, `bough tags show TAG` what worked under one, and `bough tags stats` coverage and
+vocabulary per day — which is how you tell whether a prompt change made the model name more things or
+just repeat itself.
 
-**Fan out.** `agent()` runs a subagent to completion and returns its report; `spawn()` detaches one
-that reports back as a system note. For bigger fan-outs, a **workflow** is a script that runs
-detached from the turn, with `agent` / `parallel` / `pipeline` primitives and structured (schema
-validated) results. Every `agent()` call is journaled before it runs, so a stopped run loses no
-completed work and a relaunch replays the unchanged prefix instead of paying for it twice.
+### Fan out
 
-**MCP is a command, not a verb.** There is no MCP host function: a granted server's tool is
-called with `bough mcp call SERVER TOOL '{"arg":"value"}'` through the shell, and the turn's prompt
-carries the catalog of what is connected. One calling convention for the model and the human, and
-nothing to keep in step with the CLI. Registering, granting and authorizing stay the human's —
-`bough mcp` on its own says what every server's state is.
+`agent()` runs a subagent to completion and returns its report; `spawn()` detaches one that reports
+back as a system note. For bigger fan-outs, a **workflow** is a script that runs detached from the
+turn, with `agent` / `parallel` / `pipeline` primitives and schema-validated results. Every `agent()`
+call is journaled before it runs, so a stopped run loses no completed work and a relaunch replays the
+unchanged prefix instead of paying for it twice.
 
-**Everything else in one panel.** Sessions, conversation tree, changes review, model picker, MCP,
-skills, themes — with direct-jump keys. Models route to Anthropic, OpenAI, or OpenRouter by id
-prefix, and the picker's catalog is what the server's keys can actually reach, not a compiled-in
-list; a cheap tier handles titles, ghost text, and activity blurbs and fails silently when it can't.
+### MCP is a command, not a verb
 
-Plus: artifact publishing at a URL with a comment layer, keyword search across transcripts, `@`
-files and `/` skills in the composer, and recurring runs on a schedule. Four skills ship bundled —
-`history`, `wayfinder`, `domain-modeling`, `grilling` — and `~/.bough/skills` holds your own.
-Project rules come from `AGENTS.md`, read per turn from the git root down.
+There is no MCP host function: a granted server's tool is called with
+`bough mcp call SERVER TOOL '{"arg":"value"}'` through the shell, and the turn's prompt carries the
+catalog of what is connected. Registering, granting and authorizing stay the human's — `bough mcp` on
+its own says what every server's state is.
+
+### Everything else in one panel
+
+Sessions, conversation tree, changes review, model picker, MCP, skills, themes — each with a
+direct-jump key. Models route to Anthropic, OpenAI, or OpenRouter by id prefix, and the picker's
+catalog is what the server's keys can actually reach, not a compiled-in list; a cheap tier handles
+titles, ghost text, and activity blurbs and fails silently when it can't.
+
+Plus: artifact publishing at a URL with a comment layer, keyword search across transcripts, `@` files
+and `/` skills in the composer, and recurring runs on a schedule. Four skills ship bundled —
+`history`, `wayfinder`, `domain-modeling`, `grilling` — and `~/.bough/skills` holds your own. Project
+rules come from `AGENTS.md`, read per turn from the git root down.
 
 ## How it works
 
@@ -184,8 +212,8 @@ Project rules come from `AGENTS.md`, read per turn from the git root down.
   functions bridge over a line protocol on its pipes. The sidecar exists to give the program a clean
   global scope and a cancellable lifetime, not to contain it.
 - **Workflow sidecar** — a JS process running one orchestration script. A scripting surface, not a
-  sandbox: it is bound to `agent()` / `phase()` / `log()` / `parallel()` / `pipeline()`, and is
-  starved of ambient nondeterminism (`Date.now`, `Math.random`) so journal replay stays sound.
+  sandbox: bound to `agent()` / `phase()` / `log()` / `parallel()` / `pipeline()`, and starved of
+  ambient nondeterminism (`Date.now`, `Math.random`) so journal replay stays sound.
 - **Clients** — a ratatui TUI and a headless one-shot CLI.
 
 ## Develop
@@ -205,8 +233,8 @@ cargo test --workspace    # unit + integration, offline and hermetic
 These are decisions, not gaps:
 
 - No confinement of any kind, and no credential gating.
-- No acceptance gate — the model reports what it did and you verify it. The harness does not re-run
-  a committed command or block a turn from finishing.
+- No acceptance gate — the model reports what it did and you verify it. The harness does not re-run a
+  committed command or block a turn from finishing.
 - No local inference in the turn loop; the cheap tier is a hosted model. The one exception is the
   embedding layer, which runs a small model inside SQLite.
 - No embeddings over transcripts — cross-session transcript search is SQLite FTS. Only the tagged
