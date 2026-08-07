@@ -372,7 +372,9 @@ pub fn render_composer(p: &ComposerProps, area: Rect, buf: &mut Buffer) {
             Span::styled(
                 format!("[image: {name}]"),
                 if selected {
-                    Style::default().fg(super::accent()).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(super::accent())
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(super::info())
                 },

@@ -187,24 +187,48 @@ fn claude_home() -> Option<PathBuf> {
 /// NOTHING IS CACHED, here as everywhere else in this module: a plugin
 /// installed mid-session is available on the next turn.
 pub fn sources_for(workspace: &Path) -> Vec<SkillSource> {
+    compose_sources(
+        workspace,
+        &ensure_bundled_skills(),
+        &user_skills_dir(),
+        dirs::home_dir().as_deref(),
+        claude_home().as_deref(),
+    )
+}
+
+/// [`sources_for`] with every global it reads passed in.
+///
+/// THE ORDER LIVES HERE AND IS TESTED HERE. `sources_for` reads `BOUGH_HOME`
+/// and `$HOME`, and a test that had to redirect those to assert a precedence
+/// rule would be mutating process-global state for a question that is really
+/// about five paths and their sequence. This is the module's own stated
+/// principle (see the header: DI OVER GLOBALS) applied to the one function
+/// that had grown a set of globals since.
+pub fn compose_sources(
+    workspace: &Path,
+    bundled: &Path,
+    user: &Path,
+    home: Option<&Path>,
+    claude_home: Option<&Path>,
+) -> Vec<SkillSource> {
     let mut out = vec![SkillSource {
         source: SkillSourceName::Bundled,
-        dir: ensure_bundled_skills(),
+        dir: bundled.to_path_buf(),
     }];
     out.extend(foreign::project_sources(workspace));
     out.push(SkillSource {
         source: SkillSourceName::User,
-        dir: user_skills_dir(),
+        dir: user.to_path_buf(),
     });
-    if let Some(home) = dirs::home_dir() {
-        out.extend(foreign::user_sources(&home));
+    if let Some(home) = home {
+        out.extend(foreign::user_sources(home));
     }
-    if let Some(claude) = claude_home() {
-        out.extend(foreign::claude_plugin_sources(&claude, workspace));
+    if let Some(claude) = claude_home {
+        out.extend(foreign::claude_plugin_sources(claude, workspace));
     }
     // Repo-scoped marketplaces before the personal one: the repo is the more
     // specific statement about this workspace, matching the project rung.
-    for market in codex_marketplaces(workspace) {
+    for market in codex_marketplaces(workspace, home) {
         out.extend(foreign::codex_marketplace_sources(&market));
     }
     out
@@ -213,7 +237,7 @@ pub fn sources_for(workspace: &Path) -> Vec<SkillSource> {
 /// The Codex marketplace files that apply: the workspace's own, then the
 /// user's. Repo-scoped ones are looked for at the git root and at the
 /// workspace itself, which is where Codex documents them.
-fn codex_marketplaces(workspace: &Path) -> Vec<PathBuf> {
+fn codex_marketplaces(workspace: &Path, home: Option<&Path>) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let mut push = |dir: PathBuf| {
         let path = dir.join(".agents").join("plugins").join("marketplace.json");
@@ -234,8 +258,8 @@ fn codex_marketplaces(workspace: &Path) -> Vec<PathBuf> {
             None => break,
         }
     }
-    if let Some(home) = dirs::home_dir() {
-        push(home);
+    if let Some(home) = home {
+        push(home.to_path_buf());
     }
     out
 }
@@ -860,6 +884,115 @@ mod tests {
         assert_eq!(load_skill("../../etc", &sources), None);
         assert_eq!(load_skill("a/b", &sources), None);
         assert_eq!(load_skill(".hidden", &sources), None);
+    }
+
+    // ---- the composed source order ------------------------------------------
+
+    /// The rule the whole design rests on, and until this test it was asserted
+    /// nowhere: the PARTS each had coverage, the ORDER they compose into had
+    /// none. Every rung is populated with a skill of the same name, so the one
+    /// that wins names the rung that won.
+    #[test]
+    fn every_rung_is_consulted_and_the_precedence_between_them_is_fixed() {
+        let root = std::env::temp_dir().join(format!("bough-compose-{}", uuid::Uuid::new_v4()));
+        let bundled = root.join("bundled");
+        let user = root.join("bough-skills");
+        let home = root.join("home");
+        let claude = root.join("home").join(".claude");
+        let ws = root.join("repo");
+        std::fs::create_dir_all(ws.join(".git")).unwrap();
+
+        let put = |dir: PathBuf, body: &str| {
+            let folder = dir.join("shared");
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(
+                folder.join("SKILL.md"),
+                format!("---\ndescription: d\n---\n{body}"),
+            )
+            .unwrap();
+            dir
+        };
+        put(bundled.clone(), "BUNDLED");
+        put(ws.join(".agents").join("skills"), "PROJECT");
+        put(user.clone(), "USER");
+        put(home.join(".claude").join("skills"), "FOREIGN");
+        // A plugin, through the real registry shape.
+        let install = put(root.join("plug").join("skills"), "PLUGIN");
+        std::fs::create_dir_all(claude.join("plugins")).unwrap();
+        std::fs::write(
+            claude.join("plugins").join("installed_plugins.json"),
+            serde_json::json!({"plugins": {"p@m": [{
+                "installPath": install.parent().unwrap().to_string_lossy(),
+                "scope": "user",
+            }]}})
+            .to_string(),
+        )
+        .unwrap();
+
+        let sources = compose_sources(&ws, &bundled, &user, Some(&home), Some(&claude));
+        let kinds: Vec<SkillSourceName> = sources.iter().map(|s| s.source).collect();
+        assert_eq!(
+            kinds,
+            [
+                SkillSourceName::Bundled,
+                SkillSourceName::Project,
+                SkillSourceName::User,
+                SkillSourceName::Foreign,
+                SkillSourceName::Plugin,
+            ],
+            "every rung must be present, in this order: {sources:?}"
+        );
+
+        // And first-wins actually resolves to the bundled body — the rung that
+        // must never be shadowed (spec §16).
+        let listed = list_skills(&sources);
+        assert_eq!(listed.len(), 1, "one name, one row: {listed:?}");
+        assert_eq!(listed[0].body, "BUNDLED");
+        assert_eq!(listed[0].source, SkillSourceName::Bundled);
+
+        // Remove the bundled copy and the next rung down takes over, which is
+        // what proves the order is a cascade and not just a first entry.
+        std::fs::remove_dir_all(bundled.join("shared")).unwrap();
+        let listed = list_skills(&compose_sources(
+            &ws,
+            &bundled,
+            &user,
+            Some(&home),
+            Some(&claude),
+        ));
+        assert_eq!(
+            listed[0].body, "PROJECT",
+            "project outranks user and plugin"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_codex_marketplace_is_found_at_the_repo_root_and_in_the_users_home() {
+        let root = std::env::temp_dir().join(format!("bough-market-{}", uuid::Uuid::new_v4()));
+        let ws = root.join("repo").join("pkg");
+        let repo = root.join("repo");
+        let home = root.join("home");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        for dir in [&repo, &home] {
+            let market = dir.join(".agents").join("plugins");
+            std::fs::create_dir_all(&market).unwrap();
+            std::fs::write(market.join("marketplace.json"), "{}").unwrap();
+        }
+        let found = codex_marketplaces(&ws, Some(&home));
+        assert_eq!(
+            found,
+            vec![
+                repo.join(".agents/plugins/marketplace.json"),
+                home.join(".agents/plugins/marketplace.json"),
+            ],
+            "repo-scoped first, personal last"
+        );
+        // A home that has none contributes none, and a workspace outside any
+        // repo still answers.
+        assert!(codex_marketplaces(&ws, None).len() == 1);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // ---- ${SKILL_DIR} -------------------------------------------------------

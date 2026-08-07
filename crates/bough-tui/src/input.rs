@@ -299,12 +299,18 @@ mod tests {
     #[test]
     fn the_startup_sequence_requests_paste_mouse_and_focus() {
         for (mode, what) in [
-            ("?2004h", "bracketed paste — without it a paste is N keystrokes"),
+            (
+                "?2004h",
+                "bracketed paste — without it a paste is N keystrokes",
+            ),
             ("?1006h", "SGR mouse encoding"),
             ("?1002h", "drag tracking, which selection needs"),
             ("?1004h", "focus reporting"),
         ] {
-            assert!(ENTER_SEQ.contains(mode), "ENTER_SEQ must request {mode}: {what}");
+            assert!(
+                ENTER_SEQ.contains(mode),
+                "ENTER_SEQ must request {mode}: {what}"
+            );
         }
         // Whatever is switched on must be switched off, or it outlives the
         // process in the user's shell.

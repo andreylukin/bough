@@ -210,6 +210,116 @@ mod tests {
             .all(|s| s["dir"].is_string() && s["source"].is_string()));
     }
 
+    /// `?session=` is what makes a project's checked-in skills visible at all.
+    /// Without this the panel lists the workspace-independent sources and a
+    /// user who checked a skill into their repo cannot see it anywhere —
+    /// which is the exact question the `sources` array exists to answer.
+    #[tokio::test]
+    async fn a_session_scoped_listing_finds_the_workspaces_own_skills() {
+        let (_home, _sources) = bundled_sources();
+        let fx = testutil::fixture();
+        let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
+
+        let ws = std::env::temp_dir().join(format!("bough-srv-skills-{}", uuid::Uuid::new_v4()));
+        let folder = ws.join(".agents").join("skills").join("shipit");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::create_dir_all(ws.join(".git")).unwrap();
+        std::fs::write(
+            folder.join("SKILL.md"),
+            "---\ndescription: ship the thing\n---\nSHIP BODY",
+        )
+        .unwrap();
+
+        let session = "s-skills".to_string();
+        {
+            let db = fx.ctx.db.lock().unwrap();
+            db.create_session(bough_core::schema::parts::Session {
+                id: session.clone(),
+                title: "t".into(),
+                kind: bough_core::schema::parts::SessionKind::Root,
+                created_at: 1_000,
+                parent_id: None,
+                origin_id: None,
+                origin_message_id: None,
+                workspace: Some(ws.to_string_lossy().into_owned()),
+                origin_dir: None,
+                base: None,
+                model: None,
+                effort: None,
+                draft: None,
+                context_tokens: None,
+                cached_tokens: None,
+                last_llm_at: None,
+                outcome_ok: None,
+            })
+            .unwrap();
+        }
+
+        // Unscoped: the project skill is invisible, because nothing said which
+        // project. This half is the control — without it the test would pass
+        // even if the query parameter were ignored entirely.
+        let bare = testutil::body_json(call.call(testutil::get("/skills")).await).await;
+        let names = |body: &serde_json::Value| -> Vec<String> {
+            body["skills"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert!(
+            !names(&bare).contains(&"shipit".to_string()),
+            "no session, no workspace, no project skills: {:?}",
+            names(&bare)
+        );
+
+        let scoped = testutil::body_json(
+            call.call(testutil::get(&format!("/skills?session={session}")))
+                .await,
+        )
+        .await;
+        assert!(
+            names(&scoped).contains(&"shipit".to_string()),
+            "the session's workspace must be searched: {:?}",
+            names(&scoped)
+        );
+        let row = scoped["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == "shipit")
+            .unwrap()
+            .clone();
+        assert_eq!(
+            row["source"], "project",
+            "the row names the rung it came from"
+        );
+        assert!(
+            scoped["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s["dir"].as_str().unwrap().contains(".agents")),
+            "the searched directories must include the workspace's own"
+        );
+
+        // And the body route agrees with the listing — a skill you can see and
+        // cannot fetch is the failure this scoping could easily have caused.
+        let res = call
+            .call(testutil::get(&format!("/skills/shipit?session={session}")))
+            .await;
+        assert_eq!(res.status(), 200);
+        let body = testutil::body_json(res).await;
+        assert!(body["body"].as_str().unwrap().contains("SHIP BODY"));
+        // Unscoped, the same fetch is a 404 rather than a wrong answer.
+        assert_eq!(
+            call.call(testutil::get("/skills/shipit")).await.status(),
+            404
+        );
+
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
     #[tokio::test]
     async fn one_skill_serves_its_body_with_skill_dir_resolved() {
         let (_home, _sources) = bundled_sources();

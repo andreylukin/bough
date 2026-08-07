@@ -62,8 +62,8 @@ use crate::agents::subagent::{
 };
 use crate::bus::Bus;
 use crate::errors::{BoughError, ErrorKind};
-use crate::paths::workflow_script_path;
 use crate::hostfn::ask::{AskInput, AskSettlement};
+use crate::paths::workflow_script_path;
 use crate::schema::events::{EventInput, EventType, MessageFinishedData, MessagePartData};
 use crate::schema::parts::{Part, WorkflowAgent, WorkflowAgentStatus, WorkflowRun};
 use crate::turn::queue::TurnRegistry;
@@ -1271,8 +1271,7 @@ pub async fn workflow_verb(
             let shape = "{id, script?, args?}";
             let bag = args_object(verb, shape, args)?;
             let id = require_string(&bag, "id").map_err(|d| arg_error(verb, shape, d))?;
-            let script =
-                optional_string(&bag, "script").map_err(|d| arg_error(verb, shape, d))?;
+            let script = optional_string(&bag, "script").map_err(|d| arg_error(verb, shape, d))?;
             let run = rerun_workflow_run(
                 ctx,
                 &id,
@@ -1919,10 +1918,7 @@ mod tests {
     where
         F: std::future::Future<Output = ()>,
     {
-        let home = std::env::temp_dir().join(format!(
-            "bough-wfcontrol-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let home = std::env::temp_dir().join(format!("bough-wfcontrol-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&home).expect("temp home");
         crate::paths::test_env::with_env(&[("BOUGH_HOME", home.to_str())], || {
             tokio::runtime::Builder::new_current_thread()
@@ -2005,7 +2001,10 @@ mod tests {
             let text = vec![Part::Text {
                 text: "the program ran".into(),
             }];
-            db.lock().unwrap().update_message("m1", &text, true).unwrap();
+            db.lock()
+                .unwrap()
+                .update_message("m1", &text, true)
+                .unwrap();
             assert_eq!(
                 part_types(&db, "m1"),
                 ["text"],
