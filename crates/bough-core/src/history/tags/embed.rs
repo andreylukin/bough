@@ -16,8 +16,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 pub use crate::db::embed::{
-    create_embed_layer, lembed_extension_path, EmbedLayer, EmbedLayerOptions, SimilarRow,
-    EMBED_MODEL_ENV, LEMBED_PATH_ENV,
+    create_embed_layer, EmbedLayer, EmbedLayerOptions, SimilarRow, EMBED_MODEL_ENV,
 };
 
 /// One tick a minute: the first tick after a busy session catches up gradually
@@ -202,25 +201,18 @@ mod tests {
         let Some(layer) = create_embed_layer(Some(EmbedLayerOptions {
             bough_db: Some(bough_db.to_string_lossy().into_owned()),
             embed_db: Some(embed_db.to_string_lossy().into_owned()),
-            model_path: Some(
-                crate::paths::bough_path(&["models", "all-MiniLM-L6-v2.e4ce9877.q8_0.gguf"])
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
+            model_path: None,
         })) else {
             let _ = std::fs::remove_dir_all(&dir);
-            return; // no sqlite-lembed on this machine — nothing to pump
+            return; // no extension support on this machine — nothing to pump
         };
-        if !crate::paths::bough_path(&["models", "all-MiniLM-L6-v2.e4ce9877.q8_0.gguf"]).exists() {
-            let _ = std::fs::remove_dir_all(&dir);
-            return; // no model — the layer would try to download 25MB
-        }
 
         let handle = spawn_drain_ticker(Arc::new(layer), Duration::from_millis(50));
         // Poll rather than sleep-a-fixed-amount: the first tick is immediate, so
-        // this settles fast, and a slow machine does not turn into a flake.
+        // this settles fast, and a slow machine does not turn into a flake. The
+        // first tick may also be fetching the model, so the window is generous.
         let mut drained = 0i64;
-        for _ in 0..100 {
+        for _ in 0..200 {
             tokio::time::sleep(Duration::from_millis(50)).await;
             if let Ok(conn) = rusqlite::Connection::open(&embed_db) {
                 if let Ok(n) =

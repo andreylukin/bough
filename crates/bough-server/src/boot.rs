@@ -536,7 +536,7 @@ pub async fn start() -> Result<(), BoughError> {
     let stop_ticker = bough_core::schedules::start_schedule_ticker(&boot.ctx);
 
     // 8b. The tag-history vector layer's drain pump (row 3.17). `None` on a
-    // machine without an extension-capable SQLite, without sqlite-lembed, or
+    // machine without an extension-capable SQLite, or
     // with `BOUGH_NO_EMBED` — everything else works identically there, so the
     // absence is reported once and never again. Without this line the layer
     // would exist and embed NOTHING, and `bough tags similar` would search an
@@ -545,7 +545,7 @@ pub async fn start() -> Result<(), BoughError> {
     match bough_core::history::tags::embed::start_drain_ticker() {
         Some(_pump) => println!("{}", bough_core::history::tags::embed::DRAIN_READY_LINE),
         None => println!(
-            "history embeddings: off (no sqlite-lembed / BOUGH_NO_EMBED) — tags + FTS recall \
+            "history embeddings: off (BOUGH_NO_EMBED / no extension support) — tags + FTS recall \
              unaffected"
         ),
     }

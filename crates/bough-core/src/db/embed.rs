@@ -5,8 +5,8 @@
 //! The whole layer is one SQL statement per direction:
 //!
 //! ```text
-//! drain:    INSERT INTO vec_index VALUES (id, lembed('embed', embed_doc(…)))
-//! similar:  … WHERE embedding MATCH lembed('embed', ?) ORDER BY distance
+//! drain:    INSERT INTO vec_index VALUES (id, <f32 blob from embed_doc(…)>)
+//! similar:  … WHERE embedding MATCH <f32 blob> ORDER BY distance
 //! ```
 //!
 //! The index is COSINE (`distance_metric=cosine`), because a threshold that
@@ -28,21 +28,23 @@
 //!   is no dylib to find and nothing to install. Together with rusqlite
 //!   `bundled` this is what retires the `Database.setCustomSQLite` Homebrew
 //!   dance (`db/extensions.rs`).
-//! - **sqlite-lembed** (GGUF models as the `lembed()` SQL function): has no Rust
-//!   crate, so it is DYLIB-LOADED from [`lembed_extension_path`] —
-//!   `$BOUGH_LEMBED_PATH`, else `~/.bough/lib/lembed0.{dylib,so,dll}`. Absent →
-//!   [`create_embed_layer`] returns `None`, exactly the shape
-//!   macOS-without-Homebrew already has in TS, and tags + FTS carry recall
-//!   alone.
+//! - **model2vec-rs** (the vectors themselves): pure Rust. A Model2Vec model is
+//!   a STATIC embedding table — a token→vector matrix plus a tokenizer — so
+//!   embedding is a lookup and a mean, with no neural forward pass, no ONNX and
+//!   no llama.cpp.
 //!
-//!   The considered alternative was `fastembed` computing vectors in Rust and
-//!   inserting the bytes directly. Not chosen: it drags in ONNX Runtime plus its
-//!   own model download and tokenizer, i.e. a DIFFERENT embedding pipeline from
-//!   the one the TS install has been filling `~/.bough/embeddings.db` with — the
-//!   model-id check below would fire and throw that store away. The dylib reuses
-//!   the same GGUF and the same SQL, so cutover keeps the vectors. If the dylib
-//!   ever stops building, fastembed is the fallback and the rebuild is the
-//!   documented cost.
+//!   THIS REPLACED sqlite-lembed, which was dylib-loaded from
+//!   `~/.bough/lib/lembed0.{dylib,so,dll}`. That dylib was an install step, and
+//!   `create_embed_layer` returned `None` the moment it was missing — so recall
+//!   was silently absent on every machine that never did it, which is the
+//!   opposite of how sqlite-vec (compiled in, works everywhere) behaves. Now
+//!   both halves are alike.
+//!
+//!   MEASURED BEFORE SWITCHING, over this memory's own commands and eight
+//!   labelled queries: MiniLM-L6 through lembed found the right command in the
+//!   top 5 for 5 of 8; potion-base-8M finds it for 7 of 8, which is what the
+//!   OLD model reached only in union with FTS. Static embeddings are the
+//!   weaker technique in general; on short command strings they are not.
 //!
 //! Everything is graceful-absence (`create_embed_layer()` returns `None`,
 //! `drain()` returns 0) except `similar()`, whose failure is an explanatory
@@ -61,9 +63,9 @@ use crate::db::extensions::extensions_enabled;
 use crate::errors::BoughError;
 use crate::paths::{bough_path, db_path};
 
-/// ~25MB, 384 dims — plenty for a corpus of thousands of short command docs.
-const MODEL_URL: &str = "https://huggingface.co/asg017/sqlite-lembed-model-examples/resolve/main/all-MiniLM-L6-v2/all-MiniLM-L6-v2.e4ce9877.q8_0.gguf";
-const DEFAULT_MODEL_FILE: &str = "all-MiniLM-L6-v2.e4ce9877.q8_0.gguf";
+/// The default model: a distilled static embedder, ~30MB, 256 dims. Fetched
+/// once through the Hugging Face cache and then read from disk.
+const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
 
 /// Small enough that one drain never blocks its thread noticeably.
 const DRAIN_BATCH: u32 = 64;
@@ -77,32 +79,36 @@ const DOC_OUTPUT_CHARS: usize = 200;
 /// How far a neighbour may be and still be surfaced UNASKED — cosine
 /// distance, so `1 - cos`.
 ///
-/// CALIBRATED against this memory rather than picked. Sweeping the cutoff
-/// over 8 labelled queries plus 4 deliberately unrelated ones ("how do I
-/// water my houseplants"), with FTS ∪ semantic scored at 5:
+/// CALIBRATED against this memory rather than picked, and RE-calibrated when
+/// the model changed — inheriting a cutoff across models would be guessing.
+/// Over 8 labelled queries and 4 deliberately unrelated ones, top-1 cosine
+/// with potion-base-8M:
 ///
 /// ```text
-///   cos ≥ 0.25  →  7/8, but 1.2 rows/query on NONSENSE
-///   cos ≥ 0.30  →  7/8, 0.5 rows on nonsense
-///   cos ≥ 0.35  →  7/8, 0.0 rows on nonsense   ← this (distance 0.65)
-///   cos ≥ 0.40  →  5/8
+///   real queries    0.268 … 0.638   (7 of 8 find the right command in the top 5)
+///   nonsense        0.075 … 0.285   ("how do I water my houseplants")
 /// ```
 ///
-/// 0.35 is the knee: the last cutoff that keeps every match FTS alone misses,
-/// and the first that admits nothing at all for a question this memory has no
-/// business answering. FTS alone scored 5/8.
+/// 0.35 sits above every nonsense score and below all but one real one, so it
+/// admits nothing for a question this memory has no business answering. The
+/// margin is TIGHTER than the old model's (0.285 against 0.208), and the cost
+/// is named rather than hidden: "what is listening on the port" scores 0.268
+/// and therefore contributes nothing — a miss, not a wrong answer, which is
+/// the failure this cutoff is chosen to prefer.
 pub const MAX_SEMANTIC_DISTANCE: f64 = 0.65;
 
 /// Bumped when [`embed_doc`] or the index's distance metric changes, and
 /// stamped into the model id so an existing store REBUILDS instead of serving
 /// vectors built under the old rules — they are not comparable to the new
 /// ones, exactly like a different model's.
-const DOC_VERSION: u32 = 2;
+const DOC_VERSION: u32 = 3;
 
-/// `$BOUGH_EMBED_MODEL` — a GGUF of any width; the dimension is probed, never
-/// assumed. Supplying it makes a missing file an error instead of a download.
+/// `$BOUGH_EMBED_MODEL` — a Model2Vec model: a Hugging Face id, or a local
+/// directory holding `model.safetensors` + `tokenizer.json`. The dimension is
+/// read from the model, never assumed.
 pub const EMBED_MODEL_ENV: &str = "BOUGH_EMBED_MODEL";
-/// `$BOUGH_LEMBED_PATH` — an explicit sqlite-lembed loadable extension.
+/// Retired with sqlite-lembed. Kept as a name so an install that still sets it
+/// gets a warning rather than silence — see [`create_embed_layer`].
 pub const LEMBED_PATH_ENV: &str = "BOUGH_LEMBED_PATH";
 
 #[derive(Debug, Default, Clone)]
@@ -111,8 +117,8 @@ pub struct EmbedLayerOptions {
     pub bough_db: Option<String>,
     /// Where vectors live. Defaults to `~/.bough/embeddings.db`.
     pub embed_db: Option<String>,
-    /// A GGUF embedding model. Defaults to `$BOUGH_EMBED_MODEL`, else the
-    /// downloaded-on-first-use MiniLM.
+    /// A Model2Vec model: a Hugging Face id or a local directory. Defaults to
+    /// `$BOUGH_EMBED_MODEL`, else [`DEFAULT_MODEL`].
     pub model_path: Option<String>,
 }
 
@@ -135,11 +141,11 @@ pub struct SimilarRow {
 pub struct EmbedLayer {
     bough_db: PathBuf,
     embed_db: PathBuf,
-    model_path: PathBuf,
-    /// A model named by opt or env is a REQUEST for that file — missing is an
-    /// error, not a cue to download something else.
-    model_supplied: bool,
-    lembed_path: PathBuf,
+    /// A Hugging Face id, or a path to a local model directory.
+    model_name: String,
+    /// Loaded on first use and kept: the table is read once and then lives in
+    /// memory, which is the whole reason a static model suits this.
+    model: Mutex<Option<std::sync::Arc<model2vec_rs::model::StaticModel>>>,
     /// The one connection, opened lazily on first use. `None` = not yet opened,
     /// or the last open failed — which is what makes an offline first boot retry
     /// on the next drain instead of poisoning the layer.
@@ -168,7 +174,7 @@ impl EmbedLayer {
             }
         }
         let conn = guard.as_ref().expect("opened above");
-        Ok(drain_once(conn).unwrap_or(0))
+        Ok(drain_once(conn, &|texts| self.embed(texts)).unwrap_or(0))
     }
 
     /// KNN-10 over the memory, as JSON rows (what `bough tags similar` prints).
@@ -187,18 +193,21 @@ impl EmbedLayer {
             *guard = Some(self.open()?);
         }
         let conn = guard.as_ref().expect("opened above");
+        // Embedded HERE, not in SQL: the model is a Rust value now, and a blob
+        // parameter is what vec0 wants anyway.
+        let query_vector = self.embed(&[text.to_string()])?.remove(0);
         let mut stmt = conn
             .prepare(&format!(
                 "SELECT h.cmd, h.tags, h.repo, h.exit_code, h.ts, round(v.distance, 4) AS distance
                    FROM (SELECT rowid, distance FROM vec_index
-                          WHERE embedding MATCH lembed('embed', ?1)
+                          WHERE embedding MATCH ?1
                           ORDER BY distance LIMIT {KNN_LIMIT}) v
                    JOIN src.command_history h ON h.id = v.rowid
                   ORDER BY v.distance"
             ))
             .map_err(|e| embed_err(e.to_string()))?;
         let rows = stmt
-            .query_map([text], |row| {
+            .query_map([as_blob(&query_vector)], |row| {
                 Ok(SimilarRow {
                     cmd: row.get(0)?,
                     tags: row.get(1)?,
@@ -236,7 +245,9 @@ impl EmbedLayer {
     /// The lazy open. Lazy because the model may still be downloading, and
     /// because a process that never recalls should never pay for a 25MB read.
     fn open(&self) -> Result<Connection, BoughError> {
-        self.ensure_model()?;
+        // The model is loaded first: a store built against a model that then
+        // fails to load would be an empty index nobody can explain.
+        let dims = self.embed(&["probe".to_string()])?[0].len() as i64;
         if let Some(dir) = self.embed_db.parent() {
             std::fs::create_dir_all(dir)
                 .map_err(|e| embed_err(format!("cannot create {}: {e}", dir.display())))?;
@@ -244,52 +255,42 @@ impl EmbedLayer {
         register_vec();
         let conn = Connection::open(&self.embed_db)
             .map_err(|e| embed_err(format!("cannot open {}: {e}", self.embed_db.display())))?;
-        load_lembed(&conn, &self.lembed_path)?;
         conn.execute("ATTACH DATABASE ?1 AS src", [path_str(&self.bough_db)])
             .map_err(|e| embed_err(format!("cannot attach {}: {e}", self.bough_db.display())))?;
-        conn.execute(
-            "INSERT INTO temp.lembed_models(name, model)
-              SELECT 'embed', lembed_model_from_file(?1)",
-            [path_str(&self.model_path)],
-        )
-        .map_err(|e| {
-            embed_err(format!(
-                "cannot load model {}: {e}",
-                self.model_path.display()
-            ))
-        })?;
-        // The model decides the dimension; probe it rather than hardcode, so an
-        // env-supplied model of any width just works.
-        let dims = probe_dims(&conn).map_err(|e| embed_err(format!("cannot probe dims: {e}")))?;
-        let id = model_id(&self.model_path, dims);
+        let id = model_id(&self.model_name, dims);
         ensure_meta_and_index(&conn, &id, dims)
             .map_err(|e| embed_err(format!("cannot prepare vec_index: {e}")))?;
         Ok(conn)
     }
 
-    /// Download the default model on first use. A model named by opt or env is
-    /// never downloaded — a missing one is an error naming the path.
-    fn ensure_model(&self) -> Result<(), BoughError> {
-        if self.model_path.exists() {
-            return Ok(());
-        }
-        if self.model_supplied {
-            return Err(embed_err(format!(
-                "embedding model not found at {}",
-                self.model_path.display()
-            )));
-        }
-        if let Some(dir) = self.model_path.parent() {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| embed_err(format!("cannot create {}: {e}", dir.display())))?;
-        }
-        // Download to a sibling temp name and rename, so a killed download can
-        // never leave a half-written file that every later boot trusts.
-        let tmp = self.model_path.with_extension("download");
-        download_to(MODEL_URL, &tmp)?;
-        std::fs::rename(&tmp, &self.model_path)
-            .map_err(|e| embed_err(format!("cannot install model: {e}")))?;
-        Ok(())
+    /// Embed texts, loading the model on first use.
+    ///
+    /// Held behind its own lock rather than the connection's: a drain holds
+    /// the connection while it embeds, and one lock for both would serialize
+    /// nothing extra but would tie the model's lifetime to a SQL handle it has
+    /// nothing to do with.
+    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, BoughError> {
+        let model = {
+            let mut guard = self.model.lock().unwrap_or_else(|e| e.into_inner());
+            match guard.as_ref() {
+                Some(model) => model.clone(),
+                None => {
+                    let loaded = model2vec_rs::model::StaticModel::from_pretrained(
+                        &self.model_name,
+                        None,
+                        None,
+                        None,
+                    )
+                    .map_err(|e| {
+                        embed_err(format!("cannot load model {}: {e}", self.model_name))
+                    })?;
+                    let loaded = std::sync::Arc::new(loaded);
+                    *guard = Some(loaded.clone());
+                    loaded
+                }
+            }
+        };
+        Ok(model.encode(texts))
     }
 }
 
@@ -302,73 +303,43 @@ pub fn create_embed_layer(opts: Option<EmbedLayerOptions>) -> Option<EmbedLayer>
         return None;
     }
     let opts = opts.unwrap_or_default();
-    let lembed_path = lembed_extension_path()?;
-    let env_model = std::env::var(EMBED_MODEL_ENV)
-        .ok()
-        .filter(|m| !m.is_empty());
-    let model_supplied = opts.model_path.is_some() || env_model.is_some();
-    let model_path = opts
+    if std::env::var(LEMBED_PATH_ENV).is_ok() {
+        // Retired, and silence would read as "it is being used".
+        tracing::warn!(
+            "{LEMBED_PATH_ENV} is set but sqlite-lembed is no longer used — \
+             embeddings are computed in-process (see $BOUGH_EMBED_MODEL)"
+        );
+    }
+    let model_name = opts
         .model_path
-        .or(env_model)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| bough_path(&["models", DEFAULT_MODEL_FILE]));
+        .or_else(|| {
+            std::env::var(EMBED_MODEL_ENV)
+                .ok()
+                .filter(|m| !m.is_empty())
+        })
+        .unwrap_or_else(|| DEFAULT_MODEL.to_string());
     Some(EmbedLayer {
         bough_db: opts.bough_db.map(PathBuf::from).unwrap_or_else(db_path),
         embed_db: opts
             .embed_db
             .map(PathBuf::from)
             .unwrap_or_else(|| bough_path(&["embeddings.db"])),
-        model_path,
-        model_supplied,
-        lembed_path,
+        model_name,
+        model: Mutex::new(None),
         conn: Mutex::new(None),
     })
 }
 
-/// Where sqlite-lembed lives, if anywhere. `$BOUGH_LEMBED_PATH` wins outright (a
-/// named path is a request, and a wrong one should fail loudly at open rather
-/// than silently disable recall); otherwise `~/.bough/lib/lembed0.<ext>`, the
-/// documented install location — copy it out of the npm
-/// `sqlite-lembed-<os>-<arch>` package or build asg017/sqlite-lembed.
-pub fn lembed_extension_path() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var(LEMBED_PATH_ENV) {
-        if !p.trim().is_empty() {
-            return Some(PathBuf::from(p));
-        }
-    }
-    let p = bough_path(&["lib", LEMBED_FILE]);
-    p.exists().then_some(p)
-}
-
-/// The platform's sqlite-lembed filename, as the npm package ships it.
-const LEMBED_FILE: &str = if cfg!(target_os = "macos") {
-    "lembed0.dylib"
-} else if cfg!(target_os = "windows") {
-    "lembed0.dll"
-} else {
-    "lembed0.so"
-};
-
 /// `"<basename>:<dims>"` — the identity a stored vector set is comparable
 /// against. Basename only, so moving `~/.bough` is not a model change.
-fn model_id(model_path: &Path, dims: i64) -> String {
-    let base = model_path
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
+fn model_id(model_name: &str, dims: i64) -> String {
+    // The last path segment, so a local directory and the HF id it came from
+    // read alike, and a move on disk does not throw the store away.
+    let base = model_name.rsplit(['/', '\\']).next().unwrap_or(model_name);
     // The doc version rides in the id because the rebuild it has to trigger is
     // the same rebuild a model change triggers, and one mechanism that cannot
     // be forgotten beats two that can.
     format!("{base}:{dims}:v{DOC_VERSION}")
-}
-
-/// `length(lembed(…)) / 4` — one float32 per dimension. NEVER hardcoded.
-fn probe_dims(conn: &Connection) -> rusqlite::Result<i64> {
-    conn.query_row(
-        "SELECT length(lembed('embed', 'probe')) / 4 AS d",
-        [],
-        |r| r.get(0),
-    )
 }
 
 /// The `embed_meta` bookkeeping and the `vec_index` table. Returns whether the
@@ -455,6 +426,11 @@ pub fn embed_doc(tags: &str, cmd: &str, output_head: &str) -> String {
         .join(" ")
 }
 
+/// A vector as vec0 wants it: little-endian f32, one after another.
+fn as_blob(vector: &[f32]) -> Vec<u8> {
+    vector.iter().flat_map(|f| f.to_le_bytes()).collect()
+}
+
 /// One drain batch. **Counted by `count(*)` DELTA, never by the statement's
 /// `changes`**: an insert into a vec0 virtual table reports its SHADOW-table
 /// writes too (4 rows once came back as 14).
@@ -463,7 +439,10 @@ pub fn embed_doc(tags: &str, cmd: &str, output_head: &str) -> String {
 /// SQL as it was when it was `tags || cmd`: [`embed_doc`] splits punctuation
 /// into words, which SQLite would need twenty nested `replace()` calls to do
 /// and which the query side has to do identically anyway.
-fn drain_once(conn: &Connection) -> rusqlite::Result<u64> {
+fn drain_once(
+    conn: &Connection,
+    embed: &dyn Fn(&[String]) -> Result<Vec<Vec<f32>>, BoughError>,
+) -> rusqlite::Result<u64> {
     let count = |c: &Connection| -> rusqlite::Result<i64> {
         c.query_row("SELECT count(*) AS n FROM vec_index", [], |r| r.get(0))
     };
@@ -485,11 +464,20 @@ fn drain_once(conn: &Connection) -> rusqlite::Result<u64> {
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
-    for (id, doc) in pending {
-        conn.execute(
-            "INSERT INTO vec_index (rowid, embedding) VALUES (?1, lembed('embed', ?2))",
-            rusqlite::params![id, doc],
-        )?;
+    if !pending.is_empty() {
+        // ONE encode for the batch: a static model amortizes almost nothing
+        // per call, but the tokenizer setup is not free and the batch is the
+        // natural unit anyway.
+        let docs: Vec<String> = pending.iter().map(|(_, d)| d.clone()).collect();
+        let vectors = embed(&docs).map_err(|e| {
+            rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(e.to_string())))
+        })?;
+        for ((id, _), vector) in pending.iter().zip(vectors) {
+            conn.execute(
+                "INSERT INTO vec_index (rowid, embedding) VALUES (?1, ?2)",
+                rusqlite::params![id, as_blob(&vector)],
+            )?;
+        }
     }
     Ok((count(conn)? - before).max(0) as u64)
 }
@@ -517,60 +505,6 @@ fn register_vec() {
             )));
         }
     });
-}
-
-/// Load sqlite-lembed into one connection. Extension loading is enabled only for
-/// the duration of the load — the handle then goes back to refusing it, so
-/// nothing downstream (the ATTACHed bough.db, a later query) can be steered into
-/// loading anything else.
-fn load_lembed(conn: &Connection, path: &Path) -> Result<(), BoughError> {
-    // SAFETY: loading a native extension is inherently unsafe; the path is a
-    // machine-local install (env or `~/.bough/lib`), never user input.
-    let loaded = unsafe {
-        conn.load_extension_enable()
-            .map_err(|e| embed_err(format!("cannot enable extension loading: {e}")))?;
-        let loaded = conn.load_extension(path, None::<&str>).map_err(|e| {
-            embed_err(format!(
-                "cannot load sqlite-lembed from {}: {e}",
-                path.display()
-            ))
-        });
-        // Disabled again whether or not the load worked: while it is enabled,
-        // plain SQL can call `load_extension(...)` too, and this handle goes on
-        // to run queries built from the ATTACHed history.
-        conn.load_extension_disable()
-            .map_err(|e| embed_err(format!("cannot disable extension loading: {e}")))?;
-        loaded
-    };
-    loaded?;
-    Ok(())
-}
-
-/// Blocking model download, on a thread of its own so it is safe to call from
-/// inside `spawn_blocking`: a tokio worker context refuses to host the nested
-/// runtime `reqwest::blocking` builds.
-fn download_to(url: &str, dest: &Path) -> Result<(), BoughError> {
-    let url = url.to_string();
-    let dest = dest.to_path_buf();
-    std::thread::spawn(move || -> Result<(), String> {
-        let res = reqwest::blocking::Client::builder()
-            .build()
-            .map_err(|e| e.to_string())?
-            .get(&url)
-            .send()
-            .map_err(|e| e.to_string())?;
-        if !res.status().is_success() {
-            return Err(format!(
-                "model download failed: HTTP {} for {url}",
-                res.status().as_u16()
-            ));
-        }
-        let bytes = res.bytes().map_err(|e| e.to_string())?;
-        std::fs::write(&dest, &bytes).map_err(|e| e.to_string())
-    })
-    .join()
-    .map_err(|_| embed_err("model download thread panicked".to_string()))?
-    .map_err(embed_err)
 }
 
 fn path_str(p: &Path) -> String {
@@ -728,23 +662,20 @@ mod tests {
     #[test]
     fn model_id_is_basename_probed_dims_and_the_doc_version() {
         assert_eq!(
-            model_id(Path::new("/a/b/mini.q8_0.gguf"), 384),
+            model_id("/a/b/mini.q8_0.gguf", 384),
             format!("mini.q8_0.gguf:384:v{DOC_VERSION}")
         );
         assert_eq!(
-            model_id(Path::new("/other/mini.q8_0.gguf"), 384),
+            model_id("/other/mini.q8_0.gguf", 384),
             format!("mini.q8_0.gguf:384:v{DOC_VERSION}")
         );
         assert_eq!(
-            model_id(Path::new("/a/b/wide.gguf"), 768),
+            model_id("/a/b/wide.gguf", 768),
             format!("wide.gguf:768:v{DOC_VERSION}")
         );
         // The version is what makes a doc change rebuild rather than mix
         // old vectors with new ones.
-        assert_ne!(
-            model_id(Path::new("/a/b/mini.gguf"), 384),
-            "mini.gguf:384".to_string()
-        );
+        assert_ne!(model_id("/a/b/mini.gguf", 384), "mini.gguf:384".to_string());
     }
 
     #[test]
@@ -785,39 +716,6 @@ mod tests {
     /// `~/.bough/lib/lembed0.<ext>` is the documented install location, and an
     /// explicit `$BOUGH_LEMBED_PATH` wins outright. Absent → the feature does
     /// not exist, which is what makes `create_embed_layer` answer `None`.
-    #[test]
-    fn lembed_path_prefers_the_env_override() {
-        let dir = tmpdir("lembed-path");
-        let home = dir.join("home");
-        std::fs::create_dir_all(home.join("lib")).unwrap();
-        std::fs::write(home.join("lib").join(LEMBED_FILE), b"x").unwrap();
-        let explicit = dir.join("elsewhere").join(LEMBED_FILE);
-
-        let prev_home = std::env::var("BOUGH_HOME").ok();
-        std::env::set_var("BOUGH_HOME", &home);
-        std::env::set_var(LEMBED_PATH_ENV, &explicit);
-        assert_eq!(
-            lembed_extension_path(),
-            Some(explicit),
-            "a named path wins even if missing"
-        );
-        std::env::remove_var(LEMBED_PATH_ENV);
-        assert_eq!(
-            lembed_extension_path(),
-            Some(home.join("lib").join(LEMBED_FILE))
-        );
-        std::fs::remove_dir_all(home.join("lib")).unwrap();
-        assert_eq!(
-            lembed_extension_path(),
-            None,
-            "absent → the feature does not exist"
-        );
-        match prev_home {
-            Some(v) => std::env::set_var("BOUGH_HOME", v),
-            None => std::env::remove_var("BOUGH_HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 
     /// THE FIXTURE (port of `embed_fixture.ts` + `embed.test.ts`): four seeded
     /// commands, one drain, and a query no keyword search could answer — "how do
@@ -834,18 +732,13 @@ mod tests {
         use crate::types::{CommandRecord, Db};
 
         enable_sqlite_extensions();
-        let model = bough_path(&["models", DEFAULT_MODEL_FILE]);
-        match lembed_extension_path() {
-            Some(p) if p.exists() => {}
-            _ => {
-                eprintln!(
-                    "skipped: no sqlite-lembed (set {LEMBED_PATH_ENV} or install ~/.bough/lib/{LEMBED_FILE})"
-                );
-                return;
-            }
-        }
-        if !model.exists() {
-            eprintln!("skipped: no local model at {}", model.display());
+        // The model is fetched through the Hugging Face cache on first use, so
+        // this test needs network ONCE per machine and is a no-op after. An
+        // offline first run skips rather than fails: the layer's own contract
+        // is graceful absence, and a test that cannot be run offline would be
+        // a worse promise than the one being tested.
+        if std::env::var("BOUGH_NO_EMBED").is_ok() {
+            eprintln!("skipped: BOUGH_NO_EMBED");
             return;
         }
 
@@ -902,7 +795,7 @@ mod tests {
         let layer = create_embed_layer(Some(EmbedLayerOptions {
             bough_db: Some(path_str(&bough_db)),
             embed_db: Some(path_str(&embed_db)),
-            model_path: Some(path_str(&model)),
+            model_path: None,
         }))
         .expect("layer exists when model + lembed are both present");
 

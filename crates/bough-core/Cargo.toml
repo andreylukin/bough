@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+model2vec-rs = { version = "0.2", features = ["hf-hub"] }  # embeddings: pure-Rust static vectors
 mlua = { version = "0.11", features = ["luau", "serialize"] }  # hooks: the embedded Lua runtime
 tokio = { workspace = true }
 tokio-util = { workspace = true }
