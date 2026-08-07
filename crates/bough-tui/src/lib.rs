@@ -38,7 +38,9 @@ pub mod theme;
 /// a sentence and exit 2, never a blank screen — main.tsx contract), then the
 /// event loop over one mpsc of actions (`app::run_live`). The returned error
 /// string is user-facing; the bin prints it and exits 2.
-pub fn run(options: app::TuiOptions) -> Result<(), bough_core::errors::BoughError> {
+/// `Ok(true)` = `/restart` was asked for; the terminal is already restored and
+/// the caller does the restart.
+pub fn run(options: app::TuiOptions) -> Result<bool, bough_core::errors::BoughError> {
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| bough_core::errors::BoughError::bad_request(format!("bough tui: {e}")))?;
     rt.block_on(app::run_live(options))
