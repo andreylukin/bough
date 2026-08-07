@@ -28,6 +28,7 @@ pub mod db;
 pub mod errors;
 pub mod harness;
 pub mod history;
+pub mod hooks;
 pub mod hostfn;
 pub mod llm;
 pub mod logs;

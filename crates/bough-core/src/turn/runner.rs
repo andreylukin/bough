@@ -67,6 +67,7 @@ use crate::history::tags::stats::{
     dir_tag_hints, drain_query_tag_hints, note_query_tag_hints, stats_memo, tags_note_for,
     SemanticRecall,
 };
+use crate::hooks::{Effect, HookDispatch, HookEvent};
 use crate::hostfn::files::{create_file_host_fns, FileCtx};
 use crate::hostfn::shell::{create_shell_host_fns, EchoHooks, ShellCtx, ShellOptions};
 use crate::llm::pricing::context_window_for;
@@ -467,6 +468,55 @@ fn with_project_rule_notes(result: ProgramResult, ctx: &TurnCtx) -> ProgramResul
     ProgramResult { logs, ..result }
 }
 
+/// Fire a turn-boundary event and apply what the hooks asked for.
+///
+/// EFFECTS ARE APPLIED HERE, not inside the interpreter: `post_system_note`
+/// owns the wake rule (start a turn on an idle session, queue behind a running
+/// one) and re-deciding it on the hook thread would be a second, subtly
+/// different rule. An injected prompt is delivered as a system note for the
+/// same reason `/schedules` and artifact comments are — it is input the
+/// harness produced, and the transcript should say so rather than forge a
+/// message the user did not type.
+///
+/// Context from a turn-boundary hook is announced the same way, because the
+/// prompt is already assembled by the time this runs; a prompt edit here would
+/// bust the volatile tier for the next turn (`prompt/assemble.rs`).
+fn apply_turn_hooks(app: &AppCtx, session_id: &str, event: HookEvent, data: serde_json::Value) {
+    let Some(outcome) = crate::hooks::fire(
+        event,
+        HookDispatch {
+            session_id: session_id.to_string(),
+            pattern: session_id.to_string(),
+            data,
+        },
+    ) else {
+        return;
+    };
+    for text in outcome.context {
+        crate::agents::notes::post_system_note(
+            app,
+            session_id,
+            &format!("[hook] {text}"),
+            &Default::default(),
+        );
+    }
+    for effect in outcome.effects {
+        match effect {
+            Effect::Prompt { text } => {
+                crate::agents::notes::post_system_note(
+                    app,
+                    session_id,
+                    &format!("[hook] {text}"),
+                    &Default::default(),
+                );
+            }
+            Effect::SetTitle { title } => {
+                let _ = with_db(&app.db, |d| d.set_session_title(session_id, &title));
+            }
+        }
+    }
+}
+
 /// Append what this repo has already run on the topic the user named, queued
 /// when the turn's prompt was built. Drains, so a multi-round turn says it on
 /// the first round and never again.
@@ -840,6 +890,9 @@ impl From<BoughError> for TurnFailure {
 struct PreparedTurn {
     db: SharedDb,
     bus: Arc<Bus>,
+    /// Carried so the turn-boundary hooks can post an injected prompt through
+    /// the same starter a user message uses (`agents/notes.rs`).
+    app: AppCtx,
     session_id: String,
     message_id: String,
     now: Clock,
@@ -867,6 +920,9 @@ fn prepare_turn(
 ) -> Result<PreparedTurn, BoughError> {
     let db = ctx.db.clone();
     let bus = ctx.bus.clone();
+    // Cloned for the hook dispatch at the end of the turn, which runs after
+    // `ctx` itself is long out of scope.
+    let app = ctx.clone();
     let session_id = message.session_id.clone();
     let message_id = message.id.clone();
     let now: Clock = deps.now.clone().unwrap_or_else(|| ctx.now.clone());
@@ -1022,10 +1078,39 @@ fn prepare_turn(
             crate::history::tags::embed::recall_layer().map(|l| l as &dyn SemanticRecall),
         );
     });
+    // TurnStart, before the prompt is assembled — the one event whose context
+    // can still ride the prompt itself. It is the only per-turn text allowed
+    // in the volatile tier, and only when a hook actually returns some: a
+    // TurnStart hook that adds context is opting into a cache miss per turn,
+    // which is the honest price of context the model sees BEFORE it acts
+    // rather than after its first round.
+    let start_hooks = crate::hooks::fire(
+        HookEvent::TurnStart,
+        HookDispatch {
+            session_id: session_id.clone(),
+            pattern: session_id.clone(),
+            data: serde_json::json!({
+                "prompt": crate::skills::invoking_text(std::slice::from_ref(message)),
+                "model": model,
+            }),
+        },
+    );
+    if let Some(stop) = start_hooks.as_ref().and_then(|o| o.stop.clone()) {
+        // A hook that stops a turn stops it BEFORE the provider is called, so
+        // the refusal costs nothing and reads as one in the transcript.
+        return Err(BoughError::program(format!(
+            "a hook stopped this turn: {stop}"
+        )));
+    }
     let mut notes: Vec<String> = vec![
         workspace_note(&workspace),
         scratch_note(&scratch.to_string_lossy()),
     ];
+    if let Some(outcome) = &start_hooks {
+        for text in &outcome.context {
+            notes.push(format!("## From a hook\n{text}"));
+        }
+    }
     if let Some(n) = tags_note {
         notes.push(n);
     }
@@ -1097,6 +1182,7 @@ fn prepare_turn(
     drop(thread);
 
     Ok(PreparedTurn {
+        app,
         db,
         bus,
         session_id,
@@ -1124,6 +1210,7 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
     let PreparedTurn {
         db,
         bus,
+        app,
         session_id,
         message_id,
         now,
@@ -1540,6 +1627,15 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
             if delegated {
                 with_db(&db, |d| d.set_session_outcome(&session_id, true))?;
             }
+            // Hooks last, after the turn is durably finished: a `TurnEnd` hook
+            // that injects a follow-up prompt must find an IDLE session, or
+            // the wake rule queues work behind a turn that has already ended.
+            apply_turn_hooks(
+                &app,
+                &session_id,
+                HookEvent::TurnEnd,
+                serde_json::json!({ "ok": true }),
+            );
             Ok(TurnOutcome {
                 turn_id: turn.id,
                 message_id,
@@ -1627,6 +1723,12 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
             if delegated {
                 with_db(&db, |d| d.set_session_outcome(&session_id, false))?;
             }
+            apply_turn_hooks(
+                &app,
+                &session_id,
+                HookEvent::TurnError,
+                serde_json::json!({ "error": friendly.clone(), "interrupted": interrupted }),
+            );
             Ok(TurnOutcome {
                 turn_id: turn.id,
                 message_id,

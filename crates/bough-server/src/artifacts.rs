@@ -188,6 +188,8 @@ pub struct ServeArtifactOptions {
 /// its own scripts, and re-running it in a document that already ran another
 /// version is a class of bug with no upside. Reload is the honest primitive.
 pub fn version_bar_widget() -> String {
+    // `format!` with no arguments, deliberately: the CSS below is full of
+    // braces, and `{{`/`}}` escaping is what keeps it readable as CSS.
     format!(
         r#"<style>
 #bough-versions {{ position: fixed; z-index: 2147483646; top: 12px; left: 50%;

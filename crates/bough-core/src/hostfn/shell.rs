@@ -397,6 +397,14 @@ pub async fn bash(
             return Ok(skipped);
         }
     }
+    // The hook boundary, BEFORE anything is spawned: a hook may refuse the
+    // command or rewrite it. Placed after the echo guard so a command already
+    // known to be failing in a loop never reaches user code either.
+    let command = match pre_tool_hook(command, tags, &ctx.session_id) {
+        PreTool::Run(rewritten) => rewritten,
+        PreTool::Denied(reason) => return Ok(reason),
+    };
+    let command = command.as_str();
     let now = system_clock();
     let started_at = now();
 
@@ -510,7 +518,76 @@ pub async fn bash(
     }
     .await;
     untrack();
-    result
+    // The other half of the hook boundary: what the model is about to read.
+    // Applied to the RETURNED text only — the history row above already
+    // recorded what the command actually printed, and a redaction hook must
+    // not be able to rewrite the record of what happened.
+    result.map(|out| post_tool_hook(command, &out))
+}
+
+// ---------------------------------------------------------------------------
+// The hook boundary
+// ---------------------------------------------------------------------------
+
+/// What a `PreTool` hook decided about a command.
+enum PreTool {
+    /// Run this — possibly not the string that was passed in.
+    Run(String),
+    /// Do not run it; this text goes to the model as the command's result.
+    Denied(String),
+}
+
+/// Fire `PreTool` and fold the answer into a decision.
+///
+/// A denial is returned as ORDINARY OUTPUT, not an error: `bash()` hands the
+/// exit code back as data, and a refusal the model can read and act on beats
+/// a thrown error it can only retry. The reason is the whole message, because
+/// the model has no other way to learn why.
+fn pre_tool_hook(command: &str, tags: &str, session_id: &str) -> PreTool {
+    let Some(outcome) = crate::hooks::fire(
+        crate::hooks::HookEvent::PreTool,
+        crate::hooks::HookDispatch {
+            session_id: session_id.to_string(),
+            pattern: "bash".into(),
+            data: serde_json::json!({
+                "tool": "bash",
+                "input": { "command": command, "tags": tags },
+            }),
+        },
+    ) else {
+        return PreTool::Run(command.to_string());
+    };
+    if outcome.decision == Some(crate::hooks::ToolDecision::Deny) {
+        let reason = outcome
+            .reason
+            .unwrap_or_else(|| "a hook refused this command".to_string());
+        return PreTool::Denied(format!("[refused by a hook] {reason}"));
+    }
+    // A rewrite that does not name a command leaves the command alone, rather
+    // than running the empty string.
+    let rewritten = outcome
+        .input
+        .as_ref()
+        .and_then(|i| i.get("command"))
+        .and_then(|c| c.as_str())
+        .filter(|c| !c.trim().is_empty())
+        .map(String::from);
+    PreTool::Run(rewritten.unwrap_or_else(|| command.to_string()))
+}
+
+/// Fire `PostTool` and apply an output rewrite, if any.
+fn post_tool_hook(command: &str, out: &str) -> String {
+    let Some(outcome) = crate::hooks::fire(
+        crate::hooks::HookEvent::PostTool,
+        crate::hooks::HookDispatch {
+            session_id: String::new(),
+            pattern: "bash".into(),
+            data: serde_json::json!({ "tool": "bash", "command": command, "output": out }),
+        },
+    ) else {
+        return out.to_string();
+    };
+    outcome.output.unwrap_or_else(|| out.to_string())
 }
 
 // ---------------------------------------------------------------------------

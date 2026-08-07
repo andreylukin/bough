@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+mlua = { version = "0.11", features = ["luau", "serialize"] }  # hooks: the embedded Lua runtime
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 reqwest = { workspace = true }
