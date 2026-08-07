@@ -3043,9 +3043,7 @@ impl<T: Transport> App<T> {
         // empty draft is a no-op that still reports it handled the key, so
         // routing this through it silently swallowed the only way to remove an
         // attachment (App.tsx puts the same branch ahead of its own editLine).
-        if command == Command::DeleteBack
-            && self.draft.is_empty()
-            && self.attachment_sel.is_some()
+        if command == Command::DeleteBack && self.draft.is_empty() && self.attachment_sel.is_some()
         {
             self.delete_back();
             return true;
@@ -8341,10 +8339,11 @@ mod tests {
             "{}",
             transcript(&app)
         );
-        // Collapsed still says WHAT it did — the gist rides the header — but
-        // not what it printed.
+        // Collapsed still says WHAT it did — but NAMED, not quoted: the header
+        // is `ran 1 command`, not the program's first line of source. The
+        // source is what expanding is for, asserted below.
         assert!(
-            transcript(&app).contains("▸ 1 step · await bash('echo hello')"),
+            transcript(&app).contains("▸ 1 step · ran 1 command"),
             "{}",
             transcript(&app)
         );

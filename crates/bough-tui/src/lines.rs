@@ -13,9 +13,9 @@
 //!
 //! The part-folding helpers (`segment_parts`, `tool_summary`, `output_text`,
 //! `code_gist`) mirror `src/tui/format.ts` and live here until format.rs
-//! absorbs them. `program_summary` is the documented v1 stub (spec §8 scope
-//! cut): it returns `""` and every caller falls back to the code gist, exactly
-//! as the TS does when nothing is recognized.
+//! absorbs them. `program_summary` names what a program DID; `code_gist` is
+//! its fallback for a program nothing in the heuristic recognizes, which is
+//! exactly what the TS does.
 
 use std::collections::HashMap;
 
@@ -428,11 +428,393 @@ pub fn code_gist(input: &Value, max: usize) -> String {
     clip(line, max)
 }
 
-/// v1 stub (spec §8): heuristic program labels are deferred; `""` makes every
-/// caller fall back to the code gist, which is what the TS does when nothing
-/// is recognized.
-pub fn program_summary(_code: &str, _max: usize, _running: bool) -> String {
-    String::new()
+/// A host-fn name that must NOT match its member-call twin.
+///
+/// The TS wrote `(?<![.\w])name`; Rust's `regex` has no lookbehind, so the
+/// boundary is CONSUMED instead: `(?:^|[^.\w])name`. Same rule, and `\b` is
+/// still wrong for the same reason — `\b` matches between a dot and a letter,
+/// so every host name would also match its twin on an object. Seen on screen:
+/// a program whose only host call was `artifact()` was headlined `collected
+/// subagent reports · published an artifact`, because it also contained
+/// `functions.join("\n")`. The same trap waited in `.write(` on a stream,
+/// `.search(` on a string, and `.view(`/`.ask(` on anything.
+fn host_re(pattern: &str) -> Regex {
+    Regex::new(&format!(r"(?:^|[^.\w]){pattern}")).unwrap()
+}
+
+/// How many times `re` matches. Non-overlapping, which is what a tally wants.
+fn count_re(re: &Regex, code: &str) -> usize {
+    re.find_iter(code).count()
+}
+
+/// The distinct capture-1 values of `re`, in order of appearance.
+fn captured_paths(re: &Regex, code: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for c in re.captures_iter(code) {
+        if let Some(m) = c.get(1) {
+            let p = m.as_str().to_string();
+            if !p.is_empty() && !out.contains(&p) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// The basename. What a reviewer would call the file.
+fn base_name(path: &str) -> String {
+    path.split('/')
+        .rfind(|s| !s.is_empty())
+        .unwrap_or(path)
+        .to_string()
+}
+
+/// A path with `${…}` in it is a TEMPLATE, not a name.
+///
+/// Seen on a fresh walk: `▸ 1 step · wrote ${cartPath}` — the placeholder
+/// printed at the reader. An interpolated path is unnamed, so it falls through
+/// to the counting branch and reads `wrote 1 file`.
+fn is_named(path: &str) -> bool {
+    !path.contains("${")
+}
+
+/// Two names in full, then `first +N more` — the row is shared with the step
+/// count and the status chips.
+fn name_list(paths: &[String]) -> String {
+    if paths.len() <= 2 {
+        paths
+            .iter()
+            .map(|p| base_name(p))
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        format!("{} +{} more", base_name(&paths[0]), paths.len() - 1)
+    }
+}
+
+/// What a program DID, named the way a reviewer would name it.
+///
+/// The collapsed step header used to be the program's first line of code,
+/// clipped:
+///
+///   `▸ 1 step  run_steps · const out = await bash(`node --input-type=module -e "`
+///
+/// — which reads as debug output rather than as a UI, and answers none of the
+/// questions a reader has (which files did it touch? did it run something?).
+/// Every comparable harness names the operation and its target: `Update(app.mjs)`,
+/// `Read 1 file`, `Ran 1 shell command`.
+///
+/// bough writes ONE program per round rather than one call, so the equivalent
+/// is a tally of the host functions it called: `read app.mjs · ran 1 command`.
+/// Derived by scanning the source for host-function call sites, which is a
+/// heuristic and is allowed to be — **it is a LABEL.** When nothing is
+/// recognized this returns `""` and the caller falls back to the code gist, so
+/// an unusual program degrades to what was shown before rather than to nothing.
+///
+/// `running` puts the verbs in the present tense. A call with no result yet is
+/// a call still in flight, and "ran 1 command" under a shell that has been
+/// blocked for ten seconds is a statement the reader acts on and should not.
+pub fn program_summary(code: &str, max: usize, running: bool) -> String {
+    if code.is_empty() {
+        return String::new();
+    }
+    let mut bits: Vec<String> = Vec::new();
+
+    // `patch` is NOT in this alternation, and that is the whole point: it takes
+    // ONE string — the patch body — not a path, so matching it here captured
+    // the entire template literal and the header read
+    // `wrote cart.js#8902] SWAP 3.=3: + for (…`. Its files are the `[path#hash]`
+    // section tags inside that body, and one call may carry several.
+    static WROTE: LazyLock<Regex> = LazyLock::new(|| {
+        // The boundary guards the HOST names only: `fs.writeFileSync` is a
+        // write, `stream.write` is not.
+        Regex::new(
+            r#"(?:(?:^|[^.\w])(?:write|edit)|writeFileSync|writeFile)\s*\(\s*["'`]([^"'`]+)"#,
+        )
+        .unwrap()
+    });
+    static PATCH_CALL: LazyLock<Regex> = LazyLock::new(|| host_re(r"patch\s*\("));
+    static PATCH_TAG: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\[([^\]\s#]+)#[^\]\s]*\]").unwrap());
+    // Three spellings, because a program reads a file three ways in practice:
+    // the host verb, the `Bun.file` the prompt recommends ("there is no
+    // read()"), and `node:fs` — models reach for whatever the prompt says.
+    // `readFileSync`/`readFile` are matched WITH a possible dot
+    // (`fs.readFileSync`) unlike the host names, because those two words mean
+    // the same thing on any object.
+    static READ: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?:(?:^|[^.\w])(?:view|read)|Bun\.file|readFileSync|readFile)\s*\(\s*["'`]([^"'`]+)"#).unwrap()
+    });
+
+    let mut wrote = captured_paths(&WROTE, code);
+    if PATCH_CALL.is_match(code) {
+        for p in captured_paths(&PATCH_TAG, code) {
+            if !wrote.contains(&p) {
+                wrote.push(p);
+            }
+        }
+    }
+    wrote.retain(|p| is_named(p));
+    let mut read = captured_paths(&READ, code);
+    read.retain(|p| is_named(p));
+
+    if !wrote.is_empty() {
+        bits.push(format!(
+            "{} {}",
+            if running { "writing" } else { "wrote" },
+            name_list(&wrote)
+        ));
+    }
+    if !read.is_empty() {
+        bits.push(format!(
+            "{} {}",
+            if running { "reading" } else { "read" },
+            name_list(&read)
+        ));
+    }
+    // A call whose path is a VARIABLE yields no name —
+    // `fs.readFileSync(filePath, "utf8")` — and naming nothing is not a reason
+    // to fall back to a line of source. Count it instead. `patch` belongs in
+    // the COUNT even though it is deliberately absent from the naming
+    // alternation: a program that builds its tag — ``patch(`[${path}#3AF0]…`)``,
+    // exactly what a skill told to view-then-patch writes — named nothing AND
+    // counted nothing.
+    if wrote.is_empty() {
+        static N: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"(?:(?:^|[^.\w])(?:write|edit|patch)|writeFileSync|writeFile)\s*\(")
+                .unwrap()
+        });
+        let n = count_re(&N, code);
+        if n > 0 {
+            bits.push(format!(
+                "{} {}",
+                if running { "writing" } else { "wrote" },
+                plural(n as i64, "file")
+            ));
+        }
+    }
+    if read.is_empty() {
+        static N: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"(?:(?:^|[^.\w])view|Bun\.file|readFileSync|readFile)\s*\(").unwrap()
+        });
+        let n = count_re(&N, code);
+        if n > 0 {
+            bits.push(format!(
+                "{} {}",
+                if running { "reading" } else { "read" },
+                plural(n as i64, "file")
+            ));
+        }
+    }
+
+    // `execSync`/`spawnSync`/`Bun.$` are running a command too: a program that
+    // reached for `node:child_process` instead of `bash()` was unrecognized, so
+    // the header fell back to
+    // `const { execSync } = require("node:child_process");`.
+    //
+    // The SYNC names only, plus `Bun.$`. Bare `spawn(` and `exec(` are excluded
+    // and that is not fussiness: `spawn` IS bough's detached-delegation verb,
+    // so counting it here made a fan-out report `ran 1 command · 1 subagent`.
+    static BASH: LazyLock<Regex> = LazyLock::new(|| host_re(r"bash\s*\("));
+    static SH: LazyLock<Regex> = LazyLock::new(|| host_re(r"sh\s*\("));
+    static EXEC: LazyLock<Regex> =
+        LazyLock::new(|| host_re(r"(?:execSync|execFileSync|spawnSync)\s*\("));
+    static BUN_SH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"Bun\.\$").unwrap());
+    let shells = count_re(&BASH, code)
+        + count_re(&SH, code)
+        + count_re(&EXEC, code)
+        + count_re(&BUN_SH, code);
+    if shells > 0 {
+        bits.push(format!(
+            "{} {} command{}",
+            if running { "running" } else { "ran" },
+            shells,
+            if shells == 1 { "" } else { "s" }
+        ));
+    }
+    // `bashBg(` does not match `bash\s*\(`, so a round that only backgrounded a
+    // command was unrecognized — the one round whose whole point is that
+    // something is still running after it returns.
+    static BG: LazyLock<Regex> = LazyLock::new(|| host_re(r"bashBg\s*\("));
+    static KILL: LazyLock<Regex> = LazyLock::new(|| host_re(r"bashKill\s*\("));
+    static WAIT: LazyLock<Regex> = LazyLock::new(|| host_re(r"bashWait\s*\("));
+    static OUTPUT: LazyLock<Regex> = LazyLock::new(|| host_re(r"bashOutput\s*\("));
+    let bg = count_re(&BG, code);
+    if bg > 0 {
+        bits.push(format!(
+            "started {bg} background command{}",
+            if bg == 1 { "" } else { "s" }
+        ));
+    // The three shell-management verbs, which complete the set. Observed
+    // unnamed: `▸ 1 step · const output = await bashOutput("bg_1");` — a round
+    // whose whole act was reading a job's output, headlined with the line that
+    // read it.
+    } else if count_re(&KILL, code) > 0 {
+        bits.push("killed a background command".into());
+    } else if count_re(&WAIT, code) > 0 {
+        bits.push(
+            if running {
+                "waiting for a background command"
+            } else {
+                "waited for a background command"
+            }
+            .into(),
+        );
+    } else if count_re(&OUTPUT, code) > 0 {
+        bits.push("read a background command's output".into());
+    }
+
+    // Delegation is FOUR verbs, not one. Counting only `agent(` meant the round
+    // that fanned three subagents out with `spawn()` matched nothing and fell
+    // back to the gist — the header read `const tasks = [`, raw source, on the
+    // single round a reader most needs named. `join`/`adopt` collect reports
+    // for spawns issued in an earlier round, so they are named only when no
+    // spawn happens here.
+    static AGENTS: LazyLock<Regex> = LazyLock::new(|| host_re(r"(?:agent|spawn)\s*\("));
+    static JOINS: LazyLock<Regex> = LazyLock::new(|| host_re(r"(?:join|adopt)\s*\("));
+    // `node:path` exports a BARE `join`, so a program that did
+    // `const { join } = await import("node:path")` was headlined "collected
+    // subagent reports". Requiring `await` does not separate them — the real
+    // delegation pattern is `Promise.all(ids.map((id) => join(id)))`, with no
+    // await in sight. What DOES separate them is the destructure: a program
+    // that pulled `join` out of `path` has shadowed the host verb and cannot be
+    // calling it. BOTH spellings, because the one I did not write is the one
+    // the model used.
+    static SHADOW_DYN: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"\{[^}]*\bjoin\b[^}]*\}\s*=\s*(?:await\s+)?(?:import|require)\s*\(\s*["'`](?:node:)?path"#).unwrap()
+    });
+    static SHADOW_STATIC: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"import\s*\{[^}]*\bjoin\b[^}]*\}\s*from\s*["'`](?:node:)?path"#).unwrap()
+    });
+    let shadows_join = SHADOW_DYN.is_match(code) || SHADOW_STATIC.is_match(code);
+    let agents = count_re(&AGENTS, code);
+    if agents > 0 {
+        bits.push(format!(
+            "{agents} subagent{}",
+            if agents == 1 { "" } else { "s" }
+        ));
+    } else if !shadows_join && count_re(&JOINS, code) > 0 {
+        bits.push(
+            if running {
+                "collecting subagent reports"
+            } else {
+                "collected subagent reports"
+            }
+            .into(),
+        );
+    }
+
+    // `workflow(…)` starts one; `workflow.status(…)` asks after one already
+    // running. Naming only the first left every poll round falling back to the
+    // gist, so waiting for a fan-out read as
+    // `await new Promise(r => setTimeout(r, 2000));`.
+    static WORKFLOW: LazyLock<Regex> = LazyLock::new(|| host_re(r"workflow\s*\("));
+    static WORKFLOW_MEMBER: LazyLock<Regex> = LazyLock::new(|| host_re(r"workflow\.\w+\s*\("));
+    static TIMEOUT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"setTimeout\s*\(").unwrap());
+    if count_re(&WORKFLOW, code) > 0 {
+        bits.push(
+            if running {
+                "running a workflow"
+            } else {
+                "ran a workflow"
+            }
+            .into(),
+        );
+    } else if count_re(&WORKFLOW_MEMBER, code) > 0 {
+        bits.push("checked the workflow run".into());
+    } else if TIMEOUT.is_match(code) {
+        bits.push(if running { "waiting" } else { "waited" }.into());
+    }
+
+    static ASK: LazyLock<Regex> = LazyLock::new(|| host_re(r"ask\s*\("));
+    static ARTIFACT: LazyLock<Regex> = LazyLock::new(|| host_re(r"artifact\s*\("));
+    if count_re(&ASK, code) > 0 {
+        bits.push("asked you a question".into());
+    }
+    if count_re(&ARTIFACT, code) > 0 {
+        bits.push(
+            if running {
+                "publishing an artifact"
+            } else {
+                "published an artifact"
+            }
+            .into(),
+        );
+    }
+
+    // THE REST OF THE HOST SURFACE. Everything not named here falls back to a
+    // line of source, which is the state this function exists to end — a
+    // program whose only call was `state.set({key, value})` was headlined
+    // `await state.set({key: "campaign", value: "overnight-ux"});`.
+    static STATE_W: LazyLock<Regex> = LazyLock::new(|| host_re(r"state\.(?:set|delete)\s*\("));
+    static STATE_R: LazyLock<Regex> = LazyLock::new(|| host_re(r"state\.(?:get|list)\s*\("));
+    static SCHEDULE: LazyLock<Regex> = LazyLock::new(|| host_re(r"schedule\.\w+\s*\("));
+    static FETCH: LazyLock<Regex> = LazyLock::new(|| host_re(r"fetch\s*\("));
+    static IMAGE: LazyLock<Regex> = LazyLock::new(|| host_re(r"image\s*\("));
+    if count_re(&STATE_W, code) > 0 {
+        bits.push("wrote session state".into());
+    } else if count_re(&STATE_R, code) > 0 {
+        bits.push("read session state".into());
+    }
+    if count_re(&SCHEDULE, code) > 0 {
+        bits.push("changed a schedule".into());
+    }
+    let fetched = count_re(&FETCH, code);
+    if fetched > 0 {
+        bits.push(format!(
+            "{} {}",
+            if running { "fetching" } else { "fetched" },
+            plural(fetched as i64, "URL")
+        ));
+    }
+    if count_re(&IMAGE, code) > 0 {
+        bits.push("attached an image".into());
+    }
+
+    // Matched in the COMMAND TEXT, not as a call shape: MCP is reached by
+    // running `bough mcp call`, the same way `ast-grep` is. There is no host
+    // function left to count.
+    static MCP_CALL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bbough mcp call\b").unwrap());
+    static MCP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bbough mcp\b").unwrap());
+    static AST_GREP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bast-grep\b").unwrap());
+    let mcp_calls = count_re(&MCP_CALL, code);
+    if mcp_calls > 0 {
+        bits.push(plural(mcp_calls as i64, "MCP call"));
+    } else if count_re(&MCP, code) > 0 {
+        bits.push("checked the MCP servers".into());
+    }
+    // `ast-grep` rides inside a shell string rather than arriving as its own
+    // host function, so this matches the command text, not a call shape. It
+    // stays in the list because a structural search is a different ACT from a
+    // text sweep and the header is the only place that distinction is visible.
+    if count_re(&AST_GREP, code) > 0 {
+        bits.push("searched by structure".into());
+    }
+
+    static SEARCHES: LazyLock<Regex> = LazyLock::new(|| host_re(r"(?:grep|glob|search)\s*\("));
+    if count_re(&SEARCHES, code) > 0 && bits.is_empty() {
+        bits.push(
+            if running {
+                "searching the tree"
+            } else {
+                "searched the tree"
+            }
+            .into(),
+        );
+    }
+
+    // Nothing recognized: the caller falls back to the code gist rather than to
+    // an empty header.
+    if bits.is_empty() {
+        return String::new();
+    }
+    let joined = bits.join(" · ");
+    if joined.chars().count() > max {
+        let head: String = joined.chars().take(max.saturating_sub(1)).collect();
+        format!("{}…", head.trim_end())
+    } else {
+        joined
+    }
 }
 
 // ---- the tool fold ----------------------------------------------------------
@@ -3334,5 +3716,229 @@ mod tests {
         let (body2, hints2) = split_margin_notes("just output");
         assert_eq!(body2, "just output");
         assert!(hints2.is_empty());
+    }
+
+    #[test]
+    fn a_step_is_headlined_by_what_the_program_did_not_by_its_first_line_of_code() {
+        // Ported from format.test.ts. The old header was a clipped source line
+        // — debug output, not a UI:
+        //   ▸ 1 step  run_steps · const out = await bash(`node --input-type=module -e "
+        let sum = |code: &str| program_summary(code, 64, false);
+
+        assert_eq!(
+            sum(r#"const out = await bash("node -e 1"); console.log(out);"#),
+            "ran 1 command"
+        );
+        assert_eq!(
+            sum(r#"console.log(await view("/tmp/x/app.mjs"));"#),
+            "read app.mjs"
+        );
+        // `Bun.file` is where `files.md` sends the model for raw content, so a
+        // program using it was following instructions and still got a source
+        // line for a header.
+        assert_eq!(
+            sum(r#"const t = await Bun.file("/w/src/order.py").text();"#),
+            "read order.py"
+        );
+        // And `node:fs`, which models reach for whatever the prompt recommends.
+        assert_eq!(
+            sum(r#"const fs = require("fs"); const t = fs.readFileSync("/w/src/a.py", "utf8");"#),
+            "read a.py"
+        );
+        assert_eq!(
+            sum("const { readFile } = await import(\"node:fs/promises\");\nconst t = await readFile(\"/w/src/b.py\", \"utf8\");"),
+            "read b.py"
+        );
+        assert_eq!(
+            sum(r#"await write("src/a.ts", body); await bash("deno test");"#),
+            "wrote a.ts · ran 1 command"
+        );
+        // A write through `node:fs` is still a write.
+        assert_eq!(
+            sum("const { writeFile } = await import(\"node:fs/promises\");\nawait writeFile(\"/w/lib/slugify.py\", body);"),
+            "wrote slugify.py"
+        );
+        // Several files collapse rather than running off the row.
+        assert_eq!(
+            sum(r#"await edit("a.ts", x); await edit("b.ts", y); await edit("c.ts", z);"#),
+            "wrote a.ts +2 more"
+        );
+        assert_eq!(
+            sum(r#"await Promise.all([agent("one"), agent("two")]);"#),
+            "2 subagents"
+        );
+        // Delegation has four verbs. A fan-out written with `spawn()` matched
+        // nothing, so the header fell back to the gist and read `const tasks = [`.
+        assert_eq!(
+            sum("const r = await Promise.allSettled(tasks.map((t) => spawn(t.prompt)));"),
+            "1 subagent"
+        );
+        assert_eq!(
+            sum("const reports = await Promise.all(ids.map((id) => join(id)));"),
+            "collected subagent reports"
+        );
+        // `node:path` exports a bare `join` too. The destructure is the signal —
+        // the host verb is shadowed, so it cannot be the one being called.
+        assert_eq!(
+            sum("const { join } = await import(\"node:path\");\nconst p = join(dir, \"a.py\"); await bash(`ls ${p}`);"),
+            "ran 1 command"
+        );
+        // The STATIC import too — the spelling the model actually used, and the
+        // reason the first version of this fix did nothing on screen.
+        assert_eq!(
+            sum("import { readFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\nconst p = join(ws, \"src/util.py\"); const t = readFileSync(p, \"utf8\");"),
+            "read 1 file"
+        );
+        assert_eq!(sum(r#"await workflow("review", args);"#), "ran a workflow");
+        assert_eq!(
+            sum(r#"await ask("which one?", ["a", "b"]);"#),
+            "asked you a question"
+        );
+        // A path built from a template is not a name. Seen on a fresh walk:
+        // `▸ 1 step · wrote ${cartPath}` — the placeholder printed at the reader.
+        assert_eq!(sum("await write(`${cartPath}`, body);"), "wrote 1 file");
+        assert_eq!(
+            sum("const t = await Bun.file(`${ws}/src/a.py`).text();"),
+            "read 1 file"
+        );
+        // A PATCH whose section tag is built from a variable: named nothing,
+        // counted nothing, and the header fell back to a line of source.
+        assert_eq!(
+            sum("const path = f();\nawait patch(`[${path}#3AF0]\nSWAP 1.=1:\n+x`);"),
+            "wrote 1 file"
+        );
+        // A named tag still NAMES the file rather than counting it.
+        assert_eq!(
+            sum("await patch(`[src/a.py#3AF0]\nSWAP 1.=1:\n+x`);"),
+            "wrote a.py"
+        );
+        // A real name alongside an interpolated one still names the one it can.
+        assert_eq!(
+            sum("await write(\"src/a.py\", x); await write(`${p}`, y);"),
+            "wrote a.py"
+        );
+        assert_eq!(
+            sum(r#"await bashBg("npm run dev");"#),
+            "started 1 background command"
+        );
+        assert_eq!(
+            sum(r#"const out = await bashOutput("bg_1"); console.log(out);"#),
+            "read a background command's output"
+        );
+        assert_eq!(
+            sum(r#"await bashWait("bg_1");"#),
+            "waited for a background command"
+        );
+        assert_eq!(
+            sum(r#"await bashKill("bg_1");"#),
+            "killed a background command"
+        );
+        // A program that reached for `node:child_process` instead of `bash()`.
+        assert_eq!(
+            sum(r#"const { execSync } = require("node:child_process"); execSync("ls");"#),
+            "ran 1 command"
+        );
+        assert_eq!(sum("await Bun.$`ls -1`;"), "ran 1 command");
+        // But NOT the delegation verbs that happen to share those names.
+        assert_eq!(
+            sum(r#"const r = await spawn("do the thing");"#),
+            "1 subagent"
+        );
+        // MEMBER CALLS ARE NOT HOST CALLS.
+        assert_eq!(
+            sum("const body = names.join(\"\\n\"); await artifact(\"summary\", body);"),
+            "published an artifact"
+        );
+        assert_eq!(
+            sum(r#"const i = text.search(/x/); await bash("ls");"#),
+            "ran 1 command"
+        );
+        assert_eq!(
+            sum(r#"stream.write("x"); await bash("ls");"#),
+            "ran 1 command"
+        );
+        assert_eq!(
+            sum(r#"await res.body.view("x"); await bash("ls");"#),
+            "ran 1 command"
+        );
+        // And the real calls still count when they follow a dot-free boundary.
+        assert_eq!(sum("await join(id);"), "collected subagent reports");
+        // The rest of the host surface.
+        assert_eq!(
+            sum(r#"await state.set({key: "campaign", value: "x"});"#),
+            "wrote session state"
+        );
+        assert_eq!(
+            sum(r#"const v = await state.get({key: "campaign"});"#),
+            "read session state"
+        );
+        assert_eq!(
+            sum(r#"await schedule.add({cron: "0 9 * * *", prompt: "x"});"#),
+            "changed a schedule"
+        );
+        assert_eq!(
+            sum(r#"const r = await fetch("https://example.com");"#),
+            "fetched 1 URL"
+        );
+        assert_eq!(
+            sum(r#"await image("/tmp/a.png", "the chart");"#),
+            "attached an image"
+        );
+        // Command text, not a call shape — MCP is reached through the shell now.
+        assert_eq!(
+            sum("await bash(`bough mcp call github list_repos '{}'`);"),
+            "ran 1 command · 1 MCP call"
+        );
+        assert_eq!(
+            sum(r#"await bash("bough mcp doctor");"#),
+            "ran 1 command · checked the MCP servers"
+        );
+        // Both, and in that order: it IS a command, and the structural search is
+        // the part worth naming. A single label would drop one of two true facts.
+        assert_eq!(
+            sum(r#"await bash("ast-grep -p 'send($$$)' -l ts src/");"#),
+            "ran 1 command · searched by structure"
+        );
+        // Member calls still do not count — `res.fetch(…)` is not the host verb.
+        assert_eq!(
+            sum(r#"await client.fetch(u); await bash("ls");"#),
+            "ran 1 command"
+        );
+        // patch() takes ONE string — naming it like a path-first call captured
+        // the whole template literal, so the most-read line in the UI read
+        // `wrote cart.js#8902] SWAP 3.=3: + for (let i = 0; …`.
+        assert_eq!(
+            sum("await patch(`[src/cart.js#8902]\nSWAP 3.=3:\n+  const x = 1;`);"),
+            "wrote cart.js"
+        );
+        assert_eq!(
+            sum("await patch(`[a.ts#]\nDEL 2.=3\n[b/c.ts#F1]\nINS.TAIL:\n+x`);"),
+            "wrote a.ts, c.ts"
+        );
+        // A bracket that is not a patch section tag must not invent a file.
+        assert_eq!(
+            sum(r#"const rows = data["k#1"]; await bash("ls");"#),
+            "ran 1 command"
+        );
+        // Unrecognized programs yield "", so the caller falls back to the code
+        // gist rather than to an empty header.
+        assert_eq!(sum("const x = 1 + 1;"), "");
+        assert_eq!(sum(""), "");
+        // Always bounded — this shares a row with the step count and the chips.
+        assert!(sum(&r#"await bash("x");"#.repeat(40)).chars().count() <= 64);
+    }
+
+    #[test]
+    fn a_running_program_is_named_in_the_present_tense() {
+        // "ran 1 command" under a shell that has been blocked for ten seconds is
+        // a statement the reader acts on and should not.
+        let running = |code: &str| program_summary(code, 64, true);
+        assert_eq!(running(r#"await bash("cargo test");"#), "running 1 command");
+        assert_eq!(running(r#"await write("a.ts", x);"#), "writing a.ts");
+        assert_eq!(running(r#"await view("a.ts");"#), "reading a.ts");
+        assert_eq!(
+            running(r#"await workflow("review");"#),
+            "running a workflow"
+        );
     }
 }

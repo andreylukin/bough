@@ -2083,9 +2083,15 @@ mod tests {
     fn a_command_label_is_one_short_line_or_nothing() {
         assert_eq!(command_label("cargo test"), "cargo test");
         // Whitespace a model indented into the program is not information.
-        assert_eq!(command_label("  cargo   test  -p bough-core "), "cargo test -p bough-core");
+        assert_eq!(
+            command_label("  cargo   test  -p bough-core "),
+            "cargo test -p bough-core"
+        );
         // A heredoc announces its opening line; the rest is not a label.
-        assert_eq!(command_label("python3 - <<'EOF'\nprint(1)\nEOF"), "python3 - <<'EOF'");
+        assert_eq!(
+            command_label("python3 - <<'EOF'\nprint(1)\nEOF"),
+            "python3 - <<'EOF'"
+        );
         assert_eq!(command_label("\n\n  make check\n"), "make check");
         // Long ones are capped, and the cap is visible.
         let long = command_label(&format!("cargo test {}", "x".repeat(200)));
@@ -2124,7 +2130,9 @@ mod tests {
     async fn a_running_command_is_announced_and_the_slot_is_cleared_when_it_ends() {
         let r = announcing_rig("sess-announce");
         let host = create_shell_host_fns(r.ctx.clone(), r.opts());
-        host.bash("printf hi", Some("smoke:announce:probe")).await.unwrap();
+        host.bash("printf hi", Some("smoke:announce:probe"))
+            .await
+            .unwrap();
         assert_eq!(
             commands_announced(&r),
             vec![Some("printf hi".to_string()), None],
@@ -2155,7 +2163,8 @@ mod tests {
         }
         r.ctx.bus = Some(bus);
         let host = create_shell_host_fns(r.ctx.clone(), r.opts());
-        let task = tokio::spawn(async move { host.bash("sleep 30", Some("smoke:announce:sleep")).await });
+        let task =
+            tokio::spawn(async move { host.bash("sleep 30", Some("smoke:announce:sleep")).await });
         until_true(
             "the command was announced",
             || !commands_announced(&r).is_empty(),
@@ -2197,7 +2206,9 @@ mod tests {
         // Every unit test and `history/ops/explore` run this way.
         let r = rig();
         let host = create_shell_host_fns(r.ctx.clone(), r.opts());
-        host.bash("printf hi", Some("smoke:announce:probe")).await.unwrap();
+        host.bash("printf hi", Some("smoke:announce:probe"))
+            .await
+            .unwrap();
         assert!(commands_announced(&r).is_empty());
         r.cleanup().await;
     }

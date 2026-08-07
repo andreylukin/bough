@@ -276,9 +276,15 @@ struct ActivityData {
     /// Absent = this frame says nothing about the blurb; `null` = clear it.
     /// Same for `command` — two publishers share this event and neither may
     /// erase the other's slot (see `SessionActivityData`).
-    #[serde(default, deserialize_with = "bough_core::schema::events::double_option")]
+    #[serde(
+        default,
+        deserialize_with = "bough_core::schema::events::double_option"
+    )]
     activity: Option<Option<String>>,
-    #[serde(default, deserialize_with = "bough_core::schema::events::double_option")]
+    #[serde(
+        default,
+        deserialize_with = "bough_core::schema::events::double_option"
+    )]
     command: Option<Option<String>>,
 }
 
@@ -2433,5 +2439,4 @@ mod tests {
             "a command clear must not take the blurb with it"
         );
     }
-
 }
