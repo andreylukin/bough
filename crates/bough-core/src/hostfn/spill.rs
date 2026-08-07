@@ -109,6 +109,9 @@ pub trait SpillDeps {
     fn write(&self, path: &str, text: &str) -> std::io::Result<()>;
     /// Append to a file, creating it if absent. Used by the streaming sink.
     fn append(&self, path: &str, text: &str) -> std::io::Result<()>;
+    /// Read a file back. Used only to build the digest from the COMPLETE
+    /// output, since the caller's copy came out of the capped retention buffer.
+    fn read(&self, path: &str) -> std::io::Result<String>;
 }
 
 /// The real filesystem.
@@ -132,6 +135,77 @@ impl SpillDeps for RealSpillDeps {
             .open(path)?;
         f.write_all(text.as_bytes())
     }
+    fn read(&self, path: &str) -> std::io::Result<String> {
+        std::fs::read_to_string(path)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The digest — what the spilled output was actually made of
+// ---------------------------------------------------------------------------
+
+/// Patterns rendered inline. Six is what fits alongside a head and a tail
+/// without the extract stopping being an extract.
+const DIGEST_TOP: usize = 6;
+
+/// Hard ceiling on the digest, so the inline cost stays bounded by a constant
+/// the way the head and tail are. A pathological log with six enormous
+/// templates gets cut here rather than blowing the budget.
+const DIGEST_MAX_CHARS: usize = 4_000;
+
+/// Below this, there is nothing to compress — the head and tail already show
+/// most of it, and a "3 lines → 3 patterns" header is pure overhead.
+const DIGEST_MIN_LINES: usize = 40;
+
+/// One line in every `DIGEST_MIN_RATIO` must be a repeat of another for the
+/// summary to be worth its characters. Output where nearly every line is
+/// structurally distinct — prose, a diff, source code, a single-line blob —
+/// does not compress, and a digest listing it back is noise that displaces the
+/// verbatim tail.
+const DIGEST_MIN_RATIO: usize = 4;
+
+/// Output above this is pointed at rather than analyzed. The pipeline is one
+/// bounded-memory pass and runs at roughly 30,000 lines a second, but a command
+/// that printed 100MB should not add seconds of latency to its own result —
+/// and at that size the file needs targeted grepping anyway.
+const DIGEST_MAX_ANALYZE_CHARS: usize = 8_000_000;
+
+/// Compress `text` into the handful of statements it is made of, or `None` when
+/// that is not worth doing.
+///
+/// WHY THIS EXISTS AT ALL. A spilled command's output is exactly the case the
+/// log pipeline was built for — a failing suite, a full build, an unfiltered
+/// log — and until now the only thing the model got was a path and a suggestion
+/// to grep it. That suggestion is a second round trip, and it only works if the
+/// model already knows what to grep FOR. The digest answers that question in
+/// the same result: which statements this output consists of, how often each
+/// fired, and which of them were errors.
+///
+/// PURE. It reads no file and writes none; the caller decides what text to
+/// hand it.
+pub fn digest(text: &str) -> Option<String> {
+    use crate::logs::analyze::{AnalyzeOptions, Analyzer};
+    use crate::logs::format::to_llm;
+
+    if char_len(text) > DIGEST_MAX_ANALYZE_CHARS {
+        return None;
+    }
+    let mut analyzer = Analyzer::new(AnalyzeOptions {
+        top: DIGEST_TOP,
+        ..Default::default()
+    });
+    for line in text.lines() {
+        analyzer.push(line);
+    }
+    let analysis = analyzer.finish();
+    // `lines` counts only non-blank lines, which is the right denominator: a
+    // log padded with blank lines has not compressed just because they were
+    // dropped.
+    let lines = analysis.lines as usize;
+    if lines < DIGEST_MIN_LINES || analysis.pattern_count * DIGEST_MIN_RATIO > lines {
+        return None;
+    }
+    Some(clip_to_pattern(&to_llm(&analysis)))
 }
 
 /// A file that a shell's output is streamed into as it arrives.
@@ -278,6 +352,31 @@ pub fn plan_spill(text: &str, can_write: bool) -> SpillPlan {
     }
 }
 
+/// Enforce `DIGEST_MAX_CHARS` at a pattern boundary rather than mid-glyph.
+///
+/// A hard cut lands in the middle of a template or a slot's value list, and the
+/// result reads as though the pattern itself were malformed — a summary whose
+/// last entry looks corrupted invites exactly the re-run it exists to prevent.
+/// Dropping whole patterns and saying how many is honest and shorter.
+fn clip_to_pattern(rendered: &str) -> String {
+    if char_len(rendered) <= DIGEST_MAX_CHARS {
+        return rendered.to_string();
+    }
+    let cut = take_chars(rendered, DIGEST_MAX_CHARS);
+    let kept = match cut.rfind("\n### ") {
+        Some(i) => &cut[..i],
+        // No boundary at all: one enormous pattern. Nothing to do but cut it.
+        None => cut,
+    };
+    let shown = kept.matches("\n### ").count();
+    let total = rendered.matches("\n### ").count();
+    format!(
+        "{kept}\n\n[… {} more pattern(s) not shown here — the summary is capped; \
+         run `bough patterns --llm` on the file for all {total} …]\n",
+        total - shown
+    )
+}
+
 fn count_lines(text: &str) -> usize {
     1 + text.bytes().filter(|&b| b == b'\n').count()
 }
@@ -315,26 +414,50 @@ fn last_chars(s: &str, n: usize) -> &str {
 /// compose the wrong one and conclude the file is empty — and `bough patterns`
 /// in particular is a thing it would not otherwise think to reach for on a
 /// 9,000-line log.
-pub fn spill_marker(path: &str, total: usize, lines: usize, omitted: usize) -> String {
+///
+/// WHEN A DIGEST IS PRESENT the `bough patterns` hint is dropped rather than
+/// kept alongside it: the hint's entire job was to get the model to run that
+/// analysis, and it has already been run. Leaving both in would spend
+/// characters inviting a round trip whose answer is directly above it.
+pub fn spill_marker(
+    path: &str,
+    total: usize,
+    lines: usize,
+    omitted: usize,
+    digest: Option<&str>,
+) -> String {
     let lines_clause = if lines > 0 {
         format!(", {} lines", commafy(lines))
     } else {
         String::new()
     };
+    let patterns_hint = match digest {
+        Some(_) => String::new(),
+        None => format!(
+            "   bough patterns --llm {}   — if it is log-shaped, this summarizes it\n",
+            shell_quote(path)
+        ),
+    };
+    let digest_block = match digest {
+        Some(d) => format!("\nWHAT THE FULL OUTPUT IS MADE OF:\n{d}\n"),
+        None => String::new(),
+    };
     format!(
         "\n[… {} chars omitted from the middle. \
          FULL OUTPUT SAVED — {} chars{}:\n   {}\n   \
-         rg -n 'error|fail' {}   — find the part you need\n   \
-         bough patterns --llm {}   — if it is log-shaped, this summarizes it\n   \
+         rg -n 'error|fail' {}   — find the part you need\n\
+         {}   \
          view({})   — read it directly\n\
+         {}\
          Head and tail below are verbatim. Do not re-run the command to see the middle …]\n",
         commafy(omitted),
         commafy(total),
         lines_clause,
         path,
         shell_quote(path),
-        shell_quote(path),
+        patterns_hint,
         serde_json::to_string(path).unwrap_or_else(|_| format!("\"{path}\"")),
+        digest_block,
     )
 }
 
@@ -377,9 +500,20 @@ pub fn spill(text: &str, ctx: &SpillCtx, sink: Option<&SpillSink>, deps: &dyn Sp
             (text, "")
         };
         let omitted = sink.chars.saturating_sub(char_len(head) + char_len(tail));
+        // From the FILE, not from `text`: `text` is the retained buffer and has
+        // already lost its middle, so digesting it would describe a sample and
+        // present it as the whole. An unreadable file simply means no digest.
+        let full = deps.read(&sink.path).ok();
+        let digest = full.as_deref().and_then(digest);
         return format!(
             "{head}{}{tail}",
-            spill_marker(&sink.path, sink.chars, sink.lines, omitted)
+            spill_marker(
+                &sink.path,
+                sink.chars,
+                sink.lines,
+                omitted,
+                digest.as_deref()
+            )
         );
     }
     let plan = plan_spill(text, ctx.scratch.is_some());
@@ -402,10 +536,19 @@ pub fn spill(text: &str, ctx: &SpillCtx, sink: Option<&SpillSink>, deps: &dyn Sp
         deps.mkdirp(dir)?;
         let path = next_path(dir, ctx.label.as_deref().unwrap_or("output"), deps);
         deps.write(&path, text)?;
+        // `text` IS the complete output on this path — nothing streamed, so
+        // nothing was capped — and it is already in memory.
+        let digest = digest(text);
         Ok(format!(
             "{}{}{}",
             plan.head,
-            spill_marker(&path, char_len(text), plan.lines, plan.omitted),
+            spill_marker(
+                &path,
+                char_len(text),
+                plan.lines,
+                plan.omitted,
+                digest.as_deref()
+            ),
             plan.tail
         ))
     };
@@ -457,6 +600,13 @@ mod tests {
             let entry = files.entry(path.to_string()).or_default();
             entry.push_str(text);
             Ok(())
+        }
+        fn read(&self, path: &str) -> std::io::Result<String> {
+            self.files
+                .borrow()
+                .get(path)
+                .cloned()
+                .ok_or_else(|| std::io::Error::other("ENOENT"))
         }
     }
 
@@ -690,6 +840,9 @@ mod tests {
         fn append(&self, _: &str, _: &str) -> std::io::Result<()> {
             Ok(())
         }
+        fn read(&self, _: &str) -> std::io::Result<String> {
+            Err(std::io::Error::other("EROFS"))
+        }
     }
 
     #[test]
@@ -838,6 +991,9 @@ mod tests {
         fn append(&self, _: &str, _: &str) -> std::io::Result<()> {
             Err(std::io::Error::other("ENOSPC"))
         }
+        fn read(&self, _: &str) -> std::io::Result<String> {
+            Err(std::io::Error::other("ENOENT"))
+        }
     }
 
     #[test]
@@ -852,5 +1008,168 @@ mod tests {
         // command.
         let sink = sink.expect("the sink should have opened");
         assert_eq!(sink.chars, 30_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // The digest
+    // -----------------------------------------------------------------------
+
+    /// A log-shaped output: two statements repeated with varying values, which
+    /// is what a build, a test run or a server log actually looks like.
+    fn log_shaped(n: usize) -> String {
+        let mut out = String::new();
+        for i in 0..n {
+            out.push_str(&format!(
+                "INFO  handled GET /api/items/{i} in {}ms\n",
+                i % 97
+            ));
+            out.push_str(&format!("WARN  cache miss for key item-{i}\n"));
+        }
+        out
+    }
+
+    #[test]
+    fn a_log_shaped_spill_comes_back_with_the_statements_it_is_made_of() {
+        // The point of the whole feature: the model learns what the output
+        // consists of in the same result, instead of being handed a path and
+        // told to guess what to grep for.
+        let f = FakeFs::default();
+        let shown = spill(&log_shaped(800), &ctx("/s", "bash"), None, &f);
+        assert!(shown.contains("WHAT THE FULL OUTPUT IS MADE OF"));
+        assert!(
+            shown.contains("handled GET /api/items/"),
+            "the digest does not name the dominant statement:\n{shown}"
+        );
+        assert!(
+            shown.contains("cache miss for key item-"),
+            "the digest lost the second statement:\n{shown}"
+        );
+        // Having run the analysis, the marker no longer invites the model to
+        // run it.
+        assert!(
+            !shown.contains("bough patterns"),
+            "the digest and the hint to produce it are both present"
+        );
+    }
+
+    #[test]
+    fn output_that_does_not_compress_gets_no_digest_and_keeps_the_hint() {
+        // Prose, a diff, a source file: every line structurally distinct.
+        // Listing them back is noise that would displace the verbatim tail.
+        let f = FakeFs::default();
+        // This module's own source, which is the honest fixture: a synthetic
+        // one built from a small vocabulary compresses no matter how the lines
+        // are shuffled, because clustering folds on structure and structure is
+        // what a generator has little of. Real prose and real code do not
+        // compress, and if that ever stops being true here, this failing is
+        // the right way to find out.
+        let text = include_str!("spill.rs");
+        assert_eq!(digest(text), None, "source code should not compress");
+        // Asserted through the hint rather than through the absence of the
+        // digest banner: this fixture is this file, so the banner's own string
+        // literal is in the fixture and would match either way.
+        let shown = spill(text, &ctx("/s", "bash"), None, &f);
+        assert!(
+            shown.contains("bough patterns --llm"),
+            "with no digest the hint that produces one must survive"
+        );
+    }
+
+    #[test]
+    fn a_streamed_digest_describes_the_file_not_the_retained_buffer() {
+        // THE REGRESSION THIS EXISTS TO PIN. `spill` is handed text out of the
+        // capped retention buffer, whose middle is already gone. Digesting
+        // THAT would describe a sample of the output while the banner above it
+        // says "FULL OUTPUT" — a summary that is confidently wrong about what
+        // ran. The statement below appears ONLY in the middle.
+        let f = FakeFs::default();
+        let c = ctx("/s", "bash");
+        let chunks = vec![
+            log_shaped(400),
+            (0..200)
+                .map(|i| format!("ERROR failed to open /var/data/shard-{i}.db\n"))
+                .collect::<String>(),
+            log_shaped(400),
+        ];
+        let mut sink: Option<SpillSink> = None;
+        let mut seen = String::new();
+        for chunk in &chunks {
+            seen.push_str(chunk);
+            let snapshot = seen.clone();
+            let total = snapshot.chars().count();
+            sink = stream_spill(sink, chunk, &c, total, move || snapshot, &f);
+        }
+        let sink = sink.expect("the sink should have opened");
+
+        // What the retention buffer would hand `spill`: head and tail only.
+        let retained = format!(
+            "{}{}",
+            take_chars(&chunks[0], 2_000),
+            last_chars(&chunks[2], 2_000)
+        );
+        assert!(
+            !retained.contains("failed to open"),
+            "the fixture must actually lose the middle for this test to mean anything"
+        );
+
+        let shown = spill(&retained, &c, Some(&sink), &f);
+        assert!(
+            shown.contains("failed to open /var/data/shard-"),
+            "the digest missed a statement that only the file holds:\n{shown}"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_spill_file_costs_the_digest_and_nothing_else() {
+        // Same rule as every other failure here: degrade, never fail the
+        // command.
+        let f = FakeFs::default();
+        let c = ctx("/s", "bash");
+        let sink = SpillSink {
+            path: "/s/vanished-001.log".to_string(),
+            chars: 900_000,
+            lines: 9_000,
+        };
+        let shown = spill(&log_shaped(100), &c, Some(&sink), &f);
+        assert!(!shown.contains("WHAT THE FULL OUTPUT IS MADE OF"));
+        assert!(shown.contains("FULL OUTPUT SAVED — 900,000 chars"));
+    }
+
+    #[test]
+    fn the_digest_does_not_break_the_bounded_inline_cost() {
+        // The feature's original promise still holds, with the digest's own
+        // ceiling added to it and nothing else.
+        let f = FakeFs::default();
+        let shown = spill(&log_shaped(50_000), &ctx("/s", "bash"), None, &f);
+        assert!(shown.contains("WHAT THE FULL OUTPUT IS MADE OF"));
+        let ceiling = SPILL_HEAD_CHARS + SPILL_TAIL_CHARS + DIGEST_MAX_CHARS + 1_000;
+        assert!(
+            char_len(&shown) <= ceiling,
+            "a 2.6MB log produced {} inline chars, above the {ceiling} ceiling",
+            char_len(&shown)
+        );
+    }
+
+    #[test]
+    fn an_oversized_digest_is_cut_between_patterns_and_says_what_it_dropped() {
+        let body = big(1_500, 'x');
+        let rendered = format!("# header\n### #1 a\n{body}\n### #2 b\n{body}\n### #3 c\n{body}\n");
+        let clipped = clip_to_pattern(&rendered);
+        assert!(char_len(&clipped) <= DIGEST_MAX_CHARS + 200);
+        assert!(clipped.contains("### #1 a"));
+        assert!(
+            !clipped.contains("### #3 c"),
+            "the cut kept a pattern it had no room for"
+        );
+        assert!(
+            clipped.contains("1 more pattern(s) not shown"),
+            "the cut is silent about what it dropped:\n{clipped}"
+        );
+    }
+
+    #[test]
+    fn digest_declines_on_output_too_short_to_have_a_shape() {
+        assert_eq!(digest("one\ntwo\nthree\n"), None);
+        assert_eq!(digest(""), None);
     }
 }
