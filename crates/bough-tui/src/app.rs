@@ -787,6 +787,9 @@ pub struct App<T: Transport> {
     /// session switch is the only thing that clears it.
     marks: Vec<crate::store::state::TranscriptMark>,
     activity: Option<String>,
+    /// The shell command the session is blocked on right now, published by
+    /// `hostfn::shell` and cleared when nothing is waiting on it.
+    activity_command: Option<String>,
     turn: Option<TurnClock>,
     tick: u64,
     last_esc_at: Option<i64>,
@@ -957,6 +960,7 @@ impl<T: Transport> App<T> {
             tool_logs: HashMap::new(),
             marks: Vec::new(),
             activity: None,
+            activity_command: None,
             turn: None,
             tick: 0,
             last_esc_at: None,
@@ -3281,6 +3285,7 @@ impl<T: Transport> App<T> {
         self.marks.clear();
         self.turn = None;
         self.activity = None;
+        self.activity_command = None;
         self.clear_notice();
         self.last_send_at = None;
         // …and every fact the STATUS BAR was stating about the conversation
@@ -3440,7 +3445,15 @@ impl<T: Transport> App<T> {
             EventType::SessionUpdated => {}
             EventType::SessionActivity => {
                 if let Ok(d) = serde_json::from_value::<SessionActivityData>(event.data) {
-                    self.activity = d.activity;
+                    // Absent means "this frame says nothing about that slot".
+                    // The cheap tier and `hostfn::shell` both publish here and
+                    // neither may erase the other (see `SessionActivityData`).
+                    if let Some(activity) = d.activity {
+                        self.activity = activity;
+                    }
+                    if let Some(command) = d.command {
+                        self.activity_command = command;
+                    }
                 }
             }
             EventType::MessageStarted => {
@@ -3553,6 +3566,7 @@ impl<T: Transport> App<T> {
                         msg.pending = false;
                     }
                     self.activity = None;
+                    self.activity_command = None;
                     // The settle: the round that just ended is the one that
                     // moved the context and the spend, and the rules and tags
                     // are re-read from disk per turn — so the meter's numbers
@@ -4022,6 +4036,7 @@ impl<T: Transport> App<T> {
                     height: chat_h,
                     scroll_off: self.scroll_off,
                     activity: self.activity.as_deref(),
+                    activity_command: self.activity_command.as_deref(),
                     busy,
                     elapsed_ms,
                     turn_tokens: None, // usage polling lands with the store (row 1.35)
@@ -5302,12 +5317,9 @@ impl Transport for LiveTransport {
             // and THIS session is pinned. Every other session keeps what it had
             // — nothing here can express a change to them.
             //
-            // KNOWN GAP, reported rather than worked around: there is no write
-            // route for the CHEAP tier (`PUT /model-settings` carries
-            // `model`/`effort` only, and `cheapModel` is resolved server-side
-            // from `BOUGH_CHEAP_MODEL`). A cheap pick therefore moves the ● on
-            // this screen and nothing else, and the tab says so rather than
-            // letting the dot claim a write that did not happen.
+            // The cheap tier rides the same PUT, but with no session half:
+            // there is one background model per install, so there is nothing to
+            // pin per conversation.
             Effect::SaveModel(cfg) => {
                 tokio::spawn(async move {
                     use crate::components::panel::model::EffortChoice;
@@ -5320,6 +5332,13 @@ impl Transport for LiveTransport {
                     let body = PutModelSettingsBody {
                         model: Patch::Set(cfg.default_model.clone()),
                         effort: effort.clone(),
+                        cheap_model: match &cfg.cheap_model {
+                            Some(m) => Patch::Set(m.clone()),
+                            // Keep, not Clear: an install that has never picked
+                            // one must not have the frontier picker wipe its
+                            // stored cheap model on the way past.
+                            None => Patch::Keep,
+                        },
                     };
                     if let Err(e) = api.put_model_settings(&body).await {
                         let _ = tx.send(Action::Notice(e.to_string()));

@@ -177,13 +177,47 @@ pub struct ToolLogData {
     pub line: String,
 }
 
-/// `session.activity` — a cheap-tier blurb describing what the session is
-/// doing right now. `activity: null` clears it.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+/// `session.activity` — what the session is doing right now, in two
+/// independent slots: the cheap-tier `activity` blurb ("running the test
+/// suite") and the `command` a shell verb is blocked on right now
+/// (`cargo test`). Both render on the busy line.
+///
+/// TWO PUBLISHERS, ONE EVENT, so each field is `Option<Option<_>>`: **absent
+/// leaves the other slot alone, `null` clears it.** The cheap tier and
+/// `hostfn::shell` publish concurrently and neither knows the other's state
+/// — a plain `Option` would make every blurb erase the running command and
+/// every command erase the blurb. Absent-is-untouched is what keeps them
+/// independent without a shared owner.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionActivityData {
     pub session_id: String,
-    pub activity: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub activity: Option<Option<String>>,
+    #[serde(
+        default,
+        deserialize_with = "double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub command: Option<Option<String>>,
+}
+
+/// Absent → `None`, `null` → `Some(None)`, value → `Some(Some(v))`.
+///
+/// REQUIRED, not decoration: serde's derive collapses an explicit `null` to
+/// `None` for a plain `Option<Option<T>>`, which is exactly the case that
+/// carries the CLEAR. Without this the busy line named a finished command
+/// forever — the fields would have been write-only.
+pub fn double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Deserialize::deserialize(deserializer).map(Some)
 }
 
 /// `turn.finished` — emitted after `message.finished`, once per turn.

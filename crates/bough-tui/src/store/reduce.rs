@@ -273,7 +273,13 @@ struct LogData {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ActivityData {
-    activity: Option<String>,
+    /// Absent = this frame says nothing about the blurb; `null` = clear it.
+    /// Same for `command` — two publishers share this event and neither may
+    /// erase the other's slot (see `SessionActivityData`).
+    #[serde(default, deserialize_with = "bough_core::schema::events::double_option")]
+    activity: Option<Option<String>>,
+    #[serde(default, deserialize_with = "bough_core::schema::events::double_option")]
+    command: Option<Option<String>>,
 }
 
 #[derive(Deserialize)]
@@ -364,7 +370,12 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
                 return state;
             };
             let mut next = state;
-            next.activity = d.activity;
+            if let Some(activity) = d.activity {
+                next.activity = activity;
+            }
+            if let Some(command) = d.command {
+                next.activity_command = command;
+            }
             next
         }
 
@@ -2381,4 +2392,46 @@ mod tests {
         assert!(serde_json::from_value::<Role>(json!("worker")).is_err());
         assert!(serde_json::from_value::<SessionKind>(json!("worker")).is_err());
     }
+
+    #[test]
+    fn the_blurb_and_the_running_command_are_independent_slots() {
+        // TWO PUBLISHERS, ONE EVENT: the cheap tier writes `activity` and
+        // `hostfn::shell` writes `command`, neither knowing the other's state.
+        // A frame that omits a field must leave it exactly as it was —
+        // otherwise every blurb erases the running command and back again.
+        let activity = |seq: u64, data: serde_json::Value| BoughEvent {
+            r#type: EventType::SessionActivity,
+            session_id: Some(SESSION.into()),
+            seq,
+            ts: seq as i64,
+            data,
+        };
+        let mut state = reduce(initial_state(), open(SESSION));
+        state = replay_events(
+            state,
+            &[
+                activity(1, json!({"sessionId": SESSION, "command": "cargo test"})),
+                activity(
+                    2,
+                    json!({"sessionId": SESSION, "activity": "running the test suite"}),
+                ),
+            ],
+        );
+        assert_eq!(state.activity_command.as_deref(), Some("cargo test"));
+        assert_eq!(state.activity.as_deref(), Some("running the test suite"));
+
+        // An explicit null clears ONLY its own slot. This is the case a plain
+        // `Option` gets wrong twice over: it cannot tell null from absent.
+        state = replay_events(
+            state,
+            &[activity(3, json!({"sessionId": SESSION, "command": null}))],
+        );
+        assert_eq!(state.activity_command, None, "the command ended");
+        assert_eq!(
+            state.activity.as_deref(),
+            Some("running the test suite"),
+            "a command clear must not take the blurb with it"
+        );
+    }
+
 }

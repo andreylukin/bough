@@ -286,6 +286,9 @@ pub struct TuiState {
     pub notice: Option<String>,
     /// Cheap-tier blurb for the open session. Fails silently by construction.
     pub activity: Option<String>,
+    /// The shell command the open session is blocked on right now. Set and
+    /// cleared by `hostfn::shell`, independently of `activity`.
+    pub activity_command: Option<String>,
     pub usage: Option<SnapshotUsage>,
     /// The model the next turn will call.
     pub effective_model: Option<String>,
@@ -338,6 +341,7 @@ pub fn initial_state() -> TuiState {
         last_send_at: None,
         notice: None,
         activity: None,
+        activity_command: None,
         usage: None,
         effective_model: None,
         context_limit: None,

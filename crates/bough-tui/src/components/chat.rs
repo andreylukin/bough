@@ -44,6 +44,9 @@ pub struct ChatProps<'a> {
     pub scroll_off: usize,
     /// The cheap-tier activity blurb. Absent is the normal case (wave 1: always None).
     pub activity: Option<&'a str>,
+    /// The shell command the turn is blocked on right now. Independent of
+    /// `activity`: either, both or neither may be present.
+    pub activity_command: Option<&'a str>,
     /// A turn is in flight. Drives the spinner line.
     pub busy: bool,
     pub elapsed_ms: i64,
@@ -79,18 +82,28 @@ fn styled_row(text: &str, width: usize) -> Line<'static> {
 /// out, always (format.ts::busyLine, verbatim wording).
 pub(crate) fn busy_line(
     activity: Option<&str>,
+    command: Option<&str>,
     elapsed_ms: i64,
     tick: u64,
     tokens: Option<i64>,
 ) -> String {
     let frame = SPINNER[(tick as usize) % SPINNER.len()];
     let trimmed = activity.map(str::trim).unwrap_or("");
-    let what = if trimmed.is_empty() {
+    let command = command.map(str::trim).unwrap_or("");
+    // The command is the more SPECIFIC fact, so when there is no blurb it
+    // carries the line rather than sitting behind "working".
+    let what = if !trimmed.is_empty() {
+        trimmed
+    } else if command.is_empty() {
         "working"
     } else {
-        trimmed
+        "running a command"
     };
-    let mut bits: Vec<String> = vec![what.to_string(), fmt_duration(elapsed_ms)];
+    let mut bits: Vec<String> = vec![what.to_string()];
+    if !command.is_empty() {
+        bits.push(format!("$ {command}"));
+    }
+    bits.push(fmt_duration(elapsed_ms));
     if let Some(t) = tokens {
         if t > 0 {
             bits.push(format!("{} tok", fmt_tokens(t)));
@@ -170,7 +183,13 @@ pub fn render_chat(p: &ChatProps, area: Rect, buf: &mut Buffer) {
     // The busy strip — reserved unconditionally so the transcript never jumps
     // a row at turn start/end.
     if p.busy {
-        let text = busy_line(p.activity, p.elapsed_ms, p.tick, p.turn_tokens);
+        let text = busy_line(
+            p.activity,
+            p.activity_command,
+            p.elapsed_ms,
+            p.tick,
+            p.turn_tokens,
+        );
         let mut chars = text.chars();
         let head: String = chars.by_ref().take(2).collect();
         let rest: String = chars.collect();
@@ -249,6 +268,7 @@ mod tests {
             height: 20,
             scroll_off: 0,
             activity: None,
+            activity_command: None,
             busy: false,
             elapsed_ms: 0,
             turn_tokens: None,
@@ -283,6 +303,7 @@ mod tests {
         let queued = vec!["and fix the lint".to_string()];
         let p = ChatProps {
             activity: Some("running the test suite"),
+            activity_command: Some("cargo test"),
             queued: &queued,
             ..props(&lines)
         };
@@ -307,16 +328,50 @@ mod tests {
     #[test]
     fn busy_line_always_names_the_way_out() {
         assert_eq!(
-            busy_line(None, 9_000, 0, None),
+            busy_line(None, None, 9_000, 0, None),
             "⠋ working · 9s · esc interrupts"
         );
         assert_eq!(
-            busy_line(Some("reading files"), 64_000, 1, Some(3_200)),
+            busy_line(Some("reading files"), None, 64_000, 1, Some(3_200)),
             "⠙ reading files · 1m04s · 3.2k tok · esc interrupts"
         );
         // Zero tokens are omitted, not printed.
         assert_eq!(
-            busy_line(None, 0, 0, Some(0)),
+            busy_line(None, None, 0, 0, Some(0)),
+            "⠋ working · 0s · esc interrupts"
+        );
+    }
+
+    #[test]
+    fn the_busy_line_names_the_command_the_turn_is_blocked_on() {
+        // The blurb says what the round is for; the command says what it is
+        // waiting on right now. Both, in that order — a 90-second `cargo test`
+        // under "running the test suite" is otherwise indistinguishable from a
+        // hung turn.
+        assert_eq!(
+            busy_line(
+                Some("running the test suite"),
+                Some("cargo test"),
+                12_000,
+                0,
+                None
+            ),
+            "⠋ running the test suite · $ cargo test · 12s · esc interrupts"
+        );
+        // No blurb (no cheap tier, or it has not answered yet): the command is
+        // the more specific fact, so it carries the line instead of "working".
+        assert_eq!(
+            busy_line(None, Some("cargo test"), 3_000, 0, None),
+            "⠋ running a command · $ cargo test · 3s · esc interrupts"
+        );
+        // Nothing running in a shell: unchanged from before the feature.
+        assert_eq!(
+            busy_line(Some("reading files"), None, 0, 0, None),
+            "⠋ reading files · 0s · esc interrupts"
+        );
+        // A blank command is the same as none — never an empty `$ ` field.
+        assert_eq!(
+            busy_line(None, Some("  "), 0, 0, None),
             "⠋ working · 0s · esc interrupts"
         );
     }

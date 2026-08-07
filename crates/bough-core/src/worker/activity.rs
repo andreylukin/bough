@@ -239,9 +239,13 @@ fn activity_event(session_id: &str, activity: Option<String>) -> EventInput {
     EventInput {
         r#type: EventType::SessionActivity,
         session_id: Some(session_id.to_string()),
+        // Only the blurb slot: a cheap-tier answer says nothing about which
+        // command the program is blocked on, so `command` is left absent and
+        // whatever `hostfn::shell` last published survives.
         data: serde_json::to_value(SessionActivityData {
             session_id: session_id.to_string(),
-            activity,
+            activity: Some(activity),
+            command: None,
         })
         .unwrap_or_default(),
     }
@@ -323,7 +327,8 @@ mod tests {
     fn sad(session_id: &str, activity: Option<&str>) -> SessionActivityData {
         SessionActivityData {
             session_id: session_id.to_string(),
-            activity: activity.map(String::from),
+            activity: Some(activity.map(String::from)),
+            command: None,
         }
     }
 

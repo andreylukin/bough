@@ -84,6 +84,10 @@ pub struct ShellCtx {
     pub record: Option<CommandRecorder>,
     /// The memory pushed back: notes below failures, guards before loops.
     pub echo: Option<EchoHooks>,
+    /// Where the running command is announced, so the busy line can name it
+    /// (`announce`). Absent — every unit test, and `history/ops/explore` —
+    /// simply announces nothing.
+    pub bus: Option<Arc<crate::bus::Bus>>,
 }
 
 /// Injected seams. Every default is a constant, never a hidden global.
@@ -263,6 +267,108 @@ fn secs_text(ms: u64) -> String {
 // bash
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Announcing the running command
+// ---------------------------------------------------------------------------
+
+/// The most a busy line is asked to spend on a command.
+const COMMAND_LABEL_CHARS: usize = 40;
+
+/// The command as one short line: first line, whitespace collapsed, capped.
+///
+/// A heredoc or a `&&` chain is many lines and hundreds of characters; the
+/// busy line has one slot and the reader wants to know WHICH command, not to
+/// re-read it. Empty means nothing worth announcing.
+pub fn command_label(command: &str) -> String {
+    let first = command
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let collapsed = first.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() > COMMAND_LABEL_CHARS {
+        let head: String = collapsed.chars().take(COMMAND_LABEL_CHARS - 1).collect();
+        format!("{}…", head.trim_end())
+    } else {
+        collapsed
+    }
+}
+
+/// Per-session announcement counter. THE REASON IT EXISTS: `sh` fans out
+/// concurrently and a program may await several `bash` calls at once, so
+/// commands overlap. Each announcement carries the value it took, and a
+/// guard clears the slot only if it is STILL the newest — without this the
+/// first leg to finish would blank the line while three others ran.
+static COMMAND_GEN: std::sync::LazyLock<Mutex<std::collections::HashMap<String, u64>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+/// The published slot, cleared on drop. A guard rather than a call at each
+/// exit: `bash` returns from five places (exit, interrupt twice, spawn
+/// failure, background promotion) and a turn's interrupt can unwind past any
+/// of them — a line that keeps naming a command nobody is waiting on is the
+/// one failure this feature can actually cause.
+pub struct Announced {
+    bus: Arc<crate::bus::Bus>,
+    session_id: String,
+    generation: u64,
+}
+
+impl Drop for Announced {
+    fn drop(&mut self) {
+        {
+            let gen = COMMAND_GEN.lock().unwrap();
+            if gen.get(&self.session_id) != Some(&self.generation) {
+                return; // a later command owns the slot; leave it naming that one
+            }
+        }
+        publish_command(&self.bus, &self.session_id, None);
+    }
+}
+
+fn publish_command(bus: &crate::bus::Bus, session_id: &str, command: Option<String>) {
+    use crate::schema::events::{EventInput, EventType, SessionActivityData};
+    bus.publish(EventInput {
+        r#type: EventType::SessionActivity,
+        session_id: Some(session_id.to_string()),
+        // Only the command slot — `activity` absent leaves the cheap tier's
+        // blurb exactly as it was (see `SessionActivityData`).
+        data: serde_json::to_value(SessionActivityData {
+            session_id: session_id.to_string(),
+            activity: None,
+            command: Some(command),
+        })
+        .unwrap_or_default(),
+    });
+}
+
+/// Name the command the program is now blocked on, for as long as the
+/// returned guard lives. `None` when there is no bus, no session, or nothing
+/// worth naming — every one of which is an ordinary configuration, not a
+/// failure.
+#[must_use = "the slot is cleared when the guard drops"]
+pub fn announce(ctx: &ShellCtx, command: &str) -> Option<Announced> {
+    let bus = ctx.bus.clone()?;
+    if ctx.session_id.is_empty() {
+        return None;
+    }
+    let label = command_label(command);
+    if label.is_empty() {
+        return None;
+    }
+    let generation = {
+        let mut gen = COMMAND_GEN.lock().unwrap();
+        let n = gen.entry(ctx.session_id.clone()).or_insert(0);
+        *n += 1;
+        *n
+    };
+    publish_command(&bus, &ctx.session_id, Some(label));
+    Some(Announced {
+        bus,
+        session_id: ctx.session_id.clone(),
+        generation,
+    })
+}
+
 /// Run one command with `sh -c` in the session workspace and return its
 /// combined output. A non-zero exit is reported in the output as
 /// `[exit code N]`, not thrown — it is a result to read, not an error to
@@ -300,6 +406,9 @@ pub async fn bash(
         .spawn(command, spawn_opts_for(ctx))
         .map_err(|e| BoughError::program(format!("could not start command: {e}")))?;
     let untrack = registry.track_foreground(&shell, &ctx.session_id);
+    // Named on the busy line until this function returns — including the
+    // background promotion below, after which nobody is waiting on it.
+    let _announced = announce(ctx, command);
     let mut kill_task = kill_tree_on_abort(&shell, ctx.cancel.as_ref());
 
     let result = async {
@@ -468,6 +577,9 @@ async fn sh_leg(command: String, tags: String, ctx: &ShellCtx, opts: &ShellOptio
             }
         }
     };
+    // Every leg announces; the newest one owns the line and the others clear
+    // nothing when they finish (see `COMMAND_GEN`).
+    let _announced = announce(ctx, &command);
     // The deadline: `sh` owes the caller an exit code, so past it the tree is
     // SIGKILLed rather than handed to the background registry.
     let timed_out = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -679,7 +791,7 @@ mod tests {
     use crate::bus::Bus;
     use crate::hostfn::jobs::{descendant_pids, JobRegistryOptions};
     use crate::hostfn::spill::TruncateLimits;
-    use crate::schema::events::{BoughEvent, EventType};
+    use crate::schema::events::{BoughEvent, EventType, SessionActivityData};
     use crate::schema::parts::{BackgroundJob, JobStatus};
     use crate::types::RecordedCommand;
     use std::collections::HashSet;
@@ -1962,6 +2074,131 @@ mod tests {
             "a command that did not run must not enter the memory"
         );
         assert!(!probe.exists());
+        r.cleanup().await;
+    }
+
+    // ---- the running command on the busy line -------------------------------
+
+    #[test]
+    fn a_command_label_is_one_short_line_or_nothing() {
+        assert_eq!(command_label("cargo test"), "cargo test");
+        // Whitespace a model indented into the program is not information.
+        assert_eq!(command_label("  cargo   test  -p bough-core "), "cargo test -p bough-core");
+        // A heredoc announces its opening line; the rest is not a label.
+        assert_eq!(command_label("python3 - <<'EOF'\nprint(1)\nEOF"), "python3 - <<'EOF'");
+        assert_eq!(command_label("\n\n  make check\n"), "make check");
+        // Long ones are capped, and the cap is visible.
+        let long = command_label(&format!("cargo test {}", "x".repeat(200)));
+        assert_eq!(long.chars().count(), COMMAND_LABEL_CHARS);
+        assert!(long.ends_with('…'));
+        // Nothing worth naming.
+        assert_eq!(command_label("   \n  "), "");
+    }
+
+    /// A rig whose ctx carries the bus, which is what `announce` needs.
+    fn announcing_rig(session_id: &str) -> Rig {
+        let mut r = rig_with(session_id, None);
+        let bus = Arc::new(Bus::new(system_clock()));
+        {
+            let events = r.events.clone();
+            bus.subscribe(Arc::new(move |e: &BoughEvent| {
+                events.lock().unwrap().push(e.clone())
+            }));
+        }
+        r.ctx.bus = Some(bus);
+        r
+    }
+
+    fn commands_announced(r: &Rig) -> Vec<Option<String>> {
+        r.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e.r#type == EventType::SessionActivity)
+            .filter_map(|e| serde_json::from_value::<SessionActivityData>(e.data.clone()).ok())
+            .filter_map(|d| d.command)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_running_command_is_announced_and_the_slot_is_cleared_when_it_ends() {
+        let r = announcing_rig("sess-announce");
+        let host = create_shell_host_fns(r.ctx.clone(), r.opts());
+        host.bash("printf hi", Some("smoke:announce:probe")).await.unwrap();
+        assert_eq!(
+            commands_announced(&r),
+            vec![Some("printf hi".to_string()), None],
+            "named while it runs, and nothing is left naming a finished command"
+        );
+        // The blurb slot is untouched by both frames — the cheap tier owns it.
+        for e in r.events.lock().unwrap().iter() {
+            if e.r#type == EventType::SessionActivity {
+                let d: SessionActivityData = serde_json::from_value(e.data.clone()).unwrap();
+                assert_eq!(d.activity, None, "a command frame must not erase the blurb");
+            }
+        }
+        r.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_command_still_clears_the_slot() {
+        // The failure this feature could actually cause: a line that keeps
+        // naming a command nobody is waiting on.
+        let cancel = CancellationToken::new();
+        let mut r = rig_with("sess-interrupt", Some(cancel.clone()));
+        let bus = Arc::new(Bus::new(system_clock()));
+        {
+            let events = r.events.clone();
+            bus.subscribe(Arc::new(move |e: &BoughEvent| {
+                events.lock().unwrap().push(e.clone())
+            }));
+        }
+        r.ctx.bus = Some(bus);
+        let host = create_shell_host_fns(r.ctx.clone(), r.opts());
+        let task = tokio::spawn(async move { host.bash("sleep 30", Some("smoke:announce:sleep")).await });
+        until_true(
+            "the command was announced",
+            || !commands_announced(&r).is_empty(),
+            2_000,
+        )
+        .await;
+        cancel.cancel();
+        assert!(task.await.unwrap().is_err(), "an interrupt is an error");
+        assert_eq!(commands_announced(&r).last().cloned(), Some(None));
+        r.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn the_newest_of_two_overlapping_commands_owns_the_line() {
+        // `sh` fans out concurrently: the first leg to finish must not blank a
+        // line the other leg still owns.
+        let r = announcing_rig("sess-overlap");
+        sh_concurrent(
+            &[
+                ShCommand::Plain("printf a".into()),
+                ShCommand::Plain("sleep 0.4".into()),
+            ],
+            &r.ctx,
+            &r.opts(),
+        )
+        .await;
+        let announced = commands_announced(&r);
+        assert_eq!(
+            announced.iter().filter(|c| c.is_none()).count(),
+            1,
+            "exactly one clear, from the last command to finish: {announced:?}"
+        );
+        assert_eq!(announced.last().cloned(), Some(None));
+        r.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn no_bus_and_no_session_announce_nothing() {
+        // Every unit test and `history/ops/explore` run this way.
+        let r = rig();
+        let host = create_shell_host_fns(r.ctx.clone(), r.opts());
+        host.bash("printf hi", Some("smoke:announce:probe")).await.unwrap();
+        assert!(commands_announced(&r).is_empty());
         r.cleanup().await;
     }
 }

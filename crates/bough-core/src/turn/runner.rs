@@ -296,6 +296,7 @@ pub fn base_host_fns(ctx: &TurnCtx) -> HostFns {
             ),
             record: Some(ctx.record.clone().unwrap_or_else(|| recorder_for(ctx))),
             echo: Some(echo_hooks_for(ctx)),
+            bus: Some(ctx.app.bus.clone()),
         },
         ShellOptions::new(ctx.app.host.jobs.clone()),
     ));

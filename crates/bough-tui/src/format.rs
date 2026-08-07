@@ -834,6 +834,9 @@ pub struct BusyOpts {
     /// The cheap-tier activity blurb — best-effort by construction; blank or
     /// absent degrades to "working".
     pub activity: Option<String>,
+    /// The shell command the turn is blocked on right now, from
+    /// `hostfn::shell`. Independent of `activity`.
+    pub command: Option<String>,
     pub elapsed_ms: i64,
     pub tick: i64,
     /// Tokens streamed SO FAR in this turn. Absent is the normal case for a
@@ -848,12 +851,21 @@ pub struct BusyOpts {
 pub fn busy_line(opts: &BusyOpts) -> String {
     let frame = SPINNER[(opts.tick.unsigned_abs() % SPINNER.len() as u64) as usize];
     let activity = opts.activity.as_deref().unwrap_or("").trim();
-    let what = if activity.is_empty() {
+    let command = opts.command.as_deref().unwrap_or("").trim();
+    // The command is the more SPECIFIC fact, so when there is no blurb it
+    // carries the line rather than sitting behind "working".
+    let what = if !activity.is_empty() {
+        activity
+    } else if command.is_empty() {
         "working"
     } else {
-        activity
+        "running a command"
     };
-    let mut bits: Vec<String> = vec![what.to_string(), fmt_duration(opts.elapsed_ms)];
+    let mut bits: Vec<String> = vec![what.to_string()];
+    if !command.is_empty() {
+        bits.push(format!("$ {command}"));
+    }
+    bits.push(fmt_duration(opts.elapsed_ms));
     if let Some(tokens) = opts.tokens {
         if tokens > 0 {
             bits.push(format!("{} tok", fmt_tokens(tokens)));
@@ -1580,6 +1592,7 @@ mod tests {
         // terminal — was documented on no screen.
         let line = busy_line(&BusyOpts {
             activity: None,
+            command: None,
             elapsed_ms: 9_000,
             tick: 0,
             tokens: None,
@@ -1589,6 +1602,7 @@ mod tests {
         assert_eq!(
             busy_line(&BusyOpts {
                 activity: Some("reading keys.ts".into()),
+                command: None,
                 elapsed_ms: 0,
                 tick: 1,
                 tokens: None
@@ -1599,6 +1613,7 @@ mod tests {
         assert_eq!(
             busy_line(&BusyOpts {
                 activity: Some("   ".into()),
+                command: None,
                 elapsed_ms: 0,
                 tick: 0,
                 tokens: None
@@ -1610,6 +1625,7 @@ mod tests {
             .map(|i| {
                 busy_line(&BusyOpts {
                     activity: None,
+                    command: None,
                     elapsed_ms: 0,
                     tick: i,
                     tokens: None,
@@ -1628,6 +1644,7 @@ mod tests {
         assert_eq!(
             busy_line(&BusyOpts {
                 activity: None,
+                command: None,
                 elapsed_ms: 42_000,
                 tick: 0,
                 tokens: Some(3_200)
@@ -1639,6 +1656,7 @@ mod tests {
         assert_eq!(
             busy_line(&BusyOpts {
                 activity: None,
+                command: None,
                 elapsed_ms: 1_000,
                 tick: 0,
                 tokens: Some(0)
