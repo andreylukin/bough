@@ -28,8 +28,9 @@ use bough_core::types::AppCtx;
 
 use crate::http::{error_response, route, Params, Route};
 use crate::{
-    artifacts, attachments, changes, comments, events, fs, ghost, history_ops, jobs, mcp_oauth,
-    mcp_routes, models, questions, schedules, search, sessions, skills, theme, turns, workflows,
+    artifacts, attachments, changes, comments, events, fs, ghost, history_ops, hooks, jobs,
+    mcp_oauth, mcp_routes, models, questions, schedules, search, sessions, skills, theme, turns,
+    workflows,
 };
 
 // ---- the route table --------------------------------------------------------
@@ -122,6 +123,9 @@ pub fn routes() -> Vec<Route> {
             "/sessions/:id/artifacts/restore",
             artifacts::restore_artifact_version(),
         ),
+        // hooks: the Lua that runs inside the loop, and its off switches
+        route("GET", "/hooks", hooks::list()),
+        route("POST", "/hooks/:name", hooks::toggle()),
         route("GET", "/artifacts/:id/:path*", artifacts::get_artifact()),
         // jobs — a session's list covers its subagents' work too
         route("GET", "/sessions/:id/jobs", jobs::list_jobs()),

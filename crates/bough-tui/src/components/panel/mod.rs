@@ -25,6 +25,7 @@
 //! `render_*` below paints `min(lines, area.height)` rows.
 
 pub mod changes;
+pub mod hooks;
 pub mod host;
 pub mod mcp;
 pub mod model;
@@ -334,6 +335,7 @@ pub enum PanelBody<'a> {
     Workflows(workflows::WorkflowsProps<'a>),
     /// Registry · grant · connection · credential, never conflated.
     Mcp(mcp::McpTabProps<'a>),
+    Hooks(hooks::HooksTabProps<'a>),
     /// The `/name` bundles this install can load.
     Skills(skills::SkillsTabProps<'a>),
     /// Both model tiers and the thinking depth, one list.
@@ -395,6 +397,7 @@ pub fn render_panel(tab: PanelTab, body: &PanelBody, area: Rect, buf: &mut Buffe
         PanelBody::Theme(preview) => crate::theme::render_theme_tab(*preview, body_area, buf),
         PanelBody::Workflows(p) => workflows::render_workflows(p, body_area, buf),
         PanelBody::Mcp(p) => mcp::render_mcp(p, body_area, buf),
+        PanelBody::Hooks(p) => hooks::render_hooks(p, body_area, buf),
         PanelBody::Skills(p) => skills::render_skills(p, body_area, buf),
         PanelBody::Model(p) => model::render_model(p, body_area, buf),
         PanelBody::Text(text) => {
@@ -700,7 +703,7 @@ mod tests {
             .iter()
             .map(|s| s.content.to_string())
             .collect();
-        assert_eq!(text, " [theme] 7/7 · ⇥ next · ^t close");
+        assert_eq!(text, " [theme] 8/8 · ⇥ next · ^t close");
     }
 
     #[test]

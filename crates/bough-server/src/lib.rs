@@ -18,6 +18,7 @@ pub mod events;
 pub mod fs;
 pub mod ghost;
 pub mod history_ops;
+pub mod hooks;
 pub mod http;
 pub mod jobs;
 pub mod mcp_oauth;

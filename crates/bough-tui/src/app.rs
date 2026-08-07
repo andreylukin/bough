@@ -227,6 +227,13 @@ pub enum Action {
         sources: Vec<crate::api::SkillSourceRow>,
         note: Option<String>,
     },
+    /// `GET /hooks` — the hooks tab's rows and the directory walked.
+    /// `hooks: None` is a failed fetch and carries its reason.
+    Hooks {
+        hooks: Option<Vec<crate::components::panel::hooks::HookRow>>,
+        dir: Option<String>,
+        note: Option<String>,
+    },
     /// `GET /models` — the picker's catalog.
     Models(Vec<crate::api::ModelRow>),
     /// `GET /model-settings` — what a NEW conversation runs on, both tiers.
@@ -396,6 +403,13 @@ pub enum Effect {
     /// `GET /skills` — the skills TAB's rows (error and sources included), not
     /// the composer's name/description pairs.
     LoadSkillRows,
+    /// `GET /hooks` — the hooks tab's rows.
+    LoadHooks,
+    /// `POST /hooks/:name` — the toggle, which answers with the new list.
+    ToggleHook {
+        name: String,
+        enabled: bool,
+    },
     /// `GET /models` — the picker's catalog.
     LoadModels,
     /// `GET /model-settings` — both tiers' defaults.
@@ -1603,6 +1617,7 @@ impl<T: Transport> App<T> {
                 sources,
                 note,
             } => self.panel.set_skills(skills, sources, note),
+            Action::Hooks { hooks, dir, note } => self.panel.set_hooks(hooks, dir, note),
             Action::Models(models) => self.panel.set_models(models),
             Action::ModelSettings(settings) => {
                 // The meter's last fallback: before a session exists there is
@@ -2437,6 +2452,10 @@ impl<T: Transport> App<T> {
                     self.transport.effect(Effect::ClearMcpAuth(name))
                 }
                 HostRequest::LoadSkillRows => self.transport.effect(Effect::LoadSkillRows),
+                HostRequest::LoadHooks => self.transport.effect(Effect::LoadHooks),
+                HostRequest::ToggleHook { name, enabled } => {
+                    self.transport.effect(Effect::ToggleHook { name, enabled })
+                }
                 HostRequest::LoadModels => self.transport.effect(Effect::LoadModels),
                 HostRequest::LoadModelSettings => self.transport.effect(Effect::LoadModelSettings),
                 HostRequest::SaveModel(cfg) => self.transport.effect(Effect::SaveModel(cfg)),
@@ -3834,6 +3853,16 @@ impl<T: Transport> App<T> {
                     rows: panel_body_rows((area.height as usize).saturating_sub(2)),
                     cols: (area.width as usize).saturating_sub(4).max(20),
                     entry: self.panel.mcp_entry.as_deref(),
+                })
+            }
+            crate::keys::PanelTab::Hooks => {
+                PanelBody::Hooks(crate::components::panel::hooks::HooksTabProps {
+                    hooks: self.panel.hooks.as_deref(),
+                    dir: self.panel.hooks_dir.as_deref(),
+                    rows: panel_body_rows((area.height as usize).saturating_sub(2)),
+                    cols: (area.width as usize).saturating_sub(4).max(20),
+                    selected: self.panel.sel,
+                    note: self.panel.hooks_note.as_deref(),
                 })
             }
             crate::keys::PanelTab::Skills => {
@@ -5298,6 +5327,54 @@ impl Transport for LiveTransport {
                     }
                 });
             }
+            // The hooks tab's rows. Same rule as skills: a failed fetch is
+            // `None` with its reason, never an empty directory.
+            Effect::LoadHooks => {
+                tokio::spawn(async move {
+                    match api.list_hooks().await {
+                        Ok(list) => {
+                            let _ = tx.send(Action::Hooks {
+                                hooks: Some(list.hooks),
+                                dir: Some(list.dir),
+                                note: None,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Hooks {
+                                hooks: None,
+                                dir: None,
+                                note: Some(e.to_string()),
+                            });
+                        }
+                    }
+                });
+            }
+            // The toggle answers with the WHOLE list, because a reload can
+            // change any row — so the reply IS the refresh, with no second
+            // fetch to race it.
+            Effect::ToggleHook { name, enabled } => {
+                tokio::spawn(async move {
+                    match api.toggle_hook(&name, enabled).await {
+                        Ok(list) => {
+                            let _ = tx.send(Action::Hooks {
+                                hooks: Some(list.hooks),
+                                dir: None,
+                                note: None,
+                            });
+                        }
+                        Err(e) => {
+                            // The rows on screen are still true — the toggle
+                            // is what failed — so they stay, and the note says
+                            // what happened.
+                            let _ = tx.send(Action::Hooks {
+                                hooks: None,
+                                dir: None,
+                                note: Some(format!("could not toggle {name}: {e}")),
+                            });
+                        }
+                    }
+                });
+            }
             Effect::LoadModels => {
                 tokio::spawn(async move {
                     // A catalog that did not answer leaves the compiled-in rows
@@ -5911,6 +5988,7 @@ mod tests {
             (T::Workflows, Effect::LoadWorkflows),
             (T::Mcp, Effect::LoadMcp),
             (T::Skills, Effect::LoadSkillRows),
+            (T::Hooks, Effect::LoadHooks),
             (T::Model, Effect::LoadModels),
         ] {
             let (effects, sink) = scripted();

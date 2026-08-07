@@ -20,6 +20,9 @@ use super::{
 /// One registered listener.
 struct Autocmd {
     id: u32,
+    /// The file whose top level registered this, so the panel can count per
+    /// hook. Empty for one registered from inside a callback at runtime.
+    file: String,
     event: String,
     /// `None` or `"*"` matches everything.
     pattern: Option<String>,
@@ -73,6 +76,7 @@ pub(super) fn serve(
     let mut failed = Vec::new();
     for file in files {
         deadline.arm();
+        state.borrow_mut().loading = file.to_string_lossy().into_owned();
         match std::fs::read_to_string(&file) {
             Ok(src) => match lua.load(&src).set_name(file.to_string_lossy()).exec() {
                 Ok(()) => loaded.push(file),
@@ -81,6 +85,7 @@ pub(super) fn serve(
             Err(err) => failed.push((file, err.to_string())),
         }
     }
+    state.borrow_mut().loading = String::new();
     if ready.send((loaded, failed)).is_err() {
         return;
     }
@@ -90,6 +95,15 @@ pub(super) fn serve(
             HookRequest::Shutdown => break,
             HookRequest::Count(reply) => {
                 let n = state.borrow().autocmds.len();
+                let _ = reply.send(n);
+            }
+            HookRequest::ListenersFor { file, reply } => {
+                let n = state
+                    .borrow()
+                    .autocmds
+                    .iter()
+                    .filter(|a| a.file == file)
+                    .count();
                 let _ = reply.send(n);
             }
             HookRequest::Dispatch {
@@ -110,6 +124,8 @@ struct Registry {
     autocmds: Vec<Autocmd>,
     next_id: u32,
     collected: Collected,
+    /// The file currently being loaded — attribution for `create_autocmd`.
+    loading: String,
 }
 
 type Shared = std::rc::Rc<std::cell::RefCell<Registry>>;
@@ -138,8 +154,10 @@ fn install_api(lua: &Lua, state: Shared) -> mlua::Result<()> {
                 // share a callback: removal frees a key, and a shared key
                 // would leave the survivors pointing at nothing.
                 let key = lua.create_registry_value(callback.clone())?;
+                let file = r.loading.clone();
                 r.autocmds.push(Autocmd {
                     id,
+                    file,
                     event: name.clone(),
                     pattern: pattern.clone(),
                     once: once.unwrap_or(false),

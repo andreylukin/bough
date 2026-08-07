@@ -45,6 +45,7 @@ pub enum PanelTab {
     Model,
     Mcp,
     Skills,
+    Hooks,
     Theme,
 }
 
@@ -57,6 +58,7 @@ impl PanelTab {
             PanelTab::Model => "model",
             PanelTab::Mcp => "mcp",
             PanelTab::Skills => "skills",
+            PanelTab::Hooks => "hooks",
             PanelTab::Theme => "theme",
         }
     }
@@ -192,7 +194,7 @@ pub struct TabDef {
 /// Every non-chat surface, as data. Adding a surface is adding a row — it
 /// cannot add a mode, an open flag, or an escape path, and it cannot ship
 /// without a key.
-pub const TABS: [TabDef; 7] = [
+pub const TABS: [TabDef; 8] = [
     TabDef {
         id: PanelTab::Tree,
         title: "tree",
@@ -230,6 +232,15 @@ pub const TABS: [TabDef; 7] = [
         desc: "installed /skills",
     },
     TabDef {
+        id: PanelTab::Hooks,
+        title: "hooks",
+        // NOT ctrl+h: that byte IS backspace (0x08), so the terminal delivers
+        // it to the composer and the tab is unreachable. Driven in a real PTY
+        // to find that out.
+        chord: "ctrl+x",
+        desc: "lua that runs in the loop; toggle it",
+    },
+    TabDef {
         id: PanelTab::Theme,
         title: "theme",
         chord: "ctrl+y",
@@ -238,13 +249,14 @@ pub const TABS: [TabDef; 7] = [
 ];
 
 /// Tab ids in bar order. Derived, so the bar and the keymap cannot disagree.
-pub const PANEL_TABS: [PanelTab; 7] = [
+pub const PANEL_TABS: [PanelTab; 8] = [
     PanelTab::Tree,
     PanelTab::Changes,
     PanelTab::Workflows,
     PanelTab::Model,
     PanelTab::Mcp,
     PanelTab::Skills,
+    PanelTab::Hooks,
     PanelTab::Theme,
 ];
 

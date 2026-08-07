@@ -199,6 +199,11 @@ pub(crate) enum Request {
     /// Test seam: how many autocmds are registered, so a load can be asserted
     /// without firing anything.
     Count(SyncSender<usize>),
+    /// How many listeners one file registered.
+    ListenersFor {
+        file: String,
+        reply: SyncSender<usize>,
+    },
     Shutdown,
 }
 
@@ -217,11 +222,22 @@ impl HookHost {
     /// no directory, or no Lua in it. `None` is the everyday answer and costs
     /// nothing: no thread and no interpreter.
     pub fn load(dir: &Path) -> Option<HookHost> {
+        HookHost::load_enabled(dir, Path::new("/nonexistent-disabled-list"))
+    }
+
+    /// [`HookHost::load`], skipping the files named in the disabled list.
+    pub fn load_enabled(dir: &Path, disabled_at: &Path) -> Option<HookHost> {
+        let disabled = read_disabled(disabled_at);
         let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
             .ok()?
             .flatten()
             .map(|e| e.path())
             .filter(|p| p.extension().is_some_and(|e| e == "lua") && p.is_file())
+            .filter(|p| {
+                !p.file_name()
+                    .map(|n| disabled.contains(&n.to_string_lossy().into_owned()))
+                    .unwrap_or(false)
+            })
             .collect();
         if files.is_empty() {
             return None;
@@ -269,6 +285,24 @@ impl HookHost {
             .unwrap_or_default()
     }
 
+    /// How many listeners one loaded file registered — the panel's per-row
+    /// count, so a hook that loaded but wired nothing is visibly different
+    /// from one that wired three.
+    pub fn listeners_for(&self, path: &Path) -> usize {
+        let (reply, answer) = sync_channel::<usize>(0);
+        let sent = self.tx.lock().ok().and_then(|tx| {
+            tx.send(Request::ListenersFor {
+                file: path.to_string_lossy().into_owned(),
+                reply,
+            })
+            .ok()
+        });
+        if sent.is_none() {
+            return 0;
+        }
+        answer.recv_timeout(DISPATCH_TIMEOUT).unwrap_or(0)
+    }
+
     /// How many autocmds the loaded hooks registered.
     pub fn autocmd_count(&self) -> usize {
         let (reply, answer) = sync_channel::<usize>(0);
@@ -292,15 +326,185 @@ impl Drop for HookHost {
     }
 }
 
-/// The process-wide host over `~/.bough/hooks`, loaded once.
+// ---------------------------------------------------------------------------
+// Which hooks are on
+// ---------------------------------------------------------------------------
+
+/// Where the off switches live: `~/.bough/hooks-disabled.json`, a plain list
+/// of file names.
 ///
-/// Memoized including the `None`, like the semantic-recall layer: a machine
-/// with no hooks must not re-scan the directory on every turn, and hooks are
-/// loaded at start rather than per turn so a half-written file mid-session
-/// cannot change behaviour underneath a running turn.
+/// A LIST OF WHAT IS OFF, not of what is on. Dropping a new `.lua` into the
+/// directory has to work — that is the whole installation story — so the
+/// default for an unlisted file is ENABLED, and a file the user has never
+/// heard of cannot be silently inert.
+pub fn disabled_path() -> PathBuf {
+    bough_path(&["hooks-disabled.json"])
+}
+
+fn read_disabled(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok())
+        .unwrap_or_default()
+}
+
+fn write_disabled(path: &Path, names: &[String]) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(names).unwrap_or_else(|_| "[]".into());
+    std::fs::write(path, json)
+}
+
+/// One hook file, as the panel lists it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookFile {
+    /// The file name — the id the toggle route takes.
+    pub name: String,
+    pub path: String,
+    pub enabled: bool,
+    /// Listeners this file registered. 0 on a disabled one (it never ran) and
+    /// on one that registered none, which the panel distinguishes by
+    /// `enabled`.
+    pub autocmds: usize,
+    /// Why it did not load. A file that fails to parse is LISTED with its
+    /// error rather than omitted — the same rule the skills tab holds, and for
+    /// the same reason: a hook that silently vanished is discovered as a hook
+    /// that quietly did nothing.
+    pub error: Option<String>,
+}
+
+/// Every `.lua` in the hooks directory, enabled or not, with what the live
+/// host knows about the ones that loaded.
+pub fn list_hooks() -> Vec<HookFile> {
+    list_hooks_in(&hooks_dir(), &disabled_path())
+}
+
+pub fn list_hooks_in(dir: &Path, disabled_at: &Path) -> Vec<HookFile> {
+    let disabled = read_disabled(disabled_at);
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "lua") && p.is_file())
+        .collect();
+    files.sort();
+    let live = host();
+    files
+        .into_iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let enabled = !disabled.contains(&name);
+            let error = live.and_then(|h| {
+                h.failed
+                    .iter()
+                    .find(|(p, _)| p == &path)
+                    .map(|(_, e)| e.clone())
+            });
+            HookFile {
+                name,
+                path: path.to_string_lossy().into_owned(),
+                enabled,
+                autocmds: live
+                    .filter(|_| enabled)
+                    .map(|h| h.listeners_for(&path))
+                    .unwrap_or(0),
+                error,
+            }
+        })
+        .collect()
+}
+
+/// Turn one hook on or off and rebuild the interpreter.
+///
+/// A RELOAD, not a flag consulted at dispatch time: a disabled hook must stop
+/// existing, not stop being called. Its `create_autocmd` calls are gone, so a
+/// listener it registered on somebody else's event is gone too — which a
+/// dispatch-time filter could not achieve, because the registration happened
+/// at load.
+pub fn set_enabled(name: &str, enabled: bool) -> Result<(), std::io::Error> {
+    let path = disabled_path();
+    let mut disabled = read_disabled(&path);
+    let was = !disabled.contains(&name.to_string());
+    if was == enabled {
+        return Ok(()); // already there; no rebuild for a no-op
+    }
+    if enabled {
+        disabled.retain(|n| n != name);
+    } else {
+        disabled.push(name.to_string());
+        disabled.sort();
+    }
+    write_disabled(&path, &disabled)?;
+    reload();
+    Ok(())
+}
+
+/// Rebuild the process-wide host from what is on disk right now.
+pub fn reload() {
+    let dir = hooks_dir();
+    let rebuilt = HookHost::load_enabled(&dir, &disabled_path());
+    if let Ok(mut slot) = host_slot().write() {
+        // The old host drops here, which shuts its thread down. A turn holding
+        // a dispatch mid-flight keeps the old one alive until it answers,
+        // because `fire` cloned nothing — it borrows under the read lock.
+        *slot = Some((dir, rebuilt));
+    }
+}
+
+/// The built host, and the directory it was built FROM.
+///
+/// The directory is stored because it can change under the process: tests
+/// redirect `BOUGH_HOME`, and a user can too. A host built from one directory
+/// answering questions about another is the kind of wrong that reads as a
+/// bug in the hook rather than in the cache.
+type HostSlot = Option<(PathBuf, Option<HookHost>)>;
+
+fn host_slot() -> &'static std::sync::RwLock<HostSlot> {
+    static HOST: OnceLock<std::sync::RwLock<HostSlot>> = OnceLock::new();
+    HOST.get_or_init(|| std::sync::RwLock::new(None))
+}
+
+/// The process-wide host over `~/.bough/hooks`.
+///
+/// Loaded on first use and rebuilt only by [`reload`] — never per turn, so a
+/// half-written file cannot change behaviour underneath a running turn, and a
+/// machine with no hooks pays one directory read for the life of the process.
+///
+/// The `&'static` is real: the host lives in a leaked box once built, because
+/// callers hold it across a blocking dispatch and a lock guard cannot cross
+/// that boundary. A reload leaks the previous one — bounded by how many times
+/// a human toggles a hook, which is not a leak that matters.
 pub fn host() -> Option<&'static HookHost> {
-    static HOST: OnceLock<Option<HookHost>> = OnceLock::new();
-    HOST.get_or_init(|| HookHost::load(&hooks_dir())).as_ref()
+    let dir = hooks_dir();
+    {
+        let slot = host_slot().read().ok()?;
+        if let Some((built_from, built)) = slot.as_ref() {
+            if built_from == &dir {
+                return built.as_ref().map(|h| unsafe { extend(h) });
+            }
+        }
+    }
+    let mut slot = host_slot().write().ok()?;
+    let stale = slot.as_ref().map(|(d, _)| d != &dir).unwrap_or(true);
+    if stale {
+        *slot = Some((dir.clone(), HookHost::load_enabled(&dir, &disabled_path())));
+    }
+    slot.as_ref()
+        .and_then(|(_, b)| b.as_ref())
+        .map(|h| unsafe { extend(h) })
+}
+
+/// SAFETY: the host is only ever dropped by [`reload`], which replaces the
+/// slot; the box it lives in is leaked there, so a reference handed out here
+/// stays valid for the life of the process.
+unsafe fn extend(h: &HookHost) -> &'static HookHost {
+    std::mem::transmute::<&HookHost, &'static HookHost>(h)
 }
 
 /// Fire an event at the process-wide host. `None` when no hooks are loaded,

@@ -1020,6 +1020,23 @@ impl Api {
         self.get("/skills").await
     }
 
+    // -- the hooks tab --------------------------------------------------------
+
+    /// `GET /hooks` — every `.lua` in the hooks directory, on or off.
+    pub async fn list_hooks(&self) -> Result<HookList, ApiFailure> {
+        self.get("/hooks").await
+    }
+
+    /// `POST /hooks/:name` — turn one on or off. Answers with the new list,
+    /// because a reload can change every row.
+    pub async fn toggle_hook(&self, name: &str, enabled: bool) -> Result<HookList, ApiFailure> {
+        self.post(
+            &format!("/hooks/{}", seg(name)),
+            Some(serde_json::json!({ "enabled": enabled })),
+        )
+        .await
+    }
+
     // -- the model tab's catalog ----------------------------------------------
 
     /// `GET /models` — the picker's catalog, answered SERVER-SIDE because the
@@ -1343,6 +1360,14 @@ pub struct SkillTabList {
     pub skills: Vec<crate::components::panel::skills::SkillRow>,
     #[serde(default)]
     pub sources: Vec<SkillSourceRow>,
+}
+
+/// `GET /hooks` — the hooks tab's rows and the directory that was walked.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct HookList {
+    pub hooks: Vec<crate::components::panel::hooks::HookRow>,
+    #[serde(default)]
+    pub dir: String,
 }
 
 /// `GET /models` — the picker's catalog.

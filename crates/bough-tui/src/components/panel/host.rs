@@ -95,6 +95,10 @@ pub enum HostRequest {
     // ---- the skills tab ----------------------------------------------------
     /// `GET /skills` — the listing AND the directories that were walked.
     LoadSkillRows,
+    /// `GET /hooks` — the hooks tab's rows.
+    LoadHooks,
+    /// `POST /hooks/:name` — turn one on or off, then reload the list.
+    ToggleHook { name: String, enabled: bool },
     // ---- the model tab -----------------------------------------------------
     /// `GET /models` — the catalog, answered server-side because the server is
     /// the process that holds the credential.
@@ -256,6 +260,11 @@ pub struct PanelHost {
     pub skill_sources: Vec<SkillSourceRow>,
     /// Why the listing is absent, when it is.
     pub skills_note: Option<String>,
+    /// `None` = `GET /hooks` has not answered. Never rendered as an empty
+    /// directory — see `panel/hooks.rs`.
+    pub hooks: Option<Vec<crate::components::panel::hooks::HookRow>>,
+    pub hooks_dir: Option<String>,
+    pub hooks_note: Option<String>,
     // ---- the model tab -----------------------------------------------------
     pub models: Vec<ModelRow>,
     pub model_cfg: ModelConfig,
@@ -309,6 +318,9 @@ impl Default for PanelHost {
             skills: None,
             skill_sources: Vec::new(),
             skills_note: None,
+            hooks: None,
+            hooks_dir: None,
+            hooks_note: None,
             models: Vec::new(),
             model_cfg: ModelConfig::default(),
             model_filters: ModelFilters::default(),
@@ -582,6 +594,7 @@ impl PanelHost {
                 vec![HostRequest::LoadMcp]
             }
             PanelTab::Skills => vec![HostRequest::LoadSkillRows],
+            PanelTab::Hooks => vec![HostRequest::LoadHooks],
             // Two fetches, because they answer two different questions: what
             // this install can route to, and what it is set to right now.
             //
@@ -633,6 +646,31 @@ impl PanelHost {
     /// The skills listing AND the directories that were walked. `None` is "the
     /// fetch failed" and carries its reason; it is never an empty list, which
     /// would be a claim about the user's `~/.bough/skills`.
+    /// `GET /hooks` answered. `None` rows carry the reason in `note`.
+    pub fn set_hooks(
+        &mut self,
+        hooks: Option<Vec<crate::components::panel::hooks::HookRow>>,
+        dir: Option<String>,
+        note: Option<String>,
+    ) {
+        // The cursor is clamped rather than reset: a toggle re-fetches the
+        // whole list, and jumping back to the top after every space is the
+        // kind of thing that makes a list unusable at ten rows.
+        if let Some(rows) = &hooks {
+            self.sel = self.sel.min(rows.len().saturating_sub(1));
+        }
+        self.hooks = hooks;
+        if dir.is_some() {
+            self.hooks_dir = dir;
+        }
+        self.hooks_note = note;
+    }
+
+    /// The hook the cursor is on, for the toggle key.
+    pub fn selected_hook(&self) -> Option<&crate::components::panel::hooks::HookRow> {
+        self.hooks.as_ref()?.get(self.sel)
+    }
+
     pub fn set_skills(
         &mut self,
         skills: Option<Vec<SkillRow>>,
@@ -779,6 +817,7 @@ impl PanelHost {
             PanelTab::Workflows => self.runs.len(),
             PanelTab::Mcp => self.mcp.as_ref().map(|s| mcp_names(s).len()).unwrap_or(0),
             PanelTab::Skills => self.filtered_skills().len(),
+            PanelTab::Hooks => self.hooks.as_ref().map(|h| h.len()).unwrap_or(0),
             PanelTab::Model => self.model_entries().len(),
             PanelTab::Theme => 0,
         }
@@ -1400,6 +1439,20 @@ impl PanelHost {
     /// must not become a second one that drifts from it.
     pub fn confirm_at(&mut self, at: usize, summarize: bool) -> Vec<HostRequest> {
         match self.state.tab {
+            // ⏎ and space do the same thing here: the row has exactly one
+            // verb, and a list where enter does nothing teaches the user that
+            // the list is inert.
+            PanelTab::Hooks => self
+                .hooks
+                .as_ref()
+                .and_then(|h| h.get(at))
+                .map(|h| {
+                    vec![HostRequest::ToggleHook {
+                        name: h.name.clone(),
+                        enabled: !h.enabled,
+                    }]
+                })
+                .unwrap_or_default(),
             PanelTab::Tree => {
                 let rows = self.rows();
                 let Some(row) = rows.get(at) else {
