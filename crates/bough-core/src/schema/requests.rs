@@ -124,6 +124,10 @@ pub struct PutModelSettingsBody {
     pub model: Patch<String>,
     #[serde(default, skip_serializing_if = "Patch::is_keep")]
     pub effort: Patch<Effort>,
+    /// The install's ONE background model. No session field beside it: unlike
+    /// the frontier tier there is nothing to pin per conversation (spec §12).
+    #[serde(default, skip_serializing_if = "Patch::is_keep")]
+    pub cheap_model: Patch<String>,
 }
 
 /// POST /sessions/:id/questions/:qid — `{answer}` settles the hold;
@@ -439,6 +443,9 @@ impl PutModelSettingsBody {
     pub fn validate(&self) -> Result<(), BoughError> {
         if let Patch::Set(model) = &self.model {
             require_non_empty(model, "model")?;
+        }
+        if let Patch::Set(model) = &self.cheap_model {
+            require_non_empty(model, "cheapModel")?;
         }
         Ok(())
     }

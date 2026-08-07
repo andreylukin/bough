@@ -18,7 +18,10 @@ use std::sync::Arc;
 
 use crate::types::CheapTier;
 
-pub use titles::{cheap_model, cheap_model_with, CHEAP_MODEL_ENV, DEFAULT_CHEAP_MODEL};
+pub use titles::{
+    cheap_model, cheap_model_pin, cheap_model_with, set_cheap_model, CHEAP_MODEL_ENV,
+    DEFAULT_CHEAP_MODEL,
+};
 
 /// The production tier: three thin adapters over the module fns, each of
 /// which resolves `None` for every failure there is (no key, provider error,

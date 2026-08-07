@@ -47,11 +47,41 @@ use crate::types::{CheapTier, LlmClient, SharedDb};
 // The shared cheap call
 // ---------------------------------------------------------------------------
 
-/// Overridden by the model picker, which writes it to the launcher env file.
+/// The install-wide default when nothing is pinned. Outranked by the picker's
+/// own write ([`set_cheap_model`]).
 pub const CHEAP_MODEL_ENV: &str = "BOUGH_CHEAP_MODEL";
 
 /// The floor when the picker has never been used. Small, hosted, and fast.
 pub const DEFAULT_CHEAP_MODEL: &str = "claude-haiku-4-5";
+
+/// The picker's write, mirroring `~/.bough/model.json`'s `cheapModel`.
+///
+/// A process global rather than a field on `AppCtx` because of WHERE the value
+/// is read: `cheap_text` is reached from a bus listener and from a host
+/// function, neither of which is handed a ctx, and the whole tier is
+/// constructed once at boot by `create_cheap_tier()`. Threading a ctx to those
+/// two call sites to carry one string would be a larger change than the
+/// feature. The shape it replaces was already a process-wide read-per-call —
+/// this is the same lifetime with a writer.
+static CHEAP_PIN: LazyLock<std::sync::RwLock<Option<String>>> =
+    LazyLock::new(|| std::sync::RwLock::new(None));
+
+/// Install the stored cheap-model pin. Boot calls this with what is on disk;
+/// `PUT /model-settings` calls it again with what was just saved, which is why
+/// a pick needs no restart. `None` clears it, falling back to the env.
+pub fn set_cheap_model(model: Option<String>) {
+    let clean = model
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty());
+    if let Ok(mut pin) = CHEAP_PIN.write() {
+        *pin = clean;
+    }
+}
+
+/// The pin in force, or `None` when nothing is stored.
+pub fn cheap_model_pin() -> Option<String> {
+    CHEAP_PIN.read().ok().and_then(|p| p.clone())
+}
 
 /// How long any cheap-model call may take before it is abandoned.
 ///
@@ -62,7 +92,9 @@ pub const DEFAULT_CHEAP_MODEL: &str = "claude-haiku-4-5";
 /// Abandoning is what makes the drop rule self-healing.
 pub const CHEAP_TIMEOUT_MS: u64 = 12_000;
 
-/// The cheap model in force, from an injected env reader.
+/// The cheap model the ENVIRONMENT asks for, from an injected env reader.
+/// Deliberately blind to the pin, so a test that injects an env reader gets
+/// exactly what it injected no matter what another test stored.
 pub fn cheap_model_with(env: &Env) -> String {
     env(CHEAP_MODEL_ENV)
         .map(|v| v.trim().to_string())
@@ -70,10 +102,15 @@ pub fn cheap_model_with(env: &Env) -> String {
         .unwrap_or_else(|| DEFAULT_CHEAP_MODEL.to_string())
 }
 
-/// The cheap model in force. Read per call, so a picker change needs no
-/// restart.
+/// The cheap model in force: the picker's write, else the env, else the floor.
+/// Read per call, so a pick needs no restart.
+///
+/// The pin outranks the env for the same reason the frontier tier's stored
+/// default outranks `BOUGH_MODEL` (`server/sessions.rs`): `BOUGH_CHEAP_MODEL`
+/// is read from the launching shell and frozen there, so a pin that did not
+/// beat it could never take effect for anyone who had ever exported it.
 pub fn cheap_model() -> String {
-    cheap_model_with(&process_env())
+    cheap_model_pin().unwrap_or_else(|| cheap_model_with(&process_env()))
 }
 
 /// The injectable seams of one cheap call. All absent in production; tests
@@ -503,6 +540,38 @@ mod tests {
     /// Let the fire-and-forget tasks behind a publish run.
     async fn settle() {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    // ---- which model the tier runs on ---------------------------------------
+
+    #[test]
+    fn the_stored_pin_outranks_the_environment_and_clearing_it_falls_back() {
+        // The pin is process-wide, so this test restores what it found. It is
+        // the only test that touches it; `cheap_model_with` is what everything
+        // else uses precisely because it cannot see the pin.
+        let before = cheap_model_pin();
+
+        set_cheap_model(None);
+        assert_eq!(cheap_model_pin(), None);
+        // Nothing pinned: the env answers, and the floor answers for the env.
+        let empty: Env = Arc::new(|_| None);
+        assert_eq!(cheap_model_with(&empty), DEFAULT_CHEAP_MODEL);
+
+        set_cheap_model(Some("  openai:gpt-5-mini  ".into()));
+        // Trimmed on the way in, so a picker that sent whitespace does not
+        // store a model id nothing routes.
+        assert_eq!(cheap_model(), "openai:gpt-5-mini");
+        // …and it wins over `BOUGH_CHEAP_MODEL`, which is frozen at the
+        // launching shell and could otherwise never be overridden.
+        let with_env: Env = Arc::new(|k| (k == CHEAP_MODEL_ENV).then(|| "z-ai/glm-5.2".into()));
+        assert_eq!(cheap_model_with(&with_env), "z-ai/glm-5.2");
+        assert_eq!(cheap_model(), "openai:gpt-5-mini");
+
+        // A blank pin is not a pin.
+        set_cheap_model(Some("   ".into()));
+        assert_eq!(cheap_model_pin(), None);
+
+        set_cheap_model(before);
     }
 
     // ---- the shared call ----------------------------------------------------

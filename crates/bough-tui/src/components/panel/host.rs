@@ -255,6 +255,9 @@ pub struct PanelHost {
     pub model_filters: ModelFilters,
     /// Which search box has the keyboard, or `None` when neither does.
     pub model_focus: Option<Tier>,
+    /// The tab was opened and the cursor has not been moved since — the next
+    /// fetch to arrive should land it on the model in force.
+    pub model_land: bool,
 }
 
 impl Default for PanelHost {
@@ -301,6 +304,7 @@ impl Default for PanelHost {
             model_cfg: ModelConfig::default(),
             model_filters: ModelFilters::default(),
             model_focus: None,
+            model_land: false,
         }
     }
 }
@@ -543,8 +547,16 @@ impl PanelHost {
             PanelTab::Skills => vec![HostRequest::LoadSkillRows],
             // Two fetches, because they answer two different questions: what
             // this install can route to, and what it is set to right now.
+            //
+            // The cursor lands on the model IN FORCE, not on row 0. The catalog
+            // runs to hundreds of rows and the ● is wherever the active one
+            // sorts — so a tab that opened at the top answered "which model is
+            // this?" with a screenful of models that were not it, and the only
+            // way to see the answer was to scroll looking for a dot. Landing is
+            // deferred to the fetches: neither list is in hand yet here.
             PanelTab::Model => {
                 self.model_focus = None;
+                self.model_land = true;
                 vec![HostRequest::LoadModels, HostRequest::LoadModelSettings]
             }
         }
@@ -599,10 +611,36 @@ impl PanelHost {
 
     pub fn set_models(&mut self, models: Vec<ModelRow>) {
         self.models = models;
+        self.land_on_active_model();
     }
 
     pub fn set_model_config(&mut self, cfg: ModelConfig) {
         self.model_cfg = cfg;
+        self.land_on_active_model();
+    }
+
+    /// Put the cursor on the frontier model in force, while the tab is still
+    /// showing what it opened with.
+    ///
+    /// Runs on BOTH arrivals rather than on whichever is expected to be last:
+    /// the catalog says which rows exist and the settings say which one is
+    /// active, and landing needs both. Whichever answers second is the one that
+    /// gets it right, and the first is a harmless no-op.
+    ///
+    /// The arming is dropped by the first cursor move, so a slow `GET
+    /// /model-settings` cannot yank the cursor out from under someone who has
+    /// already started scrolling.
+    fn land_on_active_model(&mut self) {
+        if !self.model_land || self.state.tab != PanelTab::Model {
+            return;
+        }
+        let entries = self.model_entries();
+        if let Some(at) = entries
+            .iter()
+            .position(|e| e.tier() == Tier::Frontier && super::model::is_active(&self.model_cfg, e))
+        {
+            self.sel = at;
+        }
     }
 
     // ---- derived lists, shared by the renderer and the cursor ---------------
@@ -764,6 +802,7 @@ impl PanelHost {
         self.sel = at.clamp(0, last.max(0)) as usize;
         // The cursor moving is also the arming being dropped.
         self.pending = None;
+        self.model_land = false;
     }
 
     /// One resolved command. Returns the REST calls the app must make; an
@@ -1431,26 +1470,22 @@ impl PanelHost {
                 Vec::new()
             }
             // ⏎ CHOOSES. `choose_entry` is spec §12 in code: a frontier pick
-            // pins this session AND moves the default for new sessions; nothing
-            // else moves. The write is one request carrying the whole config,
-            // so a caller cannot perform half of it.
+            // pins this session AND moves the default for new sessions, a cheap
+            // pick moves the install's one background model and nothing else.
+            // The write is one request carrying the whole config, so a caller
+            // cannot perform half of it.
+            //
+            // The config is only mutated once a request is actually going out.
+            // It used to be assigned before the cheap tier's "nothing was
+            // saved" refusal below it, so the ● relocated to the row the user
+            // picked while the same screen said the write had not happened —
+            // the dead control the refusal existed to prevent.
             PanelTab::Model => {
                 let entries = self.model_entries();
                 let Some(entry) = entries.get(at) else {
                     return Vec::new();
                 };
-                let cheap = entry.tier() == Tier::Cheap;
                 self.model_cfg = super::model::choose_entry(&self.model_cfg, entry);
-                // KNOWN GAP, said out loud rather than faked: `PUT
-                // /model-settings` carries the frontier model and the effort
-                // only — the cheap tier is resolved server-side from the
-                // environment and has no write route. A ● that moved while
-                // nothing was written is the dead-control shape this codebase
-                // refuses, so the pick is refused in words instead.
-                if cheap {
-                    self.message = Some(CHEAP_TIER_NOT_WRITABLE.to_string());
-                    return Vec::new();
-                }
                 vec![HostRequest::SaveModel(self.model_cfg.clone())]
             }
         }
@@ -1532,8 +1567,6 @@ pub const NO_RUN_SELECTED: &str = "no run selected — ⏎ opens one first";
 pub const NO_AGENT_SESSION: &str =
     "no session — this call was replayed from the journal, so there is nothing to open";
 pub const NOT_A_SERVER_URL: &str = "that is not a URL bough can name a server from";
-pub const CHEAP_TIER_NOT_WRITABLE: &str =
-    "the cheap tier is set by BOUGH_CHEAP_MODEL and has no write route yet — nothing was saved";
 pub const EXTRACT_NEEDS_A_TURN: &str = "e splits a conversation at a TURN — move onto one first";
 pub const MOVE_NEEDS_A_TURN: &str = "m brings a TURN here — move onto one first";
 pub const MOVE_NEEDS_A_TARGET: &str = "no conversation is open to bring these turns into";
@@ -2615,6 +2648,22 @@ mod tab_tests {
 
     // ---- the model tab -----------------------------------------------------
 
+    /// The nth frontier row: its index among ALL entries (what `sel` counts)
+    /// and its model id.
+    fn nth_frontier(h: &PanelHost, n: usize) -> (usize, String) {
+        match h
+            .model_entries()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, e)| e.tier() == crate::components::panel::model::Tier::Frontier)
+            .nth(n)
+            .expect("a frontier row")
+        {
+            (at, crate::components::panel::model::ModelEntry::Model { id, .. }) => (at, id),
+            _ => unreachable!("filtered to a model row"),
+        }
+    }
+
     fn model_host() -> PanelHost {
         let mut h = PanelHost::default();
         h.handle(Command::PanelToggle, None, 20);
@@ -2655,11 +2704,69 @@ mod tab_tests {
             .iter()
             .position(|e| e.tier() == crate::components::panel::model::Tier::Cheap)
             .expect("a cheap row");
-        assert!(
-            h.confirm(at).is_empty(),
-            "there is no write route for the cheap tier"
+        let picked = match &entries[at] {
+            crate::components::panel::model::ModelEntry::Model { id, .. } => id.clone(),
+            _ => unreachable!("filtered to a model row"),
+        };
+        // The ● and the write are ONE event. This tab used to move the dot to
+        // the picked row and then refuse the write in a message beside it,
+        // which is a control that reports a change it did not make.
+        assert_eq!(
+            h.confirm(at),
+            vec![HostRequest::SaveModel(h.model_cfg.clone())]
         );
-        assert_eq!(h.message.as_deref(), Some(CHEAP_TIER_NOT_WRITABLE));
+        assert_eq!(h.model_cfg.cheap_model.as_deref(), Some(picked.as_str()));
+        assert_eq!(h.message, None, "nothing to apologise for — it saved");
+    }
+
+    #[test]
+    fn a_cheap_pick_moves_only_the_cheap_tier_never_the_frontier_or_the_effort() {
+        let mut h = model_host();
+        let before = h.model_cfg.clone();
+        let entries = h.model_entries();
+        let at = entries
+            .iter()
+            .position(|e| e.tier() == crate::components::panel::model::Tier::Cheap)
+            .expect("a cheap row");
+        h.confirm(at);
+        // One background model per install, and nothing else moves with it —
+        // in particular no session pin, because the cheap tier has none.
+        assert_eq!(h.model_cfg.session_model, before.session_model);
+        assert_eq!(h.model_cfg.default_model, before.default_model);
+        assert_eq!(h.model_cfg.session_effort, before.session_effort);
+        assert_eq!(h.model_cfg.default_effort, before.default_effort);
+        assert_ne!(h.model_cfg.cheap_model, before.cheap_model);
+    }
+
+    #[test]
+    fn the_model_tab_opens_on_the_model_in_force_not_on_the_first_row() {
+        // The catalog runs to hundreds of rows. Opening at 0 meant the tab that
+        // exists to answer "which model is this?" showed a screen of models
+        // that were not it, with the ● somewhere below the fold.
+        let mut h = model_host();
+        h.handle(Command::Tab(PanelTab::Model), None, 20);
+        let (at, id) = nth_frontier(&h, 1);
+        assert_ne!(at, 0, "the fixture must not make this vacuous");
+        let mut cfg = h.model_cfg.clone();
+        cfg.session_model = Some(id.clone());
+        cfg.default_model = id;
+        h.set_model_config(cfg);
+        assert_eq!(h.sel, at);
+    }
+
+    #[test]
+    fn a_late_settings_answer_does_not_yank_a_cursor_already_being_moved() {
+        let mut h = model_host();
+        h.handle(Command::Tab(PanelTab::Model), None, 20);
+        h.handle(Command::MoveDown, None, 20);
+        let moved = h.sel;
+        let (at, id) = nth_frontier(&h, 0);
+        assert_ne!(at, moved, "the fixture must not make this vacuous");
+        let mut cfg = h.model_cfg.clone();
+        cfg.session_model = Some(id.clone());
+        cfg.default_model = id;
+        h.set_model_config(cfg);
+        assert_eq!(h.sel, moved, "the first cursor move disarms the landing");
     }
 
     #[test]

@@ -35,7 +35,7 @@ use bough_core::schema::requests::{
 };
 use bough_core::turn::runner::DEFAULT_MODEL;
 use bough_core::types::{AppCtx, Effort, Patch};
-use bough_core::worker::cheap_model;
+use bough_core::worker::{cheap_model, set_cheap_model};
 
 use crate::defaults::{default_path, load_defaults, save_defaults, ModelDefaults};
 use crate::http::{handler, json, parse_body, Handler, Params};
@@ -625,7 +625,11 @@ fn model_settings_json(ctx: &AppCtx) -> Value {
     let pinned = defaults_of(ctx);
     json!({
         "defaultModel": pinned.model.or(ctx.model.clone()).unwrap_or_else(|| DEFAULT_MODEL.to_string()),
-        "cheapModel": cheap_model(),
+        // Same precedence as the frontier tier, and read from THIS ctx's file
+        // rather than from the process pin: a handler test injects a defaults
+        // path, and answering from a global would make its result depend on
+        // whatever another test in the same binary had stored.
+        "cheapModel": pinned.cheap_model.unwrap_or_else(cheap_model),
         "defaultEffort": pinned.effort.or(ctx.effort),
     })
 }
@@ -638,20 +642,28 @@ pub fn get_model_settings_h() -> Handler {
     handler(|_req, ctx, _params| async move { Ok(json(&model_settings_json(&ctx), 200)) })
 }
 
-/// `PUT /model-settings` — pin what a NEW conversation runs on. A partial: an
-/// absent key is left alone, and an explicit `null` clears the pin.
+/// `PUT /model-settings` — pin what a NEW conversation runs on, and the one
+/// background model the install bills on titles, ghost text and activity. A
+/// partial: an absent key is left alone, and an explicit `null` clears the pin.
 pub fn put_model_settings_h() -> Handler {
     handler(|req, ctx, _params| async move {
         let body: PutModelSettingsBody = parse_body(req, None).await?;
         body.validate()?;
         let current = defaults_of(&ctx);
-        save_defaults(
+        let saved = save_defaults(
             &ModelDefaults {
                 model: body.model.apply(current.model),
                 effort: body.effort.apply(current.effort),
+                cheap_model: body.cheap_model.apply(current.cheap_model),
             },
             &defaults_path_of(&ctx),
         );
+        // The pin is what `cheap_model()` reads, and the tier resolves it per
+        // call — so this is the line that makes a cheap pick take effect on the
+        // very next title without a restart. Installed from what was SAVED, not
+        // from the body, so the trimming the writer did is the trimming that
+        // takes effect.
+        set_cheap_model(saved.cheap_model);
         Ok(json(&model_settings_json(&ctx), 200))
     })
 }
@@ -1849,5 +1861,54 @@ mod tests {
         let cleared = put(j!({"model": null, "effort": null})).await;
         assert_eq!(cleared["defaultModel"], "test-model");
         assert_eq!(cleared["defaultEffort"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn put_model_settings_writes_the_cheap_tier_and_reads_it_back() {
+        // The tab that picks a background model used to move its ● and save
+        // NOTHING: this route carried `model`/`effort` only, so the one control
+        // for a tier that bills on every round was decoration.
+        let fx = testutil::fixture();
+        let d = call(&fx);
+        let put = |body: Value| {
+            let d = d.clone();
+            async move {
+                testutil::body_json(
+                    d.call(testutil::req("PUT", "/model-settings", Some(body)))
+                        .await,
+                )
+                .await
+            }
+        };
+
+        let saved = put(j!({"cheapModel": "openai:gpt-5-mini"})).await;
+        assert_eq!(saved["cheapModel"], "openai:gpt-5-mini");
+        // …and it is on disk, not just in the answer.
+        let reread =
+            testutil::body_json(d.clone().call(testutil::get("/model-settings")).await).await;
+        assert_eq!(reread["cheapModel"], "openai:gpt-5-mini");
+
+        // The two tiers are independent: moving the frontier one leaves the
+        // background model alone, which is the whole point of the pair.
+        let moved = put(j!({"model": "claude-opus-5"})).await;
+        assert_eq!(moved["defaultModel"], "claude-opus-5");
+        assert_eq!(moved["cheapModel"], "openai:gpt-5-mini");
+
+        // An explicit null unpins it, falling back to the env-resolved model.
+        let cleared = put(j!({"cheapModel": null})).await;
+        assert_eq!(cleared["cheapModel"], cheap_model());
+    }
+
+    #[tokio::test]
+    async fn an_empty_cheap_model_is_a_400_not_a_pin_on_the_empty_string() {
+        let fx = testutil::fixture();
+        let res = call(&fx)
+            .call(testutil::req(
+                "PUT",
+                "/model-settings",
+                Some(j!({"cheapModel": ""})),
+            ))
+            .await;
+        assert_eq!(res.status(), 400);
     }
 }

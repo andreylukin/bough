@@ -317,8 +317,19 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
             bus: ctx.bus.clone(),
             cheap: ctx.cheap.clone(),
         });
+    // The stored cheap pick, installed before the banner prints it. Without
+    // this line the picker's write would only hold until the process ended,
+    // which is the same dead control in a slower disguise.
+    bough_core::worker::set_cheap_model(
+        crate::defaults::load_defaults(
+            &ctx.model_defaults_path
+                .clone()
+                .unwrap_or_else(crate::defaults::default_path),
+        )
+        .cheap_model,
+    );
     println!(
-        "cheap tier: {} ({}) — auto titles, composer ghost text (POST /sessions/:id/ghost), \
+        "cheap tier: {} (the model tab, else {}) — auto titles, composer ghost text (POST /sessions/:id/ghost), \
          live activity blurbs. Fire-and-forget: every failure is silent and none of them \
          can delay a turn.",
         bough_core::worker::cheap_model(),

@@ -19,19 +19,27 @@ use bough_core::paths::model_settings_path;
 use bough_core::types::Effort;
 
 /// The stored pins. Field order (`model`, then `effort`) is the on-disk key
-/// order the TS server writes.
+/// order the TS server writes; `cheapModel` is appended after both so an older
+/// file's key order is unchanged by a round trip through this writer.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelDefaults {
     /// The frontier model a new conversation is created with. `None` = not pinned.
     pub model: Option<String>,
     /// The thinking depth it starts at. `None` = let the provider decide.
     pub effort: Option<Effort>,
+    /// The install's ONE background model — titles, ghost text, activity
+    /// blurbs. Not per-session by design (spec §12), which is why it is stored
+    /// here beside the defaults rather than on a session row. `None` = fall
+    /// back to `BOUGH_CHEAP_MODEL`, then to the floor.
+    pub cheap_model: Option<String>,
 }
 
 /// The unpinned state.
 pub const NO_DEFAULTS: ModelDefaults = ModelDefaults {
     model: None,
     effort: None,
+    cheap_model: None,
 };
 
 /// The production location: `~/.bough/model.json`.
@@ -54,18 +62,23 @@ pub fn load_defaults(path: &Path) -> ModelDefaults {
     let Some(obj) = value.as_object() else {
         return NO_DEFAULTS;
     };
-    let model = obj
-        .get("model")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|m| !m.is_empty())
-        .map(str::to_string);
+    let string_at = |key: &str| {
+        obj.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(str::to_string)
+    };
     // An unknown effort is dropped INDEPENDENTLY: the model beside it survives.
     let effort = obj
         .get("effort")
         .cloned()
         .and_then(|v| serde_json::from_value::<Effort>(v).ok());
-    ModelDefaults { model, effort }
+    ModelDefaults {
+        model: string_at("model"),
+        effort,
+        cheap_model: string_at("cheapModel"),
+    }
 }
 
 /// Persist the defaults. Creates the parent directory on the first write.
@@ -73,14 +86,16 @@ pub fn load_defaults(path: &Path) -> ModelDefaults {
 /// Rebuilt rather than passed through, so the file holds exactly the two
 /// validated keys and nothing a looser caller let ride along.
 pub fn save_defaults(next: &ModelDefaults, path: &Path) -> ModelDefaults {
-    let clean = ModelDefaults {
-        model: next
-            .model
-            .as_deref()
+    let trimmed = |v: &Option<String>| {
+        v.as_deref()
             .map(str::trim)
             .filter(|m| !m.is_empty())
-            .map(str::to_string),
+            .map(str::to_string)
+    };
+    let clean = ModelDefaults {
+        model: trimmed(&next.model),
         effort: next.effort,
+        cheap_model: trimmed(&next.cheap_model),
     };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -118,6 +133,7 @@ mod tests {
             &ModelDefaults {
                 model: Some("claude-sonnet-5".into()),
                 effort: Some(Effort::High),
+                cheap_model: None,
             },
             &path,
         );
@@ -125,7 +141,8 @@ mod tests {
             load_defaults(&path),
             ModelDefaults {
                 model: Some("claude-sonnet-5".into()),
-                effort: Some(Effort::High)
+                effort: Some(Effort::High),
+                cheap_model: None
             }
         );
     }
@@ -137,6 +154,7 @@ mod tests {
             &ModelDefaults {
                 model: Some("claude-sonnet-5".into()),
                 effort: Some(Effort::High),
+                cheap_model: None,
             },
             &path,
         );
@@ -144,6 +162,7 @@ mod tests {
             &ModelDefaults {
                 model: Some("claude-sonnet-5".into()),
                 effort: None,
+                cheap_model: None,
             },
             &path,
         );
@@ -151,7 +170,8 @@ mod tests {
             load_defaults(&path),
             ModelDefaults {
                 model: Some("claude-sonnet-5".into()),
-                effort: None
+                effort: None,
+                cheap_model: None
             }
         );
     }
@@ -182,7 +202,8 @@ mod tests {
             load_defaults(&path),
             ModelDefaults {
                 model: Some("claude-opus-5".into()),
-                effort: None
+                effort: None,
+                cheap_model: None
             }
         );
     }
@@ -197,18 +218,20 @@ mod tests {
             load_defaults(&path),
             ModelDefaults {
                 model: None,
-                effort: Some(Effort::Low)
+                effort: Some(Effort::Low),
+                cheap_model: None
             }
         );
     }
 
     #[test]
-    fn save_rebuilds_the_document_it_trims_and_holds_exactly_two_keys() {
+    fn save_rebuilds_the_document_it_trims_and_holds_exactly_three_keys() {
         let path = scratch();
         save_defaults(
             &ModelDefaults {
                 model: Some(" claude-opus-5 ".into()),
                 effort: Some(Effort::Max),
+                cheap_model: Some("  claude-haiku-4-5 ".into()),
             },
             &path,
         );
@@ -221,9 +244,63 @@ mod tests {
             .map(String::as_str)
             .collect();
         keys.sort();
-        assert_eq!(keys, vec!["effort", "model"]);
+        assert_eq!(keys, vec!["cheapModel", "effort", "model"]);
         assert_eq!(stored["model"], "claude-opus-5");
+        assert_eq!(stored["cheapModel"], "claude-haiku-4-5");
         // Trailing newline, like the TS writer.
         assert!(std::fs::read_to_string(&path).unwrap().ends_with('\n'));
+    }
+
+    #[test]
+    fn the_cheap_model_round_trips_and_clears_independently_of_the_frontier_one() {
+        let path = scratch();
+        save_defaults(
+            &ModelDefaults {
+                model: Some("claude-opus-5".into()),
+                effort: None,
+                cheap_model: Some("openai:gpt-5-mini".into()),
+            },
+            &path,
+        );
+        assert_eq!(
+            load_defaults(&path).cheap_model.as_deref(),
+            Some("openai:gpt-5-mini")
+        );
+        // Clearing the background model leaves the frontier pin standing: they
+        // are two decisions, and the file is the only thing joining them.
+        save_defaults(
+            &ModelDefaults {
+                model: Some("claude-opus-5".into()),
+                effort: None,
+                cheap_model: None,
+            },
+            &path,
+        );
+        let after = load_defaults(&path);
+        assert_eq!(after.cheap_model, None);
+        assert_eq!(after.model.as_deref(), Some("claude-opus-5"));
+    }
+
+    #[test]
+    fn a_blank_cheap_model_reads_as_unpinned_not_as_a_pin_on_nothing() {
+        let path = scratch();
+        write(&path, r#"{"model": "claude-opus-5", "cheapModel": "  "}"#);
+        assert_eq!(load_defaults(&path).cheap_model, None);
+    }
+
+    #[test]
+    fn a_file_written_before_the_cheap_tier_had_a_key_still_loads() {
+        // Every install that picked a model before this field existed has one
+        // of these on disk. It is not a hand-edit and must not read as one.
+        let path = scratch();
+        write(&path, r#"{"model": "claude-opus-5", "effort": "high"}"#);
+        assert_eq!(
+            load_defaults(&path),
+            ModelDefaults {
+                model: Some("claude-opus-5".into()),
+                effort: Some(Effort::High),
+                cheap_model: None,
+            }
+        );
     }
 }
