@@ -55,10 +55,10 @@ code on both.
 ```
 
 That clones into `~/bough` (override with `BOUGH_DIR`) and hands off to `scripts/bough setup`, which
-installs the toolchain (`bun` ≥ 1.3, `node`, `ripgrep`, `uv`, plus an extension-capable `sqlite` on
-macOS for the optional vector layer) with the platform's package
-manager — Homebrew, `apt-get`, `dnf` or `pacman` — installs dependencies,
-links `bough` into `~/.local/bin`, and writes an env template to `~/.bough/env`. Already have a
+installs the toolchain (the Rust toolchain via rustup, plus `node`, `ripgrep` and `uv` from the
+platform's package manager — Homebrew, `apt-get`, `dnf` or `pacman`), builds the binary
+(`cargo build --release`), links `bough` into `~/.local/bin`, and writes an env template to
+`~/.bough/env`. Already have a
 clone? Run `scripts/setup.sh` directly. Then:
 
 ```bash
@@ -87,7 +87,7 @@ Point a session at a repo and ask in plain language. bough writes a small progra
 answers — folded reasoning, the code that ran, live cost and context in one view.
 
 **The program environment.** Host functions are pre-injected globals; the program also has the full
-Bun runtime and may ignore all of them.
+JS runtime (`bun` if it is installed, else `node`) and may ignore all of them.
 
 | | |
 |---|---|
@@ -103,7 +103,7 @@ conflict. With subagents sharing one checkout, that is the primary safeguard aga
 clobbering.
 
 **Memory across sessions.** Every `bash` carries tags naming what it is *for* —
-`bash("bun test src/tui", "bun:test:composer")` — and every finished command is recorded under
+`bash("cargo test -p bough-tui", "cargo:test:composer")` — and every finished command is recorded under
 them: command, exit code, duration, the first 2k chars it *printed*, and the directories it was
 about. Labeling intent at generation time is nearly free and far more accurate than clustering
 command strings after the fact, and the exit code is the ground truth that weights the label. The
@@ -126,10 +126,9 @@ read-only SELECT over `command_history`, its tag and directory junctions, and an
 *output* as well as invocations — so "what did that migration actually print" is answerable without
 re-running it. It is the same `~/.bough/bough.db` that holds the transcripts, which is why the
 bundled `history` skill answers across both through the same command. `bough tags similar`
-adds KNN recall where the optional vector layer exists: `sqlite-vec` + `sqlite-lembed` embed with a
-local MiniLM *inside* SQLite, into a separate `~/.bough/embeddings.db` — no native module, no
-subprocess, no API call. Where the SQLite build cannot load extensions it simply is not there, and
-tags plus FTS carry recall alone.
+adds KNN recall: `sqlite-vec` + `sqlite-lembed` embed with a local MiniLM *inside* SQLite, into a
+separate `~/.bough/embeddings.db` — no native module, no subprocess, no API call. SQLite is
+compiled into the binary, so the extension layer is there on every platform.
 
 A tag with a DOT is a **reference** — `linear.eng-1234`, `pr.456`, `commit.3c1c78e` — pointing at
 something with an identity outside bough. Same table and same joins as any other tag, so a ticket
@@ -170,34 +169,35 @@ Project rules come from `AGENTS.md`, read per turn from the git root down.
 
 ```
 ┌──────────────┐  HTTP + SSE   ┌──────────────────────────────────────┐
-│ TUI (OpenTUI)│ ─────────────▶│  server  (Bun, 127.0.0.1:4321)       │
+│ TUI (ratatui)│ ─────────────▶│  server  (Rust, 127.0.0.1:4321)      │
 │  CLI (exec)  │ ◀──────────────│  ├─ turn runner                      │
-└──────────────┘   events      │  ├─ program worker                   │
-                               │  ├─ workflow worker                  │
+└──────────────┘   events      │  ├─ program sidecar                  │
+                               │  ├─ workflow sidecar                 │
                                │  ├─ SQLite  ~/.bough/bough.db        │
                                │  └─ artifacts  ~/.bough/artifacts/   │
                                └──────────────────────────────────────┘
 ```
 
-- **Server** — one Bun process: JSON API, SSE event stream, static artifact hosting. Loopback only,
+- **Server** — one Rust process: JSON API, SSE event stream, static artifact hosting. Loopback only,
   no auth layer.
-- **Program worker** — a fresh `Worker` per round, inheriting the server's full authority. Host
-  functions bridge over `postMessage`. The worker exists to give the program a clean global scope
-  and a cancellable lifetime, not to contain it.
-- **Workflow worker** — a `Worker` running one orchestration script. A scripting surface, not a
+- **Program sidecar** — a fresh JS process per round, inheriting the server's full authority. Host
+  functions bridge over a line protocol on its pipes. The sidecar exists to give the program a clean
+  global scope and a cancellable lifetime, not to contain it.
+- **Workflow sidecar** — a JS process running one orchestration script. A scripting surface, not a
   sandbox: it is bound to `agent()` / `phase()` / `log()` / `parallel()` / `pipeline()`, and is
   starved of ambient nondeterminism (`Date.now`, `Math.random`) so journal replay stays sound.
-- **Clients** — an OpenTUI TUI and a headless one-shot CLI.
+- **Clients** — a ratatui TUI and a headless one-shot CLI.
 
 ## Develop
 
-Bun, TypeScript, SQLite. No build step — everything runs from source.
+Rust, ratatui, SQLite — one cargo workspace. `make help` lists every target.
 
 ```bash
-bun run dev     # server on 127.0.0.1:4321, with --watch
-bun run tui     # the terminal UI against it
-bun run check   # typecheck — must pass before every commit
-bun test        # unit + integration, offline and hermetic
+make release    # build target/release/bough (what `bough` runs)
+make server     # the server on 127.0.0.1:4321, on a scratch BOUGH_HOME
+make tui        # the terminal UI against it
+cargo check --workspace   # must pass before every commit
+cargo test --workspace    # unit + integration, offline and hermetic
 ```
 
 ## What bough is not
@@ -208,8 +208,7 @@ These are decisions, not gaps:
 - No acceptance gate — the model reports what it did and you verify it. The harness does not re-run
   a committed command or block a turn from finishing.
 - No local inference in the turn loop; the cheap tier is a hosted model. The one exception is the
-  optional embedding layer, which runs a small model inside SQLite and is absent when the build
-  cannot load extensions.
+  embedding layer, which runs a small model inside SQLite.
 - No embeddings over transcripts — cross-session transcript search is SQLite FTS. Only the tagged
   command memory has a vector index, and it is optional and derived.
 - No per-agent worktrees or file leases. One shared checkout.
@@ -220,6 +219,6 @@ These are decisions, not gaps:
 - [`docs/spec.md`](docs/spec.md) — what the system is. Authoritative.
 - [`docs/implementation-plan.md`](docs/implementation-plan.md) — how it is built, the module layout,
   and the invariants worth knowing before changing anything.
+- [`specs/`](specs) — per-subsystem behavioral contracts, module by module.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — crate boundaries, shared types, concurrency model.
 - [`AGENTS.md`](AGENTS.md) — conventions this repo's reviews enforce.
-- [`ahe/README.md`](ahe/README.md) — the observability-driven prompt-evolution loop and its task
-  bank, kept alongside the harness it measures.

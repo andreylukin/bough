@@ -1,70 +1,37 @@
-# bough — TS system (bun, from root) + bough-rs Rust rewrite (cargo, in bough-rs/)
-# `make help` lists targets.
+# bough — cargo workspace at the repo root. `make help` lists targets.
 
-RS_DIR := bough-rs
 SMOKE_PORT ?= 43219
 
-.PHONY: help check test dev serve tui gates \
-        rs-check rs-build rs-test rs-lint rs-release rs-server rs-tui rs-smoke rs-parity rs-event-parity rs-cutover rs-tui-test rs-gates all
+.PHONY: help check build test lint release server tui smoke tui-test gates
 
 help: ## list targets
 	@grep -E '^[a-z][a-zA-Z_-]*:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
 
-# ---- TS system ----
-check: ## typecheck (tsc --noEmit)
-	bun run check
+check: ## cargo check --workspace
+	cargo check --workspace
 
-test: ## bun unit + integration suite
-	bun test
-	bun test ./ahe   # bunfig pins the runner's root to ./src (see bunfig.toml)
+build: ## cargo build --workspace
+	cargo build --workspace
 
-dev: ## TS server with --watch
-	bun run dev
+test: ## cargo test --workspace
+	cargo test --workspace
 
-serve: dev ## alias kept from the old Makefile
+lint: ## rustfmt check + clippy (warnings as errors)
+	cargo fmt --check && cargo clippy --workspace -- -D warnings
 
-tui: ## TS TUI against the local server
-	bun run tui
+release: ## cargo build --release
+	cargo build --release
 
-gates: check test ## the TS pre-commit gates
+server: release ## run the server on a scratch BOUGH_HOME (SMOKE_PORT=$(SMOKE_PORT))
+	BOUGH_HOME=$$(mktemp -d) BOUGH_PORT=$(SMOKE_PORT) ./target/release/bough start
 
-# ---- bough-rs ----
-rs-check: ## cargo check --workspace
-	cd $(RS_DIR) && cargo check --workspace
+tui: ## run the TUI against BOUGH_PORT (default live 4321)
+	cargo run --release -p bough -- tui
 
-rs-build: ## cargo build --workspace
-	cd $(RS_DIR) && cargo build --workspace
+smoke: release ## boot the server + drive the TUI via shell-use; SMOKE_MODEL=openai/gpt-5.6-luna for a live turn
+	./smoke.sh
 
-rs-test: ## cargo test --workspace
-	cd $(RS_DIR) && cargo test --workspace
+tui-test: release ## drive the TUI through a real PTY and assert on screen (SMOKE_MODEL adds a live turn)
+	./tui-test.sh
 
-rs-lint: ## rustfmt check + clippy (warnings as errors)
-	cd $(RS_DIR) && cargo fmt --check && cargo clippy --workspace -- -D warnings
-
-rs-release: ## cargo build --release
-	cd $(RS_DIR) && cargo build --release
-
-rs-server: rs-release ## run the Rust server on a scratch BOUGH_HOME (SMOKE_PORT=$(SMOKE_PORT))
-	BOUGH_HOME=$$(mktemp -d) BOUGH_PORT=$(SMOKE_PORT) $(RS_DIR)/target/release/bough start
-
-rs-tui: ## run the Rust TUI against BOUGH_PORT (default live 4321)
-	cd $(RS_DIR) && cargo run --release -p bough -- tui
-
-rs-smoke: rs-release ## boot Rust server + drive the TUI via shell-use; SMOKE_MODEL=openai/gpt-5.6-luna for a live turn
-	$(RS_DIR)/smoke.sh
-
-rs-parity: rs-release ## diff the TS and Rust servers route by route (status + JSON shape)
-	$(RS_DIR)/parity.sh
-
-rs-event-parity: rs-release ## diff the SSE event streams of both servers over one live turn
-	$(RS_DIR)/event-parity.sh
-
-rs-cutover: rs-release ## rehearse serving the real ~/.bough database (on copies, never the live file)
-	$(RS_DIR)/cutover-check.sh
-
-rs-tui-test: rs-release ## drive the TUI through a real PTY and assert on screen (SMOKE_MODEL adds a live turn)
-	$(RS_DIR)/tui-test.sh
-
-rs-gates: rs-build rs-test ## the Rust pre-commit gates
-
-all: gates rs-gates ## everything
+gates: build test ## the pre-commit gates

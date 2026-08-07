@@ -1,4 +1,10 @@
-# bough — implementation plan
+# bough — implementation plan (historical)
+
+**Stale by two rewrites, kept for its reasoning.** This was the build order for the
+Deno/Ink implementation; the system is now Rust (see [`ARCHITECTURE.md`](../ARCHITECTURE.md)
+for the crate layout and [`specs/`](../specs) for the per-subsystem contracts, which
+carry the invariants this file describes). Read it for *why* a piece is shaped the way
+it is, never for where a file lives or what command to run.
 
 Companion to [`spec.md`](./spec.md). The spec says *what* the system is; this says
 *how to build it*, in what order, and how you know a piece is done.

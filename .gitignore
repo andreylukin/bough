@@ -1,5 +1,7 @@
+# cargo build output
+/target
+
 # local artifacts
-node_modules/
 bough.app/
 
 # OS
@@ -10,8 +12,10 @@ __pycache__/
 scripts/guest-image/golden-rootfs/
 *.smolmachine
 
-ahe/state/
-ahe/runs/
+# leftovers of the deleted TypeScript tree (ahe run outputs, vendored bun builds);
+# safe to delete from your checkout by hand.
+ahe/
+node_modules/
 .bough-bun/
 .bough-bun-linux
 .bough-bun-linux-musl

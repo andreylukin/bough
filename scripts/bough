@@ -6,8 +6,7 @@
 # ~/.bough/env for ANTHROPIC_API_KEY / BOUGH_* settings. Installed onto PATH as
 # a symlink by scripts/setup.sh.
 #
-# Runs the RUST implementation (`bough-rs/`) by default; `BOUGH_IMPL=ts` runs the
-# TypeScript tree instead. See "WHICH IMPLEMENTATION" below.
+# Runs the Rust build at `target/release/bough`; `make release` builds it.
 set -euo pipefail
 
 # Resolve the repo root through the ~/.local/bin symlink (bash 3.2 compatible).
@@ -19,24 +18,22 @@ while [ -L "$SOURCE" ]; do
 done
 ROOT="$(cd "$(dirname "$SOURCE")/.." && pwd)"
 
-# Where bun might be, widened ONCE for every subcommand below.
+# Where the toolchain might be, widened ONCE for every subcommand below.
 #
-# `bun` is the runtime for all of them — the server, the TUI, `exec`, `update` —
-# and it is routinely not on the PATH we are handed. The bun.sh installer puts it
-# in ~/.bun/bin, which reaches an interactive shell only if the user's rc adds it
-# and NEVER reaches launchd, which starts with a bare environment. That gap showed
-# up as the server failing to start with nothing but a "bun: command not found" in
-# the log, on a machine where `bun --version` worked fine in the terminal.
+# The binary is ours, but a code-mode program still needs a JS runtime (`bun`, else
+# `node`) for the sidecar, and `update` needs `cargo`. None of them reliably reach
+# launchd, which starts with a bare environment: that gap showed up as the server
+# failing to start with nothing but a "command not found" in the log, on a machine
+# where the same command worked fine in the terminal.
 #
 # Prepended only when the directory exists and is not already on PATH, so this
-# cannot reorder a PATH the user deliberately arranged, and cannot shadow a brew
-# bun with an older bun.sh one that happens to be installed too.
+# cannot reorder a PATH the user deliberately arranged.
 # WHICH OS. Every platform-specific decision below routes through this and
 # nothing else, so "does bough run on Linux" is a question about four functions
 # (`svc_*`) rather than about the whole script.
 OS="$(uname -s)"
 
-for d in "/opt/homebrew/bin" "/usr/local/bin" "$HOME/.local/bin" "$HOME/.bun/bin"; do
+for d in "/opt/homebrew/bin" "/usr/local/bin" "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.cargo/bin"; do
   case ":$PATH:" in
     *":$d:"*) ;;
     *) [ -d "$d" ] && PATH="$PATH:$d" ;;
@@ -44,52 +41,22 @@ for d in "/opt/homebrew/bin" "/usr/local/bin" "$HOME/.local/bin" "$HOME/.bun/bin
 done
 export PATH
 
-# Said once, here, rather than as `bun: command not found` from six call sites.
-require_bun() {
-  command -v bun >/dev/null && return 0
-  echo "error: bun is not on PATH, and is not in ~/.bun/bin." >&2
-  if [ "$OS" = "Darwin" ]; then
-    echo "  install it with:  brew install oven-sh/bun/bun" >&2
-    echo "  or:               curl -fsSL https://bun.sh/install | bash" >&2
-  else
-    echo "  install it with:  curl -fsSL https://bun.sh/install | bash" >&2
-  fi
-  echo "  then re-run: $ROOT/scripts/setup.sh" >&2
-  exit 1
-}
-
 # ---------------------------------------------------------------------------
-# WHICH IMPLEMENTATION. The Rust rewrite (`bough-rs/`) is the default; the
-# TypeScript tree is still here and still works, and `BOUGH_IMPL=ts` returns to
-# it for one command or for a shell.
+# THE BINARY. Everything the user runs — the server, the TUI, `exec`, the CLIs —
+# is this one build.
 #
-# The switch lives HERE, not in the symlink on PATH, because this script is the
-# service manager: `start`, `kill`, `restart`, `status`, `logs` and `update` are
-# launchd/systemd verbs the Rust binary has no equivalent for. Pointing PATH at
-# the binary would swap the runtime and throw the lifecycle away. So every
-# `exec` site below asks `impl_is_rust` and nothing else changes.
-#
-# Falls back to TypeScript when the binary is missing rather than failing: a
-# fresh clone has no `target/`, and "bough does not start after git clone" would
-# be a worse answer than running the tree that is definitely there. `make
-# rs-release` builds it.
-RS_BIN="$ROOT/bough-rs/target/release/bough"
+# The lifecycle verbs stay HERE, in the script, rather than in the symlink on
+# PATH: `start`, `kill`, `restart`, `status`, `logs` and `update` are
+# launchd/systemd verbs the binary has no equivalent for. Pointing PATH at the
+# binary would throw the lifecycle away.
+RS_BIN="$ROOT/target/release/bough"
 
-impl_is_rust() {
-  case "${BOUGH_IMPL:-}" in
-    ts | typescript) return 1 ;;
-    rust | rs) return 0 ;;              # asked for explicitly: honour it even if unbuilt
-    *) [ -x "$RS_BIN" ] ;;              # the default: Rust when it is built
-  esac
-}
-
-# `require_bun` for the Rust path. Says which binary is missing and how to get
-# it, rather than failing as "no such file or directory".
+# Says which binary is missing and how to get it, rather than failing as "no such
+# file or directory" from a dozen call sites. A fresh clone has no `target/`.
 require_rust() {
   [ -x "$RS_BIN" ] && return 0
-  echo "error: the Rust build is missing at $RS_BIN" >&2
-  echo "  build it with:  make -C $ROOT rs-release" >&2
-  echo "  or run the TypeScript tree instead:  BOUGH_IMPL=ts bough ..." >&2
+  echo "error: the bough build is missing at $RS_BIN" >&2
+  echo "  build it with:  make -C $ROOT release" >&2
   exit 1
 }
 
@@ -334,20 +301,7 @@ wait_up() {
   local i
   for i in $(seq 1 30); do
     if is_up; then
-      # Name the implementation on the LAST line every `start`/`restart`/`update`
-      # prints. There are two servers in this tree and their logs and HTTP
-      # surfaces are deliberately identical, so this line is the only place the
-      # answer is free — and `bough update`'s `bun install` output above had
-      # already been misread as "still running bun".
-      local up_pid up_exe up_impl
-      up_pid="$(server_pid)"
-      up_exe="$(ps -p "$up_pid" -o comm= 2>/dev/null || true)"
-      case "$up_exe" in
-        *bough-rs/target/*) up_impl="rust" ;;
-        *bun*) up_impl="typescript (bun)" ;;
-        *) up_impl="unknown (${up_exe:-?})" ;;
-      esac
-      echo "up (pid $up_pid) — http://127.0.0.1:$PORT — impl: $up_impl"
+      echo "up (pid $(server_pid)) — http://127.0.0.1:$PORT"
       return 0
     fi
     sleep 0.5
@@ -377,8 +331,9 @@ wait_up() {
 }
 
 # What launchd executes (also handy for a manual foreground run). launchd starts
-# with a bare environment, so put the toolchain on PATH for git/rg. `bun` itself is
-# handled at the top of this file, for every subcommand rather than just this one.
+# with a bare environment, so put the toolchain on PATH for git/rg. The JS sidecar
+# runtime is handled at the top of this file, for every subcommand rather than just
+# this one.
 cmd_run() {
   export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
   if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${OPENROUTER_API_KEY:-}" ]; then
@@ -387,12 +342,8 @@ cmd_run() {
     exit 0
   fi
   cd "$ROOT"
-  if impl_is_rust; then
-    require_rust
-    exec "$RS_BIN" start
-  fi
-  require_bun
-  exec bun src/server/main.ts
+  require_rust
+  exec "$RS_BIN" start
 }
 
 cmd_start() {
@@ -430,7 +381,7 @@ cmd_kill() {
       sleep 0.5
     done
   fi
-  # Anything still holding the port was started outside the service (e.g. bun run dev).
+  # Anything still holding the port was started outside the service (e.g. `bough run`).
   local pid
   pid="$(server_pid)"
   if [ -n "$pid" ]; then
@@ -482,12 +433,10 @@ cmd_update() {
   else
     # Consumer checkout: fast-forward to the new main, carrying uncommitted
     # changes over as a patch — no `git stash` (its pop can conflict messily
-    # mid-update). Lock files stay out of the patch (npm install / bun install
-    # below regenerate them); untracked files pass through untouched.
+    # mid-update). Untracked files pass through untouched.
     local patch added=""
     patch="$BOUGH_HOME/update-carry-$(date +%Y%m%d-%H%M%S).patch"
-    git -C "$ROOT" diff --binary HEAD -- . \
-      ':(exclude)bun.lock' > "$patch"
+    git -C "$ROOT" diff --binary HEAD -- . > "$patch"
     if [ -s "$patch" ]; then
       echo "==> carrying uncommitted changes over the update ($patch)"
       # Uncommitted added files are new-file hunks in the patch and must be off
@@ -519,46 +468,20 @@ cmd_update() {
     fi
   fi
 
-  # NAMED for the tree it belongs to. `bun install` prints a wall of bun output,
-  # and when the server it is about to restart is the RUST one, that output reads
-  # as "I am still running bun" — it was misread exactly that way. These are the
-  # TypeScript tree's dependencies; they are still refreshed because `BOUGH_IMPL=ts`
-  # must keep working, and because model-written programs `require` from this
-  # node_modules through the JS sidecar whichever implementation is serving.
-  echo "==> refreshing TypeScript dependencies (bun install; the TS tree + the JS sidecar)"
-  require_bun
-  (cd "$ROOT" && bun install)
-
-  # BUILD IT — do not ask `impl_is_rust` whether to. That function answers "what
-  # runs right now", which on a machine that has never built the binary is
-  # "TypeScript"; gating the build on it means the binary is never created, so
-  # such a machine pulls the Rust code and stays on TypeScript through every
-  # future update. The fallback is for RUNNING (a fresh clone must still start),
-  # never for updating: `update` is precisely when the binary should come into
-  # existence.
-  #
-  # A build failure is fatal rather than falling back, because silently running
-  # the other implementation is not what `bough update` was asked to do.
-  case "${BOUGH_IMPL:-}" in
-    ts | typescript)
-      echo "==> BOUGH_IMPL=ts — skipping the Rust build; the TypeScript tree will run"
-      ;;
-    *)
-      if command -v cargo >/dev/null; then
-        if [ -x "$RS_BIN" ]; then
-          echo "==> building the Rust server + TUI (cargo build --release) — this is what will run"
-        else
-          echo "==> first Rust build on this machine (cargo build --release) — this may take a few minutes"
-        fi
-        (cd "$ROOT/bough-rs" && cargo build --release)
-      else
-        # Said loudly: this is the one path that leaves a machine on the older
-        # implementation, and it is silent otherwise.
-        echo "==> cargo not found — NOT building the Rust server; this machine will keep running TypeScript" >&2
-        echo "    install Rust (https://rustup.rs), then re-run: bough update" >&2
-      fi
-      ;;
-  esac
+  # BUILD IT. `update` is precisely when the binary should come into existence, so
+  # a machine that has never built it builds it here. A build failure is fatal:
+  # the alternative is restarting the OLD binary while claiming to have updated.
+  if ! command -v cargo >/dev/null; then
+    echo "error: cargo not found — bough is built from source." >&2
+    echo "  install Rust (https://rustup.rs), then re-run: bough update" >&2
+    exit 1
+  fi
+  if [ -x "$RS_BIN" ]; then
+    echo "==> building the server + TUI (cargo build --release)"
+  else
+    echo "==> first build on this machine (cargo build --release) — this may take a few minutes"
+  fi
+  (cd "$ROOT" && cargo build --release)
 
   # ast-grep: structural search (`prompt/searching.md`). Ensured on update, not just
   # on fresh setup, because the prompt names it unconditionally — an update that left
@@ -693,19 +616,7 @@ cmd_status() {
     return 1
   fi
   if is_up; then
-    # Name the implementation of the process that is ACTUALLY SERVING, read from
-    # its own command path — not what `impl_is_rust` says this invocation would
-    # launch. Those two disagree exactly when it matters most (`BOUGH_IMPL=ts
-    # bough status` against a running Rust server), and a status line that
-    # reports the wrong runtime is worse than one that reports none.
-    local impl exe
-    exe="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
-    case "$exe" in
-      *bough-rs/target/*) impl="rust" ;;
-      *bun*) impl="typescript (bun)" ;;
-      *) impl="unknown (${exe:-?})" ;;
-    esac
-    echo "running (pid $pid) — http://127.0.0.1:$PORT (service: $svc, impl: $impl)"
+    echo "running (pid $pid) — http://127.0.0.1:$PORT (service: $svc)"
   else
     echo "process alive (pid $pid) but not answering on port $PORT — check $LOG_FILE"
     return 1
@@ -739,12 +650,8 @@ cmd_tui() {
   # The TUI defaults new conversations to the directory bough was launched from.
   export BOUGH_TUI_CWD="$PWD"
   cd "$ROOT"
-  if impl_is_rust; then
-    require_rust
-    exec "$RS_BIN" tui "$@"
-  fi
-  require_bun
-  exec bun src/tui/main.tsx "$@"
+  require_rust
+  exec "$RS_BIN" tui "$@"
 }
 
 # Hard-delete sessions archived over 30 days ago (the long-term purge; also runs on
@@ -802,12 +709,8 @@ case "${1:-}" in
     # Auto-start the default server like the TUI does; an explicit --port means
     # the caller manages that server (e.g. the bench), so leave it alone.
     case " $* " in *" --port "*) ;; *) ensure_up ;; esac
-    if impl_is_rust; then
-      require_rust
-      exec "$RS_BIN" exec "$@"
-    fi
-    require_bun
-    exec bun "$ROOT/src/cli/exec.ts" "$@"
+    require_rust
+    exec "$RS_BIN" exec "$@"
     ;;
   mcp)
     shift
@@ -815,24 +718,16 @@ case "${1:-}" in
     # connecting and authorizing are things the running process does — its manager
     # owns the connections and its OAuth callback is what the browser comes back to.
     case " $* " in *" --port "*) ;; *) ensure_up ;; esac
-    if impl_is_rust; then
-      require_rust
-      exec "$RS_BIN" mcp "$@"
-    fi
-    require_bun
-    exec bun "$ROOT/src/cli/mcp.ts" "$@"
+    require_rust
+    exec "$RS_BIN" mcp "$@"
     ;;
   sync-mcp)
     shift
     # No server needed: this reads two config files and writes the registry, which
     # is a file. The server re-reads it per turn (MCP state is never cached), so a
     # running bough picks the new entries up without a restart.
-    if impl_is_rust; then
-      require_rust
-      exec "$RS_BIN" sync-mcp "$@"
-    fi
-    require_bun
-    exec bun "$ROOT/src/cli/sync_mcp.ts" "$@"
+    require_rust
+    exec "$RS_BIN" sync-mcp "$@"
     ;;
   tags)
     shift
@@ -840,12 +735,8 @@ case "${1:-}" in
     # discipline — every query it runs is a SELECT — so it is safe against the file a
     # running server has open, and it is exactly what you want when the question is
     # "what did I run before this broke".
-    if impl_is_rust; then
-      require_rust
-      exec "$RS_BIN" tags "$@"
-    fi
-    require_bun
-    exec bun "$ROOT/src/cli/tags.ts" "$@"
+    require_rust
+    exec "$RS_BIN" tags "$@"
     ;;
   patterns)
     shift
@@ -853,12 +744,8 @@ case "${1:-}" in
     # the one subcommand that is useful with bough stopped — which matters, because
     # "why did the server not come up" is answered by reading its log, and needing
     # the server to read the log would be a circle.
-    if impl_is_rust; then
-      require_rust
-      exec "$RS_BIN" patterns "$@"
-    fi
-    require_bun
-    exec bun "$ROOT/src/cli/patterns.ts" "$@"
+    require_rust
+    exec "$RS_BIN" patterns "$@"
     ;;
   purge)
     cmd_purge

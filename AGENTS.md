@@ -3,34 +3,49 @@
 ## Layout
 
 ```
-src/          the whole system — server, turn runner, harness, host functions,
-              subagents, workflows, history ops, MCP, LSP, prompt, TUI
-docs/         spec.md (what the system is) · implementation-plan.md (how it is built)
-              tags.md (the command-memory tag system, end to end)
-src/skills/   the bundled skills — history, wayfinder, domain-modeling, grilling
-ahe/          the prompt-evolution loop and its task bank
-assets/       the logo
+crates/bough-core/   the system — turn runner, harness, host functions, subagents,
+                     workflows, history ops, MCP, db, llm, prompt, skills
+crates/bough-server/ the loopback HTTP + SSE server
+crates/bough-tui/    the ratatui terminal UI
+crates/bough/        the binary: start | tui | exec | mcp | sync-mcp | tags | patterns
+specs/               per-subsystem behavioral contracts (16 files) — authoritative
+ARCHITECTURE.md      crate boundaries, shared types, concurrency model
+docs/                spec.md (what the system is) · tags.md (the command-memory tag
+                     system, end to end) · implementation-plan.md (historical)
+scripts/             setup.sh (fresh machine) and bough (the service manager)
+assets/              the logo
 ```
 
-Everything runs on `bun` from the root `package.json`. There is no build step and no web UI — the
-server and the OpenTUI TUI both run from source.
+One cargo workspace at the root. `make help` lists the targets.
 
 ```
-bun run check      # typecheck (tsc --noEmit) — must pass before every commit
-bun test           # unit + integration, offline and hermetic
-bun run dev        # server with --watch
-bun run tui        # the TUI against the local server
+cargo check --workspace    # must pass before every commit
+cargo test --workspace     # unit + integration, offline and hermetic
+make release               # what `scripts/bough` runs: target/release/bough
+make server                # the server on a scratch BOUGH_HOME
+make tui                   # the TUI against the local server
 ```
 
-`docs/spec.md` is authoritative for behavior; `docs/implementation-plan.md` carries the module
-boundary rules and the invariants that are not rediscoverable from the spec (worker wind-down
-ordering, same-millisecond message ordering, replay determinism, and the rest). Read the invariants
-section before changing anything in `turn/`, `harness/`, or `workflow/`.
+`docs/spec.md` is authoritative for product behavior; `specs/*.md` pin per-subsystem
+contracts module by module, including the invariants that are not rediscoverable from
+the spec (worker wind-down ordering, same-millisecond message ordering, replay
+determinism, and the rest). Read the relevant spec before changing anything in `turn/`,
+`harness/`, or `workflow/`. `docs/implementation-plan.md` is historical — it describes
+a build order two rewrites old, and is worth reading only for its reasoning.
 
-Conventions that reviews enforce: every module opens with a comment stating the invariant it holds;
-dependencies (db, clock, LLM client) are injected rather than reached for; parsing and other core
-logic stay pure with `now` passed in; Zod validates at the boundary; tests sit next to the module
-they cover.
+`specs/` and `ARCHITECTURE.md` were written against the TypeScript implementation this
+tree replaced, and still name `src/*.ts` modules in places. The *behavior* they pin is
+current and binding; the file names are a map to where each contract now lives in
+`crates/`. `PORT_PLAN.md` is finished history — it is not a to-do list.
+
+The only non-Rust runtime dependency is a JS runtime for the code-mode sidecar
+(`crates/bough-core/src/harness/js/`): `bun` if it is on PATH, else `node`. It needs no
+`node_modules` — the sidecar uses `node:*` builtins only.
+
+Conventions that reviews enforce: every module opens with a comment stating the
+invariant it holds; dependencies (db, clock, LLM client) are injected rather than
+reached for; parsing and other core logic stay pure with `now` passed in; validation
+happens at the boundary; tests sit next to the module they cover.
 
 ## Version control: plain git
 
@@ -44,9 +59,10 @@ the Changes rail.
 
 ## Running against this tree
 
-The live server builds from this working tree and is respawned by launchd when killed. Point a
-development instance somewhere else before exercising it: `BOUGH_HOME` relocates the data root and
-`BOUGH_PORT` moves the listener.
+The live server runs the binary built from this working tree and is respawned by launchd when
+killed — so a `make release` here replaces what the next restart runs. Point a development instance
+somewhere else before exercising it: `BOUGH_HOME` relocates the data root and `BOUGH_PORT` moves the
+listener.
 
 Never point a bough session's workspace at this repository itself while testing server endpoints
 that mutate a workspace. Use a scratch directory.

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Fresh-machine bootstrap for bough. macOS and Linux — nothing here is confined;
 # bough runs as you (spec §2). Installs toolchain deps with the platform's package
-# manager, installs the npm dependencies, and links the `bough` server manager onto
-# PATH. Safe to re-run.
+# manager, builds the binary, and links the `bough` server manager onto PATH.
+# Safe to re-run.
 #
 # WHAT IS AND IS NOT PLATFORM-SPECIFIC. The dependency LIST is identical everywhere
-# (git, node, rg, uv, bun); only the command that installs it differs. So this file
+# (git, cargo, node, rg, uv); only the command that installs it differs. So this file
 # resolves one installer up front and the rest reads the same on both — which is
 # also why a distro nobody here has tested is a missing installer line and not a
 # port.
@@ -51,9 +51,10 @@ if ! command -v git >/dev/null; then
   exit 1
 fi
 
-# rg is what the prompt tells the model to search with. (bun has its own block
-# below — it needs a version floor, and may already be on PATH from the bun.sh
-# installer.) The cheap tier is a hosted model you pick in the model picker; the
+# rg is what the prompt tells the model to search with; node is the fallback JS
+# runtime for the code-mode sidecar. (cargo has its own block below — it is
+# installed via rustup, not the package manager.) The cheap tier is a hosted model
+# you pick in the model picker; the
 # one piece of local inference is the OPTIONAL command-history embedding layer
 # (sqlite-lembed + a ~25MB GGUF the server downloads lazily) — see the sqlite
 # block below for the only setup it needs. There is no tunnel: the server binds
@@ -80,73 +81,37 @@ else
   echo "==> all packages already installed"
 fi
 
-# Bun >= 1.3. That is the floor the tree is developed and tested against. On macOS
-# we install/upgrade through brew even when an older bun is already on PATH from
-# the bun.sh installer (brew upgrade would fail on that one); elsewhere the bun.sh
-# installer IS the supported path, and it upgrades in place.
-# ~/.bun/bin is where the bun.sh installer puts it, and it is on PATH only if the
-# user's shell rc adds it. Looked at BEFORE deciding bun is missing, so a perfectly
-# good bun does not get a redundant brew install stacked on top of it.
-PATH_BEFORE_BUN="$PATH" # kept so the advisory below can tell "found it" from "you had it"
+# Rust toolchain. bough is built from source — the server, the TUI and the CLIs are
+# one `cargo build --release` — so this is the one hard dependency with no fallback.
+# rustup is the supported install on both platforms; a distro `rustc` is fine too as
+# long as it is recent enough to build the workspace.
 case ":$PATH:" in
-  *":$HOME/.bun/bin:"*) ;;
-  *) [ -d "$HOME/.bun/bin" ] && PATH="$PATH:$HOME/.bun/bin" && export PATH ;;
+  *":$HOME/.cargo/bin:"*) ;;
+  *) [ -d "$HOME/.cargo/bin" ] && PATH="$PATH:$HOME/.cargo/bin" && export PATH ;;
 esac
 
-bun_ok() {
-  command -v bun >/dev/null || return 1
-  local v
-  v="$(bun --version | head -1)"
-  [ "$(printf '%s\n' "1.3.0" "$v" | sort -V | head -1)" = "1.3.0" ]
-}
-if bun_ok; then
-  echo "==> bun $(bun --version) ok"
-elif [ "$OS" = "Darwin" ] && brew list --formula oven-sh/bun/bun >/dev/null 2>&1; then
-  echo "==> upgrading bun via brew"
-  brew upgrade oven-sh/bun/bun
-elif [ "$OS" = "Darwin" ]; then
-  echo "==> installing bun via brew"
-  brew install oven-sh/bun/bun
-else
-  echo "==> installing bun via bun.sh"
-  curl -fsSL https://bun.sh/install | bash
+if ! command -v cargo >/dev/null; then
+  echo "==> installing the Rust toolchain via rustup"
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
   case ":$PATH:" in
-    *":$HOME/.bun/bin:"*) ;;
-    *) [ -d "$HOME/.bun/bin" ] && PATH="$PATH:$HOME/.bun/bin" && export PATH ;;
+    *":$HOME/.cargo/bin:"*) ;;
+    *) [ -d "$HOME/.cargo/bin" ] && PATH="$PATH:$HOME/.cargo/bin" && export PATH ;;
   esac
 fi
-if ! bun_ok; then
-  echo "error: need bun >= 1.3 on PATH — have '$(command -v bun || echo none)'." >&2
-  if [ "$OS" = "Darwin" ]; then
-    echo "  A non-brew bun (e.g. ~/.bun/bin) may be shadowing brew's; fix your PATH so" >&2
-    echo "  $(brew --prefix)/bin comes first, or remove the old bun." >&2
-  else
-    echo "  An older bun may be shadowing the one just installed; make sure" >&2
-    echo "  ~/.bun/bin comes first on PATH, or remove the old bun." >&2
-  fi
+if ! command -v cargo >/dev/null; then
+  echo "error: cargo is still not on PATH — install Rust from https://rustup.rs and re-run." >&2
   exit 1
 fi
+echo "==> $(cargo --version) ok"
 
-# bun works for US because of the PATH line above, but the user's own shell was
-# never told. `bough` self-heals the same way, so the server and the TUI are fine —
-# what breaks is every `bun test` / `bun run check` typed by hand, which fails with
-# "command not found" on a machine where bun is plainly installed. Say the fix once,
-# with the actual file and the actual line, rather than leaving it to be rediscovered.
-case "$(command -v bun)" in
-  "$HOME/.bun/bin/"*)
-    case ":${PATH_BEFORE_BUN:-$PATH}:" in
-      *":$HOME/.bun/bin:"*) ;;
-      *)
-        rc="$HOME/.zshrc"
-        case "${SHELL:-}" in *bash) rc="$HOME/.bash_profile" ;; esac
-        echo "==> note: bun is in ~/.bun/bin, which is not on your shell's PATH."
-        echo "    bough itself does not care — it looks there. Your own shell does:"
-        echo "        echo 'export PATH=\"\$HOME/.bun/bin:\$PATH\"' >> $rc"
-        echo "    then open a new shell (or: source $rc)."
-        ;;
-    esac
-    ;;
-esac
+# A JS runtime for the code-mode sidecar (`bun` if present, else `node`). `node` is
+# in the package list above, so this is already satisfied; bun is only ever an
+# upgrade, never a requirement, and is left alone if the user has one.
+if command -v bun >/dev/null; then
+  echo "==> bun $(bun --version) — the code-mode sidecar will use it"
+else
+  echo "==> no bun; the code-mode sidecar will use node"
+fi
 
 # ast-grep: structural code search, taught in `prompt/searching.md` beside rg.
 #
@@ -177,28 +142,13 @@ else
   echo "  documents it. Install it: https://ast-grep.github.io/guide/quick-start.html"
 fi
 
-# Extension-capable SQLite, macOS only. Apple's system SQLite compiles out
-# loadable extensions, and Bun's bundled build cannot load them on macOS either —
-# the server swaps in Homebrew's libsqlite3 at boot (`src/db/extensions.ts`) to
-# power the OPTIONAL history vector layer (sqlite-vec + sqlite-lembed,
-# `history.similar()`). Keg-only, so installing it shadows nothing on PATH.
-# Graceful absence by design: without it bough runs identically minus semantic
-# recall — tags + FTS recall still work — so this warns rather than fails.
-# Linux needs nothing: Bun's bundled SQLite loads extensions there as-is.
-if [ "$OS" = "Darwin" ]; then
-  if [ -e "$(brew --prefix)/opt/sqlite/lib/libsqlite3.dylib" ]; then
-    echo "==> extension-capable sqlite already installed"
-  else
-    echo "==> installing sqlite (extension-capable, for history.similar) via brew"
-    brew install sqlite || {
-      echo "warning: brew install sqlite failed — bough works without it, but"
-      echo "  semantic command recall (history.similar) stays off until it exists."
-    }
-  fi
-fi
+# SQLite needs nothing installed. rusqlite is built with `bundled`, so bough
+# compiles its own extension-capable SQLite on both platforms — which is what
+# retired the macOS Homebrew-libsqlite3 swap the TypeScript tree needed for the
+# OPTIONAL history vector layer (sqlite-vec + sqlite-lembed, `history.similar()`).
 
-echo "==> installing dependencies + typecheck"
-(cd "$ROOT" && bun install && bun run check)
+echo "==> building bough (cargo build --release) — the first build takes a few minutes"
+(cd "$ROOT" && cargo build --release)
 
 
 echo "==> linking bough CLI to ~/.local/bin/bough"
