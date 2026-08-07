@@ -732,6 +732,25 @@ mod tests {
         );
     }
 
+    /// The other half of the deduplication rule (`hooks::dedupe`): a skill
+    /// named twice in one message must not paste its body twice.
+    #[test]
+    fn a_skill_named_twice_in_one_message_contributes_one_body() {
+        let user = TempSource::new(SkillSourceName::User);
+        user.write("history", &skill_file("description: d", "HISTORY BODY"));
+        let sources = vec![user.as_source()];
+        let active = active_skills("use /history, then /history again", &sources);
+        assert_eq!(active.names, ["history"], "one hit, not two");
+        assert_eq!(active.skills.len(), 1);
+        // And two sources holding the same name is still one body — the
+        // bundled-first rule already decides which.
+        let bundled = TempSource::new(SkillSourceName::Bundled);
+        bundled.write("history", &skill_file("description: d", "BUNDLED BODY"));
+        let both = active_skills("/history", &[bundled.as_source(), user.as_source()]);
+        assert_eq!(both.skills.len(), 1);
+        assert_eq!(both.skills[0].body.trim(), "BUNDLED BODY");
+    }
+
     #[test]
     fn a_traversing_name_never_becomes_a_path() {
         let user = TempSource::new(SkillSourceName::User);

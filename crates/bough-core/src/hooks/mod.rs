@@ -53,6 +53,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::bough_path;
 
+pub mod dedupe;
 pub mod git;
 mod runtime;
 pub mod sources;

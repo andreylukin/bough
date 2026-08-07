@@ -501,6 +501,10 @@ fn apply_turn_hooks(
         return;
     };
     for text in outcome.context {
+        // Deduplicated, because these are PERSISTED into the thread: a hook
+        // that injects the same document every turn would otherwise grow the
+        // conversation by a copy of it per turn, forever.
+        let text = crate::hooks::dedupe::once_per_session(session_id, &text);
         crate::agents::notes::post_system_note(
             app,
             session_id,
@@ -1119,7 +1123,11 @@ fn prepare_turn(
         scratch_note(&scratch.to_string_lossy()),
     ];
     if let Some(outcome) = &start_hooks {
-        for text in &outcome.context {
+        // WITHIN the turn, not across it. This prompt is rebuilt every turn,
+        // so a cross-turn reference would name bytes that are no longer in
+        // the window — the repetition is the cheaper wrong answer, and the
+        // prompt cache absorbs an unchanged block anyway.
+        for text in crate::hooks::dedupe::within_batch(&outcome.context) {
             notes.push(format!("## From a hook\n{text}"));
         }
     }
