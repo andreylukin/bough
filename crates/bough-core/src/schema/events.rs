@@ -73,6 +73,11 @@ pub enum EventType {
     WorkflowAgent,
     #[serde(rename = "workflow.log")]
     WorkflowLog,
+    /// A hook did something. Announced so the TUI can say so as it happens —
+    /// a hook that silently rewrites a command is indistinguishable from a
+    /// harness that is behaving strangely.
+    #[serde(rename = "hook.fired")]
+    HookFired,
 }
 
 impl EventType {
@@ -94,6 +99,7 @@ impl EventType {
             EventType::WorkflowUpdated => "workflow.updated",
             EventType::WorkflowAgent => "workflow.agent",
             EventType::WorkflowLog => "workflow.log",
+            EventType::HookFired => "hook.fired",
         }
     }
 }

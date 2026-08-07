@@ -77,7 +77,6 @@ pub fn toggle() -> Handler {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::app::{create_handler, CreateHandlerOptions};
     use crate::http::testutil;
     use std::sync::MutexGuard;

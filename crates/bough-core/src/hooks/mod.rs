@@ -164,6 +164,36 @@ pub struct HookOutcome {
 }
 
 impl HookOutcome {
+    /// What this outcome DID, as short verbs — the announcement's payload and
+    /// the panel's "last" column.
+    pub fn verbs(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        if !self.context.is_empty() {
+            out.push("added context".into());
+        }
+        match self.decision {
+            Some(ToolDecision::Deny) => out.push("denied a command".into()),
+            Some(ToolDecision::Allow) => out.push("allowed a command".into()),
+            None => {}
+        }
+        if self.input.is_some() {
+            out.push("rewrote a command".into());
+        }
+        if self.output.is_some() {
+            out.push("rewrote output".into());
+        }
+        for effect in &self.effects {
+            out.push(match effect {
+                Effect::Prompt { .. } => "sent a prompt".into(),
+                Effect::SetTitle { .. } => "renamed the session".into(),
+            });
+        }
+        if self.stop.is_some() {
+            out.push("stopped the turn".into());
+        }
+        out
+    }
+
     /// Did anything at all come back? Callers skip their apply path when not.
     pub fn is_empty(&self) -> bool {
         self.context.is_empty()
@@ -199,6 +229,8 @@ pub(crate) enum Request {
     /// Test seam: how many autocmds are registered, so a load can be asserted
     /// without firing anything.
     Count(SyncSender<usize>),
+    /// Per-file `(fired, last)`.
+    Activity(SyncSender<std::collections::HashMap<String, (u64, Option<String>)>>),
     /// How many listeners one file registered.
     ListenersFor {
         file: String,
@@ -303,6 +335,20 @@ impl HookHost {
         answer.recv_timeout(DISPATCH_TIMEOUT).unwrap_or(0)
     }
 
+    /// What each loaded file has done since it loaded.
+    pub fn activity(&self) -> std::collections::HashMap<String, (u64, Option<String>)> {
+        let (reply, answer) = sync_channel(0);
+        let sent = self
+            .tx
+            .lock()
+            .ok()
+            .and_then(|tx| tx.send(Request::Activity(reply)).ok());
+        if sent.is_none() {
+            return Default::default();
+        }
+        answer.recv_timeout(DISPATCH_TIMEOUT).unwrap_or_default()
+    }
+
     /// How many autocmds the loaded hooks registered.
     pub fn autocmd_count(&self) -> usize {
         let (reply, answer) = sync_channel::<usize>(0);
@@ -368,6 +414,13 @@ pub struct HookFile {
     /// on one that registered none, which the panel distinguishes by
     /// `enabled`.
     pub autocmds: usize,
+    /// How many times this file has acted since it loaded, and what it did
+    /// most recently. The panel's activity column: a hook that fires every
+    /// turn and one that has never done anything look identical without it.
+    #[serde(default)]
+    pub fired: u64,
+    #[serde(default)]
+    pub last: Option<String>,
     /// Why it did not load. A file that fails to parse is LISTED with its
     /// error rather than omitted — the same rule the skills tab holds, and for
     /// the same reason: a hook that silently vanished is discovered as a hook
@@ -392,6 +445,7 @@ pub fn list_hooks_in(dir: &Path, disabled_at: &Path) -> Vec<HookFile> {
         .collect();
     files.sort();
     let live = host();
+    let activity = live.map(|h| h.activity()).unwrap_or_default();
     files
         .into_iter()
         .map(|path| {
@@ -406,8 +460,11 @@ pub fn list_hooks_in(dir: &Path, disabled_at: &Path) -> Vec<HookFile> {
                     .find(|(p, _)| p == &path)
                     .map(|(_, e)| e.clone())
             });
+            let acted = activity.get(&path.to_string_lossy().into_owned()).cloned();
             HookFile {
                 name,
+                fired: acted.as_ref().map(|(n, _)| *n).unwrap_or(0),
+                last: acted.and_then(|(_, l)| l),
                 path: path.to_string_lossy().into_owned(),
                 enabled,
                 autocmds: live
@@ -510,10 +567,46 @@ unsafe fn extend(h: &HookHost) -> &'static HookHost {
 /// Fire an event at the process-wide host. `None` when no hooks are loaded,
 /// which every caller treats as "nothing to apply".
 pub fn fire(event: HookEvent, dispatch: HookDispatch) -> Option<HookOutcome> {
+    fire_on(None, event, dispatch)
+}
+
+/// [`fire`], announcing what the hooks did on `bus`.
+///
+/// ANNOUNCED, ALWAYS. A hook that rewrites a command or injects context is
+/// changing what the user sees the agent do, and an unexplained change reads
+/// as the harness misbehaving. The event carries the VERBS, not the content —
+/// the content already lands where it belongs (a note in the transcript, the
+/// command's own result), and repeating it in a toast would say everything
+/// twice.
+pub fn fire_on(
+    bus: Option<&Arc<crate::bus::Bus>>,
+    event: HookEvent,
+    dispatch: HookDispatch,
+) -> Option<HookOutcome> {
     let host = host()?;
+    let session_id = dispatch.session_id.clone();
+    let name = event.name().to_string();
     let outcome = host.dispatch(event, dispatch);
     for err in &outcome.errors {
         tracing::warn!("hook: {err}");
+    }
+    if outcome.is_empty() && outcome.errors.is_empty() {
+        return None;
+    }
+    if let Some(bus) = bus {
+        let actions = outcome.verbs();
+        // An error with no action is still worth announcing: a hook that
+        // throws every turn is invisible otherwise, and "why did nothing
+        // happen" is the hardest question this subsystem can pose.
+        bus.publish(crate::schema::events::EventInput {
+            r#type: crate::schema::events::EventType::HookFired,
+            session_id: Some(session_id),
+            data: serde_json::json!({
+                "event": name,
+                "actions": actions,
+                "errors": outcome.errors.len(),
+            }),
+        });
     }
     if outcome.is_empty() {
         return None;

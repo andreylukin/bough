@@ -633,6 +633,10 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
             next
         }
 
+        // Handled in `app.rs` as a NOTICE, not as transcript state: a hook
+        // firing changes nothing about the conversation's contents, and the
+        // thing it did already arrived through the channel that carries it.
+        EventType::HookFired => state,
         EventType::WorkflowLog => {
             let Some(d) = parse::<WfLogData>(&event.data) else {
                 return state;

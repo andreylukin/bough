@@ -40,6 +40,44 @@ struct Collected {
     errors: Vec<String>,
 }
 
+/// How much had been collected before one callback ran — lengths, because the
+/// vectors only ever grow within a dispatch.
+#[derive(Clone, Copy, Default)]
+struct Mark {
+    context: usize,
+    effects: usize,
+    stopped: bool,
+}
+
+impl Collected {
+    fn mark(&self) -> Mark {
+        Mark {
+            context: self.context.len(),
+            effects: self.effects.len(),
+            stopped: self.stop.is_some(),
+        }
+    }
+
+    /// The verbs for what was added since `mark` — one callback's imperative
+    /// contribution, separated from every other callback's.
+    fn since(&self, mark: &Mark) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.context.len() > mark.context {
+            out.push("added context".to_string());
+        }
+        for effect in self.effects.iter().skip(mark.effects) {
+            out.push(match effect {
+                Effect::Prompt { .. } => "sent a prompt".to_string(),
+                Effect::SetTitle { .. } => "renamed the session".to_string(),
+            });
+        }
+        if self.stop.is_some() && !mark.stopped {
+            out.push("stopped the turn".to_string());
+        }
+        out
+    }
+}
+
 /// The thread body: build the interpreter, load the files, then serve.
 pub(super) fn serve(
     files: Vec<PathBuf>,
@@ -97,6 +135,15 @@ pub(super) fn serve(
                 let n = state.borrow().autocmds.len();
                 let _ = reply.send(n);
             }
+            HookRequest::Activity(reply) => {
+                let map = state
+                    .borrow()
+                    .activity
+                    .iter()
+                    .map(|(k, v)| (k.clone(), (v.fired, v.last.clone())))
+                    .collect();
+                let _ = reply.send(map);
+            }
             HookRequest::ListenersFor { file, reply } => {
                 let n = state
                     .borrow()
@@ -119,9 +166,19 @@ pub(super) fn serve(
     }
 }
 
+/// What one file has done since it loaded — the panel's activity column.
+#[derive(Default, Clone)]
+pub(super) struct Activity {
+    pub(super) fired: u64,
+    pub(super) last: Option<String>,
+}
+
 #[derive(Default)]
 struct Registry {
     autocmds: Vec<Autocmd>,
+    /// Keyed by file path, so a hook that has never done anything is visibly
+    /// different from one that fires every turn.
+    activity: HashMap<String, Activity>,
     next_id: u32,
     collected: Collected,
     /// The file currently being loaded — attribution for `create_autocmd`.
@@ -362,6 +419,17 @@ fn fire_matching(
     };
     let mut outcome = HookOutcome::default();
     for (id, callback) in targets {
+        // Which file this listener came from, so what it does can be
+        // attributed to it. Read before the call: a callback may register or
+        // remove listeners, including this one.
+        let file = state
+            .borrow()
+            .autocmds
+            .iter()
+            .find(|a| a.id == id)
+            .map(|a| a.file.clone())
+            .unwrap_or_default();
+        let before = state.borrow().collected.mark();
         let ev = match event_table(lua, id, event, pattern, data.clone()) {
             Ok(t) => t,
             Err(err) => {
@@ -369,14 +437,39 @@ fn fire_matching(
                 continue;
             }
         };
+        // ONE outcome per callback, folded in after: it is the only way to
+        // know which file did what, and attribution is the whole point of the
+        // panel's activity column.
+        let mut one = HookOutcome::default();
+        let mut failed = false;
         match callback.call::<Value>(ev) {
-            Ok(returned) => merge_return(lua, &mut outcome, returned),
+            Ok(returned) => merge_return(lua, &mut one, returned),
             // A hook that throws contributes nothing and says so. It does not
             // stop the turn, and it does not stop the other hooks.
-            Err(err) => outcome
-                .errors
-                .push(format!("{event} handler failed: {err}")),
+            Err(err) => {
+                failed = true;
+                one.errors.push(format!("{event} handler failed: {err}"));
+            }
         }
+        // FIRED COUNTS RUNS, not changes. "used" is the question the panel
+        // answers, and a hook that runs every turn and decides to do nothing
+        // is being used — it is the one wired to an event that never fires
+        // that the user needs to find.
+        let mut verbs = one.verbs();
+        verbs.extend(state.borrow().collected.since(&before));
+        {
+            let mut r = state.borrow_mut();
+            let entry = r.activity.entry(file).or_default();
+            entry.fired += 1;
+            entry.last = Some(if failed {
+                "failed".to_string()
+            } else if verbs.is_empty() {
+                "ran".to_string()
+            } else {
+                verbs.join(", ")
+            });
+        }
+        fold(&mut outcome, one);
         // `once` is consumed even when the callback failed: a listener that
         // throws every time must not fire forever.
         let mut r = state.borrow_mut();
@@ -392,6 +485,31 @@ fn event_table(lua: &Lua, id: u32, event: &str, pattern: &str, data: Value) -> m
     ev.set("match", pattern)?;
     ev.set("data", data)?;
     Ok(ev)
+}
+
+/// Fold one callback's outcome into the round's.
+///
+/// LAST WRITER WINS on the single-valued fields — the load order the directory
+/// listing fixes is the order the user can see — EXCEPT `stop`, which is
+/// sticky: once a hook has stopped the turn, a later one saying nothing must
+/// not un-stop it.
+fn fold(into: &mut HookOutcome, one: HookOutcome) {
+    into.context.extend(one.context);
+    if one.decision.is_some() {
+        into.decision = one.decision;
+        into.reason = one.reason;
+    }
+    if one.input.is_some() {
+        into.input = one.input;
+    }
+    if one.output.is_some() {
+        into.output = one.output;
+    }
+    if into.stop.is_none() {
+        into.stop = one.stop;
+    }
+    into.effects.extend(one.effects);
+    into.errors.extend(one.errors);
 }
 
 /// Read the returnable fields off a callback's return value.

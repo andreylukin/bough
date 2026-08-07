@@ -37,6 +37,11 @@ pub struct HookRow {
     /// disabled hook is not loaded at all.
     #[serde(default)]
     pub autocmds: usize,
+    /// How many times it has acted, and what it did last.
+    #[serde(default)]
+    pub fired: u64,
+    #[serde(default)]
+    pub last: Option<String>,
     /// Why it did not load, when it did not.
     #[serde(default)]
     pub error: Option<String>,
@@ -124,6 +129,16 @@ pub fn hook_line(hook: &HookRow, selected: bool, cols: usize) -> Line<'static> {
         ),
     };
     spans.push(Span::styled(detail.0, detail.1));
+    // What it has actually DONE, which is the question the listener count
+    // cannot answer: a hook wired to an event that never fires and one that
+    // rewrites every command look the same until this column exists.
+    if hook.enabled && hook.fired > 0 {
+        let last = hook.last.clone().unwrap_or_else(|| "acted".into());
+        spans.push(Span::styled(
+            format!("  · fired {}× · {last}", hook.fired),
+            Style::default().add_modifier(Modifier::DIM),
+        ));
+    }
     Line::from(spans)
 }
 
@@ -194,7 +209,17 @@ mod tests {
             path: format!("/home/u/.bough/hooks/{name}"),
             enabled,
             autocmds,
+            fired: 0,
+            last: None,
             error: error.map(String::from),
+        }
+    }
+
+    fn acted(name: &str, fired: u64, last: &str) -> HookRow {
+        HookRow {
+            fired,
+            last: Some(last.into()),
+            ..row(name, true, 1, None)
         }
     }
 
@@ -215,6 +240,24 @@ mod tests {
         // Selected is a mark, not a colour alone — the panel is read on
         // terminals that flatten styling.
         assert!(text(&hook_line(&row("fmt.lua", true, 1, None), true, 96)).starts_with("▸ "));
+    }
+
+    #[test]
+    fn a_row_says_what_the_hook_has_actually_done_not_only_what_it_wired() {
+        assert_eq!(
+            text(&hook_line(
+                &acted("guard.lua", 3, "denied a command"),
+                false,
+                96
+            )),
+            "  [on] guard.lua  1 listener  · fired 3× · denied a command"
+        );
+        // Never fired: no activity column at all, rather than a "0×" that
+        // reads as a measurement of something.
+        assert_eq!(
+            text(&hook_line(&row("idle.lua", true, 1, None), false, 96)),
+            "  [on] idle.lua  1 listener"
+        );
     }
 
     #[test]

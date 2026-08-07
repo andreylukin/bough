@@ -482,7 +482,8 @@ fn with_project_rule_notes(result: ProgramResult, ctx: &TurnCtx) -> ProgramResul
 /// prompt is already assembled by the time this runs; a prompt edit here would
 /// bust the volatile tier for the next turn (`prompt/assemble.rs`).
 fn apply_turn_hooks(app: &AppCtx, session_id: &str, event: HookEvent, data: serde_json::Value) {
-    let Some(outcome) = crate::hooks::fire(
+    let Some(outcome) = crate::hooks::fire_on(
+        Some(&app.bus),
         event,
         HookDispatch {
             session_id: session_id.to_string(),
@@ -1084,7 +1085,8 @@ fn prepare_turn(
     // TurnStart hook that adds context is opting into a cache miss per turn,
     // which is the honest price of context the model sees BEFORE it acts
     // rather than after its first round.
-    let start_hooks = crate::hooks::fire(
+    let start_hooks = crate::hooks::fire_on(
+        Some(&bus),
         HookEvent::TurnStart,
         HookDispatch {
             session_id: session_id.clone(),

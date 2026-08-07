@@ -676,6 +676,45 @@ pub fn describe_saved_workflows(rows: &[bough_core::workflow::saved::SavedWorkfl
     )
 }
 
+/// The one-line notice for a `hook.fired` event, or `None` when the payload
+/// says nothing worth interrupting for.
+///
+/// NAMES THE VERBS, NOT THE CONTENT. "a hook added context" plus the context
+/// itself in the transcript is the same thing said twice; the notice exists to
+/// answer "why did that happen", which only the attribution answers.
+pub fn describe_hook_fired(data: &serde_json::Value) -> Option<String> {
+    let event = data
+        .get("event")
+        .and_then(|e| e.as_str())
+        .unwrap_or("a hook");
+    let actions: Vec<String> = data
+        .get("actions")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let errors = data.get("errors").and_then(|e| e.as_u64()).unwrap_or(0);
+    if actions.is_empty() {
+        // A hook that only threw is still worth one line: a hook failing every
+        // turn is otherwise invisible, and "nothing happened" is the hardest
+        // question this subsystem can pose.
+        return (errors > 0).then(|| {
+            format!(
+                "hook error on {event} — {errors} hook{} failed (^x for the list)",
+                if errors == 1 { "" } else { "s" }
+            )
+        });
+    }
+    let mut text = format!("hook on {event}: {}", actions.join(", "));
+    if errors > 0 {
+        text.push_str(&format!(" · {errors} failed",));
+    }
+    Some(text)
+}
+
 /// `/artifacts` — NAMES, NOT URLS (store.ts::describeArtifacts).
 ///
 /// A notice is ONE line, and one artifact's name plus its
@@ -3543,6 +3582,21 @@ impl<T: Transport> App<T> {
             // `build_lines` shows it under a call that has no result yet and
             // drops it the moment the finalized `tool_result` arrives, so this
             // never double-prints.
+            // A hook acted. Announced as a NOTICE rather than a transcript
+            // line: it is harness behaviour, not something the model said, and
+            // the thing it did has already landed where it belongs (a note in
+            // the transcript, the command's own result). What the user is
+            // missing, and what this supplies, is the attribution.
+            EventType::HookFired => {
+                if let Some(text) = describe_hook_fired(&event.data) {
+                    self.notice = Some(text);
+                    // The hooks tab, if it is open, is now stale: the counts
+                    // it shows just changed.
+                    if self.panel.tab() == crate::keys::PanelTab::Hooks {
+                        self.transport.effect(Effect::LoadHooks);
+                    }
+                }
+            }
             EventType::ToolLog => {
                 if let Ok(d) =
                     serde_json::from_value::<bough_core::schema::events::ToolLogData>(event.data)

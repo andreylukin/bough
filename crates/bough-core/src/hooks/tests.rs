@@ -402,6 +402,91 @@ fn one_call_can_listen_for_several_events_under_one_id() {
 }
 
 #[test]
+fn an_outcome_names_the_verbs_it_used_so_the_tui_can_say_what_happened() {
+    let h = Hooks::new(&[(
+        "busy.lua",
+        r#"
+        bough.api.create_autocmd("PreTool", {
+          callback = function(ev)
+            bough.context("fyi")
+            bough.session.prompt("and another thing")
+            return { decision = "deny", reason = "no" }
+          end,
+        })
+        "#,
+    )]);
+    let out = h.host().dispatch(
+        HookEvent::PreTool,
+        dispatch("bash", serde_json::json!({ "input": { "command": "ls" } })),
+    );
+    assert_eq!(
+        out.verbs(),
+        ["added context", "denied a command", "sent a prompt"],
+        "the announcement names what was done, never what was said"
+    );
+}
+
+#[test]
+fn activity_is_attributed_to_the_file_that_did_it() {
+    let h = Hooks::new(&[
+        (
+            "a-quiet.lua",
+            r#"
+        bough.api.create_autocmd("TurnEnd", { callback = function() end })
+        "#,
+        ),
+        (
+            "b-busy.lua",
+            r#"
+        bough.api.create_autocmd("TurnEnd", {
+          callback = function() bough.session.set_title("renamed") end,
+        })
+        "#,
+        ),
+    ]);
+    let host = h.host();
+    host.dispatch(HookEvent::TurnEnd, dispatch("s1", serde_json::json!({})));
+    host.dispatch(HookEvent::TurnEnd, dispatch("s1", serde_json::json!({})));
+
+    let activity = host.activity();
+    let busy = activity
+        .iter()
+        .find(|(path, _)| path.ends_with("b-busy.lua"))
+        .expect("the busy hook has activity");
+    assert_eq!(busy.1 .0, 2, "twice");
+    assert_eq!(busy.1 .1.as_deref(), Some("renamed the session"));
+    // A hook that RAN and chose to do nothing still counts as used: the one
+    // worth finding is the one wired to an event that never fires, and only a
+    // run count tells them apart.
+    let quiet = activity
+        .iter()
+        .find(|(path, _)| path.ends_with("a-quiet.lua"))
+        .expect("the quiet hook ran too");
+    assert_eq!(quiet.1 .0, 2);
+    assert_eq!(quiet.1 .1.as_deref(), Some("ran"));
+}
+
+#[test]
+fn a_hook_that_only_throws_still_counts_as_having_acted() {
+    let h = Hooks::new(&[(
+        "boom.lua",
+        r#"
+        bough.api.create_autocmd("TurnEnd", { callback = function() error("nope") end })
+        "#,
+    )]);
+    let host = h.host();
+    host.dispatch(HookEvent::TurnEnd, dispatch("s1", serde_json::json!({})));
+    let activity = host.activity();
+    let (_, (fired, last)) = activity.iter().next().expect("one entry");
+    assert_eq!(*fired, 1);
+    assert_eq!(
+        last.as_deref(),
+        Some("failed"),
+        "a hook failing every turn must be visible, not silent"
+    );
+}
+
+#[test]
 fn json_and_fs_follow_the_value_err_pair_convention() {
     let h = Hooks::new(&[(
         "util.lua",
