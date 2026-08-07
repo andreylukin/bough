@@ -52,6 +52,18 @@ pub fn artifacts_dir_for(session_id: &str) -> PathBuf {
     artifacts_dir().join(session_id)
 }
 
+/// Every superseded version of every artifact:
+/// `artifact-versions/<sessionId>/<name>/<ts>`.
+///
+/// OUTSIDE `artifacts/` for the same reason the comments sidecar is — a
+/// history kept inside the artifact directory would be walked by
+/// `list_artifacts`, served by `GET /artifacts/:id/*`, and overwritable by a
+/// program that published under the right name. Out here it is reachable only
+/// through the version verbs.
+pub fn artifact_versions_dir() -> PathBuf {
+    bough_path(&["artifact-versions"])
+}
+
 /// Deliberately OUTSIDE `artifacts/`: a sidecar inside the artifact directory
 /// would show up in every listing and be served as an artifact itself.
 pub fn comments_dir() -> PathBuf {

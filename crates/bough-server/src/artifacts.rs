@@ -1,5 +1,5 @@
-//! Serving artifacts: content types and the two routes (port of
-//! `src/server/artifacts.ts`).
+//! Serving artifacts: content types, the routes that host them, and the
+//! version verbs (port of `src/server/artifacts.ts`, plus history).
 //!
 //! The store itself — where artifacts live, and the confinement rules for
 //! names and session ids — is `bough_core::hostfn::artifact`, because `hostfn`
@@ -25,7 +25,9 @@
 //! `inject_comment_layer`), into HTML documents and nothing else: the bytes on
 //! disk stay exactly what the agent wrote, so a page the user saves or forwards
 //! is the page — not the page plus an annotation toolbar pointed at a loopback
-//! server that is not running.
+//! server that is not running. THE VERSION BAR ([`version_bar_widget`]) rides
+//! the same rule, and shows itself only when there is more than one version to
+//! move between.
 
 use std::path::Path;
 
@@ -33,10 +35,11 @@ use axum::body::Body;
 use axum::response::Response;
 
 use bough_core::hostfn::artifact::{
-    list_artifacts as store_list_artifacts, resolve_artifact_path, ArtifactStoreOptions,
+    list_artifacts as store_list_artifacts, list_versions as store_list_versions, read_version,
+    resolve_artifact_path, restore_version as store_restore_version, ArtifactStoreOptions,
 };
 
-use crate::http::{handler, json, Handler};
+use crate::http::{handler, json, parse_body, Handler};
 
 // ---------------------------------------------------------------------------
 // Content types
@@ -134,7 +137,16 @@ p { margin: 0; color: #52514e; }
 /// injecting into the page's own CSS or JS, served through the same route,
 /// would corrupt them and the layer would not work anyway.
 pub fn inject_comment_layer(html: String) -> String {
-    let widget = crate::comments::comment_widget();
+    splice_before_body(html, &crate::comments::comment_widget())
+}
+
+/// Splice `widget` in before `</body>`, or append it when the document has no
+/// body tag (a fragment still renders, and the widget still works).
+///
+/// Shared by the comment layer and the version bar so a document served with
+/// both still closes its own markup — a widget appended after `</html>` is a
+/// page the browser reparses and a test cannot make assertions about.
+fn splice_before_body(html: String, widget: &str) -> String {
     // Case-insensitive over the ORIGINAL bytes, never over a lowercased copy:
     // a lowercase mapping can change byte lengths, and an index from the copy
     // would then slice the original mid-codepoint.
@@ -157,6 +169,136 @@ pub struct ServeArtifactOptions {
     /// The request's `Accept` header — a browser gets the HTML 404, a client
     /// the JSON one.
     pub accept: Option<String>,
+    /// `?v=<ts>` — serve the bytes this artifact had at that moment instead of
+    /// the ones it has now. Absent = current, which is every link that existed
+    /// before history did.
+    pub version: Option<i64>,
+}
+
+/// The version bar: the controls that make an artifact's history navigable.
+///
+/// Injected at serve time, next to the comment layer and for the same reasons
+/// — the bytes on disk stay what the agent wrote, and the controls exist only
+/// where they mean something. It renders NOTHING until it knows there is more
+/// than one version, so a one-version artifact (most of them) is untouched
+/// visually and the page the user opens is the page.
+///
+/// Stepping is a plain navigation to `?v=<ts>`, not a fetch that swaps the
+/// document: the page being versioned is arbitrary agent-authored HTML with
+/// its own scripts, and re-running it in a document that already ran another
+/// version is a class of bug with no upside. Reload is the honest primitive.
+pub fn version_bar_widget() -> String {
+    format!(
+        r#"<style>
+#bough-versions {{ position: fixed; z-index: 2147483646; top: 12px; left: 50%;
+  transform: translateX(-50%); display: none; align-items: center; gap: 10px;
+  padding: 6px 8px 6px 12px; border-radius: 999px; border: 1px solid rgba(0,0,0,.12);
+  background: rgba(252,252,251,.94); backdrop-filter: blur(6px);
+  box-shadow: 0 2px 12px rgba(0,0,0,.14); color: #0b0b0b;
+  font: 12px/1.4 ui-monospace, Menlo, monospace; }}
+#bough-versions button {{ border: 0; border-radius: 999px; padding: 3px 9px; cursor: pointer;
+  font: inherit; background: rgba(0,0,0,.06); color: inherit; }}
+#bough-versions button:disabled {{ opacity: .35; cursor: default; }}
+#bough-versions .bough-restore {{ background: #0b0b0b; color: #fcfcfb; }}
+#bough-versions .bough-when {{ color: #52514e; }}
+@media (prefers-color-scheme: dark) {{
+  #bough-versions {{ background: rgba(26,26,25,.94); color: #f4f3ef; border-color: rgba(255,255,255,.14); }}
+  #bough-versions button {{ background: rgba(255,255,255,.12); }}
+  #bough-versions .bough-restore {{ background: #f4f3ef; color: #1a1a19; }}
+  #bough-versions .bough-when {{ color: #c3c2b7; }}
+}}
+</style>
+<div id="bough-versions" role="group" aria-label="artifact versions"></div>
+<script>
+(function () {{
+  var parts = location.pathname.split("/").filter(Boolean);
+  if (parts[0] !== "artifacts" || parts.length < 3) return;
+  var session = decodeURIComponent(parts[1]);
+  var name = parts.slice(2).map(decodeURIComponent).join("/");
+  var bar = document.getElementById("bough-versions");
+  var shown = new URLSearchParams(location.search).get("v");
+
+  function ago(ts) {{
+    var s = Math.max(0, (Date.now() - ts) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.round(s / 60) + "m ago";
+    if (s < 86400) return Math.round(s / 3600) + "h ago";
+    return Math.round(s / 86400) + "d ago";
+  }}
+  function size(n) {{
+    return n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(1) + " KB"
+      : (n / 1048576).toFixed(1) + " MB";
+  }}
+  function go(v) {{
+    location.href = location.pathname + (v.current ? "" : "?v=" + v.ts);
+  }}
+
+  fetch("/sessions/" + encodeURIComponent(session) + "/artifacts/versions?name="
+        + encodeURIComponent(name))
+    .then(function (r) {{ return r.ok ? r.json() : null; }})
+    .then(function (data) {{
+      var versions = (data && data.versions) || [];
+      // One version is not a history, and a bar that says "1 of 1" is chrome
+      // on a page that never changed.
+      if (versions.length < 2) return;
+      var at = shown
+        ? versions.findIndex(function (v) {{ return String(v.ts) === shown; }})
+        : versions.length - 1;
+      if (at < 0) at = versions.length - 1;
+      var v = versions[at];
+      bar.style.display = "flex";
+      bar.innerHTML = "";
+
+      var back = document.createElement("button");
+      back.textContent = "◀";
+      back.title = "older version";
+      back.disabled = at === 0;
+      back.onclick = function () {{ go(versions[at - 1]); }};
+
+      var label = document.createElement("span");
+      label.textContent = "v" + v.version + " of " + versions.length;
+
+      var when = document.createElement("span");
+      when.className = "bough-when";
+      when.textContent = ago(v.ts) + " · " + size(v.bytes);
+
+      var fwd = document.createElement("button");
+      fwd.textContent = "▶";
+      fwd.title = "newer version";
+      fwd.disabled = at === versions.length - 1;
+      fwd.onclick = function () {{ go(versions[at + 1]); }};
+
+      bar.appendChild(back);
+      bar.appendChild(label);
+      bar.appendChild(when);
+      bar.appendChild(fwd);
+
+      // Restoring the version already current would be a no-op that adds a
+      // history entry, so the button is simply not there for it.
+      if (!v.current) {{
+        var restore = document.createElement("button");
+        restore.className = "bough-restore";
+        restore.textContent = "restore";
+        restore.title = "publish these bytes again as the newest version";
+        restore.onclick = function () {{
+          restore.disabled = true;
+          fetch("/sessions/" + encodeURIComponent(session) + "/artifacts/restore", {{
+            method: "POST",
+            headers: {{ "content-type": "application/json" }},
+            body: JSON.stringify({{ name: name, ts: v.ts }})
+          }}).then(function (r) {{
+            if (r.ok) location.href = location.pathname;
+            else restore.disabled = false;
+          }}, function () {{ restore.disabled = false; }});
+        }};
+        bar.appendChild(restore);
+      }}
+    }})
+    .catch(function () {{}});
+}})();
+</script>
+"#
+    )
 }
 
 fn respond(status: u16, content_type: &str, body: impl Into<Body>) -> Response {
@@ -199,11 +341,20 @@ pub fn serve_artifact(session_id: &str, name: &str, opts: &ServeArtifactOptions)
                 content_type = sniffed;
             }
         }
+        // An unknown `?v=` is a 404 rather than a silent fall-through to the
+        // current bytes: a link to a version that no longer exists must not
+        // quietly show a different document under the same URL.
+        let bytes = match opts.version {
+            Some(ts) => read_version(session_id, name, ts, &opts.store)?,
+            None => std::fs::read(&full).ok()?,
+        };
         if content_type.starts_with("text/html") {
-            let html = std::fs::read_to_string(&full).ok()?;
-            return Some(respond_no_cache(content_type, inject_comment_layer(html)));
+            let html = String::from_utf8(bytes).ok()?;
+            return Some(respond_no_cache(
+                content_type,
+                splice_before_body(inject_comment_layer(html), &version_bar_widget()),
+            ));
         }
-        let bytes = std::fs::read(&full).ok()?;
         Some(respond_no_cache(content_type, bytes))
     })();
 
@@ -283,7 +434,7 @@ pub fn list_artifacts() -> Handler {
     })
 }
 
-/// `GET /artifacts/:id/:path*` — the hosted file itself.
+/// `GET /artifacts/:id/:path*` — the hosted file itself, optionally `?v=<ts>`.
 ///
 /// Same origin as the API on purpose: a link the agent prints is a link the
 /// user's browser opens with no extra machinery.
@@ -294,6 +445,7 @@ pub fn get_artifact() -> Handler {
             .get("accept")
             .and_then(|v| v.to_str().ok())
             .map(String::from);
+        let version = raw_query_value(&req, "v").and_then(|v| v.parse::<i64>().ok());
         let id = decode_segments(params.get("id").map(String::as_str).unwrap_or(""));
         let path = decode_segments(params.get("path").map(String::as_str).unwrap_or(""));
         Ok(serve_artifact(
@@ -302,9 +454,57 @@ pub fn get_artifact() -> Handler {
             &ServeArtifactOptions {
                 store: ArtifactStoreOptions::default(),
                 accept,
+                version,
             },
         ))
     })
+}
+
+/// One raw `?key=value`, undecoded — callers decode with the rule that fits
+/// what they asked for (a name is path-shaped, a timestamp is an integer).
+fn raw_query_value(req: &axum::extract::Request, key: &str) -> Option<String> {
+    req.uri().query()?.split('&').find_map(|kv| {
+        kv.strip_prefix(key)
+            .and_then(|rest| rest.strip_prefix('='))
+            .map(String::from)
+    })
+}
+
+/// `GET /sessions/:id/artifacts/versions?name=<name>` — one artifact's
+/// history, oldest first, the live file included as the newest entry.
+///
+/// Filesystem-backed like the listing, and for the same reason: the history
+/// has to survive a database reset, because the bytes do.
+pub fn list_artifact_versions() -> Handler {
+    handler(|req, _ctx, params| async move {
+        let id = decode_segments(params.get("id").map(String::as_str).unwrap_or(""));
+        let name = decode_segments(&raw_query_value(&req, "name").unwrap_or_default());
+        let versions = store_list_versions(&id, &name, &ArtifactStoreOptions::default());
+        Ok(json(&serde_json::json!({ "versions": versions }), 200))
+    })
+}
+
+/// `POST /sessions/:id/artifacts/restore` `{name, ts}` — bring a version back.
+///
+/// A restore is a PUBLISH, so this route creates history rather than rewinding
+/// it: the response is the artifact as it now stands, and the version that was
+/// current a moment ago is still there to restore in turn. No session check —
+/// artifacts outlive their row, and so does the ability to fix one.
+pub fn restore_artifact_version() -> Handler {
+    handler(|req, _ctx, params| async move {
+        let id = decode_segments(params.get("id").map(String::as_str).unwrap_or(""));
+        let body: RestoreBody = parse_body(req, None).await?;
+        let artifact =
+            store_restore_version(&id, &body.name, body.ts, &ArtifactStoreOptions::default())?;
+        Ok(json(&artifact, 200))
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RestoreBody {
+    name: String,
+    ts: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -340,10 +540,12 @@ mod tests {
     fn store(root: &std::path::Path) -> ServeArtifactOptions {
         ServeArtifactOptions {
             store: ArtifactStoreOptions {
-                root: Some(root.to_path_buf()),
+                root: Some(root.join("live")),
+                versions_root: Some(root.join("versions")),
                 base_url: Some("http://127.0.0.1:4321".into()),
             },
             accept: None,
+            version: None,
         }
     }
 
@@ -442,7 +644,119 @@ mod tests {
         assert_eq!(body_text(res).await, "forbidden");
     }
 
+    // ---- history: versions, ?v=, restore ------------------------------------
+
+    /// The whole round trip a user makes: republish, step back with `?v=`,
+    /// restore, and find the version they left still there.
+    #[tokio::test]
+    async fn versions_list_serve_and_restore_through_the_routes() {
+        let _home = HomeGuard::new();
+        let opts = ArtifactStoreOptions::default();
+        publish_artifact("s1", "report.html", "<body>v1</body>", &opts).unwrap();
+        // Distinct mtimes: the ids are timestamps, and a test publishes faster
+        // than a millisecond.
+        step_mtime("s1", "report.html", 1_000, &opts);
+        publish_artifact("s1", "report.html", "<body>v2</body>", &opts).unwrap();
+        step_mtime("s1", "report.html", 2_000, &opts);
+
+        let fx = testutil::fixture();
+        let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
+
+        let res = call
+            .call(testutil::get(
+                "/sessions/s1/artifacts/versions?name=report.html",
+            ))
+            .await;
+        assert_eq!(res.status(), 200);
+        let body = testutil::body_json(res).await;
+        let versions = body["versions"].as_array().unwrap().clone();
+        assert_eq!(versions.len(), 2, "{versions:?}");
+        assert_eq!(versions[0]["current"], serde_json::json!(false));
+        assert_eq!(versions[1]["current"], serde_json::json!(true));
+        let old_ts = versions[0]["ts"].as_i64().unwrap();
+
+        // `?v=` serves the OLD bytes at the SAME url, and still carries both
+        // injected layers.
+        let served = call
+            .call(testutil::get(&format!(
+                "/artifacts/s1/report.html?v={old_ts}"
+            )))
+            .await;
+        assert_eq!(served.status(), 200);
+        let html = body_text(served).await;
+        assert!(html.contains("v1"), "{html}");
+        assert!(html.contains("bough-versions"), "the bar rides the page");
+        assert!(html.contains("bgh-cmt-toggle"), "so does the comment layer");
+
+        // No `?v=` is still the current one — old links do not change meaning.
+        let current = body_text(call.call(testutil::get("/artifacts/s1/report.html")).await).await;
+        assert!(current.contains("v2"), "{current}");
+
+        // A version that does not exist is a 404, never a quiet fall-through
+        // to different bytes under the same URL.
+        let missing = call
+            .call(testutil::get("/artifacts/s1/report.html?v=424242"))
+            .await;
+        assert_eq!(missing.status(), 404);
+
+        // Restore appends, so v2 survives it and can be restored back.
+        let restored = call
+            .call(testutil::req(
+                "POST",
+                "/sessions/s1/artifacts/restore",
+                Some(serde_json::json!({ "name": "report.html", "ts": old_ts })),
+            ))
+            .await;
+        assert_eq!(restored.status(), 200);
+        let now = body_text(call.call(testutil::get("/artifacts/s1/report.html")).await).await;
+        assert!(now.contains("v1"), "{now}");
+
+        let after = testutil::body_json(
+            call.call(testutil::get(
+                "/sessions/s1/artifacts/versions?name=report.html",
+            ))
+            .await,
+        )
+        .await;
+        assert_eq!(after["versions"].as_array().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn restoring_a_version_that_does_not_exist_is_a_404() {
+        let _home = HomeGuard::new();
+        publish_artifact(
+            "s1",
+            "p.html",
+            "<body>only</body>",
+            &ArtifactStoreOptions::default(),
+        )
+        .unwrap();
+        let fx = testutil::fixture();
+        let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
+        let res = call
+            .call(testutil::req(
+                "POST",
+                "/sessions/s1/artifacts/restore",
+                Some(serde_json::json!({ "name": "p.html", "ts": 1 })),
+            ))
+            .await;
+        assert_eq!(res.status(), 404);
+    }
+
     // ---- AC 2: listing survives a database reset ----------------------------
+
+    /// Push a published file's mtime to a known millisecond — the version ids
+    /// ARE mtimes, and two publishes in one test share one.
+    fn step_mtime(session: &str, name: &str, ts: i64, opts: &ArtifactStoreOptions) {
+        let path = resolve_artifact_path(session, name, opts).unwrap();
+        let when = std::time::UNIX_EPOCH + std::time::Duration::from_millis(ts as u64);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(when)
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn ac_list_artifacts_survives_a_database_reset_no_row_required() {
@@ -604,7 +918,7 @@ mod tests {
         // The bytes on DISK are untouched: what the agent wrote is what a user
         // who saves or forwards the file gets.
         assert_eq!(
-            std::fs::read_to_string(tmp.0.join("s9").join("page.html")).unwrap(),
+            std::fs::read_to_string(tmp.0.join("live").join("s9").join("page.html")).unwrap(),
             "<!doctype html><html><body><h1>hi</h1></body></html>"
         );
     }

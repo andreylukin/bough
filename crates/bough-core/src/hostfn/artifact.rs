@@ -22,7 +22,13 @@
 //! **The filesystem is the source of truth.** There is no artifacts table and
 //! no row to keep in sync: [`list_artifacts`] walks the directory, so a
 //! listing survives a database reset, a fresh `bough.db`, or a server that
-//! has never seen the session.
+//! has never seen the session. The HISTORY works the same way — one file per
+//! superseded version under `~/.bough/artifact-versions/`, named for when it
+//! was published, so [`list_versions`] is a directory read too.
+//!
+//! **Nothing is ever destroyed.** A republish keeps what it overwrote, and a
+//! restore is itself a publish ([`restore_version`]), so there is no cursor to
+//! strand and no version that going back makes unreachable.
 //!
 //! WHY THE STORE LIVES HERE and not in the server crate: `hostfn` may not
 //! reference `bough-server`, and the confinement rules must exist exactly
@@ -37,7 +43,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{BoughError, ErrorKind};
-use crate::paths::{artifacts_dir, confine};
+use crate::paths::{artifact_versions_dir, artifacts_dir, confine};
 use crate::types::{HostFn, TurnCtx};
 
 // ---------------------------------------------------------------------------
@@ -66,6 +72,8 @@ pub struct Artifact {
 /// `BOUGH_HOME` mutation and nothing written under the real `~/.bough`.
 #[derive(Clone, Default)]
 pub struct ArtifactStoreOptions {
+    /// Where superseded versions go. Absent = `~/.bough/artifact-versions`.
+    pub versions_root: Option<PathBuf>,
     /// The artifacts root. Absent = `~/.bough/artifacts` (`paths`).
     pub root: Option<PathBuf>,
     /// Origin for `href`. Absent = the loopback base this server is reachable at.
@@ -216,6 +224,9 @@ fn mtime_ms(meta: &std::fs::Metadata) -> Option<i64> {
 /// Creates parent directories and overwrites an existing artifact of the same
 /// name — republishing `index.html` is how a program iterates on a page, and a
 /// link the user already has open has to keep working.
+///
+/// What it overwrote is KEPT: the previous bytes are copied into the version
+/// store first, so every republish is recoverable. See [`keep_version`].
 pub fn publish_artifact(
     session_id: &str,
     name: &str,
@@ -228,9 +239,22 @@ pub fn publish_artifact(
     if let Some(parent) = full.parent() {
         std::fs::create_dir_all(parent).map_err(io)?;
     }
+    let kept = keep_version(session_id, &rel, &full, content, opts);
     std::fs::write(&full, content).map_err(io)?;
     let meta = std::fs::metadata(&full).map_err(io)?;
     let ts = mtime_ms(&meta).unwrap_or_else(|| crate::types::system_clock()());
+    // Two publishes inside one millisecond would give the snapshot and the
+    // live file the same id, and an id that names two versions is worse than
+    // a timestamp that is one millisecond early.
+    if let Some(path) = kept {
+        if path.file_name().and_then(|n| n.to_str()) == Some(&ts.to_string()) {
+            let mut older = ts - 1;
+            while path.with_file_name(older.to_string()).exists() {
+                older -= 1;
+            }
+            let _ = std::fs::rename(&path, path.with_file_name(older.to_string()));
+        }
+    }
     Ok(to_artifact(session_id, &rel, meta.len(), ts, opts))
 }
 
@@ -289,6 +313,216 @@ fn walk(
             opts,
         ));
     }
+}
+
+// ---------------------------------------------------------------------------
+// History
+// ---------------------------------------------------------------------------
+
+/// One point in an artifact's history.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactVersion {
+    /// 1-based, oldest first — what the version bar counts in.
+    pub version: u32,
+    /// When these bytes were published (epoch ms). The stable id: every verb
+    /// that names a version names this.
+    pub ts: i64,
+    pub bytes: u64,
+    /// Is this what `GET /artifacts/<id>/<name>` serves right now?
+    pub current: bool,
+    /// Same-origin path that serves THESE bytes: `?v=<ts>` on the artifact's
+    /// own URL, so a version link is the artifact link plus one parameter.
+    pub url: String,
+}
+
+/// Where one artifact's superseded versions live.
+///
+/// The artifact's own name becomes a DIRECTORY here, so `assets/app.js` keeps
+/// its shape (`<session>/assets/app.js/<ts>`) and two artifacts can never
+/// share a history. Confined exactly like the live path, against the versions
+/// root instead of the artifacts root.
+fn version_dir(
+    session_id: &str,
+    name: &str,
+    opts: &ArtifactStoreOptions,
+) -> Result<PathBuf, BoughError> {
+    let raw_root = opts
+        .versions_root
+        .clone()
+        .unwrap_or_else(artifact_versions_dir);
+    let root = confine(&raw_root, Path::new(""))?;
+    let session = confine(&root, Path::new(session_id))?;
+    if session == root || session.parent() != Some(root.as_path()) {
+        return Err(path_error(format!(
+            "artifact session id must be one path segment: {}.",
+            json_str(session_id),
+        )));
+    }
+    let rel = name.trim_start_matches('/');
+    if rel.is_empty() {
+        return Err(path_error("artifact name is empty."));
+    }
+    let dir = confine(&session, Path::new(rel))?;
+    if dir == session {
+        return Err(path_error(format!(
+            "artifact name {} names the session's directory, not a file.",
+            json_str(name),
+        )));
+    }
+    Ok(dir)
+}
+
+/// Copy what is about to be overwritten into the version store.
+///
+/// BEST EFFORT, DELIBERATELY. A publish that succeeds must not be reported as
+/// a failure because the history could not be written — the artifact is the
+/// product and the history is the convenience. A lost snapshot costs one
+/// undo, which is the same thing that happens on a machine that has never had
+/// the version directory writable.
+///
+/// AN IDENTICAL REPUBLISH IS NOT A VERSION. Programs re-publish unchanged
+/// pages constantly (a turn that regenerates a report from the same data), and
+/// a history of forty identical entries is a history nobody can navigate.
+fn keep_version(
+    session_id: &str,
+    name: &str,
+    live: &Path,
+    incoming: &str,
+    opts: &ArtifactStoreOptions,
+) -> Option<PathBuf> {
+    let previous = std::fs::read(live).ok()?; // absent = first publish
+    if previous == incoming.as_bytes() {
+        return None;
+    }
+    let meta = std::fs::metadata(live).ok()?;
+    let ts = mtime_ms(&meta).unwrap_or_else(|| crate::types::system_clock()());
+    let dir = version_dir(session_id, name, opts).ok()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(ts.to_string());
+    std::fs::write(&path, &previous).ok()?;
+    Some(path)
+}
+
+/// An artifact's history, OLDEST FIRST, with the live file last.
+///
+/// The live file is part of the history rather than something beside it —
+/// "v5 of 5" has to be a place you can be, or stepping back and forth has an
+/// off-by-one at one end. Empty when the artifact does not exist.
+pub fn list_versions(
+    session_id: &str,
+    name: &str,
+    opts: &ArtifactStoreOptions,
+) -> Vec<ArtifactVersion> {
+    let Ok(live) = resolve_artifact_path(session_id, name, opts) else {
+        return Vec::new();
+    };
+    let Ok(live_meta) = std::fs::metadata(&live) else {
+        return Vec::new();
+    };
+    let rel = name.trim_start_matches('/');
+    let mut out: Vec<(i64, u64)> = Vec::new();
+    if let Ok(dir) = version_dir(session_id, rel, opts) {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let Some(ts) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|n| n.parse::<i64>().ok())
+                else {
+                    continue; // not one of ours
+                };
+                let Ok(meta) = entry.metadata() else {
+                    continue;
+                };
+                if meta.is_file() {
+                    out.push((ts, meta.len()));
+                }
+            }
+        }
+    }
+    let live_ts = mtime_ms(&live_meta).unwrap_or(0);
+    // `publish_artifact` moves a snapshot off a colliding id, so a snapshot
+    // sharing the live timestamp here means the live file was written by
+    // something else entirely (an edited store, a restored backup). Dropping
+    // it keeps every id naming exactly one version.
+    out.retain(|(ts, _)| *ts != live_ts);
+    out.push((live_ts, live_meta.len()));
+    out.sort_by_key(|(ts, _)| *ts);
+    let last = out.len();
+    out.into_iter()
+        .enumerate()
+        .map(|(i, (ts, bytes))| ArtifactVersion {
+            version: i as u32 + 1,
+            ts,
+            bytes,
+            current: i + 1 == last,
+            url: format!(
+                "{}?v={ts}",
+                to_artifact(session_id, rel, bytes, ts, opts).url
+            ),
+        })
+        .collect()
+}
+
+/// The bytes of one version, live file included. `None` when no version of
+/// this artifact carries that timestamp.
+pub fn read_version(
+    session_id: &str,
+    name: &str,
+    ts: i64,
+    opts: &ArtifactStoreOptions,
+) -> Option<Vec<u8>> {
+    let rel = name.trim_start_matches('/');
+    let live = resolve_artifact_path(session_id, rel, opts).ok()?;
+    if std::fs::metadata(&live).ok().and_then(|m| mtime_ms(&m)) == Some(ts) {
+        return std::fs::read(&live).ok();
+    }
+    let dir = version_dir(session_id, rel, opts).ok()?;
+    // `ts.to_string()` is the whole filename, so a caller-supplied value can
+    // name a file in this directory and nowhere else — but confine anyway,
+    // because "an integer cannot traverse" is a property of the parse, and
+    // the parse is not in this function.
+    let path = confine(&dir, Path::new(&ts.to_string())).ok()?;
+    std::fs::read(path).ok()
+}
+
+/// Bring an old version back, by PUBLISHING it again.
+///
+/// Restoring is an ordinary publish, which is what makes going back and
+/// forward symmetric: v2 restored becomes v6, v5 is still there to restore
+/// next, and a restore someone regrets is undone the same way it was made.
+/// Nothing in this store is ever destroyed, so there is no rewound state for a
+/// later publish to invalidate — the lost-redo problem does not arise because
+/// there is no cursor to strand.
+pub fn restore_version(
+    session_id: &str,
+    name: &str,
+    ts: i64,
+    opts: &ArtifactStoreOptions,
+) -> Result<Artifact, BoughError> {
+    let Some(bytes) = read_version(session_id, name, ts, opts) else {
+        return Err(BoughError::http(
+            404,
+            ErrorKind::Artifact,
+            format!(
+                "no version of {} published at {ts}. `GET /sessions/<id>/artifacts/versions` \
+                 lists the timestamps that exist.",
+                json_str(name),
+            ),
+        ));
+    };
+    let content = String::from_utf8(bytes).map_err(|_| {
+        BoughError::http(
+            400,
+            ErrorKind::Artifact,
+            format!(
+                "version {ts} of {} is not text and cannot be restored through this verb.",
+                json_str(name),
+            ),
+        )
+    })?;
+    publish_artifact(session_id, name, &content, opts)
 }
 
 // ---------------------------------------------------------------------------
@@ -394,7 +628,11 @@ mod tests {
 
     fn store(root: &Path) -> ArtifactStoreOptions {
         ArtifactStoreOptions {
-            root: Some(root.to_path_buf()),
+            root: Some(root.join("live")),
+            // A SIBLING of the artifacts root, never inside it — the same
+            // relationship the real directories have, so a test would catch
+            // a history that started showing up in listings.
+            versions_root: Some(root.join("versions")),
             base_url: Some("http://127.0.0.1:4321".into()),
         }
     }
@@ -435,8 +673,10 @@ mod tests {
         }
     }
 
+    /// Read a published file. `root` is the TmpDir; the live store is the
+    /// `live/` sibling of the version store under it (see [`store`]).
     fn read(root: &Path, rel: &str) -> String {
-        std::fs::read_to_string(root.join(rel)).unwrap()
+        std::fs::read_to_string(root.join("live").join(rel)).unwrap()
     }
 
     fn names(session_id: &str, opts: &ArtifactStoreOptions) -> Vec<String> {
@@ -444,6 +684,163 @@ mod tests {
             .into_iter()
             .map(|a| a.name)
             .collect()
+    }
+
+    // ---- history -------------------------------------------------------------
+
+    /// Publish, then step the file's mtime back so the next publish lands in a
+    /// distinguishable millisecond. Real publishes are separated by LLM round
+    /// trips; a test's are not, and the ids are mtimes.
+    fn publish_at(
+        session_id: &str,
+        name: &str,
+        content: &str,
+        ts: i64,
+        opts: &ArtifactStoreOptions,
+    ) -> Artifact {
+        publish_artifact(session_id, name, content, opts).unwrap();
+        let path = resolve_artifact_path(session_id, name, opts).unwrap();
+        let when = std::time::UNIX_EPOCH + std::time::Duration::from_millis(ts as u64);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(when)
+            .unwrap();
+        let meta = std::fs::metadata(&path).unwrap();
+        to_artifact(session_id, name, meta.len(), ts, opts)
+    }
+
+    #[test]
+    fn every_republish_keeps_what_it_overwrote_oldest_first_with_the_live_file_last() {
+        let tmp = TmpDir::new();
+        let opts = store(tmp.path());
+        publish_at("s1", "report.html", "v1", 1_000, &opts);
+        publish_at("s1", "report.html", "v2", 2_000, &opts);
+        publish_at("s1", "report.html", "v3", 3_000, &opts);
+
+        let versions = list_versions("s1", "report.html", &opts);
+        assert_eq!(versions.len(), 3, "{versions:?}");
+        assert_eq!(
+            versions.iter().map(|v| v.version).collect::<Vec<_>>(),
+            [1, 2, 3],
+            "oldest first, numbered from one"
+        );
+        assert_eq!(
+            versions.iter().map(|v| v.current).collect::<Vec<_>>(),
+            [false, false, true],
+            "the live file is the newest version, not something beside them"
+        );
+        assert_eq!(
+            (0..3)
+                .map(|i| read_version("s1", "report.html", versions[i].ts, &opts).unwrap())
+                .collect::<Vec<_>>(),
+            [b"v1".to_vec(), b"v2".to_vec(), b"v3".to_vec()],
+        );
+        // The version URL is the artifact's own URL plus one parameter, so a
+        // link to a version is a link.
+        assert_eq!(
+            versions[0].url,
+            format!("/artifacts/s1/report.html?v={}", versions[0].ts)
+        );
+    }
+
+    #[test]
+    fn an_identical_republish_is_not_a_new_version() {
+        let tmp = TmpDir::new();
+        let opts = store(tmp.path());
+        publish_at("s1", "page.html", "same", 1_000, &opts);
+        publish_at("s1", "page.html", "same", 2_000, &opts);
+        publish_at("s1", "page.html", "same", 3_000, &opts);
+        assert_eq!(
+            list_versions("s1", "page.html", &opts).len(),
+            1,
+            "a history of identical entries is one nobody can navigate"
+        );
+    }
+
+    #[test]
+    fn restoring_appends_so_back_and_forward_both_stay_possible() {
+        let tmp = TmpDir::new();
+        let opts = store(tmp.path());
+        publish_at("s1", "p.html", "v1", 1_000, &opts);
+        publish_at("s1", "p.html", "v2", 2_000, &opts);
+        let v3 = publish_at("s1", "p.html", "v3", 3_000, &opts);
+
+        let versions = list_versions("s1", "p.html", &opts);
+        restore_version("s1", "p.html", versions[0].ts, &opts).unwrap();
+        assert_eq!(read(tmp.path(), "s1/p.html"), "v1", "the live file rewound");
+
+        let after = list_versions("s1", "p.html", &opts);
+        assert_eq!(after.len(), 4, "restoring is a publish: {after:?}");
+        assert!(after.last().unwrap().current);
+        assert_eq!(
+            read_version("s1", "p.html", after[3].ts, &opts).unwrap(),
+            b"v1".to_vec()
+        );
+        // FORWARD: what was current before the restore is still there to
+        // restore in turn, which is the whole reason restoring appends.
+        assert_eq!(
+            read_version("s1", "p.html", v3.ts, &opts).unwrap(),
+            b"v3".to_vec()
+        );
+        restore_version("s1", "p.html", v3.ts, &opts).unwrap();
+        assert_eq!(read(tmp.path(), "s1/p.html"), "v3");
+        assert_eq!(list_versions("s1", "p.html", &opts).len(), 5);
+    }
+
+    #[test]
+    fn restoring_a_timestamp_that_names_no_version_is_a_404_that_says_where_to_look() {
+        let tmp = TmpDir::new();
+        let opts = store(tmp.path());
+        publish_at("s1", "p.html", "v1", 1_000, &opts);
+        let err = restore_version("s1", "p.html", 424_242, &opts).unwrap_err();
+        assert_eq!(err.status(), 404);
+        assert!(err.to_string().contains("versions"), "{err}");
+        assert_eq!(read(tmp.path(), "s1/p.html"), "v1", "and nothing changed");
+    }
+
+    #[test]
+    fn the_history_lives_outside_the_artifact_store_so_it_is_never_listed_or_served() {
+        let tmp = TmpDir::new();
+        let opts = store(tmp.path());
+        publish_at("s1", "p.html", "v1", 1_000, &opts);
+        publish_at("s1", "p.html", "v2", 2_000, &opts);
+        assert_eq!(
+            names("s1", &opts),
+            vec!["p.html"],
+            "the history must not appear in the listing"
+        );
+        // And it cannot be reached through the artifact path at all: the
+        // version store is not under the artifacts root.
+        let live_root = tmp.path().join("live");
+        assert!(!tmp.path().join("versions").starts_with(&live_root));
+        assert!(list_versions("s1", "p.html", &opts).len() == 2);
+    }
+
+    #[test]
+    fn one_sessions_history_cannot_be_reached_through_anothers_name() {
+        let tmp = TmpDir::new();
+        let opts = store(tmp.path());
+        publish_at("victim", "secret.html", "v1", 1_000, &opts);
+        publish_at("victim", "secret.html", "v2", 2_000, &opts);
+        let theirs = list_versions("victim", "secret.html", &opts);
+        assert_eq!(theirs.len(), 2);
+        // The traversal a URL can express, against the version verbs.
+        assert!(list_versions("attacker", "../victim/secret.html", &opts).is_empty());
+        assert!(read_version("attacker", "../victim/secret.html", theirs[0].ts, &opts).is_none());
+        assert!(restore_version("attacker", "../victim/secret.html", theirs[0].ts, &opts).is_err());
+    }
+
+    #[test]
+    fn an_artifact_with_no_history_yet_is_one_version_and_a_missing_one_is_none() {
+        let tmp = TmpDir::new();
+        let opts = store(tmp.path());
+        publish_at("s1", "only.html", "v1", 1_000, &opts);
+        let versions = list_versions("s1", "only.html", &opts);
+        assert_eq!(versions.len(), 1);
+        assert!(versions[0].current, "the only version is the current one");
+        assert!(list_versions("s1", "never-published.html", &opts).is_empty());
     }
 
     // ---- the bridged host function ------------------------------------------

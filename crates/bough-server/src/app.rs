@@ -112,6 +112,16 @@ pub fn routes() -> Vec<Route> {
             "/sessions/:id/artifacts",
             artifacts::list_artifacts(),
         ),
+        route(
+            "GET",
+            "/sessions/:id/artifacts/versions",
+            artifacts::list_artifact_versions(),
+        ),
+        route(
+            "POST",
+            "/sessions/:id/artifacts/restore",
+            artifacts::restore_artifact_version(),
+        ),
         route("GET", "/artifacts/:id/:path*", artifacts::get_artifact()),
         // jobs — a session's list covers its subagents' work too
         route("GET", "/sessions/:id/jobs", jobs::list_jobs()),
