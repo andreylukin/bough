@@ -405,12 +405,31 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
 /// document the panel and `bough mcp` render, turned into the prompt's server
 /// list. A free function rather than a closure so the wiring the starter gets is
 /// the thing a test can drive.
+///
+/// `skill_servers` are the names the turn's `/name` invocations granted. They
+/// are UNIONED with the session's own activations rather than replacing them,
+/// and passed as an explicit grant — a skill widens what a turn can reach for
+/// the length of that turn without writing an activation anybody has to revoke.
 pub(crate) fn mcp_catalog_for(
     session_id: &str,
+    skill_servers: &[String],
 ) -> Vec<bough_core::prompt::assemble::PromptMcpServer> {
+    let config = mcp_manager().config();
+    // Absent = "read this session's activations", which is the cheaper path
+    // and the one that stays right when no skill granted anything.
+    let grant = (!skill_servers.is_empty()).then(|| {
+        let mut names = bough_core::mcp::config::activations_for(Some(session_id), &config);
+        for name in skill_servers {
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        names
+    });
     prompt_mcp_servers(&mcp_status_for(&McpStatusOptions {
-        config: mcp_manager().config(),
+        config,
         session_id: Some(session_id.to_string()),
+        grant,
         ..Default::default()
     }))
 }
@@ -788,7 +807,7 @@ mod tests {
         })));
 
         assert!(
-            mcp_catalog_for("s1").is_empty(),
+            mcp_catalog_for("s1", &[]).is_empty(),
             "nothing registered, nothing claimed"
         );
         upsert_server(
@@ -798,12 +817,12 @@ mod tests {
         )
         .unwrap();
         assert!(
-            mcp_catalog_for("s1").is_empty(),
+            mcp_catalog_for("s1", &[]).is_empty(),
             "registering is not granting"
         );
 
         set_activation(Some("s1"), "echo", true, None, &config).unwrap();
-        let catalog = mcp_catalog_for("s1");
+        let catalog = mcp_catalog_for("s1", &[]);
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].name, "echo");
         // Granted and not yet connected is NAMED with the way to see its tools,
@@ -815,7 +834,7 @@ mod tests {
             .contains("not connected yet"));
         // …and another conversation is told nothing, because it was granted
         // nothing.
-        assert!(mcp_catalog_for("s2").is_empty());
+        assert!(mcp_catalog_for("s2", &[]).is_empty());
 
         set_mcp_manager(previous);
     }

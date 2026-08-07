@@ -17,9 +17,39 @@
 use serde_json::json;
 
 use bough_core::errors::BoughError;
-use bough_core::skills::{default_sources, list_skills, load_skill, Skill, SkillSource};
+use bough_core::skills::{
+    default_sources, list_skills, load_skill, sources_for, Skill, SkillSource,
+};
+use bough_core::types::AppCtx;
 
 use crate::http::{handler, json as json_res, Handler};
+
+/// The sources that apply to this request: the session's workspace when
+/// `?session=` names one, else the workspace-independent set.
+///
+/// Degrading to [`default_sources`] rather than erroring is deliberate — a
+/// listing must still answer for a session id that no longer exists, and the
+/// `sources` array it returns is what tells the user which directories were
+/// actually consulted.
+fn sources_for_request(req: &axum::extract::Request, ctx: &AppCtx) -> Vec<SkillSource> {
+    let session = req.uri().query().and_then(|q| {
+        q.split('&')
+            .find_map(|kv| kv.strip_prefix("session=").map(String::from))
+    });
+    let workspace = session.and_then(|id| {
+        ctx.db
+            .lock()
+            .ok()?
+            .get_session_runtime(&id)
+            .ok()?
+            .workspace
+            .filter(|w| !w.is_empty())
+    });
+    match workspace {
+        Some(w) => sources_for(std::path::Path::new(&w)),
+        None => default_sources(),
+    }
+}
 
 /// One row of `GET /skills` — the body is deliberately not in the listing.
 /// `mcp` and `error` are omitted when empty/absent, matching `skills.ts::row`.
@@ -51,9 +81,13 @@ fn source_row(s: &SkillSource) -> serde_json::Value {
 /// answered by the directory it was expected in, and a client that only ever
 /// sees an empty array cannot tell "nothing installed" from "looking in the
 /// wrong place".
+/// `?session=<id>` scopes the listing to that session's workspace, which is
+/// what makes a project's checked-in skills and a project-scoped plugin
+/// visible. Without it the workspace-independent sources are all that can be
+/// answered — the panel always sends it, so the bare form is the CLI's.
 pub fn list_skills_h() -> Handler {
-    handler(|_req, _ctx, _params| async move {
-        let sources = default_sources();
+    handler(|req, ctx, _params| async move {
+        let sources = sources_for_request(&req, &ctx);
         let skills: Vec<_> = list_skills(&sources).iter().map(row).collect();
         let sources: Vec<_> = sources.iter().map(source_row).collect();
         Ok(json_res(
@@ -69,9 +103,11 @@ pub fn list_skills_h() -> Handler {
 /// with no SKILL.md in it — both of which the list makes obvious once it is in
 /// front of you.
 pub fn get_skill() -> Handler {
-    handler(|_req, _ctx, params| async move {
+    handler(|req, ctx, params| async move {
         let name = params.get("name").cloned().unwrap_or_default();
-        let sources = default_sources();
+        // Same scoping as the listing: fetching a skill the listing showed
+        // must not 404 because this handler looked in fewer directories.
+        let sources = sources_for_request(&req, &ctx);
         match load_skill(&name, &sources) {
             Some(skill) => {
                 let mut out = row(&skill);

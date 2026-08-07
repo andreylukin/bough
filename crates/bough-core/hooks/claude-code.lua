@@ -1,15 +1,18 @@
--- Adopt a Claude Code setup: its CLAUDE.md files and its shell hooks.
+-- Adopt a Claude Code setup: its rules directory and its shell hooks.
 --
--- WHY THIS IS A PLUGIN AND NOT A FEATURE. bough reads AGENTS.md and never
--- CLAUDE.md — one instruction file, chosen on purpose, so a project cannot
--- have two sets of rules that disagree. That decision holds. This is the
--- opt-in: turn it on (^x) in a repo that keeps its instructions in CLAUDE.md
--- and you get them; leave it off and nothing changes.
+-- CLAUDE.md IS NO LONGER THIS FILE'S JOB. It used to be: bough read AGENTS.md
+-- and never CLAUDE.md, and this hook was the opt-in. `prompt/project.rs` now
+-- reads CLAUDE.md natively as a per-directory FALLBACK (AGENTS.md if present,
+-- else CLAUDE.md), which is strictly better — it walks the whole git-root-down
+-- cascade, it lands in the same section as every other project rule, and it
+-- cannot inject the same document twice. So this hook must NOT inject
+-- CLAUDE.md as well: with both doing it, a CC-only repo got its rules once as
+-- a project rule and again as hook context, in the same prompt.
 --
 -- It bridges TWO things:
 --
---   *.md   — CLAUDE.md at ~/.claude and in the workspace, plus
---            .claude/rules/*.md, injected as context at turn start.
+--   *.md   — .claude/rules/*.md only, which the native reader does not walk
+--            (it is a directory of rule fragments, not one instruction file).
 --   hooks  — the `hooks` block of .claude/settings.json (and the local and
 --            user files), run as Claude Code runs them: JSON on stdin, exit 2
 --            blocks with stderr as the reason, exit 0 with JSON on stdout
@@ -50,11 +53,53 @@ local function settings_files(workspace)
   return files
 end
 
--- Every `{matcher, hooks}` group Claude Code would consider for `event`,
--- across all three settings files. User first, project last — the order
--- Claude Code merges in, so the closest file has the last word.
+-- An INSTALLED plugin's own hooks, which live in neither settings.json nor
+-- anywhere under the project — the same reason `bough sync-mcp` reads this
+-- registry separately for MCP servers. Without this, a user whose guardrails
+-- arrived as a plugin (the normal way to get them now) has hooks that are
+-- configured, enabled in Claude Code, and silently absent here.
+--
+-- INSTALLED, not merely indexed: the marketplace cache holds an entry for
+-- every plugin ever browsed, and running those would be running hooks nobody
+-- chose. `${CLAUDE_PLUGIN_ROOT}` is expanded to the install directory, the way
+-- Claude Code expands it when it spawns the command.
+local function plugin_files()
+  local home = bough.home()
+  if home == "" then return {} end
+  local registry = read_json(home .. "/.claude/plugins/installed_plugins.json")
+  local plugins = registry and registry.plugins
+  if type(plugins) ~= "table" then return {} end
+
+  local out = {}
+  for _, installs in pairs(plugins) do
+    -- One install or a list of them; both shapes are in the wild.
+    local list = installs
+    if type(installs) == "table" and installs.installPath ~= nil then list = { installs } end
+    for _, install in ipairs(list or {}) do
+      local root = type(install) == "table" and install.installPath
+      if type(root) == "string" and root ~= "" then
+        table.insert(out, { path = root .. "/hooks/hooks.json", root = root })
+        table.insert(out, { path = root .. "/.claude-plugin/plugin.json", root = root })
+      end
+    end
+  end
+  return out
+end
+
+-- Every `{matcher, hooks}` group Claude Code would consider for `event`.
+-- Plugins first, then user, then project — the order Claude Code merges in,
+-- so the closest file has the last word.
 local function groups_for(workspace, event)
   local out = {}
+  for _, entry in ipairs(plugin_files()) do
+    local settings = read_json(entry.path)
+    local hooks = settings and settings.hooks and settings.hooks[event]
+    for _, group in ipairs(hooks or {}) do
+      -- Carried on the group so `run_group` can substitute it per command.
+      group.plugin_root = entry.root
+      table.insert(out, group)
+    end
+  end
   for _, path in ipairs(settings_files(workspace)) do
     local settings = read_json(path)
     local hooks = settings and settings.hooks and settings.hooks[event]
@@ -77,9 +122,15 @@ end
 local function run_group(group, payload, folded)
   for _, entry in ipairs(group.hooks or {}) do
     if entry.type == "command" and entry.command ~= nil then
-      local result, err = bough.exec(entry.command, { stdin = bough.json.encode(payload) })
+      -- A plugin's command is written against its own install directory and is
+      -- broken without this substitution.
+      local command = entry.command
+      if group.plugin_root ~= nil then
+        command = string.gsub(command, "%${CLAUDE_PLUGIN_ROOT}", group.plugin_root)
+      end
+      local result, err = bough.exec(command, { stdin = bough.json.encode(payload) })
       if err ~= nil then
-        bough.log.warn("claude-code: " .. entry.command .. ": " .. err)
+        bough.log.warn("claude-code: " .. command .. ": " .. err)
       elseif result.code == 2 then
         -- The documented block: exit 2, reason on stderr.
         folded.decision = "deny"
@@ -126,10 +177,10 @@ end
 bough.api.create_autocmd("TurnStart", {
   callback = function(ev)
     local parts = {}
-    local home = bough.home()
-    if home ~= "" then add_file(parts, home .. "/.claude/CLAUDE.md", "CLAUDE.md (user)") end
+    -- No CLAUDE.md here, at either tier: `prompt/project.rs` reads both the
+    -- user's and the project's, and injecting them again would say the same
+    -- rules twice in one prompt.
     if ev.workspace ~= nil and ev.workspace ~= "" then
-      add_file(parts, ev.workspace .. "/CLAUDE.md", "CLAUDE.md")
       local names = bough.fs.list(ev.workspace .. "/.claude/rules")
       for _, name in ipairs(names or {}) do
         if string.sub(name, -3) == ".md" then

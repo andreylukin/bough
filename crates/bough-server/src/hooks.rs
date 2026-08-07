@@ -146,16 +146,29 @@ mod tests {
             "a file that cannot be parsed is listed with why: {:?}",
             local[1]
         );
-        // The bundled ones are listed too, and every one of them is OFF: an
-        // upgrade must not start running code nobody turned on.
+        // The bundled ones are listed too. Every one that has behaviour of its
+        // own is OFF — an upgrade must not start running code nobody turned on
+        // — with exactly one exception: the two harness adapters, which only
+        // ever act on a `.claude`/`.codex` config the user already wrote and
+        // are inert on a machine with none (`hooks::sources::DEFAULT_ON`).
         let bundled: Vec<&serde_json::Value> =
             hooks.iter().filter(|h| h["source"] == "bundled").collect();
         assert!(!bundled.is_empty(), "bough ships hooks: {hooks:?}");
+        for hook in &bundled {
+            let id = hook["id"].as_str().unwrap_or_default();
+            let expected = bough_core::hooks::sources::DEFAULT_ON.contains(&id);
+            assert_eq!(
+                hook["enabled"],
+                serde_json::json!(expected),
+                "{id} should arrive {}: {hook:?}",
+                if expected { "on" } else { "off" }
+            );
+        }
         assert!(
             bundled
                 .iter()
-                .all(|h| h["enabled"] == serde_json::json!(false)),
-            "bundled hooks arrive off: {bundled:?}"
+                .any(|h| h["enabled"] == serde_json::json!(false)),
+            "the default-on list must stay an exception, not the rule: {bundled:?}"
         );
         assert!(body["dir"].as_str().unwrap().ends_with("hooks"));
     }

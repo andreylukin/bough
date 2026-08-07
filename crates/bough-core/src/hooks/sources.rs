@@ -55,6 +55,24 @@ impl SourceKind {
     }
 }
 
+/// Bundled hooks that are ON without being asked for, by id.
+///
+/// THE EXCEPTION TO "BUNDLED IS OFF", AND THE ARGUMENT FOR IT. The rule above
+/// exists so an upgrade never starts running code you did not ask for. These
+/// two do not run code of their own: they ADAPT a configuration you already
+/// have, and they are inert on a machine that has none — no `.claude` or
+/// `.codex` directory means every read returns nil and every dispatch folds to
+/// nothing. The failure they prevent is the one that actually happens: a user
+/// opens a repo whose guardrails live in `.claude/settings.json`, bough
+/// ignores them, and nothing anywhere says so.
+///
+/// What they can do once a config IS present is exactly what that config says
+/// — including running its commands. That is the same trust the user already
+/// extended to the other harness by writing the file, and it is revocable in
+/// one keystroke (`^x`), which the state file records explicitly so this list
+/// changing its mind later cannot re-enable something you turned off.
+pub const DEFAULT_ON: [&str; 2] = ["bundled/claude-code.lua", "bundled/codex.lua"];
+
 /// One place hooks are discovered from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

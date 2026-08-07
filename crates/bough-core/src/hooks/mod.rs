@@ -455,6 +455,11 @@ pub fn is_on(state: &HookState, id: &str, kind: SourceKind) -> bool {
     if state.on.iter().any(|o| o == id) {
         return true;
     }
+    // Checked before the source rule, not after: the adapters are bundled, and
+    // the source rule would say no.
+    if sources::DEFAULT_ON.contains(&id) {
+        return true;
+    }
     kind.on_by_default()
 }
 

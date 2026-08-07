@@ -553,7 +553,7 @@ fn json_and_fs_follow_the_value_err_pair_convention() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn the_claude_code_adapter_injects_claude_md_and_the_rules_directory() {
+fn the_claude_code_adapter_injects_the_rules_directory_and_never_claude_md() {
     let ws = workspace(&[
         ("CLAUDE.md", "project rules here"),
         (".claude/rules/style.md", "two spaces"),
@@ -564,7 +564,6 @@ fn the_claude_code_adapter_injects_claude_md_and_the_rules_directory() {
         in_workspace("s1", &ws, serde_json::json!({ "prompt": "hi" })),
     );
     let context = out.context.join("\n");
-    assert!(context.contains("project rules here"), "{context}");
     assert!(context.contains("two spaces"), "{context}");
     assert!(
         !context.contains("not markdown"),
@@ -572,9 +571,46 @@ fn the_claude_code_adapter_injects_claude_md_and_the_rules_directory() {
     );
     // Each file is labelled, because a model handed four merged documents with
     // no headings cannot tell which rule came from where.
-    assert!(context.contains("## CLAUDE.md"), "{context}");
     assert!(context.contains(".claude/rules/style.md"), "{context}");
+    // THE DOUBLE-INJECTION GATE. `prompt/project.rs` now reads CLAUDE.md
+    // natively as a per-directory fallback, and it runs on every turn whether
+    // or not this hook is on. If this hook injected it too, a CC-only repo
+    // would carry its own rules twice in one prompt — once as a project rule
+    // and once as hook context.
+    assert!(
+        !context.contains("project rules here"),
+        "CLAUDE.md belongs to prompt/project.rs now, not to this hook: {context}"
+    );
     let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// The adapters are the one exception to "bundled hooks are off": a machine
+/// with no `.claude`/`.codex` config gets nothing from them, and a machine
+/// with one was otherwise having its guardrails silently ignored.
+#[test]
+fn the_two_adapters_are_on_without_being_asked_for_and_no_other_bundled_hook_is() {
+    let state = HookState::default();
+    for id in sources::DEFAULT_ON {
+        assert!(
+            is_on(&state, id, SourceKind::Bundled),
+            "{id} should adapt an existing config without being switched on"
+        );
+    }
+    assert!(
+        !is_on(&state, "bundled/guard-destructive.lua", SourceKind::Bundled),
+        "a bundled hook with behaviour of its own still waits to be asked"
+    );
+    assert!(
+        !is_on(&state, "someone-repo/claude-code.lua", SourceKind::Git),
+        "the default-on list is keyed on the full id, so a cloned repo cannot \
+         claim it by shipping the same file name"
+    );
+    // And an explicit off still wins, so turning one off survives this list.
+    let off = HookState {
+        off: vec!["bundled/claude-code.lua".into()],
+        ..Default::default()
+    };
+    assert!(!is_on(&off, "bundled/claude-code.lua", SourceKind::Bundled));
 }
 
 #[test]

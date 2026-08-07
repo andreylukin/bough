@@ -674,7 +674,9 @@ pub struct TurnDeps {
     /// document the panel and `bough mcp` render. Resolved by the caller
     /// because only boot knows the session at this seam; absent = no catalog,
     /// and the prompt's MCP section simply does not render.
-    pub mcp_catalog: Option<Arc<dyn Fn(&str) -> Vec<PromptMcpServer> + Send + Sync>>,
+    /// `(session_id, servers the turn's skills grant on top of the session's
+    /// own activations)`.
+    pub mcp_catalog: Option<Arc<dyn Fn(&str, &[String]) -> Vec<PromptMcpServer> + Send + Sync>>,
 }
 
 /// How a finished turn ended.
@@ -1140,6 +1142,22 @@ fn prepare_turn(
     if let Some(extra) = &deps.notes {
         notes.extend(extra.iter().cloned());
     }
+    // The skills this turn's message named. Resolved HERE because this is
+    // where the workspace is known and where the prompt is built — and until
+    // this call existed, `PromptInput.skills` was hardcoded empty, so a `/name`
+    // parsed, listed in the panel, and reached the model as nothing at all.
+    let active = with_db(&db, |d| {
+        crate::skills::turn_skills(
+            d,
+            &session_id,
+            &crate::skills::sources_for(Path::new(&workspace)),
+        )
+        .unwrap_or_default()
+    });
+    // A named-and-broken skill tells the model why, rather than nothing
+    // (`skills/mod.rs`'s intact-or-reported invariant). These are volatile,
+    // like every other note here.
+    notes.extend(active.notes.iter().cloned());
     let prompt_input = PromptInput {
         kind: session
             .as_ref()
@@ -1153,12 +1171,16 @@ fn prepare_turn(
         // change between turns. A capability nobody is told about is not a
         // capability: without this the mcp-tools section never renders and the
         // model never learns a granted server exists.
+        // The catalog is widened by the turn's skills: a skill's `mcp:` list
+        // IS its capability grant (spec §16), so a `/linear` that arrives
+        // ungranted must still see the server in this prompt or the grant is
+        // one the model is never told about.
         mcp_servers: deps
             .mcp_catalog
             .as_ref()
-            .map(|catalog| catalog(&session_id))
+            .map(|catalog| catalog(&session_id, &active.servers))
             .unwrap_or_default(),
-        skills: vec![],
+        skills: active.skills.clone(),
         notes,
     };
     let prompt: AssembledPrompt = match &deps.assemble {
@@ -3292,6 +3314,130 @@ mod tests {
             "the workspace note must name the session's checkout, got: {}",
             notes[0]
         );
+    }
+
+    /// The seam this closes, and it is the same shape as the workspace note
+    /// above: `PromptInput.skills` existed, `active_skills`/`turn_skills`
+    /// existed and were tested, and NOTHING CALLED THEM — the field was
+    /// hardcoded `vec![]` right here. So a `/name` parsed correctly, listed
+    /// correctly in the panel, granted its `mcp:` servers to nobody, and
+    /// reached the model as absolutely nothing. Every skill in the product was
+    /// inert, and every test of the skills module passed while it was.
+    #[tokio::test]
+    async fn a_named_skill_reaches_the_prompt_and_grants_its_servers() {
+        let llm = scripted_llm(vec![ScriptedRound {
+            content: vec![text("done"), stop("c1")],
+            ..Default::default()
+        }]);
+        let f = fixture(opts(llm));
+        // A project-tier skill, which also pins that `sources_for` looks in
+        // the workspace at all.
+        let root =
+            std::env::temp_dir().join(format!("bough-runner-skill-{}", uuid::Uuid::new_v4()));
+        let skill = root.join(".agents").join("skills").join("deploy");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\ndescription: ship it\nmcp: linear\n---\nDEPLOY INSTRUCTIONS",
+        )
+        .unwrap();
+        with_db(&f.db, |d| {
+            d.set_session_workspace(&f.session.id, &root.to_string_lossy())
+        })
+        .unwrap();
+
+        let seen: Arc<Mutex<Option<PromptInput>>> = Arc::new(Mutex::new(None));
+        let s = seen.clone();
+        let granted: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let g = granted.clone();
+        let mut deps = f.deps.clone();
+        deps.assemble = Some(Arc::new(move |input: &PromptInput| {
+            *s.lock().unwrap() = Some(input.clone());
+            AssembledPrompt {
+                system: "SYSTEM".into(),
+                system_volatile: "".into(),
+                sections: vec![],
+                shas: vec![],
+            }
+        }));
+        deps.mcp_catalog = Some(Arc::new(move |_session: &str, extra: &[String]| {
+            *g.lock().unwrap() = extra.to_vec();
+            vec![]
+        }));
+        user_message(&f.db, &f.session.id, "please /deploy now", 2_000);
+        finish(begin_turn(&f.ctx, &f.session.id, deps).unwrap()).await;
+
+        let input = seen.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            input
+                .skills
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
+            ["deploy"],
+            "the skill the message named must reach the prompt"
+        );
+        assert!(input.skills[0].body.contains("DEPLOY INSTRUCTIONS"));
+        assert_eq!(
+            granted.lock().unwrap().clone(),
+            ["linear"],
+            "a skill's `mcp:` list is its grant, so the catalog must be widened by it"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The other half of the intact-or-reported invariant, at the runner
+    /// level: a skill the user named and the harness could not parse must
+    /// reach the model as a note, not as silence.
+    #[tokio::test]
+    async fn a_named_but_broken_skill_reaches_the_prompt_as_a_note() {
+        let llm = scripted_llm(vec![ScriptedRound {
+            content: vec![text("done"), stop("c1")],
+            ..Default::default()
+        }]);
+        let f = fixture(opts(llm));
+        let root =
+            std::env::temp_dir().join(format!("bough-runner-broken-{}", uuid::Uuid::new_v4()));
+        let skill = root.join(".agents").join("skills").join("halfwritten");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        // Opens a fence it never closes: the body is withheld by design.
+        std::fs::write(skill.join("SKILL.md"), "---\ndescription: oops\n\nthe body").unwrap();
+        with_db(&f.db, |d| {
+            d.set_session_workspace(&f.session.id, &root.to_string_lossy())
+        })
+        .unwrap();
+
+        let seen: Arc<Mutex<Option<PromptInput>>> = Arc::new(Mutex::new(None));
+        let s = seen.clone();
+        let mut deps = f.deps.clone();
+        deps.assemble = Some(Arc::new(move |input: &PromptInput| {
+            *s.lock().unwrap() = Some(input.clone());
+            AssembledPrompt {
+                system: "SYSTEM".into(),
+                system_volatile: "".into(),
+                sections: vec![],
+                shas: vec![],
+            }
+        }));
+        user_message(&f.db, &f.session.id, "run /halfwritten", 2_000);
+        finish(begin_turn(&f.ctx, &f.session.id, deps).unwrap()).await;
+
+        let input = seen.lock().unwrap().clone().unwrap();
+        assert!(
+            input.skills.is_empty(),
+            "a broken skill contributes no body"
+        );
+        assert!(
+            input
+                .notes
+                .iter()
+                .any(|n| n.contains("Skill /halfwritten could not be loaded")),
+            "the model must be told the file is wrong, got: {:?}",
+            input.notes
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[tokio::test]

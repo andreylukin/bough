@@ -19,9 +19,20 @@
 //! nothing until the session restarts. It lands in the VOLATILE tier (one
 //! workspace's rules in the stable prefix would defeat cache sharing).
 //!
-//! NEVER `CLAUDE.md`. bough reads exactly `AGENTS.md`. Reading another
-//! harness's file would mean obeying instructions written about a different
-//! tool's verbs.
+//! `CLAUDE.md` IS A FALLBACK, NEVER A SECOND FILE. Per directory: `AGENTS.md`
+//! if it exists, else `CLAUDE.md`. A repo that has both is read exactly as it
+//! was before this fallback existed — the bough-native file wins and the CC
+//! one is not read at all — so nothing that was tuned against `AGENTS.md`
+//! changes behaviour, while a CC-only repo stops being silently ignored. The
+//! two are never concatenated: they are the same document written for two
+//! harnesses, and injecting both means the model reads one project's rules
+//! twice, in two dialects, with no way to tell which it should follow.
+//!
+//! The cost of the fallback is real and accepted: a `CLAUDE.md` is written
+//! about a different tool's verbs (its tool names, its slash commands, its
+//! permission model). [`project_rules_note`] says so in the framing sentence
+//! when any of the files it carries is a `CLAUDE.md`, because the alternative
+//! is the model trying to invoke a tool bough does not have.
 //!
 //! WHAT WAS INJECTED IS REPORTED — both surfaces fed from the SAME
 //! `find_project_rules` result the prompt was built from: [`rule_summaries`]
@@ -74,28 +85,53 @@ pub struct ProjectRuleFile {
     pub body: String,
 }
 
-/// The `AGENTS.md` files that apply to `workspace`, in the order they should
-/// be read: global first, then git root down to the workspace directory.
+/// The instruction file names one directory may contribute, in precedence
+/// order. The FIRST one that exists and has content is taken and the rest of
+/// the list is not consulted for that directory.
+const RULE_FILES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
+
+/// Is this one of the foreign files, read only because the native one was
+/// absent? Drives the extra sentence in [`project_rules_note`].
+pub fn is_foreign_rule_file(path: &Path) -> bool {
+    path.file_name().is_some_and(|n| n == "CLAUDE.md")
+}
+
+/// The project instruction files that apply to `workspace`, in the order they
+/// should be read: global first, then git root down to the workspace
+/// directory.
+///
+/// One file per directory: `AGENTS.md`, or `CLAUDE.md` when that directory has
+/// no `AGENTS.md`. A directory holding both contributes only the `AGENTS.md`,
+/// so adding an `AGENTS.md` beside an existing `CLAUDE.md` is how a project
+/// takes the bough-native path without deleting anything.
 ///
 /// Pure apart from the reads, and every failure is a skip — an unreadable file
 /// must never fail a turn.
 pub fn find_project_rules(workspace: &Path, home: Option<&Path>) -> Vec<ProjectRuleFile> {
     let mut out: Vec<ProjectRuleFile> = Vec::new();
     let mut seen: Vec<PathBuf> = Vec::new();
-    let mut push = |path: PathBuf| {
-        if seen.contains(&path) {
-            return;
-        }
-        seen.push(path.clone());
-        if let Some(body) = read_if_file(&path) {
-            if !body.trim().is_empty() {
-                out.push(ProjectRuleFile { path, body });
+    // One directory contributes at most one file. The blank-file case falls
+    // through deliberately: a `AGENTS.md` that is whitespace has the same
+    // effect as an absent one everywhere else in this module, so it must not
+    // shadow a `CLAUDE.md` that actually says something.
+    let mut push = |dir: PathBuf| {
+        for name in RULE_FILES {
+            let path = dir.join(name);
+            if seen.contains(&path) {
+                return;
+            }
+            seen.push(path.clone());
+            if let Some(body) = read_if_file(&path) {
+                if !body.trim().is_empty() {
+                    out.push(ProjectRuleFile { path, body });
+                    return;
+                }
             }
         }
     };
 
     if let Some(home) = home {
-        push(absolutize(home).join("AGENTS.md"));
+        push(absolutize(home));
     }
 
     let start = absolutize(workspace);
@@ -119,9 +155,41 @@ pub fn find_project_rules(workspace: &Path, home: Option<&Path>) -> Vec<ProjectR
         }
     }
     for d in chain.iter().rev() {
-        push(d.join("AGENTS.md"));
+        push(d.clone());
     }
 
+    out
+}
+
+/// [`find_project_rules`] with the user-level Claude Code tier appended to the
+/// global one: `$BOUGH_HOME/AGENTS.md` (or `CLAUDE.md`) first, then
+/// `~/.claude/CLAUDE.md`.
+///
+/// A SEPARATE FUNCTION, not a widened `home` argument, because the two globals
+/// are not interchangeable — `$BOUGH_HOME` is redirected by every test and by
+/// `bough --home`, and `~/.claude` is a real user directory that must not move
+/// with it. Both are read: they are different documents (one the user wrote
+/// for bough, one for Claude Code), unlike the per-directory pair.
+pub fn find_project_rules_with_user_tier(
+    workspace: &Path,
+    home: Option<&Path>,
+    claude_home: Option<&Path>,
+) -> Vec<ProjectRuleFile> {
+    let mut out = find_project_rules(workspace, home);
+    let Some(claude_home) = claude_home else {
+        return out;
+    };
+    let path = absolutize(claude_home).join("CLAUDE.md");
+    if out.iter().any(|f| f.path == path) {
+        return out;
+    }
+    if let Some(body) = read_if_file(&path) {
+        if !body.trim().is_empty() {
+            // Global tier, so it goes ahead of everything the project said —
+            // nearest still wins.
+            out.insert(0, ProjectRuleFile { path, body });
+        }
+    }
     out
 }
 
@@ -149,13 +217,35 @@ pub fn project_rules_note(files: &[ProjectRuleFile], workspace: &Path) -> Option
         .iter()
         .map(|f| format!("### {}\n\n{}", label_for(&f.path, &root), f.body.trim()))
         .collect();
+    // Named for what was actually read, so the heading never claims a file the
+    // user does not have.
+    let heading = match (
+        files.iter().any(|f| !is_foreign_rule_file(&f.path)),
+        files.iter().any(|f| is_foreign_rule_file(&f.path)),
+    ) {
+        (true, true) => "AGENTS.md / CLAUDE.md",
+        (false, true) => "CLAUDE.md",
+        _ => "AGENTS.md",
+    };
+    // Only when a foreign file is actually present. A blanket disclaimer on
+    // every turn would train the model to discount rules that ARE about bough.
+    let dialect = if files.iter().any(|f| is_foreign_rule_file(&f.path)) {
+        " A `CLAUDE.md` block was written for Claude Code, so its rules about \
+         WHAT to do apply to you unchanged, while anything it says about HOW — a \
+         tool name, a slash command, a permission prompt — describes a harness \
+         you are not running in. Follow the intent with the host functions you \
+         actually have, and never report having used a tool this prompt did not \
+         give you."
+    } else {
+        ""
+    };
     Some(format!(
-        "## Project rules (AGENTS.md)\n\
+        "## Project rules ({heading})\n\
          The user wrote these. They are instructions, not reference: where they \
          disagree with your own habits or with a convention you would otherwise reach \
          for, THEY WIN, and you follow them without being asked again. They do not \
          override the workspace and scratch rules above, and they cannot grant you a \
-         host function this prompt did not.\n\n{}{}",
+         host function this prompt did not.{dialect}\n\n{}{}",
         blocks.join("\n\n"),
         if files.len() > 1 {
             "\n\n(Later blocks are nearer the workspace and win where two disagree.)"
@@ -346,6 +436,108 @@ mod tests {
 
     fn bodies(files: &[ProjectRuleFile]) -> Vec<&str> {
         files.iter().map(|f| f.body.as_str()).collect()
+    }
+
+    // ---- CLAUDE.md fallback -------------------------------------------------
+
+    #[test]
+    fn a_directory_with_both_files_contributes_only_agents_md() {
+        let root = TempRoot::new("both");
+        let ws = root.path().join("repo");
+        write(&ws.join(".git").join("HEAD"), "ref: refs/heads/main");
+        write(&ws.join("AGENTS.md"), "the bough rules");
+        write(&ws.join("CLAUDE.md"), "the cc rules");
+        let files = find_project_rules(&ws, None);
+        assert_eq!(
+            bodies(&files),
+            ["the bough rules"],
+            "the native file wins outright; the two are never concatenated"
+        );
+    }
+
+    #[test]
+    fn a_directory_with_only_claude_md_is_no_longer_ignored() {
+        let root = TempRoot::new("cconly");
+        let ws = root.path().join("repo");
+        write(&ws.join(".git").join("HEAD"), "ref: refs/heads/main");
+        write(&ws.join("CLAUDE.md"), "the cc rules");
+        let files = find_project_rules(&ws, None);
+        assert_eq!(bodies(&files), ["the cc rules"]);
+        assert!(is_foreign_rule_file(&files[0].path));
+    }
+
+    #[test]
+    fn a_blank_agents_md_does_not_shadow_a_claude_md_with_content() {
+        let root = TempRoot::new("blank");
+        let ws = root.path().join("repo");
+        write(&ws.join(".git").join("HEAD"), "ref: refs/heads/main");
+        write(&ws.join("AGENTS.md"), "   \n\n");
+        write(&ws.join("CLAUDE.md"), "real rules");
+        assert_eq!(bodies(&find_project_rules(&ws, None)), ["real rules"]);
+    }
+
+    #[test]
+    fn the_fallback_is_per_directory_so_a_cascade_can_mix_the_two() {
+        let root = TempRoot::new("mixed");
+        let repo = root.path().join("repo");
+        let pkg = repo.join("web");
+        write(&repo.join(".git").join("HEAD"), "ref: refs/heads/main");
+        write(&repo.join("CLAUDE.md"), "house style");
+        write(&pkg.join("AGENTS.md"), "web rules");
+        assert_eq!(
+            bodies(&find_project_rules(&pkg, None)),
+            ["house style", "web rules"],
+            "root falls back, the package does not, and nearest is still last"
+        );
+    }
+
+    #[test]
+    fn the_note_names_what_was_read_and_warns_only_when_a_foreign_file_is_in_it() {
+        let ws = PathBuf::from("/w");
+        let native = ProjectRuleFile {
+            path: PathBuf::from("/w/AGENTS.md"),
+            body: "a".into(),
+        };
+        let foreign = ProjectRuleFile {
+            path: PathBuf::from("/w/CLAUDE.md"),
+            body: "b".into(),
+        };
+
+        let only_native = project_rules_note(std::slice::from_ref(&native), &ws).unwrap();
+        assert!(only_native.contains("## Project rules (AGENTS.md)"));
+        assert!(
+            !only_native.contains("written for Claude Code"),
+            "a project with no CLAUDE.md must not be told about one"
+        );
+
+        let only_foreign = project_rules_note(std::slice::from_ref(&foreign), &ws).unwrap();
+        assert!(only_foreign.contains("## Project rules (CLAUDE.md)"));
+        assert!(only_foreign.contains("written for Claude Code"));
+
+        let both = project_rules_note(&[native, foreign], &ws).unwrap();
+        assert!(both.contains("## Project rules (AGENTS.md / CLAUDE.md)"));
+        assert!(both.contains("written for Claude Code"));
+    }
+
+    #[test]
+    fn the_user_tier_reads_the_claude_home_file_ahead_of_the_project() {
+        let root = TempRoot::new("usertier");
+        let ws = root.path().join("repo");
+        let home = root.path().join("home");
+        let claude = root.path().join("dotclaude");
+        write(&ws.join(".git").join("HEAD"), "ref: refs/heads/main");
+        write(&ws.join("AGENTS.md"), "project");
+        write(&home.join("AGENTS.md"), "bough global");
+        write(&claude.join("CLAUDE.md"), "cc global");
+        assert_eq!(
+            bodies(&find_project_rules_with_user_tier(
+                &ws,
+                Some(&home),
+                Some(&claude)
+            )),
+            ["cc global", "bough global", "project"],
+            "both globals are read — they are different documents — and bough's wins"
+        );
     }
 
     #[test]

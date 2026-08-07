@@ -39,6 +39,8 @@ use std::sync::OnceLock;
 
 use serde::Serialize;
 
+pub mod foreign;
+
 use crate::errors::BoughError;
 use crate::paths::{bough_home, user_skills_dir};
 use crate::prompt::assemble::PromptSkill;
@@ -56,6 +58,13 @@ use crate::types::Db;
 pub enum SkillSourceName {
     Bundled,
     User,
+    /// A directory inside the workspace: `.agents/skills` (Codex) or
+    /// `.claude/skills` (Claude Code), from the git root down.
+    Project,
+    /// An installed Claude Code or Codex plugin's `skills/`.
+    Plugin,
+    /// `~/.claude/skills` or `~/.agents/skills` — the foreign user tier.
+    Foreign,
 }
 
 /// One place skills are discovered from, in precedence order.
@@ -125,6 +134,10 @@ fn ensure_bundled_skills() -> PathBuf {
 }
 
 /// Bundled, then the user's. First name wins (spec §16).
+///
+/// The workspace-independent sources only. Prefer [`sources_for`] anywhere a
+/// workspace is in hand — this one cannot see a project's checked-in skills,
+/// so it answers a narrower question than most callers mean to ask.
 pub fn default_sources() -> Vec<SkillSource> {
     vec![
         SkillSource {
@@ -136,6 +149,95 @@ pub fn default_sources() -> Vec<SkillSource> {
             dir: user_skills_dir(),
         },
     ]
+}
+
+/// Where Claude Code keeps its user-level state. Not `paths.rs`'s business:
+/// nothing about it moves with `$BOUGH_HOME`.
+fn claude_home() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".claude"))
+}
+
+/// Every source that applies to a session working in `workspace`, in
+/// precedence order — FIRST WINS, as [`list_skills`] resolves it.
+///
+/// The order, and the argument for each rung:
+///
+/// 1. **bundled** — unchanged and deliberately first (spec §16). Nothing a
+///    project or a stranger's plugin ships can shadow `history`, so the one
+///    skill the harness documents always means what the docs say. This is the
+///    rung that makes the rest of the list safe to open up.
+/// 2. **project** — `.agents/skills` / `.claude/skills`, nearest directory
+///    first. Above the user's own because a skill checked into the repo is the
+///    one the repo's work should use; it is also the rung a teammate can
+///    change without touching your machine, which is the point of checking it
+///    in.
+/// 3. **user** — `~/.bough/skills`, the files you wrote for bough.
+/// 4. **foreign user** — `~/.claude/skills`, `~/.agents/skills`.
+/// 5. **plugins** — installed Claude Code plugins, then Codex marketplaces
+///    (repo-scoped before personal). Last because it is the rung with the most
+///    directories and the least intent behind any one of them: a plugin was
+///    installed for what it does in another harness, not to win a name here.
+///
+/// NAMES ARE NOT NAMESPACED. Claude Code invokes a plugin skill as
+/// `/plugin:skill`; bough's invocation token is the bare folder name, and a
+/// colon cannot be one (`name_ok`, and `mention_index` would mis-anchor on
+/// it). So a collision is resolved by this order and shown in the panel with
+/// its source, rather than by giving the same skill two names.
+///
+/// NOTHING IS CACHED, here as everywhere else in this module: a plugin
+/// installed mid-session is available on the next turn.
+pub fn sources_for(workspace: &Path) -> Vec<SkillSource> {
+    let mut out = vec![SkillSource {
+        source: SkillSourceName::Bundled,
+        dir: ensure_bundled_skills(),
+    }];
+    out.extend(foreign::project_sources(workspace));
+    out.push(SkillSource {
+        source: SkillSourceName::User,
+        dir: user_skills_dir(),
+    });
+    if let Some(home) = dirs::home_dir() {
+        out.extend(foreign::user_sources(&home));
+    }
+    if let Some(claude) = claude_home() {
+        out.extend(foreign::claude_plugin_sources(&claude, workspace));
+    }
+    // Repo-scoped marketplaces before the personal one: the repo is the more
+    // specific statement about this workspace, matching the project rung.
+    for market in codex_marketplaces(workspace) {
+        out.extend(foreign::codex_marketplace_sources(&market));
+    }
+    out
+}
+
+/// The Codex marketplace files that apply: the workspace's own, then the
+/// user's. Repo-scoped ones are looked for at the git root and at the
+/// workspace itself, which is where Codex documents them.
+fn codex_marketplaces(workspace: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut push = |dir: PathBuf| {
+        let path = dir.join(".agents").join("plugins").join("marketplace.json");
+        if !out.contains(&path) && path.is_file() {
+            out.push(path);
+        }
+    };
+    let start = std::path::absolute(workspace).unwrap_or_else(|_| workspace.to_path_buf());
+    push(start.clone());
+    let mut dir = start;
+    for _ in 0..24 {
+        if std::fs::metadata(dir.join(".git")).is_ok() {
+            push(dir.clone());
+            break;
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent.to_path_buf(),
+            None => break,
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        push(home);
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
