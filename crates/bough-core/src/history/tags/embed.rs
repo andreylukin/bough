@@ -12,7 +12,7 @@
 //! silent, so the pump is wired at boot rather than left to a caller.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 pub use crate::db::embed::{
@@ -80,6 +80,45 @@ pub fn spawn_drain_ticker(
             }
         }
     })
+}
+
+/// The layer as the PUSHED recall sees it: the meaning half of
+/// `history/tags/stats.rs`'s query hints, behind that module's own trait so it
+/// keeps knowing nothing about extensions or models.
+pub struct EmbedRecall(Arc<EmbedLayer>);
+
+impl super::stats::SemanticRecall for EmbedRecall {
+    fn related(&self, text: &str) -> Vec<super::stats::SemanticHit> {
+        // Silence on failure, by contract: this runs on the turn path, where
+        // a missing model, a locked store or a half-downloaded GGUF must cost
+        // a hint and nothing else.
+        self.0
+            .related(text)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| super::stats::SemanticHit {
+                cmd: r.cmd,
+                tags: r.tags,
+                repo: r.repo,
+                exit_code: r.exit_code,
+                ts: r.ts,
+            })
+            .collect()
+    }
+}
+
+/// The process-wide recall handle, or `None` where the layer does not exist —
+/// the everyday answer on a machine without sqlite-lembed.
+///
+/// Built ONCE and memoized including the `None`: opening the layer reads a
+/// 25MB model, so a per-turn open would put that on the turn path, and a
+/// machine without the dylib would retry the same failed lookup every turn
+/// forever. The drain ticker keeps the index behind it fresh.
+pub fn recall_layer() -> Option<&'static EmbedRecall> {
+    static LAYER: OnceLock<Option<EmbedRecall>> = OnceLock::new();
+    LAYER
+        .get_or_init(|| create_embed_layer(None).map(|l| EmbedRecall(Arc::new(l))))
+        .as_ref()
 }
 
 #[cfg(test)]

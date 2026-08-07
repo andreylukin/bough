@@ -5,9 +5,14 @@
 //! The whole layer is one SQL statement per direction:
 //!
 //! ```text
-//! drain:    INSERT INTO vec_index SELECT id, lembed('embed', tags || cmd) …
+//! drain:    INSERT INTO vec_index VALUES (id, lembed('embed', embed_doc(…)))
 //! similar:  … WHERE embedding MATCH lembed('embed', ?) ORDER BY distance
 //! ```
+//!
+//! The index is COSINE (`distance_metric=cosine`), because a threshold that
+//! decides whether a neighbour is worth pushing at the model unasked has to
+//! mean the same thing on every machine — see [`MAX_SEMANTIC_DISTANCE`], and
+//! [`embed_doc`] for what a command is embedded as and why.
 //!
 //! Vectors live in their own file because every other connection in the system
 //! (the migrator, `bough tags sql`'s readonly handle, the drain's own reader)
@@ -64,7 +69,35 @@ const DEFAULT_MODEL_FILE: &str = "all-MiniLM-L6-v2.e4ce9877.q8_0.gguf";
 const DRAIN_BATCH: u32 = 64;
 const KNN_LIMIT: u32 = 10;
 /// Command text beyond this adds latency, not meaning, to an embedding.
-const DOC_CMD_CHARS: u32 = 500;
+const DOC_CMD_CHARS: usize = 500;
+/// How much of what a command PRINTED joins its document. One line: enough to
+/// carry the subject ("connection refused talking to postgres"), short enough
+/// that a 2k head cannot drown the command itself.
+const DOC_OUTPUT_CHARS: usize = 200;
+/// How far a neighbour may be and still be surfaced UNASKED — cosine
+/// distance, so `1 - cos`.
+///
+/// CALIBRATED against this memory rather than picked. Sweeping the cutoff
+/// over 8 labelled queries plus 4 deliberately unrelated ones ("how do I
+/// water my houseplants"), with FTS ∪ semantic scored at 5:
+///
+/// ```text
+///   cos ≥ 0.25  →  7/8, but 1.2 rows/query on NONSENSE
+///   cos ≥ 0.30  →  7/8, 0.5 rows on nonsense
+///   cos ≥ 0.35  →  7/8, 0.0 rows on nonsense   ← this (distance 0.65)
+///   cos ≥ 0.40  →  5/8
+/// ```
+///
+/// 0.35 is the knee: the last cutoff that keeps every match FTS alone misses,
+/// and the first that admits nothing at all for a question this memory has no
+/// business answering. FTS alone scored 5/8.
+pub const MAX_SEMANTIC_DISTANCE: f64 = 0.65;
+
+/// Bumped when [`embed_doc`] or the index's distance metric changes, and
+/// stamped into the model id so an existing store REBUILDS instead of serving
+/// vectors built under the old rules — they are not comparable to the new
+/// ones, exactly like a different model's.
+const DOC_VERSION: u32 = 2;
 
 /// `$BOUGH_EMBED_MODEL` — a GGUF of any width; the dimension is probed, never
 /// assumed. Supplying it makes a missing file an error instead of a download.
@@ -178,6 +211,21 @@ impl EmbedLayer {
             .map_err(|e| embed_err(e.to_string()))?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(|e| embed_err(e.to_string()))
+    }
+
+    /// The neighbours close enough to be worth acting on, for the PUSHED
+    /// recall — `similar_rows` filtered by [`MAX_SEMANTIC_DISTANCE`].
+    ///
+    /// KNN always returns its k, however far away they are, so a raw
+    /// `similar_rows` on "what is the weather" hands back ten shell commands.
+    /// That is fine for `bough tags similar`, where a human asked and can see
+    /// the distances; it is not fine for a note the model did not ask for.
+    pub fn related(&self, text: &str) -> Result<Vec<SimilarRow>, BoughError> {
+        Ok(self
+            .similar_rows(text)?
+            .into_iter()
+            .filter(|r| r.distance <= MAX_SEMANTIC_DISTANCE)
+            .collect())
     }
 
     pub fn close(self) {
@@ -308,7 +356,10 @@ fn model_id(model_path: &Path, dims: i64) -> String {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    format!("{base}:{dims}")
+    // The doc version rides in the id because the rebuild it has to trigger is
+    // the same rebuild a model change triggers, and one mechanism that cannot
+    // be forgotten beats two that can.
+    format!("{base}:{dims}:v{DOC_VERSION}")
 }
 
 /// `length(lembed(…)) / 4` — one float32 per dimension. NEVER hardcoded.
@@ -345,34 +396,101 @@ fn ensure_meta_and_index(conn: &Connection, model_id: &str, dims: i64) -> rusqli
             [model_id],
         )?;
     }
+    // COSINE, not the vec0 default of L2. The threshold that decides whether
+    // a neighbour is worth surfacing has to mean the same thing on every
+    // machine, and only an angle does: L2 over vectors whose norm depends on
+    // the model and the text length gives a number no constant can be chosen
+    // against. `1 - cos` also lands the usable range in [0, 1], which is what
+    // `MAX_SEMANTIC_DISTANCE` is expressed in.
     conn.execute(
         &format!(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS vec_index USING vec0(embedding float[{dims}])"
+            "CREATE VIRTUAL TABLE IF NOT EXISTS vec_index
+               USING vec0(embedding float[{dims}] distance_metric=cosine)"
         ),
         [],
     )?;
     Ok(rebuilt)
 }
 
+/// What one command row is embedded AS.
+///
+/// MEASURED, not guessed. Over this memory (124 rows, 8 hand-labelled
+/// queries), the recall the semantic layer adds on top of FTS depends almost
+/// entirely on this string:
+///
+/// ```text
+///   tags||cmd, no separator          union@5 5/8   (what shipped first)
+///   tags spaced + cmd                union@5 5/8
+///   tags spaced + cmd + output line  union@5 5/8
+///   + cmd split into WORDS           union@5 7/8   ← this
+/// ```
+///
+/// Both halves earn their place. Splitting on punctuation is what stops a
+/// command reading as one long token to a sentence model: `src/tui/main.tsx`
+/// carries `tui` and `main` only once it is words. The output line is what
+/// makes a command findable by what it was ABOUT rather than what it was
+/// called — the failure it printed is often the only natural language in the
+/// row.
+pub fn embed_doc(tags: &str, cmd: &str, output_head: &str) -> String {
+    fn words(s: &str, cap: usize) -> String {
+        s.chars()
+            .take(cap)
+            .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+    let first_line = output_head.lines().next().unwrap_or("");
+    let parts = [
+        words(tags, tags.len()),
+        words(cmd, DOC_CMD_CHARS),
+        words(first_line, DOC_OUTPUT_CHARS),
+    ];
+    parts
+        .iter()
+        .filter(|p| !p.is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// One drain batch. **Counted by `count(*)` DELTA, never by the statement's
 /// `changes`**: an insert into a vec0 virtual table reports its SHADOW-table
 /// writes too (4 rows once came back as 14).
+///
+/// The document is built in RUST and passed in, rather than concatenated in
+/// SQL as it was when it was `tags || cmd`: [`embed_doc`] splits punctuation
+/// into words, which SQLite would need twenty nested `replace()` calls to do
+/// and which the query side has to do identically anyway.
 fn drain_once(conn: &Connection) -> rusqlite::Result<u64> {
     let count = |c: &Connection| -> rusqlite::Result<i64> {
         c.query_row("SELECT count(*) AS n FROM vec_index", [], |r| r.get(0))
     };
     let before = count(conn)?;
-    conn.execute(
-        &format!(
-            "INSERT INTO vec_index (rowid, embedding)
-              SELECT h.id, lembed('embed', h.tags || ' ' || substr(h.cmd, 1, {DOC_CMD_CHARS}))
-                FROM src.command_history h
-               WHERE h.id NOT IN (SELECT rowid FROM vec_index)
-               ORDER BY h.id
-               LIMIT {DRAIN_BATCH}"
-        ),
-        [],
-    )?;
+    let pending: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT h.id, h.tags, h.cmd, coalesce(h.output_head, '')
+               FROM src.command_history h
+              WHERE h.id NOT IN (SELECT rowid FROM vec_index)
+              ORDER BY h.id
+              LIMIT {DRAIN_BATCH}"
+        ))?;
+        let rows = stmt.query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let tags: String = row.get(1)?;
+            let cmd: String = row.get(2)?;
+            let output: String = row.get(3)?;
+            Ok((id, embed_doc(&tags, &cmd, &output)))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for (id, doc) in pending {
+        conn.execute(
+            "INSERT INTO vec_index (rowid, embedding) VALUES (?1, lembed('embed', ?2))",
+            rusqlite::params![id, doc],
+        )?;
+    }
     Ok((count(conn)? - before).max(0) as u64)
 }
 
@@ -608,16 +726,42 @@ mod tests {
     }
 
     #[test]
-    fn model_id_is_basename_and_probed_dims() {
+    fn model_id_is_basename_probed_dims_and_the_doc_version() {
         assert_eq!(
             model_id(Path::new("/a/b/mini.q8_0.gguf"), 384),
-            "mini.q8_0.gguf:384"
+            format!("mini.q8_0.gguf:384:v{DOC_VERSION}")
         );
         assert_eq!(
             model_id(Path::new("/other/mini.q8_0.gguf"), 384),
-            "mini.q8_0.gguf:384"
+            format!("mini.q8_0.gguf:384:v{DOC_VERSION}")
         );
-        assert_eq!(model_id(Path::new("/a/b/wide.gguf"), 768), "wide.gguf:768");
+        assert_eq!(
+            model_id(Path::new("/a/b/wide.gguf"), 768),
+            format!("wide.gguf:768:v{DOC_VERSION}")
+        );
+        // The version is what makes a doc change rebuild rather than mix
+        // old vectors with new ones.
+        assert_ne!(
+            model_id(Path::new("/a/b/mini.gguf"), 384),
+            "mini.gguf:384".to_string()
+        );
+    }
+
+    #[test]
+    fn the_embedded_document_is_words_from_the_tags_the_command_and_one_output_line() {
+        assert_eq!(
+            embed_doc(
+                "bun:test:history",
+                "cd /repo && bun test src/history/record.test.ts",
+                "1 fail: retention window\nstack trace line\n"
+            ),
+            "bun test history cd repo bun test src history record test ts 1 fail retention window"
+        );
+        // A path is only searchable once it is words: `src/tui/main.tsx` has
+        // to carry `tui` and `main` on its own.
+        assert!(embed_doc("", "vim src/tui/main.tsx", "").contains("tui main"));
+        // Empty parts leave no double spaces, and no output is not an error.
+        assert_eq!(embed_doc("git:push", "git push", ""), "git push git push");
     }
 
     /// `specs/history.md` §3: `similar()` rows are
@@ -782,6 +926,32 @@ mod tests {
         assert_eq!(hits[0].repo, "repo");
         assert_eq!(hits[0].exit_code, Some(0));
         assert_eq!(hits[0].ts, 1_000);
+        // COSINE distance, so `1 - cos` and the whole range is [0, 2] with
+        // anything useful under 1. An L2 index would put these in the 0.9–1.3
+        // band this test would then pass by accident.
+        assert!(
+            hits.iter().all(|h| h.distance >= 0.0 && h.distance <= 2.0),
+            "cosine distances, not L2: {:?}",
+            hits.iter().map(|h| h.distance).collect::<Vec<_>>()
+        );
+        assert!(
+            hits[0].distance < hits[hits.len() - 1].distance,
+            "nearest first"
+        );
+        // The PUSHED recall keeps only what is close enough to act on — a
+        // question this memory has nothing to say about must come back empty
+        // rather than with four shell commands.
+        assert!(
+            layer
+                .related("how do I water my houseplants")
+                .unwrap()
+                .len()
+                < layer
+                    .similar_rows("how do I water my houseplants")
+                    .unwrap()
+                    .len(),
+            "the distance cutoff has to drop something on an unrelated question"
+        );
 
         // Vectors live in their OWN file: bough.db is untouched by all of this.
         {

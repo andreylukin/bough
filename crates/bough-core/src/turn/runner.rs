@@ -65,6 +65,7 @@ use crate::history::tags::echo::{create_command_echo, EchoCtx};
 use crate::history::tags::record::{create_command_recorder, RecorderCtx};
 use crate::history::tags::stats::{
     dir_tag_hints, drain_query_tag_hints, note_query_tag_hints, stats_memo, tags_note_for,
+    SemanticRecall,
 };
 use crate::hostfn::files::{create_file_host_fns, FileCtx};
 use crate::hostfn::shell::{create_shell_host_fns, EchoHooks, ShellCtx, ShellOptions};
@@ -1011,7 +1012,15 @@ fn prepare_turn(
             .messages_for(&session_id)
             .map(|m| crate::skills::invoking_text(&m))
             .unwrap_or_default();
-        note_query_tag_hints(d, stats_memo(), &session_id, &workspace, &text, now());
+        note_query_tag_hints(
+            d,
+            stats_memo(),
+            &session_id,
+            &workspace,
+            &text,
+            now(),
+            crate::history::tags::embed::recall_layer().map(|l| l as &dyn SemanticRecall),
+        );
     });
     let mut notes: Vec<String> = vec![
         workspace_note(&workspace),

@@ -496,6 +496,35 @@ pub fn content_words(text: &str) -> Vec<String> {
     words
 }
 
+/// The MEANING half of the match, injected so this module keeps knowing
+/// nothing about SQLite extensions, GGUF models or whether either exists on
+/// this machine (`db/embed.rs` owns all three, and is absent on most).
+pub trait SemanticRecall {
+    /// Commands whose meaning is near the text, nearest first, already cut at
+    /// the distance beyond which a neighbour is noise. Empty on any failure —
+    /// a recall that cannot answer must not be distinguishable from one with
+    /// nothing to say.
+    fn related(&self, text: &str) -> Vec<SemanticHit>;
+}
+
+/// One semantically-matched command, the subset of a `SimilarRow` this needs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticHit {
+    pub cmd: String,
+    pub tags: String,
+    pub repo: String,
+    pub exit_code: Option<i64>,
+    pub ts: i64,
+}
+
+/// A matched command from either matcher, reduced to what the ranking uses.
+struct Candidate {
+    cmd: String,
+    tags: String,
+    exit_code: Option<i64>,
+    ts: i64,
+}
+
 /// What this repo has already run on the topic the user just named — the
 /// memory answering the QUESTION rather than the location.
 ///
@@ -525,6 +554,7 @@ pub fn query_tag_hints(
     workspace: &str,
     text: &str,
     now: i64,
+    semantic: Option<&dyn SemanticRecall>,
 ) -> Vec<String> {
     let words = content_words(text);
     if words.is_empty() {
@@ -543,9 +573,37 @@ pub fn query_tag_hints(
     let repo = workspace_repo(workspace);
     // Same contract as every hint here: a failed lookup is a missing hint,
     // never a failed round.
-    let Ok(matched) = db.search_commands(&repo, &words, QUERY_SCAN_LIMIT) else {
+    let Ok(keyword) = db.search_commands(&repo, &words, QUERY_SCAN_LIMIT) else {
         return Vec::new();
     };
+    let mut matched: Vec<Candidate> = keyword
+        .iter()
+        .map(|c| Candidate {
+            cmd: c.cmd.clone(),
+            tags: c.tags.clone(),
+            exit_code: c.exit_code,
+            ts: c.ts,
+        })
+        .collect();
+    // The two matchers find DIFFERENT things, which is the only reason the
+    // second one is here: over the labelled queries, keyword search found 5
+    // of 8 and meaning search found 5 of 8 — but the union found 7, because
+    // each rescued two the other missed entirely. Keyword-first ordering is
+    // kept: an exact word beats a near meaning when both fire, and the tail
+    // is where the rescue lives.
+    if let Some(sem) = semantic {
+        for row in sem.related(text) {
+            if row.repo != repo || matched.iter().any(|c| c.cmd == row.cmd) {
+                continue;
+            }
+            matched.push(Candidate {
+                cmd: row.cmd,
+                tags: row.tags,
+                exit_code: row.exit_code,
+                ts: row.ts,
+            });
+        }
+    }
     if matched.is_empty() {
         return Vec::new();
     }
@@ -613,8 +671,9 @@ pub fn note_query_tag_hints(
     workspace: &str,
     text: &str,
     now: i64,
+    semantic: Option<&dyn SemanticRecall>,
 ) {
-    let lines = query_tag_hints(db, memo, session_id, workspace, text, now);
+    let lines = query_tag_hints(db, memo, session_id, workspace, text, now, semantic);
     if lines.is_empty() {
         return;
     }
@@ -1103,6 +1162,7 @@ mod tests {
             &ws,
             "how does retention pruning work here?",
             now,
+            None,
         );
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].contains("retention"), "{}", lines[0]);
@@ -1134,6 +1194,7 @@ mod tests {
             &ws,
             "postgres connection refused",
             now,
+            None,
         );
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].contains("make check"), "{}", lines[0]);
@@ -1158,7 +1219,9 @@ mod tests {
         // Priming runs first and freezes {retention}; the hint would only be
         // repeating the prompt.
         assert!(tags_note_for(&f.db, &memo, "sess", &ws, now).is_some());
-        assert!(query_tag_hints(&f.db, &memo, "sess", &ws, "retention policy", now).is_empty());
+        assert!(
+            query_tag_hints(&f.db, &memo, "sess", &ws, "retention policy", now, None).is_empty()
+        );
     }
 
     #[test]
@@ -1175,7 +1238,9 @@ mod tests {
             1,
             now - DAY,
         );
-        assert!(query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now).is_empty());
+        assert!(
+            query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now, None).is_empty()
+        );
     }
 
     #[test]
@@ -1194,11 +1259,13 @@ mod tests {
         );
         for _ in 0..MAX_QUERY_HINTS_PER_SESSION {
             assert_eq!(
-                query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now).len(),
+                query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now, None).len(),
                 1
             );
         }
-        assert!(query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now).is_empty());
+        assert!(
+            query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now, None).is_empty()
+        );
     }
 
     #[test]
@@ -1215,7 +1282,7 @@ mod tests {
             0,
             now - DAY,
         );
-        note_query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now);
+        note_query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now, None);
         assert_eq!(drain_query_tag_hints(&memo, "sess").len(), 1);
         assert!(drain_query_tag_hints(&memo, "sess").is_empty());
     }
@@ -1226,8 +1293,115 @@ mod tests {
         let ws = f.ws();
         let memo = StatsMemo::new();
         let now = 1_000 * DAY;
-        assert!(query_tag_hints(&f.db, &memo, "sess", &ws, "do it now", now).is_empty());
-        assert!(query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now).is_empty());
+        assert!(query_tag_hints(&f.db, &memo, "sess", &ws, "do it now", now, None).is_empty());
+        assert!(
+            query_tag_hints(&f.db, &memo, "sess", &ws, "retention pruning", now, None).is_empty()
+        );
+    }
+
+    /// A semantic layer that returns exactly what the test hands it — the
+    /// real one needs a 25MB model and a loadable extension, and what this
+    /// module owes is the UNION, not the embedding.
+    struct FakeSemantic(Vec<SemanticHit>);
+
+    impl SemanticRecall for FakeSemantic {
+        fn related(&self, _text: &str) -> Vec<SemanticHit> {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn meaning_rescues_a_command_that_shares_no_word_with_the_question() {
+        let f = Fx::new();
+        let ws = f.ws();
+        let memo = StatsMemo::new();
+        let now = 1_000 * DAY;
+        // Nothing here says "container": keyword search cannot reach it.
+        f.seed_cmd(
+            &ws,
+            "docker compose up -d",
+            &["docker", "compose"],
+            "",
+            0,
+            now - DAY,
+        );
+        assert!(
+            query_tag_hints(&f.db, &memo, "sess", &ws, "start the container", now, None).is_empty(),
+            "keyword search alone cannot find it — that is the premise"
+        );
+        let sem = FakeSemantic(vec![SemanticHit {
+            cmd: "docker compose up -d".into(),
+            tags: "docker:compose".into(),
+            repo: workspace_repo(&ws),
+            exit_code: Some(0),
+            ts: now - DAY,
+        }]);
+        let lines = query_tag_hints(
+            &f.db,
+            &memo,
+            "sess",
+            &ws,
+            "start the container",
+            now,
+            Some(&sem),
+        );
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("docker compose up -d"), "{}", lines[0]);
+    }
+
+    #[test]
+    fn a_semantic_hit_from_another_repo_is_dropped_and_a_duplicate_is_not_counted_twice() {
+        let f = Fx::new();
+        let ws = f.ws();
+        let memo = StatsMemo::new();
+        let now = 1_000 * DAY;
+        f.seed_cmd(
+            &ws,
+            "bun run retention.ts",
+            &["retention"],
+            "",
+            0,
+            now - DAY,
+        );
+        let sem = FakeSemantic(vec![
+            // Same command the keyword search already found: one candidate,
+            // not two, or it would double its own tag's weight.
+            SemanticHit {
+                cmd: "bun run retention.ts".into(),
+                tags: "retention".into(),
+                repo: workspace_repo(&ws),
+                exit_code: Some(0),
+                ts: now - DAY,
+            },
+            // Another checkout entirely: the memory is repo-scoped, and the
+            // KNN index is not.
+            SemanticHit {
+                cmd: "kubectl get pods".into(),
+                tags: "kubectl:pods".into(),
+                repo: "https://github.com/someone/else.git".into(),
+                exit_code: Some(0),
+                ts: now - DAY,
+            },
+        ]);
+        let lines = query_tag_hints(
+            &f.db,
+            &memo,
+            "sess",
+            &ws,
+            "retention pruning",
+            now,
+            Some(&sem),
+        );
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(!lines[0].contains("kubectl"), "{}", lines[0]);
+        // One named tag, so one `tag — command` pair: the duplicate did not
+        // enter the ranking twice and double its own weight.
+        assert_eq!(
+            lines[0].matches(" — ").count(),
+            1,
+            "the duplicate must not be named twice: {}",
+            lines[0]
+        );
     }
 
     #[test]
