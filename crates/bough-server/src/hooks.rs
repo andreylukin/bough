@@ -44,17 +44,20 @@ struct ToggleBody {
 /// the errors, and a newly enabled one arrives with its listener count.
 pub fn toggle() -> Handler {
     handler(|req, _ctx, params| async move {
-        let name = params.get("name").cloned().unwrap_or_default();
+        // The id is `<source>/<file>`, so it arrives percent-encoded and its
+        // slash is part of the value, not a path separator.
+        let name =
+            crate::artifacts::decode_segments(params.get("name").map(String::as_str).unwrap_or(""));
         // The name indexes a listing, never a path: a `..` here would write a
         // traversing string into the disabled list, and a later reload would
         // compare it against file names that can never match — inert, but a
         // lie on screen. Refuse it at the door.
-        if name.is_empty() || name.contains('/') || name.contains("..") {
+        if name.is_empty() || name.contains("..") {
             return Err(BoughError::bad_request(format!(
                 "hook name {name:?} is not one of the listed files."
             )));
         }
-        if !list_hooks().iter().any(|h| h.name == name) {
+        if !list_hooks().iter().any(|h| h.id == name) {
             return Err(BoughError::not_found(format!(
                 "no hook {name} in {}. `GET /hooks` lists what is installed.",
                 bough_core::hooks::hooks_dir().to_string_lossy(),
@@ -131,15 +134,28 @@ mod tests {
 
         let body = testutil::body_json(call.call(testutil::get("/hooks")).await).await;
         let hooks = body["hooks"].as_array().unwrap();
-        assert_eq!(hooks.len(), 2, "{hooks:?}");
-        assert_eq!(hooks[0]["name"], "a-good.lua");
-        assert_eq!(hooks[0]["enabled"], serde_json::json!(true));
-        assert_eq!(hooks[1]["name"], "b-broken.lua");
+        let local: Vec<&serde_json::Value> =
+            hooks.iter().filter(|h| h["source"] == "local").collect();
+        assert_eq!(local.len(), 2, "{hooks:?}");
+        assert_eq!(local[0]["id"], "local/a-good.lua");
+        assert_eq!(local[0]["enabled"], serde_json::json!(true), "yours are on");
+        assert_eq!(local[1]["name"], "b-broken.lua");
         // Listed WITH its error, never omitted.
         assert!(
-            hooks[1]["error"].as_str().is_some_and(|e| !e.is_empty()),
+            local[1]["error"].as_str().is_some_and(|e| !e.is_empty()),
             "a file that cannot be parsed is listed with why: {:?}",
-            hooks[1]
+            local[1]
+        );
+        // The bundled ones are listed too, and every one of them is OFF: an
+        // upgrade must not start running code nobody turned on.
+        let bundled: Vec<&serde_json::Value> =
+            hooks.iter().filter(|h| h["source"] == "bundled").collect();
+        assert!(!bundled.is_empty(), "bough ships hooks: {hooks:?}");
+        assert!(
+            bundled
+                .iter()
+                .all(|h| h["enabled"] == serde_json::json!(false)),
+            "bundled hooks arrive off: {bundled:?}"
         );
         assert!(body["dir"].as_str().unwrap().ends_with("hooks"));
     }
@@ -156,19 +172,28 @@ mod tests {
         let res = call
             .call(testutil::req(
                 "POST",
-                "/hooks/noisy.lua",
+                "/hooks/local%2Fnoisy.lua",
                 Some(serde_json::json!({ "enabled": false })),
             ))
             .await;
         assert_eq!(res.status(), 200);
+        let mine = |body: &serde_json::Value| -> serde_json::Value {
+            body["hooks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|h| h["id"] == "local/noisy.lua")
+                .cloned()
+                .expect("the local hook is listed")
+        };
         let body = testutil::body_json(res).await;
-        assert_eq!(body["hooks"][0]["enabled"], serde_json::json!(false));
+        assert_eq!(mine(&body)["enabled"], serde_json::json!(false));
 
         // Persisted, not just remembered: the next listing reads it back.
         let again = testutil::body_json(call.call(testutil::get("/hooks")).await).await;
-        assert_eq!(again["hooks"][0]["enabled"], serde_json::json!(false));
+        assert_eq!(mine(&again)["enabled"], serde_json::json!(false));
         assert_eq!(
-            again["hooks"][0]["autocmds"],
+            mine(&again)["autocmds"],
             serde_json::json!(0),
             "a disabled hook is not loaded, so it has no listeners"
         );
@@ -176,12 +201,12 @@ mod tests {
         // And back on again.
         call.call(testutil::req(
             "POST",
-            "/hooks/noisy.lua",
+            "/hooks/local%2Fnoisy.lua",
             Some(serde_json::json!({ "enabled": true })),
         ))
         .await;
         let on = testutil::body_json(call.call(testutil::get("/hooks")).await).await;
-        assert_eq!(on["hooks"][0]["enabled"], serde_json::json!(true));
+        assert_eq!(mine(&on)["enabled"], serde_json::json!(true));
     }
 
     #[tokio::test]
@@ -193,7 +218,7 @@ mod tests {
         let missing = call
             .call(testutil::req(
                 "POST",
-                "/hooks/nope.lua",
+                "/hooks/local%2Fnope.lua",
                 Some(serde_json::json!({ "enabled": false })),
             ))
             .await;

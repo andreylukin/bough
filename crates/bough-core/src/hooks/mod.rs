@@ -53,7 +53,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::bough_path;
 
+pub mod git;
 mod runtime;
+pub mod sources;
 
 #[cfg(test)]
 mod tests;
@@ -63,11 +65,8 @@ mod tests;
 /// hiccup rather than a hang.
 const DISPATCH_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Where hooks are loaded from: every `*.lua` file directly inside, in name
-/// order so two hooks that both wrap something have a defined order.
-pub fn hooks_dir() -> PathBuf {
-    bough_path(&["hooks"])
-}
+pub use crate::paths::hooks_dir;
+pub use sources::{all_sources, HookSource, SourceKind};
 
 // ---------------------------------------------------------------------------
 // The wire between bough and a hook
@@ -254,29 +253,37 @@ impl HookHost {
     /// no directory, or no Lua in it. `None` is the everyday answer and costs
     /// nothing: no thread and no interpreter.
     pub fn load(dir: &Path) -> Option<HookHost> {
-        HookHost::load_enabled(dir, Path::new("/nonexistent-disabled-list"))
+        // One local-only source: the shape a test wants when it is testing the
+        // interpreter rather than the installation story.
+        HookHost::load_sources(
+            &[HookSource {
+                name: "local".into(),
+                kind: SourceKind::Local,
+                dir: dir.to_path_buf(),
+                repo: None,
+                rev: None,
+                sha: None,
+            }],
+            &HookState::default(),
+        )
     }
 
-    /// [`HookHost::load`], skipping the files named in the disabled list.
-    pub fn load_enabled(dir: &Path, disabled_at: &Path) -> Option<HookHost> {
-        let disabled = read_disabled(disabled_at);
-        let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-            .ok()?
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e == "lua") && p.is_file())
-            .filter(|p| {
-                !p.file_name()
-                    .map(|n| disabled.contains(&n.to_string_lossy().into_owned()))
-                    .unwrap_or(false)
-            })
-            .collect();
+    /// Load every ENABLED hook across `sources`, in source order.
+    ///
+    /// The order is the answer to "which one is running": a later source's
+    /// file of the same name loads after, and therefore decides last.
+    pub fn load_sources(sources: &[HookSource], state: &HookState) -> Option<HookHost> {
+        let mut files: Vec<PathBuf> = Vec::new();
+        for source in sources {
+            for (id, path) in sources::files_in(source) {
+                if is_on(state, &id, source.kind) {
+                    files.push(path);
+                }
+            }
+        }
         if files.is_empty() {
             return None;
         }
-        // Name order, so two hooks that both decide something have an order
-        // the user can see in `ls`.
-        files.sort();
 
         let (tx, rx) = sync_channel::<Request>(0);
         let (ready_tx, ready_rx) = sync_channel::<(Vec<PathBuf>, Vec<(PathBuf, String)>)>(0);
@@ -376,38 +383,94 @@ impl Drop for HookHost {
 // Which hooks are on
 // ---------------------------------------------------------------------------
 
-/// Where the off switches live: `~/.bough/hooks-disabled.json`, a plain list
-/// of file names.
+/// The switches: `~/.bough/hooks-state.json`.
 ///
-/// A LIST OF WHAT IS OFF, not of what is on. Dropping a new `.lua` into the
-/// directory has to work — that is the whole installation story — so the
-/// default for an unlisted file is ENABLED, and a file the user has never
-/// heard of cannot be silently inert.
-pub fn disabled_path() -> PathBuf {
+/// TWO LISTS, because the default is not the same everywhere. A file you
+/// dropped in `~/.bough/hooks` is on unless it is in `off` — that is the whole
+/// installation story, and a file that sat inert until you found a panel would
+/// be a bug report. A bundled or cloned hook is off unless it is in `on`,
+/// because neither arrived by you writing it (`hooks::sources` carries the
+/// argument).
+pub fn state_path() -> PathBuf {
+    bough_path(&["hooks-state.json"])
+}
+
+/// The pre-sources file, read only to migrate off.
+fn legacy_disabled_path() -> PathBuf {
     bough_path(&["hooks-disabled.json"])
 }
 
-fn read_disabled(path: &Path) -> Vec<String> {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok())
-        .unwrap_or_default()
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct HookState {
+    #[serde(default)]
+    pub on: Vec<String>,
+    #[serde(default)]
+    pub off: Vec<String>,
 }
 
-fn write_disabled(path: &Path, names: &[String]) -> Result<(), std::io::Error> {
+/// Read the state, folding in the pre-sources file.
+///
+/// The old file held BARE names and only ever described local hooks, so each
+/// becomes `local/<name>`. Folded at READ time rather than rewritten: nothing
+/// is written until the next toggle, so a downgrade still finds its own file
+/// where it left it.
+fn read_state(path: &Path) -> HookState {
+    let mut state: HookState = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    if let Ok(text) = std::fs::read_to_string(legacy_disabled_path()) {
+        if let Ok(names) = serde_json::from_str::<Vec<String>>(&text) {
+            for name in names {
+                let id = format!("local/{name}");
+                if !state.off.contains(&id) {
+                    state.off.push(id);
+                }
+            }
+        }
+    }
+    state
+}
+
+fn write_state(path: &Path, state: &HookState) -> Result<(), std::io::Error> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let json = serde_json::to_string_pretty(names).unwrap_or_else(|_| "[]".into());
-    std::fs::write(path, json)
+    std::fs::write(
+        path,
+        serde_json::to_string_pretty(state).unwrap_or_default(),
+    )
+}
+
+/// Is this hook on, given where it came from?
+pub fn is_on(state: &HookState, id: &str, kind: SourceKind) -> bool {
+    if state.off.iter().any(|o| o == id) {
+        return false;
+    }
+    if state.on.iter().any(|o| o == id) {
+        return true;
+    }
+    kind.on_by_default()
 }
 
 /// One hook file, as the panel lists it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HookFile {
-    /// The file name — the id the toggle route takes.
+    /// `<source>/<file>` — the id every switch, row and activity entry keys
+    /// on. Two repos can both ship a `guard.lua`; only this tells them apart.
+    pub id: String,
+    /// The file name alone, for the row.
     pub name: String,
+    /// Which source it came from, and what kind that source is.
+    pub source: String,
+    pub kind: SourceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha: Option<String>,
     pub path: String,
     pub enabled: bool,
     /// Listeners this file registered. 0 on a disabled one (it never ran) and
@@ -428,53 +491,51 @@ pub struct HookFile {
     pub error: Option<String>,
 }
 
-/// Every `.lua` in the hooks directory, enabled or not, with what the live
-/// host knows about the ones that loaded.
+/// Every hook across every source, on or off, with what the live host knows
+/// about the ones that loaded.
 pub fn list_hooks() -> Vec<HookFile> {
-    list_hooks_in(&hooks_dir(), &disabled_path())
+    list_hooks_over(&all_sources(), &read_state(&state_path()))
 }
 
-pub fn list_hooks_in(dir: &Path, disabled_at: &Path) -> Vec<HookFile> {
-    let disabled = read_disabled(disabled_at);
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "lua") && p.is_file())
-        .collect();
-    files.sort();
+pub fn list_hooks_over(sources: &[HookSource], state: &HookState) -> Vec<HookFile> {
     let live = host();
     let activity = live.map(|h| h.activity()).unwrap_or_default();
-    files
-        .into_iter()
-        .map(|path| {
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let enabled = !disabled.contains(&name);
+    let mut out = Vec::new();
+    for source in sources {
+        for (id, path) in sources::files_in(source) {
+            let enabled = is_on(state, &id, source.kind);
+            let key = path.to_string_lossy().into_owned();
             let error = live.and_then(|h| {
                 h.failed
                     .iter()
                     .find(|(p, _)| p == &path)
                     .map(|(_, e)| e.clone())
             });
-            let acted = activity.get(&path.to_string_lossy().into_owned()).cloned();
-            HookFile {
-                name,
+            let acted = activity.get(&key).cloned();
+            out.push(HookFile {
+                name: path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                id,
+                source: source.name.clone(),
+                kind: source.kind,
+                repo: source.repo.clone(),
+                rev: source.rev.clone(),
+                sha: source.sha.clone(),
                 fired: acted.as_ref().map(|(n, _)| *n).unwrap_or(0),
                 last: acted.and_then(|(_, l)| l),
-                path: path.to_string_lossy().into_owned(),
+                path: key,
                 enabled,
                 autocmds: live
                     .filter(|_| enabled)
                     .map(|h| h.listeners_for(&path))
                     .unwrap_or(0),
                 error,
-            }
-        })
-        .collect()
+            });
+        }
+    }
+    out
 }
 
 /// Turn one hook on or off and rebuild the interpreter.
@@ -484,20 +545,31 @@ pub fn list_hooks_in(dir: &Path, disabled_at: &Path) -> Vec<HookFile> {
 /// listener it registered on somebody else's event is gone too — which a
 /// dispatch-time filter could not achieve, because the registration happened
 /// at load.
-pub fn set_enabled(name: &str, enabled: bool) -> Result<(), std::io::Error> {
-    let path = disabled_path();
-    let mut disabled = read_disabled(&path);
-    let was = !disabled.contains(&name.to_string());
-    if was == enabled {
+pub fn set_enabled(id: &str, enabled: bool) -> Result<(), std::io::Error> {
+    let path = state_path();
+    let mut state = read_state(&path);
+    let kind = all_sources()
+        .into_iter()
+        .find(|s| id.starts_with(&format!("{}/", s.name)))
+        .map(|s| s.kind)
+        .unwrap_or(SourceKind::Local);
+    if is_on(&state, id, kind) == enabled {
         return Ok(()); // already there; no rebuild for a no-op
     }
+    state.on.retain(|n| n != id);
+    state.off.retain(|n| n != id);
+    // Recorded EXPLICITLY either way, never left to the default: a bundled
+    // hook you turned on must survive the next upgrade, and a local one you
+    // turned off must survive a version of this code that changes its mind
+    // about defaults.
     if enabled {
-        disabled.retain(|n| n != name);
+        state.on.push(id.to_string());
+        state.on.sort();
     } else {
-        disabled.push(name.to_string());
-        disabled.sort();
+        state.off.push(id.to_string());
+        state.off.sort();
     }
-    write_disabled(&path, &disabled)?;
+    write_state(&path, &state)?;
     reload();
     Ok(())
 }
@@ -505,7 +577,7 @@ pub fn set_enabled(name: &str, enabled: bool) -> Result<(), std::io::Error> {
 /// Rebuild the process-wide host from what is on disk right now.
 pub fn reload() {
     let dir = hooks_dir();
-    let rebuilt = HookHost::load_enabled(&dir, &disabled_path());
+    let rebuilt = HookHost::load_sources(&all_sources(), &read_state(&state_path()));
     if let Ok(mut slot) = host_slot().write() {
         // The old host drops here, which shuts its thread down. A turn holding
         // a dispatch mid-flight keeps the old one alive until it answers,
@@ -550,7 +622,10 @@ pub fn host() -> Option<&'static HookHost> {
     let mut slot = host_slot().write().ok()?;
     let stale = slot.as_ref().map(|(d, _)| d != &dir).unwrap_or(true);
     if stale {
-        *slot = Some((dir.clone(), HookHost::load_enabled(&dir, &disabled_path())));
+        *slot = Some((
+            dir.clone(),
+            HookHost::load_sources(&all_sources(), &read_state(&state_path())),
+        ));
     }
     slot.as_ref()
         .and_then(|(_, b)| b.as_ref())

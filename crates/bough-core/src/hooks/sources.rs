@@ -1,0 +1,377 @@
+//! Where hooks come from: the ones bough ships, the ones you cloned, and the
+//! ones you wrote.
+//!
+//! THREE ROOTS, ONE ORDER — bundled, then git sources in the order you added
+//! them, then your own `~/.bough/hooks`. Later wins a name collision, so a
+//! file you wrote always beats a repo's file of the same name, and a repo's
+//! always beats a bundled one. The order is the answer to "which one is
+//! running", and it is the same order the panel prints.
+//!
+//! ## Ids are source-qualified
+//!
+//! Two repos WILL both ship a `guard.lua`. So a hook's identity — the thing
+//! the off-switch, the panel row and the activity map all key on — is
+//! `<source>/<file>`, never the bare file name.
+//!
+//! ## On by default is not the same answer everywhere
+//!
+//! A file you dropped in `~/.bough/hooks` is ON: that is the whole
+//! installation story, and a file that sat inert until you found a panel
+//! would be a bug report. A BUNDLED or CLONED hook is OFF until you say
+//! otherwise, because neither arrived by you writing it — one came with an
+//! upgrade, the other came from a stranger's repository, and both run
+//! in-process as you on the next turn. Opting in is one keystroke; opting out
+//! of something already running is a support question.
+//!
+//! ## Nothing here fetches on its own
+//!
+//! `bough hooks update` re-fetches, prints the SHA it moved to, and is the
+//! only thing that ever changes cloned bytes. A harness that quietly pulled
+//! new code from a repo between turns would be a supply chain with no gate on
+//! it.
+
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::paths::{bough_path, hooks_dir};
+
+/// Where a source's hooks came from, which decides whether they default on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceKind {
+    /// Shipped inside the binary, materialized on first use.
+    Bundled,
+    /// Cloned from a git repository named in `hooks.json`.
+    Git,
+    /// `~/.bough/hooks` — the files you wrote.
+    Local,
+}
+
+impl SourceKind {
+    /// Is a hook from this source on when nothing has been said about it?
+    pub fn on_by_default(self) -> bool {
+        matches!(self, SourceKind::Local)
+    }
+}
+
+/// One place hooks are discovered from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookSource {
+    /// The id prefix: `local`, `bundled`, or a slug of the repo.
+    pub name: String,
+    pub kind: SourceKind,
+    pub dir: PathBuf,
+    /// Git sources only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// The ref you asked for — a branch, a tag, a commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
+    /// The commit actually checked out. This is the thing to compare when
+    /// asking "did what I am running change?"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha: Option<String>,
+}
+
+/// `~/.bough/hooks.json` — the git sources you added.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SourcesFile {
+    #[serde(default)]
+    pub sources: Vec<GitSource>,
+}
+
+/// One entry in `hooks.json`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitSource {
+    pub repo: String,
+    /// What to check out. Defaults to the remote's default branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
+    /// Subdirectory holding the `.lua` files, when they are not at the root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+    /// The commit last checked out, recorded so `update` can say what moved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha: Option<String>,
+}
+
+impl GitSource {
+    /// The id prefix and clone directory name for this repo: `owner-name`,
+    /// slugified. Stable across `rev` changes, because the identity is the
+    /// REPOSITORY — pinning to a different tag must not orphan every off
+    /// switch you set.
+    pub fn slug(&self) -> String {
+        let trimmed = self
+            .repo
+            .trim_end_matches('/')
+            .trim_end_matches(".git")
+            .to_lowercase();
+        let parts: Vec<&str> = trimmed
+            .rsplit(['/', ':'])
+            .take(2)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let joined = parts.join("-");
+        joined
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string()
+    }
+}
+
+pub fn sources_path() -> PathBuf {
+    bough_path(&["hooks.json"])
+}
+
+/// Where cloned repositories live. Outside `hooks/` so a clone never lands in
+/// the directory whose contents you own.
+pub fn repos_dir() -> PathBuf {
+    bough_path(&["hook-repos"])
+}
+
+pub fn bundled_hooks_dir() -> PathBuf {
+    bough_path(&["bundled-hooks", env!("CARGO_PKG_VERSION")])
+}
+
+/// The hook files shipped with bough. Materialized to disk like the bundled
+/// skills, and for the same reason: a hook may sit beside data files it reads,
+/// and a path is the only thing a `bough.fs.read` can take.
+static BUNDLED: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/hooks");
+
+/// Write the bundled hooks to disk. Overwrites in place — the embedded bytes
+/// are the source of truth, and a user edit to a bundled file is not a thing
+/// this store tries to preserve (copy it into `~/.bough/hooks` to own it).
+pub fn materialize_bundled(dest: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for file in BUNDLED.files() {
+        std::fs::write(dest.join(file.path()), file.contents())?;
+    }
+    Ok(())
+}
+
+fn ensure_bundled() -> Option<PathBuf> {
+    let dest = bundled_hooks_dir();
+    // Best effort: a bundle that cannot be written is a source with nothing
+    // in it, which discovery already handles.
+    materialize_bundled(&dest).ok()?;
+    Some(dest)
+}
+
+pub fn read_sources_file(path: &Path) -> SourcesFile {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+pub fn write_sources_file(path: &Path, file: &SourcesFile) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_json::to_string_pretty(file).unwrap_or_default())
+}
+
+/// Every source, in load order: bundled, then each git source, then local.
+pub fn all_sources() -> Vec<HookSource> {
+    sources_from(&sources_path(), &repos_dir(), &hooks_dir())
+}
+
+/// The injectable form — tests point all three somewhere temporary.
+pub fn sources_from(sources_at: &Path, repos: &Path, local: &Path) -> Vec<HookSource> {
+    let mut out = Vec::new();
+    if let Some(dir) = ensure_bundled() {
+        out.push(HookSource {
+            name: "bundled".into(),
+            kind: SourceKind::Bundled,
+            dir,
+            repo: None,
+            rev: None,
+            sha: None,
+        });
+    }
+    for git in read_sources_file(sources_at).sources {
+        let slug = git.slug();
+        out.push(HookSource {
+            name: slug.clone(),
+            kind: SourceKind::Git,
+            dir: match &git.dir {
+                Some(sub) => repos.join(&slug).join(sub),
+                None => repos.join(&slug),
+            },
+            repo: Some(git.repo),
+            rev: git.rev,
+            sha: git.sha,
+        });
+    }
+    out.push(HookSource {
+        name: "local".into(),
+        kind: SourceKind::Local,
+        dir: local.to_path_buf(),
+        repo: None,
+        rev: None,
+        sha: None,
+    });
+    out
+}
+
+/// The `.lua` files a source contributes, name-sorted, as `(id, path)`.
+pub fn files_in(source: &HookSource) -> Vec<(String, PathBuf)> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&source.dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "lua") && p.is_file())
+        .collect();
+    files.sort();
+    files
+        .into_iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            (format!("{}/{name}", source.name), path)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_repo_url_slugs_to_owner_name_however_it_was_written() {
+        let slug = |repo: &str| {
+            GitSource {
+                repo: repo.into(),
+                rev: None,
+                dir: None,
+                sha: None,
+            }
+            .slug()
+        };
+        assert_eq!(
+            slug("https://github.com/someone/rust-hooks"),
+            "someone-rust-hooks"
+        );
+        assert_eq!(
+            slug("https://github.com/someone/rust-hooks.git"),
+            "someone-rust-hooks"
+        );
+        assert_eq!(
+            slug("git@github.com:someone/rust-hooks.git"),
+            "someone-rust-hooks"
+        );
+        assert_eq!(
+            slug("https://github.com/someone/rust-hooks/"),
+            "someone-rust-hooks"
+        );
+        // The slug is the REPO's identity, so re-pinning to another tag keeps
+        // every off switch pointed at the same hooks.
+        assert_eq!(
+            GitSource {
+                repo: "https://github.com/someone/rust-hooks".into(),
+                rev: Some("v9".into()),
+                dir: None,
+                sha: None,
+            }
+            .slug(),
+            slug("https://github.com/someone/rust-hooks")
+        );
+    }
+
+    #[test]
+    fn only_local_hooks_are_on_when_nothing_has_been_said_about_them() {
+        assert!(SourceKind::Local.on_by_default());
+        assert!(
+            !SourceKind::Git.on_by_default(),
+            "a stranger's repo does not start running because you cloned it"
+        );
+        assert!(
+            !SourceKind::Bundled.on_by_default(),
+            "an upgrade must not start running code you never turned on"
+        );
+    }
+
+    #[test]
+    fn ids_are_source_qualified_so_two_repos_can_ship_the_same_file_name() {
+        let dir = std::env::temp_dir().join(format!("bough-src-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("guard.lua"), "").unwrap();
+        std::fs::write(dir.join("other.lua"), "").unwrap();
+        std::fs::write(dir.join("notes.md"), "").unwrap();
+        let source = HookSource {
+            name: "someone-rust-hooks".into(),
+            kind: SourceKind::Git,
+            dir: dir.clone(),
+            repo: None,
+            rev: None,
+            sha: None,
+        };
+        let ids: Vec<String> = files_in(&source).into_iter().map(|(id, _)| id).collect();
+        assert_eq!(
+            ids,
+            [
+                "someone-rust-hooks/guard.lua",
+                "someone-rust-hooks/other.lua"
+            ],
+            "name-sorted, .lua only, prefixed by the source"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_load_order_is_bundled_then_each_repo_then_your_own() {
+        let root = std::env::temp_dir().join(format!("bough-order-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("hooks")).unwrap();
+        let sources_at = root.join("hooks.json");
+        write_sources_file(
+            &sources_at,
+            &SourcesFile {
+                sources: vec![
+                    GitSource {
+                        repo: "https://github.com/a/one".into(),
+                        rev: None,
+                        dir: None,
+                        sha: None,
+                    },
+                    GitSource {
+                        repo: "https://github.com/b/two".into(),
+                        rev: None,
+                        dir: Some("hooks".into()),
+                        sha: None,
+                    },
+                ],
+            },
+        )
+        .unwrap();
+        let sources = sources_from(&sources_at, &root.join("repos"), &root.join("hooks"));
+        let names: Vec<&str> = sources.iter().map(|s| s.name.as_str()).collect();
+        // Bundled may be absent when the bundle cannot be written; the ORDER
+        // of what is present is what this pins.
+        let expected: Vec<&str> = ["bundled", "a-one", "b-two", "local"]
+            .into_iter()
+            .filter(|n| names.contains(n))
+            .collect();
+        assert_eq!(names, expected);
+        assert!(sources.last().unwrap().kind == SourceKind::Local);
+        // A `dir` lands under the clone, not beside it.
+        let two = sources.iter().find(|s| s.name == "b-two").unwrap();
+        assert!(two.dir.ends_with("b-two/hooks"), "{:?}", two.dir);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

@@ -21,6 +21,7 @@
 #![allow(clippy::type_complexity)]
 
 mod exec;
+mod hooks;
 mod mcp;
 mod patterns;
 mod sync_mcp;
@@ -112,10 +113,11 @@ fn parse_tui_args(argv: &[String]) -> TuiArgs {
 fn usage() -> &'static str {
     // The launchd/systemd manager verbs (setup/kill/restart/update/status/
     // logs/run/purge) stay in the bash wrapper; this binary owns the rest.
-    "usage: bough [tui|start|exec|mcp|sync-mcp|tags|patterns]
+    "usage: bough [tui|start|exec|hooks|mcp|sync-mcp|tags|patterns]
   (no args) open the terminal UI (bough [-w DIR], -h for flags)
   start    run the server in the foreground
   exec     headless one-shot turn
+  hooks    install and inspect hook plugins
   mcp      inspect and repair the MCP registry
   sync-mcp adopt Claude Code's MCP servers
   tags     what the command memory knows
@@ -196,6 +198,10 @@ fn main() -> ExitCode {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             let deps = exec::real_deps();
             let code = rt.block_on(exec::run_exec(&args[1..], &deps));
+            ExitCode::from(code as u8)
+        }
+        Some("hooks") => {
+            let code = hooks::run_hooks(&args[1..], &hooks::HooksDeps::default());
             ExitCode::from(code as u8)
         }
         Some("mcp") => {

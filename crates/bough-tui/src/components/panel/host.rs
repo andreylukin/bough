@@ -1448,7 +1448,10 @@ impl PanelHost {
                 .and_then(|h| h.get(at))
                 .map(|h| {
                     vec![HostRequest::ToggleHook {
-                        name: h.name.clone(),
+                        // The ID, never the file name: two sources can ship
+                        // the same name and only one of them is under the
+                        // cursor.
+                        name: h.id.clone(),
                         enabled: !h.enabled,
                     }]
                 })

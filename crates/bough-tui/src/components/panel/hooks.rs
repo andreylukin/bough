@@ -28,7 +28,23 @@ use crate::store::selectors::clip;
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct HookRow {
+    /// `<source>/<file>` — what the toggle names. Two sources can ship the
+    /// same file name; only this tells them apart.
+    #[serde(default)]
+    pub id: String,
     pub name: String,
+    /// Which source it came from, and enough about that source to print a
+    /// header the user can act on.
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub repo: Option<String>,
+    #[serde(default)]
+    pub rev: Option<String>,
+    #[serde(default)]
+    pub sha: Option<String>,
     #[serde(default)]
     pub path: String,
     #[serde(default)]
@@ -70,6 +86,34 @@ impl Default for HooksTabProps<'_> {
             selected: 0,
             note: None,
         }
+    }
+}
+
+/// The header printed above a source's hooks: what it is, and — for a clone —
+/// the commit you are running.
+///
+/// The COMMIT, not just the repo. "which code is this" is the question a
+/// third-party source raises and a name cannot answer, and it is the thing
+/// `bough hooks update` changes.
+pub fn source_header(row: &HookRow, hooks_dir: Option<&str>) -> String {
+    match (&row.repo, &row.sha) {
+        (Some(repo), Some(sha)) => format!(
+            "{} · {repo}{} · {}",
+            row.source,
+            row.rev
+                .as_ref()
+                .map(|r| format!(" @{r}"))
+                .unwrap_or_default(),
+            &sha[..sha.len().min(7)],
+        ),
+        _ => match row.kind.as_str() {
+            "bundled" => format!("{} · shipped with bough", row.source),
+            "local" => match hooks_dir {
+                Some(dir) => format!("{} · {dir}", row.source),
+                None => format!("{} · yours", row.source),
+            },
+            _ => row.source.clone(),
+        },
     }
 }
 
@@ -177,7 +221,18 @@ pub fn render_hooks(props: &HooksTabProps<'_>, area: Rect, buf: &mut Buffer) {
     let start = at
         .saturating_sub(avail / 2)
         .min(hooks.len().saturating_sub(avail.max(1)));
+    let mut current = String::new();
     for (i, hook) in hooks.iter().enumerate().skip(start).take(avail.max(1)) {
+        // The header rides the FIRST row of each source rather than being a
+        // row of its own: a row of its own would be one the cursor lands on
+        // and cannot act upon.
+        if hook.source != current {
+            current = hook.source.clone();
+            lines.push(Line::from(Span::styled(
+                clip(&source_header(hook, props.dir), props.cols),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        }
         lines.push(hook_line(hook, i == at, props.cols));
     }
     if let Some(dir) = props.dir {
@@ -205,6 +260,12 @@ mod tests {
 
     fn row(name: &str, enabled: bool, autocmds: usize, error: Option<&str>) -> HookRow {
         HookRow {
+            id: format!("local/{name}"),
+            source: "local".into(),
+            kind: "local".into(),
+            repo: None,
+            rev: None,
+            sha: None,
             name: name.into(),
             path: format!("/home/u/.bough/hooks/{name}"),
             enabled,
@@ -293,6 +354,37 @@ mod tests {
         assert_eq!(
             hooks_summary(&[row("a.lua", true, 1, None)]),
             "1/1 on · 1 listener"
+        );
+    }
+
+    #[test]
+    fn a_source_header_names_the_commit_a_clone_is_running() {
+        let cloned = HookRow {
+            source: "someone-rust-hooks".into(),
+            kind: "git".into(),
+            repo: Some("https://github.com/someone/rust-hooks".into()),
+            rev: Some("v0.2.0".into()),
+            sha: Some("3f2a9c1d4e5f6a7b".into()),
+            ..row("fmt.lua", false, 0, None)
+        };
+        assert_eq!(
+            source_header(&cloned, None),
+            "someone-rust-hooks · https://github.com/someone/rust-hooks @v0.2.0 · 3f2a9c1"
+        );
+        assert_eq!(
+            source_header(
+                &HookRow {
+                    kind: "bundled".into(),
+                    source: "bundled".into(),
+                    ..row("g.lua", false, 0, None)
+                },
+                None
+            ),
+            "bundled · shipped with bough"
+        );
+        assert_eq!(
+            source_header(&row("g.lua", true, 1, None), Some("/home/u/.bough/hooks")),
+            "local · /home/u/.bough/hooks"
         );
     }
 

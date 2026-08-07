@@ -52,6 +52,12 @@ pub fn artifacts_dir_for(session_id: &str) -> PathBuf {
     artifacts_dir().join(session_id)
 }
 
+/// The hooks you wrote: `~/.bough/hooks`. Bundled and cloned hooks live
+/// elsewhere — see `hooks::sources`.
+pub fn hooks_dir() -> PathBuf {
+    bough_path(&["hooks"])
+}
+
 /// Every superseded version of every artifact:
 /// `artifact-versions/<sessionId>/<name>/<ts>`.
 ///
