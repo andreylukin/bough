@@ -98,6 +98,8 @@ pub enum Command {
     SavedShow,
     ArtifactsShow,
     RulesShow,
+    /// `/restart` — stop the server, start a fresh one, come back here.
+    Restart,
     // -- composing --
     Send,
     SendQueue,
@@ -349,6 +351,12 @@ pub static SLASH_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
             name: "rules",
             command: Command::RulesShow,
             desc: "the AGENTS.md files injected into every turn",
+            takes_arg: false,
+        },
+        SlashCommand {
+            name: "restart",
+            command: Command::Restart,
+            desc: "restart the server and reopen this conversation",
             takes_arg: false,
         },
         SlashCommand {

@@ -209,8 +209,30 @@ fn run_tui(argv: &[String]) -> ExitCode {
                 );
                 return ExitCode::from(2);
             }
+            let workspace_for_restart = workspace.clone();
             match bough_tui::run(TuiOptions { workspace, resume }) {
-                Ok(()) => ExitCode::SUCCESS,
+                // `/restart`: the terminal is already restored, so this is the
+                // one place that can cleanly stop the server and hand the
+                // process over. EXEC, not spawn — the shell that launched
+                // bough should be waiting on the new one, not on a parent that
+                // is only waiting on a child.
+                Ok(true) => {
+                    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+                    if let Err(message) = rt.block_on(restart_server()) {
+                        eprintln!("{message}");
+                        return ExitCode::from(2);
+                    }
+                    let exe = std::env::current_exe().expect("current exe");
+                    let mut cmd = std::process::Command::new(exe);
+                    cmd.arg("--resume");
+                    if let Some(ws) = workspace_for_restart {
+                        cmd.arg("-w").arg(ws);
+                    }
+                    let err = std::os::unix::process::CommandExt::exec(&mut cmd);
+                    eprintln!("bough: could not restart: {err}");
+                    ExitCode::from(2)
+                }
+                Ok(false) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
                     ExitCode::from(2)

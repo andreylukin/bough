@@ -830,6 +830,8 @@ pub struct App<T: Transport> {
     notice_armed: Option<String>,
     notice_at: Option<i64>,
     quit_armed: bool,
+    /// `/restart` was asked for: quit, then re-exec instead of returning.
+    pub restarting: bool,
     pub quit: bool,
     thread: Vec<Message>,
     /// message id → streamed-but-unfinalized text.
@@ -1010,6 +1012,7 @@ impl<T: Transport> App<T> {
             notice_armed: None,
             notice_at: None,
             quit_armed: false,
+            restarting: false,
             quit: false,
             thread: Vec::new(),
             streaming: HashMap::new(),
@@ -2440,6 +2443,18 @@ impl<T: Transport> App<T> {
                     return;
                 }
                 self.transport.effect(Effect::LoadArtifacts);
+            }
+            // Leaving to come straight back: the conversation is already
+            // recorded per workspace (`resume`), so the new process reopens it
+            // without being told which one.
+            Command::Restart => {
+                if self.options.workspace.is_none() {
+                    self.notice =
+                        Some("restart needs a workspace — start bough with -w DIR".to_string());
+                    return;
+                }
+                self.restarting = true;
+                self.quit = true;
             }
             Command::RulesShow => {
                 if self.session_id.is_none() {
@@ -4482,7 +4497,7 @@ pub async fn run_loop<T: Transport>(
     options: TuiOptions,
     transport: T,
     mut events: tokio::sync::mpsc::UnboundedReceiver<Action>,
-) -> std::io::Result<()> {
+) -> std::io::Result<bool> {
     use crossterm::event::{DisableMouseCapture, EnableMouseCapture, EventStream};
     use futures::StreamExt;
 
@@ -4588,12 +4603,14 @@ pub async fn run_loop<T: Transport>(
         }
     });
 
-    let result: std::io::Result<()> = loop {
+    let result: std::io::Result<bool> = loop {
         let action = tokio::select! {
             a = rx.recv() => a,
             e = events.recv() => e,
         };
-        let Some(action) = action else { break Ok(()) };
+        let Some(action) = action else {
+            break Ok(false);
+        };
         let is_tick = matches!(action, Action::Tick);
         // Was there something moving BEFORE this action? The tick that RETIRES
         // the last moving thing must still be drawn, or the screen keeps
@@ -4633,7 +4650,7 @@ pub async fn run_loop<T: Transport>(
             }
         }
         if app.quit {
-            break Ok(());
+            break Ok(app.restarting);
         }
         // An idle tick changes nothing on screen — repainting on it would put
         // an 8fps write loop under every idle terminal (TS: no timer at all
@@ -5913,7 +5930,9 @@ async fn start_server_and_wait(api: &crate::api::Api) -> bool {
 }
 
 /// printed by the bin with exit 2 (main.tsx::preflight contract).
-pub async fn run_live(options: TuiOptions) -> Result<(), String> {
+/// Runs the screen. `Ok(true)` means `/restart` was asked for — the caller
+/// tears the terminal down, restarts the server, and re-execs.
+pub async fn run_live(options: TuiOptions) -> Result<bool, String> {
     let api = crate::api::Api::new(crate::api::ApiOptions {
         base: None,
         fetch_fn: None,
