@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+libc         = { workspace = true }   # restart: signal the recorded server pid
 bough-core = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }

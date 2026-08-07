@@ -417,6 +417,43 @@ pub(crate) fn mcp_catalog_for(
 
 /// Step 9: **loopback only, no override.** The hostname is a constant, not a
 /// parameter — there is no auth layer, and none is planned.
+/// Where the running server records its pid, so `bough restart` can stop it
+/// without guessing which process owns the port.
+pub fn pid_path() -> std::path::PathBuf {
+    bough_core::paths::bough_path(&["server.pid"])
+}
+
+/// Stop the server this install recorded, and wait for it to go.
+///
+/// Returns whether something was actually stopped. SIGTERM, never SIGKILL:
+/// the server's own shutdown path kills background shells and MCP children
+/// and closes the database, and skipping it would leave exactly the debris a
+/// restart is supposed to clear.
+pub async fn stop_running_server() -> bool {
+    let Ok(text) = std::fs::read_to_string(pid_path()) else {
+        return false;
+    };
+    let Ok(pid) = text.trim().parse::<i32>() else {
+        return false;
+    };
+    // SAFETY: signal 0 probes for existence without delivering anything.
+    if unsafe { libc::kill(pid, 0) } != 0 {
+        let _ = std::fs::remove_file(pid_path());
+        return false; // recorded, but gone
+    }
+    unsafe {
+        libc::kill(pid, libc::SIGTERM);
+    }
+    for _ in 0..40 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            let _ = std::fs::remove_file(pid_path());
+            return true;
+        }
+    }
+    true
+}
+
 pub async fn bind_loopback(port: u16) -> Result<tokio::net::TcpListener, BoughError> {
     tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
@@ -524,6 +561,11 @@ pub async fn start() -> Result<(), BoughError> {
     // socket, never from the request.
     let bound = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     configure_oauth_callback(bound);
+    // Recorded AFTER the bind: a pid file written by a process that then
+    // failed to take the port would send `bough restart` after the wrong
+    // server. Best-effort — a pid file that cannot be written costs the
+    // restart verb its shortcut, nothing else.
+    let _ = std::fs::write(pid_path(), std::process::id().to_string());
     println!(
         "bough listening on 127.0.0.1:{port} — db {}",
         db_path().display()

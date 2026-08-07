@@ -88,6 +88,9 @@ pub const WHEEL_ROWS: usize = 3;
 #[derive(Default, Clone)]
 pub struct TuiOptions {
     pub workspace: Option<String>,
+    /// `--resume`: reopen the conversation last open in this workspace
+    /// instead of starting on a blank screen.
+    pub resume: bool,
 }
 
 /// Everything that can reach the reducer — all tasks post these over one mpsc.
@@ -1504,6 +1507,11 @@ impl<T: Transport> App<T> {
                 self.attachment_sel = None;
                 self.pastes.clear();
                 self.panel.current_id = Some(id.clone());
+                // Recorded so `bough --resume` comes back here. Per workspace,
+                // and only ever a record — reopening is something you ask for.
+                if let Some(workspace) = &self.options.workspace {
+                    bough_core::resume::remember(workspace, &id);
+                }
                 self.session_id = Some(id);
                 // A session switch invalidates the listing: the candidates are
                 // that conversation's workspace, not this one's.
@@ -3956,6 +3964,19 @@ impl<T: Transport> App<T> {
     /// when the picker is opened is a theme that never paints.
     pub fn boot(&mut self) {
         self.transport.effect(Effect::LoadTheme);
+        // `--resume`: reopen where you were. Only when asked — a harness that
+        // silently drops you back into last week's thread, with its context
+        // and its costs, has made a decision that was not its to make.
+        if self.options.resume {
+            if let Some(id) = self
+                .options
+                .workspace
+                .as_deref()
+                .and_then(bough_core::resume::last_for)
+            {
+                self.transport.effect(Effect::OpenSession(id));
+            }
+        }
     }
 
     pub fn draw(&self, area: Rect, buf: &mut Buffer) {
@@ -5862,6 +5883,35 @@ impl Transport for LiveTransport {
 
 /// Preflight, connect the un-scoped SSE stream, run the loop, tear down.
 /// The error string is already the user-facing sentence (`bough tui: …`),
+/// Spawn `bough start` detached and wait for it to answer.
+///
+/// The CURRENT binary, resolved from `current_exe`, so a dev build starts the
+/// server it was built beside rather than whatever `bough` is on PATH — the
+/// two disagreeing is exactly the confusion this is meant to end.
+async fn start_server_and_wait(api: &crate::api::Api) -> bool {
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    let spawned = std::process::Command::new(exe)
+        .arg("start")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    if spawned.is_err() {
+        return false;
+    }
+    // Bounded: a server that has not answered in five seconds is a server
+    // with a problem, and the error it produces is more useful than a wait.
+    for _ in 0..25 {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        if api.preflight().await.is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
 /// printed by the bin with exit 2 (main.tsx::preflight contract).
 pub async fn run_live(options: TuiOptions) -> Result<(), String> {
     let api = crate::api::Api::new(crate::api::ApiOptions {
@@ -5869,7 +5919,15 @@ pub async fn run_live(options: TuiOptions) -> Result<(), String> {
         fetch_fn: None,
     });
     if let Err(e) = api.preflight().await {
-        return Err(format!("bough tui: {e}"));
+        // A server that is not running is not a reason to send someone back
+        // to a shell to type one word. Start it, wait for it, and say so if it
+        // still will not come up — the sentence-and-exit-2 contract only has
+        // to hold when there is nothing else to try.
+        if e.is_offline() && start_server_and_wait(&api).await {
+            eprintln!("bough: started the server");
+        } else {
+            return Err(format!("bough tui: {e}"));
+        }
     }
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Action>();
@@ -6704,6 +6762,7 @@ mod tests {
         let mut app = App::new(
             TuiOptions {
                 workspace: Some("/repos/bough".into()),
+                resume: false,
             },
             sink,
             100,
@@ -6726,6 +6785,7 @@ mod tests {
         let mut app = App::new(
             TuiOptions {
                 workspace: Some("/repos/bough".into()),
+                resume: false,
             },
             sink,
             100,
@@ -6754,6 +6814,7 @@ mod tests {
         let app = App::new(
             TuiOptions {
                 workspace: Some("/repos/bough".into()),
+                resume: false,
             },
             sink,
             100,
@@ -6919,6 +6980,7 @@ mod tests {
         let (effects, sink) = scripted();
         let opts = TuiOptions {
             workspace: Some("/tmp/demo".into()),
+            resume: false,
         };
         let mut app = App::new(opts, sink, 80, 24);
         app.apply(Action::Connected(true), 0);
@@ -8004,6 +8066,7 @@ mod tests {
         let mut app = App::new(
             TuiOptions {
                 workspace: Some("/w/demo".into()),
+                resume: false,
             },
             sink,
             80,
@@ -8146,6 +8209,7 @@ mod tests {
         let mut app = App::new(
             TuiOptions {
                 workspace: Some("/w/demo".into()),
+                resume: false,
             },
             sink,
             80,

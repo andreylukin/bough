@@ -33,9 +33,10 @@ use bough_tui::app::TuiOptions;
 
 /// src/tui/args.ts::USAGE, verbatim (a multi-line literal — `\n\`
 /// continuations would strip the indentation, which is part of the text).
-const TUI_USAGE: &str = "usage: bough [-w DIR]
+const TUI_USAGE: &str = "usage: bough [-w DIR] [-r]
 
   -w, --workspace DIR   where new conversations start (default: the cwd)
+  -r, --resume          reopen this workspace\'s last conversation
   -h, --help            this message
 
   the server port comes from BOUGH_PORT (default 4321). It is an env var and
@@ -45,7 +46,11 @@ const TUI_USAGE: &str = "usage: bough [-w DIR]
 programs run as you, with your authority — there is no sandbox.";
 
 enum TuiArgs {
-    Args { workspace: Option<String> },
+    Args {
+        workspace: Option<String>,
+        /// `--resume` / `-r`: reopen this workspace's last conversation.
+        resume: bool,
+    },
     Help,
     UsageError(String),
 }
@@ -54,6 +59,7 @@ enum TuiArgs {
 /// argument is refused with a pointer at `bough exec`.
 fn parse_tui_args(argv: &[String]) -> TuiArgs {
     let mut workspace: Option<String> = None;
+    let mut resume = false;
     let mut i = 0usize;
     while i < argv.len() {
         let token = &argv[i];
@@ -74,6 +80,7 @@ fn parse_tui_args(argv: &[String]) -> TuiArgs {
             };
             match short {
                 "w" => ("workspace".to_string(), inline),
+                "r" => ("resume".to_string(), inline),
                 _ => {
                     return TuiArgs::UsageError(format!("unknown flag -{short}\n{TUI_USAGE}"));
                 }
@@ -86,6 +93,12 @@ fn parse_tui_args(argv: &[String]) -> TuiArgs {
                 "bough takes no positional argument (got \"{token}\").\nDid you mean: bough exec \"{token}\"?\n{TUI_USAGE}"
             ));
         };
+        // A boolean flag takes no value; everything else does.
+        if name == "resume" {
+            resume = true;
+            i += 1;
+            continue;
+        }
         if name != "workspace" {
             return TuiArgs::UsageError(format!("unknown flag --{name}\n{TUI_USAGE}"));
         }
@@ -107,15 +120,49 @@ fn parse_tui_args(argv: &[String]) -> TuiArgs {
             return TuiArgs::UsageError(format!("--workspace needs a path\n{TUI_USAGE}"));
         }
     }
-    TuiArgs::Args { workspace }
+    TuiArgs::Args { workspace, resume }
+}
+
+/// Stop the running server and start a fresh one.
+///
+/// The point is not the process — it is that boot RECOVERS: every turn left
+/// `running` by the old process is closed as orphaned before anything can
+/// talk to it, so a restart is also how a session wedged mid-turn becomes
+/// usable again. That recovery already existed; this is the verb that reaches
+/// it without a manual kill.
+async fn restart_server() -> Result<String, String> {
+    let base = bough_core::hostfn::artifact::server_base_url();
+    let was = bough_server::boot::stop_running_server().await;
+    // Started DETACHED, because this command returns and the server must not.
+    let exe = std::env::current_exe().map_err(|e| format!("bough restart: {e}"))?;
+    std::process::Command::new(exe)
+        .arg("start")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("bough restart: could not start the server: {e}"))?;
+    for _ in 0..40 {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        if reqwest::get(format!("{base}/sessions")).await.is_ok() {
+            return Ok(match was {
+                true => format!("restarted · {base}"),
+                false => format!("started · {base} (nothing was running)"),
+            });
+        }
+    }
+    Err(format!(
+        "bough restart: the new server did not answer at {base}"
+    ))
 }
 
 fn usage() -> &'static str {
     // The launchd/systemd manager verbs (setup/kill/restart/update/status/
     // logs/run/purge) stay in the bash wrapper; this binary owns the rest.
     "usage: bough [tui|start|exec|hooks|mcp|sync-mcp|tags|patterns]
-  (no args) open the terminal UI (bough [-w DIR], -h for flags)
+  (no args) open the terminal UI (bough [-w DIR] [-r], -h for flags)
   start    run the server in the foreground
+  restart  stop the running server and start a fresh one
   exec     headless one-shot turn
   hooks    install and inspect hook plugins
   mcp      inspect and repair the MCP registry
@@ -135,7 +182,7 @@ fn run_tui(argv: &[String]) -> ExitCode {
             eprintln!("{message}");
             ExitCode::from(2)
         }
-        TuiArgs::Args { workspace } => {
+        TuiArgs::Args { workspace, resume } => {
             let workspace = workspace.or_else(|| {
                 std::env::var("BOUGH_TUI_CWD")
                     .ok()
@@ -162,7 +209,7 @@ fn run_tui(argv: &[String]) -> ExitCode {
                 );
                 return ExitCode::from(2);
             }
-            match bough_tui::run(TuiOptions { workspace }) {
+            match bough_tui::run(TuiOptions { workspace, resume }) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
@@ -186,6 +233,19 @@ fn main() -> ExitCode {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("{err}");
+                    ExitCode::from(2)
+                }
+            }
+        }
+        Some("restart") => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            match rt.block_on(restart_server()) {
+                Ok(message) => {
+                    println!("{message}");
+                    ExitCode::SUCCESS
+                }
+                Err(message) => {
+                    eprintln!("{message}");
                     ExitCode::from(2)
                 }
             }
@@ -256,7 +316,7 @@ mod tests {
             argv(&["-w=/tmp/x"]),
         ] {
             match parse_tui_args(&cli) {
-                TuiArgs::Args { workspace } => assert_eq!(workspace.as_deref(), Some("/tmp/x")),
+                TuiArgs::Args { workspace, .. } => assert_eq!(workspace.as_deref(), Some("/tmp/x")),
                 _ => panic!("expected args for {cli:?}"),
             }
         }
