@@ -25,3 +25,6 @@ node_modules/
 
 # the dev profile: this checkout run against its own data root (make dev)
 /.dev/
+
+# prebuilt linux bough for the Harbor/terminal-bench adapter (bench/harbor)
+bench/harbor/dist/
