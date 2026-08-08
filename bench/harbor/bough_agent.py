@@ -127,28 +127,36 @@ class Bough(BaseInstalledAgent):
         # bough shells out to these by name. `rg` and `ast-grep` in particular
         # are named unconditionally by the system prompt, so a container
         # without them makes the agent look broken rather than unequipped.
-        # RETRIED, because at high concurrency this is the single biggest
-        # source of lost trials. Twenty containers hitting the Debian mirrors
-        # at once produces transient exit-100s, and treating the first one as
-        # fatal cost 30 of 89 trials in one run -- they never ran at all, which
-        # is worse than failing, because a suite total silently averages them
-        # in. `nodejs` is NOT optional: bough runs the programs it writes under
+        # The single biggest source of lost trials, and retries alone do not
+        # fix it. N containers starting together put N apt clients on the same
+        # mirrors from one IP; at N=20 a third of the suite died on exit 100,
+        # and five straight retries still lost 19 of 28 in a later run. What
+        # actually works is spreading the herd out (jitter) AND backing off
+        # long enough for a rate limit to lapse.
+        #
+        # `nodejs` is NOT optional: bough runs the programs it writes under
         # node (or bun), so an install that skips it yields an agent that
-        # cannot execute anything. libssl3 is here because the uploaded binary
-        # links OpenSSL 3 dynamically.
+        # cannot execute anything -- a loud failure traded for a silent zero.
+        # libssl3 is here because the uploaded binary links OpenSSL 3.
         await self.exec_as_root(
             environment,
             command=(
-                "for i in 1 2 3 4 5; do "
+                # Up to 45s of jitter so simultaneous trials do not arrive as
+                # one thundering herd. From /dev/urandom, not $RANDOM: these
+                # images run dash as /bin/sh, where $RANDOM is empty and the
+                # jitter silently becomes zero -- exactly when it is needed.
+                "sleep $(( $(od -An -N1 -tu1 /dev/urandom | tr -d ' \\n') % 45 )); "
+                "for i in 1 2 3 4 5 6 7 8; do "
                 "  apt-get update -qq && apt-get install -y --no-install-recommends "
                 "    ca-certificates curl git ripgrep nodejs libssl3 && exit 0; "
-                '  echo "bough: apt attempt $i failed, retrying" >&2; '
-                "  sleep $((i * 15)); "
+                '  echo "bough: apt attempt $i failed" >&2; '
+                # Exponential-ish, capped: 20s, 40s, 80s, 160s, then 180s.
+                "  sleep $(( i * i * 20 > 180 ? 180 : i * i * 20 )); "
                 "done; "
-                'echo "bough: apt-get failed five times" >&2; exit 100'
+                'echo "bough: apt-get failed eight times" >&2; exit 100'
             ),
             env={"DEBIAN_FRONTEND": "noninteractive"},
-            timeout_sec=900,
+            timeout_sec=1800,
         )
 
         if self._binary:
