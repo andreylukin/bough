@@ -33,6 +33,10 @@ use super::{accent, display_width, fmt_duration, fmt_tokens, info, pad_row, warn
 /// Default empty-transcript placeholder (Chat.tsx).
 pub const CHAT_PLACEHOLDER: &str = "type to start · the agent writes one program per round";
 
+/// The second line of the splash: the two keys that reach everything else. A
+/// first screen that names no key leaves the whole surface undiscoverable.
+pub const CHAT_HINT: &str = "? help · / commands · ^t panel";
+
 pub struct ChatProps<'a> {
     /// The whole transcript, pre-wrapped and pre-STYLED: one entry per
     /// physical row, straight out of `lines::build_lines`.
@@ -129,8 +133,19 @@ pub fn render_chat(p: &ChatProps, area: Rect, buf: &mut Buffer) {
         }
     };
 
+    // The empty session is the FIRST screen a user ever sees, so it carries the
+    // mark, what the tool does and the keys that open the rest. It degrades to
+    // the bare one-line placeholder when the body cannot hold that.
+    let splash = if p.lines.is_empty() {
+        super::splash::splash_block(width, body, p.placeholder, CHAT_HINT)
+    } else {
+        None
+    };
+
     for i in 0..body {
-        let line = if p.lines.is_empty() {
+        let line = if let Some(rows) = splash.as_ref() {
+            rows[i].clone()
+        } else if p.lines.is_empty() {
             // The empty-transcript hint sits on the last slot, where the first
             // reply will land.
             if i == body - 1 {
@@ -291,6 +306,76 @@ mod tests {
             4,
         );
         assert!(frame.contains("one program per round"), "{frame}");
+    }
+
+    /// The first screen of a real-sized session carries the mark, the name and
+    /// the keys — a blank rectangle with one grey sentence taught a new user
+    /// nothing about what was reachable.
+    #[test]
+    fn a_roomy_empty_thread_shows_the_mark_the_name_and_the_keys() {
+        let frame = draw(
+            &ChatProps {
+                height: 24,
+                ..props(&[])
+            },
+            80,
+            24,
+        );
+        assert!(frame.contains("bough"), "{frame}");
+        assert!(frame.contains("one program per round"), "{frame}");
+        assert!(frame.contains(CHAT_HINT), "{frame}");
+        // The mark itself: the log's flank, centred.
+        assert!(frame.contains("====="), "{frame}");
+    }
+
+    /// A narrow pane used to truncate the tagline mid-word. It says the same
+    /// thing in fewer columns instead.
+    #[test]
+    fn a_narrow_empty_thread_shortens_the_tagline_instead_of_cutting_it() {
+        let frame = draw(
+            &ChatProps {
+                width: 40,
+                height: 10,
+                ..props(&[])
+            },
+            40,
+            10,
+        );
+        assert!(frame.contains("type to start · ? help"), "{frame}");
+        assert!(!frame.contains("one program p"), "{frame}");
+    }
+
+    /// A short body drops the art rather than painting half a logo.
+    #[test]
+    fn a_short_empty_thread_drops_the_art_but_keeps_the_words() {
+        let frame = draw(
+            &ChatProps {
+                height: 6,
+                ..props(&[])
+            },
+            80,
+            6,
+        );
+        assert!(!frame.contains("====="), "{frame}");
+        assert!(frame.contains("one program per round"), "{frame}");
+    }
+
+    /// The splash is for the EMPTY session only — one message and the
+    /// transcript owns the body again.
+    #[test]
+    fn the_splash_vanishes_once_the_transcript_has_a_row() {
+        let lines = rows(&["hello"]);
+        let frame = draw(
+            &ChatProps {
+                height: 24,
+                ..props(&lines)
+            },
+            80,
+            24,
+        );
+        assert!(frame.contains("hello"), "{frame}");
+        assert!(!frame.contains("====="), "{frame}");
+        assert!(!frame.contains(CHAT_HINT), "{frame}");
     }
 
     // Chat.test.tsx: "Chat renders a transcript and its scroll indicator from fixtures"

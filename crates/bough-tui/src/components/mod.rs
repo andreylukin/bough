@@ -18,6 +18,7 @@ pub mod help;
 pub mod job_output;
 pub mod panel;
 pub mod rail;
+pub mod splash;
 pub mod status;
 
 use ratatui::style::Color;

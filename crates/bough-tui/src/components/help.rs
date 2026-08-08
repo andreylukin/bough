@@ -24,6 +24,9 @@ use super::{accent, info};
 /// Rows `↑`/`↓` move the overlay (App.tsx::HELP_STEP).
 pub const HELP_STEP: usize = 3;
 
+/// What bough IS, for the reader who pressed `?` to find out.
+pub const INTRO: &str = "type a task; the agent writes one program per round and runs it here";
+
 /// The overlay's rows, keymap-derived. Recomputed rather than cached: the
 /// table is static and the list is fifty rows.
 pub fn overlay_lines() -> Vec<HelpLine> {
@@ -51,10 +54,17 @@ pub fn help_view(rows: usize, offset: usize) -> Vec<Line<'static>> {
     let more = all.len() - (start + visible.len());
 
     let dim = Style::default().add_modifier(Modifier::DIM);
-    let mut out: Vec<Line<'static>> = vec![Line::from(Span::styled(
-        "keys · esc closes",
-        Style::default().add_modifier(Modifier::BOLD),
-    ))];
+    let mut out: Vec<Line<'static>> = vec![Line::from(vec![
+        Span::styled(
+            "keys · esc closes",
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        // THE ONE SENTENCE THE OVERLAY WAS MISSING. Fifty rows of chords
+        // answer "which key does what" for someone who already knows what the
+        // program is; a first-time reader arrives here from the `? help` hint
+        // without that, and every row after this one presumes it.
+        Span::styled(format!("  ·  {INTRO}"), dim),
+    ])];
     for l in visible {
         out.push(match l.kind {
             HelpLineKind::Blank => Line::from(Span::raw(" ")),
@@ -152,7 +162,8 @@ mod tests {
         assert!(total > 24, "the keymap should outgrow one screen: {total}");
         let top = text(&help_view(24, 0));
         assert_eq!(top.len(), 24, "the overlay must fill exactly its rows");
-        assert_eq!(top[0], "keys · esc closes");
+        // The header says what the program IS, not only that esc closes.
+        assert_eq!(top[0], format!("keys · esc closes  ·  {INTRO}"));
         assert!(
             top.last().unwrap().contains("more below"),
             "{:?}",

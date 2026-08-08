@@ -202,9 +202,22 @@ fn inner_width(width: u16) -> usize {
     (width as usize).saturating_sub(4).max(4) // border + paddingX
 }
 
+/// The label a WHOLE-MESSAGE suggestion wears.
+///
+/// A ghost that continues what you are typing is obviously a completion — it
+/// grows out of your own words. A ghost on an EMPTY composer is a different
+/// animal: it is a whole message the cheap tier wrote, and dim text alone did
+/// not say so, so it read as a draft the user had typed and forgotten. One
+/// Enter sent words nobody wrote. The label is inside the dim region, so it
+/// disappears the moment a key makes the ghost a completion again.
+const SUGGESTED: &str = "suggested · ";
+
 fn full_text(input: &str, ghost: &str) -> String {
-    let ghost_hint = if ghost.is_empty() { "" } else { "  ⇥ tab" };
-    format!("› {input}{ghost}{ghost_hint}")
+    if ghost.is_empty() {
+        return format!("› {input}");
+    }
+    let label = if input.is_empty() { SUGGESTED } else { "" };
+    format!("› {input}{label}{ghost}  ⇥ tab")
 }
 
 /// One wrapped row: its char offset into the full text, and its chars.
@@ -453,6 +466,37 @@ mod tests {
             attachment_sel: None,
             keyboard_owner: None,
         }
+    }
+
+    /// A whole-message ghost SAYS it is a suggestion; a ghost that continues
+    /// your own typing does not need to, and must not be interrupted by a label
+    /// in the middle of the sentence.
+    #[test]
+    fn a_whole_message_ghost_is_labelled_and_a_completion_is_not() {
+        let whole = draw(
+            &ComposerProps {
+                ghost: "add a test for the parser",
+                ..props("", 0, false)
+            },
+            60,
+            8,
+        );
+        assert!(whole.contains("suggested · add a test"), "{whole}");
+        assert!(whole.contains("⇥ tab"), "{whole}");
+
+        let completing = draw(
+            &ComposerProps {
+                ghost: " for the parser",
+                ..props("add a test", 10, false)
+            },
+            60,
+            8,
+        );
+        assert!(!completing.contains("suggested"), "{completing}");
+        assert!(
+            completing.contains("add a test for the parser"),
+            "{completing}"
+        );
     }
 
     // Chat.test.tsx: "Composer shows the prompt, the placeholder and the mid-turn hint"

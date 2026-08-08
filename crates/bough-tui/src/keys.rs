@@ -113,6 +113,10 @@ pub enum Command {
     MessageUnsend,
     HistoryPrev,
     HistoryNext,
+    /// ⇧⇥ from the composer: one step up the thinking-depth ladder, wrapping.
+    /// The `^o` tab is the surface that EXPLAINS the depths; this is the reflex
+    /// for changing them between turns without leaving the composer.
+    EffortCycle,
     // -- the @/ completion popup --
     CompleteAccept,
     GhostAccept,
@@ -231,7 +235,7 @@ pub const TABS: [TabDef; 8] = [
         id: PanelTab::Skills,
         title: "skills",
         chord: "ctrl+k",
-        desc: "installed /skills",
+        desc: "the /skills this install has",
     },
     TabDef {
         id: PanelTab::Hooks,
@@ -240,13 +244,13 @@ pub const TABS: [TabDef; 8] = [
         // it to the composer and the tab is unreachable. Driven in a real PTY
         // to find that out.
         chord: "ctrl+x",
-        desc: "lua that runs in the loop; toggle it",
+        desc: "the lua that runs around each turn; toggle it",
     },
     TabDef {
         id: PanelTab::Theme,
         title: "theme",
         chord: "ctrl+y",
-        desc: "browse live; leaving reverts",
+        desc: "browse colour themes live; leaving reverts",
     },
 ];
 
@@ -844,6 +848,14 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
     );
     rows.push(
         b(Some(M::Chat), "ctrl+g", C::SessionCopyId).doc("compose", "copy this conversation's id"),
+    );
+    // The chord every Claude Code user presses on reflex. bough has no
+    // permission modes to cycle — it sandboxes instead of asking — so it moves
+    // the other thing that changes how the next turn runs.
+    rows.push(
+        b(Some(M::Chat), "shift+tab", C::EffortCycle)
+            .doc("compose", "cycle thinking depth")
+            .label("⇧⇥"),
     );
     // `not: [emptyDraft]` is not decoration: an empty-draft double-tap must
     // fall through to the stop, not be swallowed.

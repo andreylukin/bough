@@ -68,7 +68,7 @@ impl EffortChoice {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             EffortChoice::Default => "adaptive — the provider decides",
             EffortChoice::Level(Effort::Low) => "low — quick, minimal thinking",
@@ -113,6 +113,22 @@ impl Default for ModelConfig {
             session_effort: None,
         }
     }
+}
+
+/// One step up the `EFFORTS` ladder, wrapping past `max` back to `default`.
+///
+/// Writes BOTH halves exactly as picking the row in the tab does
+/// ([`choose_entry`]): the session is pinned, and the install default moves so
+/// a conversation that has not started yet — which has no session to pin —
+/// still runs at the depth the status bar is now promising.
+pub fn cycle_effort(cfg: &ModelConfig) -> ModelConfig {
+    let now = effective_effort(cfg);
+    let at = EFFORTS.iter().position(|e| *e == now).unwrap_or(0);
+    let next = EFFORTS[(at + 1) % EFFORTS.len()];
+    let mut out = cfg.clone();
+    out.session_effort = Some(next);
+    out.default_effort = next;
+    out
 }
 
 /// What the open session actually runs on right now.

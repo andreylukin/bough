@@ -2697,6 +2697,18 @@ impl<T: Transport> App<T> {
                     }
                     true
                 }
+                // ⇧⇥. The Claude Code reflex, landing on the axis bough
+                // actually has. It moves the SAME two fields the `^o` tab's
+                // effort rows move, through the same save, so the tab and the
+                // status bar agree with the notice a keypress later.
+                Command::EffortCycle => {
+                    let next = crate::components::panel::model::cycle_effort(&self.panel.model_cfg);
+                    let depth = crate::components::panel::model::effective_effort(&next);
+                    self.panel.set_model_config(next.clone());
+                    self.transport.effect(Effect::SaveModel(next));
+                    self.notice = Some(format!("thinking depth: {} · ⇧⇥ cycles", depth.label()));
+                    true
+                }
                 // The take-back window's Escape. The keymap decided this
                 // outranks the stop; this arm is only the gesture.
                 Command::MessageUnsend => {
@@ -4693,11 +4705,22 @@ fn now_ms() -> i64 {
 
 // ---- the live composition (api.rs + events.rs wiring) -----------------------
 
+/// The directory bough was launched in, which is what `--workspace` defaults
+/// to (`args.rs`: "where new conversations start (default: the cwd)").
+fn cwd() -> Option<String> {
+    Some(std::env::current_dir().ok()?.to_string_lossy().into_owned())
+}
+
 /// The production [`Transport`]: every effect becomes a spawned REST call
 /// whose outcome (a session id, a failure sentence) posts BACK over the same
 /// mpsc the reducer drains — the loop task never awaits I/O.
 struct LiveTransport {
     api: crate::api::Api,
+    /// Where the pickers look. `--workspace` when it was given, THE CWD
+    /// otherwise — `None` here meant the `@` picker had nowhere to list from on
+    /// a conversation that had not started, which is the one screen where a
+    /// first `@` is typed, and every candidate fetch is silent on failure, so
+    /// it said "no matching files" in a repo full of them.
     workspace: Option<String>,
     /// The session the first send creates; later effects reuse it.
     session: std::sync::Arc<std::sync::Mutex<Option<String>>>,
@@ -5979,7 +6002,7 @@ pub async fn run_live(options: TuiOptions) -> Result<bool, String> {
 
     let transport = LiveTransport {
         api,
-        workspace: options.workspace.clone(),
+        workspace: options.workspace.clone().or_else(cwd),
         session: Default::default(),
         tx,
     };
@@ -9317,6 +9340,56 @@ mod tests {
         app.apply(key(KeyCode::Down), 0);
         app.apply(Action::Files(vec!["a.rs".into(), "b.rs".into()]), 0);
         assert_eq!(app.completion_sel, 0, "a fetched list is a new list");
+    }
+
+    /// ⇧⇥ is the Claude Code reflex. bough has no permission modes to cycle, so
+    /// it moves the thinking depth — and it must SAVE, not merely say it did:
+    /// the notice is a promise about the next turn.
+    #[test]
+    fn shift_tab_cycles_the_thinking_depth_and_saves_it() {
+        use crate::components::panel::model::{effective_effort, EffortChoice};
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 110, 30);
+        open_s1(&mut app);
+
+        // From the install default, one step up the ladder.
+        app.apply(
+            Action::Term(TermEvent::Key(KeyEvent::new(
+                KeyCode::BackTab,
+                KeyModifiers::NONE,
+            ))),
+            0,
+        );
+        assert_eq!(effective_effort(&app.panel.model_cfg).id(), "low");
+        assert!(
+            app.notice.as_deref().is_some_and(|n| n.contains("low")),
+            "{:?}",
+            app.notice
+        );
+        // The tab's own state moved with it, and the change was SENT.
+        let saved: Vec<_> = effects
+            .borrow()
+            .iter()
+            .filter(|e| matches!(e, Effect::SaveModel(_)))
+            .cloned()
+            .collect();
+        assert_eq!(saved.len(), 1, "the cycle saves once");
+
+        // …and it wraps rather than sticking at the top.
+        for _ in 0..5 {
+            app.apply(
+                Action::Term(TermEvent::Key(KeyEvent::new(
+                    KeyCode::BackTab,
+                    KeyModifiers::NONE,
+                ))),
+                0,
+            );
+        }
+        assert_eq!(
+            effective_effort(&app.panel.model_cfg),
+            EffortChoice::Default,
+            "past max it comes back round"
+        );
     }
 
     /// Defect 3. The documented usage is Enter, then esc a second later — which
