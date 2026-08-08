@@ -16,7 +16,7 @@ docs/                spec.md (what the system is) · ARCHITECTURE.md (crate boun
 scripts/             setup.sh (fresh machine) · bough (the service manager) ·
                      smoke.sh and tui-test.sh (the PTY acceptance suites)
 .github/             CI, issue and PR templates, CONTRIBUTING · SECURITY · CODE_OF_CONDUCT
-assets/              the logo
+assets/              the logo (logo.svg is the source; the PNGs are exports)
 ```
 
 One cargo workspace at the root. `make help` lists the targets.

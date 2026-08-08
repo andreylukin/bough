@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="bough" width="120" height="130">
+  <img src="assets/logo.svg" alt="bough" width="120" height="120">
 </p>
 
 <h1 align="center">bough</h1>

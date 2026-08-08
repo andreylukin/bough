@@ -1,23 +1,13 @@
-<svg width="240" height="260" viewBox="0 0 240 260" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="bough logo: a high-cut tree trunk with one branch">
-  <!-- one bough, still growing off the cut trunk -->
-  <g stroke="#5e8c4e" stroke-width="13" stroke-linecap="round" fill="none">
-    <path d="M150 132 C 185 122, 198 92, 206 60" />
-    <path d="M188 96 C 198 92, 210 92, 220 86" />
-  </g>
-  <!-- leaves -->
-  <g fill="#6fa85b">
-    <ellipse cx="208" cy="54" rx="13" ry="9" transform="rotate(-35 208 54)" />
-    <ellipse cx="224" cy="82" rx="11" ry="8" transform="rotate(20 224 82)" />
-    <ellipse cx="176" cy="86" rx="10" ry="7" transform="rotate(-20 176 86)" />
-  </g>
-
-  <!-- trunk: a tall sawn-off stump -->
-  <path d="M70 78 L70 212 Q70 224 82 226 L138 226 Q150 224 150 212 L150 78 Z" fill="#b5894f" />
-  <!-- a little bark shading on the right -->
-  <path d="M150 80 L150 212 Q150 224 138 226 L126 226 L126 80 Z" fill="#a2784170" />
-
-  <!-- the high cut: a sawn top disc with rings -->
-  <ellipse cx="110" cy="78" rx="40" ry="15" fill="#c9a36a" />
-  <ellipse cx="110" cy="78" rx="26" ry="9.5" stroke="#9c7842" stroke-width="3" fill="none" />
-  <ellipse cx="110" cy="78" rx="12" ry="4.5" stroke="#9c7842" stroke-width="3" fill="none" />
+<svg width="512" height="512" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="bough logo: a green shoot growing from the rings of a sawn trunk">
+  <rect width="64" height="64" rx="12" fill="#0e1013"></rect>
+  <path d="M16 26 L16 48 C16 51.3 22.3 54 30 54 C37.7 54 44 51.3 44 48 L44 26 Z" fill="#d9b45f"></path>
+  <path d="M37 26 L44 26 L44 48 C44 51 39 53.5 32.5 54 C35.5 52.8 37 51 37 48 Z" fill="#c29c45"></path>
+  <ellipse cx="30" cy="26" rx="14" ry="6" fill="#ecd9a3"></ellipse>
+  <ellipse cx="30" cy="26" rx="11" ry="4.7" fill="none" stroke="#c29c45" stroke-width="1.3"></ellipse>
+  <ellipse cx="30" cy="26" rx="8" ry="3.4" fill="none" stroke="#c29c45" stroke-width="1.2"></ellipse>
+  <ellipse cx="30" cy="26" rx="5.2" ry="2.2" fill="none" stroke="#c29c45" stroke-width="1.1"></ellipse>
+  <ellipse cx="30" cy="26" rx="3" ry="1.4" fill="#c29c45"></ellipse>
+  <path d="M30 25 C30 19.6 31.5 15.3 35 12" stroke="#4ec98f" stroke-width="3.2" stroke-linecap="round" fill="none"></path>
+  <path d="M35 12 C31.8 10.6 30.9 6.9 33.1 4.6 C36.5 5.5 37.2 9.6 35 12 Z" fill="#4ec98f"></path>
+  <path d="M35 12 C35.4 8.9 38 6.6 41.3 6.5 C41.5 10 38.6 12.6 35 12 Z" fill="#4ec98f"></path>
 </svg>
