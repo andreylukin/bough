@@ -13,7 +13,7 @@
 
 # Governance, licensing, and release plumbing stay with the project lead.
 /LICENSE                @andreylukin
-/SECURITY.md            @andreylukin
-/CODE_OF_CONDUCT.md     @andreylukin
+/.github/SECURITY.md    @andreylukin
+/.github/CODE_OF_CONDUCT.md @andreylukin
 /.github/               @andreylukin
 /install.sh             @andreylukin

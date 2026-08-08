@@ -5,10 +5,10 @@ that design.
 
 ## Before you start
 
-- [`docs/spec.md`](docs/spec.md) is authoritative for product behavior.
-- [`specs/`](specs/) pins per-subsystem invariants you cannot rediscover from the code.
+- [`docs/spec.md`](../docs/spec.md) is authoritative for product behavior.
+- [`specs/`](../specs/) pins per-subsystem invariants you cannot rediscover from the code.
   Read the relevant one before touching `turn/`, `harness/`, or `workflow/`.
-- [`AGENTS.md`](AGENTS.md) has the layout and the commands.
+- [`AGENTS.md`](../AGENTS.md) has the layout and the commands.
 
 Open an issue first for anything that changes a spec, adds a host function, or reshapes a
 turn. Bugs, typos, flaky tests, better error messages: just send the PR.
@@ -72,7 +72,7 @@ Rebase on `main`; don't merge it in.
 
 ## Review
 
-[`.github/CODEOWNERS`](.github/CODEOWNERS) are requested automatically. Expect a first
+[`CODEOWNERS`](CODEOWNERS) are requested automatically. Expect a first
 response within a week — ping the PR if it goes quiet longer.
 
 Reviewers: say what would make the change mergeable. "Not the right approach" without an
@@ -87,4 +87,4 @@ Security issues do **not** go in the tracker: see [`SECURITY.md`](SECURITY.md).
 
 ## License
 
-Contributions are licensed under Apache 2.0, as in [`LICENSE`](LICENSE). No CLA.
+Contributions are licensed under Apache 2.0, as in [`LICENSE`](../LICENSE). No CLA.

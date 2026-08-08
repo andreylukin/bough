@@ -29,9 +29,9 @@ tui: ## run the TUI against BOUGH_PORT (default live 4321)
 	cargo run --release -p bough -- tui
 
 smoke: release ## boot the server + drive the TUI via shell-use; SMOKE_MODEL=openai/gpt-5.6-luna for a live turn
-	./smoke.sh
+	./scripts/smoke.sh
 
 tui-test: release ## drive the TUI through a real PTY and assert on screen (SMOKE_MODEL adds a live turn)
-	./tui-test.sh
+	./scripts/tui-test.sh
 
 gates: build test ## the pre-commit gates

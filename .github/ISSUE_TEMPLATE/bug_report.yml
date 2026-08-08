@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Security issues do **not** belong here — see [SECURITY.md](https://github.com/andreylukin/bough/blob/main/SECURITY.md).
+        Security issues do **not** belong here — see [SECURITY.md](https://github.com/andreylukin/bough/blob/main/.github/SECURITY.md).
 
         Note that programs running with your full authority is [by design](https://github.com/andreylukin/bough/blob/main/docs/spec.md),
         not a bug.

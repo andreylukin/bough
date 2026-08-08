@@ -248,20 +248,20 @@ These are decisions, not gaps:
 - [`docs/implementation-plan.md`](docs/implementation-plan.md) — how it is built, the module layout,
   and the invariants worth knowing before changing anything.
 - [`specs/`](specs) — per-subsystem behavioral contracts, module by module.
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — crate boundaries, shared types, concurrency model.
+- [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate boundaries, shared types, concurrency model.
 - [`AGENTS.md`](AGENTS.md) — conventions this repo's reviews enforce.
 
 ## Contributing
 
 bough is an alternative harness **design**, not a race to be a better coding agent — the most useful
 contributions are the ones that sharpen or falsify that design. Read
-[`CONTRIBUTING.md`](CONTRIBUTING.md) for the setup, the bar for a pull request, and what to read
+[`CONTRIBUTING.md`](.github/CONTRIBUTING.md) for the setup, the bar for a pull request, and what to read
 before touching `turn/`, `harness/`, or `workflow/`.
 
 Bug reports and feature requests go through the [issue templates][issues]; usage questions and
 design debates belong in [Discussions][discussions]. Security issues go through
-[`SECURITY.md`](SECURITY.md), never the public tracker. Participation is governed by the
-[Code of Conduct](CODE_OF_CONDUCT.md).
+[`SECURITY.md`](.github/SECURITY.md), never the public tracker. Participation is governed by the
+[Code of Conduct](.github/CODE_OF_CONDUCT.md).
 
 [issues]: https://github.com/andreylukin/bough/issues/new/choose
 [discussions]: https://github.com/andreylukin/bough/discussions

@@ -19,3 +19,6 @@ node_modules/
 .bough-bun/
 .bough-bun-linux
 .bough-bun-linux-musl
+
+# local harness state (worktrees, session settings)
+.claude/

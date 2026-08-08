@@ -7,11 +7,11 @@
 # still be unreachable (that failure happened five times during this port). The
 # only proof is driving the binary a human would run.
 #
-#   ./tui-test.sh                                   # offline surfaces only
-#   SMOKE_MODEL=openai/gpt-5.6-luna ./tui-test.sh   # + live turn on that model
+#   ./scripts/tui-test.sh                                   # offline surfaces only
+#   SMOKE_MODEL=openai/gpt-5.6-luna ./scripts/tui-test.sh   # + live turn on that model
 set -uo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$REPO_DIR/target/release/bough"
 PORT="${TUI_TEST_PORT:-43420}"
 S="tui-test-$$"

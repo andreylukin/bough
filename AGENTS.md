@@ -9,10 +9,13 @@ crates/bough-server/ the loopback HTTP + SSE server
 crates/bough-tui/    the ratatui terminal UI
 crates/bough/        the binary: start | tui | exec | mcp | sync-mcp | tags | patterns
 specs/               per-subsystem behavioral contracts (16 files) — authoritative
-ARCHITECTURE.md      crate boundaries, shared types, concurrency model
-docs/                spec.md (what the system is) · tags.md (the command-memory tag
-                     system, end to end) · implementation-plan.md (historical)
-scripts/             setup.sh (fresh machine) and bough (the service manager)
+docs/                spec.md (what the system is) · ARCHITECTURE.md (crate boundaries,
+                     shared types, concurrency model) · tags.md (the command-memory tag
+                     system, end to end) · implementation-plan.md and PORT_PLAN.md
+                     (historical)
+scripts/             setup.sh (fresh machine) · bough (the service manager) ·
+                     smoke.sh and tui-test.sh (the PTY acceptance suites)
+.github/             CI, issue and PR templates, CONTRIBUTING · SECURITY · CODE_OF_CONDUCT
 assets/              the logo
 ```
 
@@ -33,10 +36,10 @@ determinism, and the rest). Read the relevant spec before changing anything in `
 `harness/`, or `workflow/`. `docs/implementation-plan.md` is historical — it describes
 a build order two rewrites old, and is worth reading only for its reasoning.
 
-`specs/` and `ARCHITECTURE.md` were written against the TypeScript implementation this
+`specs/` and `docs/ARCHITECTURE.md` were written against the TypeScript implementation this
 tree replaced, and still name `src/*.ts` modules in places. The *behavior* they pin is
 current and binding; the file names are a map to where each contract now lives in
-`crates/`. `PORT_PLAN.md` is finished history — it is not a to-do list.
+`crates/`. `docs/PORT_PLAN.md` is finished history — it is not a to-do list.
 
 The only non-Rust runtime dependency is a JS runtime for the code-mode sidecar
 (`crates/bough-core/src/harness/js/`): `bun` if it is on PATH, else `node`. It needs no

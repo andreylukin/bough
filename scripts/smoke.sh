@@ -5,7 +5,7 @@
 # model; without it the leg stops at boot + first render.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/target/release/bough"
 PORT="${SMOKE_PORT:-43219}"
 HOME_DIR="$(mktemp -d)"
