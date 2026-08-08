@@ -65,19 +65,37 @@ bough.api.create_autocmd("TurnStart", {
       end
     end
 
-    -- The per-directory chain UNDER the workspace root. The root's own file is
-    -- skipped: bough already read it, and saying it twice is not saying it
-    -- louder.
+    -- The per-directory chain, WHICH RUNS UPWARD. Codex reads one file per
+    -- directory from the repository root DOWN TO the cwd — those directories
+    -- are the workspace's ANCESTORS. This used to list the workspace's
+    -- children instead, which is not Codex's chain at all: in a monorepo it
+    -- put every sibling package's rules into every turn.
+    --
+    -- Only `AGENTS.override.md` is collected. The `AGENTS.md` half of each
+    -- rung is already read natively by `prompt/project.rs`, over the same
+    -- git-root-down chain, and saying it twice is not saying it louder. The
+    -- override file is the part that reader does not know about.
     if ev.workspace ~= nil and ev.workspace ~= "" then
-      local names = bough.fs.list(ev.workspace) or {}
-      for _, name in ipairs(names) do
-        local sub = ev.workspace .. "/" .. name
-        local text, path = first_readable({
-          sub .. "/AGENTS.override.md",
-          sub .. "/AGENTS.md",
-        })
-        if text ~= nil then
-          table.insert(parts, "## " .. path .. "\n\n" .. text)
+      local chain = {}
+      local dir = ev.workspace
+      local found_root = false
+      for _ = 1, 24 do
+        table.insert(chain, 1, dir)
+        for _, name in ipairs(bough.fs.list(dir) or {}) do
+          if name == ".git" then found_root = true end
+        end
+        local parent = string.match(dir, "^(.*)/[^/]+$")
+        if found_root or parent == nil or parent == "" then break end
+        dir = parent
+      end
+      -- No git root above: read only the workspace, rather than adopting
+      -- whatever sits in the user's home directory. Same rule, same reason,
+      -- as `find_project_rules`.
+      if not found_root then chain = { ev.workspace } end
+      for _, d in ipairs(chain) do
+        local text = bough.fs.read(d .. "/AGENTS.override.md")
+        if text ~= nil and text ~= "" then
+          table.insert(parts, "## " .. d .. "/AGENTS.override.md\n\n" .. text)
         end
       end
     end

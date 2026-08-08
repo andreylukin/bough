@@ -172,8 +172,12 @@ fn claude_home() -> Option<PathBuf> {
 ///    change without touching your machine, which is the point of checking it
 ///    in.
 /// 3. **user** — `~/.bough/skills`, the files you wrote for bough.
-/// 4. **foreign user** — `~/.claude/skills`, `~/.agents/skills`.
-/// 5. **plugins** — installed Claude Code plugins, then Codex marketplaces
+/// 4. **bough plugins** — `~/.bough/plugins/<name>/skills`. Below the files
+///    you wrote and above every foreign directory: a plugin was installed on
+///    purpose, which is more intent than a directory that merely exists, and
+///    less than a skill you authored.
+/// 5. **foreign user** — `~/.claude/skills`, `~/.agents/skills`.
+/// 6. **foreign plugins** — installed Claude Code plugins, then Codex marketplaces
 ///    (repo-scoped before personal). Last because it is the rung with the most
 ///    directories and the least intent behind any one of them: a plugin was
 ///    installed for what it does in another harness, not to win a name here.
@@ -191,6 +195,7 @@ pub fn sources_for(workspace: &Path) -> Vec<SkillSource> {
         workspace,
         &ensure_bundled_skills(),
         &user_skills_dir(),
+        &crate::paths::plugins_dir(),
         dirs::home_dir().as_deref(),
         claude_home().as_deref(),
     )
@@ -208,6 +213,7 @@ pub fn compose_sources(
     workspace: &Path,
     bundled: &Path,
     user: &Path,
+    plugins: &Path,
     home: Option<&Path>,
     claude_home: Option<&Path>,
 ) -> Vec<SkillSource> {
@@ -220,6 +226,21 @@ pub fn compose_sources(
         source: SkillSourceName::User,
         dir: user.to_path_buf(),
     });
+    // bough's own plugins, below the skills you wrote for bough and above
+    // anything another harness put on disk: a plugin is deliberate
+    // installation, which is more intent than a directory that happens to be
+    // there, and less than a file you authored.
+    out.extend(
+        crate::paths::plugin_dirs_in(plugins)
+            .into_iter()
+            .filter_map(|p| {
+                let dir = p.join("skills");
+                dir.is_dir().then_some(SkillSource {
+                    source: SkillSourceName::Plugin,
+                    dir,
+                })
+            }),
+    );
     if let Some(home) = home {
         out.extend(foreign::user_sources(home));
     }
@@ -915,6 +936,10 @@ mod tests {
         put(bundled.clone(), "BUNDLED");
         put(ws.join(".agents").join("skills"), "PROJECT");
         put(user.clone(), "USER");
+        put(
+            root.join("plugins").join("acme").join("skills"),
+            "BOUGH_PLUGIN",
+        );
         put(home.join(".claude").join("skills"), "FOREIGN");
         // A plugin, through the real registry shape.
         let install = put(root.join("plug").join("skills"), "PLUGIN");
@@ -929,7 +954,14 @@ mod tests {
         )
         .unwrap();
 
-        let sources = compose_sources(&ws, &bundled, &user, Some(&home), Some(&claude));
+        let sources = compose_sources(
+            &ws,
+            &bundled,
+            &user,
+            &root.join("plugins"),
+            Some(&home),
+            Some(&claude),
+        );
         let kinds: Vec<SkillSourceName> = sources.iter().map(|s| s.source).collect();
         assert_eq!(
             kinds,
@@ -937,6 +969,7 @@ mod tests {
                 SkillSourceName::Bundled,
                 SkillSourceName::Project,
                 SkillSourceName::User,
+                SkillSourceName::Plugin,
                 SkillSourceName::Foreign,
                 SkillSourceName::Plugin,
             ],
@@ -957,6 +990,7 @@ mod tests {
             &ws,
             &bundled,
             &user,
+            &root.join("plugins"),
             Some(&home),
             Some(&claude),
         ));

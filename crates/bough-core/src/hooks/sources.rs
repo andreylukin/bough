@@ -44,12 +44,20 @@ pub enum SourceKind {
     Bundled,
     /// Cloned from a git repository named in `hooks.json`.
     Git,
+    /// The `hooks/` directory of a plugin in `~/.bough/plugins/<name>`.
+    Plugin,
     /// `~/.bough/hooks` — the files you wrote.
     Local,
 }
 
 impl SourceKind {
     /// Is a hook from this source on when nothing has been said about it?
+    ///
+    /// A PLUGIN IS OFF, for the same reason a clone is: a plugin directory is
+    /// the unit you get from someone else, and the whole argument below is
+    /// that code which arrived rather than being written must be turned on
+    /// deliberately. One keystroke turns it on; nothing turns back time on a
+    /// hook that already ran.
     pub fn on_by_default(self) -> bool {
         matches!(self, SourceKind::Local)
     }
@@ -202,13 +210,24 @@ pub fn write_sources_file(path: &Path, file: &SourcesFile) -> std::io::Result<()
     std::fs::write(path, serde_json::to_string_pretty(file).unwrap_or_default())
 }
 
-/// Every source, in load order: bundled, then each git source, then local.
+/// Every source, in load order: bundled, then each git source, then each
+/// plugin, then local.
 pub fn all_sources() -> Vec<HookSource> {
-    sources_from(&sources_path(), &repos_dir(), &hooks_dir())
+    sources_from(
+        &sources_path(),
+        &repos_dir(),
+        &crate::paths::plugins_dir(),
+        &hooks_dir(),
+    )
 }
 
-/// The injectable form — tests point all three somewhere temporary.
-pub fn sources_from(sources_at: &Path, repos: &Path, local: &Path) -> Vec<HookSource> {
+/// The injectable form — tests point all four somewhere temporary.
+pub fn sources_from(
+    sources_at: &Path,
+    repos: &Path,
+    plugins: &Path,
+    local: &Path,
+) -> Vec<HookSource> {
     let mut out = Vec::new();
     if let Some(dir) = ensure_bundled() {
         out.push(HookSource {
@@ -232,6 +251,27 @@ pub fn sources_from(sources_at: &Path, repos: &Path, local: &Path) -> Vec<HookSo
             repo: Some(git.repo),
             rev: git.rev,
             sha: git.sha,
+        });
+    }
+    // A plugin's `hooks/` directory, named by the plugin, so a hook inside it
+    // is `<plugin>/<file>.lua` — the same source-qualified id shape a repo's
+    // hooks get, and for the same reason: two plugins WILL both ship a
+    // `guard.lua`.
+    for plugin in crate::paths::plugin_dirs_in(plugins) {
+        let dir = plugin.join("hooks");
+        if !dir.is_dir() {
+            continue;
+        }
+        let Some(name) = plugin.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        out.push(HookSource {
+            name: name.to_string(),
+            kind: SourceKind::Plugin,
+            dir,
+            repo: None,
+            rev: None,
+            sha: None,
         });
     }
     out.push(HookSource {
@@ -377,11 +417,19 @@ mod tests {
             },
         )
         .unwrap();
-        let sources = sources_from(&sources_at, &root.join("repos"), &root.join("hooks"));
+        // One plugin with hooks and one without: only the first is a source.
+        std::fs::create_dir_all(root.join("plugins/acme/hooks")).unwrap();
+        std::fs::create_dir_all(root.join("plugins/skills-only/skills")).unwrap();
+        let sources = sources_from(
+            &sources_at,
+            &root.join("repos"),
+            &root.join("plugins"),
+            &root.join("hooks"),
+        );
         let names: Vec<&str> = sources.iter().map(|s| s.name.as_str()).collect();
         // Bundled may be absent when the bundle cannot be written; the ORDER
         // of what is present is what this pins.
-        let expected: Vec<&str> = ["bundled", "a-one", "b-two", "local"]
+        let expected: Vec<&str> = ["bundled", "a-one", "b-two", "acme", "local"]
             .into_iter()
             .filter(|n| names.contains(n))
             .collect();
@@ -390,6 +438,12 @@ mod tests {
         // A `dir` lands under the clone, not beside it.
         let two = sources.iter().find(|s| s.name == "b-two").unwrap();
         assert!(two.dir.ends_with("b-two/hooks"), "{:?}", two.dir);
+        // A plugin contributes its `hooks/` under the PLUGIN's name, so the
+        // ids inside it are `acme/<file>.lua`, and it is off until asked for.
+        let acme = sources.iter().find(|s| s.name == "acme").unwrap();
+        assert!(acme.dir.ends_with("acme/hooks"), "{:?}", acme.dir);
+        assert_eq!(acme.kind, SourceKind::Plugin);
+        assert!(!acme.kind.on_by_default());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

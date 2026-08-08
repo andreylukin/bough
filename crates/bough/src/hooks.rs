@@ -182,6 +182,7 @@ fn list(deps: &HooksDeps) -> i32 {
                     SourceKind::Local => {
                         format!("{} · {}", row.source, hooks::hooks_dir().to_string_lossy())
                     }
+                    SourceKind::Plugin => format!("{} · plugin", row.source),
                     SourceKind::Git => row.source.clone(),
                 },
             };

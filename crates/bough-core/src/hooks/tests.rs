@@ -708,26 +708,108 @@ fn a_missing_or_malformed_settings_file_costs_nothing() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
+/// A plugin's `plugin.json` `hooks` key is a POINTER to the hooks file, never
+/// the hooks themselves — the shape real installed plugins ship, and the one
+/// this adapter used to read as though it were an inline block, finding
+/// nothing and saying nothing.
 #[test]
-fn the_codex_adapter_takes_the_nested_agents_files_and_leaves_the_root_to_bough() {
-    let ws = workspace(&[
-        ("AGENTS.md", "the root file bough already reads"),
-        ("crates/AGENTS.md", "rules for the crates directory"),
+fn an_installed_plugins_manifest_declared_hooks_file_is_run() {
+    let home = workspace(&[]);
+    let install = home.join("plug");
+    std::fs::create_dir_all(install.join(".claude-plugin/hooks")).unwrap();
+    std::fs::write(
+        install.join(".claude-plugin/plugin.json"),
+        serde_json::json!({"name": "p", "hooks": "./.claude-plugin/hooks/hooks.json"}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        install.join(".claude-plugin/hooks/hooks.json"),
+        serde_json::json!({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    // `${CLAUDE_PLUGIN_ROOT}` is expanded to the install dir,
+                    // the way Claude Code expands it when it spawns.
+                    "hooks": [{
+                        "type": "command",
+                        "command": "echo ${CLAUDE_PLUGIN_ROOT} >&2; exit 2",
+                    }],
+                }]
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(home.join(".claude/plugins")).unwrap();
+    std::fs::write(
+        home.join(".claude/plugins/installed_plugins.json"),
+        serde_json::json!({
+            "plugins": {"p@m": [{"installPath": install.to_string_lossy(), "scope": "user"}]}
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let ws = workspace(&[]);
+    let hooks = bundled("claude-code.lua");
+    let out = crate::paths::test_env::with_env(&[("HOME", home.to_str())], || {
+        hooks.host().dispatch(
+            HookEvent::PreTool,
+            in_workspace(
+                "bash",
+                &ws,
+                serde_json::json!({ "input": { "command": "ls" } }),
+            ),
+        )
+    });
+    assert_eq!(out.decision, Some(ToolDecision::Deny), "{out:?}");
+    assert!(
+        out.reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains(&install.to_string_lossy().to_string()),
+        "the plugin root reached the command: {out:?}"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// Codex's chain runs repo-root DOWN TO the cwd, so the directories it reads
+/// are the workspace's ancestors. The adapter once read the workspace's
+/// CHILDREN instead, which put every sibling package's rules in every turn.
+#[test]
+fn the_codex_adapter_walks_up_to_the_git_root_and_never_into_siblings() {
+    let root = workspace(&[
+        (".git/HEAD", "ref: refs/heads/main"),
+        ("AGENTS.override.md", "the repo override"),
+        ("web/AGENTS.override.md", "the web override"),
+        (
+            "api/AGENTS.override.md",
+            "a sibling that is not on the path",
+        ),
+        ("web/AGENTS.md", "the plain file bough already reads"),
     ]);
+    let ws = root.join("web");
     let out = bundled("codex.lua").host().dispatch(
         HookEvent::TurnStart,
         in_workspace("s1", &ws, serde_json::json!({ "prompt": "hi" })),
     );
     let context = out.context.join("\n");
+    assert!(context.contains("the repo override"), "{context}");
+    assert!(context.contains("the web override"), "{context}");
     assert!(
-        context.contains("rules for the crates directory"),
-        "{context}"
+        context.find("the repo override") < context.find("the web override"),
+        "root first, so the nearest file has the last word: {context}"
     );
     assert!(
-        !context.contains("the root file bough already reads"),
-        "the root AGENTS.md is native; repeating it is not emphasis: {context}"
+        !context.contains("a sibling that is not on the path"),
+        "a sibling package's rules are not this workspace's: {context}"
     );
-    let _ = std::fs::remove_dir_all(&ws);
+    assert!(
+        !context.contains("the plain file bough already reads"),
+        "AGENTS.md is native; repeating it is not emphasis: {context}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]

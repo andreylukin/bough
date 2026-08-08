@@ -213,25 +213,74 @@ pub fn codex_marketplace_sources(marketplace: &Path) -> Vec<SkillSource> {
 }
 
 /// Both harnesses' plugin layouts land on the same two subdirectories, and a
-/// manifest may redirect the first.
+/// manifest may redirect either.
 ///
-/// `skills` in the manifest (`.codex-plugin/plugin.json` or
-/// `.claude-plugin/plugin.json`) is honored because Codex's own scaffolder
-/// writes it — a plugin that keeps its skills somewhere other than `skills/`
-/// is otherwise invisible. It is confined to the plugin root for the same
+/// `skills` and `commands` in the manifest (`.codex-plugin/plugin.json` or
+/// `.claude-plugin/plugin.json`) are honored because both scaffolders write
+/// them — a plugin that keeps its skills somewhere other than `skills/` is
+/// otherwise invisible. They are confined to the plugin root for the same
 /// reason the marketplace path is.
+///
+/// A DECLARED PATH IS EITHER TIER, AND THE MANIFEST DOES NOT SAY WHICH. Both
+/// shapes are in the wild: `"skills": "./workflows/"` names a directory
+/// holding skill folders, while `"skills": ["./skills/worktrunk"]` names ONE
+/// skill folder. bough's unit of discovery is the parent, so a path that
+/// holds a `SKILL.md` contributes its parent instead of itself. The cost is
+/// that a sibling skill in that parent comes along uninvited; the alternative
+/// is that the plugin that spells it the second way contributes nothing.
 fn plugin_skill_dirs(root: &Path) -> Vec<SkillSource> {
-    let declared = [".codex-plugin", ".claude-plugin"]
+    let manifest = [".codex-plugin", ".claude-plugin"]
         .iter()
-        .find_map(|d| read_json(&root.join(d).join("plugin.json")))
-        .and_then(|m| m.get("skills").and_then(|s| s.as_str()).map(String::from))
-        .and_then(|rel| crate::paths::confine(root, &root.join(rel)).ok());
+        .find_map(|d| read_json(&root.join(d).join("plugin.json")));
 
-    declared
-        .into_iter()
-        .chain(["skills", "commands"].iter().map(|d| root.join(d)))
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for key in ["skills", "commands"] {
+        for rel in manifest
+            .as_ref()
+            .map(|m| declared_paths(m, key))
+            .unwrap_or_default()
+        {
+            let Ok(path) = crate::paths::confine(root, &root.join(rel)) else {
+                continue;
+            };
+            // The skill folder itself, not a directory of them.
+            let path = if path.join("SKILL.md").is_file() {
+                match path.parent() {
+                    Some(parent) => parent.to_path_buf(),
+                    None => continue,
+                }
+            } else {
+                path
+            };
+            if !dirs.contains(&path) {
+                dirs.push(path);
+            }
+        }
+    }
+    for conventional in ["skills", "commands"] {
+        let path = root.join(conventional);
+        if !dirs.contains(&path) {
+            dirs.push(path);
+        }
+    }
+    dirs.into_iter()
         .filter_map(|d| source_if_dir(SkillSourceName::Plugin, d))
         .collect()
+}
+
+/// A manifest key that is a path, a list of paths, or absent.
+fn declared_paths(manifest: &Value, key: &str) -> Vec<String> {
+    match manifest.get(key) {
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect(),
+        _ => Vec::new(),
+    }
+    .into_iter()
+    .filter(|s| !s.is_empty())
+    .collect()
 }
 
 #[cfg(test)]
@@ -424,6 +473,44 @@ mod tests {
         assert_eq!(
             dirs_of(&plugin_skill_dirs(&root)),
             vec![root.join("workflows")]
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The shape worktrunk ships: a list, pointing at ONE skill folder.
+    #[test]
+    fn a_manifest_may_name_the_skill_folder_itself_in_a_list() {
+        let root = tmp();
+        std::fs::create_dir_all(root.join(".claude-plugin")).unwrap();
+        skill_at(&root.join("bundle"), "worktrunk");
+        std::fs::write(
+            root.join(".claude-plugin").join("plugin.json"),
+            serde_json::json!({"name": "p", "skills": ["./bundle/worktrunk"]}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            dirs_of(&plugin_skill_dirs(&root)),
+            vec![root.join("bundle")],
+            "the parent is the source, because that is bough's unit"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_manifest_can_redirect_commands_too_and_the_conventional_dirs_still_count() {
+        let root = tmp();
+        std::fs::create_dir_all(root.join(".claude-plugin")).unwrap();
+        std::fs::create_dir_all(root.join("verbs")).unwrap();
+        std::fs::create_dir_all(root.join("skills")).unwrap();
+        std::fs::write(
+            root.join(".claude-plugin").join("plugin.json"),
+            serde_json::json!({"name": "p", "commands": "./verbs"}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            dirs_of(&plugin_skill_dirs(&root)),
+            vec![root.join("verbs"), root.join("skills")],
+            "declared first, then whatever the convention put there"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

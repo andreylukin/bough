@@ -58,6 +58,52 @@ pub fn hooks_dir() -> PathBuf {
     bough_path(&["hooks"])
 }
 
+/// Where bough's own plugins live: `~/.bough/plugins/<name>/`.
+///
+/// A PLUGIN IS A DIRECTORY, AND THAT IS THE WHOLE POINT. The three extension
+/// surfaces each had their own flat drop-box — a `.lua` in `hooks/`, a `.js`
+/// in `extensions/`, a folder in `skills/` — so one coherent thing shipping
+/// all three arrived as three unrelated files with no shared name, no way to
+/// install or remove it in one move, and nothing saying which file came with
+/// which. A plugin is one directory holding `hooks/`, `skills/` and
+/// `extensions/`; the DIRECTORY NAME is its identity, which is what makes a
+/// hook inside it addressable as `<plugin>/<file>.lua`.
+///
+/// The flat drop-boxes are unchanged and still first-class: they are the
+/// files YOU wrote for yourself, and demanding a directory for a ten-line
+/// hook would be ceremony.
+pub fn plugins_dir() -> PathBuf {
+    bough_path(&["plugins"])
+}
+
+/// Every plugin directory, name-sorted, so every surface enumerates them in
+/// the same order.
+pub fn plugin_dirs() -> Vec<PathBuf> {
+    plugin_dirs_in(&plugins_dir())
+}
+
+/// [`plugin_dirs`] against a given root — tests point it somewhere temporary
+/// rather than redirecting `BOUGH_HOME`.
+pub fn plugin_dirs_in(root: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        // A dotfile directory is bookkeeping (`.git` in a cloned plugin
+        // collection), never a plugin.
+        .filter(|p| {
+            !p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with('.'))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
 /// Every superseded version of every artifact:
 /// `artifact-versions/<sessionId>/<name>/<ts>`.
 ///
@@ -294,7 +340,7 @@ pub(crate) mod test_env {
 
     /// Run `f` with env vars set to fixed values, then restore whatever was
     /// there. `None` = unset for the duration.
-    pub(crate) fn with_env(vars: &[(&str, Option<&str>)], f: impl FnOnce()) {
+    pub(crate) fn with_env<R>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> R) -> R {
         let _guard = lock();
         let _restore = Restore(
             vars.iter()
@@ -307,7 +353,7 @@ pub(crate) mod test_env {
                 None => std::env::remove_var(k),
             }
         }
-        f();
+        f()
     }
 }
 
@@ -330,6 +376,28 @@ mod tests {
     }
 
     // ---- the layout ---------------------------------------------------------
+
+    /// A plugin is a DIRECTORY. A loose file in `plugins/` is not one, and a
+    /// dotfile directory is the bookkeeping of whatever put the others there.
+    #[test]
+    fn plugin_discovery_takes_directories_only_and_sorts_them() {
+        let root = std::env::temp_dir().join(format!("bough-plugins-{}", uuid::Uuid::new_v4()));
+        for name in ["zeta", "acme", ".git"] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+        }
+        std::fs::write(root.join("README.md"), "").unwrap();
+
+        let names: Vec<String> = plugin_dirs_in(&root)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["acme", "zeta"]);
+        assert!(
+            plugin_dirs_in(&root.join("absent")).is_empty(),
+            "no plugins directory is the normal case, not an error"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn bough_home_relocates_the_entire_tree() {

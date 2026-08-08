@@ -72,11 +72,17 @@ impl Extensions {
 /// project, then the ones this project ships. Later wins a name collision,
 /// mirroring `hooks::sources` — a project's file beats your global one,
 /// because the project is the more specific answer to "which one is running".
+/// Plugins go FIRST, because later wins here: a plugin arrived from somewhere
+/// else, so the loose file you wrote by hand must be able to shadow one of its
+/// names, and the project's file must be able to shadow both.
 pub fn extension_dirs(workspace: &Path) -> Vec<PathBuf> {
-    vec![
-        bough_path(&["extensions"]),
-        workspace.join(".agents").join("extensions"),
-    ]
+    let mut out: Vec<PathBuf> = crate::paths::plugin_dirs()
+        .into_iter()
+        .map(|p| p.join("extensions"))
+        .collect();
+    out.push(bough_path(&["extensions"]));
+    out.push(workspace.join(".agents").join("extensions"));
+    out
 }
 
 /// The loadable files in one directory: `*.js` / `*.mjs` / `*.cjs` / `*.ts`
@@ -228,6 +234,38 @@ mod tests {
             })
             .collect();
         assert_eq!(names, vec!["a.js", "b.js", "sub/index.js"]);
+    }
+
+    /// A plugin bundles its extensions with its hooks and skills, and binds
+    /// EARLIEST — later wins here, so your own loose file can still shadow a
+    /// name a plugin took.
+    #[test]
+    fn a_plugin_directory_contributes_extensions_before_your_own_and_the_projects() {
+        let home = tmp_ws("plugin-home");
+        std::fs::create_dir_all(home.join("plugins").join("acme").join("extensions")).unwrap();
+        std::fs::write(
+            home.join("plugins")
+                .join("acme")
+                .join("extensions")
+                .join("gh.js"),
+            "",
+        )
+        .unwrap();
+        let ws = tmp_ws("plugin-ws");
+
+        let dirs = crate::paths::test_env::with_env(&[("BOUGH_HOME", home.to_str())], || {
+            extension_dirs(&ws)
+        });
+        assert_eq!(
+            dirs,
+            vec![
+                home.join("plugins").join("acme").join("extensions"),
+                home.join("extensions"),
+                ws.join(".agents").join("extensions"),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&ws);
     }
 
     /// The probe is the load-bearing claim of this module: the prompt

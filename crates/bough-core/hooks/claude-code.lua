@@ -63,6 +63,14 @@ end
 -- every plugin ever browsed, and running those would be running hooks nobody
 -- chose. `${CLAUDE_PLUGIN_ROOT}` is expanded to the install directory, the way
 -- Claude Code expands it when it spawns the command.
+--
+-- WHERE A PLUGIN'S HOOKS ACTUALLY ARE. Two places, and the manifest is a
+-- POINTER to the second, never the hooks themselves. `hooks/hooks.json` is
+-- the convention; `plugin.json`'s `hooks` key is a path (or a list of them)
+-- relative to the install root, which is how the plugins in the wild that
+-- keep the file under `.claude-plugin/` declare it. Reading `plugin.json` as
+-- though it held a `hooks` BLOCK — which this used to do — silently found
+-- nothing for exactly those plugins.
 local function plugin_files()
   local home = bough.home()
   if home == "" then return {} end
@@ -79,7 +87,16 @@ local function plugin_files()
       local root = type(install) == "table" and install.installPath
       if type(root) == "string" and root ~= "" then
         table.insert(out, { path = root .. "/hooks/hooks.json", root = root })
-        table.insert(out, { path = root .. "/.claude-plugin/plugin.json", root = root })
+        local manifest = read_json(root .. "/.claude-plugin/plugin.json")
+        local declared = manifest and manifest.hooks
+        if type(declared) == "string" then declared = { declared } end
+        for _, rel in ipairs(type(declared) == "table" and declared or {}) do
+          -- A declared path must stay inside the plugin; `../` in a manifest
+          -- would aim this at any JSON on the machine.
+          if type(rel) == "string" and rel ~= "" and string.find(rel, "%.%.") == nil then
+            table.insert(out, { path = root .. "/" .. rel, root = root })
+          end
+        end
       end
     end
   end
@@ -126,7 +143,11 @@ local function run_group(group, payload, folded)
       -- broken without this substitution.
       local command = entry.command
       if group.plugin_root ~= nil then
-        command = string.gsub(command, "%${CLAUDE_PLUGIN_ROOT}", group.plugin_root)
+        -- A function replacement, so a `%` in the install path is a `%` and
+        -- not a capture reference.
+        command = string.gsub(command, "%${CLAUDE_PLUGIN_ROOT}", function()
+          return group.plugin_root
+        end)
       end
       local result, err = bough.exec(command, { stdin = bough.json.encode(payload) })
       if err ~= nil then
@@ -180,13 +201,23 @@ bough.api.create_autocmd("TurnStart", {
     -- No CLAUDE.md here, at either tier: `prompt/project.rs` reads both the
     -- user's and the project's, and injecting them again would say the same
     -- rules twice in one prompt.
-    if ev.workspace ~= nil and ev.workspace ~= "" then
-      local names = bough.fs.list(ev.workspace .. "/.claude/rules")
-      for _, name in ipairs(names or {}) do
+    --
+    -- Rules directories ARE both tiers, because the native reader walks
+    -- neither: the user's own first, then the project's, so the closer file
+    -- has the last word the way every other rule cascade here does.
+    local function add_rules(dir, label)
+      for _, name in ipairs(bough.fs.list(dir) or {}) do
         if string.sub(name, -3) == ".md" then
-          add_file(parts, ev.workspace .. "/.claude/rules/" .. name, ".claude/rules/" .. name)
+          add_file(parts, dir .. "/" .. name, label .. "/" .. name)
         end
       end
+    end
+    local home = bough.home()
+    if home ~= "" then
+      add_rules(home .. "/.claude/rules", "~/.claude/rules")
+    end
+    if ev.workspace ~= nil and ev.workspace ~= "" then
+      add_rules(ev.workspace .. "/.claude/rules", ".claude/rules")
     end
     if #parts > 0 then
       bough.context(table.concat(parts, "\n\n"))
