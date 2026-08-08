@@ -295,8 +295,6 @@ class Bough(BaseInstalledAgent):
         it is one dict and the client ignores what it does not use.
         """
         env = {"BOUGH_PORT": str(self._port)}
-        if self._effort:
-            env["BOUGH_EFFORT"] = self._effort
         for key in (
             "BOUGH_EFFORT",
             "ANTHROPIC_API_KEY",
@@ -308,6 +306,12 @@ class Bough(BaseInstalledAgent):
             value = self._get_env(key)
             if value:
                 env[key] = value
+        # LAST, so it wins: `--ak effort=` is an explicit instruction for this
+        # run and must beat whatever BOUGH_EFFORT the host happens to carry.
+        # Setting it before the forwarding loop let the ambient value overwrite
+        # the flag, which is the wrong way round and silent when it happens.
+        if self._effort:
+            env["BOUGH_EFFORT"] = self._effort
         return env
 
     def _bough_model(self) -> str | None:
