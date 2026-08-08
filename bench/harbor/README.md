@@ -9,13 +9,29 @@ is not forked or patched.
 
 ```bash
 uv tool install harbor                    # or: pip install harbor
-bench/harbor/build-linux-binary.sh        # ARCH=aarch64 for arm64 containers
+bench/harbor/build-linux-binary.sh        # x86_64; ARCH=aarch64 if you know why
 ```
 
 The build step is not optional. bough publishes no binaries and a normal install
 compiles the workspace, which is minutes — times 89 tasks times 5 trials, inside
 throwaway containers. So build one Linux binary here and upload it into each
 container instead. It lands in `dist/`, which is gitignored.
+
+**Build for amd64 even on an Apple Silicon Mac.** TB 2.0 tasks pin prebuilt
+`alexgshaw/…` images in `task.toml`, and those are amd64-only, so the containers
+run emulated and want an x86_64 binary regardless of the host. Getting this
+wrong fails at install with `cannot execute: required file not found` — the ELF
+interpreter, not the file. Emulated trials are also slow, and at least one task
+(`gpt2-codegolf`) fails here even for the `oracle` agent, so a local suite total
+on this machine is not comparable to a published x86 score.
+
+**Keep `--jobs-dir` on a path your Docker VM shares with the host.** Harbor bind-
+mounts the trial's `verifier/` directory into the container and reads
+`reward.txt` back out of it. Under Colima only a whitelist of host paths is
+shared (`$HOME` by default), and a mount outside it silently succeeds while
+writing into the VM — the tests run, the reward is written, the host never sees
+it, and *every* trial fails with `RewardFileNotFoundError`, the `oracle` agent
+included. If oracle scores 0, suspect the mount before suspecting the tasks.
 
 ## Run
 
@@ -27,7 +43,8 @@ harbor run \
   --dataset terminal-bench@2.0 \
   --agent bench.harbor.bough_agent:Bough \
   --model claude-opus-4-1 \
-  --ak binary=$PWD/bench/harbor/dist/bough-linux \
+  --ak binary=$PWD/bench/harbor/dist/bough-linux-x86_64 \
+  --jobs-dir ~/.cache/bough-tbench/jobs \
   --n-concurrent 4 \
   -k 5
 ```
@@ -50,7 +67,7 @@ numbers.
 
 | key | default | what it does |
 | --- | --- | --- |
-| `binary` | — | host path to the Linux `bough` to upload. Required unless `source=1`. |
+| `binary` | — | host path to the Linux `bough` to upload — must match the CONTAINER arch. Required unless `source=1`. |
 | `source` | `0` | build bough from source inside every container instead. Slow; use for HEAD. |
 | `ref` | `main` | git ref for the source build. |
 | `port` | `4321` | loopback port for the in-container server. |

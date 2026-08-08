@@ -20,6 +20,13 @@ Two things about bough shape this file, and a naive port gets both wrong:
    trials. So the default path uploads a Linux binary you built once on the
    host (`build-linux-binary.sh`). `--ak source=1` falls back to an in-container
    source build for the rare case where you want HEAD and can pay for it.
+
+   The binary must match the CONTAINER's architecture, which for Terminal-Bench
+   2.0 is amd64 — its tasks pin prebuilt `alexgshaw/…` images. On Apple Silicon
+   those run emulated, so an aarch64 binary is the wrong one even though the
+   host is arm64. install() proves the binary runs before anything depends on
+   it, because the failure mode otherwise is an ELF-interpreter error that
+   reads like a missing file.
 """
 
 import json
@@ -127,6 +134,13 @@ class Bough(BaseInstalledAgent):
         await self.exec_as_root(
             environment, command=f"ln -sf {shlex.quote(BINARY_PATH)} /usr/local/bin/bough"
         )
+        # Prove the binary is there and runnable NOW. Harbor's own version probe
+        # swallows its exception, so without this a failed upload or an
+        # arch/libc mismatch surfaces much later as "nohup: No such file or
+        # directory" from the server start, which reads like a PATH bug.
+        await self.exec_as_root(
+            environment, command=f"{shlex.quote(BINARY_PATH)} --version"
+        )
         # bough writes its DB, logs and scratch under BOUGH_HOME. Create it as
         # the agent user so the server does not first touch it as root.
         await self.exec_as_agent(environment, command="mkdir -p ~/.bough")
@@ -179,7 +193,7 @@ class Bough(BaseInstalledAgent):
         model = self._bough_model()
         command = " ".join(
             [
-                "bough exec --json",
+                f"{shlex.quote(BINARY_PATH)} exec --json",
                 f"--port {self._port}",
                 f"--timeout {self._timeout}",
                 *([f"--model {shlex.quote(model)}"] if model else []),
@@ -248,7 +262,8 @@ class Bough(BaseInstalledAgent):
         await self.exec_as_agent(
             environment,
             command=(
-                "nohup bough start >/tmp/bough-server.log 2>&1 </dev/null & "
+                f"nohup {shlex.quote(BINARY_PATH)} start "
+                ">/tmp/bough-server.log 2>&1 </dev/null & "
                 "disown || true"
             ),
             env=env,
