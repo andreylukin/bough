@@ -85,3 +85,23 @@ history are yours and were never copied anywhere — that is what "in place" mea
 
 `bough purge` is unrelated to uninstalling: it deletes sessions archived more than 30
 days ago and needs the server running.
+
+## Running a local checkout
+
+Contributors: `make dev` runs *this* checkout — TUI and server together — on its own
+profile, so it never touches the install at `~/.bough:4321`.
+
+```bash
+make dev          # build, start the dev server if it is down, open the TUI
+make dev-server   # the server alone, in the foreground
+make dev-logs     # tail its log
+make dev-stop     # stop it — leaves the real install alone
+```
+
+The profile is `.dev/` in the checkout (gitignored, and stable, so dev sessions survive
+between runs) on port 4322. Override with `DEV_HOME` and `DEV_PORT`.
+
+Any `BOUGH_HOME` other than `~/.bough` is a profile, and the same rules apply to it:
+commands that need a server start one **detached**, never as a login service, because the
+launchd/systemd unit belongs to the default profile alone. `bough kill` on a profile stops
+that profile's listener and nothing else.

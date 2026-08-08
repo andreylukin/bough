@@ -22,3 +22,6 @@ node_modules/
 
 # local harness state (worktrees, session settings)
 .claude/
+
+# the dev profile: this checkout run against its own data root (make dev)
+/.dev/

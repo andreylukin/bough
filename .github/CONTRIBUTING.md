@@ -17,9 +17,14 @@ turn. Bugs, typos, flaky tests, better error messages: just send the PR.
 
 ```
 ./scripts/setup.sh     # fresh machine
+make dev               # run THIS checkout, on its own profile
 make gates             # build + test
 make lint              # rustfmt + clippy, warnings as errors
 ```
+
+`make dev` is the one to know: it runs the checkout you are editing against `.dev/` on
+port 4322, so it never touches your real install at `~/.bough:4321`. `make dev-stop` when
+you are done. There is no file watcher — rebuild and restart to pick up changes.
 
 Stable Rust, one workspace, `make help` for the rest. CI lints on the *latest* stable and
 is deliberately unpinned — if CI flags what `make lint` didn't, `rustup update`.

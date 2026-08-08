@@ -372,7 +372,12 @@ cmd_start() {
 }
 
 cmd_kill() {
-  if service_loaded; then
+  # A NON-DEFAULT PROFILE NEVER TOUCHES THE SERVICE. `service_loaded` and
+  # `svc_stop` name the one label every profile shares, so `BOUGH_HOME=dev
+  # bough kill` would have stopped the DEFAULT install's login service while
+  # reporting it had stopped the dev one. Kill what is on THIS profile's port
+  # (the block below), and nothing else.
+  if [ "$BOUGH_HOME" = "$HOME/.bough" ] && service_loaded; then
     echo "stopping service"
     svc_stop
     local i
@@ -633,7 +638,20 @@ cmd_logs() {
 ensure_up() {
   if ! is_up; then
     echo "server not running — starting it…" >&2
-    cmd_start
+    # A NON-DEFAULT PROFILE STARTS DETACHED, NOT AS A SERVICE. `cmd_start`
+    # installs the login service, and that service belongs to the default
+    # profile alone (see `require_default_profile`) — so routing a dev profile
+    # through it turned `BOUGH_HOME=… bough` into an error telling you to go
+    # run `bough run` in another terminal yourself. The detached path is the
+    # one the no-systemd fallback already uses: same log, same pidfile, no
+    # plist and no unit written.
+    if [ "$BOUGH_HOME" != "$HOME/.bough" ]; then
+      mkdir -p "$BOUGH_HOME"
+      nohup /bin/bash "$ROOT/scripts/bough" run >>"$LOG_FILE" 2>&1 &
+      echo $! >"$PIDFILE"
+    else
+      cmd_start
+    fi
     for _ in $(seq 1 20); do
       is_up && break
       sleep 0.5
