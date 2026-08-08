@@ -1,87 +1,90 @@
 # Contributing to bough
 
-Thanks for wanting to work on this. bough is an alternative harness **design**, not a
-race to be a better coding agent — the most useful contributions are ones that sharpen
-or falsify that design.
+bough is an alternative harness **design**. The best contributions sharpen or falsify
+that design.
 
 ## Before you start
 
-- **Read [`docs/spec.md`](docs/spec.md).** It is authoritative for product behavior.
-- **Read the relevant file in [`specs/`](specs/).** Each subsystem has a behavioral
-  contract pinning invariants that are not rediscoverable from the code — worker
-  wind-down ordering, same-millisecond message ordering, replay determinism. Changing
-  `turn/`, `harness/`, or `workflow/` without reading its spec first will waste your time
-  and ours.
-- **Read [`AGENTS.md`](AGENTS.md)** for the layout and the local commands.
-- **Open an issue before a large change.** For anything that alters a spec, adds a host
-  function, or changes the shape of a turn, discuss it first. We would rather argue about
-  a paragraph than about 2,000 lines.
+- [`docs/spec.md`](docs/spec.md) is authoritative for product behavior.
+- [`specs/`](specs/) pins per-subsystem invariants you cannot rediscover from the code.
+  Read the relevant one before touching `turn/`, `harness/`, or `workflow/`.
+- [`AGENTS.md`](AGENTS.md) has the layout and the commands.
 
-Small fixes — a bug, a typo, a flaky test, a clearer error message — need no issue. Just
-send the PR.
+Open an issue first for anything that changes a spec, adds a host function, or reshapes a
+turn. Bugs, typos, flaky tests, better error messages: just send the PR.
 
 ## Setup
 
 ```
 ./scripts/setup.sh     # fresh machine
-make check             # cargo check --workspace
-make gates             # build + test — the pre-commit gates
-make lint              # rustfmt check + clippy, warnings as errors
+make gates             # build + test
+make lint              # rustfmt + clippy, warnings as errors
 ```
 
-Stable Rust, one cargo workspace at the root. `make help` lists every target.
-
-CI lints on the *latest* stable, which is deliberately unpinned. Clippy gains lints with
-each release, so if CI flags something `make lint` didn't, `rustup update` and re-run —
-it's toolchain drift, not a mystery.
+Stable Rust, one workspace, `make help` for the rest. CI lints on the *latest* stable and
+is deliberately unpinned — if CI flags what `make lint` didn't, `rustup update`.
 
 ## The bar for a pull request
 
-1. **`make gates` and `make lint` pass.** CI runs both on Linux and macOS; a PR that is
-   red gets no review attention until it is green.
-2. **New behavior has a test.** Tests are offline and hermetic — no network, no shared
-   `$HOME`, no dependence on wall-clock ordering. If your change is only observable in
-   the TUI, drive it through a real PTY (`make tui-test`) rather than asserting on the
-   data behind it. Data-only assertions have repeatedly let broken rendering ship.
-3. **Spec changes travel with code changes.** If you change pinned behavior, update the
-   spec in the same PR. A spec that disagrees with the code is worse than no spec.
-4. **Surgical diffs.** Change what the issue asks for. Drive-by reformatting, renames,
-   and refactors of adjacent code make review much more expensive — send them separately
-   if you think they're worth doing.
-5. **One logical change per PR.** Split anything that would need "and" in its title.
+1. **`make gates` and `make lint` pass.** Red PRs aren't reviewed.
+2. **New behavior has a test**, offline and hermetic. If it's only visible in the TUI,
+   drive a real PTY (`make tui-test`) — data-only assertions have let broken rendering
+   ship more than once.
+3. **Spec changes travel with the code.** A spec that disagrees with the code is worse
+   than no spec.
+4. **Surgical diffs, one logical change.** No drive-by reformatting. Split anything whose
+   title needs an "and".
+5. **You have verified it yourself.** See below.
+
+## AI-generated code
+
+This project is a coding agent. Using one to work on it is expected, and there is no
+disclosure ritual.
+
+What is not acceptable is unverified output. **You are the author of every line you open
+a PR with**, however it was produced. Before you push, you must have:
+
+- read the whole diff and be able to explain why each part is there;
+- run `make gates` and `make lint` locally — not trusted a claim that they pass;
+- confirmed the change actually does what the PR says, by exercising it, not by reading
+  a summary of it.
+
+Tells that a PR was not verified: tests that assert nothing, or that were adjusted until
+they passed; invented API, config keys, or file paths; a plausible fix for a
+misdiagnosed cause; comments narrating code that isn't there; a diff far larger than the
+problem. These get closed rather than reviewed — an unverified PR moves the work onto
+maintainers, and there are more people generating patches than reading them.
+
+If you're unsure whether something is right, say so in the PR. "I think this is the
+cause but I couldn't reproduce it" is a useful contribution. A confident wrong
+description of a change is not.
 
 ## Commits
 
-Conventional-commit prefixes, scoped to the crate:
+Conventional prefixes, scoped to the crate:
 
 ```
 feat(bough-tui): fold thinking blocks in the transcript
 fix(bough-core): stop the turn runner erasing a part written outside it
-test(bough-server): cover SSE reconnect after a server restart
-docs: ...
 ```
 
-Rebase on `main` rather than merging it in. Squash noise before you push; we do not
-squash-merge for you.
+Rebase on `main`; don't merge it in.
 
 ## Review
 
-Maintainers are listed in [`.github/CODEOWNERS`](.github/CODEOWNERS) and are requested
-automatically. Expect a first response within a week. If a PR goes quiet for longer than
-that, comment on it — that is not rude, it is helpful.
+[`.github/CODEOWNERS`](.github/CODEOWNERS) are requested automatically. Expect a first
+response within a week — ping the PR if it goes quiet longer.
 
-Reviewers: be concrete about what would make the change mergeable. "This is not the right
-approach" without an alternative is not a review.
+Reviewers: say what would make the change mergeable. "Not the right approach" without an
+alternative is not a review.
 
-## Reporting bugs
+## Bugs and security
 
-Use the issue templates. The single most useful thing you can include is the exact
-sequence that reproduces it and what you expected instead — bough is a TUI, and "it
-looked wrong" is not actionable without the keystrokes that got you there.
+Use the issue templates, and include the exact sequence that reproduces it — bough is a
+TUI, and "it looked wrong" isn't actionable without the keystrokes.
 
-Security issues do **not** go in the issue tracker. See [`SECURITY.md`](SECURITY.md).
+Security issues do **not** go in the tracker: see [`SECURITY.md`](SECURITY.md).
 
 ## License
 
-By contributing, you agree that your contributions are licensed under the Apache License
-2.0, as in [`LICENSE`](LICENSE). There is no CLA.
+Contributions are licensed under Apache 2.0, as in [`LICENSE`](LICENSE). No CLA.
