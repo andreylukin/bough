@@ -1999,12 +1999,16 @@ mod tests {
             &r.opts(),
         )
         .await;
-        let rows: Vec<(String, Option<i64>)> = recorded
+        // `sh_concurrent` is concurrent, so the legs finish in whatever order the
+        // OS schedules them. What is pinned is one row per command with its own
+        // code intact — not the order they land in.
+        let mut rows: Vec<(String, Option<i64>)> = recorded
             .lock()
             .unwrap()
             .iter()
             .map(|e| (e.tags.clone(), e.exit_code))
             .collect();
+        rows.sort_by_key(|(_, code)| *code);
         assert_eq!(
             rows,
             vec![(String::new(), Some(0)), (String::new(), Some(7))]
