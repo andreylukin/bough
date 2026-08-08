@@ -165,6 +165,15 @@ fn src_find(s: &[char], from: usize) -> Option<usize> {
 /// shapes, verbatim from `checkProgramSyntax` in `src/harness/vm.ts`:
 /// shadowed bound name, newline-closed string, or the engine's words alone.
 pub fn syntax_error_message(why: &str, code: &str) -> String {
+    syntax_error_message_with(why, code, &[])
+}
+
+/// As [`syntax_error_message`], plus the extension functions bound for this
+/// turn (`crate::extensions`). They are bound the same way the eighteen are,
+/// so shadowing one fails the same way and deserves the same explanation —
+/// without this, a name the user's own file added reports as the engine's
+/// bare "already declared" and reads like a bug in the program.
+pub fn syntax_error_message_with(why: &str, code: &str, extra: &[String]) -> String {
     // Two phrasings because two engines: JSC (Bun) says "Cannot declare a
     // {let variable,const variable,class} twice: 'x'", V8 says "Identifier 'x'
     // has already been declared". Matching both keeps this message — a product
@@ -181,7 +190,7 @@ pub fn syntax_error_message(why: &str, code: &str) -> String {
         // Only a name in PROGRAM_PARAMS is ours to explain — shadowing anything
         // else is the program's own business (and the engine's own message).
         if let Some(name) = shadowed {
-            if program_params().contains(&name) {
+            if program_params().contains(&name) || extra.iter().any(|e| e == name) {
                 let mut chars = name.chars();
                 let renamed = match chars.next() {
                     Some(first) => format!("my{}{}", first.to_uppercase(), chars.as_str()),

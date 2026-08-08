@@ -398,7 +398,13 @@ pub fn default_program_runner(ctx: &TurnCtx, host: Option<HostFns>) -> ProgramRu
     let reads = ctx.reads.clone();
     let touched = ctx.touched.clone();
     let hint_ctx = ctx.clone();
+    // Resolved once per turn, from the same cache `prepare_turn` read for the
+    // prompt — so the functions bound into the scope are the ones documented.
+    let extension_files = crate::extensions::for_workspace(Path::new(&ctx.workspace))
+        .files
+        .clone();
     Arc::new(move |run: ProgramRun| {
+        let extension_files = extension_files.clone();
         let fns = fns.clone();
         let exits = exits.clone();
         let reads = reads.clone();
@@ -415,6 +421,7 @@ pub fn default_program_runner(ctx: &TurnCtx, host: Option<HostFns>) -> ProgramRu
                 timeout_ms: None,
                 cancel: Some(run.cancel),
                 on_log: Some(on_log),
+                extensions: extension_files,
             })
             .await;
             let round_exits: Vec<ExitNote> = {
@@ -1158,6 +1165,12 @@ fn prepare_turn(
     // (`skills/mod.rs`'s intact-or-reported invariant). These are volatile,
     // like every other note here.
     notes.extend(active.notes.iter().cloned());
+    // The workspace's extensions, probed once per edit and cached. Read HERE
+    // for the same reason skills are: this is where the workspace is known.
+    // The list feeds the prompt below and the program's scope in
+    // `default_program_runner` — one list, both halves, so a documented
+    // function is a bound one (`crate::extensions`).
+    let extensions = crate::extensions::for_workspace(Path::new(&workspace));
     let prompt_input = PromptInput {
         kind: session
             .as_ref()
@@ -1180,6 +1193,7 @@ fn prepare_turn(
             .as_ref()
             .map(|catalog| catalog(&session_id, &active.servers))
             .unwrap_or_default(),
+        extensions: extensions.fns.clone(),
         skills: active.skills.clone(),
         notes,
     };

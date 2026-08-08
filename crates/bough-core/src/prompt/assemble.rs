@@ -90,6 +90,11 @@ pub struct PromptInput {
     pub granted: Vec<HostFnName>,
     /// Connected (or failed-to-connect) MCP servers. Empty = no MCP section.
     pub mcp_servers: Vec<PromptMcpServer>,
+    /// Functions this workspace's extensions bound into the program's scope
+    /// (`crate::extensions`). Not a capability grant to gate — the worker has
+    /// already bound them by the time a program runs, so an unlisted one
+    /// would be a function the model has and is not told about.
+    pub extensions: Vec<crate::harness::protocol::ExtensionFn>,
     /// Skills the user's message named.
     pub skills: Vec<PromptSkill>,
     /// Per-session notes the caller resolved — the workspace path, background
@@ -106,6 +111,7 @@ impl PromptInput {
             kind,
             granted: granted.into_iter().collect(),
             mcp_servers: Vec::new(),
+            extensions: Vec::new(),
             skills: Vec::new(),
             notes: Vec::new(),
         }
@@ -170,6 +176,7 @@ pub enum SectionId {
     Ending,
     // volatile, rendered rather than read from a file
     McpTools,
+    Extensions,
     Skills,
     Notes,
 }
@@ -196,6 +203,7 @@ impl SectionId {
             SectionId::Network => "network",
             SectionId::Ending => "ending",
             SectionId::McpTools => "mcp-tools",
+            SectionId::Extensions => "extensions",
             SectionId::Skills => "skills",
             SectionId::Notes => "notes",
         }
@@ -462,6 +470,45 @@ fn mcp_server_block(server: &PromptMcpServer) -> String {
     lines.join("\n")
 }
 
+/// The extensions section: what the user's own JavaScript added to the
+/// program's scope.
+///
+/// The framing matters more than the list. An extension function is NOT an
+/// MCP tool (no `bough mcp call`) and NOT a skill (nothing to invoke) — it is
+/// a name already bound in the program, indistinguishable in use from
+/// `bash()`. Saying so is what stops the model from inventing a calling
+/// convention for it.
+fn extensions_section(fns: &[crate::harness::protocol::ExtensionFn]) -> String {
+    let lines: Vec<String> = fns
+        .iter()
+        .map(|f| {
+            let doc = f
+                .doc
+                .as_deref()
+                .unwrap_or("")
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let head = format!("- {}{}", f.name, f.signature);
+            if doc.is_empty() {
+                format!("{head} — defined in {}", f.file)
+            } else {
+                format!("{head} — {doc} (defined in {})", f.file)
+            }
+        })
+        .collect();
+    format!(
+        "## Extensions\n\nThis project's extensions bound these functions into your program's \
+         scope. They are already in scope: call one directly, exactly as you call `bash()`. \
+         They are not tools and not skills — there is no command to invoke them with, and \
+         `await` them like any other async call.\n\n{}\n\nOnly the functions listed here \
+         exist. If one misbehaves, its source file is named above and you can `view()` it.",
+        lines.join("\n")
+    )
+}
+
 /// The MCP tools section: the calling convention, then a compact per-server
 /// catalog. "Only the servers and tools listed here exist" is the load-bearing
 /// sentence: the catalog is this turn's grant, and it changes between turns.
@@ -587,6 +634,13 @@ pub fn assemble_prompt(input: &PromptInput) -> AssembledPrompt {
     if !input.mcp_servers.is_empty() && granted.contains(&HostFnName::Bash) {
         let text = mcp_tools_section(&input.mcp_servers);
         note(&mut sections, &mut shas, SectionId::McpTools, &text);
+        volatile.push(text);
+    }
+    // Ungated: unlike MCP, reaching an extension function needs no other
+    // capability — the worker bound it into the scope before the program ran.
+    if !input.extensions.is_empty() {
+        let text = extensions_section(&input.extensions);
+        note(&mut sections, &mut shas, SectionId::Extensions, &text);
         volatile.push(text);
     }
     if !input.skills.is_empty() {
@@ -909,6 +963,56 @@ mod tests {
         assert!(!p.system.contains("/repo"));
         // Blank notes are dropped rather than joined into stray separators.
         assert!(!p.system_volatile.contains("\n\n\n"));
+    }
+
+    /// Extensions are volatile-tier: they vary per workspace, and one
+    /// varying byte in the STABLE prefix costs every session the shared
+    /// prompt cache (`turn/runner.rs`). This is the assertion that keeps a
+    /// per-workspace surface out of the cacheable half.
+    #[test]
+    fn extensions_render_into_the_volatile_tier_and_never_the_stable_one() {
+        let mut input = PromptInput::new(SessionKind::Root, all());
+        input.extensions = vec![
+            crate::harness::protocol::ExtensionFn {
+                name: "deploy".into(),
+                signature: "(env)".into(),
+                doc: Some("Ship to an environment".into()),
+                file: "/repo/.agents/extensions/ops.js".into(),
+            },
+            crate::harness::protocol::ExtensionFn {
+                name: "rollback".into(),
+                signature: "()".into(),
+                doc: None,
+                file: "/repo/.agents/extensions/ops.js".into(),
+            },
+        ];
+        let p = assemble_prompt(&input);
+
+        assert!(has(&p, SectionId::Extensions));
+        assert!(p
+            .system_volatile
+            .contains("- deploy(env) — Ship to an environment"));
+        // Undocumented is still listed: it is bound either way, and omitting
+        // it would hide a function the model has.
+        assert!(p.system_volatile.contains("- rollback()"));
+        assert!(p
+            .system_volatile
+            .contains("/repo/.agents/extensions/ops.js"));
+        // Nothing workspace-specific reaches the cacheable prefix. Asserted on
+        // the heading and the file path rather than the bare word "deploy",
+        // which the stable sections legitimately use in their own prose.
+        assert!(
+            !p.system.contains("## Extensions") && !p.system.contains("ops.js"),
+            "the cacheable prefix must not vary per workspace"
+        );
+    }
+
+    /// No extensions, no section — an empty heading would invite the model to
+    /// invent functions to fill it.
+    #[test]
+    fn no_extensions_renders_no_section() {
+        let p = assemble_prompt(&PromptInput::new(SessionKind::Root, all()));
+        assert!(!has(&p, SectionId::Extensions));
     }
 
     #[test]

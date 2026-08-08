@@ -261,6 +261,71 @@ pub(crate) async fn engine_check(code: &str) -> std::io::Result<Option<String>> 
     answer
 }
 
+/// How long the extension probe waits for the worker to answer. Loading a
+/// file is a `require()`, not work — a file that takes longer than this is
+/// doing something at import time that a turn should not wait on.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Load extension files in a throwaway worker and report what they export.
+///
+/// Synchronous and `std::process` on purpose: the caller is the turn's
+/// synchronous head (`prepare_turn`), and this runs once per workspace per
+/// edit rather than once per turn. It answers the question "what is in this
+/// file" with the engine that will bind it, so the prompt can never document
+/// a function the worker did not bind.
+pub fn probe_extensions(
+    files: &[PathBuf],
+) -> std::io::Result<(Vec<super::protocol::ExtensionFn>, Vec<String>)> {
+    use std::io::{BufRead, BufReader as StdBufReader, Write};
+
+    let bin = runtime_bin().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "neither bun nor node found on PATH — extensions need a JS runtime",
+        )
+    })?;
+    let script = worker_script_path()?;
+    let mut child = std::process::Command::new(&bin)
+        .arg(&script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    let paths: Vec<String> = files
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    {
+        let mut stdin = child.stdin.take().expect("stdin piped");
+        let msg = json!({"type": "extensions", "files": paths});
+        writeln!(stdin, "{msg}")?;
+        stdin.flush()?;
+        // Dropping stdin closes the pipe, which is how the worker learns to
+        // exit once it has answered — otherwise the read below blocks on a
+        // worker that is still waiting for more messages.
+    }
+
+    let stdout = child.stdout.take().expect("stdout piped");
+    let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
+    let mut answer = None;
+    for line in StdBufReader::new(stdout).lines() {
+        if std::time::Instant::now() > deadline {
+            break;
+        }
+        let Ok(line) = line else { break };
+        if let Ok(FromProgramWorker::ExtensionsResult { fns, errors }) = serde_json::from_str(&line)
+        {
+            answer = Some((fns, errors));
+            break;
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+
+    answer.ok_or_else(|| std::io::Error::other("the worker did not answer the extension probe"))
+}
+
 // ---------------------------------------------------------------------------
 // Running one program
 // ---------------------------------------------------------------------------
@@ -283,6 +348,10 @@ pub struct RunProgramOptions {
     /// Fires for each `console.*` line as the program prints it. Display-only
     /// — the batched `logs` in the result carry the same lines regardless.
     pub on_log: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    /// Extension files to `require()` and bind into the program's scope
+    /// before it runs (`crate::extensions`). Their functions never cross this
+    /// wire — the host's only part is naming the files.
+    pub extensions: Vec<PathBuf>,
 }
 
 /// Spec §6: a timeout and an interrupt must be distinguishable, and each must
@@ -311,6 +380,7 @@ pub async fn run_program(opts: RunProgramOptions) -> ProgramResult {
         timeout_ms,
         cancel,
         on_log,
+        extensions,
     } = opts;
     let timeout_ms = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
     let cancel = cancel.unwrap_or_default();
@@ -348,6 +418,19 @@ pub async fn run_program(opts: RunProgramOptions) -> ProgramResult {
         }
     };
 
+    // Extensions BEFORE the pre-flight, because they add names the program is
+    // allowed to use and `check` must know them or a valid program is rejected.
+    // Both messages can go now rather than waiting on the ack: the worker
+    // handles stdin lines in order and its extension load is synchronous, so
+    // the binding is done before the `check` line is read.
+    if !extensions.is_empty() {
+        let files: Vec<String> = extensions
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        side.post(&json!({"type": "extensions", "files": files}));
+    }
+
     // Parse before running. The worker parses it again for real on `run`;
     // this pass exists only to say WHERE, and its engine is the same engine.
     side.post(&json!({"type": "check", "code": code}));
@@ -360,6 +443,9 @@ pub async fn run_program(opts: RunProgramOptions) -> ProgramResult {
     // In-flight host calls. Dropped (and therefore aborted) when we return —
     // a host call that never answers must not outlive the turn.
     let mut host_tasks: JoinSet<()> = JoinSet::new();
+    // Filled by `extensions_result`, which the worker always answers before it
+    // reads the `check` line.
+    let mut ext_names: Vec<String> = Vec::new();
 
     let wall = tokio::time::sleep(Duration::from_millis(timeout_ms));
     tokio::pin!(wall);
@@ -392,11 +478,30 @@ pub async fn run_program(opts: RunProgramOptions) -> ProgramResult {
                                 break (ProgramResult {
                                     ok: false,
                                     logs: vec![],
-                                    error: Some(preflight::syntax_error_message(&why, &code)),
+                                    error: Some(preflight::syntax_error_message_with(
+                                        &why, &code, &ext_names,
+                                    )),
                                     interrupted: None,
                                 }, false);
                             }
                             side.post(&json!({"type": "run", "code": code}));
+                        }
+                        // A file that would not load costs its functions, not
+                        // the turn. It is reported to the UI (never into the
+                        // model's logs, which are the program's own output):
+                        // an extension that silently is not there is the
+                        // support question this avoids.
+                        FromProgramWorker::ExtensionsResult { fns, errors } => {
+                            // Kept so a program that shadows an extension name
+                            // gets the same explanation as one that shadows a
+                            // host function.
+                            ext_names = fns.into_iter().map(|f| f.name).collect();
+                            for e in errors {
+                                tracing::warn!("extension: {e}");
+                                if let Some(cb) = &on_log {
+                                    cb(&format!("[extension] {e}"));
+                                }
+                            }
                         }
                         FromProgramWorker::Log { line } => {
                             if let Some(cb) = &on_log {
@@ -625,6 +730,19 @@ mod tests {
             timeout_ms: None,
             cancel: None,
             on_log: None,
+            extensions: Vec::new(),
+        })
+        .await
+    }
+
+    async fn run_with_extensions(code: &str, extensions: Vec<PathBuf>) -> ProgramResult {
+        run_program(RunProgramOptions {
+            code: code.into(),
+            host: fake_host(),
+            timeout_ms: None,
+            cancel: None,
+            on_log: None,
+            extensions,
         })
         .await
     }
@@ -681,6 +799,117 @@ mod tests {
         runtime_bin()
             .map(|p| p.file_name().is_some_and(|n| n == "bun"))
             .unwrap_or(false)
+    }
+
+    // ---- extensions --------------------------------------------------------
+
+    /// The whole point, asserted from inside a program: a function the user
+    /// wrote is in scope and callable, with no bridge and no calling
+    /// convention to learn.
+    #[tokio::test]
+    async fn an_extension_function_is_callable_from_a_program() {
+        if runtime_bin().is_none() {
+            return;
+        }
+        let dir = temp_dir("bough-vm-ext-");
+        let file = dir.join("greet.js");
+        std::fs::write(
+            &file,
+            "module.exports = { greet: async (who) => `hello ${who}` };",
+        )
+        .expect("write");
+
+        let res =
+            run_with_extensions("console.log(await greet(\"world\"))", vec![file.clone()]).await;
+
+        assert!(res.ok, "{:?}", res.error);
+        assert_eq!(res.logs, vec!["hello world"]);
+    }
+
+    /// The factory shape: an extension's only route to the session is the
+    /// host functions handed to it, so a default-exported factory receives
+    /// them and the shell run inside it still crosses the normal bridge.
+    #[tokio::test]
+    async fn an_extension_factory_receives_the_host_functions() {
+        if runtime_bin().is_none() {
+            return;
+        }
+        let dir = temp_dir("bough-vm-extfac-");
+        let file = dir.join("wrap.js");
+        std::fs::write(
+            &file,
+            "module.exports.default = ({ bash }) => ({ status: () => bash(\"git status\", \"vcs\") });",
+        )
+        .expect("write");
+
+        let res = run_with_extensions("console.log(await status())", vec![file]).await;
+
+        assert!(res.ok, "{:?}", res.error);
+        // `fake_host`'s bash echoes its arguments: the call reached the real
+        // bridge rather than being reimplemented inside the extension.
+        assert_eq!(res.logs, vec!["bash:git status|vcs"]);
+    }
+
+    /// A broken extension costs its own functions, never the turn.
+    #[tokio::test]
+    async fn a_broken_extension_does_not_fail_the_program() {
+        if runtime_bin().is_none() {
+            return;
+        }
+        let dir = temp_dir("bough-vm-extbad-");
+        let bad = dir.join("bad.js");
+        std::fs::write(&bad, "throw new Error(\"boom at import\");").expect("write");
+        let good = dir.join("good.js");
+        std::fs::write(&good, "module.exports = { two: () => 2 };").expect("write");
+
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink = seen.clone();
+        let res = run_program(RunProgramOptions {
+            code: "console.log(await two())".into(),
+            host: fake_host(),
+            timeout_ms: None,
+            cancel: None,
+            on_log: Some(Arc::new(move |l: &str| {
+                sink.lock().expect("sink").push(l.to_string())
+            })),
+            extensions: vec![bad, good],
+        })
+        .await;
+
+        assert!(res.ok, "{:?}", res.error);
+        assert_eq!(res.logs, vec!["2"]);
+        // Reported to the UI, and NOT into the model's logs — the program's
+        // output is the program's, and a silent failure is the support
+        // question this avoids.
+        let reported = seen.lock().expect("sink").clone();
+        assert!(
+            reported
+                .iter()
+                .any(|l| l.contains("[extension]") && l.contains("boom at import")),
+            "the load failure is surfaced: {reported:?}"
+        );
+        assert!(!res.logs.iter().any(|l| l.contains("boom at import")));
+    }
+
+    /// Shadowing an extension name explains itself the way shadowing a host
+    /// function does, instead of reporting the engine's bare words.
+    #[tokio::test]
+    async fn shadowing_an_extension_name_explains_itself() {
+        if runtime_bin().is_none() {
+            return;
+        }
+        let dir = temp_dir("bough-vm-extshadow-");
+        let file = dir.join("tools.js");
+        std::fs::write(&file, "module.exports = { deploy: () => 1 };").expect("write");
+
+        let res = run_with_extensions("const deploy = 5; console.log(deploy)", vec![file]).await;
+
+        assert!(!res.ok);
+        let err = res.error.unwrap_or_default();
+        assert!(
+            err.contains("already bound in every program's scope") && err.contains("myDeploy"),
+            "shadowing an extension name should teach the rename: {err}"
+        );
     }
 
     // ---- the name lists — the invariant protocol.rs exists to hold ---------
@@ -877,6 +1106,7 @@ mod tests {
             on_log: Some(Arc::new(move |line| {
                 sink.lock().unwrap().push(line.to_string())
             })),
+            extensions: Vec::new(),
         })
         .await;
 
@@ -1088,6 +1318,7 @@ mod tests {
             timeout_ms: None,
             cancel: Some(cancel.clone()),
             on_log: None,
+            extensions: Vec::new(),
         }));
 
         assert!(
@@ -1182,6 +1413,7 @@ mod tests {
             timeout_ms: Some(300),
             cancel: None,
             on_log: None,
+            extensions: Vec::new(),
         })
         .await;
 
@@ -1217,6 +1449,7 @@ mod tests {
             timeout_ms: None,
             cancel: Some(cancel),
             on_log: None,
+            extensions: Vec::new(),
         })
         .await;
 
@@ -1252,6 +1485,7 @@ mod tests {
             timeout_ms: None,
             cancel: Some(cancel.clone()),
             on_log: None,
+            extensions: Vec::new(),
         }));
         while !called.load(Ordering::SeqCst) {
             tokio::time::sleep(Duration::from_millis(10)).await;

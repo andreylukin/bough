@@ -26,6 +26,7 @@ pub mod agents;
 pub mod bus;
 pub mod db;
 pub mod errors;
+pub mod extensions;
 pub mod harness;
 pub mod history;
 pub mod hooks;

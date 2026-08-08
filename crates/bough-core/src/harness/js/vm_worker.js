@@ -343,19 +343,139 @@ const bindings = {
 // spelling. It resolves from the session's working directory (this file lives
 // in a cache dir with no node_modules of its own), so `node:*` builtins work
 // everywhere and project packages resolve from the project.
+const programRequire = createRequire(nodePath.join(process.cwd(), "__program__.cjs"));
+
 const scope = {
   ...bindings,
   console: programConsole,
-  require: createRequire(nodePath.join(process.cwd(), "__program__.cjs")),
+  require: programRequire,
 };
+
+// ---------------------------------------------------------------------------
+// Extensions — user JavaScript bound into the same scope
+// ---------------------------------------------------------------------------
+//
+// An extension function is NOT bridged: it is required here and called
+// in-process, so it never crosses the wire and the host's closed HOST_FN_NAMES
+// list is untouched. What it gets in exchange for that is the host functions
+// themselves — `bindings` is passed to the module's factory export, so an
+// extension composes bash()/view()/patch() instead of reimplementing them.
+//
+// Names bound here are appended to the program's parameter list, which is why
+// the host sends `extensions` BEFORE `check`: the pre-flight parse must know
+// about them or a program using one would fail to compile.
+
+const extensionNames = [];
+
+const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+// The declared parameter list, read off the engine's own toString. Nested
+// parens in a default value (`(a = f(1))`) would break the cheap scan, so a
+// depth counter walks it; anything unreadable degrades to "()", never throws.
+function signatureOf(fn) {
+  let src;
+  try {
+    src = Function.prototype.toString.call(fn);
+  } catch {
+    return "()";
+  }
+  const open = src.indexOf("(");
+  if (open === -1) {
+    // A bare arrow with one unparenthesized param: `x => …`.
+    const arrow = src.indexOf("=>");
+    const head = arrow === -1 ? "" : src.slice(0, arrow).trim();
+    return IDENT.test(head) ? `(${head})` : "()";
+  }
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === "(") depth++;
+    else if (src[i] === ")") {
+      depth--;
+      if (depth === 0) return src.slice(open, i + 1).replace(/\s+/g, " ");
+    }
+  }
+  return "()";
+}
+
+// Both module shapes: `module.exports = {…}` / named ESM exports, and a
+// default export object. A default-exported FUNCTION is treated as a factory
+// (called with the host bindings) so an extension can close over bash() —
+// that is the only way it reaches the session at all.
+function exportsOf(mod) {
+  if (!mod || (typeof mod !== "object" && typeof mod !== "function")) return {};
+  const dflt = mod.default;
+  if (typeof dflt === "function") {
+    const produced = dflt(bindings);
+    return produced && typeof produced === "object" ? produced : {};
+  }
+  if (dflt && typeof dflt === "object") return { ...dflt, ...mod };
+  if (typeof mod === "function") {
+    const produced = mod(bindings);
+    return produced && typeof produced === "object" ? produced : {};
+  }
+  return mod;
+}
+
+function loadExtensions(files) {
+  const fns = [];
+  const errors = [];
+  for (const file of files ?? []) {
+    let exported;
+    try {
+      exported = exportsOf(programRequire(file));
+    } catch (err) {
+      errors.push(`${file}: ${String((err && err.message) ?? err)}`);
+      continue;
+    }
+    for (const name of Object.keys(exported)) {
+      let value;
+      try {
+        value = exported[name];
+      } catch {
+        continue; // a throwing getter is not an export we can bind
+      }
+      if (typeof value !== "function") continue;
+      if (name === "default") continue;
+      if (!IDENT.test(name)) {
+        errors.push(`${file}: export "${name}" is not a usable identifier — skipped`);
+        continue;
+      }
+      // The eighteen (and console/require) win. Shadowing bash() from an
+      // extension would silently redefine the memory boundary.
+      if (PROGRAM_PARAMS.includes(name)) {
+        errors.push(`${file}: "${name}" is already bound in every program — skipped`);
+        continue;
+      }
+      // Later file wins, matching the host's binding order (global, then
+      // project). Replace the binding AND the reported entry, so the prompt
+      // never documents a function that is not the one bound.
+      const already = extensionNames.indexOf(name);
+      if (already !== -1) fns.splice(fns.findIndex((f) => f.name === name), 1);
+      else extensionNames.push(name);
+      scope[name] = value;
+      fns.push({
+        name,
+        signature: signatureOf(value),
+        doc: typeof value.doc === "string" ? value.doc : null,
+        file,
+      });
+    }
+  }
+  return { fns, errors };
+}
+
+// The full parameter list: the fixed ones, then whatever extensions bound.
+// Read through a function because extensions land after this module is
+// evaluated — a captured array would be the pre-extension one.
+const programParams = () => [...PROGRAM_PARAMS, ...extensionNames];
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 async function run(code) {
-  // Built from PROGRAM_PARAMS, in order, so the parameter list the worker
-  // binds is the same list the host pre-flighted against.
-  const program = new AsyncFunction(...PROGRAM_PARAMS, code);
-  await program(...PROGRAM_PARAMS.map((name) => scope[name]));
+  // Built from the same list the host pre-flighted against, in the same order.
+  const params = programParams();
+  const program = new AsyncFunction(...params, code);
+  await program(...params.map((name) => scope[name]));
 }
 
 // ---------------------------------------------------------------------------
@@ -386,12 +506,24 @@ rl.on("line", (raw) => {
     else p.reject(new Error(msg.value));
     return;
   }
+  // Bind user JavaScript into the program scope. Always answered, even when
+  // every file failed — the host waits on this before sending `check`.
+  if (msg.type === "extensions") {
+    let loaded;
+    try {
+      loaded = loadExtensions(msg.files);
+    } catch (err) {
+      loaded = { fns: [], errors: [String((err && err.message) ?? err)] };
+    }
+    send({ type: "extensions_result", fns: loaded.fns, errors: loaded.errors });
+    return;
+  }
   // Pre-flight parse, delegated here for engine parity: constructing the
   // AsyncFunction parses, it does not execute, and the code never touches this
   // scope. The host shapes the model-facing message from the raw engine words.
   if (msg.type === "check") {
     try {
-      new AsyncFunction(...PROGRAM_PARAMS, msg.code);
+      new AsyncFunction(...programParams(), msg.code);
       send({ type: "check_result" });
     } catch (err) {
       send({

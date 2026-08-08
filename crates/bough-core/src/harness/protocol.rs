@@ -124,6 +124,27 @@ pub fn program_params() -> Vec<&'static str> {
     v
 }
 
+/// One function an extension file exports, as the worker found it.
+///
+/// The worker reports these instead of Rust parsing JavaScript: the engine
+/// that will bind the name is the one that says what the name is. Both
+/// consumers — the prompt section and the worker's parameter list — read this
+/// one list, which is why this surface has no hand-synced second half
+/// (`crate::extensions`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionFn {
+    pub name: String,
+    /// The declared parameter list, e.g. `(owner, repo)`. `()` when the
+    /// engine's `toString` shape was not one we could read.
+    pub signature: String,
+    /// The `doc` property on the exported function, if it set one. Optional
+    /// because requiring it would make the zero-config case a failure case.
+    #[serde(default)]
+    pub doc: Option<String>,
+    /// Which file it came from — the answer to "why is this in my prompt".
+    pub file: String,
+}
+
 /// The verbs each method-object host function fans out to. One bridged
 /// function carries all of them (`state("get", argsJson)`); declared here so
 /// the host dispatcher and the worker's method-object construction cannot
@@ -145,6 +166,11 @@ pub const WORKFLOW_VERBS: [&str; 7] = [
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToProgramWorker {
+    /// Load extension files and bind their exports into the program's scope.
+    /// Sent BEFORE `check`, because the names they add are names the program
+    /// may legally use — pre-flighting first would reject a valid program.
+    /// Answered with `extensions_result`.
+    Extensions { files: Vec<String> },
     /// Start the program. Sent once, after the pre-flight check passes.
     Run { code: String },
     /// Parse-only pre-flight; answered with `check_result`, never executes.
@@ -187,6 +213,15 @@ pub enum FromProgramWorker {
     Error {
         message: String,
         logs: Vec<String>,
+    },
+    /// Answer to `extensions`: what got bound, and what did not. `errors` is
+    /// never fatal — a broken extension file costs the program that file's
+    /// functions, not its turn.
+    ExtensionsResult {
+        #[serde(default)]
+        fns: Vec<ExtensionFn>,
+        #[serde(default)]
+        errors: Vec<String>,
     },
     /// Answer to `check`: absent `message` = the program parses. `name` is the
     /// engine's error class (`SyntaxError` in practice).
