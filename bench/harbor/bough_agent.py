@@ -127,14 +127,28 @@ class Bough(BaseInstalledAgent):
         # bough shells out to these by name. `rg` and `ast-grep` in particular
         # are named unconditionally by the system prompt, so a container
         # without them makes the agent look broken rather than unequipped.
+        # RETRIED, because at high concurrency this is the single biggest
+        # source of lost trials. Twenty containers hitting the Debian mirrors
+        # at once produces transient exit-100s, and treating the first one as
+        # fatal cost 30 of 89 trials in one run -- they never ran at all, which
+        # is worse than failing, because a suite total silently averages them
+        # in. `nodejs` is NOT optional: bough runs the programs it writes under
+        # node (or bun), so an install that skips it yields an agent that
+        # cannot execute anything. libssl3 is here because the uploaded binary
+        # links OpenSSL 3 dynamically.
         await self.exec_as_root(
             environment,
             command=(
-                "apt-get update && apt-get install -y --no-install-recommends "
-                "ca-certificates curl git ripgrep nodejs"
+                "for i in 1 2 3 4 5; do "
+                "  apt-get update -qq && apt-get install -y --no-install-recommends "
+                "    ca-certificates curl git ripgrep nodejs libssl3 && exit 0; "
+                '  echo "bough: apt attempt $i failed, retrying" >&2; '
+                "  sleep $((i * 15)); "
+                "done; "
+                'echo "bough: apt-get failed five times" >&2; exit 100'
             ),
             env={"DEBIAN_FRONTEND": "noninteractive"},
-            timeout_sec=600,
+            timeout_sec=900,
         )
 
         if self._binary:
