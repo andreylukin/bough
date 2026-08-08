@@ -162,6 +162,7 @@ fn usage() -> &'static str {
     // logs/run/purge) stay in the bash wrapper; this binary owns the rest.
     "usage: bough [tui|start|exec|acp|hooks|mcp|sync-mcp|tags|patterns]
   (no args) open the terminal UI (bough [-w DIR] [-r], -h for flags)
+  --version print the version and exit (-V)
   start    run the server in the foreground
   restart  stop the running server and start a fresh one
   exec     headless one-shot turn
@@ -249,6 +250,13 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         // Bare `bough` (or flags only) opens the terminal UI.
         None => run_tui(&[]),
+        // Before the flags-open-the-TUI arm: every bug report starts with a
+        // version, and `--version` reaching the TUI parser answered with a
+        // usage error.
+        Some("--version" | "-V" | "version") => {
+            println!("bough {}", env!("CARGO_PKG_VERSION"));
+            ExitCode::SUCCESS
+        }
         Some(first) if first.starts_with('-') => run_tui(&args),
         Some("tui") => run_tui(&args[1..]),
         Some("start") => {
@@ -395,6 +403,19 @@ mod tests {
             TUI_USAGE.contains("programs run as you, with your authority — there is no sandbox")
         );
         assert!(TUI_USAGE.contains("BOUGH_PORT (default 4321)"));
+    }
+
+    /// `--version` is dispatched in `main` ahead of the arm that hands every
+    /// leading-dash argument to the TUI; the flag parser has never known it,
+    /// which is exactly how it used to answer a version request with a usage
+    /// error. The parser staying ignorant is the point — this pins the reason.
+    #[test]
+    fn version_is_not_a_tui_flag_and_the_usage_says_so() {
+        assert!(matches!(
+            parse_tui_args(&argv(&["--version"])),
+            TuiArgs::UsageError(_)
+        ));
+        assert!(usage().contains("--version"));
     }
 
     #[test]

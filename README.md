@@ -10,6 +10,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/andreylukin/bough/actions/workflows/ci.yml"><img src="https://github.com/andreylukin/bough/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache-2.0"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg" alt="macOS | Linux">
+</p>
+
+<p align="center">
   <img src="assets/screenshot-conversation.png" alt="bough conversation" width="820">
 </p>
 
@@ -45,7 +51,9 @@ of the project, and this README tries not to blur it.
 
 ## Install
 
-macOS or Linux:
+**Requirements.** macOS or Linux, and a terminal. Windows is not supported (WSL works). There are no
+prebuilt binaries yet — installing builds from source, so the first run compiles the workspace and
+takes a few minutes.
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh)"
@@ -66,9 +74,11 @@ The service manager is the only platform-specific piece — launchd on macOS, a 
 on Linux, a plain background process where there is no user systemd (containers, WSL1). There is no
 file watcher: editing code lands only on an explicit `bough restart`.
 
-**Other commands.** `kill`, `restart`, `update` (fast-forward `origin/main` and restart), `status`,
-`logs`, `run` (foreground server), `purge`, `sync-mcp` (adopt Claude Code's MCP servers), `tags`
-(what the command memory knows).
+**Other commands.** `--version`, `kill`, `restart`, `update` (fast-forward `origin/main` and
+restart), `status`, `logs`, `run` (foreground server), `purge`, `sync-mcp` (adopt Claude Code's MCP
+servers), `tags` (what the command memory knows), `patterns` (compress a log into its distinct
+statements), `hooks` (install and inspect hook plugins), `acp` (speak the Agent Client Protocol on
+stdio, so an ACP client like Zed can drive a bough session).
 
 **Scripting.** `bough exec [-w dir] [-m model] [--json] "do the thing"` creates a session, streams
 the assistant's text to stdout, and exits 0 on a completed turn, 1 on an errored one, 2 on a usage
@@ -90,8 +100,9 @@ answers — folded reasoning, the code that ran, live cost and context in one vi
 
 ### The program environment
 
-Host functions are pre-injected globals; the program also has the full JS runtime (`bun` if
-installed, else `node`) and may ignore all of them.
+Host functions are pre-injected globals; the program also has the full JS runtime and may ignore all
+of them. Setup installs `node`, which is the fallback — install `bun` too and programs get it
+instead, along with `Bun.file`, `Bun.$` and faster starts.
 
 | | |
 |---|---|
@@ -189,9 +200,36 @@ catalog is what the server's keys can actually reach, not a compiled-in list; a 
 titles, ghost text, and activity blurbs and fails silently when it can't.
 
 Plus: artifact publishing at a URL with a comment layer, keyword search across transcripts, `@` files
-and `/` skills in the composer, and recurring runs on a schedule. Four skills ship bundled —
-`history`, `wayfinder`, `domain-modeling`, `grilling` — and `~/.bough/skills` holds your own. Project
-rules come from `AGENTS.md`, read per turn from the git root down.
+and `/` skills in the composer, and recurring runs on a schedule.
+
+### It reads what your other harnesses already wrote
+
+Project rules are one file **per directory**, from the git root down: `AGENTS.md` if it exists, else
+`CLAUDE.md`. A repo that has both is read the way its author meant — adding an `AGENTS.md` beside an
+existing `CLAUDE.md` is how you move a project over, one directory at a time.
+
+Skills resolve the same way. Bundled first (`history`, `wayfinder`, `domain-modeling`, `grilling`),
+then yours in `~/.bough/skills`, then the ones already on disk for other tools: `.agents/skills` and
+`.claude/skills` in the project, `~/.claude/skills` and `~/.agents/skills` for the user. Nothing to
+port, nothing to symlink.
+
+### Extend it
+
+Two surfaces, and the difference between them is what each is allowed to do.
+
+**Extensions** are JavaScript you drop in `~/.bough/extensions` or `.agents/extensions`, bound into
+every program's scope alongside the eighteen host functions. An extension is not a tool: the model's
+tool list never changes, because a per-session entry in it would split the provider's prompt cache.
+It is one more name the program can call — and since the host functions are in scope for it too, an
+extension composes `bash()` rather than reimplementing it, and shell runs that way still land in the
+tag history.
+
+**Hooks** are Lua that runs inside bough's own lifecycle and can change what happens next — deny a
+command, rewrite its input, replace its output, stop the turn, or start work of its own by queueing
+a prompt. Five events (`TurnStart`, `TurnEnd`, `TurnError`, `PreTool`, `PostTool`) plus any a plugin
+defines. `bough hooks` lists what is installed and what is on; `guard-destructive` and
+`redact-secrets` ship switched off, and `claude-code.lua` / `codex.lua` ship on, running the hooks
+those harnesses already have configured.
 
 ## How it works
 
@@ -250,6 +288,7 @@ These are decisions, not gaps:
 - [`specs/`](specs) — per-subsystem behavioral contracts, module by module.
 - [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate boundaries, shared types, concurrency model.
 - [`AGENTS.md`](AGENTS.md) — conventions this repo's reviews enforce.
+- [`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md) — setup, the bar for a pull request, and the verification you are expected to have done.
 
 ## Contributing
 
