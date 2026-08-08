@@ -18,6 +18,8 @@ which:
 
 - installs Rust via rustup, and `node`, `ripgrep` and `uv` from Homebrew / `apt-get` /
   `dnf` / `pacman`
+- installs `ast-grep` (structural search, which the system prompt names unconditionally)
+  via brew, cargo or npm — whichever is present
 - builds the release binary
 - links `bough` into `~/.local/bin`
 - writes `~/.bough/env`

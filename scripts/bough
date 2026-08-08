@@ -667,7 +667,7 @@ cmd_purge() {
 }
 
 usage() {
-  echo "usage: bough [tui|setup|start|kill|restart|update|status|logs|run|exec|mcp|tags|patterns|purge]"
+  echo "usage: bough [tui|setup|start|kill|restart|update|status|logs|run|exec|acp|hooks|mcp|sync-mcp|tags|patterns|purge]"
   echo "  (no args) open the terminal UI (auto-starts the server)"
   echo "  setup    fresh clone → running: install deps, configure env, start"
   echo "  start    install + start the background service (auto-starts at login)"
@@ -677,6 +677,8 @@ usage() {
   echo "  run      run the server in the foreground (what the service executes)"
   echo "  exec     headless one-shot turn (auto-starts the server; alias: prompt):"
   echo "           bough exec [-w dir] [-m model] [--json] \"...\" — or prompt on stdin"
+  echo "  acp      speak the Agent Client Protocol on stdio (Zed and other ACP clients)"
+  echo "  hooks    install and inspect the lua that runs inside the turn loop"
   echo "  sync-mcp adopt Claude Code's MCP servers into bough's registry:"
   echo "           bough sync-mcp [--from DIR] [--dry-run] [--force]"
   echo "  mcp      inspect and repair that registry (bough mcp for the full list):"
@@ -686,6 +688,7 @@ usage() {
   echo "  patterns compress a log into its distinct statements, with statistics:"
   echo "           bough patterns [--llm|--json|--human] [--top N] [FILE]"
   echo "  purge    hard-delete sessions archived over 30 days ago (also runs on boot)"
+  echo "  --version  print the version and exit (-V)"
 }
 
 case "${1:-}" in
@@ -695,6 +698,18 @@ case "${1:-}" in
     ;;
   help | -h | --help)
     usage
+    ;;
+  --version | -V | version)
+    # Answered from the binary so there is one source of the version, but
+    # answered WITHOUT a build: this is the first line of every bug report, and
+    # "build it first" is the least useful reply to someone whose install is
+    # broken. No binary → say so and exit 1, which is itself the report.
+    if [ -x "$RS_BIN" ]; then
+      exec "$RS_BIN" --version
+    fi
+    echo "bough (not built) at $ROOT" >&2
+    echo "  build it with:  make -C $ROOT release" >&2
+    exit 1
     ;;
   setup) cmd_setup ;;
   start) cmd_start ;;
@@ -720,6 +735,22 @@ case "${1:-}" in
     case " $* " in *" --port "*) ;; *) ensure_up ;; esac
     require_rust
     exec "$RS_BIN" mcp "$@"
+    ;;
+  acp)
+    shift
+    # A client of the server, not a second one — an ACP client spawns this on
+    # stdio and expects to talk immediately, so start the server for it rather
+    # than failing the handshake with advice.
+    case " $* " in *" --port "*) ;; *) ensure_up ;; esac
+    require_rust
+    exec "$RS_BIN" acp "$@"
+    ;;
+  hooks)
+    shift
+    # No server: this lists bundled plugins and the ones in ~/.bough/hooks, and
+    # toggles them on disk. The server re-reads them, so nothing to restart.
+    require_rust
+    exec "$RS_BIN" hooks "$@"
     ;;
   sync-mcp)
     shift
