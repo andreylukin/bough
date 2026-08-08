@@ -1,6 +1,6 @@
 //! bough-tui — the ratatui client. Speaks ONLY loopback HTTP + SSE.
 //!
-//! Crate rule (ARCHITECTURE.md §1): this crate may use only
+//! Crate rule (architecture.md §1): this crate may use only
 //! `bough_core::{schema, errors, types::Effort/UsageTotals}` — it is a wire
 //! client, not a domain participant. It must never link the Db or LLM paths.
 //! No URL string outside `api`. The reducer stays single-threaded and pure:

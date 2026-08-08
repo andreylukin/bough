@@ -3,7 +3,7 @@
 //! parameter, and a test builds its own ctx over an in-memory database and
 //! never runs this file at all.
 //!
-//! Boot order is load-bearing (ARCHITECTURE.md §6), wave-1 subset:
+//! Boot order is load-bearing (architecture.md §6), wave-1 subset:
 //!
 //! 1. decide sqlite extension capability — before the first open
 //! 2. open db (migrate)

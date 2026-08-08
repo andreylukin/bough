@@ -25,7 +25,7 @@ Four crates, one workspace:
 | `bough` | The binary and its subcommands |
 
 Crate boundaries, shared types and the concurrency model are in
-[ARCHITECTURE.md](ARCHITECTURE.md).
+[architecture.md](architecture.md).
 
 ## The turn loop
 

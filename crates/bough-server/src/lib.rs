@@ -1,6 +1,6 @@
 //! bough-server — axum HTTP + SSE. The ONLY crate that speaks HTTP-server.
 //!
-//! The parity anchor (ARCHITECTURE.md §0): same routes, same JSON field names,
+//! The parity anchor (architecture.md §0): same routes, same JSON field names,
 //! same status codes (202 for postMessage, 201 for creates), same SSE framing
 //! (`event:` + single `data:` line, no `id:` field, `: connected` / `: ping`
 //! comments) as the TS server. `specs/server.md` §3 IS the API contract.

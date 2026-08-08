@@ -1,6 +1,6 @@
 //! bough-core — everything that is not HTTP and not a terminal.
 //!
-//! Crate rules (ARCHITECTURE.md §1):
+//! Crate rules (architecture.md §1):
 //! - `hostfn` / `turn` / `history` / `agents` never reference `bough-server`;
 //!   they return `BoughError` and only the server crate converts errors to
 //!   responses.
@@ -9,7 +9,7 @@
 //!   (plus the port types in `types`), serde-derived, field names matching the
 //!   TS wire format exactly.
 
-// The injection seams this crate is built on (ARCHITECTURE.md §1: the ports in
+// The injection seams this crate is built on (architecture.md §1: the ports in
 // `types`, and the `Deps`/`Opts` structs each module takes) are `Arc<dyn Fn(..)>`
 // fields standing in for what TS passed as a plain function argument. Naming each
 // one through a type alias would add a layer of indirection over the exact place

@@ -620,7 +620,7 @@ fn workflow_status(s: &str) -> bough_core::schema::parts::WorkflowStatus {
 /// user had no way to see it. This turns "invisible" into "visible", which is
 /// the part that matters; it says how to change one, since only the agent can.
 /// The TS prints a `MM-DD HH:MM` wall clock here. This crate may not link a
-/// calendar (ARCHITECTURE.md §1 keeps it to `bough_core::{schema, errors,
+/// calendar (architecture.md §1 keeps it to `bough_core::{schema, errors,
 /// types}`), so the same fact is said as the countdown the rail already shows —
 /// `next in 4h02m`, or `due` for one that is past its time.
 pub fn describe_schedules(rows: &[bough_core::schema::parts::Schedule], now: i64) -> String {

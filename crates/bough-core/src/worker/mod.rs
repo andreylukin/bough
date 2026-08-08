@@ -2,7 +2,7 @@
 //! live activity blurbs over `complete_text`. Not an agent. Each method
 //! resolves `None` and never errors; one in-flight blurb per session, drop
 //! don't queue (the ledgers live in the watchers). Every reader degrades on
-//! absence by contract (ARCHITECTURE.md §4.3) — a ctx built without the tier
+//! absence by contract (architecture.md §4.3) — a ctx built without the tier
 //! is a working server, which is what keeps every turn test hermetic with no
 //! stub to remember.
 //!

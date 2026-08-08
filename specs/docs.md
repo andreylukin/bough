@@ -1,6 +1,6 @@
 # docs — the authoritative behavior spec and system map (Rust port)
 
-Source of truth: `docs/spec.md` (what bough IS) and `docs/implementation-plan.md`
+Source of truth: `docs/spec.md` (what bough IS) and `docs/history/implementation-plan.md`
 (module boundaries, invariants §6, testing strategy §7, risks §8). This file is the
 system-level map for the Rust rewrite: every invariant a port must preserve, quoted
 from the TS module headers where they are stated, plus the surfaces, wire shapes,

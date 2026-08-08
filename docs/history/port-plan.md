@@ -5,7 +5,7 @@ deleted and the Rust tree is the system. Nothing here is a to-do list. It is kep
 because the "disposition" and "verification gate" columns record what each module was
 proved against — the fastest answer to "why does this module behave this way".
 
-Companion to `ARCHITECTURE.md`. Each module row: **disposition** (port | v1-stub |
+Companion to `../architecture.md`. Each module row: **disposition** (port | v1-stub |
 drop) and a **verification gate** — the check that proves the module before the next
 one builds on it. A wave is done when every `port` row's gate is green AND the wave's
 parity smoke passes (Rust TUI ↔ TS server and/or TS TUI ↔ Rust server, per wave).

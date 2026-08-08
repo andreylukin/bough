@@ -20,7 +20,7 @@
 //! connection ATTACHes bough.db as `src` and treats it as read-only by
 //! discipline. embeddings.db is fully derived state and can be deleted freely.
 //!
-//! ## The two extensions, and how the Rust port gets them (ARCHITECTURE.md §2)
+//! ## The two extensions, and how the Rust port gets them (architecture.md §2)
 //!
 //! - **sqlite-vec** (the `vec0` KNN table): the `sqlite-vec` crate compiles the
 //!   C extension into this binary and we register it with

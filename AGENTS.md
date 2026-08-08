@@ -7,12 +7,15 @@ crates/bough-core/   the system — turn runner, harness, host functions, subage
                      workflows, history ops, MCP, db, llm, prompt, skills
 crates/bough-server/ the loopback HTTP + SSE server
 crates/bough-tui/    the ratatui terminal UI
-crates/bough/        the binary: start | tui | exec | mcp | sync-mcp | tags | patterns
+crates/bough/        the binary: start | tui | exec | acp | hooks | mcp | sync-mcp |
+                     tags | patterns
 specs/               per-subsystem behavioral contracts (16 files) — authoritative
-docs/                spec.md (what the system is) · ARCHITECTURE.md (crate boundaries,
-                     shared types, concurrency model) · tags.md (the command-memory tag
-                     system, end to end) · implementation-plan.md and PORT_PLAN.md
-                     (historical)
+docs/                README.md is the map. spec.md (what the system is) ·
+                     architecture.md (crate boundaries, shared types, concurrency) ·
+                     tags.md (the command-memory tag system) · the user-facing set
+                     (install · tui · cli · programs · delegation · extending ·
+                     configuration · troubleshooting · how-it-works)
+docs/history/        finished and unmaintained: port-plan.md, implementation-plan.md
 scripts/             setup.sh (fresh machine) · bough (the service manager) ·
                      smoke.sh and tui-test.sh (the PTY acceptance suites)
 .github/             CI, issue and PR templates, CONTRIBUTING · SECURITY · CODE_OF_CONDUCT
@@ -33,13 +36,13 @@ make tui                   # the TUI against the local server
 contracts module by module, including the invariants that are not rediscoverable from
 the spec (worker wind-down ordering, same-millisecond message ordering, replay
 determinism, and the rest). Read the relevant spec before changing anything in `turn/`,
-`harness/`, or `workflow/`. `docs/implementation-plan.md` is historical — it describes
+`harness/`, or `workflow/`. `docs/history/implementation-plan.md` is historical — it describes
 a build order two rewrites old, and is worth reading only for its reasoning.
 
-`specs/` and `docs/ARCHITECTURE.md` were written against the TypeScript implementation this
+`specs/` and `docs/architecture.md` were written against the TypeScript implementation this
 tree replaced, and still name `src/*.ts` modules in places. The *behavior* they pin is
 current and binding; the file names are a map to where each contract now lives in
-`crates/`. `docs/PORT_PLAN.md` is finished history — it is not a to-do list.
+`crates/`. `docs/history/port-plan.md` is finished history — it is not a to-do list.
 
 The only non-Rust runtime dependency is a JS runtime for the code-mode sidecar
 (`crates/bough-core/src/harness/js/`): `bun` if it is on PATH, else `node`. It needs no

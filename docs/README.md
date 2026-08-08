@@ -26,18 +26,22 @@ Two audiences, in order.
 
 | | |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Crate boundaries, shared types, concurrency model |
+| [architecture.md](architecture.md) | Crate boundaries, shared types, concurrency model |
 | [spec.md](spec.md) | What the system is. Authoritative for product behavior |
 | [../specs/](../specs) | Per-subsystem behavioral contracts — the invariants, module by module |
 | [../.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md) | Setup, the bar for a pull request |
 | [../AGENTS.md](../AGENTS.md) | Conventions this repo's reviews enforce |
+| [history/](history) | Finished and unmaintained — the old build order and the Rust port plan |
 
 ## Which file is right
 
-`spec.md` and `specs/` are **normative**: when a doc here disagrees with them, they
-win and the doc is a bug. They are also written for people changing bough, not
-people using it — start above the line.
+`spec.md` and `specs/` are **normative**: when a page here disagrees with them, they
+win and the page is a bug. They are also written for people changing bough, not people
+using it — start above the line.
 
-Two files under `docs/` are finished history, kept for their reasoning and not
-maintained: `implementation-plan.md` (a build order two rewrites old) and
-`PORT_PLAN.md` (the TypeScript-to-Rust port, complete).
+`how-it-works.md` and `architecture.md` are not the same thing. The first is how the
+running system behaves — server, sidecars, the turn loop — and is for anyone who wants
+to understand bough. The second is the contract between crates, and matters when you are
+editing them.
+
+Nothing in [history/](history) describes bough as it is today.
