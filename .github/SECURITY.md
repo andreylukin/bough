@@ -2,7 +2,7 @@
 
 ## Read this first: bough has no isolation boundary
 
-This is a design decision, documented in [`docs/spec.md`](docs/spec.md) §2 and in the
+This is a design decision, documented in [`docs/spec.md`](../docs/spec.md) §2 and in the
 README. Programs the model writes run **as you, with your full authority** — filesystem,
 network, subprocesses, arbitrary `npm:` imports. There is no sandbox, no egress proxy, and
 no credential gating. Host functions are convenience and session integration, never a
