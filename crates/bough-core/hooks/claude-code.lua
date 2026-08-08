@@ -64,14 +64,15 @@ end
 -- chose. `${CLAUDE_PLUGIN_ROOT}` is expanded to the install directory, the way
 -- Claude Code expands it when it spawns the command.
 --
--- WHERE A PLUGIN'S HOOKS ACTUALLY ARE. Two places, and the manifest is a
--- POINTER to the second, never the hooks themselves. `hooks/hooks.json` is
--- the convention; `plugin.json`'s `hooks` key is a path (or a list of them)
--- relative to the install root, which is how the plugins in the wild that
--- keep the file under `.claude-plugin/` declare it. Reading `plugin.json` as
--- though it held a `hooks` BLOCK — which this used to do — silently found
--- nothing for exactly those plugins.
-local function plugin_files()
+-- WHERE A PLUGIN'S HOOKS ACTUALLY ARE. `hooks/hooks.json` is auto-discovered,
+-- and `plugin.json`'s `hooks` key is EITHER an inline block OR a path (or a
+-- list of paths) to additional files — the manifest schema is
+-- `string | string[] | object`, and Claude Code's own docs say the field is
+-- for files "beyond these defaults", so declaring the default path is an
+-- error there rather than a second read. Both shapes are handled: reading the
+-- manifest as though it were always inline silently found nothing for every
+-- plugin that keeps its hooks file under `.claude-plugin/`.
+local function plugin_blocks()
   local home = bough.home()
   if home == "" then return {} end
   local registry = read_json(home .. "/.claude/plugins/installed_plugins.json")
@@ -79,6 +80,13 @@ local function plugin_files()
   if type(plugins) ~= "table" then return {} end
 
   local out = {}
+  local function add_file(path, root)
+    local doc = read_json(path)
+    if doc ~= nil and type(doc.hooks) == "table" then
+      table.insert(out, { hooks = doc.hooks, root = root })
+    end
+  end
+
   for _, installs in pairs(plugins) do
     -- One install or a list of them; both shapes are in the wild.
     local list = installs
@@ -86,15 +94,20 @@ local function plugin_files()
     for _, install in ipairs(list or {}) do
       local root = type(install) == "table" and install.installPath
       if type(root) == "string" and root ~= "" then
-        table.insert(out, { path = root .. "/hooks/hooks.json", root = root })
-        local manifest = read_json(root .. "/.claude-plugin/plugin.json")
-        local declared = manifest and manifest.hooks
-        if type(declared) == "string" then declared = { declared } end
+        add_file(root .. "/hooks/hooks.json", root)
+        local declared = (read_json(root .. "/.claude-plugin/plugin.json") or {}).hooks
+        if type(declared) == "string" then
+          declared = { declared }
+        elseif type(declared) == "table" and declared[1] == nil then
+          -- An object with named events, not a list of paths: the inline form.
+          table.insert(out, { hooks = declared, root = root })
+          declared = {}
+        end
         for _, rel in ipairs(type(declared) == "table" and declared or {}) do
           -- A declared path must stay inside the plugin; `../` in a manifest
           -- would aim this at any JSON on the machine.
           if type(rel) == "string" and rel ~= "" and string.find(rel, "%.%.") == nil then
-            table.insert(out, { path = root .. "/" .. rel, root = root })
+            add_file(root .. "/" .. rel, root)
           end
         end
       end
@@ -108,10 +121,8 @@ end
 -- so the closest file has the last word.
 local function groups_for(workspace, event)
   local out = {}
-  for _, entry in ipairs(plugin_files()) do
-    local settings = read_json(entry.path)
-    local hooks = settings and settings.hooks and settings.hooks[event]
-    for _, group in ipairs(hooks or {}) do
+  for _, entry in ipairs(plugin_blocks()) do
+    for _, group in ipairs(entry.hooks[event] or {}) do
       -- Carried on the group so `run_group` can substitute it per command.
       group.plugin_root = entry.root
       table.insert(out, group)

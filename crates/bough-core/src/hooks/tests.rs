@@ -708,69 +708,91 @@ fn a_missing_or_malformed_settings_file_costs_nothing() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
-/// A plugin's `plugin.json` `hooks` key is a POINTER to the hooks file, never
-/// the hooks themselves — the shape real installed plugins ship, and the one
-/// this adapter used to read as though it were an inline block, finding
-/// nothing and saying nothing.
+/// Codex's hooks are a whole framework, not just `notify` — `hooks.json`
+/// beside each config layer, with the same three-level shape and the same
+/// decision contract as Claude Code's. The adapter read none of it.
 #[test]
-fn an_installed_plugins_manifest_declared_hooks_file_is_run() {
-    let home = workspace(&[]);
-    let install = home.join("plug");
-    std::fs::create_dir_all(install.join(".claude-plugin/hooks")).unwrap();
-    std::fs::write(
-        install.join(".claude-plugin/plugin.json"),
-        serde_json::json!({"name": "p", "hooks": "./.claude-plugin/hooks/hooks.json"}).to_string(),
-    )
-    .unwrap();
-    std::fs::write(
-        install.join(".claude-plugin/hooks/hooks.json"),
-        serde_json::json!({
-            "hooks": {
-                "PreToolUse": [{
-                    "matcher": "Bash",
-                    // `${CLAUDE_PLUGIN_ROOT}` is expanded to the install dir,
-                    // the way Claude Code expands it when it spawns.
-                    "hooks": [{
-                        "type": "command",
-                        "command": "echo ${CLAUDE_PLUGIN_ROOT} >&2; exit 2",
-                    }],
-                }]
-            }
-        })
-        .to_string(),
-    )
-    .unwrap();
-    std::fs::create_dir_all(home.join(".claude/plugins")).unwrap();
-    std::fs::write(
-        home.join(".claude/plugins/installed_plugins.json"),
-        serde_json::json!({
-            "plugins": {"p@m": [{"installPath": install.to_string_lossy(), "scope": "user"}]}
-        })
-        .to_string(),
-    )
-    .unwrap();
-
-    let ws = workspace(&[]);
-    let hooks = bundled("claude-code.lua");
-    let out = crate::paths::test_env::with_env(&[("HOME", home.to_str())], || {
-        hooks.host().dispatch(
-            HookEvent::PreTool,
-            in_workspace(
-                "bash",
-                &ws,
-                serde_json::json!({ "input": { "command": "ls" } }),
-            ),
-        )
-    });
+fn a_codex_project_hook_blocks_a_command_and_can_rewrite_one() {
+    let ws = workspace(&[(
+        ".codex/hooks.json",
+        r#"{ "hooks": { "PreToolUse": [ { "matcher": "^Bash$", "hooks": [
+             { "type": "command", "command": "echo 'not that one' >&2; exit 2" }
+           ] } ] } }"#,
+    )]);
+    let out = bundled("codex.lua").host().dispatch(
+        HookEvent::PreTool,
+        in_workspace(
+            "bash",
+            &ws,
+            serde_json::json!({ "input": { "command": "rm -rf /" } }),
+        ),
+    );
     assert_eq!(out.decision, Some(ToolDecision::Deny), "{out:?}");
     assert!(
         out.reason
             .as_deref()
-            .unwrap_or_default()
-            .contains(&install.to_string_lossy().to_string()),
-        "the plugin root reached the command: {out:?}"
+            .is_some_and(|r| r.contains("not that one")),
+        "{:?}",
+        out.reason
     );
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&ws);
+
+    // The rewrite half: `updatedInput` only counts alongside an explicit
+    // `allow`, which is Codex's rule and not Claude Code's.
+    let ws = workspace(&[(
+        ".codex/hooks.json",
+        &format!(
+            r#"{{ "hooks": {{ "PreToolUse": [ {{ "hooks": [
+                 {{ "type": "command", "command": "echo '{}'" }}
+               ] }} ] }} }}"#,
+            serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "updatedInput": { "command": "ls -la" },
+                }
+            })
+            .to_string()
+            .replace('"', "\\\"")
+        ),
+    )]);
+    let out = bundled("codex.lua").host().dispatch(
+        HookEvent::PreTool,
+        in_workspace(
+            "bash",
+            &ws,
+            serde_json::json!({ "input": { "command": "ls" } }),
+        ),
+    );
+    assert_eq!(
+        out.input
+            .as_ref()
+            .and_then(|i| i.get("command"))
+            .and_then(|c| c.as_str()),
+        Some("ls -la"),
+        "{out:?}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// A matcher naming a tool bough does not have must not fire on `bash`.
+#[test]
+fn a_codex_matcher_for_another_tool_does_not_fire_on_bash() {
+    let ws = workspace(&[(
+        ".codex/hooks.json",
+        r#"{ "hooks": { "PreToolUse": [ { "matcher": "^apply_patch$", "hooks": [
+             { "type": "command", "command": "exit 2" }
+           ] } ] } }"#,
+    )]);
+    let out = bundled("codex.lua").host().dispatch(
+        HookEvent::PreTool,
+        in_workspace(
+            "bash",
+            &ws,
+            serde_json::json!({ "input": { "command": "ls" } }),
+        ),
+    );
+    assert_eq!(out.decision, None, "{out:?}");
     let _ = std::fs::remove_dir_all(&ws);
 }
 

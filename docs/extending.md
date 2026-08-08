@@ -110,8 +110,21 @@ bough hooks          # what is installed, what is on, how many listeners each ha
 ```
 
 Bundled: `claude-code.lua` and `codex.lua` ship **on**, running the hooks those harnesses
-already have configured in a project — including a Claude Code plugin's own hooks,
-whether it keeps them at `hooks/hooks.json` or points at them from its `plugin.json`.
+already have configured. What each reads:
+
+| Adapter | Reads |
+|---|---|
+| `claude-code.lua` | `~/.claude/settings.json`, the project's `settings.json` / `settings.local.json`, and an installed plugin's hooks — `hooks/hooks.json` or wherever its `plugin.json` points |
+| `codex.lua` | `~/.codex/hooks.json`, the project's `.codex/hooks.json`, and `notify` from `config.toml` |
+
+Both fold the same contract: exit 2 blocks with stderr as the reason, exit 0 with JSON on
+stdout carries `permissionDecision` / `additionalContext` / `updatedInput`.
+
+Not adopted, deliberately: Codex's inline `[hooks]` TOML tables (hand-parsing nested TOML
+fails toward *running the wrong command*, so it warns instead), Codex plugin hooks (a
+marketplace lists what is *available*, not installed, and Codex itself will not run them
+untrusted), and the ~25 events with no bough counterpart.
+
 `guard-destructive.lua` and `redact-secrets.lua` ship **off**. Yours go in
 `~/.bough/hooks`, a plugin's in `~/.bough/plugins/<name>/hooks`. `^x` toggles them live.
 
