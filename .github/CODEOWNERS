@@ -1,0 +1,19 @@
+# Owners are requested for review automatically. Last matching pattern wins.
+#
+# This repo lives under a personal account, so owners must be individual users.
+# If bough moves to an organization, replace these with teams (@bough/core, etc.)
+# and add per-crate owners below as maintainers take on areas.
+
+*                       @andreylukin
+
+# Per-area owners — uncomment and fill in as maintainers take these on.
+# /crates/bough-core/    @andreylukin
+# /crates/bough-server/  @andreylukin
+# /crates/bough-tui/     @andreylukin
+
+# Governance, licensing, and release plumbing stay with the project lead.
+/LICENSE                @andreylukin
+/SECURITY.md            @andreylukin
+/CODE_OF_CONDUCT.md     @andreylukin
+/.github/               @andreylukin
+/install.sh             @andreylukin

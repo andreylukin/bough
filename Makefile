@@ -17,7 +17,7 @@ test: ## cargo test --workspace
 	cargo test --workspace
 
 lint: ## rustfmt check + clippy (warnings as errors)
-	cargo fmt --check && cargo clippy --workspace -- -D warnings
+	cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 
 release: ## cargo build --release
 	cargo build --release

@@ -1,0 +1,65 @@
+name: Bug report
+description: Something in bough behaves differently than it should
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security issues do **not** belong here — see [SECURITY.md](../blob/main/SECURITY.md).
+
+        Note that programs running with your full authority is [by design](../blob/main/docs/spec.md),
+        not a bug.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you observe, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: >
+        The exact sequence — including keystrokes, if this is a TUI issue. "It looked
+        wrong" is not actionable without the path that got you there.
+      placeholder: |
+        1. `bough` in a repo with ...
+        2. Type ... and press ...
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `bough --version`, or the commit sha you built.
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS 15.5 (arm64), Ghostty 1.1 / Ubuntu 24.04, tmux + kitty
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Model and provider
+      description: If the bug involves a turn. Some failures are provider-specific.
+      placeholder: anthropic/claude-opus-5 via OpenRouter
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or transcript
+      description: >
+        Server logs, the relevant part of the transcript, or a `shell-use` capture.
+        Redact anything secret — this is a public tracker.
+      render: text

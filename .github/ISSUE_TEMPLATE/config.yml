@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/andreylukin/bough/discussions
+    about: Usage questions, design debates, and half-formed ideas go in Discussions.
+  - name: Security vulnerability
+    url: https://github.com/andreylukin/bough/security/advisories/new
+    about: Report privately. Never open a public issue for a security problem.
+  - name: How bough is meant to work
+    url: https://github.com/andreylukin/bough/blob/main/docs/spec.md
+    about: The spec is authoritative for product behavior — check it before filing.

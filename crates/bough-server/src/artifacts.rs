@@ -137,7 +137,7 @@ p { margin: 0; color: #52514e; }
 /// injecting into the page's own CSS or JS, served through the same route,
 /// would corrupt them and the layer would not work anyway.
 pub fn inject_comment_layer(html: String) -> String {
-    splice_before_body(html, &crate::comments::comment_widget())
+    splice_before_body(html, crate::comments::comment_widget())
 }
 
 /// Splice `widget` in before `</body>`, or append it when the document has no
@@ -187,6 +187,7 @@ pub struct ServeArtifactOptions {
 /// document: the page being versioned is arbitrary agent-authored HTML with
 /// its own scripts, and re-running it in a document that already ran another
 /// version is a class of bug with no upside. Reload is the honest primitive.
+#[allow(clippy::useless_format)]
 pub fn version_bar_widget() -> String {
     // `format!` with no arguments, deliberately: the CSS below is full of
     // braces, and `{{`/`}}` escaping is what keeps it readable as CSS.

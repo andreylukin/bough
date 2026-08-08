@@ -141,6 +141,10 @@ pub fn get_skill() -> Handler {
 }
 
 #[cfg(test)]
+// `bundled_sources` hands back a guard that serializes these tests against each
+// other while they own the process-wide home; holding it across the awaits is
+// the point, not an accident.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use crate::app::{create_handler, CreateHandlerOptions};

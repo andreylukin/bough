@@ -2,6 +2,8 @@
 name = "bough-server"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/andreylukin/bough"
 
 [dependencies]
 libc         = { workspace = true }   # restart: signal the recorded server pid

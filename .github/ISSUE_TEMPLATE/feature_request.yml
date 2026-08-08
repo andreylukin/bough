@@ -1,0 +1,57 @@
+name: Feature request
+description: Propose a change to what bough does
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        bough is an alternative harness **design**, not a race to match other agents
+        feature-for-feature. Proposals that sharpen the design land far more easily than
+        ones that only add surface.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you unable to do today, and what do you do instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should bough do instead? Be concrete about the surface it touches.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including "why can't this just be a skill, or a program the model writes?"
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - turn runner / harness
+        - host functions
+        - subagents / workflows
+        - history & branching
+        - TUI
+        - server / API
+        - MCP
+        - CLI, install, or updater
+        - docs
+        - not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Participation
+      options:
+        - label: I'm willing to implement this myself

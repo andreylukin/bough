@@ -2,6 +2,8 @@
 name = "bough-core"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/andreylukin/bough"
 
 [dependencies]
 model2vec-rs = { version = "0.2", features = ["hf-hub"] }  # embeddings: pure-Rust static vectors

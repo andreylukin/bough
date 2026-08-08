@@ -713,9 +713,9 @@ mod tests {
         );
     }
 
-    /// `~/.bough/lib/lembed0.<ext>` is the documented install location, and an
-    /// explicit `$BOUGH_LEMBED_PATH` wins outright. Absent → the feature does
-    /// not exist, which is what makes `create_embed_layer` answer `None`.
+    // `~/.bough/lib/lembed0.<ext>` is the documented install location, and an
+    // explicit `$BOUGH_LEMBED_PATH` wins outright. Absent → the feature does
+    // not exist, which is what makes `create_embed_layer` answer `None`.
 
     /// THE FIXTURE (port of `embed_fixture.ts` + `embed.test.ts`): four seeded
     /// commands, one drain, and a query no keyword search could answer — "how do
