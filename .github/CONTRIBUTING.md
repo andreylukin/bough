@@ -87,4 +87,4 @@ Security issues do **not** go in the tracker: see [`SECURITY.md`](SECURITY.md).
 
 ## License
 
-Contributions are licensed under Apache 2.0, as in [`LICENSE`](../LICENSE). No CLA.
+Contributions are licensed under Apache 2.0, as in [`LICENSE`](LICENSE). No CLA.

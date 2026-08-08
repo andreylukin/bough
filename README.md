@@ -268,5 +268,5 @@ design debates belong in [Discussions][discussions]. Security issues go through
 
 ## License
 
-[Apache License 2.0](LICENSE). By contributing you agree your contributions are licensed under it;
+[Apache License 2.0](.github/LICENSE). By contributing you agree your contributions are licensed under it;
 there is no CLA.
