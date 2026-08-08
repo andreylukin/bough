@@ -71,7 +71,41 @@ numbers.
 | `source` | `0` | build bough from source inside every container instead. Slow; use for HEAD. |
 | `ref` | `main` | git ref for the source build. |
 | `port` | `4321` | loopback port for the in-container server. |
-| `timeout` | `900` | wall clock for one turn, in seconds. |
+| `timeout` | `900` | wall clock for ONE turn, in seconds. |
+| `attempts` | `3` | how many turns to spend on a task that keeps getting cut off. |
+| `budget` | `attempts × timeout` | wall clock for all attempts together, in seconds. |
+
+### Timeouts, and why there are three of them
+
+A task that times out is not a task the agent got wrong — it is a task it never
+finished. In the first suite run half the non-solves were timeouts, so the
+numbers said more about the clock than about the model.
+
+Three clocks have to be ordered, outermost first:
+
+1. **Harbor's agent phase** — the task's own `timeout_sec` (900s for most TB 2.0
+   tasks, but 1800s and 3600s appear) times `--agent-timeout-multiplier`. When
+   this expires Harbor kills the phase and the trial errors with
+   `AgentTimeoutError`, losing every attempt's envelope.
+2. **`budget`** — all attempts together. Must sit under (1) with room to spare.
+   The loop refuses to start an attempt it cannot finish inside the budget.
+3. **`timeout`** — one turn. bough stops its own turn when this expires, which
+   is the graceful ending: the container keeps the partial work.
+
+So `--ak attempts=3 --ak timeout=900` (budget 2700) wants
+`--agent-timeout-multiplier 3.5`, which gives 3150s on a 900s task.
+
+### Retrying a stuck agent
+
+Attempt 2+ only happens when the previous turn did **not** end `done` — a
+timeout, an error, an interrupt. A turn that finished on its own terms is left
+alone: with the tests hidden, a retry would let the model second-guess correct
+work with nothing to tell the two apart.
+
+`bough exec` has no session resume, so each attempt is a fresh conversation in
+the same container — the filesystem, not the transcript, is the continuity. The
+continuation prompt says so explicitly, or the model starts from scratch and
+spends the new budget rediscovering what it already wrote.
 
 ## Model ids
 

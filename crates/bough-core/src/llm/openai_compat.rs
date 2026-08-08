@@ -33,7 +33,7 @@ use crate::llm::routing::{
 use crate::llm::sse::{aborted, fetch_cancellable, http_error, parse_tool_args, SseEvents};
 use crate::schema::parts::Usage;
 use crate::types::{
-    LlmBlock, LlmClient, LlmContentBlock, LlmMessage, LlmParams, LlmResult, LlmRole, OnText,
+    Effort, LlmBlock, LlmClient, LlmContentBlock, LlmMessage, LlmParams, LlmResult, LlmRole, OnText,
 };
 
 /// Flatten our multi-block messages into chat-completions messages, splitting
@@ -204,6 +204,34 @@ struct ToolCallAcc {
     arguments: Option<String>,
 }
 
+/// The thinking-depth field for a chat-completions body, or nothing.
+///
+/// OpenRouter's unified `reasoning: { effort }` is the only place this client
+/// can express depth, and it caps at `"high"` — bough's `xhigh`/`max` collapse
+/// onto it, exactly as the Responses API mapping does. A model that does not
+/// reason ignores the field.
+///
+/// **Only OpenRouter.** Cloudflare Workers AI shares this client and has no
+/// such parameter; sending one there would put an unknown field in front of
+/// every Workers AI request to buy nothing. An effort setting must never be
+/// the reason a turn 400s — the same rule Anthropic's mapper follows for
+/// Haiku.
+fn reasoning_params(effort: Option<Effort>, provider: Provider) -> Map<String, Value> {
+    let mut out = Map::new();
+    if provider != Provider::Openrouter {
+        return out;
+    }
+    if let Some(effort) = effort {
+        let level = match effort {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High | Effort::Xhigh | Effort::Max => "high",
+        };
+        out.insert("reasoning".into(), json!({ "effort": level }));
+    }
+    out
+}
+
 /// The URL is a function of the env resolved per `run()` (Cloudflare's
 /// account id is part of the path) — a value set through the running server
 /// must apply without a restart.
@@ -235,6 +263,9 @@ impl LlmClient for OpenAICompatClient {
         let mut body = Map::new();
         body.insert("model".into(), json!(params.model));
         body.insert("max_tokens".into(), json!(params.max_tokens));
+        for (k, v) in reasoning_params(params.effort, self.provider) {
+            body.insert(k, v);
+        }
         body.insert("stream".into(), json!(true));
         body.insert("stream_options".into(), json!({ "include_usage": true }));
         body.insert(
@@ -937,5 +968,53 @@ mod tests {
             transport.requests.lock().unwrap().is_empty(),
             "must not be called"
         );
+    }
+
+    #[test]
+    fn reasoning_effort_is_openrouter_only_and_caps_at_high() {
+        // The whole point of the change: an effort setting used to reach
+        // OpenRouter as nothing at all.
+        assert_eq!(
+            reasoning_params(Some(Effort::Medium), Provider::Openrouter)["reasoning"],
+            json!({ "effort": "medium" })
+        );
+        // xhigh and max collapse onto "high" — the same cap the Responses
+        // API mapping applies, so one setting means one thing everywhere.
+        for effort in [Effort::High, Effort::Xhigh, Effort::Max] {
+            assert_eq!(
+                reasoning_params(Some(effort), Provider::Openrouter)["reasoning"],
+                json!({ "effort": "high" })
+            );
+        }
+        // Cloudflare Workers AI shares this client and has no such param.
+        assert!(reasoning_params(Some(Effort::High), Provider::Cloudflare).is_empty());
+        // No effort leaves the body shape untouched.
+        assert!(reasoning_params(None, Provider::Openrouter).is_empty());
+    }
+
+    #[tokio::test]
+    async fn effort_reaches_the_openrouter_wire() {
+        let transport = Arc::new(CannedTransport::sse(vec![vec![
+            chunk(json!({ "content": "hi" }), None),
+            chunk(json!({}), Some("stop")),
+            "[DONE]".to_string(),
+        ]]));
+        let client = openrouter_client(ProviderOpts {
+            env: Some(keyed_env()),
+            transport: Some(transport.clone()),
+        });
+        client
+            .run(
+                params_over("deepseek/deepseek-v4-flash", &TOOLS, |p| {
+                    p.effort = Some(Effort::High)
+                }),
+                Arc::new(|_| {}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let requests = transport.requests.lock().unwrap();
+        let body: Value = serde_json::from_str(requests[0].body.as_deref().unwrap()).unwrap();
+        assert_eq!(body["reasoning"], json!({ "effort": "high" }));
     }
 }

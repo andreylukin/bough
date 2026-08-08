@@ -142,7 +142,15 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
         bus,
         llm: None,
         model: std::env::var("BOUGH_MODEL").ok().filter(|m| !m.is_empty()),
-        effort: None,
+        // `BOUGH_EFFORT` sits next to `BOUGH_MODEL` in `~/.bough/env` and in
+        // docs/configuration.md, and until now nothing read it — an install
+        // that set it got the provider default and no complaint. An
+        // unrecognised value stays `None` ("let the provider decide") rather
+        // than failing the boot: a typo in an env file must not cost you the
+        // server.
+        effort: std::env::var("BOUGH_EFFORT")
+            .ok()
+            .and_then(|e| serde_json::from_value(serde_json::Value::String(e.trim().into())).ok()),
         now: system_clock(),
         // The cheap tier (wave 2, row 2.19): auto titles, composer ghost
         // text, live activity blurbs. Always installed — the gate is per

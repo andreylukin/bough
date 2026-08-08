@@ -31,6 +31,7 @@ Two things about bough shape this file, and a naive port gets both wrong:
 
 import json
 import shlex
+import time
 from pathlib import Path
 from typing import Any, override
 
@@ -71,6 +72,9 @@ class Bough(BaseInstalledAgent):
         ref: str = "main",
         port: int = DEFAULT_PORT,
         timeout: int = 900,
+        attempts: int = 3,
+        budget: int | None = None,
+        effort: str | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -81,6 +85,16 @@ class Bough(BaseInstalledAgent):
         self._ref = ref
         self._port = int(port)
         self._timeout = int(timeout)
+        self._attempts = max(int(attempts), 1)
+        # Thinking depth. bough reads BOUGH_EFFORT at server boot, so this has
+        # to be in the environment the server starts with, not a turn flag --
+        # `bough exec` has none. None = let the provider decide.
+        self._effort = effort
+        # The wall clock for ALL attempts together. Harbor enforces its own cap
+        # on the agent phase (task timeout × --agent-timeout-multiplier) and
+        # kills the phase outright when it expires, so this must be set under
+        # that cap — see the README's timeout arithmetic.
+        self._budget = int(budget) if budget else self._attempts * self._timeout
         self._server_started = False
 
         if not self._binary and not self._source:
@@ -190,30 +204,88 @@ class Bough(BaseInstalledAgent):
         env = self._agent_env()
         await self._ensure_server(environment, env)
 
-        model = self._bough_model()
-        command = " ".join(
-            [
-                f"{shlex.quote(BINARY_PATH)} exec --json",
-                f"--port {self._port}",
-                f"--timeout {self._timeout}",
-                *([f"--model {shlex.quote(model)}"] if model else []),
-                "--",
-                shlex.quote(instruction),
-            ]
-        )
+        deadline = time.monotonic() + self._budget
+        results: list[Any] = []
+        envelopes: list[dict[str, Any]] = []
 
-        # A turn that errors is a task the agent failed, not a harness fault:
-        # exit 1 must NOT raise, or every unsolved task reads as infrastructure
-        # breakage. Only exit 2 (usage / the server unreachable) is ours.
-        result = await environment.exec(
-            command=f"set -o pipefail; {command}",
-            env=env,
-            timeout_sec=self._timeout + 120,
-        )
-        if result.return_code == 2:
-            raise self._classify_exec_error(command, result)
+        for attempt in range(1, self._attempts + 1):
+            # Never start an attempt that cannot finish inside the budget:
+            # Harbor kills the whole agent phase at its own cap, and a phase
+            # killed mid-attempt loses the envelope for every attempt before
+            # it. Leaving early with results in hand beats being shot.
+            left = deadline - time.monotonic()
+            if attempt > 1 and left < self._timeout + 60:
+                self.logger.info(
+                    f"bough: stopping after {attempt - 1} attempt(s), "
+                    f"{left:.0f}s left of the budget"
+                )
+                break
 
-        self._populate(context, result)
+            prompt = instruction if attempt == 1 else self._continuation(instruction)
+            command = " ".join(
+                [
+                    f"{shlex.quote(BINARY_PATH)} exec --json",
+                    f"--port {self._port}",
+                    f"--timeout {min(self._timeout, max(int(left) - 30, 60))}",
+                    *(
+                        [f"--model {shlex.quote(self._bough_model() or '')}"]
+                        if self._bough_model()
+                        else []
+                    ),
+                    "--",
+                    shlex.quote(prompt),
+                ]
+            )
+
+            # A turn that errors is a task the agent failed, not a harness
+            # fault: exit 1 must NOT raise, or every unsolved task reads as
+            # infrastructure breakage. Only exit 2 (usage / the server
+            # unreachable) is ours.
+            result = await environment.exec(
+                command=f"set -o pipefail; {command}",
+                env=env,
+                timeout_sec=self._timeout + 120,
+            )
+            if result.return_code == 2:
+                raise self._classify_exec_error(command, result)
+
+            results.append(result)
+            envelope = _last_json_object(result.stdout or "")
+            if envelope:
+                envelopes.append(envelope)
+
+            # Retry only a turn that did NOT finish on its own terms. A turn
+            # that reached `done` has said what it has to say; re-running it
+            # would let the model second-guess correct work with no test to
+            # tell it apart. A timeout or an error is the opposite: bough was
+            # cut off mid-task, the container still holds the partial work,
+            # and a fresh turn resumes from the filesystem.
+            status = (envelope or {}).get("status")
+            if status == "done":
+                break
+            self.logger.info(
+                f"bough: attempt {attempt} ended {status!r}; "
+                f"{'retrying' if attempt < self._attempts else 'out of attempts'}"
+            )
+
+        self._populate(context, results, envelopes)
+
+    def _continuation(self, instruction: str) -> str:
+        """The prompt for attempt 2+.
+
+        `bough exec` has no session resume, so this is a fresh conversation —
+        but the same container, so the previous attempt's edits are still on
+        disk. The prompt has to say that, or the model starts over and burns
+        the budget rediscovering what it already wrote.
+        """
+        return (
+            "A previous attempt at this task ran out of time and was stopped "
+            "mid-turn. Its work is still in the working directory — read what "
+            "is there before changing anything, keep what is correct, and "
+            "finish the job. Verify the result yourself (run it, test it) "
+            "rather than assuming the earlier attempt got it right.\n\n"
+            "The task:\n\n" + instruction
+        )
 
     def _agent_env(self) -> dict[str, str]:
         """The provider keys plus bough's own port, from --ae/the host env.
@@ -223,7 +295,10 @@ class Bough(BaseInstalledAgent):
         it is one dict and the client ignores what it does not use.
         """
         env = {"BOUGH_PORT": str(self._port)}
+        if self._effort:
+            env["BOUGH_EFFORT"] = self._effort
         for key in (
+            "BOUGH_EFFORT",
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
             "OPENAI_API_KEY",
@@ -287,37 +362,56 @@ class Bough(BaseInstalledAgent):
 
     # ---- results ---------------------------------------------------------
 
-    def _populate(self, context: AgentContext, result: Any) -> None:
-        """Fold the `--json` envelope into Harbor's context.
+    def _populate(
+        self,
+        context: AgentContext,
+        results: list[Any],
+        envelopes: list[dict[str, Any]],
+    ) -> None:
+        """Fold every attempt's `--json` envelope into Harbor's context.
 
-        `--json` prints exactly one line, but the server's own diagnostics can
-        share the stream, so take the last parseable object rather than the
-        whole of stdout.
+        Tokens and cost are SUMMED across attempts — the run paid for all of
+        them, and reporting only the last one would make a three-attempt task
+        look as cheap as a one-attempt task. The status and session reported
+        are the last attempt's, because that is the one whose work the verifier
+        is about to grade.
         """
-        envelope = _last_json_object(result.stdout or "")
-        if envelope is None:
+        if not envelopes:
             self.logger.warning("bough exec produced no JSON envelope")
-            context.metadata = {"return_code": result.return_code}
+            context.metadata = {
+                "attempts": len(results),
+                "return_code": results[-1].return_code if results else None,
+            }
             return
 
-        # treeUsage collapses subagents and workflow agents under the session;
-        # it is the honest number for a harness that pays for all of them.
-        usage = envelope.get("treeUsage") or envelope.get("usage") or {}
-        context.n_input_tokens = usage.get("inputTokens")
-        context.n_output_tokens = usage.get("outputTokens")
-        context.n_cache_tokens = usage.get("cacheReadTokens")
-        context.cost_usd = usage.get("costUsd")
+        totals = {"inputTokens": 0, "outputTokens": 0, "cacheReadTokens": 0}
+        cost = 0.0
+        for envelope in envelopes:
+            # treeUsage collapses subagents and workflow agents under the
+            # session; it is the honest number for a harness paying for all.
+            usage = envelope.get("treeUsage") or envelope.get("usage") or {}
+            for key in totals:
+                totals[key] += usage.get(key) or 0
+            cost += usage.get("costUsd") or 0.0
+
+        last = envelopes[-1]
+        context.n_input_tokens = totals["inputTokens"]
+        context.n_output_tokens = totals["outputTokens"]
+        context.n_cache_tokens = totals["cacheReadTokens"]
+        context.cost_usd = cost
         context.metadata = {
-            "session": envelope.get("session"),
-            "status": envelope.get("status"),
-            "ok": envelope.get("ok"),
-            "error": envelope.get("error"),
-            "return_code": result.return_code,
+            "session": last.get("session"),
+            "status": last.get("status"),
+            "ok": last.get("ok"),
+            "error": last.get("error"),
+            "attempts": len(results),
+            "attempt_statuses": [e.get("status") for e in envelopes],
+            "return_code": results[-1].return_code if results else None,
         }
 
         agent_log = self.logs_dir / "bough-exec.json"
         agent_log.parent.mkdir(parents=True, exist_ok=True)
-        agent_log.write_text(json.dumps(envelope, indent=2))
+        agent_log.write_text(json.dumps(envelopes, indent=2))
 
 
 def _last_json_object(stdout: str) -> dict[str, Any] | None:
