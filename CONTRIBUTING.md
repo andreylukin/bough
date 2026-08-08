@@ -31,6 +31,10 @@ make lint              # rustfmt check + clippy, warnings as errors
 
 Stable Rust, one cargo workspace at the root. `make help` lists every target.
 
+CI lints on the *latest* stable, which is deliberately unpinned. Clippy gains lints with
+each release, so if CI flags something `make lint` didn't, `rustup update` and re-run —
+it's toolchain drift, not a mystery.
+
 ## The bar for a pull request
 
 1. **`make gates` and `make lint` pass.** CI runs both on Linux and macOS; a PR that is

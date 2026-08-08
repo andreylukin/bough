@@ -6,13 +6,15 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
 
 jobs:
   lint:
@@ -20,12 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -36,16 +35,19 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo build --workspace --all-targets
       - run: cargo test --workspace
 
-  deps:
+  audit:
     name: audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: taiki-e/install-action@cargo-audit
+      # Fails on actual advisories only. `cargo audit` reports unmaintained and
+      # unsound crates as informational warnings without failing, which is right:
+      # they are usually transitive and unfixable from here, and a gate that goes
+      # red for something no PR author can act on gets ignored.
+      - run: cargo audit

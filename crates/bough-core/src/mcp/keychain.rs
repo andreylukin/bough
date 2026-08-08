@@ -454,10 +454,7 @@ pub(crate) fn hostname(url: &str) -> Option<String> {
         None => authority,
     };
     let host = if authority.starts_with('[') {
-        match authority.find(']') {
-            Some(end) => &authority[1..end],
-            None => return None,
-        }
+        &authority[1..authority.find(']')?]
     } else {
         authority.split(':').next().unwrap_or("")
     };
