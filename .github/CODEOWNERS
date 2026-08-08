@@ -12,7 +12,7 @@
 # /crates/bough-tui/     @andreylukin
 
 # Governance, licensing, and release plumbing stay with the project lead.
-/.github/LICENSE        @andreylukin
+/LICENSE                @andreylukin
 /.github/SECURITY.md    @andreylukin
 /.github/CODE_OF_CONDUCT.md @andreylukin
 /.github/               @andreylukin
