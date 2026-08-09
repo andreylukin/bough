@@ -270,8 +270,13 @@ bough notes stale           how far behind each note is
 bough notes check [TAG]     raise warnings where a log contradicts a claim
 bough notes rebuild TAG     drop the derived log so it can be re-folded
 bough notes lint            llmwiki's structural check
-bough notes path TAG        where the file is
+bough notes path [TAG]      where a note's file is — bare, the wiki directory
 ```
+
+`path` always prints a path on stdout, whether or not the file exists yet, so
+`$EDITOR $(bough notes path new-thing)` opens a new note rather than failing; the fact
+that nothing is there goes to stderr. `--json` carries a `path` on every row, so a script
+never has to rebuild one from the key.
 
 Exit `0` answered · `1` nothing there · `2` usage. `--repo` / `--all` scope drift,
 `--limit` and `--json` do the obvious.

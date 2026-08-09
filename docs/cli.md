@@ -74,6 +74,7 @@ bough notes stale           # how far behind each note is, warnings first
 bough notes check [TAG]     # raise a warning where a log contradicts a claim
 bough notes rebuild TAG     # drop the derived log so it can be re-folded
 bough notes lint            # llmwiki's structural check
+bough notes path [TAG]      # a note's file, or the wiki directory itself
 ```
 
 Prose keyed on the same tags as the command memory, in `~/.bough/notes`. A note holds the

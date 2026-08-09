@@ -93,7 +93,7 @@ pub const USAGE: &str = "usage: bough notes [VERB] [OPTIONS]
   rebuild TAG     drop the derived log so it can be re-folded from commands
   check           ask the cheap model whether any log line contradicts a claim
   lint            llmwiki's structural check (broken links, orphans, index)
-  path TAG        where the file is
+  path [TAG]      where a note's file is, or the wiki directory itself
 
   --title T       write: the note's title (default: the tag)
   --repo R        scope drift to a repo identity; default: this checkout's
@@ -191,9 +191,14 @@ pub fn parse_notes_args(argv: &[String]) -> Parsed {
             }
         }
         Some("path") => {
-            if let Some(e) = needs_one("path", NotesVerb::Path, &mut args) {
-                return e;
+            // The one verb whose argument is optional: with no TAG it answers
+            // "where does this all live", which is the question someone asks
+            // before they know a tag to ask about.
+            if rest > 1 {
+                return Parsed::UsageError(format!("path takes at most one TAG\n{USAGE}"));
             }
+            args.verb = NotesVerb::Path;
+            args.key = positional.get(1).cloned();
         }
         Some("append") => {
             if !(1..=2).contains(&rest) {
@@ -351,9 +356,10 @@ fn render_note(note: &Note, out: &dyn Fn(&str)) {
     ));
 }
 
-fn note_json(note: &Note, drift: Option<&Drift>) -> serde_json::Value {
+fn note_json(note: &Note, drift: Option<&Drift>, root: &std::path::Path) -> serde_json::Value {
     json!({
         "key": note.key,
+        "path": notes::path_for(root, &note.key).to_string_lossy(),
         "title": note.title,
         "body": note.body,
         "synced": note.synced,
@@ -385,8 +391,21 @@ pub fn run_notes(argv: &[String], deps: &NotesDeps<'_>) -> i32 {
 
     match parsed.verb {
         NotesVerb::Path => {
-            let key = parsed.key.clone().unwrap_or_default();
-            (deps.out)(&notes::path_for(&root, &key).to_string_lossy());
+            let Some(key) = parsed.key.clone() else {
+                (deps.out)(&root.join("wiki").to_string_lossy());
+                return 0;
+            };
+            let path = notes::path_for(&root, &key);
+            // stdout stays the path either way, so `$EDITOR $(bough notes path
+            // new-thing)` opens a new note instead of failing. The fact that
+            // nothing is there yet goes to stderr, where a pipeline ignores it
+            // and a human does not.
+            (deps.out)(&path.to_string_lossy());
+            if !path.exists() {
+                (deps.err)(&format!(
+                    "(no note on {key} yet — that is where one would go)"
+                ));
+            }
             0
         }
 
@@ -421,7 +440,7 @@ pub fn run_notes(argv: &[String], deps: &NotesDeps<'_>) -> i32 {
                 return 1;
             };
             if parsed.json {
-                (deps.out)(&note_json(&note, None).to_string());
+                (deps.out)(&note_json(&note, None, &root).to_string());
             } else {
                 render_note(&note, &*deps.out);
             }
@@ -561,7 +580,7 @@ pub fn run_notes(argv: &[String], deps: &NotesDeps<'_>) -> i32 {
                 return 1;
             }
             if parsed.json {
-                let rows: Vec<_> = hits.iter().map(|n| note_json(n, None)).collect();
+                let rows: Vec<_> = hits.iter().map(|n| note_json(n, None, &root)).collect();
                 (deps.out)(&serde_json::Value::Array(rows).to_string());
             } else {
                 for n in &hits {
@@ -692,7 +711,10 @@ pub fn run_notes(argv: &[String], deps: &NotesDeps<'_>) -> i32 {
             rows.truncate(parsed.limit);
 
             if parsed.json {
-                let out: Vec<_> = rows.iter().map(|(n, d)| note_json(n, d.as_ref())).collect();
+                let out: Vec<_> = rows
+                    .iter()
+                    .map(|(n, d)| note_json(n, d.as_ref(), &root))
+                    .collect();
                 (deps.out)(&serde_json::Value::Array(out).to_string());
                 return 0;
             }
@@ -1093,5 +1115,63 @@ mod tests {
         let c = Collect::new();
         assert_eq!(run_notes(&argv(&["path", "linear.nme-1673"]), &c.deps()), 0);
         assert!(c.printed().ends_with("wiki/refs/linear.nme-1673.md"));
+    }
+
+    #[test]
+    fn path_with_no_tag_answers_where_the_notes_live() {
+        // The question asked before you know a tag to ask about.
+        let c = Collect::new();
+        assert_eq!(run_notes(&argv(&["path"]), &c.deps()), 0);
+        // The injected root is a temp dir, so the assertion is on the `wiki`
+        // segment, not on `~/.bough/notes` — which is what production resolves.
+        assert!(c.printed().ends_with("/wiki"), "{}", c.printed());
+        assert_eq!(c.printed(), c.root.join("wiki").to_string_lossy());
+        assert!(c.errors().is_empty());
+    }
+
+    #[test]
+    fn path_for_a_missing_note_still_prints_it_and_says_so_on_stderr() {
+        // stdout must stay usable: `$EDITOR $(bough notes path new-thing)`
+        // should open a new note, not fail. The absence goes to stderr.
+        let c = Collect::new();
+        assert_eq!(run_notes(&argv(&["path", "brand-new"]), &c.deps()), 0);
+        assert!(c.printed().ends_with("wiki/tags/brand-new.md"));
+        assert!(c.errors().contains("that is where one would go"));
+    }
+
+    #[test]
+    fn json_carries_the_path_so_a_script_never_rebuilds_it() {
+        let mut c = Collect::new();
+        c.stdin = "prose".into();
+        run_notes(&argv(&["write", "nased"]), &c.deps());
+
+        let listed = Collect {
+            root: c.root.clone(),
+            out: Arc::new(Mutex::new(vec![])),
+            err: Arc::new(Mutex::new(vec![])),
+            stdin: String::new(),
+            session: None,
+        };
+        assert_eq!(run_notes(&argv(&["--json"]), &listed.deps()), 0);
+        let rows: serde_json::Value = serde_json::from_str(&listed.printed()).unwrap();
+        let path = rows[0]["path"].as_str().unwrap();
+        assert!(path.ends_with("wiki/tags/nased.md"), "{path}");
+        assert!(
+            std::path::Path::new(path).exists(),
+            "the path is real: {path}"
+        );
+
+        let shown = Collect {
+            root: c.root.clone(),
+            out: Arc::new(Mutex::new(vec![])),
+            err: Arc::new(Mutex::new(vec![])),
+            stdin: String::new(),
+            session: None,
+        };
+        run_notes(&argv(&["show", "nased", "--json"]), &shown.deps());
+        let one: serde_json::Value = serde_json::from_str(&shown.printed()).unwrap();
+        assert_eq!(one["path"].as_str().unwrap(), path);
+        std::mem::forget(listed);
+        std::mem::forget(shown);
     }
 }
