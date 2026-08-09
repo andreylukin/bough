@@ -223,10 +223,11 @@ pub fn worked_in(session_id: &str) -> Vec<PathBuf> {
 /// practical effect is the one you want: a `~/.bough/AGENTS.md` global still
 /// applies, and the repo you are actually working in overrides it.
 ///
-/// `extra` directories contribute only files the workspace chain did not
-/// already produce — a visited subdirectory shares most of its ancestry with
-/// the workspace, and re-reading the same `AGENTS.md` under a second heading
-/// would double it in the prompt and say nothing new.
+/// `extra` directories contribute only files the merged list does not already
+/// carry — a visited subdirectory shares most of its ancestry with the
+/// workspace, and re-reading the same `AGENTS.md` under a second heading would
+/// double it in the prompt and say nothing new. [`keep_first`] decides what
+/// "already carry" means, on two keys rather than one.
 pub fn find_project_rules_across(
     workspace: &Path,
     extra: &[PathBuf],
@@ -238,11 +239,46 @@ pub fn find_project_rules_across(
         // `home` is deliberately not passed again: the global tier is already
         // in `out` and must not be re-inserted mid-list, where "later wins"
         // would let it override the project rules it is supposed to sit under.
-        for file in find_project_rules(dir, None) {
-            if !out.iter().any(|f| f.path == file.path) {
-                out.push(file);
-            }
+        out.extend(find_project_rules(dir, None));
+    }
+    keep_first(out)
+}
+
+/// Drop every file the list already carries — by IDENTITY, then by CONTENT.
+///
+/// **Identity, canonicalized.** Path equality alone was not enough, and the
+/// asymmetry that broke it is real: the shell boundary canonicalizes the
+/// directory it records (`command_workspace`), while the workspace itself is
+/// only made lexically absolute, because resolving symlinks there would change
+/// which path the model is told it is working in. So one repo reached as
+/// `~/repos/thing` and as its symlink target produced two entries for one
+/// file, and "later wins" then read the second as a more specific tier
+/// restating the first. `canonicalize` is what makes the two spellings one
+/// key; a path that cannot be resolved falls back to itself, since a file that
+/// was just read almost always can be.
+///
+/// **Content, because identity is not enough.** Two genuinely different paths
+/// hold the same bytes more often than they should: a monorepo whose packages
+/// each carry the same boilerplate, or a `~/.claude/CLAUDE.md` kept in sync
+/// with `$BOUGH_HOME/AGENTS.md` by copying rather than linking. No path check
+/// can see those. The second copy adds nothing a reader could act on and costs
+/// its own length in a window the user pays for.
+///
+/// FIRST WINS, which is the earlier tier — the later copy is byte-identical,
+/// so nothing about "later wins" is lost by dropping it.
+fn keep_first(files: Vec<ProjectRuleFile>) -> Vec<ProjectRuleFile> {
+    let mut out: Vec<ProjectRuleFile> = Vec::with_capacity(files.len());
+    let mut ids: Vec<PathBuf> = Vec::with_capacity(files.len());
+    for file in files {
+        let id = file
+            .path
+            .canonicalize()
+            .unwrap_or_else(|_| file.path.clone());
+        if ids.contains(&id) || out.iter().any(|f| f.body == file.body) {
+            continue;
         }
+        ids.push(id);
+        out.push(file);
     }
     out
 }
@@ -626,6 +662,65 @@ mod tests {
         // Global tier leads and the project still wins, exactly as when the
         // user tier is resolved without any extra directories.
         assert_eq!(bodies, ["USER TIER", "GLOBAL RULES", "REPO RULES"]);
+    }
+
+    /// The asymmetry that made one file look like two: the shell boundary
+    /// canonicalizes the directory it records, the workspace is only made
+    /// lexically absolute. Both directions of the mismatch, because the fix
+    /// has to hold whichever side carries the symlink.
+    #[test]
+    fn one_repos_rules_land_once_however_its_directory_is_spelled() {
+        let root = TempRoot::new("two-spellings");
+        let real = root.path().join("real");
+        let sub = real.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        write(&real.join(".git"), "");
+        write(&real.join("AGENTS.md"), "REPO RULES");
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // Workspace named through the symlink, the visited directory canonical.
+        let through_link = find_project_rules_across(&link, std::slice::from_ref(&sub), None, None);
+        assert_eq!(through_link.len(), 1, "{through_link:#?}");
+        assert_eq!(through_link[0].body, "REPO RULES");
+
+        // And the reverse: canonical workspace, visited directory symlinked.
+        let reversed = find_project_rules_across(&real, &[link.join("sub")], None, None);
+        assert_eq!(reversed.len(), 1, "{reversed:#?}");
+    }
+
+    /// What no path check can see. A copy is not a link, and a monorepo whose
+    /// packages each carry the same boilerplate is the ordinary way to get one.
+    #[test]
+    fn two_different_files_holding_the_same_bytes_are_injected_once() {
+        let root = TempRoot::new("same-bytes");
+        let repo = root.path().join("repo");
+        let pkg = repo.join("packages").join("one");
+        write(&repo.join(".git"), "");
+        write(&repo.join("AGENTS.md"), "SHARED BOILERPLATE");
+        write(&pkg.join("AGENTS.md"), "SHARED BOILERPLATE");
+
+        let files = find_project_rules_across(&repo, std::slice::from_ref(&pkg), None, None);
+        assert_eq!(files.len(), 1, "{files:#?}");
+        // The FIRST is kept — the copy is byte-identical, so the tier it came
+        // from cannot matter.
+        assert_eq!(files[0].path, absolutize(&repo).join("AGENTS.md"));
+    }
+
+    /// The dedupe must not swallow a package that genuinely says something
+    /// else — that is the whole reason a nested AGENTS.md is read at all.
+    #[test]
+    fn a_nested_file_that_differs_is_still_carried_and_still_wins() {
+        let root = TempRoot::new("nested-differs");
+        let repo = root.path().join("repo");
+        let pkg = repo.join("packages").join("one");
+        write(&repo.join(".git"), "");
+        write(&repo.join("AGENTS.md"), "REPO RULES");
+        write(&pkg.join("AGENTS.md"), "PACKAGE RULES");
+
+        let files = find_project_rules_across(&repo, std::slice::from_ref(&pkg), None, None);
+        let bodies: Vec<&str> = files.iter().map(|f| f.body.as_str()).collect();
+        assert_eq!(bodies, ["REPO RULES", "PACKAGE RULES"]);
     }
 
     /// The memo the shell boundary writes: same directory twice is one entry,
