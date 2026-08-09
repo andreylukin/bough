@@ -3487,7 +3487,11 @@ impl<T: Transport> App<T> {
         self.remember_sent(&text);
         // Marks expand WHERE THEY SIT, so the message reads the way the draft
         // did; a paste whose mark was deleted is dropped (`paste.rs`).
-        let message = expand_pastes(&text, &self.pastes);
+        // TRIMMED, because the server trims before it stores: the `@` picker
+        // completes a file with a trailing space, so the echo read `@a.rs ` and
+        // the server's copy read `@a.rs`, the by-text reconcile below missed,
+        // and the message stood on screen TWICE.
+        let message = expand_pastes(&text, &self.pastes).trim().to_string();
         let images = std::mem::take(&mut self.attachments);
         self.attachment_sel = None;
         self.pastes.clear();
@@ -6128,6 +6132,42 @@ mod tests {
                 other => other,
             })
             .collect()
+    }
+
+    /// The `@` picker completes a file with a TRAILING SPACE. The server trims
+    /// before it stores, so an untrimmed echo never matched the server's copy
+    /// by text and the same message stood on screen twice.
+    #[test]
+    fn a_picked_file_is_sent_trimmed_so_the_echo_reconciles() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 110, 30);
+        open_s1(&mut app);
+        type_text(&mut app, "@a", 0);
+        app.apply(Action::Files(vec!["a.rs".into(), "b.rs".into()]), 0);
+        app.apply(key(KeyCode::Enter), 0); // accept the row
+        assert_eq!(app.draft, "@a.rs ");
+        app.apply(key(KeyCode::Enter), 0); // send
+        assert_eq!(sends(&effects), vec![a_send("@a.rs".into())]);
+
+        // …and the server's copy of it supersedes the echo instead of joining it.
+        assert_eq!(app.thread.len(), 1);
+        app.apply(
+            event(
+                EventType::MessageStarted,
+                1,
+                json!({"id": "m1", "sessionId": "s1", "role": "user",
+                       "parts": [{"type": "text", "text": "@a.rs"}],
+                       "pending": false, "createdAt": 1}),
+            ),
+            1,
+        );
+        assert_eq!(
+            app.thread.len(),
+            1,
+            "one message, not two: {:?}",
+            app.thread
+        );
+        assert_eq!(app.thread[0].id, "m1");
     }
 
     fn open_s1<T: Transport>(app: &mut App<T>) {
