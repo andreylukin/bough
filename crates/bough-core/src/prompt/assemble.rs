@@ -150,7 +150,7 @@ pub struct SectionSha {
 // The section table
 // ---------------------------------------------------------------------------
 
-/// Ids of the sections, in prompt order — the 17 file-backed (stable-tier)
+/// Ids of the sections, in prompt order — the 18 file-backed (stable-tier)
 /// ones plus the three volatile ids rendered rather than read from a file.
 /// `kebab-case` on the wire so a serialized id is byte-identical to
 /// [`SectionId::as_str`] — the form traces, tests and the UI already show.
@@ -165,6 +165,7 @@ pub enum SectionId {
     Ask,
     State,
     Schedule,
+    UsingSkills,
     Artifact,
     Delegation,
     DelegationNested,
@@ -193,6 +194,7 @@ impl SectionId {
             SectionId::Ask => "ask",
             SectionId::State => "state",
             SectionId::Schedule => "schedule",
+            SectionId::UsingSkills => "using-skills",
             SectionId::Artifact => "artifact",
             SectionId::Delegation => "delegation",
             SectionId::DelegationNested => "delegation-nested",
@@ -255,7 +257,7 @@ fn always(_: &Facts) -> bool {
 /// is legal, and `delegation-nested` on `agent` because a depth-2 subagent
 /// (still kind `subagent`) is bridged nothing and must therefore be told
 /// nothing.
-static SECTIONS: [SectionSpec; 17] = [
+static SECTIONS: [SectionSpec; 18] = [
     SectionSpec {
         id: SectionId::Identity,
         file: "identity.md",
@@ -307,6 +309,16 @@ static SECTIONS: [SectionSpec; 17] = [
         file: "schedule.md",
         raw: include_str!("sections/schedule.md"),
         when: |f| f.has(HostFnName::Schedule),
+    },
+    // Directly above `artifact`, which is the section that sends the model off
+    // to read one (`flint`, for charts). Gated on `view`: a turn that cannot
+    // open a file cannot act on a skill it was told the path to, and the
+    // locations would be noise.
+    SectionSpec {
+        id: SectionId::UsingSkills,
+        file: "using-skills.md",
+        raw: include_str!("sections/using-skills.md"),
+        when: |f| f.has(HostFnName::View),
     },
     SectionSpec {
         id: SectionId::Artifact,
@@ -867,6 +879,9 @@ mod tests {
                 SectionId::History,
                 SectionId::Files,
                 SectionId::PatchGrammar,
+                // Where skills live — reading one needs `view`, so it rides
+                // with the file sections rather than with any one capability.
+                SectionId::UsingSkills,
                 SectionId::Printing,
                 SectionId::Searching,
                 SectionId::Network,

@@ -28,9 +28,9 @@ use bough_core::types::AppCtx;
 
 use crate::http::{error_response, route, Params, Route};
 use crate::{
-    artifacts, attachments, changes, comments, events, fs, ghost, history_ops, hooks, jobs,
-    mcp_oauth, mcp_routes, models, questions, schedules, search, sessions, skills, theme, turns,
-    workflows,
+    artifact_lib, artifacts, attachments, changes, comments, events, fs, ghost, history_ops, hooks,
+    jobs, mcp_oauth, mcp_routes, models, questions, schedules, search, sessions, skills, theme,
+    turns, workflows,
 };
 
 // ---- the route table --------------------------------------------------------
@@ -126,6 +126,9 @@ pub fn routes() -> Vec<Route> {
         // hooks: the Lua that runs inside the loop, and its off switches
         route("GET", "/hooks", hooks::list()),
         route("POST", "/hooks/:name", hooks::toggle()),
+        // The vendored chart engines, ahead of the catch-all it would otherwise
+        // fall into. Session ids are uuids, so `_lib` shadows no real session.
+        route("GET", "/artifacts/_lib/:file", artifact_lib::get_lib_file()),
         route("GET", "/artifacts/:id/:path*", artifacts::get_artifact()),
         // jobs — a session's list covers its subagents' work too
         route("GET", "/sessions/:id/jobs", jobs::list_jobs()),
@@ -742,6 +745,23 @@ mod tests {
                 .await
                 .status(),
             404
+        );
+    }
+
+    /// `/artifacts/_lib/*` must be matched by the bundle route, not swallowed
+    /// by `/artifacts/:id/:path*` — the catch-all matches that path too, and
+    /// first-match-wins means the ONLY thing keeping the engines reachable is
+    /// their entry sitting earlier in the table. Reorder it and every chart in
+    /// every artifact silently 404s, with nothing else failing.
+    #[tokio::test]
+    async fn the_bundle_route_wins_over_the_artifact_catch_all() {
+        let fx = testutil::fixture();
+        let call = create_handler(fx.ctx.clone(), CreateHandlerOptions::default());
+        let res = call.call(testutil::get("/artifacts/_lib/flint.js")).await;
+        assert_eq!(res.status(), 200);
+        assert_eq!(
+            res.headers().get("content-type").unwrap(),
+            "text/javascript; charset=utf-8"
         );
     }
 

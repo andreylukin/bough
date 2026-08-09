@@ -9,7 +9,7 @@ DEV_HOME ?= $(CURDIR)/.dev
 DEV_PORT ?= 4322
 DEV_ENV   = BOUGH_HOME=$(DEV_HOME) BOUGH_PORT=$(DEV_PORT)
 
-.PHONY: help check build test lint release dev dev-server dev-stop dev-logs server tui smoke tui-test gates
+.PHONY: help check build test lint release chart-bundle dev dev-server dev-stop dev-logs server tui smoke tui-test gates
 
 help: ## list targets
 	@grep -E '^[a-z][a-zA-Z_-]*:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -28,6 +28,13 @@ lint: ## rustfmt check + clippy (warnings as errors)
 
 release: ## cargo build --release
 	cargo build --release
+
+# Deliberately NOT a dependency of build/test/gates, and absent from CI: the
+# committed bundle is what `cargo build` compiles in, so a clean checkout never
+# needs node or the network. Run this to bump a pinned version, then commit the
+# diff it produces.
+chart-bundle: ## rebuild the vendored flint/echarts bundle (needs npm, network)
+	./scripts/build-chart-bundle.sh
 
 # ---- running this checkout --------------------------------------------------
 # One command. The wrapper starts the dev server detached if it is down, so this

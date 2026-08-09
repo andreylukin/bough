@@ -262,6 +262,7 @@ dependencies = [
  "bough-core",
  "dirs",
  "futures",
+ "include_dir",
  "libc",
  "rusqlite",
  "serde",

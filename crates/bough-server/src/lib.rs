@@ -8,6 +8,7 @@
 //! read/idle timeout middleware (SSE idles between turns).
 
 pub mod app;
+pub mod artifact_lib;
 pub mod artifacts;
 pub mod attachments;
 pub mod boot;

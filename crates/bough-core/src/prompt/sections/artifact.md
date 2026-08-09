@@ -11,8 +11,15 @@ diff review, a filterable comparison, a chart, a diagram, a plan, a clickable
 prototype. A short answer or a plain list stays in your reply text; never dress thin
 content up as a page.
 
-When you do build one, hold this bar: SELF-CONTAINED — inline all CSS and JS, no
-CDN, no external fonts, no remote images, so it renders offline. DENSITY over
+Whenever the page shows a chart, graph, plot, or 3D visualisation, read the
+`flint` skill FIRST and build it the way that skill says. bough vendors a chart
+compiler and ECharts, served from /artifacts/_lib/ — hand-rolled SVG is the
+wrong answer and the skill has the spec vocabulary.
+
+When you do build one, hold this bar: SELF-CONTAINED — inline all your own CSS
+and JS, no CDN, no external fonts, no remote images, so it renders offline. The
+vendored /artifacts/_lib/ scripts are the one exception: same origin, no
+network, already on the machine. DENSITY over
 decoration — real structure, tables, working controls; never gradient-and-rounded
 "markdown in a card" filler or dead buttons, and avoid the AI-slop look (purple
 gradients, one centered card, Inter). Responsive down to ~375px, key text
