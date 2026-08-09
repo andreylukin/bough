@@ -448,10 +448,16 @@ pub fn default_program_runner(ctx: &TurnCtx, host: Option<HostFns>) -> ProgramRu
                 let guard = round_refs.lock().unwrap();
                 guard[from_refs.min(guard.len())..].to_vec()
             };
-            // The automatic half of the note memory. Awaited rather than
-            // detached so the round's own result can carry the hint, and
-            // resolving to nothing is by far its commonest outcome.
-            fold_round_into_notes(&hint_ctx, &touched_refs).await;
+            // DETACHED, never awaited. The fold writes `note_log` rows; the
+            // hint below reads `note_sections`, so nothing the fold produces
+            // can appear in this round's result — or any round's. Awaiting it
+            // therefore bought nothing and put a cheap-model round trip (up to
+            // CHEAP_TIMEOUT_MS) on the critical path of every round that
+            // touched a reference, paid again on each round of a multi-round
+            // turn. The one part of the note memory that could make a turn
+            // WORSE, in a design whose whole contract is that a failure is a
+            // non-event.
+            spawn_note_fold(&hint_ctx, &touched_refs);
             with_note_hint_notes(
                 with_project_rule_notes(
                     with_query_tag_hint_notes(
@@ -644,6 +650,51 @@ fn with_note_hint_notes(
     ProgramResult { logs, ..result }
 }
 
+/// Start the fold and return. Errors and panics inside it die with the task:
+/// a lost note line is strictly better than a broken round, the same contract
+/// the command recorder holds.
+fn spawn_note_fold(ctx: &TurnCtx, refs: &[(String, Option<i64>)]) {
+    if refs.is_empty() || ctx.app.cheap.is_none() {
+        return;
+    }
+    let ctx = ctx.clone();
+    let refs = refs.to_vec();
+    tokio::spawn(async move {
+        fold_round_into_notes(&ctx, &refs).await;
+    });
+}
+
+/// Should the fold call the model for this reference right now?
+///
+/// ONE IN FLIGHT PER REFERENCE, AND ONE PER DEBOUNCE WINDOW — the discipline
+/// the live activity blurbs already run under, and for the same reason: a turn
+/// loops, so a ten-round turn working on one ticket would otherwise make ten
+/// calls saying near-identical things. Dropping bounds the spend at one call
+/// per reference per window AND keeps every line that does land true of
+/// something recent, because the next round describes itself.
+fn fold_is_due(tag: &str, now: i64) -> bool {
+    static LAST: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, i64>>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let Ok(mut guard) = LAST.lock() else {
+        return false;
+    };
+    // Bounded: a long-lived server must not accumulate a row per reference it
+    // has ever seen.
+    if guard.len() > 512 {
+        guard.retain(|_, at| now - *at < FOLD_DEBOUNCE_MS);
+    }
+    match guard.get(tag) {
+        Some(at) if now - *at < FOLD_DEBOUNCE_MS => false,
+        _ => {
+            guard.insert(tag.to_string(), now);
+            true
+        }
+    }
+}
+
+/// How long a reference rests between folds.
+pub const FOLD_DEBOUNCE_MS: i64 = 10 * 60 * 1000;
+
 /// The automatic write: one cheap-model line per reference this round touched.
 ///
 /// EVERY GATE IS A NON-EVENT. No cheap tier, no note and no threshold met, a
@@ -669,6 +720,9 @@ async fn fold_round_into_notes(ctx: &TurnCtx, refs: &[(String, Option<i64>)]) {
             continue;
         }
         seen.push(tag.clone());
+        if !fold_is_due(tag, now) {
+            continue;
+        }
 
         let existing = with_db(&ctx.app.db, |d| d.note_by_path(tag)).ok().flatten();
         let note = match existing {
@@ -4067,7 +4121,7 @@ mod tests {
     #[tokio::test]
     async fn the_fold_appends_one_cheap_line_and_never_touches_the_prose() {
         let db = crate::agents::testkit::shared_db();
-        let id = seed_note(&db, "pr.7134", "Rollout", "prose only a human writes");
+        let id = seed_note(&db, "pr.5002", "Rollout", "prose only a human writes");
         let mut ctx = note_ctx(&db, "s-fold");
         let tier = Arc::new(Tier(
             std::sync::Mutex::new(Vec::new()),
@@ -4075,7 +4129,7 @@ mod tests {
         ));
         ctx.app.cheap = Some(tier.clone());
 
-        fold_round_into_notes(&ctx, &[("pr.7134".to_string(), Some(0))]).await;
+        fold_round_into_notes(&ctx, &[("pr.5002".to_string(), Some(0))]).await;
 
         let log = db.lock().unwrap().note_log(id, 10).unwrap();
         assert_eq!(log.len(), 1);
@@ -4086,7 +4140,7 @@ mod tests {
         assert_eq!(sections[0].author, crate::types::NoteAuthor::Human);
 
         let prompt = tier.0.lock().unwrap()[0].clone();
-        assert!(prompt.contains("pr.7134 — worked"));
+        assert!(prompt.contains("pr.5002 — worked"));
         assert!(prompt.contains("prose only a human writes"));
         for leaked in ["exit_code", "output_head", "bash"] {
             assert!(!prompt.contains(leaked), "{leaked} reached the cheap model");
@@ -4101,6 +4155,88 @@ mod tests {
         ctx.app.cheap = Some(Arc::new(Tier(std::sync::Mutex::new(Vec::new()), None)));
         fold_round_into_notes(&ctx, &[("pr.9".to_string(), Some(0))]).await;
         assert!(db.lock().unwrap().note_log(id, 10).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_reference_is_folded_once_per_debounce_window_not_once_per_round() {
+        // The defect this closes: a turn LOOPS, so a ten-round turn working on
+        // one ticket made ten cheap-model calls, each on the critical path.
+        // A DISTINCT reference per test: the debounce ledger is a process
+        // global, so two tests sharing one would debounce each other.
+        let db = crate::agents::testkit::shared_db();
+        let id = seed_note(&db, "pr.5001", "Rollout", "prose");
+        let mut ctx = note_ctx(&db, "s-debounce");
+        let tier = Arc::new(Tier(
+            std::sync::Mutex::new(Vec::new()),
+            Some("a line".into()),
+        ));
+        ctx.app.cheap = Some(tier.clone());
+
+        for _ in 0..5 {
+            fold_round_into_notes(&ctx, &[("pr.5001".to_string(), Some(0))]).await;
+        }
+        assert_eq!(
+            tier.0.lock().unwrap().len(),
+            1,
+            "five rounds, one call to the model"
+        );
+        assert_eq!(db.lock().unwrap().note_log(id, 10).unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_debounce_is_per_reference() {
+        let db = crate::agents::testkit::shared_db();
+        seed_note(&db, "pr.100", "A", "prose");
+        seed_note(&db, "pr.200", "B", "prose");
+        let mut ctx = note_ctx(&db, "s-two-refs");
+        let tier = Arc::new(Tier(
+            std::sync::Mutex::new(Vec::new()),
+            Some("a line".into()),
+        ));
+        ctx.app.cheap = Some(tier.clone());
+        fold_round_into_notes(
+            &ctx,
+            &[
+                ("pr.100".to_string(), Some(0)),
+                ("pr.200".to_string(), Some(0)),
+            ],
+        )
+        .await;
+        assert_eq!(tier.0.lock().unwrap().len(), 2, "one call each");
+    }
+
+    #[tokio::test]
+    async fn the_fold_never_rides_the_rounds_critical_path() {
+        // `spawn_note_fold` returns before the model is reached. A tier that
+        // blocks forever must not be able to hold a round.
+        struct Hang;
+        #[async_trait::async_trait]
+        impl crate::types::CheapTier for Hang {
+            async fn title(&self, _f: &str) -> Option<String> {
+                None
+            }
+            async fn ghost_text(&self, _p: &str) -> Option<String> {
+                None
+            }
+            async fn activity(&self, _r: &str) -> Option<String> {
+                None
+            }
+            async fn note_line(&self, _p: &str) -> Option<String> {
+                futures::future::pending::<()>().await;
+                None
+            }
+        }
+        let db = crate::agents::testkit::shared_db();
+        seed_note(&db, "pr.999", "Hangs", "prose");
+        let mut ctx = note_ctx(&db, "s-hang");
+        ctx.app.cheap = Some(Arc::new(Hang));
+
+        let started = std::time::Instant::now();
+        spawn_note_fold(&ctx, &[("pr.999".to_string(), Some(0))]);
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(100),
+            "spawning must not wait on the model"
+        );
     }
 
     #[tokio::test]

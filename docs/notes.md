@@ -180,6 +180,13 @@ later contradicts it, and no timestamp helps.
 
 ### A1 — the automatic line
 
+**Detached, and debounced per reference.** The fold writes `note_log` rows; the hint reads
+`note_sections`, so nothing the fold produces can appear in that round's result or any
+other — awaiting it bought nothing and put a cheap-model round trip on the critical path of
+every round that touched a reference, paid again on each round of a multi-round turn. It is
+now spawned, and a reference rests `FOLD_DEBOUNCE_MS` (10 minutes) between folds: one in
+flight, drop don't queue, the discipline the live activity blurbs already run under.
+
 At the end of a round, `fold_round_into_notes` walks the references the round's commands
 carried. A page is created only for one that has EARNED it (20 commands across 2 sessions —
 about six references on a real memory, not 143). The cheap model sees the last ten log
@@ -259,6 +266,28 @@ section once is harmless, and a table would make a cosmetic feature a durability
 
 ---
 
+## 10a. Semantic recall
+
+`bough notes similar "text"` is KNN over sections, and it is optional in exactly the way
+`bough tags similar` is: without the local vector layer the command exits 1 and names the
+keyword search that always works.
+
+`note_vec_index` lives beside `vec_index` in `~/.bough/embeddings.db` — same file, same
+model, same rebuild rule, both fully derived and deletable together. A **separate table**
+rather than a `kind` column because vec0 applies its limit before any `WHERE`, so a mixed
+index would answer a section query with ten commands.
+
+One difference from the command index, and it is the reason the note drain is its own
+function: **a command row is immutable, a section is edited.** `note_vec_meta` records the
+`updated_at` each vector was built from, so an edited section re-enters the pending set and
+its stale vector is replaced rather than left answering for text that no longer exists.
+
+A section is embedded as its **path as words** plus heading plus body: the path carries the
+subject (`nased`, `kubectl`) that the prose often assumes rather than states, and a section
+that never names its own topic is exactly the one a semantic query should still find.
+
+---
+
 ## 11. Reading it back
 
 ```
@@ -269,6 +298,7 @@ bough notes write PATH      add or update sections; markdown on stdin
 bough notes rm PATH H       remove one section
 bough notes append PATH "…" one line onto the log
 bough notes search WORDS    FTS over sections
+bough notes similar TEXT    KNN over sections, where the vector layer exists
 bough notes stale           how far behind each note is
 bough notes check [PATH]    raise warnings where a log contradicts a claim
 bough notes history PATH    every superseded version

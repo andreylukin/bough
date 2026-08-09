@@ -71,6 +71,7 @@ bough notes show PATH       # its sections, then what resolves into it
 bough notes write PATH      # add or update sections; markdown on stdin
 bough notes append PATH "…" # one line onto the log
 bough notes search WORDS    # FTS over sections
+bough notes similar TEXT    # KNN over sections, where the vector layer exists
 bough notes stale           # how far behind each note is, warnings first
 bough notes check [PATH]    # raise a warning where a log contradicts a claim
 bough notes history PATH    # every superseded version

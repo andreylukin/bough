@@ -67,14 +67,24 @@ pub fn spawn_drain_ticker(
             }
             let layer = layer.clone();
             let flag = draining.clone();
-            let done = tokio::task::spawn_blocking(move || layer.drain());
+            // Both indexes on one tick: they share the model, the connection
+            // and the rebuild rule, so a second pump would only add a second
+            // way for them to disagree about which model built them.
+            let done = tokio::task::spawn_blocking(move || (layer.drain(), layer.drain_notes()));
             let result = done.await;
             // Cleared before the result is inspected, so a panic inside the
             // extension costs one tick rather than wedging the pump forever.
             flag.store(false, Ordering::SeqCst);
-            if let Ok(Ok(n)) = result {
-                if n > 0 {
-                    tracing::debug!("history embeddings: drained {n} command(s)");
+            if let Ok((commands, notes)) = result {
+                if let Ok(n) = commands {
+                    if n > 0 {
+                        tracing::debug!("history embeddings: drained {n} command(s)");
+                    }
+                }
+                if let Ok(n) = notes {
+                    if n > 0 {
+                        tracing::debug!("note embeddings: drained {n} section(s)");
+                    }
                 }
             }
         }

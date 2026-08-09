@@ -41,6 +41,7 @@ pub enum NotesVerb {
     Tree,
     Cites,
     Rm,
+    Similar,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -88,6 +89,7 @@ pub const USAGE: &str = "usage: bough notes [VERB] [OPTIONS]
   rm PATH H       remove one section by heading
   append PATH T   add one line to the log (stdin when T is absent)
   search WORDS    sections matching every word
+  similar TEXT    sections that MEAN the same, where the vector layer exists
   stale           how far behind each note is, warnings first
   check [PATH]    ask the cheap model whether a log contradicts a claim
   history PATH    every superseded version of this note's sections
@@ -229,6 +231,15 @@ pub fn parse_notes_args(argv: &[String]) -> Parsed {
                 return Parsed::UsageError(format!("search needs something to look for\n{USAGE}"));
             }
             args.verb = NotesVerb::Search;
+            args.key = Some(positional[1..].join(" "));
+        }
+        Some("similar") => {
+            if rest < 1 {
+                return Parsed::UsageError(format!(
+                    "similar needs some text to be similar to\n{USAGE}"
+                ));
+            }
+            args.verb = NotesVerb::Similar;
             args.key = Some(positional[1..].join(" "));
         }
         Some(v @ ("stale" | "tree")) => {
@@ -390,7 +401,7 @@ pub fn run_notes(argv: &[String], deps: &NotesDeps<'_>) -> i32 {
     // it does not live. Checked once, here, so no verb can create a page the
     // join can never reach. `search` is exempt — its argument is prose.
     let parsed = match (parsed.verb, &parsed.key) {
-        (NotesVerb::Search, _) | (_, None) => parsed,
+        (NotesVerb::Search, _) | (NotesVerb::Similar, _) | (_, None) => parsed,
         (_, Some(raw)) => match canonical_path(raw) {
             Ok((path, _)) => NotesArgs {
                 key: Some(path),
@@ -643,6 +654,63 @@ pub fn run_notes(argv: &[String], deps: &NotesDeps<'_>) -> i32 {
             } else {
                 for s in &hits {
                     (deps.out)(&format!("{:<28} {}", s.note_path, s.heading));
+                }
+            }
+            0
+        }
+
+        NotesVerb::Similar => {
+            let text = parsed.key.clone().unwrap_or_default();
+            let Some(layer) = bough_core::db::embed::create_embed_layer(None) else {
+                (deps.err)(
+                    "no local embedding layer here, so there is nothing to be similar with. \
+                     Keyword search always works: bough notes search <words>",
+                );
+                return 1;
+            };
+            let hits = match layer.similar_sections(&text) {
+                Ok(hits) => hits,
+                Err(error) => {
+                    (deps.err)(&format!("similar failed: {error}"));
+                    return 1;
+                }
+            };
+            if hits.is_empty() {
+                (deps.err)("nothing close enough — bough notes search <words> is exact");
+                return 1;
+            }
+            // The ids come back from the vector store; the ROWS come from the
+            // database, because that layer attaches bough.db read-only and has
+            // no business assembling a domain type out of it.
+            let by_id: std::collections::HashMap<i64, SectionRow> = db
+                .list_notes()
+                .unwrap_or_default()
+                .iter()
+                .flat_map(|n| db.sections_for_note(n.id).unwrap_or_default())
+                .map(|s| (s.id, s))
+                .collect();
+            let mut rows: Vec<(&SectionRow, f64)> = hits
+                .iter()
+                .filter_map(|(id, d)| by_id.get(id).map(|s| (s, *d)))
+                .take(parsed.limit)
+                .collect();
+            rows.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            if parsed.json {
+                (deps.out)(
+                    &serde_json::Value::Array(
+                        rows.iter()
+                            .map(|(s, d)| {
+                                let mut v = section_json(s, false);
+                                v["distance"] = json!(d);
+                                v
+                            })
+                            .collect(),
+                    )
+                    .to_string(),
+                );
+            } else {
+                for (s, d) in &rows {
+                    (deps.out)(&format!("{d:<8.4} {:<28} {}", s.note_path, s.heading));
                 }
             }
             0

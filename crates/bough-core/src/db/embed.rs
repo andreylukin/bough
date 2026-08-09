@@ -177,6 +177,48 @@ impl EmbedLayer {
         Ok(drain_once(conn, &|texts| self.embed(texts)).unwrap_or(0))
     }
 
+    /// Index pending SECTION rows. Same contract as [`EmbedLayer::drain`]:
+    /// any failure loses one tick, never the layer.
+    pub fn drain_notes(&self) -> Result<u64, BoughError> {
+        let mut guard = self.lock();
+        if guard.is_none() {
+            match self.open() {
+                Ok(conn) => *guard = Some(conn),
+                Err(_) => return Ok(0),
+            }
+        }
+        let conn = guard.as_ref().expect("opened above");
+        Ok(drain_notes_once(conn, &|texts| self.embed(texts)).unwrap_or(0))
+    }
+
+    /// KNN over note sections, nearest first.
+    ///
+    /// Returns the SECTION ids and distances; the caller reads the rows through
+    /// `Db`, because this layer attaches `bough.db` read-only and has no
+    /// business assembling a domain type out of it.
+    pub fn similar_sections(&self, text: &str) -> Result<Vec<(i64, f64)>, BoughError> {
+        let mut guard = self.lock();
+        if guard.is_none() {
+            *guard = Some(self.open()?);
+        }
+        let conn = guard.as_ref().expect("opened above");
+        let query_vector = self.embed(&[text.to_string()])?.remove(0);
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT rowid, round(distance, 4) FROM note_vec_index
+                  WHERE embedding MATCH ?1
+                  ORDER BY distance LIMIT {KNN_LIMIT}"
+            ))
+            .map_err(|e| embed_err(e.to_string()))?;
+        let rows = stmt
+            .query_map([as_blob(&query_vector)], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map_err(|e| embed_err(e.to_string()))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| embed_err(e.to_string()))
+    }
+
     /// KNN-10 over the memory, as JSON rows (what `bough tags similar` prints).
     /// Failure is an explanatory `Err`, not silence.
     pub fn similar(&self, text: &str) -> Result<Vec<serde_json::Value>, BoughError> {
@@ -389,9 +431,24 @@ fn ensure_meta_and_index(conn: &Connection, model_id: &str, dims: i64) -> rusqli
     // the model and the text length gives a number no constant can be chosen
     // against. `1 - cos` also lands the usable range in [0, 1], which is what
     // `MAX_SEMANTIC_DISTANCE` is expressed in.
+    if rebuilt {
+        conn.execute("DROP TABLE IF EXISTS note_vec_index", [])?;
+    }
     conn.execute(
         &format!(
             "CREATE VIRTUAL TABLE IF NOT EXISTS vec_index
+               USING vec0(embedding float[{dims}] distance_metric=cosine)"
+        ),
+        [],
+    )?;
+    // The SECOND index, over note sections. A separate table rather than a
+    // `kind` column because vec0 has no cheap way to filter a KNN by one: the
+    // limit is applied before any WHERE, so a mixed index would return ten
+    // commands to a query that wanted sections. Same file, same model, same
+    // rebuild rule — both are fully derived and deletable together.
+    conn.execute(
+        &format!(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS note_vec_index
                USING vec0(embedding float[{dims}] distance_metric=cosine)"
         ),
         [],
@@ -443,6 +500,18 @@ pub fn embed_doc(tags: &str, cmd: &str, output_head: &str) -> String {
 }
 
 /// A vector as vec0 wants it: little-endian f32, one after another.
+/// What one SECTION is embedded AS.
+///
+/// Heading plus body, and the note's path as words: the path carries the
+/// subject (`nased`, `kubectl`) which the prose often assumes rather than
+/// states, and a section that never names its own topic is exactly the one a
+/// semantic query should still find.
+pub fn embed_section_doc(path: &str, heading: &str, body: &str) -> String {
+    let path_words: String = path.replace(':', " ").replace(['.', '-', '_'], " ");
+    let body: String = body.chars().take(2000).collect();
+    format!("{path_words} {heading} {body}")
+}
+
 fn as_blob(vector: &[f32]) -> Vec<u8> {
     vector.iter().flat_map(|f| f.to_le_bytes()).collect()
 }
@@ -455,6 +524,65 @@ fn as_blob(vector: &[f32]) -> Vec<u8> {
 /// SQL as it was when it was `tags || cmd`: [`embed_doc`] splits punctuation
 /// into words, which SQLite would need twenty nested `replace()` calls to do
 /// and which the query side has to do identically anyway.
+/// The note half of the drain.
+///
+/// Re-embeds a section whose body CHANGED, which the command drain never has
+/// to do: a command row is immutable, a section is edited. The stored
+/// `updated_at` is the version marker, so an edit re-enters the pending set
+/// and the stale vector is replaced rather than left to answer for text that
+/// no longer exists.
+fn drain_notes_once(
+    conn: &Connection,
+    embed: &dyn Fn(&[String]) -> Result<Vec<Vec<f32>>, BoughError>,
+) -> rusqlite::Result<u64> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS note_vec_meta (
+           section_id INTEGER PRIMARY KEY, updated_at INTEGER NOT NULL)",
+        [],
+    )?;
+    let pending: Vec<(i64, i64, String)> = {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT s.id, s.updated_at, n.path, s.heading, s.body
+               FROM src.note_sections s
+               JOIN src.notes n ON n.id = s.note_id
+              WHERE s.id NOT IN (SELECT section_id FROM note_vec_meta)
+                 OR s.updated_at > (SELECT updated_at FROM note_vec_meta
+                                     WHERE section_id = s.id)
+              ORDER BY s.id
+              LIMIT {DRAIN_BATCH}"
+        ))?;
+        let rows = stmt.query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let updated_at: i64 = row.get(1)?;
+            let path: String = row.get(2)?;
+            let heading: String = row.get(3)?;
+            let body: String = row.get(4)?;
+            Ok((id, updated_at, embed_section_doc(&path, &heading, &body)))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    if pending.is_empty() {
+        return Ok(0);
+    }
+    let docs: Vec<String> = pending.iter().map(|(_, _, d)| d.clone()).collect();
+    let vectors = embed(&docs).map_err(|e| {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(e.to_string())))
+    })?;
+    for ((id, updated_at, _), vector) in pending.iter().zip(vectors) {
+        conn.execute("DELETE FROM note_vec_index WHERE rowid = ?1", [id])?;
+        conn.execute(
+            "INSERT INTO note_vec_index (rowid, embedding) VALUES (?1, ?2)",
+            rusqlite::params![id, as_blob(&vector)],
+        )?;
+        conn.execute(
+            "INSERT INTO note_vec_meta (section_id, updated_at) VALUES (?1, ?2)
+               ON CONFLICT(section_id) DO UPDATE SET updated_at = excluded.updated_at",
+            rusqlite::params![id, updated_at],
+        )?;
+    }
+    Ok(pending.len() as u64)
+}
+
 fn drain_once(
     conn: &Connection,
     embed: &dyn Fn(&[String]) -> Result<Vec<Vec<f32>>, BoughError>,
@@ -886,5 +1014,80 @@ mod tests {
         }
         layer.close();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_section_embeds_its_path_as_words() {
+        // The path carries the subject the prose often assumes rather than
+        // states, and a section that never names its own topic is exactly the
+        // one a semantic query should still find.
+        let doc = embed_section_doc(
+            "kubectl:rollout:nased",
+            "Executor ordering",
+            "DAG removal must land first.",
+        );
+        assert!(doc.contains("kubectl rollout nased"), "{doc}");
+        assert!(doc.contains("Executor ordering"));
+        assert!(doc.contains("DAG removal"));
+        assert!(!doc.contains(':'), "the path is words, not a key: {doc}");
+    }
+
+    #[test]
+    fn a_reference_in_a_path_is_split_too() {
+        let doc = embed_section_doc("linear.nme-1673", "Status", "blocked");
+        assert!(doc.contains("linear nme 1673"), "{doc}");
+    }
+
+    #[test]
+    fn a_long_body_is_capped() {
+        let doc = embed_section_doc("p", "h", &"x".repeat(5000));
+        assert!(doc.len() < 2100, "{}", doc.len());
+    }
+
+    #[test]
+    fn the_note_drain_re_embeds_an_edited_section() {
+        // The command drain never has to: a command row is immutable, a
+        // section is edited. Without the version marker a stale vector would
+        // keep answering for text that no longer exists.
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH ':memory:' AS src;
+             CREATE TABLE src.notes (id INTEGER PRIMARY KEY, path TEXT);
+             CREATE TABLE src.note_sections (id INTEGER PRIMARY KEY, note_id INTEGER,
+               heading TEXT, body TEXT, updated_at INTEGER);
+             INSERT INTO src.notes VALUES (1, 'nased');
+             INSERT INTO src.note_sections VALUES (1, 1, 'h', 'first body', 10);",
+        )
+        .unwrap();
+        c.execute(
+            "CREATE VIRTUAL TABLE note_vec_index USING vec0(embedding float[4])",
+            [],
+        )
+        .unwrap();
+        let seen = std::sync::Mutex::new(Vec::<String>::new());
+        let embed = |texts: &[String]| -> Result<Vec<Vec<f32>>, BoughError> {
+            seen.lock().unwrap().extend(texts.iter().cloned());
+            Ok(texts.iter().map(|_| vec![0.1f32, 0.2, 0.3, 0.4]).collect())
+        };
+
+        assert_eq!(drain_notes_once(&c, &embed).unwrap(), 1);
+        assert_eq!(drain_notes_once(&c, &embed).unwrap(), 0, "already indexed");
+
+        c.execute(
+            "UPDATE src.note_sections SET body = 'second body', updated_at = 20 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            drain_notes_once(&c, &embed).unwrap(),
+            1,
+            "an edit re-enters"
+        );
+        let docs = seen.lock().unwrap().clone();
+        assert!(docs.last().unwrap().contains("second body"), "{docs:?}");
+        let n: i64 = c
+            .query_row("SELECT count(*) FROM note_vec_index", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "replaced, not duplicated");
     }
 }
