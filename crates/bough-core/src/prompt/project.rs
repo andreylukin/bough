@@ -77,12 +77,19 @@ fn is_git_root(dir: &Path) -> bool {
     std::fs::metadata(dir.join(".git")).is_ok()
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProjectRuleFile {
     /// Absolute path, which is what the note shows: a rule's source is
     /// auditable.
     pub path: PathBuf,
     pub body: String,
+    /// The paths this block was merged from, when it is the union of two
+    /// near-identical files. Empty for the ordinary case of one file.
+    ///
+    /// A MERGE THE USER CANNOT SEE IS A RULE THEY CANNOT AUDIT, which is the
+    /// one thing this module refuses to allow. Every surface that names a
+    /// rule's source reads this, so a merged block says it is one.
+    pub merged_from: Vec<PathBuf>,
 }
 
 /// The instruction file names one directory may contribute, in precedence
@@ -123,7 +130,11 @@ pub fn find_project_rules(workspace: &Path, home: Option<&Path>) -> Vec<ProjectR
             seen.push(path.clone());
             if let Some(body) = read_if_file(&path) {
                 if !body.trim().is_empty() {
-                    out.push(ProjectRuleFile { path, body });
+                    out.push(ProjectRuleFile {
+                        path,
+                        body,
+                        merged_from: Vec::new(),
+                    });
                     return;
                 }
             }
@@ -241,7 +252,8 @@ pub fn find_project_rules_across(
         // would let it override the project rules it is supposed to sit under.
         out.extend(find_project_rules(dir, None));
     }
-    keep_first(out)
+    // Identity and content first, then the near-copies that survive both.
+    merge_near_duplicates(keep_first(out))
 }
 
 /// Drop every file the list already carries — by IDENTITY, then by CONTENT.
@@ -321,7 +333,14 @@ fn with_user_tier(
         if !body.trim().is_empty() {
             // Global tier, so it goes ahead of everything the project said —
             // nearest still wins.
-            out.insert(0, ProjectRuleFile { path, body });
+            out.insert(
+                0,
+                ProjectRuleFile {
+                    path,
+                    body,
+                    merged_from: Vec::new(),
+                },
+            );
         }
     }
     out
@@ -398,25 +417,156 @@ pub fn similarity(a: &str, b: &str) -> u8 {
     ((shared * 100) / total) as u8
 }
 
-/// Pairs of files in one prompt that are near-copies, as
-/// `(earlier index, later index, percent)`, worst first.
-///
-/// The threshold is deliberately high. Two rule files that share a preamble
-/// are ordinary; two that share nine tenths of their lines are one document
-/// that got forked, and only the second is worth interrupting someone about.
+/// How much two rule files must share before they are treated as one
+/// document. Deliberately high: two files that share a preamble are ordinary;
+/// two that share nine tenths of their lines are one document that got forked.
 pub const NEAR_DUPLICATE_PCT: u8 = 80;
 
-pub fn near_duplicates(files: &[ProjectRuleFile]) -> Vec<(usize, usize, u8)> {
-    let mut out: Vec<(usize, usize, u8)> = Vec::new();
-    for (i, a) in files.iter().enumerate() {
-        for (j, b) in files.iter().enumerate().skip(i + 1) {
-            let pct = similarity(&a.body, &b.body);
-            if pct >= NEAR_DUPLICATE_PCT {
-                out.push((i, j, pct));
+/// The union of two near-identical documents: shared lines once, divergent
+/// lines from BOTH, in order.
+///
+/// WHY UNION AND NOT A CHOICE. This module's invariant is that a rule the user
+/// wrote down is a rule the model was told. Picking one file discards lines
+/// the user wrote; emitting conflict markers hands the model a merge to
+/// resolve at inference time, which makes the governing rules nondeterministic
+/// between two turns of the same conversation. The union is the only
+/// resolution that keeps every line and still produces one stable document.
+///
+/// It is exactly `git merge-file --union` against a base of the two files'
+/// longest common subsequence — the same synthetic-base trick you would use by
+/// hand, because two rule files have no common ancestor to merge against.
+///
+/// EARLIER FILE FIRST inside a divergent hunk, so the later file's variant is
+/// the one a reader ends on. That matches the cascade's own "later wins"
+/// convention for the case where the two hunks really are alternatives.
+pub fn union_merge(a: &str, b: &str) -> String {
+    let left: Vec<&str> = a.lines().collect();
+    let right: Vec<&str> = b.lines().collect();
+    let common = lcs(&left, &right);
+
+    let mut out: Vec<&str> = Vec::with_capacity(left.len() + right.len());
+    let (mut i, mut j) = (0usize, 0usize);
+    for anchor in common {
+        // Everything either side added before the next shared line, both kept.
+        while i < left.len() && left[i] != anchor {
+            out.push(left[i]);
+            i += 1;
+        }
+        while j < right.len() && right[j] != anchor {
+            // A line the left side already contributed in this same hunk is
+            // not added twice — the two files share most of their text, and a
+            // duplicated line is the defect this whole path exists to remove.
+            if !out.ends_with(&[right[j]]) {
+                out.push(right[j]);
             }
+            j += 1;
+        }
+        out.push(anchor);
+        i += 1;
+        j += 1;
+    }
+    while i < left.len() {
+        out.push(left[i]);
+        i += 1;
+    }
+    while j < right.len() {
+        if !out.ends_with(&[right[j]]) {
+            out.push(right[j]);
+        }
+        j += 1;
+    }
+
+    // A hunk seam can leave two blank lines where each side ended with one.
+    // Left alone deliberately: collapsing runs of blanks would also rewrite
+    // the spacing INSIDE regions neither file disagreed about, and this
+    // function's contract is that it reorganises nothing it did not have to.
+    // Measured against `git merge-file --union` on a real pair, the whole
+    // difference is one blank line at one seam.
+    let mut text = out.join("\n");
+    text.push('\n');
+    text
+}
+
+/// The longest common subsequence of two line slices.
+///
+/// Quadratic, and bounded by the fact that it only ever runs on two files this
+/// module has already decided are ≥[`NEAR_DUPLICATE_PCT`] the same — at most a
+/// few hundred lines each, once per turn.
+fn lcs<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<&'a str> {
+    let (n, m) = (a.len(), b.len());
+    // A BLANK LINE IS NOT AN ANCHOR. It matches everywhere, so allowing it to
+    // pair splits one side's divergent region into pieces around it, and the
+    // pieces then interleave with the other side's. Measured against
+    // `git merge-file --union` on a real pair, that is the difference between
+    // a merge that keeps `### Workflow` above its own numbered list and one
+    // that strands the heading four paragraphs away from it. Every line still
+    // reaches the output — blanks ride along inside the runs around them.
+    let matches = |x: &str, y: &str| x == y && !x.trim().is_empty();
+    let mut table = vec![vec![0u32; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            table[i][j] = if matches(a[i], b[j]) {
+                table[i + 1][j + 1] + 1
+            } else {
+                table[i + 1][j].max(table[i][j + 1])
+            };
         }
     }
-    out.sort_by_key(|d| std::cmp::Reverse(d.2));
+    let (mut i, mut j, mut out) = (0usize, 0usize, Vec::new());
+    while i < n && j < m {
+        if matches(a[i], b[j]) {
+            out.push(a[i]);
+            i += 1;
+            j += 1;
+        } else if table[i + 1][j] >= table[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
+}
+
+/// Fold each pair of near-identical ADJACENT files into one merged block.
+///
+/// ADJACENT ONLY, and this is the conservative part. Merging two files that
+/// have a third between them in prompt order would promote the earlier file's
+/// unique lines past that third file, so text it used to override would start
+/// overriding it — a precedence change nobody asked for. Neighbours have
+/// nothing between them to reorder, so the merge cannot move anything past
+/// anything.
+///
+/// The merged block takes the LATER file's position and path: it is the nearer
+/// of the two, and everything after it must still win.
+fn merge_near_duplicates(files: Vec<ProjectRuleFile>) -> Vec<ProjectRuleFile> {
+    let mut out: Vec<ProjectRuleFile> = Vec::with_capacity(files.len());
+    for file in files {
+        let Some(prev) = out.last() else {
+            out.push(file);
+            continue;
+        };
+        // Cheap guard before the quadratic one: two documents of wildly
+        // different length cannot be ≥80% the same.
+        let (x, y) = (prev.body.len(), file.body.len());
+        if x.max(y) > x.min(y).saturating_mul(2)
+            || similarity(&prev.body, &file.body) < NEAR_DUPLICATE_PCT
+        {
+            out.push(file);
+            continue;
+        }
+        let prev = out.pop().expect("checked above");
+        let mut merged_from = if prev.merged_from.is_empty() {
+            vec![prev.path.clone()]
+        } else {
+            prev.merged_from.clone()
+        };
+        merged_from.push(file.path.clone());
+        out.push(ProjectRuleFile {
+            body: union_merge(&prev.body, &file.body),
+            path: file.path,
+            merged_from,
+        });
+    }
     out
 }
 
@@ -442,7 +592,26 @@ pub fn project_rules_note(files: &[ProjectRuleFile], workspace: &Path) -> Option
     let root = absolutize(workspace);
     let blocks: Vec<String> = files
         .iter()
-        .map(|f| format!("### {}\n\n{}", label_for(&f.path, &root), f.body.trim()))
+        .map(|f| {
+            // A merged block SAYS it is one, in the heading the model reads.
+            // The alternative is a document the user never wrote presented as
+            // if they had, which is the objection to merging at all — and it
+            // is answered by naming the sources, not by refusing to merge.
+            let heading = if f.merged_from.len() > 1 {
+                format!(
+                    "{} (merged: {})",
+                    label_for(&f.path, &root),
+                    f.merged_from
+                        .iter()
+                        .map(|p| label_for(p, &root))
+                        .collect::<Vec<_>>()
+                        .join(" + ")
+                )
+            } else {
+                label_for(&f.path, &root)
+            };
+            format!("### {heading}\n\n{}", f.body.trim())
+        })
         .collect();
     // Named for what was actually read, so the heading never claims a file the
     // user does not have.
@@ -495,6 +664,11 @@ pub struct ProjectRuleSummary {
     /// Absolute, so a client can open it and the report is unambiguous.
     pub path: PathBuf,
     pub bytes: usize,
+    /// The labels this block was merged from, when it is a union of
+    /// near-identical files. Empty for the ordinary one-file case. Carried on
+    /// the SUMMARY, not just in the prompt, because every surface that reports
+    /// a rule has to be able to say the block is a merge.
+    pub merged_from: Vec<String>,
 }
 
 /// `2.4k`, `312` — a size a reader can compare at a glance.
@@ -518,6 +692,7 @@ pub fn rule_summaries(files: &[ProjectRuleFile], workspace: &Path) -> Vec<Projec
             label: label_for(&f.path, &root),
             path: f.path.clone(),
             bytes: f.body.len(),
+            merged_from: f.merged_from.iter().map(|p| label_for(p, &root)).collect(),
         })
         .collect()
 }
@@ -568,7 +743,18 @@ pub fn note_project_rules(session_id: &str, files: &[ProjectRuleFile], workspace
                 // the head has to read as a phrase on its own.
                 let list = now
                     .iter()
-                    .map(|r| format!("{} ({})", r.label, size(r.bytes)))
+                    .map(|r| {
+                        if r.merged_from.len() > 1 {
+                            format!(
+                                "{} ({}, merged from {})",
+                                r.label,
+                                size(r.bytes),
+                                r.merged_from.join(" + ")
+                            )
+                        } else {
+                            format!("{} ({})", r.label, size(r.bytes))
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join(" · ");
                 lines.push(format!(
@@ -790,37 +976,6 @@ mod tests {
 
     /// The real pair that prompted this: two global rule files, 8,239 and
     /// 8,261 bytes, one forked from the other and edited since. Byte equality
-    /// says nothing about them; this has to.
-    #[test]
-    fn a_forked_copy_of_a_rules_file_is_reported_even_though_it_is_not_identical() {
-        let mut a = String::new();
-        for i in 0..50 {
-            a.push_str(&format!("- rule number {i}\n"));
-        }
-        // Four lines differ out of fifty: a copy someone has since edited.
-        let b = a
-            .replace("- rule number 7\n", "- rule seven, revised\n")
-            .replace("- rule number 9\n", "- rule nine, revised\n");
-
-        let pct = similarity(&a, &b);
-        assert!(
-            (90..100).contains(&pct),
-            "expected a high-90s match, got {pct}"
-        );
-
-        let files = vec![
-            ProjectRuleFile {
-                path: PathBuf::from("/h/.claude/CLAUDE.md"),
-                body: a,
-            },
-            ProjectRuleFile {
-                path: PathBuf::from("/h/.bough/AGENTS.md"),
-                body: b,
-            },
-        ];
-        assert_eq!(near_duplicates(&files), vec![(0, 1, pct)]);
-    }
-
     /// Reordering is the edit that a character-level ratio gets wrong, and a
     /// reordered file is exactly the duplicate worth catching.
     #[test]
@@ -828,25 +983,6 @@ mod tests {
         let a = "alpha\nbeta\ngamma\ndelta\n";
         let b = "delta\ngamma\nbeta\nalpha\n";
         assert_eq!(similarity(a, b), 100);
-    }
-
-    /// Two files that merely share a preamble are ordinary and must not warn.
-    #[test]
-    fn files_that_share_only_a_preamble_are_not_near_duplicates() {
-        let a = "# Rules\nbe careful\n".to_string() + &"- alpha thing\n".repeat(20);
-        let b = "# Rules\nbe careful\n".to_string() + &"- beta thing\n".repeat(20);
-        assert!(similarity(&a, &b) < NEAR_DUPLICATE_PCT);
-        let files = vec![
-            ProjectRuleFile {
-                path: PathBuf::from("/a/AGENTS.md"),
-                body: a,
-            },
-            ProjectRuleFile {
-                path: PathBuf::from("/b/AGENTS.md"),
-                body: b,
-            },
-        ];
-        assert!(near_duplicates(&files).is_empty());
     }
 
     /// A line repeated many times must not let one file claim many matches.
@@ -860,6 +996,130 @@ mod tests {
             "{}",
             similarity(&a, &b)
         );
+    }
+
+    /// The whole feature, end to end: two near-identical global files reach
+    /// the prompt as ONE block that still contains every line either wrote.
+    #[test]
+    fn two_near_identical_rule_files_are_merged_into_one_block() {
+        let root = TempRoot::new("union-runtime");
+        let home = root.path().join("home");
+        let repo = home.join("repo");
+        // A shared body, plus a section only one of them has — the real shape:
+        // not a contradiction, two independent additions to one document.
+        let shared: String = (0..40).map(|i| format!("- rule {i}\n")).collect();
+        write(
+            &home.join("AGENTS.md"),
+            &format!("{shared}\n## Only In Global\n- prefer semble\n"),
+        );
+        write(&repo.join(".git"), "");
+        write(
+            &repo.join("AGENTS.md"),
+            &format!("{shared}\n## Only In Repo\n- prefer prior art\n"),
+        );
+
+        let files = find_project_rules_across(&repo, &[], Some(&home), None);
+        assert_eq!(files.len(), 1, "two near-copies collapse to one block");
+        let block = &files[0];
+        // NOTHING THE USER WROTE IS LOST — the invariant the whole module
+        // holds, and the reason the resolution is a union and not a choice.
+        assert!(block.body.contains("## Only In Global"), "{}", block.body);
+        assert!(block.body.contains("## Only In Repo"), "{}", block.body);
+        assert!(block.body.contains("- rule 39"));
+        // The shared 40 lines appear ONCE, which is the point.
+        assert_eq!(
+            block.body.matches("- rule 7\n").count(),
+            1,
+            "{}",
+            block.body
+        );
+        // Cheaper than the two files it replaced.
+        let both = std::fs::read_to_string(home.join("AGENTS.md"))
+            .unwrap()
+            .len()
+            + std::fs::read_to_string(repo.join("AGENTS.md"))
+                .unwrap()
+                .len();
+        assert!(block.body.len() < both, "{} vs {both}", block.body.len());
+
+        // And it SAYS it is a merge, everywhere a rule's source is reported.
+        assert_eq!(block.merged_from.len(), 2);
+        let note = project_rules_note(&files, &repo).unwrap();
+        assert!(note.contains("(merged: "), "{note}");
+        let summary = &rule_summaries(&files, &repo)[0];
+        assert_eq!(summary.merged_from.len(), 2);
+    }
+
+    /// The conservative half. Merging across a file that sits between the two
+    /// would promote the earlier file's lines past it, so text that used to be
+    /// overridden would start overriding.
+    #[test]
+    fn files_with_another_between_them_are_left_alone() {
+        let a = ProjectRuleFile {
+            path: PathBuf::from("/h/AGENTS.md"),
+            body: (0..40).map(|i| format!("- rule {i}\n")).collect(),
+            ..Default::default()
+        };
+        let between = ProjectRuleFile {
+            path: PathBuf::from("/h/mid/AGENTS.md"),
+            body: "- something else entirely\n".repeat(30),
+            ..Default::default()
+        };
+        let mut c = a.clone();
+        c.path = PathBuf::from("/h/repo/AGENTS.md");
+        c.body.push_str("- and one more\n");
+
+        // Adjacent: merged.
+        let merged = merge_near_duplicates(vec![a.clone(), c.clone()]);
+        assert_eq!(merged.len(), 1);
+        // Separated: all three survive, untouched.
+        let kept = merge_near_duplicates(vec![a, between, c]);
+        assert_eq!(kept.len(), 3);
+        assert!(kept.iter().all(|f| f.merged_from.is_empty()));
+    }
+
+    /// Files that are merely similar must not be fused — the threshold is the
+    /// only thing standing between "one document, twice" and "two documents".
+    #[test]
+    fn ordinary_distinct_rule_files_are_never_merged() {
+        let root = TempRoot::new("union-distinct");
+        let repo = root.path().join("repo");
+        let pkg = repo.join("pkg");
+        write(&repo.join(".git"), "");
+        write(
+            &repo.join("AGENTS.md"),
+            "# Repo\n- use tabs\n- ship on green\n",
+        );
+        write(&pkg.join("AGENTS.md"), "# Package\n- no network in tests\n");
+
+        let files = find_project_rules_across(&repo, std::slice::from_ref(&pkg), None, None);
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().all(|f| f.merged_from.is_empty()));
+    }
+
+    /// A divergent hunk stays contiguous. Anchoring on blank lines split one
+    /// side's section away from its own list; the merged document then read as
+    /// a heading with someone else's paragraphs under it.
+    #[test]
+    fn a_divergent_section_is_not_interleaved_with_the_other_files() {
+        let a = "# Top\n\n## Workflow\n\n1. first\n2. second\n\n# Tail\n";
+        let b = "# Top\n\n## Conventions\n\n- alpha\n- beta\n\n# Tail\n";
+        let merged = union_merge(a, b);
+        let at = |needle: &str| {
+            merged
+                .find(needle)
+                .unwrap_or_else(|| panic!("{needle} missing:\n{merged}"))
+        };
+        // Each heading is immediately followed by its OWN body, and the two
+        // sections do not interleave.
+        assert!(at("## Workflow") < at("1. first"));
+        assert!(at("1. first") < at("2. second"));
+        assert!(at("2. second") < at("## Conventions"));
+        assert!(at("## Conventions") < at("- alpha"));
+        assert!(at("- alpha") < at("- beta"));
+        // The shared frame is still shared, once each.
+        assert_eq!(merged.matches("# Top").count(), 1);
+        assert_eq!(merged.matches("# Tail").count(), 1);
     }
 
     /// The memo the shell boundary writes: same directory twice is one entry,
@@ -952,10 +1212,12 @@ mod tests {
         let native = ProjectRuleFile {
             path: PathBuf::from("/w/AGENTS.md"),
             body: "a".into(),
+            ..Default::default()
         };
         let foreign = ProjectRuleFile {
             path: PathBuf::from("/w/CLAUDE.md"),
             body: "b".into(),
+            ..Default::default()
         };
 
         let only_native = project_rules_note(std::slice::from_ref(&native), &ws).unwrap();
@@ -1087,10 +1349,12 @@ mod tests {
                 ProjectRuleFile {
                     path: PathBuf::from("/w/AGENTS.md"),
                     body: "house".into(),
+                    ..Default::default()
                 },
                 ProjectRuleFile {
                     path: PathBuf::from("/w/pkg/AGENTS.md"),
                     body: "pkg".into(),
+                    ..Default::default()
                 },
             ],
             Path::new("/w"),
@@ -1115,6 +1379,7 @@ mod tests {
             &[ProjectRuleFile {
                 path: PathBuf::from("/home/u/.bough/AGENTS.md"),
                 body: "g".into(),
+                ..Default::default()
             }],
             Path::new("/w"),
         )

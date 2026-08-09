@@ -143,7 +143,7 @@ pub fn render(props: &ContextProps, area: Rect, buf: &mut Buffer) {
     // something anybody can act on, and the rules note is almost always the
     // largest line item above.
     for rule in &view.project_rules {
-        rows.push(rule_row(rule, &view.near_duplicates, dim));
+        rows.push(rule_row(rule, dim));
     }
     if !view.worked_in.is_empty() {
         rows.push(Line::from(Span::styled(
@@ -154,13 +154,22 @@ pub fn render(props: &ContextProps, area: Rect, buf: &mut Buffer) {
             dim,
         )));
     }
-    for dupe in &view.near_duplicates {
+    // A merged block names its sources on screen. This is the whole answer to
+    // "the model is following rules I never wrote": it did not — it is
+    // following every line of both files, and here are the two files.
+    for rule in view
+        .project_rules
+        .iter()
+        .filter(|r| r.merged_from.len() > 1)
+    {
         rows.push(Line::from(Span::styled(
             format!(
-                "  ⚠ {} and {} are {}% the same document",
-                short(&dupe.a),
-                short(&dupe.b),
-                dupe.percent
+                "  ⧉ merged: {} — one copy of what they share, both of what they don't",
+                rule.merged_from
+                    .iter()
+                    .map(|p| short(p))
+                    .collect::<Vec<_>>()
+                    .join(" + ")
             ),
             Style::default().fg(warn()),
         )));
@@ -197,12 +206,8 @@ pub fn render(props: &ContextProps, area: Rect, buf: &mut Buffer) {
 }
 
 /// One rule file's row, flagged when it is half of a near-duplicate pair.
-fn rule_row(
-    rule: &ProjectRuleSummary,
-    dupes: &[crate::api::NearDuplicate],
-    dim: Style,
-) -> Line<'static> {
-    let flagged = dupes.iter().any(|d| d.a == rule.path || d.b == rule.path);
+fn rule_row(rule: &ProjectRuleSummary, dim: Style) -> Line<'static> {
+    let flagged = rule.merged_from.len() > 1;
     Line::from(vec![
         Span::styled(
             format!("    {:<32}", clip_label(&rule.label)),
@@ -262,7 +267,7 @@ fn wrap(text: &str, cols: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{NearDuplicate, PromptSection, PromptShape};
+    use crate::api::{PromptSection, PromptShape};
 
     fn view() -> PromptView {
         PromptView {
@@ -292,22 +297,11 @@ mod tests {
                 stable_bytes: 12000,
                 volatile_bytes: 25661,
             }),
-            project_rules: vec![
-                ProjectRuleSummary {
-                    label: ".claude/CLAUDE.md".into(),
-                    path: "/h/.claude/CLAUDE.md".into(),
-                    bytes: 8239,
-                },
-                ProjectRuleSummary {
-                    label: ".bough/AGENTS.md".into(),
-                    path: "/h/.bough/AGENTS.md".into(),
-                    bytes: 8261,
-                },
-            ],
-            near_duplicates: vec![NearDuplicate {
-                a: "/h/.claude/CLAUDE.md".into(),
-                b: "/h/.bough/AGENTS.md".into(),
-                percent: 92,
+            project_rules: vec![ProjectRuleSummary {
+                label: ".bough/AGENTS.md".into(),
+                path: "/h/.bough/AGENTS.md".into(),
+                bytes: 9024,
+                merged_from: vec!["/h/.claude/CLAUDE.md".into(), "/h/.bough/AGENTS.md".into()],
             }],
             worked_in: vec!["/h/repos/thing".into()],
             context_tokens: Some(77344),
@@ -335,7 +329,7 @@ mod tests {
     /// The whole point: the sizes are visible, and the near-duplicate the user
     /// could not have found by hand is named on screen.
     #[test]
-    fn the_tab_names_each_cost_and_flags_a_forked_rules_file() {
+    fn the_tab_names_each_cost_and_shows_what_was_merged() {
         let v = view();
         let text = painted(&ContextProps {
             view: Some(&v),
@@ -348,9 +342,11 @@ mod tests {
         // Named line items with sizes, not one opaque total.
         assert!(text.contains("skills available"), "{text}");
         assert!(text.contains("2.2k tok"), "{text}");
-        // The two rules files, and the warning that they are one document.
+        // The merged block names both sources on screen — the audit trail for
+        // a document the user did not write by hand.
+        assert!(text.contains(".bough/AGENTS.md"), "{text}");
+        assert!(text.contains("⧉ merged:"), "{text}");
         assert!(text.contains(".claude/CLAUDE.md"), "{text}");
-        assert!(text.contains("92% the same document"), "{text}");
         // The shared tier is totalled, not enumerated one row per section.
         assert!(text.contains("SHARED"), "{text}");
         assert!(text.contains("identity · shell"), "{text}");

@@ -6630,6 +6630,7 @@ mod tests {
             label: path.into(),
             path: path.into(),
             bytes,
+            merged_from: Vec::new(),
         }
     }
 
@@ -6831,6 +6832,7 @@ mod tests {
                 label: "AGENTS.md".into(),
                 path: "/w/AGENTS.md".into(),
                 bytes: 120,
+                merged_from: Vec::new(),
             }],
         }))
     }

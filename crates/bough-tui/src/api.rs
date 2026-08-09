@@ -201,6 +201,10 @@ pub struct ProjectRuleSummary {
     pub path: String,
     /// Characters that went into the prompt — what the change note compares.
     pub bytes: i64,
+    /// The files this block was merged from, when two near-identical rule
+    /// files were folded into one. Empty for the ordinary single-file case.
+    #[serde(default)]
+    pub merged_from: Vec<String>,
 }
 
 /// One prompt section as the context tab reads it.
@@ -228,15 +232,6 @@ pub struct PromptShape {
     pub volatile_bytes: usize,
 }
 
-/// Two rule files that are near-copies of each other.
-#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct NearDuplicate {
-    pub a: String,
-    pub b: String,
-    pub percent: u8,
-}
-
 /// `GET /sessions/:id/prompt`.
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -244,8 +239,6 @@ pub struct PromptView {
     pub shape: Option<PromptShape>,
     #[serde(default)]
     pub project_rules: Vec<ProjectRuleSummary>,
-    #[serde(default)]
-    pub near_duplicates: Vec<NearDuplicate>,
     #[serde(default)]
     pub worked_in: Vec<String>,
     #[serde(default)]

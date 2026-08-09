@@ -24,7 +24,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use bough_core::errors::BoughError;
-use bough_core::prompt::project::{near_duplicates, rule_summaries, session_rule_files};
+use bough_core::prompt::project::{rule_summaries, session_rule_files};
 use bough_core::schema::events::{EventInput, EventType};
 use bough_core::schema::parts::{
     is_collapsed_kind, Message, Part, Role, Session, SessionKind, TurnStatus,
@@ -642,35 +642,26 @@ pub fn get_session_prompt() -> Handler {
             .or(ctx.model.clone())
             .unwrap_or_else(|| DEFAULT_MODEL.to_string());
 
-        let (rules, dupes): (Vec<Value>, Vec<Value>) = match session.workspace.as_deref() {
+        let rules: Vec<Value> = match session.workspace.as_deref() {
             Some(ws) => {
                 let files = session_rule_files(Path::new(ws), &id);
-                let rows = rule_summaries(&files, Path::new(ws))
+                // `mergedFrom` rides on the ROW rather than in a list beside
+                // it: a merged block is one rule with several sources, and two
+                // parallel arrays to be reconciled by every client is how the
+                // two get to disagree.
+                rule_summaries(&files, Path::new(ws))
                     .into_iter()
                     .map(|s| {
                         json!({
                             "label": s.label,
                             "path": s.path.to_string_lossy(),
                             "bytes": s.bytes,
+                            "mergedFrom": s.merged_from,
                         })
                     })
-                    .collect();
-                // Reported, never acted on: two files that are not identical
-                // are not the harness's to merge, and the pair is a thing the
-                // user fixes once in an editor.
-                let dupes = near_duplicates(&files)
-                    .into_iter()
-                    .map(|(a, b, pct)| {
-                        json!({
-                            "a": files[a].path.to_string_lossy(),
-                            "b": files[b].path.to_string_lossy(),
-                            "percent": pct,
-                        })
-                    })
-                    .collect();
-                (rows, dupes)
+                    .collect()
             }
-            None => (Vec::new(), Vec::new()),
+            None => Vec::new(),
         };
 
         // The directories below the workspace whose rules this session picked
@@ -685,7 +676,6 @@ pub fn get_session_prompt() -> Handler {
             &json!({
                 "shape": shape,
                 "projectRules": rules,
-                "nearDuplicates": dupes,
                 "workedIn": worked_in,
                 "contextTokens": session.context_tokens,
                 "cachedTokens": session.cached_tokens,
