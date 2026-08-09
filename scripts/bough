@@ -710,7 +710,7 @@ cmd_purge() {
 }
 
 usage() {
-  echo "usage: bough [tui|setup|start|kill|restart|update|status|logs|run|exec|acp|hooks|mcp|sync-mcp|tags|patterns|purge]"
+  echo "usage: bough [tui|setup|start|kill|restart|update|status|logs|run|exec|acp|hooks|mcp|sync-mcp|tags|notes|patterns|purge]"
   echo "  (no args) open the terminal UI (auto-starts the server)"
   echo "  setup    fresh clone → running: install deps, configure env, start"
   echo "  start    install + start the background service (auto-starts at login)"
@@ -729,6 +729,8 @@ usage() {
   echo "           bough mcp [list|doctor|test|auth|grant|revoke|add|remove]"
   echo "  tags     what the command memory knows, and what it primes the model with:"
   echo "           bough tags [show TAG|stats] [--repo R|--all] [--days N] [--json]"
+  echo "  notes    the prose beside the commands, keyed on the same tags:"
+  echo "           bough notes [show TAG|write TAG|append TAG \"...\"|stale|check]"
   echo "  patterns compress a log into its distinct statements, with statistics:"
   echo "           bough patterns [--llm|--json|--human] [--top N] [FILE]"
   echo "  purge    hard-delete sessions archived over 30 days ago (also runs on boot)"
@@ -812,6 +814,15 @@ case "${1:-}" in
     # "what did I run before this broke".
     require_rust
     exec "$RS_BIN" tags "$@"
+    ;;
+  notes)
+    shift
+    # No server, like `tags`: this reads and writes markdown under ~/.bough/notes
+    # and, for drift, opens the database read-only. Nothing here goes through a
+    # route, so it answers with bough stopped — which is the point on the day you
+    # are reading a note to find out why the server will not start.
+    require_rust
+    exec "$RS_BIN" notes "$@"
     ;;
   patterns)
     shift
