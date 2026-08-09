@@ -389,6 +389,24 @@ pub fn run_notes(argv: &[String], deps: &NotesDeps<'_>) -> i32 {
     let root = deps.root.clone().unwrap_or_else(notes_dir);
     let host = deps.host.clone().unwrap_or_else(notes::host_name);
 
+    // A note lives at a key a COMMAND could carry, or it does not live. Checked
+    // once, here, so no verb can create a page the join can never reach —
+    // `search` is exempt because its argument is prose, and `check` because its
+    // key is optional and already-written.
+    let parsed = match (parsed.verb, &parsed.key) {
+        (NotesVerb::Search, _) | (_, None) => parsed,
+        (_, Some(raw)) => match notes::canonical_key(raw) {
+            Ok(key) => NotesArgs {
+                key: Some(key),
+                ..parsed
+            },
+            Err(error) => {
+                (deps.err)(&error.to_string());
+                return 2;
+            }
+        },
+    };
+
     match parsed.verb {
         NotesVerb::Path => {
             let Some(key) = parsed.key.clone() else {
@@ -1111,6 +1129,70 @@ mod tests {
     }
 
     #[test]
+    fn a_key_no_command_could_carry_is_refused_at_every_verb() {
+        // Found by the user, after I created `wrapper-check` in a smoke test
+        // and never noticed it was unreachable: `-` separates tags, so nothing
+        // would ever record `wrapper-check` and the note could never be
+        // joined, hinted, or measured for drift.
+        for verb in [
+            vec!["write", "wrapper-check"],
+            vec!["show", "wrapper-check"],
+            vec!["append", "wrapper-check", "a line"],
+            vec!["path", "wrapper-check"],
+            vec!["rebuild", "wrapper-check"],
+        ] {
+            let mut c = Collect::new();
+            c.stdin = "prose".into();
+            assert_eq!(run_notes(&argv(&verb), &c.deps()), 2, "{verb:?}");
+            let e = c.errors();
+            assert!(e.contains("unreachable"), "{verb:?}: {e}");
+            assert!(e.contains("`wrapper_check`"), "{verb:?}: {e}");
+            assert!(!notes::path_for(&c.root, "wrapper-check").exists());
+        }
+    }
+
+    #[test]
+    fn a_key_that_only_needs_lowercasing_is_accepted_and_filed_canonically() {
+        let mut c = Collect::new();
+        c.stdin = "prose".into();
+        assert_eq!(run_notes(&argv(&["write", "NASED"]), &c.deps()), 0);
+        // Filed where a command tagged `nased` will find it, not where it was typed.
+        assert!(notes::load(&c.root, "nased").is_some());
+        assert_eq!(notes::load(&c.root, "nased").unwrap().key, "nased");
+    }
+
+    #[test]
+    fn a_reference_keeps_its_dashes() {
+        let mut c = Collect::new();
+        c.stdin = "prose".into();
+        assert_eq!(
+            run_notes(&argv(&["write", "linear.nme-1673"]), &c.deps()),
+            0
+        );
+        assert!(notes::load(&c.root, "linear.nme-1673").is_some());
+    }
+
+    #[test]
+    fn search_still_takes_prose() {
+        // Its argument is words, not a key — normalizing it would be nonsense.
+        let mut c = Collect::new();
+        c.stdin = "the executor swap".into();
+        run_notes(&argv(&["write", "nased"]), &c.deps());
+        let hit = Collect {
+            root: c.root.clone(),
+            out: Arc::new(Mutex::new(vec![])),
+            err: Arc::new(Mutex::new(vec![])),
+            stdin: String::new(),
+            session: None,
+        };
+        assert_eq!(
+            run_notes(&argv(&["search", "executor", "swap"]), &hit.deps()),
+            0
+        );
+        std::mem::forget(hit);
+    }
+
+    #[test]
     fn path_prints_where_the_file_is() {
         let c = Collect::new();
         assert_eq!(run_notes(&argv(&["path", "linear.nme-1673"]), &c.deps()), 0);
@@ -1134,8 +1216,8 @@ mod tests {
         // stdout must stay usable: `$EDITOR $(bough notes path new-thing)`
         // should open a new note, not fail. The absence goes to stderr.
         let c = Collect::new();
-        assert_eq!(run_notes(&argv(&["path", "brand-new"]), &c.deps()), 0);
-        assert!(c.printed().ends_with("wiki/tags/brand-new.md"));
+        assert_eq!(run_notes(&argv(&["path", "brand_new"]), &c.deps()), 0);
+        assert!(c.printed().ends_with("wiki/tags/brand_new.md"));
         assert!(c.errors().contains("that is where one would go"));
     }
 

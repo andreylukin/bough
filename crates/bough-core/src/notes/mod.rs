@@ -298,6 +298,42 @@ fn split_frontmatter(text: &str) -> (&str, &str) {
 // Where a note lives
 // ---------------------------------------------------------------------------
 
+/// The key a note may live at, or why it may not.
+///
+/// THE JOIN IS THE WHOLE POINT, so a note has to sit at a key a COMMAND could
+/// carry. `normalize_tags` treats a dash as a separator, so `wrapper-check` is
+/// two tags and never one: a note filed there could never be reached by
+/// `bough tags show`, could never trigger a round hint, and would report zero
+/// drift forever — a page that looks filed and is actually orphaned. This
+/// function is what makes "keyed on a tag" true rather than aspirational.
+///
+/// Normalization that LOSES nothing is applied silently (`NASED` → `nased`,
+/// the same rule the memory applies to what the model writes). Normalization
+/// that would SPLIT is refused, because picking one of the two halves would be
+/// guessing at which topic was meant.
+pub fn canonical_key(raw: &str) -> Result<String, BoughError> {
+    let normalized = crate::history::tags::record::normalize_tags(Some(raw));
+    let parts = crate::history::tags::record::split_tags(&normalized);
+    match parts.len() {
+        1 => Ok(parts.into_iter().next().unwrap()),
+        0 => Err(BoughError::bad_request(format!(
+            "`{raw}` is not a tag — a tag needs at least one letter or digit. \
+             A note is keyed on a tag so `bough tags show` can find it."
+        ))),
+        _ => {
+            let joined = parts.join("_");
+            let dotted = parts.join(".");
+            Err(BoughError::bad_request(format!(
+                "`{raw}` is {} tags, not one — a dash or a space SEPARATES tags, so no \
+                 command could ever carry `{raw}` and a note there would be unreachable. \
+                 Try `{joined}` for one word, or `{dotted}` if it names a ticket or a PR \
+                 (a dot makes it a reference, and a reference keeps its dashes).",
+                parts.len()
+            )))
+        }
+    }
+}
+
 /// The wiki subdirectory a key files under. References get their own, because
 /// they have a lifecycle (a ticket closes) and ordinary vocabulary does not.
 pub fn dir_for(key: &str) -> &'static str {
@@ -593,6 +629,51 @@ mod tests {
         assert!(!note.has_warning());
         note.body = "claim\n\n> [!WARNING] the cutover merged; check this".into();
         assert!(note.has_warning());
+    }
+
+    #[test]
+    fn a_key_must_be_something_a_command_could_carry() {
+        // The bug this closes: `bough notes write wrapper-check` created a page
+        // at a key `normalize_tags` splits in two, so nothing could ever join
+        // to it — it looked filed and was orphaned.
+        assert_eq!(canonical_key("nased").unwrap(), "nased");
+        assert_eq!(canonical_key("linear.nme-1673").unwrap(), "linear.nme-1673");
+        assert_eq!(canonical_key("pr.7134").unwrap(), "pr.7134");
+        assert_eq!(canonical_key("wrapper_check").unwrap(), "wrapper_check");
+        // Lossless normalization is silent — the same rule the memory applies
+        // to what the model writes.
+        assert_eq!(canonical_key("NASED").unwrap(), "nased");
+        assert_eq!(canonical_key("  Nased  ").unwrap(), "nased");
+
+        let split = canonical_key("wrapper-check").unwrap_err().to_string();
+        assert!(split.contains("2 tags, not one"), "{split}");
+        assert!(split.contains("unreachable"), "{split}");
+        assert!(split.contains("`wrapper_check`"), "{split}");
+        assert!(split.contains("`wrapper.check`"), "{split}");
+
+        assert!(canonical_key("two words").is_err());
+        assert!(canonical_key("...")
+            .unwrap_err()
+            .to_string()
+            .contains("letter or digit"));
+        assert!(canonical_key("").is_err());
+    }
+
+    #[test]
+    fn every_legal_key_survives_a_round_trip_through_the_tag_normalizer() {
+        // The property that makes the join automatic: whatever a note is keyed
+        // on, a command carrying that exact string records that exact tag.
+        for key in [
+            "nased",
+            "linear.nme-1673",
+            "pr.7134",
+            "wrapper_check",
+            "dag",
+        ] {
+            let canonical = canonical_key(key).unwrap();
+            let as_recorded = crate::history::tags::record::normalize_tags(Some(&canonical));
+            assert_eq!(as_recorded, canonical, "{key} would not survive recording");
+        }
     }
 
     #[test]
