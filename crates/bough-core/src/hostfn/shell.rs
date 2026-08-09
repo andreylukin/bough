@@ -72,6 +72,11 @@ pub struct ShellCtx {
     /// confident, invented mechanism ("bash() threw on the non-zero exit
     /// code"). The harness must know the code independently.
     pub exits: Option<Arc<Mutex<Vec<ExitNote>>>>,
+    /// Where a finished command's REFERENCE tags are trailed, with the exit
+    /// code, for the note memory's automatic fold. Unlike `exits` this
+    /// collects successes too — a note records what was learned, and "it
+    /// finally worked" is the commonest thing worth learning.
+    pub refs: Option<Arc<Mutex<Vec<(String, Option<i64>)>>>>,
     /// The turn's interrupt. Absent in unit tests that never interrupt.
     pub cancel: Option<CancellationToken>,
     /// The session's scratchpad, exported to every command as
@@ -449,6 +454,14 @@ pub async fn bash(
                             command: command.to_string(),
                             code,
                         });
+                    }
+                }
+                if let Some(refs) = &ctx.refs {
+                    let mut trail = refs.lock().unwrap();
+                    for tag in crate::history::tags::record::split_tags(tags) {
+                        if crate::history::tags::record::is_ref(&tag) {
+                            trail.push((tag, Some(code)));
+                        }
                     }
                 }
                 // The memory keeps what the PROGRAM saw — head, spill marker

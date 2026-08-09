@@ -24,6 +24,7 @@ mod acp;
 mod exec;
 mod hooks;
 mod mcp;
+mod notes;
 mod patterns;
 mod sync_mcp;
 mod tags;
@@ -173,7 +174,7 @@ fn version_line() -> String {
 fn usage() -> &'static str {
     // The launchd/systemd manager verbs (setup/kill/restart/update/status/
     // logs/run/purge) stay in the bash wrapper; this binary owns the rest.
-    "usage: bough [tui|start|exec|acp|hooks|mcp|sync-mcp|tags|patterns]
+    "usage: bough [tui|start|exec|acp|hooks|mcp|sync-mcp|tags|notes|patterns]
   (no args) open the terminal UI (bough [-w DIR] [-r], -h for flags)
   --version print the version and exit (-V)
   start    run the server in the foreground
@@ -184,6 +185,7 @@ fn usage() -> &'static str {
   mcp      inspect and repair the MCP registry
   sync-mcp adopt Claude Code's MCP servers
   tags     what the command memory knows
+  notes    what it MEANT — prose keyed on the same tags
   patterns compress a log into its distinct statements"
 }
 
@@ -326,6 +328,10 @@ fn main() -> ExitCode {
             let deps = sync_mcp::SyncDeps::default();
             let code = rt.block_on(sync_mcp::run_sync_mcp(&args[1..], &deps));
             ExitCode::from(code as u8)
+        }
+        Some("notes") => {
+            let deps = notes::NotesDeps::real();
+            ExitCode::from(notes::run_notes(&args[1..], &deps) as u8)
         }
         Some("tags") => {
             // FIRST, before anything opens a Database. `enable_sqlite_extensions`

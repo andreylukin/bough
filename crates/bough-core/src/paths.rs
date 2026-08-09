@@ -52,6 +52,14 @@ pub fn artifacts_dir_for(session_id: &str) -> PathBuf {
     artifacts_dir().join(session_id)
 }
 
+/// The note memory: `~/.bough/notes`, a directory of markdown that llmwiki
+/// can be pointed at. Filesystem is source of truth, like artifacts and
+/// skills, so notes are hand-editable, git-syncable between installs, and
+/// survive a database reset.
+pub fn notes_dir() -> PathBuf {
+    bough_path(&["notes"])
+}
+
 /// The hooks you wrote: `~/.bough/hooks`. Bundled and cloned hooks live
 /// elsewhere — see `hooks::sources`.
 pub fn hooks_dir() -> PathBuf {

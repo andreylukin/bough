@@ -8,7 +8,7 @@ Two audiences, in order.
 |---|---|
 | [install.md](install.md) | Requirements, install, models and keys, update, uninstall |
 | [tui.md](tui.md) | The terminal UI — the one panel, every chord, how a session runs |
-| [cli.md](cli.md) | Every subcommand: `exec`, `acp`, `mcp`, `tags`, `patterns`, `hooks` |
+| [cli.md](cli.md) | Every subcommand: `exec`, `acp`, `mcp`, `tags`, `notes`, `patterns`, `hooks` |
 | [configuration.md](configuration.md) | Environment variables and what lives under `~/.bough` |
 | [troubleshooting.md](troubleshooting.md) | When it does not start, does not answer, or answers wrong |
 
@@ -20,6 +20,7 @@ Two audiences, in order.
 | [delegation.md](delegation.md) | Subagents and workflows |
 | [extending.md](extending.md) | Skills, hooks, extensions, MCP, project rules |
 | [tags.md](tags.md) | Command memory: how tagging makes past work recallable |
+| [notes.md](notes.md) | Note memory: the prose beside the commands, and how it is kept honest |
 | [how-it-works.md](how-it-works.md) | Server, sidecars, the turn loop, the data model |
 
 **Contributing**

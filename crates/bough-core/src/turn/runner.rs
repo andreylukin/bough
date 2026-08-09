@@ -292,6 +292,7 @@ pub fn base_host_fns(ctx: &TurnCtx) -> HostFns {
             session_id: ctx.session_id.clone(),
             workspace: ctx.workspace.clone(),
             exits: Some(ctx.exits.clone()),
+            refs: Some(ctx.round_refs.clone()),
             cancel: Some(ctx.cancel.clone()),
             scratch: Some(
                 ensure_scratch_dir(&ctx.session_id)
@@ -397,6 +398,7 @@ pub fn default_program_runner(ctx: &TurnCtx, host: Option<HostFns>) -> ProgramRu
     let exits = ctx.exits.clone();
     let reads = ctx.reads.clone();
     let touched = ctx.touched.clone();
+    let round_refs = ctx.round_refs.clone();
     let hint_ctx = ctx.clone();
     // Resolved once per turn, from the same cache `prepare_turn` read for the
     // prompt — so the functions bound into the scope are the ones documented.
@@ -409,11 +411,13 @@ pub fn default_program_runner(ctx: &TurnCtx, host: Option<HostFns>) -> ProgramRu
         let exits = exits.clone();
         let reads = reads.clone();
         let touched = touched.clone();
+        let round_refs = round_refs.clone();
         let hint_ctx = hint_ctx.clone();
         async move {
             let from = exits.lock().unwrap().len();
             let from_reads = reads.lock().unwrap().len();
             let from_touched = touched.lock().unwrap().len();
+            let from_refs = round_refs.lock().unwrap().len();
             let on_log = run.on_log.clone();
             let result = run_program(RunProgramOptions {
                 code: run.code,
@@ -441,16 +445,30 @@ pub fn default_program_runner(ctx: &TurnCtx, host: Option<HostFns>) -> ProgramRu
                     .chain(touched[from_touched.min(touched.len())..].iter().cloned())
                     .collect()
             };
-            with_project_rule_notes(
-                with_query_tag_hint_notes(
-                    with_dir_tag_hint_notes(
-                        with_exit_notes(result, &round_exits),
+            let touched_refs: Vec<(String, Option<i64>)> = {
+                let guard = round_refs.lock().unwrap();
+                guard[from_refs.min(guard.len())..].to_vec()
+            };
+            // The automatic half of the note memory. Awaited rather than
+            // detached so the round's own result can carry the hint, and
+            // resolving to nothing is by far its commonest outcome.
+            let notes_root = crate::paths::notes_dir();
+            fold_round_into_notes(&hint_ctx, &touched_refs, &notes_root).await;
+            with_note_hint_notes(
+                with_project_rule_notes(
+                    with_query_tag_hint_notes(
+                        with_dir_tag_hint_notes(
+                            with_exit_notes(result, &round_exits),
+                            &hint_ctx,
+                            &round_dirs,
+                        ),
                         &hint_ctx,
-                        &round_dirs,
                     ),
                     &hint_ctx,
                 ),
                 &hint_ctx,
+                &touched_refs,
+                &notes_root,
             )
         }
         .boxed()
@@ -578,6 +596,156 @@ fn with_dir_tag_hint_notes(
     let mut logs = result.logs.clone();
     logs.extend(lines);
     ProgramResult { logs, ..result }
+}
+
+/// Has this session already been shown the note for `tag`?
+///
+/// Once per session per reference, like the per-directory hints: the point is
+/// to say what a past session concluded, and saying it every round is context
+/// bloat that trains the model to skip the line.
+fn first_mention(session_id: &str, tag: &str) -> bool {
+    static SAID: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashSet<(String, String)>>,
+    > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+    SAID.lock()
+        .map(|mut s| s.insert((session_id.to_string(), tag.to_string())))
+        .unwrap_or(false)
+}
+
+/// Append one `[notes]` line per reference this round touched that already
+/// has a note, so the round that is working on a ticket learns what the last
+/// session concluded about it.
+///
+/// REFERENCE-TRIGGERED, not directory-triggered, unlike the tag hints beside
+/// it. Measured on a real memory: 13.6% of commands carry a directory
+/// attribution at all, and the ones that do not are concentrated in exactly
+/// the infra work (kubectl, grafana, gitops) where a note is worth the most.
+/// Every command carries its tags.
+///
+/// On the round's RESULT, like every other hint here, because a mid-turn
+/// prompt edit would bust the volatile tier's cache.
+fn with_note_hint_notes(
+    result: ProgramResult,
+    ctx: &TurnCtx,
+    refs: &[(String, Option<i64>)],
+    root: &std::path::Path,
+) -> ProgramResult {
+    if refs.is_empty() {
+        return result;
+    }
+    let mut said: Vec<String> = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
+    for (tag, _) in refs {
+        if said.contains(tag) || !first_mention(&ctx.session_id, tag) {
+            continue;
+        }
+        said.push(tag.clone());
+        let Some(note) = crate::notes::load(root, tag) else {
+            continue;
+        };
+        let claim = note
+            .body
+            .lines()
+            .find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('>'))
+            .unwrap_or("")
+            .trim();
+        let warn = if note.has_warning() { " ⚠" } else { "" };
+        lines.push(format!(
+            "[notes] {tag}{warn}: {claim} — bough notes show {tag}"
+        ));
+    }
+    if lines.is_empty() {
+        return result;
+    }
+    let mut logs = result.logs.clone();
+    logs.extend(lines);
+    ProgramResult { logs, ..result }
+}
+
+/// The automatic write: one cheap-model line per reference this round touched.
+///
+/// EVERY GATE IS A NON-EVENT. No cheap tier, no note and no threshold met, a
+/// SKIP, a provider that never answers, a full log — all of them leave the
+/// round exactly as it was. Nothing here is awaited by anything the user sees
+/// beyond the round it belongs to, and nothing here can fail a turn: the
+/// contract `worker/titles.rs` holds for the whole tier.
+///
+/// The frontier advances only to the newest row actually folded, never to
+/// `now` — a fold that skipped rows must not mark them accounted for.
+async fn fold_round_into_notes(
+    ctx: &TurnCtx,
+    refs: &[(String, Option<i64>)],
+    root: &std::path::Path,
+) {
+    let Some(cheap) = ctx.app.cheap.clone() else {
+        return;
+    };
+    if refs.is_empty() {
+        return;
+    }
+    let host = crate::notes::host_name();
+    let repo = crate::history::tags::stats::workspace_repo(&ctx.workspace);
+    let now = (ctx.app.now)();
+    let date = crate::notes::local_date(now);
+
+    let mut seen: Vec<String> = Vec::new();
+    for (tag, exit_code) in refs {
+        if seen.contains(tag) {
+            continue;
+        }
+        seen.push(tag.clone());
+
+        let existing = crate::notes::load(root, tag);
+        // A page is created only for a reference that has EARNED one. The
+        // alternative is a file per reference: 143 of them on a real memory,
+        // and an index nobody can read.
+        let drift = with_db(&ctx.app.db, |d| {
+            crate::notes::drift::drift_for(
+                d,
+                tag,
+                Some(&repo),
+                existing.as_ref().map(|n| n.frontier(&host)).unwrap_or(0),
+                false,
+                500,
+            )
+            .ok()
+        });
+        let mut note = match existing {
+            Some(note) => note,
+            None => match &drift {
+                Some(d) if crate::notes::drift::earns_a_page(d) => {
+                    crate::notes::Note::new(tag, tag)
+                }
+                _ => continue,
+            },
+        };
+        if note.log.len() >= crate::notes::MAX_LOG_LINES {
+            continue;
+        }
+
+        let prompt = crate::worker::notes::round_gist(
+            &note,
+            &[crate::worker::notes::RoundTag {
+                tag: tag.clone(),
+                exit_code: *exit_code,
+            }],
+            "",
+        );
+        let Some(line) = cheap.note_line(&prompt).await else {
+            continue;
+        };
+        if crate::notes::append_log(&mut note, crate::notes::Source::Cheap, &date, &line)
+            != crate::notes::Appended::Wrote
+        {
+            continue;
+        }
+        if let Some(ts) = drift.and_then(|d| d.newest_ts) {
+            note.mark_synced(&host, ts);
+        }
+        // Best-effort, exactly like the command recorder: a lost note line is
+        // strictly better than a broken round.
+        let _ = crate::notes::save(root, &note);
+    }
 }
 
 /// Append the commands that exited non-zero, when the program did not print
@@ -999,6 +1167,7 @@ fn prepare_turn(
         record: None,
         reads: Arc::new(std::sync::Mutex::new(Vec::new())),
         touched: Arc::new(std::sync::Mutex::new(Vec::new())),
+        round_refs: Arc::new(std::sync::Mutex::new(Vec::new())),
         // The grant this turn holds: an inherited snapshot when a spawner
         // handed one down, otherwise a LIVE read of this session's
         // activations when boot asked for one (so a revocation is visible to
@@ -3745,6 +3914,190 @@ mod tests {
         assert!(notes.iter().all(|n| !n.contains("[history]")), "{notes:?}");
 
         let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    // -----------------------------------------------------------------
+    // The note memory's two halves in a round
+    // -----------------------------------------------------------------
+
+    fn notes_root_for(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("bough-runner-notes-{tag}-{}", uuid::Uuid::new_v4()))
+    }
+
+    fn plain_result() -> ProgramResult {
+        ProgramResult {
+            ok: true,
+            logs: vec!["did a thing".to_string()],
+            error: None,
+            interrupted: None,
+        }
+    }
+
+    fn note_ctx(db: &crate::types::SharedDb, session: &str) -> TurnCtx {
+        crate::agents::testkit::turn_ctx_for(db, session, "turn-1", 0)
+    }
+
+    #[tokio::test]
+    async fn a_reference_with_a_note_gets_one_hint_on_the_rounds_result() {
+        let root = notes_root_for("hint");
+        let mut note = crate::notes::Note::new("linear.nme-1673", "Executor removal");
+        note.body = "DAG removal lands before the swap.".into();
+        crate::notes::save(&root, &note).unwrap();
+
+        let db = crate::agents::testkit::shared_db();
+        let ctx = note_ctx(&db, "s-hint");
+        let refs = vec![("linear.nme-1673".to_string(), Some(0))];
+
+        let out = with_note_hint_notes(plain_result(), &ctx, &refs, &root);
+        let line = out
+            .logs
+            .iter()
+            .find(|l| l.starts_with("[notes]"))
+            .expect("a note hint");
+        assert!(
+            line.contains("DAG removal lands before the swap."),
+            "{line}"
+        );
+        assert!(line.contains("bough notes show linear.nme-1673"), "{line}");
+
+        // Once per session per reference: saying it every round is bloat that
+        // trains the model to skip the line.
+        let again = with_note_hint_notes(plain_result(), &ctx, &refs, &root);
+        assert!(again.logs.iter().all(|l| !l.starts_with("[notes]")));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn a_reference_with_no_note_changes_the_round_not_at_all() {
+        let root = notes_root_for("silent");
+        let db = crate::agents::testkit::shared_db();
+        let ctx = note_ctx(&db, "s-silent");
+        let before = plain_result();
+        let after = with_note_hint_notes(
+            before.clone(),
+            &ctx,
+            &[("linear.nothing-1".to_string(), Some(0))],
+            &root,
+        );
+        assert_eq!(after.logs, before.logs);
+    }
+
+    #[tokio::test]
+    async fn a_warned_note_says_so_in_its_hint() {
+        let root = notes_root_for("warned");
+        let mut note = crate::notes::Note::new("pr.7134", "Rollout");
+        note.body = "the cutover is blocked\n\n> [!WARNING] a log line disagrees".into();
+        crate::notes::save(&root, &note).unwrap();
+        let db = crate::agents::testkit::shared_db();
+        let ctx = note_ctx(&db, "s-warned");
+        let out = with_note_hint_notes(
+            plain_result(),
+            &ctx,
+            &[("pr.7134".to_string(), Some(0))],
+            &root,
+        );
+        let line = out.logs.iter().find(|l| l.starts_with("[notes]")).unwrap();
+        assert!(line.contains('⚠'), "{line}");
+        assert!(
+            !line.contains("[!WARNING]"),
+            "the claim is quoted, not the marker: {line}"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn without_a_cheap_tier_the_fold_is_a_non_event() {
+        // The tier's contract, at the newest place that depends on it: a ctx
+        // built without one is a working server that writes no notes.
+        let root = notes_root_for("nocheap");
+        let mut note = crate::notes::Note::new("pr.1", "P");
+        crate::notes::append_log(&mut note, crate::notes::Source::Human, "2026-08-09", "mine");
+        crate::notes::save(&root, &note).unwrap();
+        let db = crate::agents::testkit::shared_db();
+        let ctx = note_ctx(&db, "s-nocheap");
+        assert!(ctx.app.cheap.is_none());
+
+        fold_round_into_notes(&ctx, &[("pr.1".to_string(), Some(0))], &root).await;
+        assert_eq!(crate::notes::load(&root, "pr.1").unwrap().log.len(), 1);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn the_fold_appends_one_cheap_line_and_never_touches_the_prose() {
+        struct Tier(std::sync::Mutex<Vec<String>>);
+        #[async_trait::async_trait]
+        impl crate::types::CheapTier for Tier {
+            async fn title(&self, _f: &str) -> Option<String> {
+                None
+            }
+            async fn ghost_text(&self, _p: &str) -> Option<String> {
+                None
+            }
+            async fn activity(&self, _r: &str) -> Option<String> {
+                None
+            }
+            async fn note_line(&self, prompt: &str) -> Option<String> {
+                self.0.lock().unwrap().push(prompt.to_string());
+                Some("the backfill window is the blocker".into())
+            }
+        }
+
+        let root = notes_root_for("fold");
+        let mut note = crate::notes::Note::new("pr.7134", "Rollout");
+        note.body = "prose only a human writes".into();
+        crate::notes::save(&root, &note).unwrap();
+
+        let db = crate::agents::testkit::shared_db();
+        let mut ctx = note_ctx(&db, "s-fold");
+        let tier = Arc::new(Tier(std::sync::Mutex::new(Vec::new())));
+        ctx.app.cheap = Some(tier.clone());
+
+        fold_round_into_notes(&ctx, &[("pr.7134".to_string(), Some(0))], &root).await;
+
+        let after = crate::notes::load(&root, "pr.7134").unwrap();
+        assert_eq!(after.log.len(), 1);
+        assert_eq!(after.log[0].source, crate::notes::Source::Cheap);
+        assert_eq!(after.log[0].text, "the backfill window is the blocker");
+        assert_eq!(after.body, "prose only a human writes");
+
+        // What the cheap model was shown, and what it was not.
+        let prompt = tier.0.lock().unwrap()[0].clone();
+        assert!(prompt.contains("pr.7134 — worked"));
+        assert!(prompt.contains("prose only a human writes"));
+        for leaked in ["exit_code", "output_head", "bash"] {
+            assert!(!prompt.contains(leaked), "{leaked} reached the cheap model");
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn the_fold_will_not_create_a_page_for_a_reference_that_has_not_earned_one() {
+        struct Eager;
+        #[async_trait::async_trait]
+        impl crate::types::CheapTier for Eager {
+            async fn title(&self, _f: &str) -> Option<String> {
+                None
+            }
+            async fn ghost_text(&self, _p: &str) -> Option<String> {
+                None
+            }
+            async fn activity(&self, _r: &str) -> Option<String> {
+                None
+            }
+            async fn note_line(&self, _p: &str) -> Option<String> {
+                Some("something".into())
+            }
+        }
+        let root = notes_root_for("threshold");
+        let db = crate::agents::testkit::shared_db();
+        let mut ctx = note_ctx(&db, "s-threshold");
+        ctx.app.cheap = Some(Arc::new(Eager));
+
+        // No commands under it at all — 143 references on a real memory, and a
+        // page for each is an index nobody can read.
+        fold_round_into_notes(&ctx, &[("linear.brand-new".to_string(), Some(0))], &root).await;
+        assert!(crate::notes::load(&root, "linear.brand-new").is_none());
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

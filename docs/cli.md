@@ -62,6 +62,27 @@ program each command ran in, `--limit` / `--days` / `--json` do the obvious.
 Exit `1` means no command memory yet, which is different from an error. Full mechanism:
 [tags.md](tags.md).
 
+## `bough notes` — what the commands MEANT
+
+```
+bough notes                 # every note, most out of date first
+bough notes show TAG        # the prose, then its log
+bough notes write TAG       # replace the prose; the body comes in on stdin
+bough notes append TAG "…"  # one line onto the log
+bough notes search WORDS    # notes mentioning every word
+bough notes stale           # how far behind each note is, warnings first
+bough notes check [TAG]     # raise a warning where a log contradicts a claim
+bough notes rebuild TAG     # drop the derived log so it can be re-folded
+bough notes lint            # llmwiki's structural check
+```
+
+Prose keyed on the same tags as the command memory, in `~/.bough/notes`. A note holds the
+decision and the reason; it holds no commands, because `bough tags show TAG` already does
+and copying them makes two records of one fact that age apart.
+
+`bough tags show TAG` prints the note above the commands, so most recall needs no second
+command. Full mechanism: [notes.md](notes.md).
+
 ## `bough patterns` — read a big log
 
 ```

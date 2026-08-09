@@ -104,6 +104,7 @@ pub fn turn_ctx_for(db: &SharedDb, session_id: &str, turn_id: &str, depth: u8) -
         record: None,
         reads: Arc::new(Mutex::new(vec![])),
         touched: Arc::new(Mutex::new(vec![])),
+        round_refs: Arc::new(Mutex::new(vec![])),
         mcp_grant: None,
         depth,
     }
@@ -284,6 +285,7 @@ pub fn spawner_turn_ctx(
         record: None,
         reads: Arc::new(Mutex::new(vec![])),
         touched: Arc::new(Mutex::new(vec![])),
+        round_refs: Arc::new(Mutex::new(vec![])),
         mcp_grant: None,
         depth: 0,
     }

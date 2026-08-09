@@ -714,6 +714,23 @@ pub trait CheapTier: Send + Sync {
     async fn title(&self, first_message: &str) -> Option<String>;
     async fn ghost_text(&self, prefix: &str) -> Option<String>;
     async fn activity(&self, recent: &str) -> Option<String>;
+    /// One line for a note's derived zone, or `None` — which is the usual
+    /// answer. `worker/notes.rs` owns the prompt and what may reach it.
+    ///
+    /// Defaulted to `None`, unlike the three above, because the tier's whole
+    /// contract is that absence is a working system: a stub that has no
+    /// opinion about notes should get "writes no notes", not a compile error.
+    /// The production tier overrides it.
+    async fn note_line(&self, _prompt: &str) -> Option<String> {
+        None
+    }
+    /// `Some(reason)` = raise a `> [!WARNING]` on the note. NEVER means edit
+    /// the claim: a weak model may detect a contradiction and may not resolve
+    /// one, because arbitration by the same kind of process that writes wrong
+    /// notes loses the old claim silently.
+    async fn note_contradiction(&self, _prompt: &str) -> Option<String> {
+        None
+    }
 }
 
 // ---- the turn starter -------------------------------------------------------
@@ -848,6 +865,13 @@ pub struct TurnCtx {
     pub reads: Arc<Mutex<Vec<String>>>,
     /// Absolute directories the turn's shell commands were about.
     pub touched: Arc<Mutex<Vec<String>>>,
+    /// The REFERENCE tags this turn's commands carried, with how each went.
+    /// The trail the note memory folds from: a reference names one piece of
+    /// work with an identity outside bough (a ticket, a PR), which is the only
+    /// unit a note is keyed on automatically. Ordinary vocabulary tags are not
+    /// collected — they have no lifecycle, so automation would append to `git`
+    /// forever.
+    pub round_refs: Arc<Mutex<Vec<(String, Option<i64>)>>>,
     /// MCP servers inherited from the spawning turn, captured at spawn time.
     pub mcp_grant: Option<crate::mcp::manager::McpGrant>,
     /// Delegation depth. 0 = top level (may `spawn` and start workflows);

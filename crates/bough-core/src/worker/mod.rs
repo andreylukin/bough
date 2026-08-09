@@ -12,6 +12,7 @@
 
 pub mod activity;
 pub mod ghost;
+pub mod notes;
 pub mod titles;
 
 use std::sync::Arc;
@@ -41,6 +42,12 @@ impl CheapTier for CheapTierImpl {
     }
     async fn activity(&self, recent: &str) -> Option<String> {
         activity::cheap_activity(recent, &Default::default()).await
+    }
+    async fn note_line(&self, prompt: &str) -> Option<String> {
+        notes::cheap_note_line(prompt, &Default::default()).await
+    }
+    async fn note_contradiction(&self, prompt: &str) -> Option<String> {
+        notes::cheap_contradiction(prompt, &Default::default()).await
     }
 }
 

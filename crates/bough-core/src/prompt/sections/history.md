@@ -79,3 +79,32 @@ The commands worth copying are the ones that WORKED — filter exit_code = 0.
 Never open the database file yourself — not with sqlite3, not with a library.
 The CLI is read-only by construction and the file is one a live server is
 writing to; a stray write or a long lock there is a broken turn for everyone.
+
+## Notes — the why beside the how
+
+The command memory records what ran and whether it worked. It cannot record
+what it MEANT. That is `bough notes`, keyed on the same tags:
+
+    bough notes                 every note, most out of date first
+    bough notes show TAG        the prose, then its log
+    bough notes append TAG "…"  add one line to the log
+    bough notes write TAG       replace the prose (body on stdin)
+    bough notes search WORDS    notes mentioning every word
+
+`bough tags show TAG` already prints the note above the commands, so most of
+the time you do not have to ask for it separately.
+
+A note holds a decision and its reason, a constraint, a thing that will bite
+the next session. It holds NO commands and no output — those are already in
+`command_history`, and copying them there makes two records of one fact that
+age apart. Cite instead: "the working incantation is under
+`bough tags show psql:migrate:demand`".
+
+Append when you learn something a future session would otherwise re-derive —
+a blocker and why, an ordering constraint, a decision you would have to
+justify again. Not progress reports, and not what a command already says.
+
+If a note's claim turns out to be false, do not delete the sentence: say so
+in a new line and let the reader see both. A `> [!WARNING]` in the body means
+the memory already knows the claim is disputed — read it before relying on
+the sentence above it.

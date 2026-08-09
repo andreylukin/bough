@@ -792,6 +792,7 @@ mod tests {
             record: None,
             reads: Arc::new(Mutex::new(Vec::new())),
             touched: Arc::new(Mutex::new(Vec::new())),
+            round_refs: Arc::new(Mutex::new(Vec::new())),
             mcp_grant: None,
             depth: 0,
         }
