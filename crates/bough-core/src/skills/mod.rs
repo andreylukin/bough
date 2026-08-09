@@ -43,7 +43,7 @@ pub mod foreign;
 
 use crate::errors::BoughError;
 use crate::paths::{bough_home, user_skills_dir};
-use crate::prompt::assemble::PromptSkill;
+use crate::prompt::assemble::{PromptSkill, PromptSkillEntry};
 use crate::schema::parts::{Message, Part, Role};
 use crate::types::Db;
 
@@ -542,6 +542,27 @@ pub fn list_skills(sources: &[SkillSource]) -> Vec<Skill> {
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
+}
+
+/// The prompt's skill catalog: every installed skill except the ones whose
+/// bodies are already in this turn, and except the ones that are broken.
+///
+/// A BROKEN SKILL IS NOT LISTED. `list_skills` keeps them so the panel can
+/// show you what to fix, but a prompt entry is an instruction to go and read a
+/// file, and the file is the thing that does not parse. A skill the user
+/// actually NAMED gets a note saying so (`broken_skill_note`); one nobody
+/// asked for is a repair job for the panel, not a detour for the turn.
+pub fn catalog(sources: &[SkillSource], loaded: &[String]) -> Vec<PromptSkillEntry> {
+    list_skills(sources)
+        .into_iter()
+        .filter(|s| s.error.is_none() && !s.body.trim().is_empty())
+        .filter(|s| !loaded.contains(&s.name))
+        .map(|s| PromptSkillEntry {
+            name: s.name,
+            description: s.description,
+            dir: s.dir,
+        })
+        .collect()
 }
 
 /// One skill by name, resolved in source order. `None` = no such skill.
@@ -1241,6 +1262,59 @@ mod tests {
     }
 
     // ---- the body reaches the prompt ----------------------------------------
+
+    /// The bug this feature fixes: a skill nobody typed `/name` for was
+    /// invisible, so it only ever ran when the user remembered it existed.
+    #[test]
+    fn every_installed_skill_is_listed_to_the_model_without_being_invoked() {
+        use crate::harness::protocol::HostFnName;
+        use crate::prompt::assemble::{assemble_prompt, PromptInput, SectionId};
+        use crate::schema::parts::SessionKind;
+
+        let user = TempSource::new(SkillSourceName::User);
+        user.write(
+            "alpha",
+            &skill_file("description: does alpha", "ALPHA BODY"),
+        );
+        user.write("beta", &skill_file("description: does beta", "BETA BODY"));
+
+        let entries = catalog(&[user.as_source()], &[]);
+        assert_eq!(
+            entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            ["alpha", "beta"]
+        );
+        assert_eq!(entries[0].description, "does alpha");
+
+        // Name, description and path reach the prompt; the BODY does not —
+        // a catalog that carried bodies would be the whole tree every turn.
+        let mut input = PromptInput::new(SessionKind::Root, [HostFnName::Bash]);
+        input.skill_catalog = entries;
+        let prompt = assemble_prompt(&input);
+        assert!(prompt.sections.contains(&SectionId::SkillCatalog));
+        assert!(prompt.system_volatile.contains("does alpha"));
+        assert!(prompt.system_volatile.contains("/alpha/SKILL.md"));
+        assert!(!prompt.system_volatile.contains("ALPHA BODY"));
+        // The stable prefix is untouched, or every session pays for this.
+        let bare = assemble_prompt(&PromptInput::new(SessionKind::Root, [HostFnName::Bash]));
+        assert_eq!(prompt.system, bare.system);
+    }
+
+    /// Two exclusions, each for its own reason: a loaded skill is already in
+    /// the prompt, and a broken one cannot be followed by reading it.
+    #[test]
+    fn the_catalog_omits_what_is_already_loaded_and_what_cannot_be_read() {
+        let user = TempSource::new(SkillSourceName::User);
+        user.write("alpha", &skill_file("description: a", "ALPHA BODY"));
+        user.write("beta", &skill_file("description: b", "BETA BODY"));
+        // Unterminated frontmatter — the module's broken case.
+        user.write("busted", "---\ndescription: c\nNO CLOSING FENCE\n");
+
+        let names: Vec<String> = catalog(&[user.as_source()], &["alpha".to_string()])
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["beta"]);
+    }
 
     #[test]
     fn active_skills_bodies_land_in_the_assembled_prompts_volatile_tier() {

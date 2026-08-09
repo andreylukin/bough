@@ -1322,14 +1322,14 @@ fn prepare_turn(
     // where the workspace is known and where the prompt is built — and until
     // this call existed, `PromptInput.skills` was hardcoded empty, so a `/name`
     // parsed, listed in the panel, and reached the model as nothing at all.
+    let skill_sources = crate::skills::sources_for(Path::new(&workspace));
     let active = with_db(&db, |d| {
-        crate::skills::turn_skills(
-            d,
-            &session_id,
-            &crate::skills::sources_for(Path::new(&workspace)),
-        )
-        .unwrap_or_default()
+        crate::skills::turn_skills(d, &session_id, &skill_sources).unwrap_or_default()
     });
+    // What EXISTS, one line each. Named skills are excluded because their
+    // bodies are already below — listing a loaded skill as something to go
+    // and open invites the model to read a file it is holding.
+    let skill_catalog = crate::skills::catalog(&skill_sources, &active.names);
     // A named-and-broken skill tells the model why, rather than nothing
     // (`skills/mod.rs`'s intact-or-reported invariant). These are volatile,
     // like every other note here.
@@ -1364,6 +1364,7 @@ fn prepare_turn(
             .unwrap_or_default(),
         extensions: extensions.fns.clone(),
         skills: active.skills.clone(),
+        skill_catalog,
         notes,
     };
     let prompt: AssembledPrompt = match &deps.assemble {

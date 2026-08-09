@@ -54,6 +54,19 @@ pub struct PromptSkill {
     pub body: String,
 }
 
+/// One skill as the catalog lists it — everything needed to decide whether to
+/// open it, and nothing that costs a body's worth of tokens.
+#[derive(Clone, Debug)]
+pub struct PromptSkillEntry {
+    pub name: String,
+    /// `description:` from the frontmatter. Empty when the skill has none.
+    pub description: String,
+    /// The skill's folder. The catalog prints `<dir>/SKILL.md`, because a
+    /// model told a skill exists and not where it is has to go and search for
+    /// it, and the search is the part that gets skipped.
+    pub dir: String,
+}
+
 /// One tool on a connected MCP server, rendered as a single catalog line.
 #[derive(Clone, Debug, Default)]
 pub struct PromptMcpTool {
@@ -97,6 +110,12 @@ pub struct PromptInput {
     pub extensions: Vec<crate::harness::protocol::ExtensionFn>,
     /// Skills the user's message named.
     pub skills: Vec<PromptSkill>,
+    /// Every skill discoverable from this workspace, as a one-line-each
+    /// catalog. Separate from `skills` because they answer different
+    /// questions: `skills` is what was invoked, this is what EXISTS. Without
+    /// it a skill only ever runs when the user remembers to type `/name`,
+    /// which is the failure this field was added for.
+    pub skill_catalog: Vec<PromptSkillEntry>,
     /// Per-session notes the caller resolved — the workspace path, background
     /// subagents still running, project rules. Appended verbatim to the
     /// VOLATILE tier so they never poison the shared stable prefix. Each note
@@ -113,6 +132,7 @@ impl PromptInput {
             mcp_servers: Vec::new(),
             extensions: Vec::new(),
             skills: Vec::new(),
+            skill_catalog: Vec::new(),
             notes: Vec::new(),
         }
     }
@@ -178,6 +198,7 @@ pub enum SectionId {
     // volatile, rendered rather than read from a file
     McpTools,
     Extensions,
+    SkillCatalog,
     Skills,
     Notes,
 }
@@ -206,6 +227,7 @@ impl SectionId {
             SectionId::Ending => "ending",
             SectionId::McpTools => "mcp-tools",
             SectionId::Extensions => "extensions",
+            SectionId::SkillCatalog => "skill-catalog",
             SectionId::Skills => "skills",
             SectionId::Notes => "notes",
         }
@@ -556,6 +578,41 @@ fn skills_section(skills: &[PromptSkill]) -> String {
         .join("\n\n")
 }
 
+/// The one-line-each catalog of skills that exist but were not invoked.
+///
+/// NAME, DESCRIPTION, PATH — no body. The body is the expensive part and is
+/// exactly what the model does not need in order to decide whether to open it,
+/// and a catalog that grew bodies would be the whole skills tree in every
+/// prompt. The path is included because the alternative is the model listing
+/// six directories to find one file, which is the step that gets skipped.
+///
+/// A skill with no `description:` is still listed: a name alone is a weaker
+/// signal than a description, but it is a much stronger one than silence, and
+/// omitting it makes an installed skill unreachable without `/name`.
+fn skill_catalog_section(entries: &[PromptSkillEntry]) -> String {
+    let rows: Vec<String> = entries
+        .iter()
+        .map(|e| {
+            let what = if e.description.trim().is_empty() {
+                String::new()
+            } else {
+                format!(" — {}", e.description.trim())
+            };
+            format!("- **{}**{} (`{}/SKILL.md`)", e.name, what, e.dir)
+        })
+        .collect();
+    format!(
+        "## Skills available\n\n\
+         These exist on this machine and apply to this workspace. None of their \
+         instructions are in this prompt. When one covers the work you are about to \
+         do, READ its `SKILL.md` first and follow it — its pack is more specific \
+         than anything here, and skipping it is how a task gets done the wrong way \
+         twice. Writing `/name` yourself does nothing; opening the file is the \
+         whole mechanism.\n\n{}",
+        rows.join("\n")
+    )
+}
+
 /// Where this turn's verbs actually operate — the one note every turn gets.
 ///
 /// Rendered here rather than kept as a `.md` because it interpolates a
@@ -653,6 +710,14 @@ pub fn assemble_prompt(input: &PromptInput) -> AssembledPrompt {
     if !input.extensions.is_empty() {
         let text = extensions_section(&input.extensions);
         note(&mut sections, &mut shas, SectionId::Extensions, &text);
+        volatile.push(text);
+    }
+    // BEFORE the bodies: a skill whose body is already loaded is not in the
+    // catalog (the caller filters it), so the catalog reads as "and these are
+    // the ones you would have to go and open" right above the ones you don't.
+    if !input.skill_catalog.is_empty() {
+        let text = skill_catalog_section(&input.skill_catalog);
+        note(&mut sections, &mut shas, SectionId::SkillCatalog, &text);
         volatile.push(text);
     }
     if !input.skills.is_empty() {

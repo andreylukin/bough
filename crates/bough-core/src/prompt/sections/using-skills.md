@@ -23,6 +23,8 @@ Skills are searched in these places, first match winning on a name collision:
 - `~/.claude/skills/`, `~/.agents/skills/` — adopted from other harnesses,
   global
 
-To see what exists, list those directories; each folder name is the skill's
-name and the `description:` in its front matter says what it is for. A project
-skill is worth a look whenever you land in an unfamiliar repo.
+You do not have to go looking to find out what exists: everything installed is
+listed later in this prompt under **Skills available**, one line each with its
+path. Read that
+list against the task before you start. If nothing there covers the work, get
+on with it — the list is a place to check, not a detour to take every turn.
