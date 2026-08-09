@@ -730,7 +730,7 @@ usage() {
   echo "  tags     what the command memory knows, and what it primes the model with:"
   echo "           bough tags [show TAG|stats] [--repo R|--all] [--days N] [--json]"
   echo "  notes    the prose beside the commands, keyed on the same tags:"
-  echo "           bough notes [show TAG|write TAG|append TAG \"...\"|stale|check]"
+  echo "           bough notes [tree|show PATH|write PATH|append PATH \"...\"|stale|cites]"
   echo "  patterns compress a log into its distinct statements, with statistics:"
   echo "           bough patterns [--llm|--json|--human] [--top N] [FILE]"
   echo "  purge    hard-delete sessions archived over 30 days ago (also runs on boot)"
@@ -817,10 +817,10 @@ case "${1:-}" in
     ;;
   notes)
     shift
-    # No server, like `tags`: this reads and writes markdown under ~/.bough/notes
-    # and, for drift, opens the database read-only. Nothing here goes through a
-    # route, so it answers with bough stopped — which is the point on the day you
-    # are reading a note to find out why the server will not start.
+    # No server, like `tags`: this reads and writes the note tables in
+    # ~/.bough/bough.db directly. Nothing here goes through a route, so it
+    # answers with bough stopped — which is the point on the day you are reading
+    # a note to find out why the server will not start.
     require_rust
     exec "$RS_BIN" notes "$@"
     ;;

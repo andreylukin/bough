@@ -452,8 +452,7 @@ pub fn default_program_runner(ctx: &TurnCtx, host: Option<HostFns>) -> ProgramRu
             // The automatic half of the note memory. Awaited rather than
             // detached so the round's own result can carry the hint, and
             // resolving to nothing is by far its commonest outcome.
-            let notes_root = crate::paths::notes_dir();
-            fold_round_into_notes(&hint_ctx, &touched_refs, &notes_root).await;
+            fold_round_into_notes(&hint_ctx, &touched_refs).await;
             with_note_hint_notes(
                 with_project_rule_notes(
                     with_query_tag_hint_notes(
@@ -468,7 +467,6 @@ pub fn default_program_runner(ctx: &TurnCtx, host: Option<HostFns>) -> ProgramRu
                 ),
                 &hint_ctx,
                 &touched_refs,
-                &notes_root,
             )
         }
         .boxed()
@@ -598,29 +596,19 @@ fn with_dir_tag_hint_notes(
     ProgramResult { logs, ..result }
 }
 
-/// Has this session already been shown the note for `tag`?
-///
-/// Once per session per reference, like the per-directory hints: the point is
-/// to say what a past session concluded, and saying it every round is context
-/// bloat that trains the model to skip the line.
-fn first_mention(session_id: &str, tag: &str) -> bool {
-    static SAID: std::sync::LazyLock<
-        std::sync::Mutex<std::collections::HashSet<(String, String)>>,
-    > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
-    SAID.lock()
-        .map(|mut s| s.insert((session_id.to_string(), tag.to_string())))
-        .unwrap_or(false)
-}
-
-/// Append one `[notes]` line per reference this round touched that already
-/// has a note, so the round that is working on a ticket learns what the last
-/// session concluded about it.
+/// Append what this repo's notes already say about the references this round
+/// touched.
 ///
 /// REFERENCE-TRIGGERED, not directory-triggered, unlike the tag hints beside
 /// it. Measured on a real memory: 13.6% of commands carry a directory
 /// attribution at all, and the ones that do not are concentrated in exactly
-/// the infra work (kubectl, grafana, gitops) where a note is worth the most.
-/// Every command carries its tags.
+/// the infra work where a note is worth the most. Every command carries tags.
+///
+/// WHAT BOUNDS THE COST IS CHANGE, NOT A CAP. `resolve::hint_line` consults
+/// the injection ledger, so a section already in this session's context above
+/// produces nothing, one that grew produces only its new lines, and one that
+/// was rewritten is re-sent whole and labelled. A stable note therefore costs
+/// one line per session however many rounds touch it.
 ///
 /// On the round's RESULT, like every other hint here, because a mid-turn
 /// prompt edit would bust the volatile tier's cache.
@@ -628,32 +616,27 @@ fn with_note_hint_notes(
     result: ProgramResult,
     ctx: &TurnCtx,
     refs: &[(String, Option<i64>)],
-    root: &std::path::Path,
 ) -> ProgramResult {
     if refs.is_empty() {
         return result;
     }
-    let mut said: Vec<String> = Vec::new();
-    let mut lines: Vec<String> = Vec::new();
+    let mut context: Vec<String> = Vec::new();
     for (tag, _) in refs {
-        if said.contains(tag) || !first_mention(&ctx.session_id, tag) {
-            continue;
+        if !context.contains(tag) {
+            context.push(tag.clone());
         }
-        said.push(tag.clone());
-        let Some(note) = crate::notes::load(root, tag) else {
-            continue;
-        };
-        let claim = note
-            .body
-            .lines()
-            .find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('>'))
-            .unwrap_or("")
-            .trim();
-        let warn = if note.has_warning() { " ⚠" } else { "" };
-        lines.push(format!(
-            "[notes] {tag}{warn}: {claim} — bough notes show {tag}"
-        ));
     }
+    let spread = with_db(&ctx.app.db, |d| d.tag_spread(None))
+        .map(|(repos, by_tag)| crate::history::tags::stats::TagSpread { repos, by_tag })
+        .unwrap_or_default();
+    let sections =
+        with_db(&ctx.app.db, |d| d.sections_for_context(&context, None)).unwrap_or_default();
+    let ranked = crate::notes::resolve::rank(&spread, sections, &context, None);
+
+    let lines: Vec<String> = ranked
+        .iter()
+        .filter_map(|r| crate::notes::resolve::hint_line(&ctx.session_id, r))
+        .collect();
     if lines.is_empty() {
         return result;
     }
@@ -665,28 +648,21 @@ fn with_note_hint_notes(
 /// The automatic write: one cheap-model line per reference this round touched.
 ///
 /// EVERY GATE IS A NON-EVENT. No cheap tier, no note and no threshold met, a
-/// SKIP, a provider that never answers, a full log — all of them leave the
-/// round exactly as it was. Nothing here is awaited by anything the user sees
-/// beyond the round it belongs to, and nothing here can fail a turn: the
-/// contract `worker/titles.rs` holds for the whole tier.
+/// SKIP, a provider that never answers — all leave the round exactly as it
+/// was. Nothing here can fail a turn: the contract `worker/titles.rs` holds
+/// for the whole tier.
 ///
 /// The frontier advances only to the newest row actually folded, never to
 /// `now` — a fold that skipped rows must not mark them accounted for.
-async fn fold_round_into_notes(
-    ctx: &TurnCtx,
-    refs: &[(String, Option<i64>)],
-    root: &std::path::Path,
-) {
+async fn fold_round_into_notes(ctx: &TurnCtx, refs: &[(String, Option<i64>)]) {
     let Some(cheap) = ctx.app.cheap.clone() else {
         return;
     };
     if refs.is_empty() {
         return;
     }
-    let host = crate::notes::host_name();
     let repo = crate::history::tags::stats::workspace_repo(&ctx.workspace);
     let now = (ctx.app.now)();
-    let date = crate::notes::local_date(now);
 
     let mut seen: Vec<String> = Vec::new();
     for (tag, exit_code) in refs {
@@ -695,36 +671,50 @@ async fn fold_round_into_notes(
         }
         seen.push(tag.clone());
 
-        let existing = crate::notes::load(root, tag);
-        // A page is created only for a reference that has EARNED one. The
-        // alternative is a file per reference: 143 of them on a real memory,
-        // and an index nobody can read.
-        let drift = with_db(&ctx.app.db, |d| {
-            crate::notes::drift::drift_for(
-                d,
-                tag,
-                Some(&repo),
-                existing.as_ref().map(|n| n.frontier(&host)).unwrap_or(0),
-                false,
-                500,
-            )
-            .ok()
-        });
-        let mut note = match existing {
+        let existing = with_db(&ctx.app.db, |d| d.note_by_path(tag)).ok().flatten();
+        let note = match existing {
             Some(note) => note,
-            None => match &drift {
-                Some(d) if crate::notes::drift::earns_a_page(d) => {
-                    crate::notes::Note::new(tag, tag)
+            None => {
+                // A page is created only for a reference that has EARNED one.
+                // The alternative is a page per reference: 143 of them on a
+                // real memory, and an index nobody can read.
+                let probe = crate::types::NoteRow {
+                    id: 0,
+                    path: tag.clone(),
+                    title: tag.clone(),
+                    tags: vec![tag.clone()],
+                    created_at: now,
+                    updated_at: now,
+                    synced_ts: 0,
+                    closed_at: None,
+                };
+                let drift = with_db(&ctx.app.db, |d| {
+                    crate::notes::drift_for(d, &probe, Some(&repo), false)
+                });
+                if !crate::notes::earns_a_page(&drift) {
+                    continue;
                 }
-                _ => continue,
-            },
+                let Ok(id) = with_db(&ctx.app.db, |d| {
+                    d.upsert_note(tag, tag, std::slice::from_ref(tag), now)
+                }) else {
+                    continue;
+                };
+                crate::types::NoteRow { id, ..probe }
+            }
         };
-        if note.log.len() >= crate::notes::MAX_LOG_LINES {
-            continue;
-        }
+
+        let sections = with_db(&ctx.app.db, |d| d.sections_for_note(note.id)).unwrap_or_default();
+        let claim = sections
+            .iter()
+            .map(|s| s.body.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let log = with_db(&ctx.app.db, |d| d.note_log(note.id, 20)).unwrap_or_default();
 
         let prompt = crate::worker::notes::round_gist(
             &note,
+            &claim,
+            &log,
             &[crate::worker::notes::RoundTag {
                 tag: tag.clone(),
                 exit_code: *exit_code,
@@ -734,17 +724,22 @@ async fn fold_round_into_notes(
         let Some(line) = cheap.note_line(&prompt).await else {
             continue;
         };
-        if crate::notes::append_log(&mut note, crate::notes::Source::Cheap, &date, &line)
-            != crate::notes::Appended::Wrote
-        {
-            continue;
-        }
-        if let Some(ts) = drift.and_then(|d| d.newest_ts) {
-            note.mark_synced(&host, ts);
-        }
+
         // Best-effort, exactly like the command recorder: a lost note line is
         // strictly better than a broken round.
-        let _ = crate::notes::save(root, &note);
+        let wrote = with_db(&ctx.app.db, |d| {
+            d.append_note_log(note.id, now, crate::types::NoteAuthor::Cheap, &line)
+        })
+        .unwrap_or(false);
+        if !wrote {
+            continue;
+        }
+        let drift = with_db(&ctx.app.db, |d| {
+            crate::notes::drift_for(d, &note, Some(&repo), false)
+        });
+        if let Some(ts) = drift.newest_ts {
+            let _ = with_db(&ctx.app.db, |d| d.set_note_synced(note.id, ts));
+        }
     }
 }
 
@@ -3930,10 +3925,6 @@ mod tests {
     // The note memory's two halves in a round
     // -----------------------------------------------------------------
 
-    fn notes_root_for(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("bough-runner-notes-{tag}-{}", uuid::Uuid::new_v4()))
-    }
-
     fn plain_result() -> ProgramResult {
         ProgramResult {
             ok: true,
@@ -3943,22 +3934,48 @@ mod tests {
         }
     }
 
+    /// A ctx whose db is shared, with a session id unique per test so the
+    /// injection ledger (a process global) cannot leak between them.
     fn note_ctx(db: &crate::types::SharedDb, session: &str) -> TurnCtx {
+        crate::notes::resolve::forget(session);
         crate::agents::testkit::turn_ctx_for(db, session, "turn-1", 0)
+    }
+
+    /// A note with one section, written the way the CLI writes one.
+    fn seed_note(db: &crate::types::SharedDb, path: &str, heading: &str, body: &str) -> i64 {
+        let guard = db.lock().unwrap();
+        let tags: Vec<String> = path.split(':').map(str::to_string).collect();
+        let id = guard.upsert_note(path, path, &tags, 1).unwrap();
+        guard
+            .put_section(
+                &crate::types::SectionWrite {
+                    note_id: id,
+                    ord: 0,
+                    heading: heading.to_string(),
+                    body: body.to_string(),
+                    tags: None,
+                    citations: vec![],
+                    author: crate::types::NoteAuthor::Human,
+                },
+                1,
+            )
+            .unwrap();
+        id
     }
 
     #[tokio::test]
     async fn a_reference_with_a_note_gets_one_hint_on_the_rounds_result() {
-        let root = notes_root_for("hint");
-        let mut note = crate::notes::Note::new("linear.nme-1673", "Executor removal");
-        note.body = "DAG removal lands before the swap.".into();
-        crate::notes::save(&root, &note).unwrap();
-
         let db = crate::agents::testkit::shared_db();
+        seed_note(
+            &db,
+            "linear.nme-1673",
+            "Executor ordering",
+            "DAG removal lands before the swap.",
+        );
         let ctx = note_ctx(&db, "s-hint");
         let refs = vec![("linear.nme-1673".to_string(), Some(0))];
 
-        let out = with_note_hint_notes(plain_result(), &ctx, &refs, &root);
+        let out = with_note_hint_notes(plain_result(), &ctx, &refs);
         let line = out
             .logs
             .iter()
@@ -3968,18 +3985,46 @@ mod tests {
             line.contains("DAG removal lands before the swap."),
             "{line}"
         );
-        assert!(line.contains("bough notes show linear.nme-1673"), "{line}");
 
-        // Once per session per reference: saying it every round is bloat that
-        // trains the model to skip the line.
-        let again = with_note_hint_notes(plain_result(), &ctx, &refs, &root);
+        // THE LEDGER: the same section, unchanged, is already in the context
+        // above — so the second round says nothing at all.
+        let again = with_note_hint_notes(plain_result(), &ctx, &refs);
         assert!(again.logs.iter().all(|l| !l.starts_with("[notes]")));
-        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn a_grown_section_re_injects_only_its_new_lines() {
+        let db = crate::agents::testkit::shared_db();
+        let id = seed_note(&db, "pr.7134", "Rollout", "line one\nline two\nline three");
+        let ctx = note_ctx(&db, "s-grow");
+        let refs = vec![("pr.7134".to_string(), Some(0))];
+        with_note_hint_notes(plain_result(), &ctx, &refs);
+
+        db.lock()
+            .unwrap()
+            .put_section(
+                &crate::types::SectionWrite {
+                    note_id: id,
+                    ord: 0,
+                    heading: "Rollout".into(),
+                    body: "line one\nline two\nline three\nline four".into(),
+                    tags: None,
+                    citations: vec![],
+                    author: crate::types::NoteAuthor::Human,
+                },
+                2,
+            )
+            .unwrap();
+
+        let out = with_note_hint_notes(plain_result(), &ctx, &refs);
+        let line = out.logs.iter().find(|l| l.starts_with("[notes]")).unwrap();
+        assert!(line.contains("+1"), "{line}");
+        assert!(line.contains("line four"), "{line}");
+        assert!(!line.contains("line one"), "already said: {line}");
     }
 
     #[tokio::test]
     async fn a_reference_with_no_note_changes_the_round_not_at_all() {
-        let root = notes_root_for("silent");
         let db = crate::agents::testkit::shared_db();
         let ctx = note_ctx(&db, "s-silent");
         let before = plain_result();
@@ -3987,127 +4032,95 @@ mod tests {
             before.clone(),
             &ctx,
             &[("linear.nothing-1".to_string(), Some(0))],
-            &root,
         );
         assert_eq!(after.logs, before.logs);
     }
 
     #[tokio::test]
-    async fn a_warned_note_says_so_in_its_hint() {
-        let root = notes_root_for("warned");
-        let mut note = crate::notes::Note::new("pr.7134", "Rollout");
-        note.body = "the cutover is blocked\n\n> [!WARNING] a log line disagrees".into();
-        crate::notes::save(&root, &note).unwrap();
-        let db = crate::agents::testkit::shared_db();
-        let ctx = note_ctx(&db, "s-warned");
-        let out = with_note_hint_notes(
-            plain_result(),
-            &ctx,
-            &[("pr.7134".to_string(), Some(0))],
-            &root,
-        );
-        let line = out.logs.iter().find(|l| l.starts_with("[notes]")).unwrap();
-        assert!(line.contains('⚠'), "{line}");
-        assert!(
-            !line.contains("[!WARNING]"),
-            "the claim is quoted, not the marker: {line}"
-        );
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[tokio::test]
     async fn without_a_cheap_tier_the_fold_is_a_non_event() {
-        // The tier's contract, at the newest place that depends on it: a ctx
-        // built without one is a working server that writes no notes.
-        let root = notes_root_for("nocheap");
-        let mut note = crate::notes::Note::new("pr.1", "P");
-        crate::notes::append_log(&mut note, crate::notes::Source::Human, "2026-08-09", "mine");
-        crate::notes::save(&root, &note).unwrap();
         let db = crate::agents::testkit::shared_db();
+        let id = seed_note(&db, "pr.1", "P", "mine");
         let ctx = note_ctx(&db, "s-nocheap");
         assert!(ctx.app.cheap.is_none());
 
-        fold_round_into_notes(&ctx, &[("pr.1".to_string(), Some(0))], &root).await;
-        assert_eq!(crate::notes::load(&root, "pr.1").unwrap().log.len(), 1);
-        std::fs::remove_dir_all(&root).ok();
+        fold_round_into_notes(&ctx, &[("pr.1".to_string(), Some(0))]).await;
+        assert!(db.lock().unwrap().note_log(id, 10).unwrap().is_empty());
+    }
+
+    struct Tier(std::sync::Mutex<Vec<String>>, Option<String>);
+    #[async_trait::async_trait]
+    impl crate::types::CheapTier for Tier {
+        async fn title(&self, _f: &str) -> Option<String> {
+            None
+        }
+        async fn ghost_text(&self, _p: &str) -> Option<String> {
+            None
+        }
+        async fn activity(&self, _r: &str) -> Option<String> {
+            None
+        }
+        async fn note_line(&self, prompt: &str) -> Option<String> {
+            self.0.lock().unwrap().push(prompt.to_string());
+            self.1.clone()
+        }
     }
 
     #[tokio::test]
     async fn the_fold_appends_one_cheap_line_and_never_touches_the_prose() {
-        struct Tier(std::sync::Mutex<Vec<String>>);
-        #[async_trait::async_trait]
-        impl crate::types::CheapTier for Tier {
-            async fn title(&self, _f: &str) -> Option<String> {
-                None
-            }
-            async fn ghost_text(&self, _p: &str) -> Option<String> {
-                None
-            }
-            async fn activity(&self, _r: &str) -> Option<String> {
-                None
-            }
-            async fn note_line(&self, prompt: &str) -> Option<String> {
-                self.0.lock().unwrap().push(prompt.to_string());
-                Some("the backfill window is the blocker".into())
-            }
-        }
-
-        let root = notes_root_for("fold");
-        let mut note = crate::notes::Note::new("pr.7134", "Rollout");
-        note.body = "prose only a human writes".into();
-        crate::notes::save(&root, &note).unwrap();
-
         let db = crate::agents::testkit::shared_db();
+        let id = seed_note(&db, "pr.7134", "Rollout", "prose only a human writes");
         let mut ctx = note_ctx(&db, "s-fold");
-        let tier = Arc::new(Tier(std::sync::Mutex::new(Vec::new())));
+        let tier = Arc::new(Tier(
+            std::sync::Mutex::new(Vec::new()),
+            Some("the backfill window is the blocker".into()),
+        ));
         ctx.app.cheap = Some(tier.clone());
 
-        fold_round_into_notes(&ctx, &[("pr.7134".to_string(), Some(0))], &root).await;
+        fold_round_into_notes(&ctx, &[("pr.7134".to_string(), Some(0))]).await;
 
-        let after = crate::notes::load(&root, "pr.7134").unwrap();
-        assert_eq!(after.log.len(), 1);
-        assert_eq!(after.log[0].source, crate::notes::Source::Cheap);
-        assert_eq!(after.log[0].text, "the backfill window is the blocker");
-        assert_eq!(after.body, "prose only a human writes");
+        let log = db.lock().unwrap().note_log(id, 10).unwrap();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].source, crate::types::NoteAuthor::Cheap);
+        assert_eq!(log[0].text, "the backfill window is the blocker");
+        let sections = db.lock().unwrap().sections_for_note(id).unwrap();
+        assert_eq!(sections[0].body, "prose only a human writes");
+        assert_eq!(sections[0].author, crate::types::NoteAuthor::Human);
 
-        // What the cheap model was shown, and what it was not.
         let prompt = tier.0.lock().unwrap()[0].clone();
         assert!(prompt.contains("pr.7134 — worked"));
         assert!(prompt.contains("prose only a human writes"));
         for leaked in ["exit_code", "output_head", "bash"] {
             assert!(!prompt.contains(leaked), "{leaked} reached the cheap model");
         }
-        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn a_skip_writes_nothing() {
+        let db = crate::agents::testkit::shared_db();
+        let id = seed_note(&db, "pr.9", "R", "prose");
+        let mut ctx = note_ctx(&db, "s-skip");
+        ctx.app.cheap = Some(Arc::new(Tier(std::sync::Mutex::new(Vec::new()), None)));
+        fold_round_into_notes(&ctx, &[("pr.9".to_string(), Some(0))]).await;
+        assert!(db.lock().unwrap().note_log(id, 10).unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn the_fold_will_not_create_a_page_for_a_reference_that_has_not_earned_one() {
-        struct Eager;
-        #[async_trait::async_trait]
-        impl crate::types::CheapTier for Eager {
-            async fn title(&self, _f: &str) -> Option<String> {
-                None
-            }
-            async fn ghost_text(&self, _p: &str) -> Option<String> {
-                None
-            }
-            async fn activity(&self, _r: &str) -> Option<String> {
-                None
-            }
-            async fn note_line(&self, _p: &str) -> Option<String> {
-                Some("something".into())
-            }
-        }
-        let root = notes_root_for("threshold");
         let db = crate::agents::testkit::shared_db();
         let mut ctx = note_ctx(&db, "s-threshold");
-        ctx.app.cheap = Some(Arc::new(Eager));
-
+        ctx.app.cheap = Some(Arc::new(Tier(
+            std::sync::Mutex::new(Vec::new()),
+            Some("something".into()),
+        )));
         // No commands under it at all — 143 references on a real memory, and a
         // page for each is an index nobody can read.
-        fold_round_into_notes(&ctx, &[("linear.brand-new".to_string(), Some(0))], &root).await;
-        assert!(crate::notes::load(&root, "linear.brand-new").is_none());
-        std::fs::remove_dir_all(&root).ok();
+        fold_round_into_notes(&ctx, &[("linear.brand-new".to_string(), Some(0))]).await;
+        assert!(db
+            .lock()
+            .unwrap()
+            .note_by_path("linear.brand-new")
+            .unwrap()
+            .is_none());
     }
 
     #[test]

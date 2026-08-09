@@ -86,25 +86,47 @@ The command memory records what ran and whether it worked. It cannot record
 what it MEANT. That is `bough notes`, keyed on the same tags:
 
     bough notes                 every note, most out of date first
-    bough notes show TAG        the prose, then its log
-    bough notes append TAG "…"  add one line to the log
-    bough notes write TAG       replace the prose (body on stdin)
-    bough notes search WORDS    notes mentioning every word
+    bough notes show PATH       one note, and what resolves into it
+    bough notes write PATH      replace its prose (markdown on stdin)
+    bough notes append PATH "…" add one line to its log
+    bough notes search WORDS    sections matching every word
+    bough notes cites PATH      what its claims rest on
 
 `bough tags show TAG` already prints the note above the commands, so most of
 the time you do not have to ask for it separately.
 
+A PATH is one or more TAGS, colon separated — `nased`, `kubectl:rollout`. One
+tag is a note about that word; more is a note about the combination.
+
 A note holds a decision and its reason, a constraint, a thing that will bite
 the next session. It holds NO commands and no output — those are already in
 `command_history`, and copying them there makes two records of one fact that
-age apart. Cite instead: "the working incantation is under
-`bough tags show psql:migrate:demand`".
+age apart. Cite instead.
 
-Append when you learn something a future session would otherwise re-derive —
-a blocker and why, an ordering constraint, a decision you would have to
-justify again. Not progress reports, and not what a command already says.
+**Cite what a claim rests on.** `[cmd:1234]` for a command whose id you got
+from `bough tags sql`, `[file:src/x.rs@3c1c78e]`, `[url:…]`. A citation that
+does not resolve is refused and named, so do not invent one — a claim you
+cannot cite is fine, and it will simply be reported as uncited.
 
-If a note's claim turns out to be false, do not delete the sentence: say so
-in a new line and let the reader see both. A `> [!WARNING]` in the body means
-the memory already knows the claim is disputed — read it before relying on
-the sentence above it.
+**Sections and where they show up.** `## Heading` starts a section. By default
+a section inherits its note's tags and appears only on that note. A `tags:`
+line under the heading NARROWS it, and a narrowed section appears on every note
+whose tags include its own:
+
+    ## Executor ordering
+    tags: nased
+    DAG removal must land before the executor swap. [cmd:8812]
+
+Written on `nased:rollout:prod`, that section now also shows up when reading
+`nased:backfill:dev`. Narrow a section when what you learned is true of the
+subject generally, not of the particular combination you were working on.
+Leave it alone otherwise — the default is right most of the time.
+
+Append to the log when you learn something a future session would otherwise
+re-derive. Not progress reports, and not what a command already says.
+
+If a note's claim turns out to be false, do not delete the sentence — rewrite
+it with `bough notes write`, which keeps the old version on the record
+(`bough notes history PATH`). A `> [!WARNING]` in a body means the memory
+already knows the claim is disputed: read it before relying on the sentence
+above it.

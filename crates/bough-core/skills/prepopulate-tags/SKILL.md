@@ -1,6 +1,6 @@
 ---
 name: prepopulate-tags
-description: Seed the command-tag memory for a topic — survey it with real read-only commands under a small deliberate vocabulary, so later sessions on that topic start primed instead of cold.
+description: Seed the command-tag memory AND the note memory for a topic — survey it with real read-only commands under a small deliberate vocabulary, then write down what the survey concluded, so later sessions start primed instead of cold.
 ---
 
 # Prepopulate tags
@@ -117,14 +117,51 @@ failing command is worth keeping when the failure is the truth about the topic;
 the exit code is recorded and read back first, so a red row teaches too. Do not
 retry it into a lie.
 
-**5. Verify and report.** Read the memory back the way a future session will:
+**5. Write down what you learned.** The survey leaves commands, exit codes and
+output behind. It does not leave the UNDERSTANDING behind, and that is the half
+a future session cannot reconstruct — so write it, one top-level note per coined
+word:
+
+```bash
+bough notes write nased --title "NASED" <<'EOF'
+The scheduler's evaluator. Runs as a Deployment per environment; the
+executor and the DAG builder are separate images. [cmd:8812]
+
+## Where it lives
+tags: nased
+Config is in the gitops repo, not this one. [file:apps/nased/values.yaml]
+EOF
+```
+
+Three rules, and the first is the same one that governs the commands:
+
+- **Claim only what the survey showed.** The skill forbids faking a command
+  because a zero exit code is supposed to mean something. A note asserting what
+  no command demonstrated is the same defect one level up, and worse, because
+  prose carries no exit code to check it against. If you inferred something,
+  say you inferred it.
+- **Cite it.** `bough tags sql "SELECT id, cmd FROM command_history WHERE
+  session_id = '$BOUGH_SESSION'"` gives you the ids your own survey just wrote;
+  `[cmd:<id>]` attaches a claim to the command that showed it. A citation that
+  does not resolve is refused and named, so this cannot be faked either.
+- **No commands in the prose.** The command memory already holds them, and
+  `bough tags show <tag>` is the citation. A note that copies an incantation
+  goes stale silently; a note that points at one cannot.
+
+This is also the only way a new topic gets a note at all: automation creates
+one only after 20 commands across 2 sessions, which a topic nobody has worked
+on yet will never reach.
+
+**6. Verify and report.** Read the memory back the way a future session will:
 
 ```bash
 bough tags
-bough tags show <each-coined-tag>
+bough tags show <each-coined-tag>   # the note now prints above the commands
+bough notes cites <each-coined-tag> # and what each claim rests on
 ```
 
 Then report: the vocabulary, what each word means, how many rows carry it;
+which claims you had to leave uncited;
 anything that failed and why it was kept; anything you had to survey around
 because it would have mutated something. If a word came back with a single row,
 say so — it will not survive into the priming note.

@@ -56,19 +56,17 @@ All three are also settable in the model picker (`^o`), which persists to
 | `BOUGH_DB` | Override the database path |
 | `BOUGH_TRACE_DIR` | Write turn traces |
 | `BOUGH_DIR` | Where `install.sh` clones to |
-| `BOUGH_HOST` | Overrides this machine's name in a note's per-host sync frontier |
 
 ## What lives under `~/.bough`
 
 ```
 env                  API keys and environment
-bough.db             sessions, messages, turns, workflows, command memory
+bough.db             sessions, messages, turns, workflows, command memory, notes
 embeddings.db        the optional vector index (derived; deletable)
 model.json           model picker state
 theme.json           theme picker state
 mcp.json             MCP registry
 mcp-auth.json        MCP credentials
-notes/               the note memory (markdown; an llmwiki wiki)
 skills/              your skills
 hooks/               your Lua hooks
 extensions/          your JavaScript extensions
@@ -85,9 +83,6 @@ logs/                server logs
 Two of these are **derived and safe to delete**: `embeddings.db` rebuilds, and `scratch/`
 is per-session working space.
 
-`notes/` is the one directory worth putting under version control with a remote: it is the
-only part of the memory meant to travel between installs, and `bough notes` reads and
-writes nothing else. See [notes.md](notes.md).
 
 ## The database
 

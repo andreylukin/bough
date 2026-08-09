@@ -327,3 +327,151 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   session_id UNINDEXED,
   tokenize = 'unicode61 remove_diacritics 2'
 );
+
+-- ---------------------------------------------------------------------------
+-- The note memory (docs/notes.md). SANCTIONED ADDITION to a closed table set:
+-- notes began as markdown files and moved here so a note could attach to a SET
+-- of tags rather than be NAMED by one — which files cannot express without a
+-- composite filename, and a composite filename is a key no command can carry.
+-- ---------------------------------------------------------------------------
+
+-- One note. `path` is PLACEMENT: a colon path in the tag grammar's own order
+-- (`nased`, `kubectl:rollout`, `kubectl:rollout:nased`), so depth 1 is a
+-- top-level note about a word and deeper paths are notes about a combination.
+-- Intermediate nodes with no note are STUBS, computed when a tree is rendered
+-- and never stored — an empty row would be a note that says nothing.
+--
+-- Placement is NOT attachment: what a note covers is `note_tags`, because the
+-- grammar is faceted, not a containment tree. `nased` appears under
+-- `kubectl:rollout:nased` and `helm:upgrade:nased` both, so prefix matching
+-- would miss the half that carries the meaning.
+CREATE TABLE IF NOT EXISTS notes (
+  id         INTEGER PRIMARY KEY,
+  path       TEXT NOT NULL UNIQUE,
+  title      TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  -- The newest `command_history.ts` folded into the log. A plain column, not
+  -- the per-host map the file store needed: the database IS per machine, so
+  -- "this host's frontier" and "this database's frontier" are the same number.
+  -- Advanced only to a row actually folded, never to `now`, so a fold that
+  -- skipped rows cannot mark them accounted for.
+  synced_ts  INTEGER NOT NULL DEFAULT 0,
+  -- Set when a reference stops seeing commands. Frozen, never deleted: bough
+  -- has no purge, and a closed ticket's conclusions outlive the ticket.
+  closed_at  INTEGER
+);
+CREATE INDEX IF NOT EXISTS notes_path ON notes(path);
+
+-- ATTACHMENT: which commands a note covers. Many-to-many, order-free, and the
+-- reason a "tag group" costs nothing — a note on {kubectl, nased} matches every
+-- command carrying both, at any position. `tag` joins `command_tags.tag`, so a
+-- key that is not a legal tag is unreachable by construction (`canonical_key`).
+CREATE TABLE IF NOT EXISTS note_tags (
+  note_id INTEGER NOT NULL REFERENCES notes(id),
+  tag     TEXT NOT NULL,
+  PRIMARY KEY (note_id, tag)
+);
+CREATE INDEX IF NOT EXISTS note_tags_tag ON note_tags(tag, note_id);
+
+-- A note's body is its ordered sections. The section is the unit that is
+-- addressed, tagged, revised, cited and transcluded: a lesson learned while
+-- working on `nased:rollout:prod` is often a truth about `nased`, and with the
+-- note as the atom it would be stuck where it was written.
+CREATE TABLE IF NOT EXISTS note_sections (
+  id         INTEGER PRIMARY KEY,
+  note_id    INTEGER NOT NULL REFERENCES notes(id),
+  ord        INTEGER NOT NULL,
+  heading    TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  -- human | session | cheap. WHO WROTE THIS CLAIM, which no staleness query
+  -- can recover: a line the cheap model inferred and a sentence you typed
+  -- arrive as the same confident prose unless the row says otherwise.
+  author     TEXT NOT NULL DEFAULT 'human',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS note_sections_note ON note_sections(note_id, ord);
+
+-- Where a section surfaces. Defaults to its note's tags on write, so authoring
+-- is unchanged and a section appears only where it was written. NARROWING the
+-- set is PROMOTION — the deliberate act that says "this is a general truth" —
+-- and a section surfaces wherever its tags are a SUBSET of the reader's
+-- context. Subset, not overlap: overlap would put every `git`-tagged section on
+-- every page.
+--
+-- There is no cap on promotion and no policy against it. Resolution ranks by
+-- the same `weight x idf` the priming note uses, so a section promoted to a tag
+-- every repo uses scores at the floor and never wins a slot. The incentive
+-- disappears because the payoff does.
+CREATE TABLE IF NOT EXISTS section_tags (
+  section_id INTEGER NOT NULL REFERENCES note_sections(id),
+  tag        TEXT NOT NULL,
+  PRIMARY KEY (section_id, tag)
+);
+CREATE INDEX IF NOT EXISTS section_tags_tag ON section_tags(tag, section_id);
+
+-- WHAT A CLAIM RESTS ON. Rows rather than markdown, so a citation can be
+-- VALIDATED — an id that does not exist, or that carries none of the section's
+-- tags, refuses the write instead of rotting silently in prose.
+--
+-- This is what lets the cheap tier write at all without being taken on faith:
+-- the fold cites the very commands of the round it is summarizing, it is never
+-- shown any other id so it cannot invent one, and a line with no citation is by
+-- construction a human's unsourced claim.
+--
+-- `kind`: command (command_history.id) | message (messages.id) | file
+-- (path@sha) | url | section (note_sections.id). Deliberately no foreign key —
+-- the memory outlives its transcript, and losing the note would be worse than
+-- losing the link.
+CREATE TABLE IF NOT EXISTS section_citations (
+  section_id INTEGER NOT NULL REFERENCES note_sections(id),
+  kind       TEXT NOT NULL,
+  ref        TEXT NOT NULL,
+  at         INTEGER NOT NULL,
+  PRIMARY KEY (section_id, kind, ref)
+);
+CREATE INDEX IF NOT EXISTS section_citations_ref ON section_citations(kind, ref);
+
+-- HISTORICAL NOTES: one row per superseded section body, full copies (a section
+-- is small, so the column-mask tricks a large-blob history needs do not apply).
+-- Never pruned.
+--
+-- This is what makes resolving a contradiction auditable. Without it, a warning
+-- cleared by a rewrite loses the claim that was there and records that no
+-- judgment was made — the exact silent loss that makes model-arbitrated memory
+-- untrustworthy.
+CREATE TABLE IF NOT EXISTS section_revisions (
+  section_id INTEGER NOT NULL REFERENCES note_sections(id),
+  rev        INTEGER NOT NULL,
+  heading    TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  -- human | session | cheap — who wrote the version being superseded.
+  author     TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (section_id, rev)
+);
+
+-- The derived zone, as rows. Provenance is a column rather than a glyph to
+-- parse, and the frontier is a MAX(ts) rather than a frontmatter map.
+-- Append-only: the machine writes here and nowhere else.
+CREATE TABLE IF NOT EXISTS note_log (
+  id      INTEGER PRIMARY KEY,
+  note_id INTEGER NOT NULL REFERENCES notes(id),
+  ts      INTEGER NOT NULL,
+  -- human | session | cheap.
+  source  TEXT NOT NULL,
+  text    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS note_log_note ON note_log(note_id, ts);
+
+-- Keyword search over notes, at SECTION grain so a hit points at the paragraph
+-- rather than the page. Same standalone shape and tokenizer as the other two.
+CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+  heading,
+  body,
+  path,
+  section_id UNINDEXED,
+  note_id UNINDEXED,
+  tokenize = 'unicode61 remove_diacritics 2'
+);

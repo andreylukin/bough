@@ -66,23 +66,23 @@ Exit `1` means no command memory yet, which is different from an error. Full mec
 
 ```
 bough notes                 # every note, most out of date first
-bough notes show TAG        # the prose, then its log
-bough notes write TAG       # replace the prose; the body comes in on stdin
-bough notes append TAG "…"  # one line onto the log
-bough notes search WORDS    # notes mentioning every word
+bough notes tree            # the hierarchy, stubs included
+bough notes show PATH       # its sections, then what resolves into it
+bough notes write PATH      # add or update sections; markdown on stdin
+bough notes append PATH "…" # one line onto the log
+bough notes search WORDS    # FTS over sections
 bough notes stale           # how far behind each note is, warnings first
-bough notes check [TAG]     # raise a warning where a log contradicts a claim
-bough notes rebuild TAG     # drop the derived log so it can be re-folded
-bough notes lint            # llmwiki's structural check
-bough notes path [TAG]      # a note's file, or the wiki directory itself
+bough notes check [PATH]    # raise a warning where a log contradicts a claim
+bough notes history PATH    # every superseded version
+bough notes cites PATH      # what each claim rests on
 ```
 
-Prose keyed on the same tags as the command memory, in `~/.bough/notes`. A note holds the
-decision and the reason; it holds no commands, because `bough tags show TAG` already does
-and copying them makes two records of one fact that age apart.
+Prose keyed on the same tags as the command memory, in the same database. A PATH is one or
+more tags, colon separated; a `## Heading` starts a section, and a `tags:` line under it
+narrows that section so it also appears on other notes sharing those tags.
 
-`bough tags show TAG` prints the note above the commands, so most recall needs no second
-command. Full mechanism: [notes.md](notes.md).
+A note holds the decision and the reason; it holds no commands, because `bough tags show
+TAG` already does — and it prints the note above them. Full mechanism: [notes.md](notes.md).
 
 ## `bough patterns` — read a big log
 

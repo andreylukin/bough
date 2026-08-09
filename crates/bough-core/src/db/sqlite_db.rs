@@ -34,9 +34,10 @@ use crate::schema::parts::{
     WorkflowPhase, WorkflowRun,
 };
 use crate::types::{
-    system_clock, Clock, CommandRecord, CommandTagOpts, CommandTagRow, Db, PriorFailures,
-    RecentFailure, SearchHit, SessionRuntime, StateEntry, TagDiversityDay, TaggedCommand,
-    TurnPatch, UsageTotals, WorkflowAgentPatch, WorkflowPatch,
+    system_clock, Clock, CommandRecord, CommandTagOpts, CommandTagRow, Db, NoteAuthor, NoteLogRow,
+    NoteRow, PriorFailures, RecentFailure, SearchHit, SectionRevision, SectionRow, SectionWrite,
+    SessionRuntime, StateEntry, TagDiversityDay, TaggedCommand, TurnPatch, UsageTotals,
+    WorkflowAgentPatch, WorkflowPatch,
 };
 
 // ---- small helpers ----------------------------------------------------------
@@ -1317,6 +1318,74 @@ impl Db for SqliteDb {
     /// Commands recorded under one tag, newest first — `bough tags show`.
     /// The limit keeps the TS clamp (`Math.max(1, Math.trunc(limit))`),
     /// bound rather than interpolated (db.md §37).
+    // ---- the note memory: every query lives in `db/notes_sql.rs` ------
+    fn upsert_note(
+        &self,
+        path: &str,
+        title: &str,
+        tags: &[String],
+        now: i64,
+    ) -> Result<i64, BoughError> {
+        crate::db::notes_sql::upsert_note(&self.conn, path, title, tags, now)
+    }
+    fn note_by_path(&self, path: &str) -> Result<Option<NoteRow>, BoughError> {
+        crate::db::notes_sql::note_by_path(&self.conn, path)
+    }
+    fn list_notes(&self) -> Result<Vec<NoteRow>, BoughError> {
+        crate::db::notes_sql::list_notes(&self.conn)
+    }
+    fn notes_for_tags(&self, tags: &[String]) -> Result<Vec<NoteRow>, BoughError> {
+        crate::db::notes_sql::notes_for_tags(&self.conn, tags)
+    }
+    fn set_note_synced(&self, note_id: i64, ts: i64) -> Result<(), BoughError> {
+        crate::db::notes_sql::set_note_synced(&self.conn, note_id, ts)
+    }
+    fn close_note(&self, note_id: i64, at: i64) -> Result<(), BoughError> {
+        crate::db::notes_sql::close_note(&self.conn, note_id, at)
+    }
+    fn put_section(&self, write: &SectionWrite, now: i64) -> Result<i64, BoughError> {
+        crate::db::notes_sql::put_section(&self.conn, write, now)
+    }
+    fn sections_for_note(&self, note_id: i64) -> Result<Vec<SectionRow>, BoughError> {
+        crate::db::notes_sql::sections_for_note(&self.conn, note_id)
+    }
+    fn sections_for_context(
+        &self,
+        context: &[String],
+        exclude_note: Option<i64>,
+    ) -> Result<Vec<SectionRow>, BoughError> {
+        crate::db::notes_sql::sections_for_context(&self.conn, context, exclude_note)
+    }
+    fn section_revisions(&self, section_id: i64) -> Result<Vec<SectionRevision>, BoughError> {
+        crate::db::notes_sql::section_revisions(&self.conn, section_id)
+    }
+    fn delete_section(&self, section_id: i64) -> Result<(), BoughError> {
+        crate::db::notes_sql::delete_section(&self.conn, section_id)
+    }
+    fn search_sections(&self, words: &[String], limit: i64) -> Result<Vec<SectionRow>, BoughError> {
+        crate::db::notes_sql::search_sections(&self.conn, words, limit)
+    }
+    fn append_note_log(
+        &self,
+        note_id: i64,
+        ts: i64,
+        source: NoteAuthor,
+        text: &str,
+    ) -> Result<bool, BoughError> {
+        crate::db::notes_sql::append_note_log(&self.conn, note_id, ts, source, text)
+    }
+    fn note_log(&self, note_id: i64, limit: i64) -> Result<Vec<NoteLogRow>, BoughError> {
+        crate::db::notes_sql::note_log(&self.conn, note_id, limit)
+    }
+    fn citation_is_valid(
+        &self,
+        kind: &str,
+        reference: &str,
+        tags: &[String],
+    ) -> Result<bool, BoughError> {
+        crate::db::notes_sql::citation_is_valid(&self.conn, kind, reference, tags)
+    }
+
     fn commands_for_tag(
         &self,
         tag: &str,

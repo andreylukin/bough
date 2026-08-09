@@ -23,7 +23,8 @@
 //! ever RAISE a warning — clearing one needs the session model or a human.
 //! That asymmetry is the whole trust model.
 
-use crate::notes::{Note, MAX_LINE_CHARS};
+use crate::notes::MAX_LINE_CHARS;
+use crate::types::{NoteLogRow, NoteRow};
 use crate::worker::titles::{cheap_text, CheapCallOpts};
 
 // ---------------------------------------------------------------------------
@@ -58,14 +59,19 @@ pub struct RoundTag {
 
 /// The prompt body. **Takes no command string by construction** — the whole
 /// non-duplication invariant, expressed as a function signature.
-pub fn round_gist(note: &Note, tags: &[RoundTag], user_message: &str) -> String {
-    let mut out = format!("Topic: {}\n", note.key);
-    if !note.body.trim().is_empty() {
-        let body: String = note.body.trim().chars().take(600).collect();
+pub fn round_gist(
+    note: &NoteRow,
+    claim: &str,
+    log: &[NoteLogRow],
+    tags: &[RoundTag],
+    user_message: &str,
+) -> String {
+    let mut out = format!("Topic: {}\n", note.path);
+    if !claim.trim().is_empty() {
+        let body: String = claim.trim().chars().take(600).collect();
         out.push_str(&format!("\nWhat the note already claims:\n{body}\n"));
     }
-    let recent: Vec<&str> = note
-        .log
+    let recent: Vec<&str> = log
         .iter()
         .rev()
         .take(CONTEXT_LINES)
@@ -150,14 +156,13 @@ pub const CONTRADICTION_SYSTEM: &str =
      topic is not a contradiction.";
 
 /// The prompt for a contradiction check.
-pub fn contradiction_gist(note: &Note) -> String {
-    let claim: String = note.body.trim().chars().take(800).collect();
-    let lines: Vec<String> = note
-        .log
+pub fn contradiction_gist(claim: &str, log: &[NoteLogRow]) -> String {
+    let claim: String = claim.trim().chars().take(800).collect();
+    let lines: Vec<String> = log
         .iter()
         .rev()
         .take(CONTEXT_LINES)
-        .map(|l| format!("- {} {}", l.date, l.text))
+        .map(|l| format!("- {}", l.text))
         .collect();
     format!(
         "Claim:\n{claim}\n\nRecent log:\n{}\n\nNO, or one sentence.",
@@ -186,13 +191,32 @@ pub async fn cheap_contradiction(prompt: &str, opts: &CheapCallOpts) -> Option<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::notes::{append_log, Source};
+    use crate::types::{NoteAuthor, NoteLogRow, NoteRow};
 
-    fn note_with_log() -> Note {
-        let mut note = Note::new("linear.nme-1673", "NASED executor removal");
-        note.body = "DAG removal lands before the executor swap.".into();
-        append_log(&mut note, Source::Cheap, "2026-08-08", "dev quiesce merged");
-        note
+    fn note() -> NoteRow {
+        NoteRow {
+            id: 1,
+            path: "linear.nme-1673".into(),
+            title: "NASED executor removal".into(),
+            tags: vec!["linear.nme-1673".into()],
+            created_at: 0,
+            updated_at: 0,
+            synced_ts: 0,
+            closed_at: None,
+        }
+    }
+
+    fn log(lines: &[&str]) -> Vec<NoteLogRow> {
+        lines
+            .iter()
+            .enumerate()
+            .map(|(i, t)| NoteLogRow {
+                id: i as i64,
+                ts: i as i64,
+                source: NoteAuthor::Cheap,
+                text: t.to_string(),
+            })
+            .collect()
     }
 
     #[test]
@@ -201,7 +225,9 @@ mod tests {
         // takes tags and exit codes; there is no parameter a command could
         // ride in, and this test is what should fail if one is added.
         let gist = round_gist(
-            &note_with_log(),
+            &note(),
+            "DAG removal lands before the executor swap.",
+            &log(&["dev quiesce merged"]),
             &[RoundTag {
                 tag: "nased".into(),
                 exit_code: Some(0),
@@ -214,12 +240,22 @@ mod tests {
         assert!(gist.contains("nased — worked"));
         assert!(gist.contains("roll out the executor change"));
         assert!(gist.contains("do not repeat"));
+        assert!(gist.contains("dev quiesce merged"));
     }
 
     #[test]
     fn an_outcome_word_replaces_the_exit_code() {
+        // A path with no digits, so a stray `3` can only have come from the
+        // exit code this test is about.
+        let plain = NoteRow {
+            path: "nased".into(),
+            tags: vec!["nased".into()],
+            ..note()
+        };
         let gist = round_gist(
-            &Note::new("k", "t"),
+            &plain,
+            "",
+            &[],
             &[
                 RoundTag {
                     tag: "a".into(),
@@ -278,18 +314,21 @@ mod tests {
     #[test]
     fn a_line_is_capped_at_the_stores_limit() {
         let long = "x".repeat(MAX_LINE_CHARS + 40);
-        let out = sanitize_line(&long).unwrap();
-        assert_eq!(out.chars().count(), MAX_LINE_CHARS);
+        assert_eq!(
+            sanitize_line(&long).unwrap().chars().count(),
+            MAX_LINE_CHARS
+        );
     }
 
     #[test]
     fn a_contradiction_check_defaults_to_silence() {
-        // `sanitize_line` is shared, so NO must survive it and then be read as
-        // "no contradiction" rather than as a log line saying "no".
         assert_eq!(sanitize_line("NO"), Some("NO".into()));
-        let gist = contradiction_gist(&note_with_log());
+        let gist = contradiction_gist(
+            "DAG removal lands first.",
+            &log(&["the cutover merged green"]),
+        );
         assert!(gist.contains("Claim:"));
-        assert!(gist.contains("dev quiesce merged"));
+        assert!(gist.contains("the cutover merged green"));
         assert!(gist.contains("NO, or one sentence"));
     }
 

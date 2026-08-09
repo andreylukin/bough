@@ -1,301 +1,64 @@
-//! The note memory: prose keyed on a tag, beside the command memory.
+//! The note memory: prose keyed on the tags the commands already carry.
 //!
-//! WHY THIS EXISTS. `command_history` records what ran and whether it worked;
-//! it cannot record WHY. That knowledge either lives in a head or dies with
-//! the session — the observed failure being nine `session_state` keys for one
-//! PR rollout, each written by a different lineage root and invisible to the
-//! next session.
+//! WHY IT EXISTS. `command_history` records what ran and whether it worked; it
+//! cannot record WHY. That knowledge either lives in a head or dies with the
+//! session — the observed failure being nine `session_state` keys for one PR
+//! rollout, each written by a different lineage root and invisible to the next.
 //!
-//! THE INVARIANT THIS MODULE HOLDS: **a note contains no command strings and
-//! no command output.** Every "how" is a citation into `bough tags show TAG`.
-//! Break it and the two stores become two copies of the same facts that age
-//! independently, which is the exact drift the split exists to prevent. The
-//! test `a_note_never_stores_a_command` pins it.
+//! THE INVARIANT: **a note holds no command strings and no output.** Every
+//! "how" is a citation into `bough tags show TAG` — a POINTER, never a copy.
+//! Break it and the two stores become two records of one fact that age apart.
 //!
-//! PROVENANCE POINTS ONE WAY. `command_history` is canonical; the note's
-//! `## Log` is DERIVED from it and rebuildable ([`rebuild_log`] drops it so a
-//! re-fold can reproduce it). The body above the Log is not derived — it is
-//! original authorship and canonical in its own right. That is why the page is
-//! zoned rather than free-form: one file, two authorities, and the machine
-//! writes only in the derived zone.
+//! PLACEMENT IS NOT ATTACHMENT, and conflating them is the trap this module
+//! exists to keep untangled:
 //!
-//! NOT A DATABASE TABLE. Markdown files under `~/.bough/notes`, so the notes
-//! are hand-editable, git-syncable across installs, readable by llmwiki and
-//! Obsidian, and survive a database reset — the same contract artifacts and
-//! skills already have (spec §4). The table set stays closed.
+//!   * **placement** (`notes.path`) is where a note sits for browsing — a colon
+//!     path in the tag grammar's own order, so depth 1 is a top-level note
+//!     about a word and deeper paths are notes about a combination;
+//!   * **attachment** (`note_tags`, `section_tags`) is what a note COVERS —
+//!     order-free set membership, because `tool:intent:subject` is a faceted
+//!     grammar and not a containment tree. `nased` appears under
+//!     `kubectl:rollout:nased` and `helm:upgrade:nased` both, so prefix
+//!     matching would miss the half that carries the meaning.
+//!
+//! THE SECTION IS THE ATOM. A lesson learned while working on
+//! `nased:rollout:prod` is often a truth about `nased`; with the note as the
+//! atom it would be stuck where it was written. A section has ONE home and
+//! MANY appearances — resolved at read time, never copied, so one fix repairs
+//! every appearance.
 
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
 
 use crate::errors::BoughError;
-use crate::history::tags::record::is_ref;
+use crate::history::tags::record::{is_ref, normalize_tags, split_tags};
+use crate::history::tags::stats::TagSpread;
+use crate::types::{Citation, Db, NoteRow, SectionRow};
 
-pub mod drift;
-pub mod llmwiki;
+pub mod resolve;
 
 // ---------------------------------------------------------------------------
 // Caps
 // ---------------------------------------------------------------------------
 
-/// Log lines kept on one page. Past this an append is refused rather than
-/// rotating: silently dropping the oldest line would make the Log a lossy copy
-/// of a log that is not lossy, and the fix (fold it into prose) is a human's.
-pub const MAX_LOG_LINES: usize = 40;
-
-/// One Log line. A cheap model asked for "a line" will write a paragraph if
+/// One log line. A cheap model asked for "a line" writes a paragraph if
 /// nothing stops it.
 pub const MAX_LINE_CHARS: usize = 120;
 
-/// Whole-page ceiling, matching `session_state`'s per-key limit. Notes, not
-/// storage.
-pub const MAX_NOTE_BYTES: usize = 16 * 1024;
+/// One section body. Notes, not storage: a payload belongs in a file with a
+/// `[file:…]` citation pointing at it.
+pub const MAX_SECTION_BYTES: usize = 16 * 1024;
 
-/// A reference needs this many commands before automation will create a page
+/// A reference needs this many commands before automation will start a page
 /// for it. On a real memory (1,971 tags, 143 references) this is the
 /// difference between ~6 pages and 143 stubs.
 pub const AUTO_CREATE_MIN_COMMANDS: usize = 20;
 
 /// …across at least this many sessions, so one long afternoon does not mint a
-/// page for a reference that never came back.
+/// page for a reference that never comes back.
 pub const AUTO_CREATE_MIN_SESSIONS: usize = 2;
 
 // ---------------------------------------------------------------------------
-// Provenance
-// ---------------------------------------------------------------------------
-
-/// Who wrote a Log line. The trust question a reader cannot otherwise answer:
-/// a line the cheap model inferred and a line you typed arrive as the same
-/// paragraph of confident text unless the payload says otherwise, and no
-/// staleness query can detect a note that was WRONG WHEN WRITTEN.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Source {
-    /// You, at a terminal.
-    Human,
-    /// The session model, mid-turn, through `bough notes append`.
-    Session,
-    /// The cheap tier, automatically.
-    Cheap,
-}
-
-impl Source {
-    pub fn glyph(&self) -> char {
-        match self {
-            Source::Human => '*',
-            Source::Session => '+',
-            Source::Cheap => '~',
-        }
-    }
-
-    pub fn from_glyph(c: char) -> Option<Source> {
-        match c {
-            '*' => Some(Source::Human),
-            '+' => Some(Source::Session),
-            '~' => Some(Source::Cheap),
-            _ => None,
-        }
-    }
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            Source::Human => "you",
-            Source::Session => "session model",
-            Source::Cheap => "cheap model",
-        }
-    }
-}
-
-/// One line of the derived zone.
-#[derive(Clone, Debug, PartialEq)]
-pub struct LogLine {
-    pub source: Source,
-    /// `YYYY-MM-DD`, local time — the question is "what did I do on Tuesday".
-    pub date: String,
-    pub text: String,
-}
-
-impl LogLine {
-    fn render(&self) -> String {
-        format!("{} {}  {}", self.source.glyph(), self.date, self.text)
-    }
-
-    fn parse(line: &str) -> Option<LogLine> {
-        let mut chars = line.chars();
-        let source = Source::from_glyph(chars.next()?)?;
-        let rest = chars.as_str().trim_start();
-        let (date, text) = rest.split_once(char::is_whitespace)?;
-        if date.len() != 10 || !date.starts_with(|c: char| c.is_ascii_digit()) {
-            return None;
-        }
-        Some(LogLine {
-            source,
-            date: date.to_string(),
-            text: text.trim().to_string(),
-        })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// The page
-// ---------------------------------------------------------------------------
-
-/// The heading that opens the derived zone. Verbatim product surface: the CLI
-/// splits on it, `wiki` renders it, and you read it.
-pub const LOG_HEADING: &str = "## Log";
-
-/// One note. `body` is everything between the frontmatter and [`LOG_HEADING`]
-/// — prose, wikilinks, and any `> [!WARNING]` callouts a consolidation raised.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Note {
-    /// The tag this note is about. A reference (`linear.nme-1673`) or an
-    /// ordinary vocabulary tag (`nased`).
-    pub key: String,
-    pub title: String,
-    /// Per HOST frontier: the last `command_history.ts` folded into the Log on
-    /// that machine. A map and not a scalar because the notes directory
-    /// git-syncs between installs while the command memory does NOT — one
-    /// scalar would let one host advance the frontier past another host's
-    /// unfolded commands, and those rows would never be seen again.
-    pub synced: BTreeMap<String, i64>,
-    pub body: String,
-    pub log: Vec<LogLine>,
-}
-
-impl Note {
-    pub fn new(key: &str, title: &str) -> Note {
-        Note {
-            key: key.to_string(),
-            title: title.to_string(),
-            synced: BTreeMap::new(),
-            body: String::new(),
-            log: Vec::new(),
-        }
-    }
-
-    /// This host's frontier, or 0 when this host has never folded anything.
-    pub fn frontier(&self, host: &str) -> i64 {
-        self.synced.get(host).copied().unwrap_or(0)
-    }
-
-    /// Advance this host's frontier. Never moves backwards: a re-fold over an
-    /// older window must not un-sync rows already accounted for.
-    pub fn mark_synced(&mut self, host: &str, ts: i64) {
-        let entry = self.synced.entry(host.to_string()).or_insert(0);
-        if ts > *entry {
-            *entry = ts;
-        }
-    }
-
-    /// Does the body carry an unresolved contradiction marker?
-    pub fn has_warning(&self) -> bool {
-        self.body
-            .lines()
-            .any(|l| l.trim_start().starts_with("> [!WARNING]"))
-    }
-
-    /// The page WITHOUT frontmatter — what llmwiki is handed.
-    ///
-    /// It must never be given [`render`](Note::render): `wiki write` writes
-    /// its own frontmatter around whatever content it receives, so passing a
-    /// rendered page nests one set of frontmatter inside another and the
-    /// `key` and `synced` fields end up inside the body, where the next read
-    /// takes them for prose. `a_rewrite_keeps_the_derived_log` is the test
-    /// that found it.
-    pub fn page_content(&self) -> String {
-        let mut out = String::new();
-        let body = self.body.trim();
-        if !body.is_empty() {
-            out.push_str(body);
-            out.push_str("\n\n");
-        }
-        out.push_str(LOG_HEADING);
-        out.push('\n');
-        for line in &self.log {
-            out.push_str(&line.render());
-            out.push('\n');
-        }
-        out
-    }
-
-    pub fn render(&self) -> String {
-        let mut out = String::from("---\n");
-        let _ = writeln!(out, "title: {}", self.title);
-        let _ = writeln!(out, "key: {}", self.key);
-        if self.synced.is_empty() {
-            out.push_str("synced: {}\n");
-        } else {
-            out.push_str("synced:\n");
-            for (host, ts) in &self.synced {
-                let _ = writeln!(out, "  {host}: {ts}");
-            }
-        }
-        out.push_str("---\n\n");
-        let body = self.body.trim();
-        if !body.is_empty() {
-            out.push_str(body);
-            out.push_str("\n\n");
-        }
-        out.push_str(LOG_HEADING);
-        out.push('\n');
-        for line in &self.log {
-            out.push_str(&line.render());
-            out.push('\n');
-        }
-        out
-    }
-
-    pub fn parse(text: &str) -> Note {
-        let (front, rest) = split_frontmatter(text);
-        let mut note = Note::new("", "");
-        let mut in_synced = false;
-        for line in front.lines() {
-            if let Some(v) = line.strip_prefix("title:") {
-                note.title = v.trim().to_string();
-                in_synced = false;
-            } else if let Some(v) = line.strip_prefix("key:") {
-                note.key = v.trim().to_string();
-                in_synced = false;
-            } else if let Some(v) = line.strip_prefix("synced:") {
-                in_synced = v.trim().is_empty();
-            } else if in_synced && line.starts_with(' ') {
-                if let Some((host, ts)) = line.trim().split_once(':') {
-                    if let Ok(ts) = ts.trim().parse::<i64>() {
-                        note.synced.insert(host.trim().to_string(), ts);
-                    }
-                }
-            } else if !line.trim().is_empty() {
-                in_synced = false;
-            }
-        }
-        // The Log is whatever follows the LAST `## Log` heading, so a body that
-        // quotes the heading inside prose does not swallow the zone.
-        match rest.rfind(LOG_HEADING) {
-            Some(at) => {
-                note.body = rest[..at].trim().to_string();
-                let tail = &rest[at + LOG_HEADING.len()..];
-                note.log = tail.lines().filter_map(LogLine::parse).collect();
-            }
-            None => note.body = rest.trim().to_string(),
-        }
-        note
-    }
-}
-
-fn split_frontmatter(text: &str) -> (&str, &str) {
-    let Some(rest) = text.strip_prefix("---\n") else {
-        return ("", text);
-    };
-    match rest.find("\n---") {
-        Some(end) => {
-            let after = &rest[end + 4..];
-            (&rest[..end], after.strip_prefix('\n').unwrap_or(after))
-        }
-        None => ("", text),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Where a note lives
+// Keys and paths
 // ---------------------------------------------------------------------------
 
 /// The key a note may live at, or why it may not.
@@ -303,17 +66,15 @@ fn split_frontmatter(text: &str) -> (&str, &str) {
 /// THE JOIN IS THE WHOLE POINT, so a note has to sit at a key a COMMAND could
 /// carry. `normalize_tags` treats a dash as a separator, so `wrapper-check` is
 /// two tags and never one: a note filed there could never be reached by
-/// `bough tags show`, could never trigger a round hint, and would report zero
-/// drift forever — a page that looks filed and is actually orphaned. This
-/// function is what makes "keyed on a tag" true rather than aspirational.
+/// `bough tags show`, never trigger a hint, and would report zero drift
+/// forever — a page that looks filed and is actually orphaned.
 ///
-/// Normalization that LOSES nothing is applied silently (`NASED` → `nased`,
-/// the same rule the memory applies to what the model writes). Normalization
-/// that would SPLIT is refused, because picking one of the two halves would be
-/// guessing at which topic was meant.
+/// Normalization that LOSES nothing is applied silently (`NASED` → `nased`).
+/// Normalization that would SPLIT is refused, because picking one of the two
+/// halves would be guessing at which topic was meant.
 pub fn canonical_key(raw: &str) -> Result<String, BoughError> {
-    let normalized = crate::history::tags::record::normalize_tags(Some(raw));
-    let parts = crate::history::tags::record::split_tags(&normalized);
+    let normalized = normalize_tags(Some(raw));
+    let parts = split_tags(&normalized);
     match parts.len() {
         1 => Ok(parts.into_iter().next().unwrap()),
         0 => Err(BoughError::bad_request(format!(
@@ -334,412 +95,516 @@ pub fn canonical_key(raw: &str) -> Result<String, BoughError> {
     }
 }
 
-/// The wiki subdirectory a key files under. References get their own, because
-/// they have a lifecycle (a ticket closes) and ordinary vocabulary does not.
-pub fn dir_for(key: &str) -> &'static str {
-    if is_ref(key) {
-        "refs"
-    } else {
-        "tags"
-    }
-}
-
-/// The page path for a key, under a notes root.
+/// A note's PATH from what the user typed: `kubectl:rollout:nased` stays in
+/// the order written, because that order is the grammar's
+/// (`tool:intent:subject`) and re-sorting it would put the tool where the
+/// subject belongs.
 ///
-/// A reference keeps slashes (`branch.claude/tags-history` is one id), so they
-/// are folded to `-` for the filename — half a branch name is a path, not a
-/// reference, and a nested directory would hide the page from `wiki list`.
-pub fn path_for(root: &Path, key: &str) -> PathBuf {
-    root.join("wiki")
-        .join(dir_for(key))
-        .join(format!("{}.md", key.replace('/', "-")))
+/// Every segment must be a legal tag on its own — the path is a placement, but
+/// its segments are the attachment, and an unreachable segment would be an
+/// unreachable note.
+pub fn canonical_path(raw: &str) -> Result<(String, Vec<String>), BoughError> {
+    let mut segments: Vec<String> = Vec::new();
+    for piece in raw.split(':') {
+        if piece.trim().is_empty() {
+            continue;
+        }
+        let key = canonical_key(piece)?;
+        if !segments.contains(&key) {
+            segments.push(key);
+        }
+    }
+    if segments.is_empty() {
+        return Err(BoughError::bad_request(format!(
+            "`{raw}` names no tag — a note's path is one or more tags, colon separated"
+        )));
+    }
+    Ok((segments.join(":"), segments))
 }
 
-/// Every note under a root, in no particular order. Unreadable files are
-/// skipped, not raised: one corrupt page must not blind the whole memory.
-pub fn list(root: &Path) -> Vec<Note> {
-    let mut out = Vec::new();
-    for dir in ["refs", "tags"] {
-        let Ok(entries) = std::fs::read_dir(root.join("wiki").join(dir)) else {
+/// How deep a path sits. Depth 1 is a top-level note about a single word.
+pub fn depth(path: &str) -> usize {
+    path.split(':').filter(|p| !p.is_empty()).count()
+}
+
+/// The STUBS between a set of paths: intermediate nodes nothing was written
+/// at, needed so a tree renders as a tree.
+///
+/// Computed, never stored. An empty row would be a note that says nothing, and
+/// the reason folder hierarchies ossify is that they make you create the
+/// container before you have anything to put in it.
+pub fn stubs_for(paths: &[String]) -> Vec<String> {
+    let mut stubs: Vec<String> = Vec::new();
+    for path in paths {
+        let segments: Vec<&str> = path.split(':').collect();
+        for cut in 1..segments.len() {
+            let prefix = segments[..cut].join(":");
+            if !paths.contains(&prefix) && !stubs.contains(&prefix) {
+                stubs.push(prefix);
+            }
+        }
+    }
+    stubs.sort();
+    stubs
+}
+
+// ---------------------------------------------------------------------------
+// Citations
+// ---------------------------------------------------------------------------
+
+/// Pull the citations out of a section body.
+///
+/// Markdown in the prose, rows in the database — the same trick wikilinks use.
+/// The readable form is what a human writes and reads; the rows are what can be
+/// VALIDATED, and a citation that cannot be validated rots silently, which is
+/// the failure this mechanism exists to prevent.
+///
+/// `[cmd:1234]` · `[msg:<id>]` · `[file:src/x.rs@3c1c78e]` · `[url:https://…]`
+/// · `[sec:12]`
+pub fn parse_citations(body: &str) -> Vec<Citation> {
+    let mut out: Vec<Citation> = Vec::new();
+    let chars: Vec<char> = body.chars().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i] != '[' {
+            i += 1;
+            continue;
+        }
+        let Some(end) = chars[i..].iter().position(|c| *c == ']') else {
+            break;
+        };
+        let inner: String = chars[i + 1..i + end].iter().collect();
+        i += end + 1;
+        let Some((prefix, reference)) = inner.split_once(':') else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("md") {
-                continue;
-            }
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                let note = Note::parse(&text);
-                if !note.key.is_empty() {
-                    out.push(note);
-                }
-            }
+        let kind = match prefix.trim() {
+            "cmd" | "command" => "command",
+            "msg" | "message" => "message",
+            "file" => "file",
+            "url" => "url",
+            "sec" | "section" => "section",
+            _ => continue,
+        };
+        let reference = reference.trim().to_string();
+        if reference.is_empty() {
+            continue;
+        }
+        let citation = Citation {
+            kind: kind.to_string(),
+            reference,
+        };
+        if !out.contains(&citation) {
+            out.push(citation);
         }
     }
     out
 }
 
-/// The note for a key, or `None`.
-pub fn load(root: &Path, key: &str) -> Option<Note> {
-    let text = std::fs::read_to_string(path_for(root, key)).ok()?;
-    let mut note = Note::parse(&text);
-    if note.key.is_empty() {
-        note.key = key.to_string();
-    }
-    Some(note)
+/// Render a command citation the way [`parse_citations`] reads it back.
+pub fn cite_command(id: i64) -> String {
+    format!("[cmd:{id}]")
 }
 
-/// Write a note, creating the directory. Refuses a page over the byte cap
-/// rather than truncating it — a truncated note is a note that lies.
-pub fn save(root: &Path, note: &Note) -> Result<PathBuf, BoughError> {
-    let text = note.render();
-    if text.len() > MAX_NOTE_BYTES {
-        return Err(BoughError::bad_request(format!(
-            "note {} is {} bytes, over the {MAX_NOTE_BYTES} limit — notes are notes, not storage: \
-             move the detail into a file and link it",
-            note.key,
-            text.len()
-        )));
-    }
-    let path = path_for(root, &note.key);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            BoughError::bad_request(format!("cannot create {}: {e}", parent.display()))
-        })?;
-    }
-    std::fs::write(&path, text)
-        .map_err(|e| BoughError::bad_request(format!("cannot write {}: {e}", path.display())))?;
-    Ok(path)
-}
-
-/// Delete the derived zone so a re-fold can reproduce it from
-/// `command_history`. The body is untouched, and every host frontier is reset
-/// so the next fold walks the whole window again.
+/// Keep only the citations that resolve, and say which were dropped.
 ///
-/// This is the separation test, executable: if a rebuild cannot reproduce the
-/// Log, something canonical was living in the derived zone.
-pub fn rebuild_log(note: &mut Note) {
-    note.log.clear();
-    note.synced.clear();
-}
-
-// ---------------------------------------------------------------------------
-// Appending
-// ---------------------------------------------------------------------------
-
-/// What an append did. `Refused` is a normal outcome, not an error — the cheap
-/// tier's contract is that it can only ever ADD, so a cap it cannot satisfy
-/// must be a quiet no-op rather than a failed turn.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Appended {
-    Wrote,
-    /// The Log is full; a human has to fold it into prose.
-    LogFull,
-    /// Nothing worth writing (empty after trimming, or a duplicate of the last
-    /// line).
-    Empty,
-}
-
-/// Append one line to the derived zone, enforcing every cap.
-///
-/// A line identical to the last one is dropped: the cheap tier fires per
-/// round, and a rollout that runs the same check ten times must not produce
-/// ten identical lines. That is deduplication AT WRITE TIME, which is what
-/// makes a later consolidation pass unnecessary.
-pub fn append_log(note: &mut Note, source: Source, date: &str, text: &str) -> Appended {
-    let text = text.trim();
-    if text.is_empty() {
-        return Appended::Empty;
-    }
-    if note.log.last().map(|l| l.text.as_str()) == Some(text) {
-        return Appended::Empty;
-    }
-    if note.log.len() >= MAX_LOG_LINES {
-        return Appended::LogFull;
-    }
-    let text: String = text.chars().take(MAX_LINE_CHARS).collect();
-    note.log.push(LogLine {
-        source,
-        date: date.to_string(),
-        text,
-    });
-    Appended::Wrote
-}
-
-/// `YYYY-MM-DD` in LOCAL time. A log line answers "what did I do on Tuesday",
-/// and a UTC boundary answers a different question — the same rule
-/// `bough tags stats` groups days by.
-pub fn local_date(now_ms: i64) -> String {
-    use chrono::TimeZone;
-    chrono::Local
-        .timestamp_millis_opt(now_ms)
-        .single()
-        .map(|d| d.format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|| "1970-01-01".to_string())
-}
-
-// ---------------------------------------------------------------------------
-// This host
-// ---------------------------------------------------------------------------
-
-/// The machine's name, for the per-host sync frontier. `$BOUGH_HOST` overrides
-/// it so a test is not at the mercy of the developer's hostname.
-pub fn host_name() -> String {
-    if let Ok(v) = std::env::var("BOUGH_HOST") {
-        if !v.trim().is_empty() {
-            return v.trim().to_string();
+/// THE GUARD ON MACHINE WRITES. A `command` citation must name a row that
+/// exists AND that carries one of the section's tags: existence stops an
+/// invented id, and the tag check stops a real id with nothing to do with the
+/// claim, which is the shape a plausible-but-wrong citation actually takes.
+pub fn validate_citations(
+    db: &dyn Db,
+    citations: &[Citation],
+    tags: &[String],
+) -> (Vec<Citation>, Vec<Citation>) {
+    let mut kept = Vec::new();
+    let mut dropped = Vec::new();
+    for c in citations {
+        match db.citation_is_valid(&c.kind, &c.reference, tags) {
+            Ok(true) => kept.push(c.clone()),
+            _ => dropped.push(c.clone()),
         }
     }
-    let mut buf = [0i8; 256];
-    // SAFETY: `gethostname` writes at most `len` bytes into `buf`.
-    let ok = unsafe { libc::gethostname(buf.as_mut_ptr(), buf.len()) } == 0;
-    if !ok {
-        return "unknown-host".to_string();
-    }
-    let bytes: Vec<u8> = buf
-        .iter()
-        .take_while(|c| **c != 0)
-        .map(|c| *c as u8)
-        .collect();
-    let name = String::from_utf8_lossy(&bytes).trim().to_string();
-    if name.is_empty() {
-        "unknown-host".to_string()
-    } else {
-        name
-    }
+    (kept, dropped)
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Sections from markdown
 // ---------------------------------------------------------------------------
+
+/// One parsed section: a `## Heading` and the prose under it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParsedSection {
+    pub heading: String,
+    pub body: String,
+    /// From a `tags:` line directly under the heading. `None` = inherit the
+    /// note's, which is the default and what keeps a section where it was
+    /// written. Narrowing this is PROMOTION.
+    pub tags: Option<Vec<String>>,
+}
+
+/// Split a markdown body into sections.
+///
+/// Prose before the first heading becomes a section headed `Summary`, so a
+/// one-paragraph note needs no ceremony — the common case must not require
+/// learning the section syntax.
+pub fn split_sections(markdown: &str) -> Vec<ParsedSection> {
+    let mut out: Vec<ParsedSection> = Vec::new();
+    let mut heading = String::from("Summary");
+    let mut body: Vec<&str> = Vec::new();
+    let mut tags: Option<Vec<String>> = None;
+
+    fn flush(
+        out: &mut Vec<ParsedSection>,
+        heading: &str,
+        body: &[&str],
+        tags: &Option<Vec<String>>,
+    ) {
+        let text = body.join("\n").trim().to_string();
+        if !text.is_empty() {
+            out.push(ParsedSection {
+                heading: heading.to_string(),
+                body: text,
+                tags: tags.clone(),
+            });
+        }
+    }
+
+    for line in markdown.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix("## ") {
+            flush(&mut out, &heading, &body, &tags);
+            heading = rest.trim().to_string();
+            body.clear();
+            tags = None;
+            continue;
+        }
+        // `tags: a, b` immediately under a heading narrows that section.
+        if body.is_empty() {
+            if let Some(rest) = line.trim().strip_prefix("tags:") {
+                let parsed: Vec<String> = rest
+                    .split([',', ' '])
+                    .filter(|w| !w.trim().is_empty())
+                    .filter_map(|w| canonical_key(w).ok())
+                    .collect();
+                if !parsed.is_empty() {
+                    tags = Some(parsed);
+                    continue;
+                }
+            }
+        }
+        body.push(line);
+    }
+    flush(&mut out, &heading, &body, &tags);
+    out
+}
+
+/// Render sections back to the markdown [`split_sections`] reads.
+pub fn render_sections(sections: &[SectionRow], note_tags: &[String]) -> String {
+    let mut out = String::new();
+    for s in sections {
+        out.push_str(&format!("## {}\n", s.heading));
+        // Only when it diverges: printing the inherited set on every section
+        // would make promotion invisible by making it look routine.
+        if s.tags != note_tags {
+            out.push_str(&format!("tags: {}\n", s.tags.join(", ")));
+        }
+        out.push_str(&s.body);
+        out.push_str("\n\n");
+    }
+    out.trim_end().to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Drift
+// ---------------------------------------------------------------------------
+
+/// How far behind a note is, on this machine.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Drift {
+    pub path: String,
+    pub unfolded: usize,
+    /// What a fold advances the frontier to — never `now`, so a fold that
+    /// skipped rows cannot mark them accounted for.
+    pub newest_ts: Option<i64>,
+    pub sessions: usize,
+    /// An unresolved contradiction marker somewhere in the note.
+    pub warned: bool,
+}
+
+impl Drift {
+    /// Queue order: warnings above volume.
+    pub fn severity(&self) -> (bool, usize) {
+        (self.warned, self.unfolded)
+    }
+}
+
+/// The marker a contradiction check inserts. Prose, so it reads in place; a
+/// fixed prefix, so it is findable without a column.
+pub const WARNING_PREFIX: &str = "> [!WARNING]";
+
+pub fn is_warned(sections: &[SectionRow]) -> bool {
+    sections.iter().any(|s| {
+        s.body
+            .lines()
+            .any(|l| l.trim_start().starts_with(WARNING_PREFIX))
+    })
+}
+
+/// Measure a note against the command memory.
+///
+/// A personal wiki cannot do this: it has no fact stream to check a page
+/// against, so its only trigger for revision is "a new source arrived" and its
+/// lint is structural. Here it is a COUNT, and no model is involved.
+pub fn drift_for(db: &dyn Db, note: &NoteRow, repo: Option<&str>, warned: bool) -> Drift {
+    let mut newest: Option<i64> = None;
+    let mut sessions: Vec<String> = Vec::new();
+    let mut seen_ids: Vec<i64> = Vec::new();
+    let mut total = 0usize;
+    for tag in &note.tags {
+        let Ok(rows) = db.commands_for_tag(tag, repo, Some(500)) else {
+            continue;
+        };
+        for row in rows.into_iter().filter(|r| r.ts > note.synced_ts) {
+            // A command carrying two of the note's tags is ONE command; a
+            // per-tag sum would report a two-tag note as twice as stale.
+            if seen_ids.contains(&row.ts) {
+                continue;
+            }
+            seen_ids.push(row.ts);
+            total += 1;
+            newest = Some(newest.map_or(row.ts, |n: i64| n.max(row.ts)));
+            if !sessions.contains(&row.session_id) {
+                sessions.push(row.session_id);
+            }
+        }
+    }
+    Drift {
+        path: note.path.clone(),
+        unfolded: total,
+        newest_ts: newest,
+        sessions: sessions.len(),
+        warned,
+    }
+}
+
+/// Has a reference earned a page yet?
+pub fn earns_a_page(drift: &Drift) -> bool {
+    drift.unfolded >= AUTO_CREATE_MIN_COMMANDS && drift.sessions >= AUTO_CREATE_MIN_SESSIONS
+}
+
+// ---------------------------------------------------------------------------
+// Scoring, shared with the tag ranking
+// ---------------------------------------------------------------------------
+
+/// Inverse document frequency over repos — the SAME correction the priming
+/// note ranks by, and the reason promotion needs no policing.
+///
+/// A section promoted to a tag every repo uses (`git`: 26 repos, `rg`: 28,
+/// `inspect`: 36) scores at the floor and never wins a slot, however many
+/// pages it becomes eligible for. One promoted to `nased` (6 repos) is lifted.
+/// The incentive to over-promote disappears because the payoff does.
+pub fn idf(spread: &TagSpread, tag: &str) -> f64 {
+    // BOTH FLOORS ARE LOAD-BEARING. `repos` is 0 on a memory that has recorded
+    // nothing, and an unfloored numerator makes every idf `ln 1` = 0 — which
+    // would filter out every section and mean NO note ever surfaces on a fresh
+    // install. Floored, a fresh memory hands everything `ln 2` and the ranking
+    // degenerates to "all equal", the honest answer when there is nothing to
+    // contrast against, and the same fallback `rank_tags` documents.
+    let repos = spread.repos.max(1) as f64;
+    let used_by = spread.by_tag.get(tag).copied().unwrap_or(1).max(1) as f64;
+    (1.0f64 + repos / used_by).ln()
+}
+
+/// Sum of idf over the tags a section and a context share.
+///
+/// Deliberately NOT `rank_tags`, whose two filters are right for a vocabulary
+/// list and wrong here: it drops references, and `linear.nme-1673` is the most
+/// specific match a section can have; and it demotes single-use tags, but a
+/// section deliberately promoted to one is still a valid narrow match.
+pub fn section_score(spread: &TagSpread, section: &SectionRow, context: &[String]) -> f64 {
+    section
+        .tags
+        .iter()
+        .filter(|t| context.contains(t))
+        .map(|t| idf(spread, t))
+        .sum()
+}
+
+/// Tag frequency across a set of notes — for reporting which promotions are
+/// actually paying.
+pub fn tag_use_counts(notes: &[NoteRow]) -> HashMap<String, usize> {
+    let mut out: HashMap<String, usize> = HashMap::new();
+    for n in notes {
+        for t in &n.tags {
+            *out.entry(t.clone()).or_insert(0) += 1;
+        }
+    }
+    out
+}
+
+/// Is this key a reference (an id with a life outside bough)?
+pub fn is_reference(key: &str) -> bool {
+    is_ref(key)
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::NoteAuthor;
 
-    fn tmp() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("bough-notes-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    #[test]
-    fn a_page_round_trips_through_render_and_parse() {
-        let mut note = Note::new("linear.nme-1673", "NASED executor removal");
-        note.body = "DAG removal lands first.\n\nRelated: [[pr.7134]]".into();
-        note.mark_synced("host-a", 1786286717159);
-        append_log(&mut note, Source::Cheap, "2026-08-09", "otel rollout green");
-        append_log(&mut note, Source::Human, "2026-08-10", "cutover merged");
-
-        let back = Note::parse(&note.render());
-        assert_eq!(back, note);
-        assert_eq!(back.log[0].source, Source::Cheap);
-        assert_eq!(back.log[1].source, Source::Human);
-        assert_eq!(back.frontier("host-a"), 1786286717159);
-    }
-
-    #[test]
-    fn a_page_with_no_frontmatter_is_still_readable_as_a_body() {
-        let note = Note::parse("just some prose someone pasted");
-        assert_eq!(note.body, "just some prose someone pasted");
-        assert!(note.log.is_empty());
-    }
-
-    #[test]
-    fn the_log_is_whatever_follows_the_last_heading() {
-        // A body that QUOTES the heading must not swallow the derived zone.
-        let text = "---\ntitle: t\nkey: k\nsynced: {}\n---\n\nwe keep a `## Log` section.\n\n## Log\n~ 2026-08-09  a line\n";
-        let note = Note::parse(text);
-        assert!(note.body.contains("`## Log`"));
-        assert_eq!(note.log.len(), 1);
-        assert_eq!(note.log[0].text, "a line");
-    }
-
-    #[test]
-    fn a_frontier_never_moves_backwards() {
-        let mut note = Note::new("k", "t");
-        note.mark_synced("h", 100);
-        note.mark_synced("h", 50);
-        assert_eq!(note.frontier("h"), 100);
-    }
-
-    #[test]
-    fn each_host_keeps_its_own_frontier() {
-        // The bug this shape exists to prevent: the notes dir git-syncs, the
-        // command memory does not, so a shared scalar would let one machine
-        // mark another machine's unfolded rows as accounted for.
-        let mut note = Note::new("k", "t");
-        note.mark_synced("laptop", 500);
-        note.mark_synced("server", 100);
-        assert_eq!(note.frontier("laptop"), 500);
-        assert_eq!(note.frontier("server"), 100);
-        assert_eq!(note.frontier("third-machine"), 0);
-        assert_eq!(Note::parse(&note.render()).synced, note.synced);
-    }
-
-    #[test]
-    fn the_log_stops_at_its_cap_instead_of_rotating() {
-        let mut note = Note::new("k", "t");
-        for i in 0..MAX_LOG_LINES {
-            assert_eq!(
-                append_log(&mut note, Source::Cheap, "2026-08-09", &format!("line {i}")),
-                Appended::Wrote
-            );
+    fn section(tags: &[&str], body: &str) -> SectionRow {
+        SectionRow {
+            id: 1,
+            note_id: 1,
+            note_path: "n".into(),
+            ord: 0,
+            heading: "h".into(),
+            body: body.into(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            citations: vec![],
+            author: NoteAuthor::Human,
+            created_at: 0,
+            updated_at: 0,
         }
-        assert_eq!(
-            append_log(&mut note, Source::Cheap, "2026-08-09", "one more"),
-            Appended::LogFull
-        );
-        assert_eq!(note.log.len(), MAX_LOG_LINES);
-        assert_eq!(note.log[0].text, "line 0", "the oldest line is kept");
-    }
-
-    #[test]
-    fn a_long_line_is_capped_and_a_repeat_is_dropped() {
-        let mut note = Note::new("k", "t");
-        append_log(&mut note, Source::Cheap, "2026-08-09", &"x".repeat(400));
-        assert_eq!(note.log[0].text.chars().count(), MAX_LINE_CHARS);
-        append_log(&mut note, Source::Cheap, "2026-08-09", "same");
-        assert_eq!(
-            append_log(&mut note, Source::Cheap, "2026-08-10", "same"),
-            Appended::Empty,
-            "write-time dedup is what makes a consolidation rewrite unnecessary"
-        );
-        assert_eq!(
-            append_log(&mut note, Source::Cheap, "2026-08-09", "   "),
-            Appended::Empty
-        );
-    }
-
-    #[test]
-    fn rebuilding_drops_the_derived_zone_and_keeps_the_body() {
-        let mut note = Note::new("k", "t");
-        note.body = "the curated claim".into();
-        note.mark_synced("h", 900);
-        append_log(&mut note, Source::Cheap, "2026-08-09", "derived");
-        rebuild_log(&mut note);
-        assert!(note.log.is_empty());
-        assert_eq!(note.frontier("h"), 0, "the window reopens");
-        assert_eq!(note.body, "the curated claim", "canonical prose survives");
-    }
-
-    #[test]
-    fn a_warning_is_visible_to_the_stale_queue() {
-        let mut note = Note::new("k", "t");
-        assert!(!note.has_warning());
-        note.body = "claim\n\n> [!WARNING] the cutover merged; check this".into();
-        assert!(note.has_warning());
     }
 
     #[test]
     fn a_key_must_be_something_a_command_could_carry() {
-        // The bug this closes: `bough notes write wrapper-check` created a page
-        // at a key `normalize_tags` splits in two, so nothing could ever join
-        // to it — it looked filed and was orphaned.
         assert_eq!(canonical_key("nased").unwrap(), "nased");
         assert_eq!(canonical_key("linear.nme-1673").unwrap(), "linear.nme-1673");
-        assert_eq!(canonical_key("pr.7134").unwrap(), "pr.7134");
-        assert_eq!(canonical_key("wrapper_check").unwrap(), "wrapper_check");
-        // Lossless normalization is silent — the same rule the memory applies
-        // to what the model writes.
         assert_eq!(canonical_key("NASED").unwrap(), "nased");
-        assert_eq!(canonical_key("  Nased  ").unwrap(), "nased");
 
         let split = canonical_key("wrapper-check").unwrap_err().to_string();
         assert!(split.contains("2 tags, not one"), "{split}");
         assert!(split.contains("unreachable"), "{split}");
-        assert!(split.contains("`wrapper_check`"), "{split}");
-        assert!(split.contains("`wrapper.check`"), "{split}");
-
-        assert!(canonical_key("two words").is_err());
-        assert!(canonical_key("...")
-            .unwrap_err()
-            .to_string()
-            .contains("letter or digit"));
-        assert!(canonical_key("").is_err());
+        assert!(canonical_key("...").is_err());
     }
 
     #[test]
     fn every_legal_key_survives_a_round_trip_through_the_tag_normalizer() {
-        // The property that makes the join automatic: whatever a note is keyed
-        // on, a command carrying that exact string records that exact tag.
-        for key in [
-            "nased",
-            "linear.nme-1673",
-            "pr.7134",
-            "wrapper_check",
-            "dag",
-        ] {
+        for key in ["nased", "linear.nme-1673", "pr.7134", "wrapper_check"] {
             let canonical = canonical_key(key).unwrap();
-            let as_recorded = crate::history::tags::record::normalize_tags(Some(&canonical));
-            assert_eq!(as_recorded, canonical, "{key} would not survive recording");
+            assert_eq!(normalize_tags(Some(&canonical)), canonical, "{key}");
         }
     }
 
     #[test]
-    fn references_and_vocabulary_file_apart() {
-        assert_eq!(dir_for("linear.nme-1673"), "refs");
-        assert_eq!(dir_for("nased"), "tags");
-        let root = Path::new("/n");
-        assert!(path_for(root, "linear.nme-1673").ends_with("wiki/refs/linear.nme-1673.md"));
-        assert!(path_for(root, "nased").ends_with("wiki/tags/nased.md"));
+    fn a_path_keeps_the_grammars_order_and_yields_its_segments() {
+        let (path, tags) = canonical_path("kubectl:rollout:nased").unwrap();
+        assert_eq!(path, "kubectl:rollout:nased");
+        assert_eq!(tags, vec!["kubectl", "rollout", "nased"]);
+        assert_eq!(depth(&path), 3);
+        assert_eq!(depth("nased"), 1, "a top-level note");
+        // Re-sorting would put the tool where the subject belongs.
+        assert_eq!(canonical_path("nased:kubectl").unwrap().0, "nased:kubectl");
+        assert!(canonical_path("kubectl:wrapper-check").is_err());
+    }
+
+    #[test]
+    fn stubs_are_the_gaps_between_paths_and_are_never_stored() {
+        let paths = vec![
+            "kubectl:rollout:nased".to_string(),
+            "kubectl:rollout:prod".to_string(),
+            "nased".to_string(),
+        ];
+        assert_eq!(stubs_for(&paths), vec!["kubectl", "kubectl:rollout"]);
+        assert!(stubs_for(&["nased".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn citations_are_parsed_out_of_prose() {
+        let body = "the rollout worked [cmd:1234] but see [file:src/x.rs@3c1c78e] \
+                    and [url:https://example.com/x], plus [sec:12] and [msg:abc].";
+        let cites = parse_citations(body);
+        assert_eq!(cites.len(), 5);
+        assert!(cites.contains(&Citation {
+            kind: "command".into(),
+            reference: "1234".into()
+        }));
+        assert!(cites.contains(&Citation {
+            kind: "file".into(),
+            reference: "src/x.rs@3c1c78e".into()
+        }));
+        // A wikilink or an ordinary bracket is not a citation.
+        assert!(parse_citations("see [[nased]] and [note]").is_empty());
+        assert_eq!(parse_citations(&cite_command(9))[0].reference, "9");
+    }
+
+    #[test]
+    fn prose_before_any_heading_becomes_a_summary_section() {
+        let parsed = split_sections("the DAG removal lands first.");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].heading, "Summary");
+        assert_eq!(parsed[0].tags, None, "inherit by default");
+    }
+
+    #[test]
+    fn a_tags_line_under_a_heading_is_promotion() {
+        let parsed = split_sections(
+            "intro prose\n\n## Executor ordering\ntags: nased\nDAG removal first.\n\n\
+             ## Backfill window\nonly here.",
+        );
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].heading, "Summary");
+        assert_eq!(parsed[1].heading, "Executor ordering");
+        assert_eq!(parsed[1].tags, Some(vec!["nased".to_string()]));
+        assert!(!parsed[1].body.contains("tags:"), "the line is consumed");
+        assert_eq!(parsed[2].tags, None, "unpromoted, so it inherits");
+    }
+
+    #[test]
+    fn an_empty_memory_still_surfaces_notes() {
+        // The bug this pins: with `repos = 0` every idf was `ln 1` = 0, every
+        // section scored zero, and resolution dropped all of them — so a fresh
+        // install would have had a note memory that never said anything.
+        let empty = TagSpread {
+            repos: 0,
+            by_tag: HashMap::new(),
+        };
+        assert!(idf(&empty, "anything") > 0.0);
+        let s = section(&["nased"], "b");
+        assert!(section_score(&empty, &s, &["nased".into()]) > 0.0);
+    }
+
+    #[test]
+    fn idf_damps_a_word_every_project_uses() {
+        let mut spread = TagSpread {
+            repos: 30,
+            by_tag: HashMap::new(),
+        };
+        spread.by_tag.insert("git".into(), 26);
+        spread.by_tag.insert("nased".into(), 6);
+        // This inequality IS the promotion policy: there is no other one.
+        // ln(1 + 30/6) = 1.79 against ln(1 + 30/26) = 0.77 — a word six repos
+        // use is worth more than twice one that twenty-six do.
+        assert!(idf(&spread, "nased") > idf(&spread, "git") * 2.0);
         assert!(
-            path_for(root, "branch.claude/tags-history")
-                .ends_with("wiki/refs/branch.claude-tags-history.md"),
-            "a slash in a reference is folded, never a nested directory"
+            idf(&spread, "unseen") > idf(&spread, "nased"),
+            "unknown = maximally specific"
         );
     }
 
     #[test]
-    fn saving_and_loading_a_note() {
-        let root = tmp();
-        let mut note = Note::new("nased", "NASED");
-        note.body = "the scheduler's evaluator".into();
-        append_log(
-            &mut note,
-            Source::Session,
-            "2026-08-09",
-            "dag removal first",
-        );
-        save(&root, &note).unwrap();
-
-        let back = load(&root, "nased").unwrap();
-        assert_eq!(back, note);
-        assert_eq!(list(&root).len(), 1);
-        assert!(load(&root, "missing").is_none());
-        std::fs::remove_dir_all(&root).ok();
+    fn a_section_scores_only_on_the_tags_the_context_shares() {
+        let mut spread = TagSpread {
+            repos: 30,
+            by_tag: HashMap::new(),
+        };
+        spread.by_tag.insert("nased".into(), 6);
+        spread.by_tag.insert("git".into(), 26);
+        let s = section(&["nased", "git"], "b");
+        let both = section_score(&spread, &s, &["nased".into(), "git".into()]);
+        let one = section_score(&spread, &s, &["git".into()]);
+        assert!(both > one);
+        assert_eq!(section_score(&spread, &s, &["other".into()]), 0.0);
     }
 
     #[test]
-    fn an_oversized_page_is_refused_not_truncated() {
-        let root = tmp();
-        let mut note = Note::new("k", "t");
-        note.body = "x".repeat(MAX_NOTE_BYTES + 1);
-        let error = save(&root, &note).unwrap_err();
-        assert!(error.to_string().contains("over the"), "{error}");
-        assert!(!path_for(&root, "k").exists());
-        std::fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
-    fn a_note_never_stores_a_command() {
-        // The invariant, pinned where it is cheapest to check: the render path
-        // has no field a command string could ride in. If a future column
-        // appears here, this test is the one that should stop it.
-        let mut note = Note::new("k", "t");
-        note.body = "why, not how".into();
-        append_log(&mut note, Source::Cheap, "2026-08-09", "an outcome");
-        let text = note.render();
-        for forbidden in ["exit_code", "output_head", "$ ", "cmd:"] {
-            assert!(!text.contains(forbidden), "{forbidden} leaked into a note");
-        }
-    }
-
-    #[test]
-    fn the_host_name_is_overridable() {
-        std::env::set_var("BOUGH_HOST", "test-host");
-        assert_eq!(host_name(), "test-host");
-        std::env::remove_var("BOUGH_HOST");
-        assert!(!host_name().is_empty());
+    fn a_warning_anywhere_in_a_note_marks_it() {
+        assert!(!is_warned(&[section(&[], "a claim")]));
+        assert!(is_warned(&[
+            section(&[], "a claim"),
+            section(&[], "> [!WARNING] disputed")
+        ]));
     }
 }

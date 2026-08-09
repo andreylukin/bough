@@ -232,8 +232,6 @@ pub struct TagsDeps<'a> {
     pub embed: Option<Arc<dyn Fn() -> Option<Box<dyn SimilarLayer>>>>,
     /// Where "this checkout" is resolved from. Absent = the process's cwd.
     pub cwd: Option<String>,
-    /// The note memory `show` looks in. Absent = `paths::notes_dir()`.
-    pub notes_root: Option<std::path::PathBuf>,
     pub now: Option<i64>,
     pub out: Arc<dyn Fn(&str)>,
     pub err: Arc<dyn Fn(&str)>,
@@ -246,7 +244,6 @@ impl<'a> TagsDeps<'a> {
             db_file: None,
             embed: None,
             cwd: None,
-            notes_root: None,
             now: None,
             out: Arc::new(|l: &str| println!("{l}")),
             err: Arc::new(|l: &str| eprintln!("{l}")),
@@ -267,30 +264,44 @@ impl SimilarLayer for RealLayer {
     }
 }
 
-/// The note above the commands. Two zones, visibly different authorities: the
-/// prose a human wrote, then the derived log with its provenance glyphs.
-fn render_note_header(note: &bough_core::notes::Note, out: &dyn Fn(&str)) {
-    out(&format!("note · {}", note.title));
-    for line in note.body.trim().lines() {
-        out(&format!("  {line}"));
+/// The note above the commands, when there is one.
+///
+/// THE JOIN, in the one place it earns its keep: `show` is the command already
+/// being run, so the prose arrives without a second habit. Sections resolved
+/// from ELSEWHERE are included and say where they are authored — a lesson
+/// about `nased` is worth reading here whichever page it was written on.
+fn render_note_header(db: &dyn Db, tag: &str, out: &dyn Fn(&str)) {
+    let context = vec![tag.to_string()];
+    let Ok(sections) = db.sections_for_context(&context, None) else {
+        return;
+    };
+    if sections.is_empty() {
+        return;
     }
-    for line in note
-        .log
-        .iter()
-        .rev()
-        .take(3)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-    {
+    let spread = db
+        .tag_spread(None)
+        .map(|(repos, by_tag)| bough_core::history::tags::stats::TagSpread { repos, by_tag })
+        .unwrap_or_default();
+    let ranked = bough_core::notes::resolve::rank(&spread, sections, &context, None);
+    if ranked.is_empty() {
+        return;
+    }
+    out("note");
+    for r in ranked.iter().take(3) {
         out(&format!(
-            "  {} {}  {}",
-            line.source.glyph(),
-            line.date,
-            line.text
+            "  ## {}   ← {}",
+            r.section.heading, r.section.note_path
         ));
+        for line in r.section.body.trim().lines().take(4) {
+            out(&format!("     {line}"));
+        }
     }
-    out(&format!("  (bough notes show {})", note.key));
+    if let Ok(Some(note)) = db.note_by_path(tag) {
+        for l in db.note_log(note.id, 3).unwrap_or_default() {
+            out(&format!("  {} {}", l.source.glyph(), l.text));
+        }
+    }
+    out(&format!("  (bough notes show {tag})"));
     out("");
 }
 
@@ -793,31 +804,30 @@ WHERE f.cmd MATCH 'docker' ORDER BY h.ts DESC LIMIT 10\"",
                 }
             };
             let program_of = |id: &str| db.program_for_message(id).ok().flatten();
-            // The note comes FIRST, when there is one: `show` answers "what do
-            // we know about this tag", and the prose is the part a reader
-            // cannot reconstruct from the rows underneath it. Reading it is
-            // pure filesystem — a missing note memory is silence, never an
-            // error, so this cannot break the command it decorates.
-            let note = bough_core::notes::load(
-                &deps
-                    .notes_root
-                    .clone()
-                    .unwrap_or_else(bough_core::paths::notes_dir),
-                &tag,
-            );
             if parsed.json {
                 let rows: Vec<Obj> = rows
                     .iter()
                     .map(|r| command_json(r, r.message_id.as_deref().and_then(program_of)))
                     .collect();
-                if let Some(note) = &note {
-                    (deps.out)(&json!({ "note": note.body, "key": note.key }).to_string());
+                if let Ok(sections) = db.sections_for_context(std::slice::from_ref(&tag), None) {
+                    if !sections.is_empty() {
+                        (deps.out)(
+                            &json!({
+                                "notes": sections.iter().map(|s| json!({
+                                    "heading": s.heading,
+                                    "body": s.body,
+                                    "authored_in": s.note_path,
+                                })).collect::<Vec<_>>()
+                            })
+                            .to_string(),
+                        );
+                    }
                 }
                 print_rows(&*deps.out, &rows);
             } else {
-                if let Some(note) = &note {
-                    render_note_header(note, &*deps.out);
-                }
+                // A missing note memory is silence, never an error — this
+                // cannot break the command it decorates.
+                render_note_header(db, &tag, &*deps.out);
                 render_show(&rows, &tag, now, &*deps.out, &program_of, parsed.program);
             }
             0
@@ -881,28 +891,10 @@ mod tests {
         parts.iter().map(|s| s.to_string()).collect()
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Default)]
     struct Collector {
         out: Rc<RefCell<Vec<String>>>,
         err: Rc<RefCell<Vec<String>>>,
-        notes_root: std::path::PathBuf,
-    }
-
-    impl Default for Collector {
-        fn default() -> Collector {
-            Collector {
-                out: Rc::new(RefCell::new(Vec::new())),
-                err: Rc::new(RefCell::new(Vec::new())),
-                notes_root: std::env::temp_dir()
-                    .join(format!("bough-tags-notes-{}", uuid::Uuid::new_v4())),
-            }
-        }
-    }
-
-    impl Drop for Collector {
-        fn drop(&mut self) {
-            std::fs::remove_dir_all(&self.notes_root).ok();
-        }
     }
 
     impl Collector {
@@ -918,10 +910,6 @@ mod tests {
                 db_file: None,
                 embed: None,
                 cwd: None,
-                // Pointed at a directory that does not exist, deliberately: a
-                // default of `notes_dir()` would make this suite read the
-                // developer's own notes and print them into assertions.
-                notes_root: Some(self.notes_root.clone()),
                 now: Some(T0),
                 out: Arc::new(move |l: &str| out.borrow_mut().push(l.to_string())),
                 err: Arc::new(move |l: &str| err.borrow_mut().push(l.to_string())),
@@ -1116,15 +1104,29 @@ mod tests {
         // the user already runs, so the prose arrives without a second habit.
         let db = seeded();
         let c = Collector::default();
-        let mut note = bough_core::notes::Note::new("bun", "Why bun and not node");
-        note.body = "the TUI tests need bun's test runner".into();
-        bough_core::notes::append_log(
-            &mut note,
-            bough_core::notes::Source::Cheap,
-            "2026-08-09",
+        let note_id = db
+            .upsert_note("bun", "Why bun and not node", &["bun".to_string()], T0)
+            .unwrap();
+        db.put_section(
+            &bough_core::types::SectionWrite {
+                note_id,
+                ord: 0,
+                heading: "Why bun".into(),
+                body: "the TUI tests need bun's test runner".into(),
+                tags: None,
+                citations: vec![],
+                author: bough_core::types::NoteAuthor::Human,
+            },
+            T0,
+        )
+        .unwrap();
+        db.append_note_log(
+            note_id,
+            T0,
+            bough_core::types::NoteAuthor::Cheap,
             "watch mode flakes in CI",
-        );
-        bough_core::notes::save(&c.notes_root, &note).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(
             run_tags(
@@ -1134,11 +1136,11 @@ mod tests {
             0
         );
         let text = c.text();
-        assert!(text.contains("note · Why bun and not node"), "{text}");
+        assert!(text.contains("## Why bun"), "{text}");
         assert!(text.contains("the TUI tests need bun's test runner"));
-        assert!(text.contains("~ 2026-08-09  watch mode flakes in CI"));
+        assert!(text.contains("~ watch mode flakes in CI"), "{text}");
         assert!(text.contains("(bough notes show bun)"));
-        let note_at = text.find("note ·").unwrap();
+        let note_at = text.find("note").unwrap();
         let cmd_at = text.find("bun test").unwrap_or(usize::MAX);
         assert!(note_at < cmd_at, "the prose comes first");
     }
@@ -1156,7 +1158,7 @@ mod tests {
             ),
             0
         );
-        assert!(!c.text().contains("note ·"));
+        assert!(!c.text().contains("bough notes show"));
         assert!(c.errs().is_empty());
     }
 

@@ -262,6 +262,125 @@ pub struct CommandTagRow {
     pub exit_code: Option<i64>,
 }
 
+// ---- the note memory ------------------------------------------------------
+
+/// Who wrote a section, a revision, or a log line. The trust question a reader
+/// cannot otherwise answer: a line the cheap model inferred and a line you
+/// typed arrive as the same paragraph of confident text unless the payload
+/// says otherwise, and no staleness query can detect a claim that was WRONG
+/// WHEN WRITTEN.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteAuthor {
+    Human,
+    Session,
+    Cheap,
+}
+
+impl NoteAuthor {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NoteAuthor::Human => "human",
+            NoteAuthor::Session => "session",
+            NoteAuthor::Cheap => "cheap",
+        }
+    }
+    pub fn parse(s: &str) -> NoteAuthor {
+        match s {
+            "cheap" => NoteAuthor::Cheap,
+            "session" => NoteAuthor::Session,
+            _ => NoteAuthor::Human,
+        }
+    }
+    /// The one-character margin mark. `#` is already "remembered, not happening
+    /// now" across the transcript, so these stay distinct from it.
+    pub fn glyph(&self) -> char {
+        match self {
+            NoteAuthor::Human => '*',
+            NoteAuthor::Session => '+',
+            NoteAuthor::Cheap => '~',
+        }
+    }
+}
+
+/// One note: placement, title, and the frontier its log has folded to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NoteRow {
+    pub id: i64,
+    /// Colon path in the tag grammar's order. Depth 1 is a top-level note.
+    pub path: String,
+    pub title: String,
+    /// ATTACHMENT — what this note covers. Order-free.
+    pub tags: Vec<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub synced_ts: i64,
+    pub closed_at: Option<i64>,
+}
+
+/// One addressable section. `tags` default to the note's on write; NARROWING
+/// them is promotion, and a section surfaces wherever its tags are a SUBSET of
+/// the reader's context.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SectionRow {
+    pub id: i64,
+    pub note_id: i64,
+    /// The owning note's path — carried so a transcluded section can say where
+    /// it is authored without a second query.
+    pub note_path: String,
+    pub ord: i64,
+    pub heading: String,
+    pub body: String,
+    pub tags: Vec<String>,
+    pub citations: Vec<Citation>,
+    pub author: NoteAuthor,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// What a claim rests on. Validated at write time, so an unresolvable citation
+/// refuses the write instead of rotting silently in prose.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Citation {
+    /// command | message | file | url | section
+    pub kind: String,
+    pub reference: String,
+}
+
+/// One superseded section body. Never pruned — this is what makes resolving a
+/// contradiction auditable rather than a silent overwrite.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SectionRevision {
+    pub rev: i64,
+    pub heading: String,
+    pub body: String,
+    pub author: NoteAuthor,
+    pub created_at: i64,
+}
+
+/// One line of a note's derived zone.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NoteLogRow {
+    pub id: i64,
+    pub ts: i64,
+    pub source: NoteAuthor,
+    pub text: String,
+}
+
+/// What a section write asks for. `citations` are parsed from the body by
+/// `notes::parse_citations` before it gets here.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SectionWrite {
+    pub note_id: i64,
+    pub ord: i64,
+    pub heading: String,
+    pub body: String,
+    /// `None` = inherit the note's tags, which is the default and what keeps a
+    /// section where it was written.
+    pub tags: Option<Vec<String>>,
+    pub citations: Vec<Citation>,
+    pub author: NoteAuthor,
+}
+
 /// Options for [`Db::command_tag_rows`].
 #[derive(Clone, Debug, Default)]
 pub struct CommandTagOpts {
@@ -476,6 +595,58 @@ pub trait Db: Send {
         repo: Option<&str>,
         limit: Option<i64>,
     ) -> Result<Vec<TaggedCommand>, BoughError>;
+    // ---- the note memory ---------------------------------------------
+    /// Create or update a note at `path`, replacing its attachment tags.
+    fn upsert_note(
+        &self,
+        path: &str,
+        title: &str,
+        tags: &[String],
+        now: i64,
+    ) -> Result<i64, BoughError>;
+    fn note_by_path(&self, path: &str) -> Result<Option<NoteRow>, BoughError>;
+    fn list_notes(&self) -> Result<Vec<NoteRow>, BoughError>;
+    /// Notes attached to ANY of `tags` — the join a reader's context makes.
+    fn notes_for_tags(&self, tags: &[String]) -> Result<Vec<NoteRow>, BoughError>;
+    fn set_note_synced(&self, note_id: i64, ts: i64) -> Result<(), BoughError>;
+    fn close_note(&self, note_id: i64, at: i64) -> Result<(), BoughError>;
+
+    /// Write a section, pushing any previous body into `section_revisions` and
+    /// reindexing FTS. Returns the section id.
+    fn put_section(&self, write: &SectionWrite, now: i64) -> Result<i64, BoughError>;
+    fn sections_for_note(&self, note_id: i64) -> Result<Vec<SectionRow>, BoughError>;
+    /// Sections whose tag set is a SUBSET of `context` — what transclusion
+    /// resolves. `exclude_note` drops the reader's own sections, which the
+    /// caller lists separately.
+    fn sections_for_context(
+        &self,
+        context: &[String],
+        exclude_note: Option<i64>,
+    ) -> Result<Vec<SectionRow>, BoughError>;
+    fn section_revisions(&self, section_id: i64) -> Result<Vec<SectionRevision>, BoughError>;
+    fn delete_section(&self, section_id: i64) -> Result<(), BoughError>;
+    /// Sections matching an FTS query, best first.
+    fn search_sections(&self, words: &[String], limit: i64) -> Result<Vec<SectionRow>, BoughError>;
+
+    /// Append one line to a note's derived zone. `false` = a duplicate of the
+    /// last line, dropped at write time.
+    fn append_note_log(
+        &self,
+        note_id: i64,
+        ts: i64,
+        source: NoteAuthor,
+        text: &str,
+    ) -> Result<bool, BoughError>;
+    fn note_log(&self, note_id: i64, limit: i64) -> Result<Vec<NoteLogRow>, BoughError>;
+    /// Does this command id exist, and does it carry one of `tags`? The
+    /// citation guard: an id the cheap model could not have seen fails here.
+    fn citation_is_valid(
+        &self,
+        kind: &str,
+        reference: &str,
+        tags: &[String],
+    ) -> Result<bool, BoughError>;
+
     /// Commands whose text, tags OR printed output match an FTS query,
     /// newest first. The query is a bag of words, not FTS syntax — the
     /// implementation quotes them, so an operator a user typed is a word.

@@ -46,9 +46,10 @@ use bough_core::schema::parts::{
 };
 use bough_core::schema::requests::SearchQuery;
 use bough_core::types::{
-    Clock, CommandRecord, CommandTagOpts, CommandTagRow, Db, IndexHealth, PriorFailures,
-    RecentFailure, SearchHit, SessionRuntime, StateEntry, TagDiversityDay, TaggedCommand,
-    TurnPatch, UsageTotals, WorkflowAgentPatch, WorkflowPatch,
+    Clock, CommandRecord, CommandTagOpts, CommandTagRow, Db, IndexHealth, NoteAuthor, NoteLogRow,
+    NoteRow, PriorFailures, RecentFailure, SearchHit, SectionRevision, SectionRow, SectionWrite,
+    SessionRuntime, StateEntry, TagDiversityDay, TaggedCommand, TurnPatch, UsageTotals,
+    WorkflowAgentPatch, WorkflowPatch,
 };
 
 use crate::http::{handler, json, Handler};
@@ -195,6 +196,73 @@ impl<D: Db> Db for SearchSafeDb<D> {
     }
 
     // ---- everything else delegates untouched --------------------------------
+
+    fn upsert_note(
+        &self,
+        path: &str,
+        title: &str,
+        tags: &[String],
+        now: i64,
+    ) -> Result<i64, BoughError> {
+        self.inner.upsert_note(path, title, tags, now)
+    }
+    fn note_by_path(&self, path: &str) -> Result<Option<NoteRow>, BoughError> {
+        self.inner.note_by_path(path)
+    }
+    fn list_notes(&self) -> Result<Vec<NoteRow>, BoughError> {
+        self.inner.list_notes()
+    }
+    fn notes_for_tags(&self, tags: &[String]) -> Result<Vec<NoteRow>, BoughError> {
+        self.inner.notes_for_tags(tags)
+    }
+    fn set_note_synced(&self, note_id: i64, ts: i64) -> Result<(), BoughError> {
+        self.inner.set_note_synced(note_id, ts)
+    }
+    fn close_note(&self, note_id: i64, at: i64) -> Result<(), BoughError> {
+        self.inner.close_note(note_id, at)
+    }
+    fn put_section(&self, write: &SectionWrite, now: i64) -> Result<i64, BoughError> {
+        self.inner.put_section(write, now)
+    }
+    fn sections_for_note(&self, note_id: i64) -> Result<Vec<SectionRow>, BoughError> {
+        self.inner.sections_for_note(note_id)
+    }
+    fn sections_for_context(
+        &self,
+        context: &[String],
+        exclude_note: Option<i64>,
+    ) -> Result<Vec<SectionRow>, BoughError> {
+        self.inner.sections_for_context(context, exclude_note)
+    }
+    fn section_revisions(&self, section_id: i64) -> Result<Vec<SectionRevision>, BoughError> {
+        self.inner.section_revisions(section_id)
+    }
+    fn delete_section(&self, section_id: i64) -> Result<(), BoughError> {
+        self.inner.delete_section(section_id)
+    }
+    fn search_sections(&self, words: &[String], limit: i64) -> Result<Vec<SectionRow>, BoughError> {
+        self.inner.search_sections(words, limit)
+    }
+    fn append_note_log(
+        &self,
+        note_id: i64,
+        ts: i64,
+        source: NoteAuthor,
+        text: &str,
+    ) -> Result<bool, BoughError> {
+        self.inner.append_note_log(note_id, ts, source, text)
+    }
+    fn note_log(&self, note_id: i64, limit: i64) -> Result<Vec<NoteLogRow>, BoughError> {
+        self.inner.note_log(note_id, limit)
+    }
+    fn citation_is_valid(
+        &self,
+        kind: &str,
+        reference: &str,
+        tags: &[String],
+    ) -> Result<bool, BoughError> {
+        self.inner.citation_is_valid(kind, reference, tags)
+    }
 
     fn create_session(&self, session: Session) -> Result<Session, BoughError> {
         self.inner.create_session(session)
@@ -1586,6 +1654,61 @@ mod tests {
             self.0.search_messages(query, session_id, limit)
         }
         // Nothing else participates in `search_transcripts`.
+        fn upsert_note(&self, _: &str, _: &str, _: &[String], _: i64) -> Result<i64, BoughError> {
+            unreachable!()
+        }
+        fn note_by_path(&self, _: &str) -> Result<Option<NoteRow>, BoughError> {
+            unreachable!()
+        }
+        fn list_notes(&self) -> Result<Vec<NoteRow>, BoughError> {
+            unreachable!()
+        }
+        fn notes_for_tags(&self, _: &[String]) -> Result<Vec<NoteRow>, BoughError> {
+            unreachable!()
+        }
+        fn set_note_synced(&self, _: i64, _: i64) -> Result<(), BoughError> {
+            unreachable!()
+        }
+        fn close_note(&self, _: i64, _: i64) -> Result<(), BoughError> {
+            unreachable!()
+        }
+        fn put_section(&self, _: &SectionWrite, _: i64) -> Result<i64, BoughError> {
+            unreachable!()
+        }
+        fn sections_for_note(&self, _: i64) -> Result<Vec<SectionRow>, BoughError> {
+            unreachable!()
+        }
+        fn sections_for_context(
+            &self,
+            _: &[String],
+            _: Option<i64>,
+        ) -> Result<Vec<SectionRow>, BoughError> {
+            unreachable!()
+        }
+        fn section_revisions(&self, _: i64) -> Result<Vec<SectionRevision>, BoughError> {
+            unreachable!()
+        }
+        fn delete_section(&self, _: i64) -> Result<(), BoughError> {
+            unreachable!()
+        }
+        fn search_sections(&self, _: &[String], _: i64) -> Result<Vec<SectionRow>, BoughError> {
+            unreachable!()
+        }
+        fn append_note_log(
+            &self,
+            _: i64,
+            _: i64,
+            _: NoteAuthor,
+            _: &str,
+        ) -> Result<bool, BoughError> {
+            unreachable!()
+        }
+        fn note_log(&self, _: i64, _: i64) -> Result<Vec<NoteLogRow>, BoughError> {
+            unreachable!()
+        }
+        fn citation_is_valid(&self, _: &str, _: &str, _: &[String]) -> Result<bool, BoughError> {
+            unreachable!()
+        }
         fn create_session(&self, _: Session) -> Result<Session, BoughError> {
             unreachable!()
         }

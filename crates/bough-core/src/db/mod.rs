@@ -8,6 +8,7 @@
 pub mod embed;
 pub mod extensions;
 pub mod migrate;
+pub mod notes_sql;
 pub mod sqlite_db;
 
 pub use sqlite_db::{open_db, DbOptions, SqliteDb};
