@@ -24,7 +24,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use bough_core::errors::BoughError;
-use bough_core::prompt::project::{rule_summaries, session_rule_files};
+use bough_core::prompt::project::{near_duplicates, rule_summaries, session_rule_files};
 use bough_core::schema::events::{EventInput, EventType};
 use bough_core::schema::parts::{
     is_collapsed_kind, Message, Part, Role, Session, SessionKind, TurnStatus,
@@ -614,6 +614,85 @@ pub fn get_session_usage_h() -> Handler {
             (db.session_usage(&id)?, db.tree_usage(&id)?)
         };
         Ok(json(&json!({ "usage": usage, "tree": tree }), 200))
+    })
+}
+
+/// `GET /sessions/:id/prompt` — what the last turn actually put in the window.
+///
+/// THE SURFACE THIS FEEDS answers "what is in my context, and what is it
+/// costing me", which the harness has always known and never said. Every turn
+/// assembles a prompt that reports its own sections with a sha and a length;
+/// until `prompt::last` existed that value was dropped unless a trace
+/// directory was configured, and the user got one percentage in a status bar.
+///
+/// `shape: null` when this process has not run a turn for the session — a real
+/// answer, and NOT the same as an empty prompt. The rules block is served
+/// beside it because the biggest, most surprising line item is almost always
+/// an AGENTS.md, and a size with no filename beside it is not actionable.
+pub fn get_session_prompt() -> Handler {
+    handler(|_req, ctx, params| async move {
+        let id = param(&params, "id").to_string();
+        let session = require_session(&ctx, &id)?;
+        let shape = bough_core::prompt::last::last(&id);
+        // Resolved the same way the runner resolves it, so the limit shown
+        // beside the sizes is the limit they will actually be measured against.
+        let model = session
+            .model
+            .clone()
+            .or(ctx.model.clone())
+            .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+
+        let (rules, dupes): (Vec<Value>, Vec<Value>) = match session.workspace.as_deref() {
+            Some(ws) => {
+                let files = session_rule_files(Path::new(ws), &id);
+                let rows = rule_summaries(&files, Path::new(ws))
+                    .into_iter()
+                    .map(|s| {
+                        json!({
+                            "label": s.label,
+                            "path": s.path.to_string_lossy(),
+                            "bytes": s.bytes,
+                        })
+                    })
+                    .collect();
+                // Reported, never acted on: two files that are not identical
+                // are not the harness's to merge, and the pair is a thing the
+                // user fixes once in an editor.
+                let dupes = near_duplicates(&files)
+                    .into_iter()
+                    .map(|(a, b, pct)| {
+                        json!({
+                            "a": files[a].path.to_string_lossy(),
+                            "b": files[b].path.to_string_lossy(),
+                            "percent": pct,
+                        })
+                    })
+                    .collect();
+                (rows, dupes)
+            }
+            None => (Vec::new(), Vec::new()),
+        };
+
+        // The directories below the workspace whose rules this session picked
+        // up. Invisible until now, and the reason a rules list can grow
+        // between two turns that did not edit anything.
+        let worked_in: Vec<String> = bough_core::prompt::project::worked_in(&id)
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+
+        Ok(json(
+            &json!({
+                "shape": shape,
+                "projectRules": rules,
+                "nearDuplicates": dupes,
+                "workedIn": worked_in,
+                "contextTokens": session.context_tokens,
+                "cachedTokens": session.cached_tokens,
+                "contextLimit": bough_core::llm::pricing::context_window_for(&model),
+            }),
+            200,
+        ))
     })
 }
 

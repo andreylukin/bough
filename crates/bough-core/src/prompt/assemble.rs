@@ -156,14 +156,19 @@ pub struct AssembledPrompt {
     pub shas: Vec<SectionSha>,
 }
 
-/// One included section's identity: what it was, and the exact bytes it
-/// contributed.
+/// One included section's identity: what it was, the exact bytes it
+/// contributed, and how many of them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SectionSha {
     pub id: SectionId,
     /// sha256 of the section text, truncated — collision-free at this scale,
     /// readable in a log.
     pub sha: String,
+    /// Length of the section's text. Assembly is the only place this is
+    /// knowable without re-deriving the prompt, and it is what answers "what
+    /// am I paying for" — a sha says a section changed, never what it costs.
+    #[serde(default)]
+    pub bytes: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +236,25 @@ impl SectionId {
             SectionId::Skills => "skills",
             SectionId::Notes => "notes",
         }
+    }
+
+    /// Is this section rendered per session rather than read from a file?
+    ///
+    /// THE TIER IS THE COST MODEL, which is why this is worth asking. A stable
+    /// section is byte-identical across sessions and shared in the provider's
+    /// prompt cache, so its size is paid once; a volatile one is this
+    /// session's alone and paid on every uncached turn. A reader shown one
+    /// undifferentiated list of sizes would draw exactly the wrong conclusion
+    /// about which ones to shorten.
+    pub fn is_volatile(&self) -> bool {
+        matches!(
+            self,
+            SectionId::McpTools
+                | SectionId::Extensions
+                | SectionId::SkillCatalog
+                | SectionId::Skills
+                | SectionId::Notes
+        )
     }
 }
 
@@ -685,6 +709,7 @@ pub fn assemble_prompt(input: &PromptInput) -> AssembledPrompt {
         shas.push(SectionSha {
             id,
             sha: section_sha(text),
+            bytes: text.len(),
         });
     }
 

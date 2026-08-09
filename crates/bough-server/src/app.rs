@@ -64,6 +64,12 @@ pub fn routes() -> Vec<Route> {
             "/sessions/:id/usage",
             sessions::get_session_usage_h(),
         ),
+        // what the last turn actually put in the window
+        route(
+            "GET",
+            "/sessions/:id/prompt",
+            sessions::get_session_prompt(),
+        ),
         // ── row 1.31: the remaining route families (v1 stubs are marked in
         //    their own modules; the table keeps the TS append order) ──
         // workflows (rows 3.9–3.12), engine-backed and live

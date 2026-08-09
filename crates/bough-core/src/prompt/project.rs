@@ -355,6 +355,71 @@ pub fn session_rule_files(workspace: &Path, session_id: &str) -> Vec<ProjectRule
     )
 }
 
+/// Two rule files that are nearly the same document, as a percentage.
+///
+/// WHAT `keep_first` CANNOT SEE. Byte equality collapses a copy; it does
+/// nothing for a copy that has since been edited, which is the state every
+/// duplicated rules file eventually reaches. The real instance that prompted
+/// this: a `~/.claude/CLAUDE.md` and a `$BOUGH_HOME/AGENTS.md` of 8,239 and
+/// 8,261 bytes, 92% identical — four thousand tokens per turn to say almost
+/// the same thing twice, and the 8% where they DIFFER is two contradictory
+/// answers to the same question with nothing to say which one governs.
+///
+/// Reported, never acted on. Dropping one is not this module's call: they are
+/// not the same file and the harness cannot know which one the user meant.
+/// Naming the pair is the whole contribution — it is a thing you fix once, in
+/// a text editor, and never think about again.
+///
+/// Compared as SETS OF NON-BLANK LINES, which is what survives the edits
+/// people actually make to these files: reordering sections, and rewrapping a
+/// paragraph. A character-level ratio calls a reordered file different, and a
+/// reordered file is exactly the duplicate worth catching.
+pub fn similarity(a: &str, b: &str) -> u8 {
+    let lines = |t: &str| -> Vec<String> {
+        t.lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect()
+    };
+    let (mut left, right) = (lines(a), lines(b));
+    if left.is_empty() || right.is_empty() {
+        return 0;
+    }
+    let total = left.len().max(right.len());
+    let mut shared = 0usize;
+    // Each line on the right consumes at most one on the left, so a file that
+    // repeats one line a hundred times cannot claim a hundred matches.
+    for line in right {
+        if let Some(at) = left.iter().position(|l| *l == line) {
+            left.remove(at);
+            shared += 1;
+        }
+    }
+    ((shared * 100) / total) as u8
+}
+
+/// Pairs of files in one prompt that are near-copies, as
+/// `(earlier index, later index, percent)`, worst first.
+///
+/// The threshold is deliberately high. Two rule files that share a preamble
+/// are ordinary; two that share nine tenths of their lines are one document
+/// that got forked, and only the second is worth interrupting someone about.
+pub const NEAR_DUPLICATE_PCT: u8 = 80;
+
+pub fn near_duplicates(files: &[ProjectRuleFile]) -> Vec<(usize, usize, u8)> {
+    let mut out: Vec<(usize, usize, u8)> = Vec::new();
+    for (i, a) in files.iter().enumerate() {
+        for (j, b) in files.iter().enumerate().skip(i + 1) {
+            let pct = similarity(&a.body, &b.body);
+            if pct >= NEAR_DUPLICATE_PCT {
+                out.push((i, j, pct));
+            }
+        }
+    }
+    out.sort_by_key(|d| std::cmp::Reverse(d.2));
+    out
+}
+
 /// The label rule shared by the note and the summaries: workspace-relative
 /// when the file is inside the workspace, else absolute — so the margin row
 /// and the note the model got can never name the same file differently.
@@ -723,27 +788,105 @@ mod tests {
         assert_eq!(bodies, ["REPO RULES", "PACKAGE RULES"]);
     }
 
+    /// The real pair that prompted this: two global rule files, 8,239 and
+    /// 8,261 bytes, one forked from the other and edited since. Byte equality
+    /// says nothing about them; this has to.
+    #[test]
+    fn a_forked_copy_of_a_rules_file_is_reported_even_though_it_is_not_identical() {
+        let mut a = String::new();
+        for i in 0..50 {
+            a.push_str(&format!("- rule number {i}\n"));
+        }
+        // Four lines differ out of fifty: a copy someone has since edited.
+        let b = a
+            .replace("- rule number 7\n", "- rule seven, revised\n")
+            .replace("- rule number 9\n", "- rule nine, revised\n");
+
+        let pct = similarity(&a, &b);
+        assert!(
+            (90..100).contains(&pct),
+            "expected a high-90s match, got {pct}"
+        );
+
+        let files = vec![
+            ProjectRuleFile {
+                path: PathBuf::from("/h/.claude/CLAUDE.md"),
+                body: a,
+            },
+            ProjectRuleFile {
+                path: PathBuf::from("/h/.bough/AGENTS.md"),
+                body: b,
+            },
+        ];
+        assert_eq!(near_duplicates(&files), vec![(0, 1, pct)]);
+    }
+
+    /// Reordering is the edit that a character-level ratio gets wrong, and a
+    /// reordered file is exactly the duplicate worth catching.
+    #[test]
+    fn reordering_a_file_does_not_hide_that_it_is_the_same_document() {
+        let a = "alpha\nbeta\ngamma\ndelta\n";
+        let b = "delta\ngamma\nbeta\nalpha\n";
+        assert_eq!(similarity(a, b), 100);
+    }
+
+    /// Two files that merely share a preamble are ordinary and must not warn.
+    #[test]
+    fn files_that_share_only_a_preamble_are_not_near_duplicates() {
+        let a = "# Rules\nbe careful\n".to_string() + &"- alpha thing\n".repeat(20);
+        let b = "# Rules\nbe careful\n".to_string() + &"- beta thing\n".repeat(20);
+        assert!(similarity(&a, &b) < NEAR_DUPLICATE_PCT);
+        let files = vec![
+            ProjectRuleFile {
+                path: PathBuf::from("/a/AGENTS.md"),
+                body: a,
+            },
+            ProjectRuleFile {
+                path: PathBuf::from("/b/AGENTS.md"),
+                body: b,
+            },
+        ];
+        assert!(near_duplicates(&files).is_empty());
+    }
+
+    /// A line repeated many times must not let one file claim many matches.
+    #[test]
+    fn a_repeated_line_cannot_inflate_the_match() {
+        let a = "same\n".repeat(20);
+        let b = "same\nand twenty other things\n".to_string()
+            + &(0..19).map(|i| format!("line {i}\n")).collect::<String>();
+        assert!(
+            similarity(&a, &b) < NEAR_DUPLICATE_PCT,
+            "{}",
+            similarity(&a, &b)
+        );
+    }
+
     /// The memo the shell boundary writes: same directory twice is one entry,
     /// and a roaming session cannot grow the prompt without bound.
     #[test]
     fn worked_in_directories_are_recorded_once_each_and_capped() {
-        reset_project_rules_memo();
+        // A SESSION ID OF ITS OWN, and no call to `reset_project_rules_memo`.
+        // That reset clears every session's row, so calling it here reached
+        // into whichever memo test happened to be running beside this one —
+        // which is how it broke `an_edit_an_addition_…`, a test it never
+        // names and does not otherwise touch.
+        let sid = "memo-worked-in-s1";
         let root = TempRoot::new("worked-in-memo");
         let a = root.path().join("a");
-        note_worked_in("s1", &a);
-        note_worked_in("s1", &a);
-        assert_eq!(worked_in("s1").len(), 1);
+        note_worked_in(sid, &a);
+        note_worked_in(sid, &a);
+        assert_eq!(worked_in(sid).len(), 1);
 
         for i in 0..MAX_WORKED_IN + 3 {
-            note_worked_in("s1", &root.path().join(format!("d{i}")));
+            note_worked_in(sid, &root.path().join(format!("d{i}")));
         }
-        assert_eq!(worked_in("s1").len(), MAX_WORKED_IN);
+        assert_eq!(worked_in(sid).len(), MAX_WORKED_IN);
         // The oldest fell out, not the newest.
-        assert!(!worked_in("s1").contains(&absolutize(&a)));
-        assert!(worked_in("s1").contains(&absolutize(
+        assert!(!worked_in(sid).contains(&absolutize(&a)));
+        assert!(worked_in(sid).contains(&absolutize(
             &root.path().join(format!("d{}", MAX_WORKED_IN + 2))
         )));
-        reset_project_rules_memo();
     }
 
     fn bodies(files: &[ProjectRuleFile]) -> Vec<&str> {

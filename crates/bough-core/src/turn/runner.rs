@@ -1424,6 +1424,13 @@ fn prepare_turn(
         None => assemble_prompt(&prompt_input),
     };
 
+    // What this turn actually sent, for the surface that answers "what is in
+    // my context window". Unconditional, unlike the trace below: this costs
+    // one clone of a short list per turn, and a diagnostic nobody can reach
+    // without setting an environment variable first is a diagnostic that is
+    // never there when it is needed.
+    crate::prompt::last::remember(&session_id, &prompt);
+
     // The section identities the raw trace cannot see: `LlmParams` carries
     // the assembled prefix as one opaque string, so which .md files went into
     // it has to be recorded from here (`llm/trace.rs`).

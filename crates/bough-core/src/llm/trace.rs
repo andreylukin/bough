@@ -517,6 +517,7 @@ mod tests {
             sections: vec![SectionSha {
                 id: crate::prompt::assemble::SectionId::Identity,
                 sha: section_sha("x"),
+                bytes: 1,
             }],
             started_at: 1234,
         };

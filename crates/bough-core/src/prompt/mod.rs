@@ -5,4 +5,5 @@
 //! (global `~/.bough` + workspace root — NEVER CLAUDE.md) is re-read per turn.
 
 pub mod assemble;
+pub mod last;
 pub mod project;
