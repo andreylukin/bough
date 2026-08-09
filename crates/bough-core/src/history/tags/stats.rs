@@ -630,10 +630,17 @@ pub fn query_tag_hints(
     for tag in top(&tag_weights(&rows, now), QUERY_HINT_TAGS) {
         // Newest first out of the search, so the first success IS the most
         // recent one. No success under a tag means no line for it.
-        let Some(cmd) = matched
-            .iter()
-            .find(|c| c.exit_code == Some(0) && split_tags(&c.tags).contains(&tag))
-        else {
+        // The exemplar must be WORK, never a recall. Rows written before
+        // `is_memory_command` gated the recorder are still in the memory, and
+        // they are exactly the ones that win this slot: a recall always exits
+        // 0 and is always recent. Filtered here so an existing install stops
+        // reciting its own CLI immediately, rather than waiting out the
+        // 30-day half-life on the weights.
+        let Some(cmd) = matched.iter().find(|c| {
+            c.exit_code == Some(0)
+                && split_tags(&c.tags).contains(&tag)
+                && !super::record::is_memory_command(&c.cmd)
+        }) else {
             continue;
         };
         named.push((tag, cmd.cmd.clone()));
@@ -710,6 +717,45 @@ fn one_line(cmd: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_hint_never_offers_a_recall_command_as_the_example() {
+        // The visible half of the loop. Rows written before the recorder was
+        // gated are still in the memory, and they win this slot every time: a
+        // recall always exits 0 and is always recent.
+        let rows = [
+            crate::types::TaggedCommand {
+                ts: 200,
+                repo: "r".into(),
+                cmd: "bough notes show notion".into(),
+                tags: "notion".into(),
+                exit_code: Some(0),
+                duration_ms: Some(1),
+                session_id: "s".into(),
+                message_id: None,
+            },
+            crate::types::TaggedCommand {
+                ts: 100,
+                repo: "r".into(),
+                cmd: "curl -s https://api.notion.com/v1/users/me".into(),
+                tags: "notion".into(),
+                exit_code: Some(0),
+                duration_ms: Some(1),
+                session_id: "s".into(),
+                message_id: None,
+            },
+        ];
+        let picked = rows.iter().find(|c| {
+            c.exit_code == Some(0)
+                && split_tags(&c.tags).contains(&"notion".to_string())
+                && !super::super::record::is_memory_command(&c.cmd)
+        });
+        assert_eq!(
+            picked.map(|c| c.cmd.as_str()),
+            Some("curl -s https://api.notion.com/v1/users/me"),
+            "the newer row is the recall; the hint must reach past it"
+        );
+    }
     use super::*;
     use crate::db::sqlite_db::{DbOptions, SqliteDb};
     use crate::schema::parts::{Session, SessionKind};

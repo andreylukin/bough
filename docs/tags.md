@@ -130,6 +130,31 @@ A command is recorded **when it finishes**, with the output the program actually
 - Still running when the turn moved on → `exit_code` is `NULL`, which the ranking treats as
   half-credit (§5).
 
+### What is NOT recorded
+
+**A command that only reads or maintains the memory.** `bough tags …` and
+`bough notes …` are skipped by `is_memory_command` before anything is attributed,
+in every spelling — `PATH=… bough notes show x`, `./scripts/bough tags`,
+`~/.local/bin/bough notes stale`.
+
+This closes a loop that was measured on a real install: of 748 commands recorded in a
+few days, 271 were bough talking to itself, and per tag it was worse — **53 of the 54
+commands tagged `notion` were `bough notes show notion`**, 39 of 40 for `slack`, 69 of
+72 for `history`. Recall was recorded as work, which lifted the tag's weight, which
+raised it in the priming note and the hints, which prompted another recall. Every turn
+of that loop carries zero information about the project, and the "this repo has worked
+on that before" hint had become a tour of bough's own CLI.
+
+Writes are skipped too, not only reads. `bough notes write` was recorded at first on the
+argument that "the memory records its own maintenance" — a nicer sentence than it was a
+rule. Bookkeeping about the work is not the work.
+
+Deliberately narrow: `bough patterns` reads a real log and `bough mcp` changes real
+configuration, so both stay recorded. Only the two verbs whose entire subject is the
+memory are skipped. Rows written before the gate existed are still there, so the
+exemplar picker in §6 filters them at read time as well — otherwise an existing install
+would keep reciting itself until the 30-day half-life worked them out.
+
 ### Failure contract
 
 Recording is best-effort and **must never surface a failure into a turn**. `createCommandRecorder`

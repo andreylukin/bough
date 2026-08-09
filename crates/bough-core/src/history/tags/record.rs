@@ -425,6 +425,56 @@ pub struct RecorderCtx {
 
 /// Build the per-turn recorder the shell verbs call — see `ShellCtx::record`.
 /// Every failure is swallowed: memory is a side channel, never a turn hazard.
+/// Does this command only READ OR MAINTAIN the memory?
+///
+/// THE LOOP THIS CLOSES, measured on a real install: of 748 commands recorded
+/// in a few days, 271 were bough talking to itself — and per tag it was worse.
+/// 53 of the 54 commands tagged `notion` were `bough notes show notion`; 39 of
+/// 40 for `slack`; 69 of 72 for `history`. The "this repo has worked on that
+/// before" hint had become a tour of bough's own CLI.
+///
+/// It is self-reinforcing, which is why filtering at read time is not enough:
+/// a recall is recorded as work, which lifts the tag's weight, which raises it
+/// in the priming note and the hints, which prompts another recall. Every turn
+/// of that loop carries zero information about the project.
+///
+/// WRITES TOO, not only reads. `bough notes write` was originally recorded on
+/// the argument that "the memory records its own maintenance" — a nicer
+/// sentence than it was a rule. Bookkeeping about the work is not the work.
+///
+/// Deliberately narrow: `bough patterns` reads a real log and `bough mcp`
+/// changes real configuration, so both stay recorded. Only the two verbs whose
+/// entire subject is the memory are skipped.
+pub fn is_memory_command(command: &str) -> bool {
+    let mut tokens = command.split_whitespace();
+    // Leading `VAR=value` assignments, as in the observed
+    // `PATH=…/target/release:$PATH bough notes show assaia`.
+    // An assignment is `NAME=…` where NAME is a shell identifier. Testing for
+    // "contains = but no /" fails on the very form this was written for:
+    // `PATH=/Users/…/target/release:$PATH`, whose value is nothing but slashes.
+    fn is_assignment(token: &str) -> bool {
+        let Some((name, _)) = token.split_once('=') else {
+            return false;
+        };
+        !name.is_empty()
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && !name.starts_with(|c: char| c.is_ascii_digit())
+    }
+    let binary = loop {
+        match tokens.next() {
+            None => return false,
+            Some(t) if is_assignment(t) => continue,
+            Some(t) => break t,
+        }
+    };
+    // Any path prefix: `bough`, `./scripts/bough`, `~/.local/bin/bough`.
+    let name = binary.rsplit('/').next().unwrap_or(binary);
+    if name != "bough" {
+        return false;
+    }
+    matches!(tokens.next(), Some("tags") | Some("notes"))
+}
+
 pub fn create_command_recorder(ctx: RecorderCtx) -> CommandRecorder {
     let now: Clock = ctx.now.clone().unwrap_or_else(system_clock);
     // One vocabulary read per repo per turn. The set a turn is judged against
@@ -437,6 +487,13 @@ pub fn create_command_recorder(ctx: RecorderCtx) -> CommandRecorder {
     Arc::new(move |e: RecordedCommand| {
         // A lost memory row is strictly better than a broken round: every
         // early return below is the TS `catch {}`.
+        //
+        // FIRST, before anything is attributed or counted: a command that only
+        // reads the memory is not project work, and recording it is what let
+        // recall colonise the vocabulary it recalls from.
+        if is_memory_command(&e.command) {
+            return;
+        }
         let att = attribute_command(&e.command, &ctx.workspace);
         if let Some(touched) = &ctx.touched {
             if let Ok(mut t) = touched.lock() {
@@ -498,6 +555,52 @@ fn take_chars(s: &str, n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_command_that_only_reads_the_memory_is_not_project_work() {
+        // Measured: 53 of 54 commands tagged `notion` on a real install were
+        // `bough notes show notion`. Recall was being recorded as work, which
+        // lifted the tag, which prompted more recall.
+        for cmd in [
+            "bough tags",
+            "bough tags show nased",
+            "bough tags sql \"SELECT 1\"",
+            "bough notes",
+            "bough notes show assaia",
+            "bough notes write nased",
+            "bough notes append pr.1 x",
+            // Every spelling seen in the wild.
+            "PATH=/Users/andrey/repos/bough/target/release:$PATH bough notes show assaia",
+            "./scripts/bough notes show x",
+            "~/.local/bin/bough tags show git",
+            "/usr/local/bin/bough notes stale",
+            "FOO=1 BAR=2 bough tags",
+        ] {
+            assert!(is_memory_command(cmd), "should be skipped: {cmd}");
+        }
+    }
+
+    #[test]
+    fn real_work_is_still_recorded_including_boughs_other_verbs() {
+        for cmd in [
+            "git status",
+            "kubectl -n nased rollout status deploy/executor",
+            // Narrow on purpose: `patterns` reads a real log, `mcp` changes
+            // real configuration. Only the two verbs whose whole subject is
+            // the memory are skipped.
+            "bough patterns server.log",
+            "bough mcp doctor",
+            "bough exec \"do a thing\"",
+            // A command that merely MENTIONS the memory is work.
+            "rg 'bough notes' src/",
+            "echo bough tags",
+            // Not our binary.
+            "notbough tags",
+            "",
+        ] {
+            assert!(!is_memory_command(cmd), "should be recorded: {cmd}");
+        }
+    }
     use super::*;
     use crate::db::sqlite_db::{DbOptions, SqliteDb};
     use crate::schema::parts::{Session, SessionKind};
