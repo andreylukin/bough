@@ -81,7 +81,7 @@ use crate::paths::bough_home;
 use crate::prompt::assemble::{
     assemble_prompt, scratch_note, workspace_note, AssembledPrompt, PromptInput, PromptMcpServer,
 };
-use crate::prompt::project::{find_project_rules, note_project_rules, project_rules_note};
+use crate::prompt::project::{note_project_rules, project_rules_note};
 use crate::schema::events::{
     EventInput, EventType, MessageDeltaData, MessageFinishedData, MessagePartData,
     MessageRetryData, ToolLogData,
@@ -1239,7 +1239,16 @@ fn prepare_turn(
     // agent and a schedule-fired root all edit a real checkout and all need to
     // be told which one. It is built HERE because `workspace` is resolved
     // here, per session — boot cannot supply a per-session fact.
-    let rule_files = find_project_rules(Path::new(&workspace), Some(&bough_home()));
+    // Across the workspace AND every directory this session has actually run a
+    // command in: a session opened in `$HOME` that works inside one repo has to
+    // pick up that repo's AGENTS.md/CLAUDE.md, and the upward walk alone can
+    // never reach below the workspace to find it.
+    let worked_in = crate::prompt::project::worked_in(&session_id);
+    let rule_files = crate::prompt::project::find_project_rules_across(
+        Path::new(&workspace),
+        &worked_in,
+        Some(&bough_home()),
+    );
     let rules_note = project_rules_note(&rule_files, Path::new(&workspace));
     // What went in is reported, from the SAME read the prompt was built from —
     // drained onto the round's result by `with_project_rule_notes`.

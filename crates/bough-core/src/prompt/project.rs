@@ -161,6 +161,91 @@ pub fn find_project_rules(workspace: &Path, home: Option<&Path>) -> Vec<ProjectR
     out
 }
 
+/// Directories a session has actually run a command in, beyond its own
+/// workspace. Keyed by session, capped like the other memos here.
+static WORKED_IN: LazyLock<Mutex<HashMap<String, Vec<PathBuf>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// How many subdirectories one session's rules can be drawn from.
+///
+/// A session that roams is real, and every directory it visits adds an
+/// `AGENTS.md` to every subsequent prompt — permanently, since nothing here
+/// forgets. The cap is the backstop on that: past it, the oldest directory
+/// drops out, so a long session's prompt stops growing instead of quietly
+/// eating the context window.
+const MAX_WORKED_IN: usize = 8;
+
+/// Record that this session ran something in `dir`, so the next prompt reads
+/// that directory's rules too.
+///
+/// Called from the shell boundary, where a command's real directory is known.
+/// A session opened in `$HOME` that works inside one repo has to pick up that
+/// repo's `AGENTS.md`, and `find_project_rules` cannot find it on its own: it
+/// walks UP from the workspace to the git root, so nothing below the workspace
+/// is ever reachable. This is how a directory gets below-the-workspace rules
+/// into the prompt at all.
+///
+/// ONE TURN LATE, BY CONSTRUCTION. The prompt is assembled before the turn's
+/// commands run, so the repo you just stepped into governs the NEXT turn. The
+/// alternative — guessing the directory from paths in the user's message —
+/// injects rules for a directory the turn may never touch, and a rule block
+/// that should not be there is worse than one that arrives a turn later.
+pub fn note_worked_in(session_id: &str, dir: &Path) {
+    let dir = absolutize(dir);
+    let mut map = WORKED_IN.lock().unwrap();
+    let mut dirs = map.get(session_id).cloned().unwrap_or_default();
+    if dirs.contains(&dir) {
+        return;
+    }
+    dirs.push(dir);
+    if dirs.len() > MAX_WORKED_IN {
+        dirs.remove(0);
+    }
+    remember(&mut map, session_id, dirs);
+}
+
+/// The directories [`note_worked_in`] recorded, oldest first.
+pub fn worked_in(session_id: &str) -> Vec<PathBuf> {
+    WORKED_IN
+        .lock()
+        .unwrap()
+        .get(session_id)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// [`find_project_rules`] for the workspace, then for every directory this
+/// session has worked in — one merged list, no file twice.
+///
+/// ORDER IS THE PRECEDENCE. The existing rule is "later text wins", and the
+/// note says so in as many words, so the workspace's own chain leads and each
+/// visited directory's rules follow in the order they were first visited. The
+/// practical effect is the one you want: a `~/.bough/AGENTS.md` global still
+/// applies, and the repo you are actually working in overrides it.
+///
+/// `extra` directories contribute only files the workspace chain did not
+/// already produce — a visited subdirectory shares most of its ancestry with
+/// the workspace, and re-reading the same `AGENTS.md` under a second heading
+/// would double it in the prompt and say nothing new.
+pub fn find_project_rules_across(
+    workspace: &Path,
+    extra: &[PathBuf],
+    home: Option<&Path>,
+) -> Vec<ProjectRuleFile> {
+    let mut out = find_project_rules(workspace, home);
+    for dir in extra {
+        // `home` is deliberately not passed again: the global tier is already
+        // in `out` and must not be re-inserted mid-list, where "later wins"
+        // would let it override the project rules it is supposed to sit under.
+        for file in find_project_rules(dir, None) {
+            if !out.iter().any(|f| f.path == file.path) {
+                out.push(file);
+            }
+        }
+    }
+    out
+}
+
 /// [`find_project_rules`] with the user-level Claude Code tier appended to the
 /// global one: `$BOUGH_HOME/AGENTS.md` (or `CLAUDE.md`) first, then
 /// `~/.claude/CLAUDE.md`.
@@ -399,6 +484,7 @@ pub fn drain_project_rule_notes(session_id: &str) -> Vec<String> {
 pub fn reset_project_rules_memo() {
     LAST_SEEN.lock().unwrap().clear();
     PENDING.lock().unwrap().clear();
+    WORKED_IN.lock().unwrap().clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +518,69 @@ mod tests {
     fn write(path: &Path, body: &str) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, body).unwrap();
+    }
+
+    /// THE $HOME SESSION. The workspace walk only ever goes UP, so a session
+    /// opened in the home directory could never see the rules of the repo it
+    /// was actually working in — the file looked obeyed and was not read.
+    #[test]
+    fn a_directory_the_session_worked_in_contributes_its_rules_too() {
+        let root = TempRoot::new("worked-in");
+        let home = root.path().join("home");
+        let repo = home.join("repos").join("thing");
+        write(&home.join("AGENTS.md"), "GLOBAL RULES");
+        write(&repo.join(".git"), "");
+        write(&repo.join("CLAUDE.md"), "REPO RULES");
+
+        // Before: the home workspace alone sees nothing of the repo.
+        let bare = find_project_rules_across(&home, &[], None);
+        assert!(!bare.iter().any(|f| f.body.contains("REPO RULES")));
+
+        let files = find_project_rules_across(&home, std::slice::from_ref(&repo), None);
+        let bodies: Vec<&str> = files.iter().map(|f| f.body.as_str()).collect();
+        assert_eq!(bodies, ["GLOBAL RULES", "REPO RULES"]);
+        // Later wins, which is what the note promises the reader.
+        assert!(files.last().unwrap().path.ends_with("CLAUDE.md"));
+    }
+
+    /// A visited subdirectory shares most of its ancestry with the workspace;
+    /// reading that shared chain twice would put one project's rules in the
+    /// prompt under two headings.
+    #[test]
+    fn a_file_the_workspace_chain_already_carried_is_not_added_a_second_time() {
+        let root = TempRoot::new("worked-in-dedupe");
+        let repo = root.path().join("repo");
+        let sub = repo.join("crates").join("inner");
+        write(&repo.join(".git"), "");
+        write(&repo.join("AGENTS.md"), "REPO RULES");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let files = find_project_rules_across(&repo, &[sub], None);
+        assert_eq!(files.len(), 1, "{files:#?}");
+        assert_eq!(files[0].body, "REPO RULES");
+    }
+
+    /// The memo the shell boundary writes: same directory twice is one entry,
+    /// and a roaming session cannot grow the prompt without bound.
+    #[test]
+    fn worked_in_directories_are_recorded_once_each_and_capped() {
+        reset_project_rules_memo();
+        let root = TempRoot::new("worked-in-memo");
+        let a = root.path().join("a");
+        note_worked_in("s1", &a);
+        note_worked_in("s1", &a);
+        assert_eq!(worked_in("s1").len(), 1);
+
+        for i in 0..MAX_WORKED_IN + 3 {
+            note_worked_in("s1", &root.path().join(format!("d{i}")));
+        }
+        assert_eq!(worked_in("s1").len(), MAX_WORKED_IN);
+        // The oldest fell out, not the newest.
+        assert!(!worked_in("s1").contains(&absolutize(&a)));
+        assert!(worked_in("s1").contains(&absolutize(
+            &root.path().join(format!("d{}", MAX_WORKED_IN + 2))
+        )));
+        reset_project_rules_memo();
     }
 
     fn bodies(files: &[ProjectRuleFile]) -> Vec<&str> {

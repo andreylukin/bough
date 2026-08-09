@@ -25,6 +25,7 @@
 //! shell has no exit code yet, and `[{code, out}]` with a missing code is a
 //! contract the caller cannot branch on.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -556,6 +557,96 @@ pub async fn bash(
 // The hook boundary
 // ---------------------------------------------------------------------------
 
+/// The directory a command actually runs in, when that is somewhere below the
+/// session's workspace, else the workspace itself.
+///
+/// WHY THIS EXISTS. `ev.workspace` is the only thing a hook has to find
+/// project configuration with — the Claude Code adapter reads
+/// `<workspace>/.claude/settings.json` and `<workspace>/.claude/rules` off it,
+/// and passes it as `cwd` to every command it shells out to. A session opened
+/// in `$HOME` that then works inside one repo would hand every hook `$HOME`,
+/// so the repo's own guardrails never load — which is the whole complaint.
+/// The command already says where it is going: the model writes `cd <repo> &&
+/// …`, so the leading `cd` is read back out and used as the event's workspace.
+///
+/// CONFINED DOWNWARD ON PURPOSE. Only a directory at or below the session
+/// workspace wins. `cd /elsewhere` keeps the session's workspace, because a
+/// command that leaves the checkout must not be able to point the hook layer
+/// at an arbitrary directory's `settings.json` — that file names commands
+/// hooks will run.
+fn command_workspace(command: &str, workspace: &str) -> String {
+    let Some(target) = leading_cd_target(command) else {
+        return workspace.to_string();
+    };
+    let root = std::path::absolute(workspace).unwrap_or_else(|_| PathBuf::from(workspace));
+    let expanded = match target.strip_prefix("~/") {
+        Some(rest) => match dirs::home_dir() {
+            Some(home) => home.join(rest),
+            None => return workspace.to_string(),
+        },
+        None if target == "~" => return workspace.to_string(),
+        None => PathBuf::from(&target),
+    };
+    let joined = if expanded.is_absolute() {
+        expanded
+    } else {
+        root.join(expanded)
+    };
+    // `canonicalize` rather than `absolute`: `cd a/../../etc` and a symlink
+    // out of the tree both have to fail the descendant test below, and only a
+    // resolved path can be compared against the root at all.
+    let (Ok(dir), Ok(root)) = (joined.canonicalize(), root.canonicalize()) else {
+        return workspace.to_string();
+    };
+    if dir.is_dir() && dir.starts_with(&root) {
+        dir.to_string_lossy().into_owned()
+    } else {
+        workspace.to_string()
+    }
+}
+
+/// [`command_workspace`], and a note to the rules layer when the answer is a
+/// directory below the session's workspace.
+///
+/// The two travel together because they are the same fact reaching two
+/// consumers: the hook layer needs it NOW (it is about to fire on this
+/// command) and the prompt layer needs it on the next turn (its prompt is
+/// already built). Splitting them is how one of the two silently stops being
+/// updated.
+fn command_dir(command: &str, workspace: &str, session_id: &str) -> String {
+    let dir = command_workspace(command, workspace);
+    if dir != workspace {
+        crate::prompt::project::note_worked_in(session_id, Path::new(&dir));
+    }
+    dir
+}
+
+/// The argument of a `cd` that opens the command, or `None`.
+///
+/// Deliberately shallow: the FIRST statement only, one word, no expansion. A
+/// `cd` behind a `&&` has already had some other command's side effects, and
+/// a word carrying `$`, a glob or a backtick is not a path this function can
+/// know the value of — in every one of those cases the answer is `None` and
+/// the caller keeps the session workspace, which is what happens today.
+fn leading_cd_target(command: &str) -> Option<String> {
+    let rest = command.trim_start().strip_prefix("cd")?;
+    // `cdX` is a different command; `cd` alone means `$HOME`, not a subdir.
+    let rest = rest
+        .strip_prefix(|c: char| c == ' ' || c == '\t')?
+        .trim_start();
+    let word: String = match rest.chars().next()? {
+        q @ ('"' | '\'') => rest[1..].split(q).next()?.to_string(),
+        _ => rest
+            .split(|c: char| c.is_whitespace() || c == ';' || c == '&' || c == '|')
+            .next()?
+            .to_string(),
+    };
+    if word.is_empty() || word.contains(['$', '`', '*', '?']) {
+        return None;
+    }
+    Some(word)
+}
+
 /// What a `PreTool` hook decided about a command.
 enum PreTool {
     /// Run this — possibly not the string that was passed in.
@@ -582,7 +673,7 @@ fn pre_tool_hook(
         crate::hooks::HookEvent::PreTool,
         crate::hooks::HookDispatch {
             session_id: session_id.to_string(),
-            workspace: workspace.to_string(),
+            workspace: command_dir(command, workspace, session_id),
             pattern: "bash".into(),
             data: serde_json::json!({
                 "tool": "bash",
@@ -623,7 +714,7 @@ fn post_tool_hook(
         crate::hooks::HookEvent::PostTool,
         crate::hooks::HookDispatch {
             session_id: session_id.to_string(),
-            workspace: workspace.to_string(),
+            workspace: command_dir(command, workspace, session_id),
             pattern: "bash".into(),
             data: serde_json::json!({ "tool": "bash", "command": command, "output": out }),
         },
@@ -915,6 +1006,83 @@ mod tests {
     use crate::schema::parts::{BackgroundJob, JobStatus};
     use crate::types::RecordedCommand;
     use std::collections::HashSet;
+
+    // -- the directory a hook is told about ----------------------------------
+
+    /// The complaint this whole path exists for: a session opened in `$HOME`
+    /// that works inside one repo must hand that repo to the hook layer, or
+    /// the repo's `.claude/settings.json` never loads.
+    #[test]
+    fn a_cd_into_a_subdirectory_is_the_workspace_the_hooks_are_told_about() {
+        let root = temp_dir("cmd-ws");
+        let repo = root.join("repos").join("thing");
+        std::fs::create_dir_all(&repo).unwrap();
+        let root = root.canonicalize().unwrap();
+        let repo = repo.canonicalize().unwrap();
+        let home = root.to_string_lossy().to_string();
+
+        for command in [
+            "cd repos/thing && make test",
+            &format!("cd {} && make test", repo.display()),
+            &format!("cd '{}' && make test", repo.display()),
+            "cd repos/thing",
+        ] {
+            assert_eq!(
+                command_workspace(command, &home),
+                repo.to_string_lossy(),
+                "{command}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The confinement. A hook's workspace decides which `settings.json` is
+    /// read, and that file names commands hooks run — so a command that walks
+    /// out of the checkout must not get to choose it.
+    #[test]
+    fn a_cd_that_leaves_the_workspace_does_not_move_the_hooks_workspace() {
+        let root = temp_dir("cmd-ws-out");
+        let inside = root.join("inside");
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let ws = inside.canonicalize().unwrap().to_string_lossy().to_string();
+
+        for command in [
+            "cd .. && rm -rf outside",
+            "cd ../outside && make test",
+            "cd /etc && cat hosts",
+            // Never existed: nothing to read configuration out of.
+            "cd nope && make test",
+        ] {
+            assert_eq!(command_workspace(command, &ws), ws, "{command}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Everything that is not a plain leading `cd` keeps today's behaviour.
+    /// The failure mode being avoided is a WRONG directory, which is worse
+    /// than the session workspace: it silently loads another repo's hooks.
+    #[test]
+    fn anything_but_a_plain_leading_cd_leaves_the_workspace_alone() {
+        let root = temp_dir("cmd-ws-none");
+        let sub = root.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let ws = root.canonicalize().unwrap().to_string_lossy().to_string();
+
+        for command in [
+            "make test",             // no cd at all
+            "cd",                    // bare cd means $HOME
+            "cdsub && make test",    // a different command
+            "cd $REPO && make test", // unexpanded — value unknown
+            "cd sub* && make test",  // a glob — value unknown
+            "make test && cd sub",   // not the first statement
+            "git -C sub status",     // not a cd
+        ] {
+            assert_eq!(command_workspace(command, &ws), ws, "{command}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     // -- assertion helpers ---------------------------------------------------
 
