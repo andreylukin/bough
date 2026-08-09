@@ -18,6 +18,26 @@ S="tui-test-$$"
 MODEL="${SMOKE_MODEL:-}"
 [ -x "$BIN" ] || { echo "tui-test: $BIN missing — run make release first" >&2; exit 2; }
 
+# The driver, checked BEFORE anything boots. Without this guard every `SU` below
+# is a `command not found` that the `check` helper scores as a failed assertion,
+# so a missing tool reads as "the TUI never rendered its composer" — a report of
+# a bug that is not there, which is worse than no report at all.
+#
+# Exit 2 (like the missing binary above), never 0: this suite is a gate, and a
+# gate that cannot run has not passed. `TUI_TEST_OPTIONAL=1` downgrades it to a
+# skip for callers that would rather have the rest of a pipeline than a hard
+# stop — `make gates` does not run this suite, so nothing in the default path
+# depends on that.
+if ! command -v shell-use >/dev/null; then
+  echo "tui-test: shell-use is not on PATH." >&2
+  echo "  This suite asserts on what a real terminal renders, and shell-use is what" >&2
+  echo "  drives the PTY — there is no fallback that proves the same thing." >&2
+  echo "  Without it: say so in the PR and describe what you exercised by hand." >&2
+  echo "  (TUI_TEST_OPTIONAL=1 turns this into a skip.)" >&2
+  [ -n "${TUI_TEST_OPTIONAL:-}" ] && exit 0
+  exit 2
+fi
+
 HOME_DIR="$(mktemp -d)"
 BOUGH_HOME="$HOME_DIR" BOUGH_PORT="$PORT" BOUGH_MODEL="$MODEL" "$BIN" start >/tmp/tui-test-server.log 2>&1 &
 SERVER=$!

@@ -34,7 +34,9 @@ is deliberately unpinned — if CI flags what `make lint` didn't, `rustup update
 1. **`make gates` and `make lint` pass.** Red PRs aren't reviewed.
 2. **New behavior has a test**, offline and hermetic. If it's only visible in the TUI,
    drive a real PTY (`make tui-test`) — data-only assertions have let broken rendering
-   ship more than once.
+   ship more than once. That suite needs `shell-use` to drive the PTY, which is not
+   packaged yet; if you don't have it, say so in the PR and describe what you exercised
+   by hand, and a maintainer will run it. Don't claim it passed.
 3. **Spec changes travel with the code.** A spec that disagrees with the code is worse
    than no spec.
 4. **Surgical diffs, one logical change.** No drive-by reformatting. Split anything whose
