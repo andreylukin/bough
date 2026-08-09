@@ -242,6 +242,22 @@ impl EmbedLayer {
         *self.lock() = None;
     }
 
+    /// Can this layer actually embed? `Err` when the model cannot be had — an
+    /// offline first run with nothing in the Hugging Face cache, a bad
+    /// `$BOUGH_EMBED_MODEL`, a half-written download.
+    ///
+    /// The layer EXISTING and the layer WORKING are two different questions:
+    /// `create_embed_layer` answers the first from the extension capability
+    /// alone, because the model is fetched lazily and a process that never
+    /// recalls should never pay for it. Everything on the turn path wants the
+    /// first question and treats a failure as one lost tick. Only a caller that
+    /// is about to assert on vectors wants the second, which is why this is a
+    /// probe and not a constructor check — it loads the model, and on a cold
+    /// cache that means a download.
+    pub fn probe_model(&self) -> Result<(), BoughError> {
+        self.embed(&["probe".to_string()]).map(|_| ())
+    }
+
     /// The lazy open. Lazy because the model may still be downloading, and
     /// because a process that never recalls should never pay for a 25MB read.
     fn open(&self) -> Result<Connection, BoughError> {
@@ -722,10 +738,9 @@ mod tests {
     /// I get into the running container" must retrieve
     /// `docker exec -it myapp-dev-1 bash`.
     ///
-    /// Skipped without a real model + a real sqlite-lembed, exactly as the TS
-    /// test skips without the GGUF: the layer is optional by design, and a test
-    /// that downloaded 25MB would not belong in `cargo test`. Unlike TS this
-    /// needs NO subprocess — there is no `setCustomSQLite` window to lose.
+    /// Skipped without a real model: the layer is optional by design, and a
+    /// test that downloaded 25MB would not belong in `cargo test`. Unlike TS
+    /// this needs NO subprocess — there is no `setCustomSQLite` window to lose.
     #[test]
     fn drain_embeds_recorded_commands_and_similar_answers_a_fuzzy_query() {
         use crate::schema::parts::{Session, SessionKind};
@@ -797,7 +812,18 @@ mod tests {
             embed_db: Some(path_str(&embed_db)),
             model_path: None,
         }))
-        .expect("layer exists when model + lembed are both present");
+        .expect("the layer exists wherever sqlite-vec does, which is everywhere");
+
+        // THE SKIP THE DOC COMMENT ABOVE PROMISES. `create_embed_layer` says
+        // nothing about the model — it is fetched lazily — so the layer is
+        // `Some` on a machine that has never been online, and every assertion
+        // below then fails for a reason the contributor cannot fix. Probe
+        // first: with a cache or a network this costs one embed and the real
+        // assertions run; without either, the test is skipped rather than red.
+        if let Err(e) = layer.probe_model() {
+            eprintln!("skipped: the embedding model is not available here ({e})");
+            return;
+        }
 
         assert_eq!(
             layer.drain().unwrap(),

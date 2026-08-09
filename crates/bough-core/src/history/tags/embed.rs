@@ -207,6 +207,15 @@ mod tests {
             return; // no extension support on this machine — nothing to pump
         };
 
+        // A layer that cannot reach its model drains 0 forever, and the poll
+        // below would then spend ten seconds proving it. Offline is a skip,
+        // not a failure — same contract as the fixture test in `db::embed`.
+        if let Err(e) = layer.probe_model() {
+            eprintln!("skipped: the embedding model is not available here ({e})");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+
         let handle = spawn_drain_ticker(Arc::new(layer), Duration::from_millis(50));
         // Poll rather than sleep-a-fixed-amount: the first tick is immediate, so
         // this settles fast, and a slow machine does not turn into a flake. The
