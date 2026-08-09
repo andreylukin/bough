@@ -77,7 +77,6 @@ use crate::llm::routing::{api_key_env, provider_for, Provider};
 use crate::llm::trace::{trace_label, write_manifest, TurnManifest};
 use crate::llm::{client_for, ClientOpts};
 use crate::mcp::manager::McpGrant;
-use crate::paths::bough_home;
 use crate::prompt::assemble::{
     assemble_prompt, scratch_note, workspace_note, AssembledPrompt, PromptInput, PromptMcpServer,
 };
@@ -1238,12 +1237,7 @@ fn prepare_turn(
     // command in: a session opened in `$HOME` that works inside one repo has to
     // pick up that repo's AGENTS.md/CLAUDE.md, and the upward walk alone can
     // never reach below the workspace to find it.
-    let worked_in = crate::prompt::project::worked_in(&session_id);
-    let rule_files = crate::prompt::project::find_project_rules_across(
-        Path::new(&workspace),
-        &worked_in,
-        Some(&bough_home()),
-    );
+    let rule_files = crate::prompt::project::session_rule_files(Path::new(&workspace), &session_id);
     let rules_note = project_rules_note(&rule_files, Path::new(&workspace));
     // What went in is reported, from the SAME read the prompt was built from —
     // drained onto the round's result by `with_project_rule_notes`.
@@ -3657,7 +3651,6 @@ mod tests {
         finish(begin_turn(&f.ctx, &f.session.id, deps).unwrap()).await;
 
         let notes = seen.lock().unwrap().as_ref().unwrap().notes.clone();
-        assert_eq!(notes.len(), 3);
         // The two per-session facts lead, in the order a turn needs them:
         // where the real work goes, then where the throwaway files go.
         assert!(notes[0].starts_with("## Workspace"));
@@ -3666,9 +3659,14 @@ mod tests {
             notes[1].contains(&f.session.id),
             "the scratchpad note names THIS session's dir"
         );
+        // SEARCHED, not indexed, and no assertion on the total. The rules note
+        // sits between the scratchpad and the caller's, and it is built from
+        // the REAL `$BOUGH_HOME/AGENTS.md` and `~/.claude/CLAUDE.md` — so a
+        // fixed index and a fixed count both make this test pass or fail on
+        // whether the developer running it happens to keep those files.
         assert!(
-            notes[2].contains("no emoji"),
-            "a caller's notes must survive"
+            notes.iter().any(|n| n.contains("no emoji")),
+            "a caller's notes must survive: {notes:?}"
         );
     }
 
@@ -3741,7 +3739,8 @@ mod tests {
         finish(begin_turn(&f.ctx, &f.session.id, deps.clone()).unwrap()).await;
 
         let notes = seen.lock().unwrap().as_ref().unwrap().notes.clone();
-        assert_eq!(notes.len(), 3, "workspace, scratchpad, tags: {notes:?}");
+        // No count: a rules note follows these three whenever the machine
+        // running the test has a global AGENTS.md or ~/.claude/CLAUDE.md.
         assert!(notes[0].starts_with("## Workspace"));
         assert!(notes[1].starts_with("## Scratchpad"));
         assert!(

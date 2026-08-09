@@ -231,8 +231,9 @@ pub fn find_project_rules_across(
     workspace: &Path,
     extra: &[PathBuf],
     home: Option<&Path>,
+    claude_home: Option<&Path>,
 ) -> Vec<ProjectRuleFile> {
-    let mut out = find_project_rules(workspace, home);
+    let mut out = with_user_tier(find_project_rules(workspace, home), claude_home);
     for dir in extra {
         // `home` is deliberately not passed again: the global tier is already
         // in `out` and must not be re-inserted mid-list, where "later wins"
@@ -260,7 +261,19 @@ pub fn find_project_rules_with_user_tier(
     home: Option<&Path>,
     claude_home: Option<&Path>,
 ) -> Vec<ProjectRuleFile> {
-    let mut out = find_project_rules(workspace, home);
+    with_user_tier(find_project_rules(workspace, home), claude_home)
+}
+
+/// Put `~/.claude/CLAUDE.md` at the front of an already-resolved list.
+///
+/// Extracted so the workspace-only and the across-directories entry points
+/// cannot disagree about whether the user tier is read — for most of this
+/// module's life the runner called the variant that skipped it, so the file
+/// was supported, tested, and never once in a prompt.
+fn with_user_tier(
+    mut out: Vec<ProjectRuleFile>,
+    claude_home: Option<&Path>,
+) -> Vec<ProjectRuleFile> {
     let Some(claude_home) = claude_home else {
         return out;
     };
@@ -276,6 +289,34 @@ pub fn find_project_rules_with_user_tier(
         }
     }
     out
+}
+
+/// Where Claude Code keeps its user-level rules. Not `paths.rs`'s business:
+/// nothing about it moves with `$BOUGH_HOME`, which is the whole reason it is
+/// a second argument everywhere rather than a widened `home`.
+pub fn claude_user_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".claude"))
+}
+
+/// Every rule file one session's next turn will inject, in order.
+///
+/// THE ONE RESOLUTION. Two surfaces answer "which files govern this session" —
+/// the prompt itself and the session listing the panel reads — and the module
+/// contract is that both come from the SAME read. They drifted anyway, twice:
+/// the listing never learned about directories the session had worked in, and
+/// neither of them read the Claude Code user tier. Both callers now come
+/// through here, so the next thing added to the cascade cannot reach one and
+/// miss the other.
+///
+/// Resolves both homes itself, unlike everything above it — that is the point,
+/// and it is why the pure functions it calls keep taking them as arguments.
+pub fn session_rule_files(workspace: &Path, session_id: &str) -> Vec<ProjectRuleFile> {
+    find_project_rules_across(
+        workspace,
+        &worked_in(session_id),
+        Some(&crate::paths::bough_home()),
+        claude_user_dir().as_deref(),
+    )
 }
 
 /// The label rule shared by the note and the summaries: workspace-relative
@@ -533,10 +574,10 @@ mod tests {
         write(&repo.join("CLAUDE.md"), "REPO RULES");
 
         // Before: the home workspace alone sees nothing of the repo.
-        let bare = find_project_rules_across(&home, &[], None);
+        let bare = find_project_rules_across(&home, &[], None, None);
         assert!(!bare.iter().any(|f| f.body.contains("REPO RULES")));
 
-        let files = find_project_rules_across(&home, std::slice::from_ref(&repo), None);
+        let files = find_project_rules_across(&home, std::slice::from_ref(&repo), None, None);
         let bodies: Vec<&str> = files.iter().map(|f| f.body.as_str()).collect();
         assert_eq!(bodies, ["GLOBAL RULES", "REPO RULES"]);
         // Later wins, which is what the note promises the reader.
@@ -555,9 +596,36 @@ mod tests {
         write(&repo.join("AGENTS.md"), "REPO RULES");
         std::fs::create_dir_all(&sub).unwrap();
 
-        let files = find_project_rules_across(&repo, &[sub], None);
+        let files = find_project_rules_across(&repo, &[sub], None, None);
         assert_eq!(files.len(), 1, "{files:#?}");
         assert_eq!(files[0].body, "REPO RULES");
+    }
+
+    /// The Claude Code user tier reaches the prompt through the across-
+    /// directories path too. It did not for most of this module's life: the
+    /// runner called the variant that skipped it, so `~/.claude/CLAUDE.md` was
+    /// supported, tested, and never once injected.
+    #[test]
+    fn the_claude_user_tier_is_read_by_the_across_directories_path() {
+        let root = TempRoot::new("user-tier-across");
+        let claude = root.path().join("dot-claude");
+        let home = root.path().join("home");
+        let repo = home.join("repo");
+        write(&claude.join("CLAUDE.md"), "USER TIER");
+        write(&home.join("AGENTS.md"), "GLOBAL RULES");
+        write(&repo.join(".git"), "");
+        write(&repo.join("AGENTS.md"), "REPO RULES");
+
+        let files = find_project_rules_across(
+            &home,
+            std::slice::from_ref(&repo),
+            Some(&home),
+            Some(claude.as_path()),
+        );
+        let bodies: Vec<&str> = files.iter().map(|f| f.body.as_str()).collect();
+        // Global tier leads and the project still wins, exactly as when the
+        // user tier is resolved without any extra directories.
+        assert_eq!(bodies, ["USER TIER", "GLOBAL RULES", "REPO RULES"]);
     }
 
     /// The memo the shell boundary writes: same directory twice is one entry,

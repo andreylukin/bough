@@ -24,8 +24,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use bough_core::errors::BoughError;
-use bough_core::paths::bough_home;
-use bough_core::prompt::project::{find_project_rules, rule_summaries};
+use bough_core::prompt::project::{rule_summaries, session_rule_files};
 use bough_core::schema::events::{EventInput, EventType};
 use bough_core::schema::parts::{
     is_collapsed_kind, Message, Part, Role, Session, SessionKind, TurnStatus,
@@ -392,12 +391,14 @@ pub fn get_session() -> Handler {
             obj.insert("tree".to_string(), to_value(&tree));
         }
 
-        // The `AGENTS.md` files the NEXT turn will inject, resolved exactly as
-        // the runner resolves them — read per call from disk, never stored.
+        // The `AGENTS.md` files the NEXT turn will inject, through the SAME
+        // call the runner makes — read per call from disk, never stored. Not a
+        // second resolution: this row read the workspace alone for long enough
+        // that it stopped matching the prompt in two different ways.
         // `[]` for a session with no workspace.
         let project_rules: Vec<Value> = match session.workspace.as_deref() {
             Some(ws) => {
-                let files = find_project_rules(Path::new(ws), Some(&bough_home()));
+                let files = session_rule_files(Path::new(ws), &session.id);
                 rule_summaries(&files, Path::new(ws))
                     .into_iter()
                     .map(|s| {
