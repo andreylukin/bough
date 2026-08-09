@@ -358,6 +358,34 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
             .unwrap_or_else(|_| "<unaddressable>".to_string()),
     );
 
+    // 6b. The background-shell completion note. `jobs.rs` has always built the
+    // `[background] bg_N finished …` sentence and always had a seam to post it
+    // through — and NOTHING EVER ATTACHED ONE, so every background shell in
+    // every install finished in total silence: the exit reached `job.exited`
+    // for the rail and stopped there. `bashBg` even carries a `wake` flag that
+    // could not do anything.
+    //
+    // AFTER step 6, not with `attach_bus` above, because the note's whole
+    // point is the wake and the wake goes through `ctx.turn_starter()` — an
+    // unwired starter degrades to `Recorded` (read next turn), which is
+    // exactly the silence being fixed. `post_system_note` owns the rest of the
+    // rule: a busy session gets the note queued into the running turn rather
+    // than a second one started, and an interrupted session is not restarted.
+    {
+        let ctx = ctx.clone();
+        ctx.host
+            .jobs
+            .clone()
+            .attach_notifier(Arc::new(move |session_id: &str, text: &str| {
+                bough_core::agents::notes::post_system_note(
+                    &ctx,
+                    session_id,
+                    text,
+                    &bough_core::agents::notes::NoteDeps::default(),
+                );
+            }));
+    }
+
     // 6c. MCP. There is nothing to construct: the registry is a FILE, read
     // fresh on every use, because grants and connections change between turns
     // and a cached catalog is how the model ends up calling a tool that was
@@ -699,6 +727,53 @@ mod tests {
         assert!(!db.busy_session_ids().unwrap().contains(&session_id));
         assert!(db.turns_by_status(TurnStatus::Running).unwrap().is_empty());
         assert_eq!(db.turns_by_status(TurnStatus::Orphaned).unwrap().len(), 1);
+    }
+
+    /// The wiring this file forgot for the whole port: a background shell that
+    /// exits must reach the conversation. The session is held busy so the wake
+    /// takes the queue branch and no real turn (and no LLM) is needed — what is
+    /// under test is that the exit posts the note at all, which it never did.
+    #[tokio::test]
+    async fn a_finished_background_shell_posts_its_note_into_the_session() {
+        let (path, session_id) = crashed_db();
+        let boot = boot_ctx(path.to_str()).unwrap();
+        let claim = boot.ctx.turn_registry.begin(&session_id).unwrap();
+
+        let jobs = boot.ctx.host.jobs.clone();
+        jobs.bash_bg(
+            "the check",
+            "echo working; exit 3",
+            &bough_core::hostfn::jobs::JobCtx {
+                session_id: session_id.clone(),
+                workspace: std::env::temp_dir().display().to_string(),
+            },
+            true,
+        )
+        .unwrap();
+
+        let note = loop {
+            let found = {
+                let db = boot.ctx.db.lock().unwrap();
+                db.messages_for(&session_id)
+                    .unwrap()
+                    .into_iter()
+                    .find(|m| m.role == Role::System)
+            };
+            if let Some(m) = found {
+                break m;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        };
+        boot.ctx.turn_registry.end(&claim);
+
+        let Part::Text { text } = &note.parts[0] else {
+            panic!("the note is text")
+        };
+        assert!(text.contains("[background]"), "{text}");
+        assert!(text.contains("the check"), "{text}");
+        assert!(text.contains("exit 3"), "{text}");
+        // And the busy session was nudged rather than started a second time.
+        assert!(boot.ctx.turn_registry.drain(&session_id));
     }
 
     #[test]
