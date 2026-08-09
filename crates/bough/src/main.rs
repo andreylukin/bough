@@ -157,6 +157,19 @@ async fn restart_server() -> Result<String, String> {
     ))
 }
 
+/// What `--version` prints: `bough 0.1.0 (abc123def)`, or `bough 0.1.0` where
+/// the build had no git to ask (a tarball, a vendored build).
+///
+/// The sha is what makes a bug report actionable — bough installs by building
+/// `main`, so the crate version alone is the same string on every install ever
+/// made. `build.rs` stamps it, including the `-dirty` marker.
+fn version_line() -> String {
+    match option_env!("BOUGH_BUILD_REV") {
+        Some(rev) => format!("bough {} ({rev})", env!("CARGO_PKG_VERSION")),
+        None => format!("bough {}", env!("CARGO_PKG_VERSION")),
+    }
+}
+
 fn usage() -> &'static str {
     // The launchd/systemd manager verbs (setup/kill/restart/update/status/
     // logs/run/purge) stay in the bash wrapper; this binary owns the rest.
@@ -254,7 +267,7 @@ fn main() -> ExitCode {
         // version, and `--version` reaching the TUI parser answered with a
         // usage error.
         Some("--version" | "-V" | "version") => {
-            println!("bough {}", env!("CARGO_PKG_VERSION"));
+            println!("{}", version_line());
             ExitCode::SUCCESS
         }
         Some(first) if first.starts_with('-') => run_tui(&args),
@@ -416,6 +429,23 @@ mod tests {
             TuiArgs::UsageError(_)
         ));
         assert!(usage().contains("--version"));
+    }
+
+    /// The version line always leads with the crate version, and carries the
+    /// build's sha in parentheses when `build.rs` had a git checkout to ask.
+    /// Both shapes are legal — a tarball build has no sha — so this pins the
+    /// invariant that holds either way rather than asserting on the sha.
+    #[test]
+    fn the_version_line_names_the_crate_version_and_the_build() {
+        let line = version_line();
+        assert!(
+            line.starts_with(&format!("bough {}", env!("CARGO_PKG_VERSION"))),
+            "{line}"
+        );
+        if let Some(rev) = option_env!("BOUGH_BUILD_REV") {
+            assert_eq!(line, format!("bough {} ({rev})", env!("CARGO_PKG_VERSION")));
+            assert!(!rev.is_empty(), "an empty rev must not be stamped");
+        }
     }
 
     #[test]

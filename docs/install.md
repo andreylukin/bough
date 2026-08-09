@@ -26,6 +26,12 @@ which:
 
 Already have a clone? Run `scripts/setup.sh` directly.
 
+**Which commit you get.** The newest release tag — not the tip of `main`. bough builds
+from source, and `main` is a branch that gets pushed to; a tag is a commit that was green
+when it was named. `BOUGH_REF=main` installs the tip instead, and `BOUGH_REF=v0.2.0` a
+specific release. The same variable controls `bough update`, so a checkout stays on
+whichever channel you chose.
+
 **Optionally install `bun`.** Programs run under `bun` when it is on PATH and `node`
 otherwise. Setup installs only `node`, so the default install takes the fallback path —
 `Bun.file`, `Bun.$` and faster process starts come with `bun`.
@@ -65,8 +71,11 @@ The service manager is the only platform-specific piece — launchd on macOS, a 
 ## Update
 
 ```bash
-bough update    # fast-forward origin/main, rebuild, restart
+bough update    # move to the newest release tag, rebuild, restart
 ```
+
+Uncommitted changes in the clone are carried across as a patch, not stashed. `BOUGH_REF`
+picks the channel — `main` for the tip, a tag to hold a release.
 
 There is no file watcher. If you are editing bough's own source, changes land only on
 an explicit `bough restart`.

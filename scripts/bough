@@ -418,13 +418,31 @@ cmd_restart() {
   fi
 }
 
+# The commit `update` moves to: the newest release tag, else `main`. Same rule
+# and same override as `install.sh`, and it has to be the same or the pin the
+# installer just made would last exactly until the first update.
+#
+#   BOUGH_REF=main   track the tip
+#   BOUGH_REF=v0.2.0 hold a specific release
+release_ref() {
+  local ref="${BOUGH_REF:-}"
+  [ -n "$ref" ] || ref="$(git -C "$ROOT" tag --list 'v*' --sort=-v:refname | head -n 1)"
+  [ -n "$ref" ] || ref="main"
+  printf '%s' "$ref"
+}
+
 cmd_update() {
   # CHECKED BEFORE ANY GIT WORK. `update` finishes by calling `cmd_restart`, which refuses a
   # non-default profile — so without this the fast-forward, the install and the rebuild would
   # all run and only then fail, leaving the tree updated and the server stopped.
   require_default_profile update
-  echo "==> fetching origin/main"
-  git -C "$ROOT" fetch origin main
+  echo "==> fetching origin"
+  # Tags as well as main: the ref this resolves to is usually a tag, and a tag
+  # that was never fetched cannot be checked out.
+  git -C "$ROOT" fetch --tags --force origin main
+
+  local ref
+  ref="$(release_ref)"
 
   local was_running=""
   is_up && was_running=1
@@ -457,9 +475,16 @@ cmd_update() {
       printf '%s\n' "$added" | while IFS= read -r f; do rm -f "$ROOT/$f"; done
     fi
 
-    git -C "$ROOT" checkout -q main 2>/dev/null || git -C "$ROOT" checkout -qb main origin/main
-    git -C "$ROOT" merge --ff-only origin/main
-    echo "==> now at $(git -C "$ROOT" log -1 --format='%h %s')"
+    if [ "$ref" = "main" ]; then
+      git -C "$ROOT" checkout -q main 2>/dev/null || git -C "$ROOT" checkout -qb main origin/main
+      git -C "$ROOT" merge --ff-only origin/main
+    else
+      # A tag is not a branch: check it out detached rather than trying to
+      # fast-forward onto it. Nothing here commits, so a detached HEAD is the
+      # honest state — this checkout tracks a release, not a line of work.
+      git -C "$ROOT" checkout -q --detach "$ref"
+    fi
+    echo "==> now at $ref ($(git -C "$ROOT" log -1 --format='%h %s'))"
 
     if [ -n "$patch" ]; then
       echo "==> re-applying carried changes"
@@ -691,7 +716,8 @@ usage() {
   echo "  start    install + start the background service (auto-starts at login)"
   echo "  kill     stop the service and keep it stopped (across logins)"
   echo "  restart  pick up code changes explicitly"
-  echo "  update   fast-forward to origin/main, rebuild, restart"
+  echo "  update   move to the newest release tag (BOUGH_REF=main for the tip),"
+  echo "           rebuild, restart"
   echo "  run      run the server in the foreground (what the service executes)"
   echo "  exec     headless one-shot turn (auto-starts the server; alias: prompt):"
   echo "           bough exec [-w dir] [-m model] [--json] \"...\" — or prompt on stdin"
