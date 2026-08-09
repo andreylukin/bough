@@ -46,6 +46,7 @@ pub enum PanelTab {
     Mcp,
     Skills,
     Hooks,
+    Context,
     Theme,
 }
 
@@ -59,6 +60,7 @@ impl PanelTab {
             PanelTab::Mcp => "mcp",
             PanelTab::Skills => "skills",
             PanelTab::Hooks => "hooks",
+            PanelTab::Context => "context",
             PanelTab::Theme => "theme",
         }
     }
@@ -200,7 +202,7 @@ pub struct TabDef {
 /// Every non-chat surface, as data. Adding a surface is adding a row — it
 /// cannot add a mode, an open flag, or an escape path, and it cannot ship
 /// without a key.
-pub const TABS: [TabDef; 8] = [
+pub const TABS: [TabDef; 9] = [
     TabDef {
         id: PanelTab::Tree,
         title: "tree",
@@ -247,6 +249,14 @@ pub const TABS: [TabDef; 8] = [
         desc: "the lua that runs around each turn; toggle it",
     },
     TabDef {
+        id: PanelTab::Context,
+        title: "context",
+        // Every ctrl chord this TUI could reach was already bound; `meta+` is
+        // the tree's own second register, and `meta+c` was free.
+        chord: "meta+c",
+        desc: "what the last turn put in the window, and what it cost",
+    },
+    TabDef {
         id: PanelTab::Theme,
         title: "theme",
         chord: "ctrl+y",
@@ -255,7 +265,7 @@ pub const TABS: [TabDef; 8] = [
 ];
 
 /// Tab ids in bar order. Derived, so the bar and the keymap cannot disagree.
-pub const PANEL_TABS: [PanelTab; 8] = [
+pub const PANEL_TABS: [PanelTab; 9] = [
     PanelTab::Tree,
     PanelTab::Changes,
     PanelTab::Workflows,
@@ -263,6 +273,7 @@ pub const PANEL_TABS: [PanelTab; 8] = [
     PanelTab::Mcp,
     PanelTab::Skills,
     PanelTab::Hooks,
+    PanelTab::Context,
     PanelTab::Theme,
 ];
 
@@ -355,6 +366,12 @@ pub static SLASH_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
             name: "rules",
             command: Command::RulesShow,
             desc: "the AGENTS.md files injected into every turn",
+            takes_arg: false,
+        },
+        SlashCommand {
+            name: "context",
+            command: Command::Tab(PanelTab::Context),
+            desc: "what is in the window, section by section, with sizes",
             takes_arg: false,
         },
         SlashCommand {

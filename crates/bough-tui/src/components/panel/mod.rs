@@ -25,6 +25,7 @@
 //! `render_*` below paints `min(lines, area.height)` rows.
 
 pub mod changes;
+pub mod context;
 pub mod hooks;
 pub mod host;
 pub mod mcp;
@@ -340,6 +341,8 @@ pub enum PanelBody<'a> {
     Skills(skills::SkillsTabProps<'a>),
     /// Both model tiers and the thinking depth, one list.
     Model(model::ModelPickerProps<'a>),
+    /// What the last turn put in the window, and what it cost.
+    Context(context::ContextProps<'a>),
     Text(&'a str),
 }
 
@@ -400,6 +403,7 @@ pub fn render_panel(tab: PanelTab, body: &PanelBody, area: Rect, buf: &mut Buffe
         PanelBody::Hooks(p) => hooks::render_hooks(p, body_area, buf),
         PanelBody::Skills(p) => skills::render_skills(p, body_area, buf),
         PanelBody::Model(p) => model::render_model(p, body_area, buf),
+        PanelBody::Context(p) => context::render(p, body_area, buf),
         PanelBody::Text(text) => {
             let dim = Style::default().add_modifier(Modifier::DIM);
             buf.set_line(
@@ -703,7 +707,7 @@ mod tests {
             .iter()
             .map(|s| s.content.to_string())
             .collect();
-        assert_eq!(text, " [theme] 8/8 · ⇥ next · ^t close");
+        assert_eq!(text, " [theme] 9/9 · ⇥ next · ^t close");
     }
 
     #[test]

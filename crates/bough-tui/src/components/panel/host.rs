@@ -97,6 +97,8 @@ pub enum HostRequest {
     LoadSkillRows,
     /// `GET /hooks` — the hooks tab's rows.
     LoadHooks,
+    /// The context tab's one fetch.
+    LoadPrompt,
     /// `POST /hooks/:name` — turn one on or off, then reload the list.
     ToggleHook { name: String, enabled: bool },
     // ---- the model tab -----------------------------------------------------
@@ -265,6 +267,10 @@ pub struct PanelHost {
     pub hooks: Option<Vec<crate::components::panel::hooks::HookRow>>,
     pub hooks_dir: Option<String>,
     pub hooks_note: Option<String>,
+    /// `None` = `GET /sessions/:id/prompt` has not answered. Rendered as an
+    /// absence, never as a prompt with nothing in it.
+    pub prompt: Option<crate::api::PromptView>,
+    pub prompt_note: Option<String>,
     // ---- the model tab -----------------------------------------------------
     pub models: Vec<ModelRow>,
     pub model_cfg: ModelConfig,
@@ -321,6 +327,8 @@ impl Default for PanelHost {
             hooks: None,
             hooks_dir: None,
             hooks_note: None,
+            prompt: None,
+            prompt_note: None,
             models: Vec::new(),
             model_cfg: ModelConfig::default(),
             model_filters: ModelFilters::default(),
@@ -595,6 +603,10 @@ impl PanelHost {
             }
             PanelTab::Skills => vec![HostRequest::LoadSkillRows],
             PanelTab::Hooks => vec![HostRequest::LoadHooks],
+            // Re-fetched on every arrival: the shape describes the LAST turn,
+            // so a tab opened after another turn ran must not show the one
+            // before it.
+            PanelTab::Context => vec![HostRequest::LoadPrompt],
             // Two fetches, because they answer two different questions: what
             // this install can route to, and what it is set to right now.
             //
@@ -819,7 +831,8 @@ impl PanelHost {
             PanelTab::Skills => self.filtered_skills().len(),
             PanelTab::Hooks => self.hooks.as_ref().map(|h| h.len()).unwrap_or(0),
             PanelTab::Model => self.model_entries().len(),
-            PanelTab::Theme => 0,
+            // Not a list: it has no rows to land a cursor on.
+            PanelTab::Context | PanelTab::Theme => 0,
         }
     }
 
@@ -1439,6 +1452,8 @@ impl PanelHost {
     /// must not become a second one that drifts from it.
     pub fn confirm_at(&mut self, at: usize, summarize: bool) -> Vec<HostRequest> {
         match self.state.tab {
+            // Nothing to confirm: the tab is a report, not a list.
+            PanelTab::Context => vec![],
             // ⏎ and space do the same thing here: the row has exactly one
             // verb, and a list where enter does nothing teaches the user that
             // the list is inert.

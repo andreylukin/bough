@@ -203,6 +203,59 @@ pub struct ProjectRuleSummary {
     pub bytes: i64,
 }
 
+/// One prompt section as the context tab reads it.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptSection {
+    /// The section id — `identity`, `skill-catalog`, `notes`, …
+    pub id: String,
+    #[serde(default)]
+    pub sha: String,
+    #[serde(default)]
+    pub bytes: usize,
+}
+
+/// The last turn's prompt shape. `None` on the wire when this server process
+/// has not run a turn for the session — which is NOT an empty prompt.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptShape {
+    #[serde(default)]
+    pub sections: Vec<PromptSection>,
+    #[serde(default)]
+    pub stable_bytes: usize,
+    #[serde(default)]
+    pub volatile_bytes: usize,
+}
+
+/// Two rule files that are near-copies of each other.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NearDuplicate {
+    pub a: String,
+    pub b: String,
+    pub percent: u8,
+}
+
+/// `GET /sessions/:id/prompt`.
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptView {
+    pub shape: Option<PromptShape>,
+    #[serde(default)]
+    pub project_rules: Vec<ProjectRuleSummary>,
+    #[serde(default)]
+    pub near_duplicates: Vec<NearDuplicate>,
+    #[serde(default)]
+    pub worked_in: Vec<String>,
+    #[serde(default)]
+    pub context_tokens: Option<i64>,
+    #[serde(default)]
+    pub cached_tokens: Option<i64>,
+    #[serde(default)]
+    pub context_limit: Option<i64>,
+}
+
 /// The `usage` object of a snapshot: totals plus the tree rollup, flattened.
 #[derive(Deserialize, Clone, Debug)]
 pub struct SnapshotUsage {
@@ -1018,6 +1071,14 @@ impl Api {
     /// not carry a broken skill's reason into a completion popup.
     pub async fn list_skill_rows(&self) -> Result<SkillTabList, ApiFailure> {
         self.get("/skills").await
+    }
+
+    // -- the context tab ------------------------------------------------------
+
+    /// `GET /sessions/:id/prompt` — what the last turn actually put in the
+    /// window, section by section.
+    pub async fn session_prompt(&self, id: &str) -> Result<PromptView, ApiFailure> {
+        self.get(&format!("/sessions/{id}/prompt")).await
     }
 
     // -- the hooks tab --------------------------------------------------------

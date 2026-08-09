@@ -232,6 +232,12 @@ pub enum Action {
     },
     /// `GET /hooks` — the hooks tab's rows and the directory walked.
     /// `hooks: None` is a failed fetch and carries its reason.
+    /// The context tab's answer. `prompt: None` with a `note` is a failed
+    /// fetch; `Some` with `shape: None` is a session no turn has run for.
+    Prompt {
+        prompt: Option<crate::api::PromptView>,
+        note: Option<String>,
+    },
     Hooks {
         hooks: Option<Vec<crate::components::panel::hooks::HookRow>>,
         dir: Option<String>,
@@ -408,6 +414,7 @@ pub enum Effect {
     LoadSkillRows,
     /// `GET /hooks` — the hooks tab's rows.
     LoadHooks,
+    LoadPrompt,
     /// `POST /hooks/:name` — the toggle, which answers with the new list.
     ToggleHook {
         name: String,
@@ -757,7 +764,7 @@ pub fn describe_project_rules(rows: &[crate::api::ProjectRuleSummary]) -> String
             .collect::<Vec<_>>()
             .join(" → "),
         if rows.len() > 1 {
-            " — the last one wins where two disagree"
+            " — the last one wins where two disagree; /context for the sizes"
         } else {
             ""
         },
@@ -1668,6 +1675,10 @@ impl<T: Transport> App<T> {
                 note,
             } => self.panel.set_skills(skills, sources, note),
             Action::Hooks { hooks, dir, note } => self.panel.set_hooks(hooks, dir, note),
+            Action::Prompt { prompt, note } => {
+                self.panel.prompt = prompt;
+                self.panel.prompt_note = note;
+            }
             Action::Models(models) => self.panel.set_models(models),
             Action::ModelSettings(settings) => {
                 // The meter's last fallback: before a session exists there is
@@ -2515,6 +2526,7 @@ impl<T: Transport> App<T> {
                 }
                 HostRequest::LoadSkillRows => self.transport.effect(Effect::LoadSkillRows),
                 HostRequest::LoadHooks => self.transport.effect(Effect::LoadHooks),
+                HostRequest::LoadPrompt => self.transport.effect(Effect::LoadPrompt),
                 HostRequest::ToggleHook { name, enabled } => {
                     self.transport.effect(Effect::ToggleHook { name, enabled })
                 }
@@ -3895,6 +3907,14 @@ impl<T: Transport> App<T> {
                     filtering: self.panel.filtering,
                     now: self.now_ms,
                     crumbs: &crumbs,
+                })
+            }
+            crate::keys::PanelTab::Context => {
+                PanelBody::Context(crate::components::panel::context::ContextProps {
+                    view: self.panel.prompt.as_ref(),
+                    note: self.panel.prompt_note.as_deref(),
+                    height: panel_body_rows((area.height as usize).saturating_sub(2)),
+                    cols: (area.width as usize).saturating_sub(4).max(20),
                 })
             }
             crate::keys::PanelTab::Changes => {
@@ -5442,6 +5462,35 @@ impl Transport for LiveTransport {
                     }
                 });
             }
+            // The context tab's one fetch. A session id is required, so a
+            // panel opened before any conversation exists says so rather than
+            // requesting `/sessions//prompt`.
+            Effect::LoadPrompt => {
+                tokio::spawn(async move {
+                    let known = session.lock().expect("session lock").clone();
+                    let Some(id) = known else {
+                        let _ = tx.send(Action::Prompt {
+                            prompt: None,
+                            note: Some("no conversation is open yet".into()),
+                        });
+                        return;
+                    };
+                    match api.session_prompt(&id).await {
+                        Ok(view) => {
+                            let _ = tx.send(Action::Prompt {
+                                prompt: Some(view),
+                                note: None,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Prompt {
+                                prompt: None,
+                                note: Some(e.to_string()),
+                            });
+                        }
+                    }
+                });
+            }
             // The hooks tab's rows. Same rule as skills: a failed fetch is
             // `None` with its reason, never an empty directory.
             Effect::LoadHooks => {
@@ -6687,7 +6736,8 @@ mod tests {
         assert_eq!(
             describe_project_rules(&[rule("AGENTS.md", 120), rule("packages/api/AGENTS.md", 40)]),
             "2 AGENTS.mds in every turn's prompt, in this order: AGENTS.md (120 chars) → \
-             packages/api/AGENTS.md (40 chars) — the last one wins where two disagree"
+             packages/api/AGENTS.md (40 chars) — the last one wins where two disagree; \
+             /context for the sizes"
         );
     }
 
