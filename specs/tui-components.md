@@ -483,7 +483,10 @@ Panel gets first refusal: `if panel.handle(command, input) return`. Then (chat-s
   changes; typing re-opens).
 - `fold.all` (^e) — toggles `foldAll` and CLEARS `openKeys`/`fullKeys` (the global toggle
   wins; ^e twice is a reset).
-- `session.out` (←) — open `session.originId` (back to spawner).
+- `session.out` (←) — open `session.originId`, and ONLY for a session that was drilled
+  into (a collapsed kind: subagent / workflow agent / schedule run). A handoff, a fork and
+  an extract set `originId` as lineage for the tree; each is a new conversation with no way
+  back, and the `← back` chip, the guard and the destination all read the one predicate.
 - `scroll.up/down/pageUp/pageDown` — three surfaces, different senses: transcript offset
   counts UP from the bottom (scroll up raises it, page = `max(1, rows-8)`, clamp to
   `lines.len-1`); help is a top-down document (`HELP_STEP=3`, clamped to

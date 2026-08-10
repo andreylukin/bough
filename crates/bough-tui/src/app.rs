@@ -37,7 +37,7 @@ use bough_core::schema::events::{
     MessageRetryData, SessionActivityData, TurnFinishedData,
 };
 use bough_core::schema::parts::{
-    AskQuestion, AskQuestionStatus, BackgroundJob, Message, Part, Role,
+    is_collapsed_kind, AskQuestion, AskQuestionStatus, BackgroundJob, Message, Part, Role,
 };
 use crossterm::event::{
     Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
@@ -1127,6 +1127,23 @@ impl<T: Transport> App<T> {
             .or_else(|| self.options.workspace.clone())
     }
 
+    /// The session ← walks out to: the one this was DRILLED INTO from. Only a
+    /// collapsed kind (subagent, workflow agent, schedule run) is reached that
+    /// way, and each has to be leavable the way it was entered.
+    ///
+    /// `originId` alone is NOT that question, and reading it as one was the
+    /// bug: a handoff (`/compact`), a fork and an extract all set it, and every
+    /// one of them is a NEW conversation, deliberately started with the old one
+    /// behind it. Walking ← back into the session you just compacted away is
+    /// precisely the door this must not open — the lineage edge exists for the
+    /// tree to draw, not for the composer to navigate.
+    fn drilled_in_from(&self) -> Option<String> {
+        let session = self.session.as_ref()?;
+        is_collapsed_kind(session.kind)
+            .then(|| session.origin_id.clone())
+            .flatten()
+    }
+
     /// The status line's whole content (App.tsx's `<StatusLine meter=…>`).
     /// Every field is what is KNOWN — nothing here invents a number, and the
     /// renderer turns each absence into silence.
@@ -1165,7 +1182,7 @@ impl<T: Transport> App<T> {
             help: true,
             // Only when there IS somewhere to go back to — the same condition
             // the key is guarded on, so chip and binding cannot disagree.
-            out: session.is_some_and(|s| s.origin_id.is_some()),
+            out: self.drilled_in_from().is_some(),
         }
     }
 
@@ -2382,8 +2399,8 @@ impl<T: Transport> App<T> {
             // move everywhere else. Left at the default `false` the guard never
             // held, so the binding the `?` overlay prints could not fire — and
             // a drilled-into subagent was a room with no door. The fact is the
-            // meter's own: there is an origin to go back to.
-            in_subagent: self.session.as_ref().is_some_and(|s| s.origin_id.is_some()),
+            // meter's own: this session was drilled INTO ([`Self::drilled_in_from`]).
+            in_subagent: self.drilled_in_from().is_some(),
             // ↑/↓ walk the ATTACHMENT rows before the history ring when there
             // are any and the draft is empty. Left at the default `false` the
             // two rows the table declares could never fire, so an image could
@@ -2745,7 +2762,7 @@ impl<T: Transport> App<T> {
                 // chip is drawn from, so chip, binding and destination cannot
                 // disagree.
                 Command::SessionOut => {
-                    if let Some(origin) = self.session.as_ref().and_then(|s| s.origin_id.clone()) {
+                    if let Some(origin) = self.drilled_in_from() {
                         self.transport.effect(Effect::OpenSession(origin));
                     }
                     true
@@ -10010,7 +10027,10 @@ mod tests {
         let (_effects, sink) = scripted();
         let mut app = App::new(TuiOptions::default(), sink, 80, 24);
         open_s1(&mut app);
-        let mut row = session_row("s1", SessionKind::Root, 1);
+        // A DRILLED-INTO session, so `← back` is on to begin with — a plain
+        // root with an `originId` (a handoff, a fork) is a new conversation and
+        // never had a door out.
+        let mut row = session_row("s1", SessionKind::Subagent, 1);
         row.session.origin_id = Some("root-0".into());
         app.apply(
             Action::SessionMeta(Box::new(SessionMeta {
@@ -10104,6 +10124,44 @@ mod tests {
         assert!(
             effects.borrow().contains(&Effect::OpenSession("s1".into())),
             "the chip and the key must agree on the destination: {:?}",
+            effects.borrow()
+        );
+    }
+
+    /// …but a handoff is NOT a drill-in. `/compact` starts a fresh root and
+    /// records the conversation it was distilled from as lineage — for the tree
+    /// to draw, not for ← to walk. Reading that edge as "somewhere to go back
+    /// to" put a door back into the very conversation the user just compacted
+    /// away, and drew a `← back` chip inviting them through it.
+    #[test]
+    fn left_does_not_walk_back_into_the_conversation_a_handoff_left_behind() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        app.apply(Action::SessionOpened("s2".into()), 1);
+        // What `POST /sessions/:id/handoff` creates: a ROOT, carrying the
+        // source as `originId` (`history::ops::handoff`).
+        let mut row = session_row("s2", SessionKind::Root, 1);
+        row.session.origin_id = Some("s1".into());
+        app.apply(
+            Action::SessionMeta(Box::new(SessionMeta {
+                session: row.session,
+                usage: crate::api::SnapshotUsage {
+                    totals: Default::default(),
+                    tree: Default::default(),
+                },
+                effective_model: None,
+                context_limit: None,
+                primed_tags: Vec::new(),
+                project_rules: Vec::new(),
+            })),
+            2,
+        );
+        assert!(!app.meter().out, "no `← back` chip on a fresh conversation");
+        effects.borrow_mut().clear();
+        app.apply(key(KeyCode::Left), 3);
+        assert!(
+            effects.borrow().is_empty(),
+            "← is the caret here, not a door: {:?}",
             effects.borrow()
         );
     }

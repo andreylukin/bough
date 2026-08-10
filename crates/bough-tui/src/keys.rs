@@ -642,6 +642,9 @@ pub struct KeyContext {
     /// it is the STRUCTURAL scope a tab-local binding is matched against.
     pub tab: Option<PanelTab>,
     pub empty_draft: bool,
+    /// This conversation was DRILLED INTO — a subagent, a workflow agent, a
+    /// schedule run. Not "has an `originId`": a handoff or a fork carries one
+    /// too, and neither has a door back (`app::App::drilled_in_from`).
     pub in_subagent: bool,
     pub multiline: bool,
     pub busy: bool,
