@@ -111,6 +111,7 @@ serde        = { version = "1", features = ["derive"] }
 serde_json   = "1"
 ratatui      = "0.29"                                    # bough-tui only
 crossterm    = { version = "0.29", features = ["event-stream"] }
+termimad     = "0.35"                                    # GH table layout (bough-tui)
 uuid         = { version = "1", features = ["v4"] }
 thiserror    = "2"
 chrono       = "0.4"                                     # daily@ local-time math (DST)
@@ -139,6 +140,14 @@ Minor-version drift is fine; major-version bumps need a note in this file. Notes
   and test-pinned; do not substitute `eventsource-stream`.
 - **No clap** for `bough exec`/TUI args — the grammars are tiny and USAGE text is
   product surface, ported verbatim.
+- **termimad for GH tables only.** A table is the one markdown block whose layout is
+  real arithmetic — balancing columns against the width, wrapping inside a cell,
+  honoring `:---:` — so `format::md` hands the gathered block to `termimad`
+  (`FmtText::from`, which reads no terminal) with a skin built from bough's palette,
+  and keeps everything else. It is **not** the markdown renderer: fed a whole message
+  it loses OSC 8 links, the fence highlighting, and the heading style, all of which
+  `md` already does better. It pulls `minimad`/`coolor`/`crokey` and a second
+  `unicode-width` (0.1); the alternative was hand-rolled column arithmetic.
 - **ANSI handling** (`string-width`/`slice-ansi`/`wrap-ansi`): no drop-in crates.
   Port `ansiSpans` first in `bough-tui::ansi` and do width/truncate/wrap/slice **over
   parsed spans**; OSC 8 links are zero-width in all of them. `ansi.rs` is also the

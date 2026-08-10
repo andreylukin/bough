@@ -216,8 +216,11 @@ invariant; these are the contracts the Rust port must preserve, quoted:
 - `programSummary(code, max=64, running=false)` — heuristic label of what a program did
   (see §4 for the regex traps); returns `""` when nothing is recognized (caller falls back
   to codeGist).
-- Markdown-lite: `md(text, codeWidth?)` — line-by-line except GH tables (gathered, laid out
-  as padded columns, widest column shrunk to fit, no tables inside fences); fences framed
+- Markdown-lite: `md(text, codeWidth?)` — line-by-line except GH tables: a row whose next
+  line is a `|---|:-:|--:|` rule opens a block, gathered to the first line that is not a
+  row and laid out as a drawn grid fitted to `codeWidth` (no tables inside fences; the
+  column arithmetic is `termimad`'s, skinned from the palette, never re-implemented here —
+  the block's bounds are all this module decides); fences framed
   `╭ lang` / `│ …highlighted…` / `╰` and optionally `surface`d; `#`-headings bold (h1
   underlined); `---` ⇒ dim 24-char rule; `> q` ⇒ dim `│ q`; `- ` ⇒ `• `; inline: code spans,
   `**bold**`, `~~strike~~`, `*i*`/`_i_` (underscore only at word boundaries — dunders and

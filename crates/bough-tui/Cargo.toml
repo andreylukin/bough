@@ -9,6 +9,7 @@ repository = "https://github.com/andreylukin/bough"
 bough-core = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
+termimad = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 thiserror = { workspace = true }

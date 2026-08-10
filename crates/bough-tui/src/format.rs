@@ -19,6 +19,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, RwLock};
 
+use termimad::crossterm::style::{Attribute, Color};
+use termimad::{CompoundStyle, FmtText, MadSkin};
+
 pub use crate::ansi::{
     ansi_spans, line_from_ansi, slice_ansi, spans_to_line, strip_ansi, truncate_ansi, width,
     wrap_line, AnsiSpan, MIN_WRAP,
@@ -156,8 +159,7 @@ pub fn osc8(url: &str, text: &str) -> String {
 // ---- markdown-lite ----------------------------------------------------------
 // Terminal styling for prose: headings/bold via SGR bold, `code` spans
 // colored, fenced blocks highlighted on a raised surface, "- " bullets
-// prettified. Wave-1 "md-basic": the GH-table column layout is a later-wave
-// addition — table source reaches the reader as written.
+// prettified, GH pipe tables drawn as a fitted grid.
 
 /// A string that is entirely one bare URL (promotes `code`-span URLs to links).
 fn is_bare_url(s: &str) -> bool {
@@ -562,76 +564,191 @@ pub fn surface(line: &str, w: usize) -> String {
     )
 }
 
+// ---- GH pipe tables ---------------------------------------------------------
+// The one construct that is NOT line-by-line: a table's columns cannot be laid
+// out until every row of it has been seen. A table reaching the reader as its
+// own source (`| a | b |` over three lines) was the bug — the model writes them
+// constantly, and unaligned pipes are the least readable form of a grid.
+//
+// THE LAYOUT IS NOT OURS. Balancing columns against the available width,
+// wrapping inside a cell, honoring `:---:` — that is a solved problem and
+// `termimad` (minimad parses, termimad fits) solves it. This module only finds
+// where a table block starts and ends, and hands termimad a skin built from
+// bough's palette. `FmtText::from` is pure: it reads no terminal, so the
+// module's first invariant survives the dependency.
+
+/// A table row as minimad will parse one: the line must START with `|` (leading
+/// indentation is stripped before it is handed over) and carry a second one.
+fn is_table_row(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with('|') && t[1..].contains('|')
+}
+
+/// `|---|:--:|--:|` — the rule row that makes the line above it a header, and
+/// the only thing separating a table from a sentence with a pipe in it. Kept in
+/// step with `minimad`'s `as_table_alignments`: every cell is `-`, with an
+/// optional `:` at either end, and no cell is empty.
+fn is_table_rule(line: &str) -> bool {
+    let t = line.trim();
+    if !t.starts_with('|') {
+        return false;
+    }
+    t.trim_matches('|').split('|').all(|cell| {
+        let c = cell.trim();
+        !c.is_empty()
+            && c.contains('-')
+            && c.char_indices().all(|(i, ch)| match ch {
+                '-' => true,
+                ':' => i == 0 || i == c.len() - 1,
+                _ => false,
+            })
+    })
+}
+
+/// A crossterm color for one of bough's SGR foreground params — the palette is
+/// `38;5;N` / `38;2;R;G;B` strings because everything else here writes escapes
+/// by hand, and termimad wants a typed color. An unparseable param simply
+/// leaves that style unpainted rather than guessing.
+fn sgr_color(params: &str) -> Option<Color> {
+    let n: Vec<u8> = params
+        .split(';')
+        .map(|p| p.parse().ok())
+        .collect::<Option<_>>()?;
+    match n.as_slice() {
+        [38 | 48, 5, v] => Some(Color::AnsiValue(*v)),
+        [38 | 48, 2, r, g, b] => Some(Color::Rgb {
+            r: *r,
+            g: *g,
+            b: *b,
+        }),
+        _ => None,
+    }
+}
+
+/// Bough's palette as a termimad skin. Borders take the muted color, inline
+/// code the code color (no background — bough's `code` spans have none), and
+/// with color off the skin is nude so the layout still lands in plain text.
+fn table_skin() -> MadSkin {
+    let mut skin = MadSkin::no_style();
+    if !color_enabled() {
+        return skin;
+    }
+    let palette = colors();
+    if let Some(c) = sgr_color(&palette.muted) {
+        skin.table.compound_style.set_fg(c);
+    }
+    if let Some(c) = sgr_color(&palette.code) {
+        skin.inline_code = CompoundStyle::with_fg(c);
+    }
+    skin.bold = CompoundStyle::with_attr(Attribute::Bold);
+    skin.italic = CompoundStyle::with_attr(Attribute::Italic);
+    skin.strikeout = CompoundStyle::with_attr(Attribute::CrossedOut);
+    skin
+}
+
+/// Lay one gathered table out. `avail` is the width to fit — `None` (the
+/// streaming pass, which has no width to fit to) lays the columns out at their
+/// natural size instead of consulting the terminal.
+fn render_table(src: &str, avail: Option<usize>) -> Vec<String> {
+    FmtText::from(&table_skin(), src, avail)
+        .to_string()
+        .trim_end_matches('\n')
+        .split('\n')
+        .map(str::to_string)
+        .collect()
+}
+
 /// Markdown-lite for one block of prose. With `code_width`, fences get a
-/// surface.
+/// surface and tables are laid out to fit it.
 pub fn md(text: &str, code_width: Option<usize>) -> String {
     let mut fence: Option<String> = None;
     let raise = |line: String| match code_width {
         Some(w) => surface(&line, w),
         None => line,
     };
-    text.split('\n')
-        .map(|line| {
-            // Fence open/close: `^\s*```(\S*)\s*$`.
-            let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix("```") {
-                let tag: String = rest.chars().take_while(|c| !c.is_whitespace()).collect();
-                if rest[tag.len()..].trim().is_empty() {
-                    return match fence.take() {
-                        None => {
-                            let label = if tag.is_empty() { "code" } else { &tag };
-                            let framed = raise(dim(&format!("╭ {label}")));
-                            fence = Some(tag);
-                            framed
-                        }
-                        Some(_) => raise(dim("╰")),
-                    };
-                }
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        i += 1;
+        // Fence open/close: `^\s*```(\S*)\s*$`.
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("```") {
+            let tag: String = rest.chars().take_while(|c| !c.is_whitespace()).collect();
+            if rest[tag.len()..].trim().is_empty() {
+                out.push(match fence.take() {
+                    None => {
+                        let label = if tag.is_empty() { "code" } else { &tag };
+                        let framed = raise(dim(&format!("╭ {label}")));
+                        fence = Some(tag);
+                        framed
+                    }
+                    Some(_) => raise(dim("╰")),
+                });
+                continue;
             }
-            if let Some(tag) = &fence {
-                return raise(format!("{} {}", dim("│"), highlight_code(line, tag)));
+        }
+        if let Some(tag) = &fence {
+            // A table inside a fence is source, not a grid.
+            out.push(raise(format!("{} {}", dim("│"), highlight_code(line, tag))));
+            continue;
+        }
+        // Table: a row of cells whose NEXT line is a rule row, then every row
+        // that follows. Gathered whole and handed over as source, because the
+        // columns depend on every row in it.
+        if is_table_row(line) && lines.get(i).is_some_and(|next| is_table_rule(next)) {
+            let mut block: Vec<&str> = vec![line.trim_start()];
+            while let Some(row) = lines.get(i).filter(|r| is_table_row(r)) {
+                block.push(row.trim_start());
+                i += 1;
             }
-            // Headings: `^(#{1,6})\s+(.*)$`.
-            let hashes = line.chars().take_while(|&c| c == '#').count();
-            if (1..=6).contains(&hashes) {
-                let rest = &line[hashes..];
-                if rest.starts_with(char::is_whitespace) {
-                    let body = rest.trim_start();
-                    return if hashes == 1 {
-                        bold(&underline(body))
-                    } else {
-                        bold(body)
-                    };
-                }
+            out.extend(render_table(&block.join("\n"), code_width));
+            continue;
+        }
+        // Headings: `^(#{1,6})\s+(.*)$`.
+        let hashes = line.chars().take_while(|&c| c == '#').count();
+        if (1..=6).contains(&hashes) {
+            let rest = &line[hashes..];
+            if rest.starts_with(char::is_whitespace) {
+                let body = rest.trim_start();
+                out.push(if hashes == 1 {
+                    bold(&underline(body))
+                } else {
+                    bold(body)
+                });
+                continue;
             }
-            // Rule: `^\s*(-{3,}|\*{3,})\s*$`.
-            let t = line.trim();
-            if t.len() >= 3 && (t.chars().all(|c| c == '-') || t.chars().all(|c| c == '*')) {
-                return dim(&"─".repeat(24));
-            }
-            // Quote: `^>\s?(.*)$`.
-            if let Some(rest) = line.strip_prefix('>') {
-                let rest = match rest.chars().next() {
-                    Some(c) if c.is_whitespace() => &rest[c.len_utf8()..],
-                    _ => rest,
-                };
-                return dim(&format!("│ {rest}"));
-            }
-            // Bullet: `^(\s*)- ` → `$1• `.
-            let indent: usize = line
-                .char_indices()
-                .find(|(_, c)| !c.is_whitespace())
-                .map(|(i, _)| i)
-                .unwrap_or(line.len());
-            let bulleted = if line[indent..].starts_with("- ") {
-                format!("{}• {}", &line[..indent], &line[indent + 2..])
-            } else {
-                line.to_string()
+        }
+        // Rule: `^\s*(-{3,}|\*{3,})\s*$`.
+        let t = line.trim();
+        if t.len() >= 3 && (t.chars().all(|c| c == '-') || t.chars().all(|c| c == '*')) {
+            out.push(dim(&"─".repeat(24)));
+            continue;
+        }
+        // Quote: `^>\s?(.*)$`.
+        if let Some(rest) = line.strip_prefix('>') {
+            let rest = match rest.chars().next() {
+                Some(c) if c.is_whitespace() => &rest[c.len_utf8()..],
+                _ => rest,
             };
-            md_inline(&bulleted)
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+            out.push(dim(&format!("│ {rest}")));
+            continue;
+        }
+        // Bullet: `^(\s*)- ` → `$1• `.
+        let indent: usize = line
+            .char_indices()
+            .find(|(_, c)| !c.is_whitespace())
+            .map(|(i, _)| i)
+            .unwrap_or(line.len());
+        let bulleted = if line[indent..].starts_with("- ") {
+            format!("{}• {}", &line[..indent], &line[indent + 2..])
+        } else {
+            line.to_string()
+        };
+        out.push(md_inline(&bulleted));
+    }
+    out.join("\n")
 }
 
 // ---- numbers in view --------------------------------------------------------
@@ -1294,15 +1411,74 @@ mod tests {
     #[test]
     fn md_a_lone_pipe_is_prose_and_a_table_inside_a_fence_is_code() {
         with_color(false, || {
-            // No table layout in md-basic — but the invariants hold either way:
-            // a shell pipe in a sentence survives…
+            // A shell pipe in a sentence is not a table…
             let prose = md("run `wc -l < a.txt | tr -d ' '` to count", None);
             assert!(prose.contains('|'), "{prose:?}");
+            // …nor is a row without the rule row under it.
+            assert_eq!(md("| not | a table |", None), "| not | a table |");
             // …and fenced source reaches the reader as written.
             let fenced = "```markdown\n| a | b |\n|---|---|\n| 1 | 2 |\n```";
             let out = md(fenced, None);
             assert!(out.contains("| a | b |"), "{out:?}");
             assert!(out.contains("|---|---|"), "{out:?}");
+        });
+    }
+
+    #[test]
+    fn md_a_gh_table_is_laid_out_as_a_grid_not_reprinted_as_its_source() {
+        with_color(false, || {
+            let src = "before\n\n| Crate | Rows |\n|---|--:|\n| termimad | 2 |\n| minimad | 10 |\n\nafter";
+            let out = md(src, Some(60));
+            // The source pipes-and-dashes are gone, replaced by a drawn grid.
+            assert!(!out.contains("|---|--:|"), "{out:?}");
+            assert!(out.contains('┼'), "the rule row is drawn: {out:?}");
+            // Prose on either side is untouched, and the block stays in place.
+            let lines: Vec<&str> = out.split('\n').collect();
+            assert_eq!(lines[0], "before");
+            assert_eq!(lines[lines.len() - 1], "after");
+            // Every row of the grid is the same width — that IS the fix.
+            let rows: Vec<&str> = lines[2..lines.len() - 2].to_vec();
+            assert_eq!(rows.len(), 4, "header, rule, two body rows: {rows:?}");
+            let w = width(rows[0]);
+            assert!(rows.iter().all(|r| width(r) == w), "{rows:?}");
+            // `--:` right-aligns its column: the number hugs the border.
+            assert!(rows[2].trim_end().ends_with("2│"), "{:?}", rows[2]);
+        });
+    }
+
+    #[test]
+    fn md_a_table_is_fitted_to_the_width_it_is_given() {
+        with_color(false, || {
+            let src = "| Column one | Column two |\n|---|---|\n| a fairly long cell value | another long one |";
+            for w in [72usize, 40, 24] {
+                let out = md(src, Some(w));
+                assert!(
+                    out.split('\n').all(|l| width(l) <= w),
+                    "width {w} overflowed: {out:?}"
+                );
+            }
+            // With no width to fit (the streaming pass), the columns take their
+            // natural size — and no terminal is consulted to find one.
+            let natural = md(src, None);
+            assert!(natural.contains("a fairly long cell value"), "{natural:?}");
+        });
+    }
+
+    #[test]
+    fn md_table_cells_carry_inline_markdown_and_the_palette() {
+        with_color(true, || {
+            let out = md("| a | b |\n|---|---|\n| `code` | **bold** |", Some(40));
+            let p = colors();
+            assert!(out.contains(&format!("\x1b[{}m", p.code)), "{out:?}");
+            assert!(out.contains("\x1b[1m"), "bold in a cell: {out:?}");
+            // The borders are drawn in the muted color, like every other rule.
+            assert!(out.contains(&format!("\x1b[{}m│", p.muted)), "{out:?}");
+        });
+        with_color(false, || {
+            // Color off: the layout still lands, with no escapes in it.
+            let out = md("| a | b |\n|---|---|\n| `code` | **bold** |", Some(40));
+            assert!(!out.contains('\x1b'), "{out:?}");
+            assert!(out.contains("code") && out.contains("bold"), "{out:?}");
         });
     }
 
