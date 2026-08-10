@@ -54,7 +54,8 @@ of the project, and this README tries not to blur it.
 macOS or Linux. Builds from source — the first run takes a few minutes.
 
 ```bash
-brew install andreylukin/bough/bough
+brew tap andreylukin/bough https://github.com/andreylukin/bough
+brew install bough
 $EDITOR ~/.bough/env      # ANTHROPIC_API_KEY=…
 bough start               # background service
 bough                     # the TUI

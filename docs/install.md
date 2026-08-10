@@ -10,13 +10,18 @@ compiles the workspace and takes a few minutes.
 ## Install with Homebrew
 
 ```bash
-brew install andreylukin/bough/bough
+brew tap andreylukin/bough https://github.com/andreylukin/bough
+brew install bough
 ```
 
-The formula lives in [andreylukin/homebrew-bough](https://github.com/andreylukin/homebrew-bough);
-that name auto-taps it, so there is no separate `brew tap` step. It builds the same source
-from the newest release tag, brings `node`, `ripgrep`, `uv` and `ast-grep` as dependencies,
-and puts one `bough` on PATH — the same command with the same verbs as below.
+The formula is [`Formula/bough.rb`](../Formula/bough.rb) in this repository, which is why the
+tap takes an explicit URL: `brew tap user/name` alone looks for `user/homebrew-name`. Copy the
+same file into a repository called `homebrew-bough` and the one-liner
+`brew install andreylukin/bough/bough` works instead, auto-tapping as it goes.
+
+It builds the same source as everything else here, brings `node`, `ripgrep`, `uv` and
+`ast-grep` as dependencies, and puts one `bough` on PATH — the same command with the same
+verbs as below.
 
 Two things differ from the script install, both because a package prefix is not a checkout:
 
