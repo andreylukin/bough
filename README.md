@@ -54,10 +54,16 @@ of the project, and this README tries not to blur it.
 macOS or Linux. Builds from source — the first run takes a few minutes.
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh)"
+brew install andreylukin/bough/bough
 $EDITOR ~/.bough/env      # ANTHROPIC_API_KEY=…
 bough start               # background service
 bough                     # the TUI
+```
+
+Without Homebrew, the same install as a script — it clones into `~/bough` and builds there:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh)"
 ```
 
 Full instructions, keys, and updating: [docs/install.md](docs/install.md).

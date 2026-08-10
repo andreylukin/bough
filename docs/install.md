@@ -7,7 +7,30 @@ macOS or Linux, and a terminal. Windows is not supported; WSL works.
 There are no prebuilt binaries — installing builds from source, so the first run
 compiles the workspace and takes a few minutes.
 
-## Install
+## Install with Homebrew
+
+```bash
+brew install andreylukin/bough/bough
+```
+
+The formula lives in [andreylukin/homebrew-bough](https://github.com/andreylukin/homebrew-bough);
+that name auto-taps it, so there is no separate `brew tap` step. It builds the same source
+from the newest release tag, brings `node`, `ripgrep`, `uv` and `ast-grep` as dependencies,
+and puts one `bough` on PATH — the same command with the same verbs as below.
+
+Two things differ from the script install, both because a package prefix is not a checkout:
+
+- **`bough update` does not apply.** It says so and names `brew upgrade bough`, which is
+  what actually replaces the binary. `BOUGH_REF` is a checkout's channel selector and has
+  no meaning here.
+- **There is no source tree to work in.** If you want to edit bough itself, use the script
+  install (or clone separately) — the formula ships a binary, not a repo.
+
+`bough start` still installs bough's own LaunchAgent / systemd user unit. It is deliberately
+not a `brew services` formula: bough already manages that lifecycle on both platforms, and
+two service managers pointed at one server is a way to have neither work.
+
+## Install with the script
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh)"
@@ -71,7 +94,8 @@ The service manager is the only platform-specific piece — launchd on macOS, a 
 ## Update
 
 ```bash
-bough update    # move to the newest release tag, rebuild, restart
+bough update              # a script install: newest release tag, rebuild, restart
+brew upgrade bough        # a Homebrew install
 ```
 
 Uncommitted changes in the clone are carried across as a patch, not stashed. `BOUGH_REF`
@@ -88,6 +112,9 @@ rm ~/.local/bin/bough
 rm -rf ~/bough             # the clone
 rm -rf ~/.bough            # data: sessions, history, artifacts, config
 ```
+
+Homebrew: `bough kill`, then `brew uninstall bough` in place of the two middle lines. The
+data root is yours either way — `brew uninstall` does not touch `~/.bough`.
 
 Removing bough does not touch any repository it has worked in. Your code and its git
 history are yours and were never copied anywhere — that is what "in place" means.

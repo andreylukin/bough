@@ -6,7 +6,15 @@
 # ~/.bough/env for ANTHROPIC_API_KEY / BOUGH_* settings. Installed onto PATH as
 # a symlink by scripts/setup.sh.
 #
-# Runs the Rust build at `target/release/bough`; `make release` builds it.
+# TWO LAYOUTS, and every path below resolves to one of them:
+#
+#   a checkout  $ROOT/scripts/bough  runs  $ROOT/target/release/bough  (make release)
+#   an install  $ROOT/libexec/bough  runs  $BOUGH_BIN                  (a formula, a package)
+#
+# The difference is only WHERE the pieces are: the same script owns the same
+# lifecycle either way. What a packaged install does not have is a source tree,
+# so `update` and `setup` — the two verbs that build and install — say what to
+# run instead of half-doing their job against a directory with no git in it.
 set -euo pipefail
 
 # Resolve the repo root through the ~/.local/bin symlink (bash 3.2 compatible).
@@ -17,6 +25,28 @@ while [ -L "$SOURCE" ]; do
   [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
 done
 ROOT="$(cd "$(dirname "$SOURCE")/.." && pwd)"
+
+# THIS SCRIPT'S OWN PATH, symlink-resolved. What the LaunchAgent and the systemd
+# unit exec: only one of the two layouts has a `scripts/` directory, and a
+# service definition naming a path that does not exist is a server that never
+# starts with nothing in the log to say why.
+SELF="$SOURCE"
+
+# Which layout this is. One test — the source tree is either here or it is not —
+# read by `update`, by `setup`, and by the directory the server runs from.
+CHECKOUT=0
+[ -f "$ROOT/Cargo.toml" ] && CHECKOUT=1
+
+# The directory the server and the TUI run FROM. A checkout runs from its own
+# root: that is the process default workspace, which several server routes fall
+# back to when a session names none. An install has no source tree to sit in and
+# a package prefix is nobody's project, so it runs from $HOME instead.
+WORKDIR="$ROOT"
+[ "$CHECKOUT" = 1 ] || WORKDIR="$HOME"
+
+# Set by a package's wrapper (`BOUGH_INSTALLER=homebrew`) so the one verb that
+# cannot work — `update`, which is git + cargo — names the command that can.
+INSTALLER="${BOUGH_INSTALLER:-}"
 
 # Where the toolchain might be, widened ONCE for every subcommand below.
 #
@@ -49,14 +79,33 @@ export PATH
 # PATH: `start`, `kill`, `restart`, `status`, `logs` and `update` are
 # launchd/systemd verbs the binary has no equivalent for. Pointing PATH at the
 # binary would throw the lifecycle away.
-RS_BIN="$ROOT/target/release/bough"
+#
+# `BOUGH_BIN` first, because a package knows where it put the binary and nothing
+# here should have to guess; then the checkout's build; then the installed
+# layout. The default when none of them exists names the checkout, because that
+# is the case a person can act on.
+RS_BIN="${BOUGH_BIN:-}"
+if [ -z "$RS_BIN" ]; then
+  if [ -x "$ROOT/libexec/bough-bin" ]; then
+    RS_BIN="$ROOT/libexec/bough-bin"
+  else
+    RS_BIN="$ROOT/target/release/bough"
+  fi
+fi
 
 # Says which binary is missing and how to get it, rather than failing as "no such
-# file or directory" from a dozen call sites. A fresh clone has no `target/`.
+# file or directory" from a dozen call sites. A fresh clone has no `target/`; an
+# install with no binary is a broken package, and `make release` is not the fix.
 require_rust() {
   [ -x "$RS_BIN" ] && return 0
   echo "error: the bough build is missing at $RS_BIN" >&2
-  echo "  build it with:  make -C $ROOT release" >&2
+  if [ "$CHECKOUT" = 1 ]; then
+    echo "  build it with:  make -C $ROOT release" >&2
+  elif [ "$INSTALLER" = "homebrew" ]; then
+    echo "  reinstall it with:  brew reinstall bough" >&2
+  else
+    echo "  reinstall bough — this install is missing its binary" >&2
+  fi
   exit 1
 }
 
@@ -164,7 +213,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash $ROOT/scripts/bough run
+ExecStart=/bin/bash $SELF run
 # Matches the LaunchAgent's KeepAlive{SuccessfulExit=false}: come back from a
 # crash, stay down after a clean exit, so an unconfigured machine (no API key,
 # which exits 0) does not relaunch-loop.
@@ -206,7 +255,7 @@ svc_start() {
         # No user systemd. Detached, output to the same log every other backend
         # writes, pid recorded so `kill` and `status` still have an answer.
         mkdir -p "$BOUGH_HOME"
-        nohup /bin/bash "$ROOT/scripts/bough" run >>"$LOG_FILE" 2>&1 &
+        nohup /bin/bash "$SELF" run >>"$LOG_FILE" 2>&1 &
         echo $! >"$PIDFILE"
       fi
       ;;
@@ -284,7 +333,7 @@ write_plist() {
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>$ROOT/scripts/bough</string>
+    <string>$SELF</string>
     <string>run</string>
   </array>
   <key>RunAtLoad</key><true/>
@@ -341,7 +390,7 @@ cmd_run() {
     echo "no ANTHROPIC_API_KEY or OPENROUTER_API_KEY — put one in $ENV_FILE; not starting"
     exit 0
   fi
-  cd "$ROOT"
+  cd "$WORKDIR"
   require_rust
   exec "$RS_BIN" start
 }
@@ -436,6 +485,18 @@ cmd_update() {
   # non-default profile — so without this the fast-forward, the install and the rebuild would
   # all run and only then fail, leaving the tree updated and the server stopped.
   require_default_profile update
+  # A PACKAGED INSTALL HAS NOTHING TO PULL. Everything below is git and cargo
+  # against a source tree this layout does not have, and the package manager
+  # that put the binary here is the only thing that may replace it — an update
+  # that wrote into a package prefix would be undone by the next upgrade anyway.
+  if [ "$CHECKOUT" != 1 ]; then
+    echo "error: this bough was installed as a package, not built from a checkout." >&2
+    case "$INSTALLER" in
+      homebrew) echo "  update it with:  brew update && brew upgrade bough" >&2 ;;
+      *) echo "  update it the way you installed it ($ROOT)." >&2 ;;
+    esac
+    exit 1
+  fi
   echo "==> fetching origin"
   # Tags as well as main: the ref this resolves to is usually a tag, and a tag
   # that was never fetched cannot be checked out.
@@ -598,7 +659,19 @@ migrate_reclaim() {
 # and start the launchd service. Safe to re-run any time — it never overwrites
 # values that are already set.
 cmd_setup() {
-  bash "$ROOT/scripts/setup.sh"
+  if [ "$CHECKOUT" = 1 ]; then
+    bash "$ROOT/scripts/setup.sh"
+  else
+    # A PACKAGE ALREADY DID THAT HALF. setup.sh installs the toolchain, builds
+    # the binary and links it onto PATH — all three are the package manager's
+    # job in this layout, and re-doing them against a package prefix is how an
+    # install breaks itself. What is left is the part no package manager can do:
+    # the key. `env_set` below creates $ENV_FILE (0600) on first write, so
+    # nothing is templated here that the prompt does not fill in.
+    echo "==> installed at $ROOT — skipping the build (the package did it)"
+    echo "    optional keys, same file: OPENAI_API_KEY · OPENROUTER_API_KEY ·"
+    echo "    CLOUDFLARE_API_KEY + CLOUDFLARE_ACCOUNT_ID · BOUGH_PORT · BOUGH_CHEAP_MODEL"
+  fi
 
   # setup.sh may have just created the env template — (re)load it.
   if [ -f "$ENV_FILE" ]; then
@@ -672,7 +745,7 @@ ensure_up() {
     # plist and no unit written.
     if [ "$BOUGH_HOME" != "$HOME/.bough" ]; then
       mkdir -p "$BOUGH_HOME"
-      nohup /bin/bash "$ROOT/scripts/bough" run >>"$LOG_FILE" 2>&1 &
+      nohup /bin/bash "$SELF" run >>"$LOG_FILE" 2>&1 &
       echo $! >"$PIDFILE"
     else
       cmd_start
@@ -692,7 +765,7 @@ cmd_tui() {
   ensure_up
   # The TUI defaults new conversations to the directory bough was launched from.
   export BOUGH_TUI_CWD="$PWD"
-  cd "$ROOT"
+  cd "$WORKDIR"
   require_rust
   exec "$RS_BIN" tui "$@"
 }
@@ -753,8 +826,12 @@ case "${1:-}" in
     if [ -x "$RS_BIN" ]; then
       exec "$RS_BIN" --version
     fi
-    echo "bough (not built) at $ROOT" >&2
-    echo "  build it with:  make -C $ROOT release" >&2
+    echo "bough (no binary) at $ROOT" >&2
+    if [ "$CHECKOUT" = 1 ]; then
+      echo "  build it with:  make -C $ROOT release" >&2
+    elif [ "$INSTALLER" = "homebrew" ]; then
+      echo "  reinstall it with:  brew reinstall bough" >&2
+    fi
     exit 1
     ;;
   setup) cmd_setup ;;
