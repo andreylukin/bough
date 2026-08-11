@@ -570,7 +570,7 @@ mod tests {
             "bough notes write nased",
             "bough notes append pr.1 x",
             // Every spelling seen in the wild.
-            "PATH=/Users/andrey/repos/bough/target/release:$PATH bough notes show assaia",
+            "PATH=$HOME/repos/bough/target/release:$PATH bough notes show assaia",
             "./scripts/bough notes show x",
             "~/.local/bin/bough tags show git",
             "/usr/local/bin/bough notes stale",

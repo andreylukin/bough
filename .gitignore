@@ -1,21 +1,17 @@
 # cargo build output
 /target
 
-# local artifacts
-bough.app/
-
 # OS
 .DS_Store
 __pycache__/
 
-# smolvm sandbox golden rootfs (build output of scripts/guest-image/build-golden.sh)
-scripts/guest-image/golden-rootfs/
-*.smolmachine
+# npm working tree — only ever populated by scripts/build-chart-bundle.sh, which
+# vendors its output into the crate. A clean checkout never needs it.
+node_modules/
 
 # leftovers of the deleted TypeScript tree (ahe run outputs, vendored bun builds);
 # safe to delete from your checkout by hand.
 ahe/
-node_modules/
 .bough-bun/
 .bough-bun-linux
 .bough-bun-linux-musl

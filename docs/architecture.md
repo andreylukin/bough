@@ -36,9 +36,9 @@ bough/
         types.rs        # ports: Db trait, BusPort, LlmClient, CheapTier, Clock,
                         #   AppCtx, TurnCtx, HostFns, Patch<T>
         db/             # schema.sql (include_str!), migrate.rs, sqlite_db.rs,
-                        #   extensions.rs, embed.rs (v1: stub)
+                        #   extensions.rs, embed.rs (sqlite-vec + lembed)
         llm/            # routing, anthropic, openai, openai_compat, sse, retry,
-                        #   pricing (+pricing.json), trace (v1: stub), discovery
+                        #   pricing (+pricing.json), trace, discovery
         harness/        # protocol.rs, preflight.rs, vm.rs, wf.rs + js/ sidecar
         hostfn/         # patch, files, spill, shell, jobs, ask, state, delegate,
                         #   artifact, schedule + HostState registries
@@ -52,10 +52,15 @@ bough/
         prompt/         # assemble.rs + sections/*.md (include_str!), project.rs
         vcs/            # repodiff (Changes rail git layer)
         skills/         # SKILL.md discovery
-        worker/         # cheap tier: titles, ghost, activity (v1: None)
+        notes/          # note memory: sections, transclusion, citations, revisions
+        extensions/     # user JS bound into every program's scope
+        hooks/          # Lua hook engine
+        resume.rs       # in-flight turn recovery across a server restart
+        worker/         # cheap tier: titles, ghost, activity, notes
         schedules.rs    # ticker + fire + report-back
         scratch.rs      # ensure + sweep
-        logs/           # `bough patterns` pipeline (v1: absent)
+        logs/           # `bough patterns` pipeline: drain, sketch, anomaly,
+                        #   correlation, mask, timestamp, analyze, stats, format
     bough-server/       # lib: axum HTTP + SSE — the ONLY crate that speaks HTTP-server
       src/              # app.rs (router), http.rs, events.rs (SSE), one module per
                         # route family (sessions, turns, questions, jobs, artifacts,
@@ -68,8 +73,9 @@ bough/
                         # lines.rs, selection.rs, paste.rs, clipboard.rs, term.rs,
                         # input.rs, theme.rs, components/, app.rs (event loop)
     bough/              # bin: subcommand dispatch
-      src/main.rs       # bare `bough` → TUI; `start` → server; `exec`, `mcp`,
-                        # `tags`, `sync-mcp` (later), `patterns` (stub exit 2)
+      src/main.rs       # bare `bough` → TUI; `start`/`restart` → server;
+                        # `exec`, `acp`, `hooks`, `mcp`, `sync-mcp`, `tags`,
+                        # `notes`, `patterns` — one module each beside main.rs
 ```
 
 Crate dependency DAG (arrows = depends-on):

@@ -1,6 +1,6 @@
 # Port spec: `src/mcp/` → Rust
 
-Source files (all under `/Users/andrey/repos/bough/src/mcp/`): `client.ts` (658), `config.ts` (649),
+Source files (all under `src/mcp/`): `client.ts` (658), `config.ts` (649),
 `keychain.ts` (557), `oauth.ts` (821), `remote.ts` (592), `manager.ts` (722), `service.ts` (107),
 `status.ts` (442). Consumers: `cli/mcp.ts`, `cli/sync_mcp.ts`, `server/app.ts`, `server/main.ts`,
 `tui/api.ts`, `prompt/assemble.ts` (type-only).

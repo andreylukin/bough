@@ -1,6 +1,6 @@
 # Port spec: `db` subsystem (SQLite persistence + zod wire schemas)
 
-Source files (all under `/Users/andrey/repos/bough/src`):
+Source files (all under `src`):
 - `db/db.ts` (1512 ln) — the one place in the tree that speaks SQL; `SqliteDb` implements the `Db` port.
 - `db/schema.sql` (329 ln) — the frozen schema, one `CREATE ... IF NOT EXISTS` block.
 - `db/migrate.ts` (157 ln) — idempotent forward-only migration + 3 sanctioned reshapes.

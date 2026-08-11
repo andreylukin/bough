@@ -47,7 +47,7 @@ act — `cd dir && cmd`, a pipeline, a redirect, a guard whose point is the `&&`
 
 ### Normalization
 
-`normalizeTags()` (`src/history/record.ts`) is what makes a folksonomy converge: if
+`normalize_tags()` (`bough-core/src/history/tags/record.rs`) is what makes a folksonomy converge: if
 `PSQL:Migrate` and `psql:migrate` are different tags, every popularity number fragments.
 
 | Input | Recorded | Rule |
@@ -98,8 +98,8 @@ ticket or a PR.
 
 ### `bash(cmd, tags)` — tags are required
 
-Tags are enforced at the **host-function boundary** (`createShellHostFns`,
-`src/hostfn/shell.ts`), not inside `bash()` itself: internal callers and tests drive `bash()`
+Tags are enforced at the **host-function boundary** (`create_shell_host_fns`,
+`bough-core/src/hostfn/shell.rs`), not inside `bash()` itself: internal callers and tests drive `bash()`
 directly and owe no tags; the *model* does. A missing or empty-after-normalization tag string
 throws a catchable `ProgramError` that restates the format with examples, so a model that
 forgot self-repairs on the next call instead of abandoning the round.
@@ -189,10 +189,10 @@ command_history ──┬── command_tags(command_id, tag)      one row per t
 Two of these carry more design than their names suggest.
 
 **`repo` is resolved from what the command *touched*, not from where the session sits.**
-`attributeCommand()` mines path-looking tokens out of the command string (bounded: 24 tokens
+`attribute_command()` mines path-looking tokens out of the command string (bounded: 24 tokens
 checked, 4 directories kept), resolves each to its enclosing git checkout, and scopes the row
 to the checkout containing the most of them. A session rooted at `~` running
-`cd ~/repos/bough && bun test src/tui` therefore files into *bough's* memory, where sessions
+`cd ~/repos/bough && cargo test -p bough-tui` therefore files into *bough's* memory, where sessions
 rooted in that repo will find it — the miss this rule exists to fix. The identity itself is
 the **git remote origin URL** where there is one, else the workspace root path, so a project
 that is moved or re-cloned keeps its tag profile.
@@ -214,7 +214,7 @@ that joins them.
 
 ## 5. Ranking
 
-Two numbers, computed in `src/history/stats.ts`.
+Two numbers, computed in `bough-core/src/history/tags/stats.rs`.
 
 ### Weight: success × recency
 
@@ -266,7 +266,7 @@ reciting last week's ticket numbers instead of this project's words.
 
 ### The session-start priming note
 
-`tagsNoteFor()` produces one volatile-tier prompt note:
+`tags_note_for()` produces one volatile-tier prompt note:
 
 > This project's own tag vocabulary — the words it uses that other projects do not:
 > `bun, tui, composer, retention, …`. Reuse these when they fit; coin new ones freely when
@@ -305,8 +305,8 @@ Rules (`dirTagHints`):
   is skipped, because its profile *is* the priming set.
 
 These are appended to the round's **result**, never to the prompt — a mid-session prompt edit
-would bust the volatile-tier cache the note depends on (`withDirTagHintNotes`,
-`src/turn/runner.ts`).
+would bust the volatile-tier cache the note depends on (`with_dir_tag_hint_notes`,
+`bough-core/src/turn/runner.rs`).
 
 ### The TUI
 
@@ -463,18 +463,18 @@ For anyone changing this code:
 
 | File | Owns |
 |---|---|
-| `src/prompt/shell.md` | the grammar as the model is taught it — `bash(cmd, tags)`, references, one-command-one-intent |
-| `src/prompt/history.md` | how the model is taught to *recall* — the CLI, the tables, the `exit_code = 0` habit |
-| `src/hostfn/shell.ts` | the boundary that requires tags; recording on exit, including after auto-backgrounding |
-| `src/history/record.ts` | normalization, the reference rule, repo identity, directory attribution, the recorder |
-| `src/history/stats.ts` | weighting, decay, idf ranking, the priming note, the per-directory hints |
-| `src/history/embed.ts` | the optional local vector layer behind `similar` |
-| `src/db/schema.sql` | `command_history` and its three junction/index tables |
-| `src/db/db.ts` | every query: `recordCommand`, `commandTagRows`, `tagSpread`, `tagDiversityByDay`, `commandsForTag`, `programForMessage` |
-| `src/cli/tags.ts` | the `bough tags` command — parsing, the read-only `sql` handle, rendering |
-| `src/turn/runner.ts` | wiring: the note into the prompt, the hints onto the round's result |
-| `src/server/sessions.ts` · `src/tui/lines.ts` | `primedTags` on the snapshot, and the `#` margin row |
-| `src/skills/history/SKILL.md` | the bundled skill that queries transcripts through the same command |
+| `bough-core/src/prompt/sections/shell.md` | the grammar as the model is taught it — `bash(cmd, tags)`, references, one-command-one-intent |
+| `bough-core/src/prompt/sections/history.md` | how the model is taught to *recall* — the CLI, the tables, the `exit_code = 0` habit |
+| `bough-core/src/hostfn/shell.rs` | the boundary that requires tags; recording on exit, including after auto-backgrounding |
+| `bough-core/src/history/tags/record.rs` | normalization, the reference rule, repo identity, directory attribution, the recorder |
+| `bough-core/src/history/tags/stats.rs` | weighting, decay, idf ranking, the priming note, the per-directory hints |
+| `bough-core/src/history/tags/embed.rs` | the optional local vector layer behind `similar` |
+| `bough-core/src/db/schema.sql` | `command_history` and its three junction/index tables |
+| `bough-core/src/db/sqlite_db.rs` | every query: `record_command`, `command_tag_rows`, `tag_spread`, `tag_diversity_by_day`, `commands_for_tag`, `program_for_message` (the `Db` trait declaring them is `bough-core/src/types.rs`) |
+| `bough/src/tags.rs` | the `bough tags` command — parsing, the read-only `sql` handle, rendering |
+| `bough-core/src/turn/runner.rs` | wiring: the note into the prompt, the hints onto the round's result |
+| `bough-server/src/sessions.rs` · `bough-tui/src/lines.rs` | `primedTags` on the snapshot, and the `#` margin row |
+| `bough-core/skills/history/SKILL.md` | the bundled skill that queries transcripts through the same command |
 
 ---
 

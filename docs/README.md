@@ -29,7 +29,7 @@ Two audiences, in order.
 |---|---|
 | [architecture.md](architecture.md) | Crate boundaries, shared types, concurrency model |
 | [spec.md](spec.md) | What the system is. Authoritative for product behavior |
-| [../specs/](../specs) | Per-subsystem behavioral contracts — the invariants, module by module |
+| [../specs/](../specs) | Per-subsystem behavioral contracts — the invariants, module by module. Its [README](../specs/README.md) indexes all sixteen |
 | [../.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md) | Setup, the bar for a pull request |
 | [../AGENTS.md](../AGENTS.md) | Conventions this repo's reviews enforce |
 | [history/](history) | Finished and unmaintained — the old build order and the Rust port plan |

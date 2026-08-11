@@ -1,6 +1,6 @@
 # Port spec: `src/turn/` — the turn runner, queue, replay, state machine
 
-Source files (all under `/Users/andrey/repos/bough/src/turn/`):
+Source files (all under `src/turn/`):
 - `runner.ts` (1170 lines) — the turn loop: rounds, tool execution, nudges, ending rules
 - `queue.ts` (298 lines) — TurnRegistry (one turn per session), interrupt cascade, derived queue, retry ring
 - `replay.ts` (298 lines) — stored parts → provider messages (pure)

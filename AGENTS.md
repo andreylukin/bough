@@ -7,9 +7,10 @@ crates/bough-core/   the system — turn runner, harness, host functions, subage
                      workflows, history ops, MCP, db, llm, prompt, skills
 crates/bough-server/ the loopback HTTP + SSE server
 crates/bough-tui/    the ratatui terminal UI
-crates/bough/        the binary: start | tui | exec | acp | hooks | mcp | sync-mcp |
-                     tags | patterns
-specs/               per-subsystem behavioral contracts (16 files) — authoritative
+crates/bough/        the binary: start | restart | tui | exec | acp | hooks | mcp |
+                     sync-mcp | tags | notes | patterns
+specs/               per-subsystem behavioral contracts (16 files) — authoritative;
+                     README.md indexes them and maps the old TS names to crates/
 docs/                README.md is the map. spec.md (what the system is) ·
                      architecture.md (crate boundaries, shared types, concurrency) ·
                      tags.md (the command-memory tag system) · the user-facing set

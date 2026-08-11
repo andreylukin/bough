@@ -11,7 +11,7 @@ reattaches. Subagents keep running when you quit.
 
 ## One panel
 
-Everything that is not the conversation lives in a single panel with eight tabs. Each
+Everything that is not the conversation lives in a single panel with nine tabs. Each
 has a direct-jump chord — pressing it opens the panel *on that tab*, so there is no
 navigating.
 
@@ -24,6 +24,7 @@ navigating.
 | `^p` | mcp | servers, grants, authorization |
 | `^k` | skills | installed `/skills` |
 | `^x` | hooks | Lua that runs in the loop; toggle it |
+| `⌥c` | context | what the last turn put in the window, and what it cost (`/context`) |
 | `^y` | theme | browse live; leaving reverts |
 
 `^t` opens and closes the panel without naming a tab. `tab` / `shift-tab` move between

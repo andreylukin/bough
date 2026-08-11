@@ -79,9 +79,9 @@ answers — folded reasoning, the code that ran, live cost and context in one vi
   <img src="assets/screenshot-program.png" alt="an unfolded step: the program that ran, and its output" width="820">
 </p>
 
-Everything that is not the conversation lives in one panel with eight tabs, each on a direct-jump
+Everything that is not the conversation lives in one panel with nine tabs, each on a direct-jump
 chord — the conversation tree (`^f`), changes (`^d`), workflows (`^w`), model (`^o`), MCP (`^p`),
-skills (`^k`), hooks (`^x`), theme (`^y`). Press `?` for the full keymap.
+skills (`^k`), hooks (`^x`), context (`⌥c`), theme (`^y`). Press `?` for the full keymap.
 
 Review with `^d`: the Changes rail is `git diff` against the sha the session started from, per file
 and revertable per path. You commit and push with your own git.
