@@ -174,7 +174,7 @@ fn version_line() -> String {
 fn usage() -> &'static str {
     // The launchd/systemd manager verbs (setup/kill/restart/update/status/
     // logs/run/purge) stay in the bash wrapper; this binary owns the rest.
-    "usage: bough [tui|start|exec|acp|hooks|mcp|sync-mcp|tags|notes|patterns]
+    "usage: bough [tui|start|restart|exec|acp|hooks|mcp|sync-mcp|tags|notes|patterns]
   (no args) open the terminal UI (bough [-w DIR] [-r], -h for flags)
   --version print the version and exit (-V)
   start    run the server in the foreground
