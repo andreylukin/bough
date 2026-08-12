@@ -12,7 +12,7 @@ lifecycle; the **binary** owns everything else.
 |---|---|
 | `bough setup` | Fresh clone → running: install dependencies, configure env, start |
 | `bough start` | Install and start the background service (auto-starts at login) |
-| `bough kill` | Stop the service and keep it stopped across logins |
+| `bough kill` | Stop the service and keep it stopped across logins (`bough stop` also works) |
 | `bough restart` | Pick up code changes — there is no file watcher |
 | `bough update` | Fast-forward to `origin/main`, rebuild, restart |
 | `bough status` | Is it up, on what port, since when |
@@ -29,7 +29,8 @@ bough exec [-w DIR] [-m MODEL] [--json] [--timeout SECS] [--port N] "prompt"
 
 Creates a session, streams the assistant's text to stdout, exits. The prompt may also
 come on stdin. `--timeout` is wall clock for the whole turn, default 900s. `--json` gives
-one JSON envelope per line.
+one JSON envelope per line. `bough prompt` is the same command under the name people
+reach for first.
 
 **Exit codes:** `0` completed · `1` the turn errored · `2` usage or connection problem.
 That split is the contract worth scripting against — a non-zero from a *failed turn* is
