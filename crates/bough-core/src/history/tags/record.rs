@@ -448,7 +448,7 @@ pub struct RecorderCtx {
 pub fn is_memory_command(command: &str) -> bool {
     let mut tokens = command.split_whitespace();
     // Leading `VAR=value` assignments, as in the observed
-    // `PATH=…/target/release:$PATH bough notes show assaia`.
+    // `PATH=…/target/release:$PATH bough notes show nimbus`.
     // An assignment is `NAME=…` where NAME is a shell identifier. Testing for
     // "contains = but no /" fails on the very form this was written for:
     // `PATH=/Users/…/target/release:$PATH`, whose value is nothing but slashes.
@@ -563,14 +563,14 @@ mod tests {
         // lifted the tag, which prompted more recall.
         for cmd in [
             "bough tags",
-            "bough tags show nased",
+            "bough tags show atlas",
             "bough tags sql \"SELECT 1\"",
             "bough notes",
-            "bough notes show assaia",
-            "bough notes write nased",
+            "bough notes show nimbus",
+            "bough notes write atlas",
             "bough notes append pr.1 x",
             // Every spelling seen in the wild.
-            "PATH=$HOME/repos/bough/target/release:$PATH bough notes show assaia",
+            "PATH=$HOME/repos/bough/target/release:$PATH bough notes show nimbus",
             "./scripts/bough notes show x",
             "~/.local/bin/bough tags show git",
             "/usr/local/bin/bough notes stale",
@@ -584,7 +584,7 @@ mod tests {
     fn real_work_is_still_recorded_including_boughs_other_verbs() {
         for cmd in [
             "git status",
-            "kubectl -n nased rollout status deploy/executor",
+            "kubectl -n atlas rollout status deploy/executor",
             // Narrow on purpose: `patterns` reads a real log, `mcp` changes
             // real configuration. Only the two verbs whose whole subject is
             // the memory are skipped.

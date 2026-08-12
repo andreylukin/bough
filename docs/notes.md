@@ -12,7 +12,7 @@ written by hand when you have something to say and by the cheap model when you d
 
 From one real install (11,028 commands, 1,971 tags, 143 references):
 
-* one PR rollout had **nine `session_state` keys** — `pr7134_rollout`, `nased_pr7134`,
+* one PR rollout had **nine `session_state` keys** — `pr7134_rollout`, `atlas_pr7134`,
   `rollout_7134`, … — each written by a different lineage root, none visible to the next
   session, none readable by a human;
 * the work spanned repos: `linear.nme-1673` is **1,405 commands across 7 repos and 37
@@ -53,9 +53,9 @@ Conflating these is the trap the whole design is built to avoid.
 top-level note about a word; deeper paths are notes about a combination.
 
 ```
-nased                    a subsystem
+atlas                    a subsystem
 kubectl:rollout          how rollouts are done here
-kubectl:rollout:nased    this particular operation
+kubectl:rollout:atlas    this particular operation
 linear.nme-1673          a ticket
 ```
 
@@ -65,16 +65,16 @@ create the container before you have anything to put in it is exactly why folder
 hierarchies ossify.
 
 **Attachment** is `note_tags` / `section_tags` — order-free set membership. The grammar is
-faceted, not a containment tree: `nased` appears under `kubectl:rollout:nased` *and*
-`helm:upgrade:nased`, so prefix matching would miss the half that carries the meaning. A
-note attached to `{kubectl, nased}` covers every command carrying both, in any order, at
+faceted, not a containment tree: `atlas` appears under `kubectl:rollout:atlas` *and*
+`helm:upgrade:atlas`, so prefix matching would miss the half that carries the meaning. A
+note attached to `{kubectl, atlas}` covers every command carrying both, in any order, at
 any position. That is what makes a tag *group* free.
 
 ---
 
 ## 4. The section is the atom
 
-A lesson learned while working on `nased:rollout:prod` is often a truth about `nased`. With
+A lesson learned while working on `atlas:rollout:prod` is often a truth about `atlas`. With
 the note as the atom it would be stuck where it was written, so the addressable unit is the
 **section**: one home, many appearances, resolved at read time and never copied — one fix
 repairs every appearance.
@@ -84,7 +84,7 @@ repairs every appearance.
 Only true of prod: the window closes at 02:00 UTC.
 
 ## Executor ordering
-tags: nased
+tags: atlas
 DAG removal must land before the executor swap. [cmd:8812]
 ```
 
@@ -94,7 +94,7 @@ only where it was written. A `tags:` line under the heading NARROWS it — and t
 its tags are a **subset** of the reader's context. Subset, not overlap: overlap would put
 every `git`-tagged section on every page.
 
-Reading `nased:backfill:dev` then shows its own prose *and* `Executor ordering`, labelled
+Reading `atlas:backfill:dev` then shows its own prose *and* `Executor ordering`, labelled
 with where it is authored — because a transcluded section that looked native would turn one
 home / many appearances into an invisible copy.
 
@@ -111,7 +111,7 @@ correction the tag priming note uses:
 score = Σ over shared tags of  ln(1 + N_repos / repos_using(tag))
 ```
 
-`git` is in 26 repos, `rg` 28, `inspect` 36; `nased` is in 6. **A section promoted to a
+`git` is in 26 repos, `rg` 28, `inspect` 36; `atlas` is in 6. **A section promoted to a
 word every repo uses scores at the floor and never wins a slot**, however many pages it
 becomes eligible for. The incentive to over-promote disappears because the payoff does.
 
@@ -151,7 +151,7 @@ by a rewrite loses the claim it replaced and records that no judgment was made �
 silent loss that makes model-arbitrated memory untrustworthy.
 
 ```
-$ bough notes history nased:rollout:prod
+$ bough notes history atlas:rollout:prod
 ## Backfill window
   * now      The window moved to 04:00 UTC after the executor swap. [cmd:5]
   * rev 1    Only true of prod: the window closes at 02:00 UTC.
@@ -231,7 +231,7 @@ Here drift is a COUNT, and no model is involved:
 $ bough notes stale
 linear.nme-1673   ⚠ warning · 412 behind          4d
 pr.7134           142 commands since sync         2d
-nased             fresh                           1h
+atlas             fresh                           1h
 ```
 
 Warnings sort above volume. `notes.synced_ts` advances **only to a row actually folded,
@@ -283,7 +283,7 @@ function: **a command row is immutable, a section is edited.** `note_vec_meta` r
 its stale vector is replaced rather than left answering for text that no longer exists.
 
 A section is embedded as its **path as words** plus heading plus body: the path carries the
-subject (`nased`, `kubectl`) that the prose often assumes rather than states, and a section
+subject (`atlas`, `kubectl`) that the prose often assumes rather than states, and a section
 that never names its own topic is exactly the one a semantic query should still find.
 
 ---

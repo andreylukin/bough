@@ -99,7 +99,7 @@ pub const USAGE: &str = "usage: bough notes [VERB] [OPTIONS]
   tags, citations and history, and other notes may resolve it, so dropping
   one is an explicit `rm`. Superseded bodies stay in `history`.
 
-  A PATH is one or more TAGS, colon separated: `nased`, `kubectl:rollout`.
+  A PATH is one or more TAGS, colon separated: `atlas`, `kubectl:rollout`.
   Depth 1 is a top-level note. `## Heading` starts a section; a `tags:` line
   under it NARROWS that section, which is what makes it appear elsewhere.
 
@@ -508,7 +508,7 @@ pub fn run_notes(argv: &[String], deps: &NotesDeps<'_>) -> i32 {
             // The most DISTINCTIVE tag, by the same idf everything else ranks
             // by — neither the first (`note_tags` comes back alphabetised) nor
             // the last (the grammar's order is the author's, and they may have
-            // led with the subject). `dev` is a useless next command; `nased`
+            // led with the subject). `dev` is a useless next command; `atlas`
             // is the one worth handing over.
             let subject = note
                 .tags
@@ -1022,6 +1022,13 @@ mod tests {
     }
 
     fn seed_command(db: &dyn Db, tags: &str, ts: i64, session: &str) {
+        seed_command_in(db, tags, ts, session, "/nowhere");
+    }
+
+    /// The same, with the repo named. `idf` counts DISTINCT repos per tag, so a
+    /// test that wants one tag to outrank another has to spread the common one
+    /// across several — seeding it many times in one repo leaves the two tied.
+    fn seed_command_in(db: &dyn Db, tags: &str, ts: i64, session: &str, repo: &str) {
         if db.get_session(session).ok().flatten().is_none() {
             db.create_session(Session {
                 id: session.to_string(),
@@ -1047,7 +1054,7 @@ mod tests {
         db.record_command(&CommandRecord {
             session_id: session.to_string(),
             ts,
-            repo: "/nowhere".into(),
+            repo: repo.into(),
             cmd: format!("some command {ts}"),
             tags: tags.to_string(),
             tag_list: tags.split(':').map(str::to_string).collect(),
@@ -1088,10 +1095,10 @@ mod tests {
                 other => panic!("{input:?} parsed: {other:?}"),
             }
         }
-        match parse_notes_args(&argv(&["nased"])) {
+        match parse_notes_args(&argv(&["atlas"])) {
             Parsed::Args(a) => {
                 assert_eq!(a.verb, NotesVerb::Show);
-                assert_eq!(a.key.as_deref(), Some("nased"));
+                assert_eq!(a.key.as_deref(), Some("atlas"));
             }
             other => panic!("{other:?}"),
         }
@@ -1120,13 +1127,13 @@ mod tests {
     #[test]
     fn write_then_show_round_trips_and_points_at_the_commands() {
         let db = db();
-        write(&*db, "nased", "DAG removal lands before the executor swap.");
+        write(&*db, "atlas", "DAG removal lands before the executor swap.");
         let c = Collect::new();
-        assert_eq!(run_notes(&argv(&["show", "nased"]), &c.deps(&*db)), 0);
+        assert_eq!(run_notes(&argv(&["show", "atlas"]), &c.deps(&*db)), 0);
         let shown = c.printed();
         assert!(shown.contains("DAG removal lands before the executor swap."));
         assert!(shown.contains("## Summary"), "no heading needed: {shown}");
-        assert!(shown.contains("bough tags show nased"));
+        assert!(shown.contains("bough tags show atlas"));
     }
 
     #[test]
@@ -1136,19 +1143,19 @@ mod tests {
         let db = db();
         write(
             &*db,
-            "nased:rollout:prod",
+            "atlas:rollout:prod",
             "## Backfill window\nonly true of prod rollouts.\n\n\
-             ## Executor ordering\ntags: nased\nDAG removal must land first.",
+             ## Executor ordering\ntags: atlas\nDAG removal must land first.",
         );
         write(
             &*db,
-            "nased:backfill:dev",
+            "atlas:backfill:dev",
             "## Dev notes\nthe dev stack is smaller.",
         );
 
         let c = Collect::new();
         assert_eq!(
-            run_notes(&argv(&["show", "nased:backfill:dev"]), &c.deps(&*db)),
+            run_notes(&argv(&["show", "atlas:backfill:dev"]), &c.deps(&*db)),
             0
         );
         let shown = c.printed();
@@ -1156,7 +1163,7 @@ mod tests {
         assert!(shown.contains("also true here"), "{shown}");
         assert!(shown.contains("DAG removal must land first"), "{shown}");
         assert!(
-            shown.contains("← nased:rollout:prod"),
+            shown.contains("← atlas:rollout:prod"),
             "a transcluded section says where it is authored: {shown}"
         );
         assert!(
@@ -1171,9 +1178,9 @@ mod tests {
         // notes may resolve it — so an incremental write must not destroy one
         // that simply was not mentioned.
         let db = db();
-        write(&*db, "nased", "## A\nfirst.\n\n## B\nsecond.");
-        write(&*db, "nased", "## A\nrewritten.");
-        let note = db.note_by_path("nased").unwrap().unwrap();
+        write(&*db, "atlas", "## A\nfirst.\n\n## B\nsecond.");
+        write(&*db, "atlas", "## A\nrewritten.");
+        let note = db.note_by_path("atlas").unwrap().unwrap();
         let headings: Vec<String> = db
             .sections_for_note(note.id)
             .unwrap()
@@ -1184,28 +1191,33 @@ mod tests {
 
         // Removing one is explicit, and says what is there when it misses.
         let miss = Collect::new();
-        assert_eq!(run_notes(&argv(&["rm", "nased", "C"]), &miss.deps(&*db)), 1);
+        assert_eq!(run_notes(&argv(&["rm", "atlas", "C"]), &miss.deps(&*db)), 1);
         assert!(miss.errors().contains("it has: A, B"), "{}", miss.errors());
 
         let c = Collect::new();
-        assert_eq!(run_notes(&argv(&["rm", "nased", "B"]), &c.deps(&*db)), 0);
+        assert_eq!(run_notes(&argv(&["rm", "atlas", "B"]), &c.deps(&*db)), 0);
         assert_eq!(db.sections_for_note(note.id).unwrap().len(), 1);
     }
 
     #[test]
     fn the_footer_names_the_most_distinctive_tag_not_the_first() {
-        // `nased:backfill:dev` handed over `dev`, which is a useless next
+        // `atlas:backfill:dev` handed over `dev`, which is a useless next
         // command. idf picks the word the note is actually about.
+        //
+        // `dev` has to appear in SEVERAL repos to be the common word: idf
+        // counts distinct repos per tag, so three `dev` rows in one repo tie
+        // with `atlas` exactly and the winner falls out of tag order instead —
+        // which is how this test once passed while asserting nothing.
         let db = db();
-        for _ in 0..3 {
-            seed_command(&*db, "dev", 10, "s1");
+        for repo in ["/r1", "/r2", "/r3"] {
+            seed_command_in(&*db, "dev", 10, "s1", repo);
         }
-        seed_command(&*db, "nased", 20, "s1");
-        write(&*db, "nased:dev", "prose");
+        seed_command_in(&*db, "atlas", 20, "s1", "/r1");
+        write(&*db, "atlas:dev", "prose");
         let c = Collect::new();
-        run_notes(&argv(&["show", "nased:dev"]), &c.deps(&*db));
+        run_notes(&argv(&["show", "atlas:dev"]), &c.deps(&*db));
         assert!(
-            c.printed().contains("bough tags show nased"),
+            c.printed().contains("bough tags show atlas"),
             "{}",
             c.printed()
         );
@@ -1214,10 +1226,10 @@ mod tests {
     #[test]
     fn own_only_suppresses_what_resolves_in() {
         let db = db();
-        write(&*db, "nased:a", "## Shared\ntags: nased\npromoted.");
-        write(&*db, "nased:b", "## Mine\nlocal.");
+        write(&*db, "atlas:a", "## Shared\ntags: atlas\npromoted.");
+        write(&*db, "atlas:b", "## Mine\nlocal.");
         let c = Collect::new();
-        run_notes(&argv(&["show", "nased:b", "--own"]), &c.deps(&*db));
+        run_notes(&argv(&["show", "atlas:b", "--own"]), &c.deps(&*db));
         assert!(c.printed().contains("local."));
         assert!(!c.printed().contains("promoted."));
     }
@@ -1245,15 +1257,15 @@ mod tests {
     #[test]
     fn a_citation_that_does_not_resolve_is_named_and_not_recorded() {
         let db = db();
-        seed_command(&*db, "nased", 100, "s1");
-        // 1 exists and carries `nased`; 999 does not exist at all.
+        seed_command(&*db, "atlas", 100, "s1");
+        // 1 exists and carries `atlas`; 999 does not exist at all.
         write(
             &*db,
-            "nased",
+            "atlas",
             "grounded in [cmd:1] but also claims [cmd:999].",
         );
         let c = Collect::new();
-        run_notes(&argv(&["cites", "nased"]), &c.deps(&*db));
+        run_notes(&argv(&["cites", "atlas"]), &c.deps(&*db));
         assert!(c.printed().contains("command:1"), "{}", c.printed());
         assert!(!c.printed().contains("999"), "the invented id was dropped");
     }
@@ -1263,11 +1275,11 @@ mod tests {
         let db = db();
         write(
             &*db,
-            "nased",
+            "atlas",
             "## Hunch\nI think the executor is the problem.",
         );
         let c = Collect::new();
-        run_notes(&argv(&["cites", "nased"]), &c.deps(&*db));
+        run_notes(&argv(&["cites", "atlas"]), &c.deps(&*db));
         assert!(c.printed().contains("(uncited)"), "{}", c.printed());
     }
 
@@ -1311,22 +1323,22 @@ mod tests {
     #[test]
     fn the_tree_shows_stubs_for_nodes_nothing_was_written_at() {
         let db = db();
-        write(&*db, "kubectl:rollout:nased", "deep.");
-        write(&*db, "nased", "top.");
+        write(&*db, "kubectl:rollout:atlas", "deep.");
+        write(&*db, "atlas", "top.");
         let c = Collect::new();
         assert_eq!(run_notes(&argv(&["tree"]), &c.deps(&*db)), 0);
         let shown = c.printed();
         assert!(shown.contains("kubectl/"), "a stub: {shown}");
         assert!(shown.contains("rollout/"), "a stub: {shown}");
-        assert!(shown.contains("nased   nased"), "a real note: {shown}");
+        assert!(shown.contains("atlas   atlas"), "a real note: {shown}");
     }
 
     #[test]
     fn stale_counts_a_two_tag_note_once_per_command() {
         // A per-tag sum would report a two-tag note as twice as stale.
         let db = db();
-        write(&*db, "kubectl:nased", "prose");
-        seed_command(&*db, "kubectl:nased", 500, "s1");
+        write(&*db, "kubectl:atlas", "prose");
+        seed_command(&*db, "kubectl:atlas", 500, "s1");
         let c = Collect::new();
         run_notes(&argv(&["stale", "--json"]), &c.deps(&*db));
         let rows: serde_json::Value = serde_json::from_str(&c.printed()).unwrap();
@@ -1338,7 +1350,7 @@ mod tests {
         let db = db();
         write(
             &*db,
-            "nased",
+            "atlas",
             "## Ordering\nthe executor swap needs the dag removal",
         );
         let hit = Collect::new();
@@ -1346,7 +1358,7 @@ mod tests {
             run_notes(&argv(&["search", "executor", "dag"]), &hit.deps(&*db)),
             0
         );
-        assert!(hit.printed().contains("nased"));
+        assert!(hit.printed().contains("atlas"));
 
         let miss = Collect::new();
         assert_eq!(

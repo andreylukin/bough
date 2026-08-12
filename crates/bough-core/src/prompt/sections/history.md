@@ -95,7 +95,7 @@ what it MEANT. That is `bough notes`, keyed on the same tags:
 `bough tags show TAG` already prints the note above the commands, so most of
 the time you do not have to ask for it separately.
 
-A PATH is one or more TAGS, colon separated — `nased`, `kubectl:rollout`. One
+A PATH is one or more TAGS, colon separated — `atlas`, `kubectl:rollout`. One
 tag is a note about that word; more is a note about the combination.
 
 A note holds a decision and its reason, a constraint, a thing that will bite
@@ -114,11 +114,11 @@ line under the heading NARROWS it, and a narrowed section appears on every note
 whose tags include its own:
 
     ## Executor ordering
-    tags: nased
+    tags: atlas
     DAG removal must land before the executor swap. [cmd:8812]
 
-Written on `nased:rollout:prod`, that section now also shows up when reading
-`nased:backfill:dev`. Narrow a section when what you learned is true of the
+Written on `atlas:rollout:prod`, that section now also shows up when reading
+`atlas:backfill:dev`. Narrow a section when what you learned is true of the
 subject generally, not of the particular combination you were working on.
 Leave it alone otherwise — the default is right most of the time.
 

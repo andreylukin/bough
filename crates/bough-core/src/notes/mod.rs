@@ -17,12 +17,12 @@
 //!     about a word and deeper paths are notes about a combination;
 //!   * **attachment** (`note_tags`, `section_tags`) is what a note COVERS —
 //!     order-free set membership, because `tool:intent:subject` is a faceted
-//!     grammar and not a containment tree. `nased` appears under
-//!     `kubectl:rollout:nased` and `helm:upgrade:nased` both, so prefix
+//!     grammar and not a containment tree. `atlas` appears under
+//!     `kubectl:rollout:atlas` and `helm:upgrade:atlas` both, so prefix
 //!     matching would miss the half that carries the meaning.
 //!
 //! THE SECTION IS THE ATOM. A lesson learned while working on
-//! `nased:rollout:prod` is often a truth about `nased`; with the note as the
+//! `atlas:rollout:prod` is often a truth about `atlas`; with the note as the
 //! atom it would be stuck where it was written. A section has ONE home and
 //! MANY appearances — resolved at read time, never copied, so one fix repairs
 //! every appearance.
@@ -69,7 +69,7 @@ pub const AUTO_CREATE_MIN_SESSIONS: usize = 2;
 /// `bough tags show`, never trigger a hint, and would report zero drift
 /// forever — a page that looks filed and is actually orphaned.
 ///
-/// Normalization that LOSES nothing is applied silently (`NASED` → `nased`).
+/// Normalization that LOSES nothing is applied silently (`ATLAS` → `atlas`).
 /// Normalization that would SPLIT is refused, because picking one of the two
 /// halves would be guessing at which topic was meant.
 pub fn canonical_key(raw: &str) -> Result<String, BoughError> {
@@ -95,7 +95,7 @@ pub fn canonical_key(raw: &str) -> Result<String, BoughError> {
     }
 }
 
-/// A note's PATH from what the user typed: `kubectl:rollout:nased` stays in
+/// A note's PATH from what the user typed: `kubectl:rollout:atlas` stays in
 /// the order written, because that order is the grammar's
 /// (`tool:intent:subject`) and re-sorting it would put the tool where the
 /// subject belongs.
@@ -401,7 +401,7 @@ pub fn earns_a_page(drift: &Drift) -> bool {
 ///
 /// A section promoted to a tag every repo uses (`git`: 26 repos, `rg`: 28,
 /// `inspect`: 36) scores at the floor and never wins a slot, however many
-/// pages it becomes eligible for. One promoted to `nased` (6 repos) is lifted.
+/// pages it becomes eligible for. One promoted to `atlas` (6 repos) is lifted.
 /// The incentive to over-promote disappears because the payoff does.
 pub fn idf(spread: &TagSpread, tag: &str) -> f64 {
     // BOTH FLOORS ARE LOAD-BEARING. `repos` is 0 on a memory that has recorded
@@ -470,9 +470,9 @@ mod tests {
 
     #[test]
     fn a_key_must_be_something_a_command_could_carry() {
-        assert_eq!(canonical_key("nased").unwrap(), "nased");
+        assert_eq!(canonical_key("atlas").unwrap(), "atlas");
         assert_eq!(canonical_key("linear.nme-1673").unwrap(), "linear.nme-1673");
-        assert_eq!(canonical_key("NASED").unwrap(), "nased");
+        assert_eq!(canonical_key("ATLAS").unwrap(), "atlas");
 
         let split = canonical_key("wrapper-check").unwrap_err().to_string();
         assert!(split.contains("2 tags, not one"), "{split}");
@@ -482,7 +482,7 @@ mod tests {
 
     #[test]
     fn every_legal_key_survives_a_round_trip_through_the_tag_normalizer() {
-        for key in ["nased", "linear.nme-1673", "pr.7134", "wrapper_check"] {
+        for key in ["atlas", "linear.nme-1673", "pr.7134", "wrapper_check"] {
             let canonical = canonical_key(key).unwrap();
             assert_eq!(normalize_tags(Some(&canonical)), canonical, "{key}");
         }
@@ -490,25 +490,25 @@ mod tests {
 
     #[test]
     fn a_path_keeps_the_grammars_order_and_yields_its_segments() {
-        let (path, tags) = canonical_path("kubectl:rollout:nased").unwrap();
-        assert_eq!(path, "kubectl:rollout:nased");
-        assert_eq!(tags, vec!["kubectl", "rollout", "nased"]);
+        let (path, tags) = canonical_path("kubectl:rollout:atlas").unwrap();
+        assert_eq!(path, "kubectl:rollout:atlas");
+        assert_eq!(tags, vec!["kubectl", "rollout", "atlas"]);
         assert_eq!(depth(&path), 3);
-        assert_eq!(depth("nased"), 1, "a top-level note");
+        assert_eq!(depth("atlas"), 1, "a top-level note");
         // Re-sorting would put the tool where the subject belongs.
-        assert_eq!(canonical_path("nased:kubectl").unwrap().0, "nased:kubectl");
+        assert_eq!(canonical_path("atlas:kubectl").unwrap().0, "atlas:kubectl");
         assert!(canonical_path("kubectl:wrapper-check").is_err());
     }
 
     #[test]
     fn stubs_are_the_gaps_between_paths_and_are_never_stored() {
         let paths = vec![
-            "kubectl:rollout:nased".to_string(),
+            "kubectl:rollout:atlas".to_string(),
             "kubectl:rollout:prod".to_string(),
-            "nased".to_string(),
+            "atlas".to_string(),
         ];
         assert_eq!(stubs_for(&paths), vec!["kubectl", "kubectl:rollout"]);
-        assert!(stubs_for(&["nased".to_string()]).is_empty());
+        assert!(stubs_for(&["atlas".to_string()]).is_empty());
     }
 
     #[test]
@@ -526,7 +526,7 @@ mod tests {
             reference: "src/x.rs@3c1c78e".into()
         }));
         // A wikilink or an ordinary bracket is not a citation.
-        assert!(parse_citations("see [[nased]] and [note]").is_empty());
+        assert!(parse_citations("see [[atlas]] and [note]").is_empty());
         assert_eq!(parse_citations(&cite_command(9))[0].reference, "9");
     }
 
@@ -541,13 +541,13 @@ mod tests {
     #[test]
     fn a_tags_line_under_a_heading_is_promotion() {
         let parsed = split_sections(
-            "intro prose\n\n## Executor ordering\ntags: nased\nDAG removal first.\n\n\
+            "intro prose\n\n## Executor ordering\ntags: atlas\nDAG removal first.\n\n\
              ## Backfill window\nonly here.",
         );
         assert_eq!(parsed.len(), 3);
         assert_eq!(parsed[0].heading, "Summary");
         assert_eq!(parsed[1].heading, "Executor ordering");
-        assert_eq!(parsed[1].tags, Some(vec!["nased".to_string()]));
+        assert_eq!(parsed[1].tags, Some(vec!["atlas".to_string()]));
         assert!(!parsed[1].body.contains("tags:"), "the line is consumed");
         assert_eq!(parsed[2].tags, None, "unpromoted, so it inherits");
     }
@@ -562,8 +562,8 @@ mod tests {
             by_tag: HashMap::new(),
         };
         assert!(idf(&empty, "anything") > 0.0);
-        let s = section(&["nased"], "b");
-        assert!(section_score(&empty, &s, &["nased".into()]) > 0.0);
+        let s = section(&["atlas"], "b");
+        assert!(section_score(&empty, &s, &["atlas".into()]) > 0.0);
     }
 
     #[test]
@@ -573,13 +573,13 @@ mod tests {
             by_tag: HashMap::new(),
         };
         spread.by_tag.insert("git".into(), 26);
-        spread.by_tag.insert("nased".into(), 6);
+        spread.by_tag.insert("atlas".into(), 6);
         // This inequality IS the promotion policy: there is no other one.
         // ln(1 + 30/6) = 1.79 against ln(1 + 30/26) = 0.77 — a word six repos
         // use is worth more than twice one that twenty-six do.
-        assert!(idf(&spread, "nased") > idf(&spread, "git") * 2.0);
+        assert!(idf(&spread, "atlas") > idf(&spread, "git") * 2.0);
         assert!(
-            idf(&spread, "unseen") > idf(&spread, "nased"),
+            idf(&spread, "unseen") > idf(&spread, "atlas"),
             "unknown = maximally specific"
         );
     }
@@ -590,10 +590,10 @@ mod tests {
             repos: 30,
             by_tag: HashMap::new(),
         };
-        spread.by_tag.insert("nased".into(), 6);
+        spread.by_tag.insert("atlas".into(), 6);
         spread.by_tag.insert("git".into(), 26);
-        let s = section(&["nased", "git"], "b");
-        let both = section_score(&spread, &s, &["nased".into(), "git".into()]);
+        let s = section(&["atlas", "git"], "b");
+        let both = section_score(&spread, &s, &["atlas".into(), "git".into()]);
         let one = section_score(&spread, &s, &["git".into()]);
         assert!(both > one);
         assert_eq!(section_score(&spread, &s, &["other".into()]), 0.0);

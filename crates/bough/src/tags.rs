@@ -269,7 +269,7 @@ impl SimilarLayer for RealLayer {
 /// THE JOIN, in the one place it earns its keep: `show` is the command already
 /// being run, so the prose arrives without a second habit. Sections resolved
 /// from ELSEWHERE are included and say where they are authored — a lesson
-/// about `nased` is worth reading here whichever page it was written on.
+/// about `atlas` is worth reading here whichever page it was written on.
 fn render_note_header(db: &dyn Db, tag: &str, out: &dyn Fn(&str)) {
     let context = vec![tag.to_string()];
     let Ok(sections) = db.sections_for_context(&context, None) else {

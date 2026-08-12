@@ -503,7 +503,7 @@ pub fn embed_doc(tags: &str, cmd: &str, output_head: &str) -> String {
 /// What one SECTION is embedded AS.
 ///
 /// Heading plus body, and the note's path as words: the path carries the
-/// subject (`nased`, `kubectl`) which the prose often assumes rather than
+/// subject (`atlas`, `kubectl`) which the prose often assumes rather than
 /// states, and a section that never names its own topic is exactly the one a
 /// semantic query should still find.
 pub fn embed_section_doc(path: &str, heading: &str, body: &str) -> String {
@@ -1022,11 +1022,11 @@ mod tests {
         // states, and a section that never names its own topic is exactly the
         // one a semantic query should still find.
         let doc = embed_section_doc(
-            "kubectl:rollout:nased",
+            "kubectl:rollout:atlas",
             "Executor ordering",
             "DAG removal must land first.",
         );
-        assert!(doc.contains("kubectl rollout nased"), "{doc}");
+        assert!(doc.contains("kubectl rollout atlas"), "{doc}");
         assert!(doc.contains("Executor ordering"));
         assert!(doc.contains("DAG removal"));
         assert!(!doc.contains(':'), "the path is words, not a key: {doc}");
@@ -1055,7 +1055,7 @@ mod tests {
              CREATE TABLE src.notes (id INTEGER PRIMARY KEY, path TEXT);
              CREATE TABLE src.note_sections (id INTEGER PRIMARY KEY, note_id INTEGER,
                heading TEXT, body TEXT, updated_at INTEGER);
-             INSERT INTO src.notes VALUES (1, 'nased');
+             INSERT INTO src.notes VALUES (1, 'atlas');
              INSERT INTO src.note_sections VALUES (1, 1, 'h', 'first body', 10);",
         )
         .unwrap();

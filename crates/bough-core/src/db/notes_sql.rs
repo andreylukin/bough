@@ -283,7 +283,7 @@ pub fn put_section(conn: &Connection, write: &SectionWrite, now: i64) -> Result<
     };
 
     // Tags DEFAULT to the note's. That default is what keeps authoring
-    // unchanged: a section written under `nased:rollout:prod` appears only
+    // unchanged: a section written under `atlas:rollout:prod` appears only
     // there until someone narrows it on purpose.
     let tags: Vec<String> = match &write.tags {
         Some(tags) => tags.clone(),
@@ -446,7 +446,7 @@ pub fn search_sections(
     if words.is_empty() {
         return Ok(Vec::new());
     }
-    // Each word quoted: a user typing `nased:rollout` means two words, not FTS
+    // Each word quoted: a user typing `atlas:rollout` means two words, not FTS
     // operator syntax. Same treatment `search_commands` gives its input.
     let query = words
         .iter()

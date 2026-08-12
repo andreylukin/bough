@@ -197,7 +197,7 @@ mod tests {
         NoteRow {
             id: 1,
             path: "linear.nme-1673".into(),
-            title: "NASED executor removal".into(),
+            title: "ATLAS executor removal".into(),
             tags: vec!["linear.nme-1673".into()],
             created_at: 0,
             updated_at: 0,
@@ -229,7 +229,7 @@ mod tests {
             "DAG removal lands before the executor swap.",
             &log(&["dev quiesce merged"]),
             &[RoundTag {
-                tag: "nased".into(),
+                tag: "atlas".into(),
                 exit_code: Some(0),
             }],
             "roll out the executor change",
@@ -237,7 +237,7 @@ mod tests {
         for leaked in ["kubectl", "git ", "bash", "exit_code", "output_head", "$"] {
             assert!(!gist.contains(leaked), "{leaked} reached the cheap model");
         }
-        assert!(gist.contains("nased — worked"));
+        assert!(gist.contains("atlas — worked"));
         assert!(gist.contains("roll out the executor change"));
         assert!(gist.contains("do not repeat"));
         assert!(gist.contains("dev quiesce merged"));
@@ -248,8 +248,8 @@ mod tests {
         // A path with no digits, so a stray `3` can only have come from the
         // exit code this test is about.
         let plain = NoteRow {
-            path: "nased".into(),
-            tags: vec!["nased".into()],
+            path: "atlas".into(),
+            tags: vec!["atlas".into()],
             ..note()
         };
         let gist = round_gist(

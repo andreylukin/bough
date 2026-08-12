@@ -206,13 +206,13 @@ UNDERSTANDING behind, and that is the half a future session cannot reconstruct â
 so write it, one top-level note per coined word:
 
 ```bash
-bough notes write nased --title "NASED" <<'EOF'
+bough notes write atlas --title "ATLAS" <<'EOF'
 The scheduler's evaluator. Runs as a Deployment per environment; the
 executor and the DAG builder are separate images. [cmd:8812]
 
 ## Where it lives
-tags: nased
-Config is in the gitops repo, not this one. [file:apps/nased/values.yaml]
+tags: atlas
+Config is in the gitops repo, not this one. [file:apps/atlas/values.yaml]
 EOF
 ```
 

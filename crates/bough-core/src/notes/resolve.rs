@@ -242,7 +242,7 @@ mod tests {
         SectionRow {
             id,
             note_id,
-            note_path: "nased".into(),
+            note_path: "atlas".into(),
             ord: 0,
             heading: format!("h{id}"),
             body: body.into(),
@@ -257,7 +257,7 @@ mod tests {
     fn spread() -> TagSpread {
         let mut by_tag = HashMap::new();
         by_tag.insert("git".to_string(), 26i64);
-        by_tag.insert("nased".to_string(), 6i64);
+        by_tag.insert("atlas".to_string(), 6i64);
         by_tag.insert("linear.nme-1673".to_string(), 1i64);
         TagSpread { repos: 30, by_tag }
     }
@@ -270,10 +270,10 @@ mod tests {
             &spread(),
             vec![
                 section(1, 9, &["git"], "generic"),
-                section(2, 9, &["nased"], "specific"),
+                section(2, 9, &["atlas"], "specific"),
                 section(3, 9, &["linear.nme-1673"], "a ticket"),
             ],
-            &["git".into(), "nased".into(), "linear.nme-1673".into()],
+            &["git".into(), "atlas".into(), "linear.nme-1673".into()],
             None,
         );
         let order: Vec<i64> = ranked.iter().map(|r| r.section.id).collect();
@@ -364,8 +364,8 @@ mod tests {
     #[test]
     fn a_hint_line_names_where_a_transcluded_section_is_authored() {
         forget("s6");
-        let mut s = section(1, 7, &["nased"], "DAG removal lands first");
-        s.note_path = "nased".into();
+        let mut s = section(1, 7, &["atlas"], "DAG removal lands first");
+        s.note_path = "atlas".into();
         s.heading = "Executor ordering".into();
         let resolved = Resolved {
             section: s,
@@ -374,7 +374,7 @@ mod tests {
         };
         let line = hint_line("s6", &resolved).unwrap();
         assert!(
-            line.starts_with("[notes] nased · Executor ordering:"),
+            line.starts_with("[notes] atlas · Executor ordering:"),
             "{line}"
         );
         assert!(line.contains("DAG removal lands first"));
@@ -386,7 +386,7 @@ mod tests {
         // The claim is the useful part; the marker is noise in one line.
         forget("s7");
         let resolved = Resolved {
-            section: section(1, 7, &["nased"], "> [!WARNING] disputed\nthe real claim"),
+            section: section(1, 7, &["atlas"], "> [!WARNING] disputed\nthe real claim"),
             score: 1.0,
             transcluded: false,
         };

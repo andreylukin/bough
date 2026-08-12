@@ -336,14 +336,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 -- ---------------------------------------------------------------------------
 
 -- One note. `path` is PLACEMENT: a colon path in the tag grammar's own order
--- (`nased`, `kubectl:rollout`, `kubectl:rollout:nased`), so depth 1 is a
+-- (`atlas`, `kubectl:rollout`, `kubectl:rollout:atlas`), so depth 1 is a
 -- top-level note about a word and deeper paths are notes about a combination.
 -- Intermediate nodes with no note are STUBS, computed when a tree is rendered
 -- and never stored — an empty row would be a note that says nothing.
 --
 -- Placement is NOT attachment: what a note covers is `note_tags`, because the
--- grammar is faceted, not a containment tree. `nased` appears under
--- `kubectl:rollout:nased` and `helm:upgrade:nased` both, so prefix matching
+-- grammar is faceted, not a containment tree. `atlas` appears under
+-- `kubectl:rollout:atlas` and `helm:upgrade:atlas` both, so prefix matching
 -- would miss the half that carries the meaning.
 CREATE TABLE IF NOT EXISTS notes (
   id         INTEGER PRIMARY KEY,
@@ -364,7 +364,7 @@ CREATE TABLE IF NOT EXISTS notes (
 CREATE INDEX IF NOT EXISTS notes_path ON notes(path);
 
 -- ATTACHMENT: which commands a note covers. Many-to-many, order-free, and the
--- reason a "tag group" costs nothing — a note on {kubectl, nased} matches every
+-- reason a "tag group" costs nothing — a note on {kubectl, atlas} matches every
 -- command carrying both, at any position. `tag` joins `command_tags.tag`, so a
 -- key that is not a legal tag is unreachable by construction (`canonical_key`).
 CREATE TABLE IF NOT EXISTS note_tags (
@@ -376,7 +376,7 @@ CREATE INDEX IF NOT EXISTS note_tags_tag ON note_tags(tag, note_id);
 
 -- A note's body is its ordered sections. The section is the unit that is
 -- addressed, tagged, revised, cited and transcluded: a lesson learned while
--- working on `nased:rollout:prod` is often a truth about `nased`, and with the
+-- working on `atlas:rollout:prod` is often a truth about `atlas`, and with the
 -- note as the atom it would be stuck where it was written.
 CREATE TABLE IF NOT EXISTS note_sections (
   id         INTEGER PRIMARY KEY,
