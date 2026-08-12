@@ -31,6 +31,13 @@ Two things differ from the script install, both because a package prefix is not 
 - **There is no source tree to work in.** If you want to edit bough itself, use the script
   install (or clone separately) — the formula ships a binary, not a repo.
 
+Pick one or the other. If you already have the script install, its `bough` is on PATH
+already and `brew install` will report the formula as **not linked** rather than replace
+it — which is the right outcome, not an error to fix: `brew link --overwrite bough` would
+point the name at the package and leave the checkout's service manager driving a binary it
+no longer owns. To switch, remove the old symlink (`scripts/setup.sh` put it in
+`~/.local/bin` or `/opt/homebrew/bin`) and then `brew link bough`.
+
 `bough start` still installs bough's own LaunchAgent / systemd user unit. It is deliberately
 not a `brew services` formula: bough already manages that lifecycle on both platforms, and
 two service managers pointed at one server is a way to have neither work.
