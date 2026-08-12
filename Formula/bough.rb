@@ -38,9 +38,12 @@ class Bough < Formula
   depends_on "uv"
 
   def install
-    system "cargo", "build", "--release", "--locked", "--package", "bough"
+    # Into libexec, not bin: `bin/bough` is the wrapper below, and the binary
+    # would collide with it. `std_cargo_args` carries --locked.
+    system "cargo", "install", *std_cargo_args(root: libexec, path: "crates/bough")
 
-    libexec.install "target/release/bough" => "bough-bin"
+    # The lifecycle script, beside the binary it drives. `libexec/bin/bough` and
+    # `libexec/bough` are different files — the install above owns the first.
     libexec.install "scripts/bough"
 
     # The command on PATH. It names the binary and the installer so the script
@@ -49,7 +52,7 @@ class Bough < Formula
     # answer "brew upgrade bough" instead of failing in a package prefix.
     (bin/"bough").write <<~BASH
       #!/bin/bash
-      export BOUGH_BIN="#{opt_libexec}/bough-bin"
+      export BOUGH_BIN="#{opt_libexec}/bin/bough"
       export BOUGH_INSTALLER="homebrew"
       exec /bin/bash "#{opt_libexec}/bough" "$@"
     BASH
