@@ -252,7 +252,7 @@ The mid-turn hint would be pure cost if it re-said what the session was already 
 
 | State | What the round carries |
 |---|---|
-| unchanged | **nothing** — it is in the context above |
+| unchanged | **nothing**: it is in the context above |
 | lines added | only the new lines, `+2` |
 | >50% churn | the whole section, labelled `rewritten` |
 | lines only removed | one line saying so |

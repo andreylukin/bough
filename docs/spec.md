@@ -40,15 +40,15 @@ A headless server owns all state and execution. Clients are views over it.
                                 └──────────────────────────────────────┘
 ```
 
-- **Server** — one Rust process. JSON API, SSE event stream, static artifact
+- **Server.** One Rust process. JSON API, SSE event stream, static artifact
   hosting. Binds loopback only; no auth layer.
-- **Program sidecar** — a fresh JS process per round (`bun` if on PATH, else
+- **Program sidecar.** A fresh JS process per round (`bun` if on PATH, else
   `node`), running at the user's own authority: there is no permission layer to
   narrow (§2). Host functions bridge over a line protocol on its stdio.
-- **Workflow sidecar** — a JS process running one orchestration script. It is a
+- **Workflow sidecar.** A JS process running one orchestration script. It is a
   scripting surface, not a sandbox: its capabilities are `agent()`, `phase()`,
   `log()`, and the pipeline helpers, and it reaches the world only through them.
-- **Clients** — a ratatui TUI, a headless `bough exec` one-shot CLI, and `bough acp`
+- **Clients.** A ratatui TUI, a headless `bough exec` one-shot CLI, and `bough acp`
   for editors that speak the Agent Client Protocol.
 
 ### The event stream
@@ -80,12 +80,12 @@ operates on) and optional lineage pointers.
 |---|---|
 | `id`, `title`, `createdAt` | identity |
 | `kind` | `root` \| `fork` \| `compaction` \| `subagent` \| `workflow_agent` |
-| `parentId` | thread inheritance — a session's thread is its ancestors' messages ++ its own |
+| `parentId` | thread inheritance: a session's thread is its ancestors' messages ++ its own |
 | `originId`, `originMessageId` | lineage edge for the tree view (what it branched from) |
 | `workspace`, `originDir` | the checkout; `originDir` is the stable project record |
 | `model`, `effort` | per-session overrides; absent = global default |
 | `draft` | prefilled composer text (set by handoff) |
-| `base` | the git sha the session started from — drives the Changes rail |
+| `base` | the git sha the session started from: drives the Changes rail |
 
 **Visibility is derived, not stored.** Sessions of kind `subagent` and
 `workflow_agent` collapse under their `originId` and surface only on drill-in.
@@ -205,11 +205,11 @@ failed, the state that caused it, and the move that resolves it:
 
 | Condition | Must convey |
 |---|---|
-| Patch conflict | The file, the line range, and that someone else changed those lines — so the program re-views rather than retrying blind |
+| Patch conflict | The file, the line range, and that someone else changed those lines: so the program re-views rather than retrying blind |
 | Stale tag | That the file moved on, and that an empty tag means "the version I just viewed" |
 | Spawn cap hit | Which cap (per-turn or concurrent), so the program batches instead of retrying immediately |
 | `ask` declined | That the user dismissed it, so the program proceeds on a stated default or stops cleanly |
-| LSP backend down | That the backend failed, not that the symbol is missing — the program drops to `rg` for the rest of the task |
+| LSP backend down | That the backend failed, not that the symbol is missing: the program drops to `rg` for the rest of the task |
 | Empty LSP result | That this is an ordinary answer, not a failure |
 | Program timeout / interrupt | Which one, and what partial work survived |
 
@@ -224,13 +224,13 @@ capabilities:
 | Section | Included when |
 |---|---|
 | Identity and the `run_steps` contract | Always |
-| Host functions — shell, files, session verbs | Always |
+| Host functions: shell, files, session verbs | Always |
 | The patch grammar | Always |
 | Printing and context economy | Always |
 | Searching code | Always |
 | Network posture | Always |
 | Ending the turn, chat style | Always |
-| Delegation (top-level) | Session can spawn — root, fork, compaction |
+| Delegation (top-level) | Session can spawn: root, fork, compaction |
 | Delegation (nested) | Session is a subagent (blocking `agent()` only) |
 | Subagent framing | Session is a subagent or workflow agent |
 | MCP tools + calling convention | The turn has connected MCP servers |
@@ -265,7 +265,7 @@ at the user's permission level and may ignore every host function.
 
 | Signature | Behavior |
 |---|---|
-| `await bash(cmd)` | Combined output. Carries the turn's interrupt. **Auto-backgrounds past 60s** — returns `…moved to background as bg_N` and keeps running; a `[background]` system note announces its exit. |
+| `await bash(cmd)` | Combined output. Carries the turn's interrupt. **Auto-backgrounds past 60s**: returns `…moved to background as bg_N` and keeps running; a `[background]` system note announces its exit. |
 | `await sh(...cmds)` | Runs commands **concurrently**, returns `[{code, out}, …]` in order. Never throws on non-zero exit. |
 | `await bashBg(name, cmd)` | Explicit background shell that outlives the turn. The name is required and is what the user sees in the rail and the job view. Returns `{id, name, pid}`. |
 | `await bashOutput(id)` | Output since the last call plus a `[running]`/`[exited]` status line. Safe to call while running. |
@@ -339,8 +339,8 @@ program name two different files (§6, the workspace note).
 
 | Signature | Behavior |
 |---|---|
-| `await ask(q, {options})` | Parks the program and asks the human. Returns their answer; throws a catchable `user declined` on dismissal. Memory-only — the hold dies with the turn. |
-| `state.get/set/list/delete` | Durable KV scoped to the **lineage root**, so forks, compactions and subagents of one piece of work share it. Any JSON, 16KB per key. Notes, not storage — keep payloads in files. |
+| `await ask(q, {options})` | Parks the program and asks the human. Returns their answer; throws a catchable `user declined` on dismissal. Memory-only: the hold dies with the turn. |
+| `state.get/set/list/delete` | Durable KV scoped to the **lineage root**, so forks, compactions and subagents of one piece of work share it. Any JSON, 16KB per key. Notes, not storage: keep payloads in files. |
 | `schedule.list/add/enable/disable/remove` | Recurring runs. |
 | `await artifact(name, content)` | Publishes a file for browser viewing; returns `{url, href}`. |
 | `console.log(...)` | Streams live to the UI and batches into the model's tool result. |
@@ -409,7 +409,7 @@ extracted host-side by a balanced-brace scan before the body runs.
 | Primitive | Semantics |
 |---|---|
 | `agent(prompt, opts)` | Runs a subagent, returns its report. Throws on failure. `opts`: `label`, `phase`, `model`, `schema`. |
-| `parallel(thunks)` | Barrier — awaits all. A thunk that throws resolves to `null`; the call never rejects. |
+| `parallel(thunks)` | Barrier: awaits all. A thunk that throws resolves to `null`; the call never rejects. |
 | `pipeline(items, ...stages)` | Each item flows through all stages independently, **no barrier**. A throwing stage drops that item to `null`. Stage callbacks get `(prev, originalItem, index)`. |
 | `phase(title)` / `log(msg)` | Fire-and-forget progress. Never blocks. |
 | `args` | The run's input value, verbatim. |
@@ -602,9 +602,9 @@ context-window display.
 
 Two tiers, both chosen in the model picker:
 
-- **Frontier** — the supervisor. Per-session pinning; switching moves the default
+- **Frontier.** The supervisor. Per-session pinning; switching moves the default
   for new sessions and leaves other existing sessions alone.
-- **Cheap** — powers auto session titles, composer ghost text, and live activity
+- **Cheap.** Powers auto session titles, composer ghost text, and live activity
   blurbs. Every one of these bills on every round, so each must fail silently and
   never block or delay a turn.
 
@@ -633,9 +633,9 @@ in-place rewrite.
 | **Take-back** | Delete the session's own **last user message** and everything after it, stopping the turn it started. The only destructive operation, and the only one that does not branch. |
 | **Compact** | Replace a selected span with an LLM summary on a new sibling branch. Non-contiguous selections collapse each maximal run to one summary in place. |
 | **Sections** | Stateless LLM pass labeling turns into contiguous topic sections, so the UI can color history and offer whole sections as selections. |
-| **Extract** | Copy hand-picked messages into a fresh **root** — any message in the visible thread, ancestors included. Picks may carry part indexes to copy a turn's prose without its tool calls. |
+| **Extract** | Copy hand-picked messages into a fresh **root**: any message in the visible thread, ancestors included. Picks may carry part indexes to copy a turn's prose without its tool calls. |
 | **Move-into** | Append copies of picked messages onto an **existing** session. |
-| **Handoff** | LLM drafts the opening prompt for a fresh root from a stated goal — the goal restated, only the context that matters, and the relevant paths. Persisted as the new session's `draft`; the source is never mutated. |
+| **Handoff** | LLM drafts the opening prompt for a fresh root from a stated goal: the goal restated, only the context that matters, and the relevant paths. Persisted as the new session's `draft`; the source is never mutated. |
 
 **Take-back is undo, and undo may not leave a second conversation behind.** For
 `UNSEND_MS` after a send, Escape on an empty composer retracts the message: it is
@@ -739,8 +739,8 @@ Resolved by stated assumption; cheap to reverse:
 
 - **`adopt()`** carries forward with the delegation verbs; it was not separately
   scoped.
-- **Cheap-tier failure modes** — titles, ghost text and blurbs are specified to fail
+- **Cheap-tier failure modes.** Titles, ghost text and blurbs are specified to fail
   silently. Whether a failed title retries or the session keeps a truncated-prompt
   fallback name is unspecified.
-- **FTS ranking** — keyword search is specified as SQLite FTS; ranking and snippet
+- **FTS ranking.** Keyword search is specified as SQLite FTS; ranking and snippet
   strategy are left to implementation.

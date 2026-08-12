@@ -289,7 +289,7 @@ The TS "worker" (titles, ghost text, activity blurbs) is not a Bun Worker — it
 `CheapTier`, three methods that each resolve `Option` and never error, one in-flight
 blurb per session, drop-don't-queue. Rust: a plain `struct CheapTierImpl` over
 `complete_text` with a per-session `Mutex<HashSet<SessionId>>` in-flight guard.
-**v1 ships `cheap: None`** — every reader degrades on absence by contract.
+**v1 ships `cheap: None`.** Every reader degrades on absence by contract.
 
 ### 4.4 Everything else Bun
 
@@ -300,8 +300,8 @@ blurb per session, drop-don't-queue. Rust: a plain `struct CheapTierImpl` over
 | `bun:sqlite` (sync) | rusqlite, sync, behind the Db seam (§5) |
 | `URLPattern` routing | axum router (`/{id}`, `/{*path}`); the only order-sensitive overlap (`/saved-workflows` vs `/workflows/:id`) is statically disambiguated; percent-decode **per segment** for artifacts |
 | `AbortSignal` | `tokio_util::sync::CancellationToken` (child tokens = cascade) |
-| Bun single-thread atomicity | explicit `Mutex` around check+take sections (SpawnCaps.reserve, TurnRegistry.begin, workflow admit) — this does NOT come free in Rust and each site is called out in the specs |
-| module-static registries | one explicit `HostState { jobs, snapshots, writes, asks, detached, caps }` built at boot, `Arc`-cloned into each turn — the TS statics existed only because `TurnCtx` was frozen |
+| Bun single-thread atomicity | explicit `Mutex` around check+take sections (SpawnCaps.reserve, TurnRegistry.begin, workflow admit): this does NOT come free in Rust and each site is called out in the specs |
+| module-static registries | one explicit `HostState { jobs, snapshots, writes, asks, detached, caps }` built at boot, `Arc`-cloned into each turn: the TS statics existed only because `TurnCtx` was frozen |
 
 ## 5. Concurrency model
 

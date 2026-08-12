@@ -83,9 +83,9 @@ The two kinds behave oppositely, which is why they are told apart at all:
 |  | Tag | Reference |
 |---|---|---|
 | Nature | a **word** the model coins | a **key** with one referent |
-| Converges through reuse | yes — that is the point | never |
+| Converges through reuse | yes: that is the point | never |
 | Lives in | many projects | exactly one |
-| Ranked into the priming note | yes | **no** — see §5 |
+| Ranked into the priming note | yes | **no**: see §5 |
 | Recalled by | popularity, hints, search | name (`bough tags show pr.456`) |
 
 Same table, same joins, same graph. Different ranking. Spending a reference therefore costs
@@ -175,16 +175,16 @@ command_history ──┬── command_tags(command_id, tag)      one row per t
 
 | Column | Meaning |
 |---|---|
-| `id` | `INTEGER PRIMARY KEY` — a high-volume append-only log joined through two junctions; the rowid alias is the natural join key |
+| `id` | `INTEGER PRIMARY KEY`: a high-volume append-only log joined through two junctions; the rowid alias is the natural join key |
 | `session_id`, `ts` | who ran it, when (epoch ms) |
-| `repo` | the **scope key** — git origin URL, else a path (below) |
+| `repo` | the **scope key**: git origin URL, else a path (below) |
 | `cmd`, `tags` | the command, and the normalized colon-separated string (`''` for an untagged leg) |
 | `exit_code` | `NULL` = unknown (still running when the turn moved on) |
 | `duration_ms` | |
-| `output_head` | first ~2k chars the command **printed** — recall over results, not just invocations |
+| `output_head` | first ~2k chars the command **printed**: recall over results, not just invocations |
 | `spill_path` | the file holding the full output when it was too big to inline; may have been cleaned since |
 | `source` | `live` \| `backfill` |
-| `message_id` | the supervisor message whose `run_steps` program ran it — nullable, because a memory row outlives its transcript |
+| `message_id` | the supervisor message whose `run_steps` program ran it: nullable, because a memory row outlives its transcript |
 
 Two of these carry more design than their names suggest.
 
@@ -225,7 +225,7 @@ weight(tag) = Σ over its commands of  successFactor(exit_code) × 0.5 ^ (age / 
 | `exit_code` | factor | why |
 |---|---|---|
 | `0` | 1 | it worked |
-| `NULL` | 0.5 | unknown — still running when the turn moved on |
+| `NULL` | 0.5 | unknown: still running when the turn moved on |
 | anything else | 0.25 | a tag on ten failures must not read as popular |
 
 The half-life is 30 days and the query looks back 5 half-lives (150 days) — beyond that a row
@@ -339,7 +339,7 @@ bough tags similar "text"   semantic recall, where the local vector layer exists
 | Option | Effect |
 |---|---|
 | `--repo R` | scope to a repo identity (origin URL or path); default is this checkout's |
-| `--all` | no repo scope — answer across every project the memory knows |
+| `--all` | no repo scope: answer across every project the memory knows |
 | `--program` | `show`: print the whole program each command ran in, not just its line count |
 | `--limit N` | rows (default 20) |
 | `--days N` | `stats`: how far back to look (default 30) |
@@ -391,7 +391,7 @@ bough tags sql "SELECT cmd FROM command_history
   WHERE session_id = '$BOUGH_SESSION' ORDER BY ts DESC LIMIT 10"
 ```
 
-**Never open the database file directly** — not with `sqlite3`, not with a library. A stray
+**Never open the database file directly.** Not with `sqlite3`, not with a library. A stray
 write or a long lock on the file a live server holds is a broken turn for everyone.
 
 ### `similar` and the optional vector layer
@@ -425,7 +425,7 @@ The measurement the tag system otherwise lacks: whether a prompt change made the
 |---|---|
 | `sessions` | distinct sessions that ran commands |
 | `cmds` | commands recorded |
-| `tagged` | share of them carrying at least one tag — the number a bare `sh` leg moves |
+| `tagged` | share of them carrying at least one tag: the number a bare `sh` leg moves |
 | `vocab` | distinct **coined** tags that day (references excluded) |
 | `refs` | distinct references that day, counted apart so a busy ticket week does not read as a richer vocabulary |
 | `uses` | total tag applications |
@@ -463,15 +463,15 @@ For anyone changing this code:
 
 | File | Owns |
 |---|---|
-| `bough-core/src/prompt/sections/shell.md` | the grammar as the model is taught it — `bash(cmd, tags)`, references, one-command-one-intent |
-| `bough-core/src/prompt/sections/history.md` | how the model is taught to *recall* — the CLI, the tables, the `exit_code = 0` habit |
+| `bough-core/src/prompt/sections/shell.md` | the grammar as the model is taught it: `bash(cmd, tags)`, references, one-command-one-intent |
+| `bough-core/src/prompt/sections/history.md` | how the model is taught to *recall*: the CLI, the tables, the `exit_code = 0` habit |
 | `bough-core/src/hostfn/shell.rs` | the boundary that requires tags; recording on exit, including after auto-backgrounding |
 | `bough-core/src/history/tags/record.rs` | normalization, the reference rule, repo identity, directory attribution, the recorder |
 | `bough-core/src/history/tags/stats.rs` | weighting, decay, idf ranking, the priming note, the per-directory hints |
 | `bough-core/src/history/tags/embed.rs` | the optional local vector layer behind `similar` |
 | `bough-core/src/db/schema.sql` | `command_history` and its three junction/index tables |
 | `bough-core/src/db/sqlite_db.rs` | every query: `record_command`, `command_tag_rows`, `tag_spread`, `tag_diversity_by_day`, `commands_for_tag`, `program_for_message` (the `Db` trait declaring them is `bough-core/src/types.rs`) |
-| `bough/src/tags.rs` | the `bough tags` command — parsing, the read-only `sql` handle, rendering |
+| `bough/src/tags.rs` | the `bough tags` command: parsing, the read-only `sql` handle, rendering |
 | `bough-core/src/turn/runner.rs` | wiring: the note into the prompt, the hints onto the round's result |
 | `bough-server/src/sessions.rs` · `bough-tui/src/lines.rs` | `primedTags` on the snapshot, and the `#` margin row |
 | `bough-core/skills/history/SKILL.md` | the bundled skill that queries transcripts through the same command |
