@@ -1,4 +1,4 @@
-# bough — the note memory
+# bough: the note memory
 
 The command memory records what ran and whether it worked. It cannot record what it
 *meant*. `bough notes` is the layer that does: prose keyed on the tags that already exist,
@@ -12,8 +12,8 @@ written by hand when you have something to say and by the cheap model when you d
 
 From one real install (11,028 commands, 1,971 tags, 143 references):
 
-* one PR rollout had **nine `session_state` keys** — `pr7134_rollout`, `atlas_pr7134`,
-  `rollout_7134`, … — each written by a different lineage root, none visible to the next
+* one PR rollout had **nine `session_state` keys**: `pr7134_rollout`, `atlas_pr7134`,
+  `rollout_7134`, …, each written by a different lineage root, none visible to the next
   session, none readable by a human;
 * the work spanned repos: `linear.nme-1673` is **1,405 commands across 7 repos and 37
   sessions**;
@@ -37,7 +37,7 @@ logging produces on its own.
 | Truth from | the exit code | authorship, and citations |
 
 **The invariant: a note holds no command strings and no output.** Every "how" is a
-citation — a POINTER, never a copy. Two tests pin it, one at the store and one at the
+citation, a POINTER rather than a copy. Two tests pin it, one at the store and one at the
 prompt: `round_gist` has no parameter a command could arrive through.
 
 The payoff is a safety property: a stale note gives wrong *context*, never a wrong
@@ -49,7 +49,7 @@ The payoff is a safety property: a stale note gives wrong *context*, never a wro
 
 Conflating these is the trap the whole design is built to avoid.
 
-**Placement** is `notes.path` — a colon path in the tag grammar's own order. Depth 1 is a
+**Placement** is `notes.path`, a colon path in the tag grammar's own order. Depth 1 is a
 top-level note about a word; deeper paths are notes about a combination.
 
 ```
@@ -59,12 +59,12 @@ kubectl:rollout:atlas    this particular operation
 linear.nme-1673          a ticket
 ```
 
-Intermediate nodes nothing was written at are **stubs** — computed when `bough notes tree`
+Intermediate nodes nothing was written at are **stubs**, computed when `bough notes tree`
 renders, never stored. An empty row would be a note that says nothing, and needing to
 create the container before you have anything to put in it is exactly why folder
 hierarchies ossify.
 
-**Attachment** is `note_tags` / `section_tags` — order-free set membership. The grammar is
+**Attachment** is `note_tags` / `section_tags`, order-free set membership. The grammar is
 faceted, not a containment tree: `atlas` appears under `kubectl:rollout:atlas` *and*
 `helm:upgrade:atlas`, so prefix matching would miss the half that carries the meaning. A
 note attached to `{kubectl, atlas}` covers every command carrying both, in any order, at
@@ -76,7 +76,7 @@ any position. That is what makes a tag *group* free.
 
 A lesson learned while working on `atlas:rollout:prod` is often a truth about `atlas`. With
 the note as the atom it would be stuck where it was written, so the addressable unit is the
-**section**: one home, many appearances, resolved at read time and never copied — one fix
+**section**: one home, many appearances, resolved at read time and never copied, so one fix
 repairs every appearance.
 
 ```markdown
@@ -89,13 +89,13 @@ DAG removal must land before the executor swap. [cmd:8812]
 ```
 
 A section **inherits its note's tags by default**, so authoring is unchanged and it appears
-only where it was written. A `tags:` line under the heading NARROWS it — and that is
+only where it was written. A `tags:` line under the heading NARROWS it, and that is
 **promotion**, the deliberate act that says "this is general". A section surfaces wherever
 its tags are a **subset** of the reader's context. Subset, not overlap: overlap would put
 every `git`-tagged section on every page.
 
 Reading `atlas:backfill:dev` then shows its own prose *and* `Executor ordering`, labelled
-with where it is authored — because a transcluded section that looked native would turn one
+with where it is authored, because a transcluded section that looked native would turn one
 home / many appearances into an invisible copy.
 
 `write` **upserts by heading and never removes**: a section has its own tags, citations and
@@ -104,7 +104,7 @@ history, and other notes may resolve it, so dropping one is an explicit
 
 ### Why promotion needs no policy
 
-There is no cap on promotion and no quota. Resolution ranks by `idf` over repos — the same
+There is no cap on promotion and no quota. Resolution ranks by `idf` over repos, the same
 correction the tag priming note uses:
 
 ```
@@ -123,7 +123,7 @@ tags, but a section deliberately promoted to one is still a valid narrow match.
 
 ## 5. Citations
 
-What a claim rests on, as rows rather than markdown — so a citation can be **validated**.
+What a claim rests on, as rows rather than markdown, so a citation can be **validated**.
 
 ```
 [cmd:1234]  [msg:<id>]  [file:src/x.rs@3c1c78e]  [url:https://…]  [sec:12]
@@ -135,7 +135,7 @@ stops an invented id, and the tag check stops a real id with nothing to do with 
 which is the shape a plausible-but-wrong citation actually takes. One that fails is refused
 and **named**, never silently dropped.
 
-`bough notes cites PATH` reports the citations — and, more usefully, marks the sections
+`bough notes cites PATH` reports the citations and, more usefully, marks the sections
 that have none. An uncited claim is the interesting one: it is the only signal separating a
 claim that rests on evidence from one resting on somebody's memory.
 
@@ -143,11 +143,11 @@ claim that rests on evidence from one resting on somebody's memory.
 
 ## 6. History
 
-Every superseded section body is kept in `section_revisions`. Full copies, never pruned —
+Every superseded section body is kept in `section_revisions`. Full copies, never pruned;
 a section is small, so the column-mask tricks a large-blob history needs do not apply.
 
 This is what makes resolving a contradiction **auditable**. Without it, a warning cleared
-by a rewrite loses the claim it replaced and records that no judgment was made — the exact
+by a rewrite loses the claim it replaced and records that no judgment was made, which is the exact
 silent loss that makes model-arbitrated memory untrustworthy.
 
 ```
@@ -169,26 +169,26 @@ $ bough notes history atlas:rollout:prod
 | A2 | `bough notes check` | on demand or scheduled | **cheap tier** |
 
 **There is no host function.** The model writes by running `bough notes append`, exactly as
-it recalls by running `bough tags` — one door, and the write lands in `command_history`
+it recalls by running `bough tags`: one door, and the write lands in `command_history`
 under its own tag, so the memory records its own maintenance.
 
 Provenance is a column: `*` you · `+` the session model · `~` the cheap model.
 `bough notes append` picks it from `$BOUGH_SESSION`, which is set in every shell bough runs
-and in none of yours — so the model and the human are told apart without either declaring
+and in none of yours, so the model and the human are told apart without either declaring
 itself. It is the only defence against a claim that was **wrong when written**: nothing
 later contradicts it, and no timestamp helps.
 
-### A1 — the automatic line
+### A1: the automatic line
 
 **Detached, and debounced per reference.** The fold writes `note_log` rows; the hint reads
 `note_sections`, so nothing the fold produces can appear in that round's result or any
-other — awaiting it bought nothing and put a cheap-model round trip on the critical path of
+other, because awaiting it bought nothing and put a cheap-model round trip on the critical path of
 every round that touched a reference, paid again on each round of a multi-round turn. It is
 now spawned, and a reference rests `FOLD_DEBOUNCE_MS` (10 minutes) between folds: one in
 flight, drop don't queue, the discipline the live activity blurbs already run under.
 
 At the end of a round, `fold_round_into_notes` walks the references the round's commands
-carried. A page is created only for one that has EARNED it (20 commands across 2 sessions —
+carried. A page is created only for one that has EARNED it (20 commands across 2 sessions,
 about six references on a real memory, not 143). The cheap model sees the last ten log
 lines, the note's own claim, and the reference as `tag → worked/failed/still running`; it
 sees **no command string, no exit code, no output**. It answers `SKIP` or one line, and the
@@ -197,13 +197,13 @@ prompt says SKIP is the usual answer twice.
 Every gate is a non-event, as is a missing cheap tier, a provider error, a refusal, or the
 deadline: **a bough built without a cheap tier is a working bough that writes no notes**.
 
-### A2 — `bough notes check`
+### A2: `bough notes check`
 
 Asks whether any log line makes a section's claim false, and if so **inserts a
 `> [!WARNING]`**. It never edits the claim, never compacts the log, never clears a warning.
 
 There is deliberately **no rewriting consolidation pass**. Consolidation solves one failure
-— a flat scratchpad accumulating twenty phrasings of one fact — and this log does not have
+(a flat scratchpad accumulating twenty phrasings of one fact) and this log does not have
 it: one line per round, deduplicated at write time. For memory that already has structure
 and provenance, a rewrite pass is at best a no-op and at worst destructive.
 
@@ -214,7 +214,7 @@ and provenance, a rewrite pass is at best a no-op and at worst destructive.
 > **The cheap model may append, and may raise a warning. It may never resolve one.**
 
 Detection is cheap and reversible; judgment is not. Arbitration by the same kind of process
-that writes wrong notes does not remove the failure — it moves it one layer down, where the
+that writes wrong notes does not remove the failure; it moves it one layer down, where the
 loss is silent. Resolving a warning means rewriting the body, which means
 `bough notes write`, which means you or the session model. It is the only edge in the state
 machine the cheap tier cannot traverse.
@@ -224,7 +224,7 @@ machine the cheap tier cannot traverse.
 ## 9. Staleness is computed
 
 A wiki has no fact stream to check a page against, so its only trigger for revision is "a
-new source arrived" and its lint is structural — a page a year out of date lints clean.
+new source arrived" and its lint is structural, so a page a year out of date lints clean.
 Here drift is a COUNT, and no model is involved:
 
 ```
@@ -236,7 +236,7 @@ atlas             fresh                           1h
 
 Warnings sort above volume. `notes.synced_ts` advances **only to a row actually folded,
 never to `now`**, so a skipped or failed fold leaves the note visibly behind rather than
-falsely fresh. A command carrying two of a note's tags counts once — a per-tag sum would
+falsely fresh. A command carrying two of a note's tags counts once, because a per-tag sum would
 report a two-tag note as twice as stale.
 
 The frontier is a plain column and not the per-host map the file store needed: **the
@@ -261,7 +261,7 @@ The rewrite threshold matters: an added-lines diff would show a corrected claim 
 *addition*, leaving the superseded claim standing in the context above it.
 
 A stable note therefore costs **one injection per session** however many rounds touch it.
-The ledger is memory-only and bounded at 512 sessions — a restart that re-injects one
+The ledger is memory-only and bounded at 512 sessions, so a restart that re-injects one
 section once is harmless, and a table would make a cosmetic feature a durability problem.
 
 ---
@@ -272,7 +272,7 @@ section once is harmless, and a table would make a cosmetic feature a durability
 `bough tags similar` is: without the local vector layer the command exits 1 and names the
 keyword search that always works.
 
-`note_vec_index` lives beside `vec_index` in `~/.bough/embeddings.db` — same file, same
+`note_vec_index` lives beside `vec_index` in `~/.bough/embeddings.db`: same file, same
 model, same rebuild rule, both fully derived and deletable together. A **separate table**
 rather than a `kind` column because vec0 applies its limit before any `WHERE`, so a mixed
 index would answer a section query with ten commands.
@@ -307,7 +307,7 @@ bough notes cites PATH      what each claim rests on, and which rest on nothing
 
 Exit `0` answered · `1` nothing there · `2` usage.
 
-And the surface that matters most, because it needs no new habit — `bough tags show TAG`
+And the surface that matters most, because it needs no new habit, is `bough tags show TAG`
 prints the resolved sections above the commands, each labelled with where it is authored.
 
 ---

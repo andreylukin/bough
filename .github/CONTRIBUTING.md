@@ -24,16 +24,16 @@ make lint              # rustfmt + clippy, warnings as errors
 
 `make dev` is the one to know: it runs the checkout you are editing against `.dev/` on
 port 4322, so it never touches your real install at `~/.bough:4321`. `make dev-stop` when
-you are done. There is no file watcher — rebuild and restart to pick up changes.
+you are done. There is no file watcher, so rebuild and restart to pick up changes.
 
 Stable Rust, one workspace, `make help` for the rest. CI lints on the *latest* stable and
-is deliberately unpinned — if CI flags what `make lint` didn't, `rustup update`.
+is deliberately unpinned: if CI flags what `make lint` didn't, `rustup update`.
 
 ## The bar for a pull request
 
 1. **`make gates` and `make lint` pass.** Red PRs aren't reviewed.
 2. **New behavior has a test**, offline and hermetic. If it's only visible in the TUI,
-   drive a real PTY (`make tui-test`) — data-only assertions have let broken rendering
+   drive a real PTY (`make tui-test`), because data-only assertions have let broken rendering
    ship more than once. That suite needs `shell-use` to drive the PTY, which is not
    packaged yet; if you don't have it, say so in the PR and describe what you exercised
    by hand, and a maintainer will run it. Don't claim it passed.
@@ -52,14 +52,14 @@ What is not acceptable is unverified output. **You are the author of every line 
 a PR with**, however it was produced. Before you push, you must have:
 
 - read the whole diff and be able to explain why each part is there;
-- run `make gates` and `make lint` locally — not trusted a claim that they pass;
+- run `make gates` and `make lint` locally, rather than trusting a claim that they pass;
 - confirmed the change actually does what the PR says, by exercising it, not by reading
   a summary of it.
 
 Tells that a PR was not verified: tests that assert nothing, or that were adjusted until
 they passed; invented API, config keys, or file paths; a plausible fix for a
 misdiagnosed cause; comments narrating code that isn't there; a diff far larger than the
-problem. These get closed rather than reviewed — an unverified PR moves the work onto
+problem. These get closed rather than reviewed, because an unverified PR moves the work onto
 maintainers, and there are more people generating patches than reading them.
 
 If you're unsure whether something is right, say so in the PR. "I think this is the
@@ -80,14 +80,14 @@ Rebase on `main`; don't merge it in.
 ## Review
 
 [`CODEOWNERS`](CODEOWNERS) are requested automatically. Expect a first
-response within a week — ping the PR if it goes quiet longer.
+response within a week; ping the PR if it goes quiet longer.
 
 Reviewers: say what would make the change mergeable. "Not the right approach" without an
 alternative is not a review.
 
 ## Bugs and security
 
-Use the issue templates, and include the exact sequence that reproduces it — bough is a
+Use the issue templates, and include the exact sequence that reproduces it. bough is a
 TUI, and "it looked wrong" isn't actionable without the keystrokes.
 
 Security issues do **not** go in the tracker: see [`SECURITY.md`](SECURITY.md).

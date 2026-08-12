@@ -18,7 +18,7 @@ Not acceptable, anywhere in the project:
 - Harassment, public or private; sexualized language, imagery, or attention.
 - Personal attacks, insults, trolling, or political flamewars.
 - Publishing someone's private information without permission.
-- Sustained disruption — relitigating settled decisions, or wearing people down.
+- Sustained disruption: relitigating settled decisions, or wearing people down.
 
 ## Scope
 
@@ -32,7 +32,7 @@ reporter's identity is protected.
 
 Maintainers may edit, remove, or reject any contribution that violates this document, and
 will say why. Responses escalate as the situation warrants: a private warning, a temporary
-ban from interaction, or a permanent ban. Severity and pattern both count — one serious
+ban from interaction, or a permanent ban. Severity and pattern both count; one serious
 incident is enough, and so is a persistent low-grade one.
 
 Maintainers who violate this document face the same consequences, not fewer.

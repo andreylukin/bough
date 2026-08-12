@@ -3,7 +3,7 @@
 ## Read this first: bough has no isolation boundary
 
 This is a design decision, documented in [`docs/spec.md`](../docs/spec.md) §2 and in the
-README. Programs the model writes run **as you, with your full authority** — filesystem,
+README. Programs the model writes run **as you, with your full authority**: filesystem,
 network, subprocesses, arbitrary `npm:` imports. There is no sandbox, no egress proxy, and
 no credential gating. Host functions are convenience and session integration, never a
 wall.
@@ -36,7 +36,7 @@ because that is exactly what happens.
 
 ## Reporting
 
-Report privately — **do not open a public issue**.
+Report privately, and **do not open a public issue**.
 
 Use GitHub's private vulnerability reporting: **Security → Report a vulnerability** on
 <https://github.com/andreylukin/bough/security/advisories/new>.
@@ -47,7 +47,7 @@ gains. A working proof of concept helps a lot.
 ## What to expect
 
 - **Acknowledgement within 3 business days.**
-- An assessment — in-scope or not, and a severity — within 10 business days.
+- An assessment (in-scope or not, and a severity) within 10 business days.
 - For confirmed in-scope issues: a fix or a documented mitigation, coordinated disclosure
   via a GitHub Security Advisory, and credit in the advisory unless you'd rather not be
   named.
