@@ -30,25 +30,26 @@ A headless server owns all state and execution. Clients are views over it.
 ## 3. Architecture
 
 ```
-┌─────────────┐   HTTP + SSE    ┌──────────────────────────────────────┐
-│ TUI (OpenTUI)│ ──────────────▶│  server  (Bun, 127.0.0.1:4321)       │
-│  CLI (exec) │ ◀─────────────── │  ├─ turn runner                      │
-└─────────────┘   events         │  ├─ program worker   (inherit perms) │
-                                 │  ├─ workflow worker  (no perms)      │
-                                 │  ├─ SQLite  ~/.bough/bough.db        │
-                                 │  └─ artifacts  ~/.bough/artifacts/   │
-                                 └──────────────────────────────────────┘
+┌───────────────┐  HTTP + SSE   ┌──────────────────────────────────────┐
+│ TUI (ratatui) │ ─────────────▶│  server  (Rust, 127.0.0.1:4321)      │
+│  CLI (exec)   │ ◀─────────────│  ├─ turn runner                      │
+│  ACP client   │   events      │  ├─ program sidecar                  │
+└───────────────┘               │  ├─ workflow sidecar                 │
+                                │  ├─ SQLite  ~/.bough/bough.db        │
+                                │  └─ artifacts  ~/.bough/artifacts/   │
+                                └──────────────────────────────────────┘
 ```
 
-- **Server** — one Bun process. JSON API, SSE event stream, static artifact
+- **Server** — one Rust process. JSON API, SSE event stream, static artifact
   hosting. Binds loopback only; no auth layer.
-- **Program worker** — a fresh `Worker` per round, running at the user's own
-  authority: there is no permission layer to narrow (§2). Host functions bridge over
-  `postMessage`.
-- **Workflow worker** — a `Worker` running one orchestration script. It is a
+- **Program sidecar** — a fresh JS process per round (`bun` if on PATH, else
+  `node`), running at the user's own authority: there is no permission layer to
+  narrow (§2). Host functions bridge over a line protocol on its stdio.
+- **Workflow sidecar** — a JS process running one orchestration script. It is a
   scripting surface, not a sandbox: its capabilities are `agent()`, `phase()`,
   `log()`, and the pipeline helpers, and it reaches the world only through them.
-- **Clients** — an OpenTUI TUI and a headless `bough exec` one-shot CLI.
+- **Clients** — a ratatui TUI, a headless `bough exec` one-shot CLI, and `bough acp`
+  for editors that speak the Agent Client Protocol.
 
 ### The event stream
 
@@ -672,9 +673,9 @@ reaching into ancestor history is a 400.
 
 ## 15. Clients
 
-**TUI (OpenTUI).** State layer separated from rendering; no monolithic component. One
-tabbed panel holds every non-chat surface (tree, changes, model picker, MCP,
-skills, theme) with direct-jump keys. Chat shows folded reasoning, the program that
+**TUI (ratatui).** State layer separated from rendering; no monolithic component. One
+tabbed panel holds every non-chat surface (tree, changes, workflows, model picker, MCP,
+skills, hooks, context, theme) with direct-jump keys. Chat shows folded reasoning, the program that
 ran, live cost and context. A rail pins live subagents and background jobs, and ⏎
 on a job row opens its output.
 
@@ -696,9 +697,11 @@ problems.
 **Skills** are `/name` instruction bundles: a folder with `SKILL.md`, frontmatter
 (`name`, `description`, optional `mcp:` server list), and a markdown body appended
 to the system prompt for that run. `${SKILL_DIR}` resolves to the skill's folder so
-instructions can reference helper scripts. Sources, first name wins: bundled →
-`~/.bough/skills`. One skill ships bundled: **`history`**, documenting how to query
-bough's own SQLite.
+instructions can reference helper scripts. Sources, first name wins: bundled → project
+(`.agents/skills`, `.claude/skills`) → `~/.bough/skills` → plugins → the foreign tiers
+another harness already wrote (see [extending.md](extending.md)). Seven ship bundled:
+**`history`**, **`wayfinder`**, **`domain-modeling`**, **`grilling`**, **`analyze-logs`**,
+**`flint`** and **`prepopulate-tags`**.
 
 **Theming** is a named partial palette over a fixed set of semantic tokens,
 persisted server-side and served over HTTP. The TUI fetches it at boot and paints
