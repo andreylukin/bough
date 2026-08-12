@@ -15,7 +15,7 @@ A headless server owns all state and execution. Clients are views over it.
 1. **One program per round.** The model's only action is `run_steps(code)`. Control
    flow belongs in the program, not in a chain of round-trips.
 2. **No isolation boundary.** Programs run as the user, with the user's full
-   authority — filesystem, network, subprocesses, `npm:`/`jsr:` imports. Host
+   authority — filesystem, network, subprocesses, `npm:` imports. Host
    functions are convenience and session integration, never confinement. bough
    states this plainly rather than implying safety it does not provide.
 3. **In place.** The agent edits the user's real checkout. `git diff` is the review
