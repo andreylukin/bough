@@ -13,14 +13,14 @@ lifecycle; the **binary** owns everything else.
 | `bough setup` | Fresh clone → running: install dependencies, configure env, start |
 | `bough start` | Install and start the background service (auto-starts at login) |
 | `bough kill` | Stop the service and keep it stopped across logins (`bough stop` also works) |
-| `bough restart` | Pick up code changes — there is no file watcher |
+| `bough restart` | Pick up code changes; there is no file watcher |
 | `bough update` | Fast-forward to `origin/main`, rebuild, restart |
 | `bough status` | Is it up, on what port, since when |
 | `bough logs` | Server logs |
 | `bough run` | Run the server in the foreground (what the service executes) |
 | `bough --version` | The version (`-V` and `bough version` also work) |
 
-## `bough exec` — headless turn
+## `bough exec`: headless turn
 
 ```
 bough exec [-w DIR] [-m MODEL] [--json] [--timeout SECS] [--port N] "prompt"
@@ -32,21 +32,21 @@ one JSON envelope per line. `bough prompt` is the same command under the name pe
 reach for first.
 
 **Exit codes:** `0` completed · `1` the turn errored · `2` usage or connection problem.
-That split is the contract worth scripting against — a non-zero from a *failed turn* is
+That split is the contract worth scripting against: a non-zero from a *failed turn* is
 distinguishable from a non-zero from a *broken invocation*.
 
-## `bough acp` — Agent Client Protocol
+## `bough acp`: Agent Client Protocol
 
 ```
 bough acp
 ```
 
 Speaks ACP on stdin/stdout so a client like Zed can drive bough sessions and receive
-streaming updates. It is a **client of the bough server, not a second server** — start
+streaming updates. It is a **client of the bough server, not a second server**, so start
 `bough start` first. stdout carries the protocol and nothing else; diagnostics go to
 stderr.
 
-## `bough tags` — the command memory
+## `bough tags`: the command memory
 
 ```
 bough tags                  # this project's tag vocabulary, as the model is primed with it
@@ -62,7 +62,7 @@ program each command ran in, `--limit` / `--days` / `--json` do the obvious.
 Exit `1` means no command memory yet, which is different from an error. Full mechanism:
 [tags.md](tags.md).
 
-## `bough notes` — what the commands MEANT
+## `bough notes`: what the commands MEANT
 
 ```
 bough notes                 # every note, most out of date first
@@ -83,9 +83,9 @@ more tags, colon separated; a `## Heading` starts a section, and a `tags:` line 
 narrows that section so it also appears on other notes sharing those tags.
 
 A note holds the decision and the reason; it holds no commands, because `bough tags show
-TAG` already does — and it prints the note above them. Full mechanism: [notes.md](notes.md).
+TAG` already does, and it prints the note above them. Full mechanism: [notes.md](notes.md).
 
-## `bough patterns` — read a big log
+## `bough patterns`: read a big log
 
 ```
 bough patterns [--llm|--json|--human] [--top N] [--threshold F] [FILE]
@@ -99,7 +99,7 @@ Defaults to `--human` on a terminal and `--llm` otherwise.
 Raise `--threshold` if distinct statements are being merged; lower it if one statement is
 splitting into near-duplicates.
 
-## `bough mcp` — servers and grants
+## `bough mcp`: servers and grants
 
 ```
 bough mcp                            # every server's state

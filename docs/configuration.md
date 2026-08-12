@@ -4,7 +4,7 @@
 
 Read from `~/.bough/env` (and the process environment).
 
-**Keys** — at least one is required. See [install.md](install.md).
+**Keys.** At least one is required. See [install.md](install.md).
 
 ```
 ANTHROPIC_API_KEY  OPENAI_API_KEY  OPENROUTER_API_KEY  CLOUDFLARE_API_TOKEN
@@ -32,7 +32,7 @@ flag could be read, so a `--port` that parsed and did nothing would be the bug.
 All three are also settable in the model picker (`^o`), which persists to
 `~/.bough/model.json`.
 
-**Endpoints** — every provider's base URL is overridable, and both the picker and the
+**Endpoints.** Every provider's base URL is overridable, and both the picker and the
 turn read the same variable, so a custom base moves both.
 
 | | |
@@ -43,7 +43,7 @@ turn read the same variable, so a custom base moves both.
 | `CLOUDFLARE_API_BASE` | default `https://api.cloudflare.com/client/v4` |
 
 This is how you reach something that is not the vendor: a gateway, a proxy, or a model
-running on your own machine. Use the **OpenRouter** slot for anything OpenAI-compatible —
+running on your own machine. Use the **OpenRouter** slot for anything OpenAI-compatible:
 it speaks `/v1/chat/completions`, which is the dialect Ollama, vLLM, LM Studio and
 LiteLLM serve. Point `OPENROUTER_API_BASE` at the server, put any non-empty string in
 `OPENROUTER_API_KEY` for the servers that ignore it, and address the model by its
@@ -106,7 +106,7 @@ is per-session working space.
 
 ## The database
 
-One SQLite file, and **the table set is closed** — every column is created in a single
+One SQLite file, and **the table set is closed**: every column is created in a single
 block at open. There is no migration ladder, deliberately: the previous implementation
 accumulated one column at a time, and the result was a schema you could only learn by
 reading its migration history. A change that needs a new column stops and asks.
@@ -118,7 +118,7 @@ messages_fts  command_history_fts
 ```
 
 Sessions form a forest by `parent_id`, and a session's thread is its ancestors' messages
-plus its own — which is what makes fork and compaction cheap. Message ordering is
+plus its own, which is what makes fork and compaction cheap. Message ordering is
 `(created_at, rowid)` everywhere, never `created_at` alone, because branch seeding and a
 turn started immediately after can land in the same millisecond.
 
@@ -128,4 +128,4 @@ persisted row would always be a lie after a restart), no message embeddings (cro
 message search is keyword FTS), and no artifacts or skills tables (the filesystem is the
 source of truth, and both survive a database reset).
 
-`bough tags sql` opens this file read-only — see [tags.md](tags.md).
+`bough tags sql` opens this file read-only; see [tags.md](tags.md).

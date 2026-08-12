@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>A coding agent that acts by writing programs.</b><br>
-  One JavaScript program per round — loops, branching, composition — run against your real checkout.
+  One JavaScript program per round, with real loops and branching, run against your real checkout.
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
   <img src="assets/screenshot-conversation.png" alt="bough conversation" width="820">
 </p>
 
-**bough** rhymes with *now*, not with *dough* — /baʊ/. It is the word for a branch of a tree, which
+**bough** rhymes with *now*, not with *dough*: /baʊ/. It is the word for a branch of a tree, which
 is what a conversation is here: you fork a turn and the old line goes on living as a branch.
 
 Most harnesses let the model emit one tool call and wait. bough gives it a single tool that takes a
@@ -30,7 +30,7 @@ bough is an alternative harness **design**, not a better coding agent. That dist
 of the project, and this README tries not to blur it.
 
 > [!WARNING]
-> **There is no isolation boundary.** Programs run as you, with your full authority — filesystem,
+> **There is no isolation boundary.** Programs run as you, with your full authority: filesystem,
 > network, subprocesses, `npm:` imports. No sandbox, no egress proxy, no credential gating. Host
 > functions are convenience and session integration, never a wall.
 >
@@ -43,17 +43,16 @@ of the project, and this README tries not to blur it.
 
 - **One program per round.** The model's only action is `run_steps(code)`. Control flow lives in the
   program, not in a chain of round-trips.
-- **In place.** The agent edits your own checkout — no copy, no overlay. The Changes rail is
+- **In place.** The agent edits your own checkout. No copy, no overlay. The Changes rail is
   `git diff` against the sha the session started from; you deliver with `git commit` / `git push`.
 - **History is a tree.** Fork any turn, compact a span onto a new branch, lift messages into a fresh
-  root. Nothing is destructively rewritten — every operation produces a new branch.
+  root. Nothing is destructively rewritten; every operation produces a new branch.
 - **The server is the system.** State, execution, and orchestration are server-side. A client can
   crash or detach without affecting a running turn.
 - **Delegation is core.** Subagents and workflows are primary capabilities with real persistence,
   lifecycle control, and observability.
 
-A round looks like this — one program that scans, fans out, and reports, where another harness
-would spend five round-trips:
+Here is a round. It is one program where another harness would spend five round-trips:
 
 ```js
 // Which crates still pin the old ratatui, and do they still pass?
@@ -73,12 +72,12 @@ console.log(broken.length ? `failed: ${broken.join(", ")}` : "all green");
 ```
 
 The loop, the fan-out and the branch are the model's own code. `console.log` is what streams to
-you and what comes back as the round's result, so the program decides what is worth your context —
+you and what comes back as the round's result, so the program decides what is worth your context:
 here, the names that failed rather than four test logs.
 
 ## Install
 
-macOS or Linux. Builds from source — the first run takes a few minutes.
+macOS or Linux. Builds from source, so the first run takes a few minutes.
 
 ```bash
 brew tap andreylukin/bough https://github.com/andreylukin/bough
@@ -88,7 +87,7 @@ bough start               # background service
 bough                     # the TUI
 ```
 
-Without Homebrew, the same install as a script — it clones into `~/bough` and builds there:
+Without Homebrew, the same install as a script. It clones into `~/bough` and builds there:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh)"
@@ -96,7 +95,7 @@ Without Homebrew, the same install as a script — it clones into `~/bough` and 
 
 **Models.** Four providers, and a model routes to one by the shape of its id alone:
 `claude-opus-5` is Anthropic, `openai:gpt-5` is OpenAI's Responses API, `vendor/model` is
-OpenRouter, `@cf/vendor/model` is Cloudflare Workers AI. OpenRouter is the wide door — if it
+OpenRouter, `@cf/vendor/model` is Cloudflare Workers AI. OpenRouter is the wide door: if it
 carries a model, bough can run a turn on it. Every provider's base URL is overridable, and the
 OpenRouter path speaks `/v1/chat/completions`, so pointing `OPENROUTER_API_BASE` at Ollama,
 vLLM, LM Studio or a gateway runs turns against that instead. The picker (`^o`) lists what your
@@ -107,15 +106,15 @@ Full instructions, keys, and updating: [docs/install.md](docs/install.md).
 ## Use it
 
 Point a session at a repo and ask in plain language. bough writes a small program, runs it, and
-answers — folded reasoning, the code that ran, live cost and context in one view. Unfold a step
-(`^e`) and you see the actual program and its output:
+answers. Folded reasoning, the code that ran, and live cost and context all sit in one view.
+Unfold a step (`^e`) and you see the actual program and its output:
 
 <p align="center">
   <img src="assets/screenshot-program.png" alt="an unfolded step: the program that ran, and its output" width="820">
 </p>
 
 Everything that is not the conversation lives in one panel with nine tabs, each on a direct-jump
-chord — the conversation tree (`^f`), changes (`^d`), workflows (`^w`), model (`^o`), MCP (`^p`),
+chord: the conversation tree (`^f`), changes (`^d`), workflows (`^w`), model (`^o`), MCP (`^p`),
 skills (`^k`), hooks (`^x`), context (`⌥c`), theme (`^y`). Press `?` for the full keymap.
 
 Review with `^d`: the Changes rail is `git diff` against the sha the session started from, per file
@@ -136,7 +135,7 @@ Rewind to any turn and send something else, and the old line survives as a branc
 
 ## What it can do
 
-**Programs.** Eighteen host functions in scope, plus the full JS runtime. One editing idiom —
+**Programs.** Eighteen host functions in scope, plus the full JS runtime. One editing idiom:
 `view` gives numbered lines with a version tag, `patch` names lines instead of quoting them, so code
 being edited never has to survive the model's own string escaping, and a stale edit reports a
 conflict instead of clobbering. → [docs/programs.md](docs/programs.md)
@@ -167,11 +166,11 @@ extensions bound into every program's scope, and MCP as a command rather than a 
 These are decisions, not gaps:
 
 - No confinement of any kind, and no credential gating.
-- No acceptance gate — the model reports what it did and you verify it. The harness does not re-run a
+- No acceptance gate. The model reports what it did and you verify it. The harness does not re-run a
   committed command or block a turn from finishing.
 - No local inference in the turn loop; the cheap tier is a hosted model. The one exception is the
   embedding layer, which runs a small model inside SQLite.
-- No embeddings over transcripts — cross-session transcript search is SQLite FTS. The two vector
+- No embeddings over transcripts; cross-session transcript search is SQLite FTS. The two vector
   indexes cover the tagged command memory and note sections; both live in a separate
   `embeddings.db` that is derived state and can be deleted at any time.
 - No per-agent worktrees or file leases. One shared checkout.

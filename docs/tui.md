@@ -12,7 +12,7 @@ reattaches. Subagents keep running when you quit.
 ## One panel
 
 Everything that is not the conversation lives in a single panel with nine tabs. Each
-has a direct-jump chord — pressing it opens the panel *on that tab*, so there is no
+has a direct-jump chord. Pressing it opens the panel *on that tab*, so there is no
 navigating.
 
 | Chord | Tab | |
@@ -30,14 +30,14 @@ navigating.
 `^t` opens and closes the panel without naming a tab. `tab` / `shift-tab` move between
 tabs, `/` filters within one, `esc` goes back to chat.
 
-Hooks is `^x` and not `^h` because `^h` *is* backspace (0x08) — the terminal delivers it
+Hooks is `^x` and not `^h` because `^h` *is* backspace (0x08): the terminal delivers it
 to the composer, and the tab would be unreachable. That was found by driving a real PTY.
 
 ## Composing
 
 | | |
 |---|---|
-| `enter` | send — interjects while a turn is running |
+| `enter` | send; interjects while a turn is running |
 | `meta-enter` | queue for after this turn |
 | `^j` | newline |
 | `tab` | accept the suggested next message |
@@ -67,7 +67,7 @@ reads, so it cannot drift from the bindings.
 | `esc` | from a subagent, back to the session that spawned it |
 
 Unfolding a step shows the actual program that ran and its output. That is the honest
-view of what bough did — not a summary of it.
+view of what bough did, not a summary of it.
 
 ## A session
 
@@ -75,12 +75,12 @@ Point it at a repo and ask in plain language. bough writes one program, runs it,
 answers. Reasoning folds away; cost and remaining context sit in the status bar.
 
 **Review** with `^d`. The Changes rail is `git diff` against the sha the session started
-from — per file, revertable per path, and never a staging area of its own. You commit
+from, per file, revertable per path, and never a staging area of its own. You commit
 and push with your own git.
 
 **Branch** with `esc` `esc` on an empty draft. Rewind to any turn, send something else, and the old line
 survives as a branch in the tree (`^f`). Compacting a span or lifting messages into a
 fresh root works the same way: a new branch, never a rewrite. Nothing is destroyed.
 
-**Interject** by typing while a turn runs — `enter` reaches the model mid-turn.
+**Interject** by typing while a turn runs: `enter` reaches the model mid-turn.
 `meta-enter` queues instead.

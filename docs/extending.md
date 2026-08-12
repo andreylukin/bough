@@ -1,6 +1,6 @@
 # Extending bough
 
-Four surfaces, in order of how much they are allowed to do — and one directory that
+Four surfaces, in order of how much they are allowed to do, plus one directory that
 bundles three of them.
 
 ## Plugins
@@ -19,7 +19,7 @@ makes two plugins able to ship the same `guard.lua`.
 
 Plugin hooks are **off** until you turn them on (`^x`), the same as a cloned repo's and
 for the same reason: a plugin is the unit you get from someone else, and one keystroke
-turning it on beats no way to un-run it. Skills and extensions have no such switch —
+turning it on beats no way to un-run it. Skills and extensions have no such switch,
 they do nothing until something names them.
 
 Precedence: a plugin's skills rank below `~/.bough/skills` and above every foreign
@@ -50,7 +50,7 @@ Resolution runs bundled → this repo → yours → the ones other tools already
 | Tier | Where |
 |---|---|
 | bundled | shipped in the binary |
-| project | `.agents/skills`, `.claude/skills` — nearest directory wins, from the git root down |
+| project | `.agents/skills`, `.claude/skills`; nearest directory wins, from the git root down |
 | user | `~/.bough/skills` |
 | plugin | `~/.bough/plugins/<name>/skills` |
 | foreign user | `~/.claude/skills`, `~/.agents/skills` |
@@ -64,7 +64,7 @@ symlinks. `^k` lists what resolved and from where.
 
 JavaScript bound into **every program's scope**, alongside the eighteen host functions.
 
-Drop files in `~/.bough/extensions`, a plugin's `extensions/`, or `.agents/extensions` —
+Drop files in `~/.bough/extensions`, a plugin's `extensions/`, or `.agents/extensions`.
 `*.js`, `*.mjs`, `*.cjs`,
 `*.ts` at the top level, plus `<sub>/index.*` one level down so an extension with helper
 modules can be a directory. Binding order is sorted, so it is stable across runs.
@@ -74,10 +74,10 @@ per-session entry in it would split the provider's prompt cache. It is one more 
 the program's scope, documented in one more prompt section.
 
 The functions never cross the wire: the sidecar `require()`s the file and binds its
-exports directly. Nothing reaches Rust. The consequence is deliberate — an extension has
+exports directly. Nothing reaches Rust. The consequence is deliberate: an extension has
 no handle to the session (no db, no recorder, no artifacts, no `ask`). What it *does*
 have is the bridged host functions, in scope exactly as they are for the program, so an
-extension composes `bash()` rather than reimplementing it — and a shell run that way
+extension composes `bash()` rather than reimplementing it, and a shell run that way
 still lands in the tag history.
 
 ## Hooks
@@ -91,15 +91,15 @@ Five events, plus any a plugin defines with `exec_autocmds`:
 
 Two kinds of change, and the line between them is the design:
 
-- **Returned** — the callback's value decides the thing happening right now: deny a
+- **Returned.** The callback's value decides the thing happening right now: deny a
   command, rewrite its input, replace its output, stop the turn. Synchronous; the caller
   is blocked on the answer.
-- **Effected** — `bough.session.prompt(...)`, `bough.session.set_title(...)` and friends
+- **Effected.** `bough.session.prompt(...)`, `bough.session.set_title(...)` and friends
   act on the session rather than the call in flight.
 
 That second kind is the point. A hook that can only return a patch is a filter; these are
 first-class enough to *start* work, not only veto it. The cost is running foreign code
-in-process, which is accepted deliberately — the alternative (shelling out and reading a
+in-process, which is accepted deliberately: the alternative (shelling out and reading a
 JSON patch off stdout) means every new power needs a new field in a schema somebody owns.
 
 The event surface is small on purpose. Claude Code fires about thirty events; four or
@@ -115,7 +115,7 @@ already have configured. What each reads:
 
 | Adapter | Reads |
 |---|---|
-| `claude-code.lua` | `~/.claude/settings.json`, the project's `settings.json` / `settings.local.json`, and an installed plugin's hooks — `hooks/hooks.json` or wherever its `plugin.json` points |
+| `claude-code.lua` | `~/.claude/settings.json`, the project's `settings.json` / `settings.local.json`, and an installed plugin's hooks (`hooks/hooks.json` or wherever its `plugin.json` points) |
 | `codex.lua` | `~/.codex/hooks.json`, the project's `.codex/hooks.json`, and `notify` from `config.toml` |
 
 Both fold the same contract: exit 2 blocks with stderr as the reason, exit 0 with JSON on
@@ -138,7 +138,7 @@ await bash(`bough mcp call SERVER TOOL '{"arg":"value"}'`, "mcp:call:thing")
 ```
 
 The turn's prompt carries the catalog of what is connected, so the model knows what
-exists without a tool-list entry per server — the same prompt-cache argument as
+exists without a tool-list entry per server, the same prompt-cache argument as
 extensions.
 
 Registering, granting and authorizing stay the human's job. `bough mcp` on its own

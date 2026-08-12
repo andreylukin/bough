@@ -14,7 +14,7 @@ Separate sessions, each working in the **same checkout**.
 | `await join(sessionId)` | Wait for a detached subagent and take its result in-band. |
 | `await adopt(sessionId)` | Take over a subagent's session. |
 
-**A subagent starts with no context beyond the task string.** It is the entire briefing —
+**A subagent starts with no context beyond the task string.** It is the entire briefing,
 every path, command, constraint and acceptance criterion has to be in it. They do inherit
 the turn's MCP servers.
 
@@ -53,7 +53,7 @@ const results = await pipeline(
 return { confirmed: results.flat().filter(Boolean) }
 ```
 
-`meta` must be a **pure literal** — no variables, calls or interpolation. It is read
+`meta` must be a **pure literal**: no variables, calls or interpolation. It is read
 host-side before the body runs.
 
 The body gets five primitives and nothing else:
@@ -61,16 +61,16 @@ The body gets five primitives and nothing else:
 | | |
 |---|---|
 | `agent(prompt, {label?, phase?, model?, schema?})` | Runs a subagent, returns its report; throws on failure. With `schema`, returns a parsed and validated object. |
-| `parallel(thunks)` | A barrier — awaits all. Failures come back as `null`; it never rejects. |
+| `parallel(thunks)` | A barrier that awaits all. Failures come back as `null`; it never rejects. |
 | `pipeline(items, ...stages)` | Each item flows through every stage independently, **no barrier**. A throwing stage drops that item to `null`. |
 | `phase(title)` / `log(msg)` | Fire-and-forget progress. |
 | `args` | The run's input. |
 
-Prefer `pipeline` — a barrier is only correct when a stage genuinely needs cross-item
+Prefer `pipeline`. A barrier is only correct when a stage genuinely needs cross-item
 context from all of the previous one.
 
 **The script has no permissions.** Those five plus `args` are its entire world: no
-filesystem, no network, no imports. It must also be deterministic — `Date.now()`,
+filesystem, no network, no imports. It must also be deterministic: `Date.now()`,
 argless `new Date()` and `Math.random()` throw, because journal replay depends on it.
 Pass timestamps in through `args`.
 
@@ -84,7 +84,7 @@ returns nothing produces `Result: null` and costs a second round-trip to fetch b
 
 Every `agent()` call is journaled before it runs. A stopped run loses no completed work,
 and `rerun` replays unchanged calls from the journal instantly, re-running only the calls
-whose prompt or options changed — so editing a script and rerunning costs only the edits.
+whose prompt or options changed, so editing a script and rerunning costs only the edits.
 
 Verbs: `workflow.start({script, args?})`, `.status({id})`, `.stop`, `.pause`, `.resume`,
 `.list()`, `.rerun({id, script?})`. Runs are visible in the TUI under `^w`.

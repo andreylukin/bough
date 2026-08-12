@@ -17,7 +17,7 @@ bough start`, or `bough kill` first.
 or call `~/.local/bin/bough` directly.
 
 **The service does not come back at login.** launchd on macOS and a systemd *user* unit
-on Linux. Where there is no user systemd — containers, WSL1 — it falls back to a plain
+on Linux. Where there is no user systemd (containers, WSL1) it falls back to a plain
 background process, which does not survive a logout. `bough start` again.
 
 ## A turn does nothing, or errors immediately
@@ -34,7 +34,7 @@ error, so check `bough logs` if turns fail with nothing else to show.
 
 ## The model wrote a program that failed
 
-Unfold the step (`^e`) — you get the actual program and its actual output. That is the
+Unfold the step (`^e`) and you get the actual program and its actual output. That is the
 first place to look, and usually the last.
 
 Two failures are common enough to name:
@@ -44,7 +44,7 @@ the output *string*; `sh()` returns `[{code, out}]`. Calling `.out` on a `bash()
 is the single most common way a round dies, and the stack makes it look like bough broke.
 
 **A patch conflict.** The file changed underneath the version that was viewed, on exactly
-the lines being edited. This is information, not a hiccup — it means something else
+the lines being edited. This is information, not a hiccup: it means something else
 touched that range, usually a sibling subagent. The fix is to re-view and redo the edit,
 never to retry the same patch.
 
@@ -52,16 +52,16 @@ never to retry the same patch.
 
 It did not. Output over ~20k chars is written to a file under `~/.bough/scratch/`, and
 the marker in the transcript names the path, the size, and what to run next. Read the
-file — re-running the command to see the middle is always wrong.
+file, and re-running the command to see the middle is always wrong.
 
 ## It does not remember anything
 
 `bough tags` exits `1` when there is no command memory for this repo yet, which is
-different from an error. Memory is per repo identity — the git origin URL, else the path
-— so a fresh clone with a different remote starts empty.
+different from an error. Memory is per repo identity (the git origin URL, else the path),
+so a fresh clone with a different remote starts empty.
 
 Semantic recall (`bough tags similar`) needs the optional vector layer. Without
-`sqlite-vec` and `sqlite-lembed` it is absent, and everything else still works —
+`sqlite-vec` and `sqlite-lembed` it is absent, and everything else still works,
 `bough tags show` and `bough tags sql` are the keyword paths and have no such dependency.
 `BOUGH_NO_EMBED=1` turns the layer off deliberately.
 
@@ -69,12 +69,12 @@ Semantic recall (`bough tags similar`) needs the optional vector layer. Without
 
 bough works in place, with no copy and no overlay, so everything it did is in `git diff`
 and `git status`. Revert per path from the Changes rail (`^d`), or with your own git.
-There is no hidden state to reconcile — that is the point of working in place.
+There is no hidden state to reconcile, which is the point of working in place.
 
 ## Still stuck
 
 - [Discussions](https://github.com/andreylukin/bough/discussions) for questions
-- [Issues](https://github.com/andreylukin/bough/issues/new/choose) for bugs — the exact
+- [Issues](https://github.com/andreylukin/bough/issues/new/choose) for bugs, with the exact
   keystrokes matter, since this is a TUI
 - [SECURITY.md](../.github/SECURITY.md) for anything security-related, never the public
   tracker
