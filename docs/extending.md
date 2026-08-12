@@ -41,16 +41,17 @@ project moves over one directory at a time. `~/.bough/AGENTS.md` applies everywh
 ## Skills
 
 A skill is a folder with a `SKILL.md` the model can pull in on demand, and `/` in the
-composer lists them. Four ship bundled: `history`, `wayfinder`, `domain-modeling`,
-`grilling`.
+composer lists them. Seven ship bundled, compiled into the binary: `history`,
+`wayfinder`, `domain-modeling`, `grilling`, `analyze-logs`, `flint` and
+`prepopulate-tags`.
 
-Resolution runs bundled → yours → the ones other tools already put on disk:
+Resolution runs bundled → this repo → yours → the ones other tools already put on disk:
 
 | Tier | Where |
 |---|---|
 | bundled | shipped in the binary |
-| user | `~/.bough/skills` |
 | project | `.agents/skills`, `.claude/skills` — nearest directory wins, from the git root down |
+| user | `~/.bough/skills` |
 | plugin | `~/.bough/plugins/<name>/skills` |
 | foreign user | `~/.claude/skills`, `~/.agents/skills` |
 | foreign plugin | installed Claude Code plugins, then Codex marketplaces |
