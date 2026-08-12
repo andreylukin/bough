@@ -32,6 +32,26 @@ flag could be read, so a `--port` that parsed and did nothing would be the bug.
 All three are also settable in the model picker (`^o`), which persists to
 `~/.bough/model.json`.
 
+**Endpoints** — every provider's base URL is overridable, and both the picker and the
+turn read the same variable, so a custom base moves both.
+
+| | |
+|---|---|
+| `ANTHROPIC_API_BASE` | default `https://api.anthropic.com` |
+| `OPENAI_API_BASE` | default `https://api.openai.com` |
+| `OPENROUTER_API_BASE` | default `https://openrouter.ai/api` |
+| `CLOUDFLARE_API_BASE` | default `https://api.cloudflare.com/client/v4` |
+
+This is how you reach something that is not the vendor: a gateway, a proxy, or a model
+running on your own machine. Use the **OpenRouter** slot for anything OpenAI-compatible —
+it speaks `/v1/chat/completions`, which is the dialect Ollama, vLLM, LM Studio and
+LiteLLM serve. Point `OPENROUTER_API_BASE` at the server, put any non-empty string in
+`OPENROUTER_API_KEY` for the servers that ignore it, and address the model by its
+`vendor/model` id.
+
+The `openai:` slot is *not* the one to use for a local runtime: OpenAI rides
+`/v1/responses`, and most local servers do not implement that endpoint.
+
 **Tuning**
 
 | | |
