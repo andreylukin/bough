@@ -459,7 +459,19 @@ pub(crate) fn openrouter_client_with_stall(
     Arc::new(OpenAICompatClient {
         opts,
         provider: Provider::Openrouter,
-        url: Arc::new(|_| Ok("https://openrouter.ai/api/v1/chat/completions".to_string())),
+        // Honours OPENROUTER_API_BASE, and must: discovery already reads it, so
+        // ignoring it here listed a custom endpoint's models in the picker and
+        // then sent the turn to openrouter.ai. Same default and same `/v1/…`
+        // suffix as `discover_openrouter_models`, which is what makes any
+        // chat-completions server (a gateway, a local runtime, a test double)
+        // usable by pointing both halves at one base.
+        url: Arc::new(|env| {
+            let base = env("OPENROUTER_API_BASE")
+                .map(|v| v.trim().trim_end_matches('/').to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| "https://openrouter.ai/api".to_string());
+            Ok(format!("{base}/v1/chat/completions"))
+        }),
         extra_headers: vec![("x-title".to_string(), "bough".to_string())],
         key_alternatives: vec![],
         stall_ms,
@@ -717,6 +729,41 @@ mod tests {
                 cache_write_tokens: Some(0),
                 cost_usd: None,
             })
+        );
+    }
+
+    /// The picker and the turn have to agree on where the models live.
+    /// Discovery has always read `OPENROUTER_API_BASE`; the run path hardcoded
+    /// openrouter.ai, so a custom base listed models it then refused to use.
+    #[tokio::test]
+    async fn openrouter_api_base_moves_the_turn_and_not_only_the_picker() {
+        let transport = Arc::new(CannedTransport::sse(vec![vec![
+            chunk(json!({ "content": "hi" }), None),
+            chunk(json!({}), Some("stop")),
+        ]]));
+        let env: crate::llm::routing::Env = Arc::new(|k| match k {
+            // A trailing slash is the natural way to write it and must not
+            // produce a doubled one.
+            "OPENROUTER_API_BASE" => Some("http://127.0.0.1:11434/api/".to_string()),
+            k if k.ends_with("_API_KEY") => Some("test-key".to_string()),
+            _ => None,
+        });
+        let client = openrouter_client(ProviderOpts {
+            env: Some(env),
+            transport: Some(transport.clone()),
+        });
+        client
+            .run(
+                params_over("local/model", &TOOLS, |_| {}),
+                Arc::new(|_| {}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            transport.requests.lock().unwrap()[0].url,
+            "http://127.0.0.1:11434/api/v1/chat/completions"
         );
     }
 
