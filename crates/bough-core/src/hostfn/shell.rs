@@ -1772,10 +1772,20 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn bash_wait_blocks_until_exit_returns_the_exit_line_and_suppresses_the_note() {
         let r = rig();
+        // The sleep is load-bearing, and it is covering a REAL race rather than
+        // a test artifact: `bash_wait` sets `claimed` only once it is entered
+        // (jobs.rs), while the exit handler decides whether to post a note the
+        // moment the process dies. `printf; exit 4` finished in about a
+        // millisecond, so on a loaded runner the exit won and the note this
+        // test says is suppressed had already been posted — ubuntu CI failed
+        // here on a docs-only commit. A command that outlives the call into
+        // `bash_wait` pins what the test is actually about: a claim suppresses
+        // the note. The product-side race (bashBg then an immediate bashWait on
+        // a very fast command can still post one) is issue #50.
         r.registry
             .bash_bg(
                 "quick failure",
-                "printf 'done\\n'; exit 4",
+                "sleep 0.4; printf 'done\\n'; exit 4",
                 &job_ctx_of(&r.ctx),
                 true,
             )
