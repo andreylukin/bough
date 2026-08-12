@@ -3,7 +3,7 @@
 ```
 ┌──────────────┐  HTTP + SSE   ┌──────────────────────────────────────┐
 │ TUI (ratatui)│ ─────────────▶│  server  (Rust, 127.0.0.1:4321)      │
-│  CLI (exec)  │ ◀──────────────│  ├─ turn runner                      │
+│  CLI (exec)  │ ◀─────────────│  ├─ turn runner                      │
 │  ACP client  │   events      │  ├─ program sidecar                  │
 └──────────────┘               │  ├─ workflow sidecar                 │
                                │  ├─ SQLite  ~/.bough/bough.db        │
