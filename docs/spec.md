@@ -1,10 +1,10 @@
-# bough — harness specification
+# bough: the harness specification
 
 ## 1. What bough is
 
 bough is a coding agent that acts by **writing programs**. Instead of emitting one
 tool call at a time and waiting, the model writes a single JavaScript program per
-round — with loops, branching, and composition — and a harness executes it against
+round, with loops and branching and composition, and a harness executes it against
 the user's machine. Delegation is first-class: a program can spawn subagents or
 launch a detached workflow that fans work across many agents.
 
@@ -15,13 +15,13 @@ A headless server owns all state and execution. Clients are views over it.
 1. **One program per round.** The model's only action is `run_steps(code)`. Control
    flow belongs in the program, not in a chain of round-trips.
 2. **No isolation boundary.** Programs run as the user, with the user's full
-   authority — filesystem, network, subprocesses, `npm:` imports. Host
+   authority: filesystem, network, subprocesses, `npm:` imports. Host
    functions are convenience and session integration, never confinement. bough
    states this plainly rather than implying safety it does not provide.
 3. **In place.** The agent edits the user's real checkout. `git diff` is the review
    payload; `git commit` and `git push` are the delivery mechanism.
 4. **History is a tree.** Any turn can be branched. Nothing is ever destructively
-   rewritten — compaction and forking both produce new branches.
+   rewritten; compaction and forking both produce new branches.
 5. **The server is the system.** All state, execution, and orchestration live
    server-side. A client can crash or detach without affecting a running turn.
 6. **Delegation is core.** Subagents and workflows are primary capabilities with
@@ -64,7 +64,7 @@ Event types: `session.created` · `session.updated` · `session.activity` ·
 **Reconnect.** `seq` is per-process and resets on server restart, so it is a
 *dedupe* key, not a resume cursor. A reconnecting client re-fetches the session
 (`GET /sessions/:id` returns `{session, thread}`) and reconciles against live
-events by message id — it does not replay from a seq. Events are display
+events by message id, and does not replay from a seq. Events are display
 transport; the database is the source of truth. Any state a client cannot
 reconstruct from a fresh fetch is a bug in the event design, not something to fix
 with replay.
@@ -103,7 +103,7 @@ ordered `parts[]` array. Parts are a discriminated union on `type`:
 background job exit, artifact comments). They render distinctly and replay to the
 model as user-side text.
 
-Image bytes live outside the parts JSON — the part stores a path under
+Image bytes live outside the parts JSON: the part stores a path under
 `~/.bough/attachments/`, so rows stay small and replay survives a moved file.
 
 ### Turns
@@ -118,7 +118,7 @@ and the session recovers instead of hanging.
 `workflows`, `workflow_agents`, `session_state` (durable KV), `schedules`,
 `messages_fts` (keyword search over transcripts).
 
-Artifacts and skills are filesystem-backed — the directory is the source of truth,
+Artifacts and skills are filesystem-backed, so the directory is the source of truth,
 and both survive a database reset.
 
 ## 5. The turn
@@ -141,7 +141,7 @@ killed, the worker is wound down, and the partial tool result is persisted with
 fresh turn when the current one ends, rather than being dropped or racing it.
 
 **Ending.** A turn never ends implicitly. The model calls `stop` after its final
-text, in the same response. Every turn must produce user-visible text — a turn of
+text, in the same response. Every turn must produce user-visible text, because a turn of
 only tool calls shows the user nothing.
 
 There is no acceptance gate. The model reports what it did; the user verifies. The
@@ -152,13 +152,13 @@ across the tree comes from subagents and workflows, each of which is its own
 session.
 
 **Retry.** A tool call whose input is cut off mid-stream is retried rather than
-executed with a truncated or empty argument — executing it would run the wrong
+executed with a truncated or empty argument, because executing it would run the wrong
 program. The retry emits `message.retry` so the UI can show it happened. Retries
 are bounded; an exhausted retry surfaces as a turn error.
 
 **Context overflow.** When a turn would exceed the model's context window, the turn
 fails with an explicit error naming the limit. Compaction is a deliberate,
-user-initiated branch (§14) — the harness never silently summarizes a conversation
+user-initiated branch (§14); the harness never silently summarizes a conversation
 out from under the user, and never auto-compacts mid-turn.
 
 **Usage.** Token counts and cost are recorded per turn from the provider's usage
@@ -237,9 +237,10 @@ capabilities:
 | Skill bodies | The user's message named a skill |
 | Project rules (`AGENTS.md`) | The workspace or `$BOUGH_HOME` has one |
 
-**Project rules.** bough reads `AGENTS.md` — never `CLAUDE.md`, which is written
-about another tool's verbs. Two tiers: `$BOUGH_HOME/AGENTS.md`, then every
-`AGENTS.md` from the git root down to the workspace directory, nearest last, so a
+**Project rules.** One file **per directory**: `AGENTS.md` if it exists, else
+`CLAUDE.md`. The fallback is per directory and never a second file, so a directory
+with both is read exactly as its author meant. Two tiers: `$BOUGH_HOME/AGENTS.md`,
+then every such file from the git root down to the workspace directory, nearest last, so a
 monorepo's package rules win over its house style. The walk stops at the git root; a
 workspace outside a checkout reads only its own. Read **per turn**, not per session,
 so editing the file to correct a misbehaving model takes effect on the next message.
@@ -251,7 +252,7 @@ user debugs by guessing, and "is it even being read" was unanswerable from insid
 the product. Three surfaces, all fed from the same read the prompt was built from: a
 dim `#` row in the transcript naming the files in effect, `/rules` for their full
 paths, sizes and precedence order, and one `[rules]` line on the turn where the set
-changes — a file added, removed, or edited — which is the surface that matters,
+changes (a file added, removed, or edited), which is the surface that matters,
 because per-turn reading means a mid-session edit lands silently otherwise.
 
 A host function exists **only** when the prompt grants it. The model never guesses
@@ -272,12 +273,12 @@ at the user's permission level and may ignore every host function.
 | `await bashWait(id)` | Block until the job finishes. |
 | `await bashKill(id)` | SIGTERM the job. |
 
-Oversized output is truncated deterministically — head and tail kept verbatim with
+Oversized output is truncated deterministically: head and tail kept verbatim with
 an explicit omission marker in between. Programs are expected to filter at the
 source (`rg`, `head`, `tail`, targeted reads) rather than dump and rely on
 truncation.
 
-### Files — one editing idiom
+### Files: one editing idiom
 
 | Signature | Behavior |
 |---|---|
@@ -290,7 +291,7 @@ never has to survive the model's own string escaping. The TAG pins the version t
 was read: when a file changed underneath but the patched lines are untouched, the
 edit rebases onto the new version; when they *are* touched, it reports a conflict.
 With subagents sharing one checkout, this is the primary safeguard against silent
-clobbering — it is load-bearing, not merely preferred.
+clobbering. It is load-bearing, not merely preferred.
 
 Patch grammar:
 
@@ -307,12 +308,12 @@ INS.HEAD:
 INS.TAIL:
 ```
 
-- An **empty tag** (`[path#]`) means "the version I just viewed" — the normal case.
+- An **empty tag** (`[path#]`) means "the version I just viewed", the normal case.
   An explicit tag chains a second patch onto the TAG a previous patch echoed,
   without viewing again.
 - Body rows are `+`-prefixed **new text only**; `+` alone is a blank line. There are
   no `-` rows.
-- Every line number is in the coordinates of the viewed version — earlier edits in
+- Every line number is in the coordinates of the viewed version; earlier edits in
   the same patch do not shift later numbers.
 - One patch may carry several files. It applies **all of them or none**.
 
@@ -352,12 +353,12 @@ One door for the model and the human, and no bridge to keep in step with it.
 ## 7. Subagents
 
 A subagent is a real session (`kind: "subagent"`) with a **fresh, task-only
-thread** — no inherited context. The task string is the entire briefing, so it must
+thread**, with no inherited context. The task string is the entire briefing, so it must
 carry every path, constraint, and acceptance criterion. It does inherit the
 spawning turn's MCP grants.
 
 **Shared checkout.** Subagents work in the *same* checkout as their spawner. There
-is no per-agent worktree and nothing to merge afterwards — a subagent's writes are
+is no per-agent worktree and nothing to merge afterwards: a subagent's writes are
 already present when it reports. The spawner is responsible for giving concurrent
 agents disjoint files; `patch`'s hash anchoring is what turns a violation into a
 reported conflict rather than a silent overwrite.
@@ -371,7 +372,7 @@ delivers its report as a system note that wakes an idle spawner with a fresh tur
 or rides the queued drain if one is mid-flight.
 
 **Caps.** At most 8 spawns per turn and 4 subagents running concurrently across the
-whole tree. Exceeding a cap fails that launch with an error — spawners should use
+whole tree. Exceeding a cap fails that launch with an error, so spawners should use
 `Promise.allSettled`, not `Promise.all`, so one refused launch doesn't discard
 siblings that already started. Subagents may delegate one level further, blocking
 only.
@@ -401,7 +402,7 @@ const findings = await pipeline(
 return findings.flat().filter(Boolean)
 ```
 
-`meta` must be a **pure literal** — no variables, calls, or interpolation — and is
+`meta` must be a **pure literal** (no variables, calls, or interpolation) and is
 extracted host-side by a balanced-brace scan before the body runs.
 
 ### Primitives
@@ -419,20 +420,20 @@ extracted host-side by a balanced-brace scan before the body runs.
 `agent(prompt, {schema})` forces the subagent to return JSON validated against the
 supplied JSON Schema, and `agent()` resolves to the parsed object. Validation
 happens at the tool-call layer so the model retries on mismatch. Scripts branch on
-typed data rather than parsing prose — this is the primary reliability mechanism
+typed data rather than parsing prose. This is the primary reliability mechanism
 for fan-out, since delegated work reports no other machine-readable result.
 
 ### The journal
 
 Every `agent()` call is journaled into `workflow_agents` **before it runs**, keyed by
-`hash(prompt + label + phase + resolved model + schema)` — everything that decides
+`hash(prompt + label + phase + resolved model + schema)`: everything that decides
 what the subagent will be asked. The key must hash the *resolved* model, not just one
 the script named: a script naming none still runs on something, and hashing only the
 named model let a repinned session replay stale answers as a fresh run.
 
 The journal does three jobs at once, and the first is the reason it exists:
 
-1. **Completed work is never redone.** A key hit replays its stored result instantly —
+1. **Completed work is never redone.** A key hit replays its stored result instantly,
    no subagent, no cost.
 2. **Live progress.** Each row carries status (`queued` → `running` →
    `done`/`error`/`stopped`/`cached`), label, phase, and the backing session id for
@@ -440,7 +441,7 @@ The journal does three jobs at once, and the first is the reason it exists:
    shows queued agents rather than pretending all of them are working.
 3. **The record.** Each agent's returned text or error, kept after the run ends.
 
-Only successful calls replay. A failed call re-runs live — the failure may well be
+Only successful calls replay. A failed call re-runs live, because the failure may well be
 the thing the author just fixed.
 
 **Replay is always reported.** Any operation that replays returns how many calls were
@@ -451,7 +452,7 @@ key defect visible. This is a required part of the response, not a UI nicety.
 ### Replay is prefix-bounded
 
 A relaunch replays **the longest unchanged prefix** of `agent()` calls. The first
-call whose key changed, and *everything after it*, runs live — even calls whose own
+call whose key changed, and *everything after it*, runs live, even calls whose own
 key is unchanged.
 
 This is deliberately more conservative than replaying every key hit wherever it
@@ -459,7 +460,7 @@ appears, and the reason is bough-specific: **agents mutate a shared checkout.** 
 call's key covers its prompt, not the world that prompt runs against. Two agents can
 ask "run the test suite" with byte-identical prompts and mean entirely different
 questions, because an upstream agent rewrote the code in between. Replaying the
-second one returns a verdict about a tree that no longer exists — and unlike a cache
+second one returns a verdict about a tree that no longer exists, and unlike a cache
 miss, which only costs money, a stale hit is a wrong answer presented as a fresh one.
 
 The prefix rule is what makes the shared checkout safe to combine with replay. It
@@ -477,8 +478,8 @@ What a long run supports instead:
   finish normally and their results are journaled. Resume releases the gate and the
   run continues. Nothing is discarded and no completed work is lost.
 - **stop, then relaunch from the journal.** To change what a run does, stop it, edit
-  the script — on disk at `~/.bough/workflows/<id>.js`, through the API, or by asking
-  the agent to rewrite it — and relaunch seeded from the stopped run's journal. The
+  the script: on disk at `~/.bough/workflows/<id>.js`, through the API, or by asking
+  the agent to rewrite it, and relaunch seeded from the stopped run's journal. The
   unchanged prefix replays; the rest runs live. This is a **new run** with its own id,
   reading the old run's journal. It is the same operation as a rerun; a rerun is just
   the case where the script did not change.
@@ -497,12 +498,12 @@ A run can spawn hundreds of agents and quietly become the most expensive thing i
 product, so cost is a first-class surface rather than something discovered afterward.
 
 - **Size guideline.** A configurable target for how many agents a generated script
-  should aim for — `small` (<5), `medium` (<15), `large` (<50), or unrestricted. It is
+  should aim for: `small` (<5), `medium` (<15), `large` (<50), or unrestricted. It is
   advice to the model that writes the script, not a cap; a request that plainly calls
   for a different scale overrides it. Default `medium`.
 - **Large-run warning.** A run that schedules more than the guideline's count, or
   whose projected token total crosses a threshold, is flagged in the run view. The
-  warning is advisory — it does not pause or throttle — and points at the control that
+  warning is advisory (it does not pause or throttle) and points at the control that
   stops the run.
 - **Per-agent accounting.** The run view shows tokens and elapsed time per agent and
   per phase, so an expensive stage is visible while it is running rather than in the
@@ -515,8 +516,8 @@ relaunch replays it.
 
 A run whose script did what you wanted can be **saved as a named workflow**, at
 `~/.bough/workflows/saved/<name>.js` or in the project. A saved workflow is invoked by
-name and parameterized through `args`, so an orchestration worth repeating — a review
-you run on every branch — becomes a command rather than a script you re-derive.
+name and parameterized through `args`, so an orchestration worth repeating, such as a review
+you run on every branch, becomes a command rather than a script you re-derive.
 
 ### Control
 
@@ -525,7 +526,7 @@ you run on every branch — becomes a command rather than a script you re-derive
 - **pause** / **resume** as above.
 - **rerun** starts a new run seeded from a finished run's journal.
 - Concurrency is capped by the run's own semaphore: up to 16 agents at once, fewer on
-  machines with few cores. Subagent caps do not apply inside a workflow — queue as
+  machines with few cores. Subagent caps do not apply inside a workflow; queue as
   many calls as needed.
 - A run may spawn at most 1,000 agents in its lifetime. This is a runaway-loop
   backstop, not a working limit.
@@ -543,7 +544,7 @@ Spec grammar: `every:<N><m|h|d>` (N ≥ 1) or `daily@HH:MM` (local wall clock).
 
 **Catch-up.** `next_run_at` advances *from now* at fire time, never from the stale
 value. A server down through N missed slots fires **once** on the first tick after
-boot, then resumes cadence — no burst of make-up runs.
+boot, then resumes cadence, with no burst of make-up runs.
 
 **Background jobs.** Auto-backgrounded and explicit `bashBg` shells are tracked per
 session, survive the turn, and publish `job.spawned` / `job.exited`. Their output
@@ -555,13 +556,13 @@ buffers are readable while running and after exit.
 HTTP with OAuth/PKCE against a bough-hosted callback). Per-session grants carry
 into subagents.
 
-**There is no MCP host function.** A tool is called through the shell —
+**There is no MCP host function.** A tool is called through the shell,
 `bough mcp call SERVER TOOL '{"arg":"value"}'`, with oversized arguments piped on
-stdin — and the grant is enforced there against `$BOUGH_SESSION`, which every
+stdin, and the grant is enforced there against `$BOUGH_SESSION`, which every
 command carries. One calling convention serves the model and the human, and there
 is no bridge to keep in step with the CLI. The turn's prompt carries the catalog of
-what is connected; anything beyond calling — what state a server is in, why one is
-broken — is `bough mcp` and `bough mcp doctor`, answered fresh rather than from
+what is connected; anything beyond calling (what state a server is in, why one is
+broken) is `bough mcp` and `bough mcp doctor`, answered fresh rather than from
 conversation memory, since grants and connections change between turns. The OAuth client is registered
 dynamically where the authorization server offers it; where it does not, a registry
 entry may name a pre-registered client with `clientId` and a `clientSecret` given
@@ -578,8 +579,8 @@ that returns nothing means the pattern is wrong, not that the code is absent.
 
 ## 11. Artifacts
 
-`artifact(name, content)` writes to `~/.bough/artifacts/<sessionId>/` — outside the
-workspace, so publishing never pollutes the diff under review — and serves it from
+`artifact(name, content)` writes to `~/.bough/artifacts/<sessionId>/`, outside the
+workspace, so publishing never pollutes the diff under review, and serves it from
 the server origin. Names and session ids are confined to their directory.
 
 Every served HTML artifact gets a **comment layer** injected at serve time: the user
@@ -591,7 +592,7 @@ output the user chooses to open, not a containment boundary.
 
 Quality bar for generated pages: self-contained (no CDN, no external fonts or
 images), dense over decorative, responsive to ~375px, selectable text, and an
-"AI-generated — verify anything important" footer.
+"AI-generated, verify anything important" footer.
 
 ## 12. Models
 
@@ -618,12 +619,12 @@ untracked ones, per path, never touching anything the session did not change.
 
 **Non-git workspaces.** A session whose workspace is not a repository has no `base`
 and therefore no change set. The Changes rail says so plainly rather than showing an
-empty diff, and revert is unavailable. The agent still works there — it simply
+empty diff, and revert is unavailable. The agent still works there; it simply
 produces no reviewable change set, and nothing else degrades.
 
 ## 14. History operations
 
-All operate by **branching**, never by mutating history in place — with one named
+All operate by **branching**, never by mutating history in place, with one named
 exception, **Take-back**, whose rules are what keep it from becoming a general
 in-place rewrite.
 
@@ -641,8 +642,8 @@ in-place rewrite.
 `UNSEND_MS` after a send, Escape on an empty composer retracts the message: it is
 deleted from the conversation it was sent in, the partial answer it provoked goes
 with it, the turn is stopped, and the text returns to the composer. This was a fork
-— the message stayed, a sibling branch was created without it, and the user was
-moved there — which honored the rule above and served nobody: the gesture means "I
+the message stayed, a sibling branch was created without it, and the user was
+moved there, which honored the rule above and served nobody: the gesture means "I
 did not mean to send that", and answering a three-second-old typo with a permanent
 branch is not what undo is. Three guards keep the exception narrow: the session's
 **own** messages only (ancestor history belongs to another session's rows, as for
@@ -652,7 +653,7 @@ is for.
 
 **The TUI's `/compact` is a handoff, not a compaction.** Filling a context and
 wanting to keep going is answered by a clean thread that knows what matters, not by
-the same thread with one span summarized — so `/compact [goal]` runs Handoff and
+the same thread with one span summarized, so `/compact [goal]` runs Handoff and
 prefills the new root's composer with the distilled prompt, editable and unsent.
 Compaction proper remains the operation for shortening a thread you intend to stay
 in. bough never compacts on its own (§17).
@@ -680,14 +681,14 @@ ran, live cost and context. A rail pins live subagents and background jobs, and 
 on a job row opens its output.
 
 **One tree.** Conversations, their turns, and what branched off which turn are ONE
-walkable list — the switcher and the history are the same surface, because "which
+walkable list: the switcher and the history are the same surface, because "which
 turn of which conversation did that branch come from" is one question. A
 conversation expands to its turns; a branch hangs off the turn it cut from;
 delegated fan-outs stay collapsed to a count (§4). ⏎ opens a conversation and forks
 a turn, and `esc esc` at an idle composer lands the cursor on the last turn you
 would go back to.
 
-**CLI.** `bough exec [flags] "prompt"` — creates a session, opens the event stream
+**CLI.** `bough exec [flags] "prompt"` creates a session, opens the event stream
 *before* posting (a fast turn must not finish unseen), streams assistant text to
 stdout, exits 0 on a completed turn, 1 on an errored one, 2 on usage or connection
 problems.
@@ -705,7 +706,7 @@ another harness already wrote (see [extending.md](extending.md)). Seven ship bun
 
 **Theming** is a named partial palette over a fixed set of semantic tokens,
 persisted server-side and served over HTTP. The TUI fetches it at boot and paints
-truecolor — a theme is pure data, no rebuild. The picker previews live on cursor
+truecolor, and a theme is pure data with no rebuild. The picker previews live on cursor
 move and reverts on exit, so browsing never commits.
 
 ## 17. Non-goals
