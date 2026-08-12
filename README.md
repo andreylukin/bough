@@ -70,6 +70,12 @@ Without Homebrew, the same install as a script — it clones into `~/bough` and 
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh)"
 ```
 
+**Models.** Four providers, and a model routes to one by the shape of its id alone:
+`claude-opus-5` is Anthropic, `openai:gpt-5` is OpenAI's Responses API, `vendor/model` is
+OpenRouter, `@cf/vendor/model` is Cloudflare Workers AI. OpenRouter is the wide door — if it
+carries a model, bough can run a turn on it. The picker (`^o`) lists what your keys actually
+reach rather than a compiled-in catalog, and any one key is enough to start.
+
 Full instructions, keys, and updating: [docs/install.md](docs/install.md).
 
 ## Use it

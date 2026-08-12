@@ -81,8 +81,13 @@ $EDITOR ~/.bough/env
 ANTHROPIC_API_KEY=sk-ant-…
 OPENAI_API_KEY=…          # optional
 OPENROUTER_API_KEY=…      # optional
-CLOUDFLARE_API_TOKEN=…    # optional
+CLOUDFLARE_API_TOKEN=…    # optional — CLOUDFLARE_API_KEY works too
+CLOUDFLARE_ACCOUNT_ID=…   # required WITH the Cloudflare token, not instead of it
 ```
+
+Cloudflare is the one provider that needs two values. Discovery asks for the token and
+the account id together and returns nothing at all when either is missing, so a token on
+its own reads as "no Cloudflare models" rather than as an error.
 
 Models route to a provider by their id prefix, and the model picker (`^o`) lists what
 the server's keys can actually reach — not a compiled-in catalog. At least one key is
