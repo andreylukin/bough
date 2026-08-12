@@ -63,13 +63,22 @@ INSTALLER="${BOUGH_INSTALLER:-}"
 # (`svc_*`) rather than about the whole script.
 OS="$(uname -s)"
 
-for d in "/opt/homebrew/bin" "/usr/local/bin" "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.cargo/bin"; do
+for d in "/opt/homebrew/bin" "/usr/local/bin" "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.cargo/bin" "/Applications/Rancher Desktop.app/Contents/Resources/resources/darwin/bin"; do
   case ":$PATH:" in
     *":$d:"*) ;;
     *) [ -d "$d" ] && PATH="$PATH:$d" ;;
   esac
 done
 export PATH
+
+# Rancher Desktop installs Docker outside launchd's default PATH and exposes its
+# daemon on a user socket. Keep an explicit DOCKER_HOST untouched.
+if [ "$OS" = "Darwin" ] \
+  && [ -x "/Applications/Rancher Desktop.app/Contents/Resources/resources/darwin/bin/docker" ] \
+  && [ -S "$HOME/.rd/docker.sock" ] \
+  && [ -z "${DOCKER_HOST:-}" ]; then
+  export DOCKER_HOST="unix://$HOME/.rd/docker.sock"
+fi
 
 # ---------------------------------------------------------------------------
 # THE BINARY. Everything the user runs — the server, the TUI, `exec`, the CLIs —
