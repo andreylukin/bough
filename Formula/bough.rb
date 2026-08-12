@@ -20,8 +20,8 @@
 class Bough < Formula
   desc "Coding agent that acts by writing programs"
   homepage "https://github.com/andreylukin/bough"
-  url "https://github.com/andreylukin/bough/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "89ea82b6219f70ccd0934560d4e8f695525113c509fe117f4201cc9a0cd526ed"
+  url "https://github.com/andreylukin/bough/archive/refs/tags/v0.1.1.tar.gz"
+  sha256 "a7452c5564813c1101c702024ce2b83fa0f269a93d30971c45d4e5a06da2d25c"
   license "Apache-2.0"
   head "https://github.com/andreylukin/bough.git", branch: "main"
 

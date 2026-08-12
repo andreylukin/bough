@@ -245,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "bough"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "bough-core",
@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "bough-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "bough-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -315,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "bough-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "bough-core",
