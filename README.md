@@ -52,6 +52,30 @@ of the project, and this README tries not to blur it.
 - **Delegation is core.** Subagents and workflows are primary capabilities with real persistence,
   lifecycle control, and observability.
 
+A round looks like this — one program that scans, fans out, and reports, where another harness
+would spend five round-trips:
+
+```js
+// Which crates still pin the old ratatui, and do they still pass?
+const pinned = (await bash("rg -l 'ratatui = \"0.29\"' crates", "repo:scan:ratatui"))
+  .trim().split("\n").filter(Boolean);
+
+const names = pinned.map(p => p.split("/")[1]);
+
+// sh() runs them concurrently; a non-zero exit is data, not an exception.
+const runs = await sh(names.map(n => ({
+  cmd: `cargo test -p ${n} 2>&1 | tail -3`,
+  tag: `cargo:test:${n}`,
+})));
+
+const broken = names.filter((_, i) => runs[i].code !== 0);
+console.log(broken.length ? `${broken.length}/${names.length} failed: ${broken.join(", ")}` : "all green");
+```
+
+The loop, the fan-out and the branch are the model's own code. `console.log` is what streams to
+you and what comes back as the round's result, so the program decides what is worth your context —
+here, the names that failed rather than four test logs.
+
 ## Install
 
 macOS or Linux. Builds from source — the first run takes a few minutes.
