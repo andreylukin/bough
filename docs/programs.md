@@ -51,6 +51,10 @@ Output over ~20k chars is **saved to a file**: you get the first and last 5k plu
 marker naming the path. Nothing is lost, and re-running the command to see the middle is
 always the wrong move.
 
+That file lands in the session's scratch directory, which every command also gets as
+**`$BOUGH_SCRATCH`** — somewhere to put a temp file without choosing a path or littering
+the checkout. It is per-session and swept, so nothing there is worth keeping.
+
 `tags` are how commands become recallable across sessions — see [tags.md](tags.md).
 
 ### Files
