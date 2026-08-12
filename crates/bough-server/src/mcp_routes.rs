@@ -462,13 +462,15 @@ mod tests {
     use bough_core::schema::parts::{Session, SessionKind};
     use futures::FutureExt;
     use serde_json::json as j;
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{Arc, Mutex};
 
     /// The process manager is ONE object and these tests swap it, so they run one
     /// at a time. (Production has exactly one too — that is the point of it.)
+    /// The crate-wide one, not a private lock: `boot` swaps the same global
+    /// manager these tests do, and a lock only this module took left that race
+    /// live — which is what it was failing on.
     fn manager_lock() -> &'static tokio::sync::Mutex<()> {
-        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+        &crate::MCP_MANAGER_LOCK
     }
 
     struct FakeConnection {

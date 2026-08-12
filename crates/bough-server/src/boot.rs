@@ -881,6 +881,10 @@ mod tests {
         use bough_core::mcp::config::{set_activation, upsert_server, McpConfigOptions};
         use bough_core::mcp::manager::{set_mcp_manager, McpManager, McpManagerOptions};
 
+        // The global manager is one static for the whole binary; see the lock's
+        // own comment. Held until `previous` is back.
+        let _global = crate::MCP_MANAGER_LOCK.lock().await;
+
         let dir = std::env::temp_dir().join(format!("bough-boot-mcp-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let config = McpConfigOptions::with_file(dir.join("mcp.json"));
