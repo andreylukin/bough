@@ -19,8 +19,9 @@ docs/                README.md is the map. spec.md (what the system is) ·
 docs/history/        finished and unmaintained: port-plan.md, implementation-plan.md
 scripts/             setup.sh (fresh machine) · bough (the service manager) ·
                      smoke.sh and tui-test.sh (the PTY acceptance suites)
-Formula/             the Homebrew formula. A release bumps its url + sha256 here
-                     first; the tap repo carries a copy of this file
+Formula/             the Homebrew formula. A release tags the commit, then bumps
+                     this file's url + sha256 to that TAG (never a commit sha —
+                     it goes stale on the next push); the tap repo copies it
 .github/             CI, issue and PR templates, CONTRIBUTING · SECURITY · CODE_OF_CONDUCT
 assets/              the logo (logo.svg is the source; the PNGs are exports)
 ```
