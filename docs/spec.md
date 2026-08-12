@@ -716,14 +716,18 @@ Explicitly out of scope. These are decisions, not omissions:
 - **No acceptance gate.** No committed check, no harness-verified `done`.
 - **No local inference.** No supervised `llama-server`, no GGUF management. The
   cheap tier is a hosted model.
-- **No semantic recall.** Cross-session search is keyword (SQLite FTS) over
-  transcripts. No embeddings, no vector index.
-- **No output digestion or `extract()`.** Oversized output is truncated
-  deterministically.
+- **No semantic recall over transcripts.** Cross-session MESSAGE search is keyword
+  (SQLite FTS); there is no `message_embeddings` table and never will be. The tagged
+  command memory and note sections do each carry a vector index, in a separate
+  `embeddings.db` that is derived state and can be deleted at any time.
+- **No output digestion or `extract()`.** Oversized output is bounded
+  deterministically: the head and tail reach the model, and the whole of it goes to a
+  file in `$BOUGH_SCRATCH` whose path travels with the result.
 - **No `edit()` or `read()`.** One editing idiom.
 - **No archive, deprecate, or purge.** Visibility is derived from lineage.
 - **No per-agent worktrees or file leases.** One shared checkout.
-- **No benchmarking, probes, or metrics endpoints** in this repo.
+- **No probes or metrics endpoints** on the server. (`bench/` drives it from outside,
+  through the same CLI a person uses, and the server knows nothing about it.)
 - **No remote access.** Loopback only; no auth layer, no tunnel.
 - **No web UI.** The server is API plus artifact hosting.
 - **No workflow nesting or token budgets.**

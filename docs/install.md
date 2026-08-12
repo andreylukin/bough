@@ -136,8 +136,10 @@ data root is yours either way — `brew uninstall` does not touch `~/.bough`.
 Removing bough does not touch any repository it has worked in. Your code and its git
 history are yours and were never copied anywhere — that is what "in place" means.
 
-`bough purge` is unrelated to uninstalling: it deletes sessions archived more than 30
-days ago and needs the server running.
+There is nothing to prune, either: bough has no archive, hide or purge action and no
+columns behind one. A conversation's visibility is derived from what it *is* — a subagent
+or workflow branch collapses under the turn that spawned it — so nothing accumulates in a
+list waiting to be tidied away.
 
 ## Running a local checkout
 

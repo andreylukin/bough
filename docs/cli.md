@@ -18,7 +18,6 @@ lifecycle; the **binary** owns everything else.
 | `bough status` | Is it up, on what port, since when |
 | `bough logs` | Server logs |
 | `bough run` | Run the server in the foreground (what the service executes) |
-| `bough purge` | Delete sessions archived more than 30 days ago. Needs the server up |
 | `bough --version` | The version (`-V` and `bough version` also work) |
 
 ## `bough exec` — headless turn

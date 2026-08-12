@@ -770,20 +770,8 @@ cmd_tui() {
   exec "$RS_BIN" tui "$@"
 }
 
-# Hard-delete sessions archived over 30 days ago (the long-term purge; also runs on
-# boot). Talks to the running server so it uses the same DB handle.
-cmd_purge() {
-  if ! is_up; then
-    echo "server not running — start it first (bough start)" >&2
-    exit 1
-  fi
-  local n
-  n="$(curl -sf -m 10 -X POST "http://127.0.0.1:$PORT/purge" | sed -n 's/.*"purged":\([0-9]*\).*/\1/p')"
-  echo "purged ${n:-0} session(s) archived over 30 days ago"
-}
-
 usage() {
-  echo "usage: bough [tui|setup|start|kill|restart|update|status|logs|run|exec|acp|hooks|mcp|sync-mcp|tags|notes|patterns|purge]"
+  echo "usage: bough [tui|setup|start|kill|restart|update|status|logs|run|exec|acp|hooks|mcp|sync-mcp|tags|notes|patterns]"
   echo "  (no args) open the terminal UI (auto-starts the server)"
   echo "  setup    fresh clone → running: install deps, configure env, start"
   echo "  start    install + start the background service (auto-starts at login)"
@@ -806,7 +794,6 @@ usage() {
   echo "           bough notes [tree|show PATH|write PATH|append PATH \"...\"|stale|cites]"
   echo "  patterns compress a log into its distinct statements, with statistics:"
   echo "           bough patterns [--llm|--json|--human] [--top N] [FILE]"
-  echo "  purge    hard-delete sessions archived over 30 days ago (also runs on boot)"
   echo "  --version  print the version and exit (-V)"
 }
 
@@ -909,9 +896,6 @@ case "${1:-}" in
     # the server to read the log would be a circle.
     require_rust
     exec "$RS_BIN" patterns "$@"
-    ;;
-  purge)
-    cmd_purge
     ;;
   *)
     echo "error: unknown command '$1'" >&2
