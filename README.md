@@ -19,6 +19,9 @@
   <img src="assets/screenshot-conversation.png" alt="bough conversation" width="820">
 </p>
 
+**bough** rhymes with *now*, not with *dough* — /baʊ/. It is the word for a branch of a tree, which
+is what a conversation is here: you fork a turn and the old line goes on living as a branch.
+
 Most harnesses let the model emit one tool call and wait. bough gives it a single tool that takes a
 program: the model writes JavaScript with real control flow, and a harness executes it on your
 machine. A headless server owns all state and execution; the terminal UI is a view over it.
@@ -136,8 +139,9 @@ These are decisions, not gaps:
   committed command or block a turn from finishing.
 - No local inference in the turn loop; the cheap tier is a hosted model. The one exception is the
   embedding layer, which runs a small model inside SQLite.
-- No embeddings over transcripts — cross-session transcript search is SQLite FTS. Only the tagged
-  command memory has a vector index, and it is optional and derived.
+- No embeddings over transcripts — cross-session transcript search is SQLite FTS. The two vector
+  indexes cover the tagged command memory and note sections; both live in a separate
+  `embeddings.db` that is derived state and can be deleted at any time.
 - No per-agent worktrees or file leases. One shared checkout.
 - No remote access, no auth layer, no web UI.
 
