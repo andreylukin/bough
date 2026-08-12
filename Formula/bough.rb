@@ -4,7 +4,9 @@
 # repo's URL>`, and — once the tap repo exists — as the copy in
 # `andreylukin/homebrew-bough`, which is what makes the short
 # `brew install andreylukin/bough/bough` resolve. This file is the source of
-# truth for both; a release bumps `url`/`sha256` here first.
+# truth for both; a release tags the commit and bumps `url`/`version`/`sha256`
+# here first. The url names a TAG, not a commit sha: a commit pin goes stale on
+# the next push and quietly ships a `brew install` of yesterday's tree.
 #
 # WHAT THIS FORMULA INSTALLS. Two files and a wrapper, because bough is two
 # things: the Rust binary (server, TUI, `exec`, the CLIs — one build) and the
@@ -18,9 +20,9 @@
 class Bough < Formula
   desc "Coding agent that acts by writing programs"
   homepage "https://github.com/andreylukin/bough"
-  url "https://github.com/andreylukin/bough/archive/9f9d302abaf5f212435a567e4991243fe7560347.tar.gz"
+  url "https://github.com/andreylukin/bough/archive/refs/tags/v0.1.0.tar.gz"
   version "0.1.0"
-  sha256 "97f24486cf90c28a880954c66ed49aec517a50db75c7f011f442d6cab4acff5b"
+  sha256 "89ea82b6219f70ccd0934560d4e8f695525113c509fe117f4201cc9a0cd526ed"
   license "Apache-2.0"
   head "https://github.com/andreylukin/bough.git", branch: "main"
 
