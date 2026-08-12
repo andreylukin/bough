@@ -69,7 +69,7 @@ const runs = await sh(names.map(n => ({
 })));
 
 const broken = names.filter((_, i) => runs[i].code !== 0);
-console.log(broken.length ? `${broken.length}/${names.length} failed: ${broken.join(", ")}` : "all green");
+console.log(broken.length ? `failed: ${broken.join(", ")}` : "all green");
 ```
 
 The loop, the fan-out and the branch are the model's own code. `console.log` is what streams to
