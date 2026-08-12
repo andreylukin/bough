@@ -1459,11 +1459,11 @@ mod tests {
 
     // ---- containment --------------------------------------------------------
 
-    // QUARANTINED, not abandoned — see the tracking issue. This fails on
-    // ubuntu CI roughly one run in three, and never locally: 100+ single runs
-    // on macOS, three full-suite runs, and a run with every core saturated all
-    // pass. It is also not this assertion's fault. Ubuntu job durations are
-    // bimodal with no overlap — 86/105/113/127s when the suite passes against
+    // QUARANTINED, not abandoned — github.com/andreylukin/bough/issues/49.
+    // This fails on ubuntu CI roughly one run in three, and never locally:
+    // 100+ single runs on macOS, three full-suite runs, and a run with every
+    // core saturated all pass. It is also not this assertion's fault. Ubuntu
+    // job durations are bimodal with no overlap — 86/105/113/127s passing against
     // 960/964/966/971s when it fails — and the bough-core suite itself reports
     // `finished in 31.04s` versus `905.29s` for the SAME 1413 tests. Something
     // makes the whole suite ~29x slower (bimodal ⇒ a blocking timeout, not
