@@ -130,8 +130,15 @@ pub fn require_key(
             }
         }
     }
+    // Names the file as well as the variable: a missing key is the first thing
+    // a new install hits, and "which variable" is only half of what the person
+    // reading it needs. The server reads this file at start, so `export` in a
+    // shell it did not inherit is the other common way to be confused here.
     Err(BoughError::llm_with(
-        format!("{provider}: {} is not set", names.join(" / ")),
+        format!(
+            "{provider}: {} is not set — put it in ~/.bough/env, then `bough restart`",
+            names.join(" / ")
+        ),
         401,
         None,
     ))
@@ -294,7 +301,8 @@ mod tests {
         assert_eq!(err.status(), 401, "a missing key must not be retried");
         assert_eq!(
             err.to_string(),
-            "anthropic: ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN is not set"
+            "anthropic: ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN is not set \
+             — put it in ~/.bough/env, then `bough restart`"
         );
         // Blank values are not keys; the first non-empty (trimmed) wins.
         let env: Env = Arc::new(|k| match k {

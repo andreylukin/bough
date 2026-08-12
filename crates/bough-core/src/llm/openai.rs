@@ -662,7 +662,10 @@ mod tests {
             401,
             "a missing key will still be missing in 15 seconds"
         );
-        assert_eq!(err.to_string(), "openai: OPENAI_API_KEY is not set");
+        assert_eq!(
+            err.to_string(),
+            "openai: OPENAI_API_KEY is not set — put it in ~/.bough/env, then `bough restart`"
+        );
         assert!(!is_retryable(&err));
         assert!(
             transport.requests.lock().unwrap().is_empty(),
