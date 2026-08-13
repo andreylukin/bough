@@ -38,6 +38,7 @@ use bough_core::schema::events::{
 };
 use bough_core::schema::parts::{
     is_collapsed_kind, AskQuestion, AskQuestionStatus, BackgroundJob, Message, Part, Role,
+    TurnStatus,
 };
 use crossterm::event::{
     Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
@@ -495,6 +496,10 @@ impl<F: FnMut(Effect)> Transport for F {
 struct TurnClock {
     started_at: i64,
     ended: bool,
+    /// How the turn came out, straight off `turn.finished`. The session row
+    /// carries the same fact, but it arrives a round trip later — and the
+    /// moment a turn ends is exactly the moment the tab has to say so.
+    status: Option<TurnStatus>,
 }
 
 /// The open job view's own state. The buffer is a prop the poll refreshes;
@@ -1334,7 +1339,7 @@ impl<T: Transport> App<T> {
     /// session rather than eight times a second. `run_loop` pushes it only on
     /// change, which now actually means something.
     pub fn tab_ident(&self) -> crate::ident::Ident {
-        use crate::components::panel::tree::{kind_glyph, status_mark, title_of};
+        use crate::components::panel::tree::{kind_glyph, status_mark, title_of, turn_mark};
         let Some(id) = self.session_id.as_ref() else {
             return crate::ident::Ident {
                 glyph: "●",
@@ -1362,14 +1367,26 @@ impl<T: Transport> App<T> {
                 .filter(|t| t != "(untitled)")
                 .unwrap_or_default(),
             handle: crate::ident::handle(id),
-            // The LIVE turn wins over the row's last-turn status. The row is a
-            // snapshot from the session list and lags by a round trip, so
-            // trusting it would leave a tab reading `✓` while its turn runs.
+            // The LIVE turn wins over the row's last-turn status, which is a
+            // snapshot from the session list and lags by a round trip: trusting
+            // it leaves a tab reading `✓` while its turn runs, and — worse —
+            // reading `✓` for the whole second after a turn has FAILED.
             mark: match &self.turn {
                 Some(turn) if !turn.ended => Some("⋯"),
-                _ => row.and_then(|r| status_mark(r, 0)).map(|(mark, _)| mark),
-            },
+                Some(turn) => turn.status.map(|s| turn_mark(s).0),
+                None => None,
+            }
+            .or_else(|| row.and_then(|r| status_mark(r, 0)).map(|(mark, _)| mark)),
         }
+    }
+
+    /// Whether the tab should be showing the terminal's ERROR progress state
+    /// rather than a cleared one — a turn that ended badly.
+    ///
+    /// Ghostty paints OSC 9;4 over the split itself, so this is the one signal
+    /// that reaches you without reading anything: the bar goes red.
+    pub fn turn_failed(&self) -> bool {
+        self.tab_ident().mark == Some("✗")
     }
 
     /// The rows the rail paints, capped at a third of the screen: the rail is
@@ -3615,6 +3632,7 @@ impl<T: Transport> App<T> {
                     self.turn = Some(TurnClock {
                         started_at: event.ts,
                         ended: false,
+                        status: None,
                     });
                 }
                 // The server's copy of a message we sent supersedes the
@@ -3700,6 +3718,7 @@ impl<T: Transport> App<T> {
                 if let Ok(d) = serde_json::from_value::<TurnFinishedData>(event.data) {
                     if let Some(turn) = &mut self.turn {
                         turn.ended = true;
+                        turn.status = Some(d.status);
                     }
                     // The settle line, into the ledger the transcript
                     // interleaves (reduce.rs::TurnSettle). It is a MARK and not
@@ -4726,10 +4745,20 @@ pub async fn run_loop<T: Transport>(
             if was_busy {
                 term.progress_start();
             } else {
-                term.progress_end(false);
+                // A FAILED turn ends in the error state, not a cleared one.
+                // `progress_end` has always taken this flag and has always been
+                // passed `false`, so the red bar Ghostty draws for OSC 9;4
+                // state 2 — the one signal that needs no reading — has never
+                // once fired.
+                let failed = app.turn_failed();
+                term.progress_end(failed);
                 // ONLY while unfocused — `Term` enforces that itself, so the
                 // call is unconditional here and silent when you are looking.
-                term.notify_desktop(&tab_ident.notice("turn finished"));
+                term.notify_desktop(&tab_ident.notice(if failed {
+                    "turn failed"
+                } else {
+                    "turn finished"
+                }));
             }
         }
         if app.quit {
@@ -8675,6 +8704,60 @@ mod tests {
         // a second (and under tmux, spawns that many rename processes).
         app.tick = app.tick.wrapping_add(1);
         assert_eq!(app.tab_ident(), running, "a tick is not an identity change");
+
+        // The turn's OWN outcome, not the session row's — the row is a round
+        // trip behind, and the second after a turn fails is the second the
+        // answer matters most.
+        app.apply(
+            event(
+                EventType::TurnFinished,
+                20,
+                json!({
+                    "turnId": "t1",
+                    "sessionId": "s1",
+                    "status": "error",
+                    "error": "the model hung up",
+                }),
+            ),
+            20,
+        );
+        assert_eq!(app.tab_ident().mark, Some("✗"), "a failed turn is marked");
+        assert!(
+            app.turn_failed(),
+            "and drives the terminal's error progress state"
+        );
+    }
+
+    #[test]
+    fn a_turn_that_merely_ends_does_not_claim_to_have_failed() {
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(
+            event(
+                EventType::MessageStarted,
+                10,
+                json!({
+                    "id": "m1",
+                    "sessionId": "s1",
+                    "role": "supervisor",
+                    "parts": [],
+                    "pending": true,
+                    "createdAt": 10,
+                }),
+            ),
+            10,
+        );
+        app.apply(
+            event(
+                EventType::TurnFinished,
+                20,
+                json!({"turnId": "t1", "sessionId": "s1", "status": "done"}),
+            ),
+            20,
+        );
+        assert_eq!(app.tab_ident().mark, Some("✓"));
+        assert!(!app.turn_failed());
     }
 
     #[test]

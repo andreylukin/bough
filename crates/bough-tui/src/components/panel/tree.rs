@@ -69,12 +69,18 @@ pub fn status_mark(s: &SessionRow, busy_below: usize) -> Option<(&'static str, C
     if s.session.outcome_ok == Some(false) {
         return Some(("✗", Color::Red));
     }
-    match s.last_turn_status {
-        Some(TurnStatus::Running) => Some(("⋯", Color::Cyan)),
-        Some(TurnStatus::Orphaned) | Some(TurnStatus::Interrupted) => Some(("◼", Color::Yellow)),
-        Some(TurnStatus::Error) => Some(("✗", Color::Red)),
-        Some(TurnStatus::Done) => Some(("✓", Color::Green)),
-        None => None,
+    s.last_turn_status.map(turn_mark)
+}
+
+/// The mark for one turn outcome, and the ONE place the mapping lives — the
+/// terminal tab reads a live `turn.finished` while the tree reads a row's
+/// `last_turn_status`, and the two must not drift into different alphabets.
+pub fn turn_mark(status: TurnStatus) -> (&'static str, Color) {
+    match status {
+        TurnStatus::Running => ("⋯", Color::Cyan),
+        TurnStatus::Orphaned | TurnStatus::Interrupted => ("◼", Color::Yellow),
+        TurnStatus::Error => ("✗", Color::Red),
+        TurnStatus::Done => ("✓", Color::Green),
     }
 }
 
