@@ -574,19 +574,24 @@ fn mcp_tools_section(servers: &[PromptMcpServer]) -> String {
     let blocks: Vec<String> = servers.iter().map(mcp_server_block).collect();
     format!(
         "## MCP tools\n\
-         This turn has MCP servers connected. Call one through the shell:\n\n\
+         This turn has MCP servers granted. Call one directly — no shell:\n\n\
          ```\n\
-         const r = await bash(`bough mcp call SERVER TOOL '''{{\"arg\":\"value\"}}'''`);\n\
-         const result = JSON.parse(r.out);\n\
+         const result = await mcp.call(\"SERVER\", \"TOOL\", {{arg: \"value\"}});\n\
          ```\n\n\
-         The arguments are a JSON object matching the tool's parameters, and stdout is\n\
-         the tool's result as JSON. A failure exits non-zero with the server's own error\n\
-         text on stderr. For arguments too large or quote-hostile for a shell word, pipe\n\
-         them in instead: `echo \"$JSON\" | bough mcp call SERVER TOOL`.\n\n\
-         `bough mcp` on its own lists the servers and their state; `bough mcp doctor`\n\
-         says why one is not working. Registering, granting and authorizing are the\n\
-         human's to do — tell them to run `bough mcp` or type /mcp rather than\n\
-         improvising a config edit.\n\n\
+         The third argument is a real object, passed as an object: it never becomes a\n\
+         shell word, so quotes, newlines, `$`, backticks and large payloads in it need\n\
+         no escaping and cannot corrupt the call. Omit it for a tool that takes no\n\
+         parameters. The result comes back parsed. A failure throws, carrying the\n\
+         server's own error text, and is catchable like any other host-function\n\
+         failure.\n\n\
+         `await mcp.list()` is the live catalog — every granted server with its tools,\n\
+         and a named error for any that will not connect. You rarely need it: the list\n\
+         below is what it would tell you. `bough mcp doctor` says why a server is not\n\
+         working. Registering, granting and authorizing are the human's to do — tell\n\
+         them to run `bough mcp` or type /mcp rather than improvising a config edit.\n\n\
+         The servers below are ready to call. Do not test, probe or otherwise verify one\n\
+         before using it: calling a tool is what connects the server, and a call that\n\
+         cannot connect tells you so with a better error than a probe would.\n\n\
          Only the servers and tools listed here exist; a tool you do not see is not one\n\
          to guess at.\n\n{}",
         blocks.join("\n\n")
@@ -1009,7 +1014,15 @@ mod tests {
         let p = assemble_prompt(&input);
         assert!(has(&p, SectionId::McpTools));
         assert!(p.system_volatile.contains("## MCP tools"));
-        assert!(p.system_volatile.contains("bough mcp call SERVER TOOL"));
+        // The call idiom is the host function, not a shell word: the whole
+        // point of `mcp.call` is that the arguments are never quoted twice.
+        assert!(p
+            .system_volatile
+            .contains("await mcp.call(\"SERVER\", \"TOOL\", {arg: \"value\"})"));
+        assert!(
+            !p.system_volatile.contains("bough mcp call"),
+            "the shell idiom must not still be taught alongside the host fn"
+        );
         assert!(p
             .system_volatile
             .contains("- read_file({path}) — Read a file"));

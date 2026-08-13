@@ -13,8 +13,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The closed, ordered 18-name list, exactly as on the wire.
-pub const HOST_FN_NAMES: [&str; 18] = [
+/// The closed, ordered 19-name list, exactly as on the wire.
+pub const HOST_FN_NAMES: [&str; 19] = [
     // shell
     "bash",
     "sh",
@@ -38,6 +38,7 @@ pub const HOST_FN_NAMES: [&str; 18] = [
     "state",
     "schedule",
     "artifact",
+    "mcp",
 ];
 
 /// The typed mirror of [`HOST_FN_NAMES`]. `types::HostFns::get` matches it
@@ -62,6 +63,7 @@ pub enum HostFnName {
     State,
     Schedule,
     Artifact,
+    Mcp,
 }
 
 impl HostFnName {
@@ -85,6 +87,7 @@ impl HostFnName {
             HostFnName::State => "state",
             HostFnName::Schedule => "schedule",
             HostFnName::Artifact => "artifact",
+            HostFnName::Mcp => "mcp",
         }
     }
 
@@ -108,6 +111,7 @@ impl HostFnName {
             "state" => HostFnName::State,
             "schedule" => HostFnName::Schedule,
             "artifact" => HostFnName::Artifact,
+            "mcp" => HostFnName::Mcp,
             _ => return None,
         })
     }
@@ -154,6 +158,10 @@ pub const SCHEDULE_VERBS: [&str; 5] = ["list", "add", "enable", "disable", "remo
 pub const WORKFLOW_VERBS: [&str; 7] = [
     "start", "rerun", "stop", "pause", "resume", "status", "list",
 ];
+/// `call` invokes a tool with a real object; `list` is the live catalog. Both
+/// exist so that reaching an MCP server never requires composing JSON inside a
+/// shell word — the failure that accounted for 267 of 1,848 field calls.
+pub const MCP_VERBS: [&str; 2] = ["call", "list"];
 
 // ---- program worker: host → worker ------------------------------------------
 
@@ -325,8 +333,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn host_fn_names_18_and_round_trip() {
-        assert_eq!(HOST_FN_NAMES.len(), 18);
+    fn host_fn_names_19_and_round_trip() {
+        assert_eq!(HOST_FN_NAMES.len(), 19);
         for n in HOST_FN_NAMES {
             assert_eq!(HostFnName::parse(n).unwrap().as_str(), n);
         }
@@ -338,7 +346,7 @@ mod tests {
     #[test]
     fn program_params_adds_console_and_require() {
         let p = program_params();
-        assert_eq!(p.len(), 20);
+        assert_eq!(p.len(), 21);
         assert!(p.contains(&"console") && p.contains(&"require"));
     }
 

@@ -29,10 +29,26 @@ different command and it runs again.
 The rest is reached through the CLI, in bash. There is no host function:
 
     bough tags                  this project's tag vocabulary, ranked
+    bough tags last TAG...      per tag, the newest command AND WHAT IT PRINTED
     bough tags show TAG         the commands under TAG, newest first, exit code
                                 first — add --program for the round each ran in
     bough tags sql "SELECT …"   a read-only SELECT, rows as JSON
     bough tags similar "text"   semantic recall, where the vector layer exists
+
+`last` is the one to reach for when the question is "what did that say" rather
+than "what have we run". It takes as MANY tags as you like in one invocation,
+and answers in the order you asked:
+
+    bough tags last pr.7911 pr.7913 pr.12337 pr.12395
+
+That is one command, not four. Asking about a dozen entities one at a time is a
+dozen round trips for an answer the memory could have given in one, and writing
+the SELECT by hand is a dozen chances to write it wrong.
+
+ONE TAG PER ARGUMENT. A colon separates tags, it does not build a compound one:
+a command tagged `gh:inspect:pr.7911` carries the three tags `gh`, `inspect` and
+`pr.7911`, so `t.tag = 'gh:inspect:pr.7911'` matches NOTHING. When recall comes
+back empty, this is the first thing to suspect.
 
 Add --json to any of them for parseable output, --all to cross projects, and
 --limit N to widen a list.

@@ -47,9 +47,9 @@ use bough_core::schema::parts::{
 use bough_core::schema::requests::SearchQuery;
 use bough_core::types::{
     Clock, CommandRecord, CommandTagOpts, CommandTagRow, Db, IndexHealth, NoteAuthor, NoteLogRow,
-    NoteRow, PriorFailures, RecentFailure, SearchHit, SectionRevision, SectionRow, SectionWrite,
-    SessionRuntime, StateEntry, TagDiversityDay, TaggedCommand, TurnPatch, UsageTotals,
-    WorkflowAgentPatch, WorkflowPatch,
+    NoteRow, PriorFailures, RecalledCommand, RecentFailure, SearchHit, SectionRevision, SectionRow,
+    SectionWrite, SessionRuntime, StateEntry, TagDiversityDay, TaggedCommand, TurnPatch,
+    UsageTotals, WorkflowAgentPatch, WorkflowPatch,
 };
 
 use crate::http::{handler, json, Handler};
@@ -454,6 +454,13 @@ impl<D: Db> Db for SearchSafeDb<D> {
         limit: Option<i64>,
     ) -> Result<Vec<TaggedCommand>, BoughError> {
         self.inner.commands_for_tag(tag, repo, limit)
+    }
+    fn last_for_tags(
+        &self,
+        tags: &[String],
+        repo: Option<&str>,
+    ) -> Result<Vec<RecalledCommand>, BoughError> {
+        self.inner.last_for_tags(tags, repo)
     }
     fn search_commands(
         &self,
@@ -1883,6 +1890,13 @@ mod tests {
             _: Option<&str>,
             _: Option<i64>,
         ) -> Result<Vec<TaggedCommand>, BoughError> {
+            unreachable!()
+        }
+        fn last_for_tags(
+            &self,
+            _: &[String],
+            _: Option<&str>,
+        ) -> Result<Vec<RecalledCommand>, BoughError> {
             unreachable!()
         }
         fn search_commands(

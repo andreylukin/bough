@@ -135,7 +135,7 @@ Rewind to any turn and send something else, and the old line survives as a branc
 
 ## What it can do
 
-**Programs.** Eighteen host functions in scope, plus the full JS runtime. One editing idiom:
+**Programs.** Nineteen host functions in scope, plus the full JS runtime. One editing idiom:
 `view` gives numbered lines with a version tag, `patch` names lines instead of quoting them, so code
 being edited never has to survive the model's own string escaping, and a stale edit reports a
 conflict instead of clobbering. → [docs/programs.md](docs/programs.md)
@@ -162,7 +162,8 @@ marker names the file and how to grep it, and the same pipeline is available by 
 → [docs/logs.md](docs/logs.md)
 
 **Extending it.** Skills, Lua hooks that can start work rather than only veto it, JavaScript
-extensions bound into every program's scope, and MCP as a command rather than a verb. Reads the
+extensions bound into every program's scope, and MCP tools called with real objects
+rather than through a shell. Reads the
 `AGENTS.md`, `CLAUDE.md` and `.claude/skills` your other harnesses already wrote.
 → [docs/extending.md](docs/extending.md)
 

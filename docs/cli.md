@@ -103,7 +103,7 @@ splitting into near-duplicates. Full mechanism: [logs.md](logs.md).
 
 ```
 bough mcp                            # every server's state
-bough mcp call SERVER TOOL '{"a":1}' # how a program invokes a tool
+bough mcp call SERVER TOOL '{"a":1}' # one tool, from a shell (a program uses mcp.call)
 bough mcp add|remove|list|test|doctor
 bough mcp auth|logout|grant|revoke
 ```

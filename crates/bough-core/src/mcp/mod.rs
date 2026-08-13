@@ -3,6 +3,7 @@
 //! never a hang. Grants are never cached (re-read per call); a spawner's Live
 //! grant becomes Inherited at spawn.
 
+pub mod catalog;
 pub mod client;
 pub mod config;
 pub mod keychain;

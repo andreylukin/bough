@@ -32,13 +32,14 @@ use bough_core::db::embed::create_embed_layer;
 use bough_core::db::sqlite_db::{open_db, DbOptions};
 use bough_core::history::tags::stats::{ranked_repo_tags, workspace_repo, RankedTag};
 use bough_core::paths::db_path;
-use bough_core::types::{Db, TagDiversityDay, TaggedCommand};
+use bough_core::types::{Db, RecalledCommand, TagDiversityDay, TaggedCommand};
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TagsVerb {
     List,
     Show,
+    Last,
     Stats,
     Sql,
     Similar,
@@ -56,6 +57,8 @@ pub struct TagsArgs {
     pub verb: TagsVerb,
     /// `show` only: the tag to open. Also holds the `sql` query / `similar` text.
     pub tag: Option<String>,
+    /// `last`: every tag asked about, in the order they were asked.
+    pub tags: Vec<String>,
     /// A repo identity (git origin URL, or a path). Absent = this checkout's.
     pub repo: Option<String>,
     /// `--all`: no repo scope at all, so the memory answers across projects.
@@ -72,6 +75,7 @@ impl Default for TagsArgs {
         TagsArgs {
             verb: TagsVerb::List,
             tag: None,
+            tags: Vec::new(),
             repo: None,
             all_repos: false,
             limit: 20,
@@ -92,6 +96,7 @@ pub const USAGE: &str = "usage: bough tags [VERB] [OPTIONS]
 
   (none)          this project's tag vocabulary — what the model is primed with
   show TAG        the commands recorded under TAG, newest first
+  last TAG...     the newest command under each TAG and WHAT IT PRINTED
   stats           tag coverage and vocabulary per day — did anything change?
   sql QUERY       a read-only SELECT over the memory and the transcripts
   similar TEXT    semantic recall, where the local vector layer exists
@@ -189,6 +194,13 @@ pub fn parse_tags_args(argv: &[String]) -> Parsed {
             }
             args.verb = TagsVerb::Show;
             args.tag = Some(positional[1].clone());
+        }
+        Some("last") => {
+            if rest == 0 {
+                return Parsed::UsageError(format!("last needs at least one TAG\n{USAGE}"));
+            }
+            args.verb = TagsVerb::Last;
+            args.tags = positional[1..].to_vec();
         }
         Some("stats") => {
             if rest > 0 {
@@ -631,6 +643,86 @@ fn command_json(r: &TaggedCommand, program: Option<String>) -> Obj {
     ])
 }
 
+/// One recalled command as `--json`.
+fn recalled_json(r: &RecalledCommand) -> Obj {
+    Obj(vec![
+        ("tag", json!(r.tag)),
+        ("ts", json!(r.ts)),
+        ("cmd", json!(r.cmd)),
+        ("exitCode", json!(r.exit_code)),
+        ("outputHead", json!(r.output_head)),
+        ("spillPath", json!(r.spill_path)),
+    ])
+}
+
+/// How much of a remembered output is worth printing per tag.
+///
+/// The whole head is up to ~2k chars, and a dozen tags of that is a wall
+/// nobody reads and a tool result nobody should pay for. The head's OWN head
+/// is almost always the answer — an error line, a status, a PR title — and the
+/// row says where the rest is.
+const RECALL_CHARS: usize = 600;
+
+/// `last` in human form: one block per tag, the command, and what it printed.
+///
+/// Iterating the TAGS ASKED FOR rather than the rows found is deliberate: a
+/// tag with nothing under it gets a line saying so, in place, instead of
+/// silently missing from a list of twelve. "Nothing recorded" is the answer
+/// to a recall question, and it is the answer that stops the model waiting
+/// for something that is not coming.
+fn render_last(rows: &[RecalledCommand], asked: &[String], now: i64, out: &dyn Fn(&str)) {
+    for tag in asked {
+        let Some(r) = rows.iter().find(|r| &r.tag == tag) else {
+            // THE MISTAKE WORTH NAMING. A colon SEPARATES tags; it does not
+            // build a compound one. `gh:inspect:pr.7911` is three tags, and
+            // asking for it as one matches nothing — which is silent, looks
+            // like "we never ran that", and sends the asker off to re-run a
+            // command whose output is sitting right here under `pr.7911`.
+            if tag.contains(':') {
+                let parts: Vec<&str> = tag.split(':').filter(|p| !p.is_empty()).collect();
+                out(&format!(
+                    "{tag}: nothing recorded — a colon SEPARATES tags, so this is {} of them. \
+                     Ask for them one per argument: bough tags last {}",
+                    parts.len(),
+                    parts.join(" ")
+                ));
+            } else {
+                out(&format!("{tag}: nothing recorded"));
+            }
+            out("");
+            continue;
+        };
+        let mark = match r.exit_code {
+            Some(0) => "✓",
+            None => "·",
+            _ => "✗",
+        };
+        out(&format!("{tag}  {mark} {}", ago(r.ts, now)));
+        out(&format!(
+            "  {}",
+            collapse_ws(&r.cmd).chars().take(160).collect::<String>()
+        ));
+        let head = r.output_head.trim();
+        if head.is_empty() {
+            out("  (printed nothing)");
+        } else {
+            let clipped: String = head.chars().take(RECALL_CHARS).collect();
+            for line in clipped.lines() {
+                out(&format!("  | {line}"));
+            }
+            if head.chars().count() > RECALL_CHARS {
+                match &r.spill_path {
+                    Some(path) => out(&format!("  | … truncated; the rest is at {path}")),
+                    None => out("  | … truncated"),
+                }
+            } else if let Some(path) = &r.spill_path {
+                out(&format!("  | (the full output was spilled to {path})"));
+            }
+        }
+        out("");
+    }
+}
+
 fn day_json(d: &TagDiversityDay) -> Obj {
     Obj(vec![
         ("day", json!(d.day)),
@@ -832,6 +924,22 @@ WHERE f.cmd MATCH 'docker' ORDER BY h.ts DESC LIMIT 10\"",
             }
             0
         }
+        TagsVerb::Last => {
+            let rows = match db.last_for_tags(&parsed.tags, repo.as_deref()) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    (deps.err)(&error.to_string());
+                    return 1;
+                }
+            };
+            if parsed.json {
+                let rows: Vec<Obj> = rows.iter().map(recalled_json).collect();
+                print_rows(&*deps.out, &rows);
+            } else {
+                render_last(&rows, &parsed.tags, now, &*deps.out);
+            }
+            0
+        }
         TagsVerb::Stats => {
             let since = now - parsed.days * 24 * 60 * 60 * 1000;
             let rows = match db.tag_diversity_by_day(since, repo.as_deref()) {
@@ -958,6 +1066,27 @@ mod tests {
         .unwrap();
     }
 
+    /// A recorded command that PRINTED something — recall is about the output,
+    /// so most of this file's fixtures (which record `""`) cannot exercise it.
+    fn record_saying(db: &SqliteDb, repo: &str, cmd: &str, tags: &str, ts: i64, said: &str) {
+        db.record_command(&CommandRecord {
+            session_id: "s1".into(),
+            ts,
+            repo: repo.into(),
+            cmd: cmd.into(),
+            tags: tags.into(),
+            tag_list: tags.split(':').map(str::to_string).collect(),
+            dirs: vec![],
+            exit_code: Some(0),
+            duration_ms: Some(40),
+            output_head: said.into(),
+            spill_path: None,
+            source: "live".into(),
+            message_id: None,
+        })
+        .unwrap();
+    }
+
     /// A session row, only the fields this file cares about.
     fn session_row(id: &str, title: &str) -> Session {
         Session {
@@ -1047,6 +1176,103 @@ mod tests {
         record(&db, "mine", "rg todo", "rg:search:todo", 0, T0 - DAY);
         record(&db, "mine", "echo untagged", "", 0, T0 - DAY);
         db
+    }
+
+    /// Twelve entities, ONE invocation. The field wrote twelve near-identical
+    /// SELECTs and paid twelve shell round trips for exactly this answer.
+    #[test]
+    fn last_answers_every_tag_asked_for_in_one_go_with_what_each_command_printed() {
+        let db = seeded();
+        record_saying(
+            &db,
+            "mine",
+            "gh pr view 7911",
+            "gh:inspect:pr.7911",
+            T0 - 5,
+            "MERGED",
+        );
+        record_saying(
+            &db,
+            "mine",
+            "gh pr view 7913",
+            "gh:inspect:pr.7913",
+            T0 - 4,
+            "OPEN",
+        );
+        let c = Collector::default();
+        let code = run_tags(
+            // ONE tag per argument. `gh:inspect:pr.7911` is three tags, not
+            // one — the grammar field queries kept getting wrong, and the
+            // reason a fifth of their hand-written SELECTs came back empty.
+            &argv(&["last", "pr.7911", "pr.7913", "pr.9999", "--repo", "mine"]),
+            &c.deps(Some(&db)),
+        );
+        assert_eq!(code, 0);
+        let text = c.text();
+        // What it PRINTED, which is the thing `show` never gave back.
+        assert!(text.contains("| MERGED"), "{text}");
+        assert!(text.contains("| OPEN"), "{text}");
+        // Asked in this order, answered in this order.
+        assert!(
+            text.find("pr.7911").unwrap() < text.find("pr.7913").unwrap(),
+            "{text}"
+        );
+        // A tag with nothing under it is answered, not silently dropped.
+        assert!(text.contains("pr.9999: nothing recorded"), "{text}");
+    }
+
+    /// The recall mistake the field kept making, answered in place.
+    #[test]
+    fn a_colon_joined_argument_is_told_it_is_several_tags() {
+        let db = seeded();
+        let c = Collector::default();
+        run_tags(
+            &argv(&["last", "gh:inspect:pr.7911", "--repo", "mine"]),
+            &c.deps(Some(&db)),
+        );
+        let text = c.text();
+        assert!(text.contains("a colon SEPARATES tags"), "{text}");
+        assert!(
+            text.contains("bough tags last gh inspect pr.7911"),
+            "the correction must be runnable as printed: {text}"
+        );
+    }
+
+    #[test]
+    fn last_needs_at_least_one_tag() {
+        match parse_tags_args(&argv(&["last"])) {
+            Parsed::UsageError(m) => assert!(m.contains("at least one TAG"), "{m}"),
+            other => panic!("{other:?}"),
+        }
+        match parse_tags_args(&argv(&["last", "a", "b"])) {
+            Parsed::Args(a) => {
+                assert_eq!(a.verb, TagsVerb::Last);
+                assert_eq!(a.tags, vec!["a".to_string(), "b".to_string()]);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn last_json_carries_the_output_and_the_spill_pointer() {
+        let db = seeded();
+        record_saying(
+            &db,
+            "mine",
+            "kubectl get pods",
+            "kubectl:nased",
+            T0 - 1,
+            "3 running",
+        );
+        let c = Collector::default();
+        run_tags(
+            &argv(&["last", "nased", "--repo", "mine", "--json"]),
+            &c.deps(Some(&db)),
+        );
+        let parsed: Value = serde_json::from_str(&c.text()).unwrap();
+        assert_eq!(parsed[0]["tag"], "nased");
+        assert_eq!(parsed[0]["outputHead"], "3 running");
+        assert_eq!(parsed[0]["spillPath"], Value::Null);
     }
 
     // tags.test.ts: "parsing is pure and total, and a bare word is a tag"

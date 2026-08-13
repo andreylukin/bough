@@ -606,7 +606,9 @@ fn retitle(ctx: &AppCtx, branch: &Session, summary: String, picks: usize) {
     let db = ctx.db.clone();
     let bus = ctx.bus.clone();
     tokio::spawn(async move {
-        let Some(title) = cheap.title(&summary).await else {
+        // No glossary: the input is a summary this system already wrote, in
+        // the project's own words, not a stranger's first message.
+        let Some(title) = cheap.title(&summary, &[]).await else {
             return;
         };
         if title.is_empty() {
@@ -1278,7 +1280,7 @@ mod tests {
         }
         #[async_trait::async_trait]
         impl crate::types::CheapTier for Titler {
-            async fn title(&self, first_message: &str) -> Option<String> {
+            async fn title(&self, first_message: &str, _glossary: &[String]) -> Option<String> {
                 self.seen.lock().unwrap().push(first_message.to_string());
                 self.answer.clone()
             }

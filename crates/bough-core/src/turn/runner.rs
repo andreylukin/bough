@@ -4110,7 +4110,7 @@ mod tests {
     struct Tier(std::sync::Mutex<Vec<String>>, Option<String>);
     #[async_trait::async_trait]
     impl crate::types::CheapTier for Tier {
-        async fn title(&self, _f: &str) -> Option<String> {
+        async fn title(&self, _f: &str, _glossary: &[String]) -> Option<String> {
             None
         }
         async fn ghost_text(&self, _p: &str) -> Option<String> {
@@ -4219,7 +4219,7 @@ mod tests {
         struct Hang;
         #[async_trait::async_trait]
         impl crate::types::CheapTier for Hang {
-            async fn title(&self, _f: &str) -> Option<String> {
+            async fn title(&self, _f: &str, _glossary: &[String]) -> Option<String> {
                 None
             }
             async fn ghost_text(&self, _p: &str) -> Option<String> {

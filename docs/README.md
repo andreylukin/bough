@@ -16,7 +16,7 @@ Two audiences, in order.
 
 | | |
 |---|---|
-| [programs.md](programs.md) | The program environment and all eighteen host functions |
+| [programs.md](programs.md) | The program environment and all nineteen host functions |
 | [delegation.md](delegation.md) | Subagents and workflows |
 | [extending.md](extending.md) | Skills, hooks, extensions, MCP, project rules |
 | [tags.md](tags.md) | Command memory: how tagging makes past work recallable |

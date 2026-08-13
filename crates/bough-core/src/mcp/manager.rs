@@ -58,6 +58,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::errors::BoughError;
+use crate::mcp::catalog::{forget_catalog, remember_catalog, CatalogOptions};
 use crate::mcp::client::{
     McpCallResult, McpConnection, McpStdioClient, McpStdioOptions, McpTimeouts, McpToolInfo,
 };
@@ -189,6 +190,10 @@ pub struct McpManagerOptions {
     pub timeouts: Option<McpTimeouts>,
     /// Idle reap window. Absent = [`IDLE_MS`].
     pub idle_ms: Option<i64>,
+    /// Where the remembered tool catalog is written. Absent = the real
+    /// `~/.bough/mcp-catalog.json`; a test points it at a temp file so a
+    /// connection assertion does not touch the developer's own catalog.
+    pub catalog: Option<CatalogOptions>,
 }
 
 // ---------------------------------------------------------------------------
@@ -369,6 +374,11 @@ impl McpManager {
     /// Where this manager reads the registry and the grants.
     pub fn config(&self) -> McpConfigOptions {
         self.opts.config.clone().unwrap_or_default()
+    }
+
+    /// Where this manager remembers what each server advertised.
+    pub fn catalog(&self) -> CatalogOptions {
+        self.opts.catalog.clone().unwrap_or_default()
     }
 
     /// Connect (or reuse) each named server and report its catalog.
@@ -585,6 +595,9 @@ impl McpManager {
             }
             live
         };
+        // Its definition changed or it is gone; the tools it used to advertise
+        // are no longer something to tell a future session about.
+        forget_catalog(server, &self.catalog());
         for conn in closing {
             conn.client.close().await;
         }
@@ -686,6 +699,12 @@ impl McpManager {
                 Ok(conn) => {
                     state.conns.insert(k.clone(), conn.clone());
                     state.failures.remove(&k);
+                    // The tool list is knowable now, so the NEXT session's
+                    // first turn should not have to spend a command asking
+                    // for it. Names only, and never load-bearing: see
+                    // `mcp/catalog.rs`.
+                    let names: Vec<String> = conn.tools.iter().map(|t| t.name.clone()).collect();
+                    remember_catalog(server, &names, now, &self.catalog());
                 }
                 Err(e) => {
                     state.failures.insert(
@@ -1078,6 +1097,16 @@ mod tests {
         McpConfigOptions::with_file(file)
     }
 
+    /// The remembered-catalog file beside this test's registry. Every manager
+    /// a test builds gets one: a connection writes what it advertised, and
+    /// without this the suite would write into the developer's own
+    /// `~/.bough/mcp-catalog.json`.
+    fn cat(file: &Path) -> CatalogOptions {
+        CatalogOptions {
+            file: Some(file.with_extension("catalog.json")),
+        }
+    }
+
     /// Deadlines short enough that a regression reads as a failure, not a hung
     /// suite.
     const TIMEOUTS: McpTimeouts = McpTimeouts {
@@ -1089,6 +1118,7 @@ mod tests {
     fn manager(file: &Path, connect: Option<Connector>) -> McpManager {
         McpManager::new(McpManagerOptions {
             config: Some(opts(file)),
+            catalog: Some(cat(file)),
             timeouts: Some(TIMEOUTS),
             connect,
             ..Default::default()
@@ -1576,6 +1606,7 @@ mod tests {
         let reader = clock.clone();
         let mgr = McpManager::new(McpManagerOptions {
             config: Some(opts(&file)),
+            catalog: Some(cat(&file)),
             now: Some(Arc::new(move || *reader.lock().unwrap())),
             idle_ms: Some(1_000),
             connect: Some(fake_connector(&["echo"], spawned.clone(), sink())),
@@ -1995,6 +2026,7 @@ mod tests {
         .unwrap();
         let mgr = McpManager::new(McpManagerOptions {
             config: Some(opts(&file)),
+            catalog: Some(cat(&file)),
             timeouts: Some(McpTimeouts {
                 connect_ms: Some(1_000),
                 request_ms: Some(1_000),

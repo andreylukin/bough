@@ -556,14 +556,29 @@ buffers are readable while running and after exit.
 HTTP with OAuth/PKCE against a bough-hosted callback). Per-session grants carry
 into subagents.
 
-**There is no MCP host function.** A tool is called through the shell,
-`bough mcp call SERVER TOOL '{"arg":"value"}'`, with oversized arguments piped on
-stdin, and the grant is enforced there against `$BOUGH_SESSION`, which every
-command carries. One calling convention serves the model and the human, and there
-is no bridge to keep in step with the CLI. The turn's prompt carries the catalog of
-what is connected; anything beyond calling (what state a server is in, why one is
-broken) is `bough mcp` and `bough mcp doctor`, answered fresh rather than from
-conversation memory, since grants and connections change between turns. The OAuth client is registered
+**Calling a tool is a host function; everything else about MCP is the CLI.**
+`await mcp.call(server, tool, args)` takes `args` as an object and serializes it
+once, so tool arguments never pass through a shell word. `mcp.list()` is the live
+catalog.
+
+This replaced a shell-only convention (`bough mcp call SERVER TOOL '{"arg":"v"}'`),
+which was chosen so that one calling convention served the model and the human with
+no bridge to keep in step. Field measurement retired it: of 1,848 calls, 267 failed,
+and the dominant failure was `the arguments were not valid JSON` — a payload that
+did not survive being written inside a shell word inside a JavaScript string. The
+uniformity was real and so was its price, and the price was paid on the most-used
+integration in the product. The bridge is deliberately THIN for the same reason the
+old argument was right: it resolves arguments and delegates every question of
+existence, grant and catalog to the same code `bough mcp` uses, so the two doors
+cannot disagree about state — only about quoting.
+
+The grant is enforced identically on both paths, against the calling session. The
+turn's prompt carries the catalog of what is connected — including, for a server
+nothing has connected to yet, the tools it advertised last time, so a fresh session
+does not spend a command probing for a list that was already known. Anything beyond
+calling (what state a server is in, why one is broken) is `bough mcp` and `bough mcp
+doctor`, answered fresh rather than from conversation memory, since grants and
+connections change between turns. The OAuth client is registered
 dynamically where the authorization server offers it; where it does not, a registry
 entry may name a pre-registered client with `clientId` and a `clientSecret` given
 only as a `${VAR}` reference, since the registry is served and rendered and a secret

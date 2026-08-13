@@ -62,7 +62,7 @@ symlinks. `^k` lists what resolved and from where.
 
 ## Extensions
 
-JavaScript bound into **every program's scope**, alongside the eighteen host functions.
+JavaScript bound into **every program's scope**, alongside the nineteen host functions.
 
 Drop files in `~/.bough/extensions`, a plugin's `extensions/`, or `.agents/extensions`.
 `*.js`, `*.mjs`, `*.cjs`,
@@ -131,10 +131,10 @@ untrusted), and the ~25 events with no bough counterpart.
 
 ## MCP
 
-There is no MCP host function. A granted server's tool is called through the shell:
+A granted server's tool is called directly, with the arguments as an object:
 
 ```js
-await bash(`bough mcp call SERVER TOOL '{"arg":"value"}'`, "mcp:call:thing")
+await mcp.call("SERVER", "TOOL", { arg: "value" })
 ```
 
 The turn's prompt carries the catalog of what is connected, so the model knows what

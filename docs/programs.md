@@ -13,7 +13,7 @@ a cancellable lifetime. **It is not a container.** See the warning in the README
 
 ## What is in scope
 
-Eighteen host functions are pre-injected globals. Call them directly, never redeclare
+Nineteen host functions are pre-injected globals. Call them directly, never redeclare
 one (a pre-flight check fails the program if you do). They are not tools; the model
 cannot call them the way it calls `run_steps`.
 
@@ -27,7 +27,7 @@ command history is the only memory bough keeps of what has been run in a project
 Spawning a binary directly (`Bun.spawn(["bun", "x.ts"])`) is still allowed when a pipe
 or stdin is needed.
 
-## The eighteen
+## The nineteen
 
 ### Shell
 
@@ -92,6 +92,21 @@ workspace; `Bun.file("notes.txt")` does not.
 | `state.get/set/list/delete` | Durable KV for this line of work. Any JSON value, 16KB per value and 200 keys, scoped to the lineage root, so forks, compactions and subagents share one store. |
 | `schedule.list/add/enable/disable/remove` | Recurring runs. `spec` is `every:<N><m\|h\|d>` or `daily@HH:MM` local time. Each firing opens a fresh session and reports back as a system note. |
 | `await artifact(name, content)` | Publish a file for browser viewing; returns `{url, href}`. Artifacts live outside the workspace, so publishing never pollutes the diff under review. Each carries a comment layer whose batches arrive back as messages. |
+
+### MCP
+
+| | |
+|---|---|
+| `await mcp.call(server, tool, args)` | Invoke one tool. `args` is a real object and is serialized once, on the way out. Returns the result parsed; throws with the server's own text on failure. |
+| `await mcp.list(server?)` | The live catalog: every granted server with its tools, or one named server's. |
+
+`args` never becomes a shell word, so quotes, newlines, `$` and backticks inside it need
+no escaping. That is the whole reason this is a host function and not a `bash("bough mcp
+call …")`: composing JSON inside a shell word inside a JS string was the single largest
+source of failed commands in the field, and none of those failures were about MCP.
+
+Which servers a turn may reach is the human's to grant (`/mcp`); a program cannot widen
+its own grant, and the refusal says so rather than leaving it to be retried.
 
 ## The authoritative text
 

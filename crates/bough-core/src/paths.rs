@@ -181,6 +181,13 @@ pub fn mcp_auth_path() -> PathBuf {
     bough_path(&["mcp-auth.json"])
 }
 
+/// The last tool list each server advertised, so a session that has not
+/// connected yet can still be told what it may call. Never a secret: tool
+/// names only.
+pub fn mcp_catalog_path() -> PathBuf {
+    bough_path(&["mcp-catalog.json"])
+}
+
 pub fn logs_dir() -> PathBuf {
     bough_path(&["logs"])
 }

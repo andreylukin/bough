@@ -194,6 +194,12 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
             HostFnName::Ask,
             HostFnName::State,
             HostFnName::Artifact,
+            // Granted at every tier for the same reason as `artifact`: the
+            // grant that decides what MCP a turn may reach is the MCP grant,
+            // checked per call, and a subagent that may run `bough mcp call`
+            // through the shell gains nothing from being denied the door that
+            // does not go through a shell.
+            HostFnName::Mcp,
         ]);
 
         let jobs = ctx.host.jobs.clone();
@@ -258,6 +264,10 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
                         .into_host_fn(),
                 ),
                 artifact: Some(bough_core::hostfn::artifact::create_artifact_host_fn(
+                    turn_ctx,
+                    Default::default(),
+                )),
+                mcp: Some(bough_core::hostfn::mcp::create_mcp_host_fn(
                     turn_ctx,
                     Default::default(),
                 )),
@@ -912,13 +922,12 @@ mod tests {
         let catalog = mcp_catalog_for("s1", &[]);
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].name, "echo");
-        // Granted and not yet connected is NAMED with the way to see its tools,
-        // never dropped and never rendered as an empty catalog.
-        assert!(catalog[0]
-            .note
-            .as_deref()
-            .unwrap_or("")
-            .contains("not connected yet"));
+        // Granted and not yet connected is NAMED with a note about where its
+        // tools stand, never dropped and never rendered as an empty catalog.
+        // Which note depends on whether anything ever connected to a server of
+        // this name before (`mcp/catalog.rs`), which this test does not pin —
+        // `mcp::status` owns that distinction and tests both branches.
+        assert!(catalog[0].note.as_deref().unwrap_or("").contains("connect"));
         // …and another conversation is told nothing, because it was granted
         // nothing.
         assert!(mcp_catalog_for("s2", &[]).is_empty());

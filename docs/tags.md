@@ -330,11 +330,39 @@ it. It needs no server, because it only reads.
 
 ```
 bough tags                  this project's tag vocabulary, ranked, with the arithmetic
+bough tags last TAG...      per tag, the newest command AND WHAT IT PRINTED
 bough tags show TAG         the commands under TAG, newest first, exit code first
 bough tags stats            tag coverage and vocabulary per day
 bough tags sql "SELECT …"   a read-only SELECT over the memory and the transcripts
 bough tags similar "text"   semantic recall, where the local vector layer exists
 ```
+
+### `last`: the shape recall is actually asked for
+
+`show` answers "what have we run under this tag". Field use asks something else, far
+more often: **what did it say**. A month of real sessions is full of hand-written
+variations on one query —
+
+```sql
+SELECT h.cmd, h.exit_code, h.output_head, h.spill_path
+  FROM command_history h JOIN command_tags t ON t.command_id = h.id
+ WHERE t.tag = 'pr.7911' ORDER BY h.ts DESC LIMIT 1
+```
+
+— issued once per entity, twelve times in a row, two hundred characters of SQL and one
+shell round trip each. `bough tags last pr.7911 pr.7913 pr.12337` is that, for as many
+tags as you like, in one invocation, answered in the order you asked. A tag with nothing
+under it says so in place rather than going missing from a list of twelve.
+
+Each block is the command, how it exited, how long ago, and the first ~600 characters of
+what it printed — the head's own head, which is nearly always the answer, with the spill
+path named when there is more.
+
+**One tag per argument.** A colon SEPARATES tags; it does not build a compound one. A
+command tagged `gh:inspect:pr.7911` carries three tags, so `t.tag = 'gh:inspect:pr.7911'`
+matches nothing — the mistake behind a fifth of the field's recall queries coming back
+empty. `last` says so when a colon-joined argument finds nothing, and prints the
+corrected command.
 
 | Option | Effect |
 |---|---|

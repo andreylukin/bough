@@ -92,6 +92,25 @@ result before you can continue.
 
 await bashKill(id) — SIGTERM the job. Kill background shells you no longer need.
 
+## Running a script
+
+A script longer than a line goes in a FILE, not a heredoc:
+
+    await write(`${scratch}/probe.py`, source);
+    await bash(`python3 ${scratch}/probe.py`, "python:probe:schema");
+
+`$BOUGH_SCRATCH` is a per-session directory, set in every shell you run, swept
+afterwards — somewhere to put a temp file without choosing a path or littering the
+checkout.
+
+A heredoc inside a JS string is quoted twice, and it is the second layer that breaks
+it: the shell reads `$`, backticks and quotes that your template literal already
+resolved, and what arrives at the interpreter is a truncated program. The failure
+reads as a syntax error in the language you were writing, so it looks like a bug in
+your code rather than in the delivery, and the natural next move — rewrite the
+snippet — cannot fix it. Write the file; then the source reaches the interpreter
+exactly as you wrote it, and it is a real file you can view, patch and re-run.
+
 ## When a command prints too much
 
 Output over ~20k chars is SAVED TO A FILE automatically. You get the first and last

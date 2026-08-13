@@ -254,6 +254,20 @@ pub struct TaggedCommand {
     pub message_id: Option<String>,
 }
 
+/// The newest command under one tag, with what it printed — the unit of
+/// recall. `output_head` is the answer being looked for; `spill_path` points
+/// at the rest when there was more than the head could hold (the file may
+/// since have been swept, so it is a pointer and not a promise).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecalledCommand {
+    pub tag: String,
+    pub ts: i64,
+    pub cmd: String,
+    pub exit_code: Option<i64>,
+    pub output_head: String,
+    pub spill_path: Option<String>,
+}
+
 /// One (tag, outcome) observation, the unit the popularity stats aggregate.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CommandTagRow {
@@ -595,6 +609,23 @@ pub trait Db: Send {
         repo: Option<&str>,
         limit: Option<i64>,
     ) -> Result<Vec<TaggedCommand>, BoughError>;
+    /// For each tag, the newest command recorded under it AND WHAT IT PRINTED.
+    ///
+    /// The shape the memory is actually asked for. Field use shows the
+    /// recall question is almost never "list the commands under this tag" but
+    /// "what did the command for entity X say" — asked about a dozen entities
+    /// in a row, one hand-written SELECT and one shell round trip each.
+    /// Answering the whole list in one query is the difference between recall
+    /// being cheaper than re-running the command and it not being.
+    ///
+    /// A tag with nothing under it is simply absent from the result; the
+    /// caller reports it, because "no rows" and "no such tag" read the same
+    /// from here and only the caller knows which the user meant.
+    fn last_for_tags(
+        &self,
+        tags: &[String],
+        repo: Option<&str>,
+    ) -> Result<Vec<RecalledCommand>, BoughError>;
     // ---- the note memory ---------------------------------------------
     /// Create or update a note at `path`, replacing its attachment tags.
     fn upsert_note(
@@ -882,7 +913,10 @@ pub trait LlmClient: Send + Sync {
 /// degrades on absence by contract.
 #[async_trait::async_trait]
 pub trait CheapTier: Send + Sync {
-    async fn title(&self, first_message: &str) -> Option<String>;
+    /// `glossary` is the project's own vocabulary — words that look like
+    /// ordinary English but are its names for things. Without it a titler with
+    /// no other context guesses, and "nased" becomes a nasal decongestant.
+    async fn title(&self, first_message: &str, glossary: &[String]) -> Option<String>;
     async fn ghost_text(&self, prefix: &str) -> Option<String>;
     async fn activity(&self, recent: &str) -> Option<String>;
     /// One line for a note's derived zone, or `None` — which is the usual
@@ -1102,6 +1136,9 @@ pub struct HostFns {
     pub schedule: Option<HostFn>,
     /// Publish a file for browser viewing; returns `{url, href}`.
     pub artifact: Option<HostFn>,
+    /// Verb-dispatched: call/list. Arguments are a real object, so tool
+    /// arguments never have to survive shell quoting.
+    pub mcp: Option<HostFn>,
 }
 
 impl HostFns {
@@ -1129,6 +1166,7 @@ impl HostFns {
             HostFnName::State => self.state.as_ref(),
             HostFnName::Schedule => self.schedule.as_ref(),
             HostFnName::Artifact => self.artifact.as_ref(),
+            HostFnName::Mcp => self.mcp.as_ref(),
         }
     }
 }
@@ -1212,7 +1250,7 @@ mod tests {
         // The Rust replacement for the TS compile-time drift proof: every wire
         // name parses to a HostFnName, and `get` matches it exhaustively.
         let fns = HostFns::default();
-        assert_eq!(HOST_FN_NAMES.len(), 18);
+        assert_eq!(HOST_FN_NAMES.len(), 19);
         for name in HOST_FN_NAMES {
             let parsed = HostFnName::parse(name)
                 .unwrap_or_else(|| panic!("protocol name {name} not in HostFnName"));

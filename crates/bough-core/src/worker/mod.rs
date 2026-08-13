@@ -34,8 +34,8 @@ pub struct CheapTierImpl;
 
 #[async_trait::async_trait]
 impl CheapTier for CheapTierImpl {
-    async fn title(&self, first_message: &str) -> Option<String> {
-        titles::cheap_title(first_message, &Default::default()).await
+    async fn title(&self, first_message: &str, glossary: &[String]) -> Option<String> {
+        titles::cheap_title(first_message, glossary, &Default::default()).await
     }
     async fn ghost_text(&self, prompt: &str) -> Option<String> {
         ghost::cheap_ghost(prompt, &Default::default()).await
@@ -171,7 +171,7 @@ pub(crate) mod test_support {
 
     #[async_trait::async_trait]
     impl CheapTier for StubTier {
-        async fn title(&self, _f: &str) -> Option<String> {
+        async fn title(&self, _f: &str, _g: &[String]) -> Option<String> {
             self.title_calls.fetch_add(1, Ordering::SeqCst);
             self.title.clone()
         }
@@ -244,7 +244,7 @@ pub(crate) mod test_support {
 
     #[async_trait::async_trait]
     impl CheapTier for GatedTier {
-        async fn title(&self, f: &str) -> Option<String> {
+        async fn title(&self, f: &str, _g: &[String]) -> Option<String> {
             self.gated(f).await
         }
         async fn ghost_text(&self, _p: &str) -> Option<String> {

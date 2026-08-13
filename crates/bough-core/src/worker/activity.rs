@@ -516,7 +516,7 @@ mod tests {
         struct Panicking;
         #[async_trait::async_trait]
         impl CheapTier for Panicking {
-            async fn title(&self, _f: &str) -> Option<String> {
+            async fn title(&self, _f: &str, _glossary: &[String]) -> Option<String> {
                 None
             }
             async fn ghost_text(&self, _p: &str) -> Option<String> {

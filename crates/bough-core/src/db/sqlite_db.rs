@@ -35,9 +35,9 @@ use crate::schema::parts::{
 };
 use crate::types::{
     system_clock, Clock, CommandRecord, CommandTagOpts, CommandTagRow, Db, NoteAuthor, NoteLogRow,
-    NoteRow, PriorFailures, RecentFailure, SearchHit, SectionRevision, SectionRow, SectionWrite,
-    SessionRuntime, StateEntry, TagDiversityDay, TaggedCommand, TurnPatch, UsageTotals,
-    WorkflowAgentPatch, WorkflowPatch,
+    NoteRow, PriorFailures, RecalledCommand, RecentFailure, SearchHit, SectionRevision, SectionRow,
+    SectionWrite, SessionRuntime, StateEntry, TagDiversityDay, TaggedCommand, TurnPatch,
+    UsageTotals, WorkflowAgentPatch, WorkflowPatch,
 };
 
 // ---- small helpers ----------------------------------------------------------
@@ -1422,6 +1422,59 @@ impl Db for SqliteDb {
             Some(r) => self.all(&sql, params![tag, r, cap], to_row),
             None => self.all(&sql, params![tag, cap], to_row),
         }
+    }
+
+    /// The newest command under each tag, with what it printed.
+    ///
+    /// One statement, reused per tag, rather than one query with an `IN` and a
+    /// window function: the tags come from a caller's argv, the per-tag answer
+    /// is a single indexed row (`command_tags(tag, command_id)`), and a
+    /// prepared statement stepped N times is both faster to read and faster to
+    /// run than the grouped alternative. Order follows the CALLER's tag order,
+    /// not recency — someone who asked about twelve PRs wants the answers in
+    /// the order they asked.
+    fn last_for_tags(
+        &self,
+        tags: &[String],
+        repo: Option<&str>,
+    ) -> Result<Vec<RecalledCommand>, BoughError> {
+        let scope = if repo.is_some() {
+            " AND h.repo = ?"
+        } else {
+            ""
+        };
+        let sql = format!(
+            "SELECT h.ts AS ts, h.cmd AS cmd, h.exit_code AS exit_code,
+                    h.output_head AS output_head, h.spill_path AS spill_path
+               FROM command_history h JOIN command_tags t ON t.command_id = h.id
+              WHERE t.tag = ?{scope}
+              ORDER BY h.ts DESC LIMIT 1"
+        );
+        let mut out = Vec::with_capacity(tags.len());
+        for tag in tags {
+            let to_row = |row: &Row| -> rusqlite::Result<RecalledCommand> {
+                Ok(RecalledCommand {
+                    tag: tag.clone(),
+                    ts: row.get("ts")?,
+                    cmd: row.get("cmd")?,
+                    exit_code: row.get("exit_code")?,
+                    output_head: row
+                        .get::<_, Option<String>>("output_head")?
+                        .unwrap_or_default(),
+                    spill_path: row.get("spill_path")?,
+                })
+            };
+            let found = match repo {
+                Some(r) => self.one(&sql, params![tag, r], to_row)?,
+                None => self.one(&sql, params![tag], to_row)?,
+            };
+            // A tag with nothing under it is absent, not an empty row: the
+            // caller says "nothing recorded under X", which is information.
+            if let Some(row) = found {
+                out.push(row);
+            }
+        }
+        Ok(out)
     }
 
     /// Commands this repo has run that MATCH a bag of words, across the
@@ -3218,6 +3271,85 @@ mod tests {
         r.tag_list = tags.iter().map(|t| t.to_string()).collect();
         r.ts = ts;
         db.record_command(&r).unwrap();
+    }
+
+    /// Recall answers in the order ASKED, one row per tag, carrying what the
+    /// command printed — the shape the field's hand-written SQL was building
+    /// by hand, twelve separate invocations at a time.
+    #[test]
+    fn last_for_tags_answers_each_tag_with_its_newest_output_in_the_order_asked() {
+        let db = mem();
+        db.create_session(session("s1")).unwrap();
+        let mut older = cmd_record();
+        older.cmd = "gh pr view 1".into();
+        older.tags = "pr.1".into();
+        older.tag_list = vec!["pr.1".into()];
+        older.ts = 100;
+        older.output_head = "stale".into();
+        db.record_command(&older).unwrap();
+
+        let mut newer = cmd_record();
+        newer.cmd = "gh pr view 1 --json state".into();
+        newer.tags = "pr.1".into();
+        newer.tag_list = vec!["pr.1".into()];
+        newer.ts = 200;
+        newer.output_head = "MERGED".into();
+        newer.exit_code = Some(0);
+        db.record_command(&newer).unwrap();
+
+        let mut other = cmd_record();
+        other.cmd = "gh pr view 2".into();
+        other.tags = "pr.2".into();
+        other.tag_list = vec!["pr.2".into()];
+        other.ts = 150;
+        other.output_head = "OPEN".into();
+        other.spill_path = Some("/tmp/spill".into());
+        db.record_command(&other).unwrap();
+
+        let asked = vec!["pr.2".to_string(), "pr.1".to_string(), "pr.404".to_string()];
+        let rows = db.last_for_tags(&asked, None).unwrap();
+        // Caller order, not recency — and the tag with nothing under it is
+        // absent rather than an empty row.
+        assert_eq!(
+            rows.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),
+            ["pr.2", "pr.1"]
+        );
+        assert_eq!(rows[0].output_head, "OPEN");
+        assert_eq!(rows[0].spill_path.as_deref(), Some("/tmp/spill"));
+        // The NEWEST row under the tag, not the first one recorded.
+        assert_eq!(rows[1].output_head, "MERGED");
+        assert_eq!(rows[1].cmd, "gh pr view 1 --json state");
+    }
+
+    #[test]
+    fn last_for_tags_scopes_to_a_repo_when_one_is_named() {
+        let db = mem();
+        db.create_session(session("s1")).unwrap();
+        let mut here = cmd_record();
+        here.repo = "mine".into();
+        here.tags = "t".into();
+        here.tag_list = vec!["t".into()];
+        here.ts = 100;
+        here.output_head = "mine".into();
+        db.record_command(&here).unwrap();
+        let mut elsewhere = cmd_record();
+        elsewhere.repo = "theirs".into();
+        elsewhere.tags = "t".into();
+        elsewhere.tag_list = vec!["t".into()];
+        elsewhere.ts = 900;
+        elsewhere.output_head = "theirs".into();
+        db.record_command(&elsewhere).unwrap();
+
+        let asked = vec!["t".to_string()];
+        assert_eq!(
+            db.last_for_tags(&asked, Some("mine")).unwrap()[0].output_head,
+            "mine"
+        );
+        // Unscoped, the newest wins wherever it ran.
+        assert_eq!(
+            db.last_for_tags(&asked, None).unwrap()[0].output_head,
+            "theirs"
+        );
     }
 
     #[test]

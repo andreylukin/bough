@@ -72,6 +72,7 @@ const HOST_FN_NAMES = [
   "state",
   "schedule",
   "artifact",
+  "mcp",
 ];
 
 const PROGRAM_PARAMS = [...HOST_FN_NAMES, "console", "require"];
@@ -336,6 +337,15 @@ const bindings = {
   schedule: methodObject("schedule"),
   artifact: (name, content) =>
     jsonCall("artifact", [name, typeof content === "string" ? content : JSON.stringify(content)]),
+  // NOT a method object: `call` is positional (server, tool, args) because
+  // that is how the model already thinks about it, and the whole reason this
+  // binding exists is that `args` stays an OBJECT the whole way down — it is
+  // serialized once, here, and never has to survive a shell word.
+  mcp: {
+    call: (server, tool, args) =>
+      jsonCall("mcp", ["call", JSON.stringify({ server, tool, args: args ?? null })]),
+    list: (server) => jsonCall("mcp", ["list", JSON.stringify({ server: server ?? null })]),
+  },
 };
 
 // The `require` is a REAL one — the program already has the capabilities it

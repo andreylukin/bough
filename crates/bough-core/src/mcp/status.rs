@@ -34,6 +34,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::mcp::catalog::{cached_catalog, CatalogOptions};
 use crate::mcp::config::{load_registry, McpConfigOptions, Registry};
 use crate::mcp::manager::{
     mcp_manager, resolve_grant, ConnStatus, GrantCtx, McpConnState, McpGrant, McpManager,
@@ -127,7 +128,23 @@ pub fn mcp_status_for(opts: &McpStatusOptions) -> McpStatus {
 /// saying how to see its tools, rather than dropped or rendered as an empty
 /// catalog. Pure, and it never connects: the prompt is assembled on the turn's
 /// critical path.
+///
+/// WHERE THE TOOLS COME FROM WHEN NOTHING IS CONNECTED. From
+/// [`crate::mcp::catalog`] — what that server advertised the last time
+/// anything connected to it. This section used to say "run `bough mcp test
+/// <name>`" instead, and the model obeyed: three servers probed at the top of
+/// nearly every session, one command each, before any work started. A
+/// remembered list is labelled as remembered and is never presented as live,
+/// but it is enough to aim the first call, which is all the probe bought.
 pub fn prompt_mcp_servers(status: &McpStatus) -> Vec<PromptMcpServer> {
+    prompt_mcp_servers_with(status, &CatalogOptions::default())
+}
+
+/// [`prompt_mcp_servers`] against a named catalog file — the test seam.
+pub fn prompt_mcp_servers_with(
+    status: &McpStatus,
+    catalog: &CatalogOptions,
+) -> Vec<PromptMcpServer> {
     status
         .active
         .iter()
@@ -158,13 +175,38 @@ pub fn prompt_mcp_servers(status: &McpStatus) -> Vec<PromptMcpServer> {
                         .collect(),
                     ..Default::default()
                 },
-                _ => PromptMcpServer {
-                    name: name.clone(),
-                    note: Some(format!(
-                        "granted, not connected yet — the first `bough mcp call` connects it, \
-                         and `bough mcp test {name}` lists its tools without calling one"
-                    )),
-                    ..Default::default()
+                // Nothing connected in this scope yet. Serve what the server
+                // last advertised, said plainly to be from last time — and
+                // do NOT send the model off to probe for it.
+                _ => match cached_catalog(name, catalog) {
+                    Some(remembered) => PromptMcpServer {
+                        name: name.clone(),
+                        tools: remembered
+                            .tools
+                            .iter()
+                            .map(|tool| crate::prompt::assemble::PromptMcpTool {
+                                name: tool.clone(),
+                                ..Default::default()
+                            })
+                            .collect(),
+                        note: Some(
+                            "not connected in this session yet; these are the tools it \
+                             advertised last time. Calling one connects it — there is nothing \
+                             to check first."
+                                .to_string(),
+                        ),
+                        ..Default::default()
+                    },
+                    None => PromptMcpServer {
+                        name: name.clone(),
+                        note: Some(
+                            "granted, and nothing has ever connected to it, so its tool list \
+                             is not known here. Calling a tool connects it; `bough mcp test \
+                             {name}` lists them without calling one."
+                                .replace("{name}", name),
+                        ),
+                        ..Default::default()
+                    },
                 },
             }
         })
@@ -183,6 +225,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("bough-mcp-status-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("mcp.json")
+    }
+
+    /// A remembered catalog with nothing in it, at a path nothing writes.
+    fn empty_catalog() -> CatalogOptions {
+        CatalogOptions {
+            file: Some(tmp_registry().with_file_name("mcp-catalog.json")),
+        }
     }
 
     fn options(file: &Path, session_id: Option<&str>) -> McpStatusOptions {
@@ -306,7 +355,9 @@ mod tests {
                 },
             ],
         };
-        let catalog = prompt_mcp_servers(&status);
+        // Against an EMPTY remembered catalog: the developer's own
+        // `~/.bough/mcp-catalog.json` must not decide what this test sees.
+        let catalog = prompt_mcp_servers_with(&status, &empty_catalog());
         assert_eq!(
             catalog.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
             vec!["files", "notion", "broken"]
@@ -320,10 +371,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["read_file", "write_file"]
         );
-        // Granted but never connected: NAMED, with the way to see its tools.
+        // Granted, and nothing ever connected to it anywhere: NAMED, with the
+        // way to see its tools. This is the ONE case that still points at
+        // `bough mcp test`, because here the tool list genuinely is unknown.
         assert!(catalog[1].tools.is_empty());
         let note = catalog[1].note.as_deref().unwrap_or("");
-        assert!(note.contains("not connected yet"), "{note}");
+        assert!(note.contains("nothing has ever connected"), "{note}");
         assert!(note.contains("bough mcp test notion"), "{note}");
         // Broken: its own error, so the model stops rather than inventing a
         // workaround.
@@ -331,6 +384,42 @@ mod tests {
         // A server nobody granted is not in the catalog at all — the catalog IS
         // the grant.
         assert!(!catalog.iter().any(|c| c.name == "ungranted"));
+    }
+
+    /// The probe ritual, pinned. A granted server that nothing has connected
+    /// to IN THIS SESSION carries the tools it advertised last time, and the
+    /// note does not send the model off to run `bough mcp test` for them —
+    /// which is what it did in 28 distinct sessions of field use.
+    #[test]
+    fn a_granted_server_serves_its_remembered_tools_instead_of_asking_for_a_probe() {
+        let catalog_opts = empty_catalog();
+        crate::mcp::catalog::remember_catalog(
+            "slack",
+            &["slack_send_message".into(), "slack_read_thread".into()],
+            1_000,
+            &catalog_opts,
+        );
+        let status = McpStatus {
+            registry: Registry::default(),
+            auth: BTreeMap::new(),
+            active: vec!["slack".into()],
+            connections: vec![],
+        };
+        let rendered = prompt_mcp_servers_with(&status, &catalog_opts);
+        assert_eq!(
+            rendered[0]
+                .tools
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["slack_send_message", "slack_read_thread"]
+        );
+        let note = rendered[0].note.as_deref().unwrap_or("");
+        assert!(note.contains("advertised last time"), "{note}");
+        assert!(
+            !note.contains("bough mcp test"),
+            "a remembered catalog must not still ask for a probe: {note}"
+        );
     }
 
     #[test]

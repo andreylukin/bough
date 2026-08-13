@@ -9,6 +9,7 @@ pub mod ask;
 pub mod delegate;
 pub mod files;
 pub mod jobs;
+pub mod mcp;
 pub mod patch;
 pub mod schedule;
 pub mod shell;

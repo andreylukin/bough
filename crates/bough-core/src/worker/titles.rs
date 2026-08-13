@@ -40,7 +40,7 @@ use crate::bus::Bus;
 use crate::llm::routing::{process_env, Env};
 use crate::llm::{client_for, complete_text, ClientOpts, CompleteTextOpts};
 use crate::schema::events::{BoughEvent, EventInput, EventType};
-use crate::schema::parts::{Message, Part, Role};
+use crate::schema::parts::{Message, Part, Role, Session};
 use crate::types::{CheapTier, LlmClient, SharedDb};
 
 // ---------------------------------------------------------------------------
@@ -190,6 +190,81 @@ pub const TITLE_SYSTEM: &str =
      Name only what the message names — never invent a subject, file, or domain it does not \
      mention.";
 
+/// The project's own words, appended to [`TITLE_SYSTEM`] when there are any.
+///
+/// WHY A TITLER NEEDS A GLOSSARY. "tell me about nased" was titled *Nasal
+/// decongestant medication overview* — while the session's actual answer,
+/// which had the tag memory and the notes in front of it, correctly explained
+/// NAS Element Demand. The titler is a separate cheap call with none of that
+/// context, so it did the only thing it could with an unfamiliar token: it
+/// guessed at the nearest English word. And the title is the primary
+/// navigation surface, so the one surface with no domain context is the one
+/// the human reads first.
+///
+/// The list is the same ranked vocabulary the session is primed with, so the
+/// titler and the turn are looking at one set of words.
+fn title_system_with(glossary: &[String]) -> String {
+    if glossary.is_empty() {
+        return TITLE_SYSTEM.to_string();
+    }
+    format!(
+        "{TITLE_SYSTEM} Words this project uses, which may look like ordinary English but \
+         are its own names for things: {}. Carry such a word through into the title as \
+         written; never expand it into what it sounds like.",
+        glossary.join(", ")
+    )
+}
+
+/// How many project words the titler is shown. Enough to cover the names that
+/// actually recur, short enough that the cheap call stays cheap.
+const TITLE_GLOSSARY_TAGS: usize = 12;
+
+/// Messages that name nothing to name a session after.
+///
+/// A bare greeting produced *Casual greeting session*, *Quick chat starter*,
+/// *Simple greeting session* and a dozen more like them — a paid call whose
+/// output is noise in the one list the user scans. Deferring costs nothing:
+/// the placeholder survives, and the next message (the one that says what the
+/// work is) titles the session, because the guard only ever replaces a
+/// placeholder.
+fn names_nothing(text: &str) -> bool {
+    let cleaned: String = text
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .collect();
+    let words: Vec<&str> = cleaned.split_whitespace().collect();
+    if words.is_empty() || words.len() > 4 {
+        return false;
+    }
+    const PLEASANTRIES: [&str; 22] = [
+        "hi",
+        "hey",
+        "hello",
+        "yo",
+        "sup",
+        "good",
+        "morning",
+        "afternoon",
+        "evening",
+        "thanks",
+        "thank",
+        "you",
+        "ok",
+        "okay",
+        "cool",
+        "nice",
+        "there",
+        "again",
+        "howdy",
+        "greetings",
+        "test",
+        "ping",
+    ];
+    words.iter().all(|w| PLEASANTRIES.contains(w))
+}
+
 /// A title needs the gist, not a 50KB paste — and the paste is what is billed.
 pub const TITLE_MAX_INPUT: usize = 2000;
 
@@ -326,13 +401,17 @@ fn sentence_case(title: &str) -> String {
 ///
 /// Also used by `history/compact` to name a compaction branch from its first
 /// summary, which is why it takes free text rather than a session id.
-pub async fn cheap_title(first_message: &str, opts: &CheapCallOpts) -> Option<String> {
+pub async fn cheap_title(
+    first_message: &str,
+    glossary: &[String],
+    opts: &CheapCallOpts,
+) -> Option<String> {
     let text: String = first_message.chars().take(TITLE_MAX_INPUT).collect();
     let text = text.trim();
     if text.is_empty() {
         return None;
     }
-    let raw = cheap_text(TITLE_SYSTEM, text, 64, opts).await?;
+    let raw = cheap_text(&title_system_with(glossary), text, 64, opts).await?;
     let title = sanitize_title(&raw);
     if title.is_empty() {
         None
@@ -380,11 +459,46 @@ pub struct AutoTitleOpts {
 /// Before the call: the session must still be carrying the placeholder, so a
 /// titled or renamed session is never re-titled and never re-billed. After
 /// it: the SAME check again, because a user can rename during the round-trip.
+/// This project's ranked tag vocabulary — the same words the session itself is
+/// primed with, so the titler and the turn cannot disagree about what a name
+/// means.
+///
+/// Every failure resolves to an empty glossary. A session with no workspace,
+/// no history yet, or a database that will not answer gets the plain title
+/// prompt, which is what it got before this existed.
+fn title_glossary(ctx: &TitleCtx, session: &Session) -> Vec<String> {
+    let Ok(db) = ctx.db.lock() else {
+        return Vec::new();
+    };
+    let workspace = db
+        .get_session_runtime(&session.id)
+        .ok()
+        .and_then(|r| r.workspace)
+        .unwrap_or_default();
+    if workspace.is_empty() {
+        return Vec::new();
+    }
+    crate::history::tags::stats::top_repo_tags(
+        &*db,
+        &workspace,
+        session.created_at,
+        TITLE_GLOSSARY_TAGS,
+    )
+    .unwrap_or_default()
+}
+
 pub fn maybe_auto_title(ctx: &TitleCtx, session_id: &str, text: &str, opts: AutoTitleOpts) {
     let Some(cheap) = ctx.cheap.clone() else {
         return;
     };
     if text.trim().is_empty() {
+        return;
+    }
+    // A greeting names nothing. Titling it buys *Casual greeting session* and
+    // spends a call to do it; DEFERRING costs nothing, because the placeholder
+    // survives and the next message — the one that says what the work is —
+    // titles the session under the same guard.
+    if names_nothing(text) {
         return;
     }
 
@@ -422,6 +536,11 @@ pub fn maybe_auto_title(ctx: &TitleCtx, session_id: &str, text: &str, opts: Auto
     };
 
     let input: String = text.chars().take(TITLE_MAX_INPUT).collect();
+    // The project's own words, read HERE rather than inside the spawned task
+    // so the database lock is taken on the caller's thread like every other
+    // read in this function. A failure is an empty glossary, never a missing
+    // title: this is a garnish on a garnish.
+    let glossary = title_glossary(ctx, &session);
     let ctx = ctx.clone();
     let session_id = session_id.to_string();
     let placeholder = opts.placeholder.clone();
@@ -431,7 +550,7 @@ pub fn maybe_auto_title(ctx: &TitleCtx, session_id: &str, text: &str, opts: Auto
         // type is a contract this module cannot enforce on an injected
         // implementation — and a panic here is a missing title, not a
         // process-level event.
-        let title = std::panic::AssertUnwindSafe(cheap.title(&input))
+        let title = std::panic::AssertUnwindSafe(cheap.title(&input, &glossary))
             .catch_unwind()
             .await
             .ok()
@@ -709,17 +828,52 @@ mod tests {
             llm: Some(saying_client("x")),
             ..Default::default()
         };
-        assert_eq!(cheap_title("   ", &x).await, None);
+        assert_eq!(cheap_title("   ", &[], &x).await, None);
         let quotes = CheapCallOpts {
             llm: Some(saying_client("\"\"")),
             ..Default::default()
         };
-        assert_eq!(cheap_title("hello", &quotes).await, None);
+        assert_eq!(cheap_title("hello", &[], &quotes).await, None);
         let fix = CheapCallOpts {
             llm: Some(saying_client("Fix it")),
             ..Default::default()
         };
-        assert_eq!(cheap_title("hello", &fix).await.as_deref(), Some("Fix it"));
+        assert_eq!(
+            cheap_title("hello", &[], &fix).await.as_deref(),
+            Some("Fix it")
+        );
+    }
+
+    /// The nasal-decongestant bug. A project word reaches the titler, so the
+    /// titler stops guessing at the nearest English word.
+    #[test]
+    fn the_glossary_tells_the_titler_the_projects_own_words() {
+        let plain = title_system_with(&[]);
+        assert_eq!(plain, TITLE_SYSTEM);
+        let primed = title_system_with(&["nased".to_string(), "fmds".to_string()]);
+        assert!(primed.starts_with(TITLE_SYSTEM), "{primed}");
+        assert!(primed.contains("nased, fmds"), "{primed}");
+        assert!(
+            primed.contains("never expand it into what it sounds like"),
+            "{primed}"
+        );
+    }
+
+    /// A greeting buys no title — and anything that names work still does.
+    #[test]
+    fn a_bare_pleasantry_names_nothing_but_real_work_does() {
+        for greeting in ["hi", "Hey!", "hello there", "good morning", "thanks", "ok"] {
+            assert!(names_nothing(greeting), "{greeting:?} should defer");
+        }
+        for real in [
+            "hi, fix the build",
+            "tell me about nased",
+            "hello world crashes on startup",
+            "test the migration",
+            "",
+        ] {
+            assert!(!names_nothing(real), "{real:?} should be titled");
+        }
     }
 
     #[test]
@@ -944,7 +1098,7 @@ mod tests {
         struct Panicking;
         #[async_trait::async_trait]
         impl CheapTier for Panicking {
-            async fn title(&self, _f: &str) -> Option<String> {
+            async fn title(&self, _f: &str, _glossary: &[String]) -> Option<String> {
                 panic!("provider is down")
             }
             async fn ghost_text(&self, _p: &str) -> Option<String> {

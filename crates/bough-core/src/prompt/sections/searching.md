@@ -7,6 +7,12 @@ what you are actually asking.
 message printed". Scope it to a path when you can. Read the lines you need with
 view(), not whole files.
 
+To find files BY NAME, `rg --files` beats `find`: it honours .gitignore, so it does
+not walk `node_modules`, `target` or `.git`, and it does not stop on a directory it
+may not read. `rg --files -g '*.rs' src/`, or `rg --files | rg config` when you only
+half remember the name. `find` exits non-zero on the first permission error, which
+reads as "nothing found" when the answer was there all along.
+
 **Structure — ast-grep.** Anything shaped like code: a call, a definition, a
 signature, a decorator, an import. It parses the file and matches the syntax tree, so
 `$` metavariables stand for whole expressions and matches inside comments, strings and
