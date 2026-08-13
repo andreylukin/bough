@@ -173,35 +173,12 @@ pub fn classify_bg(hex: &str) -> (String, Scheme) {
     )
 }
 
-/// Frames for an active bough turn in a terminal or multiplexer tab.
+/// Frames a bough turn was once animated with IN THE TITLE. Kept only so the
+/// regression test in `ident` can assert no title carries one: an animated
+/// title is rewritten every frame, which clobbers whatever name the user or
+/// the multiplexer set and — under tmux — spawns a rename process per tick.
+/// Progress belongs in OSC 9;4, which Ghostty draws over the split itself.
 pub const TITLE_SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TitleStatus {
-    Running,
-    Complete,
-}
-
-/// The compact title shared by the terminal window and multiplexer tab bars.
-pub fn bough_title(
-    session: Option<&str>,
-    status: Option<TitleStatus>,
-    spinner_frame: usize,
-) -> String {
-    let label = sanitize(session.unwrap_or("")).trim().to_string();
-    let state = match status {
-        Some(TitleStatus::Running) => {
-            TITLE_SPINNER[spinner_frame % TITLE_SPINNER.len()].to_string()
-        }
-        Some(TitleStatus::Complete) => "complete".to_string(),
-        None => String::new(),
-    };
-    ["bough".to_string(), label, state]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" · ")
-}
 
 // ---------------------------------------------------------------------------
 // Effects
@@ -285,17 +262,20 @@ pub fn create_term(options: TermOptions) -> Term {
 
 impl Term {
     /// Name the terminal pane and any enclosing tmux window or zellij tab.
-    pub fn set_title(&self, title: &str) {
-        let t = sanitize(title);
-        (self.write)(&format!("\u{1b}]0;{t}\u{7}"));
+    ///
+    /// Two forms, because the slots have wildly different widths: a window
+    /// title has room for the semantic name, a tmux window name has about
+    /// fourteen columns and gets the stable handle instead (see `ident`).
+    pub fn set_title(&self, long: &str, short: &str) {
+        (self.write)(&format!("\u{1b}]0;{}\u{7}", sanitize(long)));
         // OSC 0 names the pane; tmux's local action names its window even where
         // allow-rename disables terminal sequences.
         if self.caps.tmux {
-            (self.rename_tmux_window)(&t);
+            (self.rename_tmux_window)(&sanitize(short));
         }
         // OSC titles do not affect zellij's tab bar; its documented action does.
         if self.caps.zellij {
-            (self.rename_zellij_tab)(&t);
+            (self.rename_zellij_tab)(&sanitize(short));
         }
     }
 
@@ -603,23 +583,6 @@ mod tests {
     }
 
     #[test]
-    fn bough_title_animates_active_work_and_marks_completed_work() {
-        assert_eq!(bough_title(None, None, 0), "bough");
-        assert_eq!(
-            bough_title(Some("Fix parser"), Some(TitleStatus::Running), 0),
-            "bough · Fix parser · ⠋"
-        );
-        assert_eq!(
-            bough_title(Some("Fix parser"), Some(TitleStatus::Running), 1),
-            "bough · Fix parser · ⠙"
-        );
-        assert_eq!(
-            bough_title(Some("Fix\u{7} parser"), Some(TitleStatus::Complete), 0),
-            "bough · Fix  parser · complete"
-        );
-    }
-
-    #[test]
     fn tmux_wrap_doubles_every_esc_and_wraps_in_the_passthrough_dcs() {
         assert_eq!(
             tmux_wrap("\u{1b}]9;hi\u{7}", true),
@@ -736,10 +699,13 @@ mod tests {
     #[test]
     fn the_title_names_the_terminal_pane() {
         let h = harness(term_caps(&env_of(&[])));
-        h.term.set_title("bough · fix\u{7} the parser");
+        h.term.set_title(
+            "● fix\u{7} the parser · brisk-heron · bough",
+            "● brisk-heron",
+        );
         assert_eq!(
             *h.out.borrow(),
-            vec!["\u{1b}]0;bough · fix  the parser\u{7}".to_string()]
+            vec!["\u{1b}]0;● fix  the parser · brisk-heron · bough\u{7}".to_string()]
         );
     }
 
@@ -754,8 +720,11 @@ mod tests {
             rename_zellij_tab: None,
             timers: Rc::new(NoopTimers::default()),
         });
-        term.set_title("bough\u{7} running");
-        assert_eq!(*titles.borrow(), vec!["bough  running".to_string()]);
+        term.set_title(
+            "● fix the parser · brisk-heron · bough",
+            "● brisk\u{7}-heron",
+        );
+        assert_eq!(*titles.borrow(), vec!["● brisk -heron".to_string()]);
     }
 
     #[test]
@@ -769,8 +738,11 @@ mod tests {
             rename_zellij_tab: Some(Rc::new(move |t| sink.borrow_mut().push(t.to_string()))),
             timers: Rc::new(NoopTimers::default()),
         });
-        term.set_title("bough\u{7} running");
-        assert_eq!(*titles.borrow(), vec!["bough  running".to_string()]);
+        term.set_title(
+            "● fix the parser · brisk-heron · bough",
+            "● brisk\u{7}-heron",
+        );
+        assert_eq!(*titles.borrow(), vec!["● brisk -heron".to_string()]);
     }
 
     #[test]

@@ -25,6 +25,7 @@ pub mod components;
 pub mod events;
 pub mod forest;
 pub mod format;
+pub mod ident;
 pub mod input;
 pub mod keys;
 pub mod lines;

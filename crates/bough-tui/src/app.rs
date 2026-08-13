@@ -1323,29 +1323,44 @@ impl<T: Transport> App<T> {
 
     /// The terminal-window / multiplexer-tab title for the state on screen.
     ///
-    /// The conversation's own title, and whether its turn is running — the two
-    /// facts a tab bar can carry. `main.tsx` computes exactly this and pushes it
-    /// only when it CHANGES; the push itself is the loop's (`run_loop`).
-    pub fn tab_title(&self, spinner_frame: usize) -> String {
-        let title = self.session_id.as_ref().and_then(|id| {
-            self.panel
-                .sessions
-                .iter()
-                .find(|row| &row.session.id == id)
-                .map(|row| row.session.title.clone())
-        });
-        let status = match &self.turn {
-            Some(turn) if !turn.ended => Some(crate::term::TitleStatus::Running),
-            Some(_) => Some(crate::term::TitleStatus::Complete),
-            None => None,
+    /// How the open conversation is named in a tab bar.
+    ///
+    /// The kind glyph and the outcome mark are taken from the TREE's own
+    /// functions rather than reinvented, so `◆` and `✗` mean the same thing in
+    /// the tree, the rail and the terminal.
+    ///
+    /// This carries no spinner and no tick, so it changes only when the
+    /// conversation's IDENTITY or OUTCOME changes — a handful of times per
+    /// session rather than eight times a second. `run_loop` pushes it only on
+    /// change, which now actually means something.
+    pub fn tab_ident(&self) -> crate::ident::Ident {
+        use crate::components::panel::tree::{kind_glyph, status_mark};
+        let Some(id) = self.session_id.as_ref() else {
+            return crate::ident::Ident {
+                glyph: "●",
+                name: String::new(),
+                handle: String::new(),
+                mark: None,
+            };
         };
-        crate::term::bough_title(title.as_deref(), status, spinner_frame)
-    }
-
-    /// The spinner frame the title is drawn at — the loop's own tick, which
-    /// runs at `SPINNER_MS` (the TS title spinner's 120ms exactly).
-    pub fn spinner_frame(&self) -> usize {
-        self.tick as usize
+        // The handle comes off the ID, not off the row: an id is known the
+        // instant a conversation is opened, whereas the row arrives with the
+        // session list. Deriving it from the row left the tab anonymous for
+        // exactly as long as the list took to load — and anonymous is the
+        // state this whole change exists to abolish.
+        let row = self.panel.sessions.iter().find(|row| &row.session.id == id);
+        crate::ident::Ident {
+            glyph: row.map_or("●", |r| kind_glyph(r)),
+            name: row.map(|r| r.session.title.clone()).unwrap_or_default(),
+            handle: crate::ident::handle(id),
+            // The LIVE turn wins over the row's last-turn status. The row is a
+            // snapshot from the session list and lags by a round trip, so
+            // trusting it would leave a tab reading `✓` while its turn runs.
+            mark: match &self.turn {
+                Some(turn) if !turn.ended => Some("⋯"),
+                _ => row.and_then(|r| status_mark(r, 0)).map(|(mark, _)| mark),
+            },
+        }
     }
 
     /// The rows the rail paints, capped at a third of the screen: the rail is
@@ -4623,7 +4638,12 @@ pub async fn run_loop<T: Transport>(
         })),
         timers: timers.clone(),
     });
-    let mut tab_title = String::new();
+    let mut tab_ident = crate::ident::Ident {
+        glyph: "",
+        name: String::new(),
+        handle: String::new(),
+        mark: None,
+    };
     let mut was_busy = false;
     let size = terminal.size()?;
     let mut app = App::new(options, transport, size.width, size.height);
@@ -4685,11 +4705,12 @@ pub async fn run_loop<T: Transport>(
         timers.fire(now);
         // The chrome, pushed only when it CHANGES: a title written every frame
         // makes a tab bar flicker, and a terminal that renames a tmux window
-        // per keystroke spawns a process per keystroke.
-        let title = app.tab_title(app.spinner_frame());
-        if title != tab_title {
-            tab_title = title;
-            term.set_title(&tab_title);
+        // per keystroke spawns a process per keystroke. Since the title lost
+        // its spinner this is genuinely rare rather than nominally rare.
+        let ident = app.tab_ident();
+        if ident != tab_ident {
+            tab_ident = ident;
+            term.set_title(&tab_ident.long(), &tab_ident.short());
         }
         if app.busy() != was_busy {
             was_busy = app.busy();
@@ -4699,7 +4720,7 @@ pub async fn run_loop<T: Transport>(
                 term.progress_end(false);
                 // ONLY while unfocused — `Term` enforces that itself, so the
                 // call is unconditional here and silent when you are looking.
-                term.notify_desktop("bough finished a turn");
+                term.notify_desktop(&tab_ident.notice("turn finished"));
             }
         }
         if app.quit {
@@ -8600,11 +8621,17 @@ mod tests {
     }
 
     #[test]
-    fn the_tab_title_carries_the_conversation_and_whether_its_turn_runs() {
+    fn the_tab_identity_is_the_handle_and_the_outcome_and_never_the_tick() {
         let (_effects, sink) = scripted();
         let mut app = App::new(TuiOptions::default(), sink, 80, 24);
-        assert_eq!(app.tab_title(0), "bough", "no conversation, no claim");
+        assert_eq!(
+            app.tab_ident().handle,
+            "",
+            "no conversation open, nothing to name"
+        );
         open_s1(&mut app);
+        let named = app.tab_ident();
+        assert_eq!(named.handle, crate::ident::handle("s1"));
         app.apply(
             event(
                 EventType::MessageStarted,
@@ -8620,8 +8647,18 @@ mod tests {
             ),
             10,
         );
-        assert_eq!(app.tab_title(0), "bough · ⠋", "a running turn spins");
-        assert_eq!(app.tab_title(1), "bough · ⠙", "and the frame advances");
+        let running = app.tab_ident();
+        assert_eq!(running.mark, Some("⋯"), "a running turn is marked");
+        assert_eq!(
+            running.handle, named.handle,
+            "the handle is an address — a turn starting cannot change it"
+        );
+        // The regression the whole change exists for: the identity is a
+        // function of the conversation, NOT of the loop's tick, so `run_loop`
+        // writes the title a handful of times a session instead of eight times
+        // a second (and under tmux, spawns that many rename processes).
+        app.tick = app.tick.wrapping_add(1);
+        assert_eq!(app.tab_ident(), running, "a tick is not an identity change");
     }
 
     #[test]
