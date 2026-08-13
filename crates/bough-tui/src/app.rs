@@ -3979,6 +3979,9 @@ impl<T: Transport> App<T> {
                     // would be a report about a conversation; this is a view OF
                     // the one on screen, and opens instantly because of it.
                     thread: &self.thread,
+                    // The settle marks the transcript already keeps: the only
+                    // record of when a turn actually ENDED.
+                    marks: &self.marks,
                     scroll: self.panel.diff_scroll,
                     height: panel_body_rows((area.height as usize).saturating_sub(2)),
                     cols: (area.width as usize).saturating_sub(4).max(20),

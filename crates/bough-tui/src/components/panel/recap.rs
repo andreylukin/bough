@@ -35,6 +35,8 @@ use serde_json::Value;
 
 use bough_core::schema::parts::{Message, Part, Role};
 
+use crate::store::state::{MarkKind, TranscriptMark};
+
 use crate::components::panel::paint_rows;
 use crate::components::{accent, error, info};
 use crate::store::selectors::clip;
@@ -42,6 +44,9 @@ use crate::store::selectors::clip;
 /// What the tab needs. Borrowed, like every other tab's props.
 pub struct RecapProps<'a> {
     pub thread: &'a [Message],
+    /// The turn-settle marks. The ONLY place a round's real duration lives —
+    /// see `Round::elapsed_ms`.
+    pub marks: &'a [TranscriptMark],
     /// Rows scrolled off the TOP. The tail is what a recap is opened for, so
     /// the default view is pinned to the end and this counts backwards from it.
     pub scroll: usize,
@@ -56,7 +61,21 @@ pub struct Round {
     pub at: i64,
     /// What was asked, in its first line.
     pub ask: String,
-    pub elapsed_ms: i64,
+    /// How long the agent worked, or `None` when this client cannot know.
+    ///
+    /// NEITHER MESSAGE TIMESTAMP ANSWERS THIS, which is what driving the real
+    /// TUI proved. Measuring to the next ask bills your thinking time to the
+    /// agent (a `✓ 4s` round was reported as `8s`); measuring to the last
+    /// assistant message reports `0s`, because `created_at` is when a message
+    /// STARTED and the whole round happens inside it. The turn-settle mark is
+    /// the only record of when a turn ended, and it is the same one the
+    /// transcript's own settle line reads, so the two now agree by construction.
+    ///
+    /// Marks are memory-only, so a RESUMED conversation has none for turns that
+    /// ran before this process started. That is `None` — and `None` renders as
+    /// nothing. A recap that invents `0s` is worse than one that admits the
+    /// clock is not in hand.
+    pub elapsed_ms: Option<i64>,
     pub steps: usize,
     pub failed: usize,
     /// Whether the round GOT THERE — the last step's outcome, not
@@ -144,14 +163,19 @@ struct Open {
 
 /// The timeline, one entry per round. Pure — the whole tab is a function of
 /// this list, so every rule above is testable without a terminal.
-pub fn rounds(thread: &[Message], width: usize) -> Vec<Round> {
+pub fn rounds(thread: &[Message], marks: &[TranscriptMark], width: usize) -> Vec<Round> {
     let Some(origin) = thread.first().map(|m| m.created_at) else {
         return Vec::new();
     };
     let mut out: Vec<Round> = Vec::new();
     let mut open: Option<Open> = None;
 
-    fn settle(out: &mut Vec<Round>, open: &mut Option<Open>, at: i64, width: usize) {
+    fn settle(
+        out: &mut Vec<Round>,
+        open: &mut Option<Open>,
+        marks: &[TranscriptMark],
+        width: usize,
+    ) {
         let Some(o) = open.take() else { return };
         // A round with no steps is a question, not a round — one still being
         // answered, or one the agent replied to in prose alone.
@@ -167,7 +191,12 @@ pub fn rounds(thread: &[Message], width: usize) -> Vec<Round> {
         out.push(Round {
             at: o.at,
             ask: o.ask,
-            elapsed_ms: at - o.started,
+            // The FIRST turn that settled at or after this ask. A round is one
+            // turn, so the next one along belongs to the next round.
+            elapsed_ms: marks
+                .iter()
+                .find(|m| m.kind == MarkKind::Turn && m.at >= o.started)
+                .map(|m| m.at - o.started),
             steps: o.steps,
             failed: o.failed,
             arrived: o.arrived,
@@ -177,7 +206,7 @@ pub fn rounds(thread: &[Message], width: usize) -> Vec<Round> {
 
     for msg in thread {
         if msg.role == Role::User {
-            settle(&mut out, &mut open, msg.created_at, width);
+            settle(&mut out, &mut open, marks, width);
             let ask = headline(&prose(msg));
             // An ask with no words — an image, a bare resume — still opens a
             // round; the round's own figures are the record either way.
@@ -229,21 +258,24 @@ pub fn rounds(thread: &[Message], width: usize) -> Vec<Round> {
             }
         }
     }
-    // The last round settles at the last thing that happened, not at "now": a
-    // recap re-read tomorrow must not claim the round took a day.
-    let last = thread.last().map(|m| m.created_at).unwrap_or(origin);
-    settle(&mut out, &mut open, last, width);
+    // The round in flight settles at its own last activity too — never at
+    // "now", or a recap re-read tomorrow would report that it took a day.
+    settle(&mut out, &mut open, marks, width);
     out
 }
 
 /// The painted rows. Split from `render` so the shape of the tab is assertable
 /// as text.
-pub fn recap_lines(thread: &[Message], cols: usize) -> Vec<Line<'static>> {
+pub fn recap_lines(
+    thread: &[Message],
+    marks: &[TranscriptMark],
+    cols: usize,
+) -> Vec<Line<'static>> {
     let dim = Style::default().add_modifier(Modifier::DIM);
     let bold = Style::default().add_modifier(Modifier::BOLD);
     // 7 columns of gutter: the elapsed stamp, then the rail and its mark.
     let width = cols.saturating_sub(12).max(20);
-    let rounds = rounds(thread, width);
+    let rounds = rounds(thread, marks, width);
     if rounds.is_empty() {
         return vec![Line::from(Span::styled(
             "nothing has happened here yet — this fills in as the conversation runs".to_string(),
@@ -267,12 +299,16 @@ pub fn recap_lines(thread: &[Message], cols: usize) -> Vec<Line<'static>> {
             Span::styled(r.ask.clone(), bold),
         ]));
 
-        let mut settle = format!(
-            "{} · {} step{}",
-            crate::format::fmt_duration(r.elapsed_ms),
+        let mut settle = match r.elapsed_ms {
+            Some(ms) => format!("{} · ", crate::format::fmt_duration(ms)),
+            // No clock in hand — say the rest, claim nothing about the time.
+            None => String::new(),
+        };
+        settle.push_str(&format!(
+            "{} step{}",
             r.steps,
             if r.steps == 1 { "" } else { "s" }
-        );
+        ));
         if r.failed > 0 {
             settle.push_str(&format!(" · {} failed", r.failed));
         }
@@ -300,7 +336,7 @@ pub fn recap_lines(thread: &[Message], cols: usize) -> Vec<Line<'static>> {
 /// session got to, so the newest round is on screen without scrolling, and
 /// `scroll` walks backwards from there.
 pub fn render(props: &RecapProps, area: Rect, buf: &mut Buffer) {
-    let rows = recap_lines(props.thread, props.cols);
+    let rows = recap_lines(props.thread, props.marks, props.cols);
     let height = props.height.max(1);
     let end = rows.len().saturating_sub(props.scroll);
     let start = end.saturating_sub(height);
@@ -363,8 +399,19 @@ mod tests {
         }
     }
 
+    /// A turn that settled at `at` — the record the elapsed column reads.
+    fn settled(at: i64) -> TranscriptMark {
+        TranscriptMark {
+            id: format!("mark:s1:{at}"),
+            session_id: "s1".into(),
+            at,
+            kind: MarkKind::Turn,
+            text: format!("✓ {at}ms"),
+        }
+    }
+
     fn painted(thread: &[Message], cols: usize) -> Vec<String> {
-        recap_lines(thread, cols)
+        recap_lines(thread, &[], cols)
             .iter()
             .map(|l| {
                 l.spans
@@ -377,9 +424,9 @@ mod tests {
 
     #[test]
     fn an_empty_thread_is_an_absence_not_a_timeline() {
-        assert!(rounds(&[], 60).is_empty());
+        assert!(rounds(&[], &[], 60).is_empty());
         assert_eq!(
-            recap_lines(&[], 80).len(),
+            recap_lines(&[], &[], 80).len(),
             1,
             "one honest line, not an empty panel"
         );
@@ -423,7 +470,7 @@ mod tests {
                 ],
             ),
         ];
-        let gist = &rounds(&thread, 200)[0].gist;
+        let gist = &rounds(&thread, &[], 200)[0].gist;
         assert_eq!(
             gist.matches("wrote rail.rs").count(),
             1,
@@ -448,7 +495,7 @@ mod tests {
                 ],
             ),
         ];
-        let r = &rounds(&thread, 200)[0];
+        let r = &rounds(&thread, &[], 200)[0];
         assert_eq!((r.steps, r.failed), (2, 1));
         assert!(painted(&thread, 80)[1].contains("1 failed"));
     }
@@ -470,7 +517,7 @@ mod tests {
                 ],
             ),
         ];
-        let r = &rounds(&recovered, 200)[0];
+        let r = &rounds(&recovered, &[], 200)[0];
         assert!(r.arrived && r.failed == 1);
         assert!(
             !r.gist.contains("stopped on"),
@@ -490,7 +537,7 @@ mod tests {
                 ],
             ),
         ];
-        let r = &rounds(&stuck, 200)[0];
+        let r = &rounds(&stuck, &[], 200)[0];
         assert!(!r.arrived);
         assert!(
             r.gist.starts_with("stopped on") && r.gist.contains("cargo test"),
@@ -502,35 +549,57 @@ mod tests {
     }
 
     #[test]
-    fn each_ask_settles_the_round_before_it() {
+    fn a_rounds_clock_comes_from_the_turn_settle_and_is_absent_when_it_must_be() {
+        // FOUND BY DRIVING THE REAL TUI. Neither message timestamp answers
+        // "how long did this take": measuring to the next ask billed four
+        // seconds of the reader's thinking to the agent, and measuring to the
+        // last assistant message reported `0s`, because `created_at` is when a
+        // message STARTED and the whole round happens inside it.
         let thread = vec![
             user(0, "first ask"),
             msg(
                 Role::Supervisor,
-                1_000,
+                100,
                 vec![call("c1", "view('a.rs')"), result("c1", false)],
             ),
-            user(5_000, "second ask"),
+            user(9_000, "second ask"),
             msg(
                 Role::Supervisor,
-                6_000,
+                9_100,
                 vec![call("c2", "view('b.rs')"), result("c2", false)],
             ),
         ];
-        let rs = rounds(&thread, 200);
+        let marks = [settled(4_000), settled(12_000)];
+        let rs = rounds(&thread, &marks, 200);
         assert_eq!(rs.len(), 2);
+        assert_eq!(rs[0].elapsed_ms, Some(4_000), "the turn's own settle");
         assert_eq!(
-            rs[0].elapsed_ms, 5_000,
-            "measured to the SECOND ask, not to the end of the thread"
+            rs[1].elapsed_ms,
+            Some(3_000),
+            "the NEXT settle belongs to the next round, measured from its ask"
         );
-        // The last round settles at the last message, so a recap re-read
-        // tomorrow does not report that the round took a day.
-        assert_eq!(rs[1].elapsed_ms, 1_000);
+
+        // A RESUMED conversation has no marks for turns that ran before this
+        // process started. That is an absence, and it renders as one: a recap
+        // that invents `0s` is worse than one that admits it has no clock.
+        let cold = rounds(&thread, &[], 200);
+        assert_eq!(cold[0].elapsed_ms, None);
+        let rows = recap_lines(&thread, &[], 80);
+        let settle_row = rows[1]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect::<String>();
+        assert!(settle_row.contains("1 step"), "{settle_row:?}");
+        assert!(
+            !settle_row.contains("0s"),
+            "no clock, no claim: {settle_row:?}"
+        );
     }
 
     #[test]
     fn an_ask_still_being_answered_is_not_yet_a_round() {
-        assert!(rounds(&[user(0, "do the thing")], 60).is_empty());
+        assert!(rounds(&[user(0, "do the thing")], &[], 60).is_empty());
     }
 
     #[test]
@@ -559,6 +628,7 @@ mod tests {
         render(
             &RecapProps {
                 thread: &thread,
+                marks: &[],
                 scroll: 0,
                 height: 6,
                 cols: 80,
