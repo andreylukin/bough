@@ -7695,6 +7695,34 @@ mod tests {
         );
     }
 
+    /// `/recap` reported as showing nothing when typed. Drives the WHOLE path
+    /// — draft, send, dispatch, and the reducer's own handling of the command
+    /// it sent itself — because every piece of it passed in isolation.
+    #[test]
+    fn typing_slash_recap_opens_the_recap_tab() {
+        let (effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        type_text(&mut app, "/recap", 0);
+        app.apply(key(KeyCode::Esc), 5);
+        app.apply(key(KeyCode::Enter), 10);
+        assert_eq!(
+            sends(&effects).as_slice(),
+            &[Effect::Run(
+                Command::Tab(crate::keys::PanelTab::Recap),
+                String::new()
+            )],
+            "the draft dispatched as a command rather than being sent as prose"
+        );
+        // The effect comes back over the mpsc as the client's own action; a
+        // test has no loop, so it is applied here exactly as `run_loop` would.
+        app.apply(
+            Action::Run(Command::Tab(crate::keys::PanelTab::Recap), String::new()),
+            15,
+        );
+        assert!(app.panel.open(), "the panel opened");
+        assert_eq!(app.panel.tab(), crate::keys::PanelTab::Recap);
+    }
+
     /// `/clear`, typed out of Claude Code habit, once reached haiku — which
     /// answered "Done. State cleared." and offered to revert the workspace's
     /// modified files. A confirmation for something that never happened.
