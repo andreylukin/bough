@@ -150,6 +150,17 @@ moment the command is written. A session opens primed with its project's own voc
 `bough tags` answers what was tried here, what worked, and what it printed.
 → [docs/tags.md](docs/tags.md)
 
+**Large output is described, not dumped or cut.** A command's output is the one thing in a turn
+whose size the model does not choose: it asks for a test run and gets 12MB. Past 20,000 characters
+bough streams the whole thing to a file and returns head, tail, and a *digest of the middle* rather
+than an ellipsis, so the model is told what the omitted output consists of: the distinct statements
+it is made of, with exact counts, typed per-variable statistics and flagged anomalies, problems
+ranked first rather than whatever happened last. It is one streaming pass that keeps nothing per
+line, so a 200,000-line file and a 2,000-line one cost the same to summarize. Nothing is lost, the
+marker names the file and how to grep it, and the same pipeline is available by hand as
+`bough patterns` on any log, offline, even against a stopped server.
+→ [docs/logs.md](docs/logs.md)
+
 **Extending it.** Skills, Lua hooks that can start work rather than only veto it, JavaScript
 extensions bound into every program's scope, and MCP as a command rather than a verb. Reads the
 `AGENTS.md`, `CLAUDE.md` and `.claude/skills` your other harnesses already wrote.

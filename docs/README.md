@@ -21,6 +21,7 @@ Two audiences, in order.
 | [extending.md](extending.md) | Skills, hooks, extensions, MCP, project rules |
 | [tags.md](tags.md) | Command memory: how tagging makes past work recallable |
 | [notes.md](notes.md) | Note memory: the prose beside the commands, and how it is kept honest |
+| [logs.md](logs.md) | Large logs: how `bough patterns` compresses one into a fixed-size analysis |
 | [how-it-works.md](how-it-works.md) | Server, sidecars, the turn loop, the data model |
 
 **Contributing**

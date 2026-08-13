@@ -97,7 +97,7 @@ variable statistics, flagged anomalies, problems first. Reads stdin when `FILE` 
 Defaults to `--human` on a terminal and `--llm` otherwise.
 
 Raise `--threshold` if distinct statements are being merged; lower it if one statement is
-splitting into near-duplicates.
+splitting into near-duplicates. Full mechanism: [logs.md](logs.md).
 
 ## `bough mcp`: servers and grants
 
