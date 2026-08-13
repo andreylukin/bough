@@ -30,6 +30,7 @@ pub mod hooks;
 pub mod host;
 pub mod mcp;
 pub mod model;
+pub mod recap;
 pub mod skills;
 pub mod tree;
 pub mod workflows;
@@ -343,6 +344,8 @@ pub enum PanelBody<'a> {
     Model(model::ModelPickerProps<'a>),
     /// What the last turn put in the window, and what it cost.
     Context(context::ContextProps<'a>),
+    /// What happened in this conversation, one line per beat.
+    Recap(recap::RecapProps<'a>),
     Text(&'a str),
 }
 
@@ -404,6 +407,7 @@ pub fn render_panel(tab: PanelTab, body: &PanelBody, area: Rect, buf: &mut Buffe
         PanelBody::Skills(p) => skills::render_skills(p, body_area, buf),
         PanelBody::Model(p) => model::render_model(p, body_area, buf),
         PanelBody::Context(p) => context::render(p, body_area, buf),
+        PanelBody::Recap(p) => recap::render(p, body_area, buf),
         PanelBody::Text(text) => {
             let dim = Style::default().add_modifier(Modifier::DIM);
             buf.set_line(
@@ -707,7 +711,7 @@ mod tests {
             .iter()
             .map(|s| s.content.to_string())
             .collect();
-        assert_eq!(text, " [theme] 9/9 · ⇥ next · ^t close");
+        assert_eq!(text, " [theme] 10/10 · ⇥ next · ^t close");
     }
 
     #[test]

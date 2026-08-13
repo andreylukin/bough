@@ -40,6 +40,7 @@ pub enum UiMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PanelTab {
     Tree,
+    Recap,
     Changes,
     Workflows,
     Model,
@@ -54,6 +55,7 @@ impl PanelTab {
     pub fn id(self) -> &'static str {
         match self {
             PanelTab::Tree => "tree",
+            PanelTab::Recap => "recap",
             PanelTab::Changes => "changes",
             PanelTab::Workflows => "workflows",
             PanelTab::Model => "model",
@@ -202,7 +204,7 @@ pub struct TabDef {
 /// Every non-chat surface, as data. Adding a surface is adding a row — it
 /// cannot add a mode, an open flag, or an escape path, and it cannot ship
 /// without a key.
-pub const TABS: [TabDef; 9] = [
+pub const TABS: [TabDef; 10] = [
     TabDef {
         id: PanelTab::Tree,
         title: "tree",
@@ -214,6 +216,14 @@ pub const TABS: [TabDef; 9] = [
         title: "changes",
         chord: "ctrl+d",
         desc: "what this session changed",
+    },
+    TabDef {
+        id: PanelTab::Recap,
+        title: "recap",
+        // `meta+` is the second register the context tab already reaches into;
+        // every ctrl chord was taken long before this tab existed.
+        chord: "meta+r",
+        desc: "what happened in this conversation, one line per beat",
     },
     TabDef {
         id: PanelTab::Workflows,
@@ -265,9 +275,10 @@ pub const TABS: [TabDef; 9] = [
 ];
 
 /// Tab ids in bar order. Derived, so the bar and the keymap cannot disagree.
-pub const PANEL_TABS: [PanelTab; 9] = [
+pub const PANEL_TABS: [PanelTab; 10] = [
     PanelTab::Tree,
     PanelTab::Changes,
+    PanelTab::Recap,
     PanelTab::Workflows,
     PanelTab::Model,
     PanelTab::Mcp,
@@ -2745,6 +2756,12 @@ mod tests {
         );
         assert_eq!(slash_command_for("/HELP"), Some(Command::HelpOpen));
         assert_eq!(slash_command_for("/new"), Some(Command::SessionNew));
+        // Free from the TABS table rather than a second registration — a tab
+        // and its `/name` cannot drift apart because they are one row.
+        assert_eq!(
+            slash_command_for("/recap"),
+            Some(Command::Tab(PanelTab::Recap))
+        );
         assert_eq!(slash_command_for("/rewind"), Some(Command::TreeRewind));
         // Prose about a command is prose.
         assert_eq!(slash_command_for("/help me name this"), None);

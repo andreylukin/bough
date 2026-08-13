@@ -577,6 +577,9 @@ impl PanelHost {
                 self.land_on_current();
                 vec![HostRequest::LoadSessions]
             }
+            // Nothing to fetch: the recap is derived from the thread the
+            // transcript is already holding.
+            PanelTab::Recap => vec![],
             PanelTab::Changes => vec![HostRequest::LoadChanges],
             // The cursor is the PREVIEW's, not the panel's: it starts on the
             // theme in force, so `sel` is left at 0 and never read here.
@@ -832,7 +835,7 @@ impl PanelHost {
             PanelTab::Hooks => self.hooks.as_ref().map(|h| h.len()).unwrap_or(0),
             PanelTab::Model => self.model_entries().len(),
             // Not a list: it has no rows to land a cursor on.
-            PanelTab::Context | PanelTab::Theme => 0,
+            PanelTab::Context | PanelTab::Theme | PanelTab::Recap => 0,
         }
     }
 
@@ -1453,7 +1456,7 @@ impl PanelHost {
     pub fn confirm_at(&mut self, at: usize, summarize: bool) -> Vec<HostRequest> {
         match self.state.tab {
             // Nothing to confirm: the tab is a report, not a list.
-            PanelTab::Context => vec![],
+            PanelTab::Context | PanelTab::Recap => vec![],
             // ⏎ and space do the same thing here: the row has exactly one
             // verb, and a list where enter does nothing teaches the user that
             // the list is inert.

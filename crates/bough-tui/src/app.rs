@@ -3973,6 +3973,17 @@ impl<T: Transport> App<T> {
                     crumbs: &crumbs,
                 })
             }
+            crate::keys::PanelTab::Recap => {
+                PanelBody::Recap(crate::components::panel::recap::RecapProps {
+                    // The thread already in hand. A recap that had to fetch
+                    // would be a report about a conversation; this is a view OF
+                    // the one on screen, and opens instantly because of it.
+                    thread: &self.thread,
+                    scroll: self.panel.diff_scroll,
+                    height: panel_body_rows((area.height as usize).saturating_sub(2)),
+                    cols: (area.width as usize).saturating_sub(4).max(20),
+                })
+            }
             crate::keys::PanelTab::Context => {
                 PanelBody::Context(crate::components::panel::context::ContextProps {
                     view: self.panel.prompt.as_ref(),
