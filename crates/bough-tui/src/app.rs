@@ -1334,7 +1334,7 @@ impl<T: Transport> App<T> {
     /// session rather than eight times a second. `run_loop` pushes it only on
     /// change, which now actually means something.
     pub fn tab_ident(&self) -> crate::ident::Ident {
-        use crate::components::panel::tree::{kind_glyph, status_mark};
+        use crate::components::panel::tree::{kind_glyph, status_mark, title_of};
         let Some(id) = self.session_id.as_ref() else {
             return crate::ident::Ident {
                 glyph: "●",
@@ -1351,7 +1351,16 @@ impl<T: Transport> App<T> {
         let row = self.panel.sessions.iter().find(|row| &row.session.id == id);
         crate::ident::Ident {
             glyph: row.map_or("●", |r| kind_glyph(r)),
-            name: row.map(|r| r.session.title.clone()).unwrap_or_default(),
+            // `title_of`, not the raw title: the server's `handoff · ` /
+            // `fork · ` prefix is a kind, and the kind is ALREADY the glyph
+            // sitting immediately to its left. Spending a tab bar's width
+            // saying the same thing twice is how `handoff · fix the parser`
+            // truncates to `handoff · fix…`. Its `(untitled)` sentinel becomes
+            // nothing here, because the handle is already standing in.
+            name: row
+                .map(title_of)
+                .filter(|t| t != "(untitled)")
+                .unwrap_or_default(),
             handle: crate::ident::handle(id),
             // The LIVE turn wins over the row's last-turn status. The row is a
             // snapshot from the session list and lags by a round trip, so
@@ -8632,6 +8641,13 @@ mod tests {
         open_s1(&mut app);
         let named = app.tab_ident();
         assert_eq!(named.handle, crate::ident::handle("s1"));
+
+        // A kind prefix is dropped: the glyph to its left already says it, and
+        // the tab bar has no width to spend saying it twice.
+        let mut row = session_row("s1", SessionKind::Root, 1);
+        row.session.title = "handoff · fix the parser".into();
+        app.apply(Action::Sessions(vec![row]), 1);
+        assert_eq!(app.tab_ident().name, "fix the parser");
         app.apply(
             event(
                 EventType::MessageStarted,
