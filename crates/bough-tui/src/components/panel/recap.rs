@@ -2,21 +2,26 @@
 //!
 //! THE QUESTION THIS ANSWERS: "what is this session, and where did it get to."
 //! Scrolling the transcript answers it eventually — after paging through every
-//! tool output, every retry and every wall of prose. The recap is the same run
-//! at one line per event, so a session that took three hours reads in fifteen
-//! seconds.
+//! tool output, every retry and every wall of prose.
 //!
-//! IT IS DERIVED, NOT WRITTEN. Every beat comes from the parts already in the
+//! THE ROUND IS THE UNIT, and that is the whole design. One line per STEP was
+//! the obvious first cut and it was wrong: a real session runs hundreds of
+//! steps, so a step-per-line recap is a shorter transcript rather than a
+//! summary, and it needs scrolling to read — which is the thing being fixed.
+//! A round is what a person actually remembers ("I asked for the rail, it took
+//! four minutes, it fought the timezone"), so a round is two rows: what you
+//! asked, and what came of it.
+//!
+//! IT IS DERIVED, NOT WRITTEN. Every figure comes from parts already in the
 //! thread: a program's own summary line, a result's error flag, a message's
 //! timestamp. Nothing here calls a model, so it is instant, free, and cannot
 //! narrate work that did not happen — which is the failure mode of a generated
 //! recap, and the reason a generated one cannot be trusted as a record.
 //!
-//! THE FAILURES ARE THE POINT. `✗` beats — a step that errored, an approach
-//! that was retried — are the ones a summary drops first and the ones you most
-//! need on a re-read: they are what stops the same wall being walked into
-//! twice. They keep their own mark and their own colour, and the round footer
-//! counts them.
+//! FAILURES SURVIVE THE COLLAPSE. A step that errored is what a summary drops
+//! first and what you most need on a re-read. Rolling steps up to a round must
+//! not lose them, so the count rides the settle line and a round that ended
+//! badly says what it was doing when it stopped.
 //!
 //! TIME IS RELATIVE TO THE FIRST MESSAGE, never a wall clock. A recap is read
 //! for shape — how long a round took, where the session stalled — and an
@@ -44,42 +49,25 @@ pub struct RecapProps<'a> {
     pub cols: usize,
 }
 
-/// One entry on the timeline. Deliberately a small closed set: a recap that can
-/// say anything says nothing.
+/// One round: an ask and everything that answered it.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Beat {
-    /// What you asked for. Opens a round.
-    Ask { at: i64, text: String },
-    /// One program the agent ran, headlined by what it DID.
-    Step { at: i64, text: String, failed: bool },
-    /// What the agent concluded, in its own first sentence.
-    Said { at: i64, text: String },
-    /// The round's settle: how long, how many steps, how many failed, and
-    /// whether it GOT THERE.
-    ///
-    /// `arrived` is the last step's outcome, not `failed == 0`. A round that
-    /// hit a wall, backed out and landed the fix did not fail — marking it `✗`
-    /// because something went wrong on the way makes every interesting round
-    /// look like a failure, and then the mark means nothing. The `failed` count
-    /// is where the bumps are recorded.
-    Round {
-        at: i64,
-        elapsed_ms: i64,
-        steps: usize,
-        failed: usize,
-        arrived: bool,
-    },
-}
-
-impl Beat {
-    pub fn at(&self) -> i64 {
-        match self {
-            Beat::Ask { at, .. }
-            | Beat::Step { at, .. }
-            | Beat::Said { at, .. }
-            | Beat::Round { at, .. } => *at,
-        }
-    }
+pub struct Round {
+    /// Milliseconds from the first message in the thread.
+    pub at: i64,
+    /// What was asked, in its first line.
+    pub ask: String,
+    pub elapsed_ms: i64,
+    pub steps: usize,
+    pub failed: usize,
+    /// Whether the round GOT THERE — the last step's outcome, not
+    /// `failed == 0`. A round that hit a wall, backed out and landed the fix
+    /// did not fail; marking it `✗` because something went wrong on the way
+    /// makes every interesting round look broken, and then the mark means
+    /// nothing. `failed` is where the bumps are recorded.
+    pub arrived: bool,
+    /// What the round touched, rolled up from its steps and deduped — the
+    /// substance of the round in one phrase.
+    pub gist: String,
 }
 
 /// `m:ss`, or `h:mm:ss` past an hour. Relative, so no timezone is involved.
@@ -115,13 +103,13 @@ fn prose(msg: &Message) -> String {
         .join("\n")
 }
 
-/// What ONE program did, in a line.
+/// What ONE program did, in a phrase.
 ///
 /// `program_summary` is the tool-group header the transcript already paints
-/// ("read rail.rs · wrote schedule.rs"), so a beat and the group it came from
-/// cannot describe the same step differently. It gives nothing back for a
-/// program that touched no files, and a bare first line of code beats an empty
-/// row there.
+/// ("read rail.rs · wrote schedules.rs"), so a round and the groups it rolled
+/// up cannot describe the same work differently. It gives nothing back for a
+/// program that touched no files, and a bare first line of code beats nothing
+/// there.
 fn step_text(input: &Value, width: usize) -> String {
     let code = input.get("code").and_then(Value::as_str).unwrap_or("");
     let summary = crate::lines::program_summary(code, width, false);
@@ -130,59 +118,82 @@ fn step_text(input: &Value, width: usize) -> String {
     }
     let gist = crate::lines::code_gist(input, width);
     if gist.trim().is_empty() {
-        "ran a step".to_string()
+        String::new()
     } else {
         gist
     }
 }
 
-/// The timeline, derived from the thread. Pure — the whole tab is a function
-/// of this list, so every rule above is testable without a terminal.
-pub fn beats(thread: &[Message], width: usize) -> Vec<Beat> {
+/// A round being accumulated.
+struct Open {
+    at: i64,
+    started: i64,
+    ask: String,
+    steps: usize,
+    failed: usize,
+    arrived: bool,
+    /// Step phrases in order of first appearance. Deduped, because a round
+    /// that wrote the same file four times says "wrote rail.rs" once — the
+    /// repetition is already carried by the step count.
+    touched: Vec<String>,
+    /// What the round was doing when its last step failed. Only rendered when
+    /// the round did NOT arrive: on a round that recovered it is history, and
+    /// on one that stopped it is the single most useful thing on the row.
+    stopped_on: Option<String>,
+}
+
+/// The timeline, one entry per round. Pure — the whole tab is a function of
+/// this list, so every rule above is testable without a terminal.
+pub fn rounds(thread: &[Message], width: usize) -> Vec<Round> {
     let Some(origin) = thread.first().map(|m| m.created_at) else {
         return Vec::new();
     };
-    let mut out: Vec<Beat> = Vec::new();
-    // The round in flight: when it opened, and what it has done.
-    // started_at, steps, failed, and whether the LAST step landed.
-    let mut open: Option<(i64, usize, usize, bool)> = None;
+    let mut out: Vec<Round> = Vec::new();
+    let mut open: Option<Open> = None;
 
-    // Close the round in flight, if any, at `at`.
-    fn settle(
-        out: &mut Vec<Beat>,
-        open: &mut Option<(i64, usize, usize, bool)>,
-        at: i64,
-        origin: i64,
-    ) {
-        if let Some((started, steps, failed, arrived)) = open.take() {
-            // A round with nothing in it is a message, not a round — an ask
-            // still being answered, or one the agent replied to in prose alone.
-            if steps > 0 {
-                out.push(Beat::Round {
-                    at: at - origin,
-                    elapsed_ms: at - started,
-                    steps,
-                    failed,
-                    arrived,
-                });
+    fn settle(out: &mut Vec<Round>, open: &mut Option<Open>, at: i64, width: usize) {
+        let Some(o) = open.take() else { return };
+        // A round with no steps is a question, not a round — one still being
+        // answered, or one the agent replied to in prose alone.
+        if o.steps == 0 {
+            return;
+        }
+        let mut gist = o.touched.join(" · ");
+        if !o.arrived {
+            if let Some(stopped) = &o.stopped_on {
+                gist = format!("stopped on {stopped}");
             }
         }
+        out.push(Round {
+            at: o.at,
+            ask: o.ask,
+            elapsed_ms: at - o.started,
+            steps: o.steps,
+            failed: o.failed,
+            arrived: o.arrived,
+            gist: clip(&gist, width),
+        });
     }
 
     for msg in thread {
-        let at = msg.created_at - origin;
         if msg.role == Role::User {
-            settle(&mut out, &mut open, msg.created_at, origin);
-            let text = headline(&prose(msg));
-            if !text.is_empty() {
-                out.push(Beat::Ask {
-                    at,
-                    text: clip(&text, width),
-                });
-            }
-            open = Some((msg.created_at, 0, 0, true));
+            settle(&mut out, &mut open, msg.created_at, width);
+            let ask = headline(&prose(msg));
+            // An ask with no words — an image, a bare resume — still opens a
+            // round; the round's own figures are the record either way.
+            open = Some(Open {
+                at: msg.created_at - origin,
+                started: msg.created_at,
+                ask: clip(&ask, width),
+                steps: 0,
+                failed: 0,
+                arrived: true,
+                touched: Vec::new(),
+                stopped_on: None,
+            });
             continue;
         }
+        let Some(o) = open.as_mut() else { continue };
 
         // Which calls failed — a result names its call, so the two are joined
         // by id rather than by position.
@@ -196,42 +207,44 @@ pub fn beats(thread: &[Message], width: usize) -> Vec<Beat> {
                 summary.results.get(id.as_str()),
                 Some(Part::ToolResult { is_error: true, .. })
             );
-            out.push(Beat::Step {
-                at,
-                text: step_text(input, width),
-                failed,
-            });
-            if let Some((_, steps, failures, arrived)) = open.as_mut() {
-                *steps += 1;
-                *failures += usize::from(failed);
-                *arrived = !failed;
+            let text = step_text(input, width);
+            o.steps += 1;
+            o.failed += usize::from(failed);
+            o.arrived = !failed;
+            if failed {
+                // The CODE, not the summary. `program_summary` describes a
+                // step by the files it touched, which for a step that only ran
+                // a command is the near-useless "ran 1 command" — and "stopped
+                // on ran 1 command" is neither grammar nor information. The
+                // first line of the program names the command that failed.
+                let gist = crate::lines::code_gist(input, width);
+                o.stopped_on = Some(if gist.trim().is_empty() {
+                    text.clone()
+                } else {
+                    gist
+                });
+            }
+            if !text.is_empty() && !o.touched.contains(&text) {
+                o.touched.push(text);
             }
         }
-
-        let said = headline(&prose(msg));
-        if !said.is_empty() {
-            out.push(Beat::Said {
-                at,
-                text: clip(&said, width),
-            });
-        }
     }
-    // The last round is settled at the last thing that happened, not at "now":
-    // a recap re-read tomorrow must not claim the round took a day.
+    // The last round settles at the last thing that happened, not at "now": a
+    // recap re-read tomorrow must not claim the round took a day.
     let last = thread.last().map(|m| m.created_at).unwrap_or(origin);
-    settle(&mut out, &mut open, last, origin);
+    settle(&mut out, &mut open, last, width);
     out
 }
 
-/// The painted rows for a timeline. Split from `render` so the shape of the
-/// tab is assertable as text.
+/// The painted rows. Split from `render` so the shape of the tab is assertable
+/// as text.
 pub fn recap_lines(thread: &[Message], cols: usize) -> Vec<Line<'static>> {
     let dim = Style::default().add_modifier(Modifier::DIM);
     let bold = Style::default().add_modifier(Modifier::BOLD);
-    // 7 columns of gutter: `m:ss` right-aligned, then the rail and its mark.
-    let text_width = cols.saturating_sub(12).max(20);
-    let beats = beats(thread, text_width);
-    if beats.is_empty() {
+    // 7 columns of gutter: the elapsed stamp, then the rail and its mark.
+    let width = cols.saturating_sub(12).max(20);
+    let rounds = rounds(thread, width);
+    if rounds.is_empty() {
         return vec![Line::from(Span::styled(
             "nothing has happened here yet — this fills in as the conversation runs".to_string(),
             dim,
@@ -239,59 +252,46 @@ pub fn recap_lines(thread: &[Message], cols: usize) -> Vec<Line<'static>> {
     }
 
     let mut rows: Vec<Line<'static>> = Vec::new();
-    for beat in &beats {
-        let time = match beat {
-            // Only the round's ENDS carry a time. A stamp on every row is a
-            // column of near-identical numbers that hides the two that matter.
-            Beat::Ask { .. } | Beat::Round { .. } => format!("{:>6}", stamp(beat.at())),
-            _ => " ".repeat(6),
-        };
-        let (rail, mark, text, style) = match beat {
-            Beat::Ask { text, .. } => ("┌", "●", text.clone(), bold),
-            Beat::Step { text, failed, .. } => (
-                "│",
-                if *failed { "✗" } else { "◆" },
-                text.clone(),
-                if *failed {
-                    Style::default().fg(error())
-                } else {
-                    Style::default()
-                },
-            ),
-            Beat::Said { text, .. } => ("│", "·", text.clone(), dim),
-            Beat::Round {
-                elapsed_ms,
-                steps,
-                failed,
-                arrived,
-                ..
-            } => {
-                let mut s = format!(
-                    "{} · {steps} step{}",
-                    crate::format::fmt_duration(*elapsed_ms),
-                    if *steps == 1 { "" } else { "s" }
-                );
-                if *failed > 0 {
-                    s.push_str(&format!(" · {failed} failed"));
-                }
-                (
-                    "└",
-                    if *arrived { "✓" } else { "✗" },
-                    s,
-                    if *arrived {
-                        Style::default().fg(info())
-                    } else {
-                        Style::default().fg(error())
-                    },
-                )
-            }
+    for (i, r) in rounds.iter().enumerate() {
+        if i > 0 {
+            rows.push(Line::from(""));
+        }
+        let (mark, mark_style) = if r.arrived {
+            ("●", Style::default().fg(accent()))
+        } else {
+            ("✗", Style::default().fg(error()))
         };
         rows.push(Line::from(vec![
-            Span::styled(time, dim),
-            Span::styled(format!(" {rail}"), Style::default().fg(accent())),
-            Span::styled(format!("{mark} "), style),
-            Span::styled(text, style),
+            Span::styled(format!("{:>6}", stamp(r.at)), dim),
+            Span::styled(format!(" {mark} "), mark_style),
+            Span::styled(r.ask.clone(), bold),
         ]));
+
+        let mut settle = format!(
+            "{} · {} step{}",
+            crate::format::fmt_duration(r.elapsed_ms),
+            r.steps,
+            if r.steps == 1 { "" } else { "s" }
+        );
+        if r.failed > 0 {
+            settle.push_str(&format!(" · {} failed", r.failed));
+        }
+        let mut spans = vec![
+            Span::styled(" ".repeat(6), dim),
+            Span::styled(" ╰ ".to_string(), Style::default().fg(accent())),
+            Span::styled(
+                settle,
+                if r.failed > 0 {
+                    Style::default().fg(error())
+                } else {
+                    Style::default().fg(info())
+                },
+            ),
+        ];
+        if !r.gist.is_empty() {
+            spans.push(Span::styled(format!(" · {}", r.gist), dim));
+        }
+        rows.push(Line::from(spans));
     }
     rows
 }
@@ -363,55 +363,78 @@ mod tests {
         }
     }
 
+    fn painted(thread: &[Message], cols: usize) -> Vec<String> {
+        recap_lines(thread, cols)
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
     #[test]
     fn an_empty_thread_is_an_absence_not_a_timeline() {
-        assert!(beats(&[], 60).is_empty());
-        let rows = recap_lines(&[], 80);
-        assert_eq!(rows.len(), 1, "one honest line, not an empty panel");
+        assert!(rounds(&[], 60).is_empty());
+        assert_eq!(
+            recap_lines(&[], 80).len(),
+            1,
+            "one honest line, not an empty panel"
+        );
     }
 
     #[test]
-    fn a_round_is_the_ask_its_steps_and_a_settle() {
+    fn a_round_is_two_rows_however_many_steps_it_ran() {
+        // THE POINT OF THE TAB. Twenty steps must not become twenty rows, or
+        // the recap is a shorter transcript rather than a summary.
+        let mut thread = vec![user(0, "make the rail show scheduled runs")];
+        for i in 1..=20 {
+            thread.push(msg(
+                Role::Supervisor,
+                i * 1_000,
+                vec![
+                    call(&format!("c{i}"), "view('src/rail.rs')"),
+                    result(&format!("c{i}"), false),
+                ],
+            ));
+        }
+        let rows = painted(&thread, 80);
+        assert_eq!(rows.len(), 2, "{rows:#?}");
+        assert!(rows[0].contains("make the rail show scheduled runs"));
+        assert!(rows[1].contains("20 steps"), "{:?}", rows[1]);
+    }
+
+    #[test]
+    fn what_a_round_touched_is_deduped_because_the_count_carries_the_repetition() {
         let thread = vec![
-            user(1_000, "make the rail show scheduled runs"),
+            user(0, "fix the rail"),
             msg(
                 Role::Supervisor,
-                4_000,
+                1_000,
                 vec![
-                    call("c1", "const s = view('src/rail.rs')"),
+                    call("c1", "write('src/rail.rs', a)"),
                     result("c1", false),
+                    call("c2", "write('src/rail.rs', b)"),
+                    result("c2", false),
+                    call("c3", "view('src/schedules.rs')"),
+                    result("c3", false),
                 ],
             ),
-            msg(
-                Role::Supervisor,
-                9_000,
-                vec![Part::Text {
-                    text: "the countdown renders from RailCtx now".into(),
-                }],
-            ),
         ];
-        let beats = beats(&thread, 60);
-        assert!(
-            matches!(&beats[0], Beat::Ask { at: 0, text } if text.starts_with("make the rail"))
-        );
-        assert!(matches!(&beats[1], Beat::Step { failed: false, .. }));
-        assert!(matches!(&beats[2], Beat::Said { .. }));
-        // Settled at the LAST message, not at a wall clock — a recap re-read
-        // tomorrow must not report that the round took a day.
+        let gist = &rounds(&thread, 200)[0].gist;
         assert_eq!(
-            beats[3],
-            Beat::Round {
-                at: 8_000,
-                elapsed_ms: 8_000,
-                steps: 1,
-                failed: 0,
-                arrived: true,
-            }
+            gist.matches("wrote rail.rs").count(),
+            1,
+            "written twice, said once: {gist:?}"
         );
+        assert!(gist.contains("schedules.rs"), "{gist:?}");
     }
 
     #[test]
-    fn a_failed_step_keeps_its_mark_and_is_counted_in_the_settle() {
+    fn failures_survive_the_collapse_to_one_round() {
+        // The rollup must not lose the beats a summary drops first.
         let thread = vec![
             user(0, "fix the flake"),
             msg(
@@ -425,87 +448,9 @@ mod tests {
                 ],
             ),
         ];
-        let beats = beats(&thread, 60);
-        let failed: Vec<&Beat> = beats
-            .iter()
-            .filter(|b| matches!(b, Beat::Step { failed: true, .. }))
-            .collect();
-        assert_eq!(failed.len(), 1, "the error flag survives into the timeline");
-        assert_eq!(
-            beats.last(),
-            Some(&Beat::Round {
-                at: 1_000,
-                elapsed_ms: 1_000,
-                steps: 2,
-                failed: 1,
-                // The failing step was not the LAST one — the round recovered,
-                // and a round that recovered is not a round that failed.
-                arrived: true,
-            })
-        );
-        // The failure reaches the painted row, which is the whole point of
-        // keeping it: this is the beat a generated summary drops first.
-        let painted = recap_lines(&thread, 80)
-            .iter()
-            .map(|l| {
-                l.spans
-                    .iter()
-                    .map(|s| s.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>();
-        assert!(painted.iter().any(|r| r.contains('✗')), "{painted:?}");
-        assert!(
-            painted.iter().any(|r| r.contains("1 failed")),
-            "{painted:?}"
-        );
-    }
-
-    #[test]
-    fn a_second_ask_settles_the_round_before_it() {
-        let thread = vec![
-            user(0, "first ask"),
-            msg(
-                Role::Supervisor,
-                1_000,
-                vec![call("c1", "view('a.rs')"), result("c1", false)],
-            ),
-            user(5_000, "second ask"),
-            msg(
-                Role::Supervisor,
-                6_000,
-                vec![call("c2", "view('b.rs')"), result("c2", false)],
-            ),
-        ];
-        let all = beats(&thread, 60);
-        let settles: Vec<&Beat> = all
-            .iter()
-            .filter(|b| matches!(b, Beat::Round { .. }))
-            .collect();
-        assert_eq!(settles.len(), 2, "one settle per ask, not one at the end");
-        assert!(
-            matches!(
-                settles[0],
-                Beat::Round {
-                    elapsed_ms: 5_000,
-                    ..
-                }
-            ),
-            "the first round is measured to the SECOND ask, not to the end"
-        );
-    }
-
-    #[test]
-    fn an_ask_still_being_answered_has_no_settle_to_report() {
-        let thread = vec![user(0, "do the thing")];
-        assert_eq!(
-            beats(&thread, 60),
-            vec![Beat::Ask {
-                at: 0,
-                text: "do the thing".into()
-            }],
-            "a round with no steps is a question, not a round"
-        );
+        let r = &rounds(&thread, 200)[0];
+        assert_eq!((r.steps, r.failed), (2, 1));
+        assert!(painted(&thread, 80)[1].contains("1 failed"));
     }
 
     #[test]
@@ -525,14 +470,12 @@ mod tests {
                 ],
             ),
         ];
-        assert!(matches!(
-            beats(&recovered, 60).last(),
-            Some(Beat::Round {
-                arrived: true,
-                failed: 1,
-                ..
-            })
-        ));
+        let r = &rounds(&recovered, 200)[0];
+        assert!(r.arrived && r.failed == 1);
+        assert!(
+            !r.gist.contains("stopped on"),
+            "a recovered round reports what it touched, not where it tripped"
+        );
 
         let stuck = vec![
             user(0, "fix it"),
@@ -547,14 +490,47 @@ mod tests {
                 ],
             ),
         ];
-        assert!(matches!(
-            beats(&stuck, 60).last(),
-            Some(Beat::Round {
-                arrived: false,
-                failed: 1,
-                ..
-            })
-        ));
+        let r = &rounds(&stuck, 200)[0];
+        assert!(!r.arrived);
+        assert!(
+            r.gist.starts_with("stopped on") && r.gist.contains("cargo test"),
+            "a round that stopped names the COMMAND that failed, not \"ran 1 \
+             command\": {:?}",
+            r.gist
+        );
+        assert!(painted(&stuck, 80)[0].contains('✗'));
+    }
+
+    #[test]
+    fn each_ask_settles_the_round_before_it() {
+        let thread = vec![
+            user(0, "first ask"),
+            msg(
+                Role::Supervisor,
+                1_000,
+                vec![call("c1", "view('a.rs')"), result("c1", false)],
+            ),
+            user(5_000, "second ask"),
+            msg(
+                Role::Supervisor,
+                6_000,
+                vec![call("c2", "view('b.rs')"), result("c2", false)],
+            ),
+        ];
+        let rs = rounds(&thread, 200);
+        assert_eq!(rs.len(), 2);
+        assert_eq!(
+            rs[0].elapsed_ms, 5_000,
+            "measured to the SECOND ask, not to the end of the thread"
+        );
+        // The last round settles at the last message, so a recap re-read
+        // tomorrow does not report that the round took a day.
+        assert_eq!(rs[1].elapsed_ms, 1_000);
+    }
+
+    #[test]
+    fn an_ask_still_being_answered_is_not_yet_a_round() {
+        assert!(rounds(&[user(0, "do the thing")], 60).is_empty());
     }
 
     #[test]
@@ -567,11 +543,12 @@ mod tests {
 
     #[test]
     fn scrolled_past_rows_are_announced_rather_than_dropped() {
-        let mut thread = vec![user(0, "start")];
-        for i in 1..40 {
+        let mut thread = Vec::new();
+        for i in 0..20 {
+            thread.push(user(i * 10_000, &format!("ask {i}")));
             thread.push(msg(
                 Role::Supervisor,
-                i * 1_000,
+                i * 10_000 + 1_000,
                 vec![
                     call(&format!("c{i}"), "view('a.rs')"),
                     result(&format!("c{i}"), false),
@@ -589,9 +566,7 @@ mod tests {
             Rect::new(0, 0, 80, 6),
             &mut buf,
         );
-        let top: String = (0..80)
-            .map(|x| buf[(x, 0)].symbol().to_string())
-            .collect::<String>();
+        let top: String = (0..80).map(|x| buf[(x, 0)].symbol().to_string()).collect();
         assert!(top.contains("earlier row"), "{top:?}");
     }
 }
