@@ -476,17 +476,31 @@ cmd_restart() {
   fi
 }
 
-# The commit `update` moves to: the newest release tag, else `main`. Same rule
-# and same override as `install.sh`, and it has to be the same or the pin the
-# installer just made would last exactly until the first update.
+# The commit `update` moves to: `main`.
 #
-#   BOUGH_REF=main   track the tip
+# THE ASYMMETRY WITH `install.sh` IS DELIBERATE, and it used to be the other way
+# round. Both resolved the newest `v*` tag so that "the pin the installer just
+# made" survived the first update — which is right for arriving, and wrong for
+# staying. A checkout that runs `update` is asking to move; pinning it to the
+# last tag meant a machine dutifully updated itself to code weeks older than the
+# tree it was built from, and said "now at v0.1.1" while doing it. That is how
+# two laptops running `bough update` ended up on different halves of the same
+# week, with no way to tell from either one.
+#
+# So the two paths now answer two different questions. `install.sh` still lands
+# on the newest tag: arriving during a red `main` should not be someone's first
+# impression. `update` follows `main`: a checkout that updates is tracking
+# development, and tagged releases are what Homebrew ships to everyone else.
+#
+# The BUILD is the safety net, and it is why this is not reckless: `update`
+# checks out, then builds, and a build failure is fatal — a `main` that does not
+# compile aborts the update and leaves the previous binary in place. What it
+# cannot catch is a green build with broken behaviour, which is what CI is for.
+#
 #   BOUGH_REF=v0.2.0 hold a specific release
+#   BOUGH_REF=main   the default, stated explicitly
 release_ref() {
-  local ref="${BOUGH_REF:-}"
-  [ -n "$ref" ] || ref="$(git -C "$ROOT" tag --list 'v*' --sort=-v:refname | head -n 1)"
-  [ -n "$ref" ] || ref="main"
-  printf '%s' "$ref"
+  printf '%s' "${BOUGH_REF:-main}"
 }
 
 cmd_update() {
@@ -786,7 +800,7 @@ usage() {
   echo "  start    install + start the background service (auto-starts at login)"
   echo "  kill     stop the service and keep it stopped (across logins)"
   echo "  restart  pick up code changes explicitly"
-  echo "  update   move to the newest release tag (BOUGH_REF=main for the tip),"
+  echo "  update   move to the tip of main (BOUGH_REF=v0.2.0 to hold a release),"
   echo "           rebuild, restart"
   echo "  run      run the server in the foreground (what the service executes)"
   echo "  exec     headless one-shot turn (auto-starts the server; alias: prompt):"

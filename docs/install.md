@@ -63,9 +63,13 @@ Already have a clone? Run `scripts/setup.sh` directly.
 
 **Which commit you get.** The newest release tag, not the tip of `main`. bough builds
 from source, and `main` is a branch that gets pushed to; a tag is a commit that was green
-when it was named. `BOUGH_REF=main` installs the tip instead, and `BOUGH_REF=v0.2.0` a
-specific release. The same variable controls `bough update`, so a checkout stays on
-whichever channel you chose.
+when it was named — arriving during a red `main` should not be anyone's first impression.
+`BOUGH_REF=main` installs the tip instead, and `BOUGH_REF=v0.2.0` a specific release.
+
+Note that **`bough update` does not hold that pin** — it follows `main`. Installing and
+updating answer different questions: a fresh install wants a known-good starting point,
+while a checkout that runs `update` is asking to move. Tagged releases are what Homebrew
+ships. Set `BOUGH_REF=v0.2.0` in `~/.bough/env` to hold a release across updates.
 
 **Optionally install `bun`.** Programs run under `bun` when it is on PATH and `node`
 otherwise. Setup installs only `node`, so the default install takes the fallback path,
@@ -111,12 +115,15 @@ The service manager is the only platform-specific piece: launchd on macOS, a sys
 ## Update
 
 ```bash
-bough update              # a script install: newest release tag, rebuild, restart
+bough update              # a script install: the tip of main, rebuild, restart
 brew upgrade bough        # a Homebrew install
 ```
 
 Uncommitted changes in the clone are carried across as a patch, not stashed. `BOUGH_REF`
-picks the channel: `main` for the tip, a tag to hold a release.
+holds a release instead: `BOUGH_REF=v0.2.0`, in `~/.bough/env` to make it stick.
+
+`update` checks out first and then builds, and a build failure is fatal — a `main` that
+does not compile aborts the update and leaves the previous binary running.
 
 There is no file watcher. If you are editing bough's own source, changes land only on
 an explicit `bough restart`.
