@@ -10,7 +10,7 @@ Shared types live in `src/types.ts` ("the LLM boundary" section) and `src/errors
 
 ## 1. Purpose & invariants
 
-One trait (`LlmClient`) hides four providers behind one `run()`. The rest of the tree —
+One trait (`LlmClient`) hides five providers behind one `run()`. The rest of the tree —
 turn runner, subagent launcher, history ops, TUI — never learns which provider it is
 talking to.
 
@@ -28,6 +28,7 @@ Invariant comments, verbatim:
 >
 > Routing is by model id and nothing else (spec §12):
 > - `openai:gpt-5`        → OpenAI proper, the Responses API
+> - `cerebras:gpt-oss-120b` → Cerebras Inference, the chat-completions API
 > - `@cf/vendor/model`    → Cloudflare Workers AI, the chat-completions API
 > - `vendor/model`        → OpenRouter, the chat-completions API
 > - `claude-opus-5`       → Anthropic, the official SDK
@@ -147,9 +148,9 @@ Default status **502** is what makes a status-less transport error retryable.
 
 | Export | Signature | Semantics |
 |---|---|---|
-| `Provider` | `"anthropic" \| "openai" \| "openrouter" \| "cloudflare"` | |
-| `providerFor(model)` | `string → Provider` | Pure routing: `openai:` prefix → openai; `@cf/` prefix → cloudflare (MUST test before slash); contains `/` → openrouter; else anthropic. |
-| `API_KEY_ENV` | `Record<Provider, string>` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_KEY`. Read at `run()` time, never cached. |
+| `Provider` | `"anthropic" \| "openai" \| "openrouter" \| "cloudflare" \| "cerebras"` | |
+| `providerFor(model)` | `string → Provider` | Pure routing: `openai:` prefix → openai; `cerebras:` prefix → cerebras; `@cf/` prefix → cloudflare (MUST test before slash); contains `/` → openrouter; else anthropic. |
+| `API_KEY_ENV` | `Record<Provider, string>` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_KEY`, `CEREBRAS_API_KEY`. Read at `run()` time, never cached. |
 | `CLOUDFLARE_ACCOUNT_ENV` | `"CLOUDFLARE_ACCOUNT_ID"` | Account id is part of the URL. |
 | `Env` | `(key: string) → string \| undefined` | Injected env reader. |
 | `ProviderOpts` | `{ env?: Env; fetch?: typeof fetch }` | The two seams; defaults `process.env` / global fetch. |
@@ -165,7 +166,7 @@ Default status **502** is what makes a status-less transport error retryable.
 | `joinedSystem(p)` | `→ string \| undefined` | `system + systemVolatile` concatenated (no separator); `undefined` when empty. For single-system-field providers. |
 | `toApiMessage(m)` | `LlmMessage → Anthropic MessageParam` | Anthropic encoding (see §3). |
 | `effortParams(effort?, model?)` | `→ object` | `{thinking:{type:"adaptive",display:"summarized"}, output_config:{effort}}` only when effort set AND model matches `/claude-(fable\|mythos\|sonnet\|opus)-5\|opus-4-[89]/` (or model undefined); else `{}`. Haiku 4.5 hard-400s on the param. |
-| `anthropicClient(opts?)` / `openaiClient(opts?)` / `openrouterClient(opts?)` / `cloudflareClient(opts?)` | `ProviderOpts → LlmClient` | Bare per-provider clients. |
+| `anthropicClient(opts?)` / `openaiClient(opts?)` / `openrouterClient(opts?)` / `cloudflareClient(opts?)` / `cerebrasClient(opts?)` | `ProviderOpts → LlmClient` | Bare per-provider clients. |
 | `toResponsesInput(messages)` | `LlmMessage[] → unknown[]` | Responses-API input items (see §3). |
 | `fromResponsesOutput(output, tools?)` | `→ LlmBlock[]` | Decodes Responses `output`; `tools` lets a truncated call be told from an argument-less one. |
 | `toOpenAIMessages(system, messages)` | `→ unknown[]` | Chat-completions messages incl. the orphan-tool_call repair pass (see §4). |
@@ -173,11 +174,11 @@ Default status **502** is what makes a status-less transport error retryable.
 | `clientFor(model, opts?)` | `ClientOpts → LlmClient` | **The only entry point the rest of the tree uses.** `ClientOpts = ProviderOpts & { retry?: RetryOpts; trace?: TraceLabel \| null }`. |
 | `completeText(llm, {model, system, maxTokens, prompt})` | `→ Promise<string>` | One-shot: single user message, no tools, no-op onText; returns concatenated text blocks untrimmed. |
 | `ModelRow` | `{ id; label; provider }` | |
-| `MODELS` | `ModelRow[]` | The curated static picker table (17 entries; every entry's id must route to its declared provider — pinned by test). |
+| `MODELS` | `ModelRow[]` | The curated static picker table (20 entries; every entry's id must route to its declared provider — pinned by test). |
 | `filterOpenAIModels(ids)` | `string[] → ModelRow[]` | Include `/^(gpt-\|o\d\|chatgpt-)/`, exclude `/audio\|realtime\|tts\|whisper\|embed\|dall\|image\|moderation\|transcribe\|search-preview\|instruct/`, drop dated `/-\d{4}-\d{2}-\d{2}$/`, sort newest-first with **numeric digit-run comparison** (`byNewest`: split on `/(\d+)/`, digit-vs-digit compares as numbers so `gpt-5.10` > `gpt-5.6`; number-vs-word stays lexicographic so `o3` sorts above `gpt-5`), cap 25, map to `openai:`-prefixed rows. |
 | `mergeModels(static, dynamic)` | | Static first, dynamic appended, deduped by id (static wins). |
-| `discoverOpenAIModels` / `discoverAnthropicModels` / `discoverOpenRouterModels` / `discoverCloudflareModels` | `ProviderOpts → Promise<ModelRow[]>` | Picker discovery. **Never throws, never caches**; any failure (no key, bad key, non-2xx, garbage body, dead socket) → `[]`. 10 s timeout (`AbortSignal.timeout(10_000)`). |
-| `discoverModels(opts?)` | | All four concurrently via `Promise.allSettled`; rejected slots contribute `[]`. |
+| `discoverOpenAIModels` / `discoverAnthropicModels` / `discoverOpenRouterModels` / `discoverCloudflareModels` / `discoverCerebrasModels` | `ProviderOpts → Promise<ModelRow[]>` | Picker discovery. **Never throws, never caches**; any failure (no key, bad key, non-2xx, garbage body, dead socket) → `[]`. 10 s timeout (`AbortSignal.timeout(10_000)`). |
+| `discoverModels(opts?)` | | All five concurrently via `Promise.allSettled`; rejected slots contribute `[]`. |
 
 ### stream.ts exports
 
@@ -196,7 +197,7 @@ Default status **502** is what makes a status-less transport error retryable.
 |---|---|
 | `CostRates` | `{ input, output, cacheRead, cacheWrite }` USD per **million** tokens. |
 | `BillableTokens` | `{ inputTokens, outputTokens, cacheReadTokens?, cacheWriteTokens? }` (nullish = 0). |
-| `catalogKeys(model)` | Candidate catalog keys, most specific first — MUST mirror `providerFor`: `openai:x` → `["openai/x"]`; `@cf/x` → `["cloudflare-workers-ai/@cf/x"]` (note: full id including `@cf/` after the prefix); has `/` → `["openrouter/vendor/model", "vendor/model"]` (models.dev lists many vendors directly; the bare row is the fallback); bare → `["anthropic/x"]`. |
+| `catalogKeys(model)` | Candidate catalog keys, most specific first — MUST mirror `providerFor`: `openai:x` → `["openai/x"]`; `cerebras:x` → `["cerebras/x"]`; `@cf/x` → `["cloudflare-workers-ai/@cf/x"]` (note: full id including `@cf/` after the prefix); has `/` → `["openrouter/vendor/model", "vendor/model"]` (models.dev lists many vendors directly; the bare row is the fallback); bare → `["anthropic/x"]`. |
 | `catalogKey(model)` | First candidate present in the catalog, or undefined. |
 | `isPriced(model)` | `catalogKey !== undefined`. |
 | `ratesFor(model)` | `CostRates \| null`. Null cache slots fall back to the input rate. |
@@ -347,18 +348,22 @@ Usage: `inputTokens = usage.input_tokens ?? 0` (Responses input_tokens already i
 cached), `outputTokens`, `reasoningTokens = output_tokens_details.reasoning_tokens ?? 0`,
 `cacheReadTokens = input_tokens_details.cached_tokens ?? 0`, `cacheWriteTokens: 0`.
 
-### 3c. OpenRouter / Cloudflare — chat-completions (one shared family)
+### 3c. OpenRouter / Cloudflare / Cerebras — chat-completions (one shared family)
 
 OpenRouter: `POST https://openrouter.ai/api/v1/chat/completions`, extra header
 `x-title: bough`. Cloudflare: `POST {CLOUDFLARE_API_BASE|https://api.cloudflare.com/client/v4}/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1/chat/completions`;
 key env `CLOUDFLARE_API_KEY` or `CLOUDFLARE_API_TOKEN`; URL is a **function of env
 resolved per run()** (account/base changes apply without restart — test-pinned). Missing
-account id → `LlmError(..., 401)` thrown before any fetch. Both send
-`authorization: Bearer <key>`. Body:
+account id → `LlmError(..., 401)` thrown before any fetch. Cerebras:
+`POST {CEREBRAS_API_BASE|https://api.cerebras.ai}/v1/chat/completions`; key env
+`CEREBRAS_API_KEY`; the `cerebras:` routing prefix is STRIPPED before the body is
+sent (same as OpenAI strips `openai:`). All three send `authorization: Bearer <key>`.
+Body:
 
 ```jsonc
 {
-  "model": params.model,               // full id incl. "@cf/" for cloudflare
+  "model": params.model,               // full id incl. "@cf/" for cloudflare;
+                                       // cerebras: prefix STRIPPED
   "max_tokens": N, "stream": true,
   "stream_options": {"include_usage": true},
   "messages": toOpenAIMessages(joinedSystem, messages),
@@ -410,6 +415,10 @@ Assembly: text block first (if any), then tool_calls sorted by index; each id de
   `anthropic-version: 2023-06-01`, parse `{data:[{id, display_name?}]}` → bare ids,
   label = display_name || id. No key → no request.
 - OpenRouter: `GET {OPENROUTER_API_BASE|https://openrouter.ai/api}/v1/models` — **public**:
+- Cerebras: no key → `GET {CEREBRAS_API_BASE|https://api.cerebras.ai}/public/v1/models`
+  (public, no auth); with a key → `GET {base}/v1/models` with Bearer. Parse
+  `{data:[{id, name?}]}` → ids prefixed `cerebras:`, label
+  `"<name || id> (Cerebras)"`.
   called even with no key (key sent when present; it scopes the list); parse
   `{data:[{id, name?}]}`. Hundreds of rows (this is what makes the picker need search).
 - Cloudflare: `GET {base}/accounts/{acct}/ai/models/search?task=Text+Generation&per_page=100&hide_experimental=true`,
@@ -429,10 +438,11 @@ Assembly: text block first (if any), then tool_calls sorted by index; each id de
 
 ---
 
-## 4. Behaviors & edge cases (a naive port gets these wrong)
-
-**Routing**
-- `@cf/` test MUST precede the slash test (`@cf/meta/llama…` contains `/`); otherwise
+- `openai:ft/custom-model` → openai (prefix wins over slash).
+- `cerebras:org/custom` → cerebras (prefix wins over slash).
+- `MODELS` entries must each route to their declared provider; `catalogKeys(id)[0]` must
+  start with the provider's catalog prefix (`anthropic/`, `openai/`, `openrouter/`,
+  `cloudflare-workers-ai/`, `cerebras/`) — drift test.
   every Workers AI model goes to OpenRouter and 400s.
 - `openai:ft/custom-model` → openai (prefix wins over slash).
 - `MODELS` entries must each route to their declared provider; `catalogKeys(id)[0]` must
@@ -554,8 +564,9 @@ llm/
   error.rs      — LlmError { message, status: u16, retry_after: Option<Duration> } + classification
   routing.rs    — Provider enum, provider_for(), API key env table, MODELS static table
   retry.rs      — with_retries (decorator struct), is_retryable, backoff
-  sse.rs        — sse_events (impl Stream<Item = Result<String, LlmError>>), stall guard,
-                  throw_http_error, parse_tool_args
+  openai_compat.rs — chat-completions family: to_openai_messages (+repair pass),
+                  streamed tool-call accumulator; OpenRouter + Cloudflare + Cerebras
+                  are configs of it
   anthropic.rs  — request builder (system blocks, cache_control, toApiMessage, effortParams),
                   SSE assembly, usage normalization
   openai.rs     — Responses API: to_responses_input / from_responses_output / client

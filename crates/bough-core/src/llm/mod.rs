@@ -44,6 +44,7 @@ pub fn provider_client(model: &str, opts: ProviderOpts) -> Arc<dyn LlmClient> {
         Provider::Openai => openai::openai_client(opts),
         Provider::Openrouter => openai_compat::openrouter_client(opts),
         Provider::Cloudflare => openai_compat::cloudflare_client(opts),
+        Provider::Cerebras => openai_compat::cerebras_client(opts),
         Provider::Anthropic => anthropic::anthropic_client(opts),
     }
 }
@@ -418,6 +419,7 @@ mod tests {
                 "@cf/zai-org/glm-5.2",
                 "CLOUDFLARE_API_KEY / CLOUDFLARE_API_TOKEN",
             ),
+            ("cerebras:gpt-oss-120b", "CEREBRAS_API_KEY"),
         ];
         for (model, needle) in cases {
             let client = client_for(

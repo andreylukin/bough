@@ -87,6 +87,7 @@ OPENAI_API_KEY=…          # optional
 OPENROUTER_API_KEY=…      # optional
 CLOUDFLARE_API_TOKEN=…    # optional; CLOUDFLARE_API_KEY works too
 CLOUDFLARE_ACCOUNT_ID=…   # required WITH the Cloudflare token, not instead of it
+CEREBRAS_API_KEY=…        # optional; cerebras: entries in the picker
 ```
 
 Cloudflare is the one provider that needs two values. Discovery asks for the token and

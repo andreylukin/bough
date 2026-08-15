@@ -70,16 +70,19 @@ impl From<&Usage> for BillableTokens {
 }
 
 /// The catalog keys a bough model id could match, most specific first.
-///
 /// Mirrors `provider_for` in `routing.rs`: an `openai:x` id is OpenAI proper,
-/// a `@cf/x` id is Cloudflare Workers AI, any other `vendor/model` id is
-/// routed through OpenRouter, and a bare id is Anthropic. The OpenRouter case
-/// tries the `openrouter/` key first and then the bare `vendor/model` key,
-/// because models.dev also lists many of those vendors directly and the
-/// direct row is a usable fallback when OpenRouter has not published its own.
+/// a `cerebras:x` id is Cerebras Inference, a `@cf/x` id is Cloudflare
+/// Workers AI, any other `vendor/model` id is routed through OpenRouter, and
+/// a bare id is Anthropic. The OpenRouter case tries the `openrouter/` key
+/// first and then the bare `vendor/model` key, because models.dev also lists
+/// many of those vendors directly and the direct row is a usable fallback
+/// when OpenRouter has not published its own.
 pub fn catalog_keys(model: &str) -> Vec<String> {
     if let Some(bare) = model.strip_prefix("openai:") {
         return vec![format!("openai/{bare}")];
+    }
+    if let Some(bare) = model.strip_prefix("cerebras:") {
+        return vec![format!("cerebras/{bare}")];
     }
     // `@cf/…` before the slash test, exactly as `provider_for` orders them.
     if model.starts_with("@cf/") {
@@ -209,6 +212,10 @@ mod tests {
         assert_eq!(
             catalog_keys("@cf/zai-org/glm-5.2"),
             vec!["cloudflare-workers-ai/@cf/zai-org/glm-5.2"]
+        );
+        assert_eq!(
+            catalog_keys("cerebras:gpt-oss-120b"),
+            vec!["cerebras/gpt-oss-120b"]
         );
     }
 

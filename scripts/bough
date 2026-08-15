@@ -693,7 +693,8 @@ cmd_setup() {
     # nothing is templated here that the prompt does not fill in.
     echo "==> installed at $ROOT — skipping the build (the package did it)"
     echo "    optional keys, same file: OPENAI_API_KEY · OPENROUTER_API_KEY ·"
-    echo "    CLOUDFLARE_API_KEY + CLOUDFLARE_ACCOUNT_ID · BOUGH_PORT · BOUGH_CHEAP_MODEL"
+    echo "    CLOUDFLARE_API_KEY + CLOUDFLARE_ACCOUNT_ID · CEREBRAS_API_KEY ·"
+    echo "    BOUGH_PORT · BOUGH_CHEAP_MODEL"
   fi
 
   # setup.sh may have just created the env template — (re)load it.

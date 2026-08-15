@@ -143,7 +143,8 @@ views over it. Six principles (spec §2), all load-bearing:
   reach children and detached work.
 - `llm/client.ts`: "**the turn runner must not know which provider it is talking
   to.**" Routing by model id ONLY: `openai:x` → OpenAI Responses API,
-  `vendor/model` → OpenRouter, `@cf/…` → Workers AI, bare → Anthropic.
+  `cerebras:x` → Cerebras chat-completions, `vendor/model` → OpenRouter,
+  `@cf/…` → Workers AI, bare → Anthropic.
 - `llm/stream.ts`: "**a stream that stops without its completion marker is a
   failure, not a short answer**" (stall timeout on every read; partial =
   retryable transport fault). "**A tool call with missing arguments was

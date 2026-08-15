@@ -174,6 +174,8 @@ ANTHROPIC_API_KEY=
 # CLOUDFLARE_API_KEY=      # Workers AI: the @cf/ entries. Needs the account id too
 # CLOUDFLARE_ACCOUNT_ID=   # the account the Workers AI endpoint is scoped to
 # CLOUDFLARE_API_BASE=     # override the endpoint (an AI Gateway, or a test server)
+# CEREBRAS_API_KEY=        # Cerebras Inference: the cerebras: entries
+# CEREBRAS_API_BASE=       # override the endpoint (default https://api.cerebras.ai)
 # BOUGH_PORT=4321
 # BOUGH_CHEAP_MODEL=       # titles, ghost text, activity blurbs. Default: a cheap
 #                          # frontier model. Also settable in the model picker.

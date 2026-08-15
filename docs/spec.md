@@ -611,10 +611,11 @@ images), dense over decorative, responsive to ~375px, selectable text, and an
 
 ## 12. Models
 
-Three provider routes, all first-class: **Anthropic**, **OpenAI**, and
-**OpenRouter**. Model ids route by prefix (`openai:x` → OpenAI, `vendor/model` →
-OpenRouter, bare → Anthropic). A vendored pricing catalog drives live cost and
-context-window display.
+Five provider routes, all first-class: **Anthropic**, **OpenAI**, **OpenRouter**,
+**Cloudflare Workers AI**, and **Cerebras**. Model ids route by prefix
+(`openai:x` → OpenAI, `cerebras:x` → Cerebras, `vendor/model` → OpenRouter,
+`@cf/…` → Workers AI, bare → Anthropic). A vendored pricing catalog drives live
+cost and context-window display.
 
 Two tiers, both chosen in the model picker:
 

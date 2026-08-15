@@ -3,10 +3,10 @@
 //! Routing is by model id and nothing else (spec §12):
 //!
 //!   - `openai:gpt-5`        → OpenAI proper, the Responses API
+//!   - `cerebras:gpt-oss-120b` → Cerebras Inference, the chat-completions API
 //!   - `@cf/vendor/model`    → Cloudflare Workers AI, the chat-completions API
 //!   - `vendor/model`        → OpenRouter, the chat-completions API
 //!   - `claude-opus-5`       → Anthropic
-//!
 //! `provider_for` is pure, so the routing rule is unit-testable without a key.
 //! Keys are read at `run()` time, never cached, so a key set through the
 //! running server applies without a restart.
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::errors::BoughError;
 use crate::types::LlmParams;
 
-/// The four providers. Serializes to the TS union strings.
+/// The five providers. Serializes to the TS union strings.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
@@ -26,6 +26,7 @@ pub enum Provider {
     Openai,
     Openrouter,
     Cloudflare,
+    Cerebras,
 }
 
 impl Provider {
@@ -36,6 +37,7 @@ impl Provider {
             Provider::Openai => "openai",
             Provider::Openrouter => "openrouter",
             Provider::Cloudflare => "cloudflare",
+            Provider::Cerebras => "cerebras",
         }
     }
 }
@@ -47,16 +49,22 @@ impl std::fmt::Display for Provider {
 }
 
 /// Route a model id to its provider: an `openai:model` id → OpenAI proper, a
-/// `@cf/…` id → Cloudflare Workers AI, any other `vendor/model` id →
-/// OpenRouter, everything else (a bare `claude-…`) → Anthropic.
+/// `cerebras:model` id → Cerebras Inference, a `@cf/…` id → Cloudflare
+/// Workers AI, any other `vendor/model` id → OpenRouter, everything else
+/// (a bare `claude-…`) → Anthropic.
 ///
 /// Workers AI ids are themselves `vendor/model` shaped (`@cf/meta/llama-…`),
 /// so the `@cf/` test HAS to come before the slash test or every Cloudflare
 /// model would be sent to OpenRouter — which would answer with a 400 naming a
-/// model it never had.
+/// model it never had. The `cerebras:` prefix is the same kind of claim as
+/// `openai:`: Cerebras serves bare ids (`gpt-oss-120b`) that would otherwise
+/// fall through to Anthropic.
 pub fn provider_for(model: &str) -> Provider {
     if model.starts_with("openai:") {
         return Provider::Openai;
+    }
+    if model.starts_with("cerebras:") {
+        return Provider::Cerebras;
     }
     if model.starts_with("@cf/") {
         return Provider::Cloudflare;
@@ -75,6 +83,7 @@ pub fn api_key_env(provider: Provider) -> &'static str {
         Provider::Openai => "OPENAI_API_KEY",
         Provider::Openrouter => "OPENROUTER_API_KEY",
         Provider::Cloudflare => "CLOUDFLARE_API_KEY",
+        Provider::Cerebras => "CEREBRAS_API_KEY",
     }
 }
 
@@ -229,6 +238,9 @@ pub static MODELS: LazyLock<Vec<ModelRow>> = LazyLock::new(|| {
             "Llama 3.3 70B (Workers AI)",
             Cloudflare,
         ),
+        row("cerebras:gpt-oss-120b", "GPT-OSS 120B (Cerebras)", Cerebras),
+        row("cerebras:zai-glm-4.7", "GLM 4.7 (Cerebras)", Cerebras),
+        row("cerebras:gemma-4-31b", "Gemma 4 31B (Cerebras)", Cerebras),
     ]
 });
 
@@ -258,6 +270,10 @@ mod tests {
                 "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
                 Provider::Cloudflare,
             ),
+            ("cerebras:gpt-oss-120b", Provider::Cerebras),
+            ("cerebras:zai-glm-4.7", Provider::Cerebras),
+            // prefix wins over slash, same as openai:
+            ("cerebras:org/custom", Provider::Cerebras),
         ];
         for (model, provider) in table {
             assert_eq!(provider_for(model), *provider, "{model}");
@@ -282,6 +298,7 @@ mod tests {
                 Provider::Openai => "openai/",
                 Provider::Openrouter => "openrouter/",
                 Provider::Cloudflare => "cloudflare-workers-ai/",
+                Provider::Cerebras => "cerebras/",
             };
             let keys = catalog_keys(&m.id);
             assert!(

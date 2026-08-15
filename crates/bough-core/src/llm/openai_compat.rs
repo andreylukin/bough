@@ -17,9 +17,11 @@
 //!   `[DONE]`/finish_reason was cut mid-response, and returning the partial
 //!   round would run half-assembled tool calls.
 //!
-//! Cloudflare Workers AI is a config of this family: the only thing that
-//! differs is that the account id lives in the URL path, which is why the URL
-//! is a function of the env resolved per `run()` (plan row 2.16).
+//! Cloudflare Workers AI and Cerebras Inference are configs of this family:
+//! Cloudflare's account id lives in the URL path, Cerebras strips a
+//! `cerebras:` routing prefix the way OpenAI strips `openai:`. The URL is a
+//! function of the env resolved per `run()` so a base set through the running
+//! server applies without a restart (plan row 2.16).
 
 use std::sync::Arc;
 
@@ -211,9 +213,9 @@ struct ToolCallAcc {
 /// onto it, exactly as the Responses API mapping does. A model that does not
 /// reason ignores the field.
 ///
-/// **Only OpenRouter.** Cloudflare Workers AI shares this client and has no
-/// such parameter; sending one there would put an unknown field in front of
-/// every Workers AI request to buy nothing. An effort setting must never be
+/// **Only OpenRouter.** Cloudflare Workers AI and Cerebras share this client
+/// and have no such parameter; sending one there would put an unknown field
+/// in front of every request to buy nothing. An effort setting must never be
 /// the reason a turn 400s — the same rule Anthropic's mapper follows for
 /// Haiku.
 fn reasoning_params(effort: Option<Effort>, provider: Provider) -> Map<String, Value> {
@@ -261,7 +263,17 @@ impl LlmClient for OpenAICompatClient {
         let url = (self.url)(&env)?;
 
         let mut body = Map::new();
-        body.insert("model".into(), json!(params.model));
+        // `cerebras:gpt-oss-120b` is a routing id; Cerebras's wire wants the
+        // bare model name, same as OpenAI's Responses path strips `openai:`.
+        let wire_model = if self.provider == Provider::Cerebras {
+            params
+                .model
+                .strip_prefix("cerebras:")
+                .unwrap_or(&params.model)
+        } else {
+            &params.model
+        };
+        body.insert("model".into(), json!(wire_model));
         body.insert("max_tokens".into(), json!(params.max_tokens));
         for (k, v) in reasoning_params(params.effort, self.provider) {
             body.insert(k, v);
@@ -514,6 +526,29 @@ pub fn cloudflare_client(opts: ProviderOpts) -> Arc<dyn LlmClient> {
         // Cloudflare's own docs and dashboard call it a token, so accept that
         // spelling.
         key_alternatives: vec!["CLOUDFLARE_API_TOKEN"],
+        stall_ms: crate::llm::sse::STALL_TIMEOUT_MS,
+    })
+}
+
+/// Cerebras Inference over its OpenAI-compatible endpoint.
+///
+/// Same chat-completions family as OpenRouter; the only differences are the
+/// public base (`https://api.cerebras.ai`), the `CEREBRAS_API_KEY`, and that
+/// the `cerebras:` routing prefix is stripped before the body is sent — a
+/// bare `gpt-oss-120b` is what the API lists.
+pub fn cerebras_client(opts: ProviderOpts) -> Arc<dyn LlmClient> {
+    Arc::new(OpenAICompatClient {
+        opts,
+        provider: Provider::Cerebras,
+        url: Arc::new(|env| {
+            let base = env("CEREBRAS_API_BASE")
+                .map(|v| v.trim().trim_end_matches('/').to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| "https://api.cerebras.ai".to_string());
+            Ok(format!("{base}/v1/chat/completions"))
+        }),
+        extra_headers: vec![],
+        key_alternatives: vec![],
         stall_ms: crate::llm::sse::STALL_TIMEOUT_MS,
     })
 }
@@ -1035,6 +1070,7 @@ mod tests {
         }
         // Cloudflare Workers AI shares this client and has no such param.
         assert!(reasoning_params(Some(Effort::High), Provider::Cloudflare).is_empty());
+        assert!(reasoning_params(Some(Effort::High), Provider::Cerebras).is_empty());
         // No effort leaves the body shape untouched.
         assert!(reasoning_params(None, Provider::Openrouter).is_empty());
     }
@@ -1063,5 +1099,78 @@ mod tests {
         let requests = transport.requests.lock().unwrap();
         let body: Value = serde_json::from_str(requests[0].body.as_deref().unwrap()).unwrap();
         assert_eq!(body["reasoning"], json!({ "effort": "high" }));
+    }
+
+    fn cerebras_env() -> crate::llm::routing::Env {
+        Arc::new(|k| (k == "CEREBRAS_API_KEY").then(|| "cb-key".to_string()))
+    }
+
+    #[tokio::test]
+    async fn cerebras_strips_the_routing_prefix_and_hits_the_public_endpoint() {
+        let transport = Arc::new(CannedTransport::sse(vec![vec![
+            chunk(json!({ "content": "hi" }), None),
+            chunk(json!({}), Some("stop")),
+            "[DONE]".to_string(),
+        ]]));
+        let client = cerebras_client(ProviderOpts {
+            env: Some(cerebras_env()),
+            transport: Some(transport.clone()),
+        });
+        let result = client
+            .run(
+                params_over("cerebras:gpt-oss-120b", &TOOLS, |_| {}),
+                Arc::new(|_| {}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(
+            requests[0].url,
+            "https://api.cerebras.ai/v1/chat/completions"
+        );
+        assert!(requests[0]
+            .headers
+            .iter()
+            .any(|(k, v)| k == "authorization" && v == "Bearer cb-key"));
+        let body: Value = serde_json::from_str(requests[0].body.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            body["model"], "gpt-oss-120b",
+            "the cerebras: prefix is routing, not a model name"
+        );
+        assert_eq!(result.content, vec![LlmBlock::Text { text: "hi".into() }]);
+    }
+
+    #[tokio::test]
+    async fn cerebras_the_endpoint_comes_from_the_env_read_per_run() {
+        let base = Arc::new(Mutex::new("https://first.example".to_string()));
+        let base2 = base.clone();
+        let env: crate::llm::routing::Env = Arc::new(move |k| match k {
+            "CEREBRAS_API_KEY" => Some("cb-key".to_string()),
+            "CEREBRAS_API_BASE" => Some(base2.lock().unwrap().clone()),
+            _ => None,
+        });
+        let done = || vec![chunk(json!({}), Some("stop")), "[DONE]".to_string()];
+        let transport = Arc::new(CannedTransport::sse(vec![done(), done()]));
+        let client = cerebras_client(ProviderOpts {
+            env: Some(env),
+            transport: Some(transport.clone()),
+        });
+        let p = || params_over("cerebras:zai-glm-4.7", &TOOLS, |_| {});
+        client
+            .run(p(), Arc::new(|_| {}), CancellationToken::new())
+            .await
+            .unwrap();
+        *base.lock().unwrap() = "https://second.example".to_string();
+        client
+            .run(p(), Arc::new(|_| {}), CancellationToken::new())
+            .await
+            .unwrap();
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests[0].url, "https://first.example/v1/chat/completions");
+        assert_eq!(
+            requests[1].url,
+            "https://second.example/v1/chat/completions"
+        );
     }
 }

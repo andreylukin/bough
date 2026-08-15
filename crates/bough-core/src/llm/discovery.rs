@@ -370,21 +370,73 @@ pub async fn discover_cloudflare_models(opts: ProviderOpts) -> Vec<ModelRow> {
     .await
 }
 
+/// Ask Cerebras what it offers. The catalog is PUBLIC —
+/// `/public/v1/models` answers without a key — so a user deciding whether
+/// to add a Cerebras key still sees the rows they would get. A key, when
+/// present, is sent (it scopes the list to what the account can reach) but
+/// its absence is not a reason to skip the call.
+///
+/// Ids are prefixed `cerebras:` so `provider_for` routes them here rather
+/// than falling through to Anthropic — Cerebras serves bare ids
+/// (`gpt-oss-120b`) that would otherwise look like Claude.
+pub async fn discover_cerebras_models(opts: ProviderOpts) -> Vec<ModelRow> {
+    let (env, transport) = parts(&opts);
+    let key = key(&env, Provider::Cerebras);
+    let base = base(&env, "CEREBRAS_API_BASE", "https://api.cerebras.ai");
+    let headers = match key {
+        Some(key) => vec![("authorization".to_string(), format!("Bearer {key}"))],
+        None => vec![],
+    };
+    // Public catalog when there is no key (no credential to scope); the
+    // authenticated `/v1/models` when there is one.
+    let path = if headers.is_empty() {
+        "public/v1/models"
+    } else {
+        "v1/models"
+    };
+    fetch_models(
+        transport.as_ref(),
+        format!("{base}/{path}"),
+        headers,
+        |body| {
+            body["data"]
+                .as_array()
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(|m| {
+                            let id = m["id"].as_str()?;
+                            let label = m["name"].as_str().filter(|n| !n.is_empty());
+                            Some(ModelRow {
+                                id: format!("cerebras:{id}"),
+                                label: format!("{} (Cerebras)", label.unwrap_or(id)),
+                                provider: Provider::Cerebras,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        },
+    )
+    .await
+}
+
 /// Every provider at once. **Concurrent and independently fallible**: one
 /// provider being down, keyless or slow must not cost the others their rows.
 /// Each discovery already answers `[]` rather than failing, so this is the
 /// belt to that braces.
 pub async fn discover_models(opts: ProviderOpts) -> Vec<ModelRow> {
-    let (anthropic, openai, openrouter, cloudflare) = tokio::join!(
+    let (anthropic, openai, openrouter, cloudflare, cerebras) = tokio::join!(
         discover_anthropic_models(opts.clone()),
         discover_openai_models(opts.clone()),
         discover_openrouter_models(opts.clone()),
-        discover_cloudflare_models(opts),
+        discover_cloudflare_models(opts.clone()),
+        discover_cerebras_models(opts),
     );
     let mut out = anthropic;
     out.extend(openai);
     out.extend(openrouter);
     out.extend(cloudflare);
+    out.extend(cerebras);
     out
 }
 
@@ -678,6 +730,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn discover_cerebras_models_asks_without_a_key_its_catalog_is_public() {
+        let transport = UrlTransport::ok(json!({
+            "data": [
+                { "id": "gpt-oss-120b", "name": "OpenAI GPT OSS" },
+                { "id": "zai-glm-4.7" },
+            ],
+        }));
+        let rows = discover_cerebras_models(opts(no_env(), transport.clone())).await;
+        assert_eq!(
+            rows,
+            vec![
+                ModelRow {
+                    id: "cerebras:gpt-oss-120b".into(),
+                    label: "OpenAI GPT OSS (Cerebras)".into(),
+                    provider: Provider::Cerebras,
+                },
+                ModelRow {
+                    id: "cerebras:zai-glm-4.7".into(),
+                    label: "zai-glm-4.7 (Cerebras)".into(),
+                    provider: Provider::Cerebras,
+                },
+            ]
+        );
+        for r in &rows {
+            assert_eq!(provider_for(&r.id), Provider::Cerebras);
+        }
+        assert_eq!(
+            transport.seen.lock().unwrap()[0],
+            "https://api.cerebras.ai/public/v1/models"
+        );
+    }
+
+    #[tokio::test]
+    async fn discover_cerebras_models_a_key_uses_the_authenticated_list() {
+        let transport = UrlTransport::ok(
+            json!({ "data": [{ "id": "gpt-oss-120b", "name": "OpenAI GPT OSS" }] }),
+        );
+        let env: Env = Arc::new(|k| (k == "CEREBRAS_API_KEY").then(|| "cb-key".to_string()));
+        let rows = discover_cerebras_models(opts(env, transport.clone())).await;
+        assert_eq!(rows[0].id, "cerebras:gpt-oss-120b");
+        assert_eq!(
+            transport.seen.lock().unwrap()[0],
+            "https://api.cerebras.ai/v1/models"
+        );
+    }
+
+    #[tokio::test]
     async fn discovery_never_fails_a_non_2xx_a_bad_body_and_a_dead_socket_all_yield_nothing() {
         let cases: Vec<Arc<UrlTransport>> = vec![
             UrlTransport::new(|_| Err(BoughError::llm("network"))),
@@ -714,6 +813,12 @@ mod tests {
                     json!({ "data": [{ "id": "v/m", "name": "V M" }] }).to_string(),
                 ));
             }
+            if url.contains("cerebras") {
+                return Ok((
+                    200,
+                    json!({ "data": [{ "id": "gpt-oss-120b", "name": "OSS" }] }).to_string(),
+                ));
+            }
             Ok((200, json!({ "data": [{ "id": "gpt-5" }] }).to_string()))
         });
         let mut ids: Vec<String> = discover_models(opts(keys_only(), transport))
@@ -722,6 +827,13 @@ mod tests {
             .map(|r| r.id)
             .collect();
         ids.sort();
-        assert_eq!(ids, vec!["openai:gpt-5".to_string(), "v/m".to_string()]);
+        assert_eq!(
+            ids,
+            vec![
+                "cerebras:gpt-oss-120b".to_string(),
+                "openai:gpt-5".to_string(),
+                "v/m".to_string()
+            ]
+        );
     }
 }

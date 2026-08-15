@@ -7,7 +7,7 @@ Read from `~/.bough/env` (and the process environment).
 **Keys.** At least one is required. See [install.md](install.md).
 
 ```
-ANTHROPIC_API_KEY  OPENAI_API_KEY  OPENROUTER_API_KEY  CLOUDFLARE_API_TOKEN
+ANTHROPIC_API_KEY  OPENAI_API_KEY  OPENROUTER_API_KEY  CLOUDFLARE_API_TOKEN  CEREBRAS_API_KEY
 ```
 
 **The two that matter most**
@@ -41,6 +41,7 @@ turn read the same variable, so a custom base moves both.
 | `OPENAI_API_BASE` | default `https://api.openai.com` |
 | `OPENROUTER_API_BASE` | default `https://openrouter.ai/api` |
 | `CLOUDFLARE_API_BASE` | default `https://api.cloudflare.com/client/v4` |
+| `CEREBRAS_API_BASE` | default `https://api.cerebras.ai` |
 
 This is how you reach something that is not the vendor: a gateway, a proxy, or a model
 running on your own machine. Use the **OpenRouter** slot for anything OpenAI-compatible:

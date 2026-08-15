@@ -2329,6 +2329,7 @@ pub fn friendly_turn_error(msg: &str, model: &str) -> String {
         Provider::Openai => "OpenAI",
         Provider::Openrouter => "OpenRouter",
         Provider::Cloudflare => "Cloudflare",
+        Provider::Cerebras => "Cerebras",
         Provider::Anthropic => "Anthropic",
     };
     let env_var = api_key_env(key);
