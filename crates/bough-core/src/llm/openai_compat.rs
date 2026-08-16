@@ -532,6 +532,12 @@ pub fn cloudflare_client(opts: ProviderOpts) -> Arc<dyn LlmClient> {
 
 /// Cerebras Inference over its OpenAI-compatible endpoint.
 ///
+/// Note for whoever raises [`crate::turn::runner::MAX_TOKENS`]: Cerebras
+/// bills `prompt + max_tokens` against the per-minute token quota, so the
+/// reservation is spent whether or not it is used. An ask above the quota is
+/// a 429 before generation starts, on every round, no matter how short the
+/// message.
+///
 /// Same chat-completions family as OpenRouter; the only differences are the
 /// public base (`https://api.cerebras.ai`), the `CEREBRAS_API_KEY`, and that
 /// the `cerebras:` routing prefix is stripped before the body is sent — a

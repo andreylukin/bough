@@ -112,7 +112,7 @@ Purity: the image loader is injected; `messageToLlm` reads nothing and calls no 
 | `STOP` | `= "stop"` | Tool name: end the turn (loop control, never persisted). |
 | `TOOLS` | `LlmToolDef[]` | Exactly the two tools above. **Byte-stable across rounds and sessions** (prompt-cache contract — tool defs precede the system prompt in cache order; one varying byte splits the cache for every session). Tested: `deepEqual(calls[0].tools, TOOLS)`. |
 | `RunStepsInput` | zod: `{ code: string, done?: boolean }` | Boundary validation; a numeric `code` must never reach `runProgram`. |
-| `MAX_TOKENS` | `64_000` | Output reservation each round makes; context meter measures against it. |
+| `MAX_TOKENS` | `32_000` | Output reservation each round makes; context meter measures against it. Sized to the largest output a round plausibly needs, not the largest a provider permits — a reservation costs usable context everywhere, and per-minute quota on providers that bill it (Cerebras). |
 | `DEFAULT_MODEL` | `"claude-opus-4-8"` | Used when neither ctx nor session pins one. |
 | `MAX_STOP_NUDGES` | `3` | Re-prompts before the harness stops waiting for `stop`. |
 | `baseHostFns(ctx: TurnCtx): HostFns` | | Build the always-wired shell+file host fns for one turn; lazily initializes shared trails on the ctx (`exits`, `touched`, `record`, `reads`) so every construction path shares one array. |

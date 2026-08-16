@@ -161,7 +161,20 @@ pub struct RunStepsInput {
 
 /// The output reservation every round makes. The context meter measures
 /// against it.
-pub const MAX_TOKENS: i64 = 64_000;
+///
+/// A reservation is not free, and it was set as though it were. Cerebras
+/// bills `prompt + max_tokens` against its per-minute token budget, so a
+/// 64k ask was rejected before a token was generated no matter how short the
+/// message — the reservation alone outspent the quota. Providers that do not
+/// reserve still charge for it in usable context: the overflow check hands
+/// this many tokens of the window back to the model unused.
+///
+/// So the number should be the largest output a ROUND plausibly needs, not
+/// the largest a provider permits. Measured against 335 real turns: the
+/// average turn emits ~2k output tokens across all of its rounds, and this
+/// stands more than an order of magnitude above that — generous for a round
+/// that reasons at length, while returning 32k of window to every model.
+pub const MAX_TOKENS: i64 = 32_000;
 
 /// Used when neither the ctx nor the session pins one.
 pub const DEFAULT_MODEL: &str = "claude-opus-4-8";
