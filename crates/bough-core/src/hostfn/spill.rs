@@ -24,6 +24,8 @@
 
 use std::path::Path;
 
+use crate::hostfn::budget::ResultBudget;
+
 // ---------------------------------------------------------------------------
 // Deterministic truncation — the fallback, and what retention itself uses
 // ---------------------------------------------------------------------------
@@ -243,6 +245,15 @@ pub struct SpillCtx {
     pub scratch: Option<String>,
     /// Base name for the file — `bash`, `sh`, `bg_3`. Defaults to `output`.
     pub label: Option<String>,
+    /// What this turn's model can afford to be shown. `None` keeps the
+    /// absolute constants — see [`crate::hostfn::budget`].
+    pub budget: Option<ResultBudget>,
+}
+
+impl SpillCtx {
+    fn budget(&self) -> ResultBudget {
+        self.budget.unwrap_or(crate::hostfn::budget::UNBOUNDED)
+    }
 }
 
 /// Give this shell a sink if it has earned one, and write `text` to it.
@@ -266,7 +277,7 @@ pub fn stream_spill(
     let scratch = ctx.scratch.as_deref()?;
     match sink {
         None => {
-            if total_so_far <= SPILL_OVER_CHARS {
+            if total_so_far <= ctx.budget().spill_over_chars {
                 return None;
             }
             let open = move || -> std::io::Result<SpillSink> {
@@ -336,13 +347,13 @@ pub struct SpillPlan {
 }
 
 /// Decide whether and how to split. Pure.
-pub fn plan_spill(text: &str, can_write: bool) -> SpillPlan {
+pub fn plan_spill(text: &str, can_write: bool, budget: ResultBudget) -> SpillPlan {
     let len = char_len(text);
-    if !can_write || len <= SPILL_OVER_CHARS {
+    if !can_write || len <= budget.spill_over_chars {
         return SpillPlan::default();
     }
-    let head = take_chars(text, SPILL_HEAD_CHARS).to_string();
-    let tail = last_chars(text, SPILL_TAIL_CHARS).to_string();
+    let head = take_chars(text, budget.spill_head_chars).to_string();
+    let tail = last_chars(text, budget.spill_tail_chars).to_string();
     SpillPlan {
         spilled: true,
         omitted: len - char_len(&head) - char_len(&tail),
@@ -493,7 +504,7 @@ pub fn spill(text: &str, ctx: &SpillCtx, sink: Option<&SpillSink>, deps: &dyn Sp
     // not the real one — reporting it would understate a 10MB command as
     // 400KB.
     if let Some(sink) = sink {
-        let plan = plan_spill(text, true);
+        let plan = plan_spill(text, true, crate::hostfn::budget::UNBOUNDED);
         let (head, tail) = if plan.spilled {
             (plan.head.as_str(), plan.tail.as_str())
         } else {
@@ -516,7 +527,7 @@ pub fn spill(text: &str, ctx: &SpillCtx, sink: Option<&SpillSink>, deps: &dyn Sp
             )
         );
     }
-    let plan = plan_spill(text, ctx.scratch.is_some());
+    let plan = plan_spill(text, ctx.scratch.is_some(), ctx.budget());
     if !plan.spilled {
         // Under the threshold, or nowhere to write. The generous head/tail is
         // the right fallback in the second case — see the module note.
@@ -618,6 +629,7 @@ mod tests {
     fn ctx(scratch: &str, label: &str) -> SpillCtx {
         SpillCtx {
             scratch: Some(scratch.to_string()),
+            budget: None,
             label: Some(label.to_string()),
         }
     }
@@ -625,6 +637,7 @@ mod tests {
     fn no_label(scratch: &str) -> SpillCtx {
         SpillCtx {
             scratch: Some(scratch.to_string()),
+            budget: None,
             label: None,
         }
     }
@@ -637,14 +650,21 @@ mod tests {
     fn output_at_or_under_the_threshold_does_not_spill() {
         // The common case by a wide margin: git status, a targeted rg, a
         // passing test run. None of them should be affected by any of this.
-        assert!(!plan_spill(&big(SPILL_OVER_CHARS, 'x'), true).spilled);
-        assert!(!plan_spill("", true).spilled);
+        assert!(
+            !plan_spill(
+                &big(SPILL_OVER_CHARS, 'x'),
+                true,
+                crate::hostfn::budget::UNBOUNDED
+            )
+            .spilled
+        );
+        assert!(!plan_spill("", true, crate::hostfn::budget::UNBOUNDED).spilled);
     }
 
     #[test]
     fn output_over_the_threshold_spills_keeping_head_and_tail_verbatim() {
         let text = format!("HEAD{}TAIL", big(SPILL_OVER_CHARS * 2, 'x'));
-        let plan = plan_spill(&text, true);
+        let plan = plan_spill(&text, true, crate::hostfn::budget::UNBOUNDED);
         assert!(plan.spilled);
         assert_eq!(plan.head.len(), SPILL_HEAD_CHARS);
         assert_eq!(plan.tail.len(), SPILL_TAIL_CHARS);
@@ -660,7 +680,14 @@ mod tests {
     fn nowhere_to_write_means_no_spill_whatever_the_size() {
         // The aggressive inline budget is only defensible as a trade against
         // a file holding the rest. Without one it would just be destruction.
-        assert!(!plan_spill(&big(SPILL_OVER_CHARS * 10, 'x'), false).spilled);
+        assert!(
+            !plan_spill(
+                &big(SPILL_OVER_CHARS * 10, 'x'),
+                false,
+                crate::hostfn::budget::UNBOUNDED
+            )
+            .spilled
+        );
     }
 
     #[test]
@@ -670,7 +697,7 @@ mod tests {
             .chars()
             .take(SPILL_OVER_CHARS * 2)
             .collect();
-        let plan = plan_spill(&text, true);
+        let plan = plan_spill(&text, true, crate::hostfn::budget::UNBOUNDED);
         assert!(plan.spilled);
         assert_eq!(plan.lines, text.split('\n').count());
     }

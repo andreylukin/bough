@@ -94,6 +94,9 @@ pub struct ShellCtx {
     /// (`announce`). Absent — every unit test, and `history/ops/explore` —
     /// simply announces nothing.
     pub bus: Option<Arc<crate::bus::Bus>>,
+    /// How much output this turn's model can afford to be shown inline.
+    /// `None` keeps the absolute constants — see [`crate::hostfn::budget`].
+    pub budget: Option<crate::hostfn::budget::ResultBudget>,
 }
 
 /// Injected seams. Every default is a constant, never a hidden global.
@@ -820,6 +823,7 @@ async fn sh_leg(command: String, tags: String, ctx: &ShellCtx, opts: &ShellOptio
     let sctx = SpillCtx {
         scratch: ctx.scratch.clone(),
         label: Some("sh".to_string()),
+        budget: ctx.budget,
     };
     let mut out = spill(&shell_text(&shell), &sctx, None, &RealSpillDeps)
         .trim_end()

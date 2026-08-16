@@ -289,11 +289,16 @@ fn echo_hooks_for(ctx: &TurnCtx) -> EchoHooks {
 /// every construction path shares it; the fallback here covers a caller-built
 /// ctx that never went through it.
 pub fn base_host_fns(ctx: &TurnCtx) -> HostFns {
+    // What one tool result may cost is a fact about the MODEL, and this is
+    // the first point that knows which one is reading. An unpriced model
+    // yields None and keeps the absolute constants.
+    let budget = crate::hostfn::budget::budget_for(context_window_for(&ctx.model));
     let files = Arc::new(create_file_host_fns(
         FileCtx {
             workspace: ctx.workspace.clone(),
             session_id: ctx.session_id.clone(),
             reads: Some(ctx.reads.clone()),
+            view_bytes: Some(budget.view_bytes),
         },
         ctx.app.host.snapshots.clone(),
         ctx.app.host.writes.clone(),
@@ -314,6 +319,7 @@ pub fn base_host_fns(ctx: &TurnCtx) -> HostFns {
             record: Some(ctx.record.clone().unwrap_or_else(|| recorder_for(ctx))),
             echo: Some(echo_hooks_for(ctx)),
             bus: Some(ctx.app.bus.clone()),
+            budget: Some(budget),
         },
         ShellOptions::new(ctx.app.host.jobs.clone()),
     ));

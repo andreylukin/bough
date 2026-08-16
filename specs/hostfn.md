@@ -64,7 +64,7 @@ Module boundary rule (plan §3): **`hostfn/` never imports from `server/`**. Eve
 
 ### spill.ts
 - `MAX_HEAD_CHARS = 100_000`, `MAX_TAIL_CHARS = 300_000`, `MAX_BUF = 400_000` — retention budget.
-- `SPILL_OVER_CHARS = 20_000`, `SPILL_HEAD_CHARS = 5_000`, `SPILL_TAIL_CHARS = 5_000` — spill threshold and inline extract (symmetric on purpose: the file holds everything, the extract is a preview).
+- `SPILL_OVER_CHARS = 20_000`, `SPILL_HEAD_CHARS = 5_000`, `SPILL_TAIL_CHARS = 5_000` — spill threshold and inline extract (symmetric on purpose: the file holds everything, the extract is a preview). These are CEILINGS: `hostfn::budget` scales the extract down to 1% of the reading model's context window, so a 131k-window model keeps ~5.2k chars, not 10k.
 - `omissionMarker(omitted, total) -> String` — `\n[… N chars omitted from the middle of T — head and tail are verbatim. Filter at the source (rg, head, tail, targeted reads) instead of dumping output …]\n`.
 - `truncateMiddle(text, {head?, tail?}) -> String` — pure, deterministic.
 - `interface SpillDeps { exists, mkdirp, write, append, read }` — injected filesystem. `read` exists solely so the digest can be built from the complete file rather than the capped in-memory buffer.
@@ -75,7 +75,7 @@ Module boundary rule (plan §3): **`hostfn/` never imports from `server/`**. Eve
 - `spill(text, ctx{scratch?, label?, sink?}, deps) -> String` — bound text for a tool result. With a sink: use THAT file and THAT total (the in-memory text is the retained size, not the real one), and digest the file's contents — digesting the retained text would describe a sample under a banner reading "FULL OUTPUT"; an unreadable file costs the digest and nothing else. Without: plan → write `<label>-NNN.log` → head+marker+tail, or fall back to `truncateMiddle` on no scratch / write failure. `nextPath` probes `label-001.log`…`999` for the first free name (a counter resets across restarts and would overwrite); slot 999 is reused explicitly.
 
 ### files.ts
-- `MAX_SNAPSHOTS_PER_SESSION = 64`, `MAX_SESSIONS = 32`, `MAX_VIEW_BYTES = 2 MiB`, `MAX_TRACKED_WRITES = 200`.
+- `MAX_SNAPSHOTS_PER_SESSION = 64`, `MAX_SESSIONS = 32`, `MAX_VIEW_BYTES = 2 MiB`, `MAX_TRACKED_WRITES = 200`. `MAX_VIEW_BYTES` is a backstop, not the operative limit: `hostfn::budget` caps a view at 10% of the reading model's context window (131k window → 52,428 bytes), because 2 MiB is ~500k tokens and would overflow any real window several times over.
 - `class SnapshotStore` — `record(sessionId, absPath, text)` / `get` / `size` / `clear`; double-LRU (per-session file map, and per-store session map, both re-inserted on touch; eviction = oldest map key). `pub static sessionSnapshots`.
 - `takeSessionWrites(sessionId) -> Vec<String>` — read-and-clear list of paths this session's programs wrote (fills the subagent report's `changedFiles`; git can't — siblings share the checkout).
 - `createFileHostFns(ctx{workspace, sessionId, reads?}, {snapshots?}) -> {view, patch, write}`:

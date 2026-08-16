@@ -234,6 +234,7 @@ fn append(shell: &Shell, text: &str) {
     };
     let ctx = SpillCtx {
         scratch: shell.scratch.clone(),
+        budget: None,
         label: Some(if st.id.is_empty() {
             "bash".to_string()
         } else {
@@ -306,6 +307,7 @@ pub fn format_final(shell: &Shell, deps: &dyn SpillDeps) -> String {
             retained_from(&st, 0).0,
             SpillCtx {
                 scratch: shell.scratch.clone(),
+                budget: None,
                 label: Some("bash".to_string()),
             },
             st.sink.clone(),
@@ -353,6 +355,7 @@ pub fn background_note(shell: &Shell, id: &str, after_ms: u64) -> String {
             st.name.clone(),
             SpillCtx {
                 scratch: shell.scratch.clone(),
+                budget: None,
                 label: Some(id.to_string()),
             },
             st.sink.clone(),
@@ -747,6 +750,7 @@ impl JobRegistry {
                 text,
                 SpillCtx {
                     scratch: shell.scratch.clone(),
+                    budget: None,
                     label: Some(if id.is_empty() {
                         "bg".to_string()
                     } else {

@@ -6,6 +6,7 @@
 
 pub mod artifact;
 pub mod ask;
+pub mod budget;
 pub mod delegate;
 pub mod files;
 pub mod jobs;

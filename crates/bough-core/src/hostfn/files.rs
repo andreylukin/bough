@@ -194,6 +194,9 @@ pub struct FileCtx {
     /// The read trail behind the directory-triggered tag hints. Appended by
     /// `view()`, never consulted here.
     pub reads: Option<Arc<Mutex<Vec<String>>>>,
+    /// Largest file this turn's model can be shown. `None` keeps
+    /// [`MAX_VIEW_BYTES`] — see [`crate::hostfn::budget`].
+    pub view_bytes: Option<u64>,
 }
 
 /// A view is rendered into the model's context in full, so an unbounded one
@@ -245,10 +248,12 @@ impl FileHostFns {
                 shell_quote(p)
             )));
         }
-        if stat.len() > MAX_VIEW_BYTES {
+        let limit = self.ctx.view_bytes.unwrap_or(MAX_VIEW_BYTES);
+        if stat.len() > limit {
             return Err(BoughError::bad_request(format!(
-                "cannot view {p}: it is {} bytes, over the {MAX_VIEW_BYTES}-byte \
-                 view limit, and rendering it would overflow the context window. Read the \
+                "cannot view {p}: it is {} bytes, over the {limit}-byte \
+                 view limit for this model, and rendering it would overflow the context \
+                 window. Read the \
                  part you need with bash (rg -n PATTERN {}, or \
                  sed -n '1,200p' {}); patch() needs a view() of the file to \
                  anchor to, so edit a smaller file or rewrite this one with write().",
@@ -517,6 +522,7 @@ fn plural(n: usize, noun: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hostfn::budget::budget_for;
 
     /// File text from lines, with the trailing newline a real file has.
     fn doc(lines: &[&str]) -> String {
@@ -552,6 +558,7 @@ mod tests {
         fn session(&self, id: &str) -> FileHostFns {
             create_file_host_fns(
                 FileCtx {
+                    view_bytes: None,
                     workspace: self.dir.to_string_lossy().into_owned(),
                     session_id: id.to_string(),
                     reads: None,
@@ -696,6 +703,45 @@ mod tests {
         // …and it is on record, so INS.HEAD against it works.
         fns.patch("[empty.ts#]\nINS.HEAD:\n+first\n").unwrap();
         assert_eq!(w.read("empty.ts"), doc(&["first"]));
+    }
+
+    #[test]
+    fn the_view_limit_is_the_models_not_a_constant_every_model_shares() {
+        // 2 MiB is ~500k tokens: on a 131k-window model the old limit said
+        // yes to a read four times larger than everything it can hold. The
+        // budget is the model's, so the same file is fine for one and refused
+        // for another — and the refusal still names the way through.
+        let body = "x".repeat(120_000);
+        let w = ws(&[("big.ts", &body)]);
+
+        let generous = create_file_host_fns(
+            FileCtx {
+                view_bytes: None,
+                workspace: w.dir.to_string_lossy().into_owned(),
+                session_id: "s1".into(),
+                reads: None,
+            },
+            w.snapshots.clone(),
+            w.writes.clone(),
+        );
+        assert!(
+            generous.view("big.ts").is_ok(),
+            "under the absolute ceiling"
+        );
+
+        let tight = create_file_host_fns(
+            FileCtx {
+                view_bytes: Some(budget_for(Some(131_072)).view_bytes),
+                workspace: w.dir.to_string_lossy().into_owned(),
+                session_id: "s2".into(),
+                reads: None,
+            },
+            w.snapshots.clone(),
+            w.writes.clone(),
+        );
+        let err = err_of(tight.view("big.ts")).to_string();
+        assert!(err.contains("view limit for this model"), "{err}");
+        assert!(err.contains("rg -n"), "the way through survives: {err}");
     }
 
     #[test]
