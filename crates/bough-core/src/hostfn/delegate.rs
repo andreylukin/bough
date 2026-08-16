@@ -215,27 +215,70 @@ impl DetachedSubagents {
             .cloned()
     }
 
-    /// The children this session detached, newest last. The refusal message
-    /// names them.
+    /// The children this session detached, newest last, as `name (id)` — the
+    /// refusal message names them. Both halves, because either one is a legal
+    /// thing to pass back to `join()`.
     pub fn ids_for(&self, spawner_id: &str) -> Vec<String> {
         self.by_child
             .lock()
             .unwrap()
             .iter()
             .filter(|r| r.spawner_id == spawner_id)
-            .map(|r| r.session_id.clone())
+            .map(|r| {
+                if r.title.is_empty() || r.title == r.session_id {
+                    r.session_id.clone()
+                } else {
+                    format!("{} ({})", r.title, r.session_id)
+                }
+            })
+            .collect()
+    }
+
+    /// Every child of this spawner whose NAME is `name`.
+    fn by_name(&self, spawner_id: &str, name: &str) -> Vec<Arc<DetachedRecord>> {
+        self.by_child
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.spawner_id == spawner_id && r.title == name)
+            .cloned()
             .collect()
     }
 
     /// Take a child in-band. Idempotent: claiming twice returns the same
     /// record and the same future, because "spawn, join, then join again in a
     /// later round" is a program being careful, not a program being wrong.
-    pub fn claim(
-        &self,
-        spawner_id: &str,
-        session_id: &str,
-    ) -> Result<Arc<DetachedRecord>, BoughError> {
-        let record = self.get(session_id).filter(|r| r.spawner_id == spawner_id);
+    ///
+    /// `key` is the session id **or the name `spawn()` was given**. Accepting
+    /// only the id made the obvious program wrong: `spawn(task, {name: "x"})`
+    /// hands back a name, and `join("x")` is what anyone writes next — it
+    /// failed, and the refusal listed bare uuids, so the model's recovery was
+    /// to scrape ids out of an error string. The register already knew the
+    /// name; it just never looked at it.
+    pub fn claim(&self, spawner_id: &str, key: &str) -> Result<Arc<DetachedRecord>, BoughError> {
+        // Id first: an id is unambiguous, and a name that happens to equal
+        // some other child's id should not shadow it.
+        let record = match self.get(key).filter(|r| r.spawner_id == spawner_id) {
+            Some(record) => Some(record),
+            None => {
+                let named = self.by_name(spawner_id, key);
+                if named.len() > 1 {
+                    // Picking one would be a coin flip over which report the
+                    // program receives. Say so instead.
+                    let ids: Vec<&str> = named.iter().map(|r| r.session_id.as_str()).collect();
+                    return Err(agent_error(
+                        400,
+                        format!(
+                            "join(\"{key}\"): this session spawned {} subagents named \
+                             \"{key}\", so the name does not identify one. Join them by id: {}.",
+                            named.len(),
+                            ids.join(", ")
+                        ),
+                    ));
+                }
+                named.into_iter().next()
+            }
+        };
         let Some(record) = record else {
             let mine = self.ids_for(spawner_id);
             let detail = if !mine.is_empty() {
@@ -249,8 +292,8 @@ impl DetachedSubagents {
             return Err(agent_error(
                 400,
                 format!(
-                    "join(\"{session_id}\"): this session has no detached subagent by that \
-                     id. {detail}"
+                    "join(\"{key}\"): this session has no detached subagent by that \
+                     name or id. {detail}"
                 ),
             ));
         };
@@ -1418,6 +1461,62 @@ mod tests {
                 .unwrap(),
         );
         assert_eq!(again["sessionId"], json!(child_id));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn join_takes_the_name_spawn_was_given_not_only_the_id_it_returned() {
+        // The program anyone writes: spawn with a name, join by that name.
+        // It used to 400, and the refusal listed bare uuids, so the model's
+        // recovery was to scrape ids out of an error string.
+        let h = harness();
+        let spawner = seed_session(&h.db, SeedOpts::default());
+        let ctx = spawner_ctx(&h, &spawner.id, answering_llm("mapped the turn lifecycle"));
+        let host = create_delegation_host_fns(&ctx, delegation_deps(&h));
+
+        let handle = parse(
+            &call(
+                host.spawn.as_ref().unwrap(),
+                vec!["Explore bough-core.", r#"{"name":"core-explorer"}"#],
+            )
+            .await
+            .unwrap(),
+        );
+        let child_id = handle["sessionId"].as_str().unwrap().to_string();
+
+        let joined = parse(
+            &call(host.join.as_ref().unwrap(), vec!["core-explorer"])
+                .await
+                .unwrap(),
+        );
+        assert_eq!(joined["sessionId"], json!(child_id), "same child");
+        assert_eq!(joined["report"], json!("mapped the turn lifecycle"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn join_by_a_name_two_children_share_refuses_rather_than_picking_one() {
+        // Choosing between them would be a coin flip over which report the
+        // program receives, so the ambiguity is the answer.
+        let h = harness();
+        let spawner = seed_session(&h.db, SeedOpts::default());
+        let ctx = spawner_ctx(&h, &spawner.id, answering_llm("done"));
+        let host = create_delegation_host_fns(&ctx, delegation_deps(&h));
+        for _ in 0..2 {
+            call(
+                host.spawn.as_ref().unwrap(),
+                vec!["Explore.", r#"{"name":"twin"}"#],
+            )
+            .await
+            .unwrap();
+        }
+
+        let err = call(host.join.as_ref().unwrap(), vec!["twin"])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("2 subagents named"), "{err}");
+        assert!(
+            err.to_string().contains("Join them by id"),
+            "names the way through: {err}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

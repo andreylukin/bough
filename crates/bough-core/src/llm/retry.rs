@@ -33,11 +33,31 @@ pub const BASE_DELAY_MS: u64 = 1000;
 /// The attempt count alone does not bound the ladder: a `Retry-After` lifts
 /// the delay above the backoff (that is the point of the hint), so a provider
 /// answering `retry-after: 60` turns six attempts into five minutes of
-/// silence. That is not riding out a flap — it is a quota the caller cannot
-/// wait out inside one turn, and the honest move is to fail with the
-/// provider's own message while the user is still watching. Sized to keep the
-/// module comment's promise: a dead path fails the turn in under a minute.
-pub const MAX_BUDGET_MS: u64 = 45_000;
+/// silence, and the turn ring used to re-run the whole ladder on top of that.
+///
+/// SIZED TO HONOUR ONE `Retry-After: 60`, AND NOT A SECOND. The first cut of
+/// this was 45s, chosen against a quota that could never be satisfied — the
+/// prompt alone outspent it, so waiting was pure loss. But the commoner shape
+/// is a per-minute limit that is briefly saturated and clears on its own:
+/// three subagents fanning out across a fast model spend a 500k/minute budget
+/// in under a minute, and every one of them died to a limit that a single
+/// wait would have cleared. One minute of silence to recover a turn with all
+/// its work intact is worth it; five minutes to be told the same thing is
+/// not.
+pub const MAX_BUDGET_MS: u64 = 65_000;
+
+// Enforced at build time rather than in a test, because the number IS the
+// contract: Cerebras, OpenAI and Anthropic all answer a saturated per-minute
+// limit with `retry-after: 60`.
+const _: () = assert!(
+    MAX_BUDGET_MS >= 60_000,
+    "a per-minute limit clears in a minute; refusing to wait it out fails turns \
+     whose work was intact"
+);
+const _: () = assert!(
+    MAX_BUDGET_MS < 120_000,
+    "two minutes of silence is a hang, not a wait"
+);
 
 fn retryable_status(s: u16) -> bool {
     s == 408 || s == 429 || s >= 500
@@ -379,6 +399,61 @@ mod tests {
         assert!(err.to_string().contains("Tokens per minute limit exceeded"));
         assert_eq!(calls.lock().unwrap().len(), 1, "the wait was never made");
         assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn one_minute_quota_wait_is_honoured_then_the_ladder_stops() {
+        // Milliseconds stand in for the seconds a real quota asks for.
+        let boom = || BoughError::llm_with("cerebras: 429 tokens per minute", 429, Some(60));
+        let (client, calls) = fake_client(vec![Err(boom()), Err(boom()), Ok(good())]);
+        let wrapped = with_retries(
+            client,
+            RetryOpts {
+                base_delay_ms: Some(0),
+                max_attempts: Some(6),
+                on_retry: None,
+                budget_ms: Some(65),
+            },
+        );
+        let err = wrapped
+            .run(params(&TOOLS), noop_text(), CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("tokens per minute"));
+        // One wait made (60 ≤ 65), the second declined (120 > 65) — so two
+        // calls, and the scripted success is never reached.
+        assert_eq!(calls.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_saturated_minute_that_clears_recovers_instead_of_failing_the_turn() {
+        let (client, calls) = fake_client(vec![
+            Err(BoughError::llm_with(
+                "cerebras: 429 tokens per minute",
+                429,
+                Some(60),
+            )),
+            Ok(good()),
+        ]);
+        let wrapped = with_retries(
+            client,
+            RetryOpts {
+                base_delay_ms: Some(0),
+                max_attempts: Some(6),
+                on_retry: None,
+                budget_ms: Some(65),
+            },
+        );
+        let result = wrapped
+            .run(params(&TOOLS), noop_text(), CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(result.stop_reason, "end_turn");
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            2,
+            "waited once, then succeeded"
+        );
     }
 
     #[tokio::test]
