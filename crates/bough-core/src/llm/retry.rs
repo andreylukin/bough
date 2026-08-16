@@ -28,6 +28,17 @@ use crate::types::{LlmClient, LlmParams, LlmResult, OnText};
 pub const MAX_ATTEMPTS: u32 = 6;
 pub const BASE_DELAY_MS: u64 = 1000;
 
+/// The wall clock the whole ladder may spend asleep, across every attempt.
+///
+/// The attempt count alone does not bound the ladder: a `Retry-After` lifts
+/// the delay above the backoff (that is the point of the hint), so a provider
+/// answering `retry-after: 60` turns six attempts into five minutes of
+/// silence. That is not riding out a flap — it is a quota the caller cannot
+/// wait out inside one turn, and the honest move is to fail with the
+/// provider's own message while the user is still watching. Sized to keep the
+/// module comment's promise: a dead path fails the turn in under a minute.
+pub const MAX_BUDGET_MS: u64 = 45_000;
+
 fn retryable_status(s: u16) -> bool {
     s == 408 || s == 429 || s >= 500
 }
@@ -73,6 +84,8 @@ pub struct RetryOpts {
     pub on_retry: Option<OnRetry>,
     pub max_attempts: Option<u32>,
     pub base_delay_ms: Option<u64>,
+    /// Total sleep the ladder may spend. See [`MAX_BUDGET_MS`].
+    pub budget_ms: Option<u64>,
 }
 
 /// The provider's Retry-After, in ms, when the error carries one.
@@ -98,6 +111,7 @@ struct Retry {
     inner: Arc<dyn LlmClient>,
     max_attempts: u32,
     base_delay_ms: u64,
+    budget_ms: u64,
     on_retry: Option<OnRetry>,
 }
 
@@ -110,6 +124,7 @@ impl LlmClient for Retry {
         cancel: CancellationToken,
     ) -> Result<LlmResult, BoughError> {
         let mut attempt: u32 = 1;
+        let mut spent_ms: u64 = 0;
         loop {
             match self
                 .inner
@@ -130,6 +145,13 @@ impl LlmClient for Retry {
                         * (0.5 + jitter() / 2.0);
                     let hint = retry_after_hint(&err).unwrap_or(0) as f64;
                     let delay_ms = hint.max(backoff).round() as u64;
+                    // A wait the budget cannot cover is not a wait worth
+                    // making: the user gets the provider's message now
+                    // instead of the same message minutes from now.
+                    if spent_ms.saturating_add(delay_ms) > self.budget_ms {
+                        return Err(err);
+                    }
+                    spent_ms += delay_ms;
                     if let Some(on_retry) = &self.on_retry {
                         on_retry(RetryInfo {
                             attempt,
@@ -164,6 +186,7 @@ pub fn with_retries(inner: Arc<dyn LlmClient>, opts: RetryOpts) -> Arc<dyn LlmCl
         inner,
         max_attempts: opts.max_attempts.unwrap_or(MAX_ATTEMPTS),
         base_delay_ms: opts.base_delay_ms.unwrap_or(BASE_DELAY_MS),
+        budget_ms: opts.budget_ms.unwrap_or(MAX_BUDGET_MS),
         on_retry: opts.on_retry,
     })
 }
@@ -201,6 +224,7 @@ mod tests {
                 base_delay_ms: Some(0),
                 max_attempts: Some(3),
                 on_retry: Some(Arc::new(move |i| seen2.lock().unwrap().push(i.attempt))),
+                budget_ms: None,
             },
         );
         let result = wrapped
@@ -224,6 +248,7 @@ mod tests {
                 base_delay_ms: Some(0),
                 max_attempts: Some(4),
                 on_retry: None,
+                budget_ms: None,
             },
         );
         let err = wrapped
@@ -244,6 +269,7 @@ mod tests {
                 base_delay_ms: Some(0),
                 max_attempts: Some(3),
                 on_retry: None,
+                budget_ms: None,
             },
         );
         let err = wrapped
@@ -278,6 +304,7 @@ mod tests {
                 base_delay_ms: Some(50_000),
                 max_attempts: Some(6),
                 on_retry: None,
+                budget_ms: None,
             },
         );
         let start = std::time::Instant::now();
@@ -310,6 +337,7 @@ mod tests {
                 base_delay_ms: Some(1),
                 max_attempts: Some(3),
                 on_retry: Some(Arc::new(move |i| seen2.lock().unwrap().push(i.delay_ms))),
+                budget_ms: None,
             },
         );
         wrapped
@@ -319,6 +347,64 @@ mod tests {
         // delay = round(max(retryAfterHint, backoff)); the 50ms Retry-After
         // hint dominates the 1ms base's jittered backoff (≤1ms).
         assert_eq!(*seen.lock().unwrap(), vec![50]);
+    }
+
+    #[tokio::test]
+    async fn a_retry_after_the_budget_cannot_cover_fails_now_instead_of_minutes_from_now() {
+        // Cerebras answers a blown token-per-minute quota with `retry-after:
+        // 60`. Sleeping it out six times is five silent minutes ending in the
+        // same message, so the ladder declines the wait and surfaces it.
+        let (client, calls) = fake_client(vec![
+            Err(BoughError::llm_with(
+                "cerebras: 429 Tokens per minute limit exceeded",
+                429,
+                Some(60_000),
+            )),
+            Ok(good()),
+        ]);
+        let wrapped = with_retries(
+            client,
+            RetryOpts {
+                base_delay_ms: Some(0),
+                max_attempts: Some(6),
+                on_retry: None,
+                budget_ms: Some(45_000),
+            },
+        );
+        let start = std::time::Instant::now();
+        let err = wrapped
+            .run(params(&TOOLS), noop_text(), CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Tokens per minute limit exceeded"));
+        assert_eq!(calls.lock().unwrap().len(), 1, "the wait was never made");
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn the_budget_is_cumulative_not_per_attempt() {
+        // Three 20s waits fit no better than one 60s wait: the ladder spends
+        // the first two and stops rather than running the attempt count out.
+        // Milliseconds stand in for the seconds a real quota asks for — the
+        // ratio is what the arithmetic turns on, and the test stays instant.
+        let boom = || BoughError::llm_with("openrouter: 429 slow down", 429, Some(20));
+        let (client, calls) = fake_client(vec![Err(boom()), Err(boom()), Err(boom()), Ok(good())]);
+        let wrapped = with_retries(
+            client,
+            RetryOpts {
+                base_delay_ms: Some(0),
+                max_attempts: Some(6),
+                on_retry: None,
+                budget_ms: Some(45),
+            },
+        );
+        let err = wrapped
+            .run(params(&TOOLS), noop_text(), CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("slow down"));
+        // 20 + 20 spent, the third would reach 60 > 45 and is declined.
+        assert_eq!(calls.lock().unwrap().len(), 3);
     }
 
     #[test]

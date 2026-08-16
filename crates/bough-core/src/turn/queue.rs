@@ -258,6 +258,19 @@ pub fn is_truncated_tool_call(err: &BoughError) -> bool {
     matches!(err, BoughError::Llm { .. }) && TRUNCATED.is_match(&err.to_string())
 }
 
+/// True when the provider turned the round away over a quota rather than a
+/// fault.
+///
+/// The ring exists for an outage — a provider that cannot answer. A rate
+/// limit is a provider answering, promptly, that the caller is over its
+/// allowance, and the client's ladder has already spent its whole budget
+/// honouring the `Retry-After` before the error reaches here. Sleeping a
+/// further minute to re-run that ladder buys the same message several minutes
+/// later, which reads as a hang.
+pub fn is_rate_limited(err: &BoughError) -> bool {
+    matches!(err, BoughError::Llm { status: 429, .. })
+}
+
 /// True when the failure is the user's own stop, which is never retried.
 ///
 /// The typed replacement for TS `errName(err)` ∈ {`AbortError`,
@@ -291,6 +304,8 @@ pub struct ClassifyOpts {
 /// immediately — a user interrupt is an answer, not an error — and so does
 /// anything the provider layer classes as the caller's own mistake, because
 /// retrying a bad request six times only delays the message that explains it.
+/// A rate limit stops here too, for the same reason one layer down: see
+/// [`is_rate_limited`].
 pub fn classify_round_failure(
     err: &BoughError,
     attempt: u32,
@@ -306,7 +321,11 @@ pub fn classify_round_failure(
         short_reason(err)
     };
 
-    if is_abort(err) || attempt > max_retries || !(truncated || is_retryable(err)) {
+    if is_abort(err)
+        || attempt > max_retries
+        || (is_rate_limited(err) && !truncated)
+        || !(truncated || is_retryable(err))
+    {
         return RetryDecision {
             retry: false,
             delay_ms: 0,
@@ -667,6 +686,26 @@ mod tests {
         );
         assert!(second.retry);
         assert_eq!(second.delay_ms, 60_000);
+
+        // A rate limit is not an outage. The client's ladder already spent its
+        // budget on the provider's Retry-After, so a further minute here only
+        // buys the same message minutes later — which is what reads as a hang.
+        let quota = BoughError::llm_with(
+            "cerebras: 429 Tokens per minute limit exceeded",
+            429,
+            Some(60_000),
+        );
+        assert!(is_rate_limited(&quota));
+        let third = classify_round_failure(
+            &quota,
+            1,
+            &ClassifyOpts {
+                outage_delay_ms: Some(60_000),
+                ..Default::default()
+            },
+        );
+        assert!(!third.retry);
+        assert!(third.reason.contains("Tokens per minute limit exceeded"));
 
         // A caller's own mistake is not retried: six attempts only delay the
         // message that explains it.

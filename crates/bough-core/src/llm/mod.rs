@@ -433,6 +433,7 @@ mod tests {
                         max_attempts: Some(2),
                         base_delay_ms: Some(0),
                         on_retry: None,
+                        budget_ms: None,
                     },
                     trace: None,
                 },
@@ -483,6 +484,7 @@ mod tests {
                 max_attempts: Some(3),
                 base_delay_ms: Some(0),
                 on_retry: None,
+                budget_ms: None,
             },
         );
         let result = composed

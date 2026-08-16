@@ -78,7 +78,7 @@ use crate::selection::{
     is_empty_selection, link_at, row_content, selected_copy, url_across, url_at, CopyRow, Point,
     Selection,
 };
-use crate::store::selectors::{live_units, LiveUnit, LiveUnitKind};
+use crate::store::selectors::{humanize_retry_reason, live_units, LiveUnit, LiveUnitKind};
 
 /// App.tsx::DOUBLE_ESC_MS — the double-tap window.
 pub const DOUBLE_ESC_MS: i64 = 600;
@@ -3686,6 +3686,14 @@ impl<T: Transport> App<T> {
                 // The re-stream is a competing copy, not a continuation.
                 if let Ok(d) = serde_json::from_value::<MessageRetryData>(event.data) {
                     self.streaming.remove(&d.message_id);
+                    // And say so. A backoff looks exactly like a hung turn
+                    // from here — same spinner, no text — so the one thing
+                    // that distinguishes them has to reach the screen.
+                    self.notice = Some(format!(
+                        "retrying (attempt {}) — {}",
+                        d.attempt,
+                        humanize_retry_reason(&d.reason, 60)
+                    ));
                 }
             }
             // A running program's own output, line by line. Kept per CALL —
@@ -7195,6 +7203,53 @@ mod tests {
         let meter = app.meter();
         assert_eq!(meter.shells, Some(1));
         assert!(frame_of(&app, 120, 24).contains("⚙ 1 shell"));
+    }
+
+    #[test]
+    fn a_backing_off_round_says_so_instead_of_looking_like_a_hung_turn() {
+        // A retry and a hang render identically — spinner, no text — so the
+        // one event that tells them apart has to reach the screen. Without
+        // this the ladder's whole wait is silent.
+        let (_effects, sink) = scripted();
+        let mut app = App::new(TuiOptions::default(), sink, 80, 24);
+        open_s1(&mut app);
+        app.apply(
+            event(
+                EventType::MessageStarted,
+                1_000,
+                json!({
+                    "id": "m1", "sessionId": "s1", "role": "supervisor",
+                    "parts": [], "pending": true, "createdAt": 1000
+                }),
+            ),
+            1_000,
+        );
+        app.apply(
+            event(
+                EventType::MessageDelta,
+                1_100,
+                json!({"messageId": "m1", "delta": "half a thought"}),
+            ),
+            1_100,
+        );
+        app.apply(
+            event(
+                EventType::MessageRetry,
+                1_200,
+                json!({
+                    "messageId": "m1", "attempt": 2,
+                    "reason": "cerebras: 429 Tokens per minute limit exceeded — retry 2/6"
+                }),
+            ),
+            1_200,
+        );
+        let frame = frame_of(&app, 80, 24);
+        assert!(frame.contains("retrying"), "{frame}");
+        assert!(frame.contains("attempt 2"), "{frame}");
+        assert!(
+            !frame.contains("half a thought"),
+            "the re-stream is a competing copy, not a prefix: {frame}"
+        );
     }
 
     /// PORT_PLAN 1.39 gate, TestBackend half: type → stream → interrupt →
