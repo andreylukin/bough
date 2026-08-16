@@ -199,8 +199,6 @@ pub fn parse_workflow_note(text: &str) -> Option<WorkflowNote> {
 /// Logical lines shown before "+N more" — the program, then its output.
 pub const CODE_LINES: usize = 14;
 pub const OUTPUT_LINES: usize = 20;
-/// Report lines a finished-subagent card shows before "+N more".
-pub const REPORT_LINES: usize = 6;
 
 struct BlockOpts<'a> {
     max_lines: usize,
@@ -1586,7 +1584,15 @@ fn fmt_elapsed(ms: i64) -> String {
     }
 }
 
-/// The card for a finished subagent: header, files, capped report, next action.
+/// The card for a finished subagent.
+///
+/// COLLAPSED BY DEFAULT, to one line. A note is the harness reporting on work
+/// the user did not ask to read: four subagents landing at once used to push
+/// ~40 lines of somebody else's prose through the transcript and bury the
+/// conversation the user was actually having. What the line has to carry is
+/// the outcome — who finished, how it went, what it touched, what it cost —
+/// which is what a reader needs to decide whether the report is worth
+/// opening. The report itself is one click away and stays open once lifted.
 fn subagent_note_lines(
     out: &mut Vec<VLine>,
     note: &SubagentNote,
@@ -1595,6 +1601,7 @@ fn subagent_note_lines(
     spent: &str,
 ) {
     let open = format!("open:{}", note.session_id);
+    let expand = format!("report:{}!full", note.session_id);
     // Amber = stopped or orphaned (not the agent's fault); red is a genuine
     // failure. Four outcomes, four readings.
     let halted = note.status.starts_with("ORPHANED") || note.status.starts_with("STOPPED");
@@ -1616,9 +1623,44 @@ fn subagent_note_lines(
         .title
         .strip_prefix("subagent · ")
         .unwrap_or(&note.title);
+    if !full {
+        // The whole card as one row. `▸` is the same affordance folds use, so
+        // it reads as openable rather than as all there is.
+        let touched = if note.files_unknown {
+            String::new()
+        } else if note.files.is_empty() {
+            dim(" · no changes")
+        } else {
+            dim(&format!(
+                " · {} file{}",
+                note.files.len(),
+                if note.files.len() == 1 { "" } else { "s" }
+            ))
+        };
+        let report_size = match &note.report {
+            Some(r) if !r.trim().is_empty() => {
+                dim(&format!(" · {}-line report", r.lines().count()))
+            }
+            _ => dim(" · no report"),
+        };
+        out.push(VLine {
+            text: format!(
+                "{} {dot} {}  {}{touched}{report_size}{}",
+                dim("▸"),
+                bold(title),
+                clip(&status_tag, 200),
+                dim(spent)
+            ),
+            click: Some(expand),
+            copy: note.report.clone(),
+            src: None,
+        });
+        return;
+    }
     out.push(VLine {
         text: format!(
-            "{dot} {}  {}{}",
+            "{} {dot} {}  {}{}",
+            dim("▾"),
             bold(title),
             clip(&status_tag, 200),
             dim(spent)
@@ -1641,32 +1683,17 @@ fn subagent_note_lines(
     };
     push(out, &dim(&format!("  {file_note}")), w, Some(&open));
     if let Some(report) = &note.report {
-        // Physical (post-wrap) lines are what floods the screen, so cap those.
-        let physical: Vec<String> = md(report, None)
+        // Reaching here means the reader asked for the report, so it arrives
+        // whole — an expand that expands to another cap is a second click for
+        // no reason.
+        let physical = md(report, None)
             .split('\n')
             .flat_map(|line| wrap(line, w.saturating_sub(2)))
-            .collect();
-        let shown = if full {
-            physical.len()
-        } else {
-            physical.len().min(REPORT_LINES)
-        };
-        for l in &physical[..shown] {
+            .collect::<Vec<_>>();
+        for l in &physical {
             out.push(VLine {
                 text: format!("{} {l}", dim("│")),
                 click: Some(format!("report:{}", note.session_id)),
-                copy: None,
-                src: None,
-            });
-        }
-        if physical.len() > shown {
-            out.push(VLine {
-                text: format!(
-                    "{} {}",
-                    dim("│"),
-                    dim(&format!("… +{} more", physical.len() - shown))
-                ),
-                click: Some(format!("report:{}!full", note.session_id)),
                 copy: None,
                 src: None,
             });
@@ -2899,13 +2926,24 @@ mod tests {
             branches: vec![b],
             ..Default::default()
         };
+        // COLLAPSED by default: the outcome, on one row, and nothing else.
+        // A note is the harness talking about work the user did not ask to
+        // read, so it does not get to push the conversation off the screen.
         let text = joined(&build(&thread, 100, &opts));
         assert!(!text.contains("[subagent finished]")); // the raw wall is gone
         assert!(text.contains("extract token logic"));
-        assert!(text.contains("Found three call sites."));
-        assert!(text.contains("its edits are already here"), "{text}");
-        assert!(text.contains("click to open it"), "{text}");
-        assert!(!text.contains("^s opens it"), "{text}");
+        assert!(text.contains("1 file"), "{text}");
+        assert!(text.contains("▸"), "expandable affordance: {text}");
+        assert!(!text.contains("Found three call sites."), "{text}");
+        assert!(!text.contains("its edits are already here"), "{text}");
+
+        // One click, and the report arrives whole.
+        let open = |k: &str| k == "report:sub-1";
+        let full = joined(&build_lines(&thread, &closed, &open, 100, &opts));
+        assert!(full.contains("Found three call sites."), "{full}");
+        assert!(full.contains("its edits are already here"), "{full}");
+        assert!(full.contains("click to open it"), "{full}");
+        assert!(!full.contains("^s opens it"), "{full}");
 
         // With no branch to draw the card, the note itself must survive.
         let bare = joined(&build(&thread, 100, &BuildOptions::default()));

@@ -9174,17 +9174,28 @@ mod tests {
         child.session.outcome_ok = Some(true);
         app.apply(Action::Sessions(vec![child]), 3);
 
-        let lines = app.transcript_vlines();
-        let card = lines
-            .iter()
-            .find(|l| l.click.as_deref() == Some("open:sub-1"))
-            .unwrap_or_else(|| panic!("no branch card: {:?}", app.transcript_lines()));
-        assert!(card.click.is_some());
-        let plain = app.transcript_lines().join("\n");
-        assert!(plain.contains("audit app.rs"), "{plain}");
-        assert!(plain.contains("the hit-test was fine"), "{plain}");
+        // Collapsed: one row naming the outcome, and the report withheld.
+        let collapsed = app.transcript_lines().join("\n");
+        assert!(collapsed.contains("audit app.rs"), "{collapsed}");
+        assert!(!collapsed.contains("the hit-test was fine"), "{collapsed}");
         // The RAW note is gone: never both, never neither.
-        assert!(!plain.contains("[subagent finished]"), "{plain}");
+        assert!(!collapsed.contains("[subagent finished]"), "{collapsed}");
+
+        // The row's click is the expand, and it lands the report.
+        let row = app
+            .transcript_vlines()
+            .into_iter()
+            .find(|l| l.click.as_deref() == Some("report:sub-1!full"))
+            .unwrap_or_else(|| panic!("no expandable card: {:?}", app.transcript_lines()));
+        app.click_target(&row.click.unwrap());
+        let plain = app.transcript_lines().join("\n");
+        assert!(plain.contains("the hit-test was fine"), "{plain}");
+
+        // Expanded, the card descends into the subagent as it always did.
+        assert!(app
+            .transcript_vlines()
+            .iter()
+            .any(|l| l.click.as_deref() == Some("open:sub-1")));
         app.click_target("open:sub-1");
         assert!(sends(&effects).contains(&Effect::OpenSession("sub-1".into())));
     }
