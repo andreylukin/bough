@@ -234,6 +234,38 @@ fn reasoning_params(effort: Option<Effort>, provider: Provider) -> Map<String, V
     out
 }
 
+/// The most output bough will ask Cerebras for, whatever the turn reserved.
+///
+/// Cerebras rate-limits on an ESTIMATE formed before generation: prompt
+/// tokens plus the `max_tokens` ask. An ask the per-minute quota cannot cover
+/// is a 429 before a token exists, however short the message — which is what
+/// their docs mean by "set `max_completion_tokens` appropriately for your use
+/// case to avoid overestimating token usage and triggering unnecessary rate
+/// limits". Nowhere else does the ask cost anything unspent, so this is a
+/// Cerebras fact and lives at the Cerebras edge rather than shrinking the
+/// turn's reservation for every provider.
+///
+/// The binding constraint on Cerebras is tokens, not requests — 500 RPM
+/// against 500k TPM on the paid tier — so what the ask costs is throughput:
+/// a 16k prompt asking 32k fits ten times a minute, asking 8k fits twenty.
+/// It also has to clear the quota outright on a free key, where 30k/minute
+/// cannot cover a 16k prompt plus a 32k ask at all.
+///
+/// 8k is four times the output an average turn emits across all of its
+/// rounds, so this clamps the reservation rather than the answer — but it IS
+/// a ceiling on a single Cerebras round, and a round that genuinely needs
+/// more than 8k of output will stop there. Raise it if that shows up.
+const CEREBRAS_MAX_OUTPUT: i64 = 8_000;
+
+/// The `max_tokens` to actually send: the turn's reservation, capped where a
+/// provider bills the ask rather than the answer.
+fn output_ask(reserved: i64, provider: Provider) -> i64 {
+    match provider {
+        Provider::Cerebras => reserved.min(CEREBRAS_MAX_OUTPUT),
+        _ => reserved,
+    }
+}
+
 /// The URL is a function of the env resolved per `run()` (Cloudflare's
 /// account id is part of the path) — a value set through the running server
 /// must apply without a restart.
@@ -274,7 +306,10 @@ impl LlmClient for OpenAICompatClient {
             &params.model
         };
         body.insert("model".into(), json!(wire_model));
-        body.insert("max_tokens".into(), json!(params.max_tokens));
+        body.insert(
+            "max_tokens".into(),
+            json!(output_ask(params.max_tokens, self.provider)),
+        );
         for (k, v) in reasoning_params(params.effort, self.provider) {
             body.insert(k, v);
         }
@@ -1145,6 +1180,44 @@ mod tests {
             "the cerebras: prefix is routing, not a model name"
         );
         assert_eq!(result.content, vec![LlmBlock::Text { text: "hi".into() }]);
+    }
+
+    #[tokio::test]
+    async fn cerebras_caps_the_output_ask_because_the_ask_itself_is_billed() {
+        // Cerebras forms its rate-limit estimate from prompt + max_tokens
+        // BEFORE generating, so the reservation is spent whether or not it is
+        // used. The turn still reserves what it reserved; only the wire ask
+        // is capped.
+        let transport = Arc::new(CannedTransport::sse(vec![vec![
+            chunk(json!({ "content": "hi" }), None),
+            chunk(json!({}), Some("stop")),
+            "[DONE]".to_string(),
+        ]]));
+        let client = cerebras_client(ProviderOpts {
+            env: Some(cerebras_env()),
+            transport: Some(transport.clone()),
+        });
+        client
+            .run(
+                params_over("cerebras:gemma-4-31b", &TOOLS, |p| p.max_tokens = 32_000),
+                Arc::new(|_| {}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let requests = transport.requests.lock().unwrap();
+        let body: Value = serde_json::from_str(requests[0].body.as_ref().unwrap()).unwrap();
+        assert_eq!(body["max_tokens"], CEREBRAS_MAX_OUTPUT);
+    }
+
+    #[test]
+    fn output_ask_caps_only_cerebras_and_never_raises_a_smaller_reservation() {
+        assert_eq!(output_ask(32_000, Provider::Cerebras), CEREBRAS_MAX_OUTPUT);
+        // A ceiling, not a floor: a turn asking for less keeps its own number.
+        assert_eq!(output_ask(512, Provider::Cerebras), 512);
+        // Everywhere else the ask costs nothing unspent, so nothing is capped.
+        assert_eq!(output_ask(32_000, Provider::Openrouter), 32_000);
+        assert_eq!(output_ask(32_000, Provider::Cloudflare), 32_000);
     }
 
     #[tokio::test]
