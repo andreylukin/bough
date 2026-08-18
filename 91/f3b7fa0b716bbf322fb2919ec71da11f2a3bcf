@@ -1,0 +1,29 @@
+crates/bough-core/hooks/claude-code.lua
+  73ca48f24d70f3fb 149-170,185-187,264,286,304,322
+crates/bough-core/src/hooks/tests.rs
+  73ca48f24d70f3fb 49-60,723-770
+crates/bough-core/src/hooks/runtime.rs
+  73ca48f24d70f3fb 253,517,552,606,614,687
+docs/extending.md
+  73ca48f24d70f3fb 123-124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "91f3b7fa0b716bbf322fb2919ec71da11f2a3bcf",
+  "prompts": {
+    "73ca48f24d70f3fb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "",
+        "model": "unknown"
+      },
+      "human_author": "Andrey Lukin",
+      "messages": [],
+      "total_additions": 100,
+      "total_deletions": 7,
+      "accepted_lines": 100,
+      "overriden_lines": 0
+    }
+  }
+}
