@@ -30,8 +30,10 @@ Two things about bough shape this file, and a naive port gets both wrong:
 """
 
 import json
+import os
 import shlex
 import time
+import tomllib
 from pathlib import Path
 from typing import Any, override
 
@@ -44,6 +46,17 @@ from harbor.utils.env import parse_bool_env_value
 # cannot disagree, and so a task that happens to bind 4321 can be moved off it
 # with `--ak port=…`.
 DEFAULT_PORT = 4321
+
+# Slack left under Harbor's cap so the phase is never killed mid-attempt, and
+# slack left under each turn's own timeout so `bough exec` returns its envelope
+# before the shell around it is cut off.
+CAP_RESERVE = 60
+TURN_MARGIN = 30
+# The shortest turn worth starting. Splitting a small cap into three turns
+# gives three turns too short to solve anything, and `bough exec` has no
+# resume, so each one re-reads the work from disk before it can add to it.
+# Under a tight cap, one long attempt beats three stunted ones.
+MIN_TURN = 400
 
 # Where the uploaded binary lands. /installed-agent is created by
 # BaseInstalledAgent.setup() before install() runs.
@@ -74,6 +87,7 @@ class Bough(BaseInstalledAgent):
         timeout: int = 900,
         attempts: int = 3,
         budget: int | None = None,
+        cap: int | None = None,
         effort: str | None = None,
         **kwargs,
     ):
@@ -90,11 +104,15 @@ class Bough(BaseInstalledAgent):
         # to be in the environment the server starts with, not a turn flag --
         # `bough exec` has none. None = let the provider decide.
         self._effort = effort
-        # The wall clock for ALL attempts together. Harbor enforces its own cap
-        # on the agent phase (task timeout × --agent-timeout-multiplier) and
-        # kills the phase outright when it expires, so this must be set under
-        # that cap — see the README's timeout arithmetic.
-        self._budget = int(budget) if budget else self._attempts * self._timeout
+        # The wall clock for ALL attempts together. Harbor kills the agent
+        # phase outright at the task's own `[agent] timeout_sec`, so a budget
+        # over that cap is not ambition, it is a guaranteed loss: the phase
+        # dies mid-attempt and every envelope goes with it. `attempts ×
+        # timeout` as a default violated the cap on 51 of TB 2.0's 89 tasks.
+        # So the budget is now derived from the cap at run() time; this is
+        # only the explicit override, and `cap` only the manual reading of it.
+        self._budget = int(budget) if budget else None
+        self._cap = int(cap) if cap else None
         self._server_started = False
 
         if not self._binary and not self._source:
@@ -226,17 +244,18 @@ class Bough(BaseInstalledAgent):
         env = self._agent_env()
         await self._ensure_server(environment, env)
 
-        deadline = time.monotonic() + self._budget
+        budget, attempts, turn = self._plan()
+        deadline = time.monotonic() + budget
         results: list[Any] = []
         envelopes: list[dict[str, Any]] = []
 
-        for attempt in range(1, self._attempts + 1):
+        for attempt in range(1, attempts + 1):
             # Never start an attempt that cannot finish inside the budget:
             # Harbor kills the whole agent phase at its own cap, and a phase
             # killed mid-attempt loses the envelope for every attempt before
             # it. Leaving early with results in hand beats being shot.
             left = deadline - time.monotonic()
-            if attempt > 1 and left < self._timeout + 60:
+            if attempt > 1 and left < turn + 60:
                 self.logger.info(
                     f"bough: stopping after {attempt - 1} attempt(s), "
                     f"{left:.0f}s left of the budget"
@@ -248,7 +267,7 @@ class Bough(BaseInstalledAgent):
                 [
                     f"{shlex.quote(BINARY_PATH)} exec --json",
                     f"--port {self._port}",
-                    f"--timeout {min(self._timeout, max(int(left) - 30, 60))}",
+                    f"--timeout {min(turn, max(int(left) - TURN_MARGIN, 60))}",
                     *(
                         [f"--model {shlex.quote(self._bough_model() or '')}"]
                         if self._bough_model()
@@ -266,7 +285,7 @@ class Bough(BaseInstalledAgent):
             result = await environment.exec(
                 command=f"set -o pipefail; {command}",
                 env=env,
-                timeout_sec=self._timeout + 120,
+                timeout_sec=turn + 120,
             )
             if result.return_code == 2:
                 raise self._classify_exec_error(command, result)
@@ -275,6 +294,11 @@ class Bough(BaseInstalledAgent):
             envelope = _last_json_object(result.stdout or "")
             if envelope:
                 envelopes.append(envelope)
+                # On disk NOW. Harbor may still shoot the phase before the
+                # loop ends, and a log written only after it would take every
+                # completed attempt's tokens and cost down with it — which is
+                # why timed-out trials used to report $0.0000.
+                self._write_agent_log(envelopes)
 
             # Retry only a turn that did NOT finish on its own terms. A turn
             # that reached `done` has said what it has to say; re-running it
@@ -287,10 +311,67 @@ class Bough(BaseInstalledAgent):
                 break
             self.logger.info(
                 f"bough: attempt {attempt} ended {status!r}; "
-                f"{'retrying' if attempt < self._attempts else 'out of attempts'}"
+                f"{'retrying' if attempt < attempts else 'out of attempts'}"
             )
 
         self._populate(context, results, envelopes)
+
+    def _plan(self) -> tuple[int, int, int]:
+        """Budget, attempts and per-turn timeout, all sized under Harbor's cap.
+
+        Harbor caps the agent phase at the task's `[agent] timeout_sec` and
+        does not tell the agent what that is — AgentContext is output-only.
+        So we read the task's own toml out of Harbor's task cache. Failing
+        that, the old `attempts × timeout` stands, which is the caller's
+        problem to size with --ak budget.
+        """
+        cap = self._cap or self._harbor_cap()
+        budget = self._budget or (
+            cap - CAP_RESERVE if cap else self._attempts * self._timeout
+        )
+        budget = max(budget, MIN_TURN)
+        # Never plan more attempts than there is room for a real turn each.
+        attempts = max(1, min(self._attempts, budget // (MIN_TURN + TURN_MARGIN)))
+        # The retry guard below refuses to start an attempt with less than
+        # turn + CAP_RESERVE left, so the LAST planned attempt has to fit with
+        # that reserve still unspent. Divide the budget minus the reserve, or
+        # attempt 2 is planned and then never reachable: a 1140s budget split
+        # into two 540s turns leaves exactly 600s, and the guard wants 600.
+        divisible = budget - CAP_RESERVE if attempts > 1 else budget
+        turn = max(min(self._timeout, divisible // attempts - TURN_MARGIN), 60)
+        self.logger.info(
+            f"bough: cap={cap or 'unknown'}s budget={budget}s "
+            f"attempts={attempts} turn={turn}s"
+        )
+        return int(budget), int(attempts), int(turn)
+
+    def _harbor_cap(self) -> int | None:
+        """The task's agent timeout, read from Harbor's on-disk task cache.
+
+        The trial directory names the task; the cache holds its task.toml
+        under a content hash we do not know, hence the glob. Every step is
+        best-effort — a missing cache is a wider budget, not a crash.
+        """
+        try:
+            config = json.loads(
+                (self.logs_dir.parent / "config.json").read_text()
+            )
+            task = config["task"]["path"]
+            root = Path(
+                os.environ.get("HARBOR_TASKS_DIR", Path.home() / ".cache/harbor/tasks")
+            )
+            for toml_path in sorted(root.glob(f"*/{task}/task.toml")):
+                with toml_path.open("rb") as handle:
+                    seconds = tomllib.load(handle)["agent"]["timeout_sec"]
+                return int(seconds)
+        except Exception as exc:  # noqa: BLE001 - never fail a trial over this
+            self.logger.info(f"bough: could not read Harbor's agent cap: {exc}")
+        return None
+
+    def _write_agent_log(self, envelopes: list[dict[str, Any]]) -> None:
+        agent_log = self.logs_dir / "bough-exec.json"
+        agent_log.parent.mkdir(parents=True, exist_ok=True)
+        agent_log.write_text(json.dumps(envelopes, indent=2))
 
     def _continuation(self, instruction: str) -> str:
         """The prompt for attempt 2+.
@@ -435,9 +516,7 @@ class Bough(BaseInstalledAgent):
             "return_code": results[-1].return_code if results else None,
         }
 
-        agent_log = self.logs_dir / "bough-exec.json"
-        agent_log.parent.mkdir(parents=True, exist_ok=True)
-        agent_log.write_text(json.dumps(envelopes, indent=2))
+        self._write_agent_log(envelopes)
 
 
 def _last_json_object(stdout: str) -> dict[str, Any] | None:

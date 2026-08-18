@@ -71,9 +71,10 @@ numbers.
 | `source` | `0` | build bough from source inside every container instead. Slow; use for HEAD. |
 | `ref` | `main` | git ref for the source build. |
 | `port` | `4321` | loopback port for the in-container server. |
-| `timeout` | `900` | wall clock for ONE turn, in seconds. |
-| `attempts` | `3` | how many turns to spend on a task that keeps getting cut off. |
-| `budget` | `attempts × timeout` | wall clock for all attempts together, in seconds. |
+| `timeout` | `900` | upper bound on ONE turn, in seconds. The plan may pick less. |
+| `attempts` | `3` | most turns to spend on a task that keeps getting cut off. |
+| `budget` | Harbor's cap − 60s | wall clock for all attempts together, in seconds. |
+| `cap` | read from `task.toml` | Harbor's own kill deadline for the agent phase. Set it if the task cache cannot be found. |
 
 ### Timeouts, and why there are three of them
 
@@ -87,13 +88,32 @@ Three clocks have to be ordered, outermost first:
    tasks, but 1800s and 3600s appear) times `--agent-timeout-multiplier`. When
    this expires Harbor kills the phase and the trial errors with
    `AgentTimeoutError`, losing every attempt's envelope.
-2. **`budget`** — all attempts together. Must sit under (1) with room to spare.
-   The loop refuses to start an attempt it cannot finish inside the budget.
+2. **`budget`** — all attempts together. Derived from (1): the adapter reads
+   the task's `[agent] timeout_sec` out of Harbor's task cache at run time and
+   keeps 60s back. The loop refuses to start an attempt it cannot finish
+   inside it.
 3. **`timeout`** — one turn. bough stops its own turn when this expires, which
    is the graceful ending: the container keeps the partial work.
 
-So `--ak attempts=3 --ak timeout=900` (budget 2700) wants
-`--agent-timeout-multiplier 3.5`, which gives 3150s on a 900s task.
+The adapter sizes (2) and (3) from (1) rather than trusting the flags, because
+`attempts × timeout` is not a number the caller can get right for the whole
+suite: TB 2.0 caps range from 600s to 12000s, and 51 of its 89 tasks cap at or
+below a single default 900s turn. A fixed 2700s budget lost every one of those
+outright — Harbor shot the phase mid-attempt and the envelopes went with it.
+`attempts` and `timeout` are now ceilings; under a tight cap the plan collapses
+to one long turn rather than three too short to finish anything:
+
+| Harbor's cap | budget | attempts | per turn |
+| --- | --- | --- | --- |
+| 900s | 840s | 1 | 810s |
+| 1200s | 1140s | 2 | 540s |
+| 1800s | 1740s | 3 | 550s |
+| 3600s | 3540s | 3 | 900s |
+
+If Harbor's task cache cannot be read, the plan falls back to `attempts ×
+timeout` and says so in the log — pass `--ak cap=` to set the deadline by hand.
+Envelopes are written to `bough-exec.json` as each attempt lands, so a phase
+killed anyway still reports the tokens and cost of the attempts that finished.
 
 ### Retrying a stuck agent
 
