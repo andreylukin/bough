@@ -41,7 +41,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::hooks::SourceKind;
-use crate::paths::{plugin_dirs_in, plugins_dir};
+use crate::paths::{bough_path, plugin_dirs_in, plugins_dir};
 
 /// Which of the three surfaces an item is. The switch does not care; the panel
 /// and the "what does this plugin even do" question do.
@@ -186,6 +186,87 @@ pub fn set_enabled(id: &str, enabled: bool) -> std::io::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// The plugins bough ships
+// ---------------------------------------------------------------------------
+
+/// The plugins that ship inside the binary, materialized on first use.
+///
+/// WHY BOUGH SHIPS ANY. A plugin is the unit an integration comes in — a hook,
+/// the skill that tells the model how to use what the hook set up, and the
+/// switch over both. Some integrations are worth shipping to everyone rather
+/// than asking each user to clone a repo: they are small, they are inert
+/// without a binary the user has installed anyway, and the alternative is that
+/// the code leaks into bough's own prompt or its own hooks where it cannot be
+/// switched off.
+///
+/// VERSIONED, LIKE THE BUNDLED HOOKS AND SKILLS, so an upgraded binary never
+/// serves a stale copy, and OUTSIDE `~/.bough/plugins` so a shipped plugin
+/// never sits in the directory whose contents you own — a file you did not put
+/// there and cannot delete (it returns on the next launch) is a bug report.
+static BUNDLED: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/plugins");
+
+pub fn bundled_plugins_dir() -> PathBuf {
+    bough_path(&["bundled-plugins", env!("CARGO_PKG_VERSION")])
+}
+
+/// Write the bundled plugins to disk. Overwrites in place — the embedded bytes
+/// are the source of truth, and an edit to a shipped plugin is not a thing this
+/// store tries to preserve (copy it into `~/.bough/plugins` to own it).
+pub fn materialize_bundled(dest: &Path) -> std::io::Result<()> {
+    for file in walk_files(&BUNDLED) {
+        let target = dest.join(file.path());
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&target, file.contents())?;
+    }
+    Ok(())
+}
+
+/// Every file in the bundle, at any depth. A plugin is `<name>/hooks/x.lua`
+/// and `<name>/skills/<skill>/SKILL.md`, so the non-recursive `files()` — which
+/// is what the bundled HOOKS use, because those are one flat directory — finds
+/// nothing at all here.
+fn walk_files<'a>(dir: &'a include_dir::Dir<'a>) -> Vec<&'a include_dir::File<'a>> {
+    let mut out: Vec<&include_dir::File> = dir.files().collect();
+    for sub in dir.dirs() {
+        out.extend(walk_files(sub));
+    }
+    out
+}
+
+fn ensure_bundled() -> Option<PathBuf> {
+    let dest = bundled_plugins_dir();
+    // Best effort: a bundle that cannot be written is a root with nothing in
+    // it, which discovery already handles.
+    materialize_bundled(&dest).ok()?;
+    Some(dest)
+}
+
+/// Every root plugins are read from, in load order: the ones bough ships, then
+/// the ones you installed. Later wins a name collision, so a plugin you put in
+/// `~/.bough/plugins` shadows a shipped one of the same name — the same rule
+/// hooks and skills already follow, and the only way to override something
+/// that ships in the binary.
+pub fn roots() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    out.extend(ensure_bundled());
+    out.push(plugins_dir());
+    out
+}
+
+/// Every plugin directory across every root, in root order.
+pub fn plugin_dirs() -> Vec<PathBuf> {
+    dirs_over(&roots())
+}
+
+/// [`plugin_dirs`] against given roots — tests point them somewhere temporary
+/// rather than redirecting `BOUGH_HOME`.
+pub fn dirs_over(roots: &[PathBuf]) -> Vec<PathBuf> {
+    roots.iter().flat_map(|r| plugin_dirs_in(r)).collect()
+}
+
+// ---------------------------------------------------------------------------
 // What is installed
 // ---------------------------------------------------------------------------
 
@@ -198,7 +279,7 @@ pub fn set_enabled(id: &str, enabled: bool) -> std::io::Result<()> {
 /// door.
 pub fn list() -> Vec<Plugin> {
     list_in(
-        &plugins_dir(),
+        &roots(),
         &state(),
         &crate::hooks::read_state(&crate::hooks::state_path()),
     )
@@ -206,8 +287,12 @@ pub fn list() -> Vec<Plugin> {
 
 /// [`list`] with every store passed in — tests point the root somewhere
 /// temporary instead of moving `BOUGH_HOME`.
-pub fn list_in(root: &Path, state: &PluginState, hooks: &crate::hooks::HookState) -> Vec<Plugin> {
-    plugin_dirs_in(root)
+pub fn list_in(
+    roots: &[PathBuf],
+    state: &PluginState,
+    hooks: &crate::hooks::HookState,
+) -> Vec<Plugin> {
+    dirs_over(roots)
         .into_iter()
         .filter_map(|dir| {
             let name = dir.file_name()?.to_str()?.to_string();
@@ -361,7 +446,11 @@ mod tests {
     fn a_plugin_lists_every_surface_and_nothing_that_is_not_one() {
         let root = tmp("list");
         fixture(&root, "acme");
-        let plugins = list_in(&root, &PluginState::all_on(), &Default::default());
+        let plugins = list_in(
+            std::slice::from_ref(&root),
+            &PluginState::all_on(),
+            &Default::default(),
+        );
         assert_eq!(plugins.len(), 1);
         let ids: Vec<&str> = plugins[0].items.iter().map(|i| i.id.as_str()).collect();
         assert_eq!(
@@ -390,7 +479,11 @@ mod tests {
     fn a_directory_extension_is_switched_by_its_directory_not_its_index() {
         let root = tmp("dirext");
         fixture(&root, "acme");
-        let plugins = list_in(&root, &PluginState::all_on(), &Default::default());
+        let plugins = list_in(
+            std::slice::from_ref(&root),
+            &PluginState::all_on(),
+            &Default::default(),
+        );
         let ext: Vec<&str> = plugins[0]
             .items
             .iter()
@@ -412,7 +505,7 @@ mod tests {
             off: vec!["acme".into()],
             ..Default::default()
         };
-        let plugins = list_in(&root, &state, &Default::default());
+        let plugins = list_in(std::slice::from_ref(&root), &state, &Default::default());
         assert!(!plugins[0].enabled);
         // The ITEMS keep their own switches — turning the plugin back on must
         // restore the picture you left, not a blank one.

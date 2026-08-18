@@ -94,6 +94,9 @@ pub struct ConfigGroupRow {
     pub dirs: Vec<String>,
     #[serde(default)]
     pub enabled: bool,
+    /// Did it arrive inside the binary rather than being installed?
+    #[serde(default)]
+    pub shipped: bool,
     #[serde(default)]
     pub repo: Option<String>,
     #[serde(default)]
@@ -195,6 +198,7 @@ pub fn group_detail(group: &ConfigGroupRow) -> String {
             "local" => "yours".to_string(),
             "project" => "this checkout".to_string(),
             "harness" => "adopted from another harness".to_string(),
+            "plugin" if group.shipped => "a plugin bough ships".to_string(),
             "plugin" => "a plugin you installed".to_string(),
             _ => String::new(),
         },
@@ -741,6 +745,16 @@ mod tests {
                 "claude-code/skills/exa"
             ]
         );
+    }
+
+    /// A plugin bough ships and one you cloned are not the same thing to
+    /// decide about, and only the directory it sits in says which.
+    #[test]
+    fn a_shipped_plugin_says_so_rather_than_claiming_you_installed_it() {
+        let mut shipped = fixtures::acme(true);
+        shipped.shipped = true;
+        assert!(group_detail(&shipped).contains("bough ships"));
+        assert!(group_detail(&fixtures::acme(true)).contains("you installed"));
     }
 
     #[test]

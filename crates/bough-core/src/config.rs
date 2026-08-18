@@ -122,6 +122,11 @@ pub struct ConfigGroup {
     /// screen.
     pub dirs: Vec<String>,
     pub enabled: bool,
+    /// Did this arrive inside the binary rather than being installed? A plugin
+    /// bough ships and one you cloned are not the same thing to decide about,
+    /// and the directory is the only thing that says which.
+    #[serde(default)]
+    pub shipped: bool,
     /// Git groups only: what you are actually running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
@@ -157,6 +162,7 @@ pub fn list_over(workspace: &Path, state: &Switches) -> Vec<ConfigGroup> {
                 kind,
                 dirs: Vec::new(),
                 enabled: state.plugin_on(id),
+                shipped: false,
                 repo: None,
                 rev: None,
                 sha: None,
@@ -164,6 +170,10 @@ pub fn list_over(workspace: &Path, state: &Switches) -> Vec<ConfigGroup> {
             }
         });
         if !dir.is_empty() && !entry.dirs.contains(&dir) {
+            // A plugin that ships inside the binary lives under the bundled
+            // root, and nothing else about it says so.
+            entry.shipped =
+                entry.shipped || Path::new(&dir).starts_with(crate::plugins::bundled_plugins_dir());
             entry.dirs.push(dir);
         }
     };
@@ -175,7 +185,7 @@ pub fn list_over(workspace: &Path, state: &Switches) -> Vec<ConfigGroup> {
     let sources = hooks::sources::sources_from(
         &hooks::sources::sources_path(),
         &hooks::sources::repos_dir(),
-        &crate::paths::plugins_dir(),
+        &crate::plugins::roots(),
         &hooks::hooks_dir(),
         &Switches::all_on(),
     );

@@ -208,7 +208,7 @@ pub fn sources_for(workspace: &Path) -> Vec<SkillSource> {
         workspace,
         &ensure_bundled_skills(),
         &user_skills_dir(),
-        &crate::paths::plugins_dir(),
+        &crate::plugins::roots(),
         dirs::home_dir().as_deref(),
         claude_home().as_deref(),
     )
@@ -226,7 +226,7 @@ pub fn compose_sources(
     workspace: &Path,
     bundled: &Path,
     user: &Path,
-    plugins: &Path,
+    plugins: &[PathBuf],
     home: Option<&Path>,
     claude_home: Option<&Path>,
 ) -> Vec<SkillSource> {
@@ -246,7 +246,7 @@ pub fn compose_sources(
     // installation, which is more intent than a directory that happens to be
     // there, and less than a file you authored.
     out.extend(
-        crate::paths::plugin_dirs_in(plugins)
+        crate::plugins::dirs_over(plugins)
             .into_iter()
             .filter_map(|p| {
                 let dir = p.join("skills");
@@ -1156,7 +1156,7 @@ mod tests {
             &ws,
             &bundled,
             &user,
-            &root.join("plugins"),
+            &[root.join("plugins")],
             Some(&home),
             Some(&claude),
         );
@@ -1188,7 +1188,7 @@ mod tests {
             &ws,
             &bundled,
             &user,
-            &root.join("plugins"),
+            &[root.join("plugins")],
             Some(&home),
             Some(&claude),
         ));

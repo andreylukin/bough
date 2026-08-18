@@ -235,7 +235,7 @@ pub fn all_sources() -> Vec<HookSource> {
     sources_from(
         &sources_path(),
         &repos_dir(),
-        &crate::paths::plugins_dir(),
+        &crate::plugins::roots(),
         &hooks_dir(),
         &crate::plugins::state(),
     )
@@ -246,7 +246,7 @@ pub fn all_sources() -> Vec<HookSource> {
 pub fn sources_from(
     sources_at: &Path,
     repos: &Path,
-    plugins: &Path,
+    plugins: &[PathBuf],
     local: &Path,
     switches: &crate::plugins::PluginState,
 ) -> Vec<HookSource> {
@@ -316,7 +316,7 @@ pub fn sources_from(
     // is `<plugin>/<file>.lua` — the same source-qualified id shape a repo's
     // hooks get, and for the same reason: two plugins WILL both ship a
     // `guard.lua`.
-    for plugin in crate::paths::plugin_dirs_in(plugins) {
+    for plugin in crate::plugins::dirs_over(plugins) {
         let dir = plugin.join("hooks");
         if !dir.is_dir() {
             continue;
@@ -509,7 +509,7 @@ mod tests {
         let sources = sources_from(
             &sources_at,
             &root.join("repos"),
-            &root.join("plugins"),
+            &[root.join("plugins")],
             &root.join("hooks"),
             &crate::plugins::PluginState::all_on(),
         );
@@ -557,7 +557,7 @@ mod tests {
             sources_from(
                 &root.join("hooks.json"),
                 &root.join("repos"),
-                &root.join("plugins"),
+                &[root.join("plugins")],
                 &root.join("hooks"),
                 &crate::plugins::PluginState {
                     off: vec![off.into()],
@@ -587,7 +587,7 @@ mod tests {
         let names: Vec<String> = sources_from(
             &root.join("hooks.json"),
             &root.join("repos"),
-            &root.join("plugins"),
+            &[root.join("plugins")],
             &root.join("hooks"),
             &off,
         )

@@ -61,6 +61,28 @@ it is off, so turning it back on restores the picture you left.
 Switching a skill off hands its name back: the rung below wins, which is the difference
 between "use the other `review`" and "break `review`".
 
+### Plugins bough ships
+
+Some integrations are worth shipping to everyone, so a few plugins live inside the
+binary and materialize under `~/.bough/bundled-plugins/<version>/`. They are listed and
+switched exactly like installed ones, and the row says `a plugin bough ships` rather
+than `a plugin you installed`. A plugin of the same name in `~/.bough/plugins` shadows
+the shipped one — that is how you override one.
+
+**`git-ai`** — records AI-vs-human line authorship with [Git AI](https://usegitai.com).
+Its hook checkpoints twice per turn through Git AI's `agent-v1` preset: everything on
+disk at `TurnStart` is marked yours, and whatever moved by `TurnEnd` is marked the
+agent's, with the files it touched and the prompts that produced them. Shell commands the
+agent runs are reported as a `pre`/`post` pair, so a `sed -i` or a formatter is
+attributed too. Its skill covers the reading side — `git ai blame`, `diff`, `stats`,
+`show-prompt`.
+
+The hook is **off until you turn it on**, like all Lua that arrives rather than being
+written, and it is inert without the `git-ai` binary on `PATH` or outside a git
+repository. The turn is the checkpoint boundary because bough is a code-mode harness:
+the model's program edits files inside the sandbox, so there is no per-edit hook to hang
+a checkpoint on.
+
 ### The harness sections
 
 Everything bough adopts from **another harness** sits under that harness's name rather
