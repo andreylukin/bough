@@ -266,6 +266,7 @@ impl HookHost {
                 repo: None,
                 rev: None,
                 sha: None,
+                files: None,
             }],
             &HookState::default(),
         )

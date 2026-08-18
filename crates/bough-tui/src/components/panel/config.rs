@@ -120,8 +120,13 @@ pub struct ConfigRow {
     pub live: bool,
     /// A group row: ⏎ expands or collapses it instead of switching it.
     pub is_group: bool,
-    /// Group rows only: is it expanded right now? Drives the ▾/▸ marker.
+    /// Group rows only: is it expanded right now? Drives the ▾/› marker.
     pub expanded: bool,
+    /// WHERE this is: the file or folder for a thing, every directory walked
+    /// for a group. Printed in full under the list for the row the cursor is
+    /// on, because "where does this one live" is asked of one row at a time
+    /// and a path on every row would push the names off the screen.
+    pub where_: Vec<String>,
     /// Printed dim after the label — why it is not running, or what it did.
     pub note: Option<String>,
 }
@@ -154,9 +159,25 @@ pub fn shipped(group: &ConfigGroupRow) -> String {
     format!("{} · {on}/{} on", parts.join(" · "), group.items.len())
 }
 
-/// What a group IS, in the words that let you decide about it: a clone says
-/// which repo and which commit, because "which code is this" is the question a
-/// third-party source raises and a name cannot answer.
+/// `/Users/me/x` → `~/x`. The home prefix is the least informative part of
+/// every path on the screen and the most expensive in columns.
+pub fn tilde(path: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && path.starts_with(&home) => {
+            format!("~{}", &path[home.len()..])
+        }
+        _ => path.to_string(),
+    }
+}
+
+/// What a group IS, in the words that let you decide about it.
+///
+/// THE ROW SAYS WHAT, THE LINE UNDER THE LIST SAYS WHERE. Both on the row was
+/// tried and the path ate the row: a group is often several directories, and
+/// one truncated path standing for them all told you less than nothing. So a
+/// clone says which repo and which commit — "which code is this" is the
+/// question a third-party source raises and no path answers it — and everything
+/// else says what tier it is, with `where_line` carrying the directories.
 pub fn group_detail(group: &ConfigGroupRow) -> String {
     match (&group.repo, &group.sha) {
         (Some(repo), Some(sha)) => format!(
@@ -173,9 +194,9 @@ pub fn group_detail(group: &ConfigGroupRow) -> String {
             "bundled" => "shipped with bough".to_string(),
             "local" => "yours".to_string(),
             "project" => "this checkout".to_string(),
-            "foreign" => "another harness".to_string(),
-            "foreign-plugin" => "another harness's plugins".to_string(),
-            _ => group.dirs.first().cloned().unwrap_or_default(),
+            "harness" => "adopted from another harness".to_string(),
+            "plugin" => "a plugin you installed".to_string(),
+            _ => String::new(),
         },
     }
 }
@@ -223,6 +244,7 @@ pub fn config_rows(groups: &[ConfigGroupRow], expanded: &[String]) -> Vec<Config
             live: group.enabled,
             is_group: true,
             expanded: open,
+            where_: group.dirs.clone(),
             note: Some(group_detail(group)),
         });
         if !open {
@@ -239,6 +261,7 @@ pub fn config_rows(groups: &[ConfigGroupRow], expanded: &[String]) -> Vec<Config
                 live: item.live,
                 is_group: false,
                 expanded: false,
+                where_: vec![item.path.clone()],
                 note: match item.surface.as_str() {
                     "hook" => hook_note(item),
                     _ => item.error.clone().map(|e| format!("error: {e}")),
@@ -287,6 +310,23 @@ pub fn config_summary(groups: &[ConfigGroupRow]) -> String {
         groups.len(),
         if groups.len() == 1 { "" } else { "s" },
         if items == 1 { "" } else { "s" },
+    )
+}
+
+/// The path line under the list: every directory a group was read from, or the
+/// one file or folder a thing IS.
+pub fn where_line(row: Option<&ConfigRow>) -> String {
+    let Some(row) = row else {
+        return String::new();
+    };
+    if row.where_.is_empty() {
+        return String::new();
+    }
+    let paths: Vec<String> = row.where_.iter().map(|p| tilde(p)).collect();
+    format!(
+        "{} {}",
+        if row.is_group { "read from" } else { "at" },
+        paths.join("  ·  ")
     )
 }
 
@@ -389,9 +429,9 @@ pub fn render_config(props: &ConfigTabProps<'_>, area: Rect, buf: &mut Buffer) {
 
     let rows = config_rows(groups, props.expanded);
     let mut lines = vec![Line::from(Span::styled(config_summary(groups), dim))];
-    // Chrome the list gives way to: the head line, plus the legend, which is
-    // the last row of the tab and never gives up its place.
-    let chrome = 1usize;
+    // Chrome the list gives way to: the head line, the WHERE line, and the
+    // legend, which is the last row of the tab and never gives up its place.
+    let chrome = 2usize;
     let avail = props.rows.saturating_sub(chrome + 1);
     let at = props.selected.min(rows.len().saturating_sub(1));
     let start = at
@@ -400,6 +440,15 @@ pub fn render_config(props: &ConfigTabProps<'_>, area: Rect, buf: &mut Buffer) {
     for (i, row) in rows.iter().enumerate().skip(start).take(avail.max(1)) {
         lines.push(config_line(row, i == at, props.cols));
     }
+    // WHERE THE SELECTED ROW LIVES, in full. "which of the three `review`
+    // skills is this" and "what is bough even reading" are the same question,
+    // and neither is answerable from a name — but a path on every row would
+    // push the names off a narrow panel, so it is one line for the one row
+    // under the cursor.
+    lines.push(Line::from(Span::styled(
+        clip(&where_line(rows.get(at)), props.cols),
+        dim,
+    )));
     // ⏎ means two things, and the legend says which one is under the cursor —
     // a legend that said "on/off" on a group row would teach the wrong key for
     // the row you are actually on.
@@ -448,6 +497,42 @@ pub mod fixtures {
                     path: "/home/u/.bough/plugins/acme/skills/review".into(),
                     enabled: true,
                     live: enabled,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    /// A harness bough adopts configuration from: its adapter, and a skill it
+    /// brought along.
+    pub fn claude_code() -> ConfigGroupRow {
+        ConfigGroupRow {
+            id: "claude-code".into(),
+            kind: "harness".into(),
+            dirs: vec![
+                "/home/u/.bough/bundled-hooks/0.1.1".into(),
+                "/home/u/.claude/skills".into(),
+            ],
+            enabled: true,
+            items: vec![
+                ConfigItemRow {
+                    id: "claude-code/claude-code.lua".into(),
+                    surface: "hook".into(),
+                    name: "claude-code.lua".into(),
+                    path: "/home/u/.bough/bundled-hooks/0.1.1/claude-code.lua".into(),
+                    enabled: true,
+                    live: true,
+                    autocmds: Some(4),
+                    ..Default::default()
+                },
+                ConfigItemRow {
+                    id: "claude-code/skills/exa".into(),
+                    surface: "skill".into(),
+                    name: "exa".into(),
+                    path: "/home/u/.claude/skills/exa".into(),
+                    enabled: true,
+                    live: true,
                     ..Default::default()
                 },
             ],
@@ -510,7 +595,7 @@ mod tests {
         assert!(!rows[0].expanded);
         assert_eq!(
             text(&config_line(&rows[0], false, 100)),
-            "  › [on] plugin  acme · 1 hook · 1 skill · 1/2 on  · /home/u/.bough/plugins/acme",
+            "  › [on] plugin  acme · 1 hook · 1 skill · 1/2 on  · a plugin you installed",
             "the surfaces, because they are what the source is allowed to do"
         );
     }
@@ -616,6 +701,46 @@ mod tests {
         };
         assert!(legend(0).contains("⏎ expand"), "{}", legend(0));
         assert!(legend(1).contains("⏎ on/off"), "{}", legend(1));
+    }
+
+    /// A group is often several directories, and one path standing for five
+    /// is the thing this avoids.
+    #[test]
+    fn a_group_says_where_it_was_read_from_and_how_many_places() {
+        let rows = config_rows(&[fixtures::claude_code()], &[]);
+        assert_eq!(
+            text(&config_line(&rows[0], false, 120)),
+            "  › [on] harness  claude-code · 1 hook · 1 skill · 2/2 on  · adopted from another harness",
+            "the row says WHAT it is; the path would have eaten it"
+        );
+        assert_eq!(
+            where_line(Some(&rows[0])),
+            "read from /home/u/.bough/bundled-hooks/0.1.1  ·  /home/u/.claude/skills",
+            "and the line under the list names every one of them"
+        );
+    }
+
+    /// "which `review` is this" is not answerable from a name.
+    #[test]
+    fn a_thing_says_exactly_which_file_or_folder_it_is() {
+        let rows = config_rows(&[fixtures::claude_code()], &["claude-code".to_string()]);
+        assert_eq!(where_line(Some(&rows[2])), "at /home/u/.claude/skills/exa");
+    }
+
+    /// Everything one harness contributes sits under that harness, adapter
+    /// included — "stop taking anything from Claude Code" is one decision.
+    #[test]
+    fn a_harness_section_holds_its_adapter_and_its_skills() {
+        let rows = config_rows(&[fixtures::claude_code()], &["claude-code".to_string()]);
+        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "claude-code",
+                "claude-code/claude-code.lua",
+                "claude-code/skills/exa"
+            ]
+        );
     }
 
     #[test]

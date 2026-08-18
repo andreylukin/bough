@@ -73,15 +73,17 @@ pub struct SkillSource {
     pub source: SkillSourceName,
     /// The directory that CONTAINS skill folders, not a skill folder itself.
     pub dir: PathBuf,
-    /// The bough plugin this rung belongs to, when it is one.
+    /// The switchboard GROUP this rung belongs to, when it is not simply the
+    /// tier's own name: a bough plugin's name, or the harness a foreign
+    /// directory came from (`claude-code`, `codex`).
     ///
-    /// CARRIED RATHER THAN DERIVED, because `SkillSourceName::Plugin` is not
-    /// specific enough to switch on: a Claude Code plugin's `skills/` and a
-    /// Codex marketplace's are that source too, and neither is governed by
-    /// bough's switchboard — they belong to the harness that installed them.
-    /// This field is set by the one rung `compose_sources` builds from
-    /// `~/.bough/plugins`, so a switch can only ever reach what bough owns.
-    pub plugin: Option<String>,
+    /// CARRIED RATHER THAN DERIVED, because the tier is not specific enough to
+    /// group on: `SkillSourceName::Foreign` covers `~/.claude/skills` and
+    /// `~/.agents/skills` alike, and "which harness is putting this in my
+    /// prompt" is exactly the question the panel has to answer. Discovery knows
+    /// which directory it just built a rung from; nothing downstream can
+    /// recover it from a path without guessing.
+    pub group: Option<String>,
 }
 
 /// The bundled skill folders, embedded in the binary (ARCHITECTURE §2 /
@@ -152,12 +154,12 @@ pub fn default_sources() -> Vec<SkillSource> {
         SkillSource {
             source: SkillSourceName::Bundled,
             dir: ensure_bundled_skills(),
-            plugin: None,
+            group: None,
         },
         SkillSource {
             source: SkillSourceName::User,
             dir: user_skills_dir(),
-            plugin: None,
+            group: None,
         },
     ]
 }
@@ -231,13 +233,13 @@ pub fn compose_sources(
     let mut out = vec![SkillSource {
         source: SkillSourceName::Bundled,
         dir: bundled.to_path_buf(),
-        plugin: None,
+        group: None,
     }];
     out.extend(foreign::project_sources(workspace));
     out.push(SkillSource {
         source: SkillSourceName::User,
         dir: user.to_path_buf(),
-        plugin: None,
+        group: None,
     });
     // bough's own plugins, below the skills you wrote for bough and above
     // anything another harness put on disk: a plugin is deliberate
@@ -252,7 +254,7 @@ pub fn compose_sources(
                 dir.is_dir().then_some(SkillSource {
                     source: SkillSourceName::Plugin,
                     dir,
-                    plugin,
+                    group: plugin,
                 })
             }),
     );
@@ -608,13 +610,13 @@ pub fn catalog(sources: &[SkillSource], loaded: &[String]) -> Vec<PromptSkillEnt
 /// prefix, so a plugin's group covers its hooks and extensions as well —
 /// which is what a plugin's switch already meant.
 pub fn switch_group(source: &SkillSource) -> String {
-    source.plugin.clone().unwrap_or_else(|| {
+    source.group.clone().unwrap_or_else(|| {
         match source.source {
             SkillSourceName::Bundled => "bundled",
             SkillSourceName::User => "local",
             SkillSourceName::Project => "project",
-            // A Claude Code or Codex plugin's `skills/` — not one of bough's,
-            // so it groups under the tier rather than under a plugin name.
+            // Both of these carry a `group` from discovery naming the harness
+            // they came from; the fallbacks are for a rung built by hand.
             SkillSourceName::Plugin => "foreign-plugin",
             SkillSourceName::Foreign => "foreign",
         }
@@ -837,7 +839,7 @@ mod tests {
             SkillSource {
                 source: self.source,
                 dir: self.dir.clone(),
-                plugin: None,
+                group: None,
             }
         }
     }
@@ -979,7 +981,7 @@ mod tests {
             SkillSource {
                 source: SkillSourceName::Bundled,
                 dir: user.dir.join("does-not-exist"),
-                plugin: None,
+                group: None,
             },
             user.as_source(),
         ];
@@ -1047,12 +1049,12 @@ mod tests {
             SkillSource {
                 source: SkillSourceName::Plugin,
                 dir: root.join("plugins").join("acme").join("skills"),
-                plugin: Some("acme".into()),
+                group: Some("acme".into()),
             },
             SkillSource {
                 source: SkillSourceName::Foreign,
                 dir: foreign,
-                plugin: None,
+                group: None,
             },
         ];
         let bodies = |state: &crate::plugins::PluginState| -> Vec<(String, String)> {
@@ -1396,7 +1398,7 @@ mod tests {
         let sources = [SkillSource {
             source: SkillSourceName::Bundled,
             dir: dest.clone(),
-            plugin: None,
+            group: None,
         }];
 
         let skill = load_skill("history", &sources).expect("the history skill ships bundled");

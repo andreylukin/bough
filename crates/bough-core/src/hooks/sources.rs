@@ -63,6 +63,20 @@ impl SourceKind {
     }
 }
 
+/// The bundled adapters, and the harness each one adapts.
+///
+/// THEY ARE THEIR OWN SOURCES, not two files in the bundle. Everything bough
+/// adopts from another harness — that harness's skills, its installed plugins'
+/// skills, and the adapter that reads its settings and hooks — belongs under
+/// one name you can switch, because "stop taking anything from Claude Code" is
+/// one decision and was previously three places. Their group is the harness's
+/// name, which is what `skills::foreign` labels its rungs with, so the section
+/// holds all of it.
+pub const ADAPTERS: [(&str, &str); 2] = [
+    (crate::skills::foreign::CLAUDE_CODE, "claude-code.lua"),
+    (crate::skills::foreign::CODEX, "codex.lua"),
+];
+
 /// Bundled hooks that are ON without being asked for, by id.
 ///
 /// THE EXCEPTION TO "BUNDLED IS OFF", AND THE ARGUMENT FOR IT. The rule above
@@ -79,7 +93,7 @@ impl SourceKind {
 /// extended to the other harness by writing the file, and it is revocable in
 /// one keystroke (`^x`), which the state file records explicitly so this list
 /// changing its mind later cannot re-enable something you turned off.
-pub const DEFAULT_ON: [&str; 2] = ["bundled/claude-code.lua", "bundled/codex.lua"];
+pub const DEFAULT_ON: [&str; 2] = ["claude-code/claude-code.lua", "codex/codex.lua"];
 
 /// One place hooks are discovered from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +113,11 @@ pub struct HookSource {
     /// asking "did what I am running change?"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha: Option<String>,
+    /// Only these file names, when a directory is shared by more than one
+    /// source. `None` is "everything in the directory", which is every source
+    /// but the harness adapters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<String>>,
 }
 
 /// `~/.bough/hooks.json` — the git sources you added.
@@ -244,7 +263,25 @@ pub fn sources_from(
     // than no switch.
     let on = |name: &str| switches.plugin_on(name);
     let mut out = Vec::new();
-    if let Some(dir) = ensure_bundled().filter(|_| on("bundled")) {
+    let bundle = ensure_bundled();
+    // The adapters first and each under its harness's name, so they keep the
+    // load position they had inside the bundle and a harness's switch reaches
+    // the thing that reads that harness's configuration.
+    for (harness, file) in ADAPTERS {
+        let Some(dir) = bundle.clone().filter(|_| on(harness)) else {
+            continue;
+        };
+        out.push(HookSource {
+            name: harness.into(),
+            kind: SourceKind::Bundled,
+            dir,
+            repo: None,
+            rev: None,
+            sha: None,
+            files: Some(vec![file.to_string()]),
+        });
+    }
+    if let Some(dir) = bundle.filter(|_| on("bundled")) {
         out.push(HookSource {
             name: "bundled".into(),
             kind: SourceKind::Bundled,
@@ -252,6 +289,9 @@ pub fn sources_from(
             repo: None,
             rev: None,
             sha: None,
+            // Everything the bundle ships EXCEPT the adapters, which are
+            // sources of their own directly above.
+            files: None,
         });
     }
     for git in read_sources_file(sources_at).sources {
@@ -269,6 +309,7 @@ pub fn sources_from(
             repo: Some(git.repo),
             rev: git.rev,
             sha: git.sha,
+            files: None,
         });
     }
     // A plugin's `hooks/` directory, named by the plugin, so a hook inside it
@@ -293,6 +334,7 @@ pub fn sources_from(
             repo: None,
             rev: None,
             sha: None,
+            files: None,
         });
     }
     if on("local") {
@@ -303,19 +345,39 @@ pub fn sources_from(
             repo: None,
             rev: None,
             sha: None,
+            files: None,
         });
     }
     out
 }
 
 /// The `.lua` files a source contributes, name-sorted, as `(id, path)`.
+///
+/// A source with `files` takes exactly those and a source without takes
+/// everything EXCEPT what another source has claimed — otherwise the bundle's
+/// adapters would be listed twice, once under the harness they adapt and once
+/// under `bundled`.
 pub fn files_in(source: &HookSource) -> Vec<(String, PathBuf)> {
+    let claimed: Vec<&str> = ADAPTERS.iter().map(|(_, f)| *f).collect();
     let mut files: Vec<PathBuf> = std::fs::read_dir(&source.dir)
         .into_iter()
         .flatten()
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|e| e == "lua") && p.is_file())
+        .filter(|p| {
+            let name = p.file_name().map(|n| n.to_string_lossy().into_owned());
+            match (&source.files, name) {
+                (Some(only), Some(name)) => only.contains(&name),
+                (Some(_), None) => false,
+                // Only the BUNDLE's copies are claimed; a repo or a plugin that
+                // happens to ship a `codex.lua` keeps it.
+                (None, Some(name)) => {
+                    source.kind != SourceKind::Bundled || !claimed.contains(&name.as_str())
+                }
+                (None, None) => false,
+            }
+        })
         .collect();
     files.sort();
     files
@@ -402,6 +464,7 @@ mod tests {
             repo: None,
             rev: None,
             sha: None,
+            files: None,
         };
         let ids: Vec<String> = files_in(&source).into_iter().map(|(id, _)| id).collect();
         assert_eq!(
@@ -453,10 +516,20 @@ mod tests {
         let names: Vec<&str> = sources.iter().map(|s| s.name.as_str()).collect();
         // Bundled may be absent when the bundle cannot be written; the ORDER
         // of what is present is what this pins.
-        let expected: Vec<&str> = ["bundled", "a-one", "b-two", "acme", "local"]
-            .into_iter()
-            .filter(|n| names.contains(n))
-            .collect();
+        // The adapters lead, each under the harness it adapts, keeping the
+        // load position they had when they were two files in the bundle.
+        let expected: Vec<&str> = [
+            "claude-code",
+            "codex",
+            "bundled",
+            "a-one",
+            "b-two",
+            "acme",
+            "local",
+        ]
+        .into_iter()
+        .filter(|n| names.contains(n))
+        .collect();
         assert_eq!(names, expected);
         assert!(sources.last().unwrap().kind == SourceKind::Local);
         // A `dir` lands under the clone, not beside it.

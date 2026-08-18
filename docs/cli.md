@@ -127,9 +127,9 @@ bough config enable acme                 # or the whole source
 bough config disable bundled/skills/wayfinder
 ```
 
-An id is a **source** — `bundled`, `local` (yours), `project`, a cloned repo's
-slug, or a plugin's name — or one thing inside one: `acme/guard.lua`,
-`local/skills/mine`, `acme/extensions/gh.js`. A source that is off contributes
+An id is a **source** — `bundled`, `local` (yours), `project`, `claude-code`,
+`codex`, a cloned repo's slug, or a plugin's name — or one thing inside one:
+`acme/guard.lua`, `local/skills/mine`, `acme/extensions/gh.js`. A source that is off contributes
 nothing, whatever the things inside it say, and those keep their own switches
 for when you turn it back on. `^x` is the same switchboard in the panel.
 

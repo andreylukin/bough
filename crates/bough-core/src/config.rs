@@ -88,10 +88,12 @@ pub enum GroupKind {
     Local,
     /// This checkout's `.agents` / `.claude` directories.
     Project,
-    /// Another harness's user tier — `~/.claude/skills` and friends.
-    Foreign,
-    /// A Claude Code or Codex plugin's `skills/`.
-    ForeignPlugin,
+    /// Another harness entirely — Claude Code, Codex — whose configuration
+    /// bough adopts: its user tier and its installed plugins, under the name
+    /// of the harness rather than lumped into one "foreign" pile. Which
+    /// harness is putting something in the prompt is the first thing anyone
+    /// looking at these rows wants to know.
+    Harness,
 }
 
 impl GroupKind {
@@ -102,10 +104,9 @@ impl GroupKind {
             GroupKind::Bundled => 0,
             GroupKind::Git => 1,
             GroupKind::Plugin => 2,
-            GroupKind::ForeignPlugin => 3,
-            GroupKind::Foreign => 4,
-            GroupKind::Project => 5,
-            GroupKind::Local => 6,
+            GroupKind::Harness => 3,
+            GroupKind::Project => 4,
+            GroupKind::Local => 5,
         }
     }
 }
@@ -179,7 +180,12 @@ pub fn list_over(workspace: &Path, state: &Switches) -> Vec<ConfigGroup> {
         &Switches::all_on(),
     );
     for file in hooks::list_hooks_over(&sources, state) {
+        // The adapters are bundled BYTES under a harness's NAME, and the name
+        // is what decides the section: `claude-code` holds the adapter that
+        // reads Claude Code's configuration and the skills Claude Code brought,
+        // which is the one place to stop taking anything from it.
         let kind = match file.kind {
+            _ if is_harness(&file.source) => GroupKind::Harness,
             SourceKind::Bundled => GroupKind::Bundled,
             SourceKind::Git => GroupKind::Git,
             SourceKind::Plugin => GroupKind::Plugin,
@@ -309,6 +315,11 @@ pub fn list_over(workspace: &Path, state: &Switches) -> Vec<ConfigGroup> {
     out
 }
 
+/// Is this group id one of the harnesses bough adopts configuration from?
+fn is_harness(id: &str) -> bool {
+    hooks::sources::ADAPTERS.iter().any(|(name, _)| *name == id)
+}
+
 fn surface_rank(surface: Surface) -> u8 {
     match surface {
         Surface::Hook => 0,
@@ -319,15 +330,19 @@ fn surface_rank(surface: Surface) -> u8 {
 
 fn group_kind_for(rung: &SkillSource) -> GroupKind {
     use crate::skills::SkillSourceName as N;
-    if rung.plugin.is_some() {
-        return GroupKind::Plugin;
-    }
     match rung.source {
         N::Bundled => GroupKind::Bundled,
         N::User => GroupKind::Local,
         N::Project => GroupKind::Project,
-        N::Plugin => GroupKind::ForeignPlugin,
-        N::Foreign => GroupKind::Foreign,
+        // Both foreign tiers carry the harness that owns them; a rung with a
+        // group that is not a harness name is one of bough's own plugins.
+        N::Plugin | N::Foreign => match rung.group.as_deref() {
+            Some(crate::skills::foreign::CLAUDE_CODE) | Some(crate::skills::foreign::CODEX) => {
+                GroupKind::Harness
+            }
+            Some(_) => GroupKind::Plugin,
+            None => GroupKind::Harness,
+        },
     }
 }
 

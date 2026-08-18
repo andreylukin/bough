@@ -50,9 +50,9 @@ under the cursor whichever kind it is, so turning a whole source off never needs
 expanding it first, and the legend follows the cursor so the row you are on always says
 what `⏎` will do to it. `esc` collapses before it closes the panel.
 
-An id is a **source** — `bundled`, `local` (yours), `project`, a cloned repo's slug, or a
-plugin's name — or one thing inside one: `acme/guard.lua`, `local/skills/mine`,
-`acme/extensions/gh.js`. **A source that is off contributes nothing, whatever the things
+An id is a **source** — `bundled`, `local` (yours), `project`, `claude-code`, `codex`, a
+cloned repo's slug, or a plugin's name — or one thing inside one: `acme/guard.lua`,
+`local/skills/mine`, `acme/extensions/gh.js`. **A source that is off contributes nothing, whatever the things
 inside it say** — its hooks stop being LOADED (so the listeners they registered are gone,
 which is the only way to un-register one), its skills are not listed and cannot be
 loaded by name, its extensions are not bound. Those things keep their own switches while
@@ -60,6 +60,19 @@ it is off, so turning it back on restores the picture you left.
 
 Switching a skill off hands its name back: the rung below wins, which is the difference
 between "use the other `review`" and "break `review`".
+
+### The harness sections
+
+Everything bough adopts from **another harness** sits under that harness's name rather
+than in one "foreign" pile: `claude-code` holds the adapter that reads
+`~/.claude/settings.json` and its hooks, the skills in `~/.claude/skills`, and the skills
+of every installed Claude Code plugin; `codex` holds the same for `~/.agents` and Codex
+marketplaces. So "stop taking anything from Claude Code" is one switch, and each thing it
+brought is still switchable on its own.
+
+The line under the list names every directory a source was read from, and the exact file
+or folder a thing IS — which is how you tell the `~/.claude/skills/review` you wrote from
+the one that arrived inside a plugin.
 
 Defaults are unchanged by there being a switch. A **hook you did not write is off** until you
 turn it on — bundled, cloned or a plugin's, all for the same reason: it arrived rather

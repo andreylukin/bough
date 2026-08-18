@@ -113,13 +113,41 @@ pub fn read() -> Switches {
     read_at(&path())
 }
 
+/// Ids that MOVED, old name to new.
+///
+/// The harness adapters were two files in the bundle and are now sources of
+/// their own, one per harness, so `bundled/codex.lua` became `codex/codex.lua`.
+/// Both are DEFAULT_ON, so only one person is affected by this and they are the
+/// one who matters: someone who deliberately turned an adapter OFF, whose
+/// switch would otherwise be orphaned and the adapter back on after an upgrade.
+const RENAMED: [(&str, &str); 2] = [
+    ("bundled/claude-code.lua", "claude-code/claude-code.lua"),
+    ("bundled/codex.lua", "codex/codex.lua"),
+];
+
+fn current_name(id: &str) -> &str {
+    RENAMED
+        .iter()
+        .find_map(|(was, now)| (*was == id).then_some(*now))
+        .unwrap_or(id)
+}
+
 /// Fold the stores this file replaces into a state that has already been read.
 ///
 /// The NEW file wins every id it mentions: a toggle written since the move is
 /// the more recent answer, and a legacy entry re-asserting itself over it
 /// would be a switch that flipped back on its own.
 fn fold_legacy(state: &mut Switches) {
+    for (was, now) in RENAMED {
+        if state.on.iter().any(|o| o == was) && !state.on.iter().any(|o| o == now) {
+            state.on.push(now.to_string());
+        }
+        if state.off.iter().any(|o| o == was) && !state.off.iter().any(|o| o == now) {
+            state.off.push(now.to_string());
+        }
+    }
     let mut adopt = |id: String, on: bool| {
+        let id = current_name(&id).to_string();
         if state.on.contains(&id) || state.off.contains(&id) {
             return;
         }
@@ -254,6 +282,34 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// An adapter someone deliberately turned off stays off after it moved
+    /// out of the bundle into its harness's own source.
+    #[test]
+    fn a_switch_set_under_an_ids_old_name_still_applies_under_the_new_one() {
+        let home = std::env::temp_dir().join(format!("bough-sw-ren-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        crate::paths::test_env::with_env(&[("BOUGH_HOME", home.to_str())], || {
+            // Recorded in the old store, under the old name.
+            std::fs::write(
+                legacy_hooks_state(),
+                r#"{"on":[],"off":["bundled/codex.lua"]}"#,
+            )
+            .unwrap();
+            assert!(!read().is_on("codex/codex.lua", true));
+            // And recorded in the new store, still under the old name.
+            write(
+                &path(),
+                &Switches {
+                    on: vec![],
+                    off: vec!["bundled/claude-code.lua".into()],
+                },
+            )
+            .unwrap();
+            assert!(!read().is_on("claude-code/claude-code.lua", true));
+        });
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[test]
     fn the_stores_this_replaces_are_folded_in_and_the_new_file_wins() {
         let home = std::env::temp_dir().join(format!("bough-sw-mig-{}", uuid::Uuid::new_v4()));
@@ -267,7 +323,9 @@ mod tests {
             std::fs::write(legacy_plugins_state(), r#"{"off":["acme"]}"#).unwrap();
             std::fs::write(legacy_disabled(), r#"["ancient.lua"]"#).unwrap();
             let state = read();
-            assert!(state.is_on("bundled/claude-code.lua", false));
+            // Under its NEW name: the adapter moved out of the bundle into
+            // its harness's own source, and the fold follows it there.
+            assert!(state.is_on("claude-code/claude-code.lua", false));
             assert!(!state.is_on("local/noisy.lua", true));
             assert!(!state.plugin_on("acme"));
             assert!(!state.is_on("local/ancient.lua", true));

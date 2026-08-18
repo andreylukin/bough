@@ -48,15 +48,43 @@ fn read_json(path: &Path) -> Option<Value> {
 /// A source only if the directory is really there. Discovery returning a path
 /// that does not exist is harmless (`list_skills` skips unreadable dirs), but
 /// it would show up as a phantom row in the panel.
-fn source_if_dir(source: SkillSourceName, dir: PathBuf) -> Option<SkillSource> {
-    // `plugin: None` even for the foreign plugin rungs, deliberately: bough's
-    // switchboard governs `~/.bough/plugins` and nothing else, because a
-    // Claude Code plugin is turned off in Claude Code (`skills::SkillSource`).
+///
+/// `group` NAMES THE HARNESS a foreign rung came from. It used to be `None`
+/// for all of them, on the argument that a Claude Code plugin is turned off in
+/// Claude Code — true of the plugin, false of what bough does with it. These
+/// skills go into BOUGH's prompt, so bough has to be able to stop that, and
+/// "which harness is this coming from" is the first thing anyone looking at a
+/// listing of them wants to know.
+fn source_if_dir(
+    source: SkillSourceName,
+    group: Option<&str>,
+    dir: PathBuf,
+) -> Option<SkillSource> {
     dir.is_dir().then_some(SkillSource {
         source,
         dir,
-        plugin: None,
+        group: group.map(str::to_string),
     })
+}
+
+/// The harness a path belongs to, by the directory it lives under.
+///
+/// The two conventions, and which name each gets: `.claude/` is Claude Code's
+/// own. `.agents/` is the cross-vendor convention Codex documents and writes,
+/// so it is labelled `codex` — the harness that put it there is the useful
+/// answer even though the directory name does not say so.
+pub const CLAUDE_CODE: &str = "claude-code";
+pub const CODEX: &str = "codex";
+
+/// Which harness a plugin install directory belongs to, read from the manifest
+/// directory it carries. A plugin with neither is Claude Code's, which is the
+/// layout `installed_plugins.json` describes.
+fn plugin_harness(root: &Path) -> &'static str {
+    if root.join(".codex-plugin").is_dir() {
+        CODEX
+    } else {
+        CLAUDE_CODE
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +124,7 @@ pub fn project_sources(workspace: &Path) -> Vec<SkillSource> {
     chain
         .iter()
         .flat_map(|d| PROJECT_SKILL_DIRS.iter().map(move |sub| d.join(sub)))
-        .filter_map(|d| source_if_dir(SkillSourceName::Project, d))
+        .filter_map(|d| source_if_dir(SkillSourceName::Project, None, d))
         .collect()
 }
 
@@ -111,9 +139,11 @@ pub fn project_sources(workspace: &Path) -> Vec<SkillSource> {
 /// — a user who wrote a bough skill and a Claude Code skill of the same name
 /// meant the bough one here.
 pub fn user_sources(home: &Path) -> Vec<SkillSource> {
-    [".claude/skills", ".agents/skills"]
+    [(".claude/skills", CLAUDE_CODE), (".agents/skills", CODEX)]
         .iter()
-        .filter_map(|sub| source_if_dir(SkillSourceName::Foreign, home.join(sub)))
+        .filter_map(|(sub, harness)| {
+            source_if_dir(SkillSourceName::Foreign, Some(harness), home.join(sub))
+        })
         .collect()
 }
 
@@ -170,7 +200,7 @@ pub fn claude_plugin_sources(claude_home: &Path, workspace: &Path) -> Vec<SkillS
                 continue;
             }
             let root = PathBuf::from(path);
-            out.extend(plugin_skill_dirs(&root));
+            out.extend(plugin_skill_dirs(&root, plugin_harness(&root)));
         }
     }
     out
@@ -214,7 +244,10 @@ pub fn codex_marketplace_sources(marketplace: &Path) -> Vec<SkillSource> {
         let Ok(plugin_root) = crate::paths::confine(&root, &root.join(path)) else {
             continue;
         };
-        out.extend(plugin_skill_dirs(&plugin_root));
+        out.extend(plugin_skill_dirs(
+            &plugin_root,
+            plugin_harness(&plugin_root),
+        ));
     }
     out
 }
@@ -235,7 +268,7 @@ pub fn codex_marketplace_sources(marketplace: &Path) -> Vec<SkillSource> {
 /// holds a `SKILL.md` contributes its parent instead of itself. The cost is
 /// that a sibling skill in that parent comes along uninvited; the alternative
 /// is that the plugin that spells it the second way contributes nothing.
-fn plugin_skill_dirs(root: &Path) -> Vec<SkillSource> {
+fn plugin_skill_dirs(root: &Path, harness: &'static str) -> Vec<SkillSource> {
     let manifest = [".codex-plugin", ".claude-plugin"]
         .iter()
         .find_map(|d| read_json(&root.join(d).join("plugin.json")));
@@ -271,7 +304,7 @@ fn plugin_skill_dirs(root: &Path) -> Vec<SkillSource> {
         }
     }
     dirs.into_iter()
-        .filter_map(|d| source_if_dir(SkillSourceName::Plugin, d))
+        .filter_map(|d| source_if_dir(SkillSourceName::Plugin, Some(harness), d))
         .collect()
 }
 
@@ -478,7 +511,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            dirs_of(&plugin_skill_dirs(&root)),
+            dirs_of(&plugin_skill_dirs(&root, CLAUDE_CODE)),
             vec![root.join("workflows")]
         );
         let _ = std::fs::remove_dir_all(&root);
@@ -496,7 +529,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            dirs_of(&plugin_skill_dirs(&root)),
+            dirs_of(&plugin_skill_dirs(&root, CLAUDE_CODE)),
             vec![root.join("bundle")],
             "the parent is the source, because that is bough's unit"
         );
@@ -515,7 +548,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            dirs_of(&plugin_skill_dirs(&root)),
+            dirs_of(&plugin_skill_dirs(&root, CLAUDE_CODE)),
             vec![root.join("verbs"), root.join("skills")],
             "declared first, then whatever the convention put there"
         );
@@ -525,7 +558,7 @@ mod tests {
     #[test]
     fn only_directories_that_exist_become_sources() {
         let root = tmp();
-        assert!(plugin_skill_dirs(&root).is_empty());
+        assert!(plugin_skill_dirs(&root, CLAUDE_CODE).is_empty());
         assert!(user_sources(&root).is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
