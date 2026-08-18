@@ -250,7 +250,7 @@ fn install_api(lua: &Lua, state: Shared) -> mlua::Result<()> {
                 // so a plugin can test its own listeners.
                 // A plugin-fired event inherits the workspace of nothing —
                 // it is not the host's dispatch — so it carries the empty string.
-                let _ = fire_matching(lua, &reg, &name, &pattern, data.clone(), "");
+                let _ = fire_matching(lua, &reg, &name, &pattern, data.clone(), "", "");
             }
             Ok(())
         })?,
@@ -514,6 +514,7 @@ fn fire_matching(
     event: &str,
     pattern: &str,
     data: Value,
+    session_id: &str,
     workspace: &str,
 ) -> HookOutcome {
     // The list is copied out before calling anything: a callback may register
@@ -548,7 +549,7 @@ fn fire_matching(
             .map(|a| a.file.clone())
             .unwrap_or_default();
         let before = state.borrow().collected.mark();
-        let ev = match event_table(lua, id, event, pattern, data.clone(), workspace) {
+        let ev = match event_table(lua, id, event, pattern, data.clone(), session_id, workspace) {
             Ok(t) => t,
             Err(err) => {
                 outcome.errors.push(err.to_string());
@@ -602,6 +603,7 @@ fn event_table(
     event: &str,
     pattern: &str,
     data: Value,
+    session_id: &str,
     workspace: &str,
 ) -> mlua::Result<Table> {
     let ev = lua.create_table()?;
@@ -609,6 +611,7 @@ fn event_table(
     ev.set("event", event)?;
     ev.set("match", pattern)?;
     ev.set("data", data)?;
+    ev.set("session_id", session_id)?;
     ev.set("workspace", workspace)?;
     Ok(ev)
 }
@@ -681,6 +684,7 @@ fn run_event(lua: &Lua, state: &Shared, event: &HookEvent, dispatch: &HookDispat
         event.name(),
         &dispatch.pattern,
         data,
+        &dispatch.session_id,
         &dispatch.workspace,
     );
     // Whatever the callbacks pushed through the imperative verbs joins what

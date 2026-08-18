@@ -120,6 +120,8 @@ already have configured. What each reads:
 
 Both fold the same contract: exit 2 blocks with stderr as the reason, exit 0 with JSON on
 stdout carries `permissionDecision` / `additionalContext` / `updatedInput`.
+claude-code.lua also recognizes Git AI's standard checkpoint claude shell hook. Bough has no Claude JSONL transcript, so it translates the Bash event to Git AI's documented agent-v1 input instead. The repository directory comes from bough's resolved command workspace and the Bough session id becomes Git AI's conversation id.
+
 
 Not adopted, deliberately: Codex's inline `[hooks]` TOML tables (hand-parsing nested TOML
 fails toward *running the wrong command*, so it warns instead), Codex plugin hooks (a

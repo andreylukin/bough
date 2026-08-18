@@ -146,6 +146,28 @@ local function matches(matcher, tool)
   return string.find(tool, matcher) ~= nil
 end
 
+-- Git AI's Claude preset requires a Claude JSONL transcript, which bough does
+-- not have. Git AI's agent-v1 preset accepts a generic shell event instead,
+-- so translate only its standard Claude Code hook command. This preserves repo
+-- attribution through cwd, keeps each bough session distinct, and deliberately
+-- does not invent a Claude transcript to upload.
+local function git_ai_bough_event(command, payload)
+  if payload.tool_name ~= "Bash"
+    or not string.find(command, "git%-ai%s+checkpoint%s+claude%s+%-%-hook%-input%s+stdin") then
+    return nil
+  end
+  local kind = payload.hook_event_name == "PreToolUse"
+    and "pre_shell_command" or "post_shell_command"
+  return string.gsub(command, "checkpoint%s+claude", "checkpoint agent-v1", 1), {
+    type = kind,
+    repo_working_dir = payload.cwd,
+    agent_name = "bough",
+    model = "unknown",
+    conversation_id = payload.session_id,
+    command = payload.tool_input and payload.tool_input.command or nil,
+  }
+end
+
 -- Run one group's commands, newest last, and fold what they returned.
 local function run_group(group, payload, folded)
   for _, entry in ipairs(group.hooks or {}) do
@@ -160,7 +182,9 @@ local function run_group(group, payload, folded)
           return group.plugin_root
         end)
       end
-      local result, err = bough.exec(command, { stdin = bough.json.encode(payload) })
+      local git_ai_command, git_ai_payload = git_ai_bough_event(command, payload)
+      local stdin = bough.json.encode(git_ai_payload or payload)
+      local result, err = bough.exec(git_ai_command or command, { stdin = stdin })
       if err ~= nil then
         bough.log.warn("claude-code: " .. command .. ": " .. err)
       elseif result.code == 2 then
@@ -237,7 +261,7 @@ bough.api.create_autocmd("TurnStart", {
     local folded = {}
     for _, group in ipairs(groups_for(ev.workspace, MAPPED.TurnStart)) do
       run_group(group, {
-        session_id = "",
+        session_id = ev.session_id,
         hook_event_name = "UserPromptSubmit",
         prompt = ev.data.prompt,
         cwd = ev.workspace,
@@ -259,7 +283,7 @@ bough.api.create_autocmd("PreTool", {
     for _, group in ipairs(groups_for(ev.workspace, MAPPED.PreTool)) do
       if matches(group.matcher, "Bash") then
         run_group(group, {
-          session_id = "",
+          session_id = ev.session_id,
           hook_event_name = "PreToolUse",
           tool_name = "Bash",
           tool_input = { command = ev.data.input.command },
@@ -277,7 +301,7 @@ bough.api.create_autocmd("PostTool", {
     for _, group in ipairs(groups_for(ev.workspace, MAPPED.PostTool)) do
       if matches(group.matcher, "Bash") then
         run_group(group, {
-          session_id = "",
+          session_id = ev.session_id,
           hook_event_name = "PostToolUse",
           tool_name = "Bash",
           tool_input = { command = ev.data.command },
@@ -295,7 +319,7 @@ bough.api.create_autocmd("TurnEnd", {
     local folded = {}
     for _, group in ipairs(groups_for(ev.workspace, MAPPED.TurnEnd)) do
       run_group(group, {
-        session_id = "",
+        session_id = ev.session_id,
         hook_event_name = "Stop",
         cwd = ev.workspace,
       }, folded)

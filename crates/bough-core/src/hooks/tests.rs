@@ -46,6 +46,18 @@ fn in_workspace(pattern: &str, workspace: &Path, data: serde_json::Value) -> Hoo
     }
 }
 
+#[test]
+fn a_hook_event_carries_the_dispatch_session_id() {
+    let h = Hooks::new(&[(
+        "session.lua",
+        r#"bough.api.create_autocmd("TurnEnd", { callback = function(ev) bough.context(ev.session_id) end })"#,
+    )]);
+    let out = h
+        .host()
+        .dispatch(HookEvent::TurnEnd, dispatch("s1", serde_json::json!({})));
+    assert_eq!(out.context, ["s1"]);
+}
+
 /// The bundled adapters, loaded from the repository rather than from a
 /// materialized copy: these tests are about the Lua that ships, and reading it
 /// where it lives means a broken edit fails here rather than at someone's
@@ -705,6 +717,57 @@ fn a_missing_or_malformed_settings_file_costs_nothing() {
         "a broken settings file is a warning, not a failed dispatch: {:?}",
         out.errors
     );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn the_claude_adapter_translates_git_ai_to_an_agent_v1_bash_event() {
+    let ws = workspace(&[]);
+    let script = ws.join("capture-git-ai.sh");
+    let args = ws.join("git-ai-args.txt");
+    let payload = ws.join("git-ai-payload.json");
+    std::fs::write(
+        &script,
+        format!(
+            "printf '%s\n' \"$@\" > {}\ncat > {}\n",
+            args.display(),
+            payload.display()
+        ),
+    )
+    .unwrap();
+    let command = format!(
+        "sh {} git-ai checkpoint claude --hook-input stdin",
+        script.display()
+    );
+    let settings = serde_json::json!({
+        "hooks": { "PostToolUse": [{ "matcher": "Bash", "hooks": [{
+            "type": "command", "command": command
+        }] }] }
+    })
+    .to_string();
+    std::fs::create_dir_all(ws.join(".claude")).unwrap();
+    std::fs::write(ws.join(".claude/settings.json"), settings).unwrap();
+
+    let out = bundled("claude-code.lua").host().dispatch(
+        HookEvent::PostTool,
+        in_workspace(
+            "bash",
+            &ws,
+            serde_json::json!({ "command": "cd repo && touch generated.rs", "output": "" }),
+        ),
+    );
+    assert!(out.errors.is_empty(), "{out:?}");
+    assert_eq!(
+        std::fs::read_to_string(&args).unwrap(),
+        "git-ai\ncheckpoint\nagent-v1\n--hook-input\nstdin\n"
+    );
+    let captured: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&payload).unwrap()).unwrap();
+    assert_eq!(captured["type"], "post_shell_command");
+    assert_eq!(captured["repo_working_dir"], ws.to_string_lossy().as_ref());
+    assert_eq!(captured["agent_name"], "bough");
+    assert_eq!(captured["conversation_id"], "s1");
+    assert_eq!(captured["command"], "cd repo && touch generated.rs");
     let _ = std::fs::remove_dir_all(&ws);
 }
 
