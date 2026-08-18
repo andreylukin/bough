@@ -25,7 +25,8 @@ an ID is a plugin (acme) or one of its items — acme/guard.lua,
 acme/skills/review, acme/extensions/gh.js. A plugin that is off
 contributes nothing, whatever its items say.
 
-plugins are also switched in the TUI panel (meta+p)
+plugins are also switched in the TUI panel (meta+p): enter opens one,
+x switches the row under the cursor
 exit: 0 done · 1 nothing to do · 2 usage";
 
 /// Injected so the tests assert on text instead of a terminal.

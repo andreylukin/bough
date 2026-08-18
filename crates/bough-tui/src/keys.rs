@@ -182,6 +182,9 @@ pub enum Command {
     WfPause,
     WfResume,
     WfStop,
+    /// The plugins tab: switch the row under the cursor — a plugin at the list
+    /// level, one of its pieces inside one.
+    PluginToggle,
     WfRerun,
     WfScript,
     WfSave,
@@ -1251,6 +1254,14 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
                 "the tree tab",
                 "bring this turn on into the open conversation",
             ),
+    );
+
+    // -- the plugins tab --
+    rows.push(
+        b(Some(M::Panel), "x", C::PluginToggle)
+            .tabs(&[T::Plugins])
+            .not(&[G::PanelFiltering])
+            .doc("the plugins tab", "on/off — ⏎ opens a plugin"),
     );
 
     // -- the changes tab --

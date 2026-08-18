@@ -277,6 +277,10 @@ pub struct PanelHost {
     pub plugins: Option<Vec<crate::components::panel::plugins::PluginGroupRow>>,
     pub plugins_dir: Option<String>,
     pub plugins_note: Option<String>,
+    /// The plugin whose pieces are on screen, or `None` for the list of
+    /// plugins. The tab's one level, held here rather than in the renderer
+    /// because the CURSOR is what it changes.
+    pub plugin_open: Option<String>,
     /// `None` = `GET /sessions/:id/prompt` has not answered. Rendered as an
     /// absence, never as a prompt with nothing in it.
     pub prompt: Option<crate::api::PromptView>,
@@ -340,6 +344,7 @@ impl Default for PanelHost {
             plugins: None,
             plugins_dir: None,
             plugins_note: None,
+            plugin_open: None,
             prompt: None,
             prompt_note: None,
             models: Vec::new(),
@@ -619,7 +624,13 @@ impl PanelHost {
             }
             PanelTab::Skills => vec![HostRequest::LoadSkillRows],
             PanelTab::Hooks => vec![HostRequest::LoadHooks],
-            PanelTab::Plugins => vec![HostRequest::LoadPlugins],
+            // On the LIST, never on whatever plugin was last opened: a level
+            // that outlives its tab shows one plugin's pieces under a header
+            // the reader did not ask for. Same rule as the workflow view.
+            PanelTab::Plugins => {
+                self.plugin_open = None;
+                vec![HostRequest::LoadPlugins]
+            }
             // Re-fetched on every arrival: the shape describes the LAST turn,
             // so a tab opened after another turn ran must not show the one
             // before it.
@@ -711,7 +722,9 @@ impl PanelHost {
         // toggle re-fetches the whole list, and a cursor that jumped to the top
         // after every ⏎ would make the list unusable.
         if let Some(groups) = &plugins {
-            let rows = crate::components::panel::plugins::plugin_rows(groups).len();
+            let rows =
+                crate::components::panel::plugins::plugin_rows(groups, self.plugin_open.as_deref())
+                    .len();
             self.sel = self.sel.min(rows.saturating_sub(1));
         }
         self.plugins = plugins;
@@ -721,11 +734,14 @@ impl PanelHost {
         self.plugins_note = note;
     }
 
-    /// The flat, cursor-addressable rows of the plugins tab.
+    /// The cursor-addressable rows of the plugins tab AT THE LEVEL IN VIEW —
+    /// every plugin, or the pieces of the one that is open. One derivation,
+    /// used by the cursor and the renderer alike, so the row ⏎ acts on is the
+    /// row under the mark.
     pub fn plugin_rows(&self) -> Vec<crate::components::panel::plugins::PluginRow> {
         self.plugins
             .as_ref()
-            .map(|g| crate::components::panel::plugins::plugin_rows(g))
+            .map(|g| crate::components::panel::plugins::plugin_rows(g, self.plugin_open.as_deref()))
             .unwrap_or_default()
     }
 
@@ -851,6 +867,12 @@ impl PanelHost {
         // the panel closes: walking three branches in and hitting esc must
         // retrace them, not drop the reader back into the chat.
         if self.state.tab == PanelTab::Tree && self.root_stack.pop().is_some() {
+            self.sel = 0;
+            return true;
+        }
+        // An opened plugin unwinds before the panel closes, so escape from a
+        // plugin's pieces lands on the list of plugins rather than on the chat.
+        if self.state.tab == PanelTab::Plugins && self.plugin_open.take().is_some() {
             self.sel = 0;
             return true;
         }
@@ -1128,6 +1150,24 @@ impl PanelHost {
                     self.pending = Some(PendingRevert::All);
                 }
                 Vec::new()
+            }
+            // ---- the plugins tab's switch ----------------------------------
+            //
+            // `x` acts on the row under the cursor at EITHER level, so a whole
+            // plugin can be switched off without opening it — which is the
+            // common case, and one ⏎ deeper for it would be a level you enter
+            // only to leave.
+            Command::PluginToggle => {
+                if self.state.tab != PanelTab::Plugins {
+                    return Vec::new();
+                }
+                match self.plugin_rows().get(self.sel) {
+                    Some(row) => vec![HostRequest::TogglePlugin {
+                        id: row.id.clone(),
+                        enabled: !row.enabled,
+                    }],
+                    None => Vec::new(),
+                }
             }
             // ---- the workflows tab's steering (spec §8) --------------------
             //
@@ -1504,23 +1544,25 @@ impl PanelHost {
             // ⏎ and space do the same thing here: the row has exactly one
             // verb, and a list where enter does nothing teaches the user that
             // the list is inert.
-            // The plugin's own row and its items are the same kind of switch,
-            // so ⏎ means one thing here. Which STORE holds the switch is the
-            // server's business (`plugins::set_enabled`), not this cursor's.
-            PanelTab::Plugins => self
-                .plugin_rows()
-                .get(at)
-                .map(|row| {
-                    vec![HostRequest::TogglePlugin {
-                        id: row.id.clone(),
-                        // The row's OWN switch, never the effective one: ⏎ on
-                        // an item under a disabled plugin must not read as
-                        // "it is off, so turn it on" and silently flip a
-                        // switch that was already on.
-                        enabled: !row.enabled,
-                    }]
-                })
-                .unwrap_or_default(),
+            // ⏎ OPENS a plugin and SWITCHES one of its pieces. Two meanings on
+            // one key, which is what the workflow view does and for the same
+            // reason: the obvious thing to do to a row differs by level, and a
+            // second key for "open" would be a key nobody presses.
+            PanelTab::Plugins => match self.plugin_rows().get(at) {
+                Some(row) if row.is_plugin => {
+                    self.plugin_open = Some(row.id.clone());
+                    self.sel = 0;
+                    Vec::new()
+                }
+                Some(row) => vec![HostRequest::TogglePlugin {
+                    id: row.id.clone(),
+                    // The row's OWN switch, never the effective one: ⏎ on a
+                    // piece of a disabled plugin must not read as "it is off,
+                    // so turn it on" and silently flip a switch already on.
+                    enabled: !row.enabled,
+                }],
+                None => Vec::new(),
+            },
             PanelTab::Hooks => self
                 .hooks
                 .as_ref()
@@ -2576,6 +2618,102 @@ mod tab_tests {
             assert_eq!(h.wf_level, expected);
         }
         assert!(h.open(), "the panel is still open — the levels went first");
+    }
+
+    // ---- the plugins tab ----------------------------------------------------
+
+    fn plugin_fx() -> Vec<crate::components::panel::plugins::PluginGroupRow> {
+        use crate::components::panel::plugins::fixtures;
+        vec![fixtures::acme(true), fixtures::other()]
+    }
+
+    #[test]
+    fn enter_opens_a_plugin_and_esc_climbs_back_to_the_list_before_the_panel() {
+        let mut h = open_on(PanelTab::Plugins);
+        h.set_plugins(Some(plugin_fx()), Some("/p".into()), None);
+        // The list level is PLUGINS: two rows, not the five pieces they ship.
+        assert_eq!(h.plugin_rows().len(), 2);
+
+        // ⏎ opens rather than switching — a plugin row has somewhere to go.
+        assert!(
+            h.confirm(0).is_empty(),
+            "opening asks the server for nothing"
+        );
+        assert_eq!(h.plugin_open.as_deref(), Some("acme"));
+        assert_eq!(h.sel, 0, "the cursor lands on the first piece");
+        let ids: Vec<String> = h.plugin_rows().into_iter().map(|r| r.id).collect();
+        assert_eq!(ids, ["acme/guard.lua", "acme/skills/review"]);
+
+        // ⏎ inside SWITCHES the piece under the cursor, by its own switch.
+        assert_eq!(
+            h.confirm(0),
+            vec![HostRequest::TogglePlugin {
+                id: "acme/guard.lua".into(),
+                enabled: true,
+            }],
+            "a plugin's hook arrives off, so ⏎ turns it on"
+        );
+
+        // esc climbs one level, and the panel is still open.
+        h.handle(Command::PanelClose, None, 20);
+        assert_eq!(h.plugin_open, None);
+        assert!(h.open(), "the level went first, not the panel");
+        h.handle(Command::PanelClose, None, 20);
+        assert!(!h.open(), "and the second esc closes it");
+    }
+
+    #[test]
+    fn x_switches_the_row_under_the_cursor_at_either_level() {
+        let mut h = open_on(PanelTab::Plugins);
+        h.set_plugins(Some(plugin_fx()), Some("/p".into()), None);
+        // At the list level it is the PLUGIN — switching a whole plugin off
+        // must not require opening it first.
+        h.handle(Command::MoveDown, None, 20);
+        assert_eq!(
+            h.handle(Command::PluginToggle, None, 20),
+            vec![HostRequest::TogglePlugin {
+                id: "other".into(),
+                enabled: false,
+            }]
+        );
+        // And inside one it is the piece.
+        h.sel = 0;
+        h.confirm(0);
+        assert_eq!(
+            h.handle(Command::PluginToggle, None, 20),
+            vec![HostRequest::TogglePlugin {
+                id: "acme/guard.lua".into(),
+                enabled: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn the_tab_opens_on_the_list_however_it_was_left() {
+        let mut h = open_on(PanelTab::Plugins);
+        h.set_plugins(Some(plugin_fx()), Some("/p".into()), None);
+        h.confirm(0);
+        assert_eq!(h.plugin_open.as_deref(), Some("acme"));
+        // Away and back: a level that outlived its tab would show one plugin's
+        // pieces under a header the reader never asked for.
+        h.handle(Command::Tab(PanelTab::Hooks), None, 20);
+        h.handle(Command::Tab(PanelTab::Plugins), None, 20);
+        assert_eq!(h.plugin_open, None);
+    }
+
+    /// A toggle re-fetches the whole list. The cursor is clamped to the level
+    /// IN VIEW — clamping against the list's length while a plugin is open
+    /// would let the cursor sit past the last piece.
+    #[test]
+    fn a_refetch_clamps_the_cursor_to_the_level_in_view() {
+        let mut h = open_on(PanelTab::Plugins);
+        h.set_plugins(Some(plugin_fx()), Some("/p".into()), None);
+        h.sel = 1;
+        h.confirm(1); // open `other`, which ships exactly one piece
+        assert_eq!(h.plugin_open.as_deref(), Some("other"));
+        h.sel = 1;
+        h.set_plugins(Some(plugin_fx()), None, None);
+        assert_eq!(h.sel, 0, "one piece means row 0 is the last row");
     }
 
     #[test]

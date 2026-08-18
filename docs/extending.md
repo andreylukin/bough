@@ -36,7 +36,11 @@ bough plugins disable acme/extensions/gh.js
 bough plugins enable acme/guard.lua
 ```
 
-`⌥p` is the same switchboard in the panel; `⏎` toggles the row under the cursor.
+`⌥p` is the same switchboard in the panel. It opens on the list of plugins — one row
+each, with what that plugin ships (`acme · 1 hook · 1 skill · 2/3 on`). `⏎` opens the
+one under the cursor and `⏎` again switches a piece of it on or off; `esc` climbs back
+to the list. `x` switches the row under the cursor at either level, so turning a whole
+plugin off never needs opening it first.
 
 An id is a plugin (`acme`) or one of its items: `acme/guard.lua`,
 `acme/skills/review`, `acme/extensions/gh.js`. **A plugin that is off contributes

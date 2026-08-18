@@ -4082,6 +4082,7 @@ impl<T: Transport> App<T> {
                 PanelBody::Plugins(crate::components::panel::plugins::PluginsTabProps {
                     plugins: self.panel.plugins.as_deref(),
                     dir: self.panel.plugins_dir.as_deref(),
+                    open: self.panel.plugin_open.as_deref(),
                     rows: panel_body_rows((area.height as usize).saturating_sub(2)),
                     cols: (area.width as usize).saturating_sub(4).max(20),
                     selected: self.panel.sel,
