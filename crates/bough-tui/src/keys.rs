@@ -46,8 +46,7 @@ pub enum PanelTab {
     Model,
     Mcp,
     Skills,
-    Hooks,
-    Plugins,
+    Config,
     Context,
     Theme,
 }
@@ -62,8 +61,7 @@ impl PanelTab {
             PanelTab::Model => "model",
             PanelTab::Mcp => "mcp",
             PanelTab::Skills => "skills",
-            PanelTab::Hooks => "hooks",
-            PanelTab::Plugins => "plugins",
+            PanelTab::Config => "config",
             PanelTab::Context => "context",
             PanelTab::Theme => "theme",
         }
@@ -209,7 +207,7 @@ pub struct TabDef {
 /// Every non-chat surface, as data. Adding a surface is adding a row — it
 /// cannot add a mode, an open flag, or an escape path, and it cannot ship
 /// without a key.
-pub const TABS: [TabDef; 11] = [
+pub const TABS: [TabDef; 10] = [
     TabDef {
         id: PanelTab::Tree,
         title: "tree",
@@ -255,21 +253,15 @@ pub const TABS: [TabDef; 11] = [
         desc: "the /skills this install has",
     },
     TabDef {
-        id: PanelTab::Hooks,
-        title: "hooks",
+        id: PanelTab::Config,
+        title: "config",
         // NOT ctrl+h: that byte IS backspace (0x08), so the terminal delivers
         // it to the composer and the tab is unreachable. Driven in a real PTY
-        // to find that out.
+        // to find that out. Inherited from the hooks tab this one replaces,
+        // along with `meta+p` from the plugins tab, because a chord in
+        // somebody's fingers must not stop working over a merge.
         chord: "ctrl+x",
-        desc: "the lua that runs around each turn; toggle it",
-    },
-    TabDef {
-        id: PanelTab::Plugins,
-        title: "plugins",
-        // `meta+` again: ctrl+p is the mcp tab's and every other ctrl chord
-        // was taken long before this tab existed.
-        chord: "meta+p",
-        desc: "what each plugin ships, and the switch on every piece",
+        desc: "every hook, skill and extension — and the switch on each",
     },
     TabDef {
         id: PanelTab::Context,
@@ -288,7 +280,7 @@ pub const TABS: [TabDef; 11] = [
 ];
 
 /// Tab ids in bar order. Derived, so the bar and the keymap cannot disagree.
-pub const PANEL_TABS: [PanelTab; 11] = [
+pub const PANEL_TABS: [PanelTab; 10] = [
     PanelTab::Tree,
     PanelTab::Changes,
     PanelTab::Recap,
@@ -296,8 +288,7 @@ pub const PANEL_TABS: [PanelTab; 11] = [
     PanelTab::Model,
     PanelTab::Mcp,
     PanelTab::Skills,
-    PanelTab::Hooks,
-    PanelTab::Plugins,
+    PanelTab::Config,
     PanelTab::Context,
     PanelTab::Theme,
 ];
@@ -307,6 +298,11 @@ pub const PANEL_TOGGLE: &str = "ctrl+t";
 
 /// The retired `sessions` tab's chord, still bound to the tree that replaced it.
 pub const SESSIONS_ALIAS: &str = "ctrl+s";
+
+/// The retired `plugins` tab's chord, still bound to the config tab that
+/// absorbed it. A chord already in somebody's fingers must not stop working
+/// because two tabs became one.
+pub const PLUGINS_ALIAS: &str = "meta+p";
 
 /// Tabs whose body is a flat list long enough to need narrowing.
 pub const FILTER_TABS: [PanelTab; 3] = [PanelTab::Tree, PanelTab::Model, PanelTab::Skills];
@@ -818,6 +814,15 @@ fn panel_chords() -> Vec<Binding> {
         }
         rows.push(row);
     }
+    // The retired plugins chord, still landing on the tab that absorbed it.
+    // Undocumented: the overlay names one chord per tab, and `^x` is it.
+    for mode in [UiMode::Chat, UiMode::Panel, UiMode::Rail, UiMode::Ask] {
+        let mut row = b(Some(mode), PLUGINS_ALIAS, Command::Tab(PanelTab::Config));
+        if mode == UiMode::Chat {
+            row = row.when(&[Guard::EmptyDraft]);
+        }
+        rows.push(row);
+    }
     rows
 }
 
@@ -1256,12 +1261,12 @@ pub static BINDINGS: LazyLock<Vec<Binding>> = LazyLock::new(|| {
             ),
     );
 
-    // -- the plugins tab --
+    // -- the config tab --
     rows.push(
         b(Some(M::Panel), "x", C::PluginToggle)
-            .tabs(&[T::Plugins])
+            .tabs(&[T::Config])
             .not(&[G::PanelFiltering])
-            .doc("the plugins tab", "on/off — ⏎ opens a plugin"),
+            .doc("the config tab", "on/off — ⏎ opens a source"),
     );
 
     // -- the changes tab --

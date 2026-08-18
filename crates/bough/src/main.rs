@@ -21,12 +21,12 @@
 #![allow(clippy::type_complexity)]
 
 mod acp;
+mod config;
 mod exec;
 mod hooks;
 mod mcp;
 mod notes;
 mod patterns;
-mod plugins;
 mod sync_mcp;
 mod tags;
 
@@ -175,15 +175,15 @@ fn version_line() -> String {
 fn usage() -> &'static str {
     // The launchd/systemd manager verbs (setup/kill/restart/update/status/
     // logs/run/purge) stay in the bash wrapper; this binary owns the rest.
-    "usage: bough [tui|start|restart|exec|acp|hooks|plugins|mcp|sync-mcp|tags|notes|patterns]
+    "usage: bough [tui|start|restart|exec|acp|hooks|config|mcp|sync-mcp|tags|notes|patterns]
   (no args) open the terminal UI (bough [-w DIR] [-r], -h for flags)
   --version print the version and exit (-V)
   start    run the server in the foreground
   restart  stop the running server and start a fresh one
   exec     headless one-shot turn
   acp      speak the Agent Client Protocol on stdio
-  hooks    install and inspect hook plugins
-  plugins  what each plugin ships, and the switch on every piece
+  hooks    install and inspect hook sources
+  config   every hook, skill and extension — and the switch on each
   mcp      inspect and repair the MCP registry
   sync-mcp adopt Claude Code's MCP servers
   tags     what the command memory knows
@@ -319,8 +319,11 @@ fn main() -> ExitCode {
             let code = hooks::run_hooks(&args[1..], &hooks::HooksDeps::default());
             ExitCode::from(code as u8)
         }
-        Some("plugins") => {
-            let code = plugins::run_plugins(&args[1..], &plugins::PluginsDeps::default());
+        // `plugins` is the retired name, still landing here: the listing
+        // absorbed it along with the panel tab, and a command in somebody's
+        // shell history must not stop working over a merge.
+        Some("config") | Some("plugins") => {
+            let code = config::run_config(&args[1..], &config::ConfigDeps::default());
             ExitCode::from(code as u8)
         }
         Some("mcp") => {

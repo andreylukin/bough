@@ -51,8 +51,6 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::paths::bough_path;
-
 pub mod dedupe;
 pub mod git;
 mod runtime;
@@ -388,83 +386,33 @@ impl Drop for HookHost {
 // Which hooks are on
 // ---------------------------------------------------------------------------
 
-/// The switches: `~/.bough/hooks-state.json`.
-///
-/// TWO LISTS, because the default is not the same everywhere. A file you
-/// dropped in `~/.bough/hooks` is on unless it is in `off` — that is the whole
-/// installation story, and a file that sat inert until you found a panel would
-/// be a bug report. A bundled or cloned hook is off unless it is in `on`,
-/// because neither arrived by you writing it (`hooks::sources` carries the
-/// argument).
+/// The switches. One store for everything the harness injects, and
+/// [`crate::switches`] carries the argument for why it is one and not three.
+/// Kept re-exported under these names because a hook's switch is asked for
+/// from three modules and the id namespace is the interesting part, not the
+/// file holding it.
+pub type HookState = crate::switches::Switches;
+
 pub fn state_path() -> PathBuf {
-    bough_path(&["hooks-state.json"])
+    crate::switches::path()
 }
 
-/// The pre-sources file, read only to migrate off.
-fn legacy_disabled_path() -> PathBuf {
-    bough_path(&["hooks-disabled.json"])
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct HookState {
-    #[serde(default)]
-    pub on: Vec<String>,
-    #[serde(default)]
-    pub off: Vec<String>,
-}
-
-/// Read the state, folding in the pre-sources file.
-///
-/// Public because a hook's switch is stored HERE and asked for elsewhere:
-/// `plugins::list` needs it to say whether a plugin's hook is on, and a second
-/// file holding a second answer is the thing that module refuses to have.
-///
-/// The old file held BARE names and only ever described local hooks, so each
-/// becomes `local/<name>`. Folded at READ time rather than rewritten: nothing
-/// is written until the next toggle, so a downgrade still finds its own file
-/// where it left it.
+/// Read the switchboard, folding in every store this one replaced.
 pub fn read_state(path: &Path) -> HookState {
-    let mut state: HookState = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default();
-    if let Ok(text) = std::fs::read_to_string(legacy_disabled_path()) {
-        if let Ok(names) = serde_json::from_str::<Vec<String>>(&text) {
-            for name in names {
-                let id = format!("local/{name}");
-                if !state.off.contains(&id) {
-                    state.off.push(id);
-                }
-            }
-        }
-    }
-    state
+    crate::switches::read_at(path)
 }
 
-fn write_state(path: &Path, state: &HookState) -> Result<(), std::io::Error> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(
-        path,
-        serde_json::to_string_pretty(state).unwrap_or_default(),
-    )
+/// Is a hook from this source on when nothing has been said about it?
+///
+/// The adapters are checked before the source rule, not after: they are
+/// bundled, and the source rule would say no (`sources::DEFAULT_ON`).
+fn default_on(id: &str, kind: SourceKind) -> bool {
+    sources::DEFAULT_ON.contains(&id) || kind.on_by_default()
 }
 
 /// Is this hook on, given where it came from?
 pub fn is_on(state: &HookState, id: &str, kind: SourceKind) -> bool {
-    if state.off.iter().any(|o| o == id) {
-        return false;
-    }
-    if state.on.iter().any(|o| o == id) {
-        return true;
-    }
-    // Checked before the source rule, not after: the adapters are bundled, and
-    // the source rule would say no.
-    if sources::DEFAULT_ON.contains(&id) {
-        return true;
-    }
-    kind.on_by_default()
+    state.is_on(id, default_on(id, kind))
 }
 
 /// One hook file, as the panel lists it.
@@ -560,31 +508,15 @@ pub fn list_hooks_over(sources: &[HookSource], state: &HookState) -> Vec<HookFil
 /// dispatch-time filter could not achieve, because the registration happened
 /// at load.
 pub fn set_enabled(id: &str, enabled: bool) -> Result<(), std::io::Error> {
-    let path = state_path();
-    let mut state = read_state(&path);
     let kind = all_sources()
         .into_iter()
         .find(|s| id.starts_with(&format!("{}/", s.name)))
         .map(|s| s.kind)
         .unwrap_or(SourceKind::Local);
-    if is_on(&state, id, kind) == enabled {
-        return Ok(()); // already there; no rebuild for a no-op
+    // No rebuild for a no-op — the store says whether anything moved.
+    if crate::switches::set(id, enabled, default_on(id, kind))? {
+        reload();
     }
-    state.on.retain(|n| n != id);
-    state.off.retain(|n| n != id);
-    // Recorded EXPLICITLY either way, never left to the default: a bundled
-    // hook you turned on must survive the next upgrade, and a local one you
-    // turned off must survive a version of this code that changes its mind
-    // about defaults.
-    if enabled {
-        state.on.push(id.to_string());
-        state.on.sort();
-    } else {
-        state.off.push(id.to_string());
-        state.off.sort();
-    }
-    write_state(&path, &state)?;
-    reload();
     Ok(())
 }
 

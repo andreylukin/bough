@@ -24,6 +24,7 @@
 
 pub mod agents;
 pub mod bus;
+pub mod config;
 pub mod db;
 pub mod errors;
 pub mod extensions;
@@ -43,6 +44,7 @@ pub mod schedules;
 pub mod schema;
 pub mod scratch;
 pub mod skills;
+pub mod switches;
 pub mod turn;
 pub mod types;
 pub mod vcs;

@@ -1074,36 +1074,20 @@ impl Api {
         self.get(&format!("/sessions/{id}/prompt")).await
     }
 
-    // -- the hooks tab --------------------------------------------------------
+    // -- the config tab -------------------------------------------------------
 
-    /// `GET /hooks` — every `.lua` in the hooks directory, on or off.
-    pub async fn list_hooks(&self) -> Result<HookList, ApiFailure> {
-        self.get("/hooks").await
+    /// `GET /config` — every hook, skill and extension, grouped by where it
+    /// came from, with the switch on each.
+    pub async fn list_config(&self) -> Result<ConfigList, ApiFailure> {
+        self.get("/config").await
     }
 
-    /// `POST /hooks/:name` — turn one on or off. Answers with the new list,
-    /// because a reload can change every row.
-    pub async fn toggle_hook(&self, name: &str, enabled: bool) -> Result<HookList, ApiFailure> {
+    /// `POST /config/:id` — turn one source, or one thing inside one, on or
+    /// off. Answers with the whole listing, because a source's switch changes
+    /// every row under it and a hook's rebuilds the interpreter.
+    pub async fn toggle_config(&self, id: &str, enabled: bool) -> Result<ConfigList, ApiFailure> {
         self.post(
-            &format!("/hooks/{}", seg(name)),
-            Some(serde_json::json!({ "enabled": enabled })),
-        )
-        .await
-    }
-
-    // -- the plugins tab ------------------------------------------------------
-
-    /// `GET /plugins` — every plugin, everything in it, and whether it is on.
-    pub async fn list_plugins(&self) -> Result<PluginList, ApiFailure> {
-        self.get("/plugins").await
-    }
-
-    /// `POST /plugins/:id` — turn one plugin, or one thing inside one, on or
-    /// off. Answers with the new list, because a plugin's switch changes every
-    /// row under it.
-    pub async fn toggle_plugin(&self, id: &str, enabled: bool) -> Result<PluginList, ApiFailure> {
-        self.post(
-            &format!("/plugins/{}", seg(id)),
+            &format!("/config/{}", seg(id)),
             Some(serde_json::json!({ "enabled": enabled })),
         )
         .await
@@ -1434,20 +1418,10 @@ pub struct SkillTabList {
     pub sources: Vec<SkillSourceRow>,
 }
 
-/// `GET /hooks` — the hooks tab's rows and the directory that was walked.
+/// `GET /config` — the config tab's rows: every source and everything under it.
 #[derive(Debug, Clone, Default, Deserialize)]
-pub struct HookList {
-    pub hooks: Vec<crate::components::panel::hooks::HookRow>,
-    #[serde(default)]
-    pub dir: String,
-}
-
-/// `GET /plugins` — the plugins tab's rows and the directory that was walked.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct PluginList {
-    pub plugins: Vec<crate::components::panel::plugins::PluginGroupRow>,
-    #[serde(default)]
-    pub dir: String,
+pub struct ConfigList {
+    pub groups: Vec<crate::components::panel::config::ConfigGroupRow>,
 }
 
 /// `GET /models` — the picker's catalog.

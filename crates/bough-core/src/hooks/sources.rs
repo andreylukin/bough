@@ -470,6 +470,7 @@ mod tests {
         std::fs::create_dir_all(root.join("plugins/other/hooks")).unwrap();
         let off = crate::plugins::PluginState {
             off: vec!["acme".into()],
+            ..Default::default()
         };
         let names: Vec<String> = sources_from(
             &root.join("hooks.json"),

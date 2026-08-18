@@ -118,15 +118,19 @@ bough hooks     # what is installed, what is on, listener counts
 
 See [extending.md](extending.md).
 
-## `bough plugins`
+## `bough config`
 
 ```
-bough plugins                            # every plugin, everything in it, what is on
-bough plugins disable acme/skills/review # one piece
-bough plugins enable acme                # or the whole directory
+bough config                             # every hook, skill and extension, what is on
+bough config disable acme/skills/review  # one thing
+bough config enable acme                 # or the whole source
+bough config disable bundled/skills/wayfinder
 ```
 
-An id is a plugin (`acme`) or one of its items — `acme/guard.lua`,
-`acme/skills/review`, `acme/extensions/gh.js`. A plugin that is off contributes
-nothing, whatever its items say, and its items keep their own switches for when
-you turn it back on. `⌥p` is the same switchboard in the panel.
+An id is a **source** — `bundled`, `local` (yours), `project`, a cloned repo's
+slug, or a plugin's name — or one thing inside one: `acme/guard.lua`,
+`local/skills/mine`, `acme/extensions/gh.js`. A source that is off contributes
+nothing, whatever the things inside it say, and those keep their own switches
+for when you turn it back on. `^x` is the same switchboard in the panel.
+
+`bough plugins` still works and lands here.

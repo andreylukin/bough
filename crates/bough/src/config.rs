@@ -1,50 +1,58 @@
-//! `bough plugins` — what each installed plugin ships, and the switch on every
-//! piece of it.
+//! `bough config` — everything the harness injects, and the switch on each of
+//! it.
 //!
-//! The panel owns switching in the moment, because that is where you are when
-//! you decide. This owns the SHELL answer to the same question, for the same
-//! reason `bough hooks` exists beside the hooks tab: a plugin you just cloned
-//! into `~/.bough/plugins` is inspected from the shell you cloned it in, and a
+//! The panel (`^x`) owns switching in the moment, because that is where you are
+//! when you decide. This owns the SHELL answer to the same question, for the
+//! reason `bough hooks` exists beside the panel: a plugin you just cloned into
+//! `~/.bough/plugins` is inspected from the shell you cloned it in, and a
 //! machine with no TUI attached still has to be able to turn something off.
 //!
 //! Every row prints the id, never the bare name. The id is what the switch
-//! takes and what the panel shows, and two plugins WILL both ship a
+//! takes and what the panel shows, and two sources WILL both ship a
 //! `guard.lua`.
 
-use bough_core::plugins::{self, Surface};
+use bough_core::config::{self, ConfigGroup};
+use bough_core::plugins::Surface;
 
-pub const USAGE: &str = "usage: bough plugins [VERB]
+pub const USAGE: &str = "usage: bough config [VERB]
 
-  (none)          every plugin, everything in it, and whether it is on
-  enable ID       turn one plugin, or one thing inside one, on
+  (none)          every hook, skill and extension, and whether it is on
+  enable ID       turn one source, or one thing inside one, on
   disable ID      turn it off
 
   -h, --help      this
 
-an ID is a plugin (acme) or one of its items — acme/guard.lua,
-acme/skills/review, acme/extensions/gh.js. A plugin that is off
-contributes nothing, whatever its items say.
+an ID is a source (bundled, local, project, or a plugin's name) or one
+thing inside one — acme/guard.lua, local/skills/mine,
+acme/extensions/gh.js. A source that is off contributes nothing,
+whatever the things inside it say.
 
-plugins are also switched in the TUI panel (meta+p): enter opens one,
+also switched in the TUI panel (^x): enter opens a source,
 x switches the row under the cursor
 exit: 0 done · 1 nothing to do · 2 usage";
 
 /// Injected so the tests assert on text instead of a terminal.
-pub struct PluginsDeps {
+pub struct ConfigDeps {
     pub out: Box<dyn Fn(&str)>,
     pub err: Box<dyn Fn(&str)>,
 }
 
-impl Default for PluginsDeps {
+impl Default for ConfigDeps {
     fn default() -> Self {
-        PluginsDeps {
+        ConfigDeps {
             out: Box::new(|line| println!("{line}")),
             err: Box::new(|line| eprintln!("{line}")),
         }
     }
 }
 
-pub fn run_plugins(argv: &[String], deps: &PluginsDeps) -> i32 {
+/// The workspace whose project tier is listed: the shell's, because that is
+/// the checkout you are asking about.
+fn workspace() -> std::path::PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+pub fn run_config(argv: &[String], deps: &ConfigDeps) -> i32 {
     let mut positional: Vec<&str> = Vec::new();
     for arg in argv {
         match arg.as_str() {
@@ -79,57 +87,57 @@ pub fn run_plugins(argv: &[String], deps: &PluginsDeps) -> i32 {
 /// Refused unless the id names something installed, for the reason the route
 /// gives: a typo written into the state file is inert, but it reads on screen
 /// as a switch that was set.
-fn switch(id: &str, enabled: bool, deps: &PluginsDeps) -> i32 {
-    let installed = plugins::list();
-    let known = installed
-        .iter()
-        .any(|p| p.name == id || p.items.iter().any(|i| i.id == id));
-    if !known {
+fn switch(id: &str, enabled: bool, deps: &ConfigDeps) -> i32 {
+    if !config::known(&workspace(), id) {
         (deps.err)(&format!(
-            "no plugin or item {id} in {}. `bough plugins` lists what is installed.",
-            bough_core::paths::plugins_dir().to_string_lossy()
+            "nothing named {id} is installed. `bough config` lists what is."
         ));
         return 1;
     }
-    match plugins::set_enabled(id, enabled) {
+    match config::set_enabled(id, enabled) {
         Ok(()) => {
             (deps.out)(&format!("{id} is {}", if enabled { "on" } else { "off" }));
             0
         }
         Err(e) => {
-            (deps.err)(&format!("could not write the plugin state: {e}"));
+            (deps.err)(&format!("could not write the switchboard: {e}"));
             1
         }
     }
 }
 
-/// Every plugin, grouped, with what each item is and whether it is on.
-fn list(deps: &PluginsDeps) -> i32 {
-    let installed = plugins::list();
-    if installed.is_empty() {
-        (deps.out)("no plugins installed");
-        (deps.out)(&format!(
-            "a plugin is one directory in {} holding hooks/, skills/ and extensions/",
-            bough_core::paths::plugins_dir().to_string_lossy()
-        ));
+/// What one source is, in the words that let you decide about it.
+fn detail(group: &ConfigGroup) -> String {
+    match (&group.repo, &group.sha) {
+        (Some(repo), Some(sha)) => format!("{repo} · {}", &sha[..sha.len().min(7)]),
+        (Some(repo), None) => repo.clone(),
+        _ => group.dirs.first().cloned().unwrap_or_default(),
+    }
+}
+
+/// Every source, grouped, with what each thing is and whether it is on.
+fn list(deps: &ConfigDeps) -> i32 {
+    let groups = config::list(&workspace());
+    if groups.is_empty() {
+        (deps.out)("nothing installed");
         return 1;
     }
-    for plugin in &installed {
+    for group in &groups {
         (deps.out)(&format!(
             "{} · {}{}",
-            plugin.name,
-            plugin.dir,
-            if plugin.enabled { "" } else { " · OFF" },
+            group.id,
+            detail(group),
+            if group.enabled { "" } else { " · OFF" },
         ));
-        if plugin.items.is_empty() {
+        if group.items.is_empty() {
             (deps.out)("  (nothing in it)");
             continue;
         }
-        for item in &plugin.items {
-            // A disabled plugin's items keep their own switches, and printing
+        for item in &group.items {
+            // A disabled source's things keep their own switches, and printing
             // them as "on" while nothing runs would be the lie. Say which of
             // the two answers is the one in force.
-            let state = match (plugin.enabled, item.enabled) {
+            let state = match (group.enabled, item.enabled) {
                 (false, _) => "—  ",
                 (true, true) => "on ",
                 (true, false) => "off",
@@ -141,17 +149,18 @@ fn list(deps: &PluginsDeps) -> i32 {
             ));
         }
     }
-    let hooks = installed
+    let hooks = groups
         .iter()
-        .flat_map(|p| &p.items)
+        .flat_map(|g| &g.items)
         .filter(|i| i.surface == Surface::Hook && !i.enabled)
         .count();
     if hooks > 0 {
-        // Named, because it is the one default that surprises: a plugin's hook
-        // runs in-process on the next turn, so it arrives off.
+        // Named, because it is the one default that surprises: a hook that
+        // arrived rather than being written runs in-process on the next turn,
+        // so it arrives off.
         (deps.out)(&format!(
-            "\n{hooks} hook{} off by default — a plugin's Lua is opt-in. \
-             `bough plugins enable ID` turns one on.",
+            "\n{hooks} hook{} off by default — Lua you did not write is opt-in. \
+             `bough config enable ID` turns one on.",
             if hooks == 1 { "" } else { "s" }
         ));
     }
@@ -163,17 +172,13 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    fn collector() -> (
-        PluginsDeps,
-        Arc<Mutex<Vec<String>>>,
-        Arc<Mutex<Vec<String>>>,
-    ) {
+    fn collector() -> (ConfigDeps, Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<String>>>) {
         let out = Arc::new(Mutex::new(Vec::new()));
         let err = Arc::new(Mutex::new(Vec::new()));
         let o = out.clone();
         let e = err.clone();
         (
-            PluginsDeps {
+            ConfigDeps {
                 out: Box::new(move |line| o.lock().unwrap().push(line.to_string())),
                 err: Box::new(move |line| e.lock().unwrap().push(line.to_string())),
             },
@@ -189,16 +194,16 @@ mod tests {
     #[test]
     fn help_is_stdout_and_success_and_an_unknown_verb_is_usage() {
         let (deps, out, err) = collector();
-        assert_eq!(run_plugins(&["--help".into()], &deps), 0);
-        assert!(lines(&out)[0].starts_with("usage: bough plugins"));
-        assert_eq!(run_plugins(&["frobnicate".into()], &deps), 2);
+        assert_eq!(run_config(&["--help".into()], &deps), 0);
+        assert!(lines(&out)[0].starts_with("usage: bough config"));
+        assert_eq!(run_config(&["frobnicate".into()], &deps), 2);
         assert!(lines(&err)[0].contains("unknown verb frobnicate"));
     }
 
     #[test]
     fn a_verb_without_an_id_is_usage_rather_than_a_guess() {
         let (deps, _out, err) = collector();
-        assert_eq!(run_plugins(&["disable".into()], &deps), 2);
+        assert_eq!(run_config(&["disable".into()], &deps), 2);
         assert!(lines(&err)[0].contains("disable needs an id"));
     }
 }

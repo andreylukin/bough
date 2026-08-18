@@ -28,9 +28,9 @@ use bough_core::types::AppCtx;
 
 use crate::http::{error_response, route, Params, Route};
 use crate::{
-    artifact_lib, artifacts, attachments, changes, comments, events, fs, ghost, history_ops, hooks,
-    jobs, mcp_oauth, mcp_routes, models, plugins, questions, schedules, search, sessions, skills,
-    theme, turns, workflows,
+    artifact_lib, artifacts, attachments, changes, comments, config, events, fs, ghost,
+    history_ops, jobs, mcp_oauth, mcp_routes, models, questions, schedules, search, sessions,
+    skills, theme, turns, workflows,
 };
 
 // ---- the route table --------------------------------------------------------
@@ -129,12 +129,10 @@ pub fn routes() -> Vec<Route> {
             "/sessions/:id/artifacts/restore",
             artifacts::restore_artifact_version(),
         ),
-        // hooks: the Lua that runs inside the loop, and its off switches
-        route("GET", "/hooks", hooks::list()),
-        route("POST", "/hooks/:name", hooks::toggle()),
-        // plugins: what each one ships, and the switch on every piece of it
-        route("GET", "/plugins", plugins::list_route()),
-        route("POST", "/plugins/:id", plugins::toggle()),
+        // config: every hook, skill and extension the harness injects, grouped
+        // by where it came from, with the switch on each of them
+        route("GET", "/config", config::list_route()),
+        route("POST", "/config/:id", config::toggle()),
         // The vendored chart engines, ahead of the catch-all it would otherwise
         // fall into. Session ids are uuids, so `_lib` shadows no real session.
         route("GET", "/artifacts/_lib/:file", artifact_lib::get_lib_file()),

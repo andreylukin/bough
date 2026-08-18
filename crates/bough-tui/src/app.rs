@@ -239,15 +239,9 @@ pub enum Action {
         prompt: Option<crate::api::PromptView>,
         note: Option<String>,
     },
-    Hooks {
-        hooks: Option<Vec<crate::components::panel::hooks::HookRow>>,
-        dir: Option<String>,
-        note: Option<String>,
-    },
-    /// `GET /plugins` answered, or the toggle did.
-    Plugins {
-        plugins: Option<Vec<crate::components::panel::plugins::PluginGroupRow>>,
-        dir: Option<String>,
+    /// `GET /config` answered, or the toggle did.
+    Config {
+        groups: Option<Vec<crate::components::panel::config::ConfigGroupRow>>,
         note: Option<String>,
     },
     /// `GET /models` — the picker's catalog.
@@ -419,18 +413,11 @@ pub enum Effect {
     /// `GET /skills` — the skills TAB's rows (error and sources included), not
     /// the composer's name/description pairs.
     LoadSkillRows,
-    /// `GET /hooks` — the hooks tab's rows.
-    LoadHooks,
+    /// `GET /config` — the config tab's rows.
+    LoadConfig,
     LoadPrompt,
-    /// `POST /hooks/:name` — the toggle, which answers with the new list.
-    ToggleHook {
-        name: String,
-        enabled: bool,
-    },
-    /// `GET /plugins` — the plugins tab's rows.
-    LoadPlugins,
-    /// `POST /plugins/:id` — the toggle, which answers with the new list.
-    TogglePlugin {
+    /// `POST /config/:id` — the toggle, which answers with the whole listing.
+    ToggleConfig {
         id: String,
         enabled: bool,
     },
@@ -1745,8 +1732,7 @@ impl<T: Transport> App<T> {
                 sources,
                 note,
             } => self.panel.set_skills(skills, sources, note),
-            Action::Hooks { hooks, dir, note } => self.panel.set_hooks(hooks, dir, note),
-            Action::Plugins { plugins, dir, note } => self.panel.set_plugins(plugins, dir, note),
+            Action::Config { groups, note } => self.panel.set_config(groups, note),
             Action::Prompt { prompt, note } => {
                 self.panel.prompt = prompt;
                 self.panel.prompt_note = note;
@@ -2597,14 +2583,10 @@ impl<T: Transport> App<T> {
                     self.transport.effect(Effect::ClearMcpAuth(name))
                 }
                 HostRequest::LoadSkillRows => self.transport.effect(Effect::LoadSkillRows),
-                HostRequest::LoadHooks => self.transport.effect(Effect::LoadHooks),
+                HostRequest::LoadConfig => self.transport.effect(Effect::LoadConfig),
                 HostRequest::LoadPrompt => self.transport.effect(Effect::LoadPrompt),
-                HostRequest::ToggleHook { name, enabled } => {
-                    self.transport.effect(Effect::ToggleHook { name, enabled })
-                }
-                HostRequest::LoadPlugins => self.transport.effect(Effect::LoadPlugins),
-                HostRequest::TogglePlugin { id, enabled } => {
-                    self.transport.effect(Effect::TogglePlugin { id, enabled })
+                HostRequest::ToggleConfig { id, enabled } => {
+                    self.transport.effect(Effect::ToggleConfig { id, enabled })
                 }
                 HostRequest::LoadModels => self.transport.effect(Effect::LoadModels),
                 HostRequest::LoadModelSettings => self.transport.effect(Effect::LoadModelSettings),
@@ -3726,10 +3708,10 @@ impl<T: Transport> App<T> {
             EventType::HookFired => {
                 if let Some(text) = describe_hook_fired(&event.data) {
                     self.notice = Some(text);
-                    // The hooks tab, if it is open, is now stale: the counts
-                    // it shows just changed.
-                    if self.panel.tab() == crate::keys::PanelTab::Hooks {
-                        self.transport.effect(Effect::LoadHooks);
+                    // The config tab, if it is open, is now stale: the
+                    // counts it shows just changed.
+                    if self.panel.tab() == crate::keys::PanelTab::Config {
+                        self.transport.effect(Effect::LoadConfig);
                     }
                 }
             }
@@ -4068,25 +4050,14 @@ impl<T: Transport> App<T> {
                     entry: self.panel.mcp_entry.as_deref(),
                 })
             }
-            crate::keys::PanelTab::Hooks => {
-                PanelBody::Hooks(crate::components::panel::hooks::HooksTabProps {
-                    hooks: self.panel.hooks.as_deref(),
-                    dir: self.panel.hooks_dir.as_deref(),
+            crate::keys::PanelTab::Config => {
+                PanelBody::Config(crate::components::panel::config::ConfigTabProps {
+                    groups: self.panel.config.as_deref(),
+                    open: self.panel.config_open.as_deref(),
                     rows: panel_body_rows((area.height as usize).saturating_sub(2)),
                     cols: (area.width as usize).saturating_sub(4).max(20),
                     selected: self.panel.sel,
-                    note: self.panel.hooks_note.as_deref(),
-                })
-            }
-            crate::keys::PanelTab::Plugins => {
-                PanelBody::Plugins(crate::components::panel::plugins::PluginsTabProps {
-                    plugins: self.panel.plugins.as_deref(),
-                    dir: self.panel.plugins_dir.as_deref(),
-                    open: self.panel.plugin_open.as_deref(),
-                    rows: panel_body_rows((area.height as usize).saturating_sub(2)),
-                    cols: (area.width as usize).saturating_sub(4).max(20),
-                    selected: self.panel.sel,
-                    note: self.panel.plugins_note.as_deref(),
+                    note: self.panel.config_note.as_deref(),
                 })
             }
             crate::keys::PanelTab::Skills => {
@@ -5622,38 +5593,36 @@ impl Transport for LiveTransport {
                     }
                 });
             }
-            // The hooks tab's rows. Same rule as skills: a failed fetch is
-            // `None` with its reason, never an empty directory.
-            Effect::LoadHooks => {
+            // The config tab's rows. Same rule as skills: a failed fetch is
+            // `None` with its reason, never an empty listing.
+            Effect::LoadConfig => {
                 tokio::spawn(async move {
-                    match api.list_hooks().await {
+                    match api.list_config().await {
                         Ok(list) => {
-                            let _ = tx.send(Action::Hooks {
-                                hooks: Some(list.hooks),
-                                dir: Some(list.dir),
+                            let _ = tx.send(Action::Config {
+                                groups: Some(list.groups),
                                 note: None,
                             });
                         }
                         Err(e) => {
-                            let _ = tx.send(Action::Hooks {
-                                hooks: None,
-                                dir: None,
+                            let _ = tx.send(Action::Config {
+                                groups: None,
                                 note: Some(e.to_string()),
                             });
                         }
                     }
                 });
             }
-            // The toggle answers with the WHOLE list, because a reload can
-            // change any row — so the reply IS the refresh, with no second
-            // fetch to race it.
-            Effect::ToggleHook { name, enabled } => {
+            // The toggle answers with the WHOLE listing, because a source's
+            // switch changes every row under it and a hook's rebuilds the
+            // interpreter — so the reply IS the refresh, with no second fetch
+            // to race it.
+            Effect::ToggleConfig { id, enabled } => {
                 tokio::spawn(async move {
-                    match api.toggle_hook(&name, enabled).await {
+                    match api.toggle_config(&id, enabled).await {
                         Ok(list) => {
-                            let _ = tx.send(Action::Hooks {
-                                hooks: Some(list.hooks),
-                                dir: None,
+                            let _ = tx.send(Action::Config {
+                                groups: Some(list.groups),
                                 note: None,
                             });
                         }
@@ -5661,55 +5630,8 @@ impl Transport for LiveTransport {
                             // The rows on screen are still true — the toggle
                             // is what failed — so they stay, and the note says
                             // what happened.
-                            let _ = tx.send(Action::Hooks {
-                                hooks: None,
-                                dir: None,
-                                note: Some(format!("could not toggle {name}: {e}")),
-                            });
-                        }
-                    }
-                });
-            }
-            // The plugins tab's rows. Same rule as hooks: a failed fetch is
-            // `None` with its reason, never an empty directory.
-            Effect::LoadPlugins => {
-                tokio::spawn(async move {
-                    match api.list_plugins().await {
-                        Ok(list) => {
-                            let _ = tx.send(Action::Plugins {
-                                plugins: Some(list.plugins),
-                                dir: Some(list.dir),
-                                note: None,
-                            });
-                        }
-                        Err(e) => {
-                            let _ = tx.send(Action::Plugins {
-                                plugins: None,
-                                dir: None,
-                                note: Some(e.to_string()),
-                            });
-                        }
-                    }
-                });
-            }
-            // The toggle answers with the WHOLE list, because a plugin's switch
-            // changes every row under it — so the reply IS the refresh.
-            Effect::TogglePlugin { id, enabled } => {
-                tokio::spawn(async move {
-                    match api.toggle_plugin(&id, enabled).await {
-                        Ok(list) => {
-                            let _ = tx.send(Action::Plugins {
-                                plugins: Some(list.plugins),
-                                dir: None,
-                                note: None,
-                            });
-                        }
-                        Err(e) => {
-                            // The rows on screen are still true — the toggle is
-                            // what failed — so they stay, and the note says so.
-                            let _ = tx.send(Action::Plugins {
-                                plugins: None,
-                                dir: None,
+                            let _ = tx.send(Action::Config {
+                                groups: None,
                                 note: Some(format!("could not toggle {id}: {e}")),
                             });
                         }
@@ -6404,7 +6326,7 @@ mod tests {
             (T::Workflows, Effect::LoadWorkflows),
             (T::Mcp, Effect::LoadMcp),
             (T::Skills, Effect::LoadSkillRows),
-            (T::Hooks, Effect::LoadHooks),
+            (T::Config, Effect::LoadConfig),
             (T::Model, Effect::LoadModels),
         ] {
             let (effects, sink) = scripted();

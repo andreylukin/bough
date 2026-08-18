@@ -17,16 +17,15 @@
 //! exactly the per-item picture you left — the item switches are remembered,
 //! not cleared, because "off for now" is what disabling a plugin means.
 //!
-//! ## A hook's switch is not stored here
+//! ## Every switch is stored in one place
 //!
-//! Hooks had an off switch before plugins existed, keyed by the hook's own
-//! source-qualified id (`acme/guard.lua`) and living in `hooks-state.json`,
-//! because turning one off is a RELOAD of the interpreter and not a flag read
-//! at dispatch. That store stays the only answer for hooks: [`set_enabled`]
-//! routes a hook id to [`crate::hooks::set_enabled`] and reads back through
-//! [`crate::hooks::is_on`]. Two files that both claim to know whether a hook is
-//! on is the bug this avoids; which file holds it is an implementation detail
-//! of one id namespace.
+//! A hook's switch, a skill's and a plugin's all live in
+//! `~/.bough/switches.json` ([`crate::switches`]). This module used to route a
+//! hook id into a second file because hooks had a store before plugins existed;
+//! that routing was the symptom, and one store is the fix. What is still true
+//! is that flipping a HOOK is a RELOAD of the interpreter rather than a flag
+//! read at dispatch, so [`set_enabled`] still delegates to
+//! [`crate::hooks::set_enabled`] — for the reload, not for the file.
 //!
 //! ## Defaults are not changed by there being a switch
 //!
@@ -42,7 +41,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::hooks::SourceKind;
-use crate::paths::{bough_path, plugin_dirs_in, plugins_dir};
+use crate::paths::{plugin_dirs_in, plugins_dir};
 
 /// Which of the three surfaces an item is. The switch does not care; the panel
 /// and the "what does this plugin even do" question do.
@@ -107,70 +106,22 @@ pub struct Plugin {
 // The switchboard
 // ---------------------------------------------------------------------------
 
-/// `~/.bough/plugins-state.json` — beside `hooks-state.json`, and shaped like
-/// the half of it that applies.
-///
-/// ONE LIST, not two, because unlike hooks there is no rung here whose default
-/// runs the other way: a plugin and its skills and extensions are all on until
-/// you say otherwise, so the only thing worth recording is what you turned off.
-/// A hook's explicit "on" still needs recording, and still lives where it
-/// always did.
+/// The switchboard. ONE store for every id — [`crate::switches`] carries the
+/// argument, and the routing this module used to do between two files was the
+/// symptom that made it.
+pub type PluginState = crate::switches::Switches;
+
 pub fn state_path() -> PathBuf {
-    bough_path(&["plugins-state.json"])
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginState {
-    #[serde(default)]
-    pub off: Vec<String>,
-}
-
-impl PluginState {
-    /// Nothing turned off — what every caller gets on a machine with no state
-    /// file, and what tests use to mean "the switchboard is not the subject".
-    pub fn all_on() -> PluginState {
-        PluginState::default()
-    }
-
-    /// Is this plugin contributing anything at all?
-    pub fn plugin_on(&self, plugin: &str) -> bool {
-        !self.off.iter().any(|o| o == plugin)
-    }
-
-    /// Is this item live: its plugin is on AND it has not been switched off.
-    ///
-    /// Hook ids are accepted and answered the same way, but a hook's OWN
-    /// switch is not in this file — [`is_on`] is the whole answer for a hook,
-    /// and this is only the plugin half.
-    pub fn item_on(&self, plugin: &str, id: &str) -> bool {
-        self.plugin_on(plugin) && !self.off.iter().any(|o| o == id)
-    }
+    crate::switches::path()
 }
 
 pub fn read_state(path: &Path) -> PluginState {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
-}
-
-fn write_state(path: &Path, state: &PluginState) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(
-        path,
-        serde_json::to_string_pretty(state).unwrap_or_default(),
-    )
+    crate::switches::read_at(path)
 }
 
 /// The switchboard as it is on disk right now.
-///
-/// READ PER CALL, never cached, for the reason every other plugin surface
-/// gives: a switch flipped mid-session applies on the next turn, and a
-/// switchboard that needed a restart is a bug report.
 pub fn state() -> PluginState {
-    read_state(&state_path())
+    crate::switches::read()
 }
 
 /// The switch's name for a plugin's skill.
@@ -178,7 +129,7 @@ pub fn skill_id(plugin: &str, name: &str) -> String {
     format!("{plugin}/skills/{name}")
 }
 
-/// The switch's name for a plugin's extension, `rel` being its path under
+/// The switch's name for one group's extension, `rel` being its path under
 /// `extensions/` so a directory extension is `sub/index.js` and not `index.js`
 /// — two of those in one plugin would otherwise share a switch.
 pub fn extension_id(plugin: &str, rel: &str) -> String {
@@ -191,12 +142,11 @@ pub fn plugin_of(id: &str) -> &str {
     id.split_once('/').map(|(p, _)| p).unwrap_or(id)
 }
 
-/// Does this id name a HOOK, whose switch lives in `hooks-state.json`?
+/// Does this id name a HOOK, whose switch is a reload rather than a flag?
 ///
-/// The two namespaces are told apart by shape rather than by looking on disk,
-/// so an id for a file that has been deleted still routes to the store that
-/// holds its switch — which is what makes turning something off and removing
-/// it, in either order, land in the same place.
+/// Told apart by SHAPE rather than by looking on disk, so an id for a file that
+/// has been deleted still routes the same way — which is what makes turning
+/// something off and removing it, in either order, land in the same place.
 fn is_hook_id(id: &str) -> bool {
     match id.split_once('/') {
         Some((_, rest)) => !rest.starts_with("skills/") && !rest.starts_with("extensions/"),
@@ -204,21 +154,16 @@ fn is_hook_id(id: &str) -> bool {
     }
 }
 
-/// Is this switch on? The one question every surface asks, whichever store
-/// holds the answer.
+/// Is this switch on? The one question every surface asks.
 pub fn is_on(id: &str) -> bool {
-    let plugins = state();
-    if !plugins.plugin_on(plugin_of(id)) {
+    let state = state();
+    if !state.plugin_on(plugin_of(id)) {
         return false;
     }
     if is_hook_id(id) {
-        return crate::hooks::is_on(
-            &crate::hooks::read_state(&crate::hooks::state_path()),
-            id,
-            SourceKind::Plugin,
-        );
+        return crate::hooks::is_on(&state, id, SourceKind::Plugin);
     }
-    !plugins.off.iter().any(|o| o == id)
+    state.is_on(id, true)
 }
 
 /// Turn one plugin, or one thing inside one, on or off.
@@ -231,21 +176,10 @@ pub fn set_enabled(id: &str, enabled: bool) -> std::io::Result<()> {
     if is_hook_id(id) {
         return crate::hooks::set_enabled(id, enabled);
     }
-    let path = state_path();
-    let mut state = read_state(&path);
-    let was = !state.off.iter().any(|o| o == id);
-    if was == enabled {
-        return Ok(()); // already there
-    }
-    state.off.retain(|o| o != id);
-    if !enabled {
-        state.off.push(id.to_string());
-        state.off.sort();
-    }
-    write_state(&path, &state)?;
+    let moved = crate::switches::set(id, enabled, true)?;
     // A plugin's hooks are hook SOURCES, so switching the plugin changed which
     // Lua is loaded. Nothing else here reaches the interpreter.
-    if !id.contains('/') {
+    if moved && !id.contains('/') {
         crate::hooks::reload();
     }
     Ok(())
@@ -476,6 +410,7 @@ mod tests {
         fixture(&root, "acme");
         let state = PluginState {
             off: vec!["acme".into()],
+            ..Default::default()
         };
         let plugins = list_in(&root, &state, &Default::default());
         assert!(!plugins[0].enabled);
@@ -512,18 +447,18 @@ mod tests {
     }
 
     #[test]
-    fn switching_records_only_the_off_and_forgets_it_again() {
+    fn switching_records_the_answer_explicitly_either_way() {
         let home = tmp("state");
         crate::paths::test_env::with_env(&[("BOUGH_HOME", home.to_str())], || {
             assert!(is_on("acme/skills/review"), "on until said otherwise");
             set_enabled("acme/skills/review", false).unwrap();
             assert!(!is_on("acme/skills/review"));
             assert_eq!(state().off, vec!["acme/skills/review".to_string()]);
-            // Back on removes the entry rather than recording an "on": there is
-            // no rung here whose default runs the other way, so a second list
-            // would be a second thing to keep true.
+            // Back on is RECORDED, not forgotten: one rule for every id, so
+            // the answer never depends on a default that may move.
             set_enabled("acme/skills/review", true).unwrap();
             assert!(state().off.is_empty());
+            assert_eq!(state().on, vec!["acme/skills/review".to_string()]);
             // The plugin's switch outranks the item's.
             set_enabled("acme", false).unwrap();
             assert!(!is_on("acme/skills/review"));

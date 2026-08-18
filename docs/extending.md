@@ -24,46 +24,54 @@ names.
 The loose drop-boxes below are unchanged and still first-class. They are the files you
 wrote for yourself, and a ten-line hook should not need a directory.
 
-### Switching pieces of one off
+### Switching any of it off
 
 A unit you install in one move has to come apart, or the only way to stop one piece is
 to delete a file the plugin puts back on its next update. Every plugin, and everything
 in one, has a switch:
 
 ```
-bough plugins                            # what is installed, and what is on
-bough plugins disable acme/extensions/gh.js
-bough plugins enable acme/guard.lua
+bough config                            # everything installed, and what is on
+bough config disable acme/extensions/gh.js
+bough config enable acme/guard.lua
+bough config disable bundled/skills/wayfinder
 ```
 
-`⌥p` is the same switchboard in the panel. It opens on the list of plugins — one row
-each, with what that plugin ships (`acme · 1 hook · 1 skill · 2/3 on`). `⏎` opens the
-one under the cursor and `⏎` again switches a piece of it on or off; `esc` climbs back
-to the list. `x` switches the row under the cursor at either level, so turning a whole
-plugin off never needs opening it first.
+It is not only plugins. **One listing covers every hook, skill and extension the
+harness injects**, whatever surface implemented it and wherever it came from — the ones
+that ship with bough, the ones you wrote, the ones this checkout ships, the ones a
+cloned repo ships, and the ones inside a plugin.
 
-An id is a plugin (`acme`) or one of its items: `acme/guard.lua`,
-`acme/skills/review`, `acme/extensions/gh.js`. **A plugin that is off contributes
-nothing, whatever its items say** — its hooks stop being a source, its skills are not
-listed and cannot be loaded by name, its extensions are not bound. Its items keep their
-own switches while it is off, so turning it back on restores the picture you left.
+`^x` is the same switchboard in the panel (`⌥p` still lands there too). It opens on the
+list of SOURCES — one row each, with what that source ships (`acme · 1 hook · 1 skill ·
+2/3 on`). `⏎` opens the one under the cursor and `⏎` again switches one of its things on
+or off; `esc` climbs back to the list. `x` switches the row under the cursor at either
+level, so turning a whole source off never needs opening it first.
+
+An id is a **source** — `bundled`, `local` (yours), `project`, a cloned repo's slug, or a
+plugin's name — or one thing inside one: `acme/guard.lua`, `local/skills/mine`,
+`acme/extensions/gh.js`. **A source that is off contributes nothing, whatever the things
+inside it say** — its hooks stop being a source, its skills are not listed and cannot be
+loaded by name, its extensions are not bound. Those things keep their own switches while
+it is off, so turning it back on restores the picture you left.
 
 Switching a skill off hands its name back: the rung below wins, which is the difference
 between "use the other `review`" and "break `review`".
 
-Defaults are unchanged by there being a switch. A plugin's **hooks are off** until you
-turn them on, the same as a cloned repo's and for the same reason: a plugin is the unit
-you get from someone else, its Lua runs in-process on the next turn, and one keystroke
-turning it on beats no way to un-run it. Its **skills and extensions are on** — a skill
+Defaults are unchanged by there being a switch. A **hook you did not write is off** until you
+turn it on — bundled, cloned or a plugin's, all for the same reason: it arrived rather
+than being written, its Lua runs in-process on the next turn, and one keystroke turning
+it on beats no way to un-run it. **Skills and extensions are on** — a skill
 does nothing until something names it, and an extension that stopped binding the day the
 switch shipped would be a working setup broken by an upgrade. For those two the switch is
 an opt-*out*.
 
-The switches live in `~/.bough/plugins-state.json`, except a hook's, which stays in
-`~/.bough/hooks-state.json` where it has always been — turning a hook off is a reload of
-the interpreter, not a flag, and two files both claiming to know whether a hook is on is
-the bug the split avoids. Which file holds which is an implementation detail; one id
-namespace covers all of it.
+Every switch lives in `~/.bough/switches.json` — one file, because there is one id
+namespace and one question. The stores it replaces (`hooks-state.json`,
+`plugins-state.json`, `hooks-disabled.json`) are folded in on read, so an existing
+machine keeps every switch it had set. Turning a hook off is still a reload of the
+interpreter rather than a flag read at dispatch: a disabled hook has to stop existing,
+because the listener it registered at load does not unregister itself.
 
 MCP servers are not part of this: a bough plugin ships hooks, skills and extensions, and
 a server is granted per session (`^p`). A Claude Code or Codex plugin's skills are not
@@ -170,7 +178,7 @@ untrusted), and the ~25 events with no bough counterpart.
 
 `guard-destructive.lua` and `redact-secrets.lua` ship **off**. Yours go in
 `~/.bough/hooks`, a plugin's in `~/.bough/plugins/<name>/hooks`. `^x` toggles them live,
-and `⌥p` toggles a plugin's alongside the rest of what it ships.
+alongside every skill and extension.
 
 ## MCP
 

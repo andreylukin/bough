@@ -82,20 +82,28 @@ pub fn extension_dirs(workspace: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// [`extension_dirs`], each directory paired with the PLUGIN that owns it when
-/// one does. Discovery needs the pairing and nothing else does: a file under a
-/// plugin has a switch (`plugins`), a file you dropped in `~/.bough/extensions`
-/// or the project's `.agents/extensions` is yours and has none — you delete it.
-fn extension_sources(workspace: &Path) -> Vec<(Option<String>, PathBuf)> {
-    let mut out: Vec<(Option<String>, PathBuf)> = crate::paths::plugin_dirs()
+/// [`extension_dirs`], each directory paired with the SWITCH GROUP that owns
+/// it: a bough plugin's name, else the rung's own — `local` for the ones you
+/// wrote, `project` for the ones this checkout ships.
+///
+/// EVERY RUNG IS A GROUP NOW. It used to be plugins only, and a loose file in
+/// `~/.bough/extensions` had no switch at all: the answer to "stop binding this
+/// tool" was to move the file. The group is the id prefix, and it is the same
+/// prefix the skills in that tier get, because "turn off what I wrote" is one
+/// question and not two.
+pub fn extension_sources(workspace: &Path) -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = crate::paths::plugin_dirs()
         .into_iter()
-        .map(|p| {
-            let name = p.file_name().and_then(|n| n.to_str()).map(str::to_string);
-            (name, p.join("extensions"))
+        .filter_map(|p| {
+            let name = p.file_name().and_then(|n| n.to_str())?.to_string();
+            Some((name, p.join("extensions")))
         })
         .collect();
-    out.push((None, bough_path(&["extensions"])));
-    out.push((None, workspace.join(".agents").join("extensions")));
+    out.push(("local".to_string(), bough_path(&["extensions"])));
+    out.push((
+        "project".to_string(),
+        workspace.join(".agents").join("extensions"),
+    ));
     out
 }
 
@@ -108,7 +116,7 @@ fn extension_sources(workspace: &Path) -> Vec<(Option<String>, PathBuf)> {
 /// The name is the path relative to `dir` — `sub/index.js`, not `index.js` —
 /// because it is what a plugin's switch is keyed on, and two directory
 /// extensions in one plugin would otherwise share one switch.
-fn files_in(dir: &Path) -> Vec<(String, PathBuf)> {
+pub fn files_in(dir: &Path) -> Vec<(String, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -149,17 +157,13 @@ pub fn discover(workspace: &Path) -> Vec<PathBuf> {
 /// the module header's load-bearing claim — and this is upstream of both.
 pub fn discover_with(workspace: &Path, switches: &crate::plugins::PluginState) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
-    for (plugin, dir) in extension_sources(workspace) {
-        let Some(name) = plugin else {
-            out.extend(files_in(&dir).into_iter().map(|(_, p)| p));
-            continue;
-        };
-        if !switches.plugin_on(&name) {
+    for (group, dir) in extension_sources(workspace) {
+        if !switches.plugin_on(&group) {
             continue;
         }
         out.extend(files_in(&dir).into_iter().filter_map(|(rel, path)| {
             switches
-                .item_on(&name, &crate::plugins::extension_id(&name, &rel))
+                .item_on(&group, &crate::plugins::extension_id(&group, &rel))
                 .then_some(path)
         }));
     }
@@ -334,14 +338,16 @@ mod tests {
         );
         assert_eq!(
             names(&crate::plugins::PluginState {
-                off: vec!["acme/extensions/gh.js".into()]
+                off: vec!["acme/extensions/gh.js".into()],
+                ..Default::default()
             }),
             vec!["big/index.js"],
             "one file, not the whole plugin"
         );
         assert!(
             names(&crate::plugins::PluginState {
-                off: vec!["acme".into()]
+                off: vec!["acme".into()],
+                ..Default::default()
             })
             .is_empty(),
             "the plugin's switch takes the lot"

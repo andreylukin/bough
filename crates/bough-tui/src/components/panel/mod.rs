@@ -25,12 +25,11 @@
 //! `render_*` below paints `min(lines, area.height)` rows.
 
 pub mod changes;
+pub mod config;
 pub mod context;
-pub mod hooks;
 pub mod host;
 pub mod mcp;
 pub mod model;
-pub mod plugins;
 pub mod recap;
 pub mod skills;
 pub mod tree;
@@ -338,9 +337,9 @@ pub enum PanelBody<'a> {
     Workflows(workflows::WorkflowsProps<'a>),
     /// Registry · grant · connection · credential, never conflated.
     Mcp(mcp::McpTabProps<'a>),
-    Hooks(hooks::HooksTabProps<'a>),
-    /// What each installed plugin ships, and the switch on every piece of it.
-    Plugins(plugins::PluginsTabProps<'a>),
+    /// Every hook, skill and extension, grouped by where it came from, with
+    /// the switch on each of them.
+    Config(config::ConfigTabProps<'a>),
     /// The `/name` bundles this install can load.
     Skills(skills::SkillsTabProps<'a>),
     /// Both model tiers and the thinking depth, one list.
@@ -406,8 +405,7 @@ pub fn render_panel(tab: PanelTab, body: &PanelBody, area: Rect, buf: &mut Buffe
         PanelBody::Theme(preview) => crate::theme::render_theme_tab(*preview, body_area, buf),
         PanelBody::Workflows(p) => workflows::render_workflows(p, body_area, buf),
         PanelBody::Mcp(p) => mcp::render_mcp(p, body_area, buf),
-        PanelBody::Hooks(p) => hooks::render_hooks(p, body_area, buf),
-        PanelBody::Plugins(p) => plugins::render_plugins(p, body_area, buf),
+        PanelBody::Config(p) => config::render_config(p, body_area, buf),
         PanelBody::Skills(p) => skills::render_skills(p, body_area, buf),
         PanelBody::Model(p) => model::render_model(p, body_area, buf),
         PanelBody::Context(p) => context::render(p, body_area, buf),
@@ -715,7 +713,7 @@ mod tests {
             .iter()
             .map(|s| s.content.to_string())
             .collect();
-        assert_eq!(text, " [theme] 11/11 · ⇥ next · ^t close");
+        assert_eq!(text, " [theme] 10/10 · ⇥ next · ^t close");
     }
 
     #[test]

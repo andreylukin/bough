@@ -547,15 +547,8 @@ pub fn list_skills_over(
 ) -> Vec<Skill> {
     let mut out: Vec<Skill> = vec![];
     let mut taken: Vec<String> = vec![];
-    for SkillSource {
-        source,
-        dir,
-        plugin,
-    } in sources
-    {
-        if plugin.as_deref().is_some_and(|p| !switches.plugin_on(p)) {
-            continue;
-        }
+    for rung in sources {
+        let SkillSource { source, dir, .. } = rung;
         let Ok(entries) = std::fs::read_dir(dir) else {
             continue;
         };
@@ -571,7 +564,7 @@ pub fn list_skills_over(
             if !is_dir || taken.contains(&name) {
                 continue;
             }
-            if !skill_switched_on(plugin.as_deref(), &name, switches) {
+            if !skill_switched_on(rung, &name, switches) {
                 continue;
             }
             let Some(skill) = read_skill(*source, dir, &name) else {
@@ -606,17 +599,46 @@ pub fn catalog(sources: &[SkillSource], loaded: &[String]) -> Vec<PromptSkillEnt
         .collect()
 }
 
-/// Is this skill's switch on? `None` for a plugin means the rung is not one of
-/// bough's plugins, and nothing there has a switch.
+/// The switch's GROUP for a rung: the bough plugin that owns it, else the
+/// rung's own name.
+///
+/// A GROUP IS A SWITCH TOO, the same way a plugin is: "turn off every skill
+/// that shipped with bough" is one keystroke, and without it the answer is
+/// n keystrokes and a list you have to keep re-reading. The group is the id
+/// prefix, so a plugin's group covers its hooks and extensions as well —
+/// which is what a plugin's switch already meant.
+pub fn switch_group(source: &SkillSource) -> String {
+    source.plugin.clone().unwrap_or_else(|| {
+        match source.source {
+            SkillSourceName::Bundled => "bundled",
+            SkillSourceName::User => "local",
+            SkillSourceName::Project => "project",
+            // A Claude Code or Codex plugin's `skills/` — not one of bough's,
+            // so it groups under the tier rather than under a plugin name.
+            SkillSourceName::Plugin => "foreign-plugin",
+            SkillSourceName::Foreign => "foreign",
+        }
+        .to_string()
+    })
+}
+
+/// What a skill's switch is named: `<group>/skills/<name>`.
+pub fn switch_id(source: &SkillSource, name: &str) -> String {
+    format!("{}/skills/{name}", switch_group(source))
+}
+
+/// Is this skill's switch on — its own, and its group's?
+///
+/// EVERY RUNG HAS ONE NOW. It used to be plugins only, which left the skills
+/// that ship with bough and the ones in `~/.bough/skills` as the only injected
+/// things with no off switch: the answer to "stop offering me this one" was
+/// to delete a file an upgrade would put back.
 fn skill_switched_on(
-    plugin: Option<&str>,
+    source: &SkillSource,
     name: &str,
     switches: &crate::plugins::PluginState,
 ) -> bool {
-    match plugin {
-        Some(p) => switches.item_on(p, &crate::plugins::skill_id(p, name)),
-        None => true,
-    }
+    switches.item_on(&switch_group(source), &switch_id(source, name))
 }
 
 /// One skill by name, resolved in source order. `None` = no such skill.
@@ -639,8 +661,7 @@ pub fn load_skill_over(
     }
     sources
         .iter()
-        .filter(|s| s.plugin.as_deref().is_none_or(|p| switches.plugin_on(p)))
-        .filter(|s| skill_switched_on(s.plugin.as_deref(), name, switches))
+        .filter(|s| skill_switched_on(s, name, switches))
         .find_map(|s| read_skill(s.source, &s.dir, name))
 }
 
@@ -1051,6 +1072,7 @@ mod tests {
         );
         let one_off = crate::plugins::PluginState {
             off: vec!["acme/skills/review".into()],
+            ..Default::default()
         };
         assert_eq!(
             bodies(&one_off),
@@ -1071,6 +1093,7 @@ mod tests {
         );
         let all_off = crate::plugins::PluginState {
             off: vec!["acme".into()],
+            ..Default::default()
         };
         assert_eq!(
             bodies(&all_off),
