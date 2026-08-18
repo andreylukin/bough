@@ -73,6 +73,15 @@ pub struct SkillSource {
     pub source: SkillSourceName,
     /// The directory that CONTAINS skill folders, not a skill folder itself.
     pub dir: PathBuf,
+    /// The bough plugin this rung belongs to, when it is one.
+    ///
+    /// CARRIED RATHER THAN DERIVED, because `SkillSourceName::Plugin` is not
+    /// specific enough to switch on: a Claude Code plugin's `skills/` and a
+    /// Codex marketplace's are that source too, and neither is governed by
+    /// bough's switchboard — they belong to the harness that installed them.
+    /// This field is set by the one rung `compose_sources` builds from
+    /// `~/.bough/plugins`, so a switch can only ever reach what bough owns.
+    pub plugin: Option<String>,
 }
 
 /// The bundled skill folders, embedded in the binary (ARCHITECTURE §2 /
@@ -143,10 +152,12 @@ pub fn default_sources() -> Vec<SkillSource> {
         SkillSource {
             source: SkillSourceName::Bundled,
             dir: ensure_bundled_skills(),
+            plugin: None,
         },
         SkillSource {
             source: SkillSourceName::User,
             dir: user_skills_dir(),
+            plugin: None,
         },
     ]
 }
@@ -220,11 +231,13 @@ pub fn compose_sources(
     let mut out = vec![SkillSource {
         source: SkillSourceName::Bundled,
         dir: bundled.to_path_buf(),
+        plugin: None,
     }];
     out.extend(foreign::project_sources(workspace));
     out.push(SkillSource {
         source: SkillSourceName::User,
         dir: user.to_path_buf(),
+        plugin: None,
     });
     // bough's own plugins, below the skills you wrote for bough and above
     // anything another harness put on disk: a plugin is deliberate
@@ -235,9 +248,11 @@ pub fn compose_sources(
             .into_iter()
             .filter_map(|p| {
                 let dir = p.join("skills");
+                let plugin = p.file_name().and_then(|n| n.to_str()).map(str::to_string);
                 dir.is_dir().then_some(SkillSource {
                     source: SkillSourceName::Plugin,
                     dir,
+                    plugin,
                 })
             }),
     );
@@ -515,9 +530,32 @@ fn read_skill(source: SkillSourceName, root: &Path, name: &str) -> Option<Skill>
 /// sorted order so a listing does not depend on filesystem enumeration order.
 /// Broken skills ARE listed (with `error`) — the panel shows them.
 pub fn list_skills(sources: &[SkillSource]) -> Vec<Skill> {
+    list_skills_over(sources, &crate::plugins::state())
+}
+
+/// [`list_skills`] against a given switchboard.
+///
+/// A SWITCHED-OFF SKILL IS NOT LISTED, AND SO DOES NOT WIN ITS NAME. The rung
+/// order resolves a collision by first-wins, so a plugin's `review` shadows
+/// every `review` below it; if turning it off left it in the list it would go
+/// on shadowing them, and the switch would read as "break this name" rather
+/// than "use the other one". Dropped before `taken` is consulted, so the next
+/// rung's skill takes the name it would have had.
+pub fn list_skills_over(
+    sources: &[SkillSource],
+    switches: &crate::plugins::PluginState,
+) -> Vec<Skill> {
     let mut out: Vec<Skill> = vec![];
     let mut taken: Vec<String> = vec![];
-    for SkillSource { source, dir } in sources {
+    for SkillSource {
+        source,
+        dir,
+        plugin,
+    } in sources
+    {
+        if plugin.as_deref().is_some_and(|p| !switches.plugin_on(p)) {
+            continue;
+        }
         let Ok(entries) = std::fs::read_dir(dir) else {
             continue;
         };
@@ -531,6 +569,9 @@ pub fn list_skills(sources: &[SkillSource]) -> Vec<Skill> {
         names.sort_by(|a, b| a.0.cmp(&b.0));
         for (name, is_dir) in names {
             if !is_dir || taken.contains(&name) {
+                continue;
+            }
+            if !skill_switched_on(plugin.as_deref(), &name, switches) {
                 continue;
             }
             let Some(skill) = read_skill(*source, dir, &name) else {
@@ -565,13 +606,41 @@ pub fn catalog(sources: &[SkillSource], loaded: &[String]) -> Vec<PromptSkillEnt
         .collect()
 }
 
+/// Is this skill's switch on? `None` for a plugin means the rung is not one of
+/// bough's plugins, and nothing there has a switch.
+fn skill_switched_on(
+    plugin: Option<&str>,
+    name: &str,
+    switches: &crate::plugins::PluginState,
+) -> bool {
+    match plugin {
+        Some(p) => switches.item_on(p, &crate::plugins::skill_id(p, name)),
+        None => true,
+    }
+}
+
 /// One skill by name, resolved in source order. `None` = no such skill.
+///
+/// The switchboard is consulted HERE and not only in [`list_skills`]: `/name`
+/// resolves through this function, so a skill filtered out of the panel but
+/// still loadable by name would be a switch that turned off the listing and
+/// nothing else.
 pub fn load_skill(name: &str, sources: &[SkillSource]) -> Option<Skill> {
+    load_skill_over(name, sources, &crate::plugins::state())
+}
+
+pub fn load_skill_over(
+    name: &str,
+    sources: &[SkillSource],
+    switches: &crate::plugins::PluginState,
+) -> Option<Skill> {
     if !name_ok(name) {
         return None;
     }
     sources
         .iter()
+        .filter(|s| s.plugin.as_deref().is_none_or(|p| switches.plugin_on(p)))
+        .filter(|s| skill_switched_on(s.plugin.as_deref(), name, switches))
         .find_map(|s| read_skill(s.source, &s.dir, name))
 }
 
@@ -747,6 +816,7 @@ mod tests {
             SkillSource {
                 source: self.source,
                 dir: self.dir.clone(),
+                plugin: None,
             }
         }
     }
@@ -888,6 +958,7 @@ mod tests {
             SkillSource {
                 source: SkillSourceName::Bundled,
                 dir: user.dir.join("does-not-exist"),
+                plugin: None,
             },
             user.as_source(),
         ];
@@ -926,6 +997,87 @@ mod tests {
         assert_eq!(load_skill("../../etc", &sources), None);
         assert_eq!(load_skill("a/b", &sources), None);
         assert_eq!(load_skill(".hidden", &sources), None);
+    }
+
+    // ---- the plugin switchboard ---------------------------------------------
+
+    /// A plugin's skill can be switched off one at a time, and switching one
+    /// off HANDS ITS NAME BACK: the rung below it wins, which is the difference
+    /// between "use the other review" and "break review".
+    #[test]
+    fn a_switched_off_plugin_skill_gives_its_name_back_to_the_rung_below() {
+        let root = std::env::temp_dir().join(format!("bough-sw-{}", uuid::Uuid::new_v4()));
+        let put = |dir: PathBuf, name: &str, body: &str| {
+            let folder = dir.join(name);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(
+                folder.join("SKILL.md"),
+                format!("---\ndescription: d\n---\n{body}"),
+            )
+            .unwrap();
+        };
+        let plugin = root.join("plugins").join("acme").join("skills");
+        put(plugin.clone(), "review", "PLUGIN");
+        put(plugin, "draft", "PLUGIN");
+        let foreign = root.join("foreign");
+        put(foreign.clone(), "review", "FOREIGN");
+
+        let sources = vec![
+            SkillSource {
+                source: SkillSourceName::Plugin,
+                dir: root.join("plugins").join("acme").join("skills"),
+                plugin: Some("acme".into()),
+            },
+            SkillSource {
+                source: SkillSourceName::Foreign,
+                dir: foreign,
+                plugin: None,
+            },
+        ];
+        let bodies = |state: &crate::plugins::PluginState| -> Vec<(String, String)> {
+            list_skills_over(&sources, state)
+                .into_iter()
+                .map(|s| (s.name, s.body.trim().to_string()))
+                .collect()
+        };
+
+        assert_eq!(
+            bodies(&crate::plugins::PluginState::all_on()),
+            [
+                ("draft".to_string(), "PLUGIN".to_string()),
+                ("review".to_string(), "PLUGIN".to_string()),
+            ],
+            "a plugin's skill is on until said otherwise"
+        );
+        let one_off = crate::plugins::PluginState {
+            off: vec!["acme/skills/review".into()],
+        };
+        assert_eq!(
+            bodies(&one_off),
+            [
+                ("draft".to_string(), "PLUGIN".to_string()),
+                ("review".to_string(), "FOREIGN".to_string()),
+            ],
+            "the plugin's other skill is untouched and the name went to the next rung"
+        );
+        // `/review` resolves through `load_skill`, not the listing, so the
+        // switch has to be honoured there too or it turns off only the panel.
+        assert_eq!(
+            load_skill_over("review", &sources, &one_off)
+                .expect("the rung below still has one")
+                .body
+                .trim(),
+            "FOREIGN"
+        );
+        let all_off = crate::plugins::PluginState {
+            off: vec!["acme".into()],
+        };
+        assert_eq!(
+            bodies(&all_off),
+            [("review".to_string(), "FOREIGN".to_string())],
+            "the plugin's switch takes every skill in it"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // ---- the composed source order ------------------------------------------
@@ -1221,6 +1373,7 @@ mod tests {
         let sources = [SkillSource {
             source: SkillSourceName::Bundled,
             dir: dest.clone(),
+            plugin: None,
         }];
 
         let skill = load_skill("history", &sources).expect("the history skill ships bundled");

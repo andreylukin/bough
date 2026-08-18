@@ -244,6 +244,12 @@ pub enum Action {
         dir: Option<String>,
         note: Option<String>,
     },
+    /// `GET /plugins` answered, or the toggle did.
+    Plugins {
+        plugins: Option<Vec<crate::components::panel::plugins::PluginGroupRow>>,
+        dir: Option<String>,
+        note: Option<String>,
+    },
     /// `GET /models` — the picker's catalog.
     Models(Vec<crate::api::ModelRow>),
     /// `GET /model-settings` — what a NEW conversation runs on, both tiers.
@@ -419,6 +425,13 @@ pub enum Effect {
     /// `POST /hooks/:name` — the toggle, which answers with the new list.
     ToggleHook {
         name: String,
+        enabled: bool,
+    },
+    /// `GET /plugins` — the plugins tab's rows.
+    LoadPlugins,
+    /// `POST /plugins/:id` — the toggle, which answers with the new list.
+    TogglePlugin {
+        id: String,
         enabled: bool,
     },
     /// `GET /models` — the picker's catalog.
@@ -1733,6 +1746,7 @@ impl<T: Transport> App<T> {
                 note,
             } => self.panel.set_skills(skills, sources, note),
             Action::Hooks { hooks, dir, note } => self.panel.set_hooks(hooks, dir, note),
+            Action::Plugins { plugins, dir, note } => self.panel.set_plugins(plugins, dir, note),
             Action::Prompt { prompt, note } => {
                 self.panel.prompt = prompt;
                 self.panel.prompt_note = note;
@@ -2587,6 +2601,10 @@ impl<T: Transport> App<T> {
                 HostRequest::LoadPrompt => self.transport.effect(Effect::LoadPrompt),
                 HostRequest::ToggleHook { name, enabled } => {
                     self.transport.effect(Effect::ToggleHook { name, enabled })
+                }
+                HostRequest::LoadPlugins => self.transport.effect(Effect::LoadPlugins),
+                HostRequest::TogglePlugin { id, enabled } => {
+                    self.transport.effect(Effect::TogglePlugin { id, enabled })
                 }
                 HostRequest::LoadModels => self.transport.effect(Effect::LoadModels),
                 HostRequest::LoadModelSettings => self.transport.effect(Effect::LoadModelSettings),
@@ -4058,6 +4076,16 @@ impl<T: Transport> App<T> {
                     cols: (area.width as usize).saturating_sub(4).max(20),
                     selected: self.panel.sel,
                     note: self.panel.hooks_note.as_deref(),
+                })
+            }
+            crate::keys::PanelTab::Plugins => {
+                PanelBody::Plugins(crate::components::panel::plugins::PluginsTabProps {
+                    plugins: self.panel.plugins.as_deref(),
+                    dir: self.panel.plugins_dir.as_deref(),
+                    rows: panel_body_rows((area.height as usize).saturating_sub(2)),
+                    cols: (area.width as usize).saturating_sub(4).max(20),
+                    selected: self.panel.sel,
+                    note: self.panel.plugins_note.as_deref(),
                 })
             }
             crate::keys::PanelTab::Skills => {
@@ -5636,6 +5664,52 @@ impl Transport for LiveTransport {
                                 hooks: None,
                                 dir: None,
                                 note: Some(format!("could not toggle {name}: {e}")),
+                            });
+                        }
+                    }
+                });
+            }
+            // The plugins tab's rows. Same rule as hooks: a failed fetch is
+            // `None` with its reason, never an empty directory.
+            Effect::LoadPlugins => {
+                tokio::spawn(async move {
+                    match api.list_plugins().await {
+                        Ok(list) => {
+                            let _ = tx.send(Action::Plugins {
+                                plugins: Some(list.plugins),
+                                dir: Some(list.dir),
+                                note: None,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Plugins {
+                                plugins: None,
+                                dir: None,
+                                note: Some(e.to_string()),
+                            });
+                        }
+                    }
+                });
+            }
+            // The toggle answers with the WHOLE list, because a plugin's switch
+            // changes every row under it — so the reply IS the refresh.
+            Effect::TogglePlugin { id, enabled } => {
+                tokio::spawn(async move {
+                    match api.toggle_plugin(&id, enabled).await {
+                        Ok(list) => {
+                            let _ = tx.send(Action::Plugins {
+                                plugins: Some(list.plugins),
+                                dir: None,
+                                note: None,
+                            });
+                        }
+                        Err(e) => {
+                            // The rows on screen are still true — the toggle is
+                            // what failed — so they stay, and the note says so.
+                            let _ = tx.send(Action::Plugins {
+                                plugins: None,
+                                dir: None,
+                                note: Some(format!("could not toggle {id}: {e}")),
                             });
                         }
                     }

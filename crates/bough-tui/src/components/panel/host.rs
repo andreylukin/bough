@@ -101,6 +101,11 @@ pub enum HostRequest {
     LoadPrompt,
     /// `POST /hooks/:name` — turn one on or off, then reload the list.
     ToggleHook { name: String, enabled: bool },
+    /// `GET /plugins` — the plugins tab's rows.
+    LoadPlugins,
+    /// `POST /plugins/:id` — turn one plugin, or one thing inside one, on or
+    /// off, then reload the list.
+    TogglePlugin { id: String, enabled: bool },
     // ---- the model tab -----------------------------------------------------
     /// `GET /models` — the catalog, answered server-side because the server is
     /// the process that holds the credential.
@@ -267,6 +272,11 @@ pub struct PanelHost {
     pub hooks: Option<Vec<crate::components::panel::hooks::HookRow>>,
     pub hooks_dir: Option<String>,
     pub hooks_note: Option<String>,
+    /// `None` = `GET /plugins` has not answered. Never rendered as an empty
+    /// directory — see `panel/plugins.rs`.
+    pub plugins: Option<Vec<crate::components::panel::plugins::PluginGroupRow>>,
+    pub plugins_dir: Option<String>,
+    pub plugins_note: Option<String>,
     /// `None` = `GET /sessions/:id/prompt` has not answered. Rendered as an
     /// absence, never as a prompt with nothing in it.
     pub prompt: Option<crate::api::PromptView>,
@@ -327,6 +337,9 @@ impl Default for PanelHost {
             hooks: None,
             hooks_dir: None,
             hooks_note: None,
+            plugins: None,
+            plugins_dir: None,
+            plugins_note: None,
             prompt: None,
             prompt_note: None,
             models: Vec::new(),
@@ -606,6 +619,7 @@ impl PanelHost {
             }
             PanelTab::Skills => vec![HostRequest::LoadSkillRows],
             PanelTab::Hooks => vec![HostRequest::LoadHooks],
+            PanelTab::Plugins => vec![HostRequest::LoadPlugins],
             // Re-fetched on every arrival: the shape describes the LAST turn,
             // so a tab opened after another turn ran must not show the one
             // before it.
@@ -684,6 +698,35 @@ impl PanelHost {
     /// The hook the cursor is on, for the toggle key.
     pub fn selected_hook(&self) -> Option<&crate::components::panel::hooks::HookRow> {
         self.hooks.as_ref()?.get(self.sel)
+    }
+
+    /// `GET /plugins` answered. `None` rows carry the reason in `note`.
+    pub fn set_plugins(
+        &mut self,
+        plugins: Option<Vec<crate::components::panel::plugins::PluginGroupRow>>,
+        dir: Option<String>,
+        note: Option<String>,
+    ) {
+        // Clamped rather than reset, for the reason the hooks setter gives: a
+        // toggle re-fetches the whole list, and a cursor that jumped to the top
+        // after every ⏎ would make the list unusable.
+        if let Some(groups) = &plugins {
+            let rows = crate::components::panel::plugins::plugin_rows(groups).len();
+            self.sel = self.sel.min(rows.saturating_sub(1));
+        }
+        self.plugins = plugins;
+        if dir.is_some() {
+            self.plugins_dir = dir;
+        }
+        self.plugins_note = note;
+    }
+
+    /// The flat, cursor-addressable rows of the plugins tab.
+    pub fn plugin_rows(&self) -> Vec<crate::components::panel::plugins::PluginRow> {
+        self.plugins
+            .as_ref()
+            .map(|g| crate::components::panel::plugins::plugin_rows(g))
+            .unwrap_or_default()
     }
 
     pub fn set_skills(
@@ -833,6 +876,7 @@ impl PanelHost {
             PanelTab::Mcp => self.mcp.as_ref().map(|s| mcp_names(s).len()).unwrap_or(0),
             PanelTab::Skills => self.filtered_skills().len(),
             PanelTab::Hooks => self.hooks.as_ref().map(|h| h.len()).unwrap_or(0),
+            PanelTab::Plugins => self.plugin_rows().len(),
             PanelTab::Model => self.model_entries().len(),
             // Not a list: it has no rows to land a cursor on.
             PanelTab::Context | PanelTab::Theme | PanelTab::Recap => 0,
@@ -1460,6 +1504,23 @@ impl PanelHost {
             // ⏎ and space do the same thing here: the row has exactly one
             // verb, and a list where enter does nothing teaches the user that
             // the list is inert.
+            // The plugin's own row and its items are the same kind of switch,
+            // so ⏎ means one thing here. Which STORE holds the switch is the
+            // server's business (`plugins::set_enabled`), not this cursor's.
+            PanelTab::Plugins => self
+                .plugin_rows()
+                .get(at)
+                .map(|row| {
+                    vec![HostRequest::TogglePlugin {
+                        id: row.id.clone(),
+                        // The row's OWN switch, never the effective one: ⏎ on
+                        // an item under a disabled plugin must not read as
+                        // "it is off, so turn it on" and silently flip a
+                        // switch that was already on.
+                        enabled: !row.enabled,
+                    }]
+                })
+                .unwrap_or_default(),
             PanelTab::Hooks => self
                 .hooks
                 .as_ref()

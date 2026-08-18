@@ -716,7 +716,9 @@ problems.
 to the system prompt for that run. `${SKILL_DIR}` resolves to the skill's folder so
 instructions can reference helper scripts. Sources, first name wins: bundled → project
 (`.agents/skills`, `.claude/skills`) → `~/.bough/skills` → plugins → the foreign tiers
-another harness already wrote (see [extending.md](extending.md)). Seven ship bundled:
+another harness already wrote (see [extending.md](extending.md)). A plugin's skill can be
+switched off one at a time, which hands its name back to the rung below it rather than
+breaking the name. Seven ship bundled:
 **`history`**, **`wayfinder`**, **`domain-modeling`**, **`grilling`**, **`analyze-logs`**,
 **`flint`** and **`prepopulate-tags`**.
 

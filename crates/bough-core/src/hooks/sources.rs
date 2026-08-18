@@ -218,15 +218,18 @@ pub fn all_sources() -> Vec<HookSource> {
         &repos_dir(),
         &crate::paths::plugins_dir(),
         &hooks_dir(),
+        &crate::plugins::state(),
     )
 }
 
-/// The injectable form — tests point all four somewhere temporary.
+/// The injectable form — tests point all four somewhere temporary and pass the
+/// switchboard rather than moving `BOUGH_HOME` to reach the real one.
 pub fn sources_from(
     sources_at: &Path,
     repos: &Path,
     plugins: &Path,
     local: &Path,
+    switches: &crate::plugins::PluginState,
 ) -> Vec<HookSource> {
     let mut out = Vec::new();
     if let Some(dir) = ensure_bundled() {
@@ -265,6 +268,14 @@ pub fn sources_from(
         let Some(name) = plugin.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
+        // A plugin switched off is NOT A SOURCE, rather than a source whose
+        // hooks all happen to be off. Its files stop being loaded, its
+        // listeners stop existing, and its per-hook switches are left exactly
+        // as they were for when you turn it back on
+        // (`plugins`: "a plugin that is off contributes nothing").
+        if !switches.plugin_on(name) {
+            continue;
+        }
         out.push(HookSource {
             name: name.to_string(),
             kind: SourceKind::Plugin,
@@ -425,6 +436,7 @@ mod tests {
             &root.join("repos"),
             &root.join("plugins"),
             &root.join("hooks"),
+            &crate::plugins::PluginState::all_on(),
         );
         let names: Vec<&str> = sources.iter().map(|s| s.name.as_str()).collect();
         // Bundled may be absent when the bundle cannot be written; the ORDER
@@ -444,6 +456,33 @@ mod tests {
         assert!(acme.dir.ends_with("acme/hooks"), "{:?}", acme.dir);
         assert_eq!(acme.kind, SourceKind::Plugin);
         assert!(!acme.kind.on_by_default());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A plugin switched off in `plugins-state.json` stops being a hook source
+    /// at all — its Lua is not loaded, so the listeners it registered at load
+    /// are gone, which is the only way to un-register them.
+    #[test]
+    fn a_plugin_switched_off_is_not_a_hook_source() {
+        let root = std::env::temp_dir().join(format!("bough-off-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("hooks")).unwrap();
+        std::fs::create_dir_all(root.join("plugins/acme/hooks")).unwrap();
+        std::fs::create_dir_all(root.join("plugins/other/hooks")).unwrap();
+        let off = crate::plugins::PluginState {
+            off: vec!["acme".into()],
+        };
+        let names: Vec<String> = sources_from(
+            &root.join("hooks.json"),
+            &root.join("repos"),
+            &root.join("plugins"),
+            &root.join("hooks"),
+            &off,
+        )
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+        assert!(!names.contains(&"acme".to_string()), "{names:?}");
+        assert!(names.contains(&"other".to_string()), "{names:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

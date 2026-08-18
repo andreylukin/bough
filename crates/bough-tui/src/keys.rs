@@ -47,6 +47,7 @@ pub enum PanelTab {
     Mcp,
     Skills,
     Hooks,
+    Plugins,
     Context,
     Theme,
 }
@@ -62,6 +63,7 @@ impl PanelTab {
             PanelTab::Mcp => "mcp",
             PanelTab::Skills => "skills",
             PanelTab::Hooks => "hooks",
+            PanelTab::Plugins => "plugins",
             PanelTab::Context => "context",
             PanelTab::Theme => "theme",
         }
@@ -204,7 +206,7 @@ pub struct TabDef {
 /// Every non-chat surface, as data. Adding a surface is adding a row — it
 /// cannot add a mode, an open flag, or an escape path, and it cannot ship
 /// without a key.
-pub const TABS: [TabDef; 10] = [
+pub const TABS: [TabDef; 11] = [
     TabDef {
         id: PanelTab::Tree,
         title: "tree",
@@ -259,6 +261,14 @@ pub const TABS: [TabDef; 10] = [
         desc: "the lua that runs around each turn; toggle it",
     },
     TabDef {
+        id: PanelTab::Plugins,
+        title: "plugins",
+        // `meta+` again: ctrl+p is the mcp tab's and every other ctrl chord
+        // was taken long before this tab existed.
+        chord: "meta+p",
+        desc: "what each plugin ships, and the switch on every piece",
+    },
+    TabDef {
         id: PanelTab::Context,
         title: "context",
         // Every ctrl chord this TUI could reach was already bound; `meta+` is
@@ -275,7 +285,7 @@ pub const TABS: [TabDef; 10] = [
 ];
 
 /// Tab ids in bar order. Derived, so the bar and the keymap cannot disagree.
-pub const PANEL_TABS: [PanelTab; 10] = [
+pub const PANEL_TABS: [PanelTab; 11] = [
     PanelTab::Tree,
     PanelTab::Changes,
     PanelTab::Recap,
@@ -284,6 +294,7 @@ pub const PANEL_TABS: [PanelTab; 10] = [
     PanelTab::Mcp,
     PanelTab::Skills,
     PanelTab::Hooks,
+    PanelTab::Plugins,
     PanelTab::Context,
     PanelTab::Theme,
 ];

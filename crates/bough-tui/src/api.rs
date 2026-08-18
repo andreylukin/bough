@@ -1091,6 +1091,24 @@ impl Api {
         .await
     }
 
+    // -- the plugins tab ------------------------------------------------------
+
+    /// `GET /plugins` — every plugin, everything in it, and whether it is on.
+    pub async fn list_plugins(&self) -> Result<PluginList, ApiFailure> {
+        self.get("/plugins").await
+    }
+
+    /// `POST /plugins/:id` — turn one plugin, or one thing inside one, on or
+    /// off. Answers with the new list, because a plugin's switch changes every
+    /// row under it.
+    pub async fn toggle_plugin(&self, id: &str, enabled: bool) -> Result<PluginList, ApiFailure> {
+        self.post(
+            &format!("/plugins/{}", seg(id)),
+            Some(serde_json::json!({ "enabled": enabled })),
+        )
+        .await
+    }
+
     // -- the model tab's catalog ----------------------------------------------
 
     /// `GET /models` — the picker's catalog, answered SERVER-SIDE because the
@@ -1420,6 +1438,14 @@ pub struct SkillTabList {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct HookList {
     pub hooks: Vec<crate::components::panel::hooks::HookRow>,
+    #[serde(default)]
+    pub dir: String,
+}
+
+/// `GET /plugins` — the plugins tab's rows and the directory that was walked.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PluginList {
+    pub plugins: Vec<crate::components::panel::plugins::PluginGroupRow>,
     #[serde(default)]
     pub dir: String,
 }

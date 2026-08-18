@@ -415,11 +415,15 @@ pub struct HookState {
 
 /// Read the state, folding in the pre-sources file.
 ///
+/// Public because a hook's switch is stored HERE and asked for elsewhere:
+/// `plugins::list` needs it to say whether a plugin's hook is on, and a second
+/// file holding a second answer is the thing that module refuses to have.
+///
 /// The old file held BARE names and only ever described local hooks, so each
 /// becomes `local/<name>`. Folded at READ time rather than rewritten: nothing
 /// is written until the next toggle, so a downgrade still finds its own file
 /// where it left it.
-fn read_state(path: &Path) -> HookState {
+pub fn read_state(path: &Path) -> HookState {
     let mut state: HookState = std::fs::read_to_string(path)
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())

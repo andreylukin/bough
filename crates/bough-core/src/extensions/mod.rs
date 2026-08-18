@@ -76,55 +76,94 @@ impl Extensions {
 /// else, so the loose file you wrote by hand must be able to shadow one of its
 /// names, and the project's file must be able to shadow both.
 pub fn extension_dirs(workspace: &Path) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = crate::paths::plugin_dirs()
+    extension_sources(workspace)
         .into_iter()
-        .map(|p| p.join("extensions"))
+        .map(|(_, d)| d)
+        .collect()
+}
+
+/// [`extension_dirs`], each directory paired with the PLUGIN that owns it when
+/// one does. Discovery needs the pairing and nothing else does: a file under a
+/// plugin has a switch (`plugins`), a file you dropped in `~/.bough/extensions`
+/// or the project's `.agents/extensions` is yours and has none — you delete it.
+fn extension_sources(workspace: &Path) -> Vec<(Option<String>, PathBuf)> {
+    let mut out: Vec<(Option<String>, PathBuf)> = crate::paths::plugin_dirs()
+        .into_iter()
+        .map(|p| {
+            let name = p.file_name().and_then(|n| n.to_str()).map(str::to_string);
+            (name, p.join("extensions"))
+        })
         .collect();
-    out.push(bough_path(&["extensions"]));
-    out.push(workspace.join(".agents").join("extensions"));
+    out.push((None, bough_path(&["extensions"])));
+    out.push((None, workspace.join(".agents").join("extensions")));
     out
 }
 
-/// The loadable files in one directory: `*.js` / `*.mjs` / `*.cjs` / `*.ts`
-/// at the top level, plus `<sub>/index.*` one level down so an extension with
-/// helper modules is a directory. Sorted, so binding order is stable across
-/// runs rather than whatever order the filesystem answered in.
-fn files_in(dir: &Path) -> Vec<PathBuf> {
-    const EXTS: [&str; 4] = ["js", "mjs", "cjs", "ts"];
+/// The loadable files in one directory as `(name, path)`: `*.js` / `*.mjs` /
+/// `*.cjs` / `*.ts` at the top level, plus `<sub>/index.*` one level down so an
+/// extension with helper modules is a directory. Sorted by NAME, so binding
+/// order is stable across runs rather than whatever order the filesystem
+/// answered in.
+///
+/// The name is the path relative to `dir` — `sub/index.js`, not `index.js` —
+/// because it is what a plugin's switch is keyed on, and two directory
+/// extensions in one plugin would otherwise share one switch.
+fn files_in(dir: &Path) -> Vec<(String, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
-    let mut out: Vec<PathBuf> = Vec::new();
-    let mut names: Vec<PathBuf> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
-    names.sort();
-    for path in names {
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {
-            for ext in EXTS {
-                let idx = path.join(format!("index.{ext}"));
-                if idx.is_file() {
-                    out.push(idx);
-                    break;
-                }
+            if let Some(index) = crate::plugins::extension_index(&path) {
+                let leaf = index
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                out.push((format!("{name}/{leaf}"), index));
             }
             continue;
         }
-        let is_loadable = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| EXTS.contains(&e));
-        if is_loadable {
-            out.push(path);
+        if crate::plugins::is_loadable(&path) {
+            out.push((name, path));
         }
     }
+    out.sort();
     out
 }
 
-/// Every extension file for a workspace, in binding order.
+/// Every extension file for a workspace, in binding order, minus the ones a
+/// plugin switch turned off.
 pub fn discover(workspace: &Path) -> Vec<PathBuf> {
-    extension_dirs(workspace)
-        .iter()
-        .flat_map(|d| files_in(d))
-        .collect()
+    discover_with(workspace, &crate::plugins::state())
+}
+
+/// [`discover`] against a given switchboard.
+///
+/// A SWITCHED-OFF EXTENSION IS NOT DISCOVERED, rather than discovered and then
+/// skipped at binding: the file list is what the cache fingerprints and what
+/// the probe loads, so dropping it here is what makes the prompt section and
+/// the worker's parameter list agree with the switch. They are the same list —
+/// the module header's load-bearing claim — and this is upstream of both.
+pub fn discover_with(workspace: &Path, switches: &crate::plugins::PluginState) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for (plugin, dir) in extension_sources(workspace) {
+        let Some(name) = plugin else {
+            out.extend(files_in(&dir).into_iter().map(|(_, p)| p));
+            continue;
+        };
+        if !switches.plugin_on(&name) {
+            continue;
+        }
+        out.extend(files_in(&dir).into_iter().filter_map(|(rel, path)| {
+            switches
+                .item_on(&name, &crate::plugins::extension_id(&name, &rel))
+                .then_some(path)
+        }));
+    }
+    out
 }
 
 /// What the cache keys on: the files AND their mtime/len, so editing an
@@ -263,6 +302,49 @@ mod tests {
                 home.join("extensions"),
                 ws.join(".agents").join("extensions"),
             ]
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// A plugin's extension has a switch; the loose files you wrote do not,
+    /// and must not be reachable by one.
+    #[test]
+    fn a_switched_off_plugin_extension_is_not_discovered() {
+        let home = tmp_ws("switch-home");
+        let ext = home.join("plugins").join("acme").join("extensions");
+        std::fs::create_dir_all(ext.join("big")).unwrap();
+        std::fs::write(ext.join("gh.js"), "").unwrap();
+        std::fs::write(ext.join("big").join("index.js"), "").unwrap();
+        let ws = tmp_ws("switch-ws");
+
+        let names = |state: &crate::plugins::PluginState| -> Vec<String> {
+            crate::paths::test_env::with_env(&[("BOUGH_HOME", home.to_str())], || {
+                discover_with(&ws, state)
+            })
+            .into_iter()
+            .map(|p| p.strip_prefix(&ext).unwrap().to_string_lossy().into_owned())
+            .collect()
+        };
+
+        assert_eq!(
+            names(&crate::plugins::PluginState::all_on()),
+            vec!["big/index.js", "gh.js"],
+            "on until said otherwise — a switch does not change the default"
+        );
+        assert_eq!(
+            names(&crate::plugins::PluginState {
+                off: vec!["acme/extensions/gh.js".into()]
+            }),
+            vec!["big/index.js"],
+            "one file, not the whole plugin"
+        );
+        assert!(
+            names(&crate::plugins::PluginState {
+                off: vec!["acme".into()]
+            })
+            .is_empty(),
+            "the plugin's switch takes the lot"
         );
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&ws);

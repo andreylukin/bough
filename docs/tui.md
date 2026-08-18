@@ -24,6 +24,7 @@ navigating.
 | `^p` | mcp | servers, grants, authorization |
 | `^k` | skills | installed `/skills` |
 | `^x` | hooks | Lua that runs in the loop; toggle it |
+| `⌥p` | plugins | what each plugin ships, and the switch on every piece |
 | `⌥c` | context | what the last turn put in the window, and what it cost (`/context`) |
 | `^y` | theme | browse live; leaving reverts |
 

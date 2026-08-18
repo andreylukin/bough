@@ -25,6 +25,7 @@ pub mod jobs;
 pub mod mcp_oauth;
 pub mod mcp_routes;
 pub mod models;
+pub mod plugins;
 pub mod questions;
 pub mod schedules;
 pub mod search;

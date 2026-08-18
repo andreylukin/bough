@@ -36,6 +36,7 @@ pub mod logs;
 pub mod mcp;
 pub mod notes;
 pub mod paths;
+pub mod plugins;
 pub mod prompt;
 pub mod resume;
 pub mod schedules;

@@ -17,17 +17,53 @@ A plugin is **one directory** under `~/.bough/plugins`:
 Any of the three may be absent. The **directory name is the identity**, which is what
 makes two plugins able to ship the same `guard.lua`.
 
-Plugin hooks are **off** until you turn them on (`^x`), the same as a cloned repo's and
-for the same reason: a plugin is the unit you get from someone else, and one keystroke
-turning it on beats no way to un-run it. Skills and extensions have no such switch,
-they do nothing until something names them.
-
 Precedence: a plugin's skills rank below `~/.bough/skills` and above every foreign
 directory; its extensions bind first, so a loose file of yours can shadow one of its
 names.
 
 The loose drop-boxes below are unchanged and still first-class. They are the files you
 wrote for yourself, and a ten-line hook should not need a directory.
+
+### Switching pieces of one off
+
+A unit you install in one move has to come apart, or the only way to stop one piece is
+to delete a file the plugin puts back on its next update. Every plugin, and everything
+in one, has a switch:
+
+```
+bough plugins                            # what is installed, and what is on
+bough plugins disable acme/extensions/gh.js
+bough plugins enable acme/guard.lua
+```
+
+`⌥p` is the same switchboard in the panel; `⏎` toggles the row under the cursor.
+
+An id is a plugin (`acme`) or one of its items: `acme/guard.lua`,
+`acme/skills/review`, `acme/extensions/gh.js`. **A plugin that is off contributes
+nothing, whatever its items say** — its hooks stop being a source, its skills are not
+listed and cannot be loaded by name, its extensions are not bound. Its items keep their
+own switches while it is off, so turning it back on restores the picture you left.
+
+Switching a skill off hands its name back: the rung below wins, which is the difference
+between "use the other `review`" and "break `review`".
+
+Defaults are unchanged by there being a switch. A plugin's **hooks are off** until you
+turn them on, the same as a cloned repo's and for the same reason: a plugin is the unit
+you get from someone else, its Lua runs in-process on the next turn, and one keystroke
+turning it on beats no way to un-run it. Its **skills and extensions are on** — a skill
+does nothing until something names it, and an extension that stopped binding the day the
+switch shipped would be a working setup broken by an upgrade. For those two the switch is
+an opt-*out*.
+
+The switches live in `~/.bough/plugins-state.json`, except a hook's, which stays in
+`~/.bough/hooks-state.json` where it has always been — turning a hook off is a reload of
+the interpreter, not a flag, and two files both claiming to know whether a hook is on is
+the bug the split avoids. Which file holds which is an implementation detail; one id
+namespace covers all of it.
+
+MCP servers are not part of this: a bough plugin ships hooks, skills and extensions, and
+a server is granted per session (`^p`). A Claude Code or Codex plugin's skills are not
+either — those are turned off in the harness that installed them.
 
 ## Project rules
 
@@ -129,7 +165,8 @@ marketplace lists what is *available*, not installed, and Codex itself will not 
 untrusted), and the ~25 events with no bough counterpart.
 
 `guard-destructive.lua` and `redact-secrets.lua` ship **off**. Yours go in
-`~/.bough/hooks`, a plugin's in `~/.bough/plugins/<name>/hooks`. `^x` toggles them live.
+`~/.bough/hooks`, a plugin's in `~/.bough/plugins/<name>/hooks`. `^x` toggles them live,
+and `⌥p` toggles a plugin's alongside the rest of what it ships.
 
 ## MCP
 

@@ -117,3 +117,16 @@ bough hooks     # what is installed, what is on, listener counts
 ```
 
 See [extending.md](extending.md).
+
+## `bough plugins`
+
+```
+bough plugins                            # every plugin, everything in it, what is on
+bough plugins disable acme/skills/review # one piece
+bough plugins enable acme                # or the whole directory
+```
+
+An id is a plugin (`acme`) or one of its items — `acme/guard.lua`,
+`acme/skills/review`, `acme/extensions/gh.js`. A plugin that is off contributes
+nothing, whatever its items say, and its items keep their own switches for when
+you turn it back on. `⌥p` is the same switchboard in the panel.

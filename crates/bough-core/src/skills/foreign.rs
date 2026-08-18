@@ -49,7 +49,14 @@ fn read_json(path: &Path) -> Option<Value> {
 /// that does not exist is harmless (`list_skills` skips unreadable dirs), but
 /// it would show up as a phantom row in the panel.
 fn source_if_dir(source: SkillSourceName, dir: PathBuf) -> Option<SkillSource> {
-    dir.is_dir().then_some(SkillSource { source, dir })
+    // `plugin: None` even for the foreign plugin rungs, deliberately: bough's
+    // switchboard governs `~/.bough/plugins` and nothing else, because a
+    // Claude Code plugin is turned off in Claude Code (`skills::SkillSource`).
+    dir.is_dir().then_some(SkillSource {
+        source,
+        dir,
+        plugin: None,
+    })
 }
 
 // ---------------------------------------------------------------------------
