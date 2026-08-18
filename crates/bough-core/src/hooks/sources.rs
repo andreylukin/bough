@@ -231,8 +231,20 @@ pub fn sources_from(
     local: &Path,
     switches: &crate::plugins::PluginState,
 ) -> Vec<HookSource> {
+    // A GROUP THAT IS OFF IS NOT A SOURCE, rather than a source whose hooks all
+    // happen to be off. Its files stop being loaded, so the listeners they
+    // registered stop existing — which is the only way to un-register one — and
+    // the per-hook switches under it are left exactly as they were for when you
+    // turn it back on.
+    //
+    // THIS APPLIES TO EVERY GROUP, not only plugins. It used to be plugins
+    // alone, which made the switch on `bundled` or on `local` cosmetic: the
+    // panel printed "its source is off" while the hook stayed loaded and went
+    // on firing. A switch that reports a state it does not enforce is worse
+    // than no switch.
+    let on = |name: &str| switches.plugin_on(name);
     let mut out = Vec::new();
-    if let Some(dir) = ensure_bundled() {
+    if let Some(dir) = ensure_bundled().filter(|_| on("bundled")) {
         out.push(HookSource {
             name: "bundled".into(),
             kind: SourceKind::Bundled,
@@ -244,6 +256,9 @@ pub fn sources_from(
     }
     for git in read_sources_file(sources_at).sources {
         let slug = git.slug();
+        if !on(&slug) {
+            continue;
+        }
         out.push(HookSource {
             name: slug.clone(),
             kind: SourceKind::Git,
@@ -268,12 +283,7 @@ pub fn sources_from(
         let Some(name) = plugin.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        // A plugin switched off is NOT A SOURCE, rather than a source whose
-        // hooks all happen to be off. Its files stop being loaded, its
-        // listeners stop existing, and its per-hook switches are left exactly
-        // as they were for when you turn it back on
-        // (`plugins`: "a plugin that is off contributes nothing").
-        if !switches.plugin_on(name) {
+        if !on(name) {
             continue;
         }
         out.push(HookSource {
@@ -285,14 +295,16 @@ pub fn sources_from(
             sha: None,
         });
     }
-    out.push(HookSource {
-        name: "local".into(),
-        kind: SourceKind::Local,
-        dir: local.to_path_buf(),
-        repo: None,
-        rev: None,
-        sha: None,
-    });
+    if on("local") {
+        out.push(HookSource {
+            name: "local".into(),
+            kind: SourceKind::Local,
+            dir: local.to_path_buf(),
+            repo: None,
+            rev: None,
+            sha: None,
+        });
+    }
     out
 }
 
@@ -459,9 +471,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// A plugin switched off in `plugins-state.json` stops being a hook source
-    /// at all — its Lua is not loaded, so the listeners it registered at load
-    /// are gone, which is the only way to un-register them.
+    /// EVERY group's switch drops the source, not only a plugin's. When this
+    /// was plugins-only the switch on `bundled` and on `local` was cosmetic:
+    /// the panel said "its source is off" while the hook stayed loaded and
+    /// went on firing.
+    #[test]
+    fn any_group_switched_off_stops_being_a_hook_source() {
+        let root = std::env::temp_dir().join(format!("bough-grp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("hooks")).unwrap();
+        std::fs::write(root.join("hooks/mine.lua"), "").unwrap();
+        let names = |off: &str| -> Vec<String> {
+            sources_from(
+                &root.join("hooks.json"),
+                &root.join("repos"),
+                &root.join("plugins"),
+                &root.join("hooks"),
+                &crate::plugins::PluginState {
+                    off: vec![off.into()],
+                    ..Default::default()
+                },
+            )
+            .into_iter()
+            .map(|s| s.name)
+            .collect()
+        };
+        assert!(!names("local").contains(&"local".to_string()));
+        assert!(names("bundled").contains(&"local".to_string()));
+        assert!(!names("bundled").contains(&"bundled".to_string()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_plugin_switched_off_is_not_a_hook_source() {
         let root = std::env::temp_dir().join(format!("bough-off-{}", uuid::Uuid::new_v4()));

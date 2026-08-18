@@ -43,15 +43,18 @@ that ship with bough, the ones you wrote, the ones this checkout ships, the ones
 cloned repo ships, and the ones inside a plugin.
 
 `^x` is the same switchboard in the panel (`⌥p` still lands there too). It opens on the
-list of SOURCES — one row each, with what that source ships (`acme · 1 hook · 1 skill ·
-2/3 on`). `⏎` opens the one under the cursor and `⏎` again switches one of its things on
-or off; `esc` climbs back to the list. `x` switches the row under the cursor at either
-level, so turning a whole source off never needs opening it first.
+list of SOURCES, collapsed — one row each, with what that source ships (`acme · 1 hook ·
+1 skill · 2/3 on`). `⏎` expands the one under the cursor, showing everything inside it
+indented underneath, and `⏎` on one of those switches it on or off. `x` switches the row
+under the cursor whichever kind it is, so turning a whole source off never needs
+expanding it first, and the legend follows the cursor so the row you are on always says
+what `⏎` will do to it. `esc` collapses before it closes the panel.
 
 An id is a **source** — `bundled`, `local` (yours), `project`, a cloned repo's slug, or a
 plugin's name — or one thing inside one: `acme/guard.lua`, `local/skills/mine`,
 `acme/extensions/gh.js`. **A source that is off contributes nothing, whatever the things
-inside it say** — its hooks stop being a source, its skills are not listed and cannot be
+inside it say** — its hooks stop being LOADED (so the listeners they registered are gone,
+which is the only way to un-register one), its skills are not listed and cannot be
 loaded by name, its extensions are not bound. Those things keep their own switches while
 it is off, so turning it back on restores the picture you left.
 

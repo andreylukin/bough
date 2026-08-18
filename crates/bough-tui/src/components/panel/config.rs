@@ -13,12 +13,18 @@
 //! has answered yet — say so, and never render it as "nothing installed", which
 //! is a claim about the user's directories this component has not read.
 //!
-//! TWO LEVELS, AND THE GROUP LEVEL IS THE DEFAULT. One flat list of every hook,
-//! skill and extension buries the groups: a handful of sources shipping a
-//! handful of things each is fifty rows in a ten-row panel, and "what have I
-//! got" cannot be answered by scrolling through the answer to a different
-//! question. So the list level is groups, and you open the one you want to pick
-//! through.
+//! ONE TREE, GROUPS EXPANDING IN PLACE. Two shapes were tried. A flat list of
+//! every hook, skill and extension buries the groups — fifty rows in a ten-row
+//! panel, and "what have I got" cannot be answered by scrolling through the
+//! answer to a different question. A second SCREEN per group answers that, but
+//! hides the thing people actually came for: the first report from driving it
+//! was "I should be able to switch a specific hook", from someone looking at a
+//! list of groups with no sign that each row had things inside it. So the
+//! groups are rows you EXPAND, their contents indented underneath, and every
+//! switch is reachable without leaving the list you started on.
+//!
+//! Collapsed by default, because the count on the group row (`9/11 on`) is the
+//! answer most of the time and forty rows of skills is not.
 //!
 //! TWO ANSWERS PER ITEM, AND THE ROW SAYS WHICH IS IN FORCE. An item under a
 //! disabled group keeps its own switch, because turning the group back on must
@@ -98,9 +104,8 @@ pub struct ConfigGroupRow {
     pub items: Vec<ConfigItemRow>,
 }
 
-/// One row the cursor moves over. A group at the list level, one of its things
-/// once you have opened it — both are switches, which is why they share a row
-/// type.
+/// One row the cursor moves over. A group, or one thing indented under an
+/// expanded one — both are switches, which is why they share a row type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigRow {
     /// What a toggle sends to `POST /config/:id`.
@@ -113,8 +118,10 @@ pub struct ConfigRow {
     pub enabled: bool,
     /// Whether the row is actually in force.
     pub live: bool,
-    /// Does ⏎ open this row, or toggle it?
+    /// A group row: ⏎ expands or collapses it instead of switching it.
     pub is_group: bool,
+    /// Group rows only: is it expanded right now? Drives the ▾/▸ marker.
+    pub expanded: bool,
     /// Printed dim after the label — why it is not running, or what it did.
     pub note: Option<String>,
 }
@@ -197,45 +204,49 @@ fn hook_note(item: &ConfigItemRow) -> Option<String> {
     Some(note)
 }
 
-/// The rows the cursor addresses at the level currently open: every group, or
-/// the things inside the one named by `open`.
+/// Every row the cursor addresses: each group, with the things inside the
+/// expanded ones indented underneath.
 ///
-/// An `open` naming a group that is no longer there falls back to the list
-/// rather than to an empty screen — a plugin can be uninstalled between two
-/// fetches, and a level with nothing in it reads as a broken tab.
-pub fn config_rows(groups: &[ConfigGroupRow], open: Option<&str>) -> Vec<ConfigRow> {
-    if let Some(group) = open.and_then(|id| groups.iter().find(|g| g.id == id)) {
-        return group
-            .items
-            .iter()
-            .map(|item| ConfigRow {
-                id: item.id.clone(),
-                kind: item.surface.clone(),
-                // The bare name: the header above says which group this is, so
-                // the id's prefix is noise at this level.
-                label: item.name.clone(),
-                enabled: item.enabled,
-                live: item.live,
-                is_group: false,
-                note: match item.surface.as_str() {
-                    "hook" => hook_note(item),
-                    _ => item.error.clone().map(|e| format!("error: {e}")),
-                },
-            })
-            .collect();
-    }
-    groups
-        .iter()
-        .map(|group| ConfigRow {
+/// The group's own row comes FIRST and its contents follow it, so the switch
+/// that outranks them all is the one you read before them — a listing that put
+/// `— its source is off` on ten rows without the row that says why would be a
+/// puzzle rather than a screen.
+pub fn config_rows(groups: &[ConfigGroupRow], expanded: &[String]) -> Vec<ConfigRow> {
+    let mut out: Vec<ConfigRow> = Vec::new();
+    for group in groups {
+        let open = expanded.contains(&group.id);
+        out.push(ConfigRow {
             id: group.id.clone(),
             kind: group.kind.clone(),
             label: format!("{} · {}", group.id, shipped(group)),
             enabled: group.enabled,
             live: group.enabled,
             is_group: true,
+            expanded: open,
             note: Some(group_detail(group)),
-        })
-        .collect()
+        });
+        if !open {
+            continue;
+        }
+        for item in &group.items {
+            out.push(ConfigRow {
+                id: item.id.clone(),
+                kind: item.surface.clone(),
+                // The bare name: the group row directly above says which
+                // source this is, so the id's prefix is noise here.
+                label: item.name.clone(),
+                enabled: item.enabled,
+                live: item.live,
+                is_group: false,
+                expanded: false,
+                note: match item.surface.as_str() {
+                    "hook" => hook_note(item),
+                    _ => item.error.clone().map(|e| format!("error: {e}")),
+                },
+            });
+        }
+    }
+    out
 }
 
 pub struct ConfigTabProps<'a> {
@@ -246,8 +257,8 @@ pub struct ConfigTabProps<'a> {
     pub selected: usize,
     /// Shown instead of the list when there is nothing to show yet.
     pub note: Option<&'a str>,
-    /// The group whose things are on screen, or `None` for the list.
-    pub open: Option<&'a str>,
+    /// The groups showing their contents right now.
+    pub expanded: &'a [String],
 }
 
 impl Default for ConfigTabProps<'_> {
@@ -258,7 +269,7 @@ impl Default for ConfigTabProps<'_> {
             cols: 96,
             selected: 0,
             note: None,
-            open: None,
+            expanded: &[],
         }
     }
 }
@@ -276,25 +287,6 @@ pub fn config_summary(groups: &[ConfigGroupRow]) -> String {
         groups.len(),
         if groups.len() == 1 { "" } else { "s" },
         if items == 1 { "" } else { "s" },
-    )
-}
-
-/// The line above an opened group: which group, where it is, and — when it is
-/// off — that nothing under it runs whatever the rows say.
-pub fn open_header(group: &ConfigGroupRow) -> String {
-    format!(
-        "{} · {}{}",
-        group.id,
-        group
-            .dirs
-            .first()
-            .cloned()
-            .unwrap_or_else(|| group_detail(group)),
-        if group.enabled {
-            String::new()
-        } else {
-            " · OFF — nothing here runs".to_string()
-        }
     )
 }
 
@@ -322,9 +314,24 @@ pub fn config_line(row: &ConfigRow, selected: bool, cols: usize) -> Line<'static
             s.add_modifier(Modifier::DIM)
         }
     };
-    let budget = cols.saturating_sub(22);
+    // A group carries a disclosure marker and its contents are indented under
+    // it: the shape says which rows belong to which switch without a header.
+    //
+    // NOT `▸` for the collapsed one, which is the cursor's own glyph — the
+    // selected group rendered as `▸ ▸` and read as noise on the first screen
+    // it was driven on.
+    let lead = if row.is_group {
+        if row.expanded {
+            "▾ ".to_string()
+        } else {
+            "› ".to_string()
+        }
+    } else {
+        "    ".to_string()
+    };
+    let budget = cols.saturating_sub(26);
     let mut spans = vec![
-        Span::styled(format!("{mark}{state}"), state_style),
+        Span::styled(format!("{mark}{lead}{state}"), state_style),
         Span::styled(row.kind.clone(), kind_style),
         Span::styled(format!("  {}", clip(&row.label, budget)), label_style),
     ];
@@ -380,21 +387,8 @@ pub fn render_config(props: &ConfigTabProps<'_>, area: Rect, buf: &mut Buffer) {
         return;
     }
 
-    let open = props.open.and_then(|id| groups.iter().find(|g| g.id == id));
-    let rows = config_rows(groups, props.open);
-    // The head line says WHICH LEVEL you are on, because the two look alike
-    // otherwise: a list of groups and a list of one group's things are both
-    // rows with state boxes.
-    let mut lines = vec![Line::from(Span::styled(
-        match open {
-            Some(group) => clip(&open_header(group), props.cols),
-            None => config_summary(groups),
-        },
-        dim,
-    ))];
-    if open.is_some_and(|g| g.items.is_empty()) {
-        lines.push(Line::from(Span::styled("nothing in it".to_string(), dim)));
-    }
+    let rows = config_rows(groups, props.expanded);
+    let mut lines = vec![Line::from(Span::styled(config_summary(groups), dim))];
     // Chrome the list gives way to: the head line, plus the legend, which is
     // the last row of the tab and never gives up its place.
     let chrome = 1usize;
@@ -406,12 +400,14 @@ pub fn render_config(props: &ConfigTabProps<'_>, area: Rect, buf: &mut Buffer) {
     for (i, row) in rows.iter().enumerate().skip(start).take(avail.max(1)) {
         lines.push(config_line(row, i == at, props.cols));
     }
-    // The legend is the level's, because ⏎ means two things: it OPENS a group
-    // and it switches a thing. A legend that said "on/off" on both would teach
-    // the wrong key for the level you are actually on.
-    let keys: Vec<String> = match open {
-        Some(_) => ["⏎ on/off", "↑↓ move", "esc back"],
-        None => ["⏎ open", "x on/off", "↑↓ move"],
+    // ⏎ means two things, and the legend says which one is under the cursor —
+    // a legend that said "on/off" on a group row would teach the wrong key for
+    // the row you are actually on.
+    let on_group = rows.get(at).is_some_and(|r| r.is_group);
+    let keys: Vec<String> = if on_group {
+        ["⏎ expand", "x on/off", "↑↓ move"]
+    } else {
+        ["⏎ on/off", "x on/off", "↑↓ move"]
     }
     .iter()
     .map(|s| s.to_string())
@@ -502,52 +498,79 @@ mod tests {
         line.spans.iter().map(|s| s.content.to_string()).collect()
     }
 
+    fn all() -> Vec<ConfigGroupRow> {
+        vec![fixtures::acme(true), fixtures::local()]
+    }
+
     #[test]
-    fn the_list_level_is_sources_and_says_what_each_one_ships() {
-        let rows = config_rows(&[fixtures::acme(true), fixtures::local()], None);
-        assert_eq!(rows.len(), 2, "one row per source, not per thing: {rows:?}");
-        assert!(rows[0].is_group, "⏎ opens this row rather than toggling it");
+    fn collapsed_is_one_row_per_source_and_says_what_each_one_ships() {
+        let rows = config_rows(&all(), &[]);
+        assert_eq!(rows.len(), 2, "collapsed: no contents, just the sources");
+        assert!(rows[0].is_group);
+        assert!(!rows[0].expanded);
         assert_eq!(
-            text(&config_line(&rows[0], false, 96)),
-            "  [on] plugin  acme · 1 hook · 1 skill · 1/2 on  · /home/u/.bough/plugins/acme",
+            text(&config_line(&rows[0], false, 100)),
+            "  › [on] plugin  acme · 1 hook · 1 skill · 1/2 on  · /home/u/.bough/plugins/acme",
             "the surfaces, because they are what the source is allowed to do"
         );
     }
 
     #[test]
-    fn one_tab_holds_every_surface_including_the_two_that_had_no_switch() {
-        // The whole point of the merge: a skill you wrote and an extension you
-        // wrote are switchable in the same place a hook is.
-        let rows = config_rows(&[fixtures::local()], Some("local"));
+    fn expanding_a_source_puts_its_things_under_it_without_leaving_the_list() {
+        // The report that produced this shape: a list of groups gave no sign
+        // that a specific hook could be switched at all.
+        let rows = config_rows(&all(), &["acme".to_string()]);
         let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids, ["local/mine.lua", "local/skills/mine"]);
-        assert!(rows.iter().all(|r| !r.is_group), "⏎ switches these");
         assert_eq!(
-            text(&config_line(&rows[1], false, 96)),
-            "  [on] skill  mine",
-            "the bare name: the header above says which source"
+            ids,
+            ["acme", "acme/guard.lua", "acme/skills/review", "local"],
+            "the group's own row first, its contents under it, the next group after"
         );
+        assert!(rows[0].expanded, "and the marker says so");
+        assert!(text(&config_line(&rows[0], false, 100)).starts_with("  ▾ "));
+        // The things inside are indented and switchable in their own right.
+        assert_eq!(
+            text(&config_line(&rows[2], false, 100)),
+            "      [on] skill  review"
+        );
+        assert!(!rows[2].is_group, "⏎ switches this one");
+    }
+
+    #[test]
+    fn two_sources_can_be_open_at_once() {
+        let rows = config_rows(&all(), &["acme".to_string(), "local".to_string()]);
+        assert_eq!(rows.len(), 2 + 2 + 2, "both groups show their contents");
+    }
+
+    #[test]
+    fn one_tab_holds_every_surface_including_the_two_that_had_no_switch() {
+        // The whole point of the merge: a skill you wrote and a hook you wrote
+        // are switchable in the same place, and now on the same screen.
+        let rows = config_rows(&all(), &["local".to_string()]);
+        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains(&"local/mine.lua"), "{ids:?}");
+        assert!(ids.contains(&"local/skills/mine"), "{ids:?}");
     }
 
     #[test]
     fn a_live_hook_says_what_it_wired_and_what_it_last_did() {
-        let rows = config_rows(&[fixtures::local()], Some("local"));
+        let rows = config_rows(&[fixtures::local()], &["local".to_string()]);
         assert_eq!(
-            text(&config_line(&rows[0], false, 96)),
-            "  [on] hook  mine.lua  · 2 listeners · fired 3 · added context",
+            text(&config_line(&rows[1], false, 100)),
+            "      [on] hook  mine.lua  · 2 listeners · fired 3 · added context",
             "on with zero listeners is a different problem from failing to parse"
         );
     }
 
     #[test]
     fn a_thing_under_a_disabled_source_prints_neither_on_nor_off() {
-        let rows = config_rows(&[fixtures::acme(false)], Some("acme"));
-        let skill = &rows[1];
+        let rows = config_rows(&[fixtures::acme(false)], &["acme".to_string()]);
+        let skill = &rows[2];
         assert!(skill.enabled, "it keeps its own switch");
         assert!(!skill.live);
         assert_eq!(
-            text(&config_line(skill, false, 96)),
-            "  [—]  skill  review  · its source is off",
+            text(&config_line(skill, false, 100)),
+            "      [—]  skill  review  · its source is off",
             "a row that said `on` while nothing ran would be a lie"
         );
     }
@@ -556,18 +579,43 @@ mod tests {
     fn a_broken_hook_is_listed_with_its_error_rather_than_omitted() {
         let mut group = fixtures::local();
         group.items[0].error = Some("unexpected symbol".into());
-        let rows = config_rows(&[group], Some("local"));
+        let rows = config_rows(&[group], &["local".to_string()]);
         assert!(
-            text(&config_line(&rows[0], false, 96)).contains("error: unexpected symbol"),
+            text(&config_line(&rows[1], false, 100)).contains("error: unexpected symbol"),
             "a hook that vanished is discovered as one that quietly never fired"
         );
     }
 
     #[test]
-    fn an_open_source_that_is_gone_falls_back_to_the_list_not_to_an_empty_screen() {
-        let rows = config_rows(&[fixtures::acme(true)], Some("uninstalled"));
-        assert_eq!(rows.len(), 1);
+    fn an_expanded_source_that_is_gone_is_simply_not_expanded() {
+        let rows = config_rows(&[fixtures::acme(true)], &["uninstalled".to_string()]);
+        assert_eq!(rows.len(), 1, "a stale id is inert, not an empty screen");
         assert_eq!(rows[0].id, "acme");
+    }
+
+    /// The legend follows the CURSOR, because ⏎ does: on a group it expands,
+    /// on a thing it switches.
+    #[test]
+    fn the_legend_names_the_key_for_the_row_under_the_cursor() {
+        let area = Rect::new(0, 0, 100, 6);
+        let legend = |selected: usize| -> String {
+            let mut buf = Buffer::empty(area);
+            render_config(
+                &ConfigTabProps {
+                    groups: Some(&all()),
+                    expanded: &["acme".to_string()],
+                    rows: 6,
+                    cols: 100,
+                    selected,
+                    ..Default::default()
+                },
+                area,
+                &mut buf,
+            );
+            (0..100).map(|x| buf[(x, 5)].symbol()).collect()
+        };
+        assert!(legend(0).contains("⏎ expand"), "{}", legend(0));
+        assert!(legend(1).contains("⏎ on/off"), "{}", legend(1));
     }
 
     #[test]

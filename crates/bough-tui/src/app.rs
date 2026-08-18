@@ -4053,7 +4053,7 @@ impl<T: Transport> App<T> {
             crate::keys::PanelTab::Config => {
                 PanelBody::Config(crate::components::panel::config::ConfigTabProps {
                     groups: self.panel.config.as_deref(),
-                    open: self.panel.config_open.as_deref(),
+                    expanded: &self.panel.config_expanded,
                     rows: panel_body_rows((area.height as usize).saturating_sub(2)),
                     cols: (area.width as usize).saturating_sub(4).max(20),
                     selected: self.panel.sel,

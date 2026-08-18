@@ -267,10 +267,9 @@ pub struct PanelHost {
     /// listing — see `panel/config.rs`.
     pub config: Option<Vec<crate::components::panel::config::ConfigGroupRow>>,
     pub config_note: Option<String>,
-    /// The plugin whose pieces are on screen, or `None` for the list of
-    /// plugins. The tab's one level, held here rather than in the renderer
-    /// because the CURSOR is what it changes.
-    pub config_open: Option<String>,
+    /// The sources showing their contents. Held here rather than in the
+    /// renderer because the CURSOR is what it changes.
+    pub config_expanded: Vec<String>,
     /// `None` = `GET /sessions/:id/prompt` has not answered. Rendered as an
     /// absence, never as a prompt with nothing in it.
     pub prompt: Option<crate::api::PromptView>,
@@ -330,7 +329,7 @@ impl Default for PanelHost {
             skills_note: None,
             config: None,
             config_note: None,
-            config_open: None,
+            config_expanded: Vec::new(),
             prompt: None,
             prompt_note: None,
             models: Vec::new(),
@@ -609,12 +608,11 @@ impl PanelHost {
                 vec![HostRequest::LoadMcp]
             }
             PanelTab::Skills => vec![HostRequest::LoadSkillRows],
-
-            // On the LIST, never on whatever plugin was last opened: a level
-            // that outlives its tab shows one plugin's pieces under a header
-            // the reader did not ask for. Same rule as the workflow view.
+            // COLLAPSED, however it was left: the tab's first answer is
+            // "what have I got", and forty rows of somebody else's skills is
+            // the answer to a question you asked once, last time.
             PanelTab::Config => {
-                self.config_open = None;
+                self.config_expanded.clear();
                 vec![HostRequest::LoadConfig]
             }
             // Re-fetched on every arrival: the shape describes the LAST turn,
@@ -683,8 +681,7 @@ impl PanelHost {
         // the kind of thing that makes a ten-row list unusable.
         if let Some(groups) = &groups {
             let rows =
-                crate::components::panel::config::config_rows(groups, self.config_open.as_deref())
-                    .len();
+                crate::components::panel::config::config_rows(groups, &self.config_expanded).len();
             self.sel = self.sel.min(rows.saturating_sub(1));
         }
         self.config = groups;
@@ -698,7 +695,7 @@ impl PanelHost {
     pub fn config_rows(&self) -> Vec<crate::components::panel::config::ConfigRow> {
         self.config
             .as_ref()
-            .map(|g| crate::components::panel::config::config_rows(g, self.config_open.as_deref()))
+            .map(|g| crate::components::panel::config::config_rows(g, &self.config_expanded))
             .unwrap_or_default()
     }
 
@@ -827,9 +824,10 @@ impl PanelHost {
             self.sel = 0;
             return true;
         }
-        // An opened plugin unwinds before the panel closes, so escape from a
-        // plugin's pieces lands on the list of plugins rather than on the chat.
-        if self.state.tab == PanelTab::Config && self.config_open.take().is_some() {
+        // Expanded sources collapse before the panel closes, so escape from a
+        // long tree lands on the list of sources rather than on the chat.
+        if self.state.tab == PanelTab::Config && !self.config_expanded.is_empty() {
+            self.config_expanded.clear();
             self.sel = 0;
             return true;
         }
@@ -1500,14 +1498,23 @@ impl PanelHost {
             // ⏎ and space do the same thing here: the row has exactly one
             // verb, and a list where enter does nothing teaches the user that
             // the list is inert.
-            // ⏎ OPENS a source and SWITCHES one of its things. Two meanings
-            // on one key, which is what the workflow view does and for the
-            // same reason: the obvious thing to do to a row differs by level,
-            // and a second key for "open" would be a key nobody presses.
+            // ⏎ EXPANDS a source and SWITCHES one of its things. Two meanings
+            // on one key, and the legend follows the cursor so the row under
+            // the mark always says which one it is. `x` switches EITHER kind of
+            // row, so a whole source goes off without expanding it first.
             PanelTab::Config => match self.config_rows().get(at) {
                 Some(row) if row.is_group => {
-                    self.config_open = Some(row.id.clone());
-                    self.sel = 0;
+                    let id = row.id.clone();
+                    // The cursor STAYS on the source it just expanded rather
+                    // than jumping into the contents: expanding is a look, and
+                    // a cursor that moved would put the next ⏎ on a switch.
+                    self.sel = at;
+                    match self.config_expanded.iter().position(|e| *e == id) {
+                        Some(i) => {
+                            self.config_expanded.remove(i);
+                        }
+                        None => self.config_expanded.push(id),
+                    }
                     Vec::new()
                 }
                 Some(row) => vec![HostRequest::ToggleConfig {
@@ -2573,25 +2580,26 @@ mod tab_tests {
     }
 
     #[test]
-    fn enter_opens_a_source_and_esc_climbs_back_to_the_list_before_the_panel() {
+    fn enter_expands_a_source_in_place_and_esc_collapses_before_it_closes() {
         let mut h = open_on(PanelTab::Config);
         h.set_config(Some(config_fx()), None);
-        // The list level is SOURCES: two rows, not the four things they ship.
+        // Collapsed: one row per source, not per thing.
         assert_eq!(h.config_rows().len(), 2);
 
-        // ⏎ opens rather than switching — a source row has somewhere to go.
-        assert!(
-            h.confirm(0).is_empty(),
-            "opening asks the server for nothing"
-        );
-        assert_eq!(h.config_open.as_deref(), Some("acme"));
-        assert_eq!(h.sel, 0, "the cursor lands on the first thing");
+        // ⏎ expands rather than switching — and asks the server for nothing.
+        assert!(h.confirm(0).is_empty());
+        assert_eq!(h.config_expanded, vec!["acme".to_string()]);
+        assert_eq!(h.sel, 0, "the cursor stays on the source it opened");
         let ids: Vec<String> = h.config_rows().into_iter().map(|r| r.id).collect();
-        assert_eq!(ids, ["acme/guard.lua", "acme/skills/review"]);
-
-        // ⏎ inside SWITCHES the thing under the cursor, by its own switch.
         assert_eq!(
-            h.confirm(0),
+            ids,
+            ["acme", "acme/guard.lua", "acme/skills/review", "local"],
+            "the contents sit under their source, in the same list"
+        );
+
+        // ⏎ on a thing SWITCHES it, by its own switch.
+        assert_eq!(
+            h.confirm(1),
             vec![HostRequest::ToggleConfig {
                 id: "acme/guard.lua".into(),
                 enabled: true,
@@ -2599,20 +2607,35 @@ mod tab_tests {
             "a plugin's hook arrives off, so ⏎ turns it on"
         );
 
-        // esc climbs one level, and the panel is still open.
+        // ⏎ on the source again collapses it.
+        h.confirm(0);
+        assert!(h.config_expanded.is_empty());
+
+        // esc collapses first, and the panel is still open.
+        h.confirm(0);
         h.handle(Command::PanelClose, None, 20);
-        assert_eq!(h.config_open, None);
-        assert!(h.open(), "the level went first, not the panel");
+        assert!(h.config_expanded.is_empty());
+        assert!(h.open(), "the tree went first, not the panel");
         h.handle(Command::PanelClose, None, 20);
         assert!(!h.open(), "and the second esc closes it");
     }
 
     #[test]
-    fn x_switches_the_row_under_the_cursor_at_either_level() {
+    fn several_sources_can_be_expanded_at_once() {
         let mut h = open_on(PanelTab::Config);
         h.set_config(Some(config_fx()), None);
-        // At the list level it is the SOURCE — switching a whole source off
-        // must not require opening it first.
+        h.confirm(0);
+        // `local` has moved down by acme's two things.
+        h.confirm(3);
+        assert_eq!(h.config_expanded.len(), 2);
+        assert_eq!(h.config_rows().len(), 6);
+    }
+
+    #[test]
+    fn x_switches_the_row_under_the_cursor_whether_it_is_a_source_or_a_thing() {
+        let mut h = open_on(PanelTab::Config);
+        h.set_config(Some(config_fx()), None);
+        // A whole source goes off without expanding it first.
         h.handle(Command::MoveDown, None, 20);
         assert_eq!(
             h.handle(Command::PluginToggle, None, 20),
@@ -2621,9 +2644,10 @@ mod tab_tests {
                 enabled: false,
             }]
         );
-        // And inside one it is the thing.
+        // And a thing inside one.
         h.sel = 0;
         h.confirm(0);
+        h.sel = 1;
         assert_eq!(
             h.handle(Command::PluginToggle, None, 20),
             vec![HostRequest::ToggleConfig {
@@ -2634,33 +2658,31 @@ mod tab_tests {
     }
 
     #[test]
-    fn the_tab_opens_on_the_list_however_it_was_left() {
+    fn the_tab_opens_collapsed_however_it_was_left() {
         let mut h = open_on(PanelTab::Config);
         h.set_config(Some(config_fx()), None);
         h.confirm(0);
-        assert_eq!(h.config_open.as_deref(), Some("acme"));
-        // Away and back: a level that outlived its tab would show one source's
-        // things under a header the reader never asked for.
+        assert_eq!(h.config_expanded, vec!["acme".to_string()]);
+        // Away and back: the tab's first answer is "what have I got".
         h.handle(Command::Tab(PanelTab::Skills), None, 20);
         h.handle(Command::Tab(PanelTab::Config), None, 20);
-        assert_eq!(h.config_open, None);
+        assert!(h.config_expanded.is_empty());
     }
 
     /// A toggle re-fetches the whole listing. The cursor is clamped to the
-    /// level IN VIEW — clamping against the list's length while a source is
-    /// open would let the cursor sit past the last row.
+    /// rows IN VIEW — clamping against the collapsed count while a source is
+    /// expanded would drag the cursor backwards on every keystroke.
     #[test]
-    fn a_refetch_clamps_the_cursor_to_the_level_in_view() {
+    fn a_refetch_clamps_the_cursor_to_the_rows_in_view() {
         let mut h = open_on(PanelTab::Config);
-        let mut fx = config_fx();
-        fx[1].items.truncate(1); // `local` ships exactly one thing
-        h.set_config(Some(fx.clone()), None);
-        h.sel = 1;
-        h.confirm(1);
-        assert_eq!(h.config_open.as_deref(), Some("local"));
-        h.sel = 1;
-        h.set_config(Some(fx), None);
-        assert_eq!(h.sel, 0, "one thing means row 0 is the last row");
+        h.set_config(Some(config_fx()), None);
+        h.confirm(0);
+        h.sel = 3;
+        h.set_config(Some(config_fx()), None);
+        assert_eq!(h.sel, 3, "expanded: four rows, so row 3 is still there");
+        h.config_expanded.clear();
+        h.set_config(Some(config_fx()), None);
+        assert_eq!(h.sel, 1, "collapsed: two rows, so the cursor comes back");
     }
 
     #[test]
