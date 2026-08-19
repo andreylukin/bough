@@ -142,6 +142,21 @@ class Bough(BaseInstalledAgent):
 
     @override
     async def install(self, environment: BaseEnvironment) -> None:
+        # A prebaked image (see modal_prebaked.py) already carries the
+        # packages and the binary, so the whole install is a probe. Worth a
+        # round trip: it turns a ~76s setup into a sub-second one, and the
+        # probe is the same check either way -- if the image lied, or apt
+        # failed during the build, we fall through and install as usual.
+        probe = await environment.exec(
+            command=(
+                "command -v rg >/dev/null && command -v node >/dev/null "
+                f"&& command -v git >/dev/null && test -x {BINARY_PATH}"
+            ),
+        )
+        if probe.return_code == 0:
+            self.logger.info("bough: image is prebaked, skipping install")
+            return
+
         # bough shells out to these by name. `rg` and `ast-grep` in particular
         # are named unconditionally by the system prompt, so a container
         # without them makes the agent look broken rather than unequipped.
