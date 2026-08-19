@@ -7,70 +7,108 @@
 -- is the integration path for an agent that is not Claude Code or Cursor
 -- (usegitai.com/docs/guides/add-your-agent).
 --
--- THE BOUNDARY IS THE TURN, NOT THE EDIT, and that is forced rather than
--- chosen. bough is a code-mode harness: the model writes one program per round
--- and that program edits files through host functions inside a sandbox. There
--- is no per-edit hook to hang a checkpoint on — `PreTool` and `PostTool` fire
--- for shell commands only. The turn boundary is the tightest one that exists,
--- and it is the right shape anyway: everything on disk before `TurnStart` is
--- yours, everything that moved by `TurnEnd` is the agent's.
+-- THE TURN IS THE BOUNDARY, and that is forced rather than chosen. bough is a
+-- code-mode harness: the model writes one program per round and that program
+-- edits files through host functions inside a sandbox. There is no per-edit
+-- hook to hang a checkpoint on. The turn is the tightest boundary that exists.
 --
--- EDITED PATHS COME FROM A BEFORE/AFTER COMPARISON, not from watching the
--- agent. `git status --porcelain` at both ends, and what differs between them
--- is what this turn touched. Passing them is what keeps `checkpoint` fast on a
--- large repo (Git AI narrows its diff to the files it is told about), and it is
--- the difference between attributing a turn and attributing a repository.
+-- THE REPOSITORY IS NOT THE WORKSPACE, and this is the thing that stops the
+-- naive version working at all. People run bough from their home directory and
+-- let it work across several checkouts — the observed case was a machine where
+-- every session's workspace was `~`, which is not a repository, so a hook that
+-- asked "is my workspace a repo?" answered no and did nothing, forever. So
+-- repositories are discovered from the WORK: the files the turn wrote, and the
+-- directories its commands ran in. A turn can touch several, and each is
+-- checkpointed on its own.
 --
--- IT IS INERT WITHOUT GIT AI. No binary on PATH, or a workspace that is not a
--- git repository, and every callback returns immediately. That check is made
--- once per process, not once per turn: `command -v` on every event of every
--- turn is a subprocess for nothing.
+-- WHICH FILES, EXACTLY. `ev.data.edited` on `TurnEnd` is the absolute path of
+-- every file this turn's program wrote, recorded by the write verbs
+-- themselves. Git cannot answer this — subagents share their spawner's
+-- checkout, so a diff at the end is the union of every sibling's work — and
+-- neither can a `git status` heuristic when the change was a shell command in
+-- some other checkout. The porcelain comparison is still done on top, because
+-- a `sed -i` is not a write verb and it is the only thing that sees it.
 --
--- NOTHING HERE FAILS A TURN. Every failure is a log line — Git AI not
--- recording a checkpoint is worse than nothing recorded, and both are far
--- better than a turn that did not run because an attribution tool was unhappy.
+-- A REPOSITORY IS NEVER ATTRIBUTED WITHOUT A BASELINE. If a turn is the first
+-- to touch some checkout, there was no `human` checkpoint before the agent
+-- edited it, so an `ai_agent` checkpoint now would hand Git AI every
+-- uncommitted line in it — including the ones you wrote yesterday. That turn
+-- is skipped and the repository is REMEMBERED, so the next turn in this
+-- session baselines it at the start and attributes it properly. Shell commands
+-- are unaffected: Git AI brackets those itself from the pre/post pair.
+--
+-- IT IS INERT WITHOUT GIT AI, and finding Git AI is not just `command -v`: the
+-- installer puts the binary in `~/.git-ai/bin` and exports that from your shell
+-- profile, so a bough started from anything other than an interactive shell
+-- does not have it on PATH. Observed on a real machine — installed, hook on,
+-- every event silently doing nothing. Both places are checked and the absolute
+-- path is what gets invoked.
+--
+-- NOTHING HERE FAILS A TURN. Every failure is a log line.
 
 local AGENT = "bough"
 
--- Git AI's own advice: check once, at startup, and never assume the binary is
--- there. `nil` is "not yet asked".
-local installed = nil
+-- One dispatch has a five second budget and a checkpoint on a big repository is
+-- not instant. Four seconds leaves room to return.
+local TIMEOUT_MS = 4000
 
--- Per conversation: the model, the porcelain snapshot taken at TurnStart, and
--- the transcript so far. Git AI wants the WHOLE session on every call, not the
--- new messages, so it accumulates.
+-- The resolved binary, or false for "looked, not there". Asked once.
+local bin = nil
+
+-- Per conversation, and deliberately outliving a turn:
+--   model      the last model seen on TurnStart
+--   messages   the prompts so far — Git AI wants the whole session each time
+--   seen       every repository this session has touched, so the next turn
+--              baselines it even though this one discovered it too late
+--   baselined  repo root -> porcelain snapshot taken at TurnStart
 local sessions = {}
 
--- One dispatch has a five second budget and a checkpoint on a big repo is not
--- instant. Four seconds leaves room to return.
-local TIMEOUT_MS = 4000
+-- Repository root per directory. Memoized: this fires on every shell command
+-- and a directory does not change which repository it is in.
+local roots = {}
+
+local function trim(text)
+  return (string.gsub(text or "", "%s+$", ""))
+end
 
 local function now()
   return os.date("!%Y-%m-%dT%H:%M:%SZ")
 end
 
-local function have_git_ai()
-  if installed == nil then
-    local result = bough.exec("command -v git-ai")
-    installed = result ~= nil and result.code == 0
-  end
-  return installed
+local function quote(text)
+  return string.format("%q", text)
 end
 
--- The REPOSITORY a directory is in, or nil.
---
--- THE ROOT, NEVER THE DIRECTORY ITSELF. bough is pointed at a workspace, and a
--- workspace is very often a subdirectory of the repository — a crate inside a
--- monorepo, a package inside a checkout. `git status --porcelain` reports paths
--- relative to the ROOT wherever it is run from, so treating the workspace as
--- the repository named files that do not exist (`/repo/sub/sub/f.txt`) and
--- asked Git AI to attribute nothing.
---
--- Memoized per directory, because this fires on every shell command and a
--- directory does not change which repository it is in.
-local roots = {}
+local function git_ai()
+  if bin == nil then
+    local result = bough.exec(
+      'command -v git-ai || { [ -x "$HOME/.git-ai/bin/git-ai" ] && printf %s "$HOME/.git-ai/bin/git-ai"; }'
+    )
+    local found = nil
+    if result ~= nil and result.code == 0 then
+      found = trim(result.stdout)
+      if found == "" then
+        found = nil
+      end
+    end
+    bin = found or false
+  end
+  return bin or nil
+end
 
-local function toplevel(dir)
+-- Where a directory sits in its repository: `{ root, prefix }`, or nil.
+--
+-- THE ROOT, NEVER THE DIRECTORY ITSELF: `git status --porcelain` reports paths
+-- relative to the root wherever it runs from, so treating a subdirectory as the
+-- repository names files that do not exist.
+--
+-- The PREFIX comes back from the same call because it is what lets a file path
+-- be written the way git writes it. Git resolves symlinks — on macOS `/var` is
+-- `/private/var` — so the path a write verb reported and the path built from a
+-- porcelain line are the same file spelled two ways, and sending both hands Git
+-- AI one file twice. Rebuilding every path as `root/prefix/name` makes the two
+-- sources agree.
+local function dir_info(dir)
   if dir == nil or dir == "" then
     return nil
   end
@@ -78,26 +116,48 @@ local function toplevel(dir)
   if cached ~= nil then
     return cached or nil
   end
-  local result = bough.exec("git -C " .. string.format("%q", dir) .. " rev-parse --show-toplevel")
-  local root = nil
+  local result = bough.exec(
+    "git -C " .. quote(dir) .. " rev-parse --show-toplevel --show-prefix"
+  )
+  local info = nil
   if result ~= nil and result.code == 0 then
-    root = string.gsub(result.stdout, "%s+$", "")
-    if root == "" then
-      root = nil
+    local lines = {}
+    for line in string.gmatch(result.stdout, "[^\n]*") do
+      table.insert(lines, line)
+    end
+    local root = trim(lines[1])
+    if root ~= "" then
+      -- `--show-prefix` is empty at the root and `sub/` below it.
+      info = { root = root, prefix = trim(lines[2] or "") }
     end
   end
   -- `false` is a remembered "no repository here"; nil would re-ask every time.
-  roots[dir] = root or false
-  return root
+  roots[dir] = info or false
+  return info
 end
 
--- `git status --porcelain` as a map of path to status. The status is part of
--- the value, not just the key: a file already modified before the turn and
--- modified again during it keeps the same path and the same `` M`` code, so
--- the map is only half the answer — see `edited_since`.
+local function toplevel(dir)
+  local info = dir_info(dir)
+  return info and info.root or nil
+end
+
+-- A file as git spells it: the repository root, and its path within it.
+local function locate(path)
+  local dir, name = string.match(path, "^(.*)/([^/]+)$")
+  if dir == nil or dir == "" then
+    return nil, nil
+  end
+  local info = dir_info(dir)
+  if info == nil then
+    return nil, nil
+  end
+  return info.root, info.root .. "/" .. info.prefix .. name
+end
+
+-- `git status --porcelain` as a map of root-relative path to status.
 local function snapshot(root)
   local out = {}
-  local result = bough.exec("git -C " .. string.format("%q", root) .. " status --porcelain")
+  local result = bough.exec("git -C " .. quote(root) .. " status --porcelain")
   if result == nil or result.code ~= 0 then
     return out
   end
@@ -111,38 +171,34 @@ local function snapshot(root)
   return out
 end
 
--- Files whose status changed between two snapshots.
+-- Files whose status moved between two snapshots, as absolute paths.
 --
 -- A PATH ALREADY DIRTY AT BOTH ENDS IS STILL REPORTED, because `git status`
 -- cannot tell "modified before the turn" from "modified again during it" — the
 -- code is `` M`` either way. Reporting it is the safe error: Git AI diffs the
 -- file itself and attributes only the lines that actually moved, so a file
 -- named in vain costs a diff, while a file left out costs the attribution.
-local function edited_since(before, after, root)
-  local paths = {}
+local function changed_between(before, after, root, into)
   for path, status in pairs(after) do
-    if before[path] ~= status or string.sub(status, 1, 1) == "M" or string.sub(status, 2, 2) == "M" then
-      table.insert(paths, root .. "/" .. path)
+    if before[path] ~= status or string.find(status, "M") then
+      into[root .. "/" .. path] = true
     end
   end
   -- A file the turn DELETED is gone from `after` but was in `before`; Git AI
   -- still wants to know the line went, and who took it.
   for path, _ in pairs(before) do
     if after[path] == nil then
-      table.insert(paths, root .. "/" .. path)
+      into[root .. "/" .. path] = true
     end
   end
-  table.sort(paths)
-  return paths
 end
 
 local function checkpoint(payload)
-  -- `git-ai`, not `git ai`. They are the same binary, but the `git ai` form
-  -- goes through the shim Git AI's installer puts on PATH ahead of git, and
-  -- this hook's own check is `command -v git-ai` — testing for one thing and
-  -- then invoking another is how an install with the binary but without the
-  -- shim turns into an error on every event of every turn.
-  local result, err = bough.exec("git-ai checkpoint agent-v1 --hook-input stdin", {
+  local exe = git_ai()
+  if exe == nil then
+    return
+  end
+  local result, err = bough.exec(quote(exe) .. " checkpoint agent-v1 --hook-input stdin", {
     stdin = bough.json.encode(payload),
     timeout_ms = TIMEOUT_MS,
   })
@@ -157,44 +213,28 @@ end
 
 local function session_for(id)
   if sessions[id] == nil then
-    sessions[id] = { messages = {}, model = "unknown", before = {}, root = nil }
+    sessions[id] = { messages = {}, model = "unknown", seen = {}, baselined = {} }
   end
   return sessions[id]
 end
 
--- The repository this event is about, or nil when there is nothing to record:
--- no Git AI installed, or a directory that is not in a repository at all.
---
--- IT IS THE EVENT'S DIRECTORY, NOT THE SESSION'S. A shell event carries the
--- directory the command runs in, which is how a command that works inside a
--- repository is attributed to THAT repository even when bough itself was
--- started somewhere else entirely.
-local function repo_of(ev)
-  if not have_git_ai() then
-    return nil
+-- Mark a repository as one this session works in. Nothing is checkpointed here
+-- — a baseline mid-turn would call the agent's earlier edits yours — but the
+-- next TurnStart will baseline it.
+local function remember(session, root)
+  if root ~= nil then
+    session.seen[root] = true
   end
-  return toplevel(ev.workspace)
 end
 
--- Before the turn: everything on disk that is not already attributed is YOURS.
+-- Before the turn: in every repository this session works in, everything on
+-- disk that is not already attributed is YOURS.
 bough.api.create_autocmd("TurnStart", {
   callback = function(ev)
-    local root = repo_of(ev)
     local session = session_for(ev.session_id)
-    -- The model rides TurnStart and is wanted even when there is no repository
-    -- to checkpoint: a shell command later in this turn may be inside one.
+    -- Wanted even when there is nothing to baseline: a command later in this
+    -- turn may run inside a repository, and it is reported with the model.
     session.model = (ev.data and ev.data.model) or session.model
-    if root == nil then
-      -- NOTHING IS BASELINED LATER. If this turn goes on to touch a repository
-      -- through a shell command, that command is attributed by its own pre/post
-      -- pair. Taking a `human` baseline at that point instead would mark
-      -- everything the agent had already written as yours, which is the one
-      -- error worth refusing to make.
-      session.root = nil
-      return
-    end
-    session.root = root
-    session.before = snapshot(root)
     if ev.data and ev.data.prompt then
       table.insert(session.messages, {
         type = "user",
@@ -202,57 +242,94 @@ bough.api.create_autocmd("TurnStart", {
         timestamp = now(),
       })
     end
-    checkpoint({
-      type = "human",
-      repo_working_dir = root,
-    })
+    session.baselined = {}
+    if git_ai() == nil then
+      return
+    end
+    -- The workspace's repository, when it is in one, plus every repository this
+    -- session has already been seen working in.
+    remember(session, toplevel(ev.workspace))
+    for root, _ in pairs(session.seen) do
+      session.baselined[root] = snapshot(root)
+      checkpoint({ type = "human", repo_working_dir = root })
+    end
   end,
 })
 
--- After it: what moved is the agent's, with the session that produced it.
+-- After it: in each of those repositories, what moved is the agent's.
 bough.api.create_autocmd("TurnEnd", {
   callback = function(ev)
     local session = session_for(ev.session_id)
-    -- The repository BASELINED AT TURNSTART, not whatever this event points at:
-    -- the pair has to be about one repository or the diff is meaningless.
-    local root = session.root
-    if root == nil or not have_git_ai() then
+    if git_ai() == nil then
       return
     end
-    local edited = edited_since(session.before, snapshot(root), root)
-    -- A turn that edited nothing has nothing to attribute, and a checkpoint
-    -- over an untouched repository is a diff for no reason.
-    if #edited == 0 then
-      return
+    -- The files the turn's own programs wrote, grouped by repository. These
+    -- are the ones no diff could attribute to this agent rather than to a
+    -- concurrent sibling sharing the checkout.
+    local by_repo = {}
+    for _, path in ipairs((ev.data and ev.data.edited) or {}) do
+      local root, full = locate(path)
+      if root ~= nil then
+        remember(session, root)
+        by_repo[root] = by_repo[root] or {}
+        by_repo[root][full] = true
+      end
     end
-    checkpoint({
-      type = "ai_agent",
-      repo_working_dir = root,
-      agent_name = AGENT,
-      model = session.model,
-      conversation_id = ev.session_id,
-      edited_filepaths = edited,
-      -- The prompts only. bough's hooks see what you asked for, never what the
-      -- model answered, and inventing an assistant turn to fill the shape
-      -- would be a transcript that says something nobody said.
-      transcript = { messages = session.messages },
-    })
-    session.before = {}
+    -- Plus whatever else moved in a repository that was baselined — a `sed -i`
+    -- is not a write verb, and the snapshot is the only thing that sees it.
+    for root, before in pairs(session.baselined) do
+      by_repo[root] = by_repo[root] or {}
+      changed_between(before, snapshot(root), root, by_repo[root])
+    end
+    for root, paths in pairs(by_repo) do
+      local edited = {}
+      for path, _ in pairs(paths) do
+        table.insert(edited, path)
+      end
+      table.sort(edited)
+      if #edited == 0 then
+        -- Nothing moved here; a checkpoint over an untouched repository is a
+        -- diff for no reason.
+      elseif session.baselined[root] == nil then
+        -- Discovered too late to baseline. Attributing now would hand Git AI
+        -- every uncommitted line in this repository, including yours. The next
+        -- turn starts with a baseline and gets it right.
+        bough.log.info(
+          "git-ai: " .. root .. " was first touched mid-turn; attributing it from the next turn"
+        )
+      else
+        checkpoint({
+          type = "ai_agent",
+          repo_working_dir = root,
+          agent_name = AGENT,
+          model = session.model,
+          conversation_id = ev.session_id,
+          edited_filepaths = edited,
+          -- The prompts only. bough's hooks see what you asked for, never what
+          -- the model answered, and inventing an assistant turn to fill the
+          -- shape would be a transcript that says something nobody said.
+          transcript = { messages = session.messages },
+        })
+      end
+    end
+    session.baselined = {}
   end,
 })
 
--- A shell command the agent ran can change files too — a `sed -i`, a
--- formatter, a code generator. Git AI's agent-v1 preset takes the pair
--- directly and folds it into the same attribution.
+-- A shell command the agent runs can change files too — a `sed -i`, a
+-- formatter, a code generator — and in a checkout the turn boundary may know
+-- nothing about. Git AI's agent-v1 preset takes the pair directly and brackets
+-- the command itself, so this needs no baseline of its own.
 local function shell_event(kind, ev, command)
-  if command == nil or command == "" then
+  if command == nil or command == "" or git_ai() == nil then
     return
   end
-  local root = repo_of(ev)
+  local root = toplevel(ev.workspace)
   if root == nil then
     return
   end
   local session = session_for(ev.session_id)
+  remember(session, root)
   checkpoint({
     type = kind,
     repo_working_dir = root,

@@ -528,6 +528,17 @@ fn with_project_rule_notes(result: ProgramResult, ctx: &TurnCtx) -> ProgramResul
 /// Context from a turn-boundary hook is announced the same way, because the
 /// prompt is already assembled by the time this runs; a prompt edit here would
 /// bust the volatile tier for the next turn (`prompt/assemble.rs`).
+/// The files this turn wrote: whatever the session's write log holds now that
+/// was not in `before`.
+fn edited_since_turn_start(app: &AppCtx, session_id: &str, before: &[String]) -> Vec<String> {
+    app.host
+        .writes
+        .paths(session_id)
+        .into_iter()
+        .filter(|p| !before.iter().any(|seen| seen == p))
+        .collect()
+}
+
 fn apply_turn_hooks(
     app: &AppCtx,
     session_id: &str,
@@ -1533,6 +1544,12 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
         deps,
     } = p;
 
+    /* What the SESSION had already written before this turn ran. The write log
+    is per session and outlives a turn, so the turn's own files are the ones
+    that were not in it when the turn began. Captured here because nothing
+    has run yet: `prepare_turn` is done and the first round has not started. */
+    let wrote_before = app.host.writes.paths(&session_id);
+
     /* The turn's running usage total. Replaces the row's each checkpoint. */
     let mut usage = Usage {
         input_tokens: 0,
@@ -1941,7 +1958,17 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
                 &session_id,
                 &workspace,
                 HookEvent::TurnEnd,
-                serde_json::json!({ "ok": true }),
+                // The files this turn's own programs WROTE, absolute. Git
+                // cannot answer this — subagents share their spawner's
+                // checkout, so a diff at the end is the union of every
+                // sibling's work — but the write verbs recorded it at the
+                // source. A hook that attributes authorship needs exactly this
+                // and can derive it from nothing else: the paths may be in a
+                // repository the session's workspace is not even inside.
+                serde_json::json!({
+                    "ok": true,
+                    "edited": edited_since_turn_start(&app, &session_id, &wrote_before),
+                }),
             );
             Ok(TurnOutcome {
                 turn_id: turn.id,

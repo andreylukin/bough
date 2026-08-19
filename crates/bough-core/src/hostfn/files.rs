@@ -159,6 +159,21 @@ impl WriteLog {
         }
     }
 
+    /// The paths this session has written so far, WITHOUT forgetting them.
+    ///
+    /// A second reader exists now — the turn boundary tells hooks which files
+    /// this turn wrote, and a hook that consumed the log would silently empty
+    /// it under the report that clears it. Peeking is the only safe shape for
+    /// a store with two consumers and one of them destructive.
+    pub fn paths(&self, session_id: &str) -> Vec<String> {
+        self.by_session
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// The paths this session wrote, in write order, and FORGET them.
     ///
     /// Read-and-clear because the only caller is a report built once, and a

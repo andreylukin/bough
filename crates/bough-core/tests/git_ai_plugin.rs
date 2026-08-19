@@ -11,6 +11,15 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+/// `x.pipe(f)` — reads better than nesting when a payload is built and then
+/// wrapped in a dispatch.
+trait Pipe: Sized {
+    fn pipe<R>(self, f: impl FnOnce(Self) -> R) -> R {
+        f(self)
+    }
+}
+impl<T> Pipe for T {}
+
 use bough_core::hooks::{HookDispatch, HookEvent, HookHost};
 
 /// `PATH` is process-global and cargo runs these in parallel threads, so every
@@ -421,6 +430,142 @@ fn a_command_run_inside_a_repo_is_attributed_to_that_repo_not_the_workspace() {
         for payload in &seen {
             assert!(same_dir(payload["repo_working_dir"].as_str().unwrap(), &ws));
         }
+    });
+}
+
+/// THE CASE THIS PLUGIN WAS FAILING: bough started in a home directory, which
+/// is not a repository, while the model's program edits files in a checkout
+/// somewhere under it.
+///
+/// The first turn cannot attribute the repository — there was no `human`
+/// checkpoint before the agent wrote to it, so claiming it now would hand Git
+/// AI every uncommitted line in it, yours included. It is remembered, and the
+/// SECOND turn baselines it at the start and attributes it properly.
+#[test]
+fn a_repo_the_workspace_is_not_even_inside_is_attributed_from_the_next_turn() {
+    let dir = tmp("home");
+    let home = dir.0.join("home");
+    let project = home.join("repos/project");
+    std::fs::create_dir_all(&project).unwrap();
+    repo(&project);
+    let log = dir.0.join("calls.log");
+    let bin = dir.0.join("bin");
+    fake_git_ai(&bin, &log);
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let host = host(&dir.0);
+    let edited = project.join("kept.txt");
+
+    with_path(&path, || {
+        // ---- turn one: the repository is discovered by what was written ----
+        host.dispatch(
+            HookEvent::TurnStart,
+            dispatch(
+                &home,
+                serde_json::json!({ "prompt": "edit it", "model": "opus-5" }),
+            ),
+        );
+        std::fs::write(&edited, "one\ntwo\n").unwrap();
+        host.dispatch(
+            HookEvent::TurnEnd,
+            serde_json::json!({ "ok": true, "edited": [edited.to_string_lossy()] })
+                .pipe(|data| dispatch(&home, data)),
+        );
+        assert!(
+            payloads(&log).is_empty(),
+            "nothing yet: attributing without a baseline would claim your \
+             uncommitted lines as the agent's"
+        );
+
+        // ---- turn two: it is baselined at the start, and attributed ----
+        host.dispatch(
+            HookEvent::TurnStart,
+            dispatch(
+                &home,
+                serde_json::json!({ "prompt": "again", "model": "opus-5" }),
+            ),
+        );
+        std::fs::write(&edited, "one\ntwo\nthree\n").unwrap();
+        host.dispatch(
+            HookEvent::TurnEnd,
+            serde_json::json!({ "ok": true, "edited": [edited.to_string_lossy()] })
+                .pipe(|data| dispatch(&home, data)),
+        );
+
+        let seen = payloads(&log);
+        let kinds: Vec<&str> = seen.iter().filter_map(|p| p["type"].as_str()).collect();
+        assert_eq!(
+            kinds,
+            ["human", "ai_agent"],
+            "the repository bough was never pointed at: {seen:?}"
+        );
+        for payload in &seen {
+            assert!(
+                same_dir(payload["repo_working_dir"].as_str().unwrap(), &project),
+                "{payload:?}"
+            );
+        }
+        let files: Vec<String> = seen[1]["edited_filepaths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(files.len(), 1, "{files:?}");
+        assert!(files[0].ends_with("kept.txt"), "{files:?}");
+    });
+}
+
+/// A turn that writes into TWO checkouts gets two checkpoints, one per
+/// repository — the reason repositories are discovered from the work rather
+/// than assumed to be the workspace.
+#[test]
+fn a_turn_that_touches_two_repos_checkpoints_each_of_them() {
+    let dir = tmp("two");
+    let home = dir.0.join("home");
+    let a = home.join("repos/a");
+    let b = home.join("repos/b");
+    for p in [&a, &b] {
+        std::fs::create_dir_all(p).unwrap();
+        repo(p);
+    }
+    let log = dir.0.join("calls.log");
+    let bin = dir.0.join("bin");
+    fake_git_ai(&bin, &log);
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let host = host(&dir.0);
+
+    with_path(&path, || {
+        // Turn one discovers both; turn two attributes both.
+        for round in 0..2 {
+            host.dispatch(
+                HookEvent::TurnStart,
+                dispatch(&home, serde_json::json!({ "prompt": "go", "model": "m" })),
+            );
+            std::fs::write(a.join("kept.txt"), format!("a{round}\n")).unwrap();
+            std::fs::write(b.join("kept.txt"), format!("b{round}\n")).unwrap();
+            host.dispatch(
+                HookEvent::TurnEnd,
+                serde_json::json!({
+                    "ok": true,
+                    "edited": [
+                        a.join("kept.txt").to_string_lossy(),
+                        b.join("kept.txt").to_string_lossy(),
+                    ]
+                })
+                .pipe(|data| dispatch(&home, data)),
+            );
+        }
+        let seen = payloads(&log);
+        let agent: Vec<&serde_json::Value> =
+            seen.iter().filter(|p| p["type"] == "ai_agent").collect();
+        assert_eq!(agent.len(), 2, "one per repository: {seen:?}");
+        let mut dirs: Vec<&str> = agent
+            .iter()
+            .map(|p| p["repo_working_dir"].as_str().unwrap())
+            .collect();
+        dirs.sort();
+        assert!(dirs[0].ends_with("/a"), "{dirs:?}");
+        assert!(dirs[1].ends_with("/b"), "{dirs:?}");
     });
 }
 
