@@ -30,8 +30,15 @@ import harbor.environments.modal as _modal_module
 # unconditionally by bough's system prompt and node is what it runs the
 # programs it writes under, so a missing one is a silently worse agent, not a
 # louder failure.
-PACKAGES = "ca-certificates curl git ripgrep nodejs libssl3"
+PACKAGES = "ca-certificates curl git ripgrep nodejs xz-utils"
 BINARY_PATH = "/installed-agent/bough"
+
+NODE_FIX = (
+    # Downloaded then extracted, NOT piped into tar: the pipe fails
+    # silently on Debian 11 and leaves node 12 in place, which looks exactly
+    # like the bug this is here to fix.
+    'if ! node -e \'null ?? 0\' >/dev/null 2>&1; then   case "$(uname -m)" in     x86_64) NA=x64 ;; aarch64|arm64) NA=arm64 ;; *) NA= ;;   esac;   if [ -n "$NA" ]; then     curl -fsSL -o /tmp/node.tar.xz       "https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-$NA.tar.xz"     && tar -xJ -C /usr/local --strip-components=1 -f /tmp/node.tar.xz;     rm -f /tmp/node.tar.xz;   fi; fi'
+)
 
 
 class PrebakedModal(ModalEnvironment):

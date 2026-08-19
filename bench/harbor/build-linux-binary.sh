@@ -19,7 +19,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ARCH="${ARCH:-x86_64}"
 OUT="$ROOT/bench/harbor/dist"
-IMAGE="rust:1-bookworm"
+# Bullseye, not bookworm, and OpenSSL linked STATICALLY. Glibc is forward
+# compatible but not backward: a binary built on bookworm wants GLIBC_2.32+
+# and libssl.so.3, and Terminal-Bench pins some Debian 11 images (the qemu-*
+# tasks), where it cannot even start -- 10 trials lost, with the failure
+# surfacing as an unrelated apt error. Building on the OLDEST base we must
+# support, with libssl.a folded in, produces one binary that runs on both.
+IMAGE="rust:1-bullseye"
 
 case "$ARCH" in
   x86_64) PLATFORM=linux/amd64 ;;
@@ -53,13 +59,23 @@ docker run --rm \
   -v "$ROOT:/src:ro" \
   -v "$OUT:/out" \
   -v bough-harbor-cargo-registry:/usr/local/cargo/registry \
-  -v "bough-harbor-target-$ARCH:/target" \
+  -v "bough-harbor-target-$ARCH-bullseye:/target" \
   -e CARGO_TARGET_DIR=/target \
   -e ARCH="$ARCH" \
   "$IMAGE" \
   bash -euo pipefail -c '
     apt-get update -qq
     apt-get install -y -qq --no-install-recommends pkg-config libssl-dev >/dev/null
+    # libssl-dev ships libssl.a, so this needs neither a vendored build nor
+    # any change to the workspace dependencies. OPENSSL_STATIC alone is NOT
+    # enough: openssl-sys finds the library through pkg-config, which hands
+    # back the dynamic one and ignores the flag. Naming the directories is
+    # what makes it link libssl.a, and a static OpenSSL is the whole point --
+    # bullseye has libssl.so.1.1 and bookworm has libssl.so.3, so any dynamic
+    # link picks one Debian release and fails on the other.
+    export OPENSSL_STATIC=1
+    export OPENSSL_LIB_DIR="/usr/lib/$(gcc -print-multiarch)"
+    export OPENSSL_INCLUDE_DIR=/usr/include
     cargo build --release --locked --manifest-path /src/Cargo.toml -p bough
     install -m 0755 /target/release/bough "/out/bough-linux-$ARCH"
     # Stripped because this binary is uploaded into every sandbox — 89 tasks

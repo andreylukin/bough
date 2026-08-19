@@ -58,6 +58,16 @@ TURN_MARGIN = 30
 # Under a tight cap, one long attempt beats three stunted ones.
 MIN_TURN = 400
 
+# Debian 11 ships node 12, which cannot parse `?.` or `??`. bough runs what
+# it writes through a worker wrapper using both, so on those images EVERY
+# command died with a SyntaxError before running: the agent looked broken
+# rather than under-equipped. Test the syntax, not the version string.
+# Downloaded then extracted, NOT piped into tar -- the pipe fails silently
+# on Debian 11 and leaves node 12 in place, which looks like the same bug.
+_NODE_FIX = (
+    'if ! node -e \'null ?? 0\' >/dev/null 2>&1; then   case "$(uname -m)" in     x86_64) NA=x64 ;; aarch64|arm64) NA=arm64 ;; *) NA= ;;   esac;   if [ -n "$NA" ]; then     curl -fsSL -o /tmp/node.tar.xz       "https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-$NA.tar.xz"     && tar -xJ -C /usr/local --strip-components=1 -f /tmp/node.tar.xz;     rm -f /tmp/node.tar.xz;   fi; fi'
+)
+
 # Where the uploaded binary lands. /installed-agent is created by
 # BaseInstalledAgent.setup() before install() runs.
 BINARY_PATH = "/installed-agent/bough"
@@ -84,8 +94,8 @@ class Bough(BaseInstalledAgent):
         source: bool = False,
         ref: str = "main",
         port: int = DEFAULT_PORT,
-        timeout: int = 900,
-        attempts: int = 3,
+        timeout: int = 1800,
+        attempts: int = 2,
         budget: int | None = None,
         cap: int | None = None,
         effort: str | None = None,
@@ -98,6 +108,12 @@ class Bough(BaseInstalledAgent):
         self._source = parse_bool_env_value(source, name="source")
         self._ref = ref
         self._port = int(port)
+        # One retry, not two. Over a full k=5 suite the second attempt solved
+        # 8 of the 17 trials it was given; the third solved 0 of 8. A third
+        # turn is budget taken from the first two, which is the wrong trade
+        # when `bough exec` has no resume and every attempt re-reads the work
+        # from disk before it can add to it. The turn ceiling rises to match:
+        # a 3600s task now gets 2 x 1710s instead of 3 x 900s.
         self._timeout = int(timeout)
         self._attempts = max(int(attempts), 1)
         # Thinking depth. bough reads BOUGH_EFFORT at server boot, so this has
@@ -149,7 +165,7 @@ class Bough(BaseInstalledAgent):
         # failed during the build, we fall through and install as usual.
         probe = await environment.exec(
             command=(
-                "command -v rg >/dev/null && command -v node >/dev/null "
+                "command -v rg >/dev/null && node -e 'null ?? 0' >/dev/null 2>&1 "
                 f"&& command -v git >/dev/null && test -x {BINARY_PATH}"
             ),
         )
@@ -170,7 +186,11 @@ class Bough(BaseInstalledAgent):
         # `nodejs` is NOT optional: bough runs the programs it writes under
         # node (or bun), so an install that skips it yields an agent that
         # cannot execute anything -- a loud failure traded for a silent zero.
-        # libssl3 is here because the uploaded binary links OpenSSL 3.
+        # No libssl here: the binary links OpenSSL statically (see
+        # build-linux-binary.sh). Naming libssl3 cost 10 trials -- Debian 11
+        # images have libssl1.1 and no such package, and apt fails the WHOLE
+        # transaction over one missing name, so nothing got installed and the
+        # failure read as a mysterious eight-times-retried apt error.
         await self.exec_as_root(
             environment,
             command=(
@@ -181,7 +201,8 @@ class Bough(BaseInstalledAgent):
                 "sleep $(( $(od -An -N1 -tu1 /dev/urandom | tr -d ' \\n') % 45 )); "
                 "for i in 1 2 3 4 5 6 7 8; do "
                 "  apt-get update -qq && apt-get install -y --no-install-recommends "
-                "    ca-certificates curl git ripgrep nodejs libssl3 && exit 0; "
+                "    ca-certificates curl git ripgrep nodejs xz-utils "
+                "  && { " + _NODE_FIX + "; exit 0; }; "
                 '  echo "bough: apt attempt $i failed" >&2; '
                 # Exponential-ish, capped: 20s, 40s, 80s, 160s, then 180s.
                 "  sleep $(( i * i * 20 > 180 ? 180 : i * i * 20 )); "
