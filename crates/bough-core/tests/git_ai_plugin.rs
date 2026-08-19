@@ -23,6 +23,12 @@ fn path_lock() -> MutexGuard<'static, ()> {
 }
 
 /// Run `f` with `PATH` set to `path`, restoring the old one even on a panic.
+///
+/// EVERY TEST HOLDS THIS FOR ITS WHOLE BODY, assertions included. `PATH` is
+/// process-global and cargo runs these in parallel: locking only the dispatch
+/// and then reading the log outside it let one test observe a window in which
+/// another test's fake was the one on `PATH`, which showed up as a test that
+/// passed alone and failed in the suite.
 fn with_path<R>(path: &str, f: impl FnOnce() -> R) -> R {
     let _guard = path_lock();
     struct Restore(Option<String>);
@@ -75,9 +81,12 @@ fn repo(dir: &Path) {
 }
 
 /// A `git-ai` on PATH that appends every invocation's argv and stdin to a log.
-/// It is also reachable as `git ai …`, which is how the hook calls it — the
-/// real binary installs itself as a `git` shim, so a fake that only answered to
-/// `git-ai` would leave the checkpoint calls untested.
+///
+/// ONLY `git-ai`, no `git` shim. The hook invokes the binary directly rather
+/// than through Git AI's `git ai` proxy, so nothing here has to stand in for
+/// git — which also means the real git keeps working for the `rev-parse` and
+/// `status` calls the hook makes, with no chance of a shim resolving to
+/// another test's shim while `PATH` is shared.
 fn fake_git_ai(bin: &Path, log: &Path) {
     std::fs::create_dir_all(bin).unwrap();
     let script = format!(
@@ -86,33 +95,11 @@ fn fake_git_ai(bin: &Path, log: &Path) {
     );
     let git_ai = bin.join("git-ai");
     std::fs::write(&git_ai, &script).unwrap();
-    // `git ai checkpoint …` has to reach the fake too, so `git` here forwards
-    // an `ai` subcommand to it and everything else to the real git.
-    let git = bin.join("git");
-    std::fs::write(
-        &git,
-        format!(
-            "#!/bin/sh\nif [ \"$1\" = ai ]; then shift; exec {} \"$@\"; fi\nexec {} \"$@\"\n",
-            git_ai.display(),
-            real_git()
-        ),
-    )
-    .unwrap();
-    for f in [&git_ai, &git] {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&git_ai, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-}
-
-fn real_git() -> String {
-    let out = std::process::Command::new("/usr/bin/which")
-        .arg("git")
-        .output()
-        .expect("which git");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
 /// The plugin's hook, loaded from the repository rather than from a
@@ -135,6 +122,16 @@ fn dispatch(workspace: &Path, data: serde_json::Value) -> HookDispatch {
         workspace: workspace.to_string_lossy().into_owned(),
         pattern: "bash".into(),
         data,
+    }
+}
+
+/// `/var/…` and `/private/var/…` are the same directory on macOS, and
+/// `rev-parse --show-toplevel` answers with the resolved one. Compare
+/// directories through this, never as strings.
+fn same_dir(a: &str, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
     }
 }
 
@@ -186,52 +183,52 @@ fn a_turn_is_checkpointed_human_before_and_agent_after() {
             HookEvent::TurnEnd,
             dispatch(&ws, serde_json::json!({ "ok": true })),
         );
-    });
 
-    let calls = argv(&log);
-    assert!(
-        calls
+        let calls = argv(&log);
+        assert!(
+            calls
+                .iter()
+                .all(|a| a.contains("checkpoint agent-v1 --hook-input stdin")),
+            "the generic preset, because bough is not Claude Code: {calls:?}"
+        );
+        let seen = payloads(&log);
+        assert_eq!(seen.len(), 2, "one before, one after: {seen:?}");
+
+        let before = &seen[0];
+        assert_eq!(before["type"], "human", "what was already there is yours");
+        assert!(same_dir(before["repo_working_dir"].as_str().unwrap(), &ws));
+
+        let after = &seen[1];
+        assert_eq!(after["type"], "ai_agent");
+        assert_eq!(after["agent_name"], "bough");
+        assert_eq!(after["model"], "opus-5", "the model came from TurnStart");
+        assert_eq!(after["conversation_id"], "conv-1");
+        let edited: Vec<String> = after["edited_filepaths"]
+            .as_array()
+            .expect("edited_filepaths")
             .iter()
-            .all(|a| a.contains("checkpoint agent-v1 --hook-input stdin")),
-        "the generic preset, because bough is not Claude Code: {calls:?}"
-    );
-    let seen = payloads(&log);
-    assert_eq!(seen.len(), 2, "one before, one after: {seen:?}");
-
-    let before = &seen[0];
-    assert_eq!(before["type"], "human", "what was already there is yours");
-    assert_eq!(before["repo_working_dir"], ws.to_string_lossy().as_ref());
-
-    let after = &seen[1];
-    assert_eq!(after["type"], "ai_agent");
-    assert_eq!(after["agent_name"], "bough");
-    assert_eq!(after["model"], "opus-5", "the model came from TurnStart");
-    assert_eq!(after["conversation_id"], "conv-1");
-    let edited: Vec<String> = after["edited_filepaths"]
-        .as_array()
-        .expect("edited_filepaths")
-        .iter()
-        .map(|p| {
-            Path::new(p.as_str().unwrap())
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect();
-    assert!(edited.contains(&"new.txt".to_string()), "{edited:?}");
-    assert!(
-        edited.contains(&"kept.txt".to_string()),
-        "a file that was already committed and got edited: {edited:?}"
-    );
-    // The prompt rides along; nothing claims to be the assistant's words.
-    let messages = after["transcript"]["messages"]
-        .as_array()
-        .expect("messages");
-    assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0]["type"], "user");
-    assert_eq!(messages[0]["text"], "add a file");
-    assert!(messages[0]["timestamp"].is_string());
+            .map(|p| {
+                Path::new(p.as_str().unwrap())
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert!(edited.contains(&"new.txt".to_string()), "{edited:?}");
+        assert!(
+            edited.contains(&"kept.txt".to_string()),
+            "a file that was already committed and got edited: {edited:?}"
+        );
+        // The prompt rides along; nothing claims to be the assistant's words.
+        let messages = after["transcript"]["messages"]
+            .as_array()
+            .expect("messages");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["type"], "user");
+        assert_eq!(messages[0]["text"], "add a file");
+        assert!(messages[0]["timestamp"].is_string());
+    });
 }
 
 /// A turn that changed nothing has nothing to attribute, and a checkpoint over
@@ -260,11 +257,11 @@ fn a_turn_that_edited_nothing_does_not_checkpoint_the_agent() {
             HookEvent::TurnEnd,
             dispatch(&ws, serde_json::json!({ "ok": true })),
         );
-    });
 
-    let seen = payloads(&log);
-    assert_eq!(seen.len(), 1, "the human checkpoint only: {seen:?}");
-    assert_eq!(seen[0]["type"], "human");
+        let seen = payloads(&log);
+        assert_eq!(seen.len(), 1, "the human checkpoint only: {seen:?}");
+        assert_eq!(seen[0]["type"], "human");
+    });
 }
 
 /// A shell command can change files too — a `sed -i`, a formatter, a
@@ -296,13 +293,135 @@ fn a_shell_command_is_reported_as_a_pair() {
                 serde_json::json!({ "tool": "bash", "command": "sed -i s/a/b/ kept.txt", "output": "" }),
             ),
         );
-    });
 
-    let seen = payloads(&log);
-    let kinds: Vec<&str> = seen.iter().filter_map(|p| p["type"].as_str()).collect();
-    assert_eq!(kinds, ["pre_shell_command", "post_shell_command"]);
-    assert_eq!(seen[0]["command"], "sed -i s/a/b/ kept.txt");
-    assert_eq!(seen[1]["agent_name"], "bough");
+        let seen = payloads(&log);
+        let kinds: Vec<&str> = seen.iter().filter_map(|p| p["type"].as_str()).collect();
+        assert_eq!(kinds, ["pre_shell_command", "post_shell_command"]);
+        assert_eq!(seen[0]["command"], "sed -i s/a/b/ kept.txt");
+        assert_eq!(seen[1]["agent_name"], "bough");
+    });
+}
+
+/// Started in a SUBDIRECTORY of a repository, which is the normal case for a
+/// workspace pointed at a crate inside a monorepo.
+///
+/// `git status --porcelain` reports paths relative to the REPO ROOT wherever it
+/// is run from, so joining them to the workspace named files that do not exist
+/// (`/repo/sub/sub/f.txt`) and Git AI was asked to attribute nothing.
+#[test]
+fn a_workspace_below_the_repo_root_names_the_files_that_actually_changed() {
+    let dir = tmp("subdir");
+    let ws = dir.0.join("ws");
+    std::fs::create_dir_all(ws.join("sub")).unwrap();
+    repo(&ws);
+    std::fs::write(ws.join("sub/tracked.txt"), "one\n").unwrap();
+    run(&ws, "git", &["add", "-A"]);
+    run(&ws, "git", &["commit", "-qm", "sub"]);
+    let log = dir.0.join("calls.log");
+    let bin = dir.0.join("bin");
+    fake_git_ai(&bin, &log);
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let host = host(&dir.0);
+    let below = ws.join("sub");
+
+    with_path(&path, || {
+        host.dispatch(
+            HookEvent::TurnStart,
+            dispatch(&below, serde_json::json!({ "prompt": "p", "model": "m" })),
+        );
+        std::fs::write(ws.join("sub/tracked.txt"), "one\ntwo\n").unwrap();
+        host.dispatch(
+            HookEvent::TurnEnd,
+            dispatch(&below, serde_json::json!({ "ok": true })),
+        );
+
+        let seen = payloads(&log);
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        for payload in &seen {
+            assert!(
+                same_dir(payload["repo_working_dir"].as_str().unwrap(), &ws),
+                "the REPOSITORY, not the directory bough happens to be pointed at: {payload:?}"
+            );
+        }
+        let edited: Vec<PathBuf> = seen[1]["edited_filepaths"]
+            .as_array()
+            .expect("edited_filepaths")
+            .iter()
+            .map(|p| PathBuf::from(p.as_str().unwrap()))
+            .collect();
+        assert_eq!(edited.len(), 1, "{edited:?}");
+        assert!(
+            edited[0].is_file(),
+            "a path that does not exist attributes nothing: {edited:?}"
+        );
+        assert!(edited[0].ends_with("sub/tracked.txt"), "{edited:?}");
+    });
+}
+
+/// THE QUESTION THIS ANSWERS: bough started somewhere that is not a repository
+/// — a home directory — and the agent runs a command inside one.
+///
+/// The turn boundary cannot help here: at `TurnStart` there is no repository to
+/// baseline, and baselining one later would mark whatever the agent had already
+/// written as the human's, which is the one error worth avoiding. What DOES
+/// work is the shell pair, which Git AI diffs around the command itself, and it
+/// is attributed to the repository the command ran in rather than to the
+/// session's workspace.
+#[test]
+fn a_command_run_inside_a_repo_is_attributed_to_that_repo_not_the_workspace() {
+    let dir = tmp("elsewhere");
+    let home = dir.0.join("home");
+    let ws = home.join("repos/project");
+    std::fs::create_dir_all(&ws).unwrap();
+    repo(&ws);
+    let log = dir.0.join("calls.log");
+    let bin = dir.0.join("bin");
+    fake_git_ai(&bin, &log);
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let host = host(&dir.0);
+
+    with_path(&path, || {
+        // The session's workspace is the home directory: not a repository, so
+        // the turn boundary has nothing to say.
+        host.dispatch(
+            HookEvent::TurnStart,
+            dispatch(
+                &home,
+                serde_json::json!({ "prompt": "fix it", "model": "m" }),
+            ),
+        );
+        // The shell event carries the directory the command runs in.
+        host.dispatch(
+            HookEvent::PreTool,
+            dispatch(
+                &ws,
+                serde_json::json!({ "tool": "bash", "input": { "command": "sed -i s/one/two/ kept.txt" } }),
+            ),
+        );
+        host.dispatch(
+            HookEvent::PostTool,
+            dispatch(
+                &ws,
+                serde_json::json!({ "tool": "bash", "command": "sed -i s/one/two/ kept.txt", "output": "" }),
+            ),
+        );
+        host.dispatch(
+            HookEvent::TurnEnd,
+            dispatch(&home, serde_json::json!({ "ok": true })),
+        );
+
+        let seen = payloads(&log);
+        let kinds: Vec<&str> = seen.iter().filter_map(|p| p["type"].as_str()).collect();
+        assert_eq!(
+            kinds,
+            ["pre_shell_command", "post_shell_command"],
+            "no human or ai_agent checkpoint: there is no repository at the turn \
+             boundary, and a late baseline would call the agent's work yours"
+        );
+        for payload in &seen {
+            assert!(same_dir(payload["repo_working_dir"].as_str().unwrap(), &ws));
+        }
+    });
 }
 
 /// THE INERT CASE, which is most machines. No `git-ai` on PATH means no
@@ -348,6 +467,6 @@ fn outside_a_git_repository_the_hook_stays_out_of_the_way() {
             HookEvent::TurnStart,
             dispatch(&ws, serde_json::json!({ "prompt": "hi", "model": "m" })),
         );
+        assert!(payloads(&log).is_empty(), "no repository, no checkpoint");
     });
-    assert!(payloads(&log).is_empty(), "no repository, no checkpoint");
 }

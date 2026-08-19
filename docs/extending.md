@@ -83,6 +83,22 @@ repository. The turn is the checkpoint boundary because bough is a code-mode har
 the model's program edits files inside the sandbox, so there is no per-edit hook to hang
 a checkpoint on.
 
+**Which repository it attributes to.** The turn pair is about the repository the
+session's workspace is in — its ROOT, so a workspace pointed at a crate inside a
+monorepo attributes to the monorepo and names files correctly. A shell command is
+attributed to the repository the command runs in, which is not always the same one: a
+command opening with `cd some/repo` carries that directory, and its pre/post pair goes
+there.
+
+**What it does not cover, and why.** If you start bough somewhere that is not a
+repository — your home directory, say — the turn boundary has nothing to baseline, so
+edits the model's program makes in a repository elsewhere are not attributed. The hook
+deliberately does NOT baseline a repository it meets mid-turn: by then the agent may
+already have written to it, and a late `human` checkpoint would mark the agent's own
+work as yours. Shell commands run inside that repository still are attributed, because
+Git AI diffs around the command itself. **Run bough in the repository you want
+attributed** and the turn pair does the rest.
+
 ### The harness sections
 
 Everything bough adopts from **another harness** sits under that harness's name rather
