@@ -59,6 +59,29 @@ const _: () = assert!(
     "two minutes of silence is a hang, not a wait"
 );
 
+/// Rate limits get a longer ladder than everything else, because they are the
+/// one failure where waiting is KNOWN to work. A 502 may never clear and a
+/// dead socket certainly will not, so [`MAX_BUDGET_MS`] cuts those losses
+/// fast. A 429 means the opposite: the request was well-formed, the work is
+/// intact, and the only thing wrong is that it is someone else's turn.
+///
+/// Sized against what actually broke: a suite run at 100-way concurrency put
+/// 102 of ~200 turns into `model_limit_rpm` on a model under heavy demand.
+/// Every one died with its work intact after ~31s of backoff — six attempts
+/// is 1+2+4+8+16s, which never outlasts a saturated shared pool. Eight
+/// attempts reach 127s of backoff inside a three-minute budget, which does.
+///
+/// This is not the two-minute hang [`MAX_BUDGET_MS`] refuses: `on_retry`
+/// fires before every sleep, so a client that is waiting SAYS it is waiting.
+/// Silence is the thing worth refusing, not patience.
+pub const RATE_LIMIT_MAX_ATTEMPTS: u32 = 8;
+pub const RATE_LIMIT_BUDGET_MS: u64 = 180_000;
+
+/// A rate limit, as opposed to any other retryable failure.
+pub fn is_rate_limit(err: &BoughError) -> bool {
+    err.status() == 429
+}
+
 fn retryable_status(s: u16) -> bool {
     s == 408 || s == 429 || s >= 500
 }
@@ -129,9 +152,13 @@ fn jitter() -> f64 {
 
 struct Retry {
     inner: Arc<dyn LlmClient>,
-    max_attempts: u32,
+    /// `None` means "no caller preference", which is what lets a rate limit
+    /// take the longer default. A caller that states a number gets exactly
+    /// that number, whatever failed — an explicit budget is a decision, not a
+    /// starting point.
+    max_attempts: Option<u32>,
     base_delay_ms: u64,
-    budget_ms: u64,
+    budget_ms: Option<u64>,
     on_retry: Option<OnRetry>,
 }
 
@@ -156,8 +183,20 @@ impl LlmClient for Retry {
                     // Give up on exhaustion, on an abort raised during the
                     // failing run (rethrow the ORIGINAL error, no sleep), or
                     // on a non-retryable classification.
-                    if attempt >= self.max_attempts || cancel.is_cancelled() || !is_retryable(&err)
-                    {
+                    // The ladder is chosen by what failed, not fixed up
+                    // front: only a rate limit earns the longer default.
+                    let rate_limited = is_rate_limit(&err);
+                    let max_attempts = self.max_attempts.unwrap_or(if rate_limited {
+                        RATE_LIMIT_MAX_ATTEMPTS
+                    } else {
+                        MAX_ATTEMPTS
+                    });
+                    let budget_ms = self.budget_ms.unwrap_or(if rate_limited {
+                        RATE_LIMIT_BUDGET_MS
+                    } else {
+                        MAX_BUDGET_MS
+                    });
+                    if attempt >= max_attempts || cancel.is_cancelled() || !is_retryable(&err) {
                         return Err(err);
                     }
                     let backoff = self.base_delay_ms as f64
@@ -168,14 +207,15 @@ impl LlmClient for Retry {
                     // A wait the budget cannot cover is not a wait worth
                     // making: the user gets the provider's message now
                     // instead of the same message minutes from now.
-                    if spent_ms.saturating_add(delay_ms) > self.budget_ms {
+                    if spent_ms.saturating_add(delay_ms) > budget_ms {
                         return Err(err);
                     }
                     spent_ms += delay_ms;
                     if let Some(on_retry) = &self.on_retry {
                         on_retry(RetryInfo {
                             attempt,
-                            max_attempts: self.max_attempts,
+                            // the ladder actually in force for this failure
+                            max_attempts,
                             error: err,
                             delay_ms,
                         });
@@ -204,9 +244,9 @@ impl LlmClient for Retry {
 pub fn with_retries(inner: Arc<dyn LlmClient>, opts: RetryOpts) -> Arc<dyn LlmClient> {
     Arc::new(Retry {
         inner,
-        max_attempts: opts.max_attempts.unwrap_or(MAX_ATTEMPTS),
+        max_attempts: opts.max_attempts,
         base_delay_ms: opts.base_delay_ms.unwrap_or(BASE_DELAY_MS),
-        budget_ms: opts.budget_ms.unwrap_or(MAX_BUDGET_MS),
+        budget_ms: opts.budget_ms,
         on_retry: opts.on_retry,
     })
 }
@@ -367,6 +407,66 @@ mod tests {
         // delay = round(max(retryAfterHint, backoff)); the 50ms Retry-After
         // hint dominates the 1ms base's jittered backoff (≤1ms).
         assert_eq!(*seen.lock().unwrap(), vec![50]);
+    }
+
+    #[tokio::test]
+    async fn a_rate_limit_outlasts_the_ladder_a_network_fault_gets() {
+        // What broke a 445-trial suite: 100 concurrent turns against a model
+        // under heavy demand, each dying after six attempts with its work
+        // intact. Seven failures is past MAX_ATTEMPTS and only a rate limit
+        // survives it.
+        let boom = || BoughError::llm_with("openrouter: 429 model_limit_rpm", 429, None);
+        let (client, calls) = fake_client(vec![
+            Err(boom()),
+            Err(boom()),
+            Err(boom()),
+            Err(boom()),
+            Err(boom()),
+            Err(boom()),
+            Err(boom()),
+            Ok(good()),
+        ]);
+        let wrapped = with_retries(
+            client,
+            RetryOpts {
+                base_delay_ms: Some(0),
+                ..Default::default()
+            },
+        );
+        assert!(wrapped
+            .run(params(&TOOLS), noop_text(), CancellationToken::new())
+            .await
+            .is_ok());
+        assert_eq!(calls.lock().unwrap().len(), 8);
+    }
+
+    #[tokio::test]
+    async fn a_server_error_still_gives_up_at_the_shorter_ladder() {
+        // The other half of the contract: a 502 may never clear, so it keeps
+        // the six-attempt ladder and fails fast rather than inheriting the
+        // rate limit's patience.
+        let boom = || BoughError::llm_with("upstream is down", 502, None);
+        let (client, calls) = fake_client(vec![
+            Err(boom()),
+            Err(boom()),
+            Err(boom()),
+            Err(boom()),
+            Err(boom()),
+            Err(boom()),
+            Ok(good()),
+        ]);
+        let wrapped = with_retries(
+            client,
+            RetryOpts {
+                base_delay_ms: Some(0),
+                ..Default::default()
+            },
+        );
+        assert!(wrapped
+            .run(params(&TOOLS), noop_text(), CancellationToken::new())
+            .await
+            .is_err());
+        assert_eq!(calls.lock().unwrap().len(), MAX_ATTEMPTS as usize);
     }
 
     #[tokio::test]
