@@ -29,14 +29,10 @@
 -- some other checkout. The porcelain comparison is still done on top, because
 -- a `sed -i` is not a write verb and it is the only thing that sees it.
 --
--- A REPOSITORY IS NEVER ATTRIBUTED WITHOUT A BASELINE. If a turn is the first
--- to touch some checkout, there was no `human` checkpoint before the agent
--- edited it, so an `ai_agent` checkpoint now would hand Git AI every
--- uncommitted line in it — including the ones you wrote yesterday. That turn
--- is skipped and the repository is REMEMBERED, so the next turn in this
--- session baselines it at the start and attributes it properly. Shell commands
--- are unaffected: Git AI brackets those itself from the pre/post pair.
---
+-- A REPOSITORY IS NEVER ATTRIBUTED WITHOUT A BASELINE. Shell commands and
+-- bough's file verbs baseline their repository immediately before mutation.
+-- A repository discovered only at TurnEnd is still skipped: attributing it
+-- would hand Git AI every uncommitted line in it, including the user's.
 -- IT IS INERT WITHOUT GIT AI, and finding Git AI is not just `command -v`: the
 -- installer puts the binary in `~/.git-ai/bin` and exports that from your shell
 -- profile, so a bough started from anything other than an interactive shell
@@ -316,10 +312,18 @@ bough.api.create_autocmd("TurnEnd", {
   end,
 })
 
--- Shell commands can change files too, including in a checkout outside the
--- session workspace. Agent V1 only accepts human and ai_agent checkpoints, so
--- a pre/post shell pair is invalid. Instead, baseline just before the command
--- and let TurnEnd report its diff as the agent's work.
+-- Every bough mutation is baselined before it changes a repository. Shell
+-- commands identify their checkout from the command directory; write() and
+-- patch() report their target with PreWrite. That preserves a first turn in a
+-- repository outside the session workspace instead of dropping its transcript.
+local function baseline(session, root)
+  remember(session, root)
+  if session.baselined[root] == nil then
+    session.baselined[root] = snapshot(root)
+    checkpoint({ type = "human", repo_working_dir = root })
+  end
+end
+
 local function baseline_before_shell_command(ev, command)
   if command == nil or command == "" or git_ai() == nil then
     return
@@ -328,16 +332,29 @@ local function baseline_before_shell_command(ev, command)
   if root == nil then
     return
   end
-  local session = session_for(ev.session_id)
-  remember(session, root)
-  if session.baselined[root] == nil then
-    session.baselined[root] = snapshot(root)
-    checkpoint({ type = "human", repo_working_dir = root })
+  baseline(session_for(ev.session_id), root)
+end
+
+local function baseline_before_file_write(ev)
+  local path = ev.data and ev.data.path
+  if path == nil or path == "" or git_ai() == nil then
+    return
   end
+  local root = locate(path)
+  if root == nil then
+    return
+  end
+  baseline(session_for(ev.session_id), root)
 end
 
 bough.api.create_autocmd("PreTool", {
   callback = function(ev)
     baseline_before_shell_command(ev, ev.data and ev.data.input and ev.data.input.command)
+  end,
+})
+
+bough.api.create_autocmd("PreWrite", {
+  callback = function(ev)
+    baseline_before_file_write(ev)
   end,
 })

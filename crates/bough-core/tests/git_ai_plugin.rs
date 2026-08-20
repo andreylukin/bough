@@ -419,20 +419,18 @@ fn a_command_run_inside_a_repo_is_attributed_to_that_repo_not_the_workspace() {
         }
         let edited = seen[1]["edited_filepaths"].as_array().unwrap();
         assert_eq!(edited.len(), 1, "{seen:?}");
-        assert!(edited[0].as_str().unwrap().ends_with("kept.txt"), "{seen:?}");
+        assert!(
+            edited[0].as_str().unwrap().ends_with("kept.txt"),
+            "{seen:?}"
+        );
     });
 }
 
-/// THE CASE THIS PLUGIN WAS FAILING: bough started in a home directory, which
-/// is not a repository, while the model's program edits files in a checkout
-/// somewhere under it.
-///
-/// The first turn cannot attribute the repository — there was no `human`
-/// checkpoint before the agent wrote to it, so claiming it now would hand Git
-/// AI every uncommitted line in it, yours included. It is remembered, and the
-/// SECOND turn baselines it at the start and attributes it properly.
+/// A first write in a repository outside the session workspace must be
+/// baselined before it lands. Otherwise the only safe outcome was to drop the
+/// turn, which also dropped its prompt transcript from Git AI.
 #[test]
-fn a_repo_the_workspace_is_not_even_inside_is_attributed_from_the_next_turn() {
+fn a_first_turn_file_write_outside_the_workspace_is_attributed() {
     let dir = tmp("home");
     let home = dir.0.join("home");
     let project = home.join("repos/project");
@@ -446,7 +444,6 @@ fn a_repo_the_workspace_is_not_even_inside_is_attributed_from_the_next_turn() {
     let edited = project.join("kept.txt");
 
     with_path(&path, || {
-        // ---- turn one: the repository is discovered by what was written ----
         host.dispatch(
             HookEvent::TurnStart,
             dispatch(
@@ -454,27 +451,11 @@ fn a_repo_the_workspace_is_not_even_inside_is_attributed_from_the_next_turn() {
                 serde_json::json!({ "prompt": "edit it", "model": "opus-5" }),
             ),
         );
+        host.dispatch(
+            HookEvent::Custom("PreWrite".into()),
+            dispatch(&project, serde_json::json!({ "path": edited })),
+        );
         std::fs::write(&edited, "one\ntwo\n").unwrap();
-        host.dispatch(
-            HookEvent::TurnEnd,
-            serde_json::json!({ "ok": true, "edited": [edited.to_string_lossy()] })
-                .pipe(|data| dispatch(&home, data)),
-        );
-        assert!(
-            payloads(&log).is_empty(),
-            "nothing yet: attributing without a baseline would claim your \
-             uncommitted lines as the agent's"
-        );
-
-        // ---- turn two: it is baselined at the start, and attributed ----
-        host.dispatch(
-            HookEvent::TurnStart,
-            dispatch(
-                &home,
-                serde_json::json!({ "prompt": "again", "model": "opus-5" }),
-            ),
-        );
-        std::fs::write(&edited, "one\ntwo\nthree\n").unwrap();
         host.dispatch(
             HookEvent::TurnEnd,
             serde_json::json!({ "ok": true, "edited": [edited.to_string_lossy()] })
@@ -483,25 +464,17 @@ fn a_repo_the_workspace_is_not_even_inside_is_attributed_from_the_next_turn() {
 
         let seen = payloads(&log);
         let kinds: Vec<&str> = seen.iter().filter_map(|p| p["type"].as_str()).collect();
-        assert_eq!(
-            kinds,
-            ["human", "ai_agent"],
-            "the repository bough was never pointed at: {seen:?}"
-        );
+        assert_eq!(kinds, ["human", "ai_agent"], "{seen:?}");
         for payload in &seen {
             assert!(
                 same_dir(payload["repo_working_dir"].as_str().unwrap(), &project),
                 "{payload:?}"
             );
         }
-        let files: Vec<String> = seen[1]["edited_filepaths"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|p| p.as_str().unwrap().to_string())
-            .collect();
-        assert_eq!(files.len(), 1, "{files:?}");
-        assert!(files[0].ends_with("kept.txt"), "{files:?}");
+        assert_eq!(seen[1]["transcript"]["messages"][0]["text"], "edit it");
+        let paths = seen[1]["edited_filepaths"].as_array().unwrap();
+        assert_eq!(paths.len(), 1, "{seen:?}");
+        assert!(paths[0].as_str().unwrap().ends_with("kept.txt"), "{seen:?}");
     });
 }
 

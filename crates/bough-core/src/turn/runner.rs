@@ -298,6 +298,27 @@ pub fn base_host_fns(ctx: &TurnCtx) -> HostFns {
             workspace: ctx.workspace.clone(),
             session_id: ctx.session_id.clone(),
             reads: Some(ctx.reads.clone()),
+            pre_write: Some({
+                let bus = ctx.app.bus.clone();
+                let session_id = ctx.session_id.clone();
+                Arc::new(move |path: &str| {
+                    let workspace = std::path::Path::new(path)
+                        .parent()
+                        .unwrap_or_else(|| std::path::Path::new(path))
+                        .to_string_lossy()
+                        .into_owned();
+                    crate::hooks::fire_on(
+                        Some(&bus),
+                        HookEvent::Custom("PreWrite".into()),
+                        HookDispatch {
+                            session_id: session_id.clone(),
+                            workspace,
+                            pattern: "write".into(),
+                            data: serde_json::json!({ "path": path }),
+                        },
+                    );
+                })
+            }),
             view_bytes: Some(budget.view_bytes),
         },
         ctx.app.host.snapshots.clone(),

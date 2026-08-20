@@ -212,7 +212,13 @@ pub struct FileCtx {
     /// Largest file this turn's model can be shown. `None` keeps
     /// [`MAX_VIEW_BYTES`] — see [`crate::hostfn::budget`].
     pub view_bytes: Option<u64>,
+    /// Runs immediately before a file mutation. It is optional so the file
+    /// verbs remain independently testable without a hook host.
+    pub pre_write: Option<PreWriteHook>,
 }
+
+/// A pre-mutation observer used to establish authorship before bytes change.
+pub type PreWriteHook = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// A view is rendered into the model's context in full, so an unbounded one
 /// is a context overflow. Refusing is strictly better than truncating: a
@@ -247,6 +253,12 @@ impl FileHostFns {
         resolve_lexical(&self.ctx.workspace, path)
     }
 
+    fn before_write(&self, path: &str) {
+        if let Some(hook) = &self.ctx.pre_write {
+            hook(path);
+        }
+    }
+
     /// `[path#TAG]` plus numbered `N:text` lines — and the record that makes
     /// a later `[path#]` resolvable. Rendering without recording would be a
     /// lie: the model would be handed a tag naming a version nothing can
@@ -254,6 +266,7 @@ impl FileHostFns {
     pub fn view(&self, path: &str) -> Result<String, BoughError> {
         let p = require_path(path, "view")?;
         let full = self.abs(p);
+        self.before_write(&full);
 
         let stat = std::fs::metadata(&full).map_err(|err| view_read_error(p, &full, &err))?;
         if stat.is_dir() {
@@ -363,6 +376,7 @@ impl FileHostFns {
         for g in &groups {
             let p = &full[&g.path];
             let text = &next[&g.path];
+            self.before_write(p);
             if let Err(err) = std::fs::write(p, text) {
                 // Every file was decided before any was written, so this is a
                 // filesystem failure, not a patch decision. Say exactly how
@@ -577,6 +591,7 @@ mod tests {
                     workspace: self.dir.to_string_lossy().into_owned(),
                     session_id: id.to_string(),
                     reads: None,
+                    pre_write: None,
                 },
                 self.snapshots.clone(),
                 self.writes.clone(),
@@ -735,6 +750,7 @@ mod tests {
                 workspace: w.dir.to_string_lossy().into_owned(),
                 session_id: "s1".into(),
                 reads: None,
+                pre_write: None,
             },
             w.snapshots.clone(),
             w.writes.clone(),
@@ -750,6 +766,7 @@ mod tests {
                 workspace: w.dir.to_string_lossy().into_owned(),
                 session_id: "s2".into(),
                 reads: None,
+                pre_write: None,
             },
             w.snapshots.clone(),
             w.writes.clone(),
