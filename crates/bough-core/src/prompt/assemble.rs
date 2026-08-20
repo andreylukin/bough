@@ -191,6 +191,7 @@ pub enum SectionId {
     State,
     Schedule,
     UsingSkills,
+    Search,
     Artifact,
     Delegation,
     DelegationNested,
@@ -213,6 +214,7 @@ impl SectionId {
     pub fn as_str(&self) -> &'static str {
         match self {
             SectionId::Identity => "identity",
+            SectionId::Search => "search",
             SectionId::Shell => "shell",
             SectionId::History => "history",
             SectionId::Files => "files",
@@ -303,7 +305,7 @@ fn always(_: &Facts) -> bool {
 /// is legal, and `delegation-nested` on `agent` because a depth-2 subagent
 /// (still kind `subagent`) is bridged nothing and must therefore be told
 /// nothing.
-static SECTIONS: [SectionSpec; 18] = [
+static SECTIONS: [SectionSpec; 19] = [
     SectionSpec {
         id: SectionId::Identity,
         file: "identity.md",
@@ -365,6 +367,12 @@ static SECTIONS: [SectionSpec; 18] = [
         file: "using-skills.md",
         raw: include_str!("sections/using-skills.md"),
         when: |f| f.has(HostFnName::View),
+    },
+    SectionSpec {
+        id: SectionId::Search,
+        file: "search.md",
+        raw: include_str!("sections/search.md"),
+        when: |f| f.has(HostFnName::Search),
     },
     SectionSpec {
         id: SectionId::Artifact,

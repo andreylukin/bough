@@ -72,6 +72,7 @@ const HOST_FN_NAMES = [
   "state",
   "schedule",
   "artifact",
+  "search",
   "mcp",
 ];
 
@@ -337,6 +338,13 @@ const bindings = {
   schedule: methodObject("schedule"),
   artifact: (name, content) =>
     jsonCall("artifact", [name, typeof content === "string" ? content : JSON.stringify(content)]),
+  // The options object is serialized here, once, so a caller writing
+  // search(q, { maxResults: 3 }) never has to think about quoting.
+  search: (objective, options) =>
+    jsonCall("search", [
+      String(objective ?? ""),
+      options === undefined || options === null ? "" : JSON.stringify(options),
+    ]),
   // NOT a method object: `call` is positional (server, tool, args) because
   // that is how the model already thinks about it, and the whole reason this
   // binding exists is that `args` stays an OBJECT the whole way down — it is

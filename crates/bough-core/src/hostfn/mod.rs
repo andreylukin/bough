@@ -13,6 +13,7 @@ pub mod jobs;
 pub mod mcp;
 pub mod patch;
 pub mod schedule;
+pub mod search;
 pub mod shell;
 pub mod spill;
 pub mod state;

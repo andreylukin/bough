@@ -64,6 +64,12 @@ MIN_TURN = 400
 # rather than under-equipped. Test the syntax, not the version string.
 # Downloaded then extracted, NOT piped into tar -- the pipe fails silently
 # on Debian 11 and leaves node 12 in place, which looks like the same bug.
+# Web search. Baked into the prebaked image; installed here for any
+# environment that is not using it.
+_PARALLEL_CLI = (
+    'if ! command -v parallel-cli >/dev/null 2>&1; then   mkdir -p /root/.local/share /root/.local/bin   && curl -fsSL https://parallel.ai/install.sh | bash   && cp -a /root/.local/bin/parallel-cli /usr/local/bin/parallel-cli   && chmod 0755 /usr/local/bin/parallel-cli; fi'
+)
+
 _NODE_FIX = (
     'if ! node -e \'null ?? 0\' >/dev/null 2>&1; then   case "$(uname -m)" in     x86_64) NA=x64 ;; aarch64|arm64) NA=arm64 ;; *) NA= ;;   esac;   if [ -n "$NA" ]; then     curl -fsSL -o /tmp/node.tar.xz       "https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-$NA.tar.xz"     && tar -xJ -C /usr/local --strip-components=1 -f /tmp/node.tar.xz;     rm -f /tmp/node.tar.xz;   fi; fi'
 )
@@ -201,8 +207,8 @@ class Bough(BaseInstalledAgent):
                 "sleep $(( $(od -An -N1 -tu1 /dev/urandom | tr -d ' \\n') % 45 )); "
                 "for i in 1 2 3 4 5 6 7 8; do "
                 "  apt-get update -qq && apt-get install -y --no-install-recommends "
-                "    ca-certificates curl git ripgrep nodejs xz-utils "
-                "  && { " + _NODE_FIX + "; exit 0; }; "
+                "    ca-certificates curl git ripgrep nodejs xz-utils unzip "
+                "  && { " + _NODE_FIX + "; " + _PARALLEL_CLI + "; exit 0; }; "
                 '  echo "bough: apt attempt $i failed" >&2; '
                 # Exponential-ish, capped: 20s, 40s, 80s, 160s, then 180s.
                 "  sleep $(( i * i * 20 > 180 ? 180 : i * i * 20 )); "
@@ -335,6 +341,7 @@ class Bough(BaseInstalledAgent):
                 # completed attempt's tokens and cost down with it — which is
                 # why timed-out trials used to report $0.0000.
                 self._write_agent_log(envelopes)
+                await self._capture_transcript(environment, envelope, attempt)
 
             # Retry only a turn that did NOT finish on its own terms. A turn
             # that reached `done` has said what it has to say; re-running it
@@ -404,6 +411,36 @@ class Bough(BaseInstalledAgent):
             self.logger.info(f"bough: could not read Harbor's agent cap: {exc}")
         return None
 
+    async def _capture_transcript(
+        self, environment: BaseEnvironment, envelope: dict[str, Any], attempt: int
+    ) -> None:
+        """Save the turn's thread next to the envelope.
+
+        The envelope says what bough concluded; it does not say what bough
+        DID. Without the thread there is no telling "the tool did not help"
+        from "the tool was never called", which is the difference between a
+        result and a guess when a capability is being A/B tested.
+        Best-effort: a trial is not worth failing over its own logging.
+        """
+        session = envelope.get("session")
+        if not session:
+            return
+        try:
+            result = await environment.exec(
+                command=(
+                    "curl -sS --max-time 30 "
+                    f"http://127.0.0.1:{self._port}/sessions/{shlex.quote(session)}"
+                ),
+                timeout_sec=60,
+            )
+            if result.return_code != 0 or not (result.stdout or "").strip():
+                return
+            path = self.logs_dir / f"transcript-{attempt}.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(result.stdout)
+        except Exception as exc:  # noqa: BLE001 - logging must not fail a trial
+            self.logger.info(f"bough: could not capture the transcript: {exc}")
+
     def _write_agent_log(self, envelopes: list[dict[str, Any]]) -> None:
         agent_log = self.logs_dir / "bough-exec.json"
         agent_log.parent.mkdir(parents=True, exist_ok=True)
@@ -440,6 +477,7 @@ class Bough(BaseInstalledAgent):
             "ANTHROPIC_AUTH_TOKEN",
             "OPENAI_API_KEY",
             "OPENROUTER_API_KEY",
+            "PARALLEL_API_KEY",
             "CLOUDFLARE_API_KEY",
         ):
             value = self._get_env(key)

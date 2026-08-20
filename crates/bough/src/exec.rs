@@ -400,6 +400,29 @@ const INTERRUPT_TIMEOUT_MS: u64 = 5_000;
 
 /// The whole client. Returns the process exit code; never exits, never writes
 /// to a real stream, never reads a global.
+/// Prefix the turn with its own wall clock.
+///
+/// `--timeout` was only ever enforced out here: the client stops waiting and
+/// stops the turn, and the model was never told a deadline existed. An agent
+/// that does not know it has 810 seconds cannot decide to spend them, so it
+/// stops when it feels finished -- which across a benchmark suite meant turns
+/// ending at a fraction of their budget with the work unverified, and other
+/// turns walking into a cut-off they could have seen coming.
+///
+/// Stated as a fact, not an exhortation: how to spend the time is the model's
+/// business, but it cannot be its business while the number is a secret.
+fn with_deadline(prompt: &str, timeout_ms: u64) -> String {
+    let seconds = timeout_ms / 1000;
+    if seconds == 0 {
+        return prompt.to_string();
+    }
+    format!(
+        "[this turn has {seconds} seconds of wall clock. When it runs out the turn is \
+cut off wherever it is; work already written to disk survives, unfinished reasoning \
+does not.]\n\n{prompt}"
+    )
+}
+
 pub async fn run_exec(argv: &[String], deps: &ExecDeps) -> i32 {
     let parsed = match parse_exec_args(argv) {
         ExecParse::Help => {
@@ -564,7 +587,7 @@ pub async fn run_exec(argv: &[String], deps: &ExecDeps) -> i32 {
         ExecRequest {
             method: "POST".into(),
             url: format!("{api}/sessions/{session_id}/messages"),
-            body: Some(json!({ "text": prompt }).to_string()),
+            body: Some(json!({ "text": with_deadline(&prompt, parsed.timeout_ms) }).to_string()),
         },
     )
     .await
@@ -1526,7 +1549,9 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(run_exec(&argv(&["--timeout", "1", "-"]), &f.deps).await, 0);
-        assert_eq!(first_message_text(&f.ctx), "from a pipe");
+        // The posted text carries the turn's deadline ahead of the prompt;
+        // what this test pins is the stdin handling, not the prefix.
+        assert!(first_message_text(&f.ctx).ends_with("from a pipe"));
     }
 
     #[tokio::test]
@@ -1538,7 +1563,26 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(run_exec(&argv(&["--timeout", "1"]), &f.deps).await, 0);
-        assert_eq!(first_message_text(&f.ctx), "piped prompt");
+        // The posted text carries the turn's deadline ahead of the prompt;
+        // what this test pins is the stdin handling, not the prefix.
+        assert!(first_message_text(&f.ctx).ends_with("piped prompt"));
+    }
+
+    #[tokio::test]
+    async fn the_turn_is_told_how_much_wall_clock_it_has() {
+        let f = fixture(FixtureOptions {
+            turn: Some(instant_turn("ok", "done", None)),
+            ..Default::default()
+        });
+        assert_eq!(
+            run_exec(&argv(&["--timeout", "42", "do the thing"]), &f.deps).await,
+            0
+        );
+        let text = first_message_text(&f.ctx);
+        // The number matters: a deadline the model cannot read is the bug this
+        // fixes, and the prompt itself must still arrive intact after it.
+        assert!(text.contains("42 seconds"), "{text}");
+        assert!(text.ends_with("do the thing"), "{text}");
     }
 
     // ---- session shape -----------------------------------------------------

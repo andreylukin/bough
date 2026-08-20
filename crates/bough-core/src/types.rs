@@ -1117,6 +1117,9 @@ pub struct HostFns {
     pub patch: Option<HostFn>,
     /// New files and wholesale rewrites. There is no `read()` and no `edit()`.
     pub write: Option<HostFn>,
+    /// Web search. Present only when `parallel-cli` is installed, so the
+    /// prompt can describe it without promising a tool that is not there.
+    pub search: Option<HostFn>,
     /// Blocking subagent — `{sessionId, ok, report, changedFiles}` as JSON.
     pub agent: Option<HostFn>,
     /// Detached subagent — `{sessionId, title}` as JSON, immediately.
@@ -1167,6 +1170,7 @@ impl HostFns {
             HostFnName::Schedule => self.schedule.as_ref(),
             HostFnName::Artifact => self.artifact.as_ref(),
             HostFnName::Mcp => self.mcp.as_ref(),
+            HostFnName::Search => self.search.as_ref(),
         }
     }
 }
@@ -1250,7 +1254,7 @@ mod tests {
         // The Rust replacement for the TS compile-time drift proof: every wire
         // name parses to a HostFnName, and `get` matches it exhaustively.
         let fns = HostFns::default();
-        assert_eq!(HOST_FN_NAMES.len(), 19);
+        assert_eq!(HOST_FN_NAMES.len(), 20);
         for name in HOST_FN_NAMES {
             let parsed = HostFnName::parse(name)
                 .unwrap_or_else(|| panic!("protocol name {name} not in HostFnName"));

@@ -142,6 +142,35 @@ else
   echo "  documents it. Install it: https://ast-grep.github.io/guide/quick-start.html"
 fi
 
+# parallel-cli: the web search behind the `search()` host function.
+#
+# Unlike ast-grep, its absence is SILENT rather than loud, and deliberately so:
+# `search()` is registered only when this binary is on PATH, and the prompt
+# section that documents it is gated on the host function. An install without
+# it is an install with no web search, not one advertising a tool it lacks.
+#
+# Auth is separate and interactive, so it is not attempted here: run
+# `parallel-cli login`, or export PARALLEL_API_KEY.
+if command -v parallel-cli >/dev/null; then
+  echo "==> parallel-cli already installed"
+elif command -v curl >/dev/null; then
+  echo "==> installing parallel-cli (web search for search())"
+  # The installer writes into ~/.local and assumes those directories exist; on
+  # a fresh machine it exits non-zero without them.
+  mkdir -p "$HOME/.local/share" "$HOME/.local/bin"
+  if curl -fsSL https://parallel.ai/install.sh | bash; then
+    case ":$PATH:" in
+      *":$HOME/.local/bin:"*) ;;
+      *) echo "  note: add $HOME/.local/bin to PATH so bough can find parallel-cli" ;;
+    esac
+    echo "  authenticate with: parallel-cli login   (or export PARALLEL_API_KEY)"
+  else
+    echo "warning: parallel-cli install failed — bough runs fine, without search()."
+  fi
+else
+  echo "warning: no curl, skipping parallel-cli — bough runs fine, without search()."
+fi
+
 # SQLite needs nothing installed. rusqlite is built with `bundled`, so bough
 # compiles its own extension-capable SQLite on both platforms — which is what
 # retired the macOS Homebrew-libsqlite3 swap the TypeScript tree needed for the

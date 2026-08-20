@@ -271,6 +271,12 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
                     turn_ctx,
                     Default::default(),
                 )),
+                // Registered only when the CLI behind it is installed: the
+                // prompt section describes search() as available, and a
+                // global that always throws teaches the model to stop
+                // reaching for it.
+                search: bough_core::hostfn::search::parallel_cli_available()
+                    .then(|| bough_core::hostfn::search::create_search_host_fn(turn_ctx)),
                 ..Default::default()
             })),
             ..Default::default()

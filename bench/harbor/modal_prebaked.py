@@ -30,8 +30,16 @@ import harbor.environments.modal as _modal_module
 # unconditionally by bough's system prompt and node is what it runs the
 # programs it writes under, so a missing one is a silently worse agent, not a
 # louder failure.
-PACKAGES = "ca-certificates curl git ripgrep nodejs xz-utils"
+PACKAGES = "ca-certificates curl git ripgrep nodejs xz-utils unzip"
 BINARY_PATH = "/installed-agent/bough"
+
+# Web search for the agent. Terminal-Bench allows internet access; only the
+# benchmark's own site and repo are off limits (reward hacking), which is a
+# matter for what the agent is told to search, not for whether the tool is
+# here. Baked into the layer so it costs nothing per trial.
+PARALLEL_CLI = (
+    'if ! command -v parallel-cli >/dev/null 2>&1; then   mkdir -p /root/.local/share /root/.local/bin   && curl -fsSL https://parallel.ai/install.sh | bash   && cp -a /root/.local/bin/parallel-cli /usr/local/bin/parallel-cli   && chmod 0755 /usr/local/bin/parallel-cli; fi'
+)
 
 NODE_FIX = (
     # Downloaded then extracted, NOT piped into tar: the pipe fails
