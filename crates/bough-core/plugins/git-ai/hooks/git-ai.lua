@@ -316,11 +316,11 @@ bough.api.create_autocmd("TurnEnd", {
   end,
 })
 
--- A shell command the agent runs can change files too — a `sed -i`, a
--- formatter, a code generator — and in a checkout the turn boundary may know
--- nothing about. Git AI's agent-v1 preset takes the pair directly and brackets
--- the command itself, so this needs no baseline of its own.
-local function shell_event(kind, ev, command)
+-- Shell commands can change files too, including in a checkout outside the
+-- session workspace. Agent V1 only accepts human and ai_agent checkpoints, so
+-- a pre/post shell pair is invalid. Instead, baseline just before the command
+-- and let TurnEnd report its diff as the agent's work.
+local function baseline_before_shell_command(ev, command)
   if command == nil or command == "" or git_ai() == nil then
     return
   end
@@ -330,24 +330,14 @@ local function shell_event(kind, ev, command)
   end
   local session = session_for(ev.session_id)
   remember(session, root)
-  checkpoint({
-    type = kind,
-    repo_working_dir = root,
-    agent_name = AGENT,
-    model = session.model,
-    conversation_id = ev.session_id,
-    command = command,
-  })
+  if session.baselined[root] == nil then
+    session.baselined[root] = snapshot(root)
+    checkpoint({ type = "human", repo_working_dir = root })
+  end
 end
 
 bough.api.create_autocmd("PreTool", {
   callback = function(ev)
-    shell_event("pre_shell_command", ev, ev.data and ev.data.input and ev.data.input.command)
-  end,
-})
-
-bough.api.create_autocmd("PostTool", {
-  callback = function(ev)
-    shell_event("post_shell_command", ev, ev.data and ev.data.command)
+    baseline_before_shell_command(ev, ev.data and ev.data.input and ev.data.input.command)
   end,
 })

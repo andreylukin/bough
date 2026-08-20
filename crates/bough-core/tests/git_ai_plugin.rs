@@ -273,10 +273,11 @@ fn a_turn_that_edited_nothing_does_not_checkpoint_the_agent() {
     });
 }
 
-/// A shell command can change files too — a `sed -i`, a formatter, a
-/// generator — and Git AI takes the pair directly.
+/// Agent V1 only understands human and ai_agent checkpoints. A shell command
+/// is therefore baselined immediately before it runs and attributed at TurnEnd,
+/// rather than emitted as an unsupported pre/post shell event.
 #[test]
-fn a_shell_command_is_reported_as_a_pair() {
+fn a_shell_command_is_attributed_at_turn_end() {
     let dir = tmp("shell");
     let ws = dir.0.join("ws");
     std::fs::create_dir_all(&ws).unwrap();
@@ -289,25 +290,31 @@ fn a_shell_command_is_reported_as_a_pair() {
 
     with_path(&path, || {
         host.dispatch(
-            HookEvent::PreTool,
+            HookEvent::TurnStart,
             dispatch(
                 &ws,
-                serde_json::json!({ "tool": "bash", "input": { "command": "sed -i s/a/b/ kept.txt" } }),
+                serde_json::json!({ "prompt": "change it", "model": "m" }),
             ),
         );
         host.dispatch(
-            HookEvent::PostTool,
+            HookEvent::PreTool,
             dispatch(
                 &ws,
-                serde_json::json!({ "tool": "bash", "command": "sed -i s/a/b/ kept.txt", "output": "" }),
+                serde_json::json!({ "tool": "bash", "input": { "command": "sed -i s/one/two/ kept.txt" } }),
             ),
+        );
+        std::fs::write(ws.join("kept.txt"), "two\n").unwrap();
+        host.dispatch(
+            HookEvent::TurnEnd,
+            dispatch(&ws, serde_json::json!({ "ok": true })),
         );
 
         let seen = payloads(&log);
         let kinds: Vec<&str> = seen.iter().filter_map(|p| p["type"].as_str()).collect();
-        assert_eq!(kinds, ["pre_shell_command", "post_shell_command"]);
-        assert_eq!(seen[0]["command"], "sed -i s/a/b/ kept.txt");
+        assert_eq!(kinds, ["human", "ai_agent"], "{seen:?}");
         assert_eq!(seen[1]["agent_name"], "bough");
+        assert_eq!(seen[1]["model"], "m");
+        assert_eq!(seen[1]["transcript"]["messages"][0]["text"], "change it");
     });
 }
 
@@ -367,15 +374,9 @@ fn a_workspace_below_the_repo_root_names_the_files_that_actually_changed() {
     });
 }
 
-/// THE QUESTION THIS ANSWERS: bough started somewhere that is not a repository
-/// — a home directory — and the agent runs a command inside one.
-///
-/// The turn boundary cannot help here: at `TurnStart` there is no repository to
-/// baseline, and baselining one later would mark whatever the agent had already
-/// written as the human's, which is the one error worth avoiding. What DOES
-/// work is the shell pair, which Git AI diffs around the command itself, and it
-/// is attributed to the repository the command ran in rather than to the
-/// session's workspace.
+/// A shell command can work in a repository outside the session workspace.
+/// PreTool baselines that repository before the command, so TurnEnd can attribute
+/// the command's changes without relying on unsupported shell checkpoint types.
 #[test]
 fn a_command_run_inside_a_repo_is_attributed_to_that_repo_not_the_workspace() {
     let dir = tmp("elsewhere");
@@ -390,8 +391,6 @@ fn a_command_run_inside_a_repo_is_attributed_to_that_repo_not_the_workspace() {
     let host = host(&dir.0);
 
     with_path(&path, || {
-        // The session's workspace is the home directory: not a repository, so
-        // the turn boundary has nothing to say.
         host.dispatch(
             HookEvent::TurnStart,
             dispatch(
@@ -399,7 +398,6 @@ fn a_command_run_inside_a_repo_is_attributed_to_that_repo_not_the_workspace() {
                 serde_json::json!({ "prompt": "fix it", "model": "m" }),
             ),
         );
-        // The shell event carries the directory the command runs in.
         host.dispatch(
             HookEvent::PreTool,
             dispatch(
@@ -407,13 +405,7 @@ fn a_command_run_inside_a_repo_is_attributed_to_that_repo_not_the_workspace() {
                 serde_json::json!({ "tool": "bash", "input": { "command": "sed -i s/one/two/ kept.txt" } }),
             ),
         );
-        host.dispatch(
-            HookEvent::PostTool,
-            dispatch(
-                &ws,
-                serde_json::json!({ "tool": "bash", "command": "sed -i s/one/two/ kept.txt", "output": "" }),
-            ),
-        );
+        std::fs::write(ws.join("kept.txt"), "two\n").unwrap();
         host.dispatch(
             HookEvent::TurnEnd,
             dispatch(&home, serde_json::json!({ "ok": true })),
@@ -421,15 +413,13 @@ fn a_command_run_inside_a_repo_is_attributed_to_that_repo_not_the_workspace() {
 
         let seen = payloads(&log);
         let kinds: Vec<&str> = seen.iter().filter_map(|p| p["type"].as_str()).collect();
-        assert_eq!(
-            kinds,
-            ["pre_shell_command", "post_shell_command"],
-            "no human or ai_agent checkpoint: there is no repository at the turn \
-             boundary, and a late baseline would call the agent's work yours"
-        );
+        assert_eq!(kinds, ["human", "ai_agent"], "{seen:?}");
         for payload in &seen {
             assert!(same_dir(payload["repo_working_dir"].as_str().unwrap(), &ws));
         }
+        let edited = seen[1]["edited_filepaths"].as_array().unwrap();
+        assert_eq!(edited.len(), 1, "{seen:?}");
+        assert!(edited[0].as_str().unwrap().ends_with("kept.txt"), "{seen:?}");
     });
 }
 
