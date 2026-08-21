@@ -40,6 +40,12 @@ tracing-subscriber = "0.3"
 libc         = "0.2"
 tower        = { version = "0.5", features = ["util"] }  # bough-server tests: ServiceExt::oneshot
 include_dir  = "0.7"                                     # bundled skill folders (spec small.md §4)
+# MCP: the official Rust SDK. `auth` carries the OAuth 2.1 state machine (PKCE,
+# RFC 9728/8414/7591/8707, WWW-Authenticate, scope upgrade) that `mcp/oauth.rs`
+# used to hand-roll. NOTE: rmcp wants reqwest 0.13 and this workspace pins 0.12 —
+# deliberately NOT bumped (the LLM streaming path rides on 0.12). OAuth HTTP is
+# routed back through bough's own client via rmcp's `OAuthHttpClient` instead.
+rmcp         = { version = "3.1", default-features = false, features = ["auth", "client"] }
 
 bough-core   = { path = "crates/bough-core" }
 bough-server = { path = "crates/bough-server" }

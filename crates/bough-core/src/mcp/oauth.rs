@@ -227,6 +227,83 @@ impl Stored {
     }
 }
 
+/// The rmcp seam. `StoredCredentials` and `StoredAuthorizationState` are
+/// `#[non_exhaustive]`, so they cannot be built with struct-literal syntax outside
+/// rmcp — and going through serde is the better bargain anyway: it is the same
+/// bargain `discovery` already makes. A field rmcp adds arrives as JSON bough does
+/// not name and survives a round trip, instead of failing to compile on a bump.
+impl Stored {
+    /// This server's own grant, in rmcp's shape, or `None` when nothing is stored.
+    ///
+    /// The absent `client_id` is the interesting case: a token file written by
+    /// `sync-mcp` from Claude Code's `mcpOAuth` map carries tokens with no dynamic
+    /// registration beside them, because the registration belonged to Claude Code.
+    /// Those tokens are still presentable, so an empty `client_id` is returned
+    /// rather than nothing at all.
+    pub fn to_rmcp_credentials(&self) -> Option<Value> {
+        let tokens = self.tokens.as_ref()?;
+        Some(json!({
+            "client_id": self
+                .client
+                .as_ref()
+                .map(|c| c.client_id.clone())
+                .unwrap_or_default(),
+            "token_response": serde_json::to_value(tokens).ok()?,
+            "granted_scopes": tokens
+                .scope
+                .as_deref()
+                .map(|s| s.split_whitespace().map(str::to_string).collect::<Vec<_>>())
+                .unwrap_or_default(),
+        }))
+    }
+
+    /// A bearer token borrowed from another client, in rmcp's shape.
+    ///
+    /// No refresh token and no expiry, both deliberately: bough did not mint this
+    /// and must not try to refresh it. When it stops working the answer is the
+    /// authorization prompt, not a refresh bough has no standing to attempt.
+    pub fn prefill_credentials(token: &str) -> Value {
+        json!({
+            "client_id": "",
+            "token_response": {
+                "access_token": token,
+                "token_type": "bearer",
+            },
+            "granted_scopes": [],
+        })
+    }
+
+    /// Fold a grant rmcp obtained back into this document, leaving everything the
+    /// flow did not speak to alone.
+    pub fn apply_rmcp_credentials(&mut self, creds: &Value, now: i64) {
+        if let Some(id) = creds.get("client_id").and_then(|v| v.as_str()) {
+            if !id.is_empty() {
+                match &mut self.client {
+                    Some(existing) => existing.client_id = id.to_string(),
+                    None => {
+                        self.client = Some(ClientInfo {
+                            client_id: id.to_string(),
+                            ..Default::default()
+                        })
+                    }
+                }
+            }
+        }
+        if let Some(tokens) = creds
+            .get("token_response")
+            .and_then(|t| serde_json::from_value::<OAuthTokens>(t.clone()).ok())
+        {
+            self.expires_at = tokens.expires_in.map(|s| now + (s * 1000.0) as i64);
+            self.tokens = Some(tokens);
+            // Tokens landing means the in-flight authorization finished. Dropping the
+            // nonce and the verifier is what stops a replayed callback from
+            // exchanging the same code twice.
+            self.state = None;
+            self.code_verifier = None;
+        }
+    }
+}
+
 /// Where token files live. Absent = `~/.bough/mcp/tokens`. Injected in tests.
 #[derive(Debug, Clone, Default)]
 pub struct TokenStoreOptions {
@@ -1611,7 +1688,7 @@ pub mod flow {
 // Small helpers
 // ---------------------------------------------------------------------------
 
-fn now_ms() -> i64 {
+pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)

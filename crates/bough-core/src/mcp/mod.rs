@@ -10,5 +10,6 @@ pub mod keychain;
 pub mod manager;
 pub mod oauth;
 pub mod remote;
+pub mod rmcp_auth;
 pub mod service;
 pub mod status;
