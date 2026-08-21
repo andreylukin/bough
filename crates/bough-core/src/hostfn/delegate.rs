@@ -802,9 +802,25 @@ pub struct DelegationWiring {
 
 /// Lay `over`'s bridged functions on top of `base` — the Rust spelling of the
 /// TS object-spread composition in `delegationTurnDeps`.
+///
+/// THE FIELD LIST IS PINNED BY A DESTRUCTURE, and that is the whole point. The
+/// hand-written list this replaced named 18 of the 20 fields and dropped `mcp`
+/// and `search` on the floor: `boot.rs` bridged them, this laid every other
+/// field over the base, and `HostFns.mcp` stayed `None` for every turn the
+/// server ran. What the model saw was `mcp() is not available in this turn`
+/// while `granted` said it was and the prompt documented `mcp.call`: a
+/// capability written, wired and documented, and reachable from nowhere.
+/// `HostFns::get` cannot drift that way because its match is exhaustive; a
+/// macro's argument list is checked by nobody, so the fix is to make the
+/// compiler count the fields here too. The destructure has no `..`, so adding a
+/// field to `HostFns` without naming it below fails to compile rather than
+/// becoming a verb that silently disappears.
 fn merge_host_fns(base: &mut HostFns, over: HostFns) {
     macro_rules! lay {
-        ($($f:ident),*) => { $( if over.$f.is_some() { base.$f = over.$f; } )* };
+        ($($f:ident),* $(,)?) => {{
+            let HostFns { $($f),* } = over;
+            $( if $f.is_some() { base.$f = $f; } )*
+        }};
     }
     lay!(
         bash,
@@ -816,6 +832,7 @@ fn merge_host_fns(base: &mut HostFns, over: HostFns) {
         view,
         patch,
         write,
+        search,
         agent,
         spawn,
         join,
@@ -824,7 +841,8 @@ fn merge_host_fns(base: &mut HostFns, over: HostFns) {
         ask,
         state,
         schedule,
-        artifact
+        artifact,
+        mcp,
     );
 }
 
@@ -942,6 +960,7 @@ mod tests {
     use crate::agents::testkit::{seed_session, shared_db, turn_ctx_for, SeedOpts};
     use crate::bus::Bus;
     use crate::errors::BoughError;
+    use crate::harness::protocol::HOST_FN_NAMES;
     use crate::prompt::assemble::AssembledPrompt;
     use crate::schema::events::BoughEvent;
     use crate::schema::parts::{Part, Role};
@@ -1875,6 +1894,50 @@ mod tests {
                 })
                 .collect();
             assert_eq!(delegation, delegation_fns_for(tier).to_vec());
+        }
+    }
+
+    #[test]
+    fn the_merge_carries_every_bridged_verb_the_process_wires() {
+        // WHAT THIS CAUGHT, and why it is asserted over the protocol's own name
+        // list rather than over a list written here: `merge_host_fns` named 18 of
+        // the 20 fields, so `mcp` and `search` were bridged by `boot.rs` and
+        // dropped here. `mcp.call` then failed in every turn with "not available
+        // in this turn" while the grant said it was granted and the prompt
+        // documented the call, for the nine days between the verb landing and
+        // this test. A second list to keep in step would reproduce the bug it is
+        // here to stop.
+        let f: HostFn = Arc::new(|_| futures::future::ready(Ok(String::new())).boxed());
+        let over = HostFns {
+            bash: Some(f.clone()),
+            sh: Some(f.clone()),
+            bash_bg: Some(f.clone()),
+            bash_output: Some(f.clone()),
+            bash_wait: Some(f.clone()),
+            bash_kill: Some(f.clone()),
+            view: Some(f.clone()),
+            patch: Some(f.clone()),
+            write: Some(f.clone()),
+            search: Some(f.clone()),
+            agent: Some(f.clone()),
+            spawn: Some(f.clone()),
+            join: Some(f.clone()),
+            adopt: Some(f.clone()),
+            workflow: Some(f.clone()),
+            ask: Some(f.clone()),
+            state: Some(f.clone()),
+            schedule: Some(f.clone()),
+            artifact: Some(f.clone()),
+            mcp: Some(f.clone()),
+        };
+        let mut base = HostFns::default();
+        merge_host_fns(&mut base, over);
+        for name in HOST_FN_NAMES {
+            let typed = HostFnName::parse(name).expect("a wire name is a typed name");
+            assert!(
+                base.get(typed).is_some(),
+                "{name}() was bridged and the merge dropped it"
+            );
         }
     }
 
