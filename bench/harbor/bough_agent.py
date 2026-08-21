@@ -71,7 +71,7 @@ _PARALLEL_CLI = (
 )
 
 _BLOCK_BENCHMARK_HOSTS = (
-    'for h in tbench.ai www.tbench.ai github.com www.github.com api.github.com raw.githubusercontent.com codeload.github.com objects.githubusercontent.com huggingface.co hf.co cdn-lfs.huggingface.co; do   printf \'127.0.0.1 %s\\\\n::1 %s\\\\n\' "$h" "$h" >> /etc/hosts; done'
+    'for h in tbench.ai www.tbench.ai github.com www.github.com api.github.com raw.githubusercontent.com codeload.github.com objects.githubusercontent.com gist.github.com gist.githubusercontent.com huggingface.co hf.co cdn-lfs.huggingface.co cdn-lfs-us-1.hf.co; do   echo "127.0.0.1 $h" >> /etc/hosts;   echo "::1 $h" >> /etc/hosts; done; getent hosts raw.githubusercontent.com | head -1'
 )
 
 _NODE_FIX = (
