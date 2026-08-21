@@ -37,6 +37,10 @@ BINARY_PATH = "/installed-agent/bough"
 # benchmark's own site and repo are off limits (reward hacking), which is a
 # matter for what the agent is told to search, not for whether the tool is
 # here. Baked into the layer so it costs nothing per trial.
+BENCHMARK_HOSTS_BLOCKED = (
+    'for h in tbench.ai www.tbench.ai github.com www.github.com api.github.com raw.githubusercontent.com codeload.github.com objects.githubusercontent.com huggingface.co hf.co cdn-lfs.huggingface.co; do   printf \'127.0.0.1 %s\\\\n::1 %s\\\\n\' "$h" "$h" >> /etc/hosts; done'
+)
+
 PARALLEL_CLI = (
     'if ! command -v parallel-cli >/dev/null 2>&1; then   mkdir -p /root/.local/share /root/.local/bin   && curl -fsSL https://parallel.ai/install.sh | bash   && cp -a /root/.local/bin/parallel-cli /usr/local/bin/parallel-cli   && chmod 0755 /usr/local/bin/parallel-cli; fi'
 )

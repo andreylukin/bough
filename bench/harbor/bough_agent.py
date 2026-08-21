@@ -70,6 +70,10 @@ _PARALLEL_CLI = (
     'if ! command -v parallel-cli >/dev/null 2>&1; then   mkdir -p /root/.local/share /root/.local/bin   && curl -fsSL https://parallel.ai/install.sh | bash   && cp -a /root/.local/bin/parallel-cli /usr/local/bin/parallel-cli   && chmod 0755 /usr/local/bin/parallel-cli; fi'
 )
 
+_BLOCK_BENCHMARK_HOSTS = (
+    'for h in tbench.ai www.tbench.ai github.com www.github.com api.github.com raw.githubusercontent.com codeload.github.com objects.githubusercontent.com huggingface.co hf.co cdn-lfs.huggingface.co; do   printf \'127.0.0.1 %s\\\\n::1 %s\\\\n\' "$h" "$h" >> /etc/hosts; done'
+)
+
 _NODE_FIX = (
     'if ! node -e \'null ?? 0\' >/dev/null 2>&1; then   case "$(uname -m)" in     x86_64) NA=x64 ;; aarch64|arm64) NA=arm64 ;; *) NA= ;;   esac;   if [ -n "$NA" ]; then     curl -fsSL -o /tmp/node.tar.xz       "https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-$NA.tar.xz"     && tar -xJ -C /usr/local --strip-components=1 -f /tmp/node.tar.xz;     rm -f /tmp/node.tar.xz;   fi; fi'
 )
@@ -175,6 +179,7 @@ class Bough(BaseInstalledAgent):
                 f"&& command -v git >/dev/null && test -x {BINARY_PATH}"
             ),
         )
+        await self.exec_as_root(environment, command=_BLOCK_BENCHMARK_HOSTS)
         if probe.return_code == 0:
             self.logger.info("bough: image is prebaked, skipping install")
             return
