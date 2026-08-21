@@ -348,11 +348,18 @@ mod tests {
     //! whether a token file this machine already has still opens, and whether a
     //! credential borrowed from another client stays borrowed.
     //!
-    //! The Claude Code case is the one that matters most and the one with the least
-    //! margin: a grant adopted by `sync-mcp` carries tokens with no dynamic
-    //! registration beside them, because the registration belonged to Claude Code.
-    //! Read that file wrong and the user is silently logged out of every server they
-    //! adopted — on a machine where re-authorizing may not even be possible.
+    //! WHAT `sync-mcp` ACTUALLY ADOPTS, checked against a real install rather than
+    //! assumed: not a token file at all. A grant taken from Claude Code's `mcpOAuth`
+    //! map is adopted as a REGISTRY HEADER — `Bearer ${keychain:Claude
+    //! Code-credentials#mcpOAuth.<server>.accessToken}` — resolved against the
+    //! keychain at request time, plus a pre-registered `clientId` for providers that
+    //! publish no `registration_endpoint`. Those never enter `~/.bough/mcp/tokens/`,
+    //! and `keychain.rs` owns that path.
+    //!
+    //! So the shapes this store must read are bough's own, and there are two: a
+    //! COMPLETE grant (`client` + `tokens` + `expiresAt`) and a STALLED one
+    //! (`codeVerifier` + `state`, no tokens) left by an authorization that was
+    //! started and never finished. Both were taken from a live install.
 
     use super::*;
     use crate::mcp::oauth::{OAuthTokens, TokenStore};
@@ -383,38 +390,52 @@ mod tests {
         }
     }
 
-    /// A token file in the shape `sync-mcp` writes when it adopts a grant out of
-    /// Claude Code's `mcpOAuth` map: tokens, an unknown key, and NO client.
-    fn write_adopted_grant(dir: &std::path::Path, server: &str) {
-        let store = TokenStore::new(&opts(dir));
-        store
+    /// A complete grant, in the shape a working remote actually has on disk
+    /// (`linear`, `pganalyze` and `linear-server` all look like this).
+    fn write_grant(dir: &std::path::Path, server: &str) {
+        TokenStore::new(&opts(dir))
             .patch(server, |s| {
+                s.client = Some(crate::mcp::oauth::ClientInfo {
+                    client_id: "dyn-client".into(),
+                    ..Default::default()
+                });
                 s.tokens = Some(OAuthTokens {
-                    access_token: "xoxp-slack-token".into(),
+                    access_token: "an-access-token".into(),
                     token_type: "Bearer".into(),
-                    refresh_token: Some("xoxe-refresh".into()),
+                    refresh_token: Some("a-refresh-token".into()),
                     scope: Some("channels:read chat:write".into()),
                     ..Default::default()
                 });
+                // A key written by a build that knew something this one does not.
                 s.extra
-                    .insert("adoptedFrom".into(), serde_json::json!("claude-code"));
+                    .insert("clientIdIssuedAt".into(), serde_json::json!(1_700_000_000));
             })
             .unwrap();
     }
 
     #[tokio::test]
-    async fn a_grant_adopted_from_claude_code_still_opens() {
-        let dir = temp_dir("adopted");
-        write_adopted_grant(&dir, "slack");
+    async fn a_grant_with_no_registration_beside_it_still_opens() {
+        let dir = temp_dir("no-client");
+        // Tokens without a `client`: not what `sync-mcp` writes, but reachable —
+        // `invalidate_credentials(Client)` drops the registration and keeps the pair,
+        // and a pre-registered client lives in the registry rather than the file.
+        TokenStore::new(&opts(&dir))
+            .patch("slack", |s| {
+                s.tokens = Some(OAuthTokens {
+                    access_token: "an-access-token".into(),
+                    token_type: "Bearer".into(),
+                    scope: Some("channels:read chat:write".into()),
+                    ..Default::default()
+                });
+            })
+            .unwrap();
 
         let creds = BoughCredentialStore::new("slack", &opts(&dir), None)
             .load()
             .await
             .unwrap()
-            .expect("an adopted grant must be presentable");
+            .expect("a grant must be presentable without a registration beside it");
 
-        // No registration of bough's own, and that is not a reason to withhold the
-        // token — it is the ordinary shape of an adopted one.
         assert_eq!(creds.client_id, "");
         assert_eq!(
             creds.granted_scopes,
@@ -426,7 +447,7 @@ mod tests {
     #[tokio::test]
     async fn a_write_by_this_build_preserves_keys_it_does_not_understand() {
         let dir = temp_dir("preserve");
-        write_adopted_grant(&dir, "slack");
+        write_grant(&dir, "slack");
 
         let store = BoughCredentialStore::new("slack", &opts(&dir), None);
         let mut creds = store.load().await.unwrap().unwrap();
@@ -435,20 +456,17 @@ mod tests {
 
         let raw = TokenStore::new(&opts(&dir)).load("slack").unwrap();
         assert_eq!(
-            raw.extra.get("adoptedFrom").and_then(|v| v.as_str()),
-            Some("claude-code"),
+            raw.extra.get("clientIdIssuedAt").and_then(|v| v.as_i64()),
+            Some(1_700_000_000),
             "a key this build does not name must survive its write"
         );
-        assert_eq!(
-            raw.tokens.as_ref().unwrap().access_token,
-            "xoxp-slack-token"
-        );
+        assert_eq!(raw.tokens.as_ref().unwrap().access_token, "an-access-token");
     }
 
     #[tokio::test]
     async fn a_stored_grant_beats_a_borrowed_one() {
         let dir = temp_dir("stored-wins");
-        write_adopted_grant(&dir, "slack");
+        write_grant(&dir, "slack");
 
         let creds = BoughCredentialStore::new("slack", &opts(&dir), Some("borrowed".into()))
             .load()
@@ -458,7 +476,7 @@ mod tests {
 
         assert_eq!(
             access_token(&creds),
-            "xoxp-slack-token",
+            "an-access-token",
             "a credential that merely happens to be on the machine must not displace \
              one the user deliberately authorized"
         );
