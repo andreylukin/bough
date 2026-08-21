@@ -1,0 +1,24 @@
+crates/bough-core/src/hostfn/delegate.rs
+  201b1b1584e8d1b4 805-817,820-823,835,844-845,963,1900-1943
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "8314d7471c5219c2b6b98c837d4755b5d9ea33ed",
+  "prompts": {
+    "201b1b1584e8d1b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "46fdea96-6ede-4b11-bb9e-5eefaf71487b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Andrey Lukin",
+      "messages": [],
+      "total_additions": 88,
+      "total_deletions": 25,
+      "accepted_lines": 67,
+      "overriden_lines": 0,
+      "messages_url": "https://uni-git-ai-cas.sre.aws.ai-internal.com//cas/2c5a5bc90002005a84e5868da2d54538a3437318d921fbd394d239704119883e"
+    }
+  }
+}
