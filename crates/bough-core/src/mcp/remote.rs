@@ -57,7 +57,7 @@ use crate::mcp::client::{
 };
 use crate::mcp::keychain::{claude_code_prefill, KeychainOptions};
 use crate::mcp::oauth::{
-    flow, origin_of, BoughOAuthProvider, FetchFn, HttpReq, HttpRes, ProviderOptions,
+    origin_of, BoughOAuthProvider, FetchFn, HttpReq, HttpRes, ProviderOptions,
 };
 
 fn mcp(status: u16, message: impl Into<String>) -> BoughError {
@@ -367,7 +367,12 @@ impl McpRemoteClient {
             // Refresh is the transport's job: run the flow, then present the new
             // token once. A flow that ends in REDIRECT (or fails) is the prompt.
             self.saw_unauthorized.store(true, Ordering::SeqCst);
-            match self.authorize().await {
+            // The challenge off THIS 401 is what makes the retry informed: it names
+            // the resource-metadata document and, on an `insufficient_scope` refusal,
+            // the scope the server actually wants. Without it the flow can only probe
+            // well-known paths and re-ask for the same scope that just failed.
+            let challenge = first.header("www-authenticate").map(str::to_string);
+            match self.authorize(challenge).await {
                 Ok(true) => self.post(&body, timeout_ms, what).await?,
                 Ok(false) => return Err(auth_required_error(&self.name, None)),
                 Err(detail) => return Err(auth_required_error(&self.name, Some(&detail))),
@@ -519,13 +524,20 @@ impl McpRemoteClient {
     /// Run the OAuth flow after a 401. `Ok(true)` = try the request again;
     /// `Ok(false)` = the human must approve access; `Err` = the flow itself failed,
     /// and its reason becomes the prompt's parenthetical.
-    async fn authorize(&self) -> Result<bool, String> {
+    async fn authorize(&self, challenge: Option<String>) -> Result<bool, String> {
         let Some(provider) = self.auth.as_ref() else {
             return Ok(false);
         };
-        match flow::auth(provider, &self.url, None, &self.fetch).await {
-            Ok(flow::AuthResult::Authorized) => Ok(true),
-            Ok(flow::AuthResult::Redirect) => Ok(false),
+        let attempt = provider
+            .attempt(&self.url, self.fetch.clone(), challenge)
+            .map_err(|e| e.to_string())?;
+        match crate::mcp::rmcp_auth::flow::begin(&attempt).await {
+            Ok(crate::mcp::rmcp_auth::flow::Outcome::Authorized) => Ok(true),
+            Ok(crate::mcp::rmcp_auth::flow::Outcome::Redirect { url, .. }) => {
+                // Captured for the panel, never followed.
+                provider.redirect_to_authorization(&url);
+                Ok(false)
+            }
             Err(e) => Err(e.to_string()),
         }
     }
@@ -1394,7 +1406,10 @@ mod tests {
             q.get("redirect_uri").map(String::as_str),
             Some("http://127.0.0.1:4321/mcp/oauth/callback")
         );
-        assert!(q.get("state").unwrap().starts_with("notion."));
+        // The nonce is rmcp's now and no longer spells the server; the binding is
+        // that it was filed beside "notion", which is what the callback reads back.
+        let nonce = q.get("state").expect("an authorization carries a nonce");
+        assert_eq!(store.server_for_nonce(nonce).as_deref(), Some("notion"));
         assert_eq!(fx.seen.lock().unwrap().registrations, 1);
         assert_eq!(
             fx.seen.lock().unwrap().registered[0]["token_endpoint_auth_method"],

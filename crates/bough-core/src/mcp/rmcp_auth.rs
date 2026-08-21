@@ -552,3 +552,199 @@ mod tests {
         assert!(store.load("forged-nonce").await.unwrap().is_none());
     }
 }
+
+// ---------------------------------------------------------------------------
+// The flow
+// ---------------------------------------------------------------------------
+
+/// Driving rmcp's authorization manager with bough's stores under it.
+///
+/// This is the half `mcp/oauth.rs` used to own outright. What bough still decides:
+/// which client identity to offer, where the redirect lands, and that an
+/// unauthorized server is a QUESTION rather than a failure. What rmcp now decides:
+/// discovery order, scope selection, registration mechanism, and the token calls.
+pub mod flow {
+    use super::*;
+    use rmcp::transport::auth::{AuthorizationManager, AuthorizationRequest, AuthorizationSession};
+
+    /// Everything one attempt needs. Assembled by `mcp/oauth.rs`, which owns the
+    /// registry lookups and the prefill resolution.
+    pub struct Attempt {
+        pub server: String,
+        pub server_url: String,
+        pub redirect_uri: String,
+        pub fetch: FetchFn,
+        pub store: TokenStoreOptions,
+        pub prefill: Option<String>,
+        /// A client the user registered out of band, from the registry entry.
+        pub client_id: Option<String>,
+        pub client_secret: Option<String>,
+        /// The `WWW-Authenticate` header off a real 401.
+        ///
+        /// THE POINT OF THE WHOLE MIGRATION. Handed this, rmcp seeds discovery from
+        /// the challenge's `resource_metadata` URL and `scope` hint instead of
+        /// guessing at well-known paths — and reads the `scope` an
+        /// `insufficient_scope` 403 asks for, which is how a 403 stops being a dead
+        /// end. bough never parsed this header at all.
+        pub challenge: Option<String>,
+    }
+
+    /// What an attempt settled on. `Redirect` carries the URL a human must open;
+    /// nothing here ever opens one.
+    pub enum Outcome {
+        Authorized,
+        Redirect { url: String, csrf: String },
+    }
+
+    fn auth_err(server: &str, e: rmcp::transport::auth::AuthError) -> BoughError {
+        BoughError::http(
+            502,
+            crate::errors::ErrorKind::Mcp,
+            format!("the OAuth flow for \"{server}\" could not proceed: {e}"),
+        )
+    }
+
+    /// A manager pointed at one server, with bough's stores and bough's HTTP under
+    /// it, and its metadata resolved.
+    async fn manager(attempt: &Attempt) -> Result<AuthorizationManager, BoughError> {
+        let mut mgr = AuthorizationManager::new_with_oauth_http_client(
+            &attempt.server_url,
+            Arc::new(BoughOAuthHttpClient::new(attempt.fetch.clone())),
+        )
+        .await
+        .map_err(|e| auth_err(&attempt.server, e))?;
+
+        mgr.set_credential_store(BoughCredentialStore::new(
+            &attempt.server,
+            &attempt.store,
+            attempt.prefill.clone(),
+        ));
+        mgr.set_state_store(BoughStateStore::new(&attempt.server, &attempt.store));
+
+        // Metadata must be resolved before a session can be built. The provenance is
+        // deliberately NOT enforced: a server that publishes nothing gets the legacy
+        // default endpoints, which is what bough's own discovery fell back to and
+        // what several real servers still need.
+        let resolved = mgr
+            .resolve_metadata()
+            .await
+            .map_err(|e| auth_err(&attempt.server, e))?;
+        mgr.set_metadata(resolved.metadata);
+        Ok(mgr)
+    }
+
+    fn request(attempt: &Attempt) -> AuthorizationRequest {
+        let mut req =
+            AuthorizationRequest::new(attempt.redirect_uri.clone()).with_client_name("bough");
+        // A client the user registered out of band wins over dynamic registration —
+        // it is what the authorization server was told to expect.
+        if let Some(id) = &attempt.client_id {
+            req = req.with_preregistered_client(id.clone());
+            if let Some(secret) = &attempt.client_secret {
+                req = req.with_client_secret(secret.clone());
+            }
+        }
+        if let Some(challenge) = &attempt.challenge {
+            req.challenge = Some(challenge.clone());
+        }
+        req
+    }
+
+    /// Start — or silently finish — one server's flow.
+    ///
+    /// Stored credentials are tried first, and a refresh that rmcp can do on its own
+    /// is not a question for the human. Only when nothing usable is stored does this
+    /// return `Redirect`.
+    pub async fn begin(attempt: &Attempt) -> Result<Outcome, BoughError> {
+        let mut mgr = manager(attempt).await?;
+
+        // NO EXPIRY SHORTCUT, and no presenting the stored access token to decide.
+        // This is also the transport's 401 path: the token that just came back 401 is
+        // known-bad whatever its stored expiry says, and answering "authorized"
+        // because a string is on disk would present it again forever. A refresh round
+        // trip is the right price for that.
+        //
+        // `refresh_token` failing is not a fault — it is the recovery hook. A refresh
+        // token the server has expired, or none at all, falls through to the prompt,
+        // which is exactly the degradation an unauthorized server is supposed to get.
+        if mgr
+            .initialize_from_store()
+            .await
+            .map_err(|e| auth_err(&attempt.server, e))?
+        {
+            match mgr.refresh_token().await {
+                Ok(_) => return Ok(Outcome::Authorized),
+                Err(_) => {
+                    // Drop the pair that just failed so the next attempt does not
+                    // present it again, then ask.
+                    let _ = BoughCredentialStore::new(&attempt.server, &attempt.store, None)
+                        .clear()
+                        .await;
+                }
+            }
+        }
+
+        let session = AuthorizationSession::new(mgr, request(attempt))
+            .await
+            .map_err(|(_, e)| auth_err(&attempt.server, e))?;
+
+        let url = session.get_authorization_url().to_string();
+        // The nonce rmcp put in the URL is the one the callback will come back with,
+        // and the one `BoughStateStore` has just filed. Read it back off the URL
+        // rather than guessed at: rmcp owns its format.
+        let csrf = csrf_from(&url).ok_or_else(|| {
+            BoughError::http(
+                502,
+                crate::errors::ErrorKind::Mcp,
+                format!(
+                    "the authorization URL for \"{}\" carries no state parameter, so its \
+                     callback could not be matched to this attempt.",
+                    attempt.server
+                ),
+            )
+        })?;
+        Ok(Outcome::Redirect { url, csrf })
+    }
+
+    /// Finish from the browser callback: exchange the code for tokens.
+    ///
+    /// The nonce is checked by rmcp against what `BoughStateStore` holds, so a forged
+    /// or replayed callback finds no verifier and is refused before any exchange.
+    pub async fn complete(attempt: &Attempt, code: &str, csrf: &str) -> Result<(), BoughError> {
+        let mut mgr = manager(attempt).await?;
+        // The registration this flow started with has to be back in place before the
+        // exchange, or the token endpoint is asked to honour a code it issued to a
+        // different client.
+        //
+        // NOT VIA `initialize_from_store`, which is a CREDENTIAL path and finds
+        // nothing here by design: completion is the one moment when a registration
+        // exists and tokens do not. The client id is read straight off the stored
+        // document instead.
+        let _ = mgr.initialize_from_store().await;
+        let registered = TokenStore::new(&attempt.store)
+            .load(&attempt.server)
+            .ok()
+            .and_then(|s| s.client)
+            .map(|c| c.client_id);
+        if let Some(id) = attempt.client_id.clone().or(registered) {
+            if !id.is_empty() {
+                mgr.configure_client_id(&id)
+                    .map_err(|e| auth_err(&attempt.server, e))?;
+            }
+        }
+        mgr.exchange_code_for_token(code, csrf)
+            .await
+            .map(|_| ())
+            .map_err(|e| auth_err(&attempt.server, e))
+    }
+
+    /// The `state` parameter out of an authorization URL.
+    fn csrf_from(url: &str) -> Option<String> {
+        let query = url.split_once('?')?.1;
+        query
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .find(|(k, _)| *k == "state")
+            .map(|(_, v)| super::super::oauth::percent_decode(v))
+    }
+}

@@ -34,7 +34,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use base64::Engine;
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -375,6 +374,47 @@ impl TokenStore {
     }
 
     /// Forget everything for one server ("logout"). Returns whether there was any.
+    /// Every server this store holds a document for.
+    ///
+    /// Exists for [`Self::server_for_nonce`]. A missing directory is the ordinary
+    /// state of an install that has never authorized anything, not an error.
+    pub fn servers(&self) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return Vec::new();
+        };
+        let mut out: Vec<String> = entries
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().into_string().ok()?;
+                let stem = name.strip_suffix(".json")?;
+                is_slug(stem).then(|| stem.to_string())
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// The server an in-flight authorization nonce belongs to.
+    ///
+    /// WHY THE CALLBACK NO LONGER CARRIES THE SERVER NAME. bough used to mint
+    /// `state` itself as `<server>.<nonce>` and read the name back off it. rmcp mints
+    /// its own CSRF token and does not accept one, so the name has to come from
+    /// somewhere else — and the store already knows it, because a nonce is only ever
+    /// written beside the server that is using it.
+    ///
+    /// The security property is unchanged, and is the one that mattered: a callback
+    /// is answered only if its nonce matches one bough actually issued and is still
+    /// holding. An unknown nonce resolves to no server and gets the same refusal a
+    /// mismatched one always did.
+    pub fn server_for_nonce(&self, nonce: &str) -> Option<String> {
+        if nonce.is_empty() {
+            return None;
+        }
+        self.servers()
+            .into_iter()
+            .find(|s| matches!(self.load(s), Ok(st) if st.state.as_deref() == Some(nonce)))
+    }
+
     pub fn clear(&self, server: &str) -> bool {
         match self.file_for(server) {
             Ok(file) => std::fs::remove_file(file).is_ok(),
@@ -439,7 +479,7 @@ pub struct RegistryEntry {
 }
 
 impl RegistryAccess {
-    fn get(&self, name: &str) -> Result<Option<RegistryEntry>, BoughError> {
+    pub fn get(&self, name: &str) -> Result<Option<RegistryEntry>, BoughError> {
         match &self.lookup {
             Some(f) => f(name),
             None => registry_bridge::get_entry(name),
@@ -668,6 +708,36 @@ impl BoughOAuthProvider {
         })
     }
 
+    /// One authorization attempt for this server, assembled from what the provider
+    /// already holds.
+    ///
+    /// Exists for the transport: `remote.rs` answers a 401 by authorizing, and it has
+    /// a provider rather than the registry options `begin_auth` starts from. The
+    /// `challenge` is the `WWW-Authenticate` header off that very 401 — the reason
+    /// this path is worth having at all, since it tells rmcp where the resource
+    /// metadata is and which scope was insufficient.
+    pub fn attempt(
+        &self,
+        server_url: &str,
+        fetch: FetchFn,
+        challenge: Option<String>,
+    ) -> Result<crate::mcp::rmcp_auth::flow::Attempt, BoughError> {
+        let entry = self.config.get(&self.server)?.unwrap_or_default();
+        Ok(crate::mcp::rmcp_auth::flow::Attempt {
+            server: self.server.clone(),
+            server_url: server_url.to_string(),
+            redirect_uri: self.redirect_url(),
+            fetch,
+            store: TokenStoreOptions {
+                dir: Some(self.store.dir.clone()),
+            },
+            prefill: self.prefill.clone(),
+            client_id: entry.client_id,
+            client_secret: entry.client_secret,
+            challenge,
+        })
+    }
+
     pub fn save_discovery_state(&self, discovery: Value) -> Result<(), BoughError> {
         self.store
             .patch(&self.server, |s| s.discovery = Some(discovery))
@@ -790,6 +860,11 @@ pub struct AuthFlowOptions {
     pub fetch: Option<FetchFn>,
     /// Per-request deadline for the flow's HTTP. Absent = [`AUTH_HTTP_MS`].
     pub timeout_ms: Option<u64>,
+    /// The `WWW-Authenticate` header off the 401 that prompted this attempt, when
+    /// there was one. Seeds discovery from what the server actually said instead of
+    /// probing well-known paths, and carries the scope an `insufficient_scope` 403
+    /// is asking for. See `rmcp_auth::flow::Attempt::challenge`.
+    pub challenge: Option<String>,
 }
 
 /// How long any one request in the flow may take. The flow is three or four round
@@ -911,33 +986,58 @@ pub async fn begin_auth_with(
     server_url: &str,
     opts: &AuthFlowOptions,
 ) -> Result<AuthStart, BoughError> {
-    let fetch = bounded_fetch(opts.fetch.clone(), opts.timeout_ms.unwrap_or(AUTH_HTTP_MS));
-    let result = flow::auth(provider, server_url, None, &fetch)
+    let attempt = attempt_for(server, server_url, opts, Some(provider.redirect_url()))?;
+    match crate::mcp::rmcp_auth::flow::begin(&attempt)
         .await
-        .map_err(|e| auth_failure(server, server_url, e))?;
-    if result == flow::AuthResult::Authorized {
-        return Ok(AuthStart {
+        .map_err(|e| auth_failure(server, server_url, e))?
+    {
+        crate::mcp::rmcp_auth::flow::Outcome::Authorized => Ok(AuthStart {
             status: "authorized".into(),
             server: server.into(),
             authorization_url: None,
             corrected_url: None,
-        });
+        }),
+        crate::mcp::rmcp_auth::flow::Outcome::Redirect { url, .. } => {
+            // Captured, not followed. The provider is still the thing that holds it,
+            // so a caller (and a test) reads the URL back from the same place it
+            // always did.
+            provider.redirect_to_authorization(&url);
+            Ok(AuthStart {
+                status: "redirect".into(),
+                server: server.into(),
+                authorization_url: Some(url),
+                corrected_url: None,
+            })
+        }
     }
-    let Some(url) = provider.authorization_url() else {
-        return Err(mcp(
-            502,
-            format!(
-                "the authorization server for \"{server}\" produced no authorization URL, so \
-                 there is nothing to approve. Check `url` in the registry (GET /mcp/servers) \
-                 — it must point at the MCP endpoint itself."
-            ),
-        ));
-    };
-    Ok(AuthStart {
-        status: "redirect".into(),
-        server: server.into(),
-        authorization_url: Some(url),
-        corrected_url: None,
+}
+
+/// Assemble one attempt: the registry's client identity, the redirect, the fetch.
+///
+/// The prefill is NOT resolved here — reading the keychain is async and belongs to
+/// the caller that already knows whether this server is covered by it.
+fn attempt_for(
+    server: &str,
+    server_url: &str,
+    opts: &AuthFlowOptions,
+    redirect_uri: Option<String>,
+) -> Result<crate::mcp::rmcp_auth::flow::Attempt, BoughError> {
+    assert_server_name(server)?;
+    let entry = opts.provider.config.get(server)?.unwrap_or_default();
+    Ok(crate::mcp::rmcp_auth::flow::Attempt {
+        server: server.to_string(),
+        server_url: server_url.to_string(),
+        redirect_uri: redirect_uri
+            .or_else(|| opts.provider.redirect_url.clone())
+            .unwrap_or_else(callback_url),
+        fetch: bounded_fetch(opts.fetch.clone(), opts.timeout_ms.unwrap_or(AUTH_HTTP_MS)),
+        store: TokenStoreOptions {
+            dir: opts.provider.dir.clone(),
+        },
+        prefill: opts.provider.prefill.clone(),
+        client_id: entry.client_id,
+        client_secret: entry.client_secret,
+        challenge: opts.challenge.clone(),
     })
 }
 
@@ -960,36 +1060,26 @@ pub async fn complete_auth(
     code: &str,
     opts: &CompleteAuthOptions,
 ) -> Result<String, BoughError> {
-    let Some(dot) = state.rfind('.').filter(|d| *d > 0) else {
-        return Err(mcp(
-            400,
-            format!(
-                "malformed state {} — a bough callback carries \"<server>.<nonce>\". Start the \
-                 flow again from the mcp panel (^p, then a).",
-                serde_json::to_string(state).unwrap_or_default()
-            ),
-        ));
-    };
-    let server = &state[..dot];
-    assert_server_name(server)?;
-    let nonce = &state[dot + 1..];
     let store = TokenStore::new(&TokenStoreOptions {
         dir: opts.flow.provider.dir.clone(),
     });
-    if nonce.is_empty() || store.load(server)?.state.as_deref() != Some(nonce) {
+    // THE NONCE NAMES THE SERVER, by being filed beside it. rmcp mints the `state`
+    // parameter and does not accept one, so it can no longer carry `<server>.<nonce>`
+    // — but the property that mattered is untouched: a callback is answered only if
+    // its nonce matches one bough issued and is still holding.
+    let Some(server) = store.server_for_nonce(state) else {
         return Err(mcp(
             400,
-            format!(
-                "state mismatch for \"{server}\" — this callback does not match the \
-                 authorization bough started (it may have been completed already, or started \
-                 by a different process). Open the mcp panel (^p) and press a on {server} to \
-                 start a fresh one."
-            ),
+            "this callback does not match any authorization bough started (it may have \
+             been completed already, or started by a different process). Open the mcp \
+             panel (^p) and press a to start a fresh one."
+                .to_string(),
         ));
-    }
+    };
+    assert_server_name(&server)?;
     let server_url = match &opts.server_url_for {
-        Some(f) => f(server),
-        None => remote_server_url(server, &opts.flow.provider.config)?,
+        Some(f) => f(&server),
+        None => remote_server_url(&server, &opts.flow.provider.config)?,
     };
     let Some(server_url) = server_url else {
         return Err(mcp(
@@ -1000,25 +1090,11 @@ pub async fn complete_auth(
             ),
         ));
     };
-    let provider = BoughOAuthProvider::new(server, &opts.flow.provider)?;
-    let fetch = bounded_fetch(
-        opts.flow.fetch.clone(),
-        opts.flow.timeout_ms.unwrap_or(AUTH_HTTP_MS),
-    );
-    let result = flow::auth(&provider, &server_url, Some(code), &fetch)
+    let attempt = attempt_for(&server, &server_url, &opts.flow, None)?;
+    crate::mcp::rmcp_auth::flow::complete(&attempt, code, state)
         .await
-        .map_err(|e| auth_failure(server, &server_url, e))?;
-    if result != flow::AuthResult::Authorized {
-        return Err(mcp(
-            502,
-            format!(
-                "the token exchange for \"{server}\" did not complete — the authorization \
-                 server accepted the code but returned no tokens. Press a on {server} again \
-                 (^p)."
-            ),
-        ));
-    }
-    Ok(server.to_string())
+        .map_err(|e| auth_failure(&server, &server_url, e))?;
+    Ok(server)
 }
 
 /// The registry's `url` for a server, read FRESH (MCP state is never cached).
@@ -1100,25 +1176,39 @@ pub fn clear_auth_route(name: &str) -> Result<Value, BoughError> {
 /// The resource URL a failed flow says the server actually declares, when it is safe
 /// to adopt: same origin, and genuinely different from what we tried.
 pub fn declared_resource(text: &str, tried: &str) -> Option<String> {
-    let marker = "Protected resource ";
-    let start = text.find(marker)? + marker.len();
-    let rest = &text[start..];
-    let found = rest.split_whitespace().next()?;
-    if !rest[found.len()..]
-        .trim_start()
-        .starts_with("does not match expected ")
-    {
+    // rmcp's shape, which is the one that arrives now:
+    //   "Protected resource metadata resource mismatch: reference 'X', permitted 'Y'"
+    // `permitted` is the resource the server actually declares, and so the URL worth
+    // retrying against.
+    let found = match text.split_once("permitted '") {
+        Some((_, rest)) => rest.split('\'').next()?.to_string(),
+        // bough's own historical shape, kept so a message stored or logged by an
+        // earlier build still yields its correction:
+        //   "Protected resource X does not match expected Y"
+        None => {
+            let marker = "Protected resource ";
+            let start = text.find(marker)? + marker.len();
+            let rest = &text[start..];
+            let found = rest.split_whitespace().next()?;
+            if !rest[found.len()..]
+                .trim_start()
+                .starts_with("does not match expected ")
+            {
+                return None;
+            }
+            found.to_string()
+        }
+    };
+    // Same origin only, and genuinely different from what we tried. Following a
+    // cross-origin redeclaration would let a server point bough's registry at
+    // someone else's endpoint.
+    if found == tried {
         return None;
     }
-    let found = normalize_url(found)?;
-    let tried_n = normalize_url(tried)?;
-    if origin_of(&found)? != origin_of(&tried_n)? {
+    let (Some(a), Some(b)) = (origin_of(&found), origin_of(tried)) else {
         return None;
-    }
-    if found == tried_n {
-        return None;
-    }
-    Some(found)
+    };
+    (a == b).then_some(found)
 }
 
 /// `GET /mcp/oauth/callback` — where the user's browser lands.
@@ -1253,438 +1343,6 @@ mod registry_bridge {
 }
 
 // ---------------------------------------------------------------------------
-// The flow engine (the SDK `auth()` replacement)
-// ---------------------------------------------------------------------------
-
-pub mod flow {
-    //! RFC 9728 discovery → RFC 8414 metadata → RFC 7591 registration → PKCE → the
-    //! code exchange, or a refresh. Four requests, all bounded by the caller's fetch.
-
-    use super::*;
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum AuthResult {
-        Authorized,
-        Redirect,
-    }
-
-    /// What discovery settled on. Cached in the token file so a reconnect re-probes
-    /// nothing.
-    #[derive(Debug, Clone, Default)]
-    pub struct Discovered {
-        pub authorization_server_url: String,
-        pub authorization_endpoint: String,
-        pub token_endpoint: String,
-        pub registration_endpoint: Option<String>,
-        /// The canonical resource indicator, when the server declares one.
-        pub resource: Option<String>,
-    }
-
-    impl Discovered {
-        fn to_value(&self) -> Value {
-            json!({
-                "authorizationServerUrl": self.authorization_server_url,
-                "authorizationServerMetadata": {
-                    "authorization_endpoint": self.authorization_endpoint,
-                    "token_endpoint": self.token_endpoint,
-                    "registration_endpoint": self.registration_endpoint,
-                },
-                "resourceMetadata": self.resource.as_ref().map(|r| json!({ "resource": r })),
-            })
-        }
-
-        /// Read back a cached document — including one written by the TypeScript
-        /// build, whose `authorizationServerMetadata` carries the same RFC 8414 field
-        /// names.
-        fn from_value(v: &Value) -> Option<Self> {
-            let asm = v.get("authorizationServerMetadata")?;
-            let authorization_endpoint = asm.get("authorization_endpoint")?.as_str()?.to_string();
-            let token_endpoint = asm.get("token_endpoint")?.as_str()?.to_string();
-            Some(Self {
-                authorization_server_url: v
-                    .get("authorizationServerUrl")
-                    .and_then(|u| u.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                authorization_endpoint,
-                token_endpoint,
-                registration_endpoint: asm
-                    .get("registration_endpoint")
-                    .and_then(|r| r.as_str())
-                    .map(|s| s.to_string()),
-                resource: v
-                    .get("resourceMetadata")
-                    .and_then(|m| m.get("resource"))
-                    .and_then(|r| r.as_str())
-                    .map(|s| s.to_string()),
-            })
-        }
-    }
-
-    /// The whole flow. `authorization_code` present = finish; absent = start (or
-    /// discover that nothing needs asking).
-    pub async fn auth(
-        provider: &BoughOAuthProvider,
-        server_url: &str,
-        authorization_code: Option<&str>,
-        fetch: &FetchFn,
-    ) -> Result<AuthResult, BoughError> {
-        let discovered = match provider
-            .discovery_state()
-            .as_ref()
-            .and_then(Discovered::from_value)
-        {
-            Some(d) => d,
-            None => {
-                let d = discover(server_url, fetch).await?;
-                let _ = provider.save_discovery_state(d.to_value());
-                d
-            }
-        };
-
-        let client = match provider.client_information()? {
-            Some(c) => c,
-            None => {
-                let registered = register(&discovered, provider, fetch).await?;
-                provider.save_client_information(registered.clone())?;
-                registered
-            }
-        };
-
-        // Finish: exchange the code the browser came back with.
-        if let Some(code) = authorization_code {
-            let verifier = provider.code_verifier()?;
-            let tokens = exchange(&discovered, &client, provider, code, &verifier, fetch).await?;
-            provider.save_tokens(tokens)?;
-            return Ok(AuthResult::Authorized);
-        }
-
-        // A refreshable pair means nothing is asked of the human.
-        //
-        // NO EXPIRY SHORTCUT, deliberately. This is also the transport's 401 path
-        // (`remote.rs`): the token that just came back 401 is known-bad whatever
-        // `expiresAt` says, and short-circuiting on a stored expiry would present it
-        // again forever. Trading one refresh round trip for that is the right price.
-        if let Some(tokens) = provider.tokens()? {
-            if let Some(refresh_token) = tokens.refresh_token.as_deref() {
-                match refresh(&discovered, &client, refresh_token, fetch).await {
-                    Ok(next) => {
-                        provider.save_tokens(next)?;
-                        return Ok(AuthResult::Authorized);
-                    }
-                    // A rejected refresh token is not a fault: dropping it and asking
-                    // again is the whole point of the recovery hook. Without this an
-                    // expired refresh token loops instead of degrading to a prompt.
-                    Err(_) => provider.invalidate_credentials(InvalidateScope::Tokens)?,
-                }
-            }
-        }
-
-        // Start: PKCE, a nonce, and a URL for the human.
-        let verifier = random_verifier();
-        let challenge = s256_challenge(&verifier);
-        let state = provider.state()?;
-        provider.save_code_verifier(&verifier)?;
-        let mut params = vec![
-            ("response_type", "code".to_string()),
-            ("client_id", client.client_id.clone()),
-            ("code_challenge", challenge),
-            ("code_challenge_method", "S256".to_string()),
-            ("redirect_uri", provider.redirect_url()),
-            ("state", state),
-        ];
-        if let Some(resource) = &discovered.resource {
-            params.push(("resource", resource.clone()));
-        }
-        let sep = if discovered.authorization_endpoint.contains('?') {
-            '&'
-        } else {
-            '?'
-        };
-        let url = format!(
-            "{}{sep}{}",
-            discovered.authorization_endpoint,
-            form_encode(&params)
-        );
-        provider.redirect_to_authorization(&url);
-        Ok(AuthResult::Redirect)
-    }
-
-    // ---- discovery ---------------------------------------------------------
-
-    async fn discover(server_url: &str, fetch: &FetchFn) -> Result<Discovered, BoughError> {
-        let origin = origin_of(server_url)
-            .ok_or_else(|| mcp(400, format!("{server_url} is not an absolute URL")))?;
-        let path = path_of(server_url).unwrap_or_default();
-
-        // RFC 9728: the path-aware well-known first, then the root one.
-        let mut resource: Option<String> = None;
-        let mut as_url: Option<String> = None;
-        let candidates = if path.is_empty() || path == "/" {
-            vec![format!("{origin}/.well-known/oauth-protected-resource")]
-        } else {
-            vec![
-                format!("{origin}/.well-known/oauth-protected-resource{path}"),
-                format!("{origin}/.well-known/oauth-protected-resource"),
-            ]
-        };
-        for url in candidates {
-            if let Some(doc) = get_json(&url, fetch).await {
-                resource = doc
-                    .get("resource")
-                    .and_then(|r| r.as_str())
-                    .map(|s| s.to_string());
-                as_url = doc
-                    .get("authorization_servers")
-                    .and_then(|a| a.as_array())
-                    .and_then(|a| a.first())
-                    .and_then(|u| u.as_str())
-                    .map(|s| s.to_string());
-                break;
-            }
-        }
-
-        // A declared resource that does not cover the URL we were pointed at is how a
-        // token gets minted for the wrong audience, so it is refused. The message
-        // shape is what `declared_resource` reads the correction out of.
-        if let Some(declared) = &resource {
-            if !resource_allows(declared, server_url) {
-                return Err(mcp(
-                    502,
-                    format!(
-                        "Protected resource {declared} does not match expected {server_url} \
-                         (or origin)"
-                    ),
-                ));
-            }
-        }
-
-        let as_url = as_url.unwrap_or_else(|| origin.clone());
-        let as_origin = origin_of(&as_url).unwrap_or_else(|| as_url.clone());
-        let as_path = path_of(&as_url).unwrap_or_default();
-        let as_path = if as_path == "/" {
-            String::new()
-        } else {
-            as_path
-        };
-
-        // RFC 8414, then OpenID Connect discovery.
-        let mut metadata: Option<Value> = None;
-        for url in [
-            format!("{as_origin}/.well-known/oauth-authorization-server{as_path}"),
-            format!("{as_origin}/.well-known/oauth-authorization-server"),
-            format!("{as_origin}{as_path}/.well-known/openid-configuration"),
-            format!("{as_origin}/.well-known/openid-configuration"),
-        ] {
-            if let Some(doc) = get_json(&url, fetch).await {
-                metadata = Some(doc);
-                break;
-            }
-        }
-        let str_at = |doc: &Option<Value>, key: &str| -> Option<String> {
-            doc.as_ref()
-                .and_then(|d| d.get(key))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        };
-        Ok(Discovered {
-            authorization_endpoint: str_at(&metadata, "authorization_endpoint")
-                .unwrap_or_else(|| format!("{as_origin}/authorize")),
-            token_endpoint: str_at(&metadata, "token_endpoint")
-                .unwrap_or_else(|| format!("{as_origin}/token")),
-            registration_endpoint: str_at(&metadata, "registration_endpoint"),
-            authorization_server_url: as_url,
-            resource,
-        })
-    }
-
-    /// RFC 8707: the declared resource must be the requested URL or a prefix of it,
-    /// on the same origin.
-    fn resource_allows(declared: &str, requested: &str) -> bool {
-        let (Some(d_origin), Some(r_origin)) = (origin_of(declared), origin_of(requested)) else {
-            return false;
-        };
-        if d_origin != r_origin {
-            return false;
-        }
-        let d_path = path_of(declared).unwrap_or_default();
-        let r_path = path_of(requested).unwrap_or_default();
-        let d_path = d_path.trim_end_matches('/');
-        r_path == d_path || r_path.starts_with(&format!("{d_path}/")) || d_path.is_empty()
-    }
-
-    async fn get_json(url: &str, fetch: &FetchFn) -> Option<Value> {
-        let res = fetch(HttpReq {
-            method: "GET".into(),
-            url: url.to_string(),
-            headers: vec![("accept".into(), "application/json".into())],
-            body: None,
-        })
-        .await
-        .ok()?;
-        if res.status < 200 || res.status >= 300 {
-            return None;
-        }
-        serde_json::from_str(&res.body).ok()
-    }
-
-    // ---- registration ------------------------------------------------------
-
-    async fn register(
-        d: &Discovered,
-        provider: &BoughOAuthProvider,
-        fetch: &FetchFn,
-    ) -> Result<ClientInfo, BoughError> {
-        let Some(endpoint) = &d.registration_endpoint else {
-            return Err(mcp(
-                502,
-                format!(
-                    "the authorization server at {} does not support dynamic client \
-                     registration",
-                    d.authorization_server_url
-                ),
-            ));
-        };
-        let res = fetch(HttpReq {
-            method: "POST".into(),
-            url: endpoint.clone(),
-            headers: vec![
-                ("content-type".into(), "application/json".into()),
-                ("accept".into(), "application/json".into()),
-            ],
-            body: Some(provider.client_metadata().to_string()),
-        })
-        .await
-        .map_err(|e| mcp(502, format!("dynamic client registration failed: {e}")))?;
-        if res.status < 200 || res.status >= 300 {
-            return Err(mcp(
-                502,
-                format!(
-                    "dynamic client registration was refused ({}): {}",
-                    res.status, res.body
-                ),
-            ));
-        }
-        serde_json::from_str::<ClientInfo>(&res.body).map_err(|e| {
-            mcp(
-                502,
-                format!("dynamic client registration returned no client_id: {e}"),
-            )
-        })
-    }
-
-    // ---- the token endpoint ------------------------------------------------
-
-    async fn exchange(
-        d: &Discovered,
-        client: &ClientInfo,
-        provider: &BoughOAuthProvider,
-        code: &str,
-        verifier: &str,
-        fetch: &FetchFn,
-    ) -> Result<OAuthTokens, BoughError> {
-        let mut params = vec![
-            ("grant_type", "authorization_code".to_string()),
-            ("code", code.to_string()),
-            ("code_verifier", verifier.to_string()),
-            ("client_id", client.client_id.clone()),
-            ("redirect_uri", provider.redirect_url()),
-        ];
-        if let Some(secret) = &client.client_secret {
-            params.push(("client_secret", secret.clone()));
-        }
-        if let Some(resource) = &d.resource {
-            params.push(("resource", resource.clone()));
-        }
-        post_tokens(&d.token_endpoint, &params, fetch).await
-    }
-
-    async fn refresh(
-        d: &Discovered,
-        client: &ClientInfo,
-        refresh_token: &str,
-        fetch: &FetchFn,
-    ) -> Result<OAuthTokens, BoughError> {
-        let mut params = vec![
-            ("grant_type", "refresh_token".to_string()),
-            ("refresh_token", refresh_token.to_string()),
-            ("client_id", client.client_id.clone()),
-        ];
-        if let Some(secret) = &client.client_secret {
-            params.push(("client_secret", secret.clone()));
-        }
-        if let Some(resource) = &d.resource {
-            params.push(("resource", resource.clone()));
-        }
-        let mut tokens = post_tokens(&d.token_endpoint, &params, fetch).await?;
-        // RFC 6749 §6: the authorization server MAY omit a new refresh token, and the
-        // old one stays valid. Losing it here would turn every second refresh into a
-        // fresh authorization prompt.
-        if tokens.refresh_token.is_none() {
-            tokens.refresh_token = Some(refresh_token.to_string());
-        }
-        Ok(tokens)
-    }
-
-    async fn post_tokens(
-        endpoint: &str,
-        params: &[(&str, String)],
-        fetch: &FetchFn,
-    ) -> Result<OAuthTokens, BoughError> {
-        let res = fetch(HttpReq {
-            method: "POST".into(),
-            url: endpoint.to_string(),
-            headers: vec![
-                (
-                    "content-type".into(),
-                    "application/x-www-form-urlencoded".into(),
-                ),
-                ("accept".into(), "application/json".into()),
-            ],
-            body: Some(form_encode(params)),
-        })
-        .await
-        .map_err(|e| mcp(502, format!("the token endpoint could not be reached: {e}")))?;
-        if res.status < 200 || res.status >= 300 {
-            let code = serde_json::from_str::<Value>(&res.body)
-                .ok()
-                .and_then(|v| {
-                    v.get("error")
-                        .and_then(|e| e.as_str())
-                        .map(|s| s.to_string())
-                })
-                .unwrap_or_else(|| format!("HTTP {}", res.status));
-            return Err(mcp(
-                502,
-                format!("the token endpoint refused the grant: {code}"),
-            ));
-        }
-        serde_json::from_str::<OAuthTokens>(&res.body).map_err(|e| {
-            mcp(
-                502,
-                format!("the token endpoint returned no access token: {e}"),
-            )
-        })
-    }
-
-    // ---- PKCE --------------------------------------------------------------
-
-    /// 32 random bytes, base64url. `uuid` v4 is the workspace's randomness.
-    fn random_verifier() -> String {
-        let mut bytes = Vec::with_capacity(32);
-        bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
-        bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
-    }
-
-    fn s256_challenge(verifier: &str) -> String {
-        use sha2::{Digest, Sha256};
-        let digest = Sha256::digest(verifier.as_bytes());
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
 
@@ -1710,57 +1368,18 @@ pub(crate) fn origin_of(url: &str) -> Option<String> {
     Some(format!("{scheme}://{}", authority.to_ascii_lowercase()))
 }
 
-/// The path component, `""` when there is none.
+/// The path component of an absolute URL. Used by the flow tests' scripted
+/// authorization server to route by path.
+#[cfg(test)]
 pub(crate) fn path_of(url: &str) -> Option<String> {
-    let i = url.find("://")?;
-    let rest = &url[i + 3..];
-    let after_host = rest.find(['/', '?', '#'])?;
-    let tail = &rest[after_host..];
-    if !tail.starts_with('/') {
-        return Some(String::new());
+    let rest = url.split_once("://")?.1;
+    match rest.find('/') {
+        Some(i) => Some(rest[i..].split(['?', '#']).next().unwrap_or("").to_string()),
+        None => Some(String::new()),
     }
-    Some(tail.split(['?', '#']).next().unwrap_or("").to_string())
 }
 
-/// Origin + path + query, so two spellings of the same URL compare equal.
-fn normalize_url(url: &str) -> Option<String> {
-    let origin = origin_of(url)?;
-    let path = path_of(url).unwrap_or_default();
-    let path = if path.is_empty() {
-        "/".to_string()
-    } else {
-        path
-    };
-    let query = url.find('?').map(|i| &url[i..]).unwrap_or("");
-    let query = query.split('#').next().unwrap_or("");
-    Some(format!("{origin}{path}{query}"))
-}
-
-fn form_encode(params: &[(&str, String)]) -> String {
-    params
-        .iter()
-        .map(|(k, v)| format!("{}={}", percent_encode(k), percent_encode(v)))
-        .collect::<Vec<_>>()
-        .join("&")
-}
-
-/// `application/x-www-form-urlencoded` — everything outside the unreserved set is
-/// escaped, and a space is `%20` (`URLSearchParams` uses `+`; both are accepted by
-/// every token endpoint, and `%20` is also correct inside a query string).
-fn percent_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.as_bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(*b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-fn percent_decode(s: &str) -> String {
+pub fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -2217,28 +1836,43 @@ mod tests {
             server_url_for: Some(Arc::new(|_| Some("http://as.invalid/mcp".into()))),
         };
 
-        let e = complete_auth("nodot", "c", &opts)
+        // THE PROPERTY, unchanged by the migration: an unrecognized nonce is refused
+        // by a lookup against what bough is holding, and the refusal costs nothing —
+        // `never` panics if anything reaches for the network first.
+        //
+        // What DID change is that the nonce no longer encodes the server. rmcp mints
+        // the `state` parameter, so there is no format left to be malformed: a nonce
+        // either names a flow bough is holding or it does not.
+        for forged in ["", "nodot", "notion.deadbeef", "deadbeef"] {
+            let e = complete_auth(forged, "c", &opts)
+                .await
+                .expect_err("a forged nonce must be refused");
+            assert!(
+                e.to_string().contains("does not match any authorization"),
+                "{forged}: {e}"
+            );
+        }
+
+        // A flow IS in progress, and this is still not its nonce.
+        let store = store_at(&dir);
+        store
+            .patch("notion", |s| s.state = Some("real-nonce".into()))
+            .unwrap();
+        let e = complete_auth("wrong-nonce", "c", &opts)
             .await
             .expect_err("a throw");
-        assert!(e.to_string().contains("malformed state"), "{e}");
-        // Nothing stored for this server at all.
-        let e = complete_auth("notion.deadbeef", "c", &opts)
-            .await
-            .expect_err("a throw");
-        assert!(e.to_string().contains("state mismatch"), "{e}");
-        // A flow is in progress, but this is not its nonce.
-        provider_at("notion", &dir).state().unwrap();
-        let e = complete_auth("notion.wrong", "c", &opts)
-            .await
-            .expect_err("a throw");
-        assert!(e.to_string().contains("state mismatch"), "{e}");
-        // The nonce matches, but the server is no longer a registered remote.
-        let state = provider_at("notion", &dir).state().unwrap();
+        assert!(
+            e.to_string().contains("does not match any authorization"),
+            "{e}"
+        );
+
+        // The nonce matches, but the server is no longer a registered remote — and
+        // that is a 404 about the registry, not a state refusal.
         let gone = CompleteAuthOptions {
             server_url_for: Some(Arc::new(|_| None)),
             ..opts.clone()
         };
-        let e = complete_auth(&state, "c", &gone)
+        let e = complete_auth("real-nonce", "c", &gone)
             .await
             .expect_err("a throw");
         assert_eq!(e.status(), 404);
@@ -2283,15 +1917,14 @@ mod tests {
             q.get("redirect_uri").map(String::as_str),
             Some("http://127.0.0.1:4321/mcp/oauth/callback")
         );
-        // The nonce in the URL is the one that was stored, and it names the server.
+        // The nonce in the URL is the one that was stored. It no longer NAMES the
+        // server — rmcp mints the `state` parameter and does not accept one — so the
+        // binding is by storage instead: the nonce is filed beside the server using
+        // it, and `server_for_nonce` is what reads it back.
         let store = store_at(&dir);
-        assert_eq!(
-            q.get("state").cloned(),
-            Some(format!(
-                "acme.{}",
-                store.load("acme").unwrap().state.unwrap()
-            ))
-        );
+        let nonce = store.load("acme").unwrap().state.unwrap();
+        assert_eq!(q.get("state").cloned(), Some(nonce.clone()));
+        assert_eq!(store.server_for_nonce(&nonce).as_deref(), Some("acme"));
         // A verifier is waiting for the callback — the flow is genuinely half-done.
         assert!(store.load("acme").unwrap().code_verifier.is_some());
         // …and a real registration happened, once.
@@ -2334,7 +1967,7 @@ mod tests {
             server_url_for: Some(Arc::new(move |_| Some(mcp_url.clone()))),
         };
 
-        let (status, body) = oauth_callback_page("?code=the-code&state=acme.nonce-1", &opts).await;
+        let (status, body) = oauth_callback_page("?code=the-code&state=nonce-1", &opts).await;
         assert_eq!(status, 200, "{body}");
         assert!(body.contains("Connected to acme"), "{body}");
 
@@ -2353,9 +1986,9 @@ mod tests {
         assert_eq!(store.load("acme").unwrap().code_verifier, None);
 
         // Replaying the same callback is refused without a second exchange.
-        let (status, body) = oauth_callback_page("?code=the-code&state=acme.nonce-1", &opts).await;
+        let (status, body) = oauth_callback_page("?code=the-code&state=nonce-1", &opts).await;
         assert_eq!(status, 400);
-        assert!(body.contains("state mismatch"), "{body}");
+        assert!(body.contains("does not match any authorization"), "{body}");
         assert_eq!(seen.lock().unwrap().grants, vec!["authorization_code"]);
     }
 
