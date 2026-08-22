@@ -371,10 +371,10 @@ async fn scout(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::errors::BoughError;
     use crate::schema::parts::{Part, Role};
     use crate::types::{LlmResult, OnText};
     use async_trait::async_trait;
+    use bough_llm::LlmError;
     use std::sync::Mutex;
 
     struct TmpWorkspace(PathBuf);
@@ -481,7 +481,7 @@ mod tests {
             params: LlmParams,
             _on_text: OnText,
             _cancel: CancellationToken,
-        ) -> Result<LlmResult, BoughError> {
+        ) -> Result<LlmResult, LlmError> {
             let round = {
                 let mut r = self.round.lock().unwrap();
                 *r += 1;
@@ -564,7 +564,7 @@ mod tests {
             _params: LlmParams,
             _on_text: OnText,
             _cancel: CancellationToken,
-        ) -> Result<LlmResult, BoughError> {
+        ) -> Result<LlmResult, LlmError> {
             panic!("the scout must not run with no paths");
         }
     }
@@ -596,8 +596,8 @@ mod tests {
             _params: LlmParams,
             _on_text: OnText,
             _cancel: CancellationToken,
-        ) -> Result<LlmResult, BoughError> {
-            Err(BoughError::llm("401 no key for that provider"))
+        ) -> Result<LlmResult, LlmError> {
+            Err(LlmError::new("401 no key for that provider"))
         }
     }
 

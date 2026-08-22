@@ -36,11 +36,11 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
-use crate::errors::BoughError;
-use crate::llm::routing::Env;
-use crate::prompt::assemble::{section_sha, SectionSha};
+use crate::error::LlmError;
+use crate::routing::Env;
 use crate::types::{LlmClient, LlmParams, LlmResult, OnText};
 
 /// Where one turn's raw provider I/O goes.
@@ -82,26 +82,16 @@ pub fn manifest_path(label: &TraceLabel) -> PathBuf {
         .join(format!("{}.manifest.json", label.turn_id))
 }
 
-/// What the turn knew that the provider boundary does not: which prompt
-/// sections went in, and what the turn was configured with.
-///
-/// `LlmParams` carries the assembled prefix as one opaque string, so section
-/// identity has to be written from where assembly happened. That is the whole
-/// point of the manifest — an editable component is a SECTION, and without
-/// this the trace can only say "the prefix changed", never which file did.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TurnManifest {
-    pub session_id: String,
-    pub turn_id: String,
-    pub model: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub effort: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace: Option<String>,
-    /// Every included section, in prompt order, with the sha of its text.
-    pub sections: Vec<SectionSha>,
-    pub started_at: i64,
+/// sha256 of a prompt prefix, truncated to 16 hex chars — collision-free at
+/// this scale, readable in a log. The host hashes its prompt sections with
+/// the same function so a manifest's shas and a trace's shas line up.
+pub fn section_sha(text: &str) -> String {
+    let digest = Sha256::digest(text.as_bytes());
+    let mut hex = String::with_capacity(16);
+    for byte in digest.iter().take(8) {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    hex
 }
 
 /// Append one JSON line. **Every filesystem error is swallowed**: a trace is
@@ -117,20 +107,6 @@ fn write_line(path: &Path, value: &Value) {
         return;
     };
     let _ = writeln!(file, "{value}");
-}
-
-/// Write a turn's manifest, pretty-printed. Called once, from where the
-/// prompt was assembled. As above: diagnostic, never fatal.
-pub fn write_manifest(label: &TraceLabel, manifest: &TurnManifest) {
-    let path = manifest_path(label);
-    let Some(parent) = path.parent() else { return };
-    if create_dir_all(parent).is_err() {
-        return;
-    }
-    let Ok(text) = serde_json::to_string_pretty(manifest) else {
-        return;
-    };
-    let _ = std::fs::write(&path, format!("{text}\n"));
 }
 
 /// A round as it lands in the JSONL. Public so a reader can type what it
@@ -216,7 +192,7 @@ impl LlmClient for TracingClient {
         params: LlmParams,
         on_text: OnText,
         cancel: CancellationToken,
-    ) -> Result<LlmResult, BoughError> {
+    ) -> Result<LlmResult, LlmError> {
         let round = {
             let mut n = self.n.lock().unwrap();
             *n += 1;
@@ -296,9 +272,8 @@ pub fn with_trace(inner: Arc<dyn LlmClient>, label: Option<TraceLabel>) -> Arc<d
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::test_support::fake_client;
-    use crate::schema::parts::Usage;
-    use crate::types::{LlmBlock, LlmContentBlock, LlmMessage, LlmRole, LlmToolDef};
+    use crate::test_support::fake_client;
+    use crate::types::{LlmBlock, LlmContentBlock, LlmMessage, LlmRole, LlmToolDef, Usage};
     use serde_json::Map;
 
     fn label() -> TraceLabel {
@@ -420,7 +395,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_attempt_is_recorded_and_still_throws() {
         let l = label();
-        let (inner, _) = fake_client(vec![Err(BoughError::llm("boom"))]);
+        let (inner, _) = fake_client(vec![Err(LlmError::new("boom"))]);
         let err = with_trace(inner, Some(l.clone()))
             .run(params(), Arc::new(|_| {}), CancellationToken::new())
             .await
@@ -445,8 +420,8 @@ mod tests {
     async fn n_counts_failed_attempts_not_successes() {
         let l = label();
         let (inner, _) = fake_client(vec![
-            Err(BoughError::llm("first")),
-            Err(BoughError::llm("second")),
+            Err(LlmError::new("first")),
+            Err(LlmError::new("second")),
             Ok(result()),
         ]);
         let client = with_trace(inner, Some(l.clone()));
@@ -489,44 +464,7 @@ mod tests {
             .run(params(), Arc::new(|_| {}), CancellationToken::new())
             .await;
         assert!(out.is_ok(), "a dead sink must not fail the round");
-        write_manifest(
-            &l,
-            &TurnManifest {
-                session_id: "s1".into(),
-                turn_id: "t1".into(),
-                model: "m".into(),
-                effort: None,
-                workspace: None,
-                sections: vec![],
-                started_at: 0,
-            },
-        );
-        assert!(!manifest_path(&l).exists());
         let _ = std::fs::remove_file(&blocker);
-    }
-
-    #[tokio::test]
-    async fn the_manifest_carries_the_section_identities_the_raw_trace_cannot_see() {
-        let l = label();
-        let manifest = TurnManifest {
-            session_id: "s1".into(),
-            turn_id: "t1".into(),
-            model: "claude-opus-5".into(),
-            effort: Some("high".into()),
-            workspace: Some("/w".into()),
-            sections: vec![SectionSha {
-                id: crate::prompt::assemble::SectionId::Identity,
-                sha: section_sha("x"),
-                bytes: 1,
-            }],
-            started_at: 1234,
-        };
-        write_manifest(&l, &manifest);
-        let text = std::fs::read_to_string(manifest_path(&l)).unwrap();
-        let parsed: TurnManifest = serde_json::from_str(&text).unwrap();
-        assert_eq!(parsed, manifest);
-        assert!(text.ends_with('\n'));
-        assert!(text.contains("\n  "), "pretty-printed for a human reader");
     }
 
     #[test]

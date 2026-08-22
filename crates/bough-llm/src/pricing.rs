@@ -23,8 +23,8 @@ use std::sync::{Arc, LazyLock};
 
 use tokio_util::sync::CancellationToken;
 
-use crate::errors::BoughError;
-use crate::schema::parts::Usage;
+use crate::error::LlmError;
+use crate::types::Usage;
 use crate::types::{LlmClient, LlmParams, LlmResult, OnText};
 
 /// The vendored catalog, verbatim from `src/llm/pricing.json`.
@@ -163,7 +163,7 @@ impl LlmClient for Pricing {
         params: LlmParams,
         on_text: OnText,
         cancel: CancellationToken,
-    ) -> Result<LlmResult, BoughError> {
+    ) -> Result<LlmResult, LlmError> {
         let model = params.model.clone();
         let mut result = self.inner.run(params, on_text, cancel).await?;
         if let Some(usage) = &mut result.usage {
@@ -192,7 +192,7 @@ pub fn with_pricing(inner: Arc<dyn LlmClient>) -> Arc<dyn LlmClient> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::test_support::{fake_client, params_for_model, TOOLS};
+    use crate::test_support::{fake_client, params_for_model, TOOLS};
     use crate::types::LlmBlock;
 
     #[test]

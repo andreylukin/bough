@@ -65,6 +65,7 @@ pub fn create_cheap_tier() -> Option<Arc<dyn CheapTier>> {
 
 #[cfg(test)]
 pub(crate) mod test_support {
+    use bough_llm::LlmError;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -72,7 +73,6 @@ pub(crate) mod test_support {
 
     use crate::bus::Bus;
     use crate::db::sqlite_db::{DbOptions, SqliteDb};
-    use crate::errors::BoughError;
     use crate::schema::events::BoughEvent;
     use crate::schema::parts::{Session, SessionKind};
     use crate::types::{
@@ -90,7 +90,7 @@ pub(crate) mod test_support {
                 _p: LlmParams,
                 _t: OnText,
                 _c: CancellationToken,
-            ) -> Result<LlmResult, BoughError> {
+            ) -> Result<LlmResult, LlmError> {
                 Ok(LlmResult {
                     content: vec![LlmBlock::Text {
                         text: self.0.clone(),
@@ -114,7 +114,7 @@ pub(crate) mod test_support {
                 _p: LlmParams,
                 _t: OnText,
                 _c: CancellationToken,
-            ) -> Result<LlmResult, BoughError> {
+            ) -> Result<LlmResult, LlmError> {
                 futures::future::pending::<()>().await;
                 unreachable!()
             }

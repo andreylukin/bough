@@ -14,6 +14,11 @@
 
 use thiserror::Error;
 
+/// The provider layer's error (`bough-llm`). It becomes [`BoughError::Llm`]
+/// at the boundary (`From` below); re-exported so downstream crates can name
+/// it without depending on `bough-llm` themselves.
+pub use bough_llm::LlmError;
+
 /// The caller-status error families. `name()` maps each to the TS class name
 /// that appears in logs and the JSON error body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -190,6 +195,23 @@ impl BoughError {
         }
     }
 
+    /// The provider layer's own error, when this is one — what the retry
+    /// classifier and the trace writer in `bough-llm` take.
+    pub fn as_llm(&self) -> Option<bough_llm::LlmError> {
+        match self {
+            BoughError::Llm {
+                status,
+                retry_after_ms,
+                message,
+            } => Some(bough_llm::LlmError {
+                status: *status,
+                retry_after_ms: *retry_after_ms,
+                message: message.clone(),
+            }),
+            _ => None,
+        }
+    }
+
     /// The HTTP status this error should become.
     pub fn status(&self) -> u16 {
         match self {
@@ -207,6 +229,18 @@ impl BoughError {
             BoughError::Llm { .. } => "LlmError",
             BoughError::SpawnCap { .. } => "SpawnCapError",
             BoughError::ContextOverflow { .. } => "ContextOverflowError",
+        }
+    }
+}
+
+/// The provider layer's error crosses into the tree as `BoughError::Llm`,
+/// field for field — status, Retry-After hint and the message verbatim.
+impl From<bough_llm::LlmError> for BoughError {
+    fn from(err: bough_llm::LlmError) -> Self {
+        BoughError::Llm {
+            status: err.status,
+            retry_after_ms: err.retry_after_ms,
+            message: err.message,
         }
     }
 }

@@ -25,10 +25,10 @@ use std::sync::Arc;
 use serde_json::{json, Map, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::errors::BoughError;
-use crate::llm::routing::{joined_system, require_key, Provider, ProviderOpts};
-use crate::llm::sse::{aborted, fetch_cancellable, http_error, parse_tool_args, SseEvents};
-use crate::schema::parts::Usage;
+use crate::error::LlmError;
+use crate::routing::{joined_system, require_key, Provider, ProviderOpts};
+use crate::sse::{aborted, fetch_cancellable, http_error, parse_tool_args, SseEvents};
+use crate::types::Usage;
 use crate::types::{
     Effort, LlmBlock, LlmClient, LlmContentBlock, LlmMessage, LlmParams, LlmResult, LlmRole,
     LlmToolDef, OnText,
@@ -101,7 +101,7 @@ pub fn to_responses_input(messages: &[LlmMessage]) -> Vec<Value> {
 pub fn from_responses_output(
     output: &[Value],
     tools: &[LlmToolDef],
-) -> Result<Vec<LlmBlock>, BoughError> {
+) -> Result<Vec<LlmBlock>, LlmError> {
     let mut blocks = Vec::new();
     for item in output {
         match item["type"].as_str() {
@@ -177,7 +177,7 @@ impl LlmClient for OpenAIClient {
         params: LlmParams,
         on_text: OnText,
         cancel: CancellationToken,
-    ) -> Result<LlmResult, BoughError> {
+    ) -> Result<LlmResult, LlmError> {
         let provider = "openai";
         let env = self.opts.env_or_default();
         let transport = self.opts.transport_or_default();
@@ -229,7 +229,7 @@ impl LlmClient for OpenAIClient {
             body.insert("tool_choice".into(), json!("none"));
         }
 
-        let req = crate::llm::sse::HttpRequest {
+        let req = crate::sse::HttpRequest {
             url: format!("{base}/v1/responses"),
             headers: vec![
                 ("authorization".to_string(), format!("Bearer {api_key}")),
@@ -281,14 +281,14 @@ impl LlmClient for OpenAIClient {
                     } else {
                         500
                     };
-                    return Err(BoughError::llm_with(format!("openai: {ev}"), status, None));
+                    return Err(LlmError::with(format!("openai: {ev}"), status, None));
                 }
                 _ => {}
             }
         }
         // No terminal status at all → the stream was cut → a transport fault.
         let Some(final_response) = final_response else {
-            return Err(BoughError::llm(
+            return Err(LlmError::new(
                 "openai: stream ended without response.completed",
             ));
         };
@@ -339,15 +339,15 @@ impl LlmClient for OpenAIClient {
 pub fn openai_client(opts: ProviderOpts) -> Arc<dyn LlmClient> {
     Arc::new(OpenAIClient {
         opts,
-        stall_ms: crate::llm::sse::STALL_TIMEOUT_MS,
+        stall_ms: crate::sse::STALL_TIMEOUT_MS,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::retry::is_retryable;
-    use crate::llm::test_support::{keyed_env, params_over, CannedTransport, TOOLS};
+    use crate::retry::is_retryable;
+    use crate::test_support::{keyed_env, params_over, CannedTransport, TOOLS};
     use std::sync::Mutex;
 
     fn opts(transport: Arc<CannedTransport>) -> ProviderOpts {
@@ -614,10 +614,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.status(), 429);
-        match &err {
-            BoughError::Llm { retry_after_ms, .. } => assert_eq!(*retry_after_ms, Some(3000)),
-            other => panic!("expected an LlmError, got {other:?}"),
-        }
+        assert_eq!(err.retry_after_ms, Some(3000));
         assert!(is_retryable(&err));
     }
 

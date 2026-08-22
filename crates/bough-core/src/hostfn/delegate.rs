@@ -949,6 +949,7 @@ type _WeakRegistry = Weak<TurnRegistry>;
 
 #[cfg(test)]
 mod tests {
+    use bough_llm::LlmError;
     use std::sync::Mutex;
 
     use async_trait::async_trait;
@@ -1010,7 +1011,7 @@ mod tests {
             _params: LlmParams,
             _on_text: OnText,
             cancel: CancellationToken,
-        ) -> Result<LlmResult, BoughError> {
+        ) -> Result<LlmResult, LlmError> {
             let _ = self.started.send(true);
             tokio::select! {
                 _ = self.release.notified() => Ok(LlmResult {
@@ -1230,8 +1231,8 @@ mod tests {
                     _p: LlmParams,
                     _t: OnText,
                     _c: CancellationToken,
-                ) -> Result<LlmResult, BoughError> {
-                    Err(BoughError::llm_with("provider is on fire", 400, None))
+                ) -> Result<LlmResult, LlmError> {
+                    Err(LlmError::with("provider is on fire", 400, None))
                 }
             }
             Arc::new(Failing)

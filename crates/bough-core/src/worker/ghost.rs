@@ -373,7 +373,7 @@ mod tests {
                 _p: crate::types::LlmParams,
                 _t: crate::types::OnText,
                 _c: tokio_util::sync::CancellationToken,
-            ) -> Result<crate::types::LlmResult, crate::errors::BoughError> {
+            ) -> Result<crate::types::LlmResult, bough_llm::LlmError> {
                 panic!("must not be called")
             }
         }

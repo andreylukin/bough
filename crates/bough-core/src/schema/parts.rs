@@ -247,20 +247,9 @@ pub enum TurnStatus {
 }
 
 /// Per-round provider usage, summed across the turn and aggregated per session.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct Usage {
-    pub input_tokens: i64,
-    pub output_tokens: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_tokens: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_read_tokens: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_write_tokens: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cost_usd: Option<f64>,
-}
+/// Owned by `bough-llm`; re-exported here so the persisted shape and the wire
+/// shape stay one type.
+pub use bough_llm::types::Usage;
 
 /// The persisted state machine covering everything after a user message lands.
 /// Checkpointed as it progresses (`step`) so a restart can find turns still

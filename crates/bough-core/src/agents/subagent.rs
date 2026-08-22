@@ -637,6 +637,7 @@ mod tests {
     };
     use crate::schema::parts::is_collapsed_kind;
     use crate::turn::testkit::stub_deps;
+    use bough_llm::LlmError;
     use serde_json::json;
     use std::sync::Mutex;
 
@@ -999,7 +1000,7 @@ mod tests {
         let seeded = seed_spawner(&f);
         let on_fire =
             crate::turn::testkit::scripted_llm(vec![crate::turn::testkit::ScriptedRound {
-                throws: Some(BoughError::llm_with("provider is on fire", 400, None)),
+                throws: Some(LlmError::with("provider is on fire", 400, None)),
                 ..Default::default()
             }]);
         let ctx = spawner_turn_ctx(&f, &seeded, on_fire);

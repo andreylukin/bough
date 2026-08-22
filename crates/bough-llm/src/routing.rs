@@ -15,7 +15,7 @@ use std::sync::{Arc, LazyLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::errors::BoughError;
+use crate::error::LlmError;
 use crate::types::LlmParams;
 
 /// The five providers. Serializes to the TS union strings.
@@ -105,17 +105,17 @@ pub struct ProviderOpts {
     /// Defaults to reading the process environment.
     pub env: Option<Env>,
     /// Defaults to the reqwest transport. Tests pass a canned SSE transport.
-    pub transport: Option<Arc<dyn crate::llm::sse::Transport>>,
+    pub transport: Option<Arc<dyn crate::sse::Transport>>,
 }
 
 impl ProviderOpts {
     pub fn env_or_default(&self) -> Env {
         self.env.clone().unwrap_or_else(process_env)
     }
-    pub fn transport_or_default(&self) -> Arc<dyn crate::llm::sse::Transport> {
+    pub fn transport_or_default(&self) -> Arc<dyn crate::sse::Transport> {
         self.transport
             .clone()
-            .unwrap_or_else(|| Arc::new(crate::llm::sse::ReqwestTransport::new()))
+            .unwrap_or_else(|| Arc::new(crate::sse::ReqwestTransport::new()))
     }
 }
 
@@ -128,7 +128,7 @@ pub fn require_key(
     env: &Env,
     provider: Provider,
     alternatives: &[&str],
-) -> Result<String, BoughError> {
+) -> Result<String, LlmError> {
     let mut names: Vec<&str> = vec![api_key_env(provider)];
     names.extend_from_slice(alternatives);
     for name in &names {
@@ -143,7 +143,7 @@ pub fn require_key(
     // a new install hits, and "which variable" is only half of what the person
     // reading it needs. The server reads this file at start, so `export` in a
     // shell it did not inherit is the other common way to be confused here.
-    Err(BoughError::llm_with(
+    Err(LlmError::with(
         format!(
             "{provider}: {} is not set — put it in ~/.bough/env, then `bough restart`",
             names.join(" / ")
@@ -247,7 +247,7 @@ pub static MODELS: LazyLock<Vec<ModelRow>> = LazyLock::new(|| {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::pricing::catalog_keys;
+    use crate::pricing::catalog_keys;
 
     #[test]
     fn provider_for_openai_prefix_vendor_model_bare_id() {

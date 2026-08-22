@@ -1317,7 +1317,7 @@ fn prepare_turn(
                                 attempt: info.attempt,
                                 reason: format!(
                                     "{} — retry {}/{}",
-                                    short_reason(&info.error),
+                                    short_reason(&BoughError::from(info.error)),
                                     info.attempt,
                                     info.max_attempts
                                 ),
@@ -2133,6 +2133,7 @@ async fn run_round(
         {
             Ok(result) => return Ok(result),
             Err(err) => {
+                let err = BoughError::from(err);
                 let decision = classify_round_failure(
                     &err,
                     attempt,
@@ -2540,6 +2541,7 @@ mod tests {
     use crate::schema::events::BoughEvent;
     use crate::schema::parts::TurnStatus;
     use crate::turn::testkit::{reasoning, run_steps, scripted_llm, stop, text, ScriptedRound};
+    use bough_llm::LlmError;
 
     use std::sync::Mutex;
 
@@ -3381,7 +3383,7 @@ mod tests {
     #[tokio::test]
     async fn a_provider_failure_ends_the_turn_with_a_message_a_closed_row_and_a_closed_message() {
         let llm = scripted_llm(vec![ScriptedRound {
-            throws: Some(BoughError::llm_with("Anthropic: 400 bad prompt", 400, None)),
+            throws: Some(LlmError::with("Anthropic: 400 bad prompt", 400, None)),
             ..Default::default()
         }]);
         let f = fixture(opts(llm));
@@ -4733,7 +4735,7 @@ mod tests {
     async fn a_tool_call_truncated_mid_stream_is_retried_never_executed() {
         // What the stream layer raises rather than falling back to `{}`.
         let truncation = || {
-            BoughError::llm(
+            LlmError::new(
                 "anthropic: run_steps call arrived with no arguments (truncated mid-call)",
             )
         };
@@ -4806,9 +4808,8 @@ mod tests {
 
     #[tokio::test]
     async fn an_exhausted_retry_surfaces_as_a_turn_error_rather_than_an_executed_guess() {
-        let truncation = || {
-            BoughError::llm("openai: run_steps call has malformed arguments (truncated mid-call)")
-        };
+        let truncation =
+            || LlmError::new("openai: run_steps call has malformed arguments (truncated mid-call)");
         let llm = scripted_llm(vec![
             ScriptedRound {
                 throws: Some(truncation()),

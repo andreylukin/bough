@@ -14,10 +14,8 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::llm::routing::{
-    api_key_env, Env, ModelRow, Provider, ProviderOpts, CLOUDFLARE_ACCOUNT_ENV,
-};
-use crate::llm::sse::{HttpRequest, Transport};
+use crate::routing::{api_key_env, Env, ModelRow, Provider, ProviderOpts, CLOUDFLARE_ACCOUNT_ENV};
+use crate::sse::{HttpRequest, Transport};
 
 /// Every discovery call gives up after this long. A picker nicety must never
 /// hold a boot.
@@ -443,9 +441,9 @@ pub async fn discover_models(opts: ProviderOpts) -> Vec<ModelRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::errors::BoughError;
-    use crate::llm::routing::{provider_for, MODELS};
-    use crate::llm::sse::HttpResponse;
+    use crate::error::LlmError;
+    use crate::routing::{provider_for, MODELS};
+    use crate::sse::HttpResponse;
     use serde_json::json;
     use std::sync::Mutex;
 
@@ -453,12 +451,12 @@ mod tests {
     /// records the URLs it was asked for.
     struct UrlTransport {
         seen: Mutex<Vec<String>>,
-        answer: Box<dyn Fn(&str) -> Result<(u16, String), BoughError> + Send + Sync>,
+        answer: Box<dyn Fn(&str) -> Result<(u16, String), LlmError> + Send + Sync>,
     }
 
     impl UrlTransport {
         fn new(
-            answer: impl Fn(&str) -> Result<(u16, String), BoughError> + Send + Sync + 'static,
+            answer: impl Fn(&str) -> Result<(u16, String), LlmError> + Send + Sync + 'static,
         ) -> Arc<Self> {
             Arc::new(UrlTransport {
                 seen: Mutex::new(Vec::new()),
@@ -476,7 +474,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Transport for UrlTransport {
-        async fn fetch(&self, req: HttpRequest) -> Result<HttpResponse, BoughError> {
+        async fn fetch(&self, req: HttpRequest) -> Result<HttpResponse, LlmError> {
             assert!(req.body.is_none(), "discovery is a GET");
             self.seen.lock().unwrap().push(req.url.clone());
             let (status, body) = (self.answer)(&req.url)?;
@@ -596,7 +594,7 @@ mod tests {
             .await
             .is_empty());
 
-        let dead = UrlTransport::new(|_| Err(BoughError::llm("offline")));
+        let dead = UrlTransport::new(|_| Err(LlmError::new("offline")));
         assert!(discover_openai_models(opts(keys_only(), dead))
             .await
             .is_empty());
@@ -779,7 +777,7 @@ mod tests {
     #[tokio::test]
     async fn discovery_never_fails_a_non_2xx_a_bad_body_and_a_dead_socket_all_yield_nothing() {
         let cases: Vec<Arc<UrlTransport>> = vec![
-            UrlTransport::new(|_| Err(BoughError::llm("network"))),
+            UrlTransport::new(|_| Err(LlmError::new("network"))),
             UrlTransport::new(|_| Ok((500, "nope".into()))),
             UrlTransport::new(|_| Ok((200, "<html>".into()))),
         ];
@@ -805,7 +803,7 @@ mod tests {
         // The reason this is a join of independently-fallible calls.
         let transport = UrlTransport::new(|url| {
             if url.contains("anthropic") {
-                return Err(BoughError::llm("anthropic is down"));
+                return Err(LlmError::new("anthropic is down"));
             }
             if url.contains("openrouter") {
                 return Ok((

@@ -19,6 +19,7 @@ use crate::turn::testkit::{stop, text};
 use crate::types::{
     system_clock, AppCtx, HostState, LlmClient, LlmParams, LlmResult, OnText, SharedDb, TurnCtx,
 };
+use bough_llm::LlmError;
 
 /// A string that exists ONLY in the spawner's transcript.
 pub const SPAWNER_SECRET: &str = "PINEAPPLE-QUADRANT-7";
@@ -313,7 +314,7 @@ impl LlmClient for RecordingLlm {
         params: LlmParams,
         _on_text: OnText,
         _cancel: CancellationToken,
-    ) -> Result<LlmResult, BoughError> {
+    ) -> Result<LlmResult, LlmError> {
         let n = {
             let mut calls = self.calls.lock().unwrap();
             calls.push(params);
@@ -360,7 +361,7 @@ pub fn gated_llm(
             _params: LlmParams,
             _on_text: OnText,
             cancel: CancellationToken,
-        ) -> Result<LlmResult, BoughError> {
+        ) -> Result<LlmResult, LlmError> {
             let _ = self.started.send(true);
             let mut gate = self.gate.clone();
             loop {
@@ -370,7 +371,7 @@ pub fn gated_llm(
                 tokio::select! {
                     _ = cancel.cancelled() => {
                         // The llm layer's abort: status 499, never retried.
-                        return Err(BoughError::llm_with("interrupted", 499, None));
+                        return Err(LlmError::with("interrupted", 499, None));
                     }
                     changed = gate.changed() => {
                         if changed.is_err() {

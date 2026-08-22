@@ -1,7 +1,6 @@
-//! Streaming transport (port of `src/llm/stream.ts`), and the one place a
-//! finished round becomes persisted parts.
+//! Streaming transport (port of `src/llm/stream.ts`).
 //!
-//! Three invariants live here, all learned the hard way:
+//! Two invariants live here, both learned the hard way:
 //!
 //! 1. **A stream that stops without its completion marker is a failure, not a
 //!    short answer.** [`SseEvents`] guards every read with a stall timeout,
@@ -11,8 +10,9 @@
 //!    with no arguments.** [`parse_tool_args`] refuses to invent `{}` for a
 //!    tool whose schema has required fields — the schema, not the emptiness,
 //!    decides.
-//! 3. **Reasoning is persisted WITH its provider payload.** [`blocks_to_parts`]
-//!    keeps the opaque `meta`, stamped with the model that produced it.
+//!
+//! (The third — reasoning is persisted WITH its provider payload — lives with
+//! the host's `blocks_to_parts`, which is where the persisted shape is.)
 //!
 //! The parser stays hand-rolled (~40 lines): the `[DONE]`/stall/
 //! trailing-fragment semantics are custom and test-pinned — do NOT substitute
@@ -25,9 +25,8 @@ use std::time::Duration;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
 
-use crate::errors::BoughError;
-use crate::schema::parts::Part;
-use crate::types::{LlmBlock, LlmToolDef};
+use crate::error::LlmError;
+use crate::types::LlmToolDef;
 
 /// A stream that sends no bytes for this long is treated as dropped.
 pub const STALL_TIMEOUT_MS: u64 = 60_000;
@@ -36,7 +35,7 @@ pub const STALL_TIMEOUT_MS: u64 = 60_000;
 
 /// A response body as a stream of byte chunks. Errors mid-stream are transport
 /// faults, already mapped to status-less (502 ⇒ retryable) `LlmError`s.
-pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Vec<u8>, BoughError>> + Send>>;
+pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Vec<u8>, LlmError>> + Send>>;
 
 /// One HTTP request, as a provider client issues it.
 pub struct HttpRequest {
@@ -85,7 +84,7 @@ impl HttpResponse {
 /// (502 ⇒ retryable) at this edge.
 #[async_trait::async_trait]
 pub trait Transport: Send + Sync {
-    async fn fetch(&self, req: HttpRequest) -> Result<HttpResponse, BoughError>;
+    async fn fetch(&self, req: HttpRequest) -> Result<HttpResponse, LlmError>;
 }
 
 /// The production transport over one shared `reqwest::Client`.
@@ -109,7 +108,7 @@ impl Default for ReqwestTransport {
 
 #[async_trait::async_trait]
 impl Transport for ReqwestTransport {
-    async fn fetch(&self, req: HttpRequest) -> Result<HttpResponse, BoughError> {
+    async fn fetch(&self, req: HttpRequest) -> Result<HttpResponse, LlmError> {
         let mut builder = match &req.body {
             Some(body) => self.client.post(&req.url).body(body.clone()),
             None => self.client.get(&req.url),
@@ -122,7 +121,7 @@ impl Transport for ReqwestTransport {
         let res = builder
             .send()
             .await
-            .map_err(|e| BoughError::llm(e.to_string()))?;
+            .map_err(|e| LlmError::new(e.to_string()))?;
         let status = res.status().as_u16();
         let headers = res
             .headers()
@@ -137,7 +136,7 @@ impl Transport for ReqwestTransport {
         let body = res.bytes_stream().map(|chunk| {
             chunk
                 .map(|b| b.to_vec())
-                .map_err(|e| BoughError::llm(e.to_string()))
+                .map_err(|e| LlmError::new(e.to_string()))
         });
         Ok(HttpResponse {
             status,
@@ -183,7 +182,7 @@ impl SseEvents {
     }
 
     /// The next `data:` payload, `None` at stream end.
-    pub async fn next(&mut self) -> Result<Option<String>, BoughError> {
+    pub async fn next(&mut self) -> Result<Option<String>, LlmError> {
         loop {
             // Drain complete lines already buffered.
             while let Some(nl) = self.buffer.iter().position(|b| *b == b'\n') {
@@ -203,7 +202,7 @@ impl SseEvents {
                     // Cancel the reader (drop it) and surface the stall.
                     self.body = None;
                     let secs = (self.stall_ms as f64 / 1000.0).round() as u64;
-                    return Err(BoughError::llm(format!(
+                    return Err(LlmError::new(format!(
                         "{}: stream stalled (no data for {secs}s)",
                         self.provider
                     )));
@@ -225,7 +224,7 @@ impl SseEvents {
 
 /// Map a non-2xx provider response to a classified `LlmError`. Retry-After is
 /// parsed from the header as seconds; invalid/absent → no hint.
-pub async fn http_error(provider: &str, res: HttpResponse) -> BoughError {
+pub async fn http_error(provider: &str, res: HttpResponse) -> LlmError {
     let status = res.status;
     let retry_after_ms = res
         .header("retry-after")
@@ -233,7 +232,7 @@ pub async fn http_error(provider: &str, res: HttpResponse) -> BoughError {
         .filter(|secs| secs.is_finite() && *secs > 0.0)
         .map(|secs| (secs * 1000.0) as u64);
     let body = res.text().await;
-    BoughError::llm_with(
+    LlmError::with(
         format!("{provider}: {status} {body}")
             .trim_end()
             .to_string(),
@@ -244,8 +243,8 @@ pub async fn http_error(provider: &str, res: HttpResponse) -> BoughError {
 
 /// The error a user abort surfaces as. 499 is not in the retryable status
 /// set, so the retry ring never re-attempts an interrupt.
-pub fn aborted(provider: &str) -> BoughError {
-    BoughError::llm_with(format!("{provider}: aborted"), 499, None)
+pub fn aborted(provider: &str) -> LlmError {
+    LlmError::with(format!("{provider}: aborted"), 499, None)
 }
 
 /// `transport.fetch` racing the turn's interrupt.
@@ -254,7 +253,7 @@ pub async fn fetch_cancellable(
     req: HttpRequest,
     cancel: &tokio_util::sync::CancellationToken,
     provider: &str,
-) -> Result<HttpResponse, BoughError> {
+) -> Result<HttpResponse, LlmError> {
     tokio::select! {
         _ = cancel.cancelled() => Err(aborted(provider)),
         res = transport.fetch(req) => res,
@@ -275,11 +274,11 @@ pub fn parse_tool_args(
     raw: Option<&str>,
     tool: Option<&LlmToolDef>,
     name: &str,
-) -> Result<Value, BoughError> {
+) -> Result<Value, LlmError> {
     // TS `if (raw)`: an empty string is as absent as undefined.
     if let Some(raw) = raw.filter(|r| !r.is_empty()) {
         return serde_json::from_str(raw).map_err(|_| {
-            BoughError::llm(format!(
+            LlmError::new(format!(
                 "{provider}: {name} call has malformed arguments (truncated mid-call)"
             ))
         });
@@ -287,7 +286,7 @@ pub fn parse_tool_args(
     let required = tool.and_then(|t| t.input_schema.get("required"));
     if let Some(Value::Array(required)) = required {
         if !required.is_empty() {
-            return Err(BoughError::llm(format!(
+            return Err(LlmError::new(format!(
                 "{provider}: {name} call arrived with no arguments (truncated mid-call)"
             )));
         }
@@ -295,52 +294,13 @@ pub fn parse_tool_args(
     Ok(Value::Object(serde_json::Map::new()))
 }
 
-// ---- blocks → parts ---------------------------------------------------------
-
-/// A finished round's blocks → the parts persisted on the supervisor message.
-///
-/// `model` stamps the reasoning parts, because a provider signature is only
-/// valid for the model that produced it and replay is gated on that. A
-/// reasoning block with NO displayable text is still persisted when it
-/// carries `meta` — that is a redacted thinking block, and the provider's
-/// rule is that a block comes back exactly as it was received or not at all.
-pub fn blocks_to_parts(blocks: &[LlmBlock], model: Option<&str>) -> Vec<Part> {
-    let mut parts = Vec::new();
-    for b in blocks {
-        match b {
-            LlmBlock::Text { text } => {
-                if !text.is_empty() {
-                    parts.push(Part::Text { text: text.clone() });
-                }
-            }
-            LlmBlock::Reasoning { text, meta } => {
-                if !text.trim().is_empty() || meta.is_some() {
-                    parts.push(Part::Reasoning {
-                        text: text.clone(),
-                        meta: meta.clone(),
-                        model: model.map(String::from),
-                    });
-                }
-            }
-            LlmBlock::ToolUse { id, name, input } => {
-                parts.push(Part::ToolCall {
-                    id: id.clone(),
-                    name: name.clone(),
-                    input: input.clone(),
-                });
-            }
-        }
-    }
-    parts
-}
-
 // ---- test helpers -----------------------------------------------------------
 
 /// A body that emits the given chunks, byte-for-byte, in order. Used by the
 /// canned transports in this module's and the clients' tests.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn body_of(chunks: Vec<&str>) -> ByteStream {
-    let owned: Vec<Result<Vec<u8>, BoughError>> = chunks
+    let owned: Vec<Result<Vec<u8>, LlmError>> = chunks
         .into_iter()
         .map(|c| Ok(c.as_bytes().to_vec()))
         .collect();
@@ -429,7 +389,7 @@ mod tests {
     #[tokio::test]
     async fn sse_a_stalled_stream_fails_instead_of_hanging_the_turn() {
         // One chunk, and then never again, and never closes.
-        let first: Vec<Result<Vec<u8>, BoughError>> = vec![Ok(b"data: {\"a\":1}\n".to_vec())];
+        let first: Vec<Result<Vec<u8>, LlmError>> = vec![Ok(b"data: {\"a\":1}\n".to_vec())];
         let body: ByteStream =
             Box::pin(futures::stream::iter(first).chain(futures::stream::pending()));
         let mut events = SseEvents::with_stall(body, "openrouter", 10);
@@ -438,7 +398,7 @@ mod tests {
         assert!(err.to_string().contains("stream stalled"), "{err}");
         // No status set → defaults to 502 → the retry ring will try again.
         assert_eq!(err.status(), 502);
-        assert!(crate::llm::retry::is_retryable(&err));
+        assert!(crate::retry::is_retryable(&err));
     }
 
     #[tokio::test]
@@ -450,10 +410,7 @@ mod tests {
         };
         let err = http_error("openrouter", res).await;
         assert_eq!(err.status(), 429);
-        match &err {
-            BoughError::Llm { retry_after_ms, .. } => assert_eq!(*retry_after_ms, Some(7000)),
-            _ => unreachable!(),
-        }
+        assert_eq!(err.retry_after_ms, Some(7000));
         assert!(err.to_string().contains("openrouter: 429"));
         assert!(err.to_string().contains("quota exhausted"));
     }
@@ -466,10 +423,7 @@ mod tests {
             body: body_of(vec!["nope"]),
         };
         let err = http_error("openai", res).await;
-        match &err {
-            BoughError::Llm { retry_after_ms, .. } => assert_eq!(*retry_after_ms, None),
-            _ => unreachable!(),
-        }
+        assert_eq!(err.retry_after_ms, None);
     }
 
     #[test]
@@ -498,7 +452,7 @@ mod tests {
                 .contains("no arguments (truncated mid-call)"),
             "{err}"
         );
-        assert!(crate::llm::retry::is_retryable(&err));
+        assert!(crate::retry::is_retryable(&err));
     }
 
     #[test]
@@ -528,135 +482,6 @@ mod tests {
         assert!(
             err.to_string().starts_with("openrouter:"),
             "the provider must be named"
-        );
-    }
-
-    #[test]
-    fn blocks_to_parts_text_reasoning_and_tool_calls_map_across_in_order() {
-        let blocks = vec![
-            LlmBlock::Reasoning {
-                text: "weighing options".into(),
-                meta: Some(json!({ "signature": "sig" })),
-            },
-            LlmBlock::Text {
-                text: "here goes".into(),
-            },
-            LlmBlock::ToolUse {
-                id: "t1".into(),
-                name: "run_steps".into(),
-                input: json!({ "code": "1" }),
-            },
-        ];
-        assert_eq!(
-            blocks_to_parts(&blocks, Some("some-model")),
-            vec![
-                Part::Reasoning {
-                    text: "weighing options".into(),
-                    meta: Some(json!({ "signature": "sig" })),
-                    model: Some("some-model".into()),
-                },
-                Part::Text {
-                    text: "here goes".into()
-                },
-                Part::ToolCall {
-                    id: "t1".into(),
-                    name: "run_steps".into(),
-                    input: json!({ "code": "1" }),
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn blocks_to_parts_the_signature_is_persisted_stamped_with_its_model() {
-        // It is what lets the next turn replay the block verbatim. Providers
-        // reject a thinking block whose content was altered, so the payload
-        // has to survive the round trip through the database intact.
-        let parts = blocks_to_parts(
-            &[LlmBlock::Reasoning {
-                text: "hmm".into(),
-                meta: Some(json!({ "type": "thinking", "signature": "secret" })),
-            }],
-            Some("claude-opus-5"),
-        );
-        assert_eq!(
-            parts,
-            vec![Part::Reasoning {
-                text: "hmm".into(),
-                meta: Some(json!({ "type": "thinking", "signature": "secret" })),
-                model: Some("claude-opus-5".into()),
-            }]
-        );
-    }
-
-    #[test]
-    fn blocks_to_parts_with_no_model_to_stamp_reasoning_stays_display_only() {
-        // An unstamped part can never satisfy replay's model gate, which is
-        // the conservative answer for a caller not building a live request.
-        let parts = blocks_to_parts(
-            &[LlmBlock::Reasoning {
-                text: "hmm".into(),
-                meta: Some(json!({ "type": "thinking", "signature": "s" })),
-            }],
-            None,
-        );
-        assert_eq!(
-            parts,
-            vec![Part::Reasoning {
-                text: "hmm".into(),
-                meta: Some(json!({ "type": "thinking", "signature": "s" })),
-                model: None,
-            }]
-        );
-    }
-
-    #[test]
-    fn blocks_to_parts_a_redacted_block_persists_unsigned_empty_reasoning_does_not() {
-        // A redacted thinking block has nothing displayable but must still go
-        // back whole, so it is kept for its payload alone. Reasoning with
-        // neither text nor payload is worth nothing to anyone.
-        let parts = blocks_to_parts(
-            &[
-                LlmBlock::Reasoning {
-                    text: "".into(),
-                    meta: Some(json!({ "type": "redacted_thinking" })),
-                },
-                LlmBlock::Reasoning {
-                    text: "   \n ".into(),
-                    meta: None,
-                },
-                LlmBlock::Text { text: "".into() },
-            ],
-            Some("m1"),
-        );
-        assert_eq!(
-            parts,
-            vec![Part::Reasoning {
-                text: "".into(),
-                meta: Some(json!({ "type": "redacted_thinking" })),
-                model: Some("m1".into()),
-            }]
-        );
-    }
-
-    #[test]
-    fn blocks_to_parts_a_tool_call_with_no_input_still_yields_a_part() {
-        // `stop` takes no arguments; the call is the whole message.
-        let parts = blocks_to_parts(
-            &[LlmBlock::ToolUse {
-                id: "t9".into(),
-                name: "stop".into(),
-                input: json!({}),
-            }],
-            None,
-        );
-        assert_eq!(
-            parts,
-            vec![Part::ToolCall {
-                id: "t9".into(),
-                name: "stop".into(),
-                input: json!({})
-            }]
         );
     }
 }

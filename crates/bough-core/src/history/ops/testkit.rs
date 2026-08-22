@@ -15,7 +15,6 @@ use uuid::Uuid;
 
 use crate::bus::Bus;
 use crate::db::sqlite_db::{DbOptions, SqliteDb};
-use crate::errors::BoughError;
 use crate::schema::events::BoughEvent;
 use crate::schema::parts::{Message, Part, Role, Session, SessionKind};
 use crate::schema::requests::PartPick;
@@ -24,6 +23,7 @@ use crate::types::{
     system_clock, AppCtx, HostState, LlmBlock, LlmClient, LlmContentBlock, LlmParams, LlmResult,
     OnText, SharedDb,
 };
+use bough_llm::LlmError;
 
 use super::seed::with_db;
 
@@ -72,7 +72,7 @@ impl LlmClient for RecordingLlm {
         params: LlmParams,
         _on_text: OnText,
         _cancel: CancellationToken,
-    ) -> Result<LlmResult, BoughError> {
+    ) -> Result<LlmResult, LlmError> {
         let prompt = params
             .messages
             .first()
@@ -92,7 +92,7 @@ impl LlmClient for RecordingLlm {
 
         if let Some((after, message)) = self.fail_after.lock().unwrap().clone() {
             if n >= after {
-                return Err(BoughError::bad_request(message));
+                return Err(LlmError::with(message, 400, None));
             }
         }
         let text = self

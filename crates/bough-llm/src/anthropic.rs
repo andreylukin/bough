@@ -21,10 +21,10 @@ use regex::Regex;
 use serde_json::{json, Map, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::errors::BoughError;
-use crate::llm::routing::{require_key, Provider, ProviderOpts};
-use crate::llm::sse::{aborted, fetch_cancellable, http_error, parse_tool_args, SseEvents};
-use crate::schema::parts::Usage;
+use crate::error::LlmError;
+use crate::routing::{require_key, Provider, ProviderOpts};
+use crate::sse::{aborted, fetch_cancellable, http_error, parse_tool_args, SseEvents};
+use crate::types::Usage;
 use crate::types::{
     Effort, LlmBlock, LlmClient, LlmContentBlock, LlmMessage, LlmParams, LlmResult, LlmRole, OnText,
 };
@@ -227,14 +227,14 @@ impl LlmClient for AnthropicClient {
         params: LlmParams,
         on_text: OnText,
         cancel: CancellationToken,
-    ) -> Result<LlmResult, BoughError> {
+    ) -> Result<LlmResult, LlmError> {
         let env = self.opts.env_or_default();
         let transport = self.opts.transport_or_default();
         // Keys are read at run() time, not at construction, so a key set
         // through the running server applies without a restart.
         let api_key = require_key(&env, Provider::Anthropic, &["ANTHROPIC_AUTH_TOKEN"])?;
         let base = env("ANTHROPIC_API_BASE").unwrap_or_else(|| "https://api.anthropic.com".into());
-        let req = crate::llm::sse::HttpRequest {
+        let req = crate::sse::HttpRequest {
             url: format!("{base}/v1/messages"),
             headers: vec![
                 ("x-api-key".into(), api_key),
@@ -330,14 +330,14 @@ impl LlmClient for AnthropicClient {
                     // A mid-stream error event is server-side; status-less ⇒
                     // 502 ⇒ retryable.
                     let message = ev["error"]["message"].as_str().unwrap_or(&data).to_string();
-                    return Err(BoughError::llm(format!("anthropic: {message}")));
+                    return Err(LlmError::new(format!("anthropic: {message}")));
                 }
                 _ => {} // ping, content_block_stop, unknown
             }
         }
         // No terminal marker at all → the stream was cut → a transport fault.
         if !done {
-            return Err(BoughError::llm(
+            return Err(LlmError::new(
                 "anthropic: stream ended without message_stop",
             ));
         }
@@ -406,7 +406,7 @@ impl LlmClient for AnthropicClient {
 pub fn anthropic_client(opts: ProviderOpts) -> Arc<dyn LlmClient> {
     Arc::new(AnthropicClient {
         opts,
-        stall_ms: crate::llm::sse::STALL_TIMEOUT_MS,
+        stall_ms: crate::sse::STALL_TIMEOUT_MS,
     })
 }
 
@@ -422,7 +422,7 @@ pub(crate) fn anthropic_client_with_stall(opts: ProviderOpts, stall_ms: u64) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::test_support::{keyed_env, params_over, CannedTransport, TOOLS};
+    use crate::test_support::{keyed_env, params_over, CannedTransport, TOOLS};
     use std::sync::Mutex;
 
     #[test]
@@ -752,7 +752,7 @@ mod tests {
             "{err}"
         );
         assert!(
-            crate::llm::retry::is_retryable(&err),
+            crate::retry::is_retryable(&err),
             "a cut stream must be retryable"
         );
     }
@@ -777,11 +777,8 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.status(), 429);
-        match &err {
-            BoughError::Llm { retry_after_ms, .. } => assert_eq!(*retry_after_ms, Some(3000)),
-            _ => unreachable!(),
-        }
-        assert!(crate::llm::retry::is_retryable(&err));
+        assert_eq!(err.retry_after_ms, Some(3000));
+        assert!(crate::retry::is_retryable(&err));
     }
 
     #[tokio::test]

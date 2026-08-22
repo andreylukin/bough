@@ -19,7 +19,7 @@ use std::time::Duration;
 use regex::Regex;
 use tokio_util::sync::CancellationToken;
 
-use crate::errors::BoughError;
+use crate::error::LlmError;
 use crate::types::{LlmClient, LlmParams, LlmResult, OnText};
 
 /// Six attempts is roughly 15–31s of jittered backoff (1+2+4+8+16s,
@@ -78,11 +78,13 @@ pub const RATE_LIMIT_MAX_ATTEMPTS: u32 = 8;
 pub const RATE_LIMIT_BUDGET_MS: u64 = 180_000;
 
 /// A rate limit, as opposed to any other retryable failure.
-pub fn is_rate_limit(err: &BoughError) -> bool {
+pub fn is_rate_limit(err: &LlmError) -> bool {
     err.status() == 429
 }
 
-fn retryable_status(s: u16) -> bool {
+/// The status table alone: 408/429/≥500. Hosts with their own error types
+/// apply it to whatever else crosses the retry boundary.
+pub fn retryable_status(s: u16) -> bool {
     s == 408 || s == 429 || s >= 500
 }
 
@@ -94,19 +96,16 @@ static TOOL_PROTOCOL_400: LazyLock<Regex> =
 /// that encoding itself, so a re-send of the (now well-formed) request
 /// succeeds — hence this one 400 is retryable while every other 400 stays
 /// fatal, since a real caller mistake must not be retried six times.
-pub fn is_tool_protocol_400(err: &BoughError) -> bool {
-    matches!(err, BoughError::Llm { status: 400, message, .. } if TOOL_PROTOCOL_400.is_match(message))
+pub fn is_tool_protocol_400(err: &LlmError) -> bool {
+    matches!(err, LlmError { status: 400, message, .. } if TOOL_PROTOCOL_400.is_match(message))
 }
 
 /// Should this failure be re-attempted? A user abort and a caller mistake
 /// never are. Status drives the whole table: 408/429/≥500 retryable (the
 /// status-less transport default of 502 counts), plus the one self-healed
 /// tool-protocol 400. A missing key (401) will still be missing in 15 seconds.
-pub fn is_retryable(err: &BoughError) -> bool {
-    match err {
-        BoughError::Llm { status, .. } => retryable_status(*status) || is_tool_protocol_400(err),
-        other => retryable_status(other.status()),
-    }
+pub fn is_retryable(err: &LlmError) -> bool {
+    retryable_status(err.status()) || is_tool_protocol_400(err)
 }
 
 /// What one re-attempt looked like, for the `message.retry` event.
@@ -115,7 +114,7 @@ pub struct RetryInfo {
     /// 1-based.
     pub attempt: u32,
     pub max_attempts: u32,
-    pub error: BoughError,
+    pub error: LlmError,
     pub delay_ms: u64,
 }
 
@@ -132,11 +131,8 @@ pub struct RetryOpts {
 }
 
 /// The provider's Retry-After, in ms, when the error carries one.
-fn retry_after_hint(err: &BoughError) -> Option<u64> {
-    match err {
-        BoughError::Llm { retry_after_ms, .. } => *retry_after_ms,
-        _ => None,
-    }
+fn retry_after_hint(err: &LlmError) -> Option<u64> {
+    err.retry_after_ms
 }
 
 /// A cheap uniform sample in [0, 1) — jitter needs no cryptographic quality,
@@ -169,7 +165,7 @@ impl LlmClient for Retry {
         params: LlmParams,
         on_text: OnText,
         cancel: CancellationToken,
-    ) -> Result<LlmResult, BoughError> {
+    ) -> Result<LlmResult, LlmError> {
         let mut attempt: u32 = 1;
         let mut spent_ms: u64 = 0;
         loop {
@@ -224,7 +220,7 @@ impl LlmClient for Retry {
                     // immediately rather than waiting the delay out.
                     tokio::select! {
                         _ = cancel.cancelled() => {
-                            return Err(BoughError::llm_with(
+                            return Err(LlmError::with(
                                 "interrupted during retry backoff",
                                 499,
                                 None,
@@ -254,7 +250,7 @@ pub fn with_retries(inner: Arc<dyn LlmClient>, opts: RetryOpts) -> Arc<dyn LlmCl
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::test_support::{fake_client, params, TOOLS};
+    use crate::test_support::{fake_client, params, TOOLS};
     use crate::types::LlmBlock;
     use std::sync::Mutex;
 
@@ -273,7 +269,7 @@ mod tests {
     #[tokio::test]
     async fn a_transient_500_is_re_attempted_and_then_succeeds() {
         let (client, _calls) = fake_client(vec![
-            Err(BoughError::llm_with("openrouter: 500 upstream", 500, None)),
+            Err(LlmError::with("openrouter: 500 upstream", 500, None)),
             Ok(good()),
         ]);
         let seen: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(Vec::new()));
@@ -297,7 +293,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_400_is_a_caller_mistake_and_is_never_re_attempted() {
-        let (client, calls) = fake_client(vec![Err(BoughError::llm_with(
+        let (client, calls) = fake_client(vec![Err(LlmError::with(
             "openai: 400 bad schema",
             400,
             None,
@@ -321,7 +317,7 @@ mod tests {
 
     #[tokio::test]
     async fn exhausting_the_attempts_rethrows_the_last_failure() {
-        let boom = || BoughError::llm("openrouter: stream truncated before completion");
+        let boom = || LlmError::new("openrouter: stream truncated before completion");
         let (client, calls) = fake_client(vec![Err(boom()), Err(boom()), Err(boom())]);
         let wrapped = with_retries(
             client,
@@ -353,9 +349,9 @@ mod tests {
                 _params: LlmParams,
                 _on_text: OnText,
                 cancel: CancellationToken,
-            ) -> Result<LlmResult, BoughError> {
+            ) -> Result<LlmResult, LlmError> {
                 cancel.cancel();
-                Err(BoughError::llm_with("openrouter: 503", 503, None))
+                Err(LlmError::with("openrouter: 503", 503, None))
             }
         }
         let wrapped = with_retries(
@@ -382,11 +378,7 @@ mod tests {
     #[tokio::test]
     async fn retry_after_lifts_the_delay_above_the_backoff() {
         let (client, _calls) = fake_client(vec![
-            Err(BoughError::llm_with(
-                "openrouter: 429 slow down",
-                429,
-                Some(50),
-            )),
+            Err(LlmError::with("openrouter: 429 slow down", 429, Some(50))),
             Ok(good()),
         ]);
         let seen: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
@@ -415,7 +407,7 @@ mod tests {
         // under heavy demand, each dying after six attempts with its work
         // intact. Seven failures is past MAX_ATTEMPTS and only a rate limit
         // survives it.
-        let boom = || BoughError::llm_with("openrouter: 429 model_limit_rpm", 429, None);
+        let boom = || LlmError::with("openrouter: 429 model_limit_rpm", 429, None);
         let (client, calls) = fake_client(vec![
             Err(boom()),
             Err(boom()),
@@ -445,7 +437,7 @@ mod tests {
         // The other half of the contract: a 502 may never clear, so it keeps
         // the six-attempt ladder and fails fast rather than inheriting the
         // rate limit's patience.
-        let boom = || BoughError::llm_with("upstream is down", 502, None);
+        let boom = || LlmError::with("upstream is down", 502, None);
         let (client, calls) = fake_client(vec![
             Err(boom()),
             Err(boom()),
@@ -475,7 +467,7 @@ mod tests {
         // 60`. Sleeping it out six times is five silent minutes ending in the
         // same message, so the ladder declines the wait and surfaces it.
         let (client, calls) = fake_client(vec![
-            Err(BoughError::llm_with(
+            Err(LlmError::with(
                 "cerebras: 429 Tokens per minute limit exceeded",
                 429,
                 Some(60_000),
@@ -504,7 +496,7 @@ mod tests {
     #[tokio::test]
     async fn one_minute_quota_wait_is_honoured_then_the_ladder_stops() {
         // Milliseconds stand in for the seconds a real quota asks for.
-        let boom = || BoughError::llm_with("cerebras: 429 tokens per minute", 429, Some(60));
+        let boom = || LlmError::with("cerebras: 429 tokens per minute", 429, Some(60));
         let (client, calls) = fake_client(vec![Err(boom()), Err(boom()), Ok(good())]);
         let wrapped = with_retries(
             client,
@@ -528,7 +520,7 @@ mod tests {
     #[tokio::test]
     async fn a_saturated_minute_that_clears_recovers_instead_of_failing_the_turn() {
         let (client, calls) = fake_client(vec![
-            Err(BoughError::llm_with(
+            Err(LlmError::with(
                 "cerebras: 429 tokens per minute",
                 429,
                 Some(60),
@@ -562,7 +554,7 @@ mod tests {
         // the first two and stops rather than running the attempt count out.
         // Milliseconds stand in for the seconds a real quota asks for — the
         // ratio is what the arithmetic turns on, and the test stays instant.
-        let boom = || BoughError::llm_with("openrouter: 429 slow down", 429, Some(20));
+        let boom = || LlmError::with("openrouter: 429 slow down", 429, Some(20));
         let (client, calls) = fake_client(vec![Err(boom()), Err(boom()), Err(boom()), Ok(good())]);
         let wrapped = with_retries(
             client,
@@ -584,45 +576,37 @@ mod tests {
 
     #[test]
     fn is_retryable_transport_faults_yes_aborts_and_caller_mistakes_no() {
-        assert!(is_retryable(&BoughError::llm("transport fault"))); // defaults to 502
-        assert!(is_retryable(&BoughError::llm_with(
-            "rate limited",
-            429,
-            None
-        )));
-        assert!(is_retryable(&BoughError::llm_with("slow", 408, None)));
-        assert!(!is_retryable(&BoughError::llm_with(
-            "bad request",
-            400,
-            None
-        )));
-        assert!(!is_retryable(&BoughError::llm_with("no key", 401, None)));
+        assert!(is_retryable(&LlmError::new("transport fault"))); // defaults to 502
+        assert!(is_retryable(&LlmError::with("rate limited", 429, None)));
+        assert!(is_retryable(&LlmError::with("slow", 408, None)));
+        assert!(!is_retryable(&LlmError::with("bad request", 400, None)));
+        assert!(!is_retryable(&LlmError::with("no key", 401, None)));
         // The abort raised by a cancelled backoff is 499 — never re-attempted.
-        assert!(!is_retryable(&BoughError::llm_with(
+        assert!(!is_retryable(&LlmError::with(
             "interrupted during retry backoff",
             499,
             None
         )));
         // Network faults arrive from the transport edge as the 502 default —
         // the Rust spelling of ECONNRESET-on-a-plain-Error.
-        assert!(is_retryable(&BoughError::llm(
+        assert!(is_retryable(&LlmError::new(
             "error sending request: connection reset"
         )));
     }
 
     #[test]
     fn is_tool_protocol_400_the_self_healed_encoding_is_the_one_400_worth_retrying() {
-        assert!(is_tool_protocol_400(&BoughError::llm_with(
+        assert!(is_tool_protocol_400(&LlmError::with(
             "openrouter: 400 tool_call_id not found",
             400,
             None
         )));
-        assert!(is_retryable(&BoughError::llm_with(
+        assert!(is_retryable(&LlmError::with(
             "openrouter: 400 must be followed by tool messages",
             400,
             None
         )));
-        assert!(!is_tool_protocol_400(&BoughError::llm_with(
+        assert!(!is_tool_protocol_400(&LlmError::with(
             "openrouter: 400 model not found",
             400,
             None

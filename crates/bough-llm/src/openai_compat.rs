@@ -28,12 +28,12 @@ use std::sync::Arc;
 use serde_json::{json, Map, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::errors::BoughError;
-use crate::llm::routing::{
+use crate::error::LlmError;
+use crate::routing::{
     joined_system, require_key, Env, Provider, ProviderOpts, CLOUDFLARE_ACCOUNT_ENV,
 };
-use crate::llm::sse::{aborted, fetch_cancellable, http_error, parse_tool_args, SseEvents};
-use crate::schema::parts::Usage;
+use crate::sse::{aborted, fetch_cancellable, http_error, parse_tool_args, SseEvents};
+use crate::types::Usage;
 use crate::types::{
     Effort, LlmBlock, LlmClient, LlmContentBlock, LlmMessage, LlmParams, LlmResult, LlmRole, OnText,
 };
@@ -269,7 +269,7 @@ fn output_ask(reserved: i64, provider: Provider) -> i64 {
 /// The URL is a function of the env resolved per `run()` (Cloudflare's
 /// account id is part of the path) — a value set through the running server
 /// must apply without a restart.
-type UrlFn = Arc<dyn Fn(&crate::llm::routing::Env) -> Result<String, BoughError> + Send + Sync>;
+type UrlFn = Arc<dyn Fn(&crate::routing::Env) -> Result<String, LlmError> + Send + Sync>;
 
 struct OpenAICompatClient {
     opts: ProviderOpts,
@@ -287,7 +287,7 @@ impl LlmClient for OpenAICompatClient {
         params: LlmParams,
         on_text: OnText,
         cancel: CancellationToken,
-    ) -> Result<LlmResult, BoughError> {
+    ) -> Result<LlmResult, LlmError> {
         let provider = self.provider.as_str();
         let env = self.opts.env_or_default();
         let transport = self.opts.transport_or_default();
@@ -350,7 +350,7 @@ impl LlmClient for OpenAICompatClient {
             ("content-type".to_string(), "application/json".to_string()),
         ];
         headers.extend(self.extra_headers.iter().cloned());
-        let req = crate::llm::sse::HttpRequest {
+        let req = crate::sse::HttpRequest {
             url,
             headers,
             body: Some(Value::Object(body).to_string()),
@@ -396,7 +396,7 @@ impl LlmClient for OpenAICompatClient {
                     .as_i64()
                     .and_then(|c| u16::try_from(c).ok())
                     .unwrap_or(502);
-                return Err(BoughError::llm_with(
+                return Err(LlmError::with(
                     format!("{provider}: {message}"),
                     status,
                     None,
@@ -456,7 +456,7 @@ impl LlmClient for OpenAICompatClient {
             }
         }
         if !ended {
-            return Err(BoughError::llm(format!(
+            return Err(LlmError::new(format!(
                 "{provider}: stream truncated before completion"
             )));
         }
@@ -496,7 +496,7 @@ impl LlmClient for OpenAICompatClient {
 
 /// The OpenRouter route: the chat-completions family at its public endpoint.
 pub fn openrouter_client(opts: ProviderOpts) -> Arc<dyn LlmClient> {
-    openrouter_client_with_stall(opts, crate::llm::sse::STALL_TIMEOUT_MS)
+    openrouter_client_with_stall(opts, crate::sse::STALL_TIMEOUT_MS)
 }
 
 pub(crate) fn openrouter_client_with_stall(
@@ -529,12 +529,12 @@ pub(crate) fn openrouter_client_with_stall(
 /// server. 401 for the same reason a missing key is: a missing account id
 /// will still be missing in 15 seconds, so six backed-off attempts would only
 /// delay the message that fixes it.
-fn cloudflare_base(env: &Env) -> Result<String, BoughError> {
+fn cloudflare_base(env: &Env) -> Result<String, LlmError> {
     let account = env(CLOUDFLARE_ACCOUNT_ENV)
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
     let Some(account) = account else {
-        return Err(BoughError::llm_with(
+        return Err(LlmError::with(
             format!("cloudflare: {CLOUDFLARE_ACCOUNT_ENV} is not set"),
             401,
             None,
@@ -561,13 +561,13 @@ pub fn cloudflare_client(opts: ProviderOpts) -> Arc<dyn LlmClient> {
         // Cloudflare's own docs and dashboard call it a token, so accept that
         // spelling.
         key_alternatives: vec!["CLOUDFLARE_API_TOKEN"],
-        stall_ms: crate::llm::sse::STALL_TIMEOUT_MS,
+        stall_ms: crate::sse::STALL_TIMEOUT_MS,
     })
 }
 
 /// Cerebras Inference over its OpenAI-compatible endpoint.
 ///
-/// Note for whoever raises [`crate::turn::runner::MAX_TOKENS`]: Cerebras
+/// Note for whoever raises the host's `MAX_TOKENS` (bough's turn runner): Cerebras
 /// bills `prompt + max_tokens` against the per-minute token quota, so the
 /// reservation is spent whether or not it is used. An ask above the quota is
 /// a 429 before generation starts, on every round, no matter how short the
@@ -590,14 +590,14 @@ pub fn cerebras_client(opts: ProviderOpts) -> Arc<dyn LlmClient> {
         }),
         extra_headers: vec![],
         key_alternatives: vec![],
-        stall_ms: crate::llm::sse::STALL_TIMEOUT_MS,
+        stall_ms: crate::sse::STALL_TIMEOUT_MS,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::test_support::{keyed_env, params_over, CannedTransport, TOOLS};
+    use crate::test_support::{keyed_env, params_over, CannedTransport, TOOLS};
     use std::sync::Mutex;
 
     fn msg(role: LlmRole, content: Vec<LlmContentBlock>) -> LlmMessage {
@@ -817,7 +817,7 @@ mod tests {
             chunk(json!({ "content": "hi" }), None),
             chunk(json!({}), Some("stop")),
         ]]));
-        let env: crate::llm::routing::Env = Arc::new(|k| match k {
+        let env: crate::routing::Env = Arc::new(|k| match k {
             // A trailing slash is the natural way to write it and must not
             // produce a doubled one.
             "OPENROUTER_API_BASE" => Some("http://127.0.0.1:11434/api/".to_string()),
@@ -865,7 +865,7 @@ mod tests {
             err.to_string().contains("truncated before completion"),
             "{err}"
         );
-        assert!(crate::llm::retry::is_retryable(&err));
+        assert!(crate::retry::is_retryable(&err));
     }
 
     #[tokio::test]
@@ -916,7 +916,7 @@ mod tests {
                 .contains("no arguments (truncated mid-call)"),
             "{err}"
         );
-        assert!(crate::llm::retry::is_retryable(&err));
+        assert!(crate::retry::is_retryable(&err));
     }
 
     #[tokio::test]
@@ -974,7 +974,7 @@ mod tests {
 
     /// Key and account id, the pair Cloudflare needs; no `_API_BASE` so the
     /// URL is real.
-    fn cf_env() -> crate::llm::routing::Env {
+    fn cf_env() -> crate::routing::Env {
         Arc::new(|k| match k {
             "CLOUDFLARE_API_KEY" => Some("cf-key".to_string()),
             "CLOUDFLARE_ACCOUNT_ID" => Some("acct-1".to_string()),
@@ -1022,7 +1022,7 @@ mod tests {
         // constructed.
         let account = Arc::new(Mutex::new("first".to_string()));
         let account2 = account.clone();
-        let env: crate::llm::routing::Env = Arc::new(move |k| match k {
+        let env: crate::routing::Env = Arc::new(move |k| match k {
             "CLOUDFLARE_API_TOKEN" => Some("tok".to_string()),
             "CLOUDFLARE_ACCOUNT_ID" => Some(account2.lock().unwrap().clone()),
             "CLOUDFLARE_API_BASE" => Some("http://127.0.0.1:9/v4".to_string()),
@@ -1066,7 +1066,7 @@ mod tests {
         // The transport has NOTHING queued — a fetch would fail loudly, so a
         // passing test proves the endpoint was never formed.
         let transport = Arc::new(CannedTransport::sse(vec![]));
-        let env: crate::llm::routing::Env =
+        let env: crate::routing::Env =
             Arc::new(|k| (k == "CLOUDFLARE_API_KEY").then(|| "cf-key".to_string()));
         let client = cloudflare_client(ProviderOpts {
             env: Some(env),
@@ -1086,7 +1086,7 @@ mod tests {
             "a missing account id must not be retried"
         );
         assert!(err.to_string().contains("CLOUDFLARE_ACCOUNT_ID"), "{err}");
-        assert!(!crate::llm::retry::is_retryable(&err));
+        assert!(!crate::retry::is_retryable(&err));
         assert!(
             transport.requests.lock().unwrap().is_empty(),
             "must not be called"
@@ -1142,7 +1142,7 @@ mod tests {
         assert_eq!(body["reasoning"], json!({ "effort": "high" }));
     }
 
-    fn cerebras_env() -> crate::llm::routing::Env {
+    fn cerebras_env() -> crate::routing::Env {
         Arc::new(|k| (k == "CEREBRAS_API_KEY").then(|| "cb-key".to_string()))
     }
 
@@ -1224,7 +1224,7 @@ mod tests {
     async fn cerebras_the_endpoint_comes_from_the_env_read_per_run() {
         let base = Arc::new(Mutex::new("https://first.example".to_string()));
         let base2 = base.clone();
-        let env: crate::llm::routing::Env = Arc::new(move |k| match k {
+        let env: crate::routing::Env = Arc::new(move |k| match k {
             "CEREBRAS_API_KEY" => Some("cb-key".to_string()),
             "CEREBRAS_API_BASE" => Some(base2.lock().unwrap().clone()),
             _ => None,

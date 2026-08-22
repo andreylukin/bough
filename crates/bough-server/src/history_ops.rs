@@ -331,7 +331,7 @@ mod tests {
             params: bough_core::types::LlmParams,
             _on_text: bough_core::types::OnText,
             _cancel: tokio_util::sync::CancellationToken,
-        ) -> Result<bough_core::types::LlmResult, bough_core::errors::BoughError> {
+        ) -> Result<bough_core::types::LlmResult, bough_core::errors::LlmError> {
             let prompt = params
                 .messages
                 .first()
@@ -856,8 +856,8 @@ mod tests {
                 _params: bough_core::types::LlmParams,
                 _on_text: bough_core::types::OnText,
                 _cancel: tokio_util::sync::CancellationToken,
-            ) -> Result<bough_core::types::LlmResult, bough_core::errors::BoughError> {
-                Err(bough_core::errors::BoughError::llm("provider exploded"))
+            ) -> Result<bough_core::types::LlmResult, bough_core::errors::LlmError> {
+                Err(bough_core::errors::LlmError::new("provider exploded"))
             }
         }
 

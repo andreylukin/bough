@@ -713,7 +713,7 @@ mod tests {
         assert!(!classify_round_failure(&bad, 1, &ClassifyOpts::default()).retry);
 
         // The user's stop is an answer, not a failure.
-        let abort = crate::llm::sse::aborted("provider");
+        let abort = BoughError::from(crate::llm::sse::aborted("provider"));
         assert!(is_abort(&abort));
         assert!(!classify_round_failure(&abort, 1, &ClassifyOpts::default()).retry);
 

@@ -6,6 +6,7 @@ license = "Apache-2.0"
 repository = "https://github.com/andreylukin/bough"
 
 [dependencies]
+bough-llm = { workspace = true }
 model2vec-rs = { version = "0.2", features = ["hf-hub"] }  # embeddings: pure-Rust static vectors
 mlua = { version = "0.11", features = ["luau", "serialize"] }  # hooks: the embedded Lua runtime
 tokio = { workspace = true }
@@ -37,4 +38,5 @@ http = "1"
 sqlite-vec = "0.1.9"
 
 [dev-dependencies]
+bough-llm = { workspace = true, features = ["test-support"] }
 chrono-tz = { workspace = true }

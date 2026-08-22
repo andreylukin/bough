@@ -37,7 +37,6 @@
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::harness::protocol::HostFnName;
 use crate::schema::parts::SessionKind;
@@ -470,15 +469,9 @@ pub fn read_section_file(file: &str) -> &'static str {
 /// Fingerprint one section's text. Truncated sha256: 16 hex chars is 64 bits,
 /// so a collision across the few hundred distinct section texts a campaign
 /// ever sees is not a thing that happens, and the value stays readable in a
-/// trace line.
-pub fn section_sha(text: &str) -> String {
-    let digest = Sha256::digest(text.as_bytes());
-    let mut hex = String::with_capacity(16);
-    for byte in digest.iter().take(8) {
-        hex.push_str(&format!("{byte:02x}"));
-    }
-    hex
-}
+/// trace line. The same function the trace writer uses for the prefix shas,
+/// so a manifest's section shas and a trace's prefix shas line up.
+pub use bough_llm::trace::section_sha;
 
 // ---------------------------------------------------------------------------
 // Volatile rendering

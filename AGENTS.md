@@ -3,8 +3,10 @@
 ## Layout
 
 ```
+crates/bough-llm/    the provider layer: LlmClient + types, routing, retries,
+                     pricing, tracing; standalone (no bough-core dep)
 crates/bough-core/   the system: turn runner, harness, host functions, subagents,
-                     workflows, history ops, MCP, db, llm, prompt, skills
+                     workflows, history ops, MCP, db, prompt, skills
 crates/bough-server/ the loopback HTTP + SSE server
 crates/bough-tui/    the ratatui terminal UI
 crates/bough/        the binary: start | restart | tui | exec | acp | hooks | mcp |

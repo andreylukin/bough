@@ -11,7 +11,6 @@ use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::bus::Bus;
-use crate::errors::BoughError;
 use crate::harness::protocol::ProgramResult;
 use crate::prompt::assemble::AssembledPrompt;
 use crate::schema::parts::Usage;
@@ -20,6 +19,7 @@ use crate::turn::runner::{ProgramRunner, TurnDeps, RUN_STEPS, STOP};
 use crate::types::{
     system_clock, AppCtx, HostState, LlmBlock, LlmClient, LlmParams, LlmResult, OnText, SharedDb,
 };
+use bough_llm::LlmError;
 
 // ---- block builders ---------------------------------------------------------
 
@@ -61,7 +61,7 @@ pub struct ScriptedRound {
     /// Streamed through `on_text` before the round resolves.
     pub deltas: Vec<String>,
     pub usage: Option<Usage>,
-    pub throws: Option<BoughError>,
+    pub throws: Option<LlmError>,
 }
 
 /// A scripted `LlmClient` that snapshots every call — the runner mutates its
@@ -85,7 +85,7 @@ impl LlmClient for ScriptedLlm {
         params: LlmParams,
         on_text: OnText,
         _cancel: CancellationToken,
-    ) -> Result<LlmResult, BoughError> {
+    ) -> Result<LlmResult, LlmError> {
         let n = {
             let mut calls = self.calls.lock().unwrap();
             calls.push(params);
@@ -94,7 +94,7 @@ impl LlmClient for ScriptedLlm {
         let round = self.rounds.lock().unwrap().pop_front().ok_or_else(|| {
             // Non-retryable on purpose: a script that runs dry is a broken
             // test, and retrying it three times only hides which round did it.
-            BoughError::llm_with(
+            LlmError::with(
                 format!("the fake model ran out of script after {} round(s)", n - 1),
                 400,
                 None,
@@ -132,8 +132,8 @@ impl LlmClient for WedgedLlm {
         _params: LlmParams,
         _on_text: OnText,
         _cancel: CancellationToken,
-    ) -> Result<LlmResult, BoughError> {
-        futures::future::pending::<Result<LlmResult, BoughError>>().await
+    ) -> Result<LlmResult, LlmError> {
+        futures::future::pending::<Result<LlmResult, LlmError>>().await
     }
 }
 
@@ -153,7 +153,7 @@ impl LlmClient for AnsweringLlm {
         _params: LlmParams,
         _on_text: OnText,
         _cancel: CancellationToken,
-    ) -> Result<LlmResult, BoughError> {
+    ) -> Result<LlmResult, LlmError> {
         Ok(LlmResult {
             content: vec![text(&self.text), stop("stop-1")],
             stop_reason: "end_turn".to_string(),

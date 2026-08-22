@@ -647,12 +647,12 @@ pub fn watch_titles(ctx: &TitleCtx) -> impl Fn() + Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::errors::BoughError;
     use crate::types::{LlmParams, LlmResult, OnText};
     use crate::worker::test_support::{
         collect_events, hanging_client, saying_client, seed_session, test_title_ctx, GatedTier,
         StubTier,
     };
+    use bough_llm::LlmError;
     use std::sync::atomic::Ordering;
     use tokio_util::sync::CancellationToken;
 
@@ -717,8 +717,8 @@ mod tests {
                 _p: LlmParams,
                 _t: OnText,
                 _c: CancellationToken,
-            ) -> Result<LlmResult, BoughError> {
-                Err(BoughError::llm_with("500 overloaded", 500, None))
+            ) -> Result<LlmResult, LlmError> {
+                Err(LlmError::with("500 overloaded", 500, None))
             }
         }
         struct Empty;
@@ -729,7 +729,7 @@ mod tests {
                 _p: LlmParams,
                 _t: OnText,
                 _c: CancellationToken,
-            ) -> Result<LlmResult, BoughError> {
+            ) -> Result<LlmResult, LlmError> {
                 Ok(LlmResult {
                     content: vec![],
                     stop_reason: "end_turn".into(),

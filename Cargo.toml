@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/bough-llm",
   "crates/bough-core",
   "crates/bough-server",
   "crates/bough-tui",
@@ -47,6 +48,7 @@ include_dir  = "0.7"                                     # bundled skill folders
 # routed back through bough's own client via rmcp's `OAuthHttpClient` instead.
 rmcp         = { version = "3.1", default-features = false, features = ["auth", "client"] }
 
+bough-llm    = { path = "crates/bough-llm" }
 bough-core   = { path = "crates/bough-core" }
 bough-server = { path = "crates/bough-server" }
 bough-tui    = { path = "crates/bough-tui" }
