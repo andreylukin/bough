@@ -135,12 +135,24 @@ pub struct OAuthTokens {
     pub token_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Read as any JSON number (Linear answers `86100.0`), written back as a whole
+    /// second: rmcp reads `token_response.expires_in` as a `u64`.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_whole_seconds"
+    )]
     pub expires_in: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
     #[serde(flatten, default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
+}
+
+fn serialize_whole_seconds<S: serde::Serializer>(v: &Option<f64>, s: S) -> Result<S::Ok, S::Error> {
+    match v {
+        Some(secs) => s.serialize_u64(secs.max(0.0) as u64),
+        None => s.serialize_none(),
+    }
 }
 
 /// Everything one server's flow needs to survive a restart.
@@ -1437,6 +1449,31 @@ mod tests {
 
     use super::*;
     use std::sync::Mutex as StdMutex;
+
+    #[test]
+    fn expires_in_reads_any_number_and_writes_a_whole_second() {
+        for raw in ["86100.0", "86100"] {
+            let doc =
+                format!(r#"{{"access_token":"at","token_type":"Bearer","expires_in":{raw}}}"#);
+            let tokens: OAuthTokens = serde_json::from_str(&doc).unwrap();
+            assert_eq!(tokens.expires_in, Some(86100.0), "{raw}");
+            let out = serde_json::to_value(&tokens).unwrap();
+            assert_eq!(out["expires_in"], json!(86100), "{raw}");
+            assert!(out["expires_in"].is_u64(), "{raw}");
+        }
+        // And what rmcp reads back from that document must parse.
+        let stored = Stored {
+            tokens: Some(OAuthTokens {
+                access_token: "at".into(),
+                token_type: "Bearer".into(),
+                expires_in: Some(86100.0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let doc = stored.to_rmcp_credentials().unwrap();
+        serde_json::from_value::<rmcp::transport::auth::StoredCredentials>(doc).unwrap();
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
