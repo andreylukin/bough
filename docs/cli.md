@@ -1,6 +1,9 @@
 # Command reference
 
-`bough` with no arguments opens the TUI. `bough help` lists everything; every subcommand
+`bough` with no arguments opens the TUI (`-w DIR` sets where new conversations start,
+`-r` reopens the workspace's last conversation, `-s ID` opens one conversation).
+`bough resume [ID]` is the verb spelling of the last two: with an id it opens that
+conversation, without one the last. `bough help` lists everything; every subcommand
 takes `-h`.
 
 Two families. The **service manager** (`scripts/bough`, a bash wrapper) owns the process

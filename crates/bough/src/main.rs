@@ -120,7 +120,11 @@ fn parse_tui_args(argv: &[String]) -> TuiArgs {
                 argv[i].clone()
             }
         };
-        if name == "session" { session = Some(value); } else { workspace = Some(value); }
+        if name == "session" {
+            session = Some(value);
+        } else {
+            workspace = Some(value);
+        }
         i += 1;
     }
     if let Some(ws) = &workspace {
@@ -128,7 +132,11 @@ fn parse_tui_args(argv: &[String]) -> TuiArgs {
             return TuiArgs::UsageError(format!("--workspace needs a path\n{TUI_USAGE}"));
         }
     }
-    TuiArgs::Args { workspace, resume, session }
+    TuiArgs::Args {
+        workspace,
+        resume,
+        session,
+    }
 }
 
 /// Stop the running server and start a fresh one.
@@ -180,8 +188,9 @@ fn version_line() -> String {
 fn usage() -> &'static str {
     // The launchd/systemd manager verbs (setup/kill/restart/update/status/
     // logs/run/purge) stay in the bash wrapper; this binary owns the rest.
-    "usage: bough [tui|start|restart|exec|acp|hooks|config|mcp|sync-mcp|tags|notes|patterns]
-  (no args) open the terminal UI (bough [-w DIR] [-r], -h for flags)
+    "usage: bough [tui|resume|start|restart|exec|acp|hooks|config|mcp|sync-mcp|tags|notes|patterns]
+  (no args) open the terminal UI (bough [-w DIR] [-r] [-s ID], -h for flags)
+  resume   reopen a conversation in the TUI: bough resume [ID] (no ID: the last one)
   --version print the version and exit (-V)
   start    run the server in the foreground
   restart  stop the running server and start a fresh one
@@ -196,6 +205,23 @@ fn usage() -> &'static str {
   patterns compress a log into its distinct statements"
 }
 
+/// `resume [ID] [flags…]` → the TUI flag spelling. A leading non-flag token
+/// is the conversation id (`--session ID`); without one it is `--resume`.
+fn resume_as_tui_args(rest: &[String]) -> Vec<String> {
+    match rest.first() {
+        Some(id) if !id.starts_with('-') => {
+            let mut out = vec!["--session".to_string(), id.clone()];
+            out.extend(rest[1..].iter().cloned());
+            out
+        }
+        _ => {
+            let mut out = vec!["--resume".to_string()];
+            out.extend(rest.iter().cloned());
+            out
+        }
+    }
+}
+
 fn run_tui(argv: &[String]) -> ExitCode {
     match parse_tui_args(argv) {
         TuiArgs::Help => {
@@ -207,7 +233,11 @@ fn run_tui(argv: &[String]) -> ExitCode {
             eprintln!("{message}");
             ExitCode::from(2)
         }
-        TuiArgs::Args { workspace, resume, session } => {
+        TuiArgs::Args {
+            workspace,
+            resume,
+            session,
+        } => {
             let workspace = workspace.or_else(|| {
                 std::env::var("BOUGH_TUI_CWD")
                     .ok()
@@ -235,7 +265,11 @@ fn run_tui(argv: &[String]) -> ExitCode {
                 return ExitCode::from(2);
             }
             let workspace_for_restart = workspace.clone();
-            match bough_tui::run(TuiOptions { workspace, resume, session }) {
+            match bough_tui::run(TuiOptions {
+                workspace,
+                resume,
+                session,
+            }) {
                 // `/restart`: the terminal is already restored, so this is the
                 // one place that can cleanly stop the server and hand the
                 // process over. EXEC, not spawn — the shell that launched
@@ -281,6 +315,9 @@ fn main() -> ExitCode {
         }
         Some(first) if first.starts_with('-') => run_tui(&args),
         Some("tui") => run_tui(&args[1..]),
+        // `bough resume ID` is `bough -s ID` spelled as a verb; bare `bough
+        // resume` is `bough -r`. Either way the rest of argv is TUI flags.
+        Some("resume") => run_tui(&resume_as_tui_args(&args[1..])),
         Some("start") => {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             match rt.block_on(bough_server::boot::start()) {
@@ -425,6 +462,36 @@ mod tests {
             }
             _ => panic!("expected usage error"),
         }
+    }
+
+    /// `bough resume` is a verb over the TUI flags, not a parser of its own:
+    /// an id becomes `--session ID`, none becomes `--resume`, and anything
+    /// after passes through untouched so `-w` still works.
+    #[test]
+    fn resume_verb_is_spelled_in_tui_flags() {
+        assert_eq!(
+            resume_as_tui_args(&argv(&["abc"])),
+            argv(&["--session", "abc"])
+        );
+        assert_eq!(resume_as_tui_args(&argv(&[])), argv(&["--resume"]));
+        assert_eq!(
+            resume_as_tui_args(&argv(&["abc", "-w", "/x"])),
+            argv(&["--session", "abc", "-w", "/x"])
+        );
+        assert_eq!(
+            resume_as_tui_args(&argv(&["-w", "/x"])),
+            argv(&["--resume", "-w", "/x"])
+        );
+        match parse_tui_args(&resume_as_tui_args(&argv(&["abc"]))) {
+            TuiArgs::Args {
+                session, resume, ..
+            } => {
+                assert_eq!(session.as_deref(), Some("abc"));
+                assert!(!resume);
+            }
+            _ => panic!("expected args"),
+        }
+        assert!(usage().contains("resume"));
     }
 
     // args.test.ts: "--help is answered, and the usage states the posture"

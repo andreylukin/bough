@@ -7264,7 +7264,7 @@ mod tests {
         let opts = TuiOptions {
             workspace: Some("/tmp/demo".into()),
             resume: false,
-                session: None,
+            session: None,
         };
         let mut app = App::new(opts, sink, 80, 24);
         app.apply(Action::Connected(true), 0);

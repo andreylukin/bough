@@ -785,18 +785,20 @@ ensure_up() {
   fi
 }
 
+# $1 is the binary's verb (`tui` or `resume`); the rest are its flags.
 cmd_tui() {
   ensure_up
   # The TUI defaults new conversations to the directory bough was launched from.
   export BOUGH_TUI_CWD="$PWD"
   cd "$WORKDIR"
   require_rust
-  exec "$RS_BIN" tui "$@"
+  exec "$RS_BIN" "$@"
 }
 
 usage() {
-  echo "usage: bough [tui|setup|start|kill|restart|update|status|logs|run|exec|acp|hooks|mcp|sync-mcp|tags|notes|patterns]"
+  echo "usage: bough [tui|resume|setup|start|kill|restart|update|status|logs|run|exec|acp|hooks|mcp|sync-mcp|tags|notes|patterns]"
   echo "  (no args) open the terminal UI (auto-starts the server)"
+  echo "  resume   reopen a conversation in the TUI: bough resume [ID] (no ID: the last one)"
   echo "  setup    fresh clone → running: install deps, configure env, start"
   echo "  start    install + start the background service (auto-starts at login)"
   echo "  kill     stop the service and keep it stopped (across logins)"
@@ -824,6 +826,11 @@ usage() {
 case "${1:-}" in
   "" | tui)
     [ $# -gt 0 ] && shift
+    cmd_tui tui "$@"
+    ;;
+  resume)
+    # A TUI verb: `bough resume ID` opens that conversation, bare `resume` the
+    # last one. The binary turns it into the -s / -r flags.
     cmd_tui "$@"
     ;;
   help | -h | --help)
