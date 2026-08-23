@@ -557,7 +557,9 @@ pub fn list_skills_over(
         let mut names: Vec<(String, bool)> = entries
             .flatten()
             .map(|e| {
-                let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                // `file_type()` does not follow symlinks; a skill linked in from
+                // another checkout is a directory too.
+                let is_dir = e.path().is_dir();
                 (e.file_name().to_string_lossy().to_string(), is_dir)
             })
             .collect();
