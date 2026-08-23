@@ -200,6 +200,9 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
             // through the shell gains nothing from being denied the door that
             // does not go through a shell.
             HostFnName::Mcp,
+            // The session log is the session's own record; every tier keeps
+            // one, and a subagent's lines roll up into what its spawner sees.
+            HostFnName::Milestone,
         ]);
 
         let jobs = ctx.host.jobs.clone();
@@ -271,6 +274,10 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
                     turn_ctx,
                     Default::default(),
                 )),
+                milestone: Some(bough_core::hostfn::milestone::create_milestone_host_fn(
+                    turn_ctx,
+                    Default::default(),
+                )),
                 // Registered only when the CLI behind it is installed: the
                 // prompt section describes search() as available, and a
                 // global that always throws teaches the model to stop
@@ -335,6 +342,13 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
         db: ctx.db.clone(),
         bus: ctx.bus.clone(),
         cheap: ctx.cheap.clone(),
+    });
+    // The rolling summary: title + description follow the session's log.
+    let _ = bough_core::worker::summary::watch_summaries(&bough_core::worker::summary::SummaryCtx {
+        db: ctx.db.clone(),
+        bus: ctx.bus.clone(),
+        cheap: ctx.cheap.clone(),
+        now: ctx.now.clone(),
     });
     let _ =
         bough_core::worker::activity::watch_activity(&bough_core::worker::activity::ActivityCtx {
@@ -698,6 +712,7 @@ mod tests {
             cached_tokens: None,
             last_llm_at: None,
             outcome_ok: None,
+            description: None,
         })
         .unwrap();
         let m = db

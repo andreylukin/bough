@@ -289,6 +289,8 @@ pub fn routes() -> Vec<Route> {
             "/sessions/:id/comments/:cid",
             comments::delete_comment_route(),
         ),
+        // the session log — what `milestone()` wrote, oldest first
+        route("GET", "/sessions/:id/log", sessions::get_session_log()),
     ]
 }
 

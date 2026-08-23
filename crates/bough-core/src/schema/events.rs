@@ -78,6 +78,11 @@ pub enum EventType {
     /// harness that is behaving strangely.
     #[serde(rename = "hook.fired")]
     HookFired,
+    /// A program called `milestone()`: one line landed in the session log.
+    /// Announced so a sidebar can show it as it happens and so the rolling
+    /// summary can count it without polling.
+    #[serde(rename = "session.milestone")]
+    SessionMilestone,
 }
 
 impl EventType {
@@ -100,6 +105,7 @@ impl EventType {
             EventType::WorkflowAgent => "workflow.agent",
             EventType::WorkflowLog => "workflow.log",
             EventType::HookFired => "hook.fired",
+            EventType::SessionMilestone => "session.milestone",
         }
     }
 }
@@ -224,6 +230,15 @@ where
     T: Deserialize<'de>,
 {
     Deserialize::deserialize(deserializer).map(Some)
+}
+
+/// `session.milestone` — one log line, as `milestone()` wrote it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMilestoneData {
+    pub session_id: String,
+    pub ts: i64,
+    pub text: String,
 }
 
 /// `turn.finished` — emitted after `message.finished`, once per turn.

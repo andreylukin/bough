@@ -364,6 +364,7 @@ mod tests {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
             .unwrap();
         let id = uuid::Uuid::new_v4().to_string();

@@ -48,6 +48,7 @@ data. Upgrade bough, or point BOUGH_DB at a different file."
     rebuild_day_one_command_history(db)?;
     add_schedule_session_id(db)?;
     add_command_message_id(db)?;
+    add_session_description(db)?;
     db.execute_batch(schema_sql()).map_err(sql_err)?;
     if found < SCHEMA_VERSION {
         set_user_version(db, SCHEMA_VERSION)?;
@@ -75,6 +76,23 @@ fn has_column(db: &Connection, table: &str, column: &str) -> Result<bool, BoughE
         }
     }
     Ok(false)
+}
+
+/// The fourth sanctioned reshape: sessions gained `description` (2026-08) —
+/// the rolling summary's one line, rewritten by the cheap tier as the session's
+/// log grows. A session is a USER RECORD, so this ALTERs in place; existing
+/// rows get NULL, which is exactly "not summarized yet", the same state a new
+/// session starts in. Idempotent by PRAGMA check; no-op on a fresh file, where
+/// `schema.sql` creates the column directly.
+fn add_session_description(db: &Connection) -> Result<(), BoughError> {
+    if !table_exists(db, "sessions")? {
+        return Ok(());
+    }
+    if has_column(db, "sessions", "description")? {
+        return Ok(());
+    }
+    db.execute_batch("ALTER TABLE sessions ADD COLUMN description TEXT")
+        .map_err(sql_err)
 }
 
 /// The third sanctioned reshape: command_history gained `message_id` (2026-08)

@@ -188,6 +188,7 @@ pub enum SectionId {
     PatchGrammar,
     Ask,
     State,
+    Milestone,
     Schedule,
     UsingSkills,
     Search,
@@ -220,6 +221,7 @@ impl SectionId {
             SectionId::PatchGrammar => "patch-grammar",
             SectionId::Ask => "ask",
             SectionId::State => "state",
+            SectionId::Milestone => "milestone",
             SectionId::Schedule => "schedule",
             SectionId::UsingSkills => "using-skills",
             SectionId::Artifact => "artifact",
@@ -304,7 +306,7 @@ fn always(_: &Facts) -> bool {
 /// is legal, and `delegation-nested` on `agent` because a depth-2 subagent
 /// (still kind `subagent`) is bridged nothing and must therefore be told
 /// nothing.
-static SECTIONS: [SectionSpec; 19] = [
+static SECTIONS: [SectionSpec; 20] = [
     SectionSpec {
         id: SectionId::Identity,
         file: "identity.md",
@@ -350,6 +352,15 @@ static SECTIONS: [SectionSpec; 19] = [
         file: "state.md",
         raw: include_str!("sections/state.md"),
         when: |f| f.has(HostFnName::State),
+    },
+    // Right after state: both are the session's own bookkeeping. The log is
+    // what the sidebar and the summaries read, so it is gated on nothing but
+    // the bridge itself.
+    SectionSpec {
+        id: SectionId::Milestone,
+        file: "milestone.md",
+        raw: include_str!("sections/milestone.md"),
+        when: |f| f.has(HostFnName::Milestone),
     },
     SectionSpec {
         id: SectionId::Schedule,
@@ -908,7 +919,7 @@ mod tests {
 
     /// Section → the host function it grants, and a phrase only that section
     /// carries.
-    const GRANTS: [(SectionId, HostFnName, &str); 9] = [
+    const GRANTS: [(SectionId, HostFnName, &str); 10] = [
         (
             SectionId::Shell,
             HostFnName::Bash,
@@ -918,6 +929,11 @@ mod tests {
         (SectionId::PatchGrammar, HostFnName::Patch, "INS.HEAD:"),
         (SectionId::Ask, HostFnName::Ask, "await ask(question"),
         (SectionId::State, HostFnName::State, "await state.get(key)"),
+        (
+            SectionId::Milestone,
+            HostFnName::Milestone,
+            "await milestone(text)",
+        ),
         (
             SectionId::Schedule,
             HostFnName::Schedule,

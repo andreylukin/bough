@@ -355,6 +355,7 @@ pub fn launch_subagent(
             cached_tokens: None,
             last_llm_at: None,
             outcome_ok: None,
+            description: None,
         })
     })?;
     bus.publish(EventInput {
@@ -1115,6 +1116,7 @@ mod tests {
                     cached_tokens: None,
                     last_llm_at: None,
                     outcome_ok: None,
+                    description: None,
                 })
             })
             .unwrap();
@@ -1166,6 +1168,7 @@ mod tests {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
         })
         .unwrap();

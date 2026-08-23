@@ -285,6 +285,18 @@ impl<D: Db> Db for SearchSafeDb<D> {
     fn set_session_title(&self, id: &str, title: &str) -> Result<(), BoughError> {
         self.inner.set_session_title(id, title)
     }
+    fn set_session_description(&self, id: &str, description: &str) -> Result<(), BoughError> {
+        self.inner.set_session_description(id, description)
+    }
+    fn add_milestone(&self, session_id: &str, ts: i64, text: &str) -> Result<(), BoughError> {
+        self.inner.add_milestone(session_id, ts, text)
+    }
+    fn milestones(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<bough_core::schema::parts::Milestone>, BoughError> {
+        self.inner.milestones(session_id)
+    }
     fn set_session_workspace(&self, id: &str, workspace: &str) -> Result<(), BoughError> {
         self.inner.set_session_workspace(id, workspace)
     }
@@ -1003,6 +1015,7 @@ mod tests {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
             .unwrap()
     }
@@ -1495,6 +1508,7 @@ mod tests {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
             .unwrap();
         let child = db
@@ -1516,6 +1530,7 @@ mod tests {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
             .unwrap();
         for (s, text) in [(&root, "ancestor prose"), (&child, "own prose")] {
@@ -1732,6 +1747,18 @@ mod tests {
             unreachable!()
         }
         fn set_session_title(&self, _: &str, _: &str) -> Result<(), BoughError> {
+            unreachable!()
+        }
+        fn set_session_description(&self, _: &str, _: &str) -> Result<(), BoughError> {
+            unreachable!()
+        }
+        fn add_milestone(&self, _: &str, _: i64, _: &str) -> Result<(), BoughError> {
+            unreachable!()
+        }
+        fn milestones(
+            &self,
+            _: &str,
+        ) -> Result<Vec<bough_core::schema::parts::Milestone>, BoughError> {
             unreachable!()
         }
         fn set_session_workspace(&self, _: &str, _: &str) -> Result<(), BoughError> {
@@ -1972,6 +1999,7 @@ mod tests {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
             .unwrap();
         let m = raw

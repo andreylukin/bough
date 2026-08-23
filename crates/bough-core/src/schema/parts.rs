@@ -230,6 +230,18 @@ pub struct Session {
     /// Whether the delegated TURN errored; no acceptance gate.
     #[serde(default)]
     pub outcome_ok: Option<bool>,
+    /// The rolling summary's line: what this session is doing and where it
+    /// stands. Absent until the first summary ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// One line of a session's log, as `milestone()` wrote it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Milestone {
+    pub ts: i64,
+    pub text: String,
 }
 
 // ---- turns -----------------------------------------------------------------

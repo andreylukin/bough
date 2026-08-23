@@ -637,6 +637,10 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
         // firing changes nothing about the conversation's contents, and the
         // thing it did already arrived through the channel that carries it.
         EventType::HookFired => state,
+        // The log line lives in the database; the description that matters
+        // to the list arrives as `session.updated` once the summary rewrites
+        // it. Nothing to fold in here.
+        EventType::SessionMilestone => state,
         EventType::WorkflowLog => {
             let Some(d) = parse::<WfLogData>(&event.data) else {
                 return state;

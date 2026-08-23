@@ -1048,6 +1048,7 @@ mod tests {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
             .unwrap();
         }

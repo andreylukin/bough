@@ -602,6 +602,14 @@ pub fn tree_lines(p: &TreeProps) -> Vec<Line<'static>> {
                     ),
                     title_style,
                 ));
+                // The rolling summary's line, beside the title: what the
+                // session is doing and where it stands. One row is all a
+                // conversation gets, so it rides the same line, dim, clipped.
+                if let Some(desc) = session.session.description.as_deref() {
+                    if !desc.trim().is_empty() {
+                        spans.push(Span::styled(format!(" — {}", clip(desc, 48)), dim));
+                    }
+                }
                 if *delegated > 0 {
                     spans.push(Span::styled(format!("  ⋯{delegated}"), dim));
                 }
@@ -893,6 +901,37 @@ mod tests {
         // The subagent is a COUNT, not a row of its own, until it is drilled into.
         assert!(!frame.contains("review"), "{frame}");
         assert!(frame.contains("1 spawned"), "{frame}");
+    }
+
+    #[test]
+    fn a_session_with_a_description_shows_it_dim_beside_the_title_on_the_same_row() {
+        let mut a = session_row("a", SessionKind::Root, 1);
+        a.session.title = "Deicing consumer PR".into();
+        a.session.description = Some("Opened #34; review pending".into());
+        let items = forest_rows(&ForestInput {
+            sessions: &[a],
+            ..Default::default()
+        });
+        let lines = tree_lines(&TreeProps {
+            rows: &items,
+            selected: 0,
+            height: panel_body_rows(12),
+            cols: Some(120),
+            ..Default::default()
+        });
+        let row = lines
+            .iter()
+            .find(|l| text_of(l).contains("Deicing consumer PR"))
+            .expect("the session row");
+        let text = text_of(row);
+        assert!(text.contains("Deicing consumer PR — Opened #34; review pending"), "{text}");
+        let desc = row
+            .spans
+            .iter()
+            .find(|s| s.content.contains("Opened #34"))
+            .unwrap();
+        assert!(desc.style.add_modifier.contains(Modifier::DIM));
+        assert_eq!(lines.iter().filter(|l| text_of(l).contains("Opened #34")).count(), 1);
     }
 
     #[test]

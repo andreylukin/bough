@@ -247,6 +247,7 @@ pub fn open_branch(ctx: BranchCtx, spec: BranchSpec) -> Result<Seeder, BoughErro
         cached_tokens: None,
         last_llm_at: None,
         outcome_ok: None,
+        description: None,
     };
     // Announce what STORAGE kept, not the argument — `create_session` reads
     // the row back, so the event and a later `GET /sessions/:id` cannot
@@ -487,6 +488,7 @@ pub(crate) mod tests {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
         })
         .unwrap()

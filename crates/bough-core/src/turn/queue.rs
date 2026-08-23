@@ -608,6 +608,7 @@ mod tests {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
             .unwrap();
         let post = |role: Role, text: &str, at: i64| {

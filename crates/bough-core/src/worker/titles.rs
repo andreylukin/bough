@@ -568,6 +568,9 @@ pub fn maybe_auto_title(ctx: &TitleCtx, session_id: &str, text: &str, opts: Auto
                     None => false,
                 };
                 if still && db.set_session_title(&session_id, &title).is_ok() {
+                    // Provenance for the rolling summary: a title a machine
+                    // wrote may later be replaced by one; a user's may not.
+                    crate::worker::summary::note_auto_title(&session_id, &title);
                     db.get_session(&session_id).ok().flatten()
                 } else {
                     None

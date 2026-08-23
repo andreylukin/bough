@@ -370,6 +370,7 @@ fn try_fire(
         cached_tokens: None,
         last_llm_at: None,
         outcome_ok: None,
+        description: None,
     })?;
     ctx.bus.publish(EventInput {
         r#type: EventType::SessionCreated,
@@ -1013,6 +1014,7 @@ mod fire_tests {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
             .unwrap();
     }

@@ -30,8 +30,8 @@ use super::migrate::migrate;
 use crate::errors::BoughError;
 use crate::paths::db_path;
 use crate::schema::parts::{
-    Message, Part, Schedule, Session, SessionKind, Turn, TurnStatus, Usage, WorkflowAgent,
-    WorkflowPhase, WorkflowRun,
+    Message, Milestone, Part, Schedule, Session, SessionKind, Turn, TurnStatus, Usage,
+    WorkflowAgent, WorkflowPhase, WorkflowRun,
 };
 use crate::types::{
     system_clock, Clock, CommandRecord, CommandTagOpts, CommandTagRow, Db, NoteAuthor, NoteLogRow,
@@ -121,6 +121,9 @@ fn to_session(row: &Row) -> rusqlite::Result<Session> {
         cached_tokens: row.get("cached_tokens")?,
         last_llm_at: row.get("last_llm_at")?,
         outcome_ok: row.get::<_, Option<i64>>("outcome_ok")?.map(|v| v == 1),
+        description: row
+            .get::<_, Option<String>>("description")?
+            .filter(|d| !d.is_empty()),
     })
 }
 
@@ -424,6 +427,33 @@ impl Db for SqliteDb {
         self.run(
             "UPDATE sessions SET title = ? WHERE id = ?",
             params![title, id],
+        )
+    }
+
+    fn set_session_description(&self, id: &str, description: &str) -> Result<(), BoughError> {
+        self.run(
+            "UPDATE sessions SET description = ? WHERE id = ?",
+            params![description, id],
+        )
+    }
+
+    fn add_milestone(&self, session_id: &str, ts: i64, text: &str) -> Result<(), BoughError> {
+        self.run(
+            "INSERT INTO session_log (session_id, ts, text) VALUES (?, ?, ?)",
+            params![session_id, ts, text],
+        )
+    }
+
+    fn milestones(&self, session_id: &str) -> Result<Vec<Milestone>, BoughError> {
+        self.all(
+            "SELECT ts, text FROM session_log WHERE session_id = ? ORDER BY ts, id",
+            params![session_id],
+            |row| {
+                Ok(Milestone {
+                    ts: row.get("ts")?,
+                    text: row.get("text")?,
+                })
+            },
         )
     }
 
@@ -1847,6 +1877,7 @@ mod tests {
             cached_tokens: None,
             last_llm_at: None,
             outcome_ok: None,
+            description: None,
         }
     }
 

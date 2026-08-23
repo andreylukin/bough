@@ -30,7 +30,8 @@ use crate::hostfn::files::{SnapshotStore, WriteLog};
 use crate::hostfn::jobs::JobRegistry;
 use crate::schema::events::{BoughEvent, EventInput};
 use crate::schema::parts::{
-    Message, Part, Schedule, Session, Turn, TurnStatus, Usage, WorkflowAgent, WorkflowAgentStatus,
+    Message, Milestone, Part, Schedule, Session, Turn, TurnStatus, Usage, WorkflowAgent,
+    WorkflowAgentStatus,
     WorkflowPhase, WorkflowRun, WorkflowStatus,
 };
 use crate::turn::queue::TurnRegistry;
@@ -487,7 +488,13 @@ pub trait Db: Send {
     /// Root→self, inclusive. `[]` for unknown id; a parent_id cycle terminates.
     fn ancestor_chain(&self, id: &str) -> Result<Vec<Session>, BoughError>;
     fn set_session_title(&self, id: &str, title: &str) -> Result<(), BoughError>;
+    /// The rolling summary's line. Empty string clears it.
+    fn set_session_description(&self, id: &str, description: &str) -> Result<(), BoughError>;
     fn set_session_workspace(&self, id: &str, workspace: &str) -> Result<(), BoughError>;
+    /// Append one line to the session log (`milestone()`).
+    fn add_milestone(&self, session_id: &str, ts: i64, text: &str) -> Result<(), BoughError>;
+    /// The session log, oldest first.
+    fn milestones(&self, session_id: &str) -> Result<Vec<Milestone>, BoughError>;
     fn set_session_base(&self, id: &str, base: &str) -> Result<(), BoughError>;
     fn set_session_draft(&self, id: &str, draft: Option<&str>) -> Result<(), BoughError>;
     fn set_session_model(&self, id: &str, model: Option<&str>) -> Result<(), BoughError>;
@@ -793,6 +800,12 @@ pub trait CheapTier: Send + Sync {
     async fn note_contradiction(&self, _prompt: &str) -> Option<String> {
         None
     }
+    /// The rolling session summary (`worker/summary.rs` owns the prompt and
+    /// the JSON it expects back). Defaulted to `None` for the same reason as
+    /// `note_line`: a tier with no opinion writes no summaries.
+    async fn summary(&self, _prompt: &str) -> Option<String> {
+        None
+    }
 }
 
 // ---- the turn starter -------------------------------------------------------
@@ -999,6 +1012,9 @@ pub struct HostFns {
     /// Verb-dispatched: call/list. Arguments are a real object, so tool
     /// arguments never have to survive shell quoting.
     pub mcp: Option<HostFn>,
+    /// `milestone(text)` — one line in the session log when an overarching
+    /// action lands. Returns "ok".
+    pub milestone: Option<HostFn>,
 }
 
 impl HostFns {
@@ -1028,6 +1044,7 @@ impl HostFns {
             HostFnName::Artifact => self.artifact.as_ref(),
             HostFnName::Mcp => self.mcp.as_ref(),
             HostFnName::Search => self.search.as_ref(),
+            HostFnName::Milestone => self.milestone.as_ref(),
         }
     }
 }
@@ -1111,7 +1128,7 @@ mod tests {
         // The Rust replacement for the TS compile-time drift proof: every wire
         // name parses to a HostFnName, and `get` matches it exhaustively.
         let fns = HostFns::default();
-        assert_eq!(HOST_FN_NAMES.len(), 20);
+        assert_eq!(HOST_FN_NAMES.len(), 21);
         for name in HOST_FN_NAMES {
             let parsed = HostFnName::parse(name)
                 .unwrap_or_else(|| panic!("protocol name {name} not in HostFnName"));

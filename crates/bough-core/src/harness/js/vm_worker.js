@@ -74,6 +74,7 @@ const HOST_FN_NAMES = [
   "artifact",
   "search",
   "mcp",
+  "milestone",
 ];
 
 const PROGRAM_PARAMS = [...HOST_FN_NAMES, "console", "require"];
@@ -338,6 +339,8 @@ const bindings = {
   schedule: methodObject("schedule"),
   artifact: (name, content) =>
     jsonCall("artifact", [name, typeof content === "string" ? content : JSON.stringify(content)]),
+  // One line for the session log; the host clips and rejects empties.
+  milestone: (text) => hostCall("milestone", [String(text ?? "")]),
   // The options object is serialized here, once, so a caller writing
   // search(q, { maxResults: 3 }) never has to think about quoting.
   search: (objective, options) =>

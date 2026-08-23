@@ -861,6 +861,7 @@ pub(crate) mod fixtures {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             },
             busy: false,
             last_turn_status: None,

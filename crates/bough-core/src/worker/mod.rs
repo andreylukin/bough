@@ -13,6 +13,7 @@
 pub mod activity;
 pub mod ghost;
 pub mod notes;
+pub mod summary;
 pub mod titles;
 
 use std::sync::Arc;
@@ -48,6 +49,9 @@ impl CheapTier for CheapTierImpl {
     }
     async fn note_contradiction(&self, prompt: &str) -> Option<String> {
         notes::cheap_contradiction(prompt, &Default::default()).await
+    }
+    async fn summary(&self, prompt: &str) -> Option<String> {
+        summary::cheap_summary(prompt, &Default::default()).await
     }
 }
 
@@ -300,6 +304,7 @@ pub(crate) mod test_support {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
             .unwrap();
         id

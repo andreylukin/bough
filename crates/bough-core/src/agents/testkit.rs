@@ -75,6 +75,7 @@ pub fn seed_session(db: &SharedDb, opts: SeedOpts) -> Session {
             cached_tokens: None,
             last_llm_at: None,
             outcome_ok: None,
+            description: None,
         })
         .unwrap()
 }
@@ -183,6 +184,7 @@ pub fn seed_idle_session(f: &AgentsFixture) -> Session {
             cached_tokens: None,
             last_llm_at: None,
             outcome_ok: None,
+            description: None,
         })
         .unwrap();
     guard
@@ -228,6 +230,7 @@ pub fn seed_spawner(f: &AgentsFixture) -> SeededSpawner {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
             .unwrap()
     };

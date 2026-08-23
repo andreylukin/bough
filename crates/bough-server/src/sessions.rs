@@ -302,6 +302,7 @@ pub fn create_session() -> Handler {
             cached_tokens: None,
             last_llm_at: None,
             outcome_ok: None,
+            description: None,
         };
 
         {
@@ -617,6 +618,18 @@ pub fn get_session_usage_h() -> Handler {
     })
 }
 
+/// `GET /sessions/:id/log` — the session's log: every `milestone()` line,
+/// oldest first, as `[{ts, text}]`. Empty for a session that never logged
+/// one, which is a fact about the session and not an error.
+pub fn get_session_log() -> Handler {
+    handler(|_req, ctx, params| async move {
+        let id = param(&params, "id").to_string();
+        require_session(&ctx, &id)?;
+        let log = ctx.db.lock().unwrap().milestones(&id)?;
+        Ok(json(&log, 200))
+    })
+}
+
 /// `GET /sessions/:id/prompt` — what the last turn actually put in the window.
 ///
 /// THE SURFACE THIS FEEDS answers "what is in my context, and what is it
@@ -784,6 +797,7 @@ mod tests {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
             .unwrap()
     }
@@ -928,6 +942,7 @@ mod tests {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
             .unwrap();
         let drill = testutil::body_json(
@@ -1010,6 +1025,7 @@ mod tests {
             cached_tokens: None,
             last_llm_at: None,
             outcome_ok: None,
+            description: None,
         };
         assert!(is_collapsed(&base(SessionKind::Subagent)));
         assert!(is_collapsed(&base(SessionKind::WorkflowAgent)));
@@ -1256,6 +1272,7 @@ mod tests {
                 cached_tokens: None,
                 last_llm_at: None,
                 outcome_ok: None,
+                description: None,
             })
             .unwrap()
         };
@@ -1875,6 +1892,60 @@ mod tests {
                 .status(),
             404
         );
+    }
+
+    // ---- the session log -----------------------------------------------------
+
+    #[tokio::test]
+    async fn get_log_lists_milestones_oldest_first_and_404s_on_an_unknown_id() {
+        let fx = testutil::fixture();
+        let root = new_session(&fx, j!({"title": "root"})).await;
+        {
+            let db = fx.ctx.db.lock().unwrap();
+            db.add_milestone(&root.id, 20, "Tests green").unwrap();
+            db.add_milestone(&root.id, 10, "Opened #34").unwrap();
+        }
+        let body = testutil::body_json(
+            call(&fx)
+                .call(testutil::get(&format!("/sessions/{}/log", root.id)))
+                .await,
+        )
+        .await;
+        assert_eq!(body, j!([{"ts": 10, "text": "Opened #34"}, {"ts": 20, "text": "Tests green"}]));
+        assert_eq!(
+            call(&fx)
+                .call(testutil::get("/sessions/ghost/log"))
+                .await
+                .status(),
+            404
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_description_rides_on_the_list_and_the_detail() {
+        let fx = testutil::fixture();
+        let root = new_session(&fx, j!({"title": "root"})).await;
+        fx.ctx
+            .db
+            .lock()
+            .unwrap()
+            .set_session_description(&root.id, "Opened #34; review pending")
+            .unwrap();
+        let list = testutil::body_json(call(&fx).call(testutil::get("/sessions")).await).await;
+        let item = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == root.id)
+            .unwrap();
+        assert_eq!(item["description"], "Opened #34; review pending");
+        let detail = testutil::body_json(
+            call(&fx)
+                .call(testutil::get(&format!("/sessions/{}", root.id)))
+                .await,
+        )
+        .await;
+        assert_eq!(detail["session"]["description"], "Opened #34; review pending");
     }
 
     // ---- model settings ------------------------------------------------------

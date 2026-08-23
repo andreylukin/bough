@@ -3610,6 +3610,9 @@ impl<T: Transport> App<T> {
         match event.r#type {
             EventType::SessionCreated => {}
             EventType::SessionUpdated => {}
+            // The reducer keeps the line; nothing to announce — the sidebar
+            // redraws from state.
+            EventType::SessionMilestone => {}
             EventType::SessionActivity => {
                 if let Ok(d) = serde_json::from_value::<SessionActivityData>(event.data) {
                     // Absent means "this frame says nothing about that slot".

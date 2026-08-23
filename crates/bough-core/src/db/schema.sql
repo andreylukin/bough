@@ -84,10 +84,27 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- Delegation outcome, stamped when a subagent's turn finishes, so the tree can
   -- render a failed branch. Records whether the TURN errored — there is no
   -- acceptance gate and nothing here reflects one (spec §17).
-  outcome_ok        INTEGER
+  outcome_ok        INTEGER,
+  -- The rolling summary's one line: what this session is doing and where it
+  -- stands, rewritten by the cheap tier as milestones land. NULL until the
+  -- first summary; never user-typed (the title is).
+  description       TEXT
 );
 CREATE INDEX IF NOT EXISTS sessions_parent ON sessions(parent_id);
 CREATE INDEX IF NOT EXISTS sessions_origin ON sessions(origin_id);
+
+-- The session LOG: one row per `milestone()` call — what the session
+-- accomplished, written by the program at the moment an overarching action
+-- landed, as opposed to the transcript of everything it tried. Read by the
+-- rolling summary, the sidebar and anything that wants the story without the
+-- noise. Rows are never edited; the log is append-only by construction.
+CREATE TABLE IF NOT EXISTS session_log (
+  id          INTEGER PRIMARY KEY,
+  session_id  TEXT NOT NULL REFERENCES sessions(id),
+  ts          INTEGER NOT NULL,
+  text        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS session_log_session ON session_log(session_id, ts);
 
 -- One message. `parts` is the JSON Part[] from schema/parts.ts; image bytes are
 -- NOT in it — an image part stores a path under ~/.bough/attachments/, so rows

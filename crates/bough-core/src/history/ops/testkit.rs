@@ -216,6 +216,7 @@ pub fn session_with(f: &Fixture, over: SessionOver) -> Session {
             cached_tokens: None,
             last_llm_at: None,
             outcome_ok: None,
+            description: None,
         })
     })
     .unwrap()
