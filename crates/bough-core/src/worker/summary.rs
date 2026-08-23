@@ -83,11 +83,13 @@ pub const SUMMARY_SYSTEM: &str = "You keep a one-line summary of a coding sessio
      overarching action landed. Reply with ONLY this JSON, nothing else:\n\
      {\"title\": \"3-7 words, sentence case, naming what the session is FOR and its current \
      thrust; return the current title VERBATIM if it is still right\", \"description\": \
-     \"<=25 words: what this session is doing and where it stands — overarching actions \
-     (a PR opened, a fix landed, a decision), never commands or files read\", \"state\": \
+     \"<=25 words: OUTCOMES from the log first (opened/merged/fixed/found/decided, with keys \
+     and numbers); if the log is empty, state the goal plainly from the messages\", \"state\": \
      \"working|blocked|waiting|done\"}\n\
-     Name only what the log and the messages name — never invent a subject, file, or \
-     outcome. Keep ticket keys and PR numbers as written.";
+     The description is a commit-log line, not a status report: no \"exploring\", \
+     \"investigating\", \"working on\", \"in progress\", no restating the title, no hedging \
+     like \"no results yet\". Name only what the log and the messages name — never invent a \
+     subject, file, or outcome. Keep ticket keys and PR numbers as written.";
 
 /// The user's words since the session began, latest-biased and clipped.
 pub const USER_TEXT_MAX: usize = 1_500;
