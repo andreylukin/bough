@@ -40,6 +40,7 @@ const TUI_USAGE: &str = "usage: bough [-w DIR] [-r]
 
   -w, --workspace DIR   where new conversations start (default: the cwd)
   -r, --resume          reopen this workspace\'s last conversation
+  -s, --session ID      open one specific conversation (from a board, a link…)
   -h, --help            this message
 
   the server port comes from BOUGH_PORT (default 4321). It is an env var and
@@ -53,6 +54,8 @@ enum TuiArgs {
         workspace: Option<String>,
         /// `--resume` / `-r`: reopen this workspace's last conversation.
         resume: bool,
+        /// `--session ID` / `-s`: open that conversation.
+        session: Option<String>,
     },
     Help,
     UsageError(String),
@@ -63,6 +66,7 @@ enum TuiArgs {
 fn parse_tui_args(argv: &[String]) -> TuiArgs {
     let mut workspace: Option<String> = None;
     let mut resume = false;
+    let mut session: Option<String> = None;
     let mut i = 0usize;
     while i < argv.len() {
         let token = &argv[i];
@@ -84,6 +88,7 @@ fn parse_tui_args(argv: &[String]) -> TuiArgs {
             match short {
                 "w" => ("workspace".to_string(), inline),
                 "r" => ("resume".to_string(), inline),
+                "s" => ("session".to_string(), inline),
                 _ => {
                     return TuiArgs::UsageError(format!("unknown flag -{short}\n{TUI_USAGE}"));
                 }
@@ -102,7 +107,7 @@ fn parse_tui_args(argv: &[String]) -> TuiArgs {
             i += 1;
             continue;
         }
-        if name != "workspace" {
+        if name != "workspace" && name != "session" {
             return TuiArgs::UsageError(format!("unknown flag --{name}\n{TUI_USAGE}"));
         }
         let value = match inline {
@@ -115,7 +120,7 @@ fn parse_tui_args(argv: &[String]) -> TuiArgs {
                 argv[i].clone()
             }
         };
-        workspace = Some(value);
+        if name == "session" { session = Some(value); } else { workspace = Some(value); }
         i += 1;
     }
     if let Some(ws) = &workspace {
@@ -123,7 +128,7 @@ fn parse_tui_args(argv: &[String]) -> TuiArgs {
             return TuiArgs::UsageError(format!("--workspace needs a path\n{TUI_USAGE}"));
         }
     }
-    TuiArgs::Args { workspace, resume }
+    TuiArgs::Args { workspace, resume, session }
 }
 
 /// Stop the running server and start a fresh one.
@@ -202,7 +207,7 @@ fn run_tui(argv: &[String]) -> ExitCode {
             eprintln!("{message}");
             ExitCode::from(2)
         }
-        TuiArgs::Args { workspace, resume } => {
+        TuiArgs::Args { workspace, resume, session } => {
             let workspace = workspace.or_else(|| {
                 std::env::var("BOUGH_TUI_CWD")
                     .ok()
@@ -230,7 +235,7 @@ fn run_tui(argv: &[String]) -> ExitCode {
                 return ExitCode::from(2);
             }
             let workspace_for_restart = workspace.clone();
-            match bough_tui::run(TuiOptions { workspace, resume }) {
+            match bough_tui::run(TuiOptions { workspace, resume, session }) {
                 // `/restart`: the terminal is already restored, so this is the
                 // one place that can cleanly stop the server and hand the
                 // process over. EXEC, not spawn — the shell that launched

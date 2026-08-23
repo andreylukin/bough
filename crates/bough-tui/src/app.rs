@@ -92,6 +92,8 @@ pub struct TuiOptions {
     /// `--resume`: reopen the conversation last open in this workspace
     /// instead of starting on a blank screen.
     pub resume: bool,
+    /// `--session ID`: open that conversation. Wins over `resume`.
+    pub session: Option<String>,
 }
 
 /// Everything that can reach the reducer — all tasks post these over one mpsc.
@@ -4100,7 +4102,9 @@ impl<T: Transport> App<T> {
         // `--resume`: reopen where you were. Only when asked — a harness that
         // silently drops you back into last week's thread, with its context
         // and its costs, has made a decision that was not its to make.
-        if self.options.resume {
+        if let Some(id) = self.options.session.clone() {
+            self.transport.effect(Effect::OpenSession(id));
+        } else if self.options.resume {
             if let Some(id) = self
                 .options
                 .workspace
@@ -6992,6 +6996,7 @@ mod tests {
             TuiOptions {
                 workspace: Some("/repos/bough".into()),
                 resume: false,
+                session: None,
             },
             sink,
             100,
@@ -7015,6 +7020,7 @@ mod tests {
             TuiOptions {
                 workspace: Some("/repos/bough".into()),
                 resume: false,
+                session: None,
             },
             sink,
             100,
@@ -7044,6 +7050,7 @@ mod tests {
             TuiOptions {
                 workspace: Some("/repos/bough".into()),
                 resume: false,
+                session: None,
             },
             sink,
             100,
@@ -7257,6 +7264,7 @@ mod tests {
         let opts = TuiOptions {
             workspace: Some("/tmp/demo".into()),
             resume: false,
+                session: None,
         };
         let mut app = App::new(opts, sink, 80, 24);
         app.apply(Action::Connected(true), 0);
@@ -8371,6 +8379,7 @@ mod tests {
             TuiOptions {
                 workspace: Some("/w/demo".into()),
                 resume: false,
+                session: None,
             },
             sink,
             80,
@@ -8514,6 +8523,7 @@ mod tests {
             TuiOptions {
                 workspace: Some("/w/demo".into()),
                 resume: false,
+                session: None,
             },
             sink,
             80,
