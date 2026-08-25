@@ -79,7 +79,7 @@ operates on) and optional lineage pointers.
 | Field | Meaning |
 |---|---|
 | `id`, `title`, `createdAt` | identity |
-| `kind` | `root` \| `fork` \| `compaction` \| `subagent` \| `workflow_agent` |
+| `kind` | `root` \| `fork` \| `compaction` \| `subagent` \| `workflow_agent` \| `schedule_run` \| `shell` \| `mind` |
 | `parentId` | thread inheritance: a session's thread is its ancestors' messages ++ its own |
 | `originId`, `originMessageId` | lineage edge for the tree view (what it branched from) |
 | `workspace`, `originDir` | the checkout; `originDir` is the stable project record |
@@ -549,6 +549,17 @@ boot, then resumes cadence, with no burst of make-up runs.
 **Background jobs.** Auto-backgrounded and explicit `bashBg` shells are tracked per
 session, survive the turn, and publish `job.spawned` / `job.exited`. Their output
 buffers are readable while running and after exit.
+
+**The mind.** A session of kind `mind` keeps thinking between external
+interactions: a ~30s driver wakes it through the ordinary wake rule, each wakeup
+is one ordinary turn that picks one function (act / think / goal / learn / share /
+idle) and records it as a typed step, and the interval doubles while nothing is
+happening (any user message resets it). It is the one kind whose turns may end
+without user-visible text; every other turn invariant is intact. Consecutive
+failed wakeups disable it with a recorded note; an interrupt stays stopped until
+`bough mind start`. Its context is a projection — a windowed replay plus tiered
+life rollups minted forward-only on the cheap tier — never an in-place rewrite.
+[specs/mind.md](../specs/mind.md) is normative.
 
 ## 10. Integrations
 

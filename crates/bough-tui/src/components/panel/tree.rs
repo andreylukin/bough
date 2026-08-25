@@ -39,6 +39,9 @@ fn kind_glyph_for(kind: SessionKind) -> &'static str {
         SessionKind::ScheduleRun => "◷",
         // The conversation `!` runs in. Marked as the user's own, because it is.
         SessionKind::Shell => "●",
+        // A persistent mind (specs/mind.md). Listed like a root, marked as
+        // something that thinks on its own.
+        SessionKind::Mind => "☉",
     }
 }
 

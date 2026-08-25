@@ -203,6 +203,9 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
             // The session log is the session's own record; every tier keeps
             // one, and a subagent's lines roll up into what its spawner sees.
             HostFnName::Milestone,
+            // Granted broadly like `workflow`, bridged and documented only
+            // for kind: mind (the extend closure + the section's kind gate).
+            HostFnName::Step,
         ]);
 
         let jobs = ctx.host.jobs.clone();
@@ -278,6 +281,18 @@ pub fn boot_ctx(db_file: Option<&str>) -> Result<Boot, BoughError> {
                     turn_ctx,
                     Default::default(),
                 )),
+                // Bridged for minds only: a step() a root can call but the
+                // prompt never documents would be a trap, and a mind's
+                // trajectory written by non-minds would be noise.
+                step: {
+                    let kind = {
+                        let db = turn_ctx.app.db.lock().unwrap_or_else(|p| p.into_inner());
+                        db.get_session(&turn_ctx.session_id).ok().flatten().map(|s| s.kind)
+                    };
+                    (kind == Some(bough_core::schema::parts::SessionKind::Mind)).then(|| {
+                        bough_core::hostfn::step::create_step_host_fn(turn_ctx, Default::default())
+                    })
+                },
                 // Registered only when the CLI behind it is installed: the
                 // prompt section describes search() as available, and a
                 // global that always throws teaches the model to stop
@@ -620,6 +635,10 @@ pub async fn start() -> Result<(), BoughError> {
     // stopper is held for the life of the serve loop.
     let stop_ticker = bough_core::schedules::start_schedule_ticker(&boot.ctx);
 
+    // 8a. The mind wake driver, for the same reason and with the same stop
+    // guarantee: nothing wakes before the starter exists.
+    let stop_mind_ticker = bough_core::mind::start_mind_ticker(&boot.ctx);
+
     // 8b. The tag-history vector layer's drain pump (row 3.17). `None` on a
     // machine without an extension-capable SQLite, or
     // with `BOUGH_NO_EMBED` — everything else works identically there, so the
@@ -676,6 +695,7 @@ pub async fn start() -> Result<(), BoughError> {
         .map_err(|e| BoughError::bad_request(format!("server error: {e}")))?;
 
     stop_ticker();
+    stop_mind_ticker();
     Ok(())
 }
 

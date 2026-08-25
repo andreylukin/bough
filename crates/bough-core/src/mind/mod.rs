@@ -295,7 +295,6 @@ fn tick_one(ctx: &AppCtx, session: &Session, now: i64) {
                 TurnStatus::Interrupted => {
                     // A stop stays stopped — until `bough mind start`.
                     set_enabled(&ctx.db, sid, false, now);
-                    write_str(&ctx.db, sid, keys::ENABLED, "false", now);
                     clear_key(&ctx.db, sid, keys::PENDING_SINCE);
                     record_note(
                         ctx,

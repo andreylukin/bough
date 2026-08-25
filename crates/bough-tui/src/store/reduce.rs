@@ -641,6 +641,7 @@ fn apply_event(state: TuiState, event: &BoughEvent) -> TuiState {
         // to the list arrives as `session.updated` once the summary rewrites
         // it. Nothing to fold in here.
         EventType::SessionMilestone => state,
+        EventType::MindStep => state,
         EventType::WorkflowLog => {
             let Some(d) = parse::<WfLogData>(&event.data) else {
                 return state;

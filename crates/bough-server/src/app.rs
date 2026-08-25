@@ -29,8 +29,8 @@ use bough_core::types::AppCtx;
 use crate::http::{error_response, route, Params, Route};
 use crate::{
     artifact_lib, artifacts, attachments, changes, comments, config, events, fs, ghost,
-    history_ops, jobs, mcp_oauth, mcp_routes, models, questions, schedules, search, sessions,
-    skills, theme, turns, workflows,
+    history_ops, jobs, mcp_oauth, mcp_routes, mind, models, questions, schedules, search,
+    sessions, skills, theme, turns, workflows,
 };
 
 // ---- the route table --------------------------------------------------------
@@ -49,6 +49,10 @@ pub fn routes() -> Vec<Route> {
         route("PATCH", "/sessions/:id", sessions::patch_session()),
         route("POST", "/sessions/:id/messages", sessions::post_message()),
         route("PUT", "/sessions/:id/draft", sessions::put_draft()),
+        // the mind surface (specs/mind.md §8)
+        route("GET", "/sessions/:id/mind", mind::get_mind()),
+        route("POST", "/sessions/:id/mind", mind::patch_mind()),
+        route("GET", "/sessions/:id/mind/steps", mind::get_mind_steps()),
         // model settings (what a NEW conversation runs on)
         route("GET", "/model-settings", sessions::get_model_settings_h()),
         route("PUT", "/model-settings", sessions::put_model_settings_h()),

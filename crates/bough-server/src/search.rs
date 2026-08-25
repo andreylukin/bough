@@ -291,6 +291,71 @@ impl<D: Db> Db for SearchSafeDb<D> {
     fn add_milestone(&self, session_id: &str, ts: i64, text: &str) -> Result<(), BoughError> {
         self.inner.add_milestone(session_id, ts, text)
     }
+    fn add_mind_step(
+        &self,
+        session_id: &str,
+        turn_id: Option<&str>,
+        ts: i64,
+        r#type: bough_core::schema::parts::MindStepType,
+        source: &str,
+        content: &str,
+    ) -> Result<bough_core::schema::parts::MindStep, BoughError> {
+        self.inner
+            .add_mind_step(session_id, turn_id, ts, r#type, source, content)
+    }
+    fn mind_steps_tail(
+        &self,
+        session_id: &str,
+        n: i64,
+    ) -> Result<Vec<bough_core::schema::parts::MindStep>, BoughError> {
+        self.inner.mind_steps_tail(session_id, n)
+    }
+    fn mind_steps_for_turn(
+        &self,
+        turn_id: &str,
+    ) -> Result<Vec<bough_core::schema::parts::MindStep>, BoughError> {
+        self.inner.mind_steps_for_turn(turn_id)
+    }
+    fn mind_steps_after(
+        &self,
+        session_id: &str,
+        after_id: i64,
+        limit: i64,
+    ) -> Result<Vec<bough_core::schema::parts::MindStep>, BoughError> {
+        self.inner.mind_steps_after(session_id, after_id, limit)
+    }
+    fn add_mind_rollup(
+        &self,
+        session_id: &str,
+        tier: i64,
+        first_step_id: i64,
+        last_step_id: i64,
+        summary: &str,
+        created_at: i64,
+    ) -> Result<bough_core::schema::parts::MindRollup, BoughError> {
+        self.inner
+            .add_mind_rollup(session_id, tier, first_step_id, last_step_id, summary, created_at)
+    }
+    fn mind_rollups(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<bough_core::schema::parts::MindRollup>, BoughError> {
+        self.inner.mind_rollups(session_id)
+    }
+    fn mind_rollups_after(
+        &self,
+        session_id: &str,
+        tier: i64,
+        after_step_id: i64,
+    ) -> Result<Vec<bough_core::schema::parts::MindRollup>, BoughError> {
+        self.inner.mind_rollups_after(session_id, tier, after_step_id)
+    }
+    fn mind_rollup_frontier(&self, session_id: &str, tier: i64) -> Result<i64, BoughError> {
+        self.inner.mind_rollup_frontier(session_id, tier)
+    }
+    fn mind_sessions(&self) -> Result<Vec<bough_core::schema::parts::Session>, BoughError> {
+        self.inner.mind_sessions()
+    }
     fn milestones(
         &self,
         session_id: &str,
@@ -1676,6 +1741,69 @@ mod tests {
             self.0.search_messages(query, session_id, limit)
         }
         // Nothing else participates in `search_transcripts`.
+        fn add_mind_step(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: i64,
+            _: bough_core::schema::parts::MindStepType,
+            _: &str,
+            _: &str,
+        ) -> Result<bough_core::schema::parts::MindStep, BoughError> {
+            unreachable!()
+        }
+        fn mind_steps_tail(
+            &self,
+            _: &str,
+            _: i64,
+        ) -> Result<Vec<bough_core::schema::parts::MindStep>, BoughError> {
+            unreachable!()
+        }
+        fn mind_steps_for_turn(
+            &self,
+            _: &str,
+        ) -> Result<Vec<bough_core::schema::parts::MindStep>, BoughError> {
+            unreachable!()
+        }
+        fn mind_steps_after(
+            &self,
+            _: &str,
+            _: i64,
+            _: i64,
+        ) -> Result<Vec<bough_core::schema::parts::MindStep>, BoughError> {
+            unreachable!()
+        }
+        fn add_mind_rollup(
+            &self,
+            _: &str,
+            _: i64,
+            _: i64,
+            _: i64,
+            _: &str,
+            _: i64,
+        ) -> Result<bough_core::schema::parts::MindRollup, BoughError> {
+            unreachable!()
+        }
+        fn mind_rollups(
+            &self,
+            _: &str,
+        ) -> Result<Vec<bough_core::schema::parts::MindRollup>, BoughError> {
+            unreachable!()
+        }
+        fn mind_rollups_after(
+            &self,
+            _: &str,
+            _: i64,
+            _: i64,
+        ) -> Result<Vec<bough_core::schema::parts::MindRollup>, BoughError> {
+            unreachable!()
+        }
+        fn mind_rollup_frontier(&self, _: &str, _: i64) -> Result<i64, BoughError> {
+            unreachable!()
+        }
+        fn mind_sessions(&self) -> Result<Vec<Session>, BoughError> {
+            unreachable!()
+        }
         fn upsert_note(&self, _: &str, _: &str, _: &[String], _: i64) -> Result<i64, BoughError> {
             unreachable!()
         }

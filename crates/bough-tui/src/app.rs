@@ -3613,6 +3613,9 @@ impl<T: Transport> App<T> {
             // The reducer keeps the line; nothing to announce — the sidebar
             // redraws from state.
             EventType::SessionMilestone => {}
+            // A mind's trajectory line; no dedicated surface in v1, the
+            // conversation view already shows the turn that wrote it.
+            EventType::MindStep => {}
             EventType::SessionActivity => {
                 if let Ok(d) = serde_json::from_value::<SessionActivityData>(event.data) {
                     // Absent means "this frame says nothing about that slot".

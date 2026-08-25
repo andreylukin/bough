@@ -26,6 +26,7 @@ pub mod mcp_oauth;
 pub mod mcp_routes;
 pub mod models;
 pub mod questions;
+pub mod mind;
 pub mod schedules;
 pub mod search;
 pub mod sessions;

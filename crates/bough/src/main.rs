@@ -25,6 +25,7 @@ mod config;
 mod exec;
 mod hooks;
 mod mcp;
+mod mind;
 mod notes;
 mod patterns;
 mod sync_mcp;
@@ -188,7 +189,7 @@ fn version_line() -> String {
 fn usage() -> &'static str {
     // The launchd/systemd manager verbs (setup/kill/restart/update/status/
     // logs/run/purge) stay in the bash wrapper; this binary owns the rest.
-    "usage: bough [tui|resume|start|restart|exec|acp|hooks|config|mcp|sync-mcp|tags|notes|patterns]
+    "usage: bough [tui|resume|start|restart|exec|acp|hooks|config|mcp|sync-mcp|mind|tags|notes|patterns]
   (no args) open the terminal UI (bough [-w DIR] [-r] [-s ID], -h for flags)
   resume   reopen a conversation in the TUI: bough resume [ID] (no ID: the last one)
   --version print the version and exit (-V)
@@ -200,6 +201,7 @@ fn usage() -> &'static str {
   config   every hook, skill and extension — and the switch on each
   mcp      inspect and repair the MCP registry
   sync-mcp adopt Claude Code's MCP servers
+  mind     a session that keeps thinking between messages (new|list|start|stop|status|steps)
   tags     what the command memory knows
   notes    what it MEANT — prose keyed on the same tags
   patterns compress a log into its distinct statements"
@@ -378,6 +380,12 @@ fn main() -> ExitCode {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             let deps = sync_mcp::SyncDeps::default();
             let code = rt.block_on(sync_mcp::run_sync_mcp(&args[1..], &deps));
+            ExitCode::from(code as u8)
+        }
+        Some("mind") => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            let deps = mind::real_deps();
+            let code = rt.block_on(mind::run_mind(&args[1..], &deps));
             ExitCode::from(code as u8)
         }
         Some("notes") => {

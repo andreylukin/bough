@@ -152,6 +152,7 @@ fn kind_str(kind: SessionKind) -> &'static str {
         SessionKind::WorkflowAgent => "workflow_agent",
         SessionKind::ScheduleRun => "schedule_run",
         SessionKind::Shell => "shell",
+        SessionKind::Mind => "mind",
     }
 }
 

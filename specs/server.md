@@ -388,6 +388,11 @@ cacheWriteTokens, costUsd}`.
 | `PATCH /schedules/:id` | all optional; `workspace: null` clears | 200 Schedule. |
 | `DELETE /schedules/:id` | — | `{ok: true, removed: id}`. |
 
+### Mind (`bough-server/src/mind.rs` — routes only; specs/mind.md is the module contract)
+| `GET /sessions/:id/mind` | — | `{enabled, persona?, idleStreak, failStreak, nextWakeAt?, pending, stepCount}`; 400 on a non-mind kind, 404 unknown id. |
+| `POST /sessions/:id/mind` | `{enabled?, persona?}` | 200 status; enable stamps a due wake and zeroes the streaks. |
+| `GET /sessions/:id/mind/steps` | `?n=` (default 50, cap 500) | bare `[MindStep]`, oldest first. |
+
 ### Artifacts & comments
 | `GET /sessions/:id/artifacts` | — | `{artifacts: [...]}` — filesystem-walk, newest first; deliberately no session-row check (artifacts outlive rows). |
 | `GET /artifacts/:id/:path*` | — | the file. HTML (incl. sniffed extensionless) gets the comment widget injected; `cache-control: no-cache`; traversal → 403 text "forbidden"; missing → 404 (HTML page for browsers by `Accept`, JSON otherwise); a directory is a 404, never a listing. Percent-decoding per segment. |
