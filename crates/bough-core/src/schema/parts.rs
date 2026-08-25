@@ -49,6 +49,10 @@ pub enum SessionKind {
     /// The conversation a `!` command runs in when none is open. Not collapsed.
     /// One per workspace, reused.
     Shell,
+    /// A persistent mind (specs/mind.md): a root the wake driver keeps
+    /// thinking between external interactions. Always listed, never collapsed.
+    /// The one kind whose turns may end without user-visible text.
+    Mind,
 }
 
 /// The kinds that collapse under their `originId` and are reached by drill-in.
@@ -242,6 +246,74 @@ pub struct Session {
 pub struct Milestone {
     pub ts: i64,
     pub text: String,
+}
+
+/// The step types a mind's trajectory is made of (specs/mind.md §2).
+/// `Message` is reserved for the driver's mirror — `step()` rejects it.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum MindStepType {
+    Thought,
+    Observation,
+    Idle,
+    Goal,
+    Learning,
+    Message,
+}
+
+impl MindStepType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MindStepType::Thought => "thought",
+            MindStepType::Observation => "observation",
+            MindStepType::Idle => "idle",
+            MindStepType::Goal => "goal",
+            MindStepType::Learning => "learning",
+            MindStepType::Message => "message",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<MindStepType> {
+        Some(match s {
+            "thought" => MindStepType::Thought,
+            "observation" => MindStepType::Observation,
+            "idle" => MindStepType::Idle,
+            "goal" => MindStepType::Goal,
+            "learning" => MindStepType::Learning,
+            "message" => MindStepType::Message,
+            _ => return None,
+        })
+    }
+}
+
+/// One appended line of a mind's trajectory. `id` is the sqlite rowid, which
+/// is what makes rollup spans integer ranges (specs/mind.md §7).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MindStep {
+    pub id: i64,
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    pub ts: i64,
+    pub r#type: MindStepType,
+    /// Who wrote it: `self` (the model, via `step()`), `user`, `system`.
+    pub source: String,
+    pub content: String,
+}
+
+/// One minted rollup: tier 1 summarizes raw steps, tier k the spans of F
+/// tier-(k−1) rollups. Forward-only; a span is never re-minted.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MindRollup {
+    pub id: i64,
+    pub session_id: String,
+    pub tier: i64,
+    pub first_step_id: i64,
+    pub last_step_id: i64,
+    pub summary: String,
+    pub created_at: i64,
 }
 
 // ---- turns -----------------------------------------------------------------

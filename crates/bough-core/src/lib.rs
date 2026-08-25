@@ -35,6 +35,7 @@ pub mod hostfn;
 pub mod llm;
 pub mod logs;
 pub mod mcp;
+pub mod mind;
 pub mod notes;
 pub mod paths;
 pub mod plugins;

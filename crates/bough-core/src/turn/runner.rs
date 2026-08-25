@@ -1188,6 +1188,9 @@ struct PreparedTurn {
     now: Clock,
     max_tokens: i64,
     delegated: bool,
+    /// `kind: mind` — the report nudge and forced text round are skipped
+    /// (specs/mind.md §3). Never true for any other kind.
+    may_end_mute: bool,
     model: String,
     effort: Option<Effort>,
     turn: crate::schema::parts::Turn,
@@ -1253,6 +1256,10 @@ fn prepare_turn(
         0
     };
     let delegated = depth == 1;
+    // The one kind whose turns may end without user-visible text: a mind
+    // wakeup is addressed to nobody (specs/mind.md §3). Every other kind
+    // keeps the full invariant.
+    let may_end_mute = session.as_ref().map(|s| s.kind) == Some(SessionKind::Mind);
 
     let mut turn_ctx = TurnCtx {
         app: ctx.clone(),
@@ -1421,6 +1428,12 @@ fn prepare_turn(
     if let Some(extra) = &deps.notes {
         notes.extend(extra.iter().cloned());
     }
+    if may_end_mute {
+        // Persona, life summary, recent stream — volatile by nature (they
+        // change every wakeup), so they belong here and never in the stable
+        // prefix (specs/mind.md §4).
+        notes.extend(crate::mind::prompt_notes(&db, &session_id));
+    }
     // The skills this turn's message named. Resolved HERE because this is
     // where the workspace is known and where the prompt is built — and until
     // this call existed, `PromptInput.skills` was hardcoded empty, so a `/name`
@@ -1506,8 +1519,17 @@ fn prepare_turn(
     // Built once: a turn's history does not change under it, and rebuilding
     // per round would re-read every attachment from disk every round.
     let thread = with_db(&db, |d| d.thread_for(&session_id))?;
+    // A mind's context is a projection, not the whole life (specs/mind.md §4):
+    // replay only the recent window, cut at a user/system boundary. The rows
+    // stay in the database untouched; older context reaches the model through
+    // the life-summary notes above.
+    let visible: &[Message] = if may_end_mute {
+        crate::mind::window_thread(&thread, crate::mind::MIND_REPLAY_WINDOW)
+    } else {
+        &thread
+    };
     let messages: Vec<LlmMessage> = build_thread(
-        &thread,
+        visible,
         &ThreadOptions {
             exclude: Some(&message_id),
             // Reasoning replays only to the model that signed it (replay.rs).
@@ -1527,6 +1549,7 @@ fn prepare_turn(
         now,
         max_tokens,
         delegated,
+        may_end_mute,
         model,
         effort,
         turn,
@@ -1554,6 +1577,7 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
         now,
         max_tokens,
         delegated,
+        may_end_mute,
         model,
         effort,
         turn,
@@ -1844,7 +1868,7 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
                     // answers an inline nudge with text far more reliably than
                     // a standalone one, which tends to come back as empty
                     // thinking plus another stop.
-                    if stop_requested && !said_something(&parts) {
+                    if stop_requested && !may_end_mute && !said_something(&parts) {
                         if report_nudges < 1 {
                             report_nudges += 1;
                             tool_results.push(LlmContentBlock::Text {
@@ -1877,7 +1901,7 @@ async fn drive(p: PreparedTurn) -> Result<TurnOutcome, BoughError> {
                 }
 
                 if stop_requested {
-                    if said_something(&parts) {
+                    if may_end_mute || said_something(&parts) {
                         return Ok(());
                     }
                     if report_nudges < 1 {
@@ -3141,6 +3165,50 @@ mod tests {
                 text: "I printed 1.".into()
             })
         );
+    }
+
+    #[tokio::test]
+    async fn a_mind_turn_may_end_mute_no_nudge_no_forced_round() {
+        // The same shape that provokes the report nudge above: one program,
+        // stop in the same response, not a word of text. For `kind: mind`
+        // that is a complete wakeup (specs/mind.md §3) — one call, done.
+        let llm = scripted_llm(vec![ScriptedRound {
+            content: vec![run_steps("c1", "await step('idle','idle')"), stop("stop-1")],
+            ..Default::default()
+        }]);
+        let mut o = opts(llm.clone());
+        o.kind = SessionKind::Mind;
+        o.program = Some(Arc::new(|_| async { logs_result(&["ok"]) }.boxed()));
+        let f = fixture(o);
+        user_message(&f.db, &f.session.id, "[mind wake] wake", 2_000);
+
+        let started = begin_turn(&f.ctx, &f.session.id, f.deps.clone()).unwrap();
+        let outcome = finish(started).await;
+
+        assert_eq!(outcome.status, TurnOutcomeStatus::Done);
+        assert_eq!(
+            llm.calls().len(),
+            1,
+            "a mute mind wakeup must end on its own stop — no report nudge, no forced round"
+        );
+        assert!(!llm.calls()[0].tool_choice_none);
+    }
+
+    #[tokio::test]
+    async fn a_mind_turn_with_stop_and_no_tools_ends_immediately() {
+        // Pure idle: no program at all, just stop. Still one call.
+        let llm = scripted_llm(vec![ScriptedRound {
+            content: vec![stop("stop-1")],
+            ..Default::default()
+        }]);
+        let mut o = opts(llm.clone());
+        o.kind = SessionKind::Mind;
+        let f = fixture(o);
+        user_message(&f.db, &f.session.id, "[mind wake] wake", 2_000);
+        let started = begin_turn(&f.ctx, &f.session.id, f.deps.clone()).unwrap();
+        let outcome = finish(started).await;
+        assert_eq!(outcome.status, TurnOutcomeStatus::Done);
+        assert_eq!(llm.calls().len(), 1);
     }
 
     #[tokio::test]

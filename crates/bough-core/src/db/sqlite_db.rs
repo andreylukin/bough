@@ -30,8 +30,8 @@ use super::migrate::migrate;
 use crate::errors::BoughError;
 use crate::paths::db_path;
 use crate::schema::parts::{
-    Message, Milestone, Part, Schedule, Session, SessionKind, Turn, TurnStatus, Usage,
-    WorkflowAgent, WorkflowPhase, WorkflowRun,
+    Message, Milestone, MindRollup, MindStep, MindStepType, Part, Schedule, Session, SessionKind,
+    Turn, TurnStatus, Usage, WorkflowAgent, WorkflowPhase, WorkflowRun,
 };
 use crate::types::{
     system_clock, Clock, CommandRecord, CommandTagOpts, CommandTagRow, Db, NoteAuthor, NoteLogRow,
@@ -215,6 +215,36 @@ fn to_workflow(row: &Row) -> rusqlite::Result<WorkflowRun> {
         resume_of: row.get("resume_of")?,
         created_at: row.get("created_at")?,
         finished_at: row.get("finished_at")?,
+    })
+}
+
+fn to_mind_step(row: &Row) -> rusqlite::Result<MindStep> {
+    let r#type: String = row.get("type")?;
+    Ok(MindStep {
+        id: row.get("id")?,
+        session_id: row.get("session_id")?,
+        turn_id: row.get("turn_id")?,
+        ts: row.get("ts")?,
+        r#type: MindStepType::parse(&r#type).ok_or_else(|| {
+            conv(BoughError::bad_request(format!(
+                "mind_steps.type holds an unknown value '{type}'",
+                r#type = r#type
+            )))
+        })?,
+        source: row.get("source")?,
+        content: row.get("content")?,
+    })
+}
+
+fn to_mind_rollup(row: &Row) -> rusqlite::Result<MindRollup> {
+    Ok(MindRollup {
+        id: row.get("id")?,
+        session_id: row.get("session_id")?,
+        tier: row.get("tier")?,
+        first_step_id: row.get("first_step_id")?,
+        last_step_id: row.get("last_step_id")?,
+        summary: row.get("summary")?,
+        created_at: row.get("created_at")?,
     })
 }
 
@@ -454,6 +484,125 @@ impl Db for SqliteDb {
                     text: row.get("text")?,
                 })
             },
+        )
+    }
+
+    fn add_mind_step(
+        &self,
+        session_id: &str,
+        turn_id: Option<&str>,
+        ts: i64,
+        r#type: MindStepType,
+        source: &str,
+        content: &str,
+    ) -> Result<MindStep, BoughError> {
+        self.run(
+            "INSERT INTO mind_steps (session_id, turn_id, ts, type, source, content)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![session_id, turn_id, ts, r#type.as_str(), source, content],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        self.one(
+            "SELECT * FROM mind_steps WHERE id = ?",
+            params![id],
+            to_mind_step,
+        )?
+        .ok_or_else(|| BoughError::bad_request("addMindStep read-back found no row"))
+    }
+
+    fn mind_steps_tail(&self, session_id: &str, n: i64) -> Result<Vec<MindStep>, BoughError> {
+        let mut rows = self.all(
+            "SELECT * FROM mind_steps WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+            params![session_id, n],
+            to_mind_step,
+        )?;
+        rows.reverse();
+        Ok(rows)
+    }
+
+    fn mind_steps_for_turn(&self, turn_id: &str) -> Result<Vec<MindStep>, BoughError> {
+        self.all(
+            "SELECT * FROM mind_steps WHERE turn_id = ? ORDER BY id",
+            params![turn_id],
+            to_mind_step,
+        )
+    }
+
+    fn mind_steps_after(
+        &self,
+        session_id: &str,
+        after_id: i64,
+        limit: i64,
+    ) -> Result<Vec<MindStep>, BoughError> {
+        self.all(
+            "SELECT * FROM mind_steps WHERE session_id = ? AND id > ? ORDER BY id LIMIT ?",
+            params![session_id, after_id, limit],
+            to_mind_step,
+        )
+    }
+
+    fn add_mind_rollup(
+        &self,
+        session_id: &str,
+        tier: i64,
+        first_step_id: i64,
+        last_step_id: i64,
+        summary: &str,
+        created_at: i64,
+    ) -> Result<MindRollup, BoughError> {
+        self.run(
+            "INSERT INTO mind_rollups
+               (session_id, tier, first_step_id, last_step_id, summary, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![session_id, tier, first_step_id, last_step_id, summary, created_at],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        self.one(
+            "SELECT * FROM mind_rollups WHERE id = ?",
+            params![id],
+            to_mind_rollup,
+        )?
+        .ok_or_else(|| BoughError::bad_request("addMindRollup read-back found no row"))
+    }
+
+    fn mind_rollups(&self, session_id: &str) -> Result<Vec<MindRollup>, BoughError> {
+        self.all(
+            "SELECT * FROM mind_rollups WHERE session_id = ? ORDER BY tier DESC, first_step_id",
+            params![session_id],
+            to_mind_rollup,
+        )
+    }
+
+    fn mind_rollups_after(
+        &self,
+        session_id: &str,
+        tier: i64,
+        after_step_id: i64,
+    ) -> Result<Vec<MindRollup>, BoughError> {
+        self.all(
+            "SELECT * FROM mind_rollups
+             WHERE session_id = ? AND tier = ? AND first_step_id > ?
+             ORDER BY first_step_id",
+            params![session_id, tier, after_step_id],
+            to_mind_rollup,
+        )
+    }
+
+    fn mind_rollup_frontier(&self, session_id: &str, tier: i64) -> Result<i64, BoughError> {
+        self.one(
+            "SELECT COALESCE(MAX(last_step_id), 0) AS frontier FROM mind_rollups
+             WHERE session_id = ? AND tier = ?",
+            params![session_id, tier],
+            |row| row.get::<_, i64>("frontier"),
+        )
+        .map(|v| v.unwrap_or(0))
+    }
+
+    fn mind_sessions(&self) -> Result<Vec<Session>, BoughError> {
+        self.all(
+            "SELECT * FROM sessions WHERE kind = 'mind' ORDER BY created_at, rowid",
+            [],
+            to_session,
         )
     }
 

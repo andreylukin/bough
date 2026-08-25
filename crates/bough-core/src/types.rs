@@ -30,8 +30,8 @@ use crate::hostfn::files::{SnapshotStore, WriteLog};
 use crate::hostfn::jobs::JobRegistry;
 use crate::schema::events::{BoughEvent, EventInput};
 use crate::schema::parts::{
-    Message, Milestone, Part, Schedule, Session, Turn, TurnStatus, Usage, WorkflowAgent,
-    WorkflowAgentStatus,
+    Message, Milestone, MindRollup, MindStep, MindStepType, Part, Schedule, Session, Turn,
+    TurnStatus, Usage, WorkflowAgent, WorkflowAgentStatus,
     WorkflowPhase, WorkflowRun, WorkflowStatus,
 };
 use crate::turn::queue::TurnRegistry;
@@ -540,6 +540,52 @@ pub trait Db: Send {
     /// Stamps `updated_at` from the injected clock on EVERY call; `usage`
     /// REPLACES; missing id → silent no-op.
     fn update_turn(&self, id: &str, patch: TurnPatch) -> Result<(), BoughError>;
+
+    // the mind trajectory (specs/mind.md §2, §7) — append-only, rowid-spanned
+    /// Append one step; returns it with its assigned rowid.
+    fn add_mind_step(
+        &self,
+        session_id: &str,
+        turn_id: Option<&str>,
+        ts: i64,
+        r#type: MindStepType,
+        source: &str,
+        content: &str,
+    ) -> Result<MindStep, BoughError>;
+    /// The last `n` steps, oldest first (the recent stream).
+    fn mind_steps_tail(&self, session_id: &str, n: i64) -> Result<Vec<MindStep>, BoughError>;
+    /// Every step a wakeup's turn appended, oldest first (idle detection).
+    fn mind_steps_for_turn(&self, turn_id: &str) -> Result<Vec<MindStep>, BoughError>;
+    /// Up to `limit` steps with `id > after_id`, oldest first (rollup spans).
+    fn mind_steps_after(
+        &self,
+        session_id: &str,
+        after_id: i64,
+        limit: i64,
+    ) -> Result<Vec<MindStep>, BoughError>;
+    fn add_mind_rollup(
+        &self,
+        session_id: &str,
+        tier: i64,
+        first_step_id: i64,
+        last_step_id: i64,
+        summary: &str,
+        created_at: i64,
+    ) -> Result<MindRollup, BoughError>;
+    /// All rollups, coarsest tier first, then oldest first (the life summary).
+    fn mind_rollups(&self, session_id: &str) -> Result<Vec<MindRollup>, BoughError>;
+    /// Tier `tier` rollups whose span starts past `after_step_id`, oldest
+    /// first (the cascade's uncovered tail).
+    fn mind_rollups_after(
+        &self,
+        session_id: &str,
+        tier: i64,
+        after_step_id: i64,
+    ) -> Result<Vec<MindRollup>, BoughError>;
+    /// Per-tier coverage frontier: MAX(last_step_id), 0 when unminted.
+    fn mind_rollup_frontier(&self, session_id: &str, tier: i64) -> Result<i64, BoughError>;
+    /// Every session of kind `mind`, oldest first (the wake driver's sweep).
+    fn mind_sessions(&self) -> Result<Vec<Session>, BoughError>;
 
     // durable KV, scoped to the lineage root
     fn get_state(&self, root_id: &str, key: &str) -> Result<Option<String>, BoughError>;

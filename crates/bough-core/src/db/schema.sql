@@ -492,3 +492,35 @@ CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
   note_id UNINDEXED,
   tokenize = 'unicode61 remove_diacritics 2'
 );
+
+-- The mind trajectory (specs/mind.md §2): the typed, append-only narrative
+-- layer over a mind session. `id` is the rowid on purpose — rollup coverage
+-- is tracked as integer spans of it. Append-only: no update, no delete.
+CREATE TABLE IF NOT EXISTS mind_steps (
+  id         INTEGER PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  turn_id    TEXT,
+  ts         INTEGER NOT NULL,
+  -- thought | observation | idle | goal | learning | message.
+  type       TEXT NOT NULL,
+  -- self | user | system — the process that wrote the step.
+  source     TEXT NOT NULL,
+  content    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mind_steps_session ON mind_steps(session_id, id);
+CREATE INDEX IF NOT EXISTS mind_steps_turn ON mind_steps(turn_id);
+
+-- Tiered life rollups (specs/mind.md §7). Forward-only: a span is minted once
+-- and never re-minted; per-tier coverage is MAX(last_step_id), so minting is
+-- idempotent across restarts. The summaries are an index, not testimony — the
+-- raw steps above remain the source of truth.
+CREATE TABLE IF NOT EXISTS mind_rollups (
+  id            INTEGER PRIMARY KEY,
+  session_id    TEXT NOT NULL REFERENCES sessions(id),
+  tier          INTEGER NOT NULL,
+  first_step_id INTEGER NOT NULL,
+  last_step_id  INTEGER NOT NULL,
+  summary       TEXT NOT NULL,
+  created_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mind_rollups_session ON mind_rollups(session_id, tier, last_step_id);

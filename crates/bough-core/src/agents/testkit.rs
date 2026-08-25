@@ -81,21 +81,26 @@ pub fn seed_session(db: &SharedDb, opts: SeedOpts) -> Session {
 }
 
 /// A `TurnCtx` slice for the caps: db + ids + depth, nothing else live.
+/// A bare AppCtx over `db`: real bus, no llm, no cheap tier, fresh registry.
+pub fn app_ctx(db: &SharedDb) -> AppCtx {
+    AppCtx {
+        db: db.clone(),
+        bus: Arc::new(Bus::new(system_clock())),
+        llm: None,
+        model: None,
+        effort: None,
+        now: system_clock(),
+        cheap: None,
+        host: Arc::new(HostState::new()),
+        starter: Arc::new(RwLock::new(None)),
+        turn_registry: Arc::new(TurnRegistry::new()),
+        model_defaults_path: None,
+    }
+}
+
 pub fn turn_ctx_for(db: &SharedDb, session_id: &str, turn_id: &str, depth: u8) -> TurnCtx {
     TurnCtx {
-        app: AppCtx {
-            db: db.clone(),
-            bus: Arc::new(Bus::new(system_clock())),
-            llm: None,
-            model: None,
-            effort: None,
-            now: system_clock(),
-            cheap: None,
-            host: Arc::new(HostState::new()),
-            starter: Arc::new(RwLock::new(None)),
-            turn_registry: Arc::new(TurnRegistry::new()),
-            model_defaults_path: None,
-        },
+        app: app_ctx(db),
         session_id: session_id.to_string(),
         turn_id: turn_id.to_string(),
         message_id: "message-1".to_string(),
