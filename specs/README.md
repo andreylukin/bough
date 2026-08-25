@@ -1,6 +1,6 @@
 # specs — per-subsystem behavioral contracts
 
-Sixteen files pinning the invariants you cannot rediscover by reading the code: worker
+Seventeen files pinning the invariants you cannot rediscover by reading the code: worker
 wind-down ordering, same-millisecond message ordering, replay determinism, the exact SSE
 framing, and the rest. Read the relevant one before changing anything in `turn/`,
 `harness/` or `workflow/`.
@@ -33,6 +33,7 @@ wins. Anything under `docs/history/` is finished history and describes nothing c
 | [llm.md](llm.md) | The provider boundary — routing, retry, pricing, prefix caching |
 | [history.md](history.md) | Command-tag memory and the history tree operations |
 | [agents.md](agents.md) | Subagents-as-branches — caps, launch, notes |
+| [mind.md](mind.md) | Persistent agency — the wake driver, steps, backoff, rollups. Written for the Rust tree, not a port spec |
 | [workflow.md](workflow.md) | The workflow engine — journal, replay, control |
 | [mcp.md](mcp.md) | MCP config, clients, grants, OAuth |
 | [cli.md](cli.md) | The headless subcommands |

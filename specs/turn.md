@@ -30,6 +30,10 @@ sibling `*.test.ts` files; edge cases mined from them are called out inline.
 >    counts for nothing: `saidSomething()` asks only about text *after the last
 >    tool call*, and a turn about to end mute is asked once for a closing report,
 >    then forced into a text-only round (`toolChoice: "none"`).
+>    **Scoped by kind:** a `mind` session's wakeups are addressed to nobody, so
+>    for `kind: mind` the report nudge and the forced text round are skipped and
+>    a mute ending is a legal ending (specs/mind.md §3). Every other kind keeps
+>    the full guarantee; invariants 1 and 3 are unscoped and hold everywhere.
 > 3. **The pending message is closed on every path.** Success, failure, interrupt,
 >    a crash in the loop — `pending` goes false and `message.finished` fires.
 
