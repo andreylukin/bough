@@ -13,8 +13,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The closed, ordered 19-name list, exactly as on the wire.
-pub const HOST_FN_NAMES: [&str; 21] = [
+/// The closed, ordered name list, exactly as on the wire.
+pub const HOST_FN_NAMES: [&str; 22] = [
     // shell
     "bash",
     "sh",
@@ -40,6 +40,8 @@ pub const HOST_FN_NAMES: [&str; 21] = [
     "artifact",
     "mcp",
     "milestone",
+    // the mind trajectory (specs/mind.md) — granted to kind: mind only
+    "step",
     // the web
     "search",
 ];
@@ -69,6 +71,8 @@ pub enum HostFnName {
     Mcp,
     /// One line in the session's log when an overarching action lands.
     Milestone,
+    /// Append one typed step to a mind's trajectory (specs/mind.md §2).
+    Step,
     Search,
 }
 
@@ -96,6 +100,7 @@ impl HostFnName {
             HostFnName::Search => "search",
             HostFnName::Mcp => "mcp",
             HostFnName::Milestone => "milestone",
+            HostFnName::Step => "step",
         }
     }
 
@@ -122,6 +127,7 @@ impl HostFnName {
             "search" => HostFnName::Search,
             "mcp" => HostFnName::Mcp,
             "milestone" => HostFnName::Milestone,
+            "step" => HostFnName::Step,
             _ => return None,
         })
     }
@@ -343,8 +349,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn host_fn_names_21_and_round_trip() {
-        assert_eq!(HOST_FN_NAMES.len(), 21);
+    fn host_fn_names_22_and_round_trip() {
+        assert_eq!(HOST_FN_NAMES.len(), 22);
         for n in HOST_FN_NAMES {
             assert_eq!(HostFnName::parse(n).unwrap().as_str(), n);
         }
@@ -356,7 +362,7 @@ mod tests {
     #[test]
     fn program_params_adds_console_and_require() {
         let p = program_params();
-        assert_eq!(p.len(), 23);
+        assert_eq!(p.len(), 24);
         assert!(p.contains(&"console") && p.contains(&"require"));
     }
 

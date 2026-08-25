@@ -189,6 +189,7 @@ pub enum SectionId {
     Ask,
     State,
     Milestone,
+    Mind,
     Schedule,
     UsingSkills,
     Search,
@@ -222,6 +223,7 @@ impl SectionId {
             SectionId::Ask => "ask",
             SectionId::State => "state",
             SectionId::Milestone => "milestone",
+            SectionId::Mind => "mind",
             SectionId::Schedule => "schedule",
             SectionId::UsingSkills => "using-skills",
             SectionId::Artifact => "artifact",
@@ -306,7 +308,7 @@ fn always(_: &Facts) -> bool {
 /// is legal, and `delegation-nested` on `agent` because a depth-2 subagent
 /// (still kind `subagent`) is bridged nothing and must therefore be told
 /// nothing.
-static SECTIONS: [SectionSpec; 20] = [
+static SECTIONS: [SectionSpec; 21] = [
     SectionSpec {
         id: SectionId::Identity,
         file: "identity.md",
@@ -361,6 +363,15 @@ static SECTIONS: [SectionSpec; 20] = [
         file: "milestone.md",
         raw: include_str!("sections/milestone.md"),
         when: |f| f.has(HostFnName::Milestone),
+    },
+    // Kind AND grant, like `workflow`: `granted` carries `step` for every
+    // turn the server runs, but only a mind session is bridged it — the
+    // section renders exactly where the call works (specs/mind.md §4).
+    SectionSpec {
+        id: SectionId::Mind,
+        file: "mind.md",
+        raw: include_str!("sections/mind.md"),
+        when: |f| f.kind == SessionKind::Mind && f.has(HostFnName::Step),
     },
     SectionSpec {
         id: SectionId::Schedule,
@@ -976,6 +987,28 @@ mod tests {
                 "no section may document {func:?} when it is not granted (found {phrase:?})"
             );
         }
+    }
+
+    #[test]
+    fn the_mind_section_needs_both_the_kind_and_the_grant() {
+        // Kind AND grant, like workflow: `step` rides `granted` for every
+        // turn, but only kind: mind renders the section (specs/mind.md §4).
+        let mind = assemble_prompt(&PromptInput::new(SessionKind::Mind, all()));
+        assert!(has(&mind, SectionId::Mind));
+        assert!(mind.system.contains("await step(\"idle\", \"idle\")"));
+
+        let root = assemble_prompt(&PromptInput::new(SessionKind::Root, all()));
+        assert!(!has(&root, SectionId::Mind), "a root must never see the mind loop");
+        assert!(!root.system.contains("mind wake"));
+
+        let ungrant = assemble_prompt(&PromptInput::new(
+            SessionKind::Mind,
+            without(&[HostFnName::Step]),
+        ));
+        assert!(
+            !has(&ungrant, SectionId::Mind),
+            "an unbridged step() must not be documented"
+        );
     }
 
     #[test]

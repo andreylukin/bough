@@ -844,6 +844,7 @@ fn merge_host_fns(base: &mut HostFns, over: HostFns) {
         artifact,
         mcp,
         milestone,
+        step,
     );
 }
 
@@ -1932,6 +1933,7 @@ mod tests {
             artifact: Some(f.clone()),
             mcp: Some(f.clone()),
             milestone: Some(f.clone()),
+            step: Some(f.clone()),
         };
         let mut base = HostFns::default();
         merge_host_fns(&mut base, over);

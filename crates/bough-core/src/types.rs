@@ -1061,6 +1061,9 @@ pub struct HostFns {
     /// `milestone(text)` — one line in the session log when an overarching
     /// action lands. Returns "ok".
     pub milestone: Option<HostFn>,
+    /// `step(type, content)` — append one typed step to a mind's trajectory.
+    /// Bridged only for `kind: mind` sessions. Returns "ok".
+    pub step: Option<HostFn>,
 }
 
 impl HostFns {
@@ -1091,6 +1094,7 @@ impl HostFns {
             HostFnName::Mcp => self.mcp.as_ref(),
             HostFnName::Search => self.search.as_ref(),
             HostFnName::Milestone => self.milestone.as_ref(),
+            HostFnName::Step => self.step.as_ref(),
         }
     }
 }
@@ -1174,7 +1178,7 @@ mod tests {
         // The Rust replacement for the TS compile-time drift proof: every wire
         // name parses to a HostFnName, and `get` matches it exhaustively.
         let fns = HostFns::default();
-        assert_eq!(HOST_FN_NAMES.len(), 21);
+        assert_eq!(HOST_FN_NAMES.len(), 22);
         for name in HOST_FN_NAMES {
             let parsed = HostFnName::parse(name)
                 .unwrap_or_else(|| panic!("protocol name {name} not in HostFnName"));

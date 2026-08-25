@@ -12,6 +12,7 @@ pub mod files;
 pub mod jobs;
 pub mod mcp;
 pub mod milestone;
+pub mod step;
 pub mod patch;
 pub mod schedule;
 pub mod search;

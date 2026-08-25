@@ -83,6 +83,10 @@ pub enum EventType {
     /// summary can count it without polling.
     #[serde(rename = "session.milestone")]
     SessionMilestone,
+    /// A step landed on a mind's trajectory — `step()`, or the driver's
+    /// mirror. Announced so a viewer can lane the stream live.
+    #[serde(rename = "mind.step")]
+    MindStep,
 }
 
 impl EventType {
@@ -106,6 +110,7 @@ impl EventType {
             EventType::WorkflowLog => "workflow.log",
             EventType::HookFired => "hook.fired",
             EventType::SessionMilestone => "session.milestone",
+            EventType::MindStep => "mind.step",
         }
     }
 }
