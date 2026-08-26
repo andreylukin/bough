@@ -692,6 +692,25 @@ impl Kernel {
         self.fiber_of(id).and_then(|f| f.body().context())
     }
 
+    /// Ask the process to exit with `code` (P2-D23).
+    ///
+    /// Domain-blind, so §0.1 holds: a SURFACE row — `bough exec` in Phase 2, the TUI's quit key
+    /// in Phase 3 — needs a way to end the process, and the launcher still owns the exit path and
+    /// the teardown. Calling it twice keeps the FIRST code.
+    ///
+    /// WP-8.
+    pub fn request_exit(&self, _code: u8) {
+        todo!("WP-8: latch the first code and wake `exited()`")
+    }
+
+    /// Resolves with the requested exit code once some row has called [`Kernel::request_exit`].
+    /// `boot::boot` selects over this and `ctrl_c`, and tears down before exiting on either.
+    ///
+    /// WP-8.
+    pub fn exited(&self) -> impl std::future::Future<Output = u8> + Send + 'static {
+        async { todo!("WP-8: await the exit latch") }
+    }
+
     /// Unload everything, LIFO, awaited.
     pub async fn shutdown(&self) {
         let mut uids: Vec<FiberUid> = self.rt.all().iter().map(|f| f.uid()).collect();

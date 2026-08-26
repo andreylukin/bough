@@ -29,7 +29,17 @@ impl Class {
 }
 
 /// §3: `cites` is a JSON array of `{ref, url}`. Exactly that, no more.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct Cite {
     /// The cited ref, in a scheme: `step:<id>`, `rollup:<id>`, `gh:o/r#12`, …
     #[serde(rename = "ref")]

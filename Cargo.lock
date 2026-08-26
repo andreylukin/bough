@@ -114,6 +114,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "backon"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cffb0e931875b666fc4fcb20fee52e9bbd1ef836fd9e9e04ec21555f9f85f7ef"
+dependencies = [
+ "fastrand",
+ "gloo-timers",
+ "tokio",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -240,6 +251,133 @@ dependencies = [
 ]
 
 [[package]]
+name = "bough-plugin-about-line"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "bough-plugin-projection",
+ "chrono",
+ "inventory",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "bough-plugin-actions"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-ledger",
+ "chrono",
+ "inventory",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
+name = "bough-plugin-agent-loop"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-llm",
+ "bough-plugin-projection",
+ "bough-plugin-tools",
+ "bough-util",
+ "chrono",
+ "futures",
+ "inventory",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "bough-plugin-agent-loop-scripted"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agent-loop",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "bough-plugin-llm",
+ "bough-plugin-projection",
+ "bough-plugin-tools",
+ "chrono",
+ "futures",
+ "inventory",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+]
+
+[[package]]
+name = "bough-plugin-agents"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-llm",
+ "bough-util",
+ "chrono",
+ "futures",
+ "inventory",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "bough-plugin-exec-headless"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "chrono",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "bough-plugin-hello"
 version = "0.1.0"
 dependencies = [
@@ -320,6 +458,96 @@ dependencies = [
 ]
 
 [[package]]
+name = "bough-plugin-llm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-llm",
+ "bough-plugin-ledger",
+ "bough-util",
+ "futures",
+ "inventory",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "bough-plugin-llm-anthropic"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-llm",
+ "bough-plugin-llm",
+ "futures",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "bough-plugin-llm-replay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-llm",
+ "futures",
+ "inventory",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "bough-plugin-llm-retry"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "backon",
+ "bough-kernel",
+ "bough-plugin-llm",
+ "inventory",
+ "schemars",
+ "serde",
+ "tokio",
+]
+
+[[package]]
+name = "bough-plugin-model-policy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-ledger",
+ "bough-plugin-llm",
+ "inventory",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "tokio",
+]
+
+[[package]]
 name = "bough-plugin-projection"
 version = "0.1.0"
 dependencies = [
@@ -377,6 +605,125 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "bough-plugin-tool-actions"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-actions",
+ "bough-plugin-tools",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "bough-plugin-tool-workers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-tools",
+ "bough-plugin-workers",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "bough-plugin-tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "bough-plugin-llm",
+ "bough-util",
+ "chrono",
+ "futures",
+ "inventory",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "bough-plugin-tools-baseline"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-ledger",
+ "bough-plugin-tools",
+ "chrono",
+ "inventory",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "bough-plugin-worker-spawn"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "bough-plugin-tools",
+ "bough-plugin-workers",
+ "chrono",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "bough-plugin-workers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "bough-plugin-llm",
+ "bough-plugin-tools",
+ "bough-util",
+ "chrono",
+ "futures",
+ "inventory",
+ "jsonschema",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -872,6 +1219,18 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi 6.0.0",
+]
+
+[[package]]
+name = "gloo-timers"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbb143cf96099802033e0d4f4963b19fd2e0b728bcf076cd9cf7f6634f092994"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "js-sys",
+ "wasm-bindgen",
 ]
 
 [[package]]

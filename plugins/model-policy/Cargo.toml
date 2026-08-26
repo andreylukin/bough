@@ -1,0 +1,20 @@
+[package]
+name = "bough-plugin-model-policy"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-plugin-llm = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+schemars = { workspace = true }
+inventory = { workspace = true }
+parking_lot = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

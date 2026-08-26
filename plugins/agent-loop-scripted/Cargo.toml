@@ -1,0 +1,26 @@
+[package]
+name = "bough-plugin-agent-loop-scripted"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-projection = { workspace = true }
+bough-plugin-llm = { workspace = true }
+bough-plugin-agents = { workspace = true }
+bough-plugin-tools = { workspace = true }
+bough-plugin-agent-loop = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+schemars = { workspace = true }
+inventory = { workspace = true }
+parking_lot = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }

@@ -63,3 +63,20 @@ bough-plugin-ledger-memory = { path = "plugins/ledger-memory" }               # 
 bough-plugin-projection = { path = "plugins/projection" }                     # §5 projection Service Definition
 bough-plugin-projection-assembler = { path = "plugins/projection-assembler" } # §5 projection Provider
 bough-plugin-projection-probe = { path = "plugins/projection-probe" }         # §17 Phase 1 fixture
+bough-plugin-llm = { path = "plugins/llm" }                                   # §12 llm Service Definition
+bough-plugin-llm-anthropic = { path = "plugins/llm-anthropic" }               # §12 production llm Provider
+bough-plugin-llm-replay = { path = "plugins/llm-replay" }                     # §12 recorded-transcript Provider
+bough-plugin-llm-retry = { path = "plugins/llm-retry" }                       # §12 agent/request-error Consumer
+bough-plugin-agents = { path = "plugins/agents" }                             # §2 agents Service Definition
+bough-plugin-agent-loop = { path = "plugins/agent-loop" }                     # §5 the wake flow Provider
+bough-plugin-agent-loop-scripted = { path = "plugins/agent-loop-scripted" }   # §5 transcript loop Provider (swap gate)
+bough-plugin-tools = { path = "plugins/tools" }                               # §9 tools Service Definition
+bough-plugin-tools-baseline = { path = "plugins/tools-baseline" }             # §9 the six baseline tools
+bough-plugin-workers = { path = "plugins/workers" }                           # §10 workers Service Definition
+bough-plugin-worker-spawn = { path = "plugins/worker-spawn" }                 # §10 spawn Provider
+bough-plugin-tool-workers = { path = "plugins/tool-workers" }                 # §10 tool-spawn_worker + tool-ask
+bough-plugin-actions = { path = "plugins/actions" }                           # §7 actions Service Definition
+bough-plugin-tool-actions = { path = "plugins/tool-actions" }                 # §7 the four primitives as tools
+bough-plugin-model-policy = { path = "plugins/model-policy" }                 # §12 sol/terra prepend listener
+bough-plugin-about-line = { path = "plugins/about-line" }                     # §2 the two-half about-line
+bough-plugin-exec-headless = { path = "plugins/exec-headless" }               # §17 Phase 2 `bough exec`
