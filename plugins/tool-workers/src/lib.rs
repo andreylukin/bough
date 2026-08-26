@@ -77,7 +77,24 @@ impl Tool for SpawnWorkerTool {
             kind: FailureClass::NotFound,
             message: format!("workers seam unavailable: {e}"),
         })?;
-        let spawner_id = bough_plugin_agents::AgentId::new(call.agent.as_str());
+        // §2: an opaque id is a BRAND, not a spelling. `AgentId` is a uuidv7 minted by
+        // `AgentsHandle`, so it is looked up from the live registry by name; stuffing the NAME
+        // into the brand made the type look authoritative while carrying a value no registry
+        // lookup could ever match.
+        let agents = cx
+            .ctx
+            .get::<bough_plugin_agents::Agents>()
+            .map_err(|e| ToolFailure {
+                kind: FailureClass::NotFound,
+                message: format!("agents registry unavailable: {e}"),
+            })?;
+        let spawner_id = agents
+            .by_name(&call.agent)
+            .map(|a| a.id().clone())
+            .ok_or_else(|| ToolFailure {
+                kind: FailureClass::NotFound,
+                message: format!("no live agent named `{}` to spawn a worker for", call.agent),
+            })?;
         let req = StartWorker {
             kind: WorkerKind::Spawn,
             spawner: call.agent.clone(),
@@ -120,16 +137,23 @@ fn render(result: &bough_plugin_workers::WorkerResult) -> ToolOutcome {
         .unwrap_or_default();
     let content = match &result.outcome {
         WorkerOutcome::Done => {
-            let r = result.report.as_ref().expect("a done worker reported");
-            let mut s = r.summary.clone();
-            for claim in &r.claims {
-                s.push_str("\n- ");
-                s.push_str(&claim.text);
-                if !claim.is_externally_cited(&result.worker) {
-                    s.push_str("  (uncited: recorded as a thought)");
+            // A `WorkerProvider` is the seam's extension point, so `Done` with no report is a
+            // boundary case and not an internal invariant: it is REPORTED, never panicked on
+            // inside a model-facing tool call.
+            match result.report.as_ref() {
+                None => "the worker finished but filed no report".to_string(),
+                Some(r) => {
+                    let mut s = r.summary.clone();
+                    for claim in &r.claims {
+                        s.push_str("\n- ");
+                        s.push_str(&claim.text);
+                        if !claim.is_externally_cited(&result.worker) {
+                            s.push_str("  (uncited: recorded as a thought)");
+                        }
+                    }
+                    s
                 }
             }
-            s
         }
         WorkerOutcome::Asked { question, .. } => {
             format!("the worker stopped and asks: {question}")
@@ -214,8 +238,10 @@ impl Plugin for SpawnWorkerToolPlugin {
     const NAME: &'static str = "tool-spawn_worker";
     type Config = ToolWorkersConfig;
 
+    /// `agents` is required because the spawner's real `AgentId` is looked up from the live
+    /// registry rather than spelled from its name (§2's branded ids).
     fn inject() -> bough_kernel::Inject {
-        bough_kernel::Inject::required(["tools", "workers"])
+        bough_kernel::Inject::required(["tools", "workers", "agents"])
     }
 
     async fn apply(ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {

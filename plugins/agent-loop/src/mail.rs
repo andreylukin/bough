@@ -109,6 +109,11 @@ pub fn selector_for(kind: WakeKind, target: Target) -> ClaimSelector {
         target,
         only: None,
         classes,
+        // §5: "drain and tick wakes never answer him". On `next-wake` the class filter already
+        // says it, because his mail is wake-class; on `next-step` the class filter does not
+        // apply, so the exclusion has to be said outright — without it a drain wake claimed his
+        // steer and answered it on `terra`.
+        exclude_andrey: matches!(kind, WakeKind::Drain | WakeKind::Scheduled),
         limit: None,
     }
 }
@@ -124,8 +129,19 @@ pub fn only_the_trigger(mut sel: ClaimSelector, trigger: &MessageId) -> ClaimSel
 pub fn admits(kind: WakeKind, msg: &Message) -> bool {
     match kind {
         WakeKind::Drain => msg.class == MailClass::Ordinary && !msg.is_andrey(),
+        WakeKind::Scheduled => !msg.is_andrey(),
         _ => true,
     }
+}
+
+/// Whether the selector a wake of this kind claims with admits `msg`. The SAME predicate as
+/// [`admits`], read off the selector the loop actually uses, so the two cannot drift.
+pub fn selector_admits(kind: WakeKind, target: Target, msg: &Message) -> bool {
+    let sel = selector_for(kind, target);
+    sel.classes
+        .as_ref()
+        .is_none_or(|cs| cs.contains(&msg.class))
+        && !(sel.exclude_andrey && msg.is_andrey())
 }
 
 /// The union of consumed sets across `wake/end` steps, order independent (§5).

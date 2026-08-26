@@ -71,14 +71,17 @@ pub struct ToolsInner {
 }
 
 impl ToolsHandle {
-    /// An empty registry with the row's defaults.
-    pub fn new() -> ToolsHandle {
-        ToolsHandle::with_limits(8, 120_000)
-    }
-
     /// An empty registry with explicit limits. `ToolsPlugin::apply` builds the live one from
     /// `ToolsConfig`; tests build small ones.
+    ///
+    /// There is no `new()` and no `Default`: the deadline and the parallelism are
+    /// deployment-varying values and `ToolsConfig` is their one source (§0.2). A second
+    /// constructor carrying literals would be a second, invisible one.
+    ///
+    /// `max_parallel` is clamped to at least 1: zero is not "no limit", it is a batch of nothing,
+    /// and the dispatcher would spin on it forever.
     pub fn with_limits(max_parallel: usize, default_deadline_ms: u64) -> ToolsHandle {
+        let max_parallel = max_parallel.max(1);
         ToolsHandle(Arc::new(ToolsInner {
             tools: parking_lot::Mutex::new(Vec::new()),
             restrict: parking_lot::Mutex::new(Vec::new()),
@@ -239,18 +242,30 @@ impl ToolsHandle {
     /// `tools/result`. Concurrency-safe calls dispatch in parallel, everything else forms a
     /// barrier; only DISPATCH overlaps — the returned results are in the MODEL's call order.
     pub async fn execute(&self, ctx: &Context, calls: Vec<ToolCall>) -> Vec<ToolResult> {
-        exec::execute(self, ctx, calls).await
+        self.execute_under(ctx, calls, tokio_util::sync::CancellationToken::new())
+            .await
+    }
+
+    /// The same pipeline, under the CALLER's cancellation signal.
+    ///
+    /// §5 says an interrupt or a cancel stops the wake producing, and §9 says a `tools/execute`
+    /// wrapper replaces the cancellation signal — both of which need a root signal the caller
+    /// holds. Minting a fresh token per call, which is what [`ToolsHandle::execute`] does and all
+    /// this crate's tests want, meant that once a step entered tool execution neither Andrey's
+    /// preemption nor `cancel(User | Disposed)` could reach the running tool: the wake blocked
+    /// until the tool returned or hit its deadline.
+    pub async fn execute_under(
+        &self,
+        ctx: &Context,
+        calls: Vec<ToolCall>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Vec<ToolResult> {
+        exec::execute(self, ctx, calls, cancel).await
     }
 
     /// The approver, if a row mounted one. `None` in Phase 2, so `ask` degrades to deny.
     pub fn approval(&self) -> Option<ApprovalHandle> {
         self.0.approval.lock().clone()
-    }
-}
-
-impl Default for ToolsHandle {
-    fn default() -> Self {
-        ToolsHandle::new()
     }
 }
 
@@ -312,7 +327,9 @@ impl Plugin for ToolsPlugin {
         let fiber = ctx.fiber_uid();
         ctx.on::<bough_plugin_ledger::LedgerStep, _, _>(move |step| async move {
             let kind = step.kind.as_str();
-            if kind != "tool/call" && kind != "tool/result" {
+            // `wake/end` is observed too: it is the moment "no call is left unanswered" becomes
+            // checkable, and without it a dangling `tool/call` passes forever.
+            if kind != "tool/call" && kind != "tool/result" && kind != "wake/end" {
                 return;
             }
             let call = step

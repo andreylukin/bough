@@ -113,9 +113,8 @@ async fn a_retryable_failure_is_retried_without_next() {
     )
     .await;
     match out.recovery {
-        Recovery::Retry { after, request } => {
+        Recovery::Retry { after } => {
             assert!(after > Duration::ZERO, "a retry waits");
-            assert!(request.is_none(), "the SAME request is retried");
         }
         other => panic!("expected a retry, got {other:?}"),
     }

@@ -171,3 +171,50 @@ async fn repair_never_touches_rollups() {
     assert_eq!(after[0].body, sealed.body, "and none was rewritten");
     assert!(after[0].superseded_by.is_none());
 }
+
+/// §5's checkpoint-and-answer opens the answer wake BEFORE the interrupted wake closes, so a
+/// crash during a preemption leaves TWO wakes open. Both are repaired.
+#[tokio::test]
+async fn a_crash_during_a_preemption_closes_both_open_wakes() {
+    let f = Fixture::mounted().await;
+    let interrupted = orphaned(&f).await;
+    let answer = bough_plugin_ledger::WakeId::new("answer-wake");
+    for (kind, body) in [
+        ("wake/start", serde_json::json!({ "urgency": "immediate" })),
+        ("step/start", serde_json::json!({ "index": 0 })),
+    ] {
+        f.ledger
+            .0
+            .append(Append {
+                traj: traj(),
+                wake: answer.clone(),
+                kind: StepType::new(kind),
+                class: Class::Thought,
+                body,
+                cites: vec![],
+                at: now(),
+                id: None,
+            })
+            .await
+            .expect("the step lands");
+    }
+
+    repair::run(&f.ledger, now()).await.expect("repair runs");
+
+    let ends = f
+        .ledger
+        .0
+        .steps(&StepQuery {
+            trajs: vec![traj()],
+            kinds: vec![StepType::new("wake/end")],
+            ..Default::default()
+        })
+        .await
+        .expect("a read");
+    let closed: Vec<String> = ends.iter().map(|s| s.wake.to_string()).collect();
+    assert!(
+        closed.contains(&interrupted.to_string()) && closed.contains(&answer.to_string()),
+        "both open wakes close, not only the trailing one; closed = {closed:?}"
+    );
+    assert!(ends.iter().all(|s| s.body["reason"] == "interrupted"));
+}

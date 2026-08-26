@@ -1,7 +1,7 @@
 //! §0.2 runtime invariant for `bough-plugin-tools`:
 //!
-//! **Every `tool/result` has a matching `tool/call` in the SAME wake and the same step, and no
-//! call is answered twice.**
+//! **Every `tool/result` has a matching `tool/call` in the SAME wake and the same step, no call
+//! is answered twice, and no wake closes over a call that was never answered.**
 //!
 //! This is §0.2's own worked example. The check is a fold over the observed `ledger/step` stream,
 //! per fiber and bounded.
@@ -23,7 +23,7 @@ pub struct Obs {
     pub fiber: FiberUid,
     pub wake: WakeId,
     pub kind: StepType,
-    /// `tool/call` and `tool/result` both carry one.
+    /// `tool/call` and `tool/result` both carry one; `wake/end` carries the empty string.
     pub call: String,
     pub step_index: u32,
 }
@@ -71,6 +71,8 @@ pub fn evaluate(stream: &[Obs]) -> Result<(), String> {
     // (fiber, call id) -> the call's (wake, step_index)
     let mut calls: HashMap<(FiberUid, String), (WakeId, u32)> = HashMap::new();
     let mut answered: HashMap<(FiberUid, String), ()> = HashMap::new();
+    // (fiber, wake) -> the call ids issued in that wake that have no result yet.
+    let mut open: HashMap<(FiberUid, String), Vec<String>> = HashMap::new();
     for o in stream {
         let key = (o.fiber, o.call.clone());
         match o.kind.as_str() {
@@ -78,6 +80,9 @@ pub fn evaluate(stream: &[Obs]) -> Result<(), String> {
                 if calls.insert(key, (o.wake.clone(), o.step_index)).is_some() {
                     return Err(format!("tool call `{}` was issued twice", o.call));
                 }
+                open.entry((o.fiber, o.wake.to_string()))
+                    .or_default()
+                    .push(o.call.clone());
             }
             "tool/result" => {
                 let Some((wake, step_index)) = calls.get(&key) else {
@@ -94,6 +99,24 @@ pub fn evaluate(stream: &[Obs]) -> Result<(), String> {
                 }
                 if answered.insert(key, ()).is_some() {
                     return Err(format!("tool call `{}` was answered twice", o.call));
+                }
+                if let Some(v) = open.get_mut(&(o.fiber, o.wake.to_string())) {
+                    v.retain(|c| c != &o.call);
+                }
+            }
+            // A wake closes: every call it issued must have been answered by now. Crash repair
+            // synthesises `TOOL_OUTCOME_UNKNOWN` before it closes an orphan, so a dangling call
+            // at `wake/end` is a real hole and not a restart.
+            "wake/end" => {
+                if let Some(v) = open.remove(&(o.fiber, o.wake.to_string())) {
+                    if let Some(first) = v.first() {
+                        return Err(format!(
+                            "wake `{}` closed with {} unanswered tool call(s), the first being `{}`",
+                            o.wake,
+                            v.len(),
+                            first
+                        ));
+                    }
                 }
             }
             _ => {}
@@ -176,6 +199,33 @@ mod tests {
             obs(1, "w1", "tool/result", "c1", 3),
         ];
         assert!(evaluate(&s).unwrap_err().contains("answered twice"));
+    }
+
+    #[test]
+    fn a_wake_that_closes_over_an_unanswered_call_is_a_violation() {
+        let s = vec![
+            obs(1, "w1", "tool/call", "c1", 0),
+            obs(1, "w1", "wake/end", "", 0),
+        ];
+        assert!(evaluate(&s).unwrap_err().contains("unanswered tool call"));
+        // Answered first: clean.
+        let ok = vec![
+            obs(1, "w1", "tool/call", "c1", 0),
+            obs(1, "w1", "tool/result", "c1", 0),
+            obs(1, "w1", "wake/end", "", 0),
+        ];
+        assert!(evaluate(&ok).is_ok());
+    }
+
+    #[test]
+    fn a_result_recorded_without_a_step_index_field_is_a_step_mismatch() {
+        // The regression this field exists for: a result body missing `step_index` records 0,
+        // and a call issued in step 1 then reads as a cross-step pairing.
+        let s = vec![
+            obs(1, "w1", "tool/call", "c1", 1),
+            obs(1, "w1", "tool/result", "c1", 0),
+        ];
+        assert!(evaluate(&s).unwrap_err().contains("step"));
     }
 
     #[test]

@@ -83,7 +83,11 @@ async fn claimed_messages_a_decision_omits_stay_removed() {
     );
 }
 
-/// §5: `request/header` is durable "only when it changes".
+/// §5: `request/header` is durable "only when it changes" — where "it" is everything the header
+/// records. Since this phase's review that includes the projection digest, because V4 anchors a
+/// step's system prefix on the newest header at or before it: a step whose prefix moved with no
+/// header for it is a prefix nothing in the ledger describes. So a header appears exactly when
+/// the previous one no longer describes the request, and never twice with the same content.
 #[tokio::test]
 async fn a_request_header_is_appended_only_when_it_changes() {
     let f = Fixture::mounted().await;
@@ -115,7 +119,39 @@ async fn a_request_header_is_appended_only_when_it_changes() {
         .filter(|s| s.kind.as_str() == "step/start")
         .count();
     assert!(starts >= 2, "two steps ran: {:?}", kinds_of(&steps));
-    assert_eq!(headers, 1, "one header for two identical requests");
+    assert!(
+        headers <= starts,
+        "never more headers than steps: {headers} headers, {starts} steps"
+    );
+    // No two consecutive headers say the same thing: that is the whole of "only when it changes".
+    let bodies: Vec<serde_json::Value> = steps
+        .iter()
+        .filter(|s| s.kind.as_str() == "request/header")
+        .map(|s| {
+            let mut b = (*s.body).clone();
+            // `as_of` and `budget` move with every append and are deliberately outside the
+            // comparison; blank them so this asserts the compared fields only.
+            if let Some(o) = b.as_object_mut() {
+                o.remove("as_of");
+                o.remove("budget");
+            }
+            b
+        })
+        .collect();
+    for w in bodies.windows(2) {
+        assert_ne!(w[0], w[1], "a header repeated an unchanged header");
+    }
+    // The four §5 names did NOT change across the two steps: same prompt version, sections,
+    // tool schemas and call config. Only the projection digest moved.
+    for w in bodies.windows(2) {
+        for field in ["prompt_ver", "sections", "tools", "tools_digest", "call"] {
+            assert_eq!(w[0][field], w[1][field], "`{field}` did not change");
+        }
+        assert_ne!(
+            w[0]["projection_digest"], w[1]["projection_digest"],
+            "the tool call and its result moved the projection"
+        );
+    }
 }
 
 /// §5: "a tool result carrying `concludes_wake` ends the wake at its step."

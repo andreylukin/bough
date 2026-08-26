@@ -10,7 +10,11 @@ use bough_plugin_agents::{Agent, AgentError, AgentSetup, CancelCause, CreateAgen
 use common::*;
 
 /// Two cancels race; §2 says the FIRST cause wins and the driver hears exactly one.
-#[tokio::test]
+///
+/// A REAL race: `tokio::join!` polls two futures in order on one task, so the first runs to
+/// completion before the second is ever polled — sequential, and no evidence about first-wins at
+/// all. Two spawned tasks on a multi-threaded runtime are the honest shape.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_first_cancel_cause_wins() {
     let f = Fixture::mounted().await;
     let (agent, _d) = f
@@ -23,10 +27,19 @@ async fn the_first_cancel_cause_wins() {
 
     let a1 = agent.clone();
     let a2 = agent.clone();
-    let (_, _) = tokio::join!(
-        async move { a1.cancel(CancelCause::User, false).await },
-        async move { a2.cancel(CancelCause::Hook, true).await },
-    );
+    let barrier = Arc::new(tokio::sync::Barrier::new(2));
+    let b1 = barrier.clone();
+    let b2 = barrier.clone();
+    let t1 = tokio::spawn(async move {
+        b1.wait().await;
+        a1.cancel(CancelCause::User, false).await
+    });
+    let t2 = tokio::spawn(async move {
+        b2.wait().await;
+        a2.cancel(CancelCause::Hook, true).await
+    });
+    t1.await.expect("the task joins");
+    t2.await.expect("the task joins");
 
     let won = agent.cancelled_by().expect("a cause won");
     assert!(

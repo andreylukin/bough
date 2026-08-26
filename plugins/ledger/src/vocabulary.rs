@@ -97,7 +97,17 @@ pub struct RequestHeader {
     pub projection_digest: String,
     /// The projection sections that made up the context, in rendered order.
     pub sections: Vec<String>,
+    /// The step of the wake this header describes. Not part of the change comparison (it moves
+    /// every step); it is the join key a consumer needs to say WHICH request the header is for.
+    #[serde(default)]
+    pub step_index: u32,
+    /// The tool NAMES offered, in order.
     pub tools: Vec<String>,
+    /// sha256 of the canonical JSON of the tool DEFINITIONS, hex. §5 says the header records the
+    /// tool schemas; names alone missed a scoped tool shadowing its same-named global twin with
+    /// a different schema, and the reconstruction anchor was then incomplete.
+    #[serde(default)]
+    pub tools_digest: String,
     pub call: serde_json::Value,
     pub composition: String,
 }
@@ -257,7 +267,9 @@ mod tests {
             budget: 8000,
             projection_digest: "abc123".into(),
             sections: vec!["identity".into(), "tail".into()],
+            step_index: 2,
             tools: vec!["bash".into()],
+            tools_digest: "d00d".into(),
             call: serde_json::json!({ "model": "claude-haiku-4-5-20251001" }),
             composition: "fp".into(),
         };

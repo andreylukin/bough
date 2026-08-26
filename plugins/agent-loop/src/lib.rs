@@ -84,11 +84,19 @@ impl Plugin for AgentLoopPlugin {
             projection: (*projection).clone(),
             llm: (*llm).clone(),
             tools: (*tools).clone(),
+            // §5 makes the composition fingerprint part of `request/header`. A missing one is a
+            // misconfiguration, and §0.2 says misconfiguration fails LOUD at the earliest
+            // resolvable point — silently stamping "" on every header would have made the
+            // fingerprint the header is required to carry quietly absent.
             composition: ctx
                 .kernel()
                 .and_then(|k| k.composition())
                 .map(|c| c.fingerprint.as_str().to_string())
-                .unwrap_or_default(),
+                .ok_or_else(|| {
+                    err(anyhow::anyhow!(
+                        "no composition fingerprint is resolvable from the kernel;                          `request/header` cannot carry the fingerprint §5 requires"
+                    ))
+                })?,
             cfg: cfg.clone(),
         };
 
@@ -97,6 +105,7 @@ impl Plugin for AgentLoopPlugin {
         let fiber = ctx.fiber_uid();
         ctx.effect(move |e| async move {
             e.defer_sync(move || invariant::forget(fiber));
+            e.defer_sync(move || driver::forget(fiber));
             Ok(())
         })
         .await?;

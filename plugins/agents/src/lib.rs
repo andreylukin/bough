@@ -68,6 +68,10 @@ pub struct AgentsInner {
     ctx: Context,
     ledger: LedgerHandle,
     live: Mutex<BTreeMap<String, Agent>>,
+    /// Names a `create`/`resume` is holding but has not registered yet. §2 makes creation a
+    /// transaction, and a transaction that publishes its name only at the END lets two concurrent
+    /// creates of one name both proceed and orphan the first.
+    reserved: Mutex<std::collections::BTreeSet<String>>,
     factory: Mutex<Option<Arc<dyn AgentFactory>>>,
 }
 
@@ -78,6 +82,7 @@ impl AgentsHandle {
             ctx,
             ledger,
             live: Mutex::new(BTreeMap::new()),
+            reserved: Mutex::new(std::collections::BTreeSet::new()),
             factory: Mutex::new(None),
         }))
     }
@@ -125,9 +130,9 @@ impl AgentsHandle {
     /// `agent/created`, with full rollback on a `setup` failure.
     pub async fn create(&self, req: CreateAgent) -> Result<(Agent, AgentDisposer), AgentError> {
         let spec = self.resolve_create(&req);
-        if self.by_name(&spec.name).is_some() {
-            return Err(AgentError::AlreadyLive(spec.name));
-        }
+        // The name is claimed for the whole transaction, not checked at the start and registered
+        // at the end.
+        let _claim = self.claim_name(&spec.name)?;
         let factory = self.factory().ok_or(AgentError::NoFactory)?;
 
         let (agent, scope) = self.mint(&spec, req.at);
@@ -164,6 +169,20 @@ impl AgentsHandle {
         {
             Ok(driver) => *agent.0.driver.lock() = Some(driver),
             Err(e) => {
+                // §2: creation is a TRANSACTION, and `attach` is inside it. The seed mail is
+                // spliced back out durably — leaving it would strand unconsumed mail in an
+                // inbox with no live agent and nothing that could ever drain it. The `agents`
+                // row is idempotent (`put_agent` writes it only when absent, and the next
+                // `create` of this name writes exactly the same row), so it is a reservation
+                // rather than an orphan; that is stated here because it is the one durable
+                // artefact the rollback does not remove.
+                for (receipt, _) in &seeded {
+                    let _ = agent
+                        .inbox()
+                        .discard_seed(&receipt.message, receipt.target, req.at)
+                        .await;
+                }
+                agent.clear_pending_wake();
                 scope.dispose().await;
                 return Err(e);
             }
@@ -197,9 +216,7 @@ impl AgentsHandle {
     /// Resume an agent that already has a row and a chain: the inbox is rebuilt from
     /// `inbox/spliced` (P2-D8) and the factory attaches with [`Attach::Resumed`].
     pub async fn resume(&self, req: ResumeAgent) -> Result<(Agent, AgentDisposer), AgentError> {
-        if self.by_name(&req.name).is_some() {
-            return Err(AgentError::AlreadyLive(req.name));
-        }
+        let _claim = self.claim_name(&req.name)?;
         let factory = self.factory().ok_or(AgentError::NoFactory)?;
         let row = self
             .0
@@ -249,6 +266,8 @@ impl AgentsHandle {
         {
             Ok(driver) => *agent.0.driver.lock() = Some(driver),
             Err(e) => {
+                // A resume publishes nothing durable of its own — the row and the chain were
+                // already there — so the rollback is the scope and the live handle.
                 scope.dispose().await;
                 return Err(e);
             }
@@ -348,6 +367,20 @@ impl AgentsHandle {
     pub fn get(&self, id: &AgentId) -> Option<Agent> {
         self.0.live.lock().values().find(|a| a.id() == id).cloned()
     }
+    /// Claim a name for the length of a creation transaction. Dropping the guard frees it.
+    fn claim_name(&self, name: &bough_plugin_ledger::AgentName) -> Result<NameClaim, AgentError> {
+        if self.0.live.lock().contains_key(name.as_str()) {
+            return Err(AgentError::AlreadyLive(name.clone()));
+        }
+        if !self.0.reserved.lock().insert(name.to_string()) {
+            return Err(AgentError::AlreadyLive(name.clone()));
+        }
+        Ok(NameClaim {
+            agents: self.clone(),
+            name: name.to_string(),
+        })
+    }
+
     pub fn by_name(&self, name: &bough_plugin_ledger::AgentName) -> Option<Agent> {
         self.0.live.lock().get(name.as_str()).cloned()
     }
@@ -439,3 +472,15 @@ impl Plugin for AgentsPlugin {
 }
 
 bough_kernel::register_plugin!(AgentsPlugin);
+
+/// The name a creation transaction holds until it registers or rolls back.
+struct NameClaim {
+    agents: AgentsHandle,
+    name: String,
+}
+
+impl Drop for NameClaim {
+    fn drop(&mut self) {
+        self.agents.0.reserved.lock().remove(&self.name);
+    }
+}

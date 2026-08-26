@@ -6,7 +6,7 @@
 
 mod support;
 
-use bough_kernel::FiberState;
+use bough_kernel::{FiberState, SerialEvent, WaterfallEvent};
 use bough_plugin_agents::{AgentKind, Agents, CreateAgent, MailClass, Message, MessageId, Sender};
 use bough_plugin_hello::trace;
 use bough_plugin_ledger::query::{Order, StepQuery};
@@ -267,6 +267,19 @@ async fn the_retired_loop_leaves_no_factory_no_listeners_and_no_bindings() {
             .driver(),
         "agent-loop"
     );
+    let uid = row(&kernel, "agent.loop")
+        .uid
+        .expect("the live row has a uid");
+    let core = kernel.core();
+    let counts_before: Vec<(&'static str, usize)> = [
+        bough_plugin_agents::AgentPreStep::NAME,
+        bough_plugin_llm::AgentRequest::NAME,
+        bough_plugin_agents::AgentWakeStopping::NAME,
+        bough_plugin_agents::AgentRequestError::NAME,
+    ]
+    .into_iter()
+    .map(|e| (e, core.listener_count(e)))
+    .collect();
 
     // Retire the loop through the LAUNCHER'S OWN live path — a user patch layer disabling the
     // row, recomposed. The factory slot is an effect, so retiring the row must free it.
@@ -284,6 +297,30 @@ async fn the_retired_loop_leaves_no_factory_no_listeners_and_no_bindings() {
         agents.factory().is_none(),
         "the retired loop must leave the factory slot empty — that is what lets a second \
          Provider take it"
+    );
+
+    // …and the OTHER two thirds of this test's name, which used to go unchecked: no listeners and
+    // no bindings are left BY THIS ROW. `agent-loop` registers no permanent listener of its own —
+    // it DISPATCHES `agent/*` and installs one transient `llm/stream` hop per round — so the
+    // honest statements are: the counts on those events are exactly what they were before the row
+    // retired (it took nobody else's listener with it), the per-round hop is gone, and the row's
+    // own bindings are gone.
+    for (event, before) in counts_before {
+        assert_eq!(
+            core.listener_count(event),
+            before,
+            "retiring `agent.loop` changed the listener count on `{event}`"
+        );
+    }
+    assert_eq!(
+        core.listener_count(bough_plugin_llm::LlmStreamEvent::NAME),
+        0,
+        "the retired loop left a per-round `llm/stream` hop behind"
+    );
+    assert!(
+        core.provided_by(uid).is_empty(),
+        "the retired loop left a binding: {:?}",
+        core.provided_by(uid)
     );
 
     kernel.shutdown().await;

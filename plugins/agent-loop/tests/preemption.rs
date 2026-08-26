@@ -463,3 +463,119 @@ async fn a_message_during_an_answer_wake_does_not_open_a_second_one() {
     // And the second message is not lost: some wake claims it.
     f.wait_for_claim(&second.message).await;
 }
+
+/// §5: "an interrupt stops the wake producing" — and that has to reach a tool that is ALREADY
+/// running. The tool below never returns on its own; only the cancellation ends it, so a green
+/// here is the signal arriving rather than a deadline expiring (the fixture's deadline is far
+/// longer than this test's patience).
+#[tokio::test]
+async fn an_interrupt_reaches_a_tool_that_is_already_running() {
+    let f = Fixture::mounted().await;
+    // A gate nobody ever notifies: the tool returns only if it is cancelled.
+    let never = Arc::new(tokio::sync::Notify::new());
+    f.tools
+        .register(&f.ctx, gated_tool(never))
+        .await
+        .expect("the tool registers");
+    f.adapter.script(vec![
+        vec![
+            Chunk::ToolCall {
+                id: ToolCallId::new("c1"),
+                name: ToolName::new("gate"),
+                input: serde_json::json!({}),
+            },
+            Chunk::End {
+                stop: StopReason::ToolUse,
+            },
+        ],
+        says("answered"),
+    ]);
+
+    let (agent, _d) = f.agent("sol").await;
+    agent
+        .followup(ordinary("a push"))
+        .await
+        .expect("mail lands");
+    // The tool is running: its call is durable and no result has been written.
+    f.wait_for_kind("tool/call").await;
+    agent.followup(andrey("stop")).await.expect("mail lands");
+
+    let result = f.wait_for_kind("tool/result").await;
+    assert_eq!(
+        result.body["outcome"], "error",
+        "the cancelled tool answered with a failure rather than hanging: {}",
+        result.body
+    );
+    assert!(
+        result.body["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("cancelled"),
+        "and the failure says why: {}",
+        result.body
+    );
+}
+
+/// §2: `status` is the DRIVER-WIDE drain interval, and `when_idle()` means every wake is over.
+/// Checkpoint-and-answer deliberately runs two wakes at once, and per-wake status transitions
+/// made the FIRST finisher publish `Idle` over a wake that was still open — `bough exec` awaits
+/// `when_idle()` and would have printed and torn down a half-finished agent.
+#[tokio::test]
+async fn when_idle_does_not_return_while_a_second_wake_is_still_open() {
+    let f = Fixture::mounted().await;
+    // A tool nobody releases keeps the FIRST wake open past the answer wake's whole life.
+    let never = Arc::new(tokio::sync::Notify::new());
+    f.tools
+        .register(&f.ctx, gated_tool(never.clone()))
+        .await
+        .expect("the tool registers");
+    f.adapter.script(vec![
+        vec![
+            Chunk::ToolCall {
+                id: ToolCallId::new("c1"),
+                name: ToolName::new("gate"),
+                input: serde_json::json!({}),
+            },
+            Chunk::End {
+                stop: StopReason::ToolUse,
+            },
+        ],
+        says("answered"),
+    ]);
+
+    let (agent, _d) = f.agent("sol").await;
+    agent
+        .followup(ordinary("a push"))
+        .await
+        .expect("mail lands");
+    f.wait_for_kind("tool/call").await;
+    assert_eq!(
+        agent.status(),
+        bough_plugin_agents::Status::Running,
+        "a wake is open"
+    );
+
+    // Two wakes are now in flight; the answer wake will finish first.
+    agent.followup(andrey("stop")).await.expect("mail lands");
+    let idle = {
+        let a = agent.clone();
+        tokio::spawn(async move { a.when_idle().await })
+    };
+    f.wait_for_kind("wake/jot").await;
+
+    // Both wakes are over before `when_idle()` may return.
+    tokio::time::timeout(std::time::Duration::from_secs(5), idle)
+        .await
+        .expect("the agent goes idle once both wakes are over")
+        .expect("the task joins");
+    let steps = f.steps().await;
+    assert_eq!(
+        steps
+            .iter()
+            .filter(|s| s.kind.as_str() == "wake/end")
+            .count(),
+        2,
+        "both wakes closed durably before idle: {:?}",
+        f.kinds().await
+    );
+}

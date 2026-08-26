@@ -17,7 +17,7 @@ async fn fixture() -> (Context, ToolsHandle, AgentName) {
     let ctx = Context::root(KernelCore::new());
     let ledger = LedgerHandle(MemoryStore::new(ctx.clone()) as Arc<_>);
     let actions = Arc::new(ActionsHandle::new(ledger));
-    let tools = ToolsHandle::new();
+    let tools = ToolsHandle::with_limits(8, 5_000);
     for kind in ActionKind::all() {
         tools
             .register(&ctx, spec(*kind, actions.clone()))

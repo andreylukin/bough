@@ -173,6 +173,17 @@ async fn run_inner(
     )
     .await?;
 
+    // §2's `agent/wake` START moment. It is emitted by BOTH loop Providers, and the agents
+    // invariant's "a disposed agent starts no wake" clause is what consumes it; without it that
+    // clause was unreachable and a consumer listening for the start got nothing from either
+    // driver.
+    dispatch(&ctx, &scope).emit::<bough_plugin_agents::AgentWake>(bough_plugin_agents::WakeEvent {
+        agent: agent.id().clone(),
+        wake: spec.wake.clone(),
+        kind: spec.kind,
+        phase: bough_plugin_agents::Phase::Start,
+    });
+
     // A preempted wake resumes from its jot: `wake/resumed` is the first step of the next wake of
     // ANY kind, and the jot itself is folded into the request by `transcript::rebuild`.
     if let Some(jot) = &spec.resume_from {
@@ -196,6 +207,10 @@ async fn run_inner(
     }
 
     let mut step_index: u32 = 0;
+    // §5 / V10: the attempt count of the CURRENT model step. It survives the retry `continue`,
+    // because that is the only way `llm-retry`'s `attempt >= max_attempts` bound is a bound at
+    // all; a fresh `attempt: 1` per step made a sustained retryable failure retry forever.
+    let mut attempt: u32 = 1;
     let mut last_header: Option<RequestHeader> = None;
     let mut entering: Vec<ClaimedMessage> = claimed;
     let mut concludes;
@@ -389,13 +404,14 @@ async fn run_inner(
                     facts: facts.clone(),
                     request: req.clone(),
                     failure,
-                    attempt: outcome.attempt,
+                    attempt,
                     recovery: Recovery::Terminal,
                 })
                 .await;
             match recovered.recovery {
-                Recovery::Retry { after, .. } => {
+                Recovery::Retry { after } => {
                     tokio::time::sleep(after).await;
+                    attempt += 1;
                     step_index += 1;
                     continue 'wake;
                 }
@@ -435,6 +451,7 @@ async fn run_inner(
         if !concludes && (outcome.owes_another_request || !next_step_mail.is_empty()) {
             entering = next_step_mail;
             step_index += 1;
+            attempt = 1;
             continue 'wake;
         }
 
@@ -461,6 +478,7 @@ async fn run_inner(
         if !steered.is_empty() {
             entering = steered;
             step_index += 1;
+            attempt = 1;
             continue 'wake;
         }
         if cancel.is_cancelled() {
@@ -540,7 +558,6 @@ struct StepOutcomeOf {
     concludes: bool,
     max_tokens: bool,
     interrupted: bool,
-    attempt: u32,
 }
 
 /// 9–10: the stream, the tool calls it made, and the results, all durable as they happen.
@@ -557,10 +574,7 @@ async fn run_step(
     let ctx = &deps.ctx;
     let agent = cell.agent().clone();
     let traj = agent.traj().clone();
-    let mut out = StepOutcomeOf {
-        attempt: 1,
-        ..Default::default()
-    };
+    let mut out = StepOutcomeOf::default();
     let mut stream = deps.llm.stream(ctx, req, cell.cancel_token()).await;
 
     let mut text = String::new();
@@ -651,7 +665,28 @@ async fn run_step(
 
     // 10. the guarded pipeline. Results come back in the MODEL's call order and are appended in
     //     that order, so the durable record is the order the model will read them in (§9).
-    let results = deps.tools.execute(ctx, calls).await;
+    // §5: an interrupt or a cancel stops the wake PRODUCING, and that has to reach a tool that is
+    // already running. The pipeline runs under a token that fires on either.
+    let tool_cancel = tokio_util::sync::CancellationToken::new();
+    {
+        let t = tool_cancel.clone();
+        let interrupt = spec.interrupt.clone();
+        let agent_cancel = cell.cancel_token();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = interrupt.cancelled() => {}
+                _ = agent_cancel.cancelled() => {}
+                _ = t.cancelled() => return,
+            }
+            t.cancel();
+        });
+    }
+    let results = deps
+        .tools
+        .execute_under(ctx, calls, tool_cancel.clone())
+        .await;
+    // The watcher above is a task, not a leak: cancelling the token ends it.
+    tool_cancel.cancel();
     for r in results {
         let outcome = if r.ok {
             ToolOutcomeKind::Ok
@@ -685,6 +720,7 @@ async fn run_step(
                 value: r.value.clone(),
                 attached: r.attached.clone(),
                 concludes_wake: r.concludes_wake,
+                step_index,
             })
             .map_err(|e| e.to_string())?,
             r.cites.clone(),
@@ -701,58 +737,170 @@ async fn run_step(
 /// One model call, tools forbidden, bounded by `grace_deadline_ms`. If it fails, times out or
 /// says nothing, the synthetic jot — built deterministically from the wake's last thought steps —
 /// is written instead, so a continuation never depends on a model call succeeding.
+///
+/// It is a REAL step of the interrupted wake: `wake/grace-prompt`, `step/start`,
+/// `request/header`, `step/end`, and the request runs the `agent/request` waterfall like any
+/// other. It used to build its own `LlmRequest` and call the adapter directly, which meant
+/// `model-policy` never assigned it a model (the adapter was handed `""`), nothing durable
+/// described it, and V4 could not see it at all — a model-visible input on a side channel.
 pub async fn grace_jot(
     cell: &AgentCell,
     deps: &LoopDeps,
     wake: &WakeId,
+    kind: WakeKind,
     thoughts: &[Step],
 ) -> Result<bough_plugin_ledger::StepId, String> {
-    let jot = match grace_text(cell, deps, wake, thoughts).await {
-        Some(state) if !state.trim().is_empty() => WakeJot {
+    let jot = match grace_text(cell, deps, wake, kind, thoughts).await {
+        Ok(Some(state)) if !state.trim().is_empty() => WakeJot {
             of_wake: wake.clone(),
             state,
             resume_hint: "resume the interrupted work from the state above".to_string(),
             synthetic: false,
         },
-        _ => crate::preempt::synthetic_jot(wake, thoughts),
+        Ok(_) => crate::preempt::synthetic_jot(wake, thoughts),
+        Err(e) => {
+            tracing::warn!(%wake, error = %e, "the grace step failed; the synthetic jot stands");
+            crate::preempt::synthetic_jot(wake, thoughts)
+        }
     };
     write_jot(cell, deps, wake, jot).await
 }
 
-/// The grace step's model call. Returns `None` on anything that is not plain text in time.
+/// The grace step's model call. `Ok(None)` on anything that is not plain text in time; `Err` only
+/// when the ledger or the projection refuses, which the caller turns into the synthetic jot too.
 async fn grace_text(
-    _cell: &AgentCell,
+    cell: &AgentCell,
     deps: &LoopDeps,
     wake: &WakeId,
+    kind: WakeKind,
     thoughts: &[Step],
-) -> Option<String> {
-    let mut messages = crate::transcript::rebuild(thoughts, None);
-    messages.push(LlmMessage {
-        role: LlmRole::User,
-        content: vec![LlmContentBlock::Text {
-            text: crate::preempt::GRACE_INSTRUCTION.to_string(),
-        }],
+) -> Result<Option<String>, String> {
+    let agent = cell.agent().clone();
+    let traj = agent.traj().clone();
+    let name = agent.name().clone();
+    let ctx = agent.ctx().clone();
+    let scope = agent.scope_key().clone();
+
+    // The step index of the grace step: one past the wake's last `step/start`.
+    let step_index = thoughts
+        .iter()
+        .filter(|s| s.kind.as_str() == "step/start")
+        .filter_map(|s| s.body.get("index").and_then(|v| v.as_u64()))
+        .max()
+        .map(|i| i as u32 + 1)
+        .unwrap_or(0);
+
+    // The instruction, durable BEFORE the request is built: `transcript::rebuild` folds it back
+    // into the same user message, so the request reconstructs.
+    append(
+        deps,
+        &traj,
+        wake,
+        "wake/grace-prompt",
+        Class::Thought,
+        serde_json::json!({
+            "of_wake": wake.to_string(),
+            "text": crate::preempt::GRACE_INSTRUCTION,
+            "step_index": step_index,
+        }),
+        vec![],
+    )
+    .await?;
+    let start = append(
+        deps,
+        &traj,
+        wake,
+        "step/start",
+        Class::Thought,
+        serde_json::json!({ "index": step_index }),
+        vec![],
+    )
+    .await?;
+
+    let assembled = deps
+        .projection
+        .0
+        .assemble(&AssembleRequest {
+            agent: name.clone(),
+            wake: Some(wake.clone()),
+            at: Utc::now(),
+            as_of: Some(start.seq),
+            budget: None,
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    let of_wake = wake_steps(deps, &traj, wake).await?;
+    let msgs = crate::transcript::rebuild(&of_wake, Some(start.seq));
+
+    let facts = Arc::new(RequestFacts {
+        agent: name.clone(),
+        traj: traj.clone(),
+        wake: wake.clone(),
+        wake_kind: kind,
+        step_index,
+        // §12: the grace step belongs to the wake it interrupts, so it answers whoever that wake
+        // answered. `model-policy` reads exactly this.
+        answers_andrey: kind == WakeKind::Answer,
+        model_override: model_override(deps, &name).await,
+        prompt_ver: deps.cfg.prompt_ver.clone(),
+        composition: deps.composition.clone(),
     });
-    let req = Arc::new(bough_plugin_llm::LlmRequest {
-        model: String::new(),
-        system: None,
-        system_volatile: None,
-        messages,
+    let budget = assembled.budget;
+    let mut inputs = RequestInputs {
+        facts: facts.clone(),
+        projection: assembled,
+        as_of: start.seq,
+        budget,
+        // §5: the grace step is a JOT, not more work.
         tools: vec![],
         call: CallConfig {
             model: String::new(),
             max_tokens: deps.cfg.default_max_tokens,
             effort: None,
-            // §5: the grace step is a JOT, not more work.
             tool_choice_none: true,
             meta: Default::default(),
         },
+    };
+    let decided = dispatch(&ctx, &scope)
+        .waterfall::<AgentRequest>(RequestCall {
+            facts: facts.clone(),
+            call: inputs.call.clone(),
+        })
+        .await;
+    inputs.call = decided.call;
+    inputs.facts = facts.clone();
+
+    // The grace step's call config differs from the step before it (tools are forbidden), so this
+    // header always says something new.
+    let header = request::header_of(&inputs);
+    append(
+        deps,
+        &traj,
+        wake,
+        "request/header",
+        Class::Thought,
+        request::header_body(&header, &inputs),
+        vec![],
+    )
+    .await?;
+
+    let req = Arc::new(request::build(&inputs, msgs));
+    crate::invariant::record(crate::invariant::SentRequest {
+        fiber: ctx.fiber_uid(),
+        wake: wake.clone(),
+        step_index,
+        request: (*req).clone(),
     });
-    let ctx = deps.ctx.clone();
+
+    let llm = deps.llm.clone();
+    // The stream dispatches on the LOOP's context, exactly as `run_step` does: `LlmHandle::stream`
+    // installs its serving hop there, and a hop installed at a different context is invisible to
+    // the chain another live round is already holding open.
+    let stream_ctx = deps.ctx.clone();
     let cancel = tokio_util::sync::CancellationToken::new();
     let deadline = std::time::Duration::from_millis(deps.cfg.grace_deadline_ms);
     let text = tokio::time::timeout(deadline, async move {
-        let mut stream = deps.llm.stream(&ctx, req, cancel).await;
+        let mut stream = llm.stream(&stream_ctx, req, cancel).await;
         let mut out = String::new();
         while let Some(chunk) = stream.next().await {
             match chunk {
@@ -765,9 +913,36 @@ async fn grace_text(
         Some(out)
     })
     .await
-    .ok()??;
-    let _ = wake;
-    Some(text)
+    .ok()
+    .flatten();
+
+    // What the model said is a thought like any other, so the jot below can cite the wake and the
+    // reconstruction of a LATER wake still reads the same bytes.
+    if let Some(t) = text.as_ref().filter(|t| !t.trim().is_empty()) {
+        flush_text(deps, &traj, wake, step_index, &mut t.clone()).await?;
+    }
+    append(
+        deps,
+        &traj,
+        wake,
+        "step/end",
+        Class::Thought,
+        serde_json::to_value(StepEnd {
+            index: step_index,
+            outcome: if text.is_some() {
+                StepOutcome::Ok
+            } else {
+                StepOutcome::Error
+            },
+            detail: text
+                .is_none()
+                .then(|| "the grace step produced no text".to_string()),
+        })
+        .map_err(|e| e.to_string())?,
+        vec![],
+    )
+    .await?;
+    Ok(text)
 }
 
 /// Append one `wake/jot`.

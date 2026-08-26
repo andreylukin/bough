@@ -20,54 +20,67 @@ pub struct Repair {
     pub at: DateTime<Utc>,
 }
 
-/// Decide the repair for one trajectory's tail.
+/// Decide the repair for one trajectory's tail: one [`Repair`] per orphaned wake, oldest first.
 ///
-/// The tail is the trajectory's last steps in seq order. A wake is orphaned when it has a
-/// `wake/start` and no `wake/end`; only the TRAILING wake can be orphaned, because the single
-/// writer closes a wake before the next one opens.
-pub fn plan(tail: &[Step], now: DateTime<Utc>) -> Option<Repair> {
+/// EVERY unclosed wake is repaired, not only the trailing one. §5's checkpoint-and-answer opens
+/// the answer wake BEFORE the wake it interrupted has closed, so a crash during a preemption
+/// leaves two wakes open at once; a plan that looked only at the last `wake/start` closed the
+/// answer wake and left the interrupted one open forever.
+pub fn plan_all(tail: &[Step], now: DateTime<Utc>) -> Vec<Repair> {
     let mut ordered: Vec<&Step> = tail.iter().collect();
     ordered.sort_by_key(|s| s.seq);
-    let last_start = ordered
-        .iter()
-        .rev()
-        .find(|s| s.kind.as_str() == "wake/start")?;
-    let wake = last_start.wake.clone();
-    let closed = ordered
-        .iter()
-        .any(|s| s.wake == wake && s.kind.as_str() == "wake/end");
-    if closed {
-        return None;
+
+    let mut out: Vec<Repair> = Vec::new();
+    let mut seen: Vec<&str> = Vec::new();
+    for start in ordered.iter().filter(|s| s.kind.as_str() == "wake/start") {
+        let wake = start.wake.clone();
+        if seen.contains(&wake.as_str()) {
+            continue;
+        }
+        seen.push(start.wake.as_str());
+        let closed = ordered
+            .iter()
+            .any(|s| s.wake == wake && s.kind.as_str() == "wake/end");
+        if closed {
+            continue;
+        }
+
+        let in_wake: Vec<&&Step> = ordered.iter().filter(|s| s.wake == wake).collect();
+        let answered: Vec<String> = in_wake
+            .iter()
+            .filter(|s| s.kind.as_str() == "tool/result")
+            .filter_map(|s| {
+                s.body
+                    .get("call")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
+            .collect();
+        let unknown_results: Vec<StepId> = in_wake
+            .iter()
+            .filter(|s| s.kind.as_str() == "tool/call")
+            .filter(|s| {
+                let call = s.body.get("call").and_then(|v| v.as_str()).unwrap_or("");
+                !answered.iter().any(|a| a == call)
+            })
+            .map(|s| s.id.clone())
+            .collect();
+
+        out.push(Repair {
+            traj: start.traj.clone(),
+            wake,
+            unknown_results,
+            close_wake: true,
+            at: now,
+        });
     }
+    out
+}
 
-    let in_wake: Vec<&&Step> = ordered.iter().filter(|s| s.wake == wake).collect();
-    let answered: Vec<String> = in_wake
-        .iter()
-        .filter(|s| s.kind.as_str() == "tool/result")
-        .filter_map(|s| {
-            s.body
-                .get("call")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-        })
-        .collect();
-    let unknown_results: Vec<StepId> = in_wake
-        .iter()
-        .filter(|s| s.kind.as_str() == "tool/call")
-        .filter(|s| {
-            let call = s.body.get("call").and_then(|v| v.as_str()).unwrap_or("");
-            !answered.iter().any(|a| a == call)
-        })
-        .map(|s| s.id.clone())
-        .collect();
-
-    Some(Repair {
-        traj: last_start.traj.clone(),
-        wake,
-        unknown_results,
-        close_wake: true,
-        at: now,
-    })
+/// The trailing orphan alone. Kept because the unit tests read one plan at a time; `run` uses
+/// [`plan_all`].
+pub fn plan(tail: &[Step], now: DateTime<Utc>) -> Option<Repair> {
+    plan_all(tail, now).pop()
 }
 
 /// Apply the plan for every trajectory that owns an agent row: this is what `apply` runs at boot
@@ -92,56 +105,59 @@ pub async fn run(
             })
             .await
             .map_err(|e| e.to_string())?;
-        let Some(plan) = plan(&tail, now) else {
-            continue;
-        };
-        for step_id in &plan.unknown_results {
-            let call = tail
-                .iter()
-                .find(|s| &s.id == step_id)
-                .map(|s| s.body.as_ref().clone())
-                .unwrap_or(serde_json::Value::Null);
-            let body = serde_json::json!({
-                "call": call.get("call").cloned().unwrap_or(serde_json::Value::String(String::new())),
-                "name": call.get("name").cloned().unwrap_or(serde_json::Value::String(String::new())),
-                "outcome": "unknown",
-                "content": "the harness restarted before this call reported an outcome",
-                "concludes_wake": false,
-            });
-            ledger
-                .0
-                .append(Append {
-                    traj: plan.traj.clone(),
-                    wake: plan.wake.clone(),
-                    kind: StepType::new("tool/result"),
-                    class: Class::Thought,
-                    body,
-                    cites: vec![],
-                    at: plan.at,
-                    id: None,
-                })
-                .await
-                .map_err(|e| e.to_string())?;
-        }
-        if plan.close_wake {
-            ledger
-                .0
-                .append(Append {
-                    traj: plan.traj.clone(),
-                    wake: plan.wake.clone(),
-                    kind: StepType::new("wake/end"),
-                    class: Class::Thought,
-                    // `interrupted` is the one reason no loop emits (§5).
-                    body: serde_json::json!({ "reason": "interrupted", "cause": null,
+        for plan in plan_all(&tail, now) {
+            for step_id in &plan.unknown_results {
+                let call = tail
+                    .iter()
+                    .find(|s| &s.id == step_id)
+                    .map(|s| s.body.as_ref().clone())
+                    .unwrap_or(serde_json::Value::Null);
+                let body = serde_json::json!({
+                    "call": call.get("call").cloned().unwrap_or(serde_json::Value::String(String::new())),
+                    "name": call.get("name").cloned().unwrap_or(serde_json::Value::String(String::new())),
+                    "outcome": "unknown",
+                    "content": "the harness restarted before this call reported an outcome",
+                    "concludes_wake": false,
+                    // The synthesised result belongs to the SAME step as the call it answers, or the
+                    // tools invariant would read it as a cross-step pairing.
+                    "step_index": call.get("step_index").cloned()
+                        .unwrap_or(serde_json::Value::Number(0.into())),
+                });
+                ledger
+                    .0
+                    .append(Append {
+                        traj: plan.traj.clone(),
+                        wake: plan.wake.clone(),
+                        kind: StepType::new("tool/result"),
+                        class: Class::Thought,
+                        body,
+                        cites: vec![],
+                        at: plan.at,
+                        id: None,
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+            if plan.close_wake {
+                ledger
+                    .0
+                    .append(Append {
+                        traj: plan.traj.clone(),
+                        wake: plan.wake.clone(),
+                        kind: StepType::new("wake/end"),
+                        class: Class::Thought,
+                        // `interrupted` is the one reason no loop emits (§5).
+                        body: serde_json::json!({ "reason": "interrupted", "cause": null,
                                               "consumed": [] }),
-                    cites: vec![],
-                    at: plan.at,
-                    id: None,
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                        cites: vec![],
+                        at: plan.at,
+                        id: None,
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+            done.push(plan);
         }
-        done.push(plan);
     }
     Ok(done)
 }
@@ -194,13 +210,35 @@ mod tests {
     }
 
     #[test]
-    fn a_closed_wake_is_left_alone_and_repair_never_touches_rollups() {
+    fn every_open_wake_is_repaired_not_only_the_trailing_one() {
+        // §5's checkpoint-and-answer: the answer wake opens BEFORE the interrupted one closes.
+        let w1 = wake_of("w1");
+        let w2 = wake_of("w2");
+        let tail = vec![
+            step(10, &w1, "wake/start", serde_json::json!({})),
+            step(11, &w1, "step/start", serde_json::json!({ "index": 0 })),
+            step(12, &w2, "wake/start", serde_json::json!({})),
+            step(13, &w2, "step/start", serde_json::json!({ "index": 0 })),
+        ];
+        let plans = plan_all(&tail, at(99));
+        let wakes: Vec<String> = plans.iter().map(|p| p.wake.to_string()).collect();
+        assert_eq!(
+            wakes,
+            vec!["w1".to_string(), "w2".to_string()],
+            "a crash during a preemption leaves TWO wakes open and both are closed"
+        );
+        assert!(plans.iter().all(|p| p.close_wake));
+    }
+
+    #[test]
+    fn a_closed_wake_is_left_alone() {
         let mut tail = orphan_tail();
         tail.push(wake_end(15, &wake_of("w9"), "completed", &[]));
         assert_eq!(plan(&tail, at(99)), None);
-        // The plan's whole surface is steps: there is nowhere for a rollup to be named, which is
-        // §5's "never touches rollups" as a type rather than as a promise.
-        let fields = format!("{:?}", plan(&orphan_tail(), at(99)).unwrap());
-        assert!(!fields.contains("rollup"));
+        // The rollup half of V9 is NOT proven here: this is a pure planner and a Debug-string
+        // check on a struct with no rollup field cannot fail for any implementation. The real
+        // evidence is `crates/bough/tests/exec_headless.rs::repair_at_boot::
+        // booting_exec_closes_an_orphaned_wake_and_leaves_rollups_alone`, which seals a rollup,
+        // boots `bough exec` and re-reads it.
     }
 }

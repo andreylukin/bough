@@ -85,7 +85,7 @@ async fn unconsumed_ordinary_mail_implies_a_scheduled_drain_wake() {
         "nothing has been consumed yet"
     );
     assert!(
-        bough_plugin_agent_loop::driver::any_drain_scheduled(),
+        bough_plugin_agent_loop::driver::any_drain_scheduled(f.ctx.fiber_uid()),
         "unconsumed ordinary mail with no drain scheduled"
     );
 

@@ -136,11 +136,15 @@ pub struct RequestErrorCall {
 pub enum Recovery {
     /// The default: the failure stands and the wake ends with reason `error`.
     Terminal,
-    /// Re-enter the request after `after`, optionally with a rewritten request.
-    Retry {
-        after: Duration,
-        request: Option<Arc<LlmRequest>>,
-    },
+    /// Re-enter the request after `after`.
+    ///
+    /// There is deliberately NO "and here is a rewritten request" field. Everything the model
+    /// sees is rebuilt from the ledger (§0.2, P2-D19), so a repair that changes what the model
+    /// sees — §5's overflow repair — repairs the LEDGER-visible inputs (the projection budget,
+    /// a rollup) and lets the loop rebuild; a request handed sideways to the adapter would be a
+    /// side channel and V4 would report it. The field used to exist and no consumer could ever
+    /// have been honoured, which is worse than not offering it.
+    Retry { after: Duration },
 }
 
 /// §5: a listener that owns recovery returns `Recovery::Retry(..)` WITHOUT calling `next()`.

@@ -45,6 +45,17 @@ pub fn applied_override(_cfg: &PolicyConfig, call: &RequestCall) -> bool {
     !call.facts.answers_andrey && call.facts.model_override.is_some()
 }
 
+/// The step index a `request/header` belongs to: `agent-loop` appends the header inside the step
+/// whose `step/start` precedes it, and the header body carries no index of its own, so the join
+/// key is the STEP the header's `as_of` sits in. The loop stamps it on the body for exactly this
+/// reason; a header without one joins to step 0.
+fn step_index_of(step: &bough_plugin_ledger::Step) -> u32 {
+    step.body
+        .get("step_index")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32
+}
+
 /// The consumer row.
 pub struct ModelPolicyPlugin;
 
@@ -93,6 +104,8 @@ impl Plugin for ModelPolicyPlugin {
                     value.call.model = choose(&cfg, &value);
                     invariant::record(invariant::Obs {
                         fiber: mine,
+                        wake: value.facts.wake.to_string(),
+                        step_index: value.facts.step_index,
                         wake_kind: value.facts.wake_kind,
                         answers_andrey: value.facts.answers_andrey,
                         chose: value.call.model.clone(),
@@ -102,6 +115,30 @@ impl Plugin for ModelPolicyPlugin {
                 }
             },
         )
+        .await?;
+
+        // The invariant's OTHER half, and the only honest one: the model the ledger says was
+        // actually requested. `agent-loop` appends `request/header` after this waterfall, so the
+        // call config it records is what a listener downstream of the policy left behind.
+        ctx.on::<bough_plugin_ledger::LedgerStep, _, _>(move |step| async move {
+            if step.kind.as_str() != "request/header" {
+                return;
+            }
+            let Some(model) = step
+                .body
+                .get("call")
+                .and_then(|c| c.get("model"))
+                .and_then(|m| m.as_str())
+            else {
+                return;
+            };
+            invariant::record_sent(invariant::SentObs {
+                fiber: mine,
+                wake: step.wake.to_string(),
+                step_index: step_index_of(&step),
+                model: model.to_string(),
+            });
+        })
         .await?;
         Ok(())
     }

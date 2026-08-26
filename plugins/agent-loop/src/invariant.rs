@@ -80,14 +80,18 @@ pub fn evaluate_reconstruction(sent: &[SentRequest], steps: &[Step]) -> Result<(
                 s.wake, s.step_index, s.request.messages, rebuilt
             ));
         }
-        if let Some(expected) = projection_digest(&of_wake, s.step_index) {
-            let actual = crate::request::digest(s.request.system.as_deref().unwrap_or(""));
-            if actual != expected {
-                return Err(format!(
-                    "wake {} step {}: the system prefix does not match the request/header's projection_digest",
-                    s.wake, s.step_index
-                ));
-            }
+        let Some(expected) = projection_digest(&of_wake, s.step_index) else {
+            return Err(format!(
+                "wake {} step {}: no request/header describes this step's system prefix",
+                s.wake, s.step_index
+            ));
+        };
+        let actual = crate::request::digest(s.request.system.as_deref().unwrap_or(""));
+        if actual != expected {
+            return Err(format!(
+                "wake {} step {}: the system prefix does not match the request/header's projection_digest",
+                s.wake, s.step_index
+            ));
         }
     }
     Ok(())
@@ -115,12 +119,14 @@ fn step_start_seq(of_wake: &[Step], step_index: u32) -> Option<Seq> {
         .next_back()
 }
 
-/// The `projection_digest` of the header appended FOR THIS STEP, if one was.
+/// The `projection_digest` the model was shown at `step_index`: the NEWEST `request/header` at or
+/// before that step.
 ///
-/// §5 appends a header only when it changes, so a later step usually has none — and the previous
-/// step's digest describes a projection that has since grown. The anchor is therefore read only
-/// when it belongs to this step, and a step without one is checked on its messages alone (its
-/// system prefix is still reproducible, from the newest header's `as_of` plus the assembler).
+/// §5 appends a header only when it changes, and since this phase's review the projection digest
+/// is one of the things compared — so a step with no header of its own was shown EXACTLY the
+/// prefix the last header describes, and the anchor is total. That is what lets the check demand
+/// one rather than skip the step: a step with no header at or before it is a step whose system
+/// prefix nothing in the ledger describes, which is the side channel V4 exists to catch.
 fn projection_digest(of_wake: &[Step], step_index: u32) -> Option<String> {
     let start = of_wake
         .iter()
@@ -136,7 +142,7 @@ fn projection_digest(of_wake: &[Step], step_index: u32) -> Option<String> {
     of_wake
         .iter()
         .filter(|s| s.kind.as_str() == "request/header")
-        .filter(|s| s.seq > start && next_start.map(|n| s.seq < n).unwrap_or(true))
+        .filter(|s| next_start.map(|n| s.seq < n).unwrap_or(true))
         .filter_map(|s| {
             s.body
                 .get("projection_digest")
@@ -164,7 +170,7 @@ pub fn evaluate_mail(steps: &[Step], drain_scheduled: bool) -> Result<(), String
 }
 
 /// Every `wake/start` closed, or is the live one.
-pub fn evaluate_wake_pairing(steps: &[Step], live: Option<&WakeId>) -> Result<(), String> {
+pub fn evaluate_wake_pairing(steps: &[Step], live: &[WakeId]) -> Result<(), String> {
     let started: BTreeSet<&str> = steps
         .iter()
         .filter(|s| s.kind.as_str() == "wake/start")
@@ -178,7 +184,7 @@ pub fn evaluate_wake_pairing(steps: &[Step], live: Option<&WakeId>) -> Result<()
     let open: Vec<&str> = started
         .difference(&ended)
         .copied()
-        .filter(|w| live.map(|l| l.as_str() != *w).unwrap_or(true))
+        .filter(|w| !live.iter().any(|l| l.as_str() == *w))
         .collect();
     if open.is_empty() {
         Ok(())
@@ -201,6 +207,15 @@ pub fn specs() -> Vec<InvariantSpec> {
             plugin: crate::PLUGIN_NAME,
             cadence: Cadence::OnQuiesce,
             check: |ctx| Box::pin(check_mail(ctx)),
+        },
+        // The third invariant the module doc names. It was implemented and unit-tested and then
+        // never handed to the runner, which is how the concurrent-orphan repair gap below it
+        // stayed invisible.
+        InvariantSpec {
+            name: "every_wake_start_has_a_wake_end_or_is_live",
+            plugin: crate::PLUGIN_NAME,
+            cadence: Cadence::OnQuiesce,
+            check: |ctx| Box::pin(check_wake_pairing(ctx)),
         },
     ]
 }
@@ -244,6 +259,15 @@ async fn check_reconstruction(ctx: Context) -> Result<(), InvariantViolation> {
         .map_err(|d| violation("every_request_reconstructs_from_the_ledger", &ctx, d))
 }
 
+async fn check_wake_pairing(ctx: Context) -> Result<(), InvariantViolation> {
+    let steps = all_steps(&ctx)
+        .await
+        .map_err(|d| violation("every_wake_start_has_a_wake_end_or_is_live", &ctx, d))?;
+    let live = crate::driver::live_wakes(ctx.fiber_uid());
+    evaluate_wake_pairing(&steps, &live)
+        .map_err(|d| violation("every_wake_start_has_a_wake_end_or_is_live", &ctx, d))
+}
+
 async fn check_mail(ctx: Context) -> Result<(), InvariantViolation> {
     let steps = all_steps(&ctx).await.map_err(|d| {
         violation(
@@ -254,7 +278,7 @@ async fn check_mail(ctx: Context) -> Result<(), InvariantViolation> {
     })?;
     // At quiesce nothing is in flight, so a drain wake being "scheduled" is the driver's live
     // state: `crate::driver::any_drain_scheduled()` reads it across the live drivers.
-    evaluate_mail(&steps, crate::driver::any_drain_scheduled()).map_err(|d| {
+    evaluate_mail(&steps, crate::driver::any_drain_scheduled(ctx.fiber_uid())).map_err(|d| {
         violation(
             "unconsumed_ordinary_mail_implies_a_scheduled_drain_wake",
             &ctx,
@@ -290,6 +314,16 @@ mod tests {
                 serde_json::json!({ "class": "wake", "from": "andrey", "subject": "s", "summary": "do it" }),
             ),
             step(3, &w, "step/start", serde_json::json!({ "index": 0 })),
+            // Every step carries a header at or before it now, so the fixture writes the one
+            // step 0's system prefix (empty, in this fixture) is anchored by.
+            step(
+                4,
+                &w,
+                "request/header",
+                serde_json::json!({ "prompt_ver": "p", "sections": [], "tools": [],
+                                    "call": {}, "composition": "c",
+                                    "projection_digest": crate::request::digest("") }),
+            ),
         ];
         (w, steps)
     }
@@ -312,6 +346,28 @@ mod tests {
     }
 
     #[test]
+    fn a_step_with_no_header_at_or_before_it_is_a_violation() {
+        let (w, mut steps) = wake_with_one_step();
+        steps.retain(|s| s.kind.as_str() != "request/header");
+        let sent = sent_for(&w, &steps);
+        let err = evaluate_reconstruction(&[sent], &steps)
+            .expect_err("a system prefix nothing in the ledger describes is a violation");
+        assert!(err.contains("no request/header"), "{err}");
+    }
+
+    #[test]
+    fn a_header_from_an_earlier_step_still_anchors_a_later_one() {
+        // §5 appends a header only when it CHANGES; since the projection digest is one of the
+        // compared fields, a later step with no header of its own was shown the same prefix.
+        let (w, mut steps) = wake_with_one_step();
+        steps.push(step(5, &w, "step/start", serde_json::json!({ "index": 1 })));
+        let mut sent = sent_for(&w, &steps);
+        sent.step_index = 1;
+        sent.request.messages = crate::transcript::rebuild(&steps, Some(Seq(5)));
+        evaluate_reconstruction(&[sent], &steps).expect("the earlier header anchors step 1");
+    }
+
+    #[test]
     fn a_matching_pair_is_clean() {
         let (w, steps) = wake_with_one_step();
         let sent = sent_for(&w, &steps);
@@ -323,7 +379,7 @@ mod tests {
         let (w, mut steps) = wake_with_one_step();
         let sent = sent_for(&w, &steps);
         steps.push(step(
-            4,
+            5,
             &w,
             "request/header",
             serde_json::json!({ "prompt_ver": "p", "sections": [], "tools": [], "call": {},
@@ -371,7 +427,7 @@ mod tests {
     fn an_unclosed_wake_is_reported_unless_it_is_the_live_one() {
         let w = wake_of("w1");
         let steps = vec![step(1, &w, "wake/start", serde_json::json!({}))];
-        assert!(evaluate_wake_pairing(&steps, None).is_err());
-        assert!(evaluate_wake_pairing(&steps, Some(&w)).is_ok());
+        assert!(evaluate_wake_pairing(&steps, &[]).is_err());
+        assert!(evaluate_wake_pairing(&steps, std::slice::from_ref(&w)).is_ok());
     }
 }

@@ -74,6 +74,7 @@ fn env(ctx: Context, l: LedgerHandle) -> ReplayEnv {
         composition: "test".into(),
         default_max_tokens: 8192,
         recorder: None,
+        tools: None,
     }
 }
 

@@ -50,9 +50,28 @@ fn agent_of(obs: &Obs) -> &AgentId {
     }
 }
 
+/// How many observations ONE fiber keeps. Bounded on purpose (§0.2, a Phase-1 review finding):
+/// a resident agent runs for weeks, two status edges per wake, and an unbounded record is a leak
+/// rather than a check. `agent-loop`'s recorder has the same bound for the same reason.
+const PER_FIBER_CAP: usize = 4096;
+
 /// Record one moment. Called by the listeners `AgentsPlugin::apply` registers.
 pub fn record(obs: Obs) {
-    SEEN.lock().push(obs);
+    let mut seen = SEEN.lock();
+    let fiber = fiber_of(&obs);
+    seen.push(obs);
+    let count = seen.iter().filter(|o| fiber_of(o) == fiber).count();
+    if count > PER_FIBER_CAP {
+        let mut to_drop = count - PER_FIBER_CAP;
+        seen.retain(|o| {
+            if fiber_of(o) == fiber && to_drop > 0 {
+                to_drop -= 1;
+                false
+            } else {
+                true
+            }
+        });
+    }
 }
 
 /// Forget everything recorded for `fiber`, as an inverse of `apply`.

@@ -180,3 +180,92 @@ async fn a_contributed_section_added_mid_wake_does_not_break_a_past_reconstructi
     invariant::evaluate_reconstruction(&sent, &steps)
         .expect("step 0 still reconstructs against ITS header, not the later one");
 }
+
+/// V4 over the GRACE step. It used to build its own request and call the adapter directly: a
+/// model-visible input on a side channel, invisible to this check and with an EMPTY model, so
+/// `model-policy` never saw it. It is now a real step of the interrupted wake — its instruction
+/// is durable, it runs the `agent/request` waterfall, and its request reconstructs like any other.
+#[tokio::test]
+async fn the_grace_step_is_ledgered_and_runs_the_agent_request_waterfall() {
+    use bough_plugin_llm::AgentRequest;
+
+    let f = Fixture::mounted().await;
+    // A listener in `model-policy`'s position: whatever it decides is what must reach the adapter.
+    f.ctx
+        .on_waterfall::<AgentRequest, _, _>(
+            |mut value: bough_plugin_llm::RequestCall, next| async move {
+                value.call.model = "decided-by-policy".to_string();
+                next.run(value).await
+            },
+        )
+        .await
+        .expect("the listener registers");
+    // A tool nobody releases holds the first wake open, so Andrey's message provably preempts a
+    // wake that is IN FLIGHT — without holding the adapter, which the grace round also needs.
+    let never = std::sync::Arc::new(tokio::sync::Notify::new());
+    f.tools
+        .register(&f.ctx, support::gated_tool(never))
+        .await
+        .expect("the tool registers");
+    f.adapter.script(vec![
+        vec![
+            Chunk::ToolCall {
+                id: ToolCallId::new("c1"),
+                name: ToolName::new("gate"),
+                input: serde_json::json!({}),
+            },
+            Chunk::End {
+                stop: StopReason::ToolUse,
+            },
+        ],
+        says("where I stand: halfway"),
+    ]);
+
+    let (agent, _d) = f.agent("sol").await;
+    agent
+        .followup(ordinary("a push"))
+        .await
+        .expect("mail lands");
+    f.wait_for_kind("tool/call").await;
+    agent.followup(andrey("stop")).await.expect("mail lands");
+
+    let prompt = f.wait_for_kind("wake/grace-prompt").await;
+    assert!(
+        prompt.body["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("interrupted"),
+        "the instruction the model was given is DURABLE: {}",
+        prompt.body
+    );
+    let jot = f.wait_for_kind("wake/jot").await;
+    assert_eq!(
+        jot.body["synthetic"], false,
+        "the MODEL wrote this jot, which is only possible if the grace round resolved a model: {}",
+        jot.body
+    );
+
+    // Every request the adapter was handed carries the decided model — the grace one included.
+    let requests = f.adapter.requests();
+    assert!(
+        requests.iter().all(|r| r.call.model == "decided-by-policy"),
+        "the grace step went through `agent/request` too: {:?}",
+        requests
+            .iter()
+            .map(|r| r.call.model.clone())
+            .collect::<Vec<_>>()
+    );
+    let grace = requests
+        .iter()
+        .find(|r| r.call.tool_choice_none)
+        .expect("the grace round forbids tools");
+    assert!(
+        format!("{:?}", grace.messages).contains("interrupted"),
+        "and it is the round that carries the instruction"
+    );
+
+    let steps = f.steps().await;
+    let sent = recorded_for(&steps);
+    invariant::evaluate_reconstruction(&sent, &steps)
+        .expect("the grace request rebuilds from the ledger like any other");
+}

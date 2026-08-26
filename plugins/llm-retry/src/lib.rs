@@ -78,12 +78,9 @@ fn backoff(cfg: &RetryConfig, attempt: u32) -> Duration {
 pub fn apply_decision(cfg: &RetryConfig, call: &mut RequestErrorCall) -> bool {
     match decide(cfg, call) {
         Some(after) => {
-            call.recovery = Recovery::Retry {
-                after,
-                // Retry the SAME request: rewriting it is another listener's job, and a silent
-                // rewrite here would break V4's reconstruction.
-                request: None,
-            };
+            // The SAME request is re-entered: the loop rebuilds it from the ledger, so a retry
+            // cannot change what the model sees without a step saying so.
+            call.recovery = Recovery::Retry { after };
             true
         }
         None => false,

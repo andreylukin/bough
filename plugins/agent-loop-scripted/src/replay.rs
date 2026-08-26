@@ -43,6 +43,8 @@ pub enum ReplayError {
     Ledger(#[from] bough_plugin_ledger::LedgerError),
     #[error("serialising a step body failed: {0}")]
     Body(#[from] serde_json::Error),
+    #[error("the script issued a tool call but no tools handle is mounted")]
+    NoTools,
 }
 
 /// One request as the invariant's recorder wants it, without depending on `agent-loop`'s type at
@@ -71,6 +73,12 @@ pub struct ReplayEnv {
     pub composition: String,
     pub default_max_tokens: i64,
     pub recorder: Option<Recorder>,
+    /// The tools seam. `None` in a unit test that scripts no tool call; `Some` in every composed
+    /// tree, because the row injects `tools`. A scripted `tool/call` is DISPATCHED through the
+    /// same guarded pipeline `agent-loop` uses — appending the call and walking on left a
+    /// dangling call in the ledger and made "tools keep working unchanged" an activation check
+    /// rather than a functional one.
+    pub tools: Option<bough_plugin_tools::ToolsHandle>,
 }
 
 /// One inbox item this wake claims, as the transcript's driver knows it.
@@ -139,6 +147,18 @@ async fn append(
     class: Class,
     body: serde_json::Value,
 ) -> Result<Step, ReplayError> {
+    append_citing(env, input, kind, class, body, vec![]).await
+}
+
+/// The same append, carrying cites: evidence requires them (§3).
+async fn append_citing(
+    env: &ReplayEnv,
+    input: &WakeInput,
+    kind: &str,
+    class: Class,
+    body: serde_json::Value,
+    cites: Vec<bough_plugin_ledger::Cite>,
+) -> Result<Step, ReplayError> {
     Ok(env
         .ledger
         .0
@@ -148,7 +168,7 @@ async fn append(
             kind: StepType::new(kind),
             class,
             body,
-            cites: vec![],
+            cites,
             at: input.at,
             id: None,
         })
@@ -184,6 +204,15 @@ pub async fn run_wake(env: &ReplayEnv, input: &WakeInput) -> Result<WakeOutcome,
         }),
     )
     .await?;
+
+    // §2's `agent/wake` START moment, emitted by BOTH loop Providers.
+    env.ctx
+        .emit::<bough_plugin_agents::AgentWake>(bough_plugin_agents::WakeEvent {
+            agent: input.agent_id.clone(),
+            wake: input.wake.clone(),
+            kind: input.kind,
+            phase: bough_plugin_agents::Phase::Start,
+        });
 
     // §5 step 3 — the claim is a pure DELETION splice: one `inbox/spliced { op: claim }` per
     // message, durable before any of it reaches the model.
@@ -368,6 +397,7 @@ pub async fn run_wake(env: &ReplayEnv, input: &WakeInput) -> Result<WakeOutcome,
         let chunks = env.script.chunks(input.index, index).unwrap_or_default();
         let mut outcome = StepOutcome::Ok;
         let mut detail: Option<String> = None;
+        let mut calls: Vec<bough_plugin_tools::ToolCall> = Vec::new();
         for chunk in chunks {
             match chunk {
                 Chunk::TextDelta { text } => {
@@ -409,6 +439,14 @@ pub async fn run_wake(env: &ReplayEnv, input: &WakeInput) -> Result<WakeOutcome,
                         }),
                     )
                     .await?;
+                    calls.push(bough_plugin_tools::ToolCall {
+                        id,
+                        name,
+                        args,
+                        agent: input.agent.clone(),
+                        wake: input.wake.clone(),
+                        step_index: idx,
+                    });
                 }
                 Chunk::Usage(_) => {}
                 Chunk::End { stop } => {
@@ -423,6 +461,49 @@ pub async fn run_wake(env: &ReplayEnv, input: &WakeInput) -> Result<WakeOutcome,
                     detail = Some(f.message.clone());
                     reason = WakeEndReason::Error;
                 }
+            }
+        }
+
+        // §5 step 10 — the guarded pipeline, the SAME one `agent-loop` runs, and the results are
+        // appended in the model's call order (§9).
+        if !calls.is_empty() {
+            let Some(tools) = env.tools.clone() else {
+                return Err(ReplayError::NoTools);
+            };
+            for r in tools.execute(&env.ctx, calls).await {
+                let class = if r.cites.is_empty() {
+                    Class::Thought
+                } else {
+                    Class::Evidence
+                };
+                let outcome_kind = if r.ok {
+                    "ok"
+                } else {
+                    match r.failure.as_ref().map(|f| f.kind) {
+                        Some(bough_plugin_tools::FailureClass::Denied) => "denied",
+                        Some(bough_plugin_tools::FailureClass::Blocked) => "blocked",
+                        Some(bough_plugin_tools::FailureClass::Unknown) => "unknown",
+                        _ => "error",
+                    }
+                };
+                append_citing(
+                    env,
+                    input,
+                    "tool/result",
+                    class,
+                    serde_json::json!({
+                        "call": r.call,
+                        "name": r.name,
+                        "outcome": outcome_kind,
+                        "content": r.content,
+                        "value": r.value,
+                        "attached": r.attached,
+                        "concludes_wake": r.concludes_wake,
+                        "step_index": idx,
+                    }),
+                    r.cites.clone(),
+                )
+                .await?;
             }
         }
 
@@ -475,6 +556,14 @@ async fn end_wake(
         serde_json::json!({ "reason": reason, "cause": cause, "consumed": consumed }),
     )
     .await?;
+
+    env.ctx
+        .emit::<bough_plugin_agents::AgentWake>(bough_plugin_agents::WakeEvent {
+            agent: input.agent_id.clone(),
+            wake: input.wake.clone(),
+            kind: input.kind,
+            phase: bough_plugin_agents::Phase::End,
+        });
 
     if reason == WakeEndReason::Completed {
         // COMPLETED only: an interrupted wake refreshes no about-line (§5).

@@ -43,6 +43,10 @@ pub struct ToolResultBody {
     pub attached: Vec<AttachedContext>,
     #[serde(default)]
     pub concludes_wake: bool,
+    /// The step of the wake this result belongs to. It MUST equal the `step_index` of the
+    /// `tool/call` it answers: that pairing is this crate's runtime invariant, and without the
+    /// field on the result the check compared a real index against a default of 0.
+    pub step_index: u32,
 }
 
 /// The two step types this crate owns, for `declare_step_types`.
@@ -85,6 +89,7 @@ mod tests {
             value: None,
             attached: vec![],
             concludes_wake: false,
+            step_index: 3,
         })
         .unwrap();
         defs[1].validate_body(&body).unwrap();

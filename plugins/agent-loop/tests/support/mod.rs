@@ -112,7 +112,7 @@ impl Fixture {
         .await
         .expect("the policy listener registers");
 
-        let tools = ToolsHandle::new();
+        let tools = ToolsHandle::with_limits(8, 5_000);
         let agents = AgentsHandle::new(ctx.clone(), ledger.clone());
 
         let deps = LoopDeps {

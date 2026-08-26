@@ -25,13 +25,47 @@ use crate::preempt::{Preemption, Running};
 use crate::wake::{LoopDeps, WakeSpec};
 use crate::LoopConfig;
 
-/// How many drain wakes are scheduled across every live driver. The standing invariant (§5) is
-/// about ONE agent, but the invariant runner checks the tree, so the count is the tree's.
-static DRAINS_SCHEDULED: AtomicUsize = AtomicUsize::new(0);
+/// Per-FIBER live driver state the invariants read: how many drain wakes are scheduled, and which
+/// wakes are open right now.
+///
+/// Partitioned by `FiberUid` for the same reason the reconstruction recorder is: a process-wide
+/// counter let another kernel in the same test binary satisfy this tree's standing invariant
+/// without checking anything.
+#[derive(Default)]
+struct LiveState {
+    drains: usize,
+    open: std::collections::BTreeSet<String>,
+}
 
-/// Whether any live driver has a drain wake scheduled. Read by the standing-invariant check.
-pub fn any_drain_scheduled() -> bool {
-    DRAINS_SCHEDULED.load(Ordering::SeqCst) > 0
+static LIVE: Mutex<std::collections::BTreeMap<bough_kernel::FiberUid, LiveState>> =
+    Mutex::new(std::collections::BTreeMap::new());
+
+fn with_live<R>(fiber: bough_kernel::FiberUid, f: impl FnOnce(&mut LiveState) -> R) -> R {
+    let mut live = LIVE.lock();
+    f(live.entry(fiber).or_default())
+}
+
+/// Whether a live driver of THIS fiber has a drain wake scheduled. Read by the standing-invariant
+/// check.
+pub fn any_drain_scheduled(fiber: bough_kernel::FiberUid) -> bool {
+    LIVE.lock()
+        .get(&fiber)
+        .map(|l| l.drains > 0)
+        .unwrap_or(false)
+}
+
+/// The wakes this fiber's drivers currently have open. `evaluate_wake_pairing` excuses exactly
+/// these: a wake that is running is not a wake that was never closed.
+pub fn live_wakes(fiber: bough_kernel::FiberUid) -> Vec<WakeId> {
+    LIVE.lock()
+        .get(&fiber)
+        .map(|l| l.open.iter().map(WakeId::new).collect())
+        .unwrap_or_default()
+}
+
+/// Drop everything recorded for `fiber` (registered as an inverse by `apply`).
+pub fn forget(fiber: bough_kernel::FiberUid) {
+    LIVE.lock().remove(&fiber);
 }
 
 /// The factory this row registers.
@@ -97,6 +131,9 @@ struct DriverState {
 struct RunningWake {
     wake: WakeId,
     is_answer: bool,
+    /// The wake's kind. The grace step belongs to THIS wake, so it is the kind `model-policy`
+    /// decides the grace step's model from.
+    kind: WakeKind,
     /// "Started responding": the first reply token has streamed (§5's cutoff).
     streamed: Arc<AtomicBool>,
     /// Messages that joined this wake before it streamed a token (§5).
@@ -118,6 +155,11 @@ pub struct LoopDriver {
 }
 
 impl LoopDriver {
+    /// The fiber this driver's row runs in: the partition key of every process-wide record.
+    fn fiber(&self) -> bough_kernel::FiberUid {
+        self.deps.ctx.fiber_uid()
+    }
+
     fn mint_wake(&self) -> WakeId {
         WakeId::new(uuid::Uuid::now_v7().to_string())
     }
@@ -141,6 +183,7 @@ impl LoopDriver {
             st.running = Some(RunningWake {
                 wake: wake.clone(),
                 is_answer: kind == WakeKind::Answer,
+                kind,
                 streamed: streamed.clone(),
                 joined: joined.clone(),
             });
@@ -161,16 +204,35 @@ impl LoopDriver {
             joined: joined.clone(),
         };
         let me = self.clone();
-        self.wakes.fetch_add(1, Ordering::SeqCst);
+        // §5: `status` is the DRIVER-WIDE drain interval, not one wake. Checkpoint-and-answer
+        // deliberately runs two wakes at once, so the transitions are edges of the in-flight
+        // COUNT: the first wake publishes `Running`, the last one to finish publishes `Idle`.
+        // Per-wake transitions made the first finisher publish `Idle` over a wake still open,
+        // and `when_idle()` then returned on a half-finished agent.
+        let first = self.wakes.fetch_add(1, Ordering::SeqCst) == 0;
+        with_live(self.fiber(), |l| {
+            l.open.insert(spec.wake.to_string());
+        });
         tokio::spawn(async move {
-            let _ = me
-                .cell
-                .set_status(bough_plugin_agents::Status::Running)
-                .await;
+            // The pending-wake flag goes down when the wake actually STARTS, never earlier: it is
+            // what stops `when_idle()` returning in the gap between "mail is durable and a wake is
+            // armed" and "the wake is running". For the first wake the status edge clears it
+            // atomically; a concurrent second wake publishes no edge, so it says so directly.
+            if first {
+                let _ = me
+                    .cell
+                    .set_status(bough_plugin_agents::Status::Running)
+                    .await;
+            } else {
+                me.cell.wake_started();
+            }
             let out = crate::wake::run_wake(&me.cell, spec.clone(), &me.deps).await;
+            with_live(me.fiber(), |l| {
+                l.open.remove(spec.wake.as_str());
+            });
             if spec.kind == WakeKind::Drain {
                 me.drain.release();
-                DRAINS_SCHEDULED.fetch_sub(1, Ordering::SeqCst);
+                with_live(me.fiber(), |l| l.drains = l.drains.saturating_sub(1));
             }
             {
                 let mut st = me.state.lock();
@@ -185,8 +247,9 @@ impl LoopDriver {
             // this wake was running (§5's "queues as the next wake's first mail") gets its wake
             // here, at the only moment the agent is known to be free.
             me.wake_for_queued_mail();
-            me.wakes.fetch_sub(1, Ordering::SeqCst);
-            let _ = me.cell.set_status(bough_plugin_agents::Status::Idle).await;
+            if me.wakes.fetch_sub(1, Ordering::SeqCst) == 1 {
+                let _ = me.cell.set_status(bough_plugin_agents::Status::Idle).await;
+            }
             out
         });
     }
@@ -240,7 +303,7 @@ impl LoopDriver {
         if !self.drain.arm() {
             return;
         }
-        DRAINS_SCHEDULED.fetch_add(1, Ordering::SeqCst);
+        with_live(self.fiber(), |l| l.drains += 1);
         {
             let mut st = self.state.lock();
             st.debouncing = true;
@@ -252,7 +315,7 @@ impl LoopDriver {
             me.state.lock().debouncing = false;
             if me.stopping.load(Ordering::SeqCst) {
                 me.drain.release();
-                DRAINS_SCHEDULED.fetch_sub(1, Ordering::SeqCst);
+                with_live(me.fiber(), |l| l.drains = l.drains.saturating_sub(1));
                 return;
             }
             me.spawn_wake(WakeKind::Drain, None);
@@ -281,16 +344,23 @@ impl LoopDriver {
         by: bough_plugin_agents::MessageId,
         answer: WakeId,
     ) {
-        let interrupt = {
+        let (interrupt, kind) = {
             let st = self.state.lock();
-            st.interrupts.get(&wake).cloned()
+            (
+                st.interrupts.get(&wake).cloned(),
+                st.running
+                    .as_ref()
+                    .filter(|r| r.wake == wake)
+                    .map(|r| r.kind)
+                    .unwrap_or(WakeKind::Answer),
+            )
         };
         let Some(interrupt) = interrupt else { return };
         interrupt.cancel();
         let me = self.clone();
         let agent = self.cell.agent().clone();
         tokio::spawn(async move {
-            if let Some(id) = me.jot_for(&wake).await {
+            if let Some(id) = me.jot_for(&wake, kind).await {
                 me.state.lock().resume_from = Some(id);
             }
             me.deps
@@ -306,7 +376,7 @@ impl LoopDriver {
 
     /// P2-D14: a jot ALWAYS exists. The grace step is a real model step; if it fails or times out
     /// the loop writes the synthetic one, built from the wake's last thought steps.
-    async fn jot_for(&self, wake: &WakeId) -> Option<StepId> {
+    async fn jot_for(&self, wake: &WakeId, kind: WakeKind) -> Option<StepId> {
         let traj = self.cell.agent().traj().clone();
         let steps = self
             .deps
@@ -319,7 +389,7 @@ impl LoopDriver {
             })
             .await
             .unwrap_or_default();
-        crate::wake::grace_jot(&self.cell, &self.deps, wake, &steps)
+        crate::wake::grace_jot(&self.cell, &self.deps, wake, kind, &steps)
             .await
             .ok()
     }
@@ -341,12 +411,11 @@ impl AgentDriver for LoopDriver {
         if me.stopping.load(Ordering::SeqCst) {
             return;
         }
-        // A steer lands at the next STEP boundary of the running wake: the wake re-reads its
-        // inbox there, so there is nothing for the driver to schedule.
-        if receipt.target == Target::NextStep && me.state.lock().running.is_some() {
-            return;
-        }
         let next = me.mint_wake();
+        // The preemption decision runs FIRST, on both queues. §5's rule is about the SENDER, not
+        // about the queue: "an Andrey message ALWAYS gets a fresh sol answer wake, whatever queue
+        // it arrived through". Returning early for `next-step` here used to swallow his steer
+        // before the rule was ever consulted, and a drain wake would then claim and answer it.
         if let Some((p, interrupted)) = me.preempt_for(msg, next.clone()) {
             match p {
                 // JOIN: the running answer wake has not streamed a token yet, so it takes this
@@ -371,6 +440,11 @@ impl AgentDriver for LoopDriver {
                     return;
                 }
             }
+        }
+        // A non-Andrey steer lands at the next STEP boundary of the running wake: the wake
+        // re-reads its inbox there, so there is nothing for the driver to schedule.
+        if receipt.target == Target::NextStep && me.state.lock().running.is_some() {
+            return;
         }
         match crate::mail::schedule_for(msg, receipt.target, receipt.wake, me.drain.in_flight()) {
             Schedule::Now { kind, trigger } => me.spawn_wake(kind, Some(trigger)),
@@ -407,6 +481,24 @@ impl AgentDriver for LoopDriver {
         if self.wakes.load(Ordering::SeqCst) > 0 {
             // Graceful time is up; the wake is cut short and closes durably as aborted.
             self.cell.cancel_token().cancel();
+            for token in self.state.lock().interrupts.values() {
+                token.cancel();
+            }
+            // §2's teardown order is "stop AND DRAIN … returns when idle": returning the instant
+            // the token is fired would let `dispose` unwind the agent's scope while a wake is
+            // still appending steps at it. The cancel is given the same window again to be
+            // OBSERVED, and only a wake that ignores both is left behind — loudly.
+            let hard = std::time::Instant::now() + Duration::from_millis(self.cfg.status_drain_ms);
+            while self.wakes.load(Ordering::SeqCst) > 0 && std::time::Instant::now() < hard {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            if self.wakes.load(Ordering::SeqCst) > 0 {
+                tracing::error!(
+                    agent = %self.cell.agent().name(),
+                    wakes = self.wakes.load(Ordering::SeqCst),
+                    "a wake did not observe its cancellation inside the drain window;                      teardown proceeds and the wake's remaining appends may race the scope"
+                );
+            }
         }
     }
 }

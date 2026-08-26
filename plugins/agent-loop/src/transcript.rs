@@ -16,6 +16,8 @@ const REASONING: &str = "thought/reasoning";
 const TOOL_CALL: &str = "tool/call";
 const TOOL_RESULT: &str = "tool/result";
 const JOT: &str = "wake/jot";
+/// The grace step's instruction. Model-visible, therefore ledgered, therefore folded here.
+const GRACE: &str = "wake/grace-prompt";
 
 /// The steps one wake's request is built from, in seq order: the wake's OWN steps plus the
 /// delivered mail its `wake/start` claimed (mail is delivered under whatever wake delivered it,
@@ -70,6 +72,12 @@ pub fn rebuild(steps: &[Step], as_of: Option<bough_plugin_ledger::Seq>) -> Vec<L
                     },
                 ));
             }
+            GRACE => blocks.push((
+                LlmRole::User,
+                LlmContentBlock::Text {
+                    text: str_field(body, "text"),
+                },
+            )),
             TEXT => blocks.push((
                 LlmRole::Assistant,
                 LlmContentBlock::Text {

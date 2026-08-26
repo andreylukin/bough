@@ -1203,41 +1203,75 @@ number that decides Phase 0's open item 1 (below).
 Every bullet of §17 Phase 2 and of the phase brief, against the test that proves it. A bullet with
 no green named test is not done.
 
-**V1 — a scripted multi-wake conversation.**
-`crates/bough/tests/agent_scripted.rs::a_scripted_conversation_appends_every_durable_step_in_order`
-(asserts the exact kind sequence per wake: `wake/start`, `inbox/spliced`, `step/start`,
-`request/header`, `thought/*`, `tool/call`, `tool/result`, `step/end`, `wake/end`),
-`::wake_end_carries_the_reason_and_the_consumed_seq_set`,
-`::the_ledger_and_agents_invariants_hold_across_the_conversation`.
-Backed by `plugins/agent-loop-scripted/tests/replay.rs::a_two_wake_transcript_replays_in_order`.
+This map was REWRITTEN at the review close: the names below are the names in the tree, checked
+against `fn` names, and where a bullet's claim was weaker than its wording the wording was
+corrected rather than the claim inflated.
+
+**V1 — a scripted multi-wake conversation.** `crates/bough/tests/agent_scripted.rs::`
+`a_scripted_conversation_appends_every_durable_step_in_order`,
+`wake_end_carries_the_reason_and_the_consumed_seq_set`,
+`the_ledger_and_agents_invariants_hold_across_the_conversation`,
+each also as `…_under_the_scripted_driver` (6 green).
+DEVIATION, stated: the first asserts pairwise ORDERING RELATIONS between kinds, not one exact kind
+sequence, and its conversation makes no tool call — `tool/call` before `tool/result` in a real wake
+is proven by `plugins/agent-loop/tests/flow.rs::durable_tool_results_stay_model_ordered_in_the_ledger`
+and by the `tools` invariant, not here.
 
 **V2 — preemption mid-thought.** `plugins/agent-loop/tests/preemption.rs::`
 `an_andrey_message_starts_its_answer_wake_immediately`,
 `the_interrupted_wake_gets_exactly_one_grace_step_to_jot`,
+`a_failed_grace_step_still_leaves_a_synthetic_jot`,
 `the_next_wake_of_any_kind_resumes_from_the_jot`,
-`a_preempted_wake_skips_its_about_line_refresh` (with `about-line` mounted),
+`a_message_before_the_first_token_joins_and_after_it_queues`,
 `a_message_before_the_first_token_joins_the_answer_wake`,
 `a_message_after_the_first_token_queues_as_next_wake_mail`,
-`a_failed_grace_step_still_leaves_a_synthetic_jot`.
+`a_message_during_an_answer_wake_does_not_open_a_second_one`,
+`a_preempted_wake_skips_its_about_line_refresh`,
+`an_interrupt_reaches_a_tool_that_is_already_running` (NEW at the review close),
+`when_idle_does_not_return_while_a_second_wake_is_still_open` (NEW at the review close).
+DEVIATION: `a_preempted_wake_skips_its_about_line_refresh` does not MOUNT the `about-line` row; it
+registers `bough_plugin_about_line::refresh` on the same moment by hand, so it proves the
+reason-guard rather than the registration. The real row over both drivers is exercised by
+`crates/bough/tests/loop_swap.rs::about_line_tools_workers_and_model_policy_keep_working_against_the_{live,scripted}_driver`.
 
 **V3 — a worker roundtrip on a real small task.** `plugins/worker-spawn/tests/roundtrip.rs::`
-`the_spawner_prepends_the_write_boundary_block` (asserted on the `LlmRequest` the adapter received),
+`the_seeded_task_begins_with_the_boundary_block`,
+`a_scripted_workers_report_validates_against_the_seal`,
+`an_invalid_report_is_seal_invalid_naming_the_seal_and_the_pointer`,
+`the_report_lands_in_the_spawners_chain_with_the_external_cites`,
+`a_claim_citing_only_the_workers_own_report_lands_as_a_thought`,
+`ask_appears_as_wake_class_mail_on_the_spawners_lane`,
+`ask_in_block_mode_waits_for_the_answer`,
+`ask_in_end_mode_ends_the_worker_without_waiting`,
+`a_block_mode_ask_with_no_answer_ends_the_worker`;
+over a whole mounted tree: `crates/bough/tests/worker_spawn.rs::`
+`the_boundary_block_is_first_in_the_request_the_adapter_receives`,
 `the_worker_context_is_task_only`,
-`the_report_seal_carries_per_claim_cites`,
-`the_result_lands_in_the_spawners_chain_as_cited_evidence`,
-`an_uncited_claim_lands_as_a_thought`,
-`ask_surfaces_as_wake_class_mail_on_the_spawners_lane`,
-`ask_blocks_or_ends_the_worker_per_mode`;
-`plugins/workers/tests/bounds.rs::{in_flight_bound_refuses_the_excess, depth_bound_refuses_the_fourth_generation, per_wake_cap_refuses_the_excess}`;
-live: `plugins/worker-spawn/tests/live_task.rs::a_live_worker_edits_a_file_under_haiku`
-(`#[ignore]`, `BOUGH_LIVE=1`, `claude-haiku-4-5-20251001`).
+`a_workers_question_lands_on_the_spawners_lane_as_a_durable_wake_class_splice`;
+bounds: `plugins/workers/tests/bounds.rs::`
+`max_depth_refuses_the_generation_past_the_limit_and_names_it`,
+`max_in_flight_refuses_the_third_concurrent_run_and_names_it`,
+`the_per_wake_cap_refuses_the_third_spawn_of_one_wake_and_names_it`,
+`the_per_wake_cap_resets_at_the_next_wake`,
+`a_kind_with_no_provider_is_refused_and_reserves_nothing`,
+`a_refused_start_does_not_spend_the_per_wake_budget`;
+live: `crates/bough/tests/worker_live.rs::a_real_worker_edits_a_file_and_its_content_proves_it`
+(`BOUGH_LIVE=1`, `claude-haiku-4-5-20251001`).
 
 **V4 — model-visible ⟺ ledgered.** `plugins/agent-loop/tests/reconstruct.rs::`
 `every_request_of_a_wake_reconstructs_byte_for_byte`,
-`a_side_channel_message_makes_the_invariant_fail`,
-`a_contributed_section_added_mid_wake_does_not_break_a_past_reconstruction`;
-the evaluator itself: `plugins/agent-loop/src/invariant.rs::tests::{a_matching_pair_is_clean, a_digest_mismatch_is_a_violation}`;
-through the runner: `crates/bough/tests/agent_invariants.rs::a_planted_side_channel_is_reported`.
+`a_side_channel_message_makes_the_invariant_report`,
+`a_contributed_section_added_mid_wake_does_not_break_a_past_reconstruction`,
+`the_grace_step_is_ledgered_and_runs_the_agent_request_waterfall` (NEW at the review close);
+the evaluator itself: `plugins/agent-loop/src/invariant.rs::tests::`
+`a_matching_pair_is_clean`, `a_digest_mismatch_is_a_violation`,
+`a_side_channel_message_is_a_violation`,
+`a_step_with_no_header_at_or_before_it_is_a_violation`,
+`a_header_from_an_earlier_step_still_anchors_a_later_one`;
+through the runner: `crates/bough/tests/agent_invariants.rs::a_planted_side_channel_is_reported`,
+`::every_invariant_reports_clean_over_a_scripted_session`.
+The system half is now TOTAL: the projection digest is part of what makes a `request/header`
+change, so every step has an anchoring header at or before it and a step with none is reported.
 
 **V5 — the tools pipeline.** `plugins/tools/tests/pipeline.rs::`
 `a_denial_cannot_be_re_allowed_by_a_later_listener`,
@@ -1248,8 +1282,17 @@ through the runner: `crates/bough/tests/agent_invariants.rs::a_planted_side_chan
 `block_yields_a_valueless_failure`,
 `concurrency_safe_calls_dispatch_in_parallel`,
 `an_unsafe_call_forms_an_exclusive_barrier`,
-`durable_results_stay_model_ordered`;
-`plugins/tools/tests/restrict.rs::{a_restricted_tool_is_absent_from_the_schema, a_restricted_tool_is_refused_indistinguishably_from_a_nonexistent_one}`.
+`durable_results_stay_model_ordered`,
+`a_tool_outside_the_scope_is_refused_by_the_executor`;
+`plugins/tools/tests/restrict.rs::`
+`a_restricted_tool_is_absent_from_the_schema`,
+`a_restricted_tool_is_refused_indistinguishably_from_a_nonexistent_one`,
+`two_restrictions_compose_as_an_intersection`,
+`disposing_a_restriction_restores_visibility`;
+in the ledger: `plugins/agent-loop/tests/flow.rs::durable_tool_results_stay_model_ordered_in_the_ledger`;
+the crate's own invariant: `plugins/tools/src/invariant.rs::tests` (7, including
+`a_wake_that_closes_over_an_unanswered_call_is_a_violation` and
+`a_result_recorded_without_a_step_index_field_is_a_step_mismatch`).
 
 **V6 — mail consumption and wake urgency.** `plugins/agent-loop/tests/mail.rs::`
 `consumed_is_the_union_of_wake_end_sets`,
@@ -1258,46 +1301,75 @@ through the runner: `crates/bough/tests/agent_invariants.rs::a_planted_side_chan
 `only_one_drain_wake_is_in_flight_per_agent`,
 `an_andrey_message_gets_a_fresh_answer_wake_from_either_queue`,
 `a_drain_wake_never_answers_andrey`;
-`plugins/model-policy/tests/policy.rs::{an_answer_wake_gets_sol, an_unattended_wake_gets_terra, model_override_applies_to_unattended_only, sol_is_not_overridable}`.
+`plugins/model-policy/tests/policy.rs::{an_answer_wake_gets_sol, an_unattended_wake_gets_terra,
+model_override_applies_to_unattended_only, sol_is_not_overridable}`;
+the policy invariant is no longer self-confirming — it joins the DECISION to the model the durable
+`request/header` records: `plugins/model-policy/src/invariant.rs::tests::`
+`a_later_listener_rewriting_the_model_is_a_violation`, `a_matching_decision_and_header_are_clean`.
 
 **V7 — the actions journal.** `plugins/actions/tests/journal.rs::`
 `intent_is_written_before_execute_and_done_after`,
 `the_same_kind_target_and_step_collide_instead_of_duplicating`,
 `an_unregistered_kind_is_refused_by_the_executor`,
 `reconciliation_lists_intent_without_done_without_re_executing`,
-`two_spellings_of_one_target_produce_one_idem_key`;
-`plugins/tool-actions/tests/refusal.rs::each_primitive_refuses_with_no_provider_mounted`.
+`two_spellings_of_one_target_produce_one_idem_key`,
+`the_marker_the_provider_is_handed_is_derived_from_the_idem_key`,
+`a_provider_failure_marks_the_row_failed_and_still_writes_a_done`;
+`plugins/tool-actions/tests/refusal.rs::{each_primitive_refuses_with_no_provider_mounted,
+a_fifth_spelling_is_not_a_tool_at_all}`.
 
 **V8 — cancellation and lifecycle.** `plugins/agents/tests/lifecycle.rs::`
-`the_first_cancel_cause_wins`,
+`the_first_cancel_cause_wins` (a REAL race since the review close: two spawned tasks on a
+multi-threaded runtime behind a barrier, not `tokio::join!`),
 `a_cancel_with_nothing_active_is_a_no_op_and_arms_nothing`,
 `a_disposed_cancel_never_latches_a_pending_wake`,
 `a_setup_failure_rolls_the_creation_back_fully`,
-`teardown_order_is_stop_then_scope_then_agent_then_session`;
-`plugins/agents/src/invariant.rs::tests::{a_repeated_status_is_reported, a_status_after_disposal_is_reported}`;
+`teardown_order_is_stop_then_scope_then_agent_then_session`,
+`the_disposer_is_the_only_path_to_teardown`;
+`plugins/agents/src/invariant.rs::tests::{a_repeated_status_is_reported,
+a_status_after_disposal_is_reported, two_fibers_are_two_streams,
+forget_drops_only_that_fibers_observations}`;
 through the runner: `crates/bough/tests/agent_invariants.rs::a_planted_status_repeat_is_reported`.
 
 **V9 — crash repair and `bough exec`.** `plugins/agent-loop/tests/repair.rs::`
 `an_orphaned_trailing_wake_closes_as_interrupted`,
 `a_call_without_a_result_gets_tool_outcome_unknown`,
-`repair_never_touches_rollups`;
-`crates/bough/tests/exec_headless.rs::{exec_runs_one_task_end_to_end_with_llm_replay, exec_exits_with_the_ledger_intact, exec_tears_down_before_exit}`
-and `::exec_runs_one_task_live_with_haiku` (`#[ignore]`, `BOUGH_LIVE=1`).
+`a_crash_during_a_preemption_closes_both_open_wakes` (NEW: checkpoint-and-answer leaves TWO wakes
+open, and repair now closes every one, not only the trailing one);
+`crates/bough/tests/exec_headless.rs::`
+`repair_at_boot::booting_exec_closes_an_orphaned_wake_and_leaves_rollups_alone` — this, and NOT
+`repair.rs::repair_never_touches_rollups`, is the evidence for the rollup half: it seals a rollup,
+boots `bough exec` and re-reads it, whereas the planner test inspects a struct with no rollup field;
+`::exec_runs_one_task_end_to_end_with_llm_replay`, `::exec_exits_with_the_ledger_intact`,
+`::exec_tears_down_before_exit`, `::an_empty_task_is_not_a_task_and_the_row_still_activates`,
+`::exec_runs_one_task_live_with_haiku` (`BOUGH_LIVE=1`).
 
-**V10 — the llm seam.** `plugins/llm/tests/stream.rs::{a_failure_is_a_terminal_chunk_never_an_error, every_stream_ends_with_exactly_one_terminal_chunk, a_short_circuiting_wrapper_yields_a_failed_chunk}`;
-`plugins/llm-retry/tests/retry.rs::{a_retryable_failure_is_retried_without_next, the_default_leaves_the_failure_terminal_for_the_wake, attempts_are_bounded}`;
-`plugins/llm-anthropic/tests/map.rs::{text_reasoning_tool_calls_and_usage_map_to_the_seam, an_absent_key_is_a_terminal_auth_failure}`
-and `::a_live_haiku_round_streams_text_tool_calls_and_usage` (`#[ignore]`, `BOUGH_LIVE=1`);
-`plugins/llm-replay/tests/replay.rs::{the_same_transcript_answers_deterministically, an_unmatched_request_fails_in_strict_mode}`.
+**V10 — the llm seam.** `plugins/llm/tests/stream.rs::{a_failure_is_a_terminal_chunk_never_an_error,
+every_stream_ends_with_exactly_one_terminal_chunk, a_short_circuiting_wrapper_yields_a_failed_chunk}`;
+`plugins/llm-retry/tests/retry.rs::{a_retryable_failure_is_retried_without_next,
+the_default_leaves_the_failure_terminal_for_the_wake, attempts_are_bounded,
+the_delay_stays_inside_the_configured_window}` — and the bound is a bound as INTEGRATED since the
+review close: `agent-loop` carries the attempt count across the retry `continue` instead of
+rebuilding `attempt: 1` per step;
+`plugins/llm-anthropic/tests/map.rs::{text_reasoning_tool_calls_and_usage_map_to_the_seam,
+an_absent_key_is_a_terminal_auth_failure, a_transport_failure_is_terminal_and_retryable,
+the_adapter_does_not_retry_on_its_own, the_call_config_is_what_reaches_the_client}`
+and `::a_live_haiku_round_streams_text_tool_calls_and_usage` (`BOUGH_LIVE=1`);
+`plugins/llm-replay/tests/replay.rs::{the_same_transcript_answers_deterministically,
+an_unmatched_request_fails_in_strict_mode, a_lenient_replay_ends_the_turn_instead_of_hanging,
+a_round_without_a_terminal_chunk_is_closed_by_the_adapter}`.
 
 **SWAP — the phase's exit gate.** `crates/bough/tests/loop_swap.rs::`
 `a_patch_mounts_agent_loop_scripted_in_place_of_agent_loop_without_a_recompile`,
+`about_line_tools_workers_and_model_policy_keep_working_against_the_live_driver`,
 `about_line_tools_workers_and_model_policy_keep_working_against_the_scripted_driver`,
 `the_ledger_and_agents_invariants_run_against_both_loop_providers`,
-`the_retired_loop_leaves_no_factory_no_listeners_and_no_bindings`,
+`the_retired_loop_leaves_no_factory_no_listeners_and_no_bindings` (all THREE halves asserted since
+the review close: the factory slot, the listener counts on the four `agent/*` moments, the
+per-round `llm/stream` hop, and the row's own bindings),
 `a_patch_replaces_llm_anthropic_with_llm_replay`.
-Each of the four consumer suites is additionally parameterised over both drivers by a shared
-`for_each_driver!` macro (P1-D10's lesson: one case per driver, named, never a single red test).
+`agent-loop-scripted` runs a scripted `tool/call` through the REAL guarded pipeline since the
+review close, so "tools keep working unchanged" is a functional claim and not an activation one.
 
 ---
 
@@ -1416,3 +1488,68 @@ by construction but only one is exercised: §17 puts "many agents" in Phase 5.
   offline.** Andrey asked for real haiku testing, and `make live` is the target that does it
   (sourcing `~/.bough/env`); a hermetic default suite is AGENTS.md's rule and the reason the whole
   offline path runs on `llm-replay` and `agent-loop-scripted`.
+
+---
+
+## 7. Deviations and open items (written at the review close, 2026-08-26)
+
+### 7.1 What the review changed
+
+Every HIGH and MEDIUM finding is fixed, each with a named test that ran green. The ones that
+changed a shape rather than a line:
+
+- **`request/header` now compares the projection digest too.** §5 lists four things ("prompt
+  version, section ids, tool schemas, call config"); the header also anchors V4's reconstruction of
+  the SYSTEM prefix, and a step whose prefix moved with no header for it is a prefix nothing in the
+  ledger describes. The digest is therefore part of what makes a header change, and the V4 check
+  demands an anchor at or before EVERY step instead of skipping steps that had none. Cost: a
+  tool-using wake writes one header per step. `flow.rs::a_request_header_is_appended_only_when_it_changes`
+  states the new rule (no two consecutive headers are equal, and §5's four are unchanged across
+  the two steps — only the digest moved). "Tool schemas" is a DIGEST of the definitions, not the
+  name list, so a scoped tool shadowing its same-named global twin changes the header.
+- **The grace step is a real step.** `wake/grace-prompt` (a new `agents` step type),
+  `step/start`, `request/header`, `step/end`, the `agent/request` waterfall, and the recorded
+  `SentRequest`. It previously built its own `LlmRequest` with `model: ""` and called the adapter
+  directly. Fixing it uncovered a second, live defect: the grace round dispatched on the AGENT's
+  context while `LlmHandle::stream` installs its serving hop on the LOOP's, so whenever another
+  round was open the grace round failed with "a listener short-circuited the chain" and the jot was
+  ALWAYS synthetic. Both are covered by
+  `reconstruct.rs::the_grace_step_is_ledgered_and_runs_the_agent_request_waterfall`.
+- **`status` is the driver-wide interval.** The first wake publishes `Running`, the last one to
+  finish publishes `Idle`. That broke the pending-wake flag, which used to be cleared as a side
+  effect of the status edge; every driver now says `AgentCell::wake_started()` per wake.
+  `preemption.rs::when_idle_does_not_return_while_a_second_wake_is_still_open`.
+- **Cancellation reaches a running tool.** `ToolsHandle::execute_under` takes the caller's token;
+  the loop passes one that fires on the wake's interrupt or the agent's cancel.
+  `preemption.rs::an_interrupt_reaches_a_tool_that_is_already_running` (verified to FAIL against
+  the old `execute`).
+- **The kernel publishes the composition BEFORE reconciling the tree.** `agent-loop` now fails
+  loud when no fingerprint is resolvable, and that exposed the fact that the fingerprint was
+  published after `update_tree`, so no plugin's `apply` had ever seen one on the first load.
+
+### 7.2 Deviations that stand
+
+- **§5's drawn order puts `request/header` (7) before the `agent/request` waterfall (8); the code
+  appends the header AFTER.** The header records the call config, and the call config is what the
+  waterfall decides, so the drawn order cannot be implemented as drawn without writing a header
+  that is wrong. Consequence, stated: an `agent/request` listener runs before the durable header
+  for its step exists. `wake.rs`'s module comment keeps §5's numbering and marks the swap.
+- **P2-D15's JOIN does not restart the step.** A joining message is answered at the next step
+  boundary; nothing cancels the in-flight request and `StepOutcome::Restarted` is unused. §5's
+  letter holds, its latency intent does not. Unchanged from the build; recorded here and in
+  `BUILD.md`.
+- **`ToolCall` carries no `StepId`.** `tool-actions` synthesises `"{wake}#{step_index}"` and
+  `tool-spawn_worker` `"toolcall:{call.id}"`. The consequence is real and named: the actions idem
+  key is not keyed on a ledger step, two calls to the same target inside one step collide as a
+  Duplicate, and Phase 8's reconciliation cannot join a journal row back to its `tool/call` row.
+  Carrying a `StepId` on `ToolCall` is a seam change and belongs with Phase 5's graph ops.
+- **`preemption.rs::a_preempted_wake_skips_its_about_line_refresh` does not mount `about-line`.**
+  It proves `refresh`'s reason guard. The mounted row over both drivers is covered by
+  `loop_swap.rs`; the map says so rather than the parenthetical claiming otherwise.
+- **`wake/max-tokens` and `aborted{cause}`** exist in code with no named test.
+- **`WorkerResult.steps` / `.usage`** are always zero: no seam reports them back to a provider.
+- **`actions` has no Providers** (Phase 6), so every kind is refused; its invariant coverage is the
+  pure `evaluate` plus planted-violation unit tests, never a real boot.
+- **Phase 0's deferrals are untouched.** The fiber lifecycle is still a poll loop (P2-D24 measured
+  the wake path at p50 ~17ms and found the poll is not the dominant term), and `emit` is still
+  spawned and unawaited — which is why nothing durable rides an emit (P2-D25).

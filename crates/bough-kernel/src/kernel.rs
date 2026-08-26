@@ -251,8 +251,17 @@ impl Kernel {
 
     async fn apply_composition(&self, c: Composition) -> Result<(), KernelError> {
         let fingerprint = c.fingerprint.clone();
-        self.update_tree(c.tree.clone()).await?;
-        *self.composition.lock() = Some(Arc::new(c));
+        // The composition is published BEFORE the tree is reconciled, because a plugin's `apply`
+        // is entitled to read the fingerprint of the composition that is mounting it (§5 makes
+        // it part of `request/header`). Publishing it afterwards meant the FIRST load never had
+        // one, so every plugin read `None` on the only pass that matters. On failure the previous
+        // composition is put back: `update_tree` leaves the last good TREE untouched (§0.3), and
+        // the fingerprint must not drift away from it.
+        let previous = self.composition.lock().replace(Arc::new(c.clone()));
+        if let Err(e) = self.update_tree(c.tree.clone()).await {
+            *self.composition.lock() = previous;
+            return Err(e);
+        }
         self.events.config_updated(fingerprint);
         Ok(())
     }

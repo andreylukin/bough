@@ -101,6 +101,7 @@ impl AgentFactory for ScriptedFactory {
             next_wake: parking_lot::Mutex::new(0),
             stopping: std::sync::atomic::AtomicBool::new(false),
             wakes: Arc::new(tokio::sync::Semaphore::new(MAX_WAKES_IN_FLIGHT as usize)),
+            in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }))
     }
 }
@@ -125,6 +126,11 @@ pub struct ScriptedDriver {
     stopping: std::sync::atomic::AtomicBool,
     /// Wakes in flight; `stop()` drains against it.
     wakes: Arc<tokio::sync::Semaphore>,
+    /// Wakes in flight as a COUNT. §2's `status` is the driver-wide interval, not one wake, so
+    /// the first wake publishes `Running` and the last one to finish publishes `Idle`. Per-wake
+    /// transitions made a concurrent second wake refuse to start at all (its `Running` came back
+    /// `StatusRepeat`), and made the first finisher publish `Idle` over a wake still open.
+    in_flight: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl ScriptedDriver {
@@ -139,12 +145,14 @@ impl ScriptedDriver {
         if self.stopping.load(Ordering::SeqCst) {
             return;
         }
-        if self
-            .cell
-            .set_status(bough_plugin_agents::Status::Running)
-            .await
-            .is_err()
+        if self.in_flight.fetch_add(1, Ordering::SeqCst) == 0
+            && self
+                .cell
+                .set_status(bough_plugin_agents::Status::Running)
+                .await
+                .is_err()
         {
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
             return;
         }
         let index = {
@@ -155,6 +163,9 @@ impl ScriptedDriver {
         };
         let me = self.clone();
         tokio::spawn(async move {
+            // See `agent-loop`'s driver: the pending-wake flag goes down when the wake starts, and
+            // for a concurrent second wake there is no status edge to do it.
+            me.cell.wake_started();
             let _permit = me.wakes.clone().acquire_owned().await.ok();
             let agent = me.cell.agent().clone();
             let at = chrono::Utc::now();
@@ -214,7 +225,9 @@ impl ScriptedDriver {
                     tracing::error!(error = %e, "scripted wake ran out of script");
                 }
             }
-            let _ = me.cell.set_status(bough_plugin_agents::Status::Idle).await;
+            if me.in_flight.fetch_sub(1, Ordering::SeqCst) == 1 {
+                let _ = me.cell.set_status(bough_plugin_agents::Status::Idle).await;
+            }
         });
     }
 }
@@ -279,6 +292,11 @@ impl Plugin for ScriptedLoopPlugin {
         let projection = ctx
             .get::<bough_plugin_projection::Projection>()
             .map_err(|e| PluginError::new(entry.clone(), e))?;
+        // The row injects `tools`; taking the handle here is what makes a scripted `tool/call`
+        // run the real guarded pipeline rather than dangling in the ledger.
+        let tools = ctx
+            .get::<bough_plugin_tools::Tools>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
 
         // P2-D18: the shared EVALUATOR lives in `agent-loop`; this row is its second RECORDER.
         let mine = ctx.fiber_uid();
@@ -310,6 +328,7 @@ impl Plugin for ScriptedLoopPlugin {
             composition: ctx.entry_id().to_string(),
             default_max_tokens: 8192,
             recorder: Some(recorder),
+            tools: Some(bough_plugin_tools::ToolsHandle(tools.0.clone())),
         };
 
         let agents = ctx

@@ -136,6 +136,9 @@ impl Agent {
     pub(crate) fn arm_pending_wake(&self) {
         self.0.pending_wake.store(true, Ordering::SeqCst);
     }
+    pub(crate) fn clear_pending_wake(&self) {
+        self.0.pending_wake.store(false, Ordering::SeqCst);
+    }
     pub fn has_pending_wake(&self) -> bool {
         self.0.pending_wake.load(Ordering::SeqCst)
     }
@@ -214,6 +217,17 @@ impl Agent {
             .await?;
         if wake {
             self.0.pending_wake.store(true, Ordering::SeqCst);
+            // §2: "disposed never latches a pending wake". The disposal check above and this
+            // store are not one atom — a `cancel(Disposed)` landing between them used to set
+            // `disposed` and clear the flag while this call was still on its way to setting it,
+            // leaving a disposed agent latched forever (nothing clears it once the driver is
+            // detached, so `when_idle()` never returned). Re-reading the flag AFTER the store
+            // closes the window from this side; the disposer's own clear closes it from the
+            // other, and whichever runs last leaves the flag down.
+            if self.is_disposed() {
+                self.0.pending_wake.store(false, Ordering::SeqCst);
+                self.0.idle.notify_waiters();
+            }
         }
         self.0
             .base

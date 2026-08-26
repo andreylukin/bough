@@ -27,6 +27,7 @@ pub(crate) async fn execute(
     handle: &ToolsHandle,
     ctx: &Context,
     calls: Vec<ToolCall>,
+    cancel: CancellationToken,
 ) -> Vec<ToolResult> {
     let max_parallel = handle.0.max_parallel;
     let default_deadline = Duration::from_millis(handle.0.default_deadline_ms);
@@ -47,6 +48,9 @@ pub(crate) async fn execute(
     while i < planned.len() {
         // A batch is a run of concurrency-safe calls; anything else is a batch of one and so a
         // barrier for its neighbours.
+        // `max_parallel` is clamped at construction, but a batch of zero would spin, so the
+        // floor is restated where the loop depends on it.
+        let max_parallel = max_parallel.max(1);
         let mut end = i;
         if planned[i].2 {
             while end < planned.len() && planned[end].2 && end - i < max_parallel {
@@ -57,7 +61,14 @@ pub(crate) async fn execute(
         }
         let batch = &planned[i..end];
         let futs = batch.iter().map(|(call, tool, _)| {
-            run_one(handle, ctx, call.clone(), tool.clone(), default_deadline)
+            run_one(
+                handle,
+                ctx,
+                call.clone(),
+                tool.clone(),
+                default_deadline,
+                cancel.clone(),
+            )
         });
         let mut batch_results = futures::future::join_all(futs).await;
         results.append(&mut batch_results);
@@ -78,6 +89,7 @@ async fn run_one(
     call: ToolCall,
     tool: Option<Arc<dyn Tool>>,
     default_deadline: Duration,
+    caller_cancel: CancellationToken,
 ) -> ToolResult {
     let started_at = Utc::now();
     let call = Arc::new(call);
@@ -134,7 +146,9 @@ async fn run_one(
     }
 
     // ---- around-dispatch (§9, P2-D13) --------------------------------------------------------
-    let cancel = CancellationToken::new();
+    // A CHILD of the caller's signal: cancelling the wake cancels every tool it has in flight,
+    // and a `tools/execute` wrapper may still narrow it further for one call.
+    let cancel = caller_cancel.child_token();
     let deadline = Instant::now() + default_deadline;
     let digest_before = call.digest();
     let wrapped = ctx

@@ -54,7 +54,9 @@ pub fn header_of(inputs: &RequestInputs) -> RequestHeader {
             .iter()
             .map(|s| s.id.as_str().to_string())
             .collect(),
+        step_index: inputs.facts.step_index,
         tools: inputs.tools.iter().map(|t| t.name.clone()).collect(),
+        tools_digest: tools_digest(&inputs.tools),
         call: call_json(&inputs.call),
         composition: inputs.facts.composition.clone(),
     }
@@ -72,15 +74,38 @@ pub fn header_if_changed(
     }
 }
 
-/// §5's four: prompt version, section ids, tool schemas, call config. The three anchors are
-/// deliberately NOT part of the comparison — `as_of` moves with every append, so comparing it
-/// would append a header on every step and say nothing.
+/// §5's four — prompt version, section ids, tool SCHEMAS, call config — plus the composition
+/// fingerprint and the projection digest.
+///
+/// `as_of` and `budget` are deliberately NOT part of the comparison: `as_of` moves with every
+/// append, so comparing it would put a header on every step and say nothing. The projection
+/// DIGEST is a different matter and is compared: it is the anchor V4 reconstructs the system
+/// prefix from, and a step whose prefix changed with no header for it is a step whose prefix
+/// nothing in the ledger describes. "Tool schemas" is likewise the digest and not the name list,
+/// because a scoped tool may shadow its same-named global twin with a different schema.
 pub fn same_four(a: &RequestHeader, b: &RequestHeader) -> bool {
     a.prompt_ver == b.prompt_ver
         && a.sections == b.sections
         && a.tools == b.tools
+        && a.tools_digest == b.tools_digest
         && a.call == b.call
         && a.composition == b.composition
+        && a.projection_digest == b.projection_digest
+}
+
+/// sha256 of the canonical JSON of the tool definitions offered, hex.
+pub fn tools_digest(tools: &[LlmToolDef]) -> String {
+    let canonical: Vec<serde_json::Value> = tools
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "name": t.name,
+                "description": t.description,
+                "schema": t.input_schema,
+            })
+        })
+        .collect();
+    digest(&serde_json::to_string(&canonical).unwrap_or_default())
 }
 
 /// The body actually appended.

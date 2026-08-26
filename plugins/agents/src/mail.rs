@@ -324,8 +324,28 @@ impl Inbox {
         })
     }
 
-    /// A pure DELETION splice: one durable step per removed message.
+    /// A pure DELETION splice: one durable step per removed message. Removes from the live cache
+    /// AND appends; [`Inbox::take`] plus [`Inbox::append_removal`] is the two-phase form a
+    /// concurrent claim needs.
     pub(crate) async fn remove(
+        &self,
+        id: &MessageId,
+        target: Target,
+        op: SpliceOp,
+        wake: bough_plugin_ledger::WakeId,
+        at: DateTime<Utc>,
+        reason: Option<&str>,
+    ) -> Result<StepId, AgentError> {
+        let step = self
+            .append_removal(id, target, op, wake, at, reason)
+            .await?;
+        self.queues.lock().retain(|(m, _)| m.id != *id);
+        Ok(step)
+    }
+
+    /// Append the deletion splice WITHOUT touching the live cache: the caller already took the
+    /// message out of it under the queue lock.
+    pub(crate) async fn append_removal(
         &self,
         id: &MessageId,
         target: Target,
@@ -360,19 +380,51 @@ impl Inbox {
                 id: None,
             })
             .await?;
-        self.queues.lock().retain(|(m, _)| m.id != *id);
         Ok(step.id)
     }
 
-    /// The messages a selector admits, oldest first, without removing anything.
-    pub(crate) fn select(&self, sel: &crate::factory::ClaimSelector) -> Vec<Message> {
+    /// Splice one seed message back out when a creation transaction rolls back after `attach`.
+    pub(crate) async fn discard_seed(
+        &self,
+        id: &MessageId,
+        target: Target,
+        at: DateTime<Utc>,
+    ) -> Result<StepId, AgentError> {
+        self.remove(
+            id,
+            target,
+            SpliceOp::Discard,
+            outside_wake(),
+            at,
+            Some("the creation transaction rolled back"),
+        )
+        .await
+    }
+
+    /// Select AND remove in one critical section: the atomic half of a concurrent claim.
+    pub(crate) fn take(&self, sel: &crate::factory::ClaimSelector) -> Vec<Message> {
+        let mut queues = self.queues.lock();
+        let chosen = Self::admitted(&queues[..], sel);
+        queues.retain(|(m, _)| !chosen.iter().any(|c| c.id == m.id));
+        chosen
+    }
+
+    /// The messages a selector admits, oldest first, without removing anything. Read-only: a
+    /// CLAIM goes through [`Inbox::take`], which selects and removes under one lock.
+    pub fn select(&self, sel: &crate::factory::ClaimSelector) -> Vec<Message> {
         let queues = self.queues.lock();
+        Self::admitted(&queues[..], sel)
+    }
+
+    /// The selector's pure filter over a locked queue.
+    fn admitted(queues: &[(Message, Target)], sel: &crate::factory::ClaimSelector) -> Vec<Message> {
         let mut out: Vec<Message> = queues
             .iter()
             .filter(|(m, t)| {
                 *t == sel.target
                     && sel.classes.as_ref().is_none_or(|cs| cs.contains(&m.class))
                     && sel.only.as_ref().is_none_or(|ids| ids.contains(&m.id))
+                    && !(sel.exclude_andrey && m.is_andrey())
             })
             .map(|(m, _)| m.clone())
             .collect();
