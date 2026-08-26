@@ -1172,7 +1172,7 @@ above ~$0.50/day the design is wrong, not the bench.
 | never a degradation casualty | `tests/pins.rs::a_pin_is_never_a_degradation_rungs_first_casualty` (Phase 1's ladder already puts pins at rung 4 with a flag; this asserts it with real tiers present) |
 | never expired by reconsolidation — the pass side | `reconsolidation` `detect::tests::stale_never_returns_a_pin_whatever_the_config_says` |
 | never expired by reconsolidation — the projector side | `projection-assembler` `tests/expiry.rs::an_expiry_marker_naming_a_pin_is_ignored` |
-| supersession is the only relief valve, and the projector honours it | Phase 1's `live_pins` tests stand; `tests/pins.rs::a_pin_covered_by_a_sealed_tier_still_rides_the_projection_verbatim` includes a superseded pin that does NOT ride |
+| supersession is the only relief valve, and the projector honours it | Phase 1's `live_pins` tests stand; end-to-end through the real projector, `projection-assembler` `tests/pins.rs::a_superseded_pin_stops_riding_while_expiry_and_sealing_change_nothing` |
 
 ### SWAP
 

@@ -35,3 +35,7 @@ uuid = { workspace = true }
 [dev-dependencies]
 bough-plugin-ledger-memory = { workspace = true }
 bough-plugin-llm-replay = { workspace = true }
+# V5's end-to-end half: the marker a real pass writes, read by the real projector. Acyclic —
+# projection-assembler does not depend on this row.
+bough-plugin-projection = { workspace = true }
+bough-plugin-projection-assembler = { workspace = true }

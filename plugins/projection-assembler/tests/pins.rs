@@ -127,3 +127,64 @@ async fn a_pin_is_never_a_degradation_rungs_first_casualty() {
     assert!(squeezed.flags.contains(&Flag::PinsDegraded));
     assert!(squeezed.to_text().contains("> DEGRADED:"));
 }
+
+/// §3, V7: supersession is the ONLY relief valve, and the projector honours it. A superseding
+/// `pin/set` retires the old rule end-to-end — through the real ledger read and the real band —
+/// while a sealed tier covering both and an expiry marker naming the live one change nothing.
+#[tokio::test]
+async fn a_superseded_pin_stops_riding_while_expiry_and_sealing_change_nothing() {
+    let h = Harness::open(Which::Memory);
+    h.put_agent(None).await;
+
+    let old = h.pin("p1", "budget", "the wake budget is under 50ms").await;
+    for n in 1..=25 {
+        h.note(&format!("s{n}"), "w1", "a step, long past the tail window")
+            .await;
+    }
+    // The superseding rule, written the way §3 spells it: a new pin/set naming what it retires.
+    let new = h
+        .append(
+            "p2",
+            "w1",
+            "pin/set",
+            bough_plugin_ledger::Class::Thought,
+            serde_json::json!({
+                "title": "budget",
+                "text": "the wake budget is under 40ms",
+                "supersedes": [old.as_str()],
+            }),
+            Vec::new(),
+        )
+        .await;
+    // A tier sealed over the whole range both pins sit in.
+    h.tier(
+        "r-t1",
+        1,
+        1,
+        30,
+        "sol tightened the wake budget and then worked for a while",
+        &[],
+        Beneath::Raw {
+            steps: vec![old.clone(), new.clone()],
+        },
+    )
+    .await;
+    // And an expiry pass aimed squarely at the live pin.
+    h.expire("x1", &["step:p2"], "an expiry pass aimed at a pin")
+        .await;
+
+    let a = h.assemble(cfg(100_000)).await;
+    let pins = body(&a, "pins").expect("the pins band");
+    assert!(
+        pins.contains("under 40ms"),
+        "the superseding pin must ride, and expiry must not touch it:\n{pins}"
+    );
+    assert!(
+        !pins.contains("under 50ms"),
+        "the superseded pin still rides: supersession was not honoured:\n{pins}"
+    );
+    assert!(
+        a.cites.steps.contains(&new) && !a.cites.steps.contains(&old),
+        "the projection cites the live pin, not the retired one"
+    );
+}

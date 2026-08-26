@@ -187,3 +187,66 @@ async fn the_pass_never_seals_within_seal_lag_steps_of_the_head() {
         );
     }
 }
+
+/// V2's "as CONFIGURED" half, end to end: a row with a different `fanout` and a different
+/// `max_window_steps` builds a different tree over the same shape of trajectory. Nothing here is
+/// the shipped 10/10, so a constant hiding behind the config field would fail.
+#[tokio::test]
+async fn a_different_fanout_and_window_build_a_different_tree() {
+    let mut c = cfg();
+    c.fanout = 3;
+    c.max_window_steps = 5;
+    let fx = fx(c, 64).await;
+    // Ten episodes of five steps: nine close, the tenth is the open head.
+    fx.seed(10, 5).await;
+    let report = fx.seal().await;
+    assert!(!report.sealed.is_empty(), "{report:?}");
+    let rollups = fx.rollups().await;
+
+    let ones = tier_blocks(&rollups, 1);
+    assert_eq!(ones.len(), 9, "nine closed episodes at five steps each");
+    for r in &ones {
+        assert_eq!(
+            r.to_seq.0 - r.from_seq.0 + 1,
+            5,
+            "tier 1 covers max_window_steps = 5"
+        );
+    }
+
+    let twos = tier_blocks(&rollups, 2);
+    assert_eq!(twos.len(), 3, "nine children at fanout 3 ⇒ three tier-2");
+    for r in &twos {
+        match body(r).beneath {
+            Beneath::Blocks { rollups } => {
+                assert_eq!(rollups.len(), 3, "exactly `fanout` children")
+            }
+            other => panic!("tier 2 reduces blocks, not {other:?}"),
+        }
+        assert_eq!(
+            r.to_seq.0 - r.from_seq.0 + 1,
+            15,
+            "tier 2 covers max_window_steps * fanout"
+        );
+    }
+
+    let threes = tier_blocks(&rollups, 3);
+    assert_eq!(threes.len(), 1, "three tier-2 blocks reduce once more");
+    assert_eq!(threes[0].from_seq, twos[0].from_seq);
+    assert_eq!(threes[0].to_seq, twos[2].to_seq);
+
+    // Still an index at every tier under the non-default shape.
+    for r in rollups.iter().filter(|r| r.kind == RollupKind::Tier) {
+        let (steps, blocks) = block::refs_of(&body(r));
+        assert!(!steps.is_empty(), "`{}` names no raw step", r.id);
+        for id in steps {
+            assert!(
+                fx.ledger.0.step(&id).await.expect("a read").is_some(),
+                "`{}` names step `{id}`, which is not in the ledger",
+                r.id
+            );
+        }
+        for id in blocks {
+            assert!(rollups.iter().any(|x| x.id == id), "`{}` dangles", r.id);
+        }
+    }
+}

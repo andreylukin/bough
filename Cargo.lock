@@ -814,6 +814,8 @@ dependencies = [
  "bough-plugin-ledger-memory",
  "bough-plugin-llm",
  "bough-plugin-llm-replay",
+ "bough-plugin-projection",
+ "bough-plugin-projection-assembler",
  "bough-plugin-rollups",
  "bough-util",
  "chrono",
