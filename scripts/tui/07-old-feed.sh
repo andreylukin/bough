@@ -25,9 +25,12 @@ PATCH="$HOME_DIR/old-feed.patch.yml"
 cat > "$PATCH" <<YML
 entries:
   old-feed:
-    # §17 Phase 6 retired this row (`disabled: true` in the bundle): the collectors replace it and
+    # §17 Phase 6 retired this row ('disabled: true' in the bundle): the collectors replace it and
     # it stays for one week as the documented revert path. This script IS that revert path, so it
     # turns the row back on and proves the bridge still works when it is.
+    #
+    # No backticks anywhere in this heredoc: it is UNQUOTED so that it expands the paths above, and
+    # a backticked phrase in a comment is still a command substitution to bash.
     disabled: false
     config:
       jungler_db: $JUNGLER

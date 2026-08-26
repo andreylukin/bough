@@ -34,24 +34,31 @@ pub struct Fx {
     pub dir: tempfile::TempDir,
     pub shim_dir: std::path::PathBuf,
     pub state_db: std::path::PathBuf,
-    _factory: Arc<StubFactory>,
+    _factory: Option<Arc<StubFactory>>,
 }
 
 impl Fx {
     pub async fn new() -> Fx {
+        let mut fx = Fx::new_without_factory().await;
+        let factory = Arc::new(StubFactory::default());
+        std::mem::forget(
+            fx.agents
+                .set_factory(&fx.ctx, factory.clone() as Arc<dyn AgentFactory>)
+                .await
+                .expect("the slot is free"),
+        );
+        fx._factory = Some(factory);
+        fx
+    }
+
+    /// The fixture WITHOUT a factory in the slot, for a test that installs its own driver.
+    pub async fn new_without_factory() -> Fx {
         let ctx = Context::root(KernelCore::new());
         let dir = tempfile::tempdir().expect("a temp dir");
         let shim_dir = dir.path().join("gh");
         std::fs::create_dir_all(&shim_dir).expect("the shim dir");
         let ledger = LedgerHandle(MemoryStore::new(ctx.clone()));
         let agents = AgentsHandle::new(ctx.clone(), ledger.clone());
-        let factory = Arc::new(StubFactory::default());
-        std::mem::forget(
-            agents
-                .set_factory(&ctx, factory.clone() as Arc<dyn AgentFactory>)
-                .await
-                .expect("the slot is free"),
-        );
         Fx {
             state_db: dir.path().join("collect-github.db"),
             ctx,
@@ -59,7 +66,7 @@ impl Fx {
             agents,
             dir,
             shim_dir,
-            _factory: factory,
+            _factory: None,
         }
     }
 
@@ -128,6 +135,23 @@ impl Fx {
                     self.dir.path().join("argv.log").display().to_string(),
                 ),
             ])
+    }
+
+    /// Every durable `inbox/spliced` claim on that agent's trajectory.
+    pub async fn claims(&self, agent: &str) -> Vec<Step> {
+        self.ledger
+            .0
+            .steps(&StepQuery {
+                trajs: vec![traj_of(agent)],
+                kinds: vec![StepType::new("inbox/spliced")],
+                order: Order::SeqAsc,
+                ..Default::default()
+            })
+            .await
+            .expect("a read")
+            .into_iter()
+            .filter(|s| s.body["op"].as_str() == Some("claim"))
+            .collect()
     }
 
     pub async fn delivered(&self, agent: &str) -> Vec<Step> {

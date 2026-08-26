@@ -12,7 +12,10 @@ source "$(dirname "$0")/lib.sh"
 SERVER="$HOME_DIR/echo_server.py"
 cat > "$SERVER" <<'PY'
 #!/usr/bin/env python3
-"""A minimal stdio MCP server: one tool, `echo`, which returns its `text` argument."""
+"""A minimal stdio MCP server: one tool, `echo`, which returns `echo: <text>`.
+
+The prefix is deliberate: it makes the RESULT a string the caller never sent, so a screen showing
+it is showing something only this process could have produced."""
 import json, sys
 
 TOOL = {
@@ -49,7 +52,7 @@ for line in sys.stdin:
     elif method == "tools/call":
         args = msg.get("params", {}).get("arguments", {})
         reply(id_, {
-            "content": [{"type": "text", "text": args.get("text", "")}],
+            "content": [{"type": "text", "text": "echo: " + args.get("text", "")}],
             "isError": False,
         })
     elif id_ is not None:
@@ -70,7 +73,7 @@ entries:
 YML
 
 tui_open
-tui_start "$MCP_PATCH"
+tui_start "$MCP_PATCH" "$REPO_ROOT/scripts/tui/fixtures/mcp-tool.patch.yml"
 
 t the_tui_is_up_with_the_server_row_mounted \
   see "sol" --timeout 20000
@@ -116,5 +119,19 @@ shell-use submit "/mcp list"
 shell-use wait idle --timeout 20000
 t removing_the_patch_rediscovers_the_server \
   see "echofix__echo" --timeout 20000
+
+# A DISCOVERED MCP tool, called by the model and rendered in the focus pane like any other tool
+# call: the replayed round names `mcp__echofix__echo`, so what appears on screen is proof that the
+# registry, the seam and the python server all took part — the pane cannot draw a result the
+# fixture process did not produce.
+shell-use submit "use the echo tool"
+shell-use wait idle --timeout 30000
+
+t an_mcp_tool_call_renders_in_the_focus_pane \
+  see "mcp__echofix__echo" --timeout 20000
+
+shell-use mouse click --on-text "mcp__echofix__echo"
+t expanding_it_shows_the_servers_own_answer \
+  see "echo: through the mcp seam" --timeout 10000
 
 tui_quit

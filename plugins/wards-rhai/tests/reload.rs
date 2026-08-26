@@ -49,6 +49,7 @@ fn tree(dir: &Path) -> String {
     max_string_bytes: 10000
     max_array_size: 100
     eval_timeout_ms: 1000
+    max_firings_per_minute: 60
     limits: {{ max_actions: 8, max_spawns: 1, max_text_bytes: 4000 }}
 ",
         dir = dir.display()
@@ -89,6 +90,20 @@ fn wards(kernel: &Kernel) -> Vec<(String, u64)> {
     out
 }
 
+/// EVERY row in the tree, by id, with the fiber uid it currently has.
+fn all_uids(kernel: &Kernel) -> Vec<(String, u64)> {
+    fn walk(rows: &[RowSnapshot], out: &mut Vec<(String, u64)>) {
+        for r in rows {
+            out.push((r.id.as_str().to_string(), r.uid.map(|u| u.0).unwrap_or(0)));
+            walk(&r.children, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(&kernel.rows_snapshot(), &mut out);
+    out.sort();
+    out
+}
+
 /// Wait until `f` holds or the deadline passes; a reload is debounced, so a test waits on the
 /// CONDITION rather than on a sleep.
 async fn until(mut f: impl FnMut() -> bool) -> bool {
@@ -116,6 +131,11 @@ async fn editing_one_ward_file_remounts_exactly_that_child() {
     );
     // One listener per ward, on top of whatever the ledger row itself keeps.
     let listeners_before = kernel.core().listener_count("ledger/step");
+    let tree_before = all_uids(&kernel);
+    assert!(
+        tree_before.len() > before.len(),
+        "the whole-tree check would be vacuous if the tree were only the wards: {tree_before:?}"
+    );
 
     std::fs::write(dir.path().join("b.rhai"), WARD_B_EDITED).unwrap();
 
@@ -153,6 +173,26 @@ async fn editing_one_ward_file_remounts_exactly_that_child() {
         until(|| kernel.core().listener_count("ledger/step") == listeners_before).await,
         "a reload left listeners behind: {}",
         kernel.core().listener_count("ledger/step")
+    );
+
+    // EXACTLY ONE child entry reconciled: every other fiber in the WHOLE tree -- not just the
+    // sibling ward -- kept both its row and its uid.
+    let tree_after = all_uids(&kernel);
+    assert_eq!(
+        tree_before.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+        tree_after.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+        "the reload added or removed a row"
+    );
+    let moved: Vec<&String> = tree_before
+        .iter()
+        .zip(tree_after.iter())
+        .filter(|((_, a), (_, b))| a != b)
+        .map(|((id, _), _)| id)
+        .collect();
+    assert_eq!(
+        moved,
+        vec![&"ward.b".to_string()],
+        "exactly one child entry reconciles; these moved: {moved:?}"
     );
 
     kernel.shutdown().await;

@@ -70,6 +70,7 @@ bough-plugin-mcp = { workspace = true }
 bough-plugin-mcp-rmcp = { workspace = true }
 bough-plugin-tool-mcp = { workspace = true }
 bough-plugin-wards-rhai = { workspace = true }
+bough-plugin-runtime-actions = { workspace = true }
 bough-plugin-hooks-exec = { workspace = true }
 bough-plugin-mcp-subprocess = { workspace = true }
 bough-plugin-skills = { workspace = true }
@@ -98,6 +99,8 @@ libc = { workspace = true }
 # projection vocabularies directly, and the live calibration talks to Anthropic through bough-llm.
 bough-plugin-ledger = { workspace = true }
 bough-plugin-projection = { workspace = true }
+# V5: the recording `gh` shim's fixture names are computed by the crate that spawns `gh`.
+bough-plugin-gh-cli = { workspace = true }
 bough-llm = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }

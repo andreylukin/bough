@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use bough_kernel::{ConfigError, Context, EffectHandle, InvariantSpec, Plugin, PluginError};
 use bough_plugin_mcp::{
-    Mcp, McpHandle, McpServersChanged, McpToolInfo, McpToolRef, ServerChange, ServerName,
+    Mcp, McpError, McpHandle, McpServersChanged, McpToolInfo, McpToolRef, ServerChange, ServerName,
 };
 use bough_plugin_tools::{
     FailureClass, RenderIntent, Tool, ToolCall, ToolCx, ToolFailure, ToolName, ToolOutcome,
@@ -382,14 +382,29 @@ impl Plugin for McpCallPlugin {
         let exit_when_done = cfg.exit_when_done;
         let print = cfg.print;
         spawn_ctx.effect_spawn(move |_e| async move {
-            let text = match mcp.call(&r, args).await {
-                Ok(out) => render(print, &out),
-                Err(e) => format!("error: {e}"),
+            // A row's `apply` runs while the tree is still converging, and the mcp Provider may not
+            // have connected its servers yet. Row order carries no load semantics (§0.2), so the
+            // wait belongs here — bounded, so a genuinely absent server is an error and not a hang
+            // (`exec-headless`'s `wait_for_factory` is the precedent).
+            let code = match wait_for_server(&mcp, &r.server).await {
+                Ok(()) => match mcp.call(&r, args).await {
+                    Ok(out) => {
+                        println!("{}", render(print, &out));
+                        u8::from(out.is_error)
+                    }
+                    Err(e) => {
+                        println!("error: {e}");
+                        1
+                    }
+                },
+                Err(e) => {
+                    println!("error: {e}");
+                    1
+                }
             };
-            println!("{text}");
             if exit_when_done {
                 if let Some(kernel) = ctx.kernel() {
-                    kernel.request_exit(0);
+                    kernel.request_exit(code);
                 }
             }
             let _ = entry;
@@ -400,6 +415,25 @@ impl Plugin for McpCallPlugin {
 
     fn invariants() -> Vec<InvariantSpec> {
         Vec::new()
+    }
+}
+
+/// How long the CLI row waits for the named server to finish connecting.
+///
+/// A protocol bound on a startup race, not a deployment value (§0.2).
+const SERVER_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Wait until `server` is listed on the seam, or say it is not there.
+async fn wait_for_server(mcp: &McpHandle, server: &ServerName) -> Result<(), McpError> {
+    let deadline = std::time::Instant::now() + SERVER_WAIT;
+    loop {
+        if mcp.servers().iter().any(|s| s == server) {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(McpError::UnknownServer(server.clone()));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 }
 

@@ -34,3 +34,6 @@ serde_yaml = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 bough-plugin-ledger-memory = { workspace = true }
+bough-plugin-tool-mcp = { workspace = true }
+bough-plugin-tools = { workspace = true }
+bough-plugin-schedule-manual = { workspace = true }

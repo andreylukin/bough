@@ -36,6 +36,12 @@ Everything else that is visible to the team is NOT yours to do. You never send a
 write a DRAFT with `draft_message` or `draft_ticket` and say you did; Andrey sends it or he does
 not. A draft is the finished act for you.
 
+Declining is not a substitute for the draft. When the ask is a message or a ticket and there is no
+sanctioned way to send it — no such tool, no such server, no permission — you STILL write the draft
+first and then say you did not send it. An answer that only explains what you cannot do leaves the
+work undone. Do not ask whether to draft, either: a draft needs no permission, it IS the act you
+are allowed to finish.
+
 Never resolve a review thread you are not certain a bot opened. Uncertain is human.
 
 Everything you claim must be backed by something you actually observed; cite it. A claim you cannot
@@ -51,6 +57,26 @@ pub fn section_id() -> SectionId {
 pub fn block() -> &'static str {
     BOUNDARY_BLOCK
 }
+
+/// The four sanctioned outward acts of §7, each with the phrase the AGENT-framed
+/// [`BOUNDARY_BLOCK`] names it by and the phrase the WORKER-framed `worker-spawn::WRITE_BOUNDARY`
+/// names it by. The two texts word the same act differently on purpose (P6-D3) — the spawner says
+/// "updating a pull request" where this one says "push to a pull request" — so the pin has to be
+/// per-text or it pins nothing.
+///
+/// This table is the SHARED guard behind P6-D3: until `WRITE_BOUNDARY` is folded onto
+/// [`BOUNDARY_BLOCK`] (merge note 1), an edit to EITHER const that drops one of the four acts
+/// fails a test rather than drifting silently.
+pub const SANCTIONED_ACTS: [(&str, &str, &str); 4] = [
+    ("open a pull request", "open a pull request", "pull request"),
+    (
+        "push to a PR Andrey authored",
+        "push to a pull request that Andrey authored",
+        "updating a pull request",
+    ),
+    ("write to a bot thread", "BOT review thread", "bot thread"),
+    ("write to Linear", "Linear ticket's status", "Linear"),
+];
 
 /// The section's title. The BODY is [`BOUNDARY_BLOCK`] and nothing else, byte for byte: a title
 /// woven into the text would be a second spelling of the boundary.
@@ -137,16 +163,50 @@ bough_kernel::register_plugin!(BoundaryPlugin);
 
 #[cfg(test)]
 mod tests {
+    use super::{BOUNDARY_BLOCK, SANCTIONED_ACTS};
+    use bough_plugin_worker_spawn::WRITE_BOUNDARY;
+
     /// P6-D3: the spawner's block must keep stating what this block states. It is a different
     /// sentence today, and this test is what stops the two drifting apart before the merge folds
-    /// them.
+    /// them (merge note 1).
+    ///
+    /// The pin is TWO-WAY and reads from one list: an edit to EITHER const that drops one of §7's
+    /// four sanctioned acts fails here, which is what makes the deferral safe.
     #[test]
-    fn the_spawner_block_states_the_same_refusals() {
-        for needle in ["pull request", "Linear", "bot thread", "Cite the"] {
+    fn both_statements_of_the_boundary_name_all_four_sanctioned_acts() {
+        for (act, in_block, in_spawner) in SANCTIONED_ACTS {
             assert!(
-                bough_plugin_worker_spawn::WRITE_BOUNDARY.contains(needle),
-                "the spawner's WRITE_BOUNDARY stopped saying `{needle}`"
+                BOUNDARY_BLOCK.contains(in_block),
+                "BOUNDARY_BLOCK stopped naming the sanctioned act `{act}` (`{in_block}`)"
+            );
+            assert!(
+                WRITE_BOUNDARY.contains(in_spawner),
+                "the spawner's WRITE_BOUNDARY stopped naming `{act}` (`{in_spawner}`)"
             );
         }
+    }
+
+    /// The two texts are NOT interchangeable, and that is the point of P6-D3: the spawner's block
+    /// is strictly NARROWER — a worker may not perform the four acts at all, they belong to the
+    /// agent that started it. If the fold ever makes them equal without keeping that refusal, this
+    /// fails and the fold is caught.
+    #[test]
+    fn the_spawner_block_refuses_to_a_worker_what_the_boundary_sanctions_for_an_agent() {
+        assert!(
+            WRITE_BOUNDARY.contains("may NOT act outward"),
+            "the spawner's block stopped refusing outward acts to a worker outright"
+        );
+        assert!(
+            BOUNDARY_BLOCK.contains("Four outward acts are sanctioned"),
+            "BOUNDARY_BLOCK stopped sanctioning the four acts for an agent"
+        );
+    }
+
+    /// Both texts must keep demanding a citation: it is the fourth standing refusal and the one
+    /// most easily lost to a rewrite.
+    #[test]
+    fn both_statements_demand_a_citation() {
+        assert!(BOUNDARY_BLOCK.contains("cite"));
+        assert!(WRITE_BOUNDARY.contains("Cite the"));
     }
 }

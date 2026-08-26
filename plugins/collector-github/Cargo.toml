@@ -30,4 +30,5 @@ bough-plugin-gh-cli = { workspace = true }
 [dev-dependencies]
 bough-plugin-ledger-memory = { workspace = true }
 bough-plugin-schedule-manual = { workspace = true }
+uuid = { workspace = true }
 tempfile = { workspace = true }

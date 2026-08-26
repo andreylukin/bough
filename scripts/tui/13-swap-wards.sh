@@ -30,6 +30,7 @@ entries:
       max_string_bytes: 65536
       max_array_size: 4096
       eval_timeout_ms: 2000
+      max_firings_per_minute: 60
       limits: { max_actions: 16, max_spawns: 2, max_text_bytes: 8192 }
 YML
 

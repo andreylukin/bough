@@ -57,6 +57,14 @@ pub struct WardHostConfig {
     pub max_string_bytes: usize,
     pub max_array_size: usize,
     pub eval_timeout_ms: u64,
+    /// How many times ONE ward may fire in a rolling minute before the host stops firing it.
+    ///
+    /// This is the bound on the INDIRECT loop. `fire` already refuses to fire on `ward/fired`, but
+    /// that only closes the direct cycle. A ward whose actions cause an agent to write a step the
+    /// ward triggers on -- a `hint` to `sol` whose reply is another `thought/text` -- feeds itself
+    /// through the agent and never terminates. No purity or engine limit can see that cycle,
+    /// because each individual firing is well behaved; only a rate over time can.
+    pub max_firings_per_minute: u32,
     pub limits: RuntimeLimits,
 }
 
@@ -64,6 +72,10 @@ pub struct WardHostConfig {
 pub const MAX_OPS_FLOOR: u64 = 1;
 /// See [`MAX_OPS_FLOOR`].
 pub const MAX_OPS_CEILING: u64 = 5_000_000;
+
+/// The ceiling `validate` enforces on `max_firings_per_minute`, and the value `dry_run_host` uses:
+/// a dry run is not a loop (it never executes), so it takes the loosest legal setting.
+pub const MAX_FIRINGS_PER_MINUTE_CEILING: u32 = 600;
 
 /// The floor `validate` enforces on `max_depth`: the host's own prelude (`cx.recent`,
 /// `cx.already`) must fit under it, or no ward compiles at all.
@@ -451,6 +463,9 @@ impl Plugin for WardPlugin {
         let schedule = bough_plugin_schedule::ScheduleHandle(schedule.0.clone());
 
         let acted = Arc::new(parking_lot::Mutex::new(Vec::<Ref>::new()));
+        let firings = Arc::new(parking_lot::Mutex::new(
+            std::collections::VecDeque::<i64>::new(),
+        ));
         let listen_ctx = ctx.clone();
         ctx.on::<bough_plugin_ledger::LedgerStep, _, _>(move |step| {
             let live = Live {
@@ -464,6 +479,8 @@ impl Plugin for WardPlugin {
                 schedule: schedule.clone(),
                 limits: cfg.host.limits.clone(),
                 acted: acted.clone(),
+                firings: firings.clone(),
+                max_firings_per_minute: cfg.host.max_firings_per_minute,
             };
             async move {
                 if let Err(e) = live.fire(step).await {
@@ -513,8 +530,12 @@ impl Plugin for WardTestPlugin {
     const NAME: &'static str = WARD_TEST_PLUGIN_NAME;
     type Config = WardTestConfig;
 
+    /// `ledger` is what it reads. The other three are ORDERING, not reads: a dry run replays
+    /// HISTORY, and the ledger REFUSES a stored row whose step type is unknown to this process
+    /// (§3, P1-D7) — so this row must activate after the rows that declare the vocabulary that
+    /// history was written in, or `bough wards test` fails on a chain a live bough wrote.
     fn inject() -> bough_kernel::Inject {
-        bough_kernel::Inject::required(["ledger"])
+        bough_kernel::Inject::required(["ledger", "agents", "tools", "workers"])
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
@@ -649,8 +670,30 @@ pub fn dry_run_host(dir: &std::path::Path) -> WardHostConfig {
         max_string_bytes: 64_000,
         max_array_size: 1_000,
         eval_timeout_ms: 1_000,
+        max_firings_per_minute: MAX_FIRINGS_PER_MINUTE_CEILING,
         limits: RuntimeLimits::modest(),
     }
+}
+
+/// Take one firing slot out of the rolling minute ending at `now_ms`, or refuse.
+///
+/// PURE: the window is computed from the `now_ms` it is handed and the deque it is handed, so the
+/// rate bound is testable without a kernel, a clock or a ward. `firings` holds the wall-clock ms
+/// of the admitted firings still inside the window, oldest first.
+pub fn admit_firing(
+    firings: &mut std::collections::VecDeque<i64>,
+    now_ms: i64,
+    max_per_minute: u32,
+) -> bool {
+    const WINDOW_MS: i64 = 60_000;
+    // Steps do not necessarily arrive in timestamp order, so the window is drained by AGE rather
+    // than by position: an entry a full minute either side of `now_ms` is out of the window.
+    firings.retain(|t| (now_ms - *t).abs() < WINDOW_MS);
+    if firings.len() as u32 >= max_per_minute {
+        return false;
+    }
+    firings.push_back(now_ms);
+    true
 }
 
 /// One committed step, as a ward sees it.
@@ -678,6 +721,13 @@ fn validate_host(cfg: &WardHostConfig) -> Result<(), ConfigError> {
     if cfg.max_depth < MAX_DEPTH_FLOOR {
         return Err(ConfigError::Rejected {
             detail: format!("`max_depth` must be at least {MAX_DEPTH_FLOOR}"),
+        });
+    }
+    if !(1..=MAX_FIRINGS_PER_MINUTE_CEILING).contains(&cfg.max_firings_per_minute) {
+        return Err(ConfigError::Rejected {
+            detail: format!(
+                "`max_firings_per_minute` must be between 1 and {MAX_FIRINGS_PER_MINUTE_CEILING}"
+            ),
         });
     }
     if cfg.eval_timeout_ms == 0 {
@@ -828,13 +878,38 @@ struct Live {
     schedule: bough_plugin_schedule::ScheduleHandle,
     limits: RuntimeLimits,
     acted: Arc<parking_lot::Mutex<Vec<Ref>>>,
+    /// The wall-clock ms of this ward's recent firings, newest last. Shared across every firing of
+    /// ONE ward child, so it unwinds with the row like everything else the child owns.
+    firings: Arc<parking_lot::Mutex<std::collections::VecDeque<i64>>>,
+    max_firings_per_minute: u32,
 }
 
 impl Live {
+    fn admit(&self, now_ms: i64) -> bool {
+        admit_firing(
+            &mut self.firings.lock(),
+            now_ms,
+            self.max_firings_per_minute,
+        )
+    }
+
     /// One step: evaluate (PURE), execute through the seams, then append ONE `ward/fired`.
     async fn fire(&self, step: Arc<bough_plugin_ledger::Step>) -> Result<(), anyhow::Error> {
         // A ward never fires on its own journal: that is the loop this host must not have.
         if step.kind.as_str() == vocabulary::WARD_FIRED || !self.script.wants(&step.kind) {
+            return Ok(());
+        }
+        // ... and never fires away in a cycle it closed through an AGENT. `now` is the step's own
+        // timestamp, not `Instant::now()`, so this is as injected and as replayable as the rest of
+        // the host.
+        if !self.admit(step.at.timestamp_millis()) {
+            // REPORTED, NOT RETRIED (§7), and the row stays up: the ward is skipped for as long as
+            // it is over its rate, and fires again of its own accord once the window drains.
+            tracing::warn!(
+                ward = %self.script.name,
+                max_firings_per_minute = self.max_firings_per_minute,
+                "ward is firing in a loop; skipping this firing"
+            );
             return Ok(());
         }
         let agent = self

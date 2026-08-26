@@ -7,8 +7,8 @@ use bough_plugin_ledger::{AgentName, Ref, Seq, StepType, TrajId, WakeId};
 use bough_plugin_ledger_memory::store::MemoryStore;
 use bough_plugin_runtime_actions::{RuntimeAction, RuntimeLimits};
 use bough_plugin_wards_rhai::{
-    dry_run, engine::build_engine, evaluate, parse_since, render_dry_run, CompiledWard, DryRun,
-    Since, WardError, WardEvent, WardHostConfig, WardView,
+    admit_firing, dry_run, engine::build_engine, evaluate, parse_since, render_dry_run,
+    CompiledWard, DryRun, Since, WardError, WardEvent, WardHostConfig, WardView,
 };
 use chrono::{TimeZone, Utc};
 
@@ -23,6 +23,7 @@ fn host() -> WardHostConfig {
         max_string_bytes: 10_000,
         max_array_size: 100,
         eval_timeout_ms: 1_000,
+        max_firings_per_minute: 100,
         limits: RuntimeLimits {
             max_actions: 8,
             max_spawns: 1,
@@ -318,4 +319,72 @@ fn since_parses_a_seq_and_a_duration_and_refuses_the_rest() {
     );
     assert_eq!(parse_since("last tuesday"), None);
     assert_eq!(parse_since(""), None);
+}
+
+// ---------------------------------------------------------------------------
+// the rate bound: the host limit that cuts the INDIRECT firing loop
+// ---------------------------------------------------------------------------
+
+/// A ward whose actions cause an agent to write a step the ward triggers on feeds itself through
+/// that agent and never stops. Every individual firing is well behaved -- pure, under `max_ops`,
+/// under `max_depth` -- so no engine limit can see the cycle. Only a rate over time can, and this
+/// is the pure core of it.
+#[test]
+fn a_ward_gets_its_configured_number_of_firings_in_a_minute_and_no_more() {
+    let mut firings = std::collections::VecDeque::new();
+    // Three admitted, all inside one minute...
+    assert!(admit_firing(&mut firings, 1_000, 3));
+    assert!(admit_firing(&mut firings, 2_000, 3));
+    assert!(admit_firing(&mut firings, 3_000, 3));
+    // ...and the fourth is refused, however fast it arrives.
+    assert!(!admit_firing(&mut firings, 3_001, 3));
+    assert!(!admit_firing(&mut firings, 60_000, 3));
+    assert_eq!(firings.len(), 3, "a refused firing does not take a slot");
+}
+
+/// The bound is a RATE, not a quota: the ward is skipped only while it is over its rate, and
+/// starts firing again of its own accord once the window drains. Nothing has to reset it.
+#[test]
+fn the_window_drains_and_the_ward_fires_again() {
+    let mut firings = std::collections::VecDeque::new();
+    assert!(admit_firing(&mut firings, 0, 2));
+    assert!(admit_firing(&mut firings, 10, 2));
+    assert!(
+        !admit_firing(&mut firings, 59_999, 2),
+        "still in the window"
+    );
+    assert!(
+        admit_firing(&mut firings, 60_001, 2),
+        "the firing at 0 aged out and freed its slot"
+    );
+    // The window slides, it does not reset: the firing at 10ms is still inside the minute ending
+    // at 60_001, so it is still holding the other slot.
+    assert_eq!(firings.len(), 2);
+    assert!(!admit_firing(&mut firings, 60_002, 2));
+}
+
+/// `max_firings_per_minute: 1` is the strictest legal setting and cuts a loop dead after one
+/// firing. It is what `crates/bough/tests/wards_v9.rs` sets to make its live assertions
+/// deterministic.
+#[test]
+fn a_bound_of_one_admits_exactly_one_firing_per_window() {
+    let mut firings = std::collections::VecDeque::new();
+    assert!(admit_firing(&mut firings, 500, 1));
+    for t in [501, 1_000, 30_000, 59_000] {
+        assert!(!admit_firing(&mut firings, t, 1), "at {t}");
+    }
+    assert!(admit_firing(&mut firings, 60_501, 1));
+}
+
+/// Steps do not necessarily reach a listener in timestamp order, so a firing whose `now_ms` runs
+/// backwards must not silently empty the window and hand the loop a fresh budget.
+#[test]
+fn an_out_of_order_timestamp_does_not_reset_the_window() {
+    let mut firings = std::collections::VecDeque::new();
+    assert!(admit_firing(&mut firings, 100_000, 2));
+    assert!(admit_firing(&mut firings, 100_001, 2));
+    assert!(
+        !admit_firing(&mut firings, 99_000, 2),
+        "an earlier step is still inside the same minute"
+    );
 }

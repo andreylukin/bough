@@ -20,10 +20,29 @@ pub const WRITE_BOUNDARY: &str = concat!(
 ```
 
 **Why.** V3 asks that the resident's projection and the spawned worker's request carry the same
-bytes from the same source. Today they carry two differently-worded statements of the same four
-refusals (P6-D3), pinned together by
-`plugins/boundary-instructions/src/lib.rs::tests::the_spawner_block_states_the_same_refusals`. The
-concat makes the identity structural instead of pinned.
+bytes from the same source. That half IS proven on this branch, on the requests the adapter
+actually received, by
+`crates/bough/tests/boundary_injection.rs::the_boundary_block_reaches_the_adapter_on_both_paths_with_identical_bytes`:
+the `boundary` row's section is `SectionScope::Global`, so BOTH a resident wake's request and a
+spawned worker's request carry `BOUNDARY_BLOCK` byte for byte in the system prefix.
+
+What is NOT folded is `worker-spawn`'s own `WRITE_BOUNDARY`, a SECOND, worker-framed block the
+spawner prepends to the task message on top of the projection (P6-D3). `plugins/worker-spawn` is
+off-limits to track B, so this concat is the merge agent's to make.
+
+**Keep the narrowing when you fold.** The two texts are not interchangeable and the difference is
+deliberate: `BOUNDARY_BLOCK` SANCTIONS the four outward acts for an agent, while `WRITE_BOUNDARY`
+REFUSES all four to a worker ("You may NOT act outward … they belong to the agent that started
+you"). A naive concat that drops `WORKER_PREAMBLE` would silently widen every worker's authority.
+Three tests in `plugins/boundary-instructions/src/lib.rs` guard the fold in both directions and
+must stay green through it:
+
+- `both_statements_of_the_boundary_name_all_four_sanctioned_acts` — reads the
+  `SANCTIONED_ACTS` table, which carries each act's spelling in EACH text (they word the same act
+  differently: "push to a pull request" vs "updating a pull request", so one shared substring
+  would have pinned nothing).
+- `the_spawner_block_refuses_to_a_worker_what_the_boundary_sanctions_for_an_agent` — the narrowing.
+- `both_statements_demand_a_citation`.
 
 ## 2. `plugins/actions/src/lib.rs` — `find_marker` on `ActionProvider`
 
@@ -266,3 +285,36 @@ section got wrong, and the fourth is a shape the merge should keep.
   the bundle changed the timing enough to expose it. The assertion now waits (bounded, 5s) for the
   reflow, and asks whether SOME surviving pane grew rather than naming `tui.focus` — which pane
   absorbs the freed rows depends on who else is mounted in the slot.
+
+
+## 16. The first message after a cold boot can be swallowed (found by V4's probe)
+
+`scripts/tui/10-drafts.sh` was intermittently failing (~1 run in 4, always the first run of a batch,
+always on a cold `$BOUGH_HOME`): after `tui_start` returned and the screen already showed the agent
+row, the drafts pane and the composer prompt, the first `shell-use submit` left NO trace at all —
+no `user/message` step, no `wake/start`, an empty `ledger.db`. A second submit in the same session
+always works. The message is dropped between the composer and the ledger, silently.
+
+The crates that own that path (`tui-shell`, `agents`, `residents`) are ones this track may not edit,
+so the script now asserts the echo and retries up to three times
+(`the_composer_takes_the_message`), and the drop is recorded here and in `docs/phase-6-plan.md` §6.
+**What the merge should do:** find where a composer submit becomes mail, and make the pre-ready case
+either queue or report — a submit that reaches no ledger row and no error is indistinguishable, from
+the outside, from a boundary refusal, which is exactly the confusion it caused here.
+
+## 17. The ward host bounds its firing loop by RATE; provenance is the better fix
+
+Found by the verification pass (P6-D17 in `docs/phase-6-plan.md`). A ward whose actions cause an
+agent to write a step the ward triggers on feeds itself through that agent and fires forever. The
+host now bounds it with `WardHostConfig::max_firings_per_minute` (validated `1..=600`, `60` in
+`bundles/bough-base.yml`), because a rate catches every loop shape and needs one field.
+
+**What the merge agent should consider instead.** The exact fix is provenance: a ward does not fire
+on a step its own actions caused. That needs a cause carried from `runtime-actions`' `RuntimeCx`
+(which already knows `RuntimeSource::Ward(name)` and the triggering `Trigger`) through the mail a
+`hint` sends, onto the wake it opens, and onto the steps written in that wake — touching
+`plugins/agents` and `plugins/workers`, both off-limits to this track. With provenance in place the
+rate bound stays as the backstop for loops that close through something else (two wards triggering
+each other, a hook, a schedule), so this is an ADDITION, not a replacement.
+
+Merge note 7 (`Sender::Ward(String)`) is the first half of that plumbing and should land first.
