@@ -45,7 +45,7 @@ impl Catalog {
     /// `Err` on a duplicate name: two crates claiming one catalog name is a build-time bug that
     /// must not become a silent last-wins.
     pub fn from_inventory() -> Result<Catalog, CatalogError> {
-        todo!("WP-3")
+        Self::build(inventory::iter::<PluginRegistration>)
     }
     /// Look a plugin up by its catalog name.
     pub fn get(&self, name: &str) -> Option<&dyn ErasedPlugin> {
@@ -58,7 +58,20 @@ impl Catalog {
     /// Test-only: a catalog built from an explicit list, so a unit test never sees the whole
     /// binary's registrations.
     pub fn from_parts(parts: Vec<PluginRegistration>) -> Result<Catalog, CatalogError> {
-        todo!("WP-3")
+        Self::build(parts.iter())
+    }
+
+    fn build<'a>(
+        regs: impl IntoIterator<Item = &'a PluginRegistration>,
+    ) -> Result<Catalog, CatalogError> {
+        let mut plugins: BTreeMap<&'static str, Box<dyn ErasedPlugin>> = BTreeMap::new();
+        for reg in regs {
+            if plugins.contains_key(reg.name) {
+                return Err(CatalogError::DuplicateName(reg.name));
+            }
+            plugins.insert(reg.name, (reg.ctor)());
+        }
+        Ok(Catalog { plugins })
     }
 }
 
@@ -67,4 +80,78 @@ impl Catalog {
 pub enum CatalogError {
     #[error("two plugins claim the catalog name `{0}`")]
     DuplicateName(&'static str),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::Context;
+    use crate::error::PluginError;
+    use crate::plugin::{Plugin, Shim};
+    use std::sync::Arc;
+
+    /// A plugin that exists only to be found in the catalog. `apply` is never called from these
+    /// tests: the catalog builds shims, it does not mount them.
+    pub struct CatalogProbe;
+
+    #[derive(
+        Default, PartialEq, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+    )]
+    pub struct ProbeConfig {
+        #[serde(default)]
+        pub note: String,
+    }
+
+    #[async_trait::async_trait]
+    impl Plugin for CatalogProbe {
+        const NAME: &'static str = "catalog-probe";
+        type Config = ProbeConfig;
+        async fn apply(_ctx: Context, _cfg: Arc<ProbeConfig>) -> Result<(), PluginError> {
+            unreachable!("the catalog never mounts")
+        }
+    }
+
+    crate::register_plugin!(CatalogProbe);
+
+    fn reg(name: &'static str) -> PluginRegistration {
+        PluginRegistration {
+            name,
+            ctor: || Box::new(Shim::<CatalogProbe>::new()),
+        }
+    }
+
+    #[test]
+    fn inventory_finds_registered_plugins() {
+        let c = Catalog::from_inventory().expect("no duplicate names in the test binary");
+        assert!(
+            c.names().contains(&"catalog-probe"),
+            "register_plugin! did not reach the catalog: {:?}",
+            c.names()
+        );
+        assert_eq!(
+            c.get("catalog-probe").map(|p| p.name()),
+            Some("catalog-probe")
+        );
+    }
+
+    #[test]
+    fn duplicate_catalog_name_is_an_error() {
+        let err = match Catalog::from_parts(vec![reg("dup"), reg("dup")]) {
+            Ok(_) => panic!("a duplicate catalog name must be a hard error, not last-wins"),
+            Err(e) => e,
+        };
+        match err {
+            CatalogError::DuplicateName(n) => assert_eq!(n, "dup"),
+        }
+    }
+
+    #[test]
+    fn from_parts_builds_an_isolated_catalog() {
+        let c = Catalog::from_parts(vec![reg("only-me")]).unwrap();
+        assert_eq!(c.names(), vec!["only-me"]);
+        assert!(
+            c.get("catalog-probe").is_none(),
+            "from_parts must not see the whole binary"
+        );
+    }
 }

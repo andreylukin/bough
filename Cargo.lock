@@ -115,10 +115,12 @@ dependencies = [
  "bough-util",
  "clap",
  "include_dir",
+ "libc",
  "notify",
  "notify-debouncer-full",
  "serde",
  "serde_yaml",
+ "tempfile",
  "thiserror",
  "tokio",
  "tracing",
@@ -135,7 +137,6 @@ dependencies = [
  "futures",
  "inventory",
  "parking_lot",
- "pin-project-lite",
  "schemars",
  "serde",
  "serde_json",
@@ -175,6 +176,7 @@ dependencies = [
  "parking_lot",
  "schemars",
  "serde",
+ "serde_yaml",
  "tokio",
 ]
 

@@ -1,10 +1,6 @@
 //! Invariant: the kernel is domain-blind (§0.1 item 1). It knows contexts, typed service keys,
 //! fibers, effects, events, scopes, config trees and patch layers — and nothing about agents,
 //! ledgers, steps, models or terminals. A domain noun appearing in this crate is a failed review.
-//!
-//! SCAFFOLD: the crate-level allow below exists only while bodies are `todo!()`. Delete it — and
-//! fix whatever it was hiding — in the work package that fills the last body.
-#![allow(unused_variables, dead_code)]
 
 // Re-exported so `register_plugin!` works in a crate that does not name `inventory` itself.
 #[doc(hidden)]
@@ -29,7 +25,7 @@ pub use config::{
     render, ComposeError, ComposeWarning, Composer, Composition, DumpFormat, Entry, Expr, ExprEnv,
     Fingerprint, Inject, LayerId, Patch, RealmLabel, RowProvenance,
 };
-pub use context::Context;
+pub use context::{default_realm, CommittedView, Context, KernelCore};
 pub use effect::{EffectCtx, EffectHandle, Halted};
 pub use error::{ConfigError, KernelError, PluginError};
 pub use event::{
@@ -40,4 +36,4 @@ pub use invariant::{Cadence, InvariantSpec, InvariantViolation};
 pub use kernel::{Kernel, KernelOptions, RowSnapshot, TreeSnapshot, UnresolvedRow};
 pub use plugin::{ErasedConfig, ErasedPlugin, Plugin, Reconfigure};
 pub use scope::{create_scope, scope_target, ScopeGuard, ScopeKey, ScopedDispatch};
-pub use service::{ProviderUid, ServiceKey, ServiceSlot};
+pub use service::{Binding, ProviderUid, ServiceKey, ServiceSlot};

@@ -72,3 +72,29 @@ macro_rules! brand_id {
         }
     };
 }
+
+#[cfg(test)]
+mod tests {
+    crate::brand_id!(
+        /// A fixture id, declared exactly the way a real one is.
+        pub struct DemoId;
+    );
+
+    #[test]
+    fn brand_roundtrips_through_serde() {
+        let id = DemoId::new("hello.greeter");
+        let json = serde_json::to_string(&id).unwrap();
+        assert_eq!(json, "\"hello.greeter\"", "brands are transparent in serde");
+        let back: DemoId = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, id);
+    }
+
+    #[test]
+    fn brand_display_is_the_inner_string() {
+        let id = DemoId::new("hello.greeter");
+        assert_eq!(id.to_string(), "hello.greeter");
+        assert_eq!(id.as_str(), "hello.greeter");
+        assert_eq!(format!("{id:?}"), "DemoId(\"hello.greeter\")");
+        assert_eq!("hello.greeter".parse::<DemoId>().unwrap(), id);
+    }
+}

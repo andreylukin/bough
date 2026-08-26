@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+name = "bough"
+path = "src/lib.rs"
+
 [[bin]]
 name = "bough"
 path = "src/main.rs"
@@ -30,3 +34,5 @@ tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+tempfile = "3"
+libc = { workspace = true }

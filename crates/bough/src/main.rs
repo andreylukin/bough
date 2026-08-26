@@ -1,18 +1,18 @@
-//! Invariant: the launcher composes and tears down, and does nothing else (§0.1 item 2). A
-//! behaviour that lives here instead of in a plugin row is a §0.1 violation.
-//!
-//! SCAFFOLD: this allow exists only while WP-5's bodies are `todo!()`. Delete it when they land.
-#![allow(dead_code, unused_variables)]
+//! Invariant: the launcher composes and tears down, and does nothing else (§0.1 item 2). `main` is
+//! argument parsing, one runtime, and one call into `boot`.
 
-mod boot;
-mod cli;
-mod compose;
-mod profile;
-mod watch;
-
+use bough::{boot, cli};
 use clap::Parser;
 
 fn main() -> std::process::ExitCode {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+
     let cli = cli::Cli::parse();
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(r) => r,

@@ -10,6 +10,7 @@ bough-kernel = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
+serde_yaml = { workspace = true }   # the nested-mount hook parses its child Entry from YAML
 schemars = { workspace = true }
 inventory = { workspace = true }
 parking_lot = { workspace = true }

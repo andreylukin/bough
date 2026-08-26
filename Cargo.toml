@@ -51,7 +51,6 @@ libc         = "0.2"
 clap         = { version = "4", features = ["derive"] }               # the launcher's CLI
 parking_lot  = "0.12"                                                 # kernel binding store / fiber state lock
 include_dir  = "0.7"                                                  # profiles/ + bundles/ embedded in the launcher
-pin-project-lite = "0.2"                                              # effect halt futures (EffectCtx::checkpoint)
 
 bough-llm    = { path = "crates/bough-llm" }
 bough-util   = { path = "crates/bough-util" }

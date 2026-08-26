@@ -9,10 +9,13 @@ pub mod expr;
 pub mod patch;
 pub mod render;
 
-pub use compose::{Composer, Composition, Fingerprint, RowProvenance};
-pub use entry::{Entry, Inject, RealmLabel};
-pub use expr::{evaluate_tree, Expr, ExprEnv, ExprError, ExprValue, FromExprValue};
-pub use patch::{EntryPatch, Insert, InsertAt, Patch};
+pub use compose::{Composer, Composition, Fingerprint, PluginLookup, RowProvenance};
+pub use entry::{parse_entries, Entry, Inject, InjectRepr, RealmLabel};
+pub use expr::{
+    eval_str, evaluate_tree, normalize_expr_tags, Expr, ExprEnv, ExprError, ExprValue,
+    FromExprValue, EXPR_TAG, PLATFORM,
+};
+pub use patch::{EntryPatch, Insert, InsertAt, Patch, PatchRepr};
 pub use render::{render, DumpFormat};
 
 pub use crate::error::ComposeError;
@@ -26,5 +29,8 @@ bough_util::brand_id!(
 /// A patch that named a row id no layer ever created. A warning, never an error (§0.2).
 #[derive(Clone, Debug)]
 pub enum ComposeWarning {
-    AbsentRowId { layer: LayerId, id: crate::fiber::EntryId },
+    AbsentRowId {
+        layer: LayerId,
+        id: crate::fiber::EntryId,
+    },
 }

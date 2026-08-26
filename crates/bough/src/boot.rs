@@ -7,14 +7,85 @@
 //! `kernel/rows-unresolved` warning and the tree stays.
 
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::Duration;
 
-use bough_kernel::TreeSnapshot;
+use bough_kernel::{Catalog, Kernel, KernelOptions, TreeSnapshot};
 
 use crate::cli::{BootError, Cli};
+use crate::compose::compose_plan;
+
+/// How long the kernel coalesces target writes before converging. Small enough that a patch save
+/// feels immediate, large enough that a burst of writes reconciles once.
+const RECONCILE_DEBOUNCE: Duration = Duration::from_millis(10);
 
 /// Compose, mount, quiesce, assert, then either run or exit.
 pub async fn boot(cli: Cli) -> Result<ExitCode, BootError> {
-    todo!("WP-5")
+    let cli = Arc::new(cli);
+    let catalog = Catalog::from_inventory()?;
+    let (profile, composition) = compose_plan(&cli, &catalog)?;
+
+    for w in &composition.warnings {
+        match w {
+            bough_kernel::ComposeWarning::AbsentRowId { layer, id } => {
+                eprintln!("bough: layer `{layer}` names row `{id}`, which no layer created");
+            }
+        }
+    }
+
+    // `--dump-config` prints `render()` of exactly this `Composition` and mounts nothing (V6).
+    if cli.dump_config {
+        print!(
+            "{}",
+            bough_kernel::render(&composition, cli.dump_format.into())
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let kernel = Kernel::new(
+        catalog,
+        KernelOptions {
+            profile: profile.name.clone(),
+            invariants: profile.invariants,
+            reconcile_debounce: RECONCILE_DEBOUNCE,
+        },
+    );
+
+    kernel.load(composition).await?;
+    kernel.quiesce().await;
+
+    let snapshot = kernel.snapshot();
+    if assert_all_activated(&snapshot).is_err() {
+        eprint!("{}", describe_unresolved(&snapshot));
+        // Teardown BEFORE exit, always (§0.1 item 2).
+        kernel.shutdown().await;
+        return Ok(ExitCode::FAILURE);
+    }
+
+    if cli.check {
+        kernel.shutdown().await;
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let watch = if cli.no_watch {
+        None
+    } else {
+        Some(crate::watch::watch_user_patch(
+            Arc::clone(&kernel),
+            Arc::clone(&cli),
+        ))
+    };
+
+    // Phase 0 has no surface to run: the launcher owns composition and teardown, and nothing else.
+    // A surface is a row, and it keeps the process alive by holding the runtime itself.
+    if let Err(e) = tokio::signal::ctrl_c().await {
+        eprintln!("bough: could not listen for SIGINT: {e}");
+    }
+    if let Some(w) = watch {
+        w.stop();
+    }
+    kernel.shutdown().await;
+    Ok(ExitCode::SUCCESS)
 }
 
 /// After quiesce, every row with `disabled == false` must be ACTIVE.
@@ -22,11 +93,109 @@ pub async fn boot(cli: Cli) -> Result<ExitCode, BootError> {
 /// On failure the caller prints each unresolved row with its unmet keys, awaits
 /// `kernel.shutdown()`, and exits 1.
 pub fn assert_all_activated(s: &TreeSnapshot) -> Result<(), BootError> {
-    todo!("WP-5")
+    let unresolved = s.unresolved();
+    if unresolved.is_empty() {
+        Ok(())
+    } else {
+        Err(BootError::Unresolved(unresolved.len()))
+    }
 }
 
 /// Render the unresolved rows for the boot-failure message: one line per row, naming the row, its
 /// plugin and each unmet key.
 pub fn describe_unresolved(s: &TreeSnapshot) -> String {
-    todo!("WP-5")
+    let rows = s.unresolved();
+    let mut out = String::new();
+    if rows.is_empty() {
+        return out;
+    }
+    out.push_str(&format!(
+        "bough: {} enabled row(s) never activated:\n",
+        rows.len()
+    ));
+    for r in &rows {
+        let plugin = r.plugin.as_deref().unwrap_or("<no plugin>");
+        let unmet = if r.unmet.is_empty() {
+            "-".to_string()
+        } else {
+            r.unmet.join(", ")
+        };
+        out.push_str(&format!(
+            "  {} (plugin `{}`) is {:?}; unmet: {}\n",
+            r.id, plugin, r.state, unmet
+        ));
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bough_kernel::config::Fingerprint;
+    use bough_kernel::{EntryId, FiberState, RowSnapshot};
+    use std::collections::BTreeMap;
+
+    fn row(id: &str, state: FiberState, disabled: bool, unmet: &[&str]) -> RowSnapshot {
+        RowSnapshot {
+            id: EntryId::new(id),
+            plugin: Some(format!("{id}-plugin")),
+            uid: None,
+            state,
+            disabled,
+            unmet: unmet.iter().map(|s| s.to_string()).collect(),
+            provides: Vec::new(),
+            realms: BTreeMap::new(),
+            children: Vec::new(),
+        }
+    }
+
+    fn snapshot(rows: Vec<RowSnapshot>) -> TreeSnapshot {
+        TreeSnapshot {
+            fingerprint: Fingerprint::of(&[]),
+            rows,
+        }
+    }
+
+    #[test]
+    fn assert_all_activated_passes_on_a_full_tree() {
+        let s = snapshot(vec![
+            row("greeting.provider", FiberState::Active, false, &[]),
+            row("hello.greeter", FiberState::Active, false, &[]),
+        ]);
+        assert!(assert_all_activated(&s).is_ok());
+        assert_eq!(describe_unresolved(&s), "");
+    }
+
+    #[test]
+    fn assert_all_activated_names_every_unresolved_row_and_its_unmet_keys() {
+        let s = snapshot(vec![
+            row("greeting.provider", FiberState::Active, false, &[]),
+            row("hello.greeter", FiberState::Pending, false, &["greeting"]),
+            row("other.row", FiberState::Pending, false, &["a", "b"]),
+        ]);
+        let err = assert_all_activated(&s).unwrap_err();
+        assert!(matches!(err, BootError::Unresolved(2)), "{err}");
+
+        let msg = describe_unresolved(&s);
+        assert!(msg.contains("hello.greeter"), "{msg}");
+        assert!(msg.contains("greeting"), "{msg}");
+        assert!(msg.contains("other.row"), "{msg}");
+        assert!(msg.contains("a, b"), "{msg}");
+        assert!(
+            !msg.contains("greeting.provider"),
+            "an ACTIVE row must not be reported: {msg}"
+        );
+    }
+
+    #[test]
+    fn disabled_rows_are_not_required_to_activate() {
+        let s = snapshot(vec![
+            row("greeting.provider", FiberState::Active, false, &[]),
+            row("hello.greeter", FiberState::Inactive, true, &["greeting"]),
+        ]);
+        assert!(
+            assert_all_activated(&s).is_ok(),
+            "a disabled row is not a boot failure"
+        );
+    }
 }

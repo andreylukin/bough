@@ -9,6 +9,9 @@ repository.workspace = true
 serde = { workspace = true }
 thiserror = { workspace = true }
 dirs = { workspace = true }
+# tokio: `time` only — with_timeout races the caller's future against a sleep on the
+# caller's runtime. bough-util creates no runtime of its own.
+tokio = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

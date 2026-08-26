@@ -1,0 +1,17 @@
+//! Invariant: the launcher composes and tears down, and does nothing else (§0.1 item 2). A
+//! behaviour that lives here instead of in a plugin row is a §0.1 violation.
+//!
+//! The crate is a library AND a binary for one reason: `crates/bough/tests/*` must call the very
+//! same `compose_for` the binary calls, because V6's claim is an IDENTITY between the dump and
+//! what boots — a test that reimplemented the layer stack could not check it.
+
+// Linking, not naming: `inventory` only sees a plugin crate the linker kept, and an unreferenced
+// dependency can be dropped. This `as _` import is the whole of the launcher's relationship with
+// every plugin crate — it never names a plugin type (§0.1 item 2).
+use bough_plugin_hello as _;
+
+pub mod boot;
+pub mod cli;
+pub mod compose;
+pub mod profile;
+pub mod watch;

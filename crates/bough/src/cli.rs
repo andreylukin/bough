@@ -68,6 +68,8 @@ pub enum BootError {
     #[error(transparent)]
     Compose(#[from] bough_kernel::ComposeError),
     #[error(transparent)]
+    Catalog(#[from] bough_kernel::catalog::CatalogError),
+    #[error(transparent)]
     Kernel(#[from] bough_kernel::KernelError),
     /// One or more enabled rows never activated. Printed row by row, after teardown (§0.2).
     #[error("{0} enabled row(s) never activated")]

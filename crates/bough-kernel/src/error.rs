@@ -9,7 +9,9 @@ use crate::fiber::EntryId;
 pub enum KernelError {
     /// The §0.3 capability check, reported at the point of use — even when the key happens to be
     /// bound. The message is normative; see §2.11 of the Phase 0 plan.
-    #[error("plugin `{plugin}` (row `{entry}`) read service `{key}` without declaring it in inject")]
+    #[error(
+        "plugin `{plugin}` (row `{entry}`) read service `{key}` without declaring it in inject"
+    )]
     UndeclaredService {
         plugin: &'static str,
         entry: EntryId,

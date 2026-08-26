@@ -134,20 +134,42 @@ impl<P: Plugin> ErasedPlugin for Shim<P> {
         P::inject()
     }
     fn schema(&self) -> schemars::Schema {
-        todo!("WP-3: schemars::schema_for!(P::Config)")
+        schemars::schema_for!(P::Config)
     }
     fn parse(&self, raw: &serde_yaml::Value) -> Result<ErasedConfig, ConfigError> {
-        todo!("WP-3: deserialize into P::Config, run P::validate, canonicalise the yaml")
+        // An absent `config:` is Null; a struct whose fields all default must still parse, so an
+        // absent config is spelled as the empty mapping.
+        let raw = match raw {
+            serde_yaml::Value::Null => serde_yaml::Value::Mapping(Default::default()),
+            other => other.clone(),
+        };
+        let cfg: P::Config = serde_yaml::from_value(raw).map_err(|e| ConfigError::Deserialize {
+            detail: e.to_string(),
+        })?;
+        P::validate(&cfg)?;
+        // Canonical yaml: what the typed value serialises back to, not what was written.
+        let yaml = serde_yaml::to_value(&cfg).map_err(|e| ConfigError::Deserialize {
+            detail: e.to_string(),
+        })?;
+        Ok(ErasedConfig::new(cfg, yaml))
     }
     fn apply(
         &self,
         ctx: Context,
         cfg: ErasedConfig,
     ) -> futures::future::BoxFuture<'static, Result<(), PluginError>> {
-        todo!("WP-3: downcast and box P::apply")
+        let typed = cfg
+            .downcast::<P::Config>()
+            .expect("config type mismatch: the fiber handed a config parsed by another plugin");
+        Box::pin(P::apply(ctx, typed))
     }
     fn reconfigure(&self, ctx: &Context, old: &ErasedConfig, new: &ErasedConfig) -> Reconfigure {
-        todo!("WP-3: downcast both and call P::reconfigure")
+        match (old.downcast::<P::Config>(), new.downcast::<P::Config>()) {
+            (Some(o), Some(n)) => P::reconfigure(ctx, &o, &n),
+            // Type mismatch cannot happen for one row (same plugin both sides); if it ever does,
+            // the safe answer is a reload, never a silent "absorbed".
+            _ => Reconfigure::Reload,
+        }
     }
     fn invariants(&self) -> Vec<InvariantSpec> {
         P::invariants()
