@@ -14,7 +14,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bough_kernel::{
-    Context, EffectHandle, EmitEvent, Inject, InvariantSpec, Plugin, PluginError, ServiceKey,
+    ConfigError, Context, EffectHandle, EmitEvent, Inject, InvariantSpec, Plugin, PluginError,
+    ServiceKey,
 };
 use bough_plugin_agents::Agent;
 use bough_plugin_ledger::{AgentName, Cite};
@@ -221,8 +222,15 @@ impl CommandsHandle {
         spec: CommandSpec,
     ) -> Result<EffectHandle, PluginError> {
         let entry = ctx.entry_id().clone();
+        let id = NEXT_REGISTRATION.fetch_add(1, Ordering::Relaxed);
+        let name = spec.name.to_string();
+        let scope = scope_str(&spec.scope);
         {
-            let held = self.0.registered.lock();
+            // The check and the push are ONE critical section. Releasing the lock between them let
+            // two concurrent registrations of one name in one scope both pass the check and both
+            // land, which is the "which one runs depends on load order" this refusal exists to
+            // prevent.
+            let mut held = self.0.registered.lock();
             if held
                 .iter()
                 .any(|(_, s)| s.name == spec.name && s.scope == spec.scope)
@@ -236,11 +244,8 @@ impl CommandsHandle {
                     ),
                 ));
             }
+            held.push((id, spec));
         }
-        let id = NEXT_REGISTRATION.fetch_add(1, Ordering::Relaxed);
-        let name = spec.name.to_string();
-        let scope = scope_str(&spec.scope);
-        self.0.registered.lock().push((id, spec));
         invariant::record(invariant::Obs::Registered {
             name: name.clone(),
             scope: scope.clone(),
@@ -471,6 +476,20 @@ impl Plugin for CommandsPlugin {
 
     fn inject() -> Inject {
         Inject::none()
+    }
+
+    fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
+        // A whitespace prefix would make every typed line that starts with a space a command, and
+        // an alphanumeric one would swallow ordinary messages.
+        if cfg.prefix.is_whitespace() || cfg.prefix.is_alphanumeric() {
+            return Err(ConfigError::Rejected {
+                detail: format!(
+                    "prefix `{}` must be a non-alphanumeric, non-whitespace character",
+                    cfg.prefix
+                ),
+            });
+        }
+        Ok(())
     }
 
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {

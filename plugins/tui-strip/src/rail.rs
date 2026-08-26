@@ -171,10 +171,11 @@ pub fn row_lines(
     if extent == 0 {
         return out;
     }
-    let v = row
-        .about
-        .as_ref()
-        .expect("extent > 0 implies an about-line");
+    // NOT an `expect`: this is the RENDER path, and a panic inside `Pane::render` unwinds the
+    // draw loop and takes the process down (V8, which `tui-probe` exists to demonstrate).
+    let Some(v) = row.about.as_ref() else {
+        return out;
+    };
     let body_room = width.saturating_sub(2) as usize;
     // The STATE half: evidence, and only ever reached here through `about_from_step`, which
     // reads a cited step (`crate::invariant`).

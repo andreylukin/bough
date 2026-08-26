@@ -24,10 +24,14 @@
     osc52: true
     clipboard: true
     composer_max_lines: 6
+    search_pane: tui.search
+    page_lines: 10
+    wheel_lines: 3
+    notice_max_lines: 8
 
 - id: tui.strip
   plugin: tui-strip
-  config: { width: 34, show_about: true, about_lines: 2, refresh_ms: 1000 }
+  config: { width: 34, show_about: true, about_lines: 2 }
 
 - id: tui.focus
   plugin: tui-focus

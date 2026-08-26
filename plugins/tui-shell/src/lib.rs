@@ -22,7 +22,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use bough_kernel::{Context, EffectHandle, Inject, InvariantSpec, Plugin, PluginError, ServiceKey};
+use bough_kernel::{
+    ConfigError, Context, EffectHandle, Inject, InvariantSpec, Plugin, PluginError, ServiceKey,
+};
 use bough_plugin_agents::{Agent, AgentId, Agents, AgentsHandle};
 use bough_plugin_commands::{Commands, CommandsHandle};
 use bough_plugin_ledger::StepId;
@@ -517,7 +519,6 @@ impl TuiHandle {
     /// What a pane's `handle` runs against.
     pub(crate) fn pane_cx(&self) -> PaneCx {
         PaneCx {
-            ctx: self.0.ctx.clone(),
             tui: self.clone(),
             agent: self.agent(),
             at: chrono::Utc::now(),
@@ -586,6 +587,34 @@ pub struct TuiConfig {
     /// Best-effort `arboard` in addition to OSC52.
     pub clipboard: bool,
     pub composer_max_lines: u16,
+    /// The pane `Ctrl+F` gives the keyboard to. A pane id, matched EXACTLY: the binding used to
+    /// substring-match "search", so any future pane whose id contained the word stole it and a
+    /// rename broke it silently into the "no search pane" notice.
+    #[serde(default = "default_search_pane")]
+    pub search_pane: String,
+    /// The shell's OWN fallback page size, in lines, for a pane that ignores PageUp/PageDown.
+    /// A pane with a `page_lines` of its own (`tui.focus`) honours that first.
+    #[serde(default = "default_page_lines")]
+    pub page_lines: u16,
+    /// Lines per wheel notch.
+    #[serde(default = "default_wheel_lines")]
+    pub wheel_lines: u16,
+    /// How many rows a notice may borrow above the composer before it is truncated.
+    #[serde(default = "default_notice_lines")]
+    pub notice_max_lines: u16,
+}
+
+fn default_search_pane() -> String {
+    "tui.search".to_string()
+}
+fn default_page_lines() -> u16 {
+    10
+}
+fn default_wheel_lines() -> u16 {
+    3
+}
+fn default_notice_lines() -> u16 {
+    8
 }
 
 /// The config every test in this crate starts from: headless, deterministic, no clipboard.
@@ -601,6 +630,10 @@ pub fn test_config() -> TuiConfig {
         osc52: true,
         clipboard: false,
         composer_max_lines: 8,
+        search_pane: default_search_pane(),
+        page_lines: default_page_lines(),
+        wheel_lines: default_wheel_lines(),
+        notice_max_lines: default_notice_lines(),
     }
 }
 
@@ -614,6 +647,37 @@ impl Plugin for TuiShellPlugin {
 
     fn inject() -> Inject {
         Inject::required(["agents", "ledger", "commands"])
+    }
+
+    fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
+        let reject = |detail: String| Err(ConfigError::Rejected { detail });
+        // These used to be `.max(1)`d at the use site, which turns a nonsense value into a silent
+        // clamp instead of the loud load failure §0.2 asks for.
+        if cfg.frame_ms == 0 {
+            return reject("frame_ms must be > 0".to_string());
+        }
+        if cfg.tick_ms == 0 {
+            return reject("tick_ms must be > 0".to_string());
+        }
+        if cfg.composer_max_lines == 0 {
+            return reject("composer_max_lines must be > 0".to_string());
+        }
+        if cfg.page_lines == 0 {
+            return reject("page_lines must be > 0".to_string());
+        }
+        if cfg.wheel_lines == 0 {
+            return reject("wheel_lines must be > 0".to_string());
+        }
+        if cfg.notice_max_lines == 0 {
+            return reject("notice_max_lines must be > 0".to_string());
+        }
+        if cfg.search_pane.trim().is_empty() {
+            return reject("search_pane must name a pane id".to_string());
+        }
+        if cfg.size[0] == 0 || cfg.size[1] == 0 {
+            return reject("size must be a non-zero width and height".to_string());
+        }
+        Ok(())
     }
 
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {

@@ -9,7 +9,7 @@ pub mod invariant;
 
 use std::sync::Arc;
 
-use bough_kernel::{Context, Inject, InvariantSpec, Plugin, PluginError};
+use bough_kernel::{ConfigError, Context, Inject, InvariantSpec, Plugin, PluginError};
 use bough_plugin_agents::{
     AgentDisposer, AgentKind, Agents, AgentsHandle, CreateAgent, ResumeAgent, WakeCause, WakeKind,
     WakeRequest,
@@ -210,6 +210,30 @@ impl Plugin for ResidentsPlugin {
 
     fn inject() -> Inject {
         Inject::required(["agents", "ledger"])
+    }
+
+    fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
+        let reject = |detail: String| Err(ConfigError::Rejected { detail });
+        // A bootstrap name that is blank or carries a `/` would mint a trajectory id that is not
+        // the `traj_prefix + name` the row documents, and §5's lane naming is what the projection
+        // and every script address an agent by.
+        for name in &cfg.bootstrap {
+            if name.trim().is_empty() {
+                return reject("bootstrap names must not be blank".to_string());
+            }
+            if name.contains('/') {
+                return reject(format!("bootstrap name `{name}` must not contain `/`"));
+            }
+        }
+        if cfg.traj_prefix.trim().is_empty() {
+            return reject("traj_prefix must not be blank".to_string());
+        }
+        if cfg.catch_up && !cfg.resume_all {
+            return reject(
+                "catch_up requires resume_all: there is no roster to wake otherwise".to_string(),
+            );
+        }
+        Ok(())
     }
 
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {

@@ -15,6 +15,7 @@ pub mod boughdb;
 pub mod command;
 pub mod invariant;
 pub mod jungler;
+pub mod resolve;
 pub mod state;
 
 use std::collections::{BTreeSet, HashSet};
@@ -145,11 +146,8 @@ impl OldFeedHandle {
     /// §14's cheap win: command memory for PRIMING. Never mail, never a step, never a
     /// projection section in this phase.
     pub async fn prime(&self, q: &PrimingQuery) -> Result<Vec<CommandMemory>, OldFeedError> {
-        let limit = if q.limit == 0 {
-            self.0.cfg.priming_limit
-        } else {
-            q.limit
-        };
+        // Defaulting is an EXPLICIT step, in one place, at the type (§0.2).
+        let limit = resolve::resolve_priming(q, &self.0.cfg).limit;
         let Some(conn) = boughdb::open(&self.0.cfg.bough_db)? else {
             return Ok(Vec::new());
         };
@@ -161,11 +159,7 @@ impl OldFeedHandle {
 
     /// `note_sections` as CITED EVIDENCE: each carries `Cite { ref: "note:<note>#<ord>" }`.
     pub async fn notes(&self, q: &NoteQuery) -> Result<Vec<NoteEvidence>, OldFeedError> {
-        let limit = if q.limit == 0 {
-            self.0.cfg.priming_limit
-        } else {
-            q.limit
-        };
+        let limit = resolve::resolve_notes(q, &self.0.cfg).limit;
         let Some(conn) = boughdb::open(&self.0.cfg.bough_db)? else {
             return Ok(Vec::new());
         };
@@ -228,10 +222,23 @@ impl OldFeedHandle {
                         }
                     }
                 }
-                None => status.disabled.push((
-                    "deliver_to".to_string(),
-                    format!("no live agent named `{}`", cfg.deliver_to),
-                )),
+                None => {
+                    // NEVER SILENTLY SKIP A MISSING REFERENT (§0.2). The transient case — the
+                    // roster has not been raised yet — and the permanent one (a typo, or an agent
+                    // `residents.bootstrap` never creates) look identical from here, so the ONE
+                    // thing this can do is say so every sweep instead of delivering nothing
+                    // forever in silence.
+                    tracing::warn!(
+                        target: "old-feed",
+                        deliver_to = %cfg.deliver_to,
+                        "no live agent by that name: nothing is being delivered. If the roster is \
+                         up, `deliver_to` names an agent that does not exist"
+                    );
+                    status.disabled.push((
+                        "deliver_to".to_string(),
+                        format!("no live agent named `{}`", cfg.deliver_to),
+                    ));
+                }
             }
         }
         *self.0.last.lock() = status.clone();

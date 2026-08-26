@@ -11,7 +11,7 @@ pub mod rail;
 
 use std::sync::Arc;
 
-use bough_kernel::{Context, Inject, InvariantSpec, Plugin, PluginError};
+use bough_kernel::{ConfigError, Context, Inject, InvariantSpec, Plugin, PluginError};
 use bough_plugin_agents::events::{
     AgentCreated, AgentDisposed, AgentStatusChanged, AgentWake, Phase,
 };
@@ -40,8 +40,6 @@ pub struct StripConfig {
     pub width: u16,
     pub show_about: bool,
     pub about_lines: u16,
-    /// Refresh cadence for counters the ledger owns (unconsumed mail).
-    pub refresh_ms: u64,
 }
 
 /// Re-exported from the render library, which owns it because both panes read it (§1).
@@ -146,6 +144,20 @@ impl Plugin for StripPlugin {
 
     fn inject() -> Inject {
         Inject::required(["tui", "agents", "ledger"])
+    }
+
+    fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
+        let reject = |detail: String| Err(ConfigError::Rejected { detail });
+        if cfg.width == 0 {
+            return reject("width must be > 0; a zero-cell rail shows no agent".to_string());
+        }
+        if cfg.show_about && cfg.about_lines == 0 {
+            return reject(
+                "about_lines must be > 0 when show_about is true; set show_about: false instead"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {

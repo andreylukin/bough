@@ -258,8 +258,13 @@ pub enum PaneOutcome {
 }
 
 /// What a pane's `handle` runs against.
+///
+/// Deliberately NOT a `Context`. It used to carry the SHELL's, so every pane resolved services
+/// through tui-shell's committed view: a pane row that declared nothing but `tui` could reach
+/// `agents`, `ledger` and `commands`, which is exactly the capability boundary §0.3's
+/// declared-injection rule draws. A pane does its I/O through the handles its own `apply` was
+/// given.
 pub struct PaneCx {
-    pub ctx: bough_kernel::Context,
     pub tui: TuiHandle,
     /// The focused agent's live handle, when there is one.
     pub agent: Option<Agent>,

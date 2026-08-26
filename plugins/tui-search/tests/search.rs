@@ -136,8 +136,15 @@ fn row(step: &str, agent: Option<&str>) -> HitRow {
     }
 }
 
+/// A FAILED query renders inline and clears the list.
+///
+/// Honest about what this proves and what it does not: no input typed into this pane can reach
+/// FTS5 as invalid syntax (P1-D19 — `match_expr` tokenises to alphanumeric runs and quotes each
+/// one), so the reachable source of an `Err` here is a `LedgerError` from the store — the shape
+/// Phase 1's `a_handle_that_outlives_its_row_refuses_to_write` shows is real. The error VALUE is
+/// therefore constructed by the test; what is under test is the state transition it drives.
 #[test]
-fn a_bad_fts_query_renders_an_inline_error_and_clears_the_list() {
+fn a_failed_query_renders_an_inline_error_and_clears_the_list() {
     let mut state = SearchState::new(&cfg());
     let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
 
@@ -146,13 +153,13 @@ fn a_bad_fts_query_renders_an_inline_error_and_clears_the_list() {
     assert_eq!(state.rows.len(), 1);
     assert_eq!(state.error, None);
 
-    // FTS5 rejects a dangling operator; the provider hands the message back.
-    let g = state.push_char('"', now);
-    assert!(state.apply(g, Err("fts5: syntax error near \"\"\"".into())));
+    // The store hands its error message back; the pane renders it where the list was.
+    let g = state.push_char('x', now);
+    assert!(state.apply(g, Err("ledger: the store is unavailable".into())));
     assert!(state.rows.is_empty(), "the list is cleared beside an error");
     assert_eq!(
         state.error.as_deref(),
-        Some("fts5: syntax error near \"\"\"")
+        Some("ledger: the store is unavailable")
     );
 
     // And the error goes away as soon as a query succeeds again.
@@ -259,4 +266,53 @@ async fn hit_rows_is_pure_over_hits_and_agent_rows() {
     assert_eq!(rows[0].step, s.id);
     // The snippet is one line: a hit row is one row.
     assert_eq!(rows[0].snippet, "the swap gate");
+}
+
+/// The pane's slot is a dozen cells and its `limit` is fifty: without a viewport, everything past
+/// the twelfth hit was invisible AND unclickable while Up/Down moved a selection nobody could see.
+#[test]
+fn the_hit_list_scrolls_so_every_hit_can_be_reached() {
+    let mut state = SearchState::new(&cfg());
+    let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let g = state.push_char('a', now);
+    let hits: Vec<HitRow> = (0..50)
+        .map(|i| row(&format!("s{i}"), Some("sol")))
+        .collect();
+    assert!(state.apply(g, Ok(hits)));
+    // The height the last frame had: a 12-cell slot.
+    state.height = 12;
+
+    let painted = 1 + state.rows.len();
+    assert_eq!(state.top(painted, 12), 0, "a fresh list starts at the top");
+
+    // A wheel notch down moves the viewport, and it clamps at the last full screen.
+    state.scroll_by(3, painted);
+    assert_eq!(state.top(painted, 12), 3);
+    state.scroll_by(1000, painted);
+    assert_eq!(
+        state.top(painted, 12),
+        painted - 12,
+        "the last screen of hits is reachable and the scroll clamps there"
+    );
+    state.scroll_by(-1000, painted);
+    assert_eq!(state.top(painted, 12), 0, "and back to the top");
+
+    // Selecting past the bottom of the viewport brings the selection into view.
+    state.selected = 30;
+    state.follow_selection();
+    let top = state.top(painted, 12);
+    assert!(
+        (top..top + 12).contains(&(state.selected + 1)),
+        "the selected hit must be inside the viewport: top {top}, selected {}",
+        state.selected
+    );
+
+    // And selecting back up scrolls the other way, until the first hit is on screen again.
+    state.selected = 0;
+    state.follow_selection();
+    let top = state.top(painted, 12);
+    assert!(
+        (top..top + 12).contains(&1),
+        "the first hit must be back inside the viewport: top {top}"
+    );
 }

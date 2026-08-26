@@ -37,7 +37,7 @@ impl Composer {
         area.set_placeholder_text("message, or / for a command");
         Composer {
             area,
-            max_lines: cfg.composer_max_lines.max(1),
+            max_lines: cfg.composer_max_lines,
             prefix: '/',
         }
     }

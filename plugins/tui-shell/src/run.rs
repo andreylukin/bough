@@ -23,9 +23,6 @@ use crate::events::{KeyDispatch, TuiKeyEvent};
 use crate::pane::{self, HitMap, PaneEvent, PaneFrame, PaneId, PaneOutcome, RenderCx};
 use crate::{no_pane, FocusRequest, TuiConfig, TuiHandle};
 
-/// How many rows a notice may borrow above the composer before it is truncated.
-const NOTICE_MAX_LINES: usize = 8;
-
 /// The event loop, spawned as the row's effect. Returns when the effect is halted.
 pub async fn run(ctx: Context, tui: TuiHandle, cfg: Arc<TuiConfig>, e: EffectCtx) {
     let _ = ctx;
@@ -35,7 +32,7 @@ pub async fn run(ctx: Context, tui: TuiHandle, cfg: Arc<TuiConfig>, e: EffectCtx
         crate::Backend::Crossterm => Some(crossterm::event::EventStream::new()),
         _ => None,
     };
-    let mut ticks = tokio::time::interval(Duration::from_millis(cfg.tick_ms.max(1)));
+    let mut ticks = tokio::time::interval(Duration::from_millis(cfg.tick_ms));
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     draw(&tui);
@@ -63,7 +60,7 @@ pub async fn run(ctx: Context, tui: TuiHandle, cfg: Arc<TuiConfig>, e: EffectCtx
             }
             _ = tui.0.redraw.notified() => {
                 // Coalesce: everything asked for in this budget costs one frame.
-                tokio::time::sleep(Duration::from_millis(cfg.frame_ms.max(1))).await;
+                tokio::time::sleep(Duration::from_millis(cfg.frame_ms)).await;
                 draw(&tui);
             }
             _ = ticks.tick() => {
@@ -162,7 +159,9 @@ pub fn draw(tui: &TuiHandle) {
         // the rows immediately above the composer rather than reflowing the layout under it.
         if let Some(text) = notice {
             let wrapped: Vec<&str> = text.lines().collect();
-            let want = wrapped.len().clamp(1, NOTICE_MAX_LINES) as u16;
+            let want = wrapped
+                .len()
+                .clamp(1, tui.0.cfg.notice_max_lines.max(1) as usize) as u16;
             let top = crect.y.saturating_sub(want);
             let h = crect.y.saturating_sub(top);
             if h > 0 {
@@ -265,7 +264,7 @@ pub async fn on_key(tui: &TuiHandle, key: KeyEvent) {
     if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
         let target = tui.focused_pane();
         if route(tui, target.clone(), PaneEvent::Key(key)).await == PaneOutcome::Ignored {
-            if let Some(delta) = scroll_delta(key) {
+            if let Some(delta) = scroll_delta(key, tui.0.cfg.page_lines) {
                 route(tui, target, PaneEvent::Scroll { delta }).await;
             }
         }
@@ -284,7 +283,7 @@ pub async fn on_key(tui: &TuiHandle, key: KeyEvent) {
 
     let target = tui.focused_pane();
     if route(tui, target.clone(), PaneEvent::Key(key)).await == PaneOutcome::Ignored {
-        if let Some(delta) = scroll_delta(key) {
+        if let Some(delta) = scroll_delta(key, tui.0.cfg.page_lines) {
             route(tui, target, PaneEvent::Scroll { delta }).await;
         }
     }
@@ -314,7 +313,7 @@ async fn keymap(tui: &TuiHandle, key: KeyEvent) -> bool {
             match tui
                 .panes()
                 .into_iter()
-                .find(|p| p.focusable && p.id.as_str().contains("search"))
+                .find(|p| p.focusable && p.id.as_str() == tui.0.cfg.search_pane)
             {
                 Some(p) => tui.focus_pane(p.id).await,
                 // The row can be disabled by patch; the binding is then a no-op, not an error.
@@ -364,13 +363,15 @@ async fn cycle_focus(tui: &TuiHandle, step: i32) {
     }
 }
 
-/// The scroll a navigation key means, in lines. `None` for a key that is not one.
-pub fn scroll_delta(key: KeyEvent) -> Option<i16> {
+/// The scroll a navigation key means, in lines, at the shell's configured page size. `None` for a
+/// key that is not one.
+pub fn scroll_delta(key: KeyEvent, page: u16) -> Option<i16> {
+    let page = page.clamp(1, i16::MAX as u16) as i16;
     match key.code {
         KeyCode::Up => Some(-1),
         KeyCode::Down => Some(1),
-        KeyCode::PageUp => Some(-10),
-        KeyCode::PageDown => Some(10),
+        KeyCode::PageUp => Some(-page),
+        KeyCode::PageDown => Some(page),
         KeyCode::Home => Some(i16::MIN),
         KeyCode::End => Some(i16::MAX),
         _ => None,
@@ -423,10 +424,11 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
             }
         }
         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+            let notch = tui.0.cfg.wheel_lines.clamp(1, i16::MAX as u16) as i16;
             let delta = if me.kind == MouseEventKind::ScrollUp {
-                -3
+                -notch
             } else {
-                3
+                notch
             };
             if let Some(pane) = tui.pane_at(col, row) {
                 // Focus is deliberately untouched: a wheel over another pane reads it, it does

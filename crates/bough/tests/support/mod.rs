@@ -311,6 +311,13 @@ pub async fn boot_real(profile: &str, patches: &[PathBuf]) -> (Arc<Kernel>, Temp
     let mut dir = TempDir::new(&format!("phase2-{profile}"));
     // SAFETY: the caller holds the fixture's process-wide test lock.
     unsafe { std::env::set_var("BOUGH_HOME", dir.path()) };
+    // AND `$HOME`. The shipped `old-feed` row defaults `jungler_db`/`bough_db` to
+    // `!!expr home_path(..)`, which resolves against `$HOME` and NOT `$BOUGH_HOME` — so a
+    // `cargo test` that boots the shipped tui bundle used to activate the bridge against the
+    // developer's REAL `~/.bough/bough.db` and `~/.jungler/jungler.db` and, on a machine that has
+    // one, import live events as mail into the test ledger. Tests are hermetic (AGENTS.md).
+    // SAFETY: as above.
+    unsafe { std::env::set_var("HOME", dir.path()) };
     let mut cli = cli_for(profile);
     cli.root = Some(repo_root());
     cli.patches = patches.to_vec();

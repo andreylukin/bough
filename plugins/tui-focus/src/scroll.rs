@@ -10,7 +10,7 @@ pub enum Scroll {
     #[default]
     Follow,
     /// Anchored to a step: new steps DO NOT move the viewport (V3).
-    Anchored { top: usize, offset: u16 },
+    Anchored { top: usize },
 }
 
 impl Scroll {
@@ -19,7 +19,7 @@ impl Scroll {
         let max = max_top(rows, height);
         match self {
             Scroll::Follow => max,
-            Scroll::Anchored { top, .. } => top.min(max),
+            Scroll::Anchored { top } => top.min(max),
         }
     }
 
@@ -37,10 +37,7 @@ impl Scroll {
             // move with new rows would look frozen, which is the opposite of what anchoring is for.
             Scroll::Follow
         } else {
-            Scroll::Anchored {
-                top: to as usize,
-                offset: 0,
-            }
+            Scroll::Anchored { top: to as usize }
         }
     }
 
@@ -54,10 +51,7 @@ impl Scroll {
 
     /// Anchor on a row index, as a `FocusRequest { step: Some(..) }` asks for.
     pub fn anchored_on(row: usize) -> Scroll {
-        Scroll::Anchored {
-            top: row,
-            offset: 0,
-        }
+        Scroll::Anchored { top: row }
     }
 
     /// Whether the viewport is pinned to the newest row.

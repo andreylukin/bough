@@ -20,6 +20,12 @@ pub fn record_frame(rows: &[Row], live: &LiveText) {
     *LAST_FRAME.lock() = Some((rows.to_vec(), live.clone()));
 }
 
+/// Forget the recorded frame. The row's disposal path: registrations are effects, and a disabled
+/// row must leave nothing behind (§0.2) — including the frame its last render recorded.
+pub fn forget() {
+    *LAST_FRAME.lock() = None;
+}
+
 /// What the last frame drew, for the check and for tests.
 pub fn last_frame() -> Option<(Vec<Row>, LiveText)> {
     LAST_FRAME.lock().clone()

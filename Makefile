@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help check build test lint gates release audit-plugins live bench tui-test
+.PHONY: help check build test lint gates release audit-plugins live bench tui-test tui-test-replay
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-16s %s\n", $$1, $$2}'
@@ -17,7 +17,11 @@ lint: ## rustfmt check + clippy (warnings as errors)
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets -- -D warnings
 
-gates: build lint test ## the pre-commit gates
+# `tui-test-replay` is IN the gates on purpose: every screen-level bullet of the interface-cutover
+# phase (V1-V8 and SWAP) lives in `scripts/tui/*.sh`, so a gate without them exercises none of the
+# interface it gates. The REPLAY half only — `make test` and `make gates` are offline and hermetic
+# (AGENTS.md); the live half is `make tui-test`.
+gates: build lint test tui-test-replay ## the pre-commit gates
 
 # REQUIREMENTS §17 / P2-D27: `make test` is OFFLINE and hermetic, always. The live set is
 # `#[ignore]`d and gated on BOUGH_LIVE=1; this is the target that runs it, with the key sourced
@@ -48,7 +52,7 @@ audit-plugins: release ## REQUIREMENTS §17 Phase 8: boot with each bough-base r
 TUI_SCRATCH := $(CURDIR)/target/tui-test
 TUI_PATCH   := $(TUI_SCRATCH)/llm-replay.patch.yml
 
-tui-test: release ## REQUIREMENTS §17 Phase 3: drive the release binary through scripts/tui/*.sh
+tui-test-replay: release ## the OFFLINE half of the shell-use suite (in `make gates`)
 	@command -v shell-use >/dev/null || { echo "make tui-test: shell-use is not on PATH"; exit 1; }
 	@command -v sqlite3 >/dev/null || { echo "make tui-test: sqlite3 is not on PATH"; exit 1; }
 	@rm -rf $(TUI_SCRATCH); mkdir -p $(TUI_SCRATCH) $(TUI_SCRATCH)/warm
@@ -67,8 +71,10 @@ tui-test: release ## REQUIREMENTS §17 Phase 3: drive the release binary through
 	   BOUGH_LIVE= \
 	   bash $$s; \
 	 done
-	@if [ -f $(HOME)/.bough/env ]; then \
-	   set -a; . $(HOME)/.bough/env; set +a; \
+
+tui-test: tui-test-replay ## REQUIREMENTS §17 Phase 3: the whole suite, replay half then live half
+	@if [ -f $(HOME)/.bough/env ] || [ -n "$$ANTHROPIC_API_KEY" ]; then \
+	   if [ -f $(HOME)/.bough/env ]; then set -a; . $(HOME)/.bough/env; set +a; fi; \
 	   if [ -n "$$ANTHROPIC_API_KEY" ]; then \
 	     echo "== tui-test: live half (haiku) =="; \
 	     set -e; for s in scripts/tui/[0-9]*.sh; do \
@@ -81,8 +87,8 @@ tui-test: release ## REQUIREMENTS §17 Phase 3: drive the release binary through
 	       bash $$s; \
 	     done; \
 	   else \
-	     echo "== tui-test: no ANTHROPIC_API_KEY in $(HOME)/.bough/env; skipping the live half =="; \
+	     echo "== tui-test: no ANTHROPIC_API_KEY in the environment or $(HOME)/.bough/env; skipping the live half =="; \
 	   fi; \
 	 else \
-	   echo "== tui-test: no $(HOME)/.bough/env; skipping the live half =="; \
+	   echo "== tui-test: no ANTHROPIC_API_KEY and no $(HOME)/.bough/env; skipping the live half =="; \
 	 fi

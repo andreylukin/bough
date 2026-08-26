@@ -10,7 +10,7 @@ use bough_plugin_commands::{
     Commands, Invocation, OutputRender,
 };
 
-use crate::{FeedStatus, OldFeedHandle};
+use crate::{CommandMemory, FeedStatus, NoteEvidence, NoteQuery, OldFeedHandle, PrimingQuery};
 
 /// Register `/oldfeed`, if a `commands` registry is bound. The key is OPTIONAL injection: a
 /// headless profile mounts this row with no surface at all and still sweeps.
@@ -31,7 +31,93 @@ pub async fn register(ctx: &Context, feed: &OldFeedHandle) -> Result<(), PluginE
             },
         )
         .await?;
+
+    // §14's cheap win, made REACHABLE. `prime` and `notes` were a seam with one role: the methods
+    // existed, the tests called them, and nothing in the tree consumed the `old_feed` key, so the
+    // priming half of §17 Phase 3 ("command_history … queried for priming") had no runtime path
+    // at all. This is that path — a human command, rendered in the pane, never mail and never a
+    // step, which is exactly what "competence memory, never delivered" means.
+    commands
+        .register(
+            ctx,
+            CommandSpec {
+                name: CommandName::new("prime"),
+                summary: "command memory and note evidence from the old bough db".to_string(),
+                usage: "/prime [text]".to_string(),
+                args: schemars::json_schema!({ "type": "array", "items": { "type": "string" } }),
+                scope: CommandScope::Global,
+                run: Arc::new(PrimeCommand { feed: feed.clone() }),
+            },
+        )
+        .await?;
     Ok(())
+}
+
+struct PrimeCommand {
+    feed: OldFeedHandle,
+}
+
+#[async_trait::async_trait]
+impl Command for PrimeCommand {
+    async fn run(&self, inv: Invocation, _cx: CommandCx) -> Result<CommandOutput, CommandError> {
+        let contains = if inv.args.is_empty() {
+            None
+        } else {
+            Some(inv.args.join(" "))
+        };
+        // `limit: 0` is the caller saying "the row decides" — resolved once, in `resolve.rs`.
+        let cmds = self
+            .feed
+            .prime(&PrimingQuery {
+                repo: None,
+                tags: Vec::new(),
+                contains: contains.clone(),
+                limit: 0,
+            })
+            .await
+            .map_err(|e| CommandError::Failed(e.to_string()))?;
+        let notes = self
+            .feed
+            .notes(&NoteQuery { contains, limit: 0 })
+            .await
+            .map_err(|e| CommandError::Failed(e.to_string()))?;
+        let cites = notes.iter().map(|n| n.cite.clone()).collect();
+        Ok(CommandOutput {
+            text: render_priming(&cmds, &notes),
+            render: OutputRender::Plain,
+            cites,
+        })
+    }
+}
+
+/// PURE: what `/prime` shows. Command memory is COMPETENCE MEMORY: it is rendered for Andrey and
+/// never becomes a step, a message or a projection section (§17 Phase 3, and the row's own
+/// `invariant::check` enforces the negative half).
+pub fn render_priming(cmds: &[CommandMemory], notes: &[NoteEvidence]) -> String {
+    let mut out = String::new();
+    if cmds.is_empty() && notes.is_empty() {
+        out.push_str("no command memory and no notes in the old bough db\n");
+        return out;
+    }
+    if !cmds.is_empty() {
+        out.push_str(&format!("command memory ({}):\n", cmds.len()));
+        for c in cmds {
+            let tags = if c.tags.is_empty() {
+                String::new()
+            } else {
+                format!("  [{}]", c.tags.join(" "))
+            };
+            out.push_str(&format!("  {} · {}{}\n", c.repo, c.cmd, tags));
+        }
+    }
+    if !notes.is_empty() {
+        out.push_str(&format!("notes ({}):\n", notes.len()));
+        for n in notes {
+            out.push_str(&format!("  {} · {}\n", n.cite.r#ref, n.heading));
+        }
+    }
+    out.push_str("not mail: command history is competence memory and is never delivered\n");
+    out
 }
 
 struct OldFeedCommand {

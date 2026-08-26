@@ -82,6 +82,14 @@ async fn disabling_the_search_row_removes_its_pane_and_reflows() {
     let (kernel, dir) = boot_tui().await;
     let before = pane_ids(&kernel);
     assert!(before.iter().any(|p| p == "tui.search"), "{before:?}");
+    let tui = kernel.root().peek_live::<Tui>().expect("`tui` is bound");
+    let search_before = tui
+        .rect_of(&bough_plugin_tui_shell::pane::PaneId::new("tui.search"))
+        .expect("the search pane has a rectangle before the patch");
+    let focus_before = tui
+        .rect_of(&bough_plugin_tui_shell::pane::PaneId::new("tui.focus"))
+        .expect("the focus pane has a rectangle");
+    assert!(search_before.height > 0);
 
     write_patch(&dir, DISABLE_SEARCH);
     recompose(&kernel, "", &dir)
@@ -101,6 +109,20 @@ async fn disabling_the_search_row_removes_its_pane_and_reflows() {
         after.len(),
         before.len() - 1,
         "exactly one pane left the layout"
+    );
+
+    // …AND REFLOWS — the second half of this test's own name, on geometry rather than membership.
+    assert_eq!(
+        tui.rect_of(&bough_plugin_tui_shell::pane::PaneId::new("tui.search")),
+        None,
+        "a retired pane has no rectangle"
+    );
+    let focus_after = tui
+        .rect_of(&bough_plugin_tui_shell::pane::PaneId::new("tui.focus"))
+        .expect("the focus pane still has a rectangle");
+    assert!(
+        focus_after.height > focus_before.height,
+        "the freed rows go to the remaining panes: {focus_before:?} -> {focus_after:?}"
     );
 
     kernel.shutdown().await;

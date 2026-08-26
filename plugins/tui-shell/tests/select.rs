@@ -63,7 +63,11 @@ async fn a_clipboard_failure_is_a_notice_not_an_error() {
     match &outcome {
         // A machine with a display server really does copy; a headless CI box does not. Both are
         // outcomes, and neither is an error.
-        CopyOutcome::LocalOnly => {}
+        // A machine with a display server: the local copy worked and OSC52 was off, which the
+        // shell still SAYS — a notice, not an error.
+        CopyOutcome::LocalOnly => {
+            assert!(outcome.notice().is_some(), "a partial copy explains itself")
+        }
         CopyOutcome::Nothing(why) => {
             assert!(!why.is_empty(), "a failure explains itself");
             assert!(outcome.notice().is_some(), "and it renders as a notice");
@@ -71,6 +75,18 @@ async fn a_clipboard_failure_is_a_notice_not_an_error() {
         other => panic!("osc52 was off: {other:?}"),
     }
     assert!(out.is_empty(), "nothing was written to the terminal");
+
+    // The name's claim, proven whichever arm this box takes: a failure is a NOTICE, never an
+    // error. `copy` returns no `Result`, so there is nothing for a caller to handle (P3-D7), and
+    // the failure outcome renders as text.
+    let failed = CopyOutcome::Nothing("no clipboard on this box".to_string());
+    let notice = failed
+        .notice()
+        .expect("a failed copy explains itself as a notice");
+    assert!(
+        notice.contains("no clipboard on this box"),
+        "the notice carries the reason: {notice}"
+    );
 }
 
 #[tokio::test]

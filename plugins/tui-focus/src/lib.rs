@@ -14,7 +14,7 @@ pub mod stream;
 
 use std::sync::Arc;
 
-use bough_kernel::{Context, Inject, InvariantSpec, Plugin, PluginError};
+use bough_kernel::{ConfigError, Context, Inject, InvariantSpec, Plugin, PluginError};
 use bough_plugin_agents::events::{AgentStep, AgentWake, Phase};
 use bough_plugin_agents::{initiator, AgentId, Agents, AgentsHandle};
 use bough_plugin_ledger::{
@@ -34,7 +34,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 pub use expand::{call_of_hit, hit_for_call, Expanded};
-pub use rows::{rows_from_steps, trailing_durable, Row};
+pub use rows::{rows_from_steps, trailing_durable, trailing_text_rows, Row};
 pub use scroll::Scroll;
 pub use stream::{apply_tee, tee_for, tee_stream, trailing_text, LiveText};
 
@@ -87,11 +87,20 @@ impl FocusState {
     }
 
     /// One appended step. `Follow` keeps following; `Anchored` does not move (V3).
-    pub fn push_step(&mut self, step: Step, max_rows: usize) {
+    pub fn push_step(&mut self, step: Step, max_rows: usize, expand_new_tools: bool) {
         if self.steps.iter().any(|s| s.id == step.id) {
             // The backfill and the listener race on a boot-time step. Idempotent by id, so the
             // step is rendered once whichever wins.
             return;
+        }
+        // `expand_new_tools`: a tool call arriving is drawn OPEN, so a run reads as it happens
+        // rather than as a list of one-line headers to click. Keyed by call id like every other
+        // expansion, so a later collapse sticks.
+        if expand_new_tools && step.kind.as_str() == "tool/call" {
+            if let Some(call) = step.body.get("call").and_then(|v| v.as_str()) {
+                self.expanded
+                    .insert(&bough_plugin_llm::ToolCallId::new(call));
+            }
         }
         self.steps.push(step);
         if self.steps.len() > max_rows {
@@ -122,6 +131,17 @@ pub struct FocusPane {
     cfg: Arc<FocusConfig>,
     state: Arc<Mutex<FocusState>>,
     live: Arc<Mutex<LiveText>>,
+    /// The handles this ROW declared and injected. `PaneCx` no longer carries a `Context` (§0.3:
+    /// resolving a service through the SHELL's committed view let any pane reach a key it never
+    /// declared), so what `handle` may reach is exactly what `apply` was given.
+    deps: Option<Deps>,
+}
+
+/// What the pane's `handle` does I/O through.
+#[derive(Clone)]
+struct Deps {
+    agents: AgentsHandle,
+    ledger: LedgerHandle,
 }
 
 impl FocusPane {
@@ -131,7 +151,19 @@ impl FocusPane {
         state: Arc<Mutex<FocusState>>,
         live: Arc<Mutex<LiveText>>,
     ) -> FocusPane {
-        FocusPane { cfg, state, live }
+        FocusPane {
+            cfg,
+            state,
+            live,
+            deps: None,
+        }
+    }
+
+    /// The injected handles, attached by `apply`. A pane built without them scrolls and expands
+    /// but pages nothing: there is no ledger to page from.
+    pub(crate) fn with_deps(mut self, agents: AgentsHandle, ledger: LedgerHandle) -> FocusPane {
+        self.deps = Some(Deps { agents, ledger });
+        self
     }
 
     /// PURE: the whole pane, as lines. Split from `render` so the geometry (which line belongs to
@@ -144,14 +176,22 @@ impl FocusPane {
         theme: &Theme,
     ) -> (Vec<Line<'static>>, Vec<(bough_plugin_llm::ToolCallId, u16)>) {
         let durable = trailing_durable(&state.rows);
-        // The LAST text row of the trailing step is the one the live tail supersedes; every
-        // earlier row is settled and is drawn from the ledger.
-        let trailing_row = state
-            .rows
-            .iter()
-            .rposition(|r| matches!(r, Row::Text { .. }));
+        // The flushes of ONE step index CONCATENATE into `durable`, so exactly one row of the
+        // trailing group may be drawn — the last — and it carries the whole concatenation. Drawing
+        // the earlier ones as well painted `chunk1` and then `chunk1+chunk2`, which is every
+        // answer that streamed for longer than the loop's `text_flush_ms` drawn twice.
+        let group = rows::trailing_text_rows(&state.rows);
         let mut lines: Vec<Line<'static>> = Vec::new();
         let mut headers = Vec::new();
+
+        // The window is not the trajectory: `max_rows` steps back is as far as this pane holds,
+        // and saying so is what stops an elided beginning from reading as the whole story.
+        if state.more_above {
+            lines.push(Line::styled(
+                "\u{2026} older steps above (PgUp)",
+                Style::default().fg(theme.dim),
+            ));
+        }
 
         for (i, row) in state.rows.iter().enumerate() {
             let flash = state.anchor.as_ref() == Some(row.step());
@@ -169,13 +209,21 @@ impl FocusPane {
                     ]));
                 }
                 Row::Text { text, .. } => {
-                    // P3-D12: exactly one of the two is drawn, chosen by length.
-                    let shown = if Some(i) == trailing_row {
-                        trailing_text(&durable, &live.text)
-                    } else {
-                        text.as_str()
-                    };
-                    lines.extend(bough_plugin_tui_render::markdownish(shown, width, theme));
+                    match group.iter().position(|&g| g == i) {
+                        // An earlier flush of the trailing step: its text is already inside
+                        // `durable`, so drawing it here would draw it a second time.
+                        Some(pos) if pos + 1 != group.len() => continue,
+                        // The last flush of the trailing step. P3-D12: exactly one of the durable
+                        // concatenation and the live tail is drawn, chosen by length.
+                        Some(_) => lines.extend(bough_plugin_tui_render::markdownish(
+                            trailing_text(&durable, &live.text),
+                            width,
+                            theme,
+                        )),
+                        None => {
+                            lines.extend(bough_plugin_tui_render::markdownish(text, width, theme))
+                        }
+                    }
                 }
                 Row::Reasoning { text, .. } => {
                     if self.cfg.show_reasoning {
@@ -255,7 +303,7 @@ impl FocusPane {
         }
         // The live tail of a turn whose first `thought/text` has not landed yet: without this the
         // first token of every answer would be invisible until the first flush.
-        if trailing_row.is_none() && !live.text.is_empty() {
+        if group.is_empty() && !live.text.is_empty() {
             lines.extend(bough_plugin_tui_render::markdownish(
                 &live.text, width, theme,
             ));
@@ -359,15 +407,9 @@ impl Pane for FocusPane {
                         self.state.lock().scroll = s;
                         // Scrolling to the very top is the request for older rows: the pane pages
                         // rather than pretending the trajectory starts where its window does.
-                        if matches!(s, Scroll::Anchored { top: 0, .. }) {
-                            let ledger = cx.ctx.get::<Ledger>().ok();
-                            if let Some(ledger) = ledger {
-                                page_older(
-                                    &LedgerHandle(ledger.0.clone()),
-                                    &self.state,
-                                    self.cfg.max_rows,
-                                )
-                                .await;
+                        if matches!(s, Scroll::Anchored { top: 0 }) {
+                            if let Some(deps) = &self.deps {
+                                page_older(&deps.ledger, &self.state, self.cfg.max_rows).await;
                             }
                         }
                         cx.tui.redraw();
@@ -377,12 +419,10 @@ impl Pane for FocusPane {
                 }
             }
             PaneEvent::Focus(req) => {
-                let agents = cx.ctx.get::<Agents>().ok();
-                let ledger = cx.ctx.get::<Ledger>().ok();
-                if let (Some(agents), Some(ledger)) = (agents, ledger) {
+                if let Some(deps) = &self.deps {
                     retarget(
-                        &AgentsHandle(agents.0.clone()),
-                        &LedgerHandle(ledger.0.clone()),
+                        &deps.agents,
+                        &deps.ledger,
                         &self.state,
                         &req,
                         self.cfg.max_rows,
@@ -450,7 +490,12 @@ pub async fn newest_steps(ledger: &LedgerHandle, traj: &TrajId, limit: usize) ->
             ..Default::default()
         })
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|e| {
+            // Reported, not swallowed: an empty trajectory and a failed read look identical on
+            // screen, and Phase 1 ships a handle that CAN outlive its row.
+            tracing::warn!(target: "tui.focus", %traj, error = %e, "reading the newest steps failed");
+            Vec::new()
+        });
     steps.reverse();
     steps
 }
@@ -474,7 +519,10 @@ pub async fn page_older(ledger: &LedgerHandle, state: &Arc<Mutex<FocusState>>, p
             ..Default::default()
         })
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|e| {
+            tracing::warn!(target: "tui.focus", error = %e, "paging older steps failed");
+            Vec::new()
+        });
     older.reverse();
     if older.is_empty() {
         state.lock().more_above = false;
@@ -487,11 +535,8 @@ pub async fn page_older(ledger: &LedgerHandle, state: &Arc<Mutex<FocusState>>, p
     held.set_steps(steps);
     // The rows Andrey was looking at moved DOWN by what was prepended. Keeping the same absolute
     // index would silently scroll the viewport, which is the one thing anchoring exists to prevent.
-    if let Scroll::Anchored { top, offset } = held.scroll {
-        held.scroll = Scroll::Anchored {
-            top: top + added,
-            offset,
-        };
+    if let Scroll::Anchored { top } = held.scroll {
+        held.scroll = Scroll::Anchored { top: top + added };
     }
 }
 
@@ -505,6 +550,22 @@ impl Plugin for FocusPlugin {
 
     fn inject() -> Inject {
         Inject::required(["tui", "agents", "ledger", "llm"])
+    }
+
+    fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
+        let reject = |detail: String| Err(ConfigError::Rejected { detail });
+        // `max_rows: 0` made `push_step` drain every step it was handed and `newest_steps` issue
+        // `LIMIT 0`, so the trajectory rendered permanently empty with no error anywhere.
+        if cfg.max_rows == 0 {
+            return reject("max_rows must be > 0".to_string());
+        }
+        if cfg.max_tool_lines == 0 {
+            return reject("max_tool_lines must be > 0".to_string());
+        }
+        if cfg.page_lines == 0 {
+            return reject("page_lines must be > 0".to_string());
+        }
+        Ok(())
     }
 
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
@@ -521,6 +582,14 @@ impl Plugin for FocusPlugin {
             .get::<Ledger>()
             .map_err(|e| PluginError::new(entry.clone(), e))?;
         let ledger = LedgerHandle(ledger.0.clone());
+
+        // The recorded frame is per-process and this row owns it: unloading forgets what it drew,
+        // so a reload is never checked against its predecessor's screen.
+        ctx.effect(|e| async move {
+            e.defer_sync(invariant::forget);
+            Ok(())
+        })
+        .await?;
 
         let state = Arc::new(Mutex::new(FocusState::default()));
         let live: Arc<Mutex<LiveText>> = Arc::new(Mutex::new(LiveText::default()));
@@ -540,7 +609,10 @@ impl Plugin for FocusPlugin {
             .await;
         }
 
-        let pane = Arc::new(FocusPane::new(cfg.clone(), state.clone(), live.clone()));
+        let pane = Arc::new(
+            FocusPane::new(cfg.clone(), state.clone(), live.clone())
+                .with_deps(agents.clone(), ledger.clone()),
+        );
         tui.register_pane(
             &ctx,
             PaneSpec {
@@ -564,7 +636,8 @@ impl Plugin for FocusPlugin {
                 if !mine {
                     return;
                 }
-                s.lock().push_step(step.as_ref().clone(), c.max_rows);
+                s.lock()
+                    .push_step(step.as_ref().clone(), c.max_rows, c.expand_new_tools);
                 t.redraw();
             }
         })

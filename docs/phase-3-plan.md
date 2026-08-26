@@ -1514,3 +1514,164 @@ package may mark Phase 3 done without that line, and no test in this document as
   or `tui-never` through `--patch` booted the ordinary tree and asserted nothing. `lib.sh`'s
   `add_row` copies the shipped `profiles/` + `bundles/` into the script's scratch home, appends
   the row to `bough-tui-app.yml`, and echoes the `--root` argument that boots it.
+
+---
+
+## 6. Deviations and open items (review close, 2026-08-26)
+
+Written at phase close, after the review. Everything a review finding named is either fixed with a
+named test below, or listed as an open item with the reason it was not fixed. Nothing here is a
+claim about the manual workday gate, which is Andrey's act and is not run.
+
+### 6.1 Fixed, with the test that proves it
+
+- **The focus pane drew every long answer TWICE.** `FocusPane::lines` concatenated all
+  `thought/text` rows of the trailing step index into `durable`, rendered the LAST one with that
+  concatenation, and rendered every EARLIER one with its own chunk as well — so a wake that
+  streamed for longer than `agent-loop`'s `text_flush_ms` (400 in `bough-base`) painted `chunk1`
+  and then `chunk1 + chunk2`. This was the phase's headline surface and the crate's own stated
+  invariant. Fixed by `rows::trailing_text_rows`, which names the whole trailing group so exactly
+  one of them is painted. `plugins/tui-focus/tests/render.rs` (4:
+  `two_flushes_of_one_step_are_painted_once`,
+  `a_long_answer_flushed_many_times_is_painted_once`,
+  `an_earlier_step_index_is_still_drawn_on_its_own`,
+  `the_live_tail_supersedes_the_whole_trailing_group`) — all four verified RED against the old
+  composition. `stream.rs` only ever exercised the `trailing_text` helper, never `lines()`.
+
+- **`PaneCx` no longer carries a `Context`.** It carried the SHELL's, so every pane resolved
+  services through `tui-shell`'s committed view: a pane row that declared nothing but `tui` could
+  reach `agents`, `ledger` and `commands`, which is exactly the boundary §0.3's declared-injection
+  rule draws — and it is what made the search pane's `peek_live::<Agents>()` possible. A pane now
+  does its I/O through handles its own `apply` was given (`FocusPane::with_deps`,
+  `SearchPane::with_agents`). The `agents` key is DECLARED by `tui-search` as an
+  `Inject::optional`, and a hit whose agent has no live handle still focuses its step.
+
+- **The search pane's debounce timer is an effect.** `SearchPane::arm` used a bare `tokio::spawn`
+  — the only one in any Phase-3 plugin, in the one row whose whole purpose is to prove clean
+  unload. It is now `ctx.effect_spawn` with a `checkpoint()` after the sleep, so a query armed a
+  moment before the SWAP patch disables the row neither reads the ledger nor calls `redraw()`.
+
+- **The search pane scrolls.** `SearchState::scroll` was written by `PaneEvent::Scroll` and read by
+  nothing: with the shipped `height: 12, limit: 50`, at most eleven of fifty hits were ever visible
+  or clickable while Up/Down moved an invisible selection. `top`, `scroll_by` and
+  `follow_selection` are new and `render` honours them, hit rectangles included.
+  `plugins/tui-search/tests/search.rs::the_hit_list_scrolls_so_every_hit_can_be_reached`.
+
+- **Every Phase-3 row implements `Plugin::validate`.** None of the six did, so nonsense values
+  mounted silently and were clamped at the use site (`frame_ms`, `tick_ms`, `composer_max_lines`)
+  or rendered as an empty screen with no error (`tui.focus.max_rows: 0`, `tui.search.limit: 0`,
+  `commands.prefix: ' '`). `crates/bough/tests/tui_config.rs` (2:
+  `the_shipped_phase_three_configs_all_validate`,
+  `a_nonsense_value_is_refused_at_load_by_every_phase_three_row`). The `.max(1)` clamps are gone.
+
+- **Two shipped config fields read by no code.** `FocusConfig::expand_new_tools` now expands a
+  tool call as it arrives (`FocusState::push_step`, keyed by call id like every other expansion).
+  `StripConfig::refresh_ms` is REMOVED from the config and the bundle: there is no mail counter to
+  refresh and the rail repaints on the shell's `tick_ms`, so a field a patch could set and that
+  changed nothing was worse than no field. `FocusState::more_above` is now rendered ("… older
+  steps above (PgUp)"), and `Scroll::Anchored::offset` — written as `0` everywhere and read
+  nowhere — is removed.
+
+- **`old-feed`'s inline `?? default` is an explicit resolve step.** `plugins/old-feed-adapter/src/resolve.rs`
+  (`resolve_priming`, `resolve_notes` → `PrimingSpec`), with the sentinel documented at the type
+  and unit-tested (`resolve::tests`, 2).
+
+- **The priming half of §14 is reachable.** `prime`/`notes` were called only from the adapter's own
+  tests: a capability with one role, which §0.2 says is not a seam. `/prime [text]` is registered
+  by the row alongside `/oldfeed`, renders command memory and cited note sections in the pane, and
+  starts no wake and appends no step. `crates/bough/tests/old_feed_surface.rs::the_priming_query_is_reachable_as_a_human_command`.
+
+- **A `deliver_to` that names no live agent is loud.** It pushed a pair into the sweep status and
+  returned `Ok`, so a typo was indistinguishable from the roster not being up yet and the bridge
+  delivered nothing forever in silence. It now WARNs on every sweep, saying both.
+
+- **The Phase-3 invariants are proven to be registered and dispatched.** All seven specs were
+  exercised only as pure `check_*` unit functions; no test read `kernel.violations()` after a
+  Phase-3 boot — the same bug Phase 2's review found in `tools`.
+  `crates/bough/tests/tui_invariants.rs` (3: clean over a shipped boot with the seven rows named,
+  plus a planted violation of `tui-focus`'s and `tui-search`'s specs reported THROUGH the runner).
+
+- **`cargo test` no longer reads the developer's real databases.** `old-feed`'s `jungler_db` /
+  `bough_db` default to `!!expr home_path(..)`, which resolves against `$HOME` and not
+  `$BOUGH_HOME`, and `support::boot_real` overrode only the latter — so every test that booted the
+  shipped tui bundle activated the bridge against `~/.bough/bough.db` and, on a machine that has
+  one, `~/.jungler/jungler.db`, importing live events as mail into the test ledger. `boot_real`
+  now sets `$HOME` too. `crates/bough/tests/old_feed_surface.rs::the_shipped_old_feed_defaults_resolve_under_the_test_home`
+  asserts both paths are reported absent UNDER the scratch home, which fails without the fix (this
+  machine's `~/.bough/bough.db` exists).
+
+- **V8's Rust half is behavioural.** `tui_boot.rs::the_unresolved_report_is_printed_after_the_teardown`
+  read `boot.rs` as TEXT and compared `str::find` offsets: it would have passed on a dead branch
+  and failed on a rename. It now runs the real binary over a tree carrying a `tui-probe` row with a
+  new `teardown_marker` config field (a line on stderr when the row unwinds) beside `tui.never`,
+  and asserts the marker precedes the report on one ordered stream.
+
+- **`make gates` exercises the interface.** Every screen bullet of the interface-cutover phase
+  lives in `scripts/tui/*.sh` and ran only under a separate target. `gates` is now
+  `build lint test tui-test-replay` — the REPLAY half only, so the gates stay offline and hermetic
+  (AGENTS.md); `make tui-test` is still replay + live. The live half is gated on the KEY being
+  present (environment or `~/.bough/env`) rather than on the FILE existing, so `make tui-test` can
+  no longer report green having skipped a live half it could have run.
+
+- **Lows fixed:** `Ctrl+F` matched `p.id.as_str().contains("search")` and now compares against a
+  new `tui.search_pane` config field, exactly; the shell's scroll and notice geometry
+  (`±10`, `±3`, `NOTICE_MAX_LINES = 8`) are the new `page_lines`, `wheel_lines` and
+  `notice_max_lines` fields; `rail::row_lines`'s `expect("extent > 0 implies an about-line")` on
+  the RENDER path is a `let … else` (a panic there takes the process down — that is what
+  `tui-probe` exists to demonstrate); `commands::register` holds ONE lock across its duplicate
+  check and its push, so two concurrent registrations of one name can no longer both land;
+  `invariant::forget` is now actually called on disposal by `tui-search`, and `tui-focus` gained
+  one; `newest_steps` / `page_older` WARN instead of `unwrap_or_default`-ing a ledger error into an
+  empty screen; `rows::ANDREY_REF` is pinned equal to `Sender::Andrey.as_ref_str()` by a test;
+  `tui_swap.rs::disabling_the_search_row_removes_its_pane_and_reflows` now asserts geometry, which
+  is the second half of its own name; `select.rs::a_clipboard_failure_is_a_notice_not_an_error`
+  asserts the notice in both arms instead of only on a headless box.
+
+### 6.2 Open items, not fixed
+
+- **A pane's `handle` does real ledger I/O on the event-loop task.** `route` awaits `Pane::handle`
+  inline, and `tui-focus` pages (`page_older`) and retargets (`newest_steps`) there, so a slow or
+  contended ledger read blocks the draw loop, the composer and every key for its duration. The
+  plan's rule 2 guarantee — one slow pane cannot stall the frame — holds for `render` and not for
+  the path a wheel or a click takes. Fixing it means either a per-pane work queue or an outcome
+  that says "I will redraw later", both of which change the `Pane` contract; deferred with the
+  contract change to Phase 8's granularity review. Nothing in the suite measures it.
+
+- **`tui-render` depends on `tui-shell` for `Theme`**, contradicting §1's "and on nothing else".
+  Carried from the work packages and already disclosed in BUILD.md. It undercuts P3-D5's rationale
+  for a separate crate, which is precisely what §15 item 6's granularity review at Phase 8 is for:
+  either `Theme` moves down into a leaf crate or `tui-render` folds into `tui-shell`.
+
+- **V7 proves the adapter against its own fixture schema.** Every old-feed bullet asserts against
+  databases the tests CREATE; `~/.jungler/jungler.db` does not exist on this machine, so no real
+  jungler db was ever opened and the required-column set is the fixture's invention. This is not
+  fixable in this build — it needs a machine with the real file — and the row retires in Phase 6.
+  The degradation path (`a_missing_required_column_disables_that_source_only`) is real; the claim
+  that the required set matches a real jungler is not made.
+
+- **The interim tier-1 blocks borrow a foreign row id into the ledger's seq namespace**
+  (`from_seq = to_seq = Seq(row.id)` for nodes, `Seq(row.ord)` for `lane_story`), so an as-of
+  projection includes or excludes a bridge block by an unrelated number. Bounded blast radius: the
+  row is throwaway and retires in Phase 6. Fixing it properly means minting a real seq for a block
+  that covers no trajectory range, which is a ledger question, not an adapter one.
+
+- **No in-tree path produces a search query error.** The `SearchState::apply(gen, Err(..))`
+  transition and the inline `! {err}` line are guarded by a unit test whose error VALUE the test
+  constructs. P1-D19 makes an FTS5 syntax error unreachable from the pane; the reachable source is
+  a `LedgerError` from a handle that outlives its row, which Phase 1 shows is real but which no
+  Phase-3 test drives. The test is renamed `a_failed_query_renders_an_inline_error_and_clears_the_list`
+  and says so.
+
+- **Agent names cross the config boundary as bare strings** (`ResidentsConfig.bootstrap`,
+  `OldFeedConfig.deliver_to`) and are branded at the use site. `brand_id!` types carry a serde
+  shape and could be deserialised directly. Consistent with the Phase-2 precedent
+  (`exec-headless.cfg.agent`), so this is a standing pattern to change in one sweep, not here.
+
+- **`commands` recompiles a command's args schema on every dispatch** (`jsonschema::validator_for`
+  in `bind_and_validate`) rather than once at registration. Correct but wasteful; caching it means
+  carrying a compiled validator beside each `CommandSpec`, which touches the registry's shape.
+
+- **`main.rs::tests` (2) restate `owns_a_terminal`'s own boolean expression** argument by argument
+  and say nothing about where tracing actually goes; and the rule ignores the profile, so
+  `bough --profile headless` on a TTY still redirects logs to `~/.bough/bough.log` even though
+  nothing takes the alt screen. P3-D3 stands as written; the test is weak-by-construction.

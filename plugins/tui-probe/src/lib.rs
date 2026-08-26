@@ -27,6 +27,13 @@ pub struct ProbeConfig {
     pub text: String,
     /// The key that makes `render` panic, e.g. `"p"`. Empty ⇒ never panics.
     pub panic_key: String,
+    /// A line written to STDERR when this row unwinds. Empty ⇒ nothing is written.
+    ///
+    /// The only unload evidence that both survives a process boundary AND lands in the same
+    /// ordered stream as the launcher's unresolved-row report, which is what makes "teardown
+    /// BEFORE the report" (V8) assertable as behaviour rather than as source order.
+    #[serde(default)]
+    pub teardown_marker: String,
 }
 
 /// A deterministic fixture pane that panics on demand.
@@ -119,6 +126,15 @@ impl Plugin for TuiProbePlugin {
             },
         )
         .await?;
+
+        if !cfg.teardown_marker.is_empty() {
+            let marker = cfg.teardown_marker.clone();
+            ctx.effect(move |e| async move {
+                e.defer_sync(move || eprintln!("{marker}"));
+                Ok(())
+            })
+            .await?;
+        }
         Ok(())
     }
 
@@ -161,6 +177,7 @@ mod tests {
         ProbePane::new(&ProbeConfig {
             text: "PROBE-OK".to_string(),
             panic_key: panic_key.to_string(),
+            teardown_marker: String::new(),
         })
     }
 

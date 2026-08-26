@@ -291,3 +291,44 @@ pub fn trailing_durable(rows: &[Row]) -> String {
         })
         .collect()
 }
+
+/// PURE: the row indices of the trailing step's `thought/text` rows, oldest first.
+///
+/// The flushes of ONE step index concatenate (`trailing_durable`), so exactly one of them may be
+/// drawn — the last — carrying the whole concatenation. Rendering each of them with its own chunk
+/// as well painted `chunk1` and then `chunk1+chunk2` on screen: every answer that streamed for
+/// longer than `text_flush_ms` was drawn twice (the crate's own "no step is rendered twice").
+pub fn trailing_text_rows(rows: &[Row]) -> Vec<usize> {
+    let Some((wake, index)) = rows.iter().rev().find_map(|r| match r {
+        Row::Text { wake, index, .. } => Some((wake.clone(), *index)),
+        _ => None,
+    }) else {
+        return Vec::new();
+    };
+    rows.iter()
+        .enumerate()
+        .filter_map(|(i, r)| match r {
+            Row::Text {
+                wake: w, index: j, ..
+            } if *w == wake && *j == index => Some(i),
+            _ => None,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `ANDREY_REF` is a re-spelling of the sender encoding `agents` owns. The two are pinned
+    /// equal here: if the encoding ever changes, Andrey's messages would silently stop rendering
+    /// as `Row::Andrey` and lose their accent label, with nothing failing.
+    #[test]
+    fn andrey_ref_is_the_spelling_agents_writes() {
+        assert_eq!(
+            ANDREY_REF,
+            bough_plugin_agents::Sender::Andrey.as_ref_str(),
+            "the focus pane reads the ledger BODY, so its literal must match what `agents` wrote"
+        );
+    }
+}

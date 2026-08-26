@@ -7,7 +7,7 @@ use bough_plugin_tui_focus::Scroll;
 /// makes it possible to read something while the agent is still streaming underneath.
 #[test]
 fn new_steps_do_not_move_an_anchored_viewport() {
-    let anchored = Scroll::Anchored { top: 12, offset: 0 };
+    let anchored = Scroll::Anchored { top: 12 };
     assert_eq!(anchored.on_rows_appended(1), anchored);
     assert_eq!(anchored.on_rows_appended(500), anchored);
     // And the first row on screen is the same row before and after, which is the assertion the
@@ -30,7 +30,7 @@ fn follow_re_arms_at_the_bottom() {
     let height = 10;
     // Scroll up: anchored.
     let up = Scroll::Follow.scrolled(-5, rows, height);
-    assert_eq!(up, Scroll::Anchored { top: 35, offset: 0 });
+    assert_eq!(up, Scroll::Anchored { top: 35 });
     assert!(!up.is_following());
     // Back down by the same amount: at the bottom, and following again.
     assert_eq!(up.scrolled(5, rows, height), Scroll::Follow);
@@ -46,7 +46,7 @@ fn follow_re_arms_at_the_bottom() {
 fn page_down_past_the_end_clamps() {
     let rows = 50;
     let height = 10;
-    let anchored = Scroll::Anchored { top: 20, offset: 0 };
+    let anchored = Scroll::Anchored { top: 20 };
 
     assert_eq!(anchored.scrolled(1_000_000, rows, height), Scroll::Follow);
     assert_eq!(
@@ -55,23 +55,16 @@ fn page_down_past_the_end_clamps() {
     );
     assert_eq!(
         anchored.scrolled(-1_000_000, rows, height),
-        Scroll::Anchored { top: 0, offset: 0 }
+        Scroll::Anchored { top: 0 }
     );
     assert_eq!(
         anchored.scrolled(i32::MIN / 2, rows, height),
-        Scroll::Anchored { top: 0, offset: 0 }
+        Scroll::Anchored { top: 0 }
     );
 
     // An anchor left behind by rows that paged out is clamped at READ time rather than corrupting
     // the state: `top` never exceeds the last possible top.
-    assert_eq!(
-        Scroll::Anchored {
-            top: 999,
-            offset: 0
-        }
-        .top(rows, height),
-        40
-    );
+    assert_eq!(Scroll::Anchored { top: 999 }.top(rows, height), 40);
     // Zero rows and a zero-height pane are both survivable.
     assert_eq!(Scroll::Follow.top(0, 10), 0);
     assert_eq!(Scroll::Follow.scrolled(5, 0, 0), Scroll::Follow);
@@ -112,7 +105,7 @@ fn a_page_up_scrolls_when_few_rows_rendered_many_lines() {
     let page_up = KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE);
     assert_eq!(
         pane.scroll_for_key(page_up, &state),
-        Some(Scroll::Anchored { top: 50, offset: 0 }),
+        Some(Scroll::Anchored { top: 50 }),
         "one page up from the bottom of 80 lines"
     );
 
