@@ -29,16 +29,34 @@ impl LlmRequest {
     /// Canonical JSON of the whole request: stable field order, no clock, no ids minted here.
     /// The unit of V4's byte-for-byte comparison and of `request/header`'s `projection_digest`.
     ///
-    /// WP-1.
+    /// The field order is the DECLARATION order of the JSON object built here — not `Debug`, not
+    /// a derived `Serialize` — so a field added later cannot silently reorder every past digest.
     pub fn canonical(&self) -> String {
-        todo!("WP-1: canonical JSON of the request, stable field order")
+        let call = serde_json::json!({
+            "model": self.call.model,
+            "max_tokens": self.call.max_tokens,
+            "effort": self.call.effort,
+            "tool_choice_none": self.call.tool_choice_none,
+            // A `BTreeMap` serialises in key order, so a listener's insertion order is invisible.
+            "meta": self.call.meta,
+        });
+        let value = serde_json::json!({
+            "model": self.model,
+            "system": self.system,
+            "system_volatile": self.system_volatile,
+            "messages": self.messages,
+            "tools": self.tools,
+            "call": call,
+        });
+        serde_json::to_string(&value).expect("an LlmRequest is JSON by construction")
     }
 
     /// sha256 of [`LlmRequest::canonical`], hex.
-    ///
-    /// WP-1.
     pub fn digest(&self) -> String {
-        todo!("WP-1: sha256 of canonical()")
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(self.canonical().as_bytes());
+        format!("{:x}", h.finalize())
     }
 }
 
@@ -131,4 +149,52 @@ pub struct AgentRequestError;
 impl WaterfallEvent for AgentRequestError {
     const NAME: &'static str = "agent/request-error";
     type Value = RequestErrorCall;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req() -> LlmRequest {
+        LlmRequest {
+            model: "claude-haiku-4-5-20251001".into(),
+            system: Some("stable".into()),
+            system_volatile: None,
+            messages: vec![LlmMessage {
+                role: LlmRole::User,
+                content: vec![LlmContentBlock::Text { text: "hi".into() }],
+            }],
+            tools: vec![],
+            call: CallConfig {
+                model: "claude-haiku-4-5-20251001".into(),
+                max_tokens: 1024,
+                effort: None,
+                tool_choice_none: false,
+                meta: BTreeMap::new(),
+            },
+        }
+    }
+
+    /// V4 compares requests byte for byte, so the canonical form must not depend on the order a
+    /// listener happened to write its metering keys in.
+    #[test]
+    fn meta_key_order_does_not_move_the_digest() {
+        let mut a = req();
+        a.call.meta.insert("z".into(), serde_json::json!(1));
+        a.call.meta.insert("a".into(), serde_json::json!(2));
+        let mut b = req();
+        b.call.meta.insert("a".into(), serde_json::json!(2));
+        b.call.meta.insert("z".into(), serde_json::json!(1));
+        assert_eq!(a.canonical(), b.canonical());
+        assert_eq!(a.digest(), b.digest());
+    }
+
+    #[test]
+    fn a_changed_field_changes_the_digest() {
+        let a = req();
+        let mut b = req();
+        b.call.max_tokens = 2048;
+        assert_ne!(a.digest(), b.digest());
+        assert_eq!(a.digest(), req().digest(), "and it is stable across calls");
+    }
 }

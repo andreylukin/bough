@@ -1,0 +1,284 @@
+//! §5's wake flow, asserted against the DURABLE LEDGER: a rejected `agent/pre-step` still closes
+//! a wake that spent no step, claimed messages a decision omits stay removed, `request/header` is
+//! appended only when it changes, a `concludes_wake` tool result ends the wake at its step, a
+//! `wake-stopping` listener that steers runs another step and listener ORDER does not change the
+//! outcome, and a plugin failure ends the wake and not the loop.
+
+mod support;
+
+use std::sync::Arc;
+
+use bough_kernel::ListenerOpts;
+use bough_plugin_agents::{AgentPreStep, AgentWakeStopping, PreStepDecision, Status};
+use bough_plugin_llm::{Chunk, StopReason, ToolCallId, ToolName};
+use parking_lot::Mutex;
+use support::*;
+
+fn kinds_of(steps: &[bough_plugin_ledger::Step]) -> Vec<&str> {
+    steps.iter().map(|s| s.kind.as_str()).collect()
+}
+
+/// §5: "a rejected or emptied first claim still closes a durable wake that spent no step."
+#[tokio::test]
+async fn a_rejected_pre_step_still_closes_a_durable_wake_that_spent_no_step() {
+    let f = Fixture::mounted().await;
+    f.ctx
+        .on_waterfall::<AgentPreStep, _, _>(|mut pre, _next| async move {
+            pre.decision = PreStepDecision::Reject {
+                reason: "not now".into(),
+            };
+            pre
+        })
+        .await
+        .expect("the listener registers");
+
+    let (agent, _d) = f.agent("sol").await;
+    agent.followup(andrey("hello")).await.expect("mail lands");
+    let steps = f.wait_for_wake_ends(1).await;
+
+    let kinds = kinds_of(&steps);
+    assert!(kinds.contains(&"wake/start"), "{kinds:?}");
+    assert!(kinds.contains(&"wake/end"), "{kinds:?}");
+    assert!(
+        !kinds.contains(&"step/start"),
+        "a rejected pre-step spends no step: {kinds:?}"
+    );
+    let end = steps
+        .iter()
+        .find(|s| s.kind.as_str() == "wake/end")
+        .unwrap();
+    assert_eq!(end.body["reason"], "completed");
+    assert!(
+        f.adapter.requests().is_empty(),
+        "and no model call was made"
+    );
+}
+
+/// §5: "claimed messages the decision omits STAY REMOVED."
+#[tokio::test]
+async fn claimed_messages_a_decision_omits_stay_removed() {
+    let f = Fixture::mounted().await;
+    f.ctx
+        .on_waterfall::<AgentPreStep, _, _>(|mut pre, _next| async move {
+            // Enter with NOTHING: the claim already happened and is durable.
+            pre.decision = PreStepDecision::Enter { messages: vec![] };
+            pre
+        })
+        .await
+        .expect("the listener registers");
+
+    let (agent, _d) = f.agent("sol").await;
+    agent.followup(andrey("hello")).await.expect("mail lands");
+    f.wait_for_wake_ends(1).await;
+
+    let steps = f.steps().await;
+    let claims: Vec<_> = steps
+        .iter()
+        .filter(|s| s.kind.as_str() == "inbox/spliced" && s.body["op"] == "claim")
+        .collect();
+    assert_eq!(claims.len(), 1, "the message was claimed durably");
+    assert!(
+        agent.inbox().is_empty(),
+        "and it did NOT go back into the inbox"
+    );
+}
+
+/// §5: `request/header` is durable "only when it changes".
+#[tokio::test]
+async fn a_request_header_is_appended_only_when_it_changes() {
+    let f = Fixture::mounted().await;
+    // Two rounds: a tool call, then plain text. Same prompt version, sections, tools and call
+    // config, so exactly ONE header covers both steps.
+    f.adapter.script(vec![
+        vec![
+            Chunk::ToolCall {
+                id: ToolCallId::new("c1"),
+                name: ToolName::new("nope"),
+                input: serde_json::json!({}),
+            },
+            Chunk::End {
+                stop: StopReason::ToolUse,
+            },
+        ],
+        says("done"),
+    ]);
+    let (agent, _d) = f.agent("sol").await;
+    agent.followup(andrey("go")).await.expect("mail lands");
+    let steps = f.wait_for_wake_ends(1).await;
+
+    let headers = steps
+        .iter()
+        .filter(|s| s.kind.as_str() == "request/header")
+        .count();
+    let starts = steps
+        .iter()
+        .filter(|s| s.kind.as_str() == "step/start")
+        .count();
+    assert!(starts >= 2, "two steps ran: {:?}", kinds_of(&steps));
+    assert_eq!(headers, 1, "one header for two identical requests");
+}
+
+/// §5: "a tool result carrying `concludes_wake` ends the wake at its step."
+#[tokio::test]
+async fn a_concludes_wake_tool_result_ends_the_wake_at_its_step() {
+    let f = Fixture::mounted().await;
+    f.tools
+        .register(&f.ctx, support::concluding_tool())
+        .await
+        .expect("the tool registers");
+    f.adapter.script(vec![
+        vec![
+            Chunk::ToolCall {
+                id: ToolCallId::new("c1"),
+                name: ToolName::new("finish"),
+                input: serde_json::json!({}),
+            },
+            Chunk::End {
+                stop: StopReason::ToolUse,
+            },
+        ],
+        says("should never run"),
+    ]);
+    let (agent, _d) = f.agent("sol").await;
+    agent.followup(andrey("go")).await.expect("mail lands");
+    let steps = f.wait_for_wake_ends(1).await;
+
+    let result = steps
+        .iter()
+        .find(|s| s.kind.as_str() == "tool/result")
+        .expect("the tool ran");
+    assert_eq!(result.body["concludes_wake"], true);
+    assert_eq!(
+        steps
+            .iter()
+            .filter(|s| s.kind.as_str() == "step/start")
+            .count(),
+        1,
+        "the wake ended AT that step: {:?}",
+        kinds_of(&steps)
+    );
+    assert_eq!(f.adapter.requests().len(), 1, "no second model call");
+}
+
+/// §5 + P2-D10: a `wake-stopping` listener that steers runs another step, and listener ORDER does
+/// not change the outcome, because the DATA (the inbox) decides.
+#[tokio::test]
+async fn a_wake_stopping_listener_that_steers_runs_another_step() {
+    for order in ["steer-first", "steer-last"] {
+        let f = Fixture::mounted().await;
+        let steered = Arc::new(Mutex::new(false));
+        let quiet = Arc::new(Mutex::new(0usize));
+
+        let s = steered.clone();
+        let steering = move |w: bough_plugin_agents::WakeStopping| {
+            let s = s.clone();
+            async move {
+                let first = {
+                    let mut done = s.lock();
+                    let first = !*done;
+                    *done = true;
+                    first
+                };
+                if first {
+                    w.handle
+                        .steer(ordinary("one more thing"))
+                        .await
+                        .expect("a steer lands");
+                }
+                None
+            }
+        };
+        let q = quiet.clone();
+        let counting = move |_w: bough_plugin_agents::WakeStopping| {
+            let q = q.clone();
+            async move {
+                *q.lock() += 1;
+                None
+            }
+        };
+
+        if order == "steer-first" {
+            f.ctx
+                .on_serial::<AgentWakeStopping, _, _>(steering)
+                .await
+                .unwrap();
+            f.ctx
+                .on_serial::<AgentWakeStopping, _, _>(counting)
+                .await
+                .unwrap();
+        } else {
+            f.ctx
+                .on_serial::<AgentWakeStopping, _, _>(counting)
+                .await
+                .unwrap();
+            f.ctx
+                .on_serial::<AgentWakeStopping, _, _>(steering)
+                .await
+                .unwrap();
+        }
+
+        let (agent, _d) = f.agent("sol").await;
+        agent.followup(andrey("go")).await.expect("mail lands");
+        let steps = f.wait_for_wake_ends(1).await;
+
+        assert_eq!(
+            steps
+                .iter()
+                .filter(|s| s.kind.as_str() == "step/start")
+                .count(),
+            2,
+            "{order}: the steer ran a second step: {:?}",
+            kinds_of(&steps)
+        );
+        assert_eq!(
+            *quiet.lock(),
+            2,
+            "{order}: EVERY listener runs on every stopping dispatch (P2-D10)"
+        );
+    }
+}
+
+/// §5: "a plugin failure ends the current wake, not the loop."
+#[tokio::test]
+async fn a_plugin_failure_ends_the_wake_and_not_the_loop() {
+    let f = Fixture::mounted().await;
+    let boom = Arc::new(Mutex::new(true));
+    let b = boom.clone();
+    f.ctx
+        .on_waterfall_with::<AgentPreStep, _, _>(ListenerOpts::default(), move |pre, next| {
+            let b = b.clone();
+            async move {
+                if *b.lock() {
+                    *b.lock() = false;
+                    panic!("a listener blew up");
+                }
+                next.run(pre).await
+            }
+        })
+        .await
+        .expect("the listener registers");
+
+    let (agent, _d) = f.agent("sol").await;
+    agent.followup(andrey("first")).await.expect("mail lands");
+    f.wait_for_wake_ends(1).await;
+
+    // The loop is still alive: the next message gets a whole wake of its own.
+    agent.followup(andrey("second")).await.expect("mail lands");
+    let steps = f.wait_for_wake_ends(2).await;
+    assert!(
+        steps
+            .iter()
+            .filter(|s| s.kind.as_str() == "wake/start")
+            .count()
+            >= 2,
+        "the loop survived the failing plugin: {:?}",
+        kinds_of(&steps)
+    );
+    for _ in 0..200 {
+        if agent.status() == Status::Idle {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert_eq!(agent.status(), Status::Idle);
+}

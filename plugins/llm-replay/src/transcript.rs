@@ -2,7 +2,10 @@
 //! on every run and in every process, and an unmatched request fails loudly in strict mode rather
 //! than yielding a silent empty answer.
 
-use bough_plugin_llm::{Chunk, LlmRequest};
+use bough_plugin_llm::{
+    AdapterName, Chunk, FailureKind, LlmContentBlock, LlmFailure, LlmRequest, LlmRole, StopReason,
+    ToolCallId, ToolName,
+};
 
 /// One recorded round.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -41,10 +44,72 @@ pub enum RecordedChunk {
 }
 
 impl RecordedChunk {
-    /// WP-1.
+    /// TOTAL: every recorded spelling maps, and an unknown `stop` or `kind` word maps to a named
+    /// default rather than a panic — a transcript is data, and bad data must not take the process.
     pub fn to_chunk(&self) -> Chunk {
-        todo!("WP-1: total mapping from the recorded spelling onto the seam's Chunk")
+        match self {
+            RecordedChunk::Text { text } => Chunk::TextDelta { text: text.clone() },
+            RecordedChunk::Reasoning { text } => Chunk::ReasoningDelta {
+                text: text.clone(),
+                meta: None,
+            },
+            RecordedChunk::ToolCall { id, name, input } => Chunk::ToolCall {
+                id: ToolCallId::new(id),
+                name: ToolName::new(name),
+                input: input.clone(),
+            },
+            RecordedChunk::End { stop } => Chunk::End {
+                stop: match stop.as_str() {
+                    "tool_use" => StopReason::ToolUse,
+                    "max_tokens" => StopReason::MaxTokens,
+                    "stop_sequence" => StopReason::StopSequence,
+                    _ => StopReason::EndTurn,
+                },
+            },
+            RecordedChunk::Failed { kind, message } => Chunk::Failed(LlmFailure {
+                kind: parse_kind(kind),
+                message: message.clone(),
+                retryable: matches!(
+                    parse_kind(kind),
+                    FailureKind::Transport | FailureKind::RateLimit | FailureKind::Overloaded
+                ),
+                status: None,
+                adapter: AdapterName::new(crate::PLUGIN_NAME),
+            }),
+        }
     }
+}
+
+/// The recorded spelling of a [`FailureKind`]. Unknown words are `other`, never a panic.
+pub fn parse_kind(s: &str) -> FailureKind {
+    match s {
+        "transport" => FailureKind::Transport,
+        "rate_limit" => FailureKind::RateLimit,
+        "overloaded" => FailureKind::Overloaded,
+        "context_overflow" => FailureKind::ContextOverflow,
+        "auth" => FailureKind::Auth,
+        "bad_request" => FailureKind::BadRequest,
+        "cancelled" => FailureKind::Cancelled,
+        "truncated" => FailureKind::Truncated,
+        _ => FailureKind::Other,
+    }
+}
+
+/// The last user message of a request, flattened to text. The one thing a round's `match` is
+/// tested against, so replay is a pure function of (transcript, request).
+pub fn last_user_text(req: &LlmRequest) -> String {
+    let Some(m) = req.messages.iter().rev().find(|m| m.role == LlmRole::User) else {
+        return String::new();
+    };
+    m.content
+        .iter()
+        .map(|b| match b {
+            LlmContentBlock::Text { text } => text.clone(),
+            LlmContentBlock::ToolResult { content, .. } => content.clone(),
+            other => serde_json::to_string(other).unwrap_or_default(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// A whole transcript: rounds in the order they answer.
@@ -55,14 +120,129 @@ pub struct Transcript {
 }
 
 impl Transcript {
-    /// Parse YAML or JSON. WP-1.
-    pub fn parse(_text: &str) -> Result<Transcript, String> {
-        todo!("WP-1: parse a transcript")
+    /// Parse YAML (JSON is a subset of YAML, so one parser covers both).
+    ///
+    /// A bare list of rounds is accepted as well as `{ rounds: [...] }`: a fixture file that is
+    /// just a list is the common shape, and refusing it would be a papercut with no upside.
+    pub fn parse(text: &str) -> Result<Transcript, String> {
+        let value: serde_yaml::Value =
+            serde_yaml::from_str(text).map_err(|e| format!("transcript is not valid YAML: {e}"))?;
+        Transcript::from_value(value)
     }
 
-    /// Pick the round that answers `req`, consuming it. Pure over an explicit cursor so the
-    /// choice is testable without a runtime. WP-1.
-    pub fn select(&self, _cursor: usize, _req: &LlmRequest) -> Option<(usize, &Round)> {
-        todo!("WP-1: first unconsumed round whose `match` is a substring of the last user message")
+    /// The same parse over an already-decoded value: the `rounds:` config field is inline JSON.
+    pub fn from_value(value: serde_yaml::Value) -> Result<Transcript, String> {
+        if value.is_sequence() {
+            let rounds: Vec<Round> = serde_yaml::from_value(value)
+                .map_err(|e| format!("transcript rounds do not parse: {e}"))?;
+            return Ok(Transcript { rounds });
+        }
+        serde_yaml::from_value(value).map_err(|e| format!("transcript does not parse: {e}"))
+    }
+
+    /// Pick the round that answers `req`, given how many rounds are already consumed.
+    ///
+    /// Pure over an explicit cursor, so the choice is testable without a runtime and identical in
+    /// every process: the first UNCONSUMED round whose `match` is a substring of the last user
+    /// message, or whose `match` is absent.
+    pub fn select(&self, cursor: usize, req: &LlmRequest) -> Option<(usize, &Round)> {
+        let text = last_user_text(req);
+        self.rounds
+            .iter()
+            .enumerate()
+            .skip(cursor)
+            .find(|(_, r)| match &r.r#match {
+                None => true,
+                Some(m) => text.contains(m.as_str()),
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bough_plugin_llm::{CallConfig, LlmMessage};
+
+    fn req(text: &str) -> LlmRequest {
+        LlmRequest {
+            model: "m".into(),
+            system: None,
+            system_volatile: None,
+            messages: vec![LlmMessage {
+                role: LlmRole::User,
+                content: vec![LlmContentBlock::Text { text: text.into() }],
+            }],
+            tools: vec![],
+            call: CallConfig {
+                model: "m".into(),
+                max_tokens: 8,
+                effort: None,
+                tool_choice_none: false,
+                meta: Default::default(),
+            },
+        }
+    }
+
+    fn transcript() -> Transcript {
+        Transcript::parse(
+            r#"
+rounds:
+  - match: "hello"
+    chunks:
+      - { type: text, text: "hi" }
+      - { type: end, stop: end_turn }
+  - chunks:
+      - { type: end, stop: end_turn }
+"#,
+        )
+        .expect("parses")
+    }
+
+    #[test]
+    fn a_bare_list_of_rounds_parses_too() {
+        let t = Transcript::parse("- chunks: [{ type: end, stop: end_turn }]").expect("parses");
+        assert_eq!(t.rounds.len(), 1);
+    }
+
+    #[test]
+    fn selection_is_the_first_unconsumed_matching_round() {
+        let t = transcript();
+        assert_eq!(
+            t.select(0, &req("say hello please")).map(|(i, _)| i),
+            Some(0)
+        );
+        // Consumed: the next unconsumed round has no `match` and answers anything.
+        assert_eq!(
+            t.select(1, &req("say hello please")).map(|(i, _)| i),
+            Some(1)
+        );
+        assert_eq!(t.select(2, &req("say hello please")), None);
+        // A round whose `match` misses is skipped, not forced.
+        assert_eq!(t.select(0, &req("goodbye")).map(|(i, _)| i), Some(1));
+    }
+
+    #[test]
+    fn every_recorded_spelling_maps_to_a_chunk() {
+        assert!(matches!(
+            RecordedChunk::End {
+                stop: "tool_use".into()
+            }
+            .to_chunk(),
+            Chunk::End {
+                stop: StopReason::ToolUse
+            }
+        ));
+        // An unknown word does not panic.
+        assert!(matches!(
+            RecordedChunk::End {
+                stop: "who knows".into()
+            }
+            .to_chunk(),
+            Chunk::End {
+                stop: StopReason::EndTurn
+            }
+        ));
+        assert_eq!(parse_kind("nonsense"), FailureKind::Other);
+        assert_eq!(parse_kind("rate_limit"), FailureKind::RateLimit);
     }
 }

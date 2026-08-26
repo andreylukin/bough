@@ -11,10 +11,15 @@ pub mod invariant;
 pub mod journal;
 pub mod kind;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use bough_kernel::{
     Context, EffectHandle, InvariantSpec, Plugin, PluginError, ServiceKey, WaterfallEvent,
+};
+use bough_plugin_ledger::{
+    ActionQuery, ActionRow, ActionStatus, AgentName, IdemKey, Ledger, LedgerHandle, NewAction,
+    TrajId,
 };
 
 pub use error::ActionError;
@@ -38,10 +43,12 @@ impl ServiceKey for Actions {
 #[derive(Clone)]
 pub struct ActionsHandle(pub Arc<ActionsInner>);
 
-/// The seam's live state: which kinds have a Provider.
+/// The seam's live state: which kinds have a Provider, and the journal they write into.
 pub struct ActionsInner {
-    /// WP-7 fills this in. Empty in Phase 2, on purpose.
-    _providers: parking_lot::Mutex<Vec<Arc<dyn ActionProvider>>>,
+    /// Registration order, each paired with the id its disposer removes. Empty in Phase 2, on
+    /// purpose (§17 Phase 6).
+    providers: parking_lot::Mutex<Vec<(u64, Arc<dyn ActionProvider>)>>,
+    ledger: LedgerHandle,
 }
 
 /// What an action Provider does. Phase 6 writes them.
@@ -95,53 +102,204 @@ impl WaterfallEvent for ActionsExecute {
 }
 
 impl ActionsHandle {
-    /// An empty seam: no Provider, so every kind is refused. WP-7.
-    pub fn new() -> ActionsHandle {
+    /// An empty seam over one ledger: no Provider, so every kind is refused.
+    pub fn new(ledger: LedgerHandle) -> ActionsHandle {
         ActionsHandle(Arc::new(ActionsInner {
-            _providers: parking_lot::Mutex::new(Vec::new()),
+            providers: parking_lot::Mutex::new(Vec::new()),
+            ledger,
         }))
     }
 
-    /// Register a Provider. Registration is an effect (§0.2). WP-7.
+    /// The ledger this seam journals into.
+    pub fn ledger(&self) -> &LedgerHandle {
+        &self.0.ledger
+    }
+
+    /// Register a Provider. Registration is an effect (§0.2): the inverse removes exactly this
+    /// registration, so unloading a Provider row makes its kinds stop existing again.
     pub async fn provider(
         &self,
-        _ctx: &Context,
-        _p: Arc<dyn ActionProvider>,
+        ctx: &Context,
+        p: Arc<dyn ActionProvider>,
     ) -> Result<EffectHandle, PluginError> {
-        todo!("WP-7: register, with the inverse that removes it")
+        let id = NEXT_PROVIDER.fetch_add(1, Ordering::Relaxed);
+        self.0.providers.lock().push((id, p));
+        let inner = self.0.clone();
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || {
+                inner.providers.lock().retain(|(i, _)| *i != id);
+            });
+            Ok(())
+        })
+        .await
     }
 
     /// Intent row + `action/intent` step BEFORE executing; `action/done` + row status after. The
     /// idem key is UNIQUE in the journal, so a concurrent duplicate collides instead of executing
     /// twice (§7).
-    ///
-    /// WP-7.
     pub async fn execute(
         &self,
-        _ctx: &Context,
-        _req: ActionRequest,
+        ctx: &Context,
+        req: ActionRequest,
     ) -> Result<ActionArtifact, ActionError> {
-        todo!("WP-7: journal, waterfall, journal again — and NoProvider when nothing is registered")
+        let kind = req.kind;
+        let canonical = req.target.canonical(kind)?;
+
+        // A kind no Provider registered DOES NOT EXIST (§7). Refused here, before anything is
+        // journalled: an intent row is a promise that something was attempted on the world, and
+        // nothing was.
+        let provider = self
+            .provider_for(kind)
+            .ok_or(ActionError::NoProvider(kind.as_str()))?;
+
+        let idem = idem_key(kind, &canonical, &req.step);
+        if let Some(row) = self.row_with_idem_key(&idem).await? {
+            return Err(ActionError::Duplicate {
+                kind: kind.as_str(),
+                target: canonical,
+                step: req.step.clone(),
+                action: row.id,
+            });
+        }
+
+        let traj = self.traj_of(&req.agent).await?;
+        let marker = marker_for(&idem);
+        let payload = serde_json::json!({
+            "target": canonical,
+            "raw_target": req.target.raw,
+            "payload": req.payload,
+            "marker": marker,
+        });
+
+        // ---- BEFORE: the journal row, which is also the `action/intent` step -------------
+        // One act, in the store (§2.7 item 4): there is no window in which a row exists without
+        // its step, so "intent before done" is a property of the ledger, not of a caller's care.
+        let row = self
+            .0
+            .ledger
+            .0
+            .action_intent(NewAction {
+                id: None,
+                traj,
+                wake: req.wake.clone(),
+                target: canonical.clone(),
+                idem_key: idem.clone(),
+                kind: kind.as_str().to_string(),
+                payload: payload.clone(),
+                at: req.at,
+            })
+            .await?;
+
+        // ---- the waterfall, then the Provider ---------------------------------------------
+        let exec = Arc::new(ExecuteRequest {
+            request: Arc::new(req),
+            action: row.id.clone(),
+            idem_key: idem,
+            marker,
+            canonical_target: canonical,
+        });
+        let hopped = ctx
+            .waterfall::<ActionsExecute>(ActionExec {
+                request: exec.clone(),
+                outcome: OutcomeSlot::empty(),
+            })
+            .await;
+        let outcome = match hopped.outcome.take() {
+            Some(o) => o,
+            None => provider.execute(&exec).await,
+        };
+
+        // ---- AFTER: the row's status, which is also the `action/done` step ----------------
+        let (status, result) = match &outcome {
+            Ok(a) => (
+                ActionStatus::Done,
+                serde_json::json!({ "locator": a.locator, "marker": a.marker, "detail": a.detail }),
+            ),
+            // A Provider that FAILED still concluded: the row is marked `failed` and the
+            // `action/done` step is written, so this action never shows up as unreconciled work.
+            Err(e) => (
+                ActionStatus::Failed,
+                serde_json::json!({ "error": e.to_string() }),
+            ),
+        };
+        self.0
+            .ledger
+            .0
+            .action_done(&exec.action, status, result, exec.request.at)
+            .await?;
+        outcome
     }
 
     /// Boot reconciliation: LISTS intent-without-done rows. Never re-executes (§7, §17 Phase 8).
-    ///
-    /// WP-7.
     pub async fn pending(&self) -> Result<Vec<PendingAction>, ActionError> {
-        todo!("WP-7: list, never act")
+        let rows = self
+            .0
+            .ledger
+            .0
+            .actions(&ActionQuery {
+                status: Some(ActionStatus::Intent),
+                ..Default::default()
+            })
+            .await?;
+        Ok(rows.iter().filter_map(pending_of).collect())
     }
 
-    /// Exactly what some Provider registered. Empty in Phase 2. WP-7.
+    /// Exactly what some Provider registered. Empty in Phase 2, on purpose.
     pub fn kinds(&self) -> Vec<ActionKind> {
-        todo!("WP-7")
+        let mut out: Vec<ActionKind> = Vec::new();
+        for (_, p) in self.0.providers.lock().iter() {
+            for k in p.kinds() {
+                if !out.contains(&k) {
+                    out.push(k);
+                }
+            }
+        }
+        out
+    }
+
+    /// The first Provider that claims `kind`. Registration order, so a later row does not
+    /// silently shadow an earlier one.
+    fn provider_for(&self, kind: ActionKind) -> Option<Arc<dyn ActionProvider>> {
+        self.0
+            .providers
+            .lock()
+            .iter()
+            .find(|(_, p)| p.kinds().contains(&kind))
+            .map(|(_, p)| p.clone())
+    }
+
+    async fn row_with_idem_key(&self, idem: &IdemKey) -> Result<Option<ActionRow>, ActionError> {
+        // `ActionQuery` has no idem-key filter (it is WP-1's type and Phase 1 froze it), so the
+        // uniqueness check is a scan of the journal. Correct, and the journal is small.
+        let rows = self.0.ledger.0.actions(&ActionQuery::default()).await?;
+        Ok(rows.into_iter().find(|r| &r.idem_key == idem))
+    }
+
+    async fn traj_of(&self, agent: &AgentName) -> Result<TrajId, ActionError> {
+        match self.0.ledger.0.agent(agent).await? {
+            Some(row) => Ok(row.traj),
+            None => Err(ActionError::UnknownAgent(agent.clone())),
+        }
     }
 }
 
-impl Default for ActionsHandle {
-    fn default() -> Self {
-        ActionsHandle::new()
-    }
+/// The journal row of an action that was attempted and never concluded, as reconciliation reads
+/// it. `None` for a row this seam did not write (no marker in its payload).
+fn pending_of(row: &ActionRow) -> Option<PendingAction> {
+    Some(PendingAction {
+        action: row.id.clone(),
+        kind: ActionKind::all()
+            .iter()
+            .copied()
+            .find(|k| k.as_str() == row.kind)?,
+        idem_key: row.idem_key.clone(),
+        target: row.payload.get("target")?.as_str()?.to_string(),
+        marker: marker_for(&row.idem_key),
+        at: row.at,
+    })
 }
+
+static NEXT_PROVIDER: AtomicU64 = AtomicU64::new(0);
 
 /// No configuration: the four kinds are §7's, not a deployment's.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -160,8 +318,33 @@ impl Plugin for ActionsPlugin {
         bough_kernel::Inject::required(["ledger"])
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-7: provide::<Actions> and list pending rows at boot (list, never re-execute)")
+    async fn apply(ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let ledger = ctx
+            .get::<Ledger>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        let handle = ActionsHandle::new((*ledger).clone());
+
+        // Reconciliation at boot LISTS and never acts (§7): an intent without a done is a lookup
+        // against the world, and the world is looked at by a person or by Phase 8, never here.
+        match handle.pending().await {
+            Ok(rows) if rows.is_empty() => {}
+            Ok(rows) => {
+                for r in &rows {
+                    tracing::warn!(
+                        action = %r.action, kind = r.kind.as_str(), target = %r.target,
+                        marker = %r.marker,
+                        "action intent with no done: reconcile by looking for the marker"
+                    );
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "could not list pending actions at boot"),
+        }
+
+        ctx.provide::<Actions>(handle)
+            .await
+            .map_err(|e| PluginError::new(entry, e))?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

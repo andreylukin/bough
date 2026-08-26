@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bough_kernel::{Context, EffectHandle, PluginError, ServiceKey, WaterfallEvent};
-use bough_plugin_ledger::{AgentName, TrajId, WakeId};
+use bough_plugin_ledger::{AgentName, Seq, TrajId, WakeId};
 use chrono::{DateTime, Utc};
 
 pub use error::ProjectionError;
@@ -86,6 +86,12 @@ pub struct AssembleRequest {
     pub at: DateTime<Utc>,
     /// `None` ⇒ the configured `budget_tokens`.
     pub budget: Option<usize>,
+    /// The ledger high-water to assemble AT (§2.7 item 3, P2-D20). `None` ⇒ now.
+    ///
+    /// Every row above it is invisible: to the six built-in bands AND to every contributed
+    /// section, which is handed the same value. Without that second half a reconstruction is only
+    /// as good as the sections nobody contributed.
+    pub as_of: Option<Seq>,
 }
 
 /// A file-view request.

@@ -9,3 +9,12 @@ use bough_plugin_ledger::AgentName;
 pub fn scope_key(name: &AgentName) -> ScopeKey {
     ScopeKey::new(format!("agent:{name}"))
 }
+
+/// `tools.restrict` composes as an INTERSECTION (§5): a scope narrows what an agent may do and
+/// can never widen it. The one place the loop states that, so a caller cannot get it backwards.
+pub fn restrict_intersection(
+    base: &bough_plugin_tools::Restrict,
+    scoped: &bough_plugin_tools::Restrict,
+) -> bough_plugin_tools::Restrict {
+    base.intersect(scoped)
+}

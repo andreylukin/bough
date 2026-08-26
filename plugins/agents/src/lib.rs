@@ -14,11 +14,19 @@ pub mod ids;
 pub mod initiator;
 pub mod invariant;
 pub mod mail;
+pub mod trace;
 pub mod vocabulary;
 
+use std::collections::BTreeMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use bough_kernel::{Context, EffectHandle, InvariantSpec, Plugin, PluginError, ServiceKey};
+use bough_kernel::{
+    Context, EffectHandle, InvariantSpec, Plugin, PluginError, ScopeKey, ServiceKey,
+};
+use bough_plugin_ledger::{Ledger, LedgerHandle, StepQuery};
+use parking_lot::Mutex;
+use tokio_util::sync::CancellationToken;
 
 pub use agent::{Agent, AgentKind, CancelCause, Session, Status};
 pub use create::{AgentDisposer, AgentSetup, CreateAgent, CreateSpec, ResumeAgent};
@@ -57,77 +65,306 @@ pub struct AgentsHandle(pub Arc<AgentsInner>);
 
 /// The seam's live state: the registry and the factory slot.
 pub struct AgentsInner {
-    /// WP-2 fills these in; named so the shape is visible in the scaffold.
-    _live: parking_lot::Mutex<Vec<Agent>>,
-    _factory: parking_lot::Mutex<Option<Arc<dyn AgentFactory>>>,
+    ctx: Context,
+    ledger: LedgerHandle,
+    live: Mutex<BTreeMap<String, Agent>>,
+    factory: Mutex<Option<Arc<dyn AgentFactory>>>,
 }
 
 impl AgentsHandle {
-    /// An empty registry with no factory. WP-2.
-    pub fn new() -> AgentsHandle {
+    /// An empty registry with no factory.
+    pub fn new(ctx: Context, ledger: LedgerHandle) -> AgentsHandle {
         AgentsHandle(Arc::new(AgentsInner {
-            _live: parking_lot::Mutex::new(Vec::new()),
-            _factory: parking_lot::Mutex::new(None),
+            ctx,
+            ledger,
+            live: Mutex::new(BTreeMap::new()),
+            factory: Mutex::new(None),
         }))
     }
 
     /// §2: errors if one is already set, naming the driver that holds it. The token is an EFFECT,
     /// so unloading the driver row frees the slot and another loop Provider can take it — which
     /// is exactly what the phase's swap test does.
-    ///
-    /// WP-2.
     pub async fn set_factory(
         &self,
-        _ctx: &Context,
-        _f: Arc<dyn AgentFactory>,
+        ctx: &Context,
+        f: Arc<dyn AgentFactory>,
     ) -> Result<EffectHandle, AgentError> {
-        todo!("WP-2: take the slot, register the inverse that frees it")
+        {
+            let mut slot = self.0.factory.lock();
+            if let Some(held) = slot.as_ref() {
+                return Err(AgentError::FactoryAlreadySet(held.driver()));
+            }
+            *slot = Some(f.clone());
+        }
+        let inner = self.0.clone();
+        let mine = f;
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || {
+                let mut slot = inner.factory.lock();
+                // Only free the slot if it is still OURS: a later taker is not ours to evict.
+                if slot.as_ref().is_some_and(|held| Arc::ptr_eq(held, &mine)) {
+                    *slot = None;
+                }
+            });
+            Ok(())
+        })
+        .await
+        .map_err(|e| AgentError::SetupFailed {
+            name: bough_plugin_ledger::AgentName::new("<factory>"),
+            detail: e.to_string(),
+        })
     }
 
-    /// The factory, if one is set. WP-2.
+    /// The factory, if one is set.
     pub fn factory(&self) -> Option<Arc<dyn AgentFactory>> {
-        todo!("WP-2")
+        self.0.factory.lock().clone()
     }
 
     /// The creation transaction of §2: session → agent → scope → `setup` → registry →
     /// `agent/created`, with full rollback on a `setup` failure.
-    ///
-    /// WP-2.
-    pub async fn create(&self, _req: CreateAgent) -> Result<(Agent, AgentDisposer), AgentError> {
-        todo!("WP-2: the creation transaction")
+    pub async fn create(&self, req: CreateAgent) -> Result<(Agent, AgentDisposer), AgentError> {
+        let spec = self.resolve_create(&req);
+        if self.by_name(&spec.name).is_some() {
+            return Err(AgentError::AlreadyLive(spec.name));
+        }
+        let factory = self.factory().ok_or(AgentError::NoFactory)?;
+
+        let (agent, scope) = self.mint(&spec, req.at);
+
+        // `setup` runs while BOTH ids are still unpublished, so an `Err` here can be rolled back
+        // with nothing to undo but the scope.
+        if let Some(setup) = &req.setup {
+            if let Err(e) = setup.setup(&agent).await {
+                scope.dispose().await;
+                return Err(AgentError::SetupFailed {
+                    name: spec.name,
+                    detail: e.to_string(),
+                });
+            }
+        }
+
+        // Only past `setup` does anything become durable: the agent row, then the seed mail.
+        let seeded = match self.publish(&agent, &spec, &req).await {
+            Ok(seeded) => seeded,
+            Err(e) => {
+                scope.dispose().await;
+                return Err(e);
+            }
+        };
+
+        match factory
+            .attach(
+                AgentCell {
+                    agent: agent.clone(),
+                },
+                Attach::Created,
+            )
+            .await
+        {
+            Ok(driver) => *agent.0.driver.lock() = Some(driver),
+            Err(e) => {
+                scope.dispose().await;
+                return Err(e);
+            }
+        }
+
+        // The seed is spliced BEFORE the driver exists (it is part of the durable transaction),
+        // so nothing has told the driver about it. Replaying the receipts here is what makes a
+        // seeded agent actually wake: without it a worker created with its task in the seed sits
+        // idle forever and `when_idle()` returns before it ever ran a step.
+        if let Some(driver) = agent.driver() {
+            for (receipt, msg) in &seeded {
+                driver.notify(receipt, msg).await;
+            }
+        }
+
+        self.0
+            .live
+            .lock()
+            .insert(spec.name.to_string(), agent.clone());
+        self.0.ctx.emit::<AgentCreated>(agent.clone());
+        Ok((
+            agent.clone(),
+            AgentDisposer {
+                agent,
+                scope,
+                agents: self.clone(),
+            },
+        ))
     }
 
     /// Resume an agent that already has a row and a chain: the inbox is rebuilt from
     /// `inbox/spliced` (P2-D8) and the factory attaches with [`Attach::Resumed`].
-    ///
-    /// WP-2.
-    pub async fn resume(&self, _req: ResumeAgent) -> Result<(Agent, AgentDisposer), AgentError> {
-        todo!("WP-2: rebuild the inbox from the ledger, then attach")
+    pub async fn resume(&self, req: ResumeAgent) -> Result<(Agent, AgentDisposer), AgentError> {
+        if self.by_name(&req.name).is_some() {
+            return Err(AgentError::AlreadyLive(req.name));
+        }
+        let factory = self.factory().ok_or(AgentError::NoFactory)?;
+        let row = self
+            .0
+            .ledger
+            .0
+            .agent(&req.name)
+            .await?
+            .ok_or_else(|| AgentError::NoSuchAgent(req.name.clone()))?;
+        let spec = CreateSpec {
+            name: req.name.clone(),
+            traj: row.traj.clone(),
+            kind: AgentKind::Resident,
+            scope: ScopeKey::new(format!("agent:{}", req.name)),
+        };
+        let (agent, scope) = self.mint(&spec, req.at);
+
+        // The fold IS the inbox (P2-D8): the same function crash repair uses.
+        let steps = self
+            .0
+            .ledger
+            .0
+            .steps(&StepQuery {
+                trajs: vec![row.traj.clone()],
+                kinds: vec![bough_plugin_ledger::StepType::new("inbox/spliced")],
+                ..Default::default()
+            })
+            .await?;
+        agent.inbox().seed(Inbox::rebuild(&steps));
+
+        if let Some(setup) = &req.setup {
+            if let Err(e) = setup.setup(&agent).await {
+                scope.dispose().await;
+                return Err(AgentError::SetupFailed {
+                    name: spec.name,
+                    detail: e.to_string(),
+                });
+            }
+        }
+        match factory
+            .attach(
+                AgentCell {
+                    agent: agent.clone(),
+                },
+                Attach::Resumed,
+            )
+            .await
+        {
+            Ok(driver) => *agent.0.driver.lock() = Some(driver),
+            Err(e) => {
+                scope.dispose().await;
+                return Err(e);
+            }
+        }
+
+        self.0
+            .live
+            .lock()
+            .insert(spec.name.to_string(), agent.clone());
+        self.0.ctx.emit::<AgentCreated>(agent.clone());
+        Ok((
+            agent.clone(),
+            AgentDisposer {
+                agent,
+                scope,
+                agents: self.clone(),
+            },
+        ))
     }
 
-    /// WP-2.
-    pub fn get(&self, _id: &AgentId) -> Option<Agent> {
-        todo!("WP-2")
+    /// The private session, the concrete agent and the scoped context — the part of the
+    /// transaction that touches nothing durable and nothing published.
+    fn mint(&self, spec: &CreateSpec, at: chrono::DateTime<chrono::Utc>) -> (Agent, EffectHandle) {
+        let id = AgentId::new(uuid::Uuid::now_v7().to_string());
+        let session = Session {
+            id: SessionId::new(uuid::Uuid::now_v7().to_string()),
+            traj: spec.traj.clone(),
+            created_at: at,
+        };
+        let guard = bough_kernel::scope::create_scope(&self.0.ctx, spec.scope.clone());
+        let agent = Agent(Arc::new(agent::AgentInner {
+            id: id.clone(),
+            name: spec.name.clone(),
+            kind: spec.kind,
+            session,
+            inbox: Inbox::new(self.0.ledger.clone(), spec.traj.clone(), id),
+            ledger: self.0.ledger.clone(),
+            base: self.0.ctx.clone(),
+            ctx: guard.context().clone(),
+            scope_key: spec.scope.clone(),
+            status: Mutex::new(Status::Idle),
+            cancelled: Mutex::new(None),
+            token: Mutex::new(CancellationToken::new()),
+            disposed: AtomicBool::new(false),
+            pending_wake: AtomicBool::new(false),
+            driver: Mutex::new(None),
+            idle: tokio::sync::Notify::new(),
+        }));
+        (agent, guard.effect().clone())
     }
-    /// WP-2.
-    pub fn by_name(&self, _name: &bough_plugin_ledger::AgentName) -> Option<Agent> {
-        todo!("WP-2")
+
+    /// The durable half of the transaction: the agent row, then the seed mail.
+    async fn publish(
+        &self,
+        agent: &Agent,
+        spec: &CreateSpec,
+        req: &CreateAgent,
+    ) -> Result<Vec<(InboxReceipt, Message)>, AgentError> {
+        if self.0.ledger.0.agent(&spec.name).await?.is_none() {
+            self.0
+                .ledger
+                .0
+                .put_agent(bough_plugin_ledger::AgentRow {
+                    name: spec.name.clone(),
+                    traj: spec.traj.clone(),
+                    routing_refs: Default::default(),
+                    wake_classes: Default::default(),
+                    model_override: None,
+                    tick_floor: None,
+                    digest_rollup: None,
+                })
+                .await?;
+        }
+        let mut seeded = Vec::with_capacity(req.seed.len());
+        for (msg, target) in &req.seed {
+            // Wake-class seed mail (and anything from Andrey) is a wake: the same rule `send`
+            // applies, so a seeded agent and a messaged one behave identically.
+            let wake = msg.is_andrey() || msg.class == MailClass::Wake;
+            let receipt = agent
+                .inbox()
+                .insert_waking(msg.clone(), *target, wake)
+                .await?;
+            if wake {
+                agent.arm_pending_wake();
+            }
+            seeded.push((receipt, msg.clone()));
+        }
+        Ok(seeded)
     }
-    /// WP-2.
+
+    /// Remove one agent from the live registry. The disposer is the only caller (§2: teardown is
+    /// a capability).
+    pub(crate) fn detach(&self, id: &AgentId) {
+        self.0.live.lock().retain(|_, a| a.id() != id);
+    }
+
+    pub fn get(&self, id: &AgentId) -> Option<Agent> {
+        self.0.live.lock().values().find(|a| a.id() == id).cloned()
+    }
+    pub fn by_name(&self, name: &bough_plugin_ledger::AgentName) -> Option<Agent> {
+        self.0.live.lock().get(name.as_str()).cloned()
+    }
     pub fn list(&self) -> Vec<Agent> {
-        todo!("WP-2")
+        self.0.live.lock().values().cloned().collect()
     }
     /// The explicit defaulting step (§0.2): never a `?? default` inside `create`.
-    ///
-    /// WP-2.
-    pub fn resolve_create(&self, _req: &CreateAgent) -> CreateSpec {
-        todo!("WP-2: scope defaults to agent:<name>")
-    }
-}
-
-impl Default for AgentsHandle {
-    fn default() -> Self {
-        AgentsHandle::new()
+    pub fn resolve_create(&self, req: &CreateAgent) -> CreateSpec {
+        CreateSpec {
+            name: req.name.clone(),
+            traj: req.traj.clone(),
+            kind: req.kind,
+            scope: req
+                .scope
+                .clone()
+                .unwrap_or_else(|| ScopeKey::new(format!("agent:{}", req.name))),
+        }
     }
 }
 
@@ -148,8 +385,52 @@ impl Plugin for AgentsPlugin {
         bough_kernel::Inject::required(["ledger"])
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-2: declare the four step types, provide::<Agents>, record the invariant stream")
+    async fn apply(ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let ledger = ctx
+            .get::<Ledger>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        let ledger = (*ledger).clone();
+
+        ledger
+            .declare_step_types(&ctx, vocabulary::step_types())
+            .await?;
+
+        ctx.provide::<Agents>(AgentsHandle::new(ctx.clone(), ledger))
+            .await
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+
+        // The recorded stream this crate's invariant reads. Per fiber LIFE, exactly as the
+        // ledger's is (§0.3): a reload must not read as a violation of its own predecessor.
+        let mine = ctx.fiber_uid();
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || invariant::forget(mine));
+            Ok(())
+        })
+        .await?;
+        ctx.on::<AgentStatusChanged, _, _>(move |change| async move {
+            invariant::record(invariant::Obs::Status {
+                fiber: mine,
+                agent: change.agent,
+                from: change.from,
+                to: change.to,
+            });
+        })
+        .await?;
+        ctx.on::<AgentDisposed, _, _>(move |agent| async move {
+            invariant::record(invariant::Obs::Disposed { fiber: mine, agent });
+        })
+        .await?;
+        ctx.on::<AgentWake, _, _>(move |wake| async move {
+            if wake.phase == Phase::Start {
+                invariant::record(invariant::Obs::WakeStarted {
+                    fiber: mine,
+                    agent: wake.agent,
+                });
+            }
+        })
+        .await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

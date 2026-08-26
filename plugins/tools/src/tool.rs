@@ -69,9 +69,17 @@ impl ToolCall {
     /// A stable digest of the call, so the executor can tell whether a `tools/execute` wrapper
     /// edited it (P2-D13: §9 does not offer input rewrite).
     ///
-    /// WP-3.
+    /// `serde_json::Value` maps are `BTreeMap`s, so `to_string` is already key-ordered: the
+    /// digest is stable across two builds of the same call.
     pub fn digest(&self) -> String {
-        todo!("WP-3: sha256 over id, name and canonical args")
+        use sha2::Digest;
+        let mut h = sha2::Sha256::new();
+        h.update(self.id.as_str().as_bytes());
+        h.update(b"\0");
+        h.update(self.name.as_str().as_bytes());
+        h.update(b"\0");
+        h.update(self.args.to_string().as_bytes());
+        format!("{:x}", h.finalize())
     }
 }
 

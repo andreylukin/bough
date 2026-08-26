@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use bough_plugin_ledger::vocabulary::SpliceOp;
 use bough_plugin_ledger::LedgerHandle;
 use chrono::{DateTime, Utc};
 use tokio_util::sync::CancellationToken;
@@ -47,50 +48,79 @@ pub trait AgentDriver: Send + Sync + 'static {
 
 /// The driver's private view of an agent: the only way to publish status or claim inbox items.
 pub struct AgentCell {
-    /// WP-2 fills this in.
-    pub(crate) _agent: Agent,
+    pub(crate) agent: Agent,
 }
 
 impl AgentCell {
-    /// WP-2.
     pub fn agent(&self) -> &Agent {
-        &self._agent
+        &self.agent
     }
-    /// WP-2.
     pub fn ledger(&self) -> &LedgerHandle {
-        todo!("WP-2")
+        self.agent.ledger()
     }
     /// Refuses a repeat (`Running → Running`): the invariant is enforced at the setter, not only
     /// observed (P2-D9). Emits `agent/status`.
-    ///
-    /// WP-2.
-    pub async fn set_status(&self, _to: Status) -> Result<(), AgentError> {
-        todo!("WP-2: refuse a repeat, then emit agent/status")
+    pub async fn set_status(&self, to: Status) -> Result<(), AgentError> {
+        self.agent.set_status(to)
     }
     /// A pure DELETION splice (§5): appends one `inbox/spliced { op: claim }` per message.
-    ///
-    /// WP-2.
     pub async fn claim(
         &self,
-        _sel: ClaimSelector,
-        _wake: WakeId,
-        _at: DateTime<Utc>,
+        sel: ClaimSelector,
+        wake: WakeId,
+        at: DateTime<Utc>,
     ) -> Result<Vec<ClaimedMessage>, AgentError> {
-        todo!("WP-2: durable claim splice, then remove from the live cache")
+        let chosen = self.agent.inbox().select(&sel);
+        let mut out = Vec::with_capacity(chosen.len());
+        for message in chosen {
+            let claim_step = self
+                .agent
+                .inbox()
+                .remove(
+                    &message.id,
+                    sel.target,
+                    SpliceOp::Claim,
+                    wake.clone(),
+                    at,
+                    None,
+                )
+                .await?;
+            out.push(ClaimedMessage {
+                message,
+                target: sel.target,
+                claim_step,
+            });
+        }
+        Ok(out)
     }
-    /// Drop a message without delivering it, durably. WP-2.
+    /// Drop a message without delivering it, durably.
     pub async fn discard(
         &self,
-        _id: &MessageId,
-        _wake: WakeId,
-        _reason: &str,
-        _at: DateTime<Utc>,
+        id: &MessageId,
+        wake: WakeId,
+        reason: &str,
+        at: DateTime<Utc>,
     ) -> Result<(), AgentError> {
-        todo!("WP-2: inbox/spliced with op discard")
+        let in_next_step = self
+            .agent
+            .inbox()
+            .pending(Target::NextStep)
+            .iter()
+            .any(|m| m.id == *id);
+        let target = if in_next_step {
+            Target::NextStep
+        } else {
+            Target::NextWake
+        };
+        self.agent
+            .inbox()
+            .remove(id, target, SpliceOp::Discard, wake, at, Some(reason))
+            .await?;
+        Ok(())
     }
-    /// The token every cancel cause fires. WP-2.
+    /// The token every cancel cause fires.
     pub fn cancel_token(&self) -> CancellationToken {
-        todo!("WP-2")
+        self.agent.cancel_token()
     }
 }
 
@@ -103,4 +133,16 @@ pub struct ClaimSelector {
     /// A drain wake claims ORDINARY seqs only (§5); an answer wake claims its trigger only.
     pub classes: Option<Vec<MailClass>>,
     pub limit: Option<usize>,
+}
+
+impl ClaimSelector {
+    /// Everything queued for `target`.
+    pub fn all(target: Target) -> ClaimSelector {
+        ClaimSelector {
+            target,
+            only: None,
+            classes: None,
+            limit: None,
+        }
+    }
 }

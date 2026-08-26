@@ -31,32 +31,102 @@ pub enum Obs {
     },
 }
 
-/// Record one moment. Called by the listeners `AgentsPlugin::apply` registers. WP-2.
-pub fn record(_obs: Obs) {
-    todo!("WP-2: push onto the recorded stream")
+/// The recorded stream. Per-fiber, so a reload is not a violation of its predecessor.
+static SEEN: parking_lot::Mutex<Vec<Obs>> = parking_lot::Mutex::new(Vec::new());
+
+fn fiber_of(obs: &Obs) -> FiberUid {
+    match obs {
+        Obs::Status { fiber, .. }
+        | Obs::Disposed { fiber, .. }
+        | Obs::WakeStarted { fiber, .. } => *fiber,
+    }
 }
 
-/// Forget everything recorded for `fiber`, as an inverse of `apply`. WP-2.
-pub fn forget(_fiber: FiberUid) {
-    todo!("WP-2: drop this fiber's observations")
+fn agent_of(obs: &Obs) -> &AgentId {
+    match obs {
+        Obs::Status { agent, .. }
+        | Obs::Disposed { agent, .. }
+        | Obs::WakeStarted { agent, .. } => agent,
+    }
 }
 
-/// Everything recorded so far, oldest first. WP-2.
+/// Record one moment. Called by the listeners `AgentsPlugin::apply` registers.
+pub fn record(obs: Obs) {
+    SEEN.lock().push(obs);
+}
+
+/// Forget everything recorded for `fiber`, as an inverse of `apply`.
+pub fn forget(fiber: FiberUid) {
+    SEEN.lock().retain(|o| fiber_of(o) != fiber);
+}
+
+/// Everything recorded so far, oldest first.
 pub fn seen() -> Vec<Obs> {
-    todo!("WP-2: read the recorded stream")
+    SEEN.lock().clone()
 }
 
-/// Drop the recorded stream. Test setup only. WP-2.
+/// Drop the recorded stream. Test setup only.
 pub fn clear() {
-    todo!("WP-2")
+    SEEN.lock().clear();
 }
 
 /// The whole invariant as a pure function of the observed stream: the first violation wins, and
 /// the detail names the agent and what it did.
 ///
-/// WP-2.
-pub fn evaluate(_stream: &[Obs]) -> Result<(), String> {
-    todo!("WP-2: no repeat, nothing after disposal")
+/// The stream is folded PER (fiber, agent): two fibers are two streams, so a reload that starts a
+/// fresh agent life cannot read as a repeat of the retired one (Phase 1's lesson).
+pub fn evaluate(stream: &[Obs]) -> Result<(), String> {
+    use std::collections::BTreeMap;
+
+    struct Life {
+        status: Status,
+        disposed: bool,
+    }
+    let mut lives: BTreeMap<(FiberUid, String), Life> = BTreeMap::new();
+
+    for obs in stream {
+        let key = (fiber_of(obs), agent_of(obs).to_string());
+        let life = lives.entry(key).or_insert(Life {
+            status: Status::Idle,
+            disposed: false,
+        });
+        match obs {
+            Obs::Status {
+                agent, from, to, ..
+            } => {
+                if life.disposed {
+                    return Err(format!(
+                        "agent `{agent}` changed status to {to:?} after it was disposed"
+                    ));
+                }
+                if from == to {
+                    return Err(format!(
+                        "agent `{agent}` published status {to:?} twice in a row"
+                    ));
+                }
+                if life.status == *to {
+                    return Err(format!(
+                        "agent `{agent}` published status {to:?}, which repeats its current status"
+                    ));
+                }
+                life.status = *to;
+            }
+            Obs::Disposed { agent, .. } => {
+                if life.disposed {
+                    return Err(format!("agent `{agent}` was disposed twice"));
+                }
+                life.disposed = true;
+            }
+            Obs::WakeStarted { agent, .. } => {
+                if life.disposed {
+                    return Err(format!(
+                        "agent `{agent}` started a wake after it was disposed"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The spec `AgentsPlugin::invariants` returns.
@@ -76,4 +146,156 @@ async fn check(ctx: Context) -> Result<(), InvariantViolation> {
         entry: ctx.entry_id().clone(),
         detail,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fibers() -> (FiberUid, FiberUid) {
+        let core = bough_kernel::KernelCore::new();
+        (core.new_fiber_uid(), core.new_fiber_uid())
+    }
+
+    fn a() -> AgentId {
+        AgentId::new("sol")
+    }
+
+    /// The rule §0.2 names for this crate: status never repeats.
+    #[test]
+    fn a_repeated_status_is_reported() {
+        let (f, _) = fibers();
+        let clean = vec![
+            Obs::Status {
+                fiber: f,
+                agent: a(),
+                from: Status::Idle,
+                to: Status::Running,
+            },
+            Obs::Status {
+                fiber: f,
+                agent: a(),
+                from: Status::Running,
+                to: Status::Idle,
+            },
+        ];
+        assert_eq!(evaluate(&clean), Ok(()));
+
+        let planted = vec![
+            Obs::Status {
+                fiber: f,
+                agent: a(),
+                from: Status::Idle,
+                to: Status::Running,
+            },
+            Obs::Status {
+                fiber: f,
+                agent: a(),
+                from: Status::Running,
+                to: Status::Running,
+            },
+        ];
+        let detail = evaluate(&planted).expect_err("a repeat must be reported");
+        assert!(
+            detail.contains("sol"),
+            "the detail must name the agent: {detail}"
+        );
+        assert!(
+            detail.contains("Running"),
+            "the detail must name the status: {detail}"
+        );
+    }
+
+    /// Disposal is terminal: neither a status change nor a wake may follow it.
+    #[test]
+    fn a_status_after_disposal_is_reported() {
+        let (f, _) = fibers();
+        let planted = vec![
+            Obs::Disposed {
+                fiber: f,
+                agent: a(),
+            },
+            Obs::Status {
+                fiber: f,
+                agent: a(),
+                from: Status::Idle,
+                to: Status::Running,
+            },
+        ];
+        let detail = evaluate(&planted).expect_err("a post-disposal status must be reported");
+        assert!(detail.contains("after it was disposed"), "{detail}");
+
+        let woke = vec![
+            Obs::Disposed {
+                fiber: f,
+                agent: a(),
+            },
+            Obs::WakeStarted {
+                fiber: f,
+                agent: a(),
+            },
+        ];
+        let detail = evaluate(&woke).expect_err("a post-disposal wake must be reported");
+        assert!(detail.contains("started a wake"), "{detail}");
+    }
+
+    /// Phase 1's lesson: two fibers are two streams. A reload disposes the old life and starts a
+    /// fresh one under the SAME agent name, and that is not a violation of anything.
+    #[test]
+    fn two_fibers_are_two_streams() {
+        let (old, new) = fibers();
+        let reload = vec![
+            Obs::Status {
+                fiber: old,
+                agent: a(),
+                from: Status::Idle,
+                to: Status::Running,
+            },
+            Obs::Status {
+                fiber: old,
+                agent: a(),
+                from: Status::Running,
+                to: Status::Idle,
+            },
+            Obs::Disposed {
+                fiber: old,
+                agent: a(),
+            },
+            // The successor fiber's life: same agent, same first transition, clean.
+            Obs::Status {
+                fiber: new,
+                agent: a(),
+                from: Status::Idle,
+                to: Status::Running,
+            },
+            Obs::WakeStarted {
+                fiber: new,
+                agent: a(),
+            },
+        ];
+        assert_eq!(evaluate(&reload), Ok(()));
+    }
+
+    /// `forget` is the inverse of `apply`: unloading one fiber leaves the other's stream intact.
+    #[test]
+    fn forget_drops_only_that_fibers_observations() {
+        let (old, new) = fibers();
+        clear();
+        record(Obs::Status {
+            fiber: old,
+            agent: a(),
+            from: Status::Idle,
+            to: Status::Running,
+        });
+        record(Obs::Status {
+            fiber: new,
+            agent: a(),
+            from: Status::Idle,
+            to: Status::Running,
+        });
+        forget(old);
+        let left = seen();
+        assert!(left.iter().all(|o| super::fiber_of(o) == new), "{left:?}");
+        clear();
+    }
 }

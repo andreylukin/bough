@@ -39,8 +39,14 @@ pub struct WakeResumed {
 }
 
 /// The four step types this crate owns, for `declare_step_types`.
-///
-/// WP-2.
 pub fn step_types() -> Vec<bough_plugin_ledger::StepTypeDef> {
-    todo!("WP-2: thought/text, thought/reasoning, wake/jot, wake/resumed — all Thought")
+    use bough_plugin_ledger::{ClassRule, StepTypeDef};
+    const OWNER: &str = crate::PLUGIN_NAME;
+    vec![
+        StepTypeDef::of::<ThoughtText>("thought/text", OWNER).class_rule(ClassRule::Thought),
+        StepTypeDef::of::<ThoughtReasoning>("thought/reasoning", OWNER)
+            .class_rule(ClassRule::Thought),
+        StepTypeDef::of::<WakeJot>("wake/jot", OWNER).class_rule(ClassRule::Thought),
+        StepTypeDef::of::<WakeResumed>("wake/resumed", OWNER).class_rule(ClassRule::Thought),
+    ]
 }

@@ -22,8 +22,8 @@ pub mod service;
 
 pub use catalog::{Catalog, PluginRegistration};
 pub use config::{
-    render, ComposeError, ComposeWarning, Composer, Composition, DumpFormat, Entry, Expr, ExprEnv,
-    Fingerprint, Inject, LayerId, Patch, RealmLabel, RowProvenance,
+    render, ComposeError, ComposeWarning, Composer, Composition, DumpFormat, Entry, EntryPatch,
+    Expr, ExprEnv, Fingerprint, Inject, LayerId, Patch, RealmLabel, RowProvenance,
 };
 pub use context::{default_realm, CommittedView, Context, KernelCore};
 pub use effect::{EffectCtx, EffectHandle, Halted};

@@ -163,6 +163,7 @@ async fn best_of_three(
         .as_ref()
         .clone();
     let req = AssembleRequest {
+        as_of: None,
         agent: bough_plugin_ledger::AgentName::new("a1"),
         wake: None,
         at: chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")

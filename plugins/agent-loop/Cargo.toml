@@ -25,6 +25,13 @@ chrono = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 bough-plugin-ledger-memory = { workspace = true }
+bough-plugin-projection-assembler = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+parking_lot = { workspace = true }

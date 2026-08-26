@@ -196,17 +196,26 @@ impl LedgerStore for SqliteStore {
     }
 
     async fn action_intent(&self, a: NewAction) -> Result<ActionRow, LedgerError> {
-        crate::read::action_intent(self, a).await
+        let (traj, target) = (a.traj.clone(), a.target.clone());
+        let row = crate::read::action_intent(self, a).await?;
+        // §2.7 item 4: the journal row and the ledger step are one act. The step goes second so a
+        // crash between them leaves an intent row with no step, which reconciliation reports —
+        // never a step claiming an action the journal does not know.
+        self.append(bough_plugin_ledger::journal::intent_step(
+            &row, &traj, &target,
+        ))
+        .await?;
+        Ok(row)
     }
     async fn action_done(
         &self,
         id: &ActionId,
         status: ActionStatus,
         result: serde_json::Value,
+        at: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), LedgerError> {
-        // DEVIATION (§2.5): the trait passes no clock, so `done_at` is stamped here. Phase 2 owns
-        // the actions seam and can thread `now` through when it takes the policy.
-        crate::read::action_done(self, id, status, result, chrono::Utc::now()).await
+        crate::read::action_done(self, id, status, result.clone(), at).await?;
+        crate::actions_done_step(self, id, status, &result, at).await
     }
     async fn actions(&self, q: &ActionQuery) -> Result<Vec<ActionRow>, LedgerError> {
         crate::read::actions(self, q).await
@@ -218,4 +227,42 @@ impl LedgerStore for SqliteStore {
     async fn trajectory_view(&self, traj: &TrajId) -> Result<TrajectoryView, LedgerError> {
         crate::read::trajectory_view(self, traj).await
     }
+}
+
+/// The `action/done` step both providers append, once the journal row is updated.
+///
+/// Lives here rather than in each `impl` so the two stores cannot disagree about which
+/// trajectory the step lands in or what it cites.
+pub(crate) async fn actions_done_step(
+    store: &dyn LedgerStore,
+    id: &ActionId,
+    status: ActionStatus,
+    result: &serde_json::Value,
+    at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), LedgerError> {
+    let row = store
+        .actions(&bough_plugin_ledger::ActionQuery {
+            ids: vec![id.clone()],
+            ..Default::default()
+        })
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| LedgerError::Store(anyhow::anyhow!("no such action `{id}`")))?;
+    let Some(intent) = bough_plugin_ledger::journal::find_intent_step(store, id).await? else {
+        return Err(LedgerError::Store(anyhow::anyhow!(
+            "action `{id}` has no `action/intent` step to close"
+        )));
+    };
+    store
+        .append(bough_plugin_ledger::journal::done_step(
+            &row,
+            &intent.traj,
+            &intent.id,
+            status,
+            bough_plugin_ledger::journal::artifact_of(result),
+            at,
+        ))
+        .await?;
+    Ok(())
 }

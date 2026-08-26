@@ -16,4 +16,5 @@ schemars = { workspace = true }
 inventory = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
+uuid = { workspace = true }
 tokio = { workspace = true }

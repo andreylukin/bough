@@ -169,7 +169,11 @@ pub async fn digest(
             ..Default::default()
         })
         .await?;
-    let Some(r) = all.into_iter().find(|r| r.id == id) else {
+    let Some(r) = all
+        .into_iter()
+        .filter(|r| req.visible(r.to_seq))
+        .find(|r| r.id == id)
+    else {
         // Phase 4 produces digests. A dangling pointer renders nothing rather than a lie.
         return Ok(None);
     };
@@ -227,6 +231,12 @@ pub async fn tiers(
             ..Default::default()
         })
         .await?;
+    // §2.7 item 3: a rollup covering rows above `as_of` did not exist for the request being
+    // reproduced.
+    let rollups: Vec<Rollup> = rollups
+        .into_iter()
+        .filter(|r| req.visible(r.to_seq))
+        .collect();
     Ok(tier_sections(&rollups, &req.connected.refs, cfg.max_tiers))
 }
 
@@ -296,11 +306,31 @@ pub async fn tail(
     req: &SectionRequest,
     cfg: &AssemblerConfig,
 ) -> Result<(Option<RenderedSection>, Vec<Step>), ProjectionError> {
-    let steps = req
-        .ledger
-        .0
-        .tail(&req.connected.own, cfg.tail_steps)
-        .await?;
+    // §2.7 item 3: with `as_of` the window is the newest `tail_steps` rows AT OR BELOW it, not
+    // the newest rows overall — a post-filter would silently shrink the tail instead.
+    let steps = match req.before() {
+        None => {
+            req.ledger
+                .0
+                .tail(&req.connected.own, cfg.tail_steps)
+                .await?
+        }
+        Some(before) => {
+            let mut window = req
+                .ledger
+                .0
+                .steps(&bough_plugin_ledger::StepQuery {
+                    trajs: vec![req.connected.own.clone()],
+                    before: Some(before),
+                    order: bough_plugin_ledger::Order::SeqDesc,
+                    limit: Some(cfg.tail_steps),
+                    ..Default::default()
+                })
+                .await?;
+            window.reverse();
+            window
+        }
+    };
     Ok((tail_section(&steps), steps))
 }
 
@@ -363,7 +393,17 @@ pub async fn mail(
     req: &SectionRequest,
     _cfg: &AssemblerConfig,
 ) -> Result<(Option<RenderedSection>, Vec<Step>), ProjectionError> {
-    let steps = req.ledger.0.unconsumed_mail(&req.connected.own).await?;
+    let steps: Vec<Step> = req
+        .ledger
+        .0
+        .unconsumed_mail(&req.connected.own)
+        .await?
+        .into_iter()
+        // §2.7 item 3. DEVIATION worth naming: consumption is read as it stands NOW, because
+        // `wake/end.consumed` is not seq-addressable per piece. Mail delivered after `as_of` is
+        // invisible; mail delivered before it and consumed since stays invisible too.
+        .filter(|s| req.visible(s.seq))
+        .collect();
     Ok((mail_section(&steps), steps))
 }
 

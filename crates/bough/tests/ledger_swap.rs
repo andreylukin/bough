@@ -55,6 +55,7 @@ async fn assembled_text(kernel: &bough_kernel::Kernel) -> String {
         .peek_live::<Projection>()
         .expect("projection is bound");
     let req = AssembleRequest {
+        as_of: None,
         agent: bough_plugin_ledger::AgentName::new("a1"),
         wake: None,
         // Fixed, not `now()`: the assembled text must be a function of (ledger, request, config).

@@ -107,7 +107,15 @@ pub enum ActionStatus {
 #[derive(Clone, Debug)]
 pub struct NewAction {
     pub id: Option<ActionId>,
+    /// The trajectory the `action/intent` step is appended to.
+    ///
+    /// DEVIATION from Phase 1: §2.7 item 4 makes `action_intent` append its step, and a step has
+    /// no home without a trajectory. `target` joins it for the same reason — `ActionIntent`'s
+    /// body names the canonical target, and the journal row does not store one.
+    pub traj: TrajId,
     pub wake: WakeId,
+    /// The canonical target (§7): the `ActionIntent` body's `target`.
+    pub target: String,
     pub idem_key: IdemKey,
     pub kind: String,
     pub payload: serde_json::Value,

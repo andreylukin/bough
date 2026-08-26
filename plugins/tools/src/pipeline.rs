@@ -42,13 +42,23 @@ impl PreExecute {
     pub fn decision(&self) -> &Decision {
         &self.decision
     }
-    /// `Allow | Ask | Deny -> Deny`. WP-3.
-    pub fn deny(&mut self, _reason: impl Into<String>) {
-        todo!("WP-3: tighten to Deny, keeping the first denial's reason")
+    /// `Allow | Ask | Deny -> Deny`. The FIRST denial's reason is what the model is told: a
+    /// later listener can restate the refusal but cannot rewrite why the call was refused.
+    pub fn deny(&mut self, reason: impl Into<String>) {
+        if matches!(self.decision, Decision::Deny { .. }) {
+            return;
+        }
+        self.decision = Decision::Deny {
+            reason: reason.into(),
+        };
     }
-    /// `Allow -> Ask`; a `Deny` stays denied. WP-3.
-    pub fn ask(&mut self, _reason: impl Into<String>) {
-        todo!("WP-3: tighten to Ask unless already denied")
+    /// `Allow -> Ask`; a `Deny` stays denied, and a second `ask` keeps the first reason.
+    pub fn ask(&mut self, reason: impl Into<String>) {
+        if matches!(self.decision, Decision::Allow) {
+            self.decision = Decision::Ask {
+                reason: reason.into(),
+            };
+        }
     }
 }
 
@@ -97,21 +107,33 @@ impl PostExecute {
     pub fn result(&self) -> &ToolResult {
         &self.result
     }
-    /// Replace the content, CLEARING the value. WP-3.
-    pub fn accept_content(&mut self, _content: String) {
-        todo!("WP-3: set content, clear value")
+    /// Replace the content, CLEARING the value (§9: content OR value, never both).
+    pub fn accept_content(&mut self, content: String) {
+        self.result.content = content;
+        self.result.value = None;
     }
-    /// Replace the value, CLEARING the content. WP-3.
-    pub fn accept_value(&mut self, _value: serde_json::Value) {
-        todo!("WP-3: set value, clear content")
+    /// Replace the value, CLEARING the content (§9: content OR value, never both).
+    pub fn accept_value(&mut self, value: serde_json::Value) {
+        self.result.value = Some(value);
+        self.result.content = String::new();
     }
-    /// Attach a context without touching content or value. WP-3.
-    pub fn attach(&mut self, _ctx: AttachedContext) {
-        todo!("WP-3: push onto attached")
+    /// Attach a context without touching content or value.
+    pub fn attach(&mut self, ctx: AttachedContext) {
+        self.result.attached.push(ctx);
     }
-    /// Turn the result into a VALUELESS failure with [`crate::FailureClass::Blocked`]. WP-3.
-    pub fn block(&mut self, _reason: impl Into<String>) {
-        todo!("WP-3: blocked failure, no value, no content")
+    /// Turn the result into a VALUELESS failure with [`crate::FailureClass::Blocked`]. The
+    /// feedback becomes the failure message the model sees, and the value is dropped: a blocked
+    /// call must not leave a usable result behind.
+    pub fn block(&mut self, reason: impl Into<String>) {
+        let reason = reason.into();
+        self.result.ok = false;
+        self.result.value = None;
+        self.result.content = reason.clone();
+        self.result.concludes_wake = false;
+        self.result.failure = Some(ToolFailure {
+            kind: crate::tool::FailureClass::Blocked,
+            message: reason,
+        });
     }
 }
 

@@ -27,10 +27,22 @@ pub struct PolicyConfig {
 
 /// The decision, as a pure function of the config and the request's facts — no waterfall, no
 /// clock, so V6's four cases are ordinary unit tests.
-///
-/// WP-5.
-pub fn choose(_cfg: &PolicyConfig, _call: &RequestCall) -> String {
-    todo!("WP-5: answers_andrey => sol (override ignored), else model_override or terra")
+pub fn choose(cfg: &PolicyConfig, call: &RequestCall) -> String {
+    if call.facts.answers_andrey {
+        // §12: sol is not overridable. `model_override` is read and DISCARDED, not consulted.
+        return cfg.sol.clone();
+    }
+    call.facts
+        .model_override
+        .clone()
+        .unwrap_or_else(|| cfg.terra.clone())
+}
+
+/// Whether the choice actually applied `agents.model_override`. The invariant records this
+/// rather than "the facts carried one": a resident agent may have an override and still be
+/// messaged by Andrey, and the honest statement is that it never reached the request.
+pub fn applied_override(_cfg: &PolicyConfig, call: &RequestCall) -> bool {
+    !call.facts.answers_andrey && call.facts.model_override.is_some()
 }
 
 /// The consumer row.
@@ -54,8 +66,44 @@ impl Plugin for ModelPolicyPlugin {
         Ok(())
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-5: a PREPEND listener on agent/request that sets call.model = choose(..)")
+    async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        invariant::set_configured(&cfg.sol, &cfg.terra);
+
+        // Per fiber LIFE, not per apply: a reload keeps the `FiberUid`, so this fiber's
+        // observations are forgotten when it unloads (§0.3).
+        let mine = ctx.fiber_uid();
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || invariant::forget(mine));
+            Ok(())
+        })
+        .await?;
+
+        // PREPEND (§12): the policy decides FIRST, so a later listener on the same waterfall is
+        // free to refine the call config it was handed. Nothing else in the tree writes
+        // `call.model`.
+        let opts = bough_kernel::ListenerOpts {
+            prepend: true,
+            ..Default::default()
+        };
+        ctx.on_waterfall_with::<bough_plugin_llm::AgentRequest, _, _>(
+            opts,
+            move |mut value: RequestCall, next| {
+                let cfg = cfg.clone();
+                async move {
+                    value.call.model = choose(&cfg, &value);
+                    invariant::record(invariant::Obs {
+                        fiber: mine,
+                        wake_kind: value.facts.wake_kind,
+                        answers_andrey: value.facts.answers_andrey,
+                        chose: value.call.model.clone(),
+                        had_override: applied_override(&cfg, &value),
+                    });
+                    next.run(value).await
+                }
+            },
+        )
+        .await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

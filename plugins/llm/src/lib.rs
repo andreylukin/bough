@@ -47,61 +47,230 @@ pub struct LlmHandle(pub Arc<LlmInner>);
 /// The seam's live state: the adapter map. Private by construction — every mutation goes through
 /// [`LlmHandle::adapter`], which is an effect (§0.2).
 pub struct LlmInner {
-    /// WP-1 fills this in. Named so the shape of the state is visible in the scaffold.
-    _adapters: parking_lot::Mutex<Vec<AdapterSpec>>,
+    adapters: parking_lot::Mutex<Vec<AdapterSpec>>,
+    /// The fiber the recorder attributes observations to, so a reload starts clean.
+    fiber: parking_lot::Mutex<bough_kernel::FiberUid>,
 }
 
 impl LlmHandle {
-    /// An empty seam. WP-1.
+    /// An empty seam.
     pub fn new() -> LlmHandle {
         LlmHandle(Arc::new(LlmInner {
-            _adapters: parking_lot::Mutex::new(Vec::new()),
+            adapters: parking_lot::Mutex::new(Vec::new()),
+            fiber: parking_lot::Mutex::new(bough_kernel::FiberUid(0)),
         }))
     }
 
     /// Register an adapter. Registration is an effect: unloading the provider row removes it.
-    ///
-    /// WP-1.
     pub async fn adapter(
         &self,
-        _ctx: &Context,
-        _spec: AdapterSpec,
+        ctx: &Context,
+        spec: AdapterSpec,
     ) -> Result<EffectHandle, PluginError> {
-        todo!("WP-1: register the adapter as an effect of the calling fiber")
+        let inner = self.0.clone();
+        let name = spec.name.clone();
+        ctx.effect(move |e| async move {
+            inner.adapters.lock().push(spec);
+            let inner2 = inner.clone();
+            e.defer_sync(move || {
+                inner2.adapters.lock().retain(|s| s.name != name);
+            });
+            Ok(())
+        })
+        .await
     }
 
     /// Explicit `resolve(request) -> Spec` (§0.2): most specific match wins; a tie is
     /// [`LlmSeamError::AmbiguousAdapter`] naming both.
-    ///
-    /// WP-1.
-    pub fn resolve(&self, _model: &str) -> Result<Arc<dyn LlmAdapter>, LlmSeamError> {
-        todo!("WP-1: most-specific-wins adapter resolution")
+    pub fn resolve(&self, model: &str) -> Result<Arc<dyn LlmAdapter>, LlmSeamError> {
+        let adapters = self.0.adapters.lock();
+        let mut claimants: Vec<&AdapterSpec> = adapters
+            .iter()
+            .filter(|s| s.matches.claims(model))
+            .collect();
+        // Deterministic: by specificity, then by name, so the tie report names the same two
+        // adapters whatever order the rows activated in.
+        claimants.sort_by(|a, b| {
+            b.matches
+                .specificity()
+                .cmp(&a.matches.specificity())
+                .then_with(|| a.name.as_str().cmp(b.name.as_str()))
+        });
+        match claimants.as_slice() {
+            [] => Err(LlmSeamError::NoAdapter {
+                model: model.to_string(),
+                registered: adapters.iter().map(|s| s.name.to_string()).collect(),
+            }),
+            [only] => Ok(only.adapter.clone()),
+            [a, b, ..] if a.matches.specificity() == b.matches.specificity() => {
+                Err(LlmSeamError::AmbiguousAdapter {
+                    model: model.to_string(),
+                    a: a.name.clone(),
+                    b: b.name.clone(),
+                })
+            }
+            [best, ..] => Ok(best.adapter.clone()),
+        }
     }
 
     /// Run the `llm/stream` waterfall and hand back the stream. A missing adapter and an adapter
     /// failure are both `Chunk::Failed`, so no caller branches on two failure shapes.
     ///
-    /// WP-1.
+    /// The resolved adapter is the chain's INNERMOST hop, and it gets there the only way the
+    /// kernel allows: a listener registered for the duration of this one call, which is therefore
+    /// registered last and runs last. That is what makes "a wrapper that returns without calling
+    /// `next` and without filling the slot" DISTINGUISHABLE from "nobody wrapped" — the slot is
+    /// still empty, and an empty slot is a `Failed` chunk rather than a hang.
     pub async fn stream(
         &self,
-        _ctx: &Context,
-        _req: Arc<LlmRequest>,
-        _cancel: CancellationToken,
+        ctx: &Context,
+        req: Arc<LlmRequest>,
+        cancel: CancellationToken,
     ) -> LlmStream {
-        todo!("WP-1: waterfall llm/stream, innermost hop = resolve(model).start(..)")
+        let inner = self.0.clone();
+        let mine = req.clone();
+        let hop = ctx
+            .on_waterfall::<LlmStreamEvent, _, _>(move |c: StreamCall, next| {
+                let inner = inner.clone();
+                let mine = mine.clone();
+                async move {
+                    // Another call's dispatch: delegate, so its own innermost hop serves it.
+                    if !Arc::ptr_eq(&c.request, &mine) {
+                        return next.run(c).await;
+                    }
+                    match inner_resolve(&inner, &c.request.model) {
+                        Ok(adapter) => c
+                            .stream
+                            .put(adapter.start(c.request.clone(), c.cancel.clone()).await),
+                        Err(e) => c.stream.put(failed_stream(seam_failure(&e))),
+                    }
+                    c
+                }
+            })
+            .await;
+
+        let call = StreamCall {
+            request: req.clone(),
+            cancel,
+            stream: StreamSlot::empty(),
+        };
+        let out = match &hop {
+            Ok(_) => ctx.waterfall::<LlmStreamEvent>(call).await,
+            // The seam could not register its own hop; the request cannot be served, and saying so
+            // as a chunk keeps the one failure shape.
+            Err(e) => {
+                let msg = e.to_string();
+                let c = call;
+                c.stream.put(failed_stream(LlmFailure {
+                    kind: FailureKind::Other,
+                    message: msg,
+                    retryable: false,
+                    status: None,
+                    adapter: AdapterName::new(PLUGIN_NAME),
+                }));
+                c
+            }
+        };
+        if let Ok(h) = hop {
+            h.dispose().await;
+        }
+
+        let stream = out.stream.take().unwrap_or_else(|| {
+            failed_stream(LlmFailure {
+                kind: FailureKind::BadRequest,
+                message: format!(
+                    "an `llm/stream` listener short-circuited the chain for model `{}` without \
+                     supplying a stream; no model round was made",
+                    req.model
+                ),
+                retryable: false,
+                status: None,
+                adapter: AdapterName::new(PLUGIN_NAME),
+            })
+        });
+        // Every stream the seam hands out is watched, so the invariant judges what CONSUMERS saw
+        // and not what an adapter meant to produce.
+        watch(stream, *self.0.fiber.lock(), req.digest())
     }
 
     /// Every registered adapter, for `--dump-config` and for error messages.
-    ///
-    /// WP-1.
     pub fn adapters(&self) -> Vec<(AdapterName, ModelMatch)> {
-        todo!("WP-1: list the registered adapters")
+        self.0
+            .adapters
+            .lock()
+            .iter()
+            .map(|s| (s.name.clone(), s.matches.clone()))
+            .collect()
     }
 }
 
 impl Default for LlmHandle {
     fn default() -> Self {
         LlmHandle::new()
+    }
+}
+
+fn inner_resolve(inner: &Arc<LlmInner>, model: &str) -> Result<Arc<dyn LlmAdapter>, LlmSeamError> {
+    LlmHandle(inner.clone()).resolve(model)
+}
+
+/// §12: "a missing adapter is a chunk too, so no caller has to branch on two failure shapes."
+fn seam_failure(e: &LlmSeamError) -> LlmFailure {
+    LlmFailure {
+        kind: FailureKind::BadRequest,
+        message: e.to_string(),
+        retryable: false,
+        status: None,
+        adapter: AdapterName::new(PLUGIN_NAME),
+    }
+}
+
+/// A one-chunk stream carrying a terminal failure.
+pub fn failed_stream(failure: LlmFailure) -> LlmStream {
+    Box::pin(futures::stream::once(async move { Chunk::Failed(failure) }))
+}
+
+/// Wrap a stream so the seam's invariant sees the chunk shape a CONSUMER actually received.
+///
+/// The observation is filed when the wrapped stream is dropped, which is the only moment at which
+/// "nothing followed the terminal chunk" is knowable. A stream abandoned before it terminated
+/// (a cancelled wake) files nothing: the invariant is about what a producer emitted, and a
+/// consumer that stopped listening has not caught it doing anything.
+fn watch(inner: LlmStream, fiber: bough_kernel::FiberUid, request: String) -> LlmStream {
+    use futures::StreamExt;
+    let mut guard = Recorder {
+        obs: invariant::Obs {
+            fiber,
+            request,
+            terminals: 0,
+            after_terminal: 0,
+        },
+    };
+    Box::pin(inner.map(move |chunk| {
+        // Capture the WHOLE guard, not its fields: edition-2021 disjoint capture would otherwise
+        // split it and its `Drop` would never file the observation.
+        let guard = &mut guard;
+        if guard.obs.terminals > 0 {
+            guard.obs.after_terminal += 1;
+        }
+        if chunk.is_terminal() {
+            guard.obs.terminals += 1;
+        }
+        chunk
+    }))
+}
+
+/// Files the observation when the wrapped stream is dropped, exactly once.
+struct Recorder {
+    obs: invariant::Obs,
+}
+
+impl Drop for Recorder {
+    fn drop(&mut self) {
+        if self.obs.terminals == 0 && self.obs.after_terminal == 0 {
+            return;
+        }
+        invariant::record(self.obs.clone());
     }
 }
 
@@ -118,8 +287,20 @@ impl Plugin for LlmPlugin {
     const NAME: &'static str = PLUGIN_NAME;
     type Config = LlmConfig;
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-1: provide::<Llm>(LlmHandle::new()) and record the stream for the invariant")
+    async fn apply(ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let handle = LlmHandle::new();
+        *handle.0.fiber.lock() = ctx.fiber_uid();
+        ctx.provide::<Llm>(handle)
+            .await
+            .map_err(|e| PluginError::new(ctx.entry_id().clone(), e))?;
+        // A reload keeps the FiberUid, so the record is cleared rather than accumulated.
+        let fiber = ctx.fiber_uid();
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || invariant::forget(fiber));
+            Ok(())
+        })
+        .await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

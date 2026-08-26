@@ -69,8 +69,16 @@ impl KernelCore {
     }
 
     /// A fresh fiber identity. A rebuild takes a new one; a reload of the same row does not.
+    /// Mint a fiber uid.
+    ///
+    /// PROCESS-global, not per-core: a plugin's invariant recorder is a `static` keyed by
+    /// `FiberUid`, and a second `Kernel` in the same process (every integration test binary has
+    /// several) would otherwise re-mint uid 1 and inherit the previous tree's observations. The
+    /// per-core counter stays as the fallback for a core built without the global.
     pub fn new_fiber_uid(&self) -> FiberUid {
-        FiberUid(self.next_fiber.fetch_add(1, Ordering::SeqCst))
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let _ = self.next_fiber.fetch_add(1, Ordering::SeqCst);
+        FiberUid(NEXT.fetch_add(1, Ordering::SeqCst))
     }
 
     /// This fiber's accumulator, creating it on first use. `None` once the fiber has been

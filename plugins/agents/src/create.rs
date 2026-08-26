@@ -5,13 +5,15 @@
 
 use std::sync::Arc;
 
-use bough_kernel::ScopeKey;
+use bough_kernel::{EffectHandle, ScopeKey};
 use bough_plugin_ledger::{AgentName, TrajId};
 use chrono::{DateTime, Utc};
 
-use crate::agent::{Agent, AgentKind};
+use crate::agent::{Agent, AgentKind, CancelCause};
 use crate::error::AgentError;
+use crate::events::AgentDisposed;
 use crate::mail::{Message, Target};
+use crate::{trace, AgentsHandle};
 
 /// A creation request.
 pub struct CreateAgent {
@@ -25,6 +27,21 @@ pub struct CreateAgent {
     /// Mail the agent starts with, spliced inside the same transaction.
     pub seed: Vec<(Message, Target)>,
     pub at: DateTime<Utc>,
+}
+
+impl CreateAgent {
+    /// The minimal request: a resident agent on `traj`, default scope, no setup, no seed.
+    pub fn resident(name: AgentName, traj: TrajId, at: DateTime<Utc>) -> CreateAgent {
+        CreateAgent {
+            name,
+            traj,
+            kind: AgentKind::Resident,
+            scope: None,
+            setup: None,
+            seed: Vec::new(),
+            at,
+        }
+    }
 }
 
 /// What a [`CreateAgent`] resolves to before anything is created (§0.2: defaulting is explicit).
@@ -52,20 +69,49 @@ pub trait AgentSetup: Send + Sync + 'static {
 
 /// The teardown capability of §2. Deliberately not `Clone`.
 pub struct AgentDisposer {
-    /// WP-2 fills this in.
-    pub(crate) _agent: Agent,
+    pub(crate) agent: Agent,
+    pub(crate) scope: EffectHandle,
+    pub(crate) agents: AgentsHandle,
 }
 
 impl AgentDisposer {
     /// Teardown order, normative: stop and drain → unwind scope → detach agent → detach session.
-    ///
-    /// WP-2.
     pub async fn dispose(self) {
-        todo!("WP-2: the four-stage teardown, in order")
+        let id = self.agent.id().clone();
+
+        // 1. stop and drain: no new wake starts, the in-flight wake ends.
+        if let Some(driver) = self.agent.driver() {
+            driver.stop().await;
+        }
+        trace::push(&id, "stop");
+
+        // 2. unwind the scope: everything a plugin registered through `agent.ctx()` goes.
+        self.scope.dispose().await;
+        trace::push(&id, "scope");
+
+        // 3. detach the agent: out of the registry, terminally cancelled. `Disposed` never
+        //    latches a pending wake (§2), which `Agent::cancel` enforces.
+        self.agents.detach(&id);
+        self.agent.cancel(CancelCause::Disposed, false).await;
+        trace::push(&id, "agent");
+
+        // 4. detach the session: the driver slot is released and the live queues are dropped.
+        //    The DURABLE chain is untouched — an agent's trajectory outlives its handle.
+        *self.agent.0.driver.lock() = None;
+        self.agent.inbox().clear_live();
+        trace::push(&id, "session");
+
+        self.agent.0.base.emit::<AgentDisposed>(id);
     }
 
-    /// The agent this disposer owns. WP-2.
+    /// The agent this disposer owns.
     pub fn agent(&self) -> &Agent {
-        &self._agent
+        &self.agent
+    }
+}
+
+impl std::fmt::Debug for AgentDisposer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AgentDisposer({:?})", self.agent.name())
     }
 }

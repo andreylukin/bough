@@ -20,5 +20,12 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
 
+parking_lot = { workspace = true }
+uuid = { workspace = true }
+bough-plugin-llm = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
+bough-plugin-ledger-memory = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }

@@ -1572,11 +1572,17 @@ pub async fn connected_writes_nothing(f: &Fixture) {
         .expect("put agent");
     let before = f.ledger.0.row_hashes(HashScope::All).await.expect("hashes");
     let head = f.ledger.0.head_seq(&own).await.expect("head");
-    let seen_before = f.tap.seen().len();
+    // The kernel dispatches `emit` on a SPAWNED task it never awaits (Phase 0's standing
+    // deferral), so the tap for the `put_agent` above may not have been counted yet. Sample only
+    // once the count has stopped moving, or this case races the emit it is not about.
+    let seen_before = settled_tap_len(&f.tap).await;
 
     for _ in 0..3 {
         let _ = f.ledger.0.connected(&name).await.expect("connected");
     }
+    // Same reason on this side: give a broadcast that SHOULD NOT exist the same chance to land as
+    // one that should, so a green here means "nothing was emitted", not "nothing arrived yet".
+    let seen_after = settled_tap_len(&f.tap).await;
     let after = f.ledger.0.row_hashes(HashScope::All).await.expect("hashes");
     assert_eq!(
         before
@@ -1591,10 +1597,33 @@ pub async fn connected_writes_nothing(f: &Fixture) {
     );
     assert_eq!(f.ledger.0.head_seq(&own).await.expect("head"), head);
     assert_eq!(
-        f.tap.seen().len(),
-        seen_before,
+        seen_after, seen_before,
         "connected() broadcast a ledger/step"
     );
+}
+
+/// The tap's length once it has stopped moving: three consecutive equal reads 20ms apart, with a
+/// 2s ceiling so a genuinely chatty provider fails loudly instead of hanging.
+async fn settled_tap_len(tap: &EventTap) -> usize {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut last = tap.seen().len();
+    let mut stable = 0;
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let now = tap.seen().len();
+        if now == last {
+            stable += 1;
+            if stable == 3 {
+                return now;
+            }
+        } else {
+            stable = 0;
+            last = now;
+        }
+        if std::time::Instant::now() > deadline {
+            return now;
+        }
+    }
 }
 
 /// Conformance case: `search_finds_a_step_in_another_trajectory`.
@@ -1841,7 +1870,9 @@ pub async fn an_action_intent_then_done_updates_the_journal_row(f: &Fixture) {
         .0
         .action_intent(NewAction {
             id: Some(id.clone()),
+            traj: traj("t1"),
             wake: wake("w1"),
+            target: "o/r#1".to_string(),
             idem_key: IdemKey::new("k1"),
             kind: "gh:comment".to_string(),
             payload: serde_json::json!({ "body": "hi" }),
@@ -1858,6 +1889,7 @@ pub async fn an_action_intent_then_done_updates_the_journal_row(f: &Fixture) {
             &id,
             ActionStatus::Done,
             serde_json::json!({ "url": "https://x/1" }),
+            at(1),
         )
         .await
         .expect("done");
@@ -1876,7 +1908,40 @@ pub async fn an_action_intent_then_done_updates_the_journal_row(f: &Fixture) {
         rows[0].result,
         Some(serde_json::json!({ "url": "https://x/1" }))
     );
-    assert!(rows[0].done_at.is_some());
+    assert_eq!(
+        rows[0].done_at,
+        Some(at(1)),
+        "the clock is injected, not read"
+    );
+
+    // §2.7 item 4: both halves are STEPS as well as journal rows, intent before done, and the
+    // done step CITES the intent step it closes.
+    let steps = f
+        .ledger
+        .0
+        .steps(&StepQuery {
+            kinds: vec![StepType::new("action/intent"), StepType::new("action/done")],
+            ..Default::default()
+        })
+        .await
+        .expect("query");
+    let kinds: Vec<&str> = steps.iter().map(|s| s.kind.as_str()).collect();
+    assert_eq!(
+        kinds,
+        vec!["action/intent", "action/done"],
+        "intent is appended before done"
+    );
+    assert_eq!(steps[0].class, Class::Thought);
+    assert_eq!(steps[1].class, Class::Evidence);
+    assert_eq!(
+        steps[0].body.get("target").and_then(|v| v.as_str()),
+        Some("o/r#1")
+    );
+    assert_eq!(
+        steps[1].cites.first().map(|c| c.r#ref.to_string()),
+        Some(format!("step:{}", steps[0].id)),
+        "the done step cites the intent step"
+    );
     // The journal is not the ledger of record: `actions` is a mutable status row (P1-D11), and
     // filtering by status is how Phase 2 will find the unfinished ones.
     let by_status = f

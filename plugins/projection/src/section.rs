@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use bough_plugin_ledger::{AgentName, Connected, LedgerHandle, RollupId, StepId, WakeId};
+use bough_plugin_ledger::{AgentName, Connected, LedgerHandle, RollupId, Seq, StepId, WakeId};
 use chrono::{DateTime, Utc};
 
 use crate::error::ProjectionError;
@@ -110,6 +110,24 @@ pub struct SectionRequest {
     pub at: DateTime<Utc>,
     pub ledger: LedgerHandle,
     pub connected: Arc<Connected>,
+    /// The ledger high-water to render AT (§2.7 item 3). `None` ⇒ now.
+    ///
+    /// A contributed section that reads the ledger MUST honour it, or re-assembling a past
+    /// request stops reproducing that request the moment anyone contributes a section.
+    pub as_of: Option<Seq>,
+}
+
+impl SectionRequest {
+    /// The `StepQuery::before` bound for this request: exclusive, so `as_of` itself is included.
+    /// `None` when the request has no `as_of` and every committed row is visible.
+    pub fn before(&self) -> Option<Seq> {
+        self.as_of.map(|s| Seq(s.0 + 1))
+    }
+
+    /// Whether a row at `seq` is visible at this request's `as_of`.
+    pub fn visible(&self, seq: Seq) -> bool {
+        self.as_of.map(|a| seq <= a).unwrap_or(true)
+    }
 }
 
 /// What a section renderer returns.

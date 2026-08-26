@@ -127,8 +127,22 @@ fn sigint_tears_down_before_exit() {
         .spawn()
         .expect("spawn bough");
 
-    // Give it time to compose, mount and quiesce before signalling.
-    std::thread::sleep(Duration::from_millis(1500));
+    // Wait for the tree to be UP before signalling, rather than sleeping a guessed interval: the
+    // `ledger` row creates `$BOUGH_HOME/ledger.db` when it activates, so its appearance is a real
+    // readiness signal. A fixed sleep raced the process's own start-up whenever the machine was
+    // loaded by the rest of the suite.
+    let ready = home.path().join("ledger.db");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !ready.is_file() {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "a good tree must keep running until it is signalled"
+        );
+        assert!(Instant::now() < deadline, "the tree never came up");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // The ledger row is up; give the rest of the tree a moment to quiesce.
+    std::thread::sleep(Duration::from_millis(250));
     assert!(
         child.try_wait().unwrap().is_none(),
         "a good tree must keep running until it is signalled"

@@ -11,14 +11,21 @@ pub mod preempt;
 pub mod repair;
 pub mod request;
 pub mod scope;
+pub mod testing;
 pub mod transcript;
 pub mod wake;
 
 use std::sync::Arc;
 
 use bough_kernel::{Context, InvariantSpec, Plugin, PluginError};
+use bough_plugin_agents::Agents;
+use bough_plugin_ledger::Ledger;
+use bough_plugin_llm::Llm;
+use bough_plugin_projection::Projection;
+use bough_plugin_tools::Tools;
 
 pub use driver::{LoopDriver, LoopFactory};
+pub use wake::LoopDeps;
 
 /// The catalog name of this row.
 pub const PLUGIN_NAME: &str = "agent-loop";
@@ -54,8 +61,51 @@ impl Plugin for AgentLoopPlugin {
         bough_kernel::Inject::required(["agents", "ledger", "projection", "llm", "tools"])
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-4: crash repair (if configured), then agents.set_factory(LoopFactory::new(cfg))")
+    async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let err = |e: anyhow::Error| PluginError::new(entry.clone(), e);
+        let ledger = ctx.get::<Ledger>().map_err(|e| err(e.into()))?;
+        let projection = ctx.get::<Projection>().map_err(|e| err(e.into()))?;
+        let llm = ctx.get::<Llm>().map_err(|e| err(e.into()))?;
+        let tools = ctx.get::<Tools>().map_err(|e| err(e.into()))?;
+        let agents = ctx.get::<Agents>().map_err(|e| err(e.into()))?;
+
+        // Crash repair BEFORE the factory is published: an agent must never resume onto a
+        // trajectory whose last wake is still open (§5).
+        if cfg.repair_on_boot {
+            repair::run(&ledger, chrono::Utc::now())
+                .await
+                .map_err(|e| err(anyhow::anyhow!(e)))?;
+        }
+
+        let deps = LoopDeps {
+            ctx: ctx.clone(),
+            ledger: (*ledger).clone(),
+            projection: (*projection).clone(),
+            llm: (*llm).clone(),
+            tools: (*tools).clone(),
+            composition: ctx
+                .kernel()
+                .and_then(|k| k.composition())
+                .map(|c| c.fingerprint.as_str().to_string())
+                .unwrap_or_default(),
+            cfg: cfg.clone(),
+        };
+
+        // The recorded requests are this fiber's: a reload starts clean, so the invariant never
+        // reports a request a previous incarnation sent.
+        let fiber = ctx.fiber_uid();
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || invariant::forget(fiber));
+            Ok(())
+        })
+        .await?;
+
+        agents
+            .set_factory(&ctx, Arc::new(LoopFactory::new(cfg, deps)))
+            .await
+            .map_err(|e| err(anyhow::anyhow!(e)))?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

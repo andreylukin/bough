@@ -188,13 +188,30 @@ dependencies = [
  "anyhow",
  "bough-kernel",
  "bough-llm",
+ "bough-plugin-about-line",
+ "bough-plugin-actions",
+ "bough-plugin-agent-loop",
+ "bough-plugin-agent-loop-scripted",
+ "bough-plugin-agents",
+ "bough-plugin-exec-headless",
  "bough-plugin-hello",
  "bough-plugin-ledger",
  "bough-plugin-ledger-memory",
  "bough-plugin-ledger-sqlite",
+ "bough-plugin-llm",
+ "bough-plugin-llm-anthropic",
+ "bough-plugin-llm-replay",
+ "bough-plugin-llm-retry",
+ "bough-plugin-model-policy",
  "bough-plugin-projection",
  "bough-plugin-projection-assembler",
  "bough-plugin-projection-probe",
+ "bough-plugin-tool-actions",
+ "bough-plugin-tool-workers",
+ "bough-plugin-tools",
+ "bough-plugin-tools-baseline",
+ "bough-plugin-worker-spawn",
+ "bough-plugin-workers",
  "bough-util",
  "chrono",
  "clap",
@@ -259,6 +276,7 @@ dependencies = [
  "bough-kernel",
  "bough-plugin-agents",
  "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
  "bough-plugin-projection",
  "chrono",
  "inventory",
@@ -267,6 +285,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -277,6 +296,7 @@ dependencies = [
  "async-trait",
  "bough-kernel",
  "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
  "chrono",
  "inventory",
  "parking_lot",
@@ -285,6 +305,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -299,6 +321,7 @@ dependencies = [
  "bough-plugin-ledger-memory",
  "bough-plugin-llm",
  "bough-plugin-projection",
+ "bough-plugin-projection-assembler",
  "bough-plugin-tools",
  "bough-util",
  "chrono",
@@ -311,6 +334,8 @@ dependencies = [
  "sha2",
  "tokio",
  "tokio-util",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -323,6 +348,7 @@ dependencies = [
  "bough-plugin-agent-loop",
  "bough-plugin-agents",
  "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
  "bough-plugin-llm",
  "bough-plugin-projection",
  "bough-plugin-tools",
@@ -334,7 +360,11 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
+ "thiserror",
  "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -358,6 +388,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "uuid",
 ]
 
 [[package]]
@@ -375,6 +406,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -512,6 +544,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "tempfile",
  "tokio",
  "tokio-util",
 ]
@@ -524,6 +557,7 @@ dependencies = [
  "async-trait",
  "backon",
  "bough-kernel",
+ "bough-plugin-ledger",
  "bough-plugin-llm",
  "inventory",
  "schemars",
@@ -615,11 +649,16 @@ dependencies = [
  "async-trait",
  "bough-kernel",
  "bough-plugin-actions",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
  "bough-plugin-tools",
+ "chrono",
  "inventory",
  "schemars",
  "serde",
  "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -629,8 +668,11 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
  "bough-plugin-tools",
  "bough-plugin-workers",
+ "chrono",
  "inventory",
  "schemars",
  "serde",
@@ -659,6 +701,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -690,15 +733,20 @@ dependencies = [
  "bough-kernel",
  "bough-plugin-agents",
  "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-llm",
  "bough-plugin-tools",
  "bough-plugin-workers",
  "chrono",
  "inventory",
+ "parking_lot",
  "schemars",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]
@@ -724,6 +772,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+ "uuid",
 ]
 
 [[package]]

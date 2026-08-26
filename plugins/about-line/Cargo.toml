@@ -18,6 +18,8 @@ inventory = { workspace = true }
 parking_lot = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+bough-plugin-ledger-memory = { workspace = true }

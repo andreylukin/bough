@@ -68,6 +68,10 @@ pub struct StepStart {
 pub enum StepOutcome {
     Ok,
     Error,
+    /// §2.9 / P2-D15: the step was cut short by a joining Andrey message before its first
+    /// streamed token and will be re-run. The honest outcome of a restart, so a reader can tell
+    /// it from a failure.
+    Restarted,
 }
 
 /// `step/end` — Thought.
@@ -83,6 +87,14 @@ pub struct StepEnd {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct RequestHeader {
     pub prompt_ver: String,
+    /// The ledger high-water the projection was assembled at (P2-D20). Re-assembling with
+    /// `as_of = this` reproduces the exact bytes the model was shown, however much has been
+    /// appended since.
+    pub as_of: Seq,
+    /// The token budget the projection was assembled under.
+    pub budget: usize,
+    /// sha256 of `Assembled::to_text()`, hex.
+    pub projection_digest: String,
     /// The projection sections that made up the context, in rendered order.
     pub sections: Vec<String>,
     pub tools: Vec<String>,
@@ -229,4 +241,51 @@ pub struct ActionDone {
 pub struct ForkEndSeed {
     pub parent: TrajId,
     pub at_seq: Seq,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// §2.7 item 1: the three new `RequestHeader` fields are what make V4 a reconstruction rather
+    /// than a hash comparison, so they must survive a round trip intact.
+    #[test]
+    fn request_header_round_trips_its_reconstruction_anchor() {
+        let h = RequestHeader {
+            prompt_ver: "p1".into(),
+            as_of: Seq(42),
+            budget: 8000,
+            projection_digest: "abc123".into(),
+            sections: vec!["identity".into(), "tail".into()],
+            tools: vec!["bash".into()],
+            call: serde_json::json!({ "model": "claude-haiku-4-5-20251001" }),
+            composition: "fp".into(),
+        };
+        let text = serde_json::to_string(&h).expect("serialises");
+        assert_eq!(
+            serde_json::from_str::<RequestHeader>(&text).expect("parses"),
+            h
+        );
+    }
+
+    /// The addition is to a BODY, not to the envelope: `LEDGER_FORMAT_VERSION` and
+    /// `envelope_fingerprint()` must not move (§3, §2.7 item 1).
+    #[test]
+    fn the_new_fields_do_not_move_the_envelope() {
+        assert_eq!(crate::id::LEDGER_FORMAT_VERSION, 1);
+        assert_eq!(
+            crate::id::envelope_fingerprint(),
+            "824283423bd318f3864d3c9af1446268652aad0886c8e8938c92b8b7ccd89f92"
+        );
+    }
+
+    /// §2.7 item 2: `restarted` is a spelling of its own, distinguishable from `error`.
+    #[test]
+    fn a_restarted_step_is_its_own_outcome() {
+        assert_eq!(
+            serde_json::to_string(&StepOutcome::Restarted).unwrap(),
+            "\"restarted\""
+        );
+        assert_ne!(StepOutcome::Restarted, StepOutcome::Error);
+    }
 }

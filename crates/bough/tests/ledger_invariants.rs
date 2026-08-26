@@ -227,6 +227,7 @@ async fn a_projection_citing_a_missing_step_is_reported() {
     handle
         .0
         .assemble(&AssembleRequest {
+            as_of: None,
             agent: bough_plugin_ledger::AgentName::new("a1"),
             wake: None,
             at: chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")

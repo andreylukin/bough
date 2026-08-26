@@ -15,7 +15,27 @@ use crate::cli::{BootError, Cli};
 use crate::compose::compose_plan;
 
 /// Compose, mount, quiesce, assert, then either run or exit.
-pub async fn boot(cli: Cli) -> Result<ExitCode, BootError> {
+pub async fn boot(mut cli: Cli) -> Result<ExitCode, BootError> {
+    // A subcommand SELECTS a composition; it never branches the boot path (§0.1 item 2).
+    crate::exec::force_profile(&mut cli);
+    // The SIGINT handler is installed BEFORE anything is composed. `tokio::signal::ctrl_c()`
+    // registers on its first poll, so awaiting it only after the tree is mounted leaves a window
+    // — the whole of boot — in which SIGINT hits the default handler and the process dies without
+    // tearing down. Arming it here closes that window: a signal during boot is remembered and
+    // acted on the moment the tree is up.
+    let interrupted = Arc::new(tokio::sync::Notify::new());
+    {
+        let armed = Arc::clone(&interrupted);
+        tokio::spawn(async move {
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                eprintln!("bough: could not listen for SIGINT: {e}");
+            }
+            // Wake a waiter if boot has already reached the select, and leave a permit if it has
+            // not: a signal that arrives mid-boot must not be dropped.
+            armed.notify_waiters();
+            armed.notify_one();
+        });
+    }
     let cli = Arc::new(cli);
     let catalog = Catalog::from_inventory()?;
     let (profile, composition) = compose_plan(&cli, &catalog)?;
@@ -69,16 +89,18 @@ pub async fn boot(cli: Cli) -> Result<ExitCode, BootError> {
         ))
     };
 
-    // Phase 0 has no surface to run: the launcher owns composition and teardown, and nothing else.
-    // A surface is a row, and it keeps the process alive by holding the runtime itself.
-    if let Err(e) = tokio::signal::ctrl_c().await {
-        eprintln!("bough: could not listen for SIGINT: {e}");
-    }
+    // The launcher owns composition and teardown, and nothing else. A surface is a ROW, and it
+    // keeps the process alive by holding the runtime; the two ways out are SIGINT and a row
+    // asking through `Kernel::request_exit` (P2-D23). Both tear down first.
+    let code = tokio::select! {
+        code = kernel.exited() => code,
+        _ = interrupted.notified() => 0,
+    };
     if let Some(w) = watch {
         w.stop().await;
     }
     kernel.shutdown().await;
-    Ok(ExitCode::SUCCESS)
+    Ok(ExitCode::from(code))
 }
 
 /// Print composition warnings. Shared by boot and by the live watch path, so an absent row id is
@@ -129,6 +151,9 @@ pub fn describe_unresolved(s: &TreeSnapshot) -> String {
             "  {} (plugin `{}`) is {:?}; unmet: {}\n",
             r.id, plugin, r.state, unmet
         ));
+        if let Some(e) = &r.error {
+            out.push_str(&format!("      error: {e}\n"));
+        }
     }
     out
 }
@@ -148,6 +173,7 @@ mod tests {
             state,
             disabled,
             unmet: unmet.iter().map(|s| s.to_string()).collect(),
+            error: None,
             provides: Vec::new(),
             realms: BTreeMap::new(),
             children: Vec::new(),

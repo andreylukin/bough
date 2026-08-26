@@ -258,6 +258,7 @@ async fn run(case: &str, which: Which) -> String {
     }
     let out = assembler
         .assemble(&AssembleRequest {
+            as_of: None,
             agent: agent(),
             wake: None,
             at: at(),
@@ -411,7 +412,133 @@ async fn seed(case: &str, h: &Harness) -> (AssemblerConfig, Vec<SectionSpec>) {
             h.note("s1", "w1", "one").await;
             (cfg(100_000), vec![])
         }
+        // §2.7 item 3: the ledger this case reproduces a PAST assembly of.
+        "as_of" => {
+            h.put_agent(None).await;
+            h.pin("p1", "the standing pin", "still standing", &[]).await;
+            h.note("s1", "w1", "one").await;
+            h.note("s2", "w1", "two").await;
+            h.mail("m1", "ordinary", "andrey", "the old mail").await;
+            (cfg(100_000), vec![spec_at_seq()])
+        }
         other => panic!("unknown golden case `{other}`"),
+    }
+}
+
+/// Steps appended AFTER the anchor: a pin, two notes and a piece of mail, one of each kind the
+/// bands read, so a band that ignores `as_of` shows up in the diff.
+async fn seed_after_the_anchor(h: &Harness) {
+    h.pin("p2", "a later pin", "written after the anchor", &[])
+        .await;
+    h.note("s3", "w2", "three").await;
+    h.note("s4", "w2", "four").await;
+    h.mail("m2", "ordinary", "andrey", "the new mail").await;
+}
+
+/// A contributed section that reads the ledger and HONOURS `as_of` — the half of §2.7 item 3 the
+/// built-in bands cannot cover on their own.
+struct StepCount;
+
+#[async_trait::async_trait]
+impl SectionRender for StepCount {
+    async fn render(&self, r: &SectionRequest) -> Result<Option<SectionBody>, ProjectionError> {
+        let steps = r
+            .ledger
+            .0
+            .steps(&bough_plugin_ledger::StepQuery {
+                trajs: vec![traj()],
+                before: r.before(),
+                ..Default::default()
+            })
+            .await
+            .map_err(ProjectionError::from)?;
+        Ok(Some(SectionBody {
+            title: "Contributed".to_string(),
+            body: format!("{} steps visible\n", steps.len()),
+            cites: Default::default(),
+        }))
+    }
+}
+
+fn spec_at_seq() -> SectionSpec {
+    SectionSpec {
+        id: SectionId::new("step-count"),
+        position: Position {
+            slot: Slot::Identity,
+            place: Place::After,
+        },
+        scope: SectionScope::Global,
+        agent: None,
+        priority: DropPriority::Never,
+        render: Arc::new(StepCount),
+    }
+}
+
+/// Assemble the `as_of` case twice: once as it stood, and once at that same high-water after four
+/// more rows have landed. The second must reproduce the first BYTE FOR BYTE.
+async fn run_as_of(which: Which) -> (String, String) {
+    let h = Harness::open(which);
+    let (config, specs) = seed("as_of", &h).await;
+    let assembler = Assembler::new(Arc::new(config), h.ledger.clone(), h.ctx.clone());
+    for s in specs {
+        std::mem::forget(assembler.section(s).expect("a fresh section registers"));
+    }
+    let req = |as_of: Option<Seq>| AssembleRequest {
+        as_of,
+        agent: agent(),
+        wake: None,
+        at: at(),
+        budget: None,
+    };
+    let anchor = h
+        .ledger
+        .0
+        .head_seq(&traj())
+        .await
+        .expect("head")
+        .expect("the case seeded rows");
+    let then = assembler.assemble(&req(None)).await.expect("assemble");
+
+    seed_after_the_anchor(&h).await;
+
+    let now = assembler.assemble(&req(None)).await.expect("assemble");
+    let replayed = assembler
+        .assemble(&req(Some(anchor)))
+        .await
+        .expect("assemble");
+    assert_ne!(
+        then.to_text(),
+        now.to_text(),
+        "the later rows must actually change an unanchored assembly, or the case proves nothing"
+    );
+    (then.to_text(), replayed.to_text())
+}
+
+#[tokio::test]
+async fn as_of_reproduces_a_past_assembly_byte_for_byte_on_sqlite() {
+    let (then, replayed) = run_as_of(Which::Sqlite).await;
+    assert_eq!(then, replayed, "as_of did not reproduce the past assembly");
+    assert_golden("as_of", &replayed);
+}
+
+#[tokio::test]
+async fn as_of_reproduces_a_past_assembly_byte_for_byte_on_memory() {
+    let (then, replayed) = run_as_of(Which::Memory).await;
+    assert_eq!(then, replayed, "as_of did not reproduce the past assembly");
+    assert_golden("as_of", &replayed);
+}
+
+/// The contributed section is handed the same `as_of` the bands get: a projection is only
+/// reproducible if the sections nobody in this crate wrote honour it too.
+#[tokio::test]
+async fn a_contributed_section_is_handed_the_as_of_filter() {
+    for which in [Which::Sqlite, Which::Memory] {
+        let (then, replayed) = run_as_of(which).await;
+        assert!(
+            then.contains("4 steps visible"),
+            "the contributed section rendered from the anchored ledger: {then}"
+        );
+        assert!(replayed.contains("4 steps visible"), "{replayed}");
     }
 }
 
@@ -690,6 +817,7 @@ async fn run_with_budget(case: &str, which: Which, budget: usize) -> String {
     }
     assembler
         .assemble(&AssembleRequest {
+            as_of: None,
             agent: agent(),
             wake: None,
             at: at(),

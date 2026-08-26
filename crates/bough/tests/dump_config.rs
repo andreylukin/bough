@@ -34,6 +34,7 @@ fn cli_for(home: &Path, dump: bool, check: bool) -> Cli {
         check,
         no_watch: true,
         root: None,
+        command: None,
     }
 }
 

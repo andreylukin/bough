@@ -23,4 +23,12 @@ inventory = { workspace = true }
 parking_lot = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+bough-plugin-ledger-memory = { workspace = true }
+schemars = { workspace = true }

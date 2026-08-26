@@ -7,6 +7,7 @@
 
 pub mod approval;
 pub mod error;
+mod exec;
 pub mod invariant;
 pub mod pipeline;
 pub mod registry;
@@ -57,72 +58,193 @@ pub struct ToolsHandle(pub Arc<ToolsInner>);
 
 /// The seam's live state: the tool map and the per-agent restrictions.
 pub struct ToolsInner {
-    /// WP-3 fills these in.
-    _tools: parking_lot::Mutex<Vec<ToolSpec>>,
-    _restrict: parking_lot::Mutex<Vec<(AgentName, Restrict)>>,
+    /// Registered tools, each with the registration id its disposer removes.
+    tools: parking_lot::Mutex<Vec<(u64, ToolSpec)>>,
+    /// Live restrictions. Several may be in force for one agent; they compose as an INTERSECTION.
+    restrict: parking_lot::Mutex<Vec<(u64, AgentName, Restrict)>>,
+    /// The approver, if a row mounted one. `None` in Phase 2, so `ask` degrades to deny.
+    approval: parking_lot::Mutex<Option<ApprovalHandle>>,
+    next_id: std::sync::atomic::AtomicU64,
+    /// From `ToolsConfig`. Neither is a `const`: both vary by deployment.
+    max_parallel: usize,
+    default_deadline_ms: u64,
 }
 
 impl ToolsHandle {
-    /// An empty registry. WP-3.
+    /// An empty registry with the row's defaults.
     pub fn new() -> ToolsHandle {
+        ToolsHandle::with_limits(8, 120_000)
+    }
+
+    /// An empty registry with explicit limits. `ToolsPlugin::apply` builds the live one from
+    /// `ToolsConfig`; tests build small ones.
+    pub fn with_limits(max_parallel: usize, default_deadline_ms: u64) -> ToolsHandle {
         ToolsHandle(Arc::new(ToolsInner {
-            _tools: parking_lot::Mutex::new(Vec::new()),
-            _restrict: parking_lot::Mutex::new(Vec::new()),
+            tools: parking_lot::Mutex::new(Vec::new()),
+            restrict: parking_lot::Mutex::new(Vec::new()),
+            approval: parking_lot::Mutex::new(None),
+            next_id: std::sync::atomic::AtomicU64::new(1),
+            max_parallel,
+            default_deadline_ms,
         }))
     }
 
-    /// Register a tool. Registration is an effect (§0.2). WP-3.
-    pub async fn register(
-        &self,
-        _ctx: &Context,
-        _spec: ToolSpec,
-    ) -> Result<EffectHandle, PluginError> {
-        todo!("WP-3: register, with the inverse that removes it")
+    fn mint(&self) -> u64 {
+        self.0
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// §5: an INTERSECTION filter over the global set, registered in the agent's scope. WP-3.
+    /// Register a tool. Registration is an effect (§0.2): the disposer removes it.
+    pub async fn register(
+        &self,
+        ctx: &Context,
+        spec: ToolSpec,
+    ) -> Result<EffectHandle, PluginError> {
+        {
+            let tools = self.0.tools.lock();
+            if tools
+                .iter()
+                .any(|(_, s)| s.name == spec.name && s.scope == spec.scope)
+            {
+                let scope = match &spec.scope {
+                    ToolScope::Global => "globally".to_string(),
+                    ToolScope::Agent(a) => format!("for agent `{a}`"),
+                };
+                return Err(PluginError::new(
+                    ctx.entry_id().clone(),
+                    ToolsError::Duplicate {
+                        name: spec.name.clone(),
+                        scope,
+                    },
+                ));
+            }
+        }
+        let id = self.mint();
+        self.0.tools.lock().push((id, spec));
+        let inner = self.0.clone();
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || inner.tools.lock().retain(|(i, _)| *i != id));
+            Ok(())
+        })
+        .await
+    }
+
+    /// §5: an INTERSECTION filter over the global set, registered in the agent's scope.
+    ///
+    /// Several restrictions may be in force at once; [`Restrict::intersect`] composes them, so a
+    /// second one can only narrow.
     pub async fn restrict(
         &self,
-        _ctx: &Context,
-        _agent: &AgentName,
-        _r: Restrict,
+        ctx: &Context,
+        agent: &AgentName,
+        r: Restrict,
     ) -> Result<EffectHandle, PluginError> {
-        todo!("WP-3: compose as an intersection with whatever is already in scope")
+        let id = self.mint();
+        self.0.restrict.lock().push((id, agent.clone(), r));
+        let inner = self.0.clone();
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || inner.restrict.lock().retain(|(i, _, _)| *i != id));
+            Ok(())
+        })
+        .await
+    }
+
+    /// Mount an approver. Phase 2 mounts none in production, so `ask` degrades to deny; a surface
+    /// (Phase 3) and the pipeline tests mount one through here.
+    pub async fn mount_approval(
+        &self,
+        ctx: &Context,
+        approver: ApprovalHandle,
+    ) -> Result<EffectHandle, PluginError> {
+        *self.0.approval.lock() = Some(approver);
+        let inner = self.0.clone();
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || *inner.approval.lock() = None);
+            Ok(())
+        })
+        .await
+    }
+
+    /// The effective restriction for `agent`: the intersection of everything in force.
+    fn effective_restrict(&self, agent: &AgentName) -> Restrict {
+        self.0
+            .restrict
+            .lock()
+            .iter()
+            .filter(|(_, a, _)| a == agent)
+            .fold(Restrict::default(), |acc, (_, _, r)| acc.intersect(r))
+    }
+
+    /// The specs visible to `agent`, in NAME order. An agent-scoped tool SHADOWS its same-named
+    /// global twin, for that agent alone.
+    fn visible_specs(&self, agent: &AgentName) -> Vec<ToolSpec> {
+        let restrict = self.effective_restrict(agent);
+        let tools = self.0.tools.lock();
+        let mut by_name: std::collections::BTreeMap<ToolName, &ToolSpec> =
+            std::collections::BTreeMap::new();
+        for (_, spec) in tools.iter() {
+            match &spec.scope {
+                ToolScope::Global => {
+                    by_name.entry(spec.name.clone()).or_insert(spec);
+                }
+                ToolScope::Agent(a) if a == agent => {
+                    // Most specific wins.
+                    by_name.insert(spec.name.clone(), spec);
+                }
+                ToolScope::Agent(_) => {}
+            }
+        }
+        by_name
+            .into_values()
+            .filter(|s| restrict.admits(&s.name))
+            .cloned()
+            .collect()
     }
 
     /// EXACTLY what the prompt shows. Scoped tools shadow same-named globals for that agent
-    /// alone. WP-3.
-    pub fn schemas(&self, _agent: &AgentName) -> Vec<LlmToolDef> {
-        todo!("WP-3: the visible set, as tool defs, in a stable order")
+    /// alone; a restricted tool is simply absent.
+    pub fn schemas(&self, agent: &AgentName) -> Vec<LlmToolDef> {
+        self.visible_specs(agent)
+            .into_iter()
+            .map(|s| LlmToolDef {
+                name: s.name.to_string(),
+                description: s.description.clone(),
+                input_schema: s.input_schema.as_value().clone(),
+            })
+            .collect()
     }
 
-    /// The visible names, for a surface and for error messages. WP-3.
-    pub fn visible(&self, _agent: &AgentName) -> Vec<ToolName> {
-        todo!("WP-3")
+    /// The visible names, for a surface and for error messages.
+    pub fn visible(&self, agent: &AgentName) -> Vec<ToolName> {
+        self.visible_specs(agent)
+            .into_iter()
+            .map(|s| s.name)
+            .collect()
     }
 
     /// A filtered-away tool answers `NotFound`, indistinguishably from a nonexistent one (§9).
-    /// WP-3.
-    pub fn resolve(
-        &self,
-        _agent: &AgentName,
-        _name: &ToolName,
-    ) -> Result<Arc<dyn Tool>, ToolsError> {
-        todo!("WP-3: scoped lookup, then the global one")
+    pub fn resolve(&self, agent: &AgentName, name: &ToolName) -> Result<Arc<dyn Tool>, ToolsError> {
+        self.visible_specs(agent)
+            .into_iter()
+            .find(|s| &s.name == name)
+            .map(|s| s.tool)
+            .ok_or_else(|| ToolsError::NotFound {
+                name: name.clone(),
+                agent: agent.clone(),
+            })
     }
 
     /// The guarded pipeline: `tools/pre-execute` → `tools/execute` → `tools/post-execute` →
     /// `tools/result`. Concurrency-safe calls dispatch in parallel, everything else forms a
     /// barrier; only DISPATCH overlaps — the returned results are in the MODEL's call order.
-    ///
-    /// WP-3.
-    pub async fn execute(&self, _ctx: &Context, _calls: Vec<ToolCall>) -> Vec<ToolResult> {
-        todo!("WP-3: the three-stage pipeline with the barrier dispatcher")
+    pub async fn execute(&self, ctx: &Context, calls: Vec<ToolCall>) -> Vec<ToolResult> {
+        exec::execute(self, ctx, calls).await
     }
 
-    /// The approver, if a row mounted one. `None` in Phase 2, so `ask` degrades to deny. WP-3.
+    /// The approver, if a row mounted one. `None` in Phase 2, so `ask` degrades to deny.
     pub fn approval(&self) -> Option<ApprovalHandle> {
-        todo!("WP-3")
+        self.0.approval.lock().clone()
     }
 }
 
@@ -164,8 +286,63 @@ impl Plugin for ToolsPlugin {
         Ok(())
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-3: declare the two step types, provide::<Tools>, record the invariant stream")
+    async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let ledger = ctx
+            .get::<bough_plugin_ledger::Ledger>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+
+        // The two step types this crate owns. Declaration is an effect, so unloading the row
+        // leaves the step-type map as if it had never mounted (§0.2).
+        ledger
+            .declare_step_types(&ctx, vocabulary::step_types())
+            .await?;
+
+        // The invariant's stream is per-LIFE: a reload keeps the `FiberUid`, so this fiber's
+        // observations are forgotten when it unloads.
+        let mine = ctx.fiber_uid();
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || invariant::forget(mine));
+            Ok(())
+        })
+        .await?;
+
+        // Record `tool/call` / `tool/result` off the DURABLE ledger stream, never off the live
+        // pipeline: the invariant is about what was committed (P2-D25).
+        let fiber = ctx.fiber_uid();
+        ctx.on::<bough_plugin_ledger::LedgerStep, _, _>(move |step| async move {
+            let kind = step.kind.as_str();
+            if kind != "tool/call" && kind != "tool/result" {
+                return;
+            }
+            let call = step
+                .body
+                .get("call")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let step_index = step
+                .body
+                .get("step_index")
+                .and_then(|v| v.as_u64())
+                .unwrap_or_default() as u32;
+            invariant::record(invariant::Obs {
+                fiber,
+                wake: step.wake.clone(),
+                kind: step.kind.clone(),
+                call,
+                step_index,
+            });
+        })
+        .await?;
+
+        ctx.provide::<Tools>(ToolsHandle::with_limits(
+            cfg.max_parallel,
+            cfg.default_deadline_ms,
+        ))
+        .await
+        .map_err(|e| PluginError::new(entry, e))?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

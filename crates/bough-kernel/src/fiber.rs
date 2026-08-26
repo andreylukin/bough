@@ -147,6 +147,9 @@ impl Fiber {
     pub(crate) fn state(&self) -> FiberState {
         self.state.lock().state
     }
+    pub(crate) fn error(&self) -> Option<Arc<PluginError>> {
+        self.state.lock().error.clone()
+    }
     pub(crate) fn unmet(&self) -> Vec<String> {
         self.state.lock().unmet.clone()
     }

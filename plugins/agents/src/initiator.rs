@@ -6,16 +6,40 @@ use std::future::Future;
 
 use crate::ids::AgentId;
 
+tokio::task_local! {
+    static INITIATOR: AgentId;
+}
+
 /// The agent whose work the current task is doing, if any.
-///
-/// WP-2.
 pub fn current() -> Option<AgentId> {
-    todo!("WP-2: read the task-local")
+    INITIATOR.try_with(|id| id.clone()).ok()
 }
 
 /// Run `fut` with `id` as the ambient initiator.
-///
-/// WP-2.
-pub async fn with<F: Future>(_id: AgentId, _fut: F) -> F::Output {
-    todo!("WP-2: tokio::task_local scope")
+pub async fn with<F: Future>(id: AgentId, fut: F) -> F::Output {
+    INITIATOR.scope(id, fut).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Attribution is ambient and nested: the innermost scope names the initiator, and outside
+    /// every scope there is none.
+    #[tokio::test]
+    async fn the_initiator_is_ambient_and_nests() {
+        assert_eq!(current(), None);
+        let outer = AgentId::new("a");
+        let inner = AgentId::new("b");
+        with(outer.clone(), async {
+            assert_eq!(current(), Some(outer.clone()));
+            with(inner.clone(), async {
+                assert_eq!(current(), Some(inner.clone()));
+            })
+            .await;
+            assert_eq!(current(), Some(outer.clone()));
+        })
+        .await;
+        assert_eq!(current(), None);
+    }
 }

@@ -171,6 +171,7 @@ async fn the_probes_sections_are_gone_while_the_assembler_is_disabled() {
     let text = handle
         .0
         .assemble(&bough_plugin_projection::AssembleRequest {
+            as_of: None,
             agent: bough_plugin_ledger::AgentName::new("a1"),
             wake: None,
             at: chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")

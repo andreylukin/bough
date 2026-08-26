@@ -24,9 +24,17 @@ pub struct ActionRequest {
 
 /// `idem_key = sha256(kind ‖ canonical target ‖ triggering step id)`, hex (§7).
 ///
-/// WP-7.
-pub fn idem_key(_kind: ActionKind, _canonical_target: &str, _step: &StepId) -> IdemKey {
-    todo!("WP-7: the one formula, with a stable separator")
+/// The separator is a NUL byte, which none of the three fields can contain, so no two distinct
+/// triples can be spelled into one string.
+pub fn idem_key(kind: ActionKind, canonical_target: &str, step: &StepId) -> IdemKey {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    h.update(kind.as_str().as_bytes());
+    h.update([0u8]);
+    h.update(canonical_target.as_bytes());
+    h.update([0u8]);
+    h.update(step.as_str().as_bytes());
+    IdemKey::new(format!("{:x}", h.finalize()))
 }
 
 /// What the Provider is handed. The marker is derived from the idem key, so the artifact carries
@@ -36,6 +44,8 @@ pub struct ExecuteRequest {
     pub action: ActionId,
     pub idem_key: IdemKey,
     pub marker: String,
+    /// The target the idem key was computed over — the Provider acts on THIS, never on `raw`.
+    pub canonical_target: String,
 }
 
 /// What a Provider produced.
@@ -59,7 +69,40 @@ pub struct PendingAction {
     pub at: DateTime<Utc>,
 }
 
-/// The marker derived from an idem key: what a Provider embeds in the artifact. WP-7.
-pub fn marker_for(_idem: &IdemKey) -> String {
-    todo!("WP-7: a short, greppable marker derived from the idem key")
+/// The marker derived from an idem key: what a Provider embeds in the artifact.
+///
+/// It is DERIVED, never chosen: reconciliation greps the world for the marker of an
+/// intent-without-done row, so the marker must be recomputable from the journal alone (§7).
+pub fn marker_for(idem: &IdemKey) -> String {
+    format!("{}{}", MARKER_PREFIX, &idem.as_str()[..MARKER_HEX_LEN])
+}
+
+/// The fixed prefix of every marker. A protocol constant, not a tunable (§0.2): it is written into
+/// artifacts that outlive any config.
+pub const MARKER_PREFIX: &str = "bough-action:";
+
+/// How much of the idem key the marker carries. 16 hex digits = 64 bits, ample against collision
+/// among one person\'s actions and short enough to sit in a commit trailer.
+pub const MARKER_HEX_LEN: usize = 16;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_marker_is_derived_from_the_idem_key() {
+        let k = idem_key(ActionKind::OpenPr, "owner/repo", &StepId::new("s1"));
+        assert_eq!(
+            marker_for(&k),
+            format!("bough-action:{}", &k.as_str()[..16])
+        );
+    }
+
+    #[test]
+    fn the_key_separates_its_three_fields() {
+        // Without a separator these two would hash the same bytes.
+        let a = idem_key(ActionKind::OpenPr, "ab", &StepId::new("c"));
+        let b = idem_key(ActionKind::OpenPr, "a", &StepId::new("bc"));
+        assert_ne!(a, b);
+    }
 }

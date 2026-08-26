@@ -40,6 +40,9 @@ pub enum LayerSource {
     Text { origin: String, yaml: String },
     /// The profile document's own `patch:` block, already parsed with the profile.
     ProfilePatch,
+    /// A layer the launcher built itself: `bough exec`'s one row-config write. It never comes
+    /// from text, so a shell-quoted task cannot be re-parsed as YAML.
+    Synthetic(bough_kernel::Patch),
 }
 
 /// The plan of layers, in the normative order, plus the profile that named them.
@@ -120,13 +123,53 @@ fn include_base(origin: &profile::SourceOrigin) -> PathBuf {
 
 /// Stack every layer and produce the composition, together with the profile that selected them
 /// (the launcher needs `invariants` and the profile name for `KernelOptions`).
+///
+/// `bough exec` composes TWICE: the first pass exists only to read the `exec` row's configured
+/// defaults, so the synthetic layer can write the task without restating fields the bundle
+/// already set (§0.5 replaces a config wholesale — there is no merge to lean on).
 pub fn compose_plan(cli: &Cli, catalog: &Catalog) -> Result<(Profile, Composition), BootError> {
-    let (profile, _sources, layers) = plan_layers(cli)?;
+    let (profile, _sources, mut layers) = plan_layers(cli)?;
 
+    if let Some(crate::cli::Command::Exec(args)) = &cli.command {
+        let first = stack(catalog, &profile, &layers)?;
+        let base = exec_row_config(&first);
+        layers.push(crate::exec::exec_layer(args, &base));
+    }
+
+    let composition = stack(catalog, &profile, &layers)?;
+    Ok((profile, composition))
+}
+
+/// The `exec` row's config as the bundles left it, or an empty mapping if no such row exists —
+/// in which case composing will fail on the absent row id, loudly, which is the right failure.
+fn exec_row_config(c: &Composition) -> serde_yaml::Value {
+    find_row(&c.tree, &bough_kernel::EntryId::new(crate::exec::EXEC_ROW))
+        .map(|e| e.config.clone())
+        .unwrap_or_else(|| serde_yaml::Value::Mapping(Default::default()))
+}
+
+fn find_row<'a>(
+    rows: &'a [bough_kernel::Entry],
+    id: &bough_kernel::EntryId,
+) -> Option<&'a bough_kernel::Entry> {
+    for r in rows {
+        if &r.id == id {
+            return Some(r);
+        }
+        if let Some(hit) = find_row(&r.group, id) {
+            return Some(hit);
+        }
+    }
+    None
+}
+
+/// Stack a located plan into a composition. The ONE place layers become a tree.
+fn stack(catalog: &Catalog, profile: &Profile, layers: &[Layer]) -> Result<Composition, BootError> {
     let mut composer = Composer::new(catalog, ExprEnv::new(&profile.name));
     for layer in layers {
         let patch = match &layer.source {
             LayerSource::Text { yaml, .. } => Patch::parse_in(yaml, &layer.base, &layer.id)?,
+            LayerSource::Synthetic(p) => p.clone(),
             LayerSource::ProfilePatch => {
                 // The profile document is deserialized whole, so its `patch:` block is grafted
                 // here rather than at parse time.
@@ -135,10 +178,9 @@ pub fn compose_plan(cli: &Cli, catalog: &Catalog) -> Result<(Profile, Compositio
                 p
             }
         };
-        composer.layer(layer.id, patch);
+        composer.layer(layer.id.clone(), patch);
     }
-    let composition = composer.compose()?;
-    Ok((profile, composition))
+    Ok(composer.compose()?)
 }
 
 /// The ONE composition path. `--dump-config` and boot both call it.
@@ -165,6 +207,7 @@ mod tests {
             check: true,
             no_watch: true,
             root: None,
+            command: None,
         }
     }
 

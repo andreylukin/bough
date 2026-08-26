@@ -29,3 +29,85 @@
     mail_newest_n: 5
     max_tiers: 3
     file_view_dir: !!expr 'bough_path("views")'
+
+# Phase 2 (§17 Phase 2): everything between a message and a model call and back. Row ORDER carries
+# no load semantics (§0.2) — the reading order below is the seam order of §2.12, Definition before
+# Provider before Consumer, so the file reads as the phase's dependency story.
+#
+# `agent-loop-scripted` and `llm-replay` are in the binary's catalog and in NO bundle: the swap
+# patches name them, exactly as `ledger-memory` is handled.
+- id: llm
+  plugin: llm
+- id: llm.anthropic
+  plugin: llm-anthropic
+  config:
+    models: "*"
+    api_key_env: ANTHROPIC_API_KEY
+    request_timeout_ms: 120000
+- id: llm.retry
+  plugin: llm-retry
+  config:
+    max_attempts: 4
+    min_delay_ms: 250
+    max_delay_ms: 8000
+    jitter: true
+    retry_on: [transport, rate_limit, overloaded]
+- id: tools
+  plugin: tools
+  config:
+    default_deadline_ms: 120000
+    max_parallel: 8
+- id: tools.baseline
+  plugin: tools-baseline
+  config:
+    # DEVIATION from plan §2.12's `!!expr 'cwd()'`: the expr language (§0.5) has no `cwd`
+    # function, and a relative root is canonicalised against the process cwd anyway — which is
+    # the same value, without inventing a function for one row.
+    root: "."
+    bash_timeout_ms: 120000
+    max_output_bytes: 20000
+    max_read_bytes: 400000
+    deny_globs: []
+- id: agents
+  plugin: agents
+- id: agent.loop
+  plugin: agent-loop
+  config:
+    drain_debounce_ms: 120000
+    grace_deadline_ms: 20000
+    default_max_tokens: 8192
+    prompt_ver: "p2.1"
+    text_flush_ms: 400
+    repair_on_boot: true
+    status_drain_ms: 500
+# BOTH models are claude-haiku-4-5-20251001 for this build: Andrey's choice for the testing
+# period. Swapping either is a one-line patch, which is the whole point of them being config.
+- id: model.policy
+  plugin: model-policy
+  config:
+    sol: claude-haiku-4-5-20251001
+    terra: claude-haiku-4-5-20251001
+- id: about.line
+  plugin: about-line
+  config:
+    max_state_chars: 400
+    max_intent_chars: 200
+- id: workers
+  plugin: workers
+  config:
+    max_in_flight: 8
+    max_depth: 3
+    per_wake_spawn_cap: 4
+- id: worker.spawn
+  plugin: worker-spawn
+  config:
+    ask_mode: block
+    max_steps: 40
+- id: tool.spawn_worker
+  plugin: tool-spawn_worker
+- id: tool.ask
+  plugin: tool-ask
+- id: actions
+  plugin: actions
+- id: tool.actions
+  plugin: tool-actions

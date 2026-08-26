@@ -4,6 +4,7 @@
 //! LEDGER PROTOCOL and not to a feature list.
 
 pub mod invariant;
+pub mod replay;
 pub mod script;
 
 use std::path::PathBuf;
@@ -12,7 +13,8 @@ use std::sync::Arc;
 use bough_kernel::{Context, InvariantSpec, Plugin, PluginError};
 use bough_plugin_agents::{AgentCell, AgentDriver, AgentError, AgentFactory, Attach};
 
-pub use script::{Script, ScriptedStep, ScriptedWake};
+pub use replay::{ReplayEnv, ReplayError, ScriptedClaim, WakeInput, WakeOutcome};
+pub use script::{Script, ScriptedChunk, ScriptedStep, ScriptedWake};
 
 /// The catalog name of this row.
 pub const PLUGIN_NAME: &str = "agent-loop-scripted";
@@ -35,9 +37,46 @@ fn yes() -> bool {
     true
 }
 
+/// Resolve the row's config into the one script it will replay (§0.2: an explicit
+/// `resolve(request) -> Spec`, never a `?? default` inside `apply`).
+///
+/// `transcript` and `wakes` are alternatives, not a merge: naming both is a misconfiguration and
+/// fails loud at boot rather than silently preferring one.
+pub fn resolve_script(cfg: &ScriptedConfig) -> Result<Script, String> {
+    match (&cfg.transcript, &cfg.wakes) {
+        (Some(_), Some(_)) => {
+            Err("`transcript` and `wakes` are alternatives: name one, not both".to_string())
+        }
+        (Some(path), None) => {
+            let text = std::fs::read_to_string(path)
+                .map_err(|e| format!("reading transcript `{}`: {e}", path.display()))?;
+            Script::parse(&text)
+        }
+        (None, Some(v)) => Script::from_value(v),
+        (None, None) => Err(
+            "a scripted loop with no transcript and no inline `wakes` would never wake: name one"
+                .to_string(),
+        ),
+    }
+}
+
 /// The factory this row registers.
 pub struct ScriptedFactory {
-    _cfg: Arc<ScriptedConfig>,
+    cfg: Arc<ScriptedConfig>,
+    script: Arc<Script>,
+    env: ReplayEnv,
+}
+
+impl ScriptedFactory {
+    /// The factory `apply` installs into the `agents` seam's factory slot.
+    pub fn new(cfg: Arc<ScriptedConfig>, script: Arc<Script>, env: ReplayEnv) -> ScriptedFactory {
+        ScriptedFactory { cfg, script, env }
+    }
+
+    /// The script this factory replays; the swap test reads it.
+    pub fn script(&self) -> &Arc<Script> {
+        &self.script
+    }
 }
 
 #[async_trait::async_trait]
@@ -46,15 +85,158 @@ impl AgentFactory for ScriptedFactory {
         PLUGIN_NAME
     }
 
-    /// WP-5.
     async fn attach(
         &self,
-        _cell: AgentCell,
+        cell: AgentCell,
         _mode: Attach,
     ) -> Result<Arc<dyn AgentDriver>, AgentError> {
-        todo!("WP-5: a driver that replays the script through the same seam")
+        let cell = Arc::new(cell);
+        let cfg = self.cfg.clone();
+        let env = self.env.clone();
+        Ok(Arc::new_cyclic(|me| ScriptedDriver {
+            cell,
+            cfg,
+            env,
+            me: me.clone(),
+            next_wake: parking_lot::Mutex::new(0),
+            stopping: std::sync::atomic::AtomicBool::new(false),
+            wakes: Arc::new(tokio::sync::Semaphore::new(MAX_WAKES_IN_FLIGHT as usize)),
+        }))
     }
 }
+
+/// One agent's scripted loop.
+///
+/// It schedules the way §5's IMMEDIATE half does and nothing more: a waking inbox mutation opens
+/// one wake, which replays the next entry of the transcript. There is no debounced drain, no
+/// preemption and no retry — a replacement loop is held to the LEDGER PROTOCOL, not to a feature
+/// list.
+///
+/// The claim runs BEFORE the replay (the same order `agent-loop` uses): `AgentCell::claim` is the
+/// only durable way to take an inbox item, and it appends the `inbox/spliced { op: claim }` step
+/// itself — so [`replay::run_wake`] is handed an empty `claim` list rather than splicing twice.
+pub struct ScriptedDriver {
+    cell: Arc<AgentCell>,
+    cfg: Arc<ScriptedConfig>,
+    env: ReplayEnv,
+    me: std::sync::Weak<ScriptedDriver>,
+    /// Which transcript entry the next wake replays.
+    next_wake: parking_lot::Mutex<usize>,
+    stopping: std::sync::atomic::AtomicBool,
+    /// Wakes in flight; `stop()` drains against it.
+    wakes: Arc<tokio::sync::Semaphore>,
+}
+
+impl ScriptedDriver {
+    fn spawn_wake(self: &Arc<Self>, trigger: Option<bough_plugin_ledger::StepId>) {
+        use std::sync::atomic::Ordering;
+        if self.stopping.load(Ordering::SeqCst) {
+            return;
+        }
+        let index = {
+            let mut n = self.next_wake.lock();
+            let i = *n;
+            *n += 1;
+            i
+        };
+        let me = self.clone();
+        tokio::spawn(async move {
+            let _permit = me.wakes.clone().acquire_owned().await.ok();
+            let agent = me.cell.agent().clone();
+            if me
+                .cell
+                .set_status(bough_plugin_agents::Status::Running)
+                .await
+                .is_err()
+            {
+                return;
+            }
+            let at = chrono::Utc::now();
+            let wake = bough_plugin_ledger::WakeId::new(uuid::Uuid::now_v7().to_string());
+            // Claim both queues: a `steer` to an idle agent must not open a wake that claims
+            // nothing (the same rule `agent-loop` follows).
+            let mut claimed = Vec::new();
+            for target in [
+                bough_plugin_agents::Target::NextWake,
+                bough_plugin_agents::Target::NextStep,
+            ] {
+                if let Ok(mut c) = me
+                    .cell
+                    .claim(
+                        bough_plugin_agents::ClaimSelector::all(target),
+                        wake.clone(),
+                        at,
+                    )
+                    .await
+                {
+                    claimed.append(&mut c);
+                }
+            }
+            let answers_andrey = claimed.iter().any(|c| c.message.is_andrey());
+            let input = WakeInput {
+                traj: agent.traj().clone(),
+                agent: agent.name().clone(),
+                agent_id: agent.id().clone(),
+                wake,
+                index,
+                kind: if answers_andrey {
+                    bough_plugin_llm::WakeKind::Answer
+                } else {
+                    bough_plugin_llm::WakeKind::Catchup
+                },
+                urgency: bough_plugin_ledger::vocabulary::Urgency::Immediate,
+                trigger,
+                answers_andrey,
+                model_override: None,
+                // Already spliced by `claim` above; handing them over again would double-append.
+                claim: Vec::new(),
+                handle: Some(agent.clone()),
+                at,
+            };
+            let out = replay::run_wake(&me.env, &input).await;
+            if let Err(e) = &out {
+                if me.cfg.strict {
+                    tracing::error!(error = %e, "scripted wake ran out of script");
+                }
+            }
+            let _ = me.cell.set_status(bough_plugin_agents::Status::Idle).await;
+        });
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentDriver for ScriptedDriver {
+    fn driver(&self) -> &'static str {
+        PLUGIN_NAME
+    }
+
+    async fn notify(
+        &self,
+        receipt: &bough_plugin_agents::InboxReceipt,
+        _msg: &bough_plugin_agents::Message,
+    ) {
+        if !receipt.wake {
+            return;
+        }
+        if let Some(me) = self.me.upgrade() {
+            me.spawn_wake(Some(receipt.step.clone()));
+        }
+    }
+
+    async fn cancel(&self, _cause: bough_plugin_agents::CancelCause, _keep_inbox: bool) {
+        self.cell.cancel_token().cancel();
+    }
+
+    async fn stop(&self) {
+        self.stopping
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        // Drain: every permit back means every wake in flight has ended.
+        let _ = self.wakes.acquire_many(MAX_WAKES_IN_FLIGHT).await;
+    }
+}
+
+/// The scripted loop replays one wake at a time; the semaphore is the drain latch `stop` waits on.
+const MAX_WAKES_IN_FLIGHT: u32 = 1;
 
 /// The Provider row. In the catalog, in NO bundle: the swap patch names it.
 pub struct ScriptedLoopPlugin;
@@ -68,8 +250,63 @@ impl Plugin for ScriptedLoopPlugin {
         bough_kernel::Inject::required(["agents", "ledger", "projection", "tools"])
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-5: agents.set_factory(ScriptedFactory) — the slot the swap test frees")
+    async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let fail = |detail: String| PluginError::new(entry.clone(), anyhow::anyhow!(detail));
+
+        // Misconfiguration fails LOUD (§0.2): an unreadable or unreplayable transcript is a boot
+        // failure, not a row that mounts and never wakes.
+        let script = Arc::new(resolve_script(&cfg).map_err(fail)?);
+
+        let ledger = ctx
+            .get::<bough_plugin_ledger::Ledger>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        let projection = ctx
+            .get::<bough_plugin_projection::Projection>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+
+        // P2-D18: the shared EVALUATOR lives in `agent-loop`; this row is its second RECORDER.
+        let mine = ctx.fiber_uid();
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || bough_plugin_agent_loop::invariant::forget(mine));
+            Ok(())
+        })
+        .await?;
+        let recorder: replay::Recorder = Arc::new(move |r: replay::Recorded| {
+            bough_plugin_agent_loop::invariant::record(
+                bough_plugin_agent_loop::invariant::SentRequest {
+                    fiber: mine,
+                    wake: r.wake,
+                    step_index: r.step_index,
+                    request: r.request,
+                },
+            );
+        });
+
+        let env = ReplayEnv {
+            ctx: ctx.clone(),
+            ledger: bough_plugin_ledger::LedgerHandle(ledger.0.clone()),
+            projection: Some(bough_plugin_projection::ProjectionHandle(
+                projection.0.clone(),
+            )),
+            script: script.clone(),
+            strict: cfg.strict,
+            prompt_ver: "scripted".to_string(),
+            composition: ctx.entry_id().to_string(),
+            default_max_tokens: 8192,
+            recorder: Some(recorder),
+        };
+
+        let agents = ctx
+            .get::<bough_plugin_agents::Agents>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        // The slot the swap test frees: taking it is an EFFECT, so unloading this row hands it
+        // back to whichever loop Provider the patch mounts next.
+        bough_plugin_agents::AgentsHandle(agents.0.clone())
+            .set_factory(&ctx, Arc::new(ScriptedFactory::new(cfg, script, env)))
+            .await
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

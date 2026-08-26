@@ -19,8 +19,20 @@ schemars = { workspace = true }
 inventory = { workspace = true }
 parking_lot = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+schemars = { workspace = true }
+async-trait = { workspace = true }
+bough-kernel = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-llm = { workspace = true }
+parking_lot = { workspace = true }

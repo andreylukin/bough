@@ -15,3 +15,10 @@ serde_json = { workspace = true }
 schemars = { workspace = true }
 inventory = { workspace = true }
 anyhow = { workspace = true }
+chrono = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+
+[dev-dependencies]
+bough-plugin-ledger-memory = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }

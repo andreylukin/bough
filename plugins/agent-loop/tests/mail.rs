@@ -1,0 +1,160 @@
+//! §5's mail rules, as V6 names them: consumption is a UNION (so concurrent wakes cannot regress
+//! it), unconsumed ordinary mail implies a scheduled drain wake, one drain wake is in flight per
+//! agent, an Andrey message always gets a fresh answer wake whatever queue it arrived through,
+//! and a drain wake never answers him.
+
+mod support;
+
+use bough_plugin_agent_loop::mail;
+use bough_plugin_agent_loop::testing::{delivered, ordinary as ordinary_msg, wake_end, wake_of};
+use bough_plugin_ledger::{Seq, SeqRange};
+use bough_plugin_llm::WakeKind;
+use support::*;
+
+fn range(from: u64, to: u64) -> SeqRange {
+    SeqRange {
+        from: Seq(from),
+        to: Seq(to),
+    }
+}
+
+/// §5: "consumed = the UNION of all wake_end sets."
+#[test]
+fn consumed_is_the_union_of_wake_end_sets() {
+    let w = wake_of("w1");
+    let ends = vec![
+        wake_end(10, &w, "completed", &[(1, 2)]),
+        wake_end(11, &w, "completed", &[(5, 5)]),
+        wake_end(12, &w, "completed", &[(3, 4)]),
+    ];
+    assert_eq!(mail::consumed_union(&ends), vec![range(1, 5)]);
+}
+
+/// §5: "Union is order-independent, so concurrent wakes can never regress consumption."
+#[test]
+fn concurrent_wakes_over_disjoint_seqs_never_regress_consumption() {
+    let w = wake_of("w1");
+    let answer = wake_end(20, &w, "completed", &[(7, 7)]);
+    let drain = wake_end(21, &w, "completed", &[(1, 3)]);
+    let one_order = mail::consumed_union(&[answer.clone(), drain.clone()]);
+    let other_order = mail::consumed_union(&[drain, answer]);
+    assert_eq!(one_order, other_order);
+    assert_eq!(one_order, vec![range(1, 3), range(7, 7)]);
+    // And neither order un-consumes what the other consumed.
+    for r in [range(1, 3), range(7, 7)] {
+        assert!(one_order.contains(&r));
+    }
+}
+
+/// §5's standing invariant, live: ordinary mail arrives, nothing else wakes the agent, and a
+/// DRAIN wake runs on its own.
+#[tokio::test]
+async fn unconsumed_ordinary_mail_implies_a_scheduled_drain_wake() {
+    let f = Fixture::mounted().await;
+    let (agent, _d) = f.agent("sol").await;
+    agent
+        .followup(ordinary("a push landed"))
+        .await
+        .expect("mail lands");
+
+    let steps = f.wait_for_wake_ends(1).await;
+    let start = steps
+        .iter()
+        .find(|s| s.kind.as_str() == "wake/start")
+        .expect("a wake ran");
+    assert_eq!(
+        start.body["urgency"], "coalesced",
+        "ordinary mail drains, it does not answer"
+    );
+    // The mail it delivered is the ordinary message, and the wake consumed nothing else.
+    assert!(steps.iter().any(|s| s.kind.as_str() == "mail/delivered"));
+    // The standing invariant is satisfied: nothing ordinary is left unconsumed with no drain.
+    let consumed = mail::consumed_union(&steps);
+    let left = mail::unconsumed(&steps, &consumed)
+        .into_iter()
+        .filter(mail::is_ordinary)
+        .count();
+    assert!(
+        left == 0 || bough_plugin_agent_loop::driver::any_drain_scheduled(),
+        "unconsumed ordinary mail with no drain scheduled"
+    );
+}
+
+/// §5: "One drain wake in flight per agent."
+#[tokio::test]
+async fn only_one_drain_wake_is_in_flight_per_agent() {
+    let f = Fixture::mounted().await;
+    let (agent, _d) = f.agent("sol").await;
+    for i in 0..3 {
+        agent
+            .followup(ordinary(&format!("push {i}")))
+            .await
+            .expect("mail lands");
+    }
+    let steps = f.wait_for_wake_ends(1).await;
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    let steps2 = f.steps().await;
+    let drains = steps2
+        .iter()
+        .filter(|s| s.kind.as_str() == "wake/start" && s.body["urgency"] == "coalesced")
+        .count();
+    assert_eq!(
+        drains,
+        1,
+        "three ordinary messages coalesce into ONE drain wake: {:?}",
+        steps.len()
+    );
+}
+
+/// §5: "An Andrey message ALWAYS gets a fresh sol answer wake, whatever queue it arrived through."
+#[tokio::test]
+async fn an_andrey_message_gets_a_fresh_answer_wake_from_either_queue() {
+    for (queue, send) in [("next-wake", true), ("next-step", false)] {
+        let f = Fixture::mounted().await;
+        let (agent, _d) = f.agent("sol").await;
+        if send {
+            agent.followup(andrey("hello")).await.expect("mail lands");
+        } else {
+            agent.steer(andrey("hello")).await.expect("mail lands");
+        }
+        let steps = f.wait_for_wake_ends(1).await;
+        let start = steps
+            .iter()
+            .find(|s| s.kind.as_str() == "wake/start")
+            .expect("a wake ran");
+        assert_eq!(
+            start.body["urgency"], "immediate",
+            "{queue}: his message never waits"
+        );
+        assert!(
+            steps.iter().any(|s| s.kind.as_str() == "step/start"),
+            "{queue}: and it is actually answered"
+        );
+    }
+}
+
+/// §5: "drain and tick wakes never answer him" — a drain claims ORDINARY seqs only.
+#[test]
+fn a_drain_wake_never_answers_andrey() {
+    let sel = mail::selector_for(WakeKind::Drain, bough_plugin_agents::Target::NextWake);
+    assert_eq!(
+        sel.classes,
+        Some(vec![bough_plugin_agents::MailClass::Ordinary])
+    );
+    assert!(!mail::admits(
+        WakeKind::Drain,
+        &bough_plugin_agent_loop::testing::andrey("m", "hi")
+    ));
+    assert!(mail::admits(WakeKind::Drain, &ordinary_msg("m", None)));
+    // An answer wake, by contrast, claims its TRIGGER and nothing else.
+    let answer = mail::only_the_trigger(
+        mail::selector_for(WakeKind::Answer, bough_plugin_agents::Target::NextWake),
+        &bough_plugin_agents::MessageId::new("m7"),
+    );
+    assert_eq!(
+        answer.only.map(|v| v.len()),
+        Some(1),
+        "an answer wake reads only the message that triggered it"
+    );
+    let _ = delivered(1, &wake_of("w"), "ordinary", "x");
+}

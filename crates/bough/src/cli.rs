@@ -3,12 +3,16 @@
 
 use std::path::PathBuf;
 
+/// The profile `--profile` defaults to. Named because `bough exec` has to be able to tell the
+/// default apart from a profile the user typed.
+pub const DEFAULT_PROFILE: &str = "tui";
+
 /// `bough`.
 #[derive(Debug, clap::Parser)]
 #[command(name = "bough", version)]
 pub struct Cli {
     /// Which profile to boot: `tui` (default), `headless`, `dev`.
-    #[arg(long, default_value = "tui")]
+    #[arg(long, default_value = DEFAULT_PROFILE)]
     pub profile: String,
     /// Extra patch layers, applied last, in argument order.
     #[arg(long = "patch")]
@@ -28,6 +32,55 @@ pub struct Cli {
     /// Override the embedded `profiles/` + `bundles/` directory.
     #[arg(long)]
     pub root: Option<PathBuf>,
+    /// `bough exec "<task>"`. A subcommand is COMPOSITION, not behaviour: it selects the headless
+    /// profile and overlays one synthetic patch layer on the `exec` row (§0.1 item 2).
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+/// The launcher's subcommands.
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum Command {
+    /// Run ONE task through the ordinary loop, print the answer, exit.
+    Exec(ExecArgs),
+}
+
+/// `bough exec` — every field here writes the `exec` row's config and nothing else.
+#[derive(Debug, Clone, clap::Args)]
+pub struct ExecArgs {
+    /// The task, sent to the agent as an Andrey message.
+    pub task: String,
+    /// Which agent answers. Defaults to the `exec` row's configured agent.
+    #[arg(long)]
+    pub agent: Option<String>,
+    /// Which trajectory the agent's chain lives on.
+    #[arg(long)]
+    pub traj: Option<String>,
+    /// `text` (the last assistant text) or `json` (the whole wake).
+    #[arg(long, value_enum)]
+    pub print: Option<PrintFormat>,
+    /// Stay up after the task instead of asking the process to exit. For a test that wants to
+    /// inspect the running tree.
+    #[arg(long)]
+    pub keep_running: bool,
+}
+
+/// The CLI spelling of the `exec` row's `print` field. A separate enum for the same reason
+/// [`DumpFormat`] is one: the launcher never names a plugin type (§0.1 item 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum PrintFormat {
+    Text,
+    Json,
+}
+
+impl PrintFormat {
+    /// The YAML spelling the `exec` row's config expects.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PrintFormat::Text => "text",
+            PrintFormat::Json => "json",
+        }
+    }
 }
 
 /// The CLI spelling of [`bough_kernel::DumpFormat`].

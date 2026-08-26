@@ -139,6 +139,7 @@ fn cli_for(profile: &str) -> Cli {
         // The tests drive `recompose_once` directly rather than waiting on a file watcher.
         no_watch: true,
         root: None,
+        command: None,
     }
 }
 
@@ -281,3 +282,69 @@ pub const BASE: &str = "\
     who: world
     log_level: info
 ";
+
+// ---------------------------------------------------------------------------
+// Phase 2: booting the REAL bundles
+// ---------------------------------------------------------------------------
+
+/// A fixture patch file, by base name, under `crates/bough/tests/fixtures/`.
+pub fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join(name)
+}
+
+/// Boot the SHIPPED `profiles/` + `bundles/` — not a test tree — with extra `--patch` layers.
+///
+/// Phase 0's `boot_with` swaps the bundle list for a fixture, which is right for testing the
+/// loader; Phase 2's gates are about the rows Andrey actually ships, so these boot the real files
+/// through `--root` with a throwaway `$BOUGH_HOME` for the ledger and the user patch layer.
+pub async fn boot_real(profile: &str, patches: &[PathBuf]) -> (Arc<Kernel>, TempDir) {
+    // The invariant recorders are PER PROCESS and keyed by `FiberUid`, and a fresh `Kernel` mints
+    // fiber uids from zero — so a previous test in this binary can leave observations that the
+    // next one's runner reads as its own. Every boot starts from a clean stream; a test whose
+    // whole point is the recorded stream must be the only writer of it.
+    bough_plugin_ledger::invariant::clear();
+    bough_plugin_agents::invariant::clear();
+
+    let mut dir = TempDir::new(&format!("phase2-{profile}"));
+    // SAFETY: the caller holds the fixture's process-wide test lock.
+    unsafe { std::env::set_var("BOUGH_HOME", dir.path()) };
+    let mut cli = cli_for(profile);
+    cli.root = Some(repo_root());
+    cli.patches = patches.to_vec();
+    dir.cli = Some(Arc::new(cli));
+
+    let catalog = Catalog::from_inventory().expect("the linked catalog has no duplicate names");
+    let (resolved, composition) =
+        bough::compose::compose_plan(dir.cli(), &catalog).expect("the shipped tree composes");
+    let kernel = Kernel::new(
+        catalog,
+        KernelOptions {
+            profile: resolved.name.clone(),
+            invariants: true,
+        },
+    );
+    kernel
+        .load(composition)
+        .await
+        .expect("the shipped tree mounts");
+    assert!(kernel.quiesce().await, "the shipped tree must quiesce");
+    assert!(
+        kernel.snapshot().unresolved().is_empty(),
+        "an enabled row that never activates is a boot failure (§0.2): {:#?}",
+        kernel.snapshot().unresolved()
+    );
+    (kernel, dir)
+}
+
+/// A row's `Context`, for a test that needs to reach a service the way a plugin does.
+///
+/// `exec` is the row of choice: it injects both `agents` and `ledger`, so its context resolves
+/// exactly the two keys these gates read, and nothing else.
+pub fn row_ctx(kernel: &Kernel, id: &str) -> bough_kernel::Context {
+    kernel
+        .row_context(&bough_kernel::EntryId::new(id))
+        .unwrap_or_else(|| panic!("row `{id}` has no context"))
+}

@@ -15,5 +15,7 @@ schemars = { workspace = true }
 inventory = { workspace = true }
 anyhow = { workspace = true }
 
+bough-plugin-ledger = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true }

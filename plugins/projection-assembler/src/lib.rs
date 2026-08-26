@@ -259,6 +259,7 @@ pub(crate) mod test_support {
 
     pub fn assemble_request(agent: &str) -> AssembleRequest {
         AssembleRequest {
+            as_of: None,
             agent: AgentName::new(agent),
             wake: None,
             at: at(),

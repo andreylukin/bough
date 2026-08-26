@@ -158,6 +158,7 @@ mod tests {
                 .unwrap()
                 .into(),
             budget: None,
+            as_of: None,
         };
         assert_eq!(resolve_assemble(&base, &c).budget, 1000);
         let asked = AssembleRequest {

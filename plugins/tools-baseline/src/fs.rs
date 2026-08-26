@@ -2,17 +2,171 @@
 //! path cannot leave the task tree by accident; it is not a security boundary and must never be
 //! described as one.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Resolve `path` against `root`, refusing anything that escapes it (`..`, an absolute path
 /// elsewhere, a symlink out).
 ///
-/// WP-3.
-pub fn contain(_root: &Path, _path: &str) -> Result<PathBuf, String> {
-    todo!("WP-3: canonicalise and refuse an escape, naming the root in the message")
+/// The target need not exist (a write creates it), so the deepest EXISTING ancestor is
+/// canonicalised and the rest is appended lexically: that is what makes a symlink pointing out of
+/// the tree refusable without requiring the leaf to be there already.
+pub fn contain(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("tool root `{}` is unreadable: {e}", root.display()))?;
+    let joined = if Path::new(path).is_absolute() {
+        PathBuf::from(path)
+    } else {
+        root.join(path)
+    };
+    let resolved = resolve_existing_prefix(&normalize(&joined));
+    if !resolved.starts_with(&root) {
+        return Err(format!(
+            "path `{path}` is outside the tool root `{}`",
+            root.display()
+        ));
+    }
+    Ok(resolved)
 }
 
-/// Whether `path` matches any of the row's `deny_globs`. WP-3.
-pub fn denied(_deny_globs: &[String], _path: &Path) -> bool {
-    todo!("WP-3")
+/// Lexical normalisation: drop `.`, fold `..` against the preceding component. No filesystem
+/// access, so it works for paths that do not exist yet.
+fn normalize(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Canonicalise the deepest existing ancestor and re-append the rest, so a symlinked ancestor
+/// (`/var` → `/private/var` on macOS, and a link out of the tree) is resolved before the
+/// containment comparison.
+fn resolve_existing_prefix(p: &Path) -> PathBuf {
+    let mut rest: Vec<std::ffi::OsString> = Vec::new();
+    let mut cur = p.to_path_buf();
+    loop {
+        if let Ok(c) = cur.canonicalize() {
+            let mut out = c;
+            for part in rest.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+        match cur.file_name() {
+            Some(name) => {
+                rest.push(name.to_os_string());
+                if !cur.pop() {
+                    return p.to_path_buf();
+                }
+            }
+            None => return p.to_path_buf(),
+        }
+    }
+}
+
+/// Whether `path` matches any of the row's `deny_globs`.
+///
+/// `**` crosses separators, `*` and `?` do not. The pattern is matched against the whole path and
+/// against its tail after any `/`, so `*.env` denies `a/b/.env` too.
+pub fn denied(deny_globs: &[String], path: &Path) -> bool {
+    let s = path.to_string_lossy().to_string();
+    deny_globs.iter().any(|g| {
+        let re = glob_to_regex(g);
+        regex::Regex::new(&re)
+            .map(|r| {
+                r.is_match(&s)
+                    || path
+                        .file_name()
+                        .map(|n| r.is_match(&n.to_string_lossy()))
+                        .unwrap_or(false)
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// A glob as an anchored regex. Shared by `denied` and by the `glob` tool.
+pub fn glob_to_regex(pattern: &str) -> String {
+    let mut re = String::from("^");
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '*' => {
+                if i + 1 < chars.len() && chars[i + 1] == '*' {
+                    // `**/` also matches zero directories.
+                    if i + 2 < chars.len() && chars[i + 2] == '/' {
+                        re.push_str("(?:.*/)?");
+                        i += 3;
+                        continue;
+                    }
+                    re.push_str(".*");
+                    i += 2;
+                    continue;
+                }
+                re.push_str("[^/]*");
+            }
+            '?' => re.push_str("[^/]"),
+            c => re.push_str(&regex::escape(&c.to_string())),
+        }
+        i += 1;
+    }
+    re.push('$');
+    re
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_relative_path_resolves_under_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hi").unwrap();
+        let p = contain(dir.path(), "a.txt").unwrap();
+        assert!(p.ends_with("a.txt"));
+        assert_eq!(std::fs::read_to_string(p).unwrap(), "hi");
+    }
+
+    #[test]
+    fn a_path_that_does_not_exist_yet_still_resolves() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = contain(dir.path(), "sub/new.txt").unwrap();
+        assert!(p.ends_with("sub/new.txt"));
+    }
+
+    #[test]
+    fn a_dotdot_escape_is_refused_and_names_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = contain(dir.path(), "../outside.txt").unwrap_err();
+        assert!(err.contains("outside the tool root"), "{err}");
+    }
+
+    #[test]
+    fn an_absolute_path_elsewhere_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(contain(dir.path(), "/etc/hosts").is_err());
+    }
+
+    #[test]
+    fn deny_globs_match_the_tail_and_the_whole_path() {
+        let p = PathBuf::from("/root/a/b/.env");
+        assert!(denied(&["*.env".to_string()], &p));
+        assert!(denied(&["**/b/*".to_string()], &p));
+        assert!(!denied(&["*.toml".to_string()], &p));
+    }
+
+    #[test]
+    fn a_double_star_prefix_matches_zero_directories() {
+        let re = regex::Regex::new(&glob_to_regex("**/*.rs")).unwrap();
+        assert!(re.is_match("main.rs"));
+        assert!(re.is_match("src/a/main.rs"));
+        assert!(!re.is_match("main.toml"));
+    }
 }

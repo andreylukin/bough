@@ -49,6 +49,7 @@ async fn a_patch_that_stops_composing_broadcasts_and_leaves_the_tree_running() {
                 .canonicalize()
                 .unwrap(),
         ),
+        command: None,
     });
 
     let catalog = Catalog::from_inventory().expect("catalog");

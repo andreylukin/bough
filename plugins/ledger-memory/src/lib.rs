@@ -332,11 +332,17 @@ impl LedgerStore for MemoryStore {
     }
 
     async fn action_intent(&self, a: NewAction) -> Result<ActionRow, LedgerError> {
+        let (traj, target) = (a.traj.clone(), a.target.clone());
         let row = store::action_row(a);
         self.inner
             .write()
             .actions
             .insert(row.id.clone(), row.clone());
+        // §2.7 item 4: the journal row and the ledger step are one act.
+        self.append(bough_plugin_ledger::journal::intent_step(
+            &row, &traj, &target,
+        ))
+        .await?;
         Ok(row)
     }
     async fn action_done(
@@ -344,16 +350,20 @@ impl LedgerStore for MemoryStore {
         id: &ActionId,
         status: ActionStatus,
         result: serde_json::Value,
+        at: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), LedgerError> {
-        let mut inner = self.inner.write();
-        let row = inner
-            .actions
-            .get_mut(id)
-            .ok_or_else(|| LedgerError::Store(anyhow::anyhow!("no such action `{id}`")))?;
-        row.status = status;
-        row.result = Some(result);
-        row.done_at = Some(chrono::Utc::now());
-        Ok(())
+        {
+            let mut inner = self.inner.write();
+            let row = inner
+                .actions
+                .get_mut(id)
+                .ok_or_else(|| LedgerError::Store(anyhow::anyhow!("no such action `{id}`")))?;
+            row.status = status;
+            row.result = Some(result.clone());
+            // The clock is injected now (§2.7 item 4): no store reads one.
+            row.done_at = Some(at);
+        }
+        crate::actions_done_step(self, id, status, &result, at).await
     }
     async fn actions(&self, q: &ActionQuery) -> Result<Vec<ActionRow>, LedgerError> {
         let inner = self.inner.read();
@@ -438,4 +448,41 @@ impl LedgerStore for MemoryStore {
             agent,
         })
     }
+}
+
+/// The `action/done` step both providers append, once the journal row is updated. The same shape
+/// as `bough-plugin-ledger-sqlite`'s, deliberately: the two stores must not disagree about which
+/// trajectory the step lands in or what it cites.
+pub(crate) async fn actions_done_step(
+    store: &dyn LedgerStore,
+    id: &ActionId,
+    status: ActionStatus,
+    result: &serde_json::Value,
+    at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), LedgerError> {
+    let row = store
+        .actions(&bough_plugin_ledger::ActionQuery {
+            ids: vec![id.clone()],
+            ..Default::default()
+        })
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| LedgerError::Store(anyhow::anyhow!("no such action `{id}`")))?;
+    let Some(intent) = bough_plugin_ledger::journal::find_intent_step(store, id).await? else {
+        return Err(LedgerError::Store(anyhow::anyhow!(
+            "action `{id}` has no `action/intent` step to close"
+        )));
+    };
+    store
+        .append(bough_plugin_ledger::journal::done_step(
+            &row,
+            &intent.traj,
+            &intent.id,
+            status,
+            bough_plugin_ledger::journal::artifact_of(result),
+            at,
+        ))
+        .await?;
+    Ok(())
 }

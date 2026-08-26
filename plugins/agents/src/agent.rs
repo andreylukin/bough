@@ -2,13 +2,18 @@
 //! cancel with nothing active arms nothing, and `Disposed` never latches a pending wake. Those
 //! four are enforced here, at the setters, not merely observed by the invariant module (P2-D9).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use bough_kernel::{Context, ScopeKey};
-use bough_plugin_ledger::{AgentName, TrajId};
+use bough_plugin_ledger::{AgentName, LedgerHandle, TrajId};
 use chrono::{DateTime, Utc};
+use parking_lot::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::error::AgentError;
+use crate::events::{AgentInbox, AgentStatusChanged, StatusChange};
+use crate::factory::AgentDriver;
 use crate::ids::{AgentId, SessionId};
 use crate::mail::{Inbox, InboxReceipt, Message, Target};
 
@@ -61,94 +66,210 @@ pub struct Session {
 #[derive(Clone)]
 pub struct Agent(pub(crate) Arc<AgentInner>);
 
-/// Everything one live agent owns. Private: the handle is the only surface (WP-2 fills it in).
+/// Everything one live agent owns. Private: the handle is the only surface.
 pub struct AgentInner {
-    pub(crate) _id: AgentId,
-    pub(crate) _name: AgentName,
+    pub(crate) id: AgentId,
+    pub(crate) name: AgentName,
+    pub(crate) kind: AgentKind,
+    pub(crate) session: Session,
+    pub(crate) inbox: Inbox,
+    pub(crate) ledger: LedgerHandle,
+    /// The plugin's own context: where `agent/*` events are dispatched from.
+    pub(crate) base: Context,
+    /// The agent's SCOPE: everything registered through it unwinds with the agent.
+    pub(crate) ctx: Context,
+    pub(crate) scope_key: ScopeKey,
+    pub(crate) status: Mutex<Status>,
+    pub(crate) cancelled: Mutex<Option<CancelCause>>,
+    /// Fresh on every wake: a cancelled token stays cancelled, so reusing one would make the
+    /// NEXT wake start already-cancelled.
+    pub(crate) token: Mutex<CancellationToken>,
+    pub(crate) disposed: AtomicBool,
+    /// A wake the seam has handed to the driver that has not started yet. `when_idle` waits for
+    /// it, and a `Disposed` cancel clears it and never lets another be armed (§2).
+    pub(crate) pending_wake: AtomicBool,
+    pub(crate) driver: Mutex<Option<Arc<dyn AgentDriver>>>,
+    pub(crate) idle: tokio::sync::Notify,
 }
 
 impl Agent {
-    /// WP-2.
     pub fn id(&self) -> &AgentId {
-        todo!("WP-2")
+        &self.0.id
     }
-    /// WP-2.
     pub fn name(&self) -> &AgentName {
-        todo!("WP-2")
+        &self.0.name
     }
-    /// WP-2.
     pub fn kind(&self) -> AgentKind {
-        todo!("WP-2")
+        self.0.kind
     }
-    /// WP-2.
     pub fn session(&self) -> &Session {
-        todo!("WP-2")
+        &self.0.session
     }
-    /// WP-2.
     pub fn traj(&self) -> &TrajId {
-        todo!("WP-2")
+        &self.0.session.traj
     }
-    /// WP-2.
     pub fn inbox(&self) -> &Inbox {
-        todo!("WP-2")
+        &self.0.inbox
     }
-    /// WP-2.
     pub fn status(&self) -> Status {
-        todo!("WP-2")
+        *self.0.status.lock()
     }
     /// The agent's SCOPE (§5): scoped tools, sections and `tools.restrict` register through it
     /// and unwind with the agent.
-    ///
-    /// WP-2.
     pub fn ctx(&self) -> &Context {
-        todo!("WP-2")
+        &self.0.ctx
     }
-    /// WP-2.
     pub fn scope_key(&self) -> &ScopeKey {
-        todo!("WP-2")
+        &self.0.scope_key
     }
+    /// The ledger this agent's chain lives in.
+    pub fn ledger(&self) -> &LedgerHandle {
+        &self.0.ledger
+    }
+    /// Whether teardown (or a `Disposed` cancel) has run.
+    pub fn is_disposed(&self) -> bool {
+        self.0.disposed.load(Ordering::SeqCst)
+    }
+    /// Whether a wake has been handed to the driver and has not started.
+    /// Arm the pending wake without a `send`: the creation transaction's seed mail takes this
+    /// path, because the driver does not exist yet when the seed is spliced.
+    pub(crate) fn arm_pending_wake(&self) {
+        self.0.pending_wake.store(true, Ordering::SeqCst);
+    }
+    pub fn has_pending_wake(&self) -> bool {
+        self.0.pending_wake.load(Ordering::SeqCst)
+    }
+    /// The driver, once the factory has attached one.
+    pub fn driver(&self) -> Option<Arc<dyn AgentDriver>> {
+        self.0.driver.lock().clone()
+    }
+    /// The token every cancel cause fires.
+    pub fn cancel_token(&self) -> CancellationToken {
+        self.0.token.lock().clone()
+    }
+
     /// First cause wins; nothing active ⇒ a no-op that never arms later work; `Disposed` never
     /// latches a pending wake (§2).
-    ///
-    /// WP-2.
-    pub async fn cancel(&self, _cause: CancelCause, _keep_inbox: bool) {
-        todo!("WP-2: first-wins cancellation")
+    pub async fn cancel(&self, cause: CancelCause, keep_inbox: bool) {
+        if cause == CancelCause::Disposed {
+            // Terminal, whatever the status: after this no wake can be armed, and any wake the
+            // seam had already handed to the driver is un-latched.
+            self.0.disposed.store(true, Ordering::SeqCst);
+            self.0.pending_wake.store(false, Ordering::SeqCst);
+            self.0.token.lock().cancel();
+            self.0.idle.notify_waiters();
+        }
+        if self.status() != Status::Running {
+            // Nothing active: a no-op. In particular it does not record a cause that a LATER
+            // wake would then observe, and it never touches the inbox.
+            return;
+        }
+        {
+            let mut held = self.0.cancelled.lock();
+            if held.is_some() {
+                // First cause wins.
+                return;
+            }
+            *held = Some(cause);
+        }
+        self.0.token.lock().cancel();
+        let driver = self.driver();
+        if let Some(driver) = driver {
+            driver.cancel(cause, keep_inbox).await;
+        }
     }
-    /// The cause that won, if any. WP-2.
+
+    /// The cause that won, if any.
     pub fn cancelled_by(&self) -> Option<CancelCause> {
-        todo!("WP-2")
+        *self.0.cancelled.lock()
     }
-    /// Resolves when the agent is idle and no wake is scheduled. WP-2.
+
+    /// Resolves when the agent is idle and no wake is scheduled.
     pub async fn when_idle(&self) {
-        todo!("WP-2")
+        loop {
+            let notified = self.0.idle.notified();
+            if self.status() == Status::Idle && !self.has_pending_wake() {
+                return;
+            }
+            notified.await;
+        }
     }
+
     /// Every inbox mutation is a durable `inbox/spliced` step keyed by the message id (§2).
-    ///
-    /// WP-2.
     pub async fn send(
         &self,
-        _msg: Message,
-        _target: Target,
-        _wake: bool,
+        msg: Message,
+        target: Target,
+        wake: bool,
     ) -> Result<InboxReceipt, AgentError> {
-        todo!("WP-2: splice, notify the driver, return the receipt")
+        if self.is_disposed() {
+            return Err(AgentError::Disposed {
+                name: self.0.name.clone(),
+            });
+        }
+        let receipt = self
+            .0
+            .inbox
+            .insert_waking(msg.clone(), target, wake)
+            .await?;
+        if wake {
+            self.0.pending_wake.store(true, Ordering::SeqCst);
+        }
+        self.0
+            .base
+            .emit::<AgentInbox>((receipt.clone(), msg.clone()));
+        if let Some(driver) = self.driver() {
+            driver.notify(&receipt, &msg).await;
+        }
+        Ok(receipt)
     }
-    /// Preset: `NextWake`, wake. WP-2.
-    pub async fn followup(&self, _msg: Message) -> Result<InboxReceipt, AgentError> {
-        todo!("WP-2: send(msg, Target::NextWake, true)")
+
+    /// Preset: `NextWake`, wake.
+    pub async fn followup(&self, msg: Message) -> Result<InboxReceipt, AgentError> {
+        self.send(msg, Target::NextWake, true).await
     }
-    /// Preset: `NextStep`, wake. WP-2.
-    pub async fn steer(&self, _msg: Message) -> Result<InboxReceipt, AgentError> {
-        todo!("WP-2: send(msg, Target::NextStep, true)")
+    /// Preset: `NextStep`, wake.
+    pub async fn steer(&self, msg: Message) -> Result<InboxReceipt, AgentError> {
+        self.send(msg, Target::NextStep, true).await
     }
-    /// Preset: `NextStep`, no wake. WP-2.
-    pub async fn inject(&self, _msg: Message) -> Result<InboxReceipt, AgentError> {
-        todo!("WP-2: send(msg, Target::NextStep, false)")
+    /// Preset: `NextStep`, no wake.
+    pub async fn inject(&self, msg: Message) -> Result<InboxReceipt, AgentError> {
+        self.send(msg, Target::NextStep, false).await
+    }
+
+    /// Publish a status transition. `AgentCell::set_status` is the only caller.
+    pub(crate) fn set_status(&self, to: Status) -> Result<(), AgentError> {
+        let from = {
+            let mut held = self.0.status.lock();
+            if *held == to {
+                return Err(AgentError::StatusRepeat(to));
+            }
+            let from = *held;
+            *held = to;
+            from
+        };
+        if to == Status::Running {
+            // The pending wake has become a running one.
+            self.0.pending_wake.store(false, Ordering::SeqCst);
+            if !self.is_disposed() {
+                *self.0.token.lock() = CancellationToken::new();
+            }
+        } else {
+            // A finished wake clears the cause, so the NEXT wake starts uncancelled.
+            *self.0.cancelled.lock() = None;
+        }
+        self.0.idle.notify_waiters();
+        self.0.base.emit::<AgentStatusChanged>(StatusChange {
+            agent: self.0.id.clone(),
+            from,
+            to,
+        });
+        Ok(())
     }
 }
 
 impl std::fmt::Debug for Agent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Agent({:?})", self.0._name)
+        write!(f, "Agent({:?})", self.0.name)
     }
 }

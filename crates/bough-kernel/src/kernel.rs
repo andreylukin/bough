@@ -106,6 +106,8 @@ pub struct Kernel {
     composition: Mutex<Option<Arc<Composition>>>,
     runner: Mutex<Option<Arc<InvariantRunner>>>,
     updates: AtomicU64,
+    /// The exit latch (P2-D23). `None` until a row asks; the FIRST code wins.
+    exit: tokio::sync::watch::Sender<Option<u8>>,
 }
 
 impl Kernel {
@@ -182,6 +184,7 @@ impl Kernel {
             composition: Mutex::new(None),
             runner: Mutex::new(None),
             updates: AtomicU64::new(0),
+            exit: tokio::sync::watch::channel(None).0,
         });
         // Every binding-store mutation re-resolves the dependents' targets, so a provider that
         // withdraws and re-provides (`ServiceSlot::republish`) actually reloads them (§0.3).
@@ -553,6 +556,10 @@ impl Kernel {
                 .unwrap_or(FiberState::Inactive),
             disabled: is_disabled(e),
             unmet: fiber.as_ref().map(|f| f.unmet()).unwrap_or_default(),
+            error: fiber
+                .as_ref()
+                .and_then(|f| f.error())
+                .map(|e| e.to_string()),
             provides: fiber.as_ref().map(|f| f.provides()).unwrap_or_default(),
             realms: e.isolate.clone(),
             children: {
@@ -585,6 +592,7 @@ impl Kernel {
             state: f.state(),
             disabled: false,
             unmet: f.unmet(),
+            error: f.error().map(|e| e.to_string()),
             provides: f.provides(),
             realms: f.realms(),
             children: f
@@ -607,6 +615,18 @@ impl Kernel {
             .as_ref()
             .map(|r| r.violations())
             .unwrap_or_default()
+    }
+
+    /// Run every `OnQuiesce` invariant once, now. A no-op when the runner is off.
+    ///
+    /// The kernel runs these after reconciliation settles, which is the right cadence for a tree
+    /// that has just changed shape. A phase gate instead wants them AFTER a conversation, when
+    /// the tree has not moved at all, and that is what this is for (§17 Phase 2).
+    pub async fn run_invariants(&self) {
+        let runner = self.runner.lock().clone();
+        if let Some(r) = runner {
+            r.run_on_quiesce().await;
+        }
     }
 
     /// Start the invariant runner. A no-op unless `KernelOptions::invariants` (§0.2, §2.9).
@@ -699,8 +719,15 @@ impl Kernel {
     /// the teardown. Calling it twice keeps the FIRST code.
     ///
     /// WP-8.
-    pub fn request_exit(&self, _code: u8) {
-        todo!("WP-8: latch the first code and wake `exited()`")
+    pub fn request_exit(&self, code: u8) {
+        self.exit.send_if_modified(|slot| {
+            if slot.is_some() {
+                false
+            } else {
+                *slot = Some(code);
+                true
+            }
+        });
     }
 
     /// Resolves with the requested exit code once some row has called [`Kernel::request_exit`].
@@ -708,7 +735,18 @@ impl Kernel {
     ///
     /// WP-8.
     pub fn exited(&self) -> impl std::future::Future<Output = u8> + Send + 'static {
-        async { todo!("WP-8: await the exit latch") }
+        let mut rx = self.exit.subscribe();
+        async move {
+            loop {
+                if let Some(code) = *rx.borrow_and_update() {
+                    return code;
+                }
+                if rx.changed().await.is_err() {
+                    // The kernel is gone; nothing will ever ask for an exit.
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
     }
 
     /// Unload everything, LIFO, awaited.
@@ -982,6 +1020,10 @@ pub struct RowSnapshot {
     pub state: FiberState,
     pub disabled: bool,
     pub unmet: Vec<String>,
+    /// The rendered `apply` failure, when the row is `Failed`. A boot failure that named the row
+    /// and not the reason sent every reader to the debugger (§0.2: misconfiguration fails LOUD,
+    /// and loud means legible).
+    pub error: Option<String>,
     pub provides: Vec<&'static str>,
     pub realms: BTreeMap<String, RealmLabel>,
     pub children: Vec<RowSnapshot>,
@@ -995,6 +1037,8 @@ pub struct UnresolvedRow {
     pub plugin: Option<String>,
     pub state: FiberState,
     pub unmet: Vec<String>,
+    /// The `apply` failure, when there was one.
+    pub error: Option<String>,
 }
 
 impl TreeSnapshot {
@@ -1016,6 +1060,7 @@ pub fn unresolved_rows(rows: &[RowSnapshot]) -> Vec<UnresolvedRow> {
                     plugin: r.plugin.clone(),
                     state: r.state,
                     unmet: r.unmet.clone(),
+                    error: r.error.clone(),
                 });
             }
             walk(&r.children, out);
@@ -1686,5 +1731,55 @@ mod e2e {
         );
 
         kernel.shutdown().await;
+    }
+}
+
+/// The exit latch (P2-D23). Domain-blind: a surface row asks, the launcher decides how to leave.
+#[cfg(test)]
+mod exit_latch {
+    use super::*;
+    use crate::catalog::Catalog;
+
+    fn kernel() -> Arc<Kernel> {
+        Kernel::new(
+            Catalog::from_parts(Vec::new()).unwrap(),
+            KernelOptions {
+                profile: "test".into(),
+                invariants: false,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn exited_resolves_with_the_requested_code() {
+        let k = kernel();
+        let waiter = k.exited();
+        k.request_exit(3);
+        assert_eq!(waiter.await, 3);
+    }
+
+    #[tokio::test]
+    async fn a_late_waiter_still_sees_an_exit_already_requested() {
+        let k = kernel();
+        k.request_exit(7);
+        assert_eq!(k.exited().await, 7);
+    }
+
+    #[tokio::test]
+    async fn the_first_code_wins() {
+        let k = kernel();
+        k.request_exit(1);
+        k.request_exit(9);
+        assert_eq!(k.exited().await, 1);
+    }
+
+    #[tokio::test]
+    async fn exited_does_not_resolve_before_anyone_asks() {
+        let k = kernel();
+        let r = tokio::time::timeout(std::time::Duration::from_millis(50), k.exited()).await;
+        assert!(
+            r.is_err(),
+            "no row asked to exit, so `exited()` must not resolve"
+        );
     }
 }

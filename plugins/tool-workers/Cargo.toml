@@ -15,3 +15,6 @@ serde_json = { workspace = true }
 schemars = { workspace = true }
 inventory = { workspace = true }
 anyhow = { workspace = true }
+chrono = { workspace = true }
+bough-plugin-agents = { workspace = true }
+bough-plugin-ledger = { workspace = true }

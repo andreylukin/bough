@@ -118,11 +118,13 @@ pub trait LedgerStore: Send + Sync + 'static {
     // ---- actions journal (storage only in Phase 1, P1-D11) ---------------------
 
     async fn action_intent(&self, a: NewAction) -> Result<ActionRow, LedgerError>;
+    /// The clock is INJECTED (§2.7 item 4): the store no longer reads one.
     async fn action_done(
         &self,
         id: &ActionId,
         status: ActionStatus,
         result: serde_json::Value,
+        at: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), LedgerError>;
     async fn actions(&self, q: &ActionQuery) -> Result<Vec<ActionRow>, LedgerError>;
 
@@ -167,6 +169,110 @@ impl LedgerHandle {
             Ok(())
         })
         .await
+    }
+}
+
+/// The two journal STEPS §2.7 item 4 makes `action_intent` / `action_done` append.
+///
+/// Shared by both providers so "intent before done, and both in the ledger" is ONE implementation
+/// and cannot drift between the store you test on and the store you ship on.
+pub mod journal {
+    use super::*;
+    use crate::vocabulary::{ActionDone, ActionIntent, ActionOutcome};
+
+    /// sha256 of an action payload's canonical JSON, hex. `serde_json` orders object keys, so the
+    /// digest is stable across processes.
+    pub fn payload_digest(payload: &serde_json::Value) -> String {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(
+            serde_json::to_string(payload)
+                .unwrap_or_default()
+                .as_bytes(),
+        );
+        format!("{:x}", h.finalize())
+    }
+
+    /// The `action/intent` step for a freshly journalled row. Thought: it is a decision, not a
+    /// truth claim about the world.
+    pub fn intent_step(row: &ActionRow, traj: &TrajId, target: &str) -> Append {
+        Append {
+            traj: traj.clone(),
+            wake: row.wake.clone(),
+            kind: StepType::new("action/intent"),
+            class: Class::Thought,
+            body: serde_json::to_value(ActionIntent {
+                action: row.id.clone(),
+                idem_key: row.idem_key.clone(),
+                kind: row.kind.clone(),
+                target: target.to_string(),
+                payload_digest: payload_digest(&row.payload),
+            })
+            .expect("ActionIntent serialises"),
+            cites: Vec::new(),
+            at: row.at,
+            id: None,
+        }
+    }
+
+    /// The `action/done` step. EVIDENCE, so it cites the intent step it closes — which is also
+    /// what makes intent-before-done checkable from the ledger alone.
+    pub fn done_step(
+        row: &ActionRow,
+        traj: &TrajId,
+        intent: &StepId,
+        status: ActionStatus,
+        artifact: Option<String>,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Append {
+        Append {
+            traj: traj.clone(),
+            wake: row.wake.clone(),
+            kind: StepType::new("action/done"),
+            class: Class::Evidence,
+            body: serde_json::to_value(ActionDone {
+                action: row.id.clone(),
+                status: match status {
+                    ActionStatus::Done => ActionOutcome::Done,
+                    _ => ActionOutcome::Failed,
+                },
+                artifact,
+            })
+            .expect("ActionDone serialises"),
+            cites: vec![Cite {
+                r#ref: Ref::new(format!("step:{intent}")),
+                url: None,
+            }],
+            at,
+            id: None,
+        }
+    }
+
+    /// The `action/intent` step that opened `action`, found from the ledger alone.
+    ///
+    /// A lookup rather than a column: it keeps the `actions` schema unchanged and makes the
+    /// trajectory of the done step provably the trajectory of the intent step.
+    pub async fn find_intent_step(
+        store: &dyn LedgerStore,
+        action: &ActionId,
+    ) -> Result<Option<Step>, LedgerError> {
+        let steps = store
+            .steps(&StepQuery {
+                kinds: vec![StepType::new("action/intent")],
+                ..Default::default()
+            })
+            .await?;
+        Ok(steps
+            .into_iter()
+            .find(|s| s.body.get("action").and_then(|v| v.as_str()) == Some(action.as_str())))
+    }
+
+    /// The artifact locator a result payload carries, if any. `None` for anything else.
+    pub fn artifact_of(result: &serde_json::Value) -> Option<String> {
+        result
+            .get("locator")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
 }
 

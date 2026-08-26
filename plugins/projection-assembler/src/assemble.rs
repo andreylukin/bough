@@ -49,6 +49,7 @@ pub async fn assemble(a: &Assembler, req: &AssembleRequest) -> Result<Assembled,
         at: req.at,
         ledger: a.ledger.clone(),
         connected: Arc::clone(&connected),
+        as_of: req.as_of,
     };
     let cfg = &*a.cfg;
     // Every request-time default, resolved once and explicitly (§0.2).
@@ -63,6 +64,8 @@ pub async fn assemble(a: &Assembler, req: &AssembleRequest) -> Result<Assembled,
     let mut pins = {
         let trajs: Vec<_> = connected.trajectories().into_iter().collect();
         let mut p = a.ledger.0.live_pins(&trajs).await?;
+        // §2.7 item 3: a pin set after `as_of` was not in the projection being reproduced.
+        p.retain(|pin| sreq.visible(pin.seq));
         bands::sort_pins(&mut p);
         p
     };

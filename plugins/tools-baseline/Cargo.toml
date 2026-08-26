@@ -22,3 +22,9 @@ tokio-util = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+bough-kernel = { workspace = true }
+bough-plugin-tools = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde_json = { workspace = true }

@@ -21,6 +21,10 @@ pub enum WorkerError {
     SealInvalid { seal: String, detail: String },
     #[error("worker `{0}` was cancelled")]
     Cancelled(WorkerId),
+    #[error("the workers seam is not wired: {0}")]
+    Seam(String),
     #[error(transparent)]
     Agent(#[from] AgentError),
+    #[error(transparent)]
+    Ledger(#[from] bough_plugin_ledger::LedgerError),
 }
