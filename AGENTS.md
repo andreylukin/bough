@@ -1,80 +1,61 @@
-# Working in this repo
+# Working in this repo (the `rebuild` branch)
 
-## Layout
+`REQUIREMENTS.md` is the spec and the only authority. Section numbers below refer to it. Read the
+sections named by your task before touching code; when code and REQUIREMENTS disagree, REQUIREMENTS
+wins and the code is the bug. `BUILD.md` is the phase ledger: what is done, what is verified, what
+was deliberately deferred.
 
-```
-crates/bough-llm/    the provider layer: LlmClient + types, routing, retries,
-                     pricing, tracing; standalone (no bough-core dep)
-crates/bough-core/   the system: turn runner, harness, host functions, subagents,
-                     workflows, history ops, MCP, db, prompt, skills
-crates/bough-server/ the loopback HTTP + SSE server
-crates/bough-tui/    the ratatui terminal UI
-crates/bough/        the binary: start | restart | tui | exec | acp | hooks | mcp |
-                     sync-mcp | tags | notes | patterns
-specs/               per-subsystem behavioral contracts (16 files), authoritative;
-                     README.md indexes them and maps the old TS names to crates/
-docs/                README.md is the map. spec.md (what the system is) ·
-                     architecture.md (crate boundaries, shared types, concurrency) ·
-                     tags.md (the command-memory tag system) · the user-facing set
-                     (install · tui · cli · programs · delegation · extending ·
-                     configuration · troubleshooting · how-it-works)
-docs/history/        finished and unmaintained: port-plan.md, implementation-plan.md
-scripts/             setup.sh (fresh machine) · bough (the service manager) ·
-                     smoke.sh and tui-test.sh (the PTY acceptance suites)
-Formula/             the Homebrew formula. A release tags the commit, then bumps
-                     this file's url + sha256 to that TAG (never a commit sha, because
-                     it goes stale on the next push); the tap repo copies it
-.github/             CI, issue and PR templates, CONTRIBUTING · SECURITY · CODE_OF_CONDUCT
-assets/              the logo (logo.svg is the source; the PNGs are exports)
-```
-
-One cargo workspace at the root. `make help` lists the targets.
+## Layout (§13, §17 Phase 0)
 
 ```
-cargo check --workspace    # must pass before every commit
-cargo test --workspace     # unit + integration, offline and hermetic
-make release               # what `scripts/bough` runs: target/release/bough
-make server                # the server on a scratch BOUGH_HOME
-make tui                   # the TUI against the local server
+crates/bough-kernel/   the center: contexts, typed services, fibers, effects, events, isolate/
+                       intercept, scope, loader (entries/group/include, per-field reconcile),
+                       patch layers, invariant runner. NO domain vocabulary. §0.1, §0.3
+crates/bough-util/     branded ids, home paths, timeouts. A library, no ctx key.
+crates/bough-llm/      KEPT from the old tree: LlmClient over Anthropic/OpenAI/OpenRouter/... Do not
+                       redesign it; wrap it (plugin llm-anthropic).
+crates/bough/          the launcher: profiles, bundles, patch layers, --dump-config, fail-loud boot,
+                       patch-file watch, teardown-before-exit. Composition only. §0.1, §0.5
+plugins/<name>/        one crate per plugin row, package name `bough-plugin-<name>`; registers a
+                       name + constructor through `inventory`; owns an `invariant` module. §9
+bundles/               bough-base.yml, bough-tui-app.yml, bough-headless.yml (YAML patch lists)
+profiles/              tui.yml, headless.yml, dev.yml (ordered bundle lists + profile patch)
+scripts/               shell-use TUI scripts, audit-plugins.sh
+docs/                  per-phase design notes written by the build (plan, decisions, deviations)
 ```
 
-`docs/spec.md` is authoritative for product behavior; `specs/*.md` pin per-subsystem
-contracts module by module, including the invariants that are not rediscoverable from
-the spec (worker wind-down ordering, same-millisecond message ordering, replay
-determinism, and the rest). Read the relevant spec before changing anything in `turn/`,
-`harness/`, or `workflow/`. `docs/history/implementation-plan.md` is historical: it describes
-a build order two rewrites old, and is worth reading only for its reasoning.
+One cargo workspace at the root. `make gates` (build + lint + test) must be green before every commit.
 
-`specs/` and `docs/architecture.md` were written against the TypeScript implementation this
-tree replaced, and still name `src/*.ts` modules in places. The *behavior* they pin is
-current and binding; the file names are a map to where each contract now lives in
-`crates/`. `docs/history/port-plan.md` is finished history, not a to-do list.
+## Rules the reviews enforce
 
-The only non-Rust runtime dependency is a JS runtime for the code-mode sidecar
-(`crates/bough-core/src/harness/js/`): `bun` if it is on PATH, else `node`. It needs no
-`node_modules`; the sidecar uses `node:*` builtins only.
+- **Plugins, not loop changes** (§0.2). New behavior attaches to a service key or a typed event.
+- **Registrations are effects**; every contribution returns a disposer; unload leaves no trace.
+- **No hardcoded tunables in plugins**: a deployment-varying value is a validated `Config` field
+  set from the bundle patch. Protocol constants and security invariants stay in code.
+- **Misconfiguration fails loud.** An enabled row that never activates is a boot failure.
+- **Every plugin crate has `src/invariant.rs`** checking an event stream or data relation it owns,
+  or a `No runtime invariant:` statement with the reason.
+- **Branded ids at boundaries**, explicit `resolve(request) -> Spec` for defaults, never `?? default`
+  inside `run()`.
+- **Model-visible ⟺ ledgered** (§0.2, §3). A new model-visible input is a new step type.
+- Tests sit next to the module they cover; they are offline and hermetic. Anything needing a real
+  model or the network is behind an env var (`BOUGH_LIVE=1`) and skipped otherwise.
+- Every module opens with a comment stating the invariant it holds. Dependencies (db, clock, LLM
+  client) are injected. Parsing and core logic are pure with `now` passed in.
+- Every phase ends with a **swap test** (§17): one row introduced in the phase replaced or disabled
+  by a patch, no compile, tree stays consistent.
 
-Conventions that reviews enforce: every module opens with a comment stating the
-invariant it holds; dependencies (db, clock, LLM client) are injected rather than
-reached for; parsing and other core logic stay pure with `now` passed in; validation
-happens at the boundary; tests sit next to the module they cover.
+## Verification tooling
 
-## Version control: plain git
+- `shell-use` (on PATH) drives the TUI in a real PTY: `shell-use --help`. The Phase 3+ TUI scripts
+  live in `scripts/tui/` and run under `make tui-test`.
+- `gh` is the GitHub transport (§13: no octocrab). Tests never call the real `gh`: they put a
+  recording shim first on PATH.
+- Old data for the §14 adapter: `~/.bough/bough.db` (command_history, command_tags, note_sections);
+  `~/.jungler/jungler.db` may be ABSENT on a machine and the adapter must activate anyway.
 
-This repo is a normal git checkout on `main`, and bough works in it **in place**, with no shadow store,
-no per-session worktree, no overlay. Edits land in the real files immediately, so git is the only
-record of what a session changed. Each session's starting sha is recorded in the database and drives
-the Changes rail.
+## Version control
 
-- Ship work with ordinary commits on `main`; branch first for anything you'd want reviewed as a PR.
-- There is no snapshot store to salvage from; uncommitted work lives only in the working tree.
-
-## Running against this tree
-
-The live server runs the binary built from this working tree and is respawned by launchd when
-killed, so a `make release` here replaces what the next restart runs. Point a development instance
-somewhere else before exercising it: `BOUGH_HOME` relocates the data root and `BOUGH_PORT` moves the
-listener.
-
-Never point a bough session's workspace at this repository itself while testing server endpoints
-that mutate a workspace. Use a scratch directory.
+Plain git, branch `rebuild`, worktree at `~/repos/bough-rebuild`. Commit per completed work package
+with a message that names the REQUIREMENTS section it satisfies. Never `git stash`. Never `git add -A`
+without reading `git status` first. Never touch `~/repos/bough` (the user's daily driver checkout).

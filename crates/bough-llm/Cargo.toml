@@ -1,9 +1,9 @@
 [package]
 name = "bough-llm"
 version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0"
-repository = "https://github.com/andreylukin/bough"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "bough's LLM provider layer: one LlmClient over Anthropic, OpenAI, OpenRouter, Cloudflare and Cerebras, with routing, retries, pricing and tracing."
 
 [features]

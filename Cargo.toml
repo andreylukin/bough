@@ -2,53 +2,54 @@
 resolver = "2"
 members = [
   "crates/bough-llm",
-  "crates/bough-core",
-  "crates/bough-server",
-  "crates/bough-tui",
+  "crates/bough-util",
+  "crates/bough-kernel",
   "crates/bough",
+  "plugins/*",
 ]
 
-# Pinned per architecture.md §2. Minor-version drift is fine; major-version bumps
-# need a note in architecture.md.
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/andreylukin/bough"
+
+# REQUIREMENTS.md §13 is the dependency policy. Add here, pin minor versions
+# for pre-1.0 crates, and say in a comment which row/seam uses the crate.
 [workspace.dependencies]
 tokio        = { version = "1.47", features = ["full"] }
-tokio-util   = { version = "0.7", features = ["rt"] }   # CancellationToken
-axum         = { version = "0.8" }                       # bough-server only
-# `blocking` is for the embedding-model download only (`db/embed.rs`): the embed
-# layer is synchronous (rusqlite + a CPU-bound extension) and its callers wrap it
-# in `spawn_blocking`, so it has no async context to await a stream in.
+tokio-util   = { version = "0.7", features = ["rt"] }
+# reqwest: 0.12 for bough-llm's streaming path; rmcp (Phase 6) wants 0.13 and is
+# bridged through OAuthHttpClient. The dual-version arrangement STANDS (§13, Phase 0).
 reqwest      = { version = "0.12", features = ["json", "stream", "blocking"] }
-rusqlite     = { version = "0.37", features = ["bundled", "load_extension"] }
+rusqlite     = { version = "0.37", features = ["bundled"] }          # ledger-sqlite
 serde        = { version = "1", features = ["derive"] }
 serde_json   = "1"
-ratatui      = "0.30"                                    # bough-tui only
-crossterm    = { version = "0.29", features = ["event-stream"] }
-termimad     = "0.35"                                    # GH table layout (bough-tui)
-uuid         = { version = "1", features = ["v4"] }
+serde_yaml   = "0.9"                                                  # config tree + patch layers (kernel loader)
+schemars     = "1"                                                    # plugin Config schemas, seal schemas
+jsonschema   = "0.33"                                                 # compiled validators
+inventory    = "0.3"                                                  # compile-time plugin catalog
 thiserror    = "2"
-chrono       = "0.4"                                     # daily@ local-time math (DST)
-chrono-tz    = "0.10"                                    # dev-only: pins the DST tests to a fixed zone
+anyhow       = "1"
+uuid         = { version = "1", features = ["v4", "v7"] }
+chrono       = "0.4"
 regex        = "1"
-sha2         = "0.10"                                    # sectionSha, callKey inputs
-base64       = "0.22"                                    # attachments, OSC 52
-unicode-width = "0.2"                                    # display columns (bough-tui)
+sha2         = "0.10"                                                 # composition fingerprint, idem keys
+base64       = "0.22"
 futures      = "0.3"
 async-trait  = "0.1"
-dirs         = "6"                                       # home_dir
-nix          = { version = "0.29", features = ["signal", "process"] }  # kill/killpg
+dirs         = "6"
 tracing      = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+notify       = "8"                                                    # patch-file / skill / ward watch
+notify-debouncer-full = "0.5"
+ratatui      = "0.30"                                                 # bough-tui-app
+crossterm    = { version = "0.29", features = ["event-stream", "osc52"] }
+unicode-width = "0.2"
+tiktoken-rs  = "0.7"                                                  # o200k_base token estimate (§5, 0.6 headroom)
+backon       = "1"                                                    # llm-retry
 libc         = "0.2"
-tower        = { version = "0.5", features = ["util"] }  # bough-server tests: ServiceExt::oneshot
-include_dir  = "0.7"                                     # bundled skill folders (spec small.md §4)
-# MCP: the official Rust SDK. `auth` carries the OAuth 2.1 state machine (PKCE,
-# RFC 9728/8414/7591/8707, WWW-Authenticate, scope upgrade) that `mcp/oauth.rs`
-# used to hand-roll. NOTE: rmcp wants reqwest 0.13 and this workspace pins 0.12 —
-# deliberately NOT bumped (the LLM streaming path rides on 0.12). OAuth HTTP is
-# routed back through bough's own client via rmcp's `OAuthHttpClient` instead.
-rmcp         = { version = "3.1", default-features = false, features = ["auth", "client"] }
+clap         = { version = "4", features = ["derive"] }               # the launcher's CLI
 
 bough-llm    = { path = "crates/bough-llm" }
-bough-core   = { path = "crates/bough-core" }
-bough-server = { path = "crates/bough-server" }
-bough-tui    = { path = "crates/bough-tui" }
+bough-util   = { path = "crates/bough-util" }
+bough-kernel = { path = "crates/bough-kernel" }

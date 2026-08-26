@@ -1,67 +1,26 @@
-# bough — cargo workspace at the repo root. `make help` lists targets.
-
-SMOKE_PORT ?= 43219
-
-# The dev profile: this checkout's own data root and port, so running it never
-# touches the install at ~/.bough:4321. Stable (not a mktemp), so dev sessions
-# survive between runs. Gitignored.
-DEV_HOME ?= $(CURDIR)/.dev
-DEV_PORT ?= 4322
-DEV_ENV   = BOUGH_HOME=$(DEV_HOME) BOUGH_PORT=$(DEV_PORT)
-
-.PHONY: help check build test lint release chart-bundle dev dev-server dev-stop dev-logs server tui smoke tui-test gates
+.DEFAULT_GOAL := help
+.PHONY: help check build test lint gates release audit-plugins
 
 help: ## list targets
-	@grep -E '^[a-z][a-zA-Z_-]*:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-16s %s\n", $$1, $$2}'
 
-check: ## cargo check --workspace
-	cargo check --workspace
+check: ## cargo check --workspace --all-targets
+	cargo check --workspace --all-targets
 
-build: ## cargo build --workspace
-	cargo build --workspace
+build: ## cargo build --workspace --all-targets
+	cargo build --workspace --all-targets
 
-test: ## cargo test --workspace
+test: ## cargo test --workspace (offline, hermetic)
 	cargo test --workspace
 
 lint: ## rustfmt check + clippy (warnings as errors)
-	cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
+	cargo fmt --all --check
+	cargo clippy --workspace --all-targets -- -D warnings
+
+gates: build lint test ## the pre-commit gates
 
 release: ## cargo build --release
 	cargo build --release
 
-# Deliberately NOT a dependency of build/test/gates, and absent from CI: the
-# committed bundle is what `cargo build` compiles in, so a clean checkout never
-# needs node or the network. Run this to bump a pinned version, then commit the
-# diff it produces.
-chart-bundle: ## rebuild the vendored flint/echarts bundle (needs npm, network)
-	./scripts/build-chart-bundle.sh
-
-# ---- running this checkout --------------------------------------------------
-# One command. The wrapper starts the dev server detached if it is down, so this
-# is the whole story: `make dev`.
-
-dev: release ## run THIS checkout — TUI + server on the dev profile (.dev/, port 4322)
-	@$(DEV_ENV) ./scripts/bough
-
-dev-server: release ## just the dev server, in the foreground (logs to the terminal)
-	@$(DEV_ENV) ./scripts/bough run
-
-dev-stop: ## stop the dev server (never touches the install at ~/.bough)
-	@$(DEV_ENV) ./scripts/bough kill
-
-dev-logs: ## tail the dev server's log
-	@tail -f $(DEV_HOME)/server.log
-
-server: release ## the server alone on a throwaway BOUGH_HOME (SMOKE_PORT)
-	BOUGH_HOME=$$(mktemp -d) BOUGH_PORT=$(SMOKE_PORT) ./target/release/bough start
-
-tui: release ## the TUI against SMOKE_PORT — the companion to `make server`
-	BOUGH_PORT=$(SMOKE_PORT) ./target/release/bough tui
-
-smoke: release ## boot the server + drive the TUI via shell-use; SMOKE_MODEL=openai/gpt-5.6-luna for a live turn
-	./scripts/smoke.sh
-
-tui-test: release ## drive the TUI through a real PTY and assert on screen (SMOKE_MODEL adds a live turn)
-	./scripts/tui-test.sh
-
-gates: build test ## the pre-commit gates
+audit-plugins: release ## REQUIREMENTS §17 Phase 8: boot with each bough-base row disabled, assert the tree settles
+	./scripts/audit-plugins.sh
