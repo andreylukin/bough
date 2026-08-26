@@ -1,0 +1,27 @@
+[package]
+name = "bough-plugin-mcp-rmcp"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# §6: the mcp Provider on rmcp — stdio and HTTP clients built from config rows, ONE CHILD ENTRY per server so a server is disabled by disabling its row.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+bough-plugin-mcp = { workspace = true }
+serde_yaml = { workspace = true }
+# rmcp is wired by WP-5: rmcp 3.x wants reqwest 0.13 bridged through OAuthHttpClient (§13).
+# rmcp = { workspace = true }

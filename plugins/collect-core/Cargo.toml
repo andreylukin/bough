@@ -1,0 +1,29 @@
+[package]
+name = "bough-plugin-collect-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# §6: the collector library — watermark store, ref-dedupe guard, Delivery building. NO ROW: it is a library both collectors share so the at-least-once argument is written ONCE.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-agents = { workspace = true }
+rusqlite = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

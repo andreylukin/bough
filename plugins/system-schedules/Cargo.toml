@@ -1,0 +1,31 @@
+[package]
+name = "bough-plugin-system-schedules"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# §5/§8: the two system passes as schedule rows — catch-up, and reconsolidation (which invokes `/reconsolidate` BY NAME through ctx.commands, or reports PENDING until it exists).
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+bough-plugin-schedule = { workspace = true }
+bough-plugin-agents = { workspace = true }
+bough-plugin-commands = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+
+[dev-dependencies]
+bough-plugin-schedule-manual = { workspace = true }
+bough-plugin-ledger-memory = { workspace = true }
