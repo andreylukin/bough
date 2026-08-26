@@ -122,6 +122,7 @@ fn input(
         trigger: mail.map(|s| s.id.clone()),
         answers_andrey: kind == WakeKind::Answer,
         model_override: None,
+        deliver: Vec::new(),
         claim: mail
             .map(|s| {
                 vec![ScriptedClaim {

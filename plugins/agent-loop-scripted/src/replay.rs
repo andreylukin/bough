@@ -84,6 +84,19 @@ pub struct ScriptedClaim {
     pub mail_seq: Option<Seq>,
 }
 
+/// One piece of mail this wake shows the model, appended as a `mail/delivered` step.
+///
+/// §5 makes consumption per (agent, seq) over DELIVERED mail, so a replayed wake that claims
+/// mail must ledger the delivery too — otherwise its `wake/end.consumed` set is empty however
+/// much mail it took, and the model never sees the message it woke for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeliveredMail {
+    pub summary: String,
+    pub from: String,
+    pub class: String,
+    pub subject: String,
+}
+
 /// One wake of the transcript.
 #[derive(Clone, Debug)]
 pub struct WakeInput {
@@ -99,6 +112,8 @@ pub struct WakeInput {
     pub answers_andrey: bool,
     pub model_override: Option<String>,
     pub claim: Vec<ScriptedClaim>,
+    /// The mail this wake delivers to the model (the driver's claimed messages).
+    pub deliver: Vec<DeliveredMail>,
     /// The live handle `agent/wake-stopping` carries, so a listener that wants to bound a
     /// runaway wake can cancel (§5). `None` in a replay driven without the `agents` seam — a
     /// test of the durable protocol — and `Some` in every composed tree, where the driver has
@@ -189,6 +204,42 @@ pub async fn run_wake(env: &ReplayEnv, input: &WakeInput) -> Result<WakeOutcome,
         .await?;
         claim_steps.push(s.id);
     }
+
+    // §5 step 4a — the claimed mail becomes durable, model-visible `mail/delivered` steps, and
+    // their seqs are what this wake CONSUMED (§5: consumption is per (agent, seq) over delivered
+    // mail).
+    let mut consumed = consumed;
+    for m in &input.deliver {
+        // `mail/delivered` is EVIDENCE and evidence carries cites (§3): the sender is the source.
+        let step = env
+            .ledger
+            .0
+            .append(Append {
+                traj: input.traj.clone(),
+                wake: input.wake.clone(),
+                kind: StepType::new("mail/delivered"),
+                class: Class::Evidence,
+                body: serde_json::json!({
+                    "class": m.class,
+                    "from": m.from,
+                    "refs": Vec::<String>::new(),
+                    "subject": m.subject,
+                    "summary": m.summary,
+                }),
+                cites: vec![bough_plugin_ledger::Cite {
+                    r#ref: bough_plugin_ledger::Ref::new(&m.from),
+                    url: None,
+                }],
+                at: input.at,
+                id: None,
+            })
+            .await?;
+        consumed.push(SeqRange {
+            from: step.seq,
+            to: step.seq,
+        });
+    }
+    let consumed = SeqRange::union(&consumed);
 
     // §5 step 4 — `agent/pre-step`. A Reject still closes a durable wake that spent no step.
     let pre = env
@@ -471,14 +522,25 @@ fn rebuild(steps: &[Step]) -> Vec<bough_plugin_llm::LlmMessage> {
     let mut out: Vec<bough_plugin_llm::LlmMessage> = Vec::new();
     for s in steps {
         let (role, text) = match s.kind.as_str() {
-            "mail/delivered" => (
-                LlmRole::User,
-                s.body
-                    .get("summary")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-            ),
+            // The canonical envelope (§5) is `[mail from {from}] {subject}\n{summary}`: the model
+            // is shown who wrote it, not a bare line. Rendering only the summary here made the
+            // shared reconstruction evaluator fail — which is exactly its job.
+            "mail/delivered" => {
+                let field = |k: &str| {
+                    s.body
+                        .get(k)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string()
+                };
+                let (from, subject, summary) = (field("from"), field("subject"), field("summary"));
+                let head = if subject.is_empty() {
+                    format!("[mail from {from}]")
+                } else {
+                    format!("[mail from {from}] {subject}")
+                };
+                (LlmRole::User, format!("{head}\n{summary}"))
+            }
             "thought/text" => (
                 LlmRole::Assistant,
                 s.body

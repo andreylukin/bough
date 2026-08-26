@@ -87,3 +87,96 @@ async fn a_side_channel_message_makes_the_invariant_report() {
         .expect_err("a message that reached the model without a step must be reported");
     assert!(err.contains("does not reconstruct"), "{err}");
 }
+
+/// A section that appears MID-WAKE (a `projection/assemble` listener that starts contributing on
+/// the second step) changes the system prefix under the model's feet. §5 appends a fresh
+/// `request/header` when the section set changes, and the plan's third V4 case is that this must
+/// not retroactively break step 0: each step is checked against the header that belongs to IT.
+#[tokio::test]
+async fn a_contributed_section_added_mid_wake_does_not_break_a_past_reconstruction() {
+    use bough_plugin_projection::section::{Place, Position, Slot};
+    use bough_plugin_projection::{ProjectionAssemble, RenderedSection, SectionId};
+
+    let f = Fixture::mounted().await;
+    f.tools
+        .register(&f.ctx, support::echo_tool())
+        .await
+        .expect("the tool registers");
+
+    // Contribute nothing to the first assemble, a section to every one after it.
+    let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = seen.clone();
+    f.ctx
+        .on_waterfall::<ProjectionAssemble, _, _>(move |mut draft, next| {
+            let counter = counter.clone();
+            async move {
+                if counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
+                    draft.sections.push(RenderedSection {
+                        id: SectionId::new("late-arrival"),
+                        position: Position {
+                            slot: Slot::Identity,
+                            place: Place::Band,
+                        },
+                        title: "late arrival".into(),
+                        body: "a section that did not exist at step 0".into(),
+                        cites: Default::default(),
+                        tokens: 8,
+                        degraded: None,
+                    });
+                }
+                next.run(draft).await
+            }
+        })
+        .await
+        .expect("the listener registers");
+
+    f.adapter.script(vec![
+        vec![
+            Chunk::ToolCall {
+                id: ToolCallId::new("c1"),
+                name: ToolName::new("echo"),
+                input: serde_json::json!({ "text": "hi" }),
+            },
+            Chunk::End {
+                stop: StopReason::ToolUse,
+            },
+        ],
+        says("done"),
+    ]);
+    let (agent, _d) = f.agent("sol").await;
+    agent.followup(andrey("go")).await.expect("mail lands");
+    let steps = f.wait_for_wake_ends(1).await;
+
+    // The section really did arrive mid-wake: the second request's system prefix carries it and
+    // the first one's does not.
+    let reqs = f.adapter.requests();
+    assert_eq!(reqs.len(), 2, "two model rounds ran");
+    assert!(
+        !reqs[0]
+            .system
+            .as_deref()
+            .unwrap_or("")
+            .contains("late arrival"),
+        "step 0 must predate the section"
+    );
+    assert!(
+        reqs[1]
+            .system
+            .as_deref()
+            .unwrap_or("")
+            .contains("late arrival"),
+        "step 1 must carry it: {:?}",
+        reqs[1].system
+    );
+    // And §5 wrote a second header for it, so each step has its own anchor.
+    let headers = steps
+        .iter()
+        .filter(|s| s.kind.as_str() == "request/header")
+        .count();
+    assert_eq!(headers, 2, "the changed section set gets a fresh header");
+
+    let sent = recorded_for(&steps);
+    assert_eq!(sent.len(), 2);
+    invariant::evaluate_reconstruction(&sent, &steps)
+        .expect("step 0 still reconstructs against ITS header, not the later one");
+}

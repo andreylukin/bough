@@ -10,7 +10,7 @@ use bough_kernel::EntryId;
 use bough_plugin_agents::{AgentKind, Agents, CreateAgent, MailClass, Message, MessageId, Sender};
 use bough_plugin_hello::trace;
 use bough_plugin_ledger::query::{Order, StepQuery};
-use bough_plugin_ledger::{AgentName, Ledger, Step, TrajId, WakeId};
+use bough_plugin_ledger::{AgentName, Ledger, SeqRange, Step, TrajId, WakeId};
 use support::{boot_real, fixture, row_ctx};
 
 /// The kinds of one wake, in seq order.
@@ -182,6 +182,48 @@ async fn reason_and_consumed_set(driver: &str) {
         .filter(|s| s.kind.as_str() == "wake/end")
         .collect();
     assert_eq!(ends.len(), 2, "two wakes, two ends");
+
+    // §5: consumption is per (agent, seq) over DELIVERED mail, so the seqs a wake may claim are
+    // exactly the `mail/delivered` steps. Two Andrey messages ⇒ two of them.
+    let delivered: Vec<u64> = steps
+        .iter()
+        .filter(|s| s.kind.as_str() == "mail/delivered")
+        .map(|s| s.seq.0)
+        .collect();
+    assert_eq!(
+        delivered.len(),
+        2,
+        "each message is delivered to the model exactly once: {delivered:?}"
+    );
+    // Both messages must also have landed as insert splices (§2's durable inbox mutation).
+    assert_eq!(
+        steps
+            .iter()
+            .filter(|s| s.kind.as_str() == "inbox/spliced"
+                && s.body.get("op").and_then(|v| v.as_str()) == Some("insert"))
+            .count(),
+        2,
+        "two messages, two insert splices"
+    );
+    let summaries: Vec<String> = steps
+        .iter()
+        .filter(|s| s.kind.as_str() == "mail/delivered")
+        .map(|s| {
+            s.body
+                .get("summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        summaries,
+        vec!["first".to_string(), "second".to_string()],
+        "the delivered mail is Andrey's two messages, in order"
+    );
+    let inserted = delivered;
+
+    let mut union: Vec<u64> = Vec::new();
     for e in ends {
         assert_eq!(
             e.body.get("reason").and_then(|v| v.as_str()),
@@ -189,15 +231,37 @@ async fn reason_and_consumed_set(driver: &str) {
             "a scripted wake that ran to the end of its script completes: {:?}",
             e.body
         );
-        let consumed = e
-            .body
-            .get("consumed")
-            .unwrap_or_else(|| panic!("wake/end must carry a consumed set: {:?}", e.body));
+        let consumed: Vec<SeqRange> = serde_json::from_value(
+            e.body
+                .get("consumed")
+                .unwrap_or_else(|| panic!("wake/end must carry a consumed set: {:?}", e.body))
+                .clone(),
+        )
+        .expect("the consumed set is a set of seq ranges");
         assert!(
-            consumed.is_array(),
-            "the consumed set is a set of seq ranges: {consumed:?}"
+            !consumed.is_empty(),
+            "a wake triggered by a message consumes it: {:?}",
+            e.body
+        );
+        for r in consumed {
+            union.extend(r.from.0..=r.to.0);
+        }
+    }
+    union.sort_unstable();
+    union.dedup();
+    // The UNION of the wake_end sets is exactly the mail that arrived: nothing left unconsumed,
+    // and no wake claiming a seq that was never a message.
+    for seq in &inserted {
+        assert!(
+            union.contains(seq),
+            "message at seq {seq} must appear in the consumed union {union:?}"
         );
     }
+    assert_eq!(
+        union.len(),
+        inserted.len(),
+        "the consumed union covers the two messages and nothing else: {union:?} vs {inserted:?}"
+    );
 
     kernel.shutdown().await;
 }

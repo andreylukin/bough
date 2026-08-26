@@ -13,7 +13,7 @@ use std::sync::Arc;
 use bough_kernel::{Context, InvariantSpec, Plugin, PluginError};
 use bough_plugin_agents::{AgentCell, AgentDriver, AgentError, AgentFactory, Attach};
 
-pub use replay::{ReplayEnv, ReplayError, ScriptedClaim, WakeInput, WakeOutcome};
+pub use replay::{DeliveredMail, ReplayEnv, ReplayError, ScriptedClaim, WakeInput, WakeOutcome};
 pub use script::{Script, ScriptedChunk, ScriptedStep, ScriptedWake};
 
 /// The catalog name of this row.
@@ -128,9 +128,23 @@ pub struct ScriptedDriver {
 }
 
 impl ScriptedDriver {
-    fn spawn_wake(self: &Arc<Self>, trigger: Option<bough_plugin_ledger::StepId>) {
+    /// Mark the agent RUNNING and spawn its wake.
+    ///
+    /// The status transition is awaited HERE, before the caller's `notify` returns: setting it
+    /// inside the spawned task left a window in which the mail was durable, a wake was armed and
+    /// `when_idle()` still resolved immediately — a caller could read the chain before the wake
+    /// had appended anything.
+    async fn spawn_wake(self: &Arc<Self>, trigger: Option<bough_plugin_ledger::StepId>) {
         use std::sync::atomic::Ordering;
         if self.stopping.load(Ordering::SeqCst) {
+            return;
+        }
+        if self
+            .cell
+            .set_status(bough_plugin_agents::Status::Running)
+            .await
+            .is_err()
+        {
             return;
         }
         let index = {
@@ -143,14 +157,6 @@ impl ScriptedDriver {
         tokio::spawn(async move {
             let _permit = me.wakes.clone().acquire_owned().await.ok();
             let agent = me.cell.agent().clone();
-            if me
-                .cell
-                .set_status(bough_plugin_agents::Status::Running)
-                .await
-                .is_err()
-            {
-                return;
-            }
             let at = chrono::Utc::now();
             let wake = bough_plugin_ledger::WakeId::new(uuid::Uuid::now_v7().to_string());
             // Claim both queues: a `steer` to an idle agent must not open a wake that claims
@@ -190,6 +196,15 @@ impl ScriptedDriver {
                 model_override: None,
                 // Already spliced by `claim` above; handing them over again would double-append.
                 claim: Vec::new(),
+                deliver: claimed
+                    .iter()
+                    .map(|c| replay::DeliveredMail {
+                        summary: c.message.text.clone(),
+                        from: bough_plugin_agent_loop::wake::sender_ref(&c.message.from),
+                        class: format!("{:?}", c.message.class).to_lowercase(),
+                        subject: c.message.subject.clone(),
+                    })
+                    .collect(),
                 handle: Some(agent.clone()),
                 at,
             };
@@ -219,7 +234,7 @@ impl AgentDriver for ScriptedDriver {
             return;
         }
         if let Some(me) = self.me.upgrade() {
-            me.spawn_wake(Some(receipt.step.clone()));
+            me.spawn_wake(Some(receipt.step.clone())).await;
         }
     }
 

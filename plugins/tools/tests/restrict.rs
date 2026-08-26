@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bough_plugin_ledger::AgentName;
-use bough_plugin_tools::{Restrict, ToolName, ToolsError};
+use bough_plugin_tools::{FailureClass, Restrict, ToolName, ToolsError};
 use parking_lot::Mutex;
-use support::{agent, ctx, registry_with, spec, Stub};
+use support::{agent, call, ctx, registry_with, spec, Stub};
 
 fn stub() -> Arc<dyn bough_plugin_tools::Tool> {
     Arc::new(Stub {
@@ -85,6 +85,27 @@ async fn a_restricted_tool_is_refused_indistinguishably_from_a_nonexistent_one()
         restricted.to_string().replace("bash", "X"),
         absent.to_string().replace("never_existed", "X"),
         "the two messages differ only in the name that was asked for"
+    );
+
+    // ...and the same holds through the EXECUTOR, which is where the model actually meets it.
+    let out = tools
+        .execute(&ctx, vec![call("bash", "a"), call("never_existed", "b")])
+        .await;
+    assert!(!out[0].ok && !out[1].ok);
+    let restricted = out[0].failure.as_ref().unwrap();
+    let absent = out[1].failure.as_ref().unwrap();
+    assert_eq!(restricted.kind, FailureClass::NotFound);
+    assert_eq!(absent.kind, FailureClass::NotFound);
+    assert_eq!(
+        restricted.message.replace("bash", "X"),
+        absent.message.replace("never_existed", "X"),
+        "the executor's two refusals differ only in the name asked for"
+    );
+    assert_eq!(out[0].value, None);
+    assert!(
+        !restricted.message.contains("restrict") && !restricted.message.contains("denied"),
+        "a filtered tool must not leak that it exists: {}",
+        restricted.message
     );
 }
 

@@ -99,6 +99,8 @@ struct RunningWake {
     is_answer: bool,
     /// "Started responding": the first reply token has streamed (§5's cutoff).
     streamed: Arc<AtomicBool>,
+    /// Messages that joined this wake before it streamed a token (§5).
+    joined: Arc<Mutex<Vec<bough_plugin_agents::MessageId>>>,
 }
 
 /// One agent's running loop.
@@ -132,6 +134,7 @@ impl LoopDriver {
         }
         let wake = self.mint_wake();
         let streamed = Arc::new(AtomicBool::new(false));
+        let joined = Arc::new(Mutex::new(Vec::new()));
         let interrupt = CancellationToken::new();
         let resume_from = {
             let mut st = self.state.lock();
@@ -139,6 +142,7 @@ impl LoopDriver {
                 wake: wake.clone(),
                 is_answer: kind == WakeKind::Answer,
                 streamed: streamed.clone(),
+                joined: joined.clone(),
             });
             st.interrupts.insert(wake.clone(), interrupt.clone());
             st.resume_from.take()
@@ -154,6 +158,7 @@ impl LoopDriver {
             resume_from,
             interrupt: interrupt.clone(),
             streamed: streamed.clone(),
+            joined: joined.clone(),
         };
         let me = self.clone();
         self.wakes.fetch_add(1, Ordering::SeqCst);
@@ -344,10 +349,18 @@ impl AgentDriver for LoopDriver {
         let next = me.mint_wake();
         if let Some((p, interrupted)) = me.preempt_for(msg, next.clone()) {
             match p {
-                // Join and Queue both leave the message where it is: the running answer wake
-                // claims it at its next step boundary, or the next wake takes it as its first
-                // mail. Nothing else starts a second answer wake.
-                Preemption::Join { .. } | Preemption::Queue => return,
+                // JOIN: the running answer wake has not streamed a token yet, so it takes this
+                // message at its next STEP boundary and answers both. QUEUE: it has, so the
+                // message is left where it is and the next wake takes it as its first mail.
+                // Neither opens a second answer wake.
+                Preemption::Join { wake } => {
+                    let st = me.state.lock();
+                    if let Some(r) = st.running.as_ref().filter(|r| r.wake == wake) {
+                        r.joined.lock().push(msg.id.clone());
+                    }
+                    return;
+                }
+                Preemption::Queue => return,
                 Preemption::Checkpoint { answer } => {
                     // ORDER IS THE POINT: his wake opens first, and only then is the interrupted
                     // wake told to stop and jot.

@@ -282,3 +282,103 @@ async fn a_plugin_failure_ends_the_wake_and_not_the_loop() {
     }
     assert_eq!(agent.status(), Status::Idle);
 }
+
+/// §9 + §5: the durable record of a batch is in the MODEL's call order, even when the calls
+/// finish in the opposite order. The tools seam returns results in call order; this asserts the
+/// LEDGER — what the model reads back — keeps that order too.
+#[tokio::test]
+async fn durable_tool_results_stay_model_ordered_in_the_ledger() {
+    use bough_plugin_tools::{
+        RenderIntent, Tool, ToolCall, ToolCx, ToolFailure, ToolOutcome, ToolScope, ToolSpec,
+    };
+
+    struct Timed {
+        tag: &'static str,
+        delay: std::time::Duration,
+        log: Arc<Mutex<Vec<String>>>,
+    }
+    #[async_trait::async_trait]
+    impl Tool for Timed {
+        fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
+            true
+        }
+        async fn call(
+            &self,
+            _call: Arc<ToolCall>,
+            _cx: ToolCx,
+        ) -> Result<ToolOutcome, ToolFailure> {
+            tokio::time::sleep(self.delay).await;
+            self.log.lock().push(self.tag.to_string());
+            Ok(ToolOutcome {
+                content: self.tag.to_string(),
+                value: None,
+                cites: vec![],
+                concludes_wake: false,
+            })
+        }
+    }
+    fn timed(name: &'static str, ms: u64, log: Arc<Mutex<Vec<String>>>) -> ToolSpec {
+        ToolSpec {
+            name: ToolName::new(name),
+            description: format!("the {name} tool"),
+            input_schema: schemars::json_schema!({ "type": "object" }),
+            render: RenderIntent::Generic,
+            scope: ToolScope::Global,
+            tool: Arc::new(Timed {
+                tag: name,
+                delay: std::time::Duration::from_millis(ms),
+                log,
+            }),
+        }
+    }
+
+    let f = Fixture::mounted().await;
+    let done = Arc::new(Mutex::new(Vec::new()));
+    f.tools
+        .register(&f.ctx, timed("slow", 120, done.clone()))
+        .await
+        .expect("slow registers");
+    f.tools
+        .register(&f.ctx, timed("fast", 0, done.clone()))
+        .await
+        .expect("fast registers");
+
+    f.adapter.script(vec![
+        vec![
+            Chunk::ToolCall {
+                id: ToolCallId::new("c1"),
+                name: ToolName::new("slow"),
+                input: serde_json::json!({}),
+            },
+            Chunk::ToolCall {
+                id: ToolCallId::new("c2"),
+                name: ToolName::new("fast"),
+                input: serde_json::json!({}),
+            },
+            Chunk::End {
+                stop: StopReason::ToolUse,
+            },
+        ],
+        says("done"),
+    ]);
+    let (agent, _d) = f.agent("sol").await;
+    agent.followup(andrey("go")).await.expect("mail lands");
+    let steps = f.wait_for_wake_ends(1).await;
+
+    assert_eq!(
+        done.lock().clone(),
+        vec!["fast".to_string(), "slow".to_string()],
+        "the calls really did complete in the REVERSE of call order"
+    );
+    let results: Vec<String> = steps
+        .iter()
+        .filter(|s| s.kind.as_str() == "tool/result")
+        .map(|s| s.body["name"].as_str().unwrap_or("?").to_string())
+        .collect();
+    assert_eq!(
+        results,
+        vec!["slow".to_string(), "fast".to_string()],
+        "the durable steps are in the model's call order: {:?}",
+        kinds_of(&steps)
+    );
+}

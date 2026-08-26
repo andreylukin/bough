@@ -86,6 +86,11 @@ pub struct WakeSpec {
     /// Set on the first streamed reply token: §5's "started responding" cutoff, which is what
     /// decides whether an arriving message joins this wake or queues behind it.
     pub streamed: Arc<std::sync::atomic::AtomicBool>,
+    /// Messages that JOINED this wake (§5, P2-D15): Andrey mail that arrived on the `next-wake`
+    /// queue while this answer wake was running and had not yet streamed a token. The wake claims
+    /// them at its next STEP boundary, so one answer wake answers both messages rather than a
+    /// second one opening behind it.
+    pub joined: Arc<parking_lot::Mutex<Vec<MessageId>>>,
 }
 
 /// How one wake ended.
@@ -789,13 +794,27 @@ pub async fn write_jot(
 // ---- small helpers ---------------------------------------------------------------------------
 
 async fn claim_next_step(cell: &AgentCell, spec: &WakeSpec) -> Result<Vec<ClaimedMessage>, String> {
-    cell.claim(
-        crate::mail::selector_for(spec.kind, Target::NextStep),
-        spec.wake.clone(),
-        Utc::now(),
-    )
-    .await
-    .map_err(|e| e.to_string())
+    let mut claimed = cell
+        .claim(
+            crate::mail::selector_for(spec.kind, Target::NextStep),
+            spec.wake.clone(),
+            Utc::now(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    // The JOIN half of §5's cutoff: mail that arrived before the first streamed token is claimed
+    // by THIS wake at its step boundary, off the `next-wake` queue it was addressed to.
+    let joining: Vec<MessageId> = std::mem::take(&mut *spec.joined.lock());
+    if !joining.is_empty() {
+        let mut sel = crate::mail::selector_for(spec.kind, Target::NextWake);
+        sel.only = Some(joining);
+        claimed.extend(
+            cell.claim(sel, spec.wake.clone(), Utc::now())
+                .await
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    Ok(claimed)
 }
 
 /// The model-visible rendering of one message. The SAME shape `transcript::rebuild` folds a

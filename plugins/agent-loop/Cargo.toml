@@ -31,6 +31,7 @@ uuid = { workspace = true }
 [dev-dependencies]
 bough-plugin-ledger-memory = { workspace = true }
 bough-plugin-projection-assembler = { workspace = true }
+bough-plugin-about-line = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
 async-trait = { workspace = true }

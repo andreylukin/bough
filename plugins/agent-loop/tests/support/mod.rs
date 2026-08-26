@@ -353,3 +353,65 @@ pub fn recorded_for(steps: &[Step]) -> Vec<bough_plugin_agent_loop::invariant::S
         .filter(|s| wakes.contains(&s.wake.to_string()))
         .collect()
 }
+
+/// A tool that blocks until the test releases it. It lets a wake be provably IN FLIGHT *after*
+/// its first reply token has streamed, which is the only state §5's "queue" side can be observed
+/// in.
+pub fn gated_tool(gate: Arc<tokio::sync::Notify>) -> bough_plugin_tools::ToolSpec {
+    use bough_plugin_tools::{
+        RenderIntent, Tool, ToolCall, ToolCx, ToolFailure, ToolOutcome, ToolScope, ToolSpec,
+    };
+
+    struct Gated(Arc<tokio::sync::Notify>);
+    #[async_trait::async_trait]
+    impl Tool for Gated {
+        fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
+            true
+        }
+        async fn call(&self, _c: Arc<ToolCall>, _cx: ToolCx) -> Result<ToolOutcome, ToolFailure> {
+            self.0.notified().await;
+            Ok(ToolOutcome {
+                content: "released".into(),
+                value: None,
+                cites: vec![],
+                concludes_wake: false,
+            })
+        }
+    }
+
+    ToolSpec {
+        name: bough_plugin_llm::ToolName::new("gate"),
+        description: "block until released".into(),
+        input_schema: schemars::json_schema!({ "type": "object" }),
+        render: RenderIntent::Generic,
+        scope: ToolScope::Global,
+        tool: Arc::new(Gated(gate)),
+    }
+}
+
+impl Fixture {
+    /// The wake that CLAIMED a message, read off the durable inbox splice. `None` until it is
+    /// claimed. This is §5's join/queue cutoff as durable evidence: joined mail carries the
+    /// running wake's id, queued mail carries a later one's.
+    pub async fn claiming_wake(&self, msg: &bough_plugin_agents::MessageId) -> Option<String> {
+        self.steps()
+            .await
+            .into_iter()
+            .find(|s| {
+                s.kind.as_str() == "inbox/spliced"
+                    && s.body["op"] == "claim"
+                    && s.body["message"] == msg.to_string()
+            })
+            .map(|s| s.wake.to_string())
+    }
+
+    pub async fn wait_for_claim(&self, msg: &bough_plugin_agents::MessageId) -> String {
+        for _ in 0..400 {
+            if let Some(w) = self.claiming_wake(msg).await {
+                return w;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("timed out waiting for message {msg} to be claimed");
+    }
+}

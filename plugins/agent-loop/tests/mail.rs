@@ -7,6 +7,7 @@ mod support;
 
 use bough_plugin_agent_loop::mail;
 use bough_plugin_agent_loop::testing::{delivered, ordinary as ordinary_msg, wake_end, wake_of};
+use bough_plugin_agent_loop::LoopConfig;
 use bough_plugin_ledger::{Seq, SeqRange};
 use bough_plugin_llm::WakeKind;
 use support::*;
@@ -46,17 +47,49 @@ fn concurrent_wakes_over_disjoint_seqs_never_regress_consumption() {
     }
 }
 
-/// §5's standing invariant, live: ordinary mail arrives, nothing else wakes the agent, and a
-/// DRAIN wake runs on its own.
+/// §5's standing invariant, live and at the moment it BITES: ordinary mail arrives, and while it
+/// is still unconsumed a drain wake is already scheduled — then the drain runs on its own,
+/// consumes it, and the invariant holds again for the opposite reason.
 #[tokio::test]
 async fn unconsumed_ordinary_mail_implies_a_scheduled_drain_wake() {
-    let f = Fixture::mounted().await;
+    // A long debounce so the "scheduled but not yet run" window is observable rather than raced.
+    let f = Fixture::with_config(LoopConfig {
+        drain_debounce_ms: 400,
+        ..config()
+    })
+    .await;
     let (agent, _d) = f.agent("sol").await;
     agent
         .followup(ordinary("a push landed"))
         .await
         .expect("mail lands");
 
+    // Phase 1: the message is durably in the inbox and NOT yet consumed by any wake — so a
+    // drain must already be scheduled. (`mail/delivered` is written BY the wake, so the only
+    // durable trace of unconsumed mail at this instant is `inbox/spliced`.)
+    let spliced = f.wait_for_kind("inbox/spliced").await;
+    assert_eq!(spliced.body["op"], "insert");
+    assert!(
+        spliced.body.to_string().contains("a push landed"),
+        "the durable envelope carries the message: {}",
+        spliced.body
+    );
+    let mid = f.steps().await;
+    assert!(
+        mid.iter().all(|s| s.kind.as_str() != "wake/end"),
+        "the debounce window has not closed yet: {:?}",
+        f.kinds().await
+    );
+    assert!(
+        mail::consumed_union(&mid).is_empty(),
+        "nothing has been consumed yet"
+    );
+    assert!(
+        bough_plugin_agent_loop::driver::any_drain_scheduled(),
+        "unconsumed ordinary mail with no drain scheduled"
+    );
+
+    // Phase 2: the drain runs by itself, is COALESCED (never an answer), and consumes that seq.
     let steps = f.wait_for_wake_ends(1).await;
     let start = steps
         .iter()
@@ -66,17 +99,23 @@ async fn unconsumed_ordinary_mail_implies_a_scheduled_drain_wake() {
         start.body["urgency"], "coalesced",
         "ordinary mail drains, it does not answer"
     );
-    // The mail it delivered is the ordinary message, and the wake consumed nothing else.
-    assert!(steps.iter().any(|s| s.kind.as_str() == "mail/delivered"));
-    // The standing invariant is satisfied: nothing ordinary is left unconsumed with no drain.
+    let delivered_step = steps
+        .iter()
+        .find(|s| s.kind.as_str() == "mail/delivered")
+        .expect("the drain delivered the mail");
     let consumed = mail::consumed_union(&steps);
+    assert!(
+        consumed.iter().any(|r| r.contains(delivered_step.seq)),
+        "the drain consumed the delivered seq: consumed={consumed:?} seq={:?}",
+        delivered_step.seq
+    );
     let left = mail::unconsumed(&steps, &consumed)
         .into_iter()
         .filter(mail::is_ordinary)
         .count();
-    assert!(
-        left == 0 || bough_plugin_agent_loop::driver::any_drain_scheduled(),
-        "unconsumed ordinary mail with no drain scheduled"
+    assert_eq!(
+        left, 0,
+        "nothing ordinary is left unconsumed after the drain"
     );
 }
 

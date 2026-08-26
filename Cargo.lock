@@ -316,6 +316,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bough-kernel",
+ "bough-plugin-about-line",
  "bough-plugin-agents",
  "bough-plugin-ledger",
  "bough-plugin-ledger-memory",

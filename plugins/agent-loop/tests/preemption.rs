@@ -10,6 +10,7 @@ use std::sync::Arc;
 use bough_plugin_agent_loop::preempt::{self, Preemption, Running};
 use bough_plugin_agents::AgentWakeEnd;
 use bough_plugin_ledger::WakeId;
+use bough_plugin_llm::{Chunk, StopReason, ToolCallId, ToolName};
 use parking_lot::Mutex;
 use support::*;
 
@@ -224,14 +225,9 @@ async fn the_next_wake_of_any_kind_resumes_from_the_jot() {
     );
 }
 
-/// §5's cutoff, as the DATA that decides it: "started responding" means the first reply token has
-/// streamed. Before it a message joins the running answer wake; after it, it queues as the next
-/// wake's first mail.
-///
-/// DEVIATION, stated plainly: this loop implements JOIN by leaving the message for the answer
-/// wake's next step boundary rather than by cancelling and restarting the step
-/// (`step/end { outcome: restarted }`, P2-D15). The decision is the one §5 draws; the restart is
-/// not built. See the WP-4 report.
+/// §5's cutoff as the pure DECISION: "started responding" means the first reply token has
+/// streamed. Before it a message joins the running answer wake; after it, it queues.
+/// The two tests below drive the same rule through the real loop.
 #[test]
 fn a_message_before_the_first_token_joins_and_after_it_queues() {
     let running = WakeId::new("w1");
@@ -264,8 +260,189 @@ fn a_message_before_the_first_token_joins_and_after_it_queues() {
     );
 }
 
-/// The other half of the same rule, live: a second message never opens a SECOND answer wake while
-/// one is running — it is answered by the wake that is already open, or by the next one.
+/// §5, live: a message that arrives BEFORE the first streamed token joins the running answer
+/// wake. The evidence is durable and cannot be faked by a flag — the inbox splice that CLAIMED
+/// the second message carries the FIRST wake's id, and no second wake ever opened.
+///
+/// DEVIATION, stated plainly: the join happens at the running wake's next STEP boundary. P2-D15's
+/// stronger form (cancel the in-flight request and append `step/end { outcome: restarted }`) is
+/// not built; `StepOutcome::Restarted` is still unused.
+#[tokio::test]
+async fn a_message_before_the_first_token_joins_the_answer_wake() {
+    let f = Fixture::mounted().await;
+    let gate = hold(&f);
+    let (agent, _d) = f.agent("sol").await;
+
+    let first = agent.followup(andrey("first")).await.expect("mail lands");
+    for _ in 0..200 {
+        if wake_starts(&f).await >= 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    // The round is held open BEFORE its first chunk, so not one token has streamed.
+    let second = agent.followup(andrey("second")).await.expect("mail lands");
+    release(&f, &gate);
+
+    let w1 = f.wait_for_claim(&first.message).await;
+    let w2 = f.wait_for_claim(&second.message).await;
+    assert_eq!(
+        w1, w2,
+        "the second message was claimed by the wake that was already answering"
+    );
+    f.wait_for_wake_ends(1).await;
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    assert_eq!(
+        wake_starts(&f).await,
+        1,
+        "and no second answer wake opened: {:?}",
+        f.kinds().await
+    );
+    // The join is a real second STEP of that wake, not a relabelling.
+    let steps = f.steps().await;
+    assert!(
+        steps
+            .iter()
+            .filter(|s| s.kind.as_str() == "step/start")
+            .count()
+            >= 2,
+        "the joined message got its own step: {:?}",
+        f.kinds().await
+    );
+}
+
+/// §5, live: a message that arrives AFTER the first token has streamed does NOT join — it queues
+/// as next-wake mail and is claimed by a LATER wake. The wake is held open past its first token
+/// by a blocking tool, so "still running" is a fact and not a race.
+#[tokio::test]
+async fn a_message_after_the_first_token_queues_as_next_wake_mail() {
+    let f = Fixture::mounted().await;
+    let tool_gate = Arc::new(tokio::sync::Notify::new());
+    f.tools
+        .register(&f.ctx, gated_tool(tool_gate.clone()))
+        .await
+        .expect("the tool registers");
+    f.adapter.script(vec![
+        vec![
+            Chunk::TextDelta {
+                text: "on it".into(),
+            },
+            Chunk::ToolCall {
+                id: ToolCallId::new("c1"),
+                name: ToolName::new("gate"),
+                input: serde_json::json!({}),
+            },
+            Chunk::End {
+                stop: StopReason::ToolUse,
+            },
+        ],
+        says("done"),
+    ]);
+
+    let (agent, _d) = f.agent("sol").await;
+    let first = agent.followup(andrey("first")).await.expect("mail lands");
+    // Wait for the token to be durable: `thought/text` IS the streamed first token.
+    f.wait_for_kind("thought/text").await;
+    let second = agent.followup(andrey("second")).await.expect("mail lands");
+    tool_gate.notify_waiters();
+
+    let w1 = f.wait_for_claim(&first.message).await;
+    let w2 = f.wait_for_claim(&second.message).await;
+    assert_ne!(
+        w1, w2,
+        "the late message was NOT taken by the wake that had already started responding"
+    );
+    let steps = f.wait_for_wake_ends(2).await;
+    assert!(
+        steps
+            .iter()
+            .any(|s| s.kind.as_str() == "wake/start" && s.wake.to_string() == w2),
+        "it got a wake of its own"
+    );
+}
+
+/// §5 + P2-D11: a preempted wake refreshes NO about-line. The real `about-line` refresh is wired
+/// to the same `agent/wake-end` moment the plugin registers it on, so the absence below is the
+/// plugin's own behaviour and not a stubbed-out branch — the positive control in the same test
+/// proves the wiring writes a line when a wake DOES complete.
+#[tokio::test]
+async fn a_preempted_wake_skips_its_about_line_refresh() {
+    let f = Fixture::mounted().await;
+    for def in bough_plugin_about_line::step_types() {
+        f.ledger.0.register_step_type(def).expect("a fresh type");
+    }
+    let cfg = Arc::new(bough_plugin_about_line::AboutConfig {
+        max_state_chars: 400,
+        max_intent_chars: 200,
+    });
+    let l = f.ledger.clone();
+    f.ctx
+        .on_parallel::<AgentWakeEnd, _, _>(move |ended| {
+            let (l, cfg) = (l.clone(), cfg.clone());
+            async move {
+                let _ = bough_plugin_about_line::refresh(
+                    &l,
+                    &cfg,
+                    &ended.wake,
+                    ended.reason,
+                    &ended.end_step,
+                )
+                .await;
+            }
+        })
+        .await
+        .expect("the listener registers");
+
+    let gate = hold(&f);
+    let (agent, _d) = f.agent("sol").await;
+    agent
+        .followup(ordinary("a push"))
+        .await
+        .expect("mail lands");
+    for _ in 0..200 {
+        if wake_starts(&f).await >= 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let interrupted = f
+        .steps()
+        .await
+        .iter()
+        .find(|s| s.kind.as_str() == "wake/start")
+        .expect("the drain wake")
+        .wake
+        .clone();
+    agent.followup(andrey("stop")).await.expect("mail lands");
+    f.wait_for_kind("wake/jot").await;
+    release(&f, &gate);
+
+    // The positive control: SOME wake completes and writes a line, so an empty ledger cannot pass.
+    let line = f.wait_for_kind("about/line").await;
+    assert_ne!(
+        line.wake, interrupted,
+        "the line belongs to a completed wake"
+    );
+    let interrupted_end = f
+        .steps()
+        .await
+        .into_iter()
+        .find(|s| s.kind.as_str() == "wake/end" && s.wake == interrupted)
+        .expect("the interrupted wake closed");
+    assert_eq!(interrupted_end.body["reason"], "interrupted");
+    assert!(
+        !f.steps()
+            .await
+            .iter()
+            .any(|s| s.kind.as_str() == "about/line" && s.wake == interrupted),
+        "and it refreshed no about-line: {:?}",
+        f.kinds().await
+    );
+}
+
+/// The other half of the same rule, live: a second message never opens a SECOND answer wake
+/// while one is running — it is answered by the wake that is already open (a join, before the
+/// first token) or by the next one (a queue, after it). Either way it is never lost.
 #[tokio::test]
 async fn a_message_during_an_answer_wake_does_not_open_a_second_one() {
     let f = Fixture::mounted().await;
@@ -278,19 +455,11 @@ async fn a_message_during_an_answer_wake_does_not_open_a_second_one() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
-    agent.followup(andrey("second")).await.expect("mail lands");
+    let second = agent.followup(andrey("second")).await.expect("mail lands");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert_eq!(wake_starts(&f).await, 1, "one answer wake at a time (§5)");
 
     release(&f, &gate);
-    // And the second message is not lost: it gets its wake once the first is done.
-    let steps = f.wait_for_wake_ends(2).await;
-    assert!(
-        steps
-            .iter()
-            .filter(|s| s.kind.as_str() == "wake/start")
-            .count()
-            >= 2,
-        "the queued message got its own wake"
-    );
+    // And the second message is not lost: some wake claims it.
+    f.wait_for_claim(&second.message).await;
 }
