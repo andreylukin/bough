@@ -242,6 +242,13 @@ impl FocusPane {
             }
             if flash {
                 if let Some(last) = lines.last_mut() {
+                    // The accent has to reach the SPANS, not only the line: a span's own `fg`
+                    // (every `markdownish` span carries one) is patched OVER the line style by
+                    // ratatui, so a line-level flash was invisible on screen for exactly the rows
+                    // a search hit lands on (P3-D27).
+                    for span in last.spans.iter_mut() {
+                        span.style = span.style.fg(theme.accent);
+                    }
                     *last = last.clone().style(Style::default().fg(theme.accent));
                 }
             }

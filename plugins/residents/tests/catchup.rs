@@ -63,14 +63,18 @@ impl AgentFactory for RecordingFactory {
 
 struct Fixture {
     ctx: Context,
+    /// This fixture's own fiber. `Context::root` is always `FiberUid(0)`, so every test in this
+    /// binary would otherwise record into ONE stream and the global assertions would race.
+    fiber: bough_kernel::FiberUid,
     ledger: LedgerHandle,
     agents: AgentsHandle,
     rec: Arc<Recorder>,
 }
 
 async fn fixture() -> Fixture {
-    bough_plugin_residents::invariant::clear();
-    let ctx = Context::root(KernelCore::new());
+    let core = KernelCore::new();
+    let fiber = core.new_fiber_uid();
+    let ctx = Context::root(core);
     let ledger = LedgerHandle(MemoryStore::new(ctx.clone()) as Arc<_>);
     let agents = AgentsHandle::new(ctx.clone(), ledger.clone());
     let rec = Arc::new(Recorder::default());
@@ -85,10 +89,19 @@ async fn fixture() -> Fixture {
         .expect("the slot is free");
     Fixture {
         ctx,
+        fiber,
         ledger,
         agents,
         rec,
     }
+}
+
+/// Only what THIS fixture's fiber recorded.
+fn mine(f: &Fixture) -> Vec<bough_plugin_residents::invariant::Obs> {
+    bough_plugin_residents::invariant::seen()
+        .into_iter()
+        .filter(|o| o.fiber == f.fiber)
+        .collect()
 }
 
 fn cfg(bootstrap: &[&str]) -> ResidentsConfig {
@@ -172,7 +185,7 @@ async fn no_wake_when_nothing_is_queued() {
         .await
         .expect("the roster comes up");
 
-    catch_up(&f.agents, &up, f.ctx.fiber_uid())
+    catch_up(&f.agents, &up, f.fiber)
         .await
         .expect("catch-up runs");
 
@@ -181,7 +194,7 @@ async fn no_wake_when_nothing_is_queued() {
         "an empty inbox produces no wake at all (V6)"
     );
     assert!(
-        bough_plugin_residents::invariant::seen().is_empty(),
+        mine(&f).is_empty(),
         "nothing was requested, so nothing was recorded"
     );
 }
@@ -208,7 +221,7 @@ async fn one_catch_up_wake_per_agent_with_queued_mail() {
         .await
         .expect("the mail lands");
 
-    catch_up(&f.agents, &up, f.ctx.fiber_uid())
+    catch_up(&f.agents, &up, f.fiber)
         .await
         .expect("catch-up runs");
 
@@ -217,7 +230,7 @@ async fn one_catch_up_wake_per_agent_with_queued_mail() {
     assert_eq!(wakes[0].0, "sol");
     assert_eq!(wakes[0].1, WakeCause::CatchUp);
     assert_eq!(
-        bough_plugin_residents::invariant::check_stream(&bough_plugin_residents::invariant::seen()),
+        bough_plugin_residents::invariant::check_stream(&mine(&f)),
         Ok(()),
         "at most one catch-up per agent per activation"
     );
@@ -228,7 +241,7 @@ async fn disabling_the_row_disposes_the_roster_and_leaves_the_ledger_untouched()
     let f = fixture().await;
     seed_row(&f.ledger, "sol").await;
     let roster = Arc::new(Roster::default());
-    let held = hold_roster(&f.ctx, Arc::clone(&roster), f.ctx.fiber_uid())
+    let held = hold_roster(&f.ctx, Arc::clone(&roster), f.fiber)
         .await
         .expect("the effect registers");
     raise_roster(&f.agents, &f.ledger, &cfg(&[]), &roster)

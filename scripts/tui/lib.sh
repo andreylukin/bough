@@ -257,6 +257,9 @@ wheel() {
   esac
   for i in $(seq 1 "$count"); do
     shell-use write "$(printf '\033[<%d;%d;%dM' "$btn" "$((x + 1))" "$((y + 1))")" >/dev/null
+    # A gap between reports. Written back to back, a burst of SGR sequences intermittently left a
+    # partial escape in the parser and the NEXT key (a PageUp) was swallowed with it.
+    sleep 0.05
   done
 }
 
@@ -276,7 +279,21 @@ select_drag() {
 # Asserted on the BACKGROUND and not by grepping `shell-use cells` for the word "reverse": that
 # word is a FIELD NAME in every cell dump, so the grep matched whether or not anything was ever
 # selected.
+# Polled: the SGR press/drag reports are handed to the event loop and the highlight is painted on
+# a LATER frame, so reading the cells once raced the repaint and reported `bg default`.
 expect_selected() {
+  local i out
+  for i in $(seq 1 25); do
+    if out="$(_expect_selected_once "$@" 2>&1)"; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "$out"
+  return 1
+}
+
+_expect_selected_once() {
   local x="$1" y="$2" w="$3" want="$4"
   shell-use cells "$x" "$y" "$w" 1 --json | WANT="$want" python3 -c '
 import json, os, sys
@@ -344,4 +361,4 @@ expect_absent() {
 # be reported as a failed bullet rather than as the harness bug it is. The variables the ledger
 # helpers close over have to travel too.
 export LEDGER HOME_DIR BOUGH_BIN
-export -f see expect_absent wheel select_drag expect_selected expect_diff_gutter _expect_diff_gutter_py sql steps_of expect_steps expect_steps_exactly await_exit_code
+export -f see expect_absent wheel select_drag expect_selected _expect_selected_once expect_diff_gutter _expect_diff_gutter_py sql steps_of expect_steps expect_steps_exactly await_exit_code
