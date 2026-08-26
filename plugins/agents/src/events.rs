@@ -188,3 +188,53 @@ impl EmitEvent for AgentContinuation {
     const NAME: &'static str = "agent/continuation";
     type Payload = Continuation;
 }
+
+// ---- `agent/wake-request`: the admission point (P5-D1, §1) ---------------------------------
+
+/// `agent/wake-request` — WATERFALL, dispatched by EVERY loop Provider immediately before it
+/// opens a wake and appends `wake/start`. A listener that returns [`Admit::Defer`] stops the wake
+/// from existing at all: no `wake/start`, no claim, no step. The default (no listener) is
+/// [`Admit::Open`], so a tree without the `dormancy` row behaves exactly as it did in Phase 4.
+///
+/// This amends §5's wake flow and is flagged as such (P5-D1): `agent/pre-step` fires INSIDE an
+/// already-durable wake, so suppressing there would leave a trail of empty wakes for an agent that
+/// is supposed to cost nothing.
+pub struct AgentWakeRequest;
+impl WaterfallEvent for AgentWakeRequest {
+    const NAME: &'static str = "agent/wake-request";
+    type Value = WakeAdmission;
+}
+
+/// The value the admission waterfall carries.
+#[derive(Clone, Debug)]
+pub struct WakeAdmission {
+    pub agent: AgentName,
+    pub id: AgentId,
+    pub kind: WakeKind,
+    pub cause: crate::agent::WakeCause,
+    /// What would trigger this wake, read from the inbox WITHOUT claiming it.
+    pub trigger: Option<TriggerFacts>,
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub decision: Admit,
+}
+
+/// The admission decision.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Admit {
+    /// Open the wake.
+    Open,
+    /// No wake exists. `by` names the row that deferred, for the toast and the ledger-free
+    /// explanation.
+    Defer { by: &'static str, reason: String },
+}
+
+/// The facts about the message that would open this wake, so a listener never re-reads the inbox.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TriggerFacts {
+    pub message: MessageId,
+    pub from_andrey: bool,
+    pub class: crate::mail::MailClass,
+    /// The message's refs — P5-D3 spells a wake CLASS as a ref in the `class:` namespace.
+    pub refs: std::collections::BTreeSet<bough_plugin_ledger::Ref>,
+    pub mail_seq: Option<bough_plugin_ledger::Seq>,
+}

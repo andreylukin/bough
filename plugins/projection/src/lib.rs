@@ -48,6 +48,17 @@ pub trait Projector: Send + Sync + 'static {
     async fn assemble(&self, req: &AssembleRequest) -> Result<Assembled, ProjectionError>;
     /// Render a trajectory to text. A pure function of the ledger; writes nothing.
     async fn file_view(&self, req: &FileViewRequest) -> Result<String, ProjectionError>;
+    /// Pin an already-assembled prefix for ONE agent (P5-D12, §10). [`Projector::assemble`]
+    /// returns it verbatim for that agent, whatever the request's budget or `as_of` says, and
+    /// records `source` so the request stays reconstructible from the ledger. Synchronous: the
+    /// caller wraps it in an effect, so the pin unwinds with the agent that holds it.
+    fn pin_prefix(
+        &self,
+        agent: AgentName,
+        prefix: Assembled,
+        source: PrefixSource,
+    ) -> Result<PrefixToken, ProjectionError>;
+
     /// [`Projector::file_view`] plus one write. Returns the path written.
     async fn write_file_view(
         &self,
@@ -75,6 +86,42 @@ impl ProjectionHandle {
             Ok(())
         })
         .await
+    }
+}
+
+/// Where a pinned prefix came from. Written durably as `fork/prefix` by `worker-fork`, so §0.2's
+/// "the sent request reconstructs from the ledger" survives pinning: re-assembling `of_agent` at
+/// `as_of` reproduces the pin.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PrefixSource {
+    pub of_agent: AgentName,
+    pub as_of: Seq,
+}
+
+/// The disposer for one pinned prefix. Dropping it does NOT unpin; `remove()` does, and the
+/// effect wrapper calls it (the [`SectionToken`] precedent).
+#[derive(Clone)]
+pub struct PrefixToken {
+    #[doc(hidden)]
+    inner: Arc<dyn Fn() + Send + Sync>,
+}
+
+impl PrefixToken {
+    /// A token over a provider's own unpin closure.
+    pub fn new(remove: impl Fn() + Send + Sync + 'static) -> PrefixToken {
+        PrefixToken {
+            inner: Arc::new(remove),
+        }
+    }
+    /// Unpin. Idempotent by the provider's contract.
+    pub fn remove(&self) {
+        (self.inner)()
+    }
+}
+
+impl std::fmt::Debug for PrefixToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PrefixToken")
     }
 }
 

@@ -474,6 +474,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "bough-plugin-claims"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-commands",
+ "bough-plugin-graph-ops",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-rollups",
+ "bough-plugin-tools",
+ "bough-util",
+ "chrono",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+]
+
+[[package]]
 name = "bough-plugin-commands"
 version = "0.1.0"
 dependencies = [
@@ -495,6 +519,29 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "bough-plugin-dormancy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-commands",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-rollups",
+ "bough-util",
+ "chrono",
+ "inventory",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]
@@ -542,6 +589,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "bough-plugin-graph-ops"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-mail-router",
+ "bough-plugin-rollups",
+ "bough-util",
+ "chrono",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+]
+
+[[package]]
 name = "bough-plugin-hello"
 version = "0.1.0"
 dependencies = [
@@ -554,6 +623,51 @@ dependencies = [
  "schemars",
  "serde",
  "serde_yaml",
+ "tokio",
+]
+
+[[package]]
+name = "bough-plugin-lane-scope"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-projection",
+ "bough-plugin-tools",
+ "chrono",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "bough-plugin-leader"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-claims",
+ "bough-plugin-graph-ops",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-mail-router",
+ "bough-plugin-projection",
+ "bough-plugin-rollups",
+ "bough-util",
+ "chrono",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
  "tokio",
 ]
 
@@ -694,6 +808,28 @@ dependencies = [
  "inventory",
  "schemars",
  "serde",
+ "tokio",
+]
+
+[[package]]
+name = "bough-plugin-mail-router"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-rollups",
+ "bough-util",
+ "chrono",
+ "inventory",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
  "tokio",
 ]
 
@@ -948,6 +1084,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "bough-plugin-tool-leader"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-claims",
+ "bough-plugin-graph-ops",
+ "bough-plugin-leader",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-tools",
+ "chrono",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "bough-plugin-tool-workers"
 version = "0.1.0"
 dependencies = [
@@ -1149,6 +1306,28 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "bough-plugin-worker-fork"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-projection",
+ "bough-plugin-tools",
+ "bough-plugin-workers",
+ "bough-util",
+ "chrono",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

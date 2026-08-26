@@ -256,6 +256,7 @@ pub async fn run(inner: &ReconInner, req: &PassRequest) -> Result<PassReport, Re
                 // drift-watch's, and it is the only caller that passes `true`.
                 from_raw: false,
                 parents: Vec::new(),
+                reconcile: false,
             })
             .await;
         match outcome {

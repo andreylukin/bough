@@ -1,0 +1,30 @@
+[package]
+name = "bough-plugin-worker-fork"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The `WorkerKind::Fork` Provider (§10): a child agent on a REAL ledger fork of the parent's
+# trajectory, with the parent's assembled prefix pinned byte-identically. Registers on `workers`;
+# provides no key of its own. Row `worker.fork` in `bough-base`.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-agents = { workspace = true }
+bough-plugin-workers = { workspace = true }
+bough-plugin-projection = { workspace = true }
+bough-plugin-tools = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+bough-plugin-ledger-memory = { workspace = true }

@@ -303,6 +303,7 @@ impl Conformance {
                 attribution: Attribution::System,
                 from_raw: true,
                 parents: Vec::new(),
+                reconcile: false,
             })
             .await;
         // The OUTCOME is part of the contract, not something to discard: a provider that seals

@@ -102,3 +102,11 @@ bough-plugin-rollups-summarizer = { path = "plugins/rollups-summarizer" }      #
 bough-plugin-rollups-none = { path = "plugins/rollups-none" }                  # §8 stub Provider (swap subject)
 bough-plugin-reconsolidation = { path = "plugins/reconsolidation" }            # §8 batched distillation
 bough-plugin-drift-watch = { path = "plugins/drift-watch" }                    # §8 stability signals + /reset
+bough-plugin-mail-router = { path = "plugins/mail-router" }                    # §3, §5 mail fan-out + unsorted queue
+bough-plugin-dormancy = { path = "plugins/dormancy" }                          # §1 dormancy + the wake-admission listener
+bough-plugin-graph-ops = { path = "plugins/graph-ops" }                        # §4 split / merge / bud / fork / undo
+bough-plugin-claims = { path = "plugins/claims" }                              # §3, §16 the claims seam
+bough-plugin-leader = { path = "plugins/leader" }                              # §2 the leader plugin set
+bough-plugin-tool-leader = { path = "plugins/tool-leader" }                    # §2 the leader-scoped tools
+bough-plugin-lane-scope = { path = "plugins/lane-scope" }                      # §5 per-lane persona + tools.restrict
+bough-plugin-worker-fork = { path = "plugins/worker-fork" }                    # §10 WorkerKind::Fork

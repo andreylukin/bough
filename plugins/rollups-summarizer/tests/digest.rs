@@ -15,6 +15,7 @@ fn request(from_raw: bool, day: i64) -> DigestRequest {
         at: base() + chrono::Duration::days(day),
         attribution: Attribution::System,
         parents: Vec::new(),
+        reconcile: false,
         from_raw,
     }
 }

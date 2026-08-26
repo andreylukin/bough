@@ -41,6 +41,7 @@ pub async fn run(inner: &DriftInner, req: &ResetRequest) -> Result<ResetReport, 
             from_raw: true,
             // A `/reset` rebuilds THIS agent's own standing digest, never an inherited one.
             parents: Vec::new(),
+            reconcile: false,
         })
         .await?;
 

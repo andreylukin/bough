@@ -156,6 +156,10 @@ pub struct DigestRequest {
     /// what makes an inheritance digest distinguishable from a standing one in the store, for
     /// graph-ops.
     pub parents: Vec<TrajId>,
+    /// P5-D13: `true` ⇒ this is a RECONCILIATION digest, not an inheritance one. The same
+    /// two-parent input selects [`bough_plugin_ledger::RollupKind::Reconciliation`] and the
+    /// `recon:` id namespace instead of `digest:…:inherited`. `false` everywhere but a merge.
+    pub reconcile: bool,
 }
 
 /// What a digest rebuild did.

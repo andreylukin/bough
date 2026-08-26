@@ -112,6 +112,15 @@ impl Projector for Assembler {
     async fn assemble(&self, req: &AssembleRequest) -> Result<Assembled, ProjectionError> {
         crate::assemble::assemble(self, req).await
     }
+    /// WP-6 fills this: the pin store lives in `pin.rs` and `assemble` short-circuits on it.
+    fn pin_prefix(
+        &self,
+        _agent: bough_plugin_ledger::AgentName,
+        _prefix: bough_plugin_projection::Assembled,
+        _source: bough_plugin_projection::PrefixSource,
+    ) -> Result<bough_plugin_projection::PrefixToken, ProjectionError> {
+        todo!("WP-6: pin the prefix for one agent and return its disposer")
+    }
     async fn file_view(&self, req: &FileViewRequest) -> Result<String, ProjectionError> {
         let view = self.ledger.0.trajectory_view(&req.traj).await?;
         Ok(file_view::render_file_view(&view, req.at))

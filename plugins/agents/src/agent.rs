@@ -370,6 +370,13 @@ pub enum WakeCause {
     CatchUp,
     /// A schedule fired; the `&'static str` names it.
     Schedule(&'static str),
+    /// Mail arrived. Phase 5 (P5-D1): the driver opened those wakes with no cause at all before,
+    /// which an `agent/wake-request` admission listener cannot read.
+    Mail { class: crate::mail::MailClass },
+    /// Andrey said something. Always reactivates a dormant agent (§1).
+    Andrey,
+    /// The drain wake armed by a reactivation (§5's standing invariant).
+    Reactivated,
 }
 
 /// What [`Agent::request_wake`] did. `Nothing` is the answer for an agent with nothing queued —
