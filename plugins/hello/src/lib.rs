@@ -85,6 +85,11 @@ pub struct HelloConfig {
     /// rejects anything else, purely and synchronously (§0.5).
     #[serde(default)]
     pub read_undeclared: Option<String>,
+    /// Test hook: a path this row's teardown TOUCHES on unwind. The only unload evidence that
+    /// survives a process boundary, which is what `crates/bough/tests/boot.rs` needs to assert
+    /// that teardown-before-exit actually ran rather than that the exit code was zero.
+    #[serde(default)]
+    pub unload_marker: Option<std::path::PathBuf>,
     /// Test hook: mount a nested child row from `apply`, so unloading this fiber has something to
     /// cascade to (V3). Deviation from the plan's four fields, noted in `docs/phase-0-plan.md`'s
     /// terms: `ctx.mount` has no other Phase-0 caller and V3 names a hello-side test for it.
@@ -149,6 +154,16 @@ impl Plugin for HelloPlugin {
         })
         .await?;
 
+        if let Some(path) = cfg.unload_marker.clone() {
+            ctx.effect(move |e| async move {
+                e.defer_sync(move || {
+                    let _ = std::fs::write(&path, b"unwound\n");
+                });
+                Ok(())
+            })
+            .await?;
+        }
+
         // Three numbered effects, so `hello_effects_unwind_lifo_on_unload` has an order to see.
         for moment in ["effect-1", "effect-2", "effect-3"] {
             let t = t.clone();
@@ -159,7 +174,15 @@ impl Plugin for HelloPlugin {
             .await?;
         }
 
-        // The stream `src/invariant.rs` polices, recorded by its listener.
+        // The stream `src/invariant.rs` polices, recorded by its listener. The recorded stream is
+        // per-LIFE: a reload keeps the FiberUid and restarts the seq at 1, so this fiber's stream
+        // is forgotten when it unloads, or the invariant would flag its own reload (§0.3).
+        let mine = ctx.fiber_uid();
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || invariant::forget(mine));
+            Ok(())
+        })
+        .await?;
         ctx.on_parallel::<GreetedEvent, _, _>(move |g| async move {
             invariant::record(g.fiber, g.seq);
         })

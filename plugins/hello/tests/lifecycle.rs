@@ -7,7 +7,6 @@
 //! Covers V1, V2 and the hello-side half of V3.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use bough_kernel::{
     Catalog, Composer, Composition, ExprEnv, FiberState, Kernel, KernelOptions, LayerId, Patch,
@@ -46,7 +45,6 @@ async fn boot(yaml: &str) -> Arc<Kernel> {
         KernelOptions {
             profile: "test".into(),
             invariants: true,
-            reconcile_debounce: Duration::from_millis(0),
         },
     );
     kernel.load(composition).await.expect("the tree mounts");

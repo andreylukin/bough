@@ -1,27 +1,35 @@
 //! Shared harness for the launcher's Phase 0 integration tests.
 //!
-//! Invariant this file holds: the tests below compose through the SAME layer order the launcher
-//! does (§0.5) — bundle layer, then `$BOUGH_HOME/bough.patch.yml` — so a patch that swaps a row in
-//! a test swaps it the same way a user's patch file would. The launcher's own module is private to
-//! its binary target, so this harness reproduces the layer stack rather than importing it; the
-//! `--dump-config` tests drive the real binary instead, which is what keeps the two honest.
+//! Invariant this file holds: these tests boot and recompose through the LAUNCHER'S OWN code —
+//! `bough::compose::compose_plan` and `bough::watch::recompose_once` — over a real `$BOUGH_HOME`
+//! with a real `profiles/` and `bundles/` on disk. It reproduces nothing. That is the point: the
+//! previous harness stacked its own two layers and emitted `config-update-failed` itself, so the
+//! SWAP gate never exercised the normative §0.5 layer stack and V7's broadcast half was
+//! self-fulfilling.
+//!
+//! `$BOUGH_HOME` is process-global, so every test using [`boot_with`] MUST hold
+//! `bough_plugin_hello::trace::test_lock()` for its whole body. They all do.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
+use bough::cli::{BootError, Cli, DumpFormat};
 use bough_kernel::{
-    Catalog, ComposeError, Composer, Composition, ExprEnv, Kernel, KernelOptions, LayerId, Patch,
-    RowSnapshot,
+    Catalog, ComposeError, Composition, Kernel, KernelError, KernelOptions, RowSnapshot,
 };
 
-/// A throwaway `$BOUGH_HOME`. Removed on drop.
+/// The bundle name the harness writes its test tree to.
+const TEST_BUNDLE: &str = "phase0-test";
+
+/// A throwaway `$BOUGH_HOME`, with the `Cli` the launcher was booted with. Removed on drop.
 ///
-/// Hand-rolled rather than `tempfile` so this package's manifest — WP-5's file — needs no new
-/// dev-dependency.
-pub struct TempDir(PathBuf);
+/// Hand-rolled rather than `tempfile` so this package's manifest needs no new dev-dependency.
+pub struct TempDir {
+    path: PathBuf,
+    cli: Option<Arc<Cli>>,
+}
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -32,20 +40,24 @@ impl TempDir {
             std::env::temp_dir().join(format!("bough-phase0-{tag}-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("a temp dir");
-        TempDir(path)
+        TempDir { path, cli: None }
     }
     pub fn path(&self) -> &Path {
-        &self.0
+        &self.path
     }
     /// Where the launcher looks for the user patch layer.
     pub fn patch_path(&self) -> PathBuf {
-        self.0.join("bough.patch.yml")
+        self.path.join("bough.patch.yml")
+    }
+    /// The `Cli` this home was booted with — the one the launcher's own recompose path takes.
+    pub fn cli(&self) -> &Arc<Cli> {
+        self.cli.as_ref().expect("this home was not booted")
     }
 }
 
 impl Drop for TempDir {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let _ = std::fs::remove_dir_all(&self.path);
     }
 }
 
@@ -67,8 +79,7 @@ pub fn repo_root() -> PathBuf {
         .expect("the repo root exists")
 }
 
-/// The subset of a profile document these tests need. The launcher's own `Profile` lives in a
-/// private module of its binary target, so it cannot be imported here.
+/// The subset of a profile document these tests need.
 #[derive(serde::Deserialize)]
 struct ProfileDoc {
     #[serde(default)]
@@ -84,20 +95,65 @@ pub fn profile_runs_invariants(profile: &str) -> bool {
     doc.invariants
 }
 
-/// Stack the bundle layer and, if it exists, the user patch layer — the launcher's order (§0.5).
+/// Lay a `$BOUGH_HOME` out the way an installed bough sees one: the repo's real profile document
+/// with its bundle list pointed at this test's tree, and the tree itself as a bundle file.
+///
+/// `--root` is deliberately NOT used: the launcher searches `$BOUGH_HOME/{profiles,bundles}` first
+/// (Decision D11), which is the override path a user has.
+fn lay_out_home(dir: &TempDir, bundle_yaml: &str, profile: &str) {
+    std::fs::create_dir_all(dir.path().join("bundles")).unwrap();
+    std::fs::create_dir_all(dir.path().join("profiles")).unwrap();
+    std::fs::write(
+        dir.path()
+            .join("bundles")
+            .join(format!("{TEST_BUNDLE}.yml")),
+        bundle_yaml,
+    )
+    .unwrap();
+
+    // Start from the repo's real profile so `invariants` and every other field stay honest; only
+    // the bundle list is swapped for the test tree.
+    let src = repo_root().join("profiles").join(format!("{profile}.yml"));
+    let text = std::fs::read_to_string(&src).unwrap_or_else(|e| panic!("{}: {e}", src.display()));
+    let mut doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("the profile parses");
+    doc.as_mapping_mut()
+        .expect("a profile is a mapping")
+        .insert(
+            serde_yaml::Value::from("bundles"),
+            serde_yaml::Value::from(vec![serde_yaml::Value::from(TEST_BUNDLE)]),
+        );
+    std::fs::write(
+        dir.path().join("profiles").join(format!("{profile}.yml")),
+        serde_yaml::to_string(&doc).unwrap(),
+    )
+    .unwrap();
+}
+
+fn cli_for(profile: &str) -> Cli {
+    Cli {
+        profile: profile.to_string(),
+        patches: Vec::new(),
+        dump_config: false,
+        dump_format: DumpFormat::Yaml,
+        check: false,
+        // The tests drive `recompose_once` directly rather than waiting on a file watcher.
+        no_watch: true,
+        root: None,
+    }
+}
+
+/// Compose through the launcher's own layer stack (§0.5): bundles → profile patch → user patch →
+/// `--patch`.
 pub fn compose_layers(
     catalog: &Catalog,
-    bundle_yaml: &str,
+    _bundle_yaml: &str,
     dir: &TempDir,
 ) -> Result<Composition, ComposeError> {
-    let bundle: Patch = serde_yaml::from_str(bundle_yaml).expect("the bundle document parses");
-    let mut composer = Composer::new(catalog, ExprEnv::new("test"));
-    composer.layer(LayerId::new("bundle:test"), bundle);
-    if let Ok(text) = std::fs::read_to_string(dir.patch_path()) {
-        let user: Patch = serde_yaml::from_str(&text).expect("the user patch document parses");
-        composer.layer(LayerId::new("user"), user);
+    match bough::compose::compose_for(dir.cli(), catalog) {
+        Ok(c) => Ok(c),
+        Err(BootError::Compose(c)) => Err(c),
+        Err(other) => panic!("unexpected launcher failure: {other}"),
     }
-    composer.compose()
 }
 
 /// Boot `bundle_yaml` under the `tui` profile with a fresh `$BOUGH_HOME`.
@@ -105,59 +161,91 @@ pub async fn boot_with(bundle_yaml: &str) -> (Arc<Kernel>, TempDir) {
     boot_with_profile(bundle_yaml, "tui").await
 }
 
-/// Boot `bundle_yaml` under a named profile: the profile decides whether the kernel's invariant
-/// runner exists at all (§2.9).
+/// Boot `bundle_yaml` under a named profile, through the launcher's composition path.
+///
+/// Sets `$BOUGH_HOME`; the caller must hold `trace::test_lock()`.
 pub async fn boot_with_profile(bundle_yaml: &str, profile: &str) -> (Arc<Kernel>, TempDir) {
-    let dir = TempDir::new(profile);
+    let mut dir = TempDir::new(profile);
+    // SAFETY: single-threaded within the test, which holds the fixture's process-wide test lock.
+    unsafe { std::env::set_var("BOUGH_HOME", dir.path()) };
+    lay_out_home(&dir, bundle_yaml, profile);
+    dir.cli = Some(Arc::new(cli_for(profile)));
+
     let catalog = Catalog::from_inventory().expect("the linked catalog has no duplicate names");
-    let composition = compose_layers(&catalog, bundle_yaml, &dir).expect("the tree composes");
+    let (resolved, composition) =
+        bough::compose::compose_plan(dir.cli(), &catalog).expect("the tree composes");
+    assert_eq!(resolved.name, profile);
+    assert_eq!(
+        resolved.invariants,
+        profile_runs_invariants(profile),
+        "the harness must not change what the profile decides"
+    );
+
     let kernel = Kernel::new(
         catalog,
         KernelOptions {
-            profile: profile.to_string(),
-            invariants: profile_runs_invariants(profile),
-            reconcile_debounce: Duration::from_millis(0),
+            profile: resolved.name.clone(),
+            invariants: resolved.invariants,
         },
     );
     kernel.load(composition).await.expect("the tree mounts");
-    kernel.quiesce().await;
+    assert!(kernel.quiesce().await, "the booted tree must quiesce");
     (kernel, dir)
 }
 
-/// Recompose from the layers on disk and hand the candidate to the kernel — the launcher's watch
-/// path (§2.13), in-process.
+/// Recompose from the layers on disk — the launcher's LIVE path (`bough::watch::recompose_once`),
+/// the same function the patch-file watch task calls.
 ///
-/// A candidate that fails to compose never reaches `Kernel::update`, so the broadcast of
-/// `config-update-failed` is issued here, exactly where `crates/bough/src/watch.rs` issues it. The
-/// claim the tests then check is the kernel's: the last good tree keeps running.
+/// Nothing is emitted here: `config-update-failed` is broadcast by production code, from inside
+/// the kernel for a candidate that fails to mount and from `recompose_once` for one that fails to
+/// compose.
 pub async fn recompose(
     kernel: &Kernel,
-    bundle_yaml: &str,
+    _bundle_yaml: &str,
     dir: &TempDir,
 ) -> Result<(), ComposeError> {
-    let catalog = Catalog::from_inventory().expect("catalog");
-    match compose_layers(&catalog, bundle_yaml, dir) {
-        Ok(candidate) => {
-            kernel.update(candidate).await.expect("the tree updates");
-            kernel.quiesce().await;
-            Ok(())
-        }
-        Err(e) => {
-            kernel
-                .root()
-                .emit::<bough_kernel::event::ConfigUpdateFailed>(Arc::new(clone_error(&e)));
-            kernel.quiesce().await;
-            Err(e)
-        }
+    let outcome = bough::watch::recompose_once(kernel, dir.cli()).await;
+    kernel.quiesce().await;
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(BootError::ComposeShared(c)) => Err(rebuild(&c)),
+        Err(BootError::Compose(c)) => Err(c),
+        Err(BootError::Kernel(KernelError::Compose(c))) => Err(c),
+        Err(other) => panic!("unexpected launcher failure: {other}"),
     }
 }
 
-/// `ComposeError` is not `Clone` (it carries `#[source]` chains), and the broadcast payload is an
-/// `Arc<ComposeError>`, so the emitted copy is rebuilt from the rendered message.
-fn clone_error(e: &ComposeError) -> ComposeError {
-    ComposeError::BadYaml {
-        layer: LayerId::new("user"),
-        detail: e.to_string(),
+/// `ComposeError` is not `Clone` and the broadcast payload is shared behind an `Arc`, so the
+/// variant a test matches on is reconstructed from the shared one. Only the shapes the Phase 0
+/// tests assert on are reconstructed; anything else keeps its rendered message.
+fn rebuild(e: &ComposeError) -> ComposeError {
+    match e {
+        ComposeError::UnknownPlugin {
+            entry,
+            plugin,
+            layer,
+        } => ComposeError::UnknownPlugin {
+            entry: entry.clone(),
+            plugin: plugin.clone(),
+            layer: layer.clone(),
+        },
+        ComposeError::BadConfig {
+            entry,
+            plugin,
+            layer,
+            source,
+        } => ComposeError::BadConfig {
+            entry: entry.clone(),
+            plugin: plugin.clone(),
+            layer: layer.clone(),
+            source: bough_kernel::ConfigError::Rejected {
+                detail: source.to_string(),
+            },
+        },
+        other => ComposeError::BadYaml {
+            layer: bough_kernel::LayerId::new("user"),
+            detail: other.to_string(),
+        },
     }
 }
 

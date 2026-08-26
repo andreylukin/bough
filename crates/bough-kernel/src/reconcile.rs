@@ -50,8 +50,12 @@ impl TargetWrite {
     }
 }
 
-/// A row's `disabled`, as resolved on an evaluated tree. An unevaluated `!!expr` reaching here is
-/// a composition bug, not a runtime decision: treat it as enabled so boot fails loud on the row
+/// A row's `disabled`, as resolved on an evaluated tree.
+///
+/// An unevaluated `!!expr` cannot reach here: `Composer::compose` evaluates every row's `disabled`
+/// into a literal before the tree is ever handed to the kernel, and an expression that fails to
+/// evaluate rejects the whole candidate (`ComposeError::BadExpr`). Should one arrive anyway, the
+/// row is treated as ENABLED — the choice that keeps a row visible to the activation assertion
 /// rather than silently skipping it.
 pub fn is_disabled(e: &Entry) -> bool {
     match &e.disabled {
@@ -106,10 +110,11 @@ pub fn diff_row(old: Option<&Entry>, new: Option<&Entry>, out: &mut Vec<TargetWr
                 return;
             }
             match (is_disabled(o), is_disabled(n)) {
-                (false, true) => {
-                    out.push(TargetWrite::Unload { id: n.id.clone() });
-                    return;
-                }
+                // Unload, and then KEEP GOING: a `config`/`isolate`/`inject` change arriving in
+                // the same update must still reach the plugin, or the row's bookkeeping entry and
+                // the fiber's body would disagree and a later `disabled: false` would re-load with
+                // the stale config. The quiescent state is a function of the final tree alone.
+                (false, true) => out.push(TargetWrite::Unload { id: n.id.clone() }),
                 (true, false) => out.push(TargetWrite::Load { id: n.id.clone() }),
                 _ => {}
             }
@@ -372,6 +377,118 @@ mod tests {
                 ("d", FiberState::Inactive),
                 ("p", FiberState::Active)
             ]
+        );
+    }
+
+    /// §0.3: "the quiescent state is a function of the final config alone, whatever order the
+    /// changes arrived in". A `disabled` false→true arriving in the SAME update as a `config`
+    /// change must still hand the new config to the plugin, or re-enabling the row later loads the
+    /// STALE config and the two orders reach different quiescent states.
+    #[tokio::test]
+    async fn disabling_and_reconfiguring_in_one_update_still_hands_the_config_over() {
+        // Stepwise: enabled(world) → disabled(moon) → enabled(moon).
+        let stepwise = TreeHarness::new();
+        stepwise
+            .apply(vec![row("a").plugin("one").cfg("who", "world")])
+            .await;
+        stepwise
+            .apply(vec![row("a")
+                .plugin("one")
+                .cfg("who", "moon")
+                .disabled(true)])
+            .await;
+        stepwise.trace.push("--");
+        stepwise
+            .apply(vec![row("a").plugin("one").cfg("who", "moon")])
+            .await;
+
+        // Direct: enabled(world) → enabled(moon).
+        let direct = TreeHarness::new();
+        direct
+            .apply(vec![row("a").plugin("one").cfg("who", "world")])
+            .await;
+        direct.trace.push("--");
+        direct
+            .apply(vec![row("a").plugin("one").cfg("who", "moon")])
+            .await;
+
+        let tail = |h: &TreeHarness| -> Vec<String> {
+            let t = h.trace.entries();
+            let base = t.iter().position(|e| e == "--").unwrap();
+            t[base + 1..]
+                .iter()
+                .filter(|e| e.starts_with("a/one:who="))
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            tail(&stepwise),
+            vec!["a/one:who=moon".to_string()],
+            "re-enabling the row must load the config the disabling update carried, not the stale one"
+        );
+        assert_eq!(tail(&direct), vec!["a/one:who=moon".to_string()]);
+        assert_eq!(stepwise.state("a"), FiberState::Active);
+        assert_eq!(direct.state("a"), FiberState::Active);
+    }
+
+    /// §0.3 again, from the other side: an update that BOTH removes a provider AND disables its
+    /// dependent must leave the dependent INACTIVE. The provider's teardown pokes every dependent
+    /// to reload; that poke must not undo the `disabled: true` the same update wrote.
+    #[tokio::test]
+    async fn removing_a_provider_does_not_resurrect_a_dependent_disabled_in_the_same_update() {
+        let h = TreeHarness::new();
+        h.apply(vec![
+            row("p").plugin("provider"),
+            row("c").plugin("one").inject(&["greeting"]),
+        ])
+        .await;
+        assert_eq!(h.state("c"), FiberState::Active);
+
+        h.apply(vec![row("c")
+            .plugin("one")
+            .inject(&["greeting"])
+            .disabled(true)])
+            .await;
+
+        assert!(h.fiber("p").is_none(), "the provider row left the tree");
+        assert_eq!(
+            h.state("c"),
+            FiberState::Inactive,
+            "a disabled row must not be resurrected by its provider's teardown"
+        );
+        let snap = h
+            .kernel
+            .rows_snapshot()
+            .into_iter()
+            .find(|r| r.id.as_str() == "c")
+            .expect("row c");
+        assert!(snap.disabled);
+        assert!(
+            snap.unmet.is_empty(),
+            "an INACTIVE row has no unmet keys: {:?}",
+            snap.unmet
+        );
+    }
+
+    /// The pure half of the same claim, on the diff alone.
+    #[test]
+    fn a_disabling_update_that_also_changes_config_emits_both_writes() {
+        use crate::reconcile::{diff_trees, TargetWrite};
+        let a: Vec<crate::config::Entry> = vec![row("a").plugin("one").cfg("who", "world").0];
+        let b: Vec<crate::config::Entry> =
+            vec![row("a").plugin("one").cfg("who", "moon").disabled(true).0];
+        let writes = diff_trees(&a, &b);
+        assert!(
+            writes
+                .iter()
+                .any(|w| matches!(w, TargetWrite::Unload { .. })),
+            "{writes:?}"
+        );
+        assert!(
+            writes
+                .iter()
+                .any(|w| matches!(w, TargetWrite::Reconfigure { .. })),
+            "a config change must not be swallowed by the unload: {writes:?}"
         );
     }
 

@@ -58,7 +58,6 @@ async fn a_patch_that_stops_composing_broadcasts_and_leaves_the_tree_running() {
         KernelOptions {
             profile: profile.name.clone(),
             invariants: profile.invariants,
-            reconcile_debounce: Duration::from_millis(10),
         },
     );
     kernel.load(composition).await.expect("mounts");
@@ -115,6 +114,6 @@ async fn a_patch_that_stops_composing_broadcasts_and_leaves_the_tree_running() {
         "the rejected candidate must not have disturbed a running row"
     );
 
-    watch.stop();
+    watch.stop().await;
     kernel.shutdown().await;
 }

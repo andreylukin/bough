@@ -197,11 +197,15 @@ impl Fiber {
     }
 
     /// Request a full unload+load. Honoured after the in-flight transition, never during it.
+    ///
+    /// It does NOT set `want`: whether a row wants to be loaded at all is the reconciler's
+    /// `disabled` decision, written through [`Fiber::set_want`]. A provider's teardown pokes every
+    /// dependent through here, and a dependent the same update disabled must stay disabled — a
+    /// reload request that resurrected it would make the quiescent state depend on arrival order.
     pub(crate) fn request_reload(&self) {
         {
             let mut t = self.target.lock();
             t.gen += 1;
-            t.want = true;
         }
         self.wake.notify_waiters();
         self.wake.notify_one();
@@ -242,7 +246,9 @@ impl FiberHandle {
     pub fn id(&self) -> &EntryId {
         &self.inner.id
     }
-    /// `None` for a pure group row (Decision D18).
+    /// The catalog name of this row's plugin. `None` only for a body the config tree never
+    /// produced: Decision D18 (a pure group row) is not implemented in Phase 0, and the composer
+    /// rejects a row that names no plugin.
     pub fn plugin(&self) -> Option<&'static str> {
         self.inner.plugin
     }
@@ -381,11 +387,20 @@ impl FiberRuntime {
     pub async fn dispose(self: &Arc<Self>, uid: FiberUid) {
         let Some(fiber) = self.get(uid) else { return };
         fiber.set_want(false);
-        FiberHandle {
+        // BOUNDED: `shutdown` and every removed-row path await this, so an inverse that never
+        // returns must not be able to hold the process open (§0.1 item 2). The bound is loud.
+        let handle = FiberHandle {
             inner: fiber.clone(),
+        };
+        if tokio::time::timeout(DISPOSE_CEILING, handle.settled())
+            .await
+            .is_err()
+        {
+            tracing::error!(
+                entry = %fiber.id,
+                "fiber did not settle within {DISPOSE_CEILING:?}; disposing it anyway"
+            );
         }
-        .settled()
-        .await;
         fiber.stopped.store(true, Ordering::SeqCst);
         fiber.wake.notify_waiters();
         fiber.settled.notify_waiters();
@@ -402,6 +417,25 @@ impl FiberRuntime {
     pub fn poke_all(&self) {
         for f in self.all() {
             f.poke();
+        }
+    }
+
+    /// Re-resolve every ACTIVE fiber's dependency targets and request a reload wherever a
+    /// resolved `ProviderUid` moved (§0.3: targets are identified by provider fiber uid, not by
+    /// value, so a withdraw-and-re-provide propagates and an in-place `set` does not).
+    ///
+    /// Synchronous, and it bumps the target generation, so a caller that then awaits quiescence
+    /// waits for the reload rather than observing a tree that has not started converging yet.
+    pub fn recheck_targets(&self) {
+        for f in self.all() {
+            if f.state() != FiberState::Active {
+                continue;
+            }
+            let Some(view) = f.view() else { continue };
+            let (now, _unmet) = self.resolve_view(&f);
+            if *now != *view {
+                f.request_reload();
+            }
         }
     }
 
@@ -501,7 +535,11 @@ async fn drive(rt: Arc<FiberRuntime>, fiber: Arc<Fiber>) {
                     s.view = Some(view.clone());
                 }
                 let body = fiber.body();
-                match body.load(view).await {
+                // A plugin that panics in `apply` must FAIL, not wedge the driver: an unwind that
+                // escaped here would kill this task with `busy == true`, so the fiber never
+                // settles and `Kernel::shutdown` — the teardown-before-exit guarantee of §0.1
+                // item 2 — would block forever.
+                match contain(&fiber, "apply", body.load(view)).await {
                     Ok(()) => transition(&rt, &fiber, FiberState::Active, None),
                     Err(e) => {
                         // A failed apply unwinds as if unloaded, then rests in FAILED.
@@ -522,6 +560,50 @@ async fn drive(rt: Arc<FiberRuntime>, fiber: Arc<Fiber>) {
     }
 }
 
+/// Run one plugin-supplied future, turning a panic into a `PluginError` on this fiber.
+///
+/// §0.3's lifecycle is inertial only if every transition actually finishes; a panic escaping into
+/// the driver task ends the loop with the fiber permanently unsettled.
+async fn contain<F>(fiber: &Arc<Fiber>, step: &'static str, fut: F) -> Result<(), PluginError>
+where
+    F: std::future::Future<Output = Result<(), PluginError>>,
+{
+    use futures::FutureExt as _;
+    match std::panic::AssertUnwindSafe(fut).catch_unwind().await {
+        Ok(r) => r,
+        Err(payload) => Err(PluginError::new(
+            fiber.id.clone(),
+            anyhow::anyhow!("plugin panicked in {step}: {}", panic_message(&payload)),
+        )),
+    }
+}
+
+/// As [`contain`], for the inverse steps, which return nothing. A panic there is logged and the
+/// teardown continues: an unload that stops halfway leaves exactly the trace §0.2 forbids.
+async fn contain_unit<F>(fiber: &Arc<Fiber>, step: &'static str, fut: F)
+where
+    F: std::future::Future<Output = ()>,
+{
+    use futures::FutureExt as _;
+    if let Err(payload) = std::panic::AssertUnwindSafe(fut).catch_unwind().await {
+        tracing::error!(
+            entry = %fiber.id,
+            "plugin panicked in {step}: {}; teardown continues",
+            panic_message(&payload)
+        );
+    }
+}
+
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "<non-string panic payload>".to_string()
+    }
+}
+
 async fn unload(rt: &Arc<FiberRuntime>, fiber: &Arc<Fiber>, end: FiberState) {
     transition(rt, fiber, FiberState::Unloading, None);
     teardown(rt, fiber).await;
@@ -537,7 +619,7 @@ async fn unload(rt: &Arc<FiberRuntime>, fiber: &Arc<Fiber>, end: FiberState) {
 /// withdraw → notify dependents → await their teardown → cascade to children → unwind LIFO.
 async fn teardown(rt: &Arc<FiberRuntime>, fiber: &Arc<Fiber>) {
     // 1. This fiber stops providing, before any other inverse of it runs.
-    fiber.body().withdraw().await;
+    contain_unit(fiber, "withdraw", fiber.body().withdraw()).await;
 
     // 2. Notify dependents, then 3. await each one's own teardown.
     let deps = rt.dependents(fiber.uid);
@@ -550,12 +632,22 @@ async fn teardown(rt: &Arc<FiberRuntime>, fiber: &Arc<Fiber>) {
         })
         .collect();
     for (dep, epoch) in before {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + DEPENDENT_WAIT_CEILING;
         loop {
-            if dep.unload_epoch.load(Ordering::SeqCst) > epoch
-                || dep.stopped.load(Ordering::SeqCst)
-                || std::time::Instant::now() > deadline
+            if dep.unload_epoch.load(Ordering::SeqCst) > epoch || dep.stopped.load(Ordering::SeqCst)
             {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                // The §0.3 ordering is abandoned here. That is a bug in the dependent, and it must
+                // be visible: silently unwinding this provider under a dependent that is still
+                // tearing down against it is the failure nobody would ever find.
+                tracing::error!(
+                    provider = %fiber.id,
+                    dependent = %dep.id,
+                    "dependent did not tear down within {DEPENDENT_WAIT_CEILING:?}; \
+                     unwinding the provider anyway, out of the order §0.3 mandates"
+                );
                 break;
             }
             let w = dep.settled.notified();
@@ -571,13 +663,27 @@ async fn teardown(rt: &Arc<FiberRuntime>, fiber: &Arc<Fiber>) {
     fiber.children.lock().clear();
 
     // 5. Only now, this fiber's own accumulator, LIFO.
-    fiber.body().unwind().await;
+    contain_unit(fiber, "unwind", fiber.body().unwind()).await;
     fiber.unload_epoch.fetch_add(1, Ordering::SeqCst);
     fiber.settled.notify_waiters();
 }
 
+/// How long [`FiberRuntime::dispose`] waits for a fiber to settle before proceeding regardless.
+/// A ceiling, not a tuning knob: past it, something is wedged and holding the process open is the
+/// worse failure.
+const DISPOSE_CEILING: Duration = Duration::from_secs(5);
+
+/// How long an UNLOADING provider waits for a notified dependent's own teardown before proceeding
+/// out of order. Expiry is logged at ERROR; it is never silent.
+const DEPENDENT_WAIT_CEILING: Duration = Duration::from_secs(5);
+
 /// Await quiescence over the whole registry, INCLUDING fibers a transition created.
-pub async fn quiesce_runtime(rt: &Arc<FiberRuntime>) {
+///
+/// Returns whether the tree ACTUALLY quiesced. `false` means the ceiling expired with fibers still
+/// converging: every caller that asserts on a settled tree must treat that as a failure rather
+/// than as quiescence, which is why this is a `bool` and not `()`.
+#[must_use]
+pub async fn quiesce_runtime(rt: &Arc<FiberRuntime>) -> bool {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     let mut stable = 0;
     loop {
@@ -586,14 +692,20 @@ pub async fn quiesce_runtime(rt: &Arc<FiberRuntime>) {
             // Two consecutive clean passes, so a fiber created by the transition we just observed
             // is counted before we call it quiet.
             if stable >= 3 {
-                return;
+                return true;
             }
         } else {
             stable = 0;
         }
         if std::time::Instant::now() > deadline {
-            tracing::error!("quiesce timed out; the tree is still converging");
-            return;
+            let stuck: Vec<String> = rt
+                .all()
+                .iter()
+                .filter(|f| !f.settled_now())
+                .map(|f| format!("{} ({:?})", f.id, f.state()))
+                .collect();
+            tracing::error!("quiesce timed out; still converging: {stuck:?}");
+            return false;
         }
         tokio::time::sleep(Duration::from_millis(1)).await;
     }
@@ -666,6 +778,8 @@ pub(crate) mod tests {
         pub load_delay: Duration,
         pub unload_delay: Duration,
         pub fail: AtomicBool,
+        /// Panic in `load` instead of returning. The kernel must contain it (§0.1 item 2).
+        pub panic_on_load: AtomicBool,
         pub realm: Option<RealmLabel>,
     }
 
@@ -681,6 +795,7 @@ pub(crate) mod tests {
                 load_delay: Duration::ZERO,
                 unload_delay: Duration::ZERO,
                 fail: AtomicBool::new(false),
+                panic_on_load: AtomicBool::new(false),
                 realm: None,
             })
         }
@@ -701,6 +816,10 @@ pub(crate) mod tests {
             self.trace.push(format!("{}:apply-start", self.name));
             if !self.load_delay.is_zero() {
                 tokio::time::sleep(self.load_delay).await;
+            }
+            if self.panic_on_load.load(Ordering::SeqCst) {
+                self.trace.push(format!("{}:apply-panic", self.name));
+                panic!("planted apply panic");
             }
             if self.fail.load(Ordering::SeqCst) {
                 self.trace.push(format!("{}:apply-failed", self.name));
@@ -754,7 +873,7 @@ pub(crate) mod tests {
                 .create(id, None, BTreeMap::new(), None, body.clone(), want)
         }
         pub(crate) async fn quiesce(&self) {
-            quiesce_runtime(&self.rt).await;
+            let _ = quiesce_runtime(&self.rt).await;
         }
     }
 
@@ -859,8 +978,10 @@ pub(crate) mod tests {
         let fiber = h.rt.get(f.uid()).unwrap();
         fiber.set_want(false);
         tokio::time::sleep(Duration::from_millis(5)).await;
-        // A reload target arrives mid-unload: it must not truncate the unload.
-        fiber.request_reload();
+        // A load target arrives mid-unload: it must not truncate the unload.
+        // `set_want`, not `request_reload`: whether a row wants to be loaded is the reconciler's
+        // `disabled` decision, and `request_reload` deliberately does not touch it.
+        fiber.set_want(true);
         h.quiesce().await;
 
         let t = h.trace.entries();
@@ -876,6 +997,70 @@ pub(crate) mod tests {
             vec!["slow:unwind".to_string(), "slow:apply".to_string()]
         );
         assert_eq!(f.state(), FiberState::Active);
+    }
+
+    /// §0.3: the quiescent state is a function of the final config alone. A provider's teardown
+    /// pokes every dependent through `request_reload`; a dependent the same update DISABLED must
+    /// stay disabled, whichever order the two writes landed in.
+    #[tokio::test]
+    async fn a_reload_request_never_resurrects_a_disabled_fiber() {
+        let h = harness();
+        let f = h.spawn(TestBody::new("dep", &h.trace, &h.store), true);
+        h.quiesce().await;
+        assert_eq!(f.state(), FiberState::Active);
+
+        let fiber = h.rt.get(f.uid()).unwrap();
+        fiber.set_want(false);
+        fiber.request_reload();
+        h.quiesce().await;
+        assert_eq!(
+            f.state(),
+            FiberState::Inactive,
+            "a reload request must not undo `disabled: true`"
+        );
+
+        // And the other order.
+        fiber.request_reload();
+        fiber.set_want(false);
+        h.quiesce().await;
+        assert_eq!(f.state(), FiberState::Inactive);
+    }
+
+    /// §0.1 item 2: teardown before exit. A plugin that PANICS in `apply` must leave its fiber
+    /// FAILED and settled, so `dispose` (and therefore `Kernel::shutdown`) still returns.
+    #[tokio::test]
+    async fn a_panicking_apply_fails_the_fiber_instead_of_wedging_the_kernel() {
+        let h = harness();
+        let body = TestBody::new("boom", &h.trace, &h.store);
+        body.panic_on_load.store(true, Ordering::SeqCst);
+        let f = h.spawn(body.clone(), true);
+        h.quiesce().await;
+
+        assert_eq!(
+            f.state(),
+            FiberState::Failed,
+            "a panicking apply is a failed activation, not a hang"
+        );
+        let err = f
+            .error()
+            .expect("the panic is reported as the fiber's error");
+        assert!(
+            err.to_string().contains("panicked in apply"),
+            "the error must name the panic: {err}"
+        );
+        assert!(h.trace.entries().iter().any(|e| e == "boom:unwind"));
+
+        // The whole point: disposal still completes.
+        tokio::time::timeout(Duration::from_secs(2), h.rt.dispose(f.uid()))
+            .await
+            .expect("dispose must not block on a panicked fiber");
+        assert!(h.rt.get(f.uid()).is_none());
+
+        // And the fiber recovers if the panic stops.
+        let ok = TestBody::new("fine", &h.trace, &h.store);
+        let g = h.spawn(ok, true);
+        h.quiesce().await;
+        assert_eq!(g.state(), FiberState::Active);
     }
 
     #[tokio::test]

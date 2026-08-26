@@ -1,6 +1,6 @@
 //! Invariant: the dispatch mode of an event is part of its public contract and is checked by the
 //! compiler — four traits, not one trait plus a runtime mode enum (§0.2, Decision D3). Every
-//! listener invocation is contained: a panic or an `Err` is caught, `kernel/listener-failed` is
+//! listener invocation is contained: a panic is caught, `kernel/listener-failed` is
 //! emitted, and the dispatch continues (§0.3, Decision D4).
 
 use std::any::Any;

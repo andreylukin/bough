@@ -138,14 +138,36 @@ async fn swapped_out_provider_leaves_no_listeners_and_no_bindings() {
     assert_eq!(live.0.provider(), "greeting-shout");
 
     // Nothing owned by the retired fiber runs any more. The kernel exposes no listener registry
-    // to enumerate, so what is asserted is the observable consequence: after the swap settled,
-    // the echo plugin contributes no further line to the trace, through a further recompose.
+    // to enumerate, so what is asserted is the observable consequence — but the recompose that
+    // shows it must actually DO something, or an empty diff would make the claim vacuous: a
+    // no-op recompose dispatches nothing, so no plugin, retired or live, could contribute a line.
+    write_patch(
+        &dir,
+        "\
+entries:
+  greeting.provider:
+    plugin: greeting-shout
+  hello.greeter:
+    config: { who: moon }
+",
+    );
     recompose(&kernel, BASE, &dir)
         .await
-        .expect("a no-op recompose");
+        .expect("the second edit composes");
     let tail = &trace::global().lines()[after_swap..];
     assert!(
-        !tail.iter().any(|(p, _)| *p == "greeting-echo"),
+        tail.iter().any(|(p, m)| *p == "hello" && *m == "apply"),
+        "the second edit must have made the tree work, or this assertion proves nothing: {tail:?}"
+    );
+    assert!(
+        tail.contains(&("hello", "greeting-shout")),
+        "the reload must have bound against the LIVE provider, so 'no echo line' below is a \
+         statement about the retired fiber and not about an idle tree: {tail:?}"
+    );
+    assert!(
+        !tail
+            .iter()
+            .any(|(p, m)| *p == "greeting-echo" || *m == "greeting-echo"),
         "the swapped-out provider is still doing work: {tail:?}"
     );
 

@@ -67,6 +67,11 @@ pub enum BootError {
     BadFile { path: PathBuf, detail: String },
     #[error(transparent)]
     Compose(#[from] bough_kernel::ComposeError),
+    /// A compose failure that has ALREADY been broadcast as `config-update-failed`. The payload of
+    /// that broadcast is an `Arc<ComposeError>` (§0.3), and this shares it rather than degrading
+    /// the returned error to a rendered string.
+    #[error("{0}")]
+    ComposeShared(std::sync::Arc<bough_kernel::ComposeError>),
     #[error(transparent)]
     Catalog(#[from] bough_kernel::catalog::CatalogError),
     #[error(transparent)]

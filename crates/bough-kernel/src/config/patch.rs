@@ -23,9 +23,55 @@ pub struct Patch {
 }
 
 impl Patch {
-    /// Parse one layer document.
+    /// Parse one layer document, WITHOUT grafting `include:`.
+    ///
+    /// Only for documents that cannot carry an include (a unit test's inline YAML). Every
+    /// production layer goes through [`Patch::parse_in`], which resolves includes against the
+    /// directory the document was read from — an `include:` that never grafts would be a missing
+    /// referent silently skipped (§0.2).
     pub fn parse(yaml: &str) -> Result<Patch, serde_yaml::Error> {
         serde_yaml::from_str(&crate::config::expr::normalize_expr_tags(yaml))
+    }
+
+    /// Parse one layer document and graft every `include:` in it, relative to `base`.
+    ///
+    /// This is the production path (§0.3 loader: `include` is an external YAML file grafted in).
+    /// A missing or cyclic include is a `ComposeError` naming the path: never a skipped row.
+    pub fn parse_in(
+        yaml: &str,
+        base: &std::path::Path,
+        layer: &crate::config::LayerId,
+    ) -> Result<Patch, crate::error::ComposeError> {
+        let mut patch: Patch =
+            serde_yaml::from_str(&crate::config::expr::normalize_expr_tags(yaml)).map_err(|e| {
+                crate::error::ComposeError::BadYaml {
+                    layer: layer.clone(),
+                    detail: e.to_string(),
+                }
+            })?;
+        patch.graft_includes(base, layer)?;
+        Ok(patch)
+    }
+
+    /// Graft every `include:` reachable from this layer's inserted rows.
+    ///
+    /// A patch layer can only introduce a row through `insert:` (an `EntryPatch` has no `include`
+    /// field), so that is the whole surface.
+    pub fn graft_includes(
+        &mut self,
+        base: &std::path::Path,
+        layer: &crate::config::LayerId,
+    ) -> Result<(), crate::error::ComposeError> {
+        let mut stack: Vec<std::path::PathBuf> = Vec::new();
+        for ins in self.insert.iter_mut() {
+            crate::config::entry::graft_includes(
+                std::slice::from_mut(&mut ins.entry),
+                base,
+                &mut stack,
+                layer,
+            )?;
+        }
+        Ok(())
     }
     /// Apply this layer to `rows` in place, recording provenance through `record`.
     ///

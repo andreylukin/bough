@@ -21,23 +21,33 @@ const DEBOUNCE: Duration = Duration::from_millis(250);
 /// Not a `bough_kernel::EffectHandle`: an `EffectHandle` is minted by the kernel for a fiber's
 /// accumulator, and the launcher owns no fiber. The deviation is recorded in the phase notes.
 pub struct WatchHandle {
-    _debouncer: notify_debouncer_full::Debouncer<
-        notify::RecommendedWatcher,
-        notify_debouncer_full::RecommendedCache,
+    debouncer: Option<
+        notify_debouncer_full::Debouncer<
+            notify::RecommendedWatcher,
+            notify_debouncer_full::RecommendedCache,
+        >,
     >,
-    task: tokio::task::JoinHandle<()>,
+    task: Option<tokio::task::JoinHandle<()>>,
 }
+
+/// How long [`WatchHandle::stop`] waits for an in-flight recompose to finish.
+const STOP_CEILING: Duration = Duration::from_secs(10);
 
 impl WatchHandle {
-    /// Stop watching and drop the recompose task.
-    pub fn stop(self) {
-        self.task.abort();
-    }
-}
-
-impl Drop for WatchHandle {
-    fn drop(&mut self) {
-        self.task.abort();
+    /// Stop watching, COOPERATIVELY: drop the watcher so the channel closes, then await the
+    /// recompose task.
+    ///
+    /// Never `abort()`. `Kernel::update_tree` is not cancellation-safe — aborting inside it would
+    /// leave disposed fibers, a stale recorded tree and orphaned row bookkeeping, which is exactly
+    /// the "a rejected or interrupted candidate never disturbs the running tree" rule (§0.3). This
+    /// is also the normal SIGINT path, not an edge case.
+    pub async fn stop(mut self) {
+        drop(self.debouncer.take());
+        if let Some(task) = self.task.take() {
+            if tokio::time::timeout(STOP_CEILING, task).await.is_err() {
+                tracing::error!("bough: a recompose was still running after {STOP_CEILING:?}");
+            }
+        }
     }
 }
 
@@ -60,7 +70,7 @@ pub fn watch_user_patch(kernel: Arc<Kernel>, cli: Arc<Cli>) -> WatchHandle {
     );
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
-    let mut debouncer = notify_debouncer_full::new_debouncer(
+    let debouncer = notify_debouncer_full::new_debouncer(
         DEBOUNCE,
         None,
         move |res: notify_debouncer_full::DebounceEventResult| match res {
@@ -75,55 +85,85 @@ pub fn watch_user_patch(kernel: Arc<Kernel>, cli: Arc<Cli>) -> WatchHandle {
                 }
             }
         },
-    )
-    .expect("notify: could not create the patch-file watcher");
+    );
+
+    // The OS can refuse a watcher (inotify/FSEvents limits, fd exhaustion). This whole path exists
+    // so that a failure here never disturbs the running tree, so it degrades to "no live reload"
+    // exactly as a failed `watch()` below does — it does not panic the launcher.
+    let mut debouncer = match debouncer {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(
+                "bough: could not create the patch-file watcher ({e}); \
+                 live recomposition is off for this run"
+            );
+            return WatchHandle {
+                debouncer: None,
+                task: None,
+            };
+        }
+    };
 
     if let Err(e) = debouncer.watch(&dir, notify::RecursiveMode::NonRecursive) {
         tracing::warn!("bough: cannot watch {}: {e}", dir.display());
     }
 
     let task = tokio::spawn(async move {
+        // Ends when the channel closes, which is what `WatchHandle::stop` does by dropping the
+        // debouncer: the loop finishes whatever recompose is in flight and then returns.
         while rx.recv().await.is_some() {
-            recompose_once(&kernel, &cli).await;
+            let _ = recompose_once(&kernel, &cli).await;
         }
     });
 
     WatchHandle {
-        _debouncer: debouncer,
-        task,
+        debouncer: Some(debouncer),
+        task: Some(task),
     }
 }
 
 /// One recompose attempt. Every failure path logs and returns: the last good tree keeps running.
-async fn recompose_once(kernel: &Kernel, cli: &Cli) {
+///
+/// `pub` so the launcher's integration tests drive the REAL live path rather than a reproduction
+/// of it; `boot()` reaches it only through the watch task.
+pub async fn recompose_once(kernel: &Kernel, cli: &Cli) -> Result<(), BootError> {
     let catalog = match Catalog::from_inventory() {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("bough: catalog: {e}");
-            return;
+            return Err(BootError::Catalog(e));
         }
     };
     match compose_for(cli, &catalog) {
         Ok(c) => {
-            if let Err(e) = kernel.update(c).await {
-                tracing::warn!("bough: patch rejected, last good tree still running: {e}");
+            // §0.2: a patch naming an absent row id is a warning, never an error — and the live
+            // path is the one a user actually edits patches through, so it must say so too.
+            crate::boot::report_warnings(&c.warnings);
+            match kernel.update(c).await {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    // The kernel has already broadcast `config-update-failed` from inside
+                    // `update_tree`; it is not re-broadcast here.
+                    tracing::warn!("bough: patch rejected, last good tree still running: {e}");
+                    Err(BootError::Kernel(e))
+                }
             }
         }
-        Err(e) => {
-            tracing::warn!("bough: patch rejected, last good tree still running: {e}");
-            kernel.report_config_update_failed(Arc::new(compose_error(e)));
+        Err(BootError::Compose(c)) => {
+            tracing::warn!("bough: patch rejected, last good tree still running: {c}");
+            let shared = Arc::new(c);
+            kernel.report_config_update_failed(shared.clone());
+            Err(BootError::ComposeShared(shared))
         }
-    }
-}
-
-/// The broadcast payload is an `Arc<ComposeError>`; a `BootError` that already carries one hands
-/// it over, and anything else (a missing bundle, an unreadable file) is reported by its message.
-fn compose_error(e: BootError) -> bough_kernel::ComposeError {
-    match e {
-        BootError::Compose(c) => c,
-        other => bough_kernel::ComposeError::BadYaml {
-            layer: bough_kernel::LayerId::new("user"),
-            detail: other.to_string(),
-        },
+        Err(other) => {
+            // A missing bundle, an unreadable file: not a `ComposeError`, but still a rejected
+            // candidate, so §0.3's broadcast is unconditional.
+            tracing::warn!("bough: patch rejected, last good tree still running: {other}");
+            kernel.report_config_update_failed(Arc::new(bough_kernel::ComposeError::BadYaml {
+                layer: bough_kernel::LayerId::new("user"),
+                detail: other.to_string(),
+            }));
+            Err(other)
+        }
     }
 }

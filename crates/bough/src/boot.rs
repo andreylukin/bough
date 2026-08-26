@@ -8,16 +8,11 @@
 
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::Duration;
 
 use bough_kernel::{Catalog, Kernel, KernelOptions, TreeSnapshot};
 
 use crate::cli::{BootError, Cli};
 use crate::compose::compose_plan;
-
-/// How long the kernel coalesces target writes before converging. Small enough that a patch save
-/// feels immediate, large enough that a burst of writes reconciles once.
-const RECONCILE_DEBOUNCE: Duration = Duration::from_millis(10);
 
 /// Compose, mount, quiesce, assert, then either run or exit.
 pub async fn boot(cli: Cli) -> Result<ExitCode, BootError> {
@@ -25,13 +20,7 @@ pub async fn boot(cli: Cli) -> Result<ExitCode, BootError> {
     let catalog = Catalog::from_inventory()?;
     let (profile, composition) = compose_plan(&cli, &catalog)?;
 
-    for w in &composition.warnings {
-        match w {
-            bough_kernel::ComposeWarning::AbsentRowId { layer, id } => {
-                eprintln!("bough: layer `{layer}` names row `{id}`, which no layer created");
-            }
-        }
-    }
+    report_warnings(&composition.warnings);
 
     // `--dump-config` prints `render()` of exactly this `Composition` and mounts nothing (V6).
     if cli.dump_config {
@@ -47,15 +36,19 @@ pub async fn boot(cli: Cli) -> Result<ExitCode, BootError> {
         KernelOptions {
             profile: profile.name.clone(),
             invariants: profile.invariants,
-            reconcile_debounce: RECONCILE_DEBOUNCE,
         },
     );
 
     kernel.load(composition).await?;
-    kernel.quiesce().await;
+    let quiesced = kernel.quiesce().await;
+    if !quiesced {
+        eprintln!(
+            "bough: the tree did not reach a quiescent state; treating that as a boot failure"
+        );
+    }
 
     let snapshot = kernel.snapshot();
-    if assert_all_activated(&snapshot).is_err() {
+    if !quiesced || assert_all_activated(&snapshot).is_err() {
         eprint!("{}", describe_unresolved(&snapshot));
         // Teardown BEFORE exit, always (§0.1 item 2).
         kernel.shutdown().await;
@@ -82,10 +75,22 @@ pub async fn boot(cli: Cli) -> Result<ExitCode, BootError> {
         eprintln!("bough: could not listen for SIGINT: {e}");
     }
     if let Some(w) = watch {
-        w.stop();
+        w.stop().await;
     }
     kernel.shutdown().await;
     Ok(ExitCode::SUCCESS)
+}
+
+/// Print composition warnings. Shared by boot and by the live watch path, so an absent row id is
+/// reported the same way whichever produced it (§0.2, §0.5).
+pub fn report_warnings(warnings: &[bough_kernel::ComposeWarning]) {
+    for w in warnings {
+        match w {
+            bough_kernel::ComposeWarning::AbsentRowId { layer, id } => {
+                eprintln!("bough: layer `{layer}` names row `{id}`, which no layer created");
+            }
+        }
+    }
 }
 
 /// After quiesce, every row with `disabled == false` must be ACTIVE.

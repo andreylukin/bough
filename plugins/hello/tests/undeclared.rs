@@ -6,8 +6,6 @@
 //! This runs through the real catalog path — `hello` is mounted by the kernel from a bundle row —
 //! because a fabricated context would prove nothing about how a plugin actually reads a key.
 
-use std::time::Duration;
-
 use bough_kernel::{Catalog, Composer, ExprEnv, FiberState, Kernel, KernelOptions, LayerId, Patch};
 use bough_plugin_hello::trace;
 
@@ -35,7 +33,6 @@ async fn hello_reading_undeclared_key_names_key_and_plugin() {
         KernelOptions {
             profile: "test".into(),
             invariants: false,
-            reconcile_debounce: Duration::from_millis(0),
         },
     );
     kernel.load(composition).await.expect("the tree mounts");

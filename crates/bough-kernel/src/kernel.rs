@@ -10,7 +10,6 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use parking_lot::Mutex;
 
@@ -34,8 +33,6 @@ pub struct KernelOptions {
     pub profile: String,
     /// Create the invariant runner (`dev` and the test harness; false in `tui`/`headless`).
     pub invariants: bool,
-    /// How long the reconciler coalesces target writes before converging.
-    pub reconcile_debounce: Duration,
 }
 
 impl Default for KernelOptions {
@@ -43,7 +40,6 @@ impl Default for KernelOptions {
         KernelOptions {
             profile: "dev".to_string(),
             invariants: false,
-            reconcile_debounce: Duration::from_millis(50),
         }
     }
 }
@@ -57,6 +53,8 @@ pub trait KernelEvents: Send + Sync + 'static {
     fn config_update_failed(&self, _error: Arc<ComposeError>) {}
     fn config_updated(&self, _fingerprint: Fingerprint) {}
     fn invariant_violated(&self, _violation: Arc<InvariantViolation>) {}
+    /// After a live recompose, the enabled rows that never activated (Decision D12).
+    fn rows_unresolved(&self, _rows: Arc<Vec<UnresolvedRow>>) {}
 }
 
 /// Drops everything. Used until a root `Context` exists to dispatch through.
@@ -185,6 +183,16 @@ impl Kernel {
             runner: Mutex::new(None),
             updates: AtomicU64::new(0),
         });
+        // Every binding-store mutation re-resolves the dependents' targets, so a provider that
+        // withdraws and re-provides (`ServiceSlot::republish`) actually reloads them (§0.3).
+        {
+            let rt = Arc::downgrade(&kernel.rt);
+            kernel.core.set_bindings_hook(Arc::new(move || {
+                if let Some(rt) = rt.upgrade() {
+                    rt.recheck_targets();
+                }
+            }));
+        }
         // The root context carries the kernel handle, so a plugin's `ctx.kernel()` works.
         let with_kernel = kernel.root.lock().with_kernel(kernel.clone());
         *kernel.root.lock() = with_kernel;
@@ -261,6 +269,8 @@ impl Kernel {
 
         // ---- validate the whole candidate before touching anything --------
         let mut built: BTreeMap<EntryId, Arc<dyn FiberBody>> = BTreeMap::new();
+        let mut reconfigured: BTreeMap<EntryId, (Arc<dyn FiberBody>, Reconfigure)> =
+            BTreeMap::new();
         for w in &writes {
             let id = w.id();
             let Some(entry) = new_rows.get(id) else {
@@ -273,21 +283,30 @@ impl Kernel {
                     | TargetWrite::Reload { .. }
                     | TargetWrite::Retarget { .. }
             );
+            // A Reconfigure runs the plugin's own `reconfigure` (which parses BOTH configs), so it
+            // belongs in the validate pass like every other write. Doing it in the apply loop was
+            // the one unvalidated call site, and a failure there returned from the MIDDLE of the
+            // loop with earlier target writes already applied — the opposite of "a single bad row
+            // rejects the whole candidate and nothing is touched" (§0.3).
+            if let TargetWrite::Reconfigure { .. } = w {
+                let old_entry = self.entry_of(id);
+                if let (Some(f), Some(old_entry)) = (self.fiber_of(id), old_entry) {
+                    let current = f.body();
+                    match self.factory.reconfigure(&current, &old_entry, entry) {
+                        Ok(pair) => {
+                            reconfigured.insert(id.clone(), pair);
+                        }
+                        Err(e) => return Err(self.reject_candidate(e)),
+                    }
+                }
+                continue;
+            }
             if needs_body && !built.contains_key(id) {
                 match self.factory.build(entry) {
                     Ok(b) => {
                         built.insert(id.clone(), b);
                     }
-                    Err(e) => {
-                        let e = Arc::new(e);
-                        self.events.config_update_failed(e.clone());
-                        return Err(KernelError::Compose(Arc::try_unwrap(e).unwrap_or_else(
-                            |a| ComposeError::BadYaml {
-                                layer: crate::config::LayerId::new("candidate"),
-                                detail: a.to_string(),
-                            },
-                        )));
-                    }
+                    Err(e) => return Err(self.reject_candidate(e)),
                 }
             }
         }
@@ -351,30 +370,14 @@ impl Kernel {
                     }
                 }
                 TargetWrite::Reconfigure { id } => {
-                    let Some(entry) = new_rows.get(id) else {
+                    // Already computed and validated above; nothing here can fail.
+                    let Some((body, verdict)) = reconfigured.remove(id) else {
                         continue;
                     };
-                    let old_entry = self.entry_of(id);
-                    let (Some(f), Some(old_entry)) = (self.fiber_of(id), old_entry) else {
-                        continue;
-                    };
-                    let current = f.body();
-                    match self.factory.reconfigure(&current, &old_entry, entry) {
-                        Ok((body, verdict)) => {
-                            f.set_body(body);
-                            if verdict == Reconfigure::Reload {
-                                f.request_reload();
-                            }
-                        }
-                        Err(e) => {
-                            // Validation already passed for creations; a reconfigure that still
-                            // fails leaves the fiber alone and is reported.
-                            let e = Arc::new(e);
-                            self.events.config_update_failed(e.clone());
-                            return Err(KernelError::Compose(ComposeError::BadYaml {
-                                layer: crate::config::LayerId::new("candidate"),
-                                detail: e.to_string(),
-                            }));
+                    if let Some(f) = self.fiber_of(id) {
+                        f.set_body(body);
+                        if verdict == Reconfigure::Reload {
+                            f.request_reload();
                         }
                     }
                 }
@@ -408,7 +411,7 @@ impl Kernel {
         *self.tree.lock() = new;
         self.updates.fetch_add(1, Ordering::SeqCst);
 
-        self.quiesce().await;
+        let quiesced = self.quiesce().await;
         // A cascade may have disposed a child fiber whose row is still in the tree; drop the
         // bookkeeping for anything the runtime no longer holds.
         let stale: Vec<EntryId> = self
@@ -425,7 +428,46 @@ impl Kernel {
             runner.collect_specs(self.active_plugin_specs());
         }
         self.run_quiesce_invariants().await;
+        // Decision D12, the RUNTIME half: after a live recompose, an enabled row that never
+        // activated is loud. At boot the launcher turns the same fact into an exit code.
+        self.report_unresolved(quiesced);
         Ok(())
+    }
+
+    /// Broadcast `kernel/rows-unresolved` if any enabled row failed to activate.
+    fn report_unresolved(&self, quiesced: bool) {
+        let rows = crate::kernel::unresolved_rows(&self.rows_snapshot());
+        if rows.is_empty() && quiesced {
+            return;
+        }
+        if !quiesced {
+            tracing::error!("the tree did not quiesce; the rows below may still be converging");
+        }
+        for r in &rows {
+            tracing::warn!(
+                entry = %r.id,
+                state = ?r.state,
+                unmet = ?r.unmet,
+                "enabled row is not ACTIVE"
+            );
+        }
+        if !rows.is_empty() {
+            self.events.rows_unresolved(Arc::new(rows));
+        }
+    }
+
+    /// Reject a candidate before anything is touched: broadcast `config-update-failed` and return
+    /// the error. The running tree is untouched because this is only ever called from the
+    /// validate pass (§0.3).
+    fn reject_candidate(&self, e: ComposeError) -> KernelError {
+        let e = Arc::new(e);
+        self.events.config_update_failed(e.clone());
+        KernelError::Compose(
+            Arc::try_unwrap(e).unwrap_or_else(|a| ComposeError::BadYaml {
+                layer: crate::config::LayerId::new("candidate"),
+                detail: a.to_string(),
+            }),
+        )
     }
 
     fn create_row(&self, entry: &Entry, tree: &[Entry], body: Arc<dyn FiberBody>) {
@@ -473,8 +515,11 @@ impl Kernel {
 
     /// Return once no fiber is Loading or Unloading and no reconcile is pending — including
     /// fibers that a transition itself created. The workhorse of every test.
-    pub async fn quiesce(&self) {
-        quiesce_runtime(&self.rt).await;
+    ///
+    /// `false` means the ceiling expired with the tree still converging; a caller about to assert
+    /// on a settled tree must not treat that as success.
+    pub async fn quiesce(&self) -> bool {
+        quiesce_runtime(&self.rt).await
     }
 
     /// The structural view tests assert on.
@@ -550,12 +595,9 @@ impl Kernel {
         })
     }
 
-    /// The composition currently live.
-    pub fn composition(&self) -> Arc<Composition> {
-        self.composition
-            .lock()
-            .clone()
-            .expect("no composition loaded")
+    /// The composition currently live. `None` before the first [`Kernel::load`].
+    pub fn composition(&self) -> Option<Arc<Composition>> {
+        self.composition.lock().clone()
     }
 
     /// Violations recorded by the invariant runner; empty when it is not running.
@@ -659,7 +701,7 @@ impl Kernel {
         }
         self.rows.lock().clear();
         self.tree.lock().clear();
-        self.quiesce().await;
+        let _ = self.quiesce().await;
     }
 }
 
@@ -735,6 +777,7 @@ impl FiberBody for PluginBody {
             .chain(self.inject.optional.iter())
             .map(String::as_str)
             .collect();
+        self.core.clear_unwound(ctx.fiber_uid());
         let view = CommittedView::capture(&self.core, &names, &self.realms, ctx.scope_key());
         let ctx = ctx.with_view(Arc::new(view));
         {
@@ -899,6 +942,9 @@ impl KernelEvents for ContextEvents {
     fn invariant_violated(&self, violation: Arc<InvariantViolation>) {
         self.ctx.emit::<crate::event::InvariantViolated>(violation);
     }
+    fn rows_unresolved(&self, rows: Arc<Vec<UnresolvedRow>>) {
+        self.ctx.emit::<crate::event::RowsUnresolved>(rows);
+    }
 }
 
 /// A snapshot of the whole tree, keyed by the composition fingerprint it reflects.
@@ -1048,6 +1094,10 @@ pub(crate) mod tests {
         realms: BTreeMap<String, RealmLabel>,
         provides: Option<&'static str>,
         entry: EntryId,
+        /// The `who` field of the row's config, as the body was BUILT with. Traced on apply, so a
+        /// test can see which config the fiber actually loaded rather than which one the tree
+        /// records.
+        who: Option<String>,
     }
 
     #[async_trait::async_trait]
@@ -1067,6 +1117,9 @@ pub(crate) mod tests {
                 self.store.provide(key, self.realms.get(key), uid);
             }
             self.trace.push(format!("{}:apply", self.name));
+            if let Some(who) = &self.who {
+                self.trace.push(format!("{}:who={who}", self.name));
+            }
             let _ = &self.entry;
             Ok(())
         }
@@ -1104,6 +1157,7 @@ pub(crate) mod tests {
                     None
                 },
                 entry: entry.id.clone(),
+                who: cfg_field(entry, "who"),
             })
         }
     }
@@ -1134,6 +1188,18 @@ pub(crate) mod tests {
             let plugin = new.plugin.clone().unwrap_or_else(|| "group".to_string());
             self.trace
                 .push(format!("{}/{}:reconfigure", new.id.as_str(), plugin));
+            // A config the plugin rejects at reconfigure time. The one call site that used to run
+            // outside the validate pass.
+            if cfg_field(new, "who").as_deref() == Some("bad") {
+                return Err(ComposeError::BadConfig {
+                    entry: new.id.clone(),
+                    plugin,
+                    layer: crate::config::LayerId::new("candidate"),
+                    source: crate::error::ConfigError::Rejected {
+                        detail: "who: `bad` is not acceptable".to_string(),
+                    },
+                });
+            }
             // `log_level` is immaterial; everything else reloads. This mirrors the `hello`
             // fixture's rule and is what proves the plugin, not the kernel, decides.
             let material = cfg_field(old, "who") != cfg_field(new, "who");
@@ -1158,9 +1224,15 @@ pub(crate) mod tests {
     pub(crate) struct RecordingEvents {
         pub failures: Mutex<Vec<String>>,
         pub updated: Mutex<Vec<Fingerprint>>,
+        pub unresolved: Mutex<Vec<Vec<EntryId>>>,
     }
 
     impl KernelEvents for RecordingEvents {
+        fn rows_unresolved(&self, rows: Arc<Vec<UnresolvedRow>>) {
+            self.unresolved
+                .lock()
+                .push(rows.iter().map(|r| r.id.clone()).collect());
+        }
         fn config_update_failed(&self, error: Arc<ComposeError>) {
             self.failures.lock().push(error.to_string());
         }
@@ -1239,6 +1311,93 @@ pub(crate) mod tests {
 
     fn keys(v: &[&str]) -> BTreeSet<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Decision D12, the runtime half: after a live recompose an enabled row that never activates
+    /// is broadcast on `kernel/rows-unresolved`. (At boot the launcher turns the same fact into an
+    /// exit code; that half is `crates/bough/tests/boot.rs`.)
+    #[tokio::test]
+    async fn a_live_recompose_broadcasts_rows_that_never_activated() {
+        let h = TreeHarness::new();
+        h.apply(vec![
+            row("p").plugin("provider"),
+            row("c").plugin("one").inject(&["greeting"]),
+        ])
+        .await;
+        assert!(
+            h.events.unresolved.lock().is_empty(),
+            "a tree that fully activated reports nothing"
+        );
+
+        // Drop the provider: `c` is still enabled and can no longer activate.
+        h.apply(vec![row("c").plugin("one").inject(&["greeting"])])
+            .await;
+        assert_eq!(h.state("c"), FiberState::Pending);
+        let reports = h.events.unresolved.lock().clone();
+        assert_eq!(
+            reports.len(),
+            1,
+            "exactly one broadcast for the one bad recompose: {reports:?}"
+        );
+        assert_eq!(reports[0], vec![EntryId::new("c")]);
+    }
+
+    /// §0.3: a failed update leaves the LAST GOOD TREE running and touches nothing. A reconfigure
+    /// that the plugin rejects must be caught in the validate pass, not halfway through applying
+    /// target writes — a half-applied tree leaks fibers on the next diff.
+    #[tokio::test]
+    async fn a_rejected_reconfigure_touches_nothing() {
+        let h = TreeHarness::new();
+        h.apply(vec![
+            row("a").plugin("one").cfg("who", "world"),
+            row("b").plugin("one").cfg("who", "world"),
+        ])
+        .await;
+        let before = h.kernel.snapshot();
+        let uid_a = h.uid("a");
+        let uid_b = h.uid("b");
+        h.trace.push("--");
+
+        // `b` reconfigures fine and `a` does not: the whole candidate must be rejected.
+        let err = h
+            .kernel
+            .update_tree(vec![
+                row("a").plugin("one").cfg("who", "bad").into(),
+                row("b").plugin("one").cfg("who", "moon").into(),
+            ])
+            .await
+            .expect_err("a rejected reconfigure rejects the candidate");
+        assert!(err.to_string().contains("not acceptable"), "{err}");
+
+        let t = h.trace.entries();
+        let base = t.iter().position(|e| e == "--").unwrap();
+        assert!(
+            !t[base..].iter().any(|e| e.ends_with(":unwind")),
+            "nothing was torn down: {t:?}"
+        );
+        assert!(
+            !t[base..].iter().any(|e| e == "b/one:who=moon"),
+            "`b` must not have taken the new config: {t:?}"
+        );
+        assert_eq!(h.uid("a"), uid_a, "the fibers did not move");
+        assert_eq!(h.uid("b"), uid_b);
+        assert_eq!(h.state("a"), FiberState::Active);
+        assert_eq!(h.state("b"), FiberState::Active);
+        assert_eq!(
+            h.kernel.snapshot().rows.len(),
+            before.rows.len(),
+            "the recorded tree is the last good one"
+        );
+        assert!(!h.events.failures.lock().is_empty());
+
+        // And the next good update still works — no fiber was leaked or double-created.
+        h.apply(vec![
+            row("a").plugin("one").cfg("who", "moon"),
+            row("b").plugin("one").cfg("who", "moon"),
+        ])
+        .await;
+        assert_eq!(h.uid("a"), uid_a);
+        assert_eq!(h.state("a"), FiberState::Active);
     }
 
     #[tokio::test]
@@ -1336,6 +1495,20 @@ mod e2e {
         SEEN.get_or_init(|| Mutex::new(Vec::new()))
     }
 
+    /// The provider's own binding slot, so a test can `republish` through it. Written on every
+    /// activation of `e2e-echo`.
+    fn slot() -> &'static Mutex<Option<crate::service::ServiceSlot<Greet>>> {
+        static SLOT: OnceLock<Mutex<Option<crate::service::ServiceSlot<Greet>>>> = OnceLock::new();
+        SLOT.get_or_init(|| Mutex::new(None))
+    }
+
+    /// `seen()` and `slot()` are process-global; the tests in this module serialise on this.
+    /// An ASYNC mutex, because the guard is held across the tests' await points.
+    async fn test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        static L: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+        L.get_or_init(|| tokio::sync::Mutex::new(())).lock().await
+    }
+
     #[derive(
         serde::Serialize, serde::Deserialize, schemars::JsonSchema, PartialEq, Debug, Default,
     )]
@@ -1350,9 +1523,11 @@ mod e2e {
         const NAME: &'static str = "e2e-echo";
         type Config = EchoConfig;
         async fn apply(ctx: Context, cfg: Arc<EchoConfig>) -> Result<(), PluginError> {
-            ctx.provide::<Greet>(format!("hello{}", cfg.suffix))
+            let s = ctx
+                .provide::<Greet>(format!("hello{}", cfg.suffix))
                 .await
                 .map_err(|e| PluginError::new(ctx.entry_id().clone(), anyhow::anyhow!("{e}")))?;
+            *slot().lock() = Some(s);
             Ok(())
         }
     }
@@ -1398,6 +1573,7 @@ mod e2e {
 
     #[tokio::test]
     async fn a_catalog_backed_tree_activates_and_unloads() {
+        let _g = test_lock().await;
         seen().lock().clear();
         let kernel = Kernel::new(catalog(), KernelOptions::default());
         let tree: Vec<Entry> = vec![
@@ -1437,5 +1613,59 @@ mod e2e {
 
         kernel.shutdown().await;
         assert_eq!(kernel.core().binding_count(), 0);
+    }
+
+    /// §0.3: "Targets are identified by provider fiber uid, not value: replacing a provider
+    /// reloads dependents even when the new value is equal; a provider overwriting its own binding
+    /// in place is not observed (withdraw and re-provide to propagate)."
+    ///
+    /// `set` must NOT reload; `republish` must. Both with an EQUAL value, so nothing here can be
+    /// explained by the value moving.
+    #[tokio::test]
+    async fn republish_reloads_an_active_dependent_and_set_does_not() {
+        let _g = test_lock().await;
+        seen().lock().clear();
+        *slot().lock() = None;
+        let kernel = Kernel::new(catalog(), KernelOptions::default());
+        let tree: Vec<Entry> = vec![
+            tests::row("p").plugin("e2e-echo").into(),
+            tests::row("c")
+                .plugin("e2e-consumer")
+                .cfg("who", "world")
+                .into(),
+        ];
+        kernel.update_tree(tree).await.unwrap();
+        assert_eq!(seen().lock().len(), 1, "one activation so far");
+
+        let s = slot().lock().take().expect("the provider published a slot");
+        let before = s.uid();
+
+        // In place: same identity, so the dependent is not notified and does not re-apply.
+        s.set("hello".to_string());
+        assert_eq!(s.uid(), before);
+        kernel.quiesce().await;
+        assert_eq!(
+            seen().lock().len(),
+            1,
+            "an in-place `set` is not observed by dependents"
+        );
+
+        // Withdraw and re-provide, EQUAL value: the identity moves, so the dependent reloads.
+        s.republish("hello".to_string()).await;
+        assert_ne!(s.uid(), before, "republish must move the binding identity");
+        kernel.quiesce().await;
+        assert_eq!(
+            seen().lock().len(),
+            2,
+            "republish must reload the dependent: {:?}",
+            seen().lock().clone()
+        );
+        assert_eq!(
+            kernel.rows_snapshot()[1].state,
+            FiberState::Active,
+            "the dependent is back up"
+        );
+
+        kernel.shutdown().await;
     }
 }

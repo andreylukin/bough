@@ -107,15 +107,6 @@ impl Store {
         names
     }
 
-    /// Whether `fiber` currently provides `name` in any realm or scope. A fiber may always read
-    /// what it itself provides without declaring it in `inject`.
-    pub(crate) fn fiber_provides(&self, fiber: FiberUid, name: &str) -> bool {
-        self.map
-            .read()
-            .iter()
-            .any(|(k, b)| k.1 == name && b.uid.fiber == fiber)
-    }
-
     /// The service NAMEs `fiber` provides, for `RowSnapshot::provides`.
     pub(crate) fn provided_by(&self, fiber: FiberUid) -> Vec<&'static str> {
         let mut v: Vec<&'static str> = self
@@ -170,6 +161,10 @@ impl<K: ServiceKey> ServiceSlot<K> {
         );
     }
     /// Withdraw and re-provide: a new `seq`, so dependents recompute and reload (§0.3).
+    ///
+    /// The reload is real, not just a moved number: the store mutation announces itself through
+    /// `KernelCore::bindings_changed`, and the lifecycle reloads every ACTIVE fiber whose
+    /// committed view resolved this key to the identity that just moved.
     pub async fn republish(&self, value: K::Value) {
         let old = self.uid();
         self.core.store.remove_if(&self.key, old);
@@ -185,6 +180,7 @@ impl<K: ServiceKey> ServiceSlot<K> {
                 value: Arc::new(value),
             },
         );
+        self.core.bindings_changed();
     }
     /// Withdraw now. Idempotent.
     pub async fn withdraw(&self) {
@@ -292,6 +288,52 @@ pub(crate) mod tests {
         // The live store moved on; the fiber's committed view did not (§0.3).
         assert_eq!(*consumer.get::<Greeting>().unwrap(), "first");
         assert_eq!(*consumer.peek_live::<Greeting>().unwrap(), "second");
+    }
+
+    /// §0.3: "declared injections resolve against the fiber's COMMITTED view (bindings captured at
+    /// activation), so a plugin reads the same providers for its whole life". That has to hold for
+    /// a declared key that was ABSENT at activation too, or an optional key silently becomes a
+    /// live read and the plugin starts seeing a provider it never reloaded against.
+    #[tokio::test]
+    async fn an_optional_key_absent_at_activation_stays_absent_for_this_life() {
+        let core = kernel();
+        let consumer =
+            row(&core, "hello", "hello", Inject::optional(["greeting"])).with_view(Arc::new(
+                CommittedView::capture(&core, &["greeting"], &Default::default(), None),
+            ));
+        assert!(matches!(consumer.try_get::<Greeting>(), Ok(None)));
+
+        // A provider arrives AFTER this fiber activated.
+        let provider = row(&core, "greeting-echo", "greeting-echo", Inject::none());
+        provider.provide::<Greeting>("late".into()).await.unwrap();
+
+        assert!(
+            matches!(consumer.try_get::<Greeting>(), Ok(None)),
+            "the committed view is the whole answer; a later provider needs a reload to be seen"
+        );
+        assert!(
+            consumer.peek_live::<Greeting>().is_some(),
+            "the live store did move — only the view did not"
+        );
+    }
+
+    /// §0.3 again: the committed view holds for the plugin's whole life, TEARDOWN INCLUDED. Step 1
+    /// of UNLOADING removes the fiber's own bindings, so a disposer reading a key its own fiber
+    /// provided must get `ServiceUnavailable` — a capability error there would be the kernel
+    /// telling a plugin it never declared what it just provided.
+    #[tokio::test]
+    async fn reading_a_self_provided_key_after_withdrawal_is_unavailable_not_undeclared() {
+        let core = kernel();
+        let p = row(&core, "greeting-echo", "greeting-echo", Inject::none());
+        p.provide::<Greeting>("hi".into()).await.unwrap();
+        assert_eq!(*p.get::<Greeting>().unwrap(), "hi");
+
+        core.withdraw_bindings_of(p.fiber_uid());
+
+        match p.get::<Greeting>() {
+            Err(KernelError::ServiceUnavailable { .. }) => {}
+            other => panic!("expected ServiceUnavailable during teardown, got {other:?}"),
+        }
     }
 
     #[tokio::test]

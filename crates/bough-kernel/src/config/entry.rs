@@ -18,8 +18,10 @@ bough_util::brand_id!(
 #[serde(deny_unknown_fields)]
 pub struct Entry {
     pub id: EntryId,
-    /// `None` ⇒ a pure group row: it owns children, a realm map and an inject set, and is ACTIVE
-    /// as soon as it is mounted (Decision D18).
+    /// Required in Phase 0. Decision D18 (`None` ⇒ a pure group row, ACTIVE as soon as it is
+    /// mounted) is NOT implemented: the composer rejects a row that names no plugin, so that
+    /// `--dump-config` and the mount path agree. A group is expressed by giving the parent row a
+    /// plugin of its own.
     #[serde(default)]
     pub plugin: Option<String>,
     /// `Null` when absent. May contain `!!expr` nodes, evaluated at mount.

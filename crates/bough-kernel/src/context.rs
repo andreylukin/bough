@@ -41,7 +41,18 @@ pub struct KernelCore {
     pub(crate) events: Registry,
     /// Per-fiber effect accumulators. LIFO within a fiber (§0.3).
     fibers: Mutex<HashMap<FiberUid, Arc<Accumulator>>>,
+    /// Service NAMEs each fiber has provided during its current life. Kept because
+    /// `check_declared` must answer the same way for a fiber's whole life, teardown included
+    /// (§0.3) — and UNLOADING removes the bindings themselves as its very first step, so the live
+    /// store cannot answer it.
+    self_provided: Mutex<HashMap<FiberUid, std::collections::HashSet<&'static str>>>,
+    /// Fibers whose accumulator has already been unwound. An effect registered after that point
+    /// belongs to nobody, so it is disposed at once rather than recreating a dead accumulator.
+    unwound: Mutex<std::collections::HashSet<FiberUid>>,
     next_fiber: AtomicU64,
+    /// Called after every mutation of the binding store, so the lifecycle can recompute which
+    /// dependents' resolved `ProviderUid`s moved (§0.3). `None` until a `Kernel` wires it.
+    bindings_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl KernelCore {
@@ -50,7 +61,10 @@ impl KernelCore {
             store: Store::default(),
             events: Registry::default(),
             fibers: Mutex::new(HashMap::new()),
+            self_provided: Mutex::new(HashMap::new()),
+            unwound: Mutex::new(std::collections::HashSet::new()),
             next_fiber: AtomicU64::new(1),
+            bindings_hook: Mutex::new(None),
         })
     }
 
@@ -59,32 +73,94 @@ impl KernelCore {
         FiberUid(self.next_fiber.fetch_add(1, Ordering::SeqCst))
     }
 
-    fn accumulator(&self, fiber: FiberUid) -> Arc<Accumulator> {
-        self.fibers
-            .lock()
-            .entry(fiber)
-            .or_insert_with(|| Arc::new(Accumulator::default()))
-            .clone()
+    /// This fiber's accumulator, creating it on first use. `None` once the fiber has been
+    /// unwound: whatever is registered then has no owner and must not resurrect one.
+    fn accumulator(&self, fiber: FiberUid) -> Option<Arc<Accumulator>> {
+        if self.unwound.lock().contains(&fiber) {
+            return None;
+        }
+        Some(
+            self.fibers
+                .lock()
+                .entry(fiber)
+                .or_insert_with(|| Arc::new(Accumulator::default()))
+                .clone(),
+        )
+    }
+
+    /// Install the post-binding-mutation hook. Called once, by [`crate::Kernel::new`].
+    pub fn set_bindings_hook(&self, f: Arc<dyn Fn() + Send + Sync>) {
+        *self.bindings_hook.lock() = Some(f);
+    }
+
+    /// Announce that the binding store changed. Never called with a store lock held.
+    pub(crate) fn bindings_changed(&self) {
+        let hook = self.bindings_hook.lock().clone();
+        if let Some(hook) = hook {
+            hook();
+        }
     }
 
     /// Attach an effect to a fiber's accumulator directly. Used by `create_scope`, which owns an
     /// effect before any context is tagged with it.
     pub fn push_fiber_effect(&self, fiber: FiberUid, handle: EffectHandle) {
-        self.accumulator(fiber).push(handle);
+        match self.accumulator(fiber) {
+            Some(acc) => acc.push(handle),
+            None => handle.dispose_detached(),
+        }
     }
 
     /// Step one of UNLOADING (§0.3): the fiber stops providing before any inverse of its runs.
     /// Returns the service NAMEs that were withdrawn, so the caller can notify dependents.
     pub fn withdraw_bindings_of(&self, fiber: FiberUid) -> Vec<&'static str> {
-        self.store.withdraw_fiber(fiber)
+        let names = self.store.withdraw_fiber(fiber);
+        if !names.is_empty() {
+            self.bindings_changed();
+        }
+        names
+    }
+
+    /// Whether `fiber`'s accumulator has already been unwound.
+    pub fn is_unwound(&self, fiber: FiberUid) -> bool {
+        self.unwound.lock().contains(&fiber)
     }
 
     /// The last step of UNLOADING: unwind this fiber's accumulator, LIFO.
     pub async fn unwind_fiber(&self, fiber: FiberUid) {
+        // Marked BEFORE the unwind: an inverse that registers a new effect must not recreate an
+        // accumulator nobody will ever unwind ("unload leaves no trace", §0.2).
+        self.unwound.lock().insert(fiber);
         let acc = self.fibers.lock().remove(&fiber);
         if let Some(acc) = acc {
             acc.unwind().await;
         }
+        self.fibers.lock().remove(&fiber);
+    }
+
+    /// Record that `fiber` provided `name`, for [`KernelCore::fiber_provided`].
+    pub(crate) fn record_self_provision(&self, fiber: FiberUid, name: &'static str) {
+        self.self_provided
+            .lock()
+            .entry(fiber)
+            .or_default()
+            .insert(name);
+    }
+
+    /// Whether `fiber` has provided `name` at any point in its current life.
+    pub(crate) fn fiber_provided(&self, fiber: FiberUid, name: &str) -> bool {
+        self.self_provided
+            .lock()
+            .get(&fiber)
+            .map(|s| s.contains(name))
+            .unwrap_or(false)
+    }
+
+    /// Clear the unwound tombstone. A RELOAD keeps the `FiberUid`, so the fiber must be able to
+    /// accumulate effects again; called at the top of every load.
+    pub fn clear_unwound(&self, fiber: FiberUid) {
+        self.unwound.lock().remove(&fiber);
+        // A new life starts with no provisions of its own.
+        self.self_provided.lock().remove(&fiber);
     }
 
     /// The service NAMEs `fiber` provides right now (for `RowSnapshot::provides`).
@@ -113,6 +189,11 @@ impl KernelCore {
 #[derive(Default)]
 pub struct CommittedView {
     bindings: BTreeMap<String, Binding>,
+    /// Every name the view was captured FOR, whether or not it resolved. A declared key that was
+    /// absent at activation must stay absent for this life: falling through to the live store
+    /// would let a provider that appeared afterwards be read with no reload and no recapture,
+    /// which is the opposite of what a committed view is (§0.3).
+    declared: std::collections::BTreeSet<String>,
 }
 
 impl CommittedView {
@@ -124,12 +205,19 @@ impl CommittedView {
         scope: Option<&ScopeKey>,
     ) -> CommittedView {
         let mut bindings = BTreeMap::new();
+        let mut declared = std::collections::BTreeSet::new();
         for name in names {
+            declared.insert((*name).to_string());
             if let Some(b) = resolve_live(core, name, realms, scope) {
                 bindings.insert((*name).to_string(), b);
             }
         }
-        CommittedView { bindings }
+        CommittedView { bindings, declared }
+    }
+
+    /// Whether this view was captured for `name` (resolved or not).
+    pub fn declares(&self, name: &str) -> bool {
+        self.declared.contains(name)
     }
 
     /// The `ProviderUid` this view resolved `name` to, if any. A change here is a reload (§0.3).
@@ -290,13 +378,14 @@ impl Context {
 
     // ---- identity ---------------------------------------------------------
 
-    /// The fiber that owns every effect registered through this context.
-    pub fn fiber(&self) -> FiberHandle {
+    /// The fiber that owns every effect registered through this context, if it is still live.
+    ///
+    /// `None` once that fiber has been disposed. A `Context` clone outlives its fiber by
+    /// construction — a spawned effect body and a listener closure both capture one — so a caller
+    /// that unwraps this is asserting something the kernel does not promise.
+    pub fn fiber(&self) -> Option<FiberHandle> {
         // WP-3: the lifecycle owns fibers; the context carries only the uid.
-        self.kernel()
-            .runtime()
-            .handle(self.inner.fiber)
-            .expect("the fiber that owns this context is live")
+        self.kernel()?.runtime().handle(self.inner.fiber)
     }
     /// The uid of the fiber that owns every effect registered through this context.
     pub fn fiber_uid(&self) -> FiberUid {
@@ -310,13 +399,12 @@ impl Context {
     pub fn plugin_name(&self) -> &'static str {
         self.inner.plugin
     }
-    /// The kernel this context belongs to.
-    pub fn kernel(&self) -> Arc<Kernel> {
-        self.inner
-            .kernel
-            .get()
-            .and_then(std::sync::Weak::upgrade)
-            .expect("context is not attached to a Kernel")
+    /// The kernel this context belongs to, if it is still alive.
+    ///
+    /// `None` for a context never attached to one, and during process teardown once the
+    /// `Arc<Kernel>` has been dropped.
+    pub fn kernel(&self) -> Option<Arc<Kernel>> {
+        self.inner.kernel.get().and_then(std::sync::Weak::upgrade)
     }
     /// The shared state behind this context.
     pub fn core(&self) -> &Arc<KernelCore> {
@@ -366,13 +454,17 @@ impl Context {
                 value: Arc::new(value),
             },
         );
+        core.record_self_provision(self.inner.fiber, K::NAME);
+        core.bindings_changed();
         let uid_cell = Arc::new(Mutex::new(uid));
         let (c2, k2, cell) = (core.clone(), key.clone(), uid_cell.clone());
         let effect = self
             .effect(move |e| async move {
                 e.defer_sync(move || {
                     let current = *cell.lock();
-                    c2.store.remove_if(&k2, current);
+                    if c2.store.remove_if(&k2, current) {
+                        c2.bindings_changed();
+                    }
                 });
                 Ok(())
             })
@@ -423,12 +515,12 @@ impl Context {
 
     /// The capability check of §0.3, at the point of use and BEFORE the store is consulted.
     fn check_declared<K: ServiceKey>(&self) -> Result<(), KernelError> {
+        // The second clause is the "a fiber may read what it itself provides" allowance. It is
+        // answered from the recorded provisions, not from the live store: UNLOADING withdraws the
+        // bindings first, and a disposer reading a key its own fiber provided must get
+        // `ServiceUnavailable`, never a capability error (§0.3, teardown included).
         if self.inner.inject.declares(K::NAME)
-            || self
-                .inner
-                .core
-                .store
-                .fiber_provides(self.inner.fiber, K::NAME)
+            || self.inner.core.fiber_provided(self.inner.fiber, K::NAME)
         {
             return Ok(());
         }
@@ -444,8 +536,11 @@ impl Context {
     fn resolve(&self, name: &str) -> Option<Binding> {
         if self.inner.scope.is_none() {
             if let Some(view) = &self.inner.view {
-                if let Some(b) = view.get(name) {
-                    return Some(b);
+                // A name the view was captured for is answered by the view ALONE, `None`
+                // included. Only a name outside the view — a key the fiber provides itself —
+                // reaches the live store.
+                if view.declares(name) {
+                    return view.get(name);
                 }
             }
         }
@@ -503,7 +598,12 @@ impl Context {
     fn register_effect(&self, handle: EffectHandle) {
         match &self.inner.scope {
             Some(scope) => scope.effect.defer_dispose(handle),
-            None => self.inner.core.accumulator(self.inner.fiber).push(handle),
+            None => match self.inner.core.accumulator(self.inner.fiber) {
+                Some(acc) => acc.push(handle),
+                // The fiber is already unwinding: nothing owns this, so dispose it now rather
+                // than leaving it behind (§0.2, unload leaves no trace).
+                None => handle.dispose_detached(),
+            },
         }
     }
 
@@ -514,7 +614,10 @@ impl Context {
     pub async fn mount(&self, entry: Entry) -> Result<FiberHandle, KernelError> {
         // WP-3: a nested mount is a fiber whose parent is this one, so the parent's teardown
         // cascades to it at its position in the accumulator (§0.3).
-        let kernel = self.kernel();
+        let kernel = self.kernel().ok_or_else(|| KernelError::Detached {
+            entry: self.inner.entry.clone(),
+            what: "kernel",
+        })?;
         kernel.mount_child(self.inner.fiber, entry).await
     }
 
@@ -789,18 +892,45 @@ mod tests {
         let slot = provider.provide::<Greeting>("hi".into()).await.unwrap();
         let before = slot.uid();
 
+        // A REAL committed view, so "the view did not move" is an observation and not a
+        // statement about a context that never had one.
         let consumer = row(&core, "consumer", "q", Inject::required(["greeting"]))
+            .with_view(Arc::new(CommittedView::capture(
+                &core,
+                &["greeting"],
+                &Default::default(),
+                None,
+            )))
             .intercept::<Greeting>(serde_yaml::Value::String("quiet".into()));
         assert_eq!(*consumer.get::<Greeting>().unwrap(), "hi");
+        let targets_before: Vec<Option<ProviderUid>> = consumer
+            .view()
+            .expect("a committed view")
+            .names()
+            .iter()
+            .map(|n| consumer.view().unwrap().provider_of(n))
+            .collect();
+        assert_eq!(targets_before, vec![Some(before)]);
 
         consumer.set_interception::<Greeting>(serde_yaml::Value::String("loud".into()));
         assert_eq!(
             consumer.interception::<Greeting>().as_deref(),
             Some(&serde_yaml::Value::String("loud".into()))
         );
-        // Satisfaction is untouched: same binding, same identity, nothing to reload.
+        // Satisfaction is untouched: same binding, same identity, same committed view. A reload
+        // would be visible as a moved `ProviderUid` in the view (§0.3), and there is none.
         assert_eq!(slot.uid(), before);
-        assert_eq!(consumer.view().map(|v| v.names().len()).unwrap_or(0), 0);
+        assert_eq!(consumer.view().unwrap().names(), vec!["greeting"]);
+        assert_eq!(
+            consumer.view().unwrap().provider_of("greeting"),
+            Some(before),
+            "changing interception metadata must not move the resolved target"
+        );
         assert_eq!(*consumer.get::<Greeting>().unwrap(), "hi");
+
+        // The control: what a real retarget looks like. `republish` moves the identity, which IS
+        // a reload — so the assertion above is about interception, not about an inert fixture.
+        slot.republish("hi".into()).await;
+        assert_ne!(slot.uid(), before);
     }
 }

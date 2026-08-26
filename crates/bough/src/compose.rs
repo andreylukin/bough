@@ -28,6 +28,9 @@ use crate::profile::{self, Profile, Sources};
 pub struct Layer {
     pub id: LayerId,
     pub source: LayerSource,
+    /// The directory this layer's `include:` paths resolve against — the directory the document
+    /// was read from, or `$BOUGH_HOME` for an embedded one.
+    pub base: PathBuf,
 }
 
 /// Where a layer's patch comes from.
@@ -51,6 +54,7 @@ pub fn plan_layers(cli: &Cli) -> Result<(Profile, Sources, Vec<Layer>), BootErro
         let (yaml, origin) = profile::load_bundle_text(b, &profile.name, root)?;
         layers.push(Layer {
             id: LayerId::new(format!("bundle:{b}")),
+            base: include_base(&origin),
             source: LayerSource::Text {
                 origin: origin.to_string(),
                 yaml,
@@ -60,6 +64,7 @@ pub fn plan_layers(cli: &Cli) -> Result<(Profile, Sources, Vec<Layer>), BootErro
 
     layers.push(Layer {
         id: LayerId::new(format!("profile:{}", profile.name)),
+        base: include_base(&sources.profile),
         source: LayerSource::ProfilePatch,
     });
 
@@ -71,6 +76,7 @@ pub fn plan_layers(cli: &Cli) -> Result<(Profile, Sources, Vec<Layer>), BootErro
         })?;
         layers.push(Layer {
             id: LayerId::new("user"),
+            base: parent_dir(&user),
             source: LayerSource::Text {
                 origin: user.display().to_string(),
                 yaml,
@@ -85,6 +91,7 @@ pub fn plan_layers(cli: &Cli) -> Result<(Profile, Sources, Vec<Layer>), BootErro
         })?;
         layers.push(Layer {
             id: LayerId::new(format!("patch:{n}:{}", p.display())),
+            base: parent_dir(p),
             source: LayerSource::Text {
                 origin: p.display().to_string(),
                 yaml,
@@ -95,6 +102,22 @@ pub fn plan_layers(cli: &Cli) -> Result<(Profile, Sources, Vec<Layer>), BootErro
     Ok((profile, sources, layers))
 }
 
+/// The directory a document's relative `include:` paths resolve against.
+fn parent_dir(p: &std::path::Path) -> PathBuf {
+    p.parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// As [`parent_dir`], for a located document. An EMBEDDED document has no directory of its own, so
+/// its includes resolve against `$BOUGH_HOME` — the only directory an installed binary owns.
+fn include_base(origin: &profile::SourceOrigin) -> PathBuf {
+    match origin {
+        profile::SourceOrigin::File(p) => parent_dir(p),
+        profile::SourceOrigin::Embedded(_) => bough_util::bough_home(),
+    }
+}
+
 /// Stack every layer and produce the composition, together with the profile that selected them
 /// (the launcher needs `invariants` and the profile name for `KernelOptions`).
 pub fn compose_plan(cli: &Cli, catalog: &Catalog) -> Result<(Profile, Composition), BootError> {
@@ -103,13 +126,14 @@ pub fn compose_plan(cli: &Cli, catalog: &Catalog) -> Result<(Profile, Compositio
     let mut composer = Composer::new(catalog, ExprEnv::new(&profile.name));
     for layer in layers {
         let patch = match &layer.source {
-            LayerSource::Text { origin, yaml } => {
-                Patch::parse(yaml).map_err(|e| BootError::BadFile {
-                    path: PathBuf::from(origin),
-                    detail: e.to_string(),
-                })?
+            LayerSource::Text { yaml, .. } => Patch::parse_in(yaml, &layer.base, &layer.id)?,
+            LayerSource::ProfilePatch => {
+                // The profile document is deserialized whole, so its `patch:` block is grafted
+                // here rather than at parse time.
+                let mut p = profile.patch.clone();
+                p.graft_includes(&layer.base, &layer.id)?;
+                p
             }
-            LayerSource::ProfilePatch => profile.patch.clone(),
         };
         composer.layer(layer.id, patch);
     }

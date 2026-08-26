@@ -1,7 +1,13 @@
 //! §0.2 runtime invariant for `bough-plugin-hello`:
 //!
-//! **Every `hello/greeted` payload carries a `seq` strictly greater than the previous one for the
-//! same fiber uid.**
+//! **Within one LIFE of a fiber, every `hello/greeted` payload carries a `seq` strictly greater
+//! than the previous one for that fiber uid.**
+//!
+//! "One life" is the operative clause. A RELOAD keeps the `FiberUid` (only a `plugin`/`id` change
+//! rebuilds, §0.3), and the reloaded plugin starts its seq at 1 again — so the recorded stream is
+//! cleared for that fiber when it unloads, by an inverse `apply` registers. Without that, the
+//! phase's own headline behaviour (swap a provider, the dependent reloads) would falsify the one
+//! runtime invariant the phase ships.
 //!
 //! `hello` owns that stream, so it is authoritative about it. `HelloConfig::plant_violation` makes
 //! the plugin emit a repeated seq on purpose; that is the planted violation V9 detects, and the
@@ -29,6 +35,12 @@ pub fn seen() -> Vec<(FiberUid, u64)> {
 /// Drop the recorded stream. Test setup only.
 pub fn clear() {
     SEEN.lock().clear();
+}
+
+/// Forget everything recorded for `fiber`. Called from the inverse `HelloPlugin::apply` registers,
+/// so a reload of the same fiber starts a fresh stream rather than a spurious regression.
+pub fn forget(fiber: FiberUid) {
+    SEEN.lock().retain(|(f, _)| *f != fiber);
 }
 
 /// The spec `HelloPlugin::invariants` returns.
@@ -83,6 +95,24 @@ mod tests {
         // regression of a's.
         let stream = vec![(a, 1), (b, 1), (a, 2), (b, 2), (a, 7)];
         assert_eq!(super::evaluate(&stream), Ok(()));
+    }
+
+    /// The bug this file used to have: a reload keeps the `FiberUid` and restarts the seq at 1,
+    /// which reads as a regression unless the fiber's stream is forgotten on unload.
+    #[test]
+    fn forgetting_a_fiber_lets_a_reload_start_over() {
+        clear();
+        let a = FiberUid(1);
+        record(a, 1);
+        record(a, 2);
+        assert!(super::evaluate(&seen()).is_ok());
+        // Without `forget`, the reload's seq 1 would regress against the high-water mark of 2.
+        assert!(super::evaluate(&[(a, 1), (a, 2), (a, 1)]).is_err());
+        forget(a);
+        record(a, 1);
+        record(a, 2);
+        assert_eq!(super::evaluate(&seen()), Ok(()));
+        clear();
     }
 
     #[test]

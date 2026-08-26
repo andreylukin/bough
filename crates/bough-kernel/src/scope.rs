@@ -48,8 +48,13 @@ impl ScopeKey {
 ///
 /// Registrations made through the returned context are scope-VISIBLE and scope-LIFETIME: services
 /// provided through it bind only for `key` and its descendants; listeners registered through it are
-/// admitted only for dispatches targeted at `key` or a descendant; disposing the guard unwinds all
-/// of them.
+/// admitted only for dispatches targeted at `key` or a descendant; disposing `guard.effect()`
+/// unwinds all of them.
+///
+/// NOT an RAII guard despite the name: dropping it does nothing. The scope is an effect of the
+/// OWNING FIBER (`push_fiber_effect` below), so its registrations live until either
+/// `guard.effect().dispose()` is awaited or the fiber unwinds — which is what makes disposal
+/// awaited rather than "kills issued but not awaited" (§0.2). `Drop` could only spawn.
 pub fn create_scope(ctx: &Context, key: ScopeKey) -> ScopeGuard {
     let (handle, _inner) = EffectHandle::new();
     // The scope itself is an effect of the fiber, so unloading the fiber unwinds the scope, which
@@ -65,6 +70,8 @@ pub fn create_scope(ctx: &Context, key: ScopeKey) -> ScopeGuard {
 }
 
 /// Owns the lifetime of everything registered through a scoped context.
+///
+/// Dropping it is a no-op; see [`create_scope`].
 pub struct ScopeGuard {
     context: Context,
     key: ScopeKey,
@@ -258,6 +265,8 @@ mod tests {
                 })
                 .await
                 .unwrap();
+            // `ScopeGuard` has no `Drop`, so this only makes the intent explicit: the scope
+            // stays registered, owned by the fiber, for the rest of the test.
             std::mem::forget(s);
         }
 

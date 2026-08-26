@@ -16,6 +16,12 @@ fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_bough"))
 }
 
+/// Sets the process-wide `$BOUGH_HOME`.
+///
+/// Safe without a lock only because exactly ONE test in this binary calls it
+/// (`dump_config_equals_the_booted_tree`); every other test here reaches the launcher through a
+/// child process, which is handed `BOUGH_HOME` explicitly and never reads the parent's. A second
+/// in-process caller must take a lock first.
 fn cli_for(home: &Path, dump: bool, check: bool) -> Cli {
     // The in-process half of the test reads `$BOUGH_HOME` through `bough_util`, which reads the
     // environment on every call; the child process is given the same value explicitly.
@@ -65,13 +71,17 @@ async fn dump_config_equals_the_booted_tree() {
         KernelOptions {
             profile: "tui".into(),
             invariants: false,
-            reconcile_debounce: std::time::Duration::from_millis(10),
         },
     );
     kernel.load(composition).await.unwrap();
     kernel.quiesce().await;
 
-    let live = render(&kernel.composition(), bough_kernel::DumpFormat::Yaml);
+    let live = render(
+        &kernel
+            .composition()
+            .expect("the kernel mounted a composition"),
+        bough_kernel::DumpFormat::Yaml,
+    );
 
     // Tie the dump to the RUNNING kernel, not merely to the composition it was handed: every
     // enabled row named in the dump is a row that actually reached ACTIVE, and the fingerprint the

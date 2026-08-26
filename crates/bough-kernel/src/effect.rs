@@ -174,8 +174,13 @@ impl EffectHandle {
         self.inner.finished.notify_waiters();
     }
 
-    /// Start disposal without awaiting it. For drop paths and sync call sites only.
-    pub fn dispose_detached(&self) {
+    /// Start disposal without awaiting it.
+    ///
+    /// NOT plugin-facing (§0.2: "kills issued but not awaited" is the shape the rule names as a
+    /// bug). `pub(crate)` on purpose: the kernel's only use is disposing a registration that
+    /// arrived after its owning fiber had already unwound, from a synchronous context where
+    /// awaiting is impossible and leaving it registered would be the worse failure.
+    pub(crate) fn dispose_detached(&self) {
         let me = self.clone();
         tokio::spawn(async move { me.dispose().await });
     }

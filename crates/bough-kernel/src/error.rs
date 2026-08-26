@@ -26,6 +26,11 @@ pub enum KernelError {
     },
     #[error("row `{0}` is not in the tree")]
     NoSuchRow(EntryId),
+    /// The context outlived what it points at: the fiber unloaded, or the process is tearing the
+    /// kernel down. A `Context` clone outlives its fiber by construction — every spawned effect
+    /// body and every listener closure holds one — so this is a normal outcome, not a panic.
+    #[error("row `{entry}`: this context's {what} is gone (the fiber unloaded, or the kernel is shutting down)")]
+    Detached { entry: EntryId, what: &'static str },
     #[error("duplicate row id `{0}`")]
     DuplicateRowId(EntryId),
     #[error(transparent)]
@@ -36,6 +41,11 @@ pub enum KernelError {
 /// good tree keeps running and `config-update-failed` is broadcast (§0.3).
 #[derive(Debug, thiserror::Error)]
 pub enum ComposeError {
+    /// Decision D18 (a row may omit `plugin:` and be a pure group) is NOT implemented in Phase 0.
+    /// The composer rejects such a row rather than letting `--dump-config` accept a tree the mount
+    /// path would refuse: the dump must be what boots (§0.5).
+    #[error("row `{entry}` names no plugin; a pure group row is not supported yet (Decision D18)")]
+    MissingPlugin { entry: EntryId, layer: LayerId },
     #[error("row `{entry}` names plugin `{plugin}`, which is not in the catalog")]
     UnknownPlugin {
         entry: EntryId,

@@ -25,14 +25,26 @@ pub struct InvariantSpec {
 }
 
 /// When an invariant runs.
-#[derive(Clone, Copy, Debug)]
+///
+/// Phase 0 dispatches [`Cadence::OnQuiesce`] only. The other two are declared because §0.2 asks for
+/// invariants that hold OVER TIME and later phases need them; until then, collecting one is
+/// reported at WARN and counted by [`InvariantRunner::unsupported`], so a plugin that declares one
+/// is never silently unchecked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cadence {
     /// Once, each time the tree quiesces.
     OnQuiesce,
-    /// On a timer.
+    /// On a timer. NOT DISPATCHED in Phase 0.
     Interval(Duration),
-    /// Whenever the named event dispatches.
+    /// Whenever the named event dispatches. NOT DISPATCHED in Phase 0.
     OnEvent(&'static str),
+}
+
+impl Cadence {
+    /// Whether the runner actually dispatches this cadence today.
+    pub fn is_dispatched(&self) -> bool {
+        matches!(self, Cadence::OnQuiesce)
+    }
 }
 
 /// A violation, as reported. Carries enough to act on without reading the check's source.
@@ -63,6 +75,8 @@ pub struct InvariantRunner {
     host: Arc<dyn CheckHost>,
     specs: Mutex<Vec<(EntryId, InvariantSpec)>>,
     violations: Mutex<Vec<InvariantViolation>>,
+    /// Specs whose cadence this runner does not dispatch, most recent collection only.
+    unsupported: Mutex<Vec<(EntryId, &'static str)>>,
 }
 
 impl InvariantRunner {
@@ -77,13 +91,34 @@ impl InvariantRunner {
             host,
             specs: Mutex::new(Vec::new()),
             violations: Mutex::new(Vec::new()),
+            unsupported: Mutex::new(Vec::new()),
         }
     }
 
     /// Replace the spec set. Called after every reconciliation, so a plugin that just unloaded
     /// stops being checked.
     pub fn collect_specs(&self, specs: Vec<(EntryId, InvariantSpec)>) {
+        let mut unsupported = Vec::new();
+        for (id, s) in &specs {
+            if !s.cadence.is_dispatched() {
+                tracing::warn!(
+                    entry = %id,
+                    plugin = s.plugin,
+                    invariant = s.name,
+                    cadence = ?s.cadence,
+                    "invariant cadence is not dispatched in this phase; the check will NOT run"
+                );
+                unsupported.push((id.clone(), s.name));
+            }
+        }
+        *self.unsupported.lock() = unsupported;
         *self.specs.lock() = specs;
+    }
+
+    /// Collected specs whose cadence the runner does not dispatch. Never silent: `collect_specs`
+    /// also logs each one at WARN.
+    pub fn unsupported(&self) -> Vec<(EntryId, &'static str)> {
+        self.unsupported.lock().clone()
     }
 
     pub fn spec_count(&self) -> usize {
@@ -173,6 +208,44 @@ mod tests {
         assert_eq!(v[0].invariant, "greeted-seq-is-monotonic");
         assert_eq!(v[0].entry.as_str(), "hello.greeter");
         assert!(v[0].detail.contains("seq 7"));
+    }
+
+    /// §0.2 asks for invariants that hold OVER TIME. Phase 0 dispatches `OnQuiesce` only; a spec
+    /// with any other cadence must be reported, never silently unchecked. This test pins the
+    /// silence that used to be there — delete it when the cadences are implemented.
+    #[tokio::test]
+    async fn an_undispatched_cadence_is_reported_and_does_not_run() {
+        let events = Arc::new(RecordingEvents::default());
+        let runner = InvariantRunner::with_host(events, Arc::new(PlantedHost { fail: true }));
+        let timed = InvariantSpec {
+            name: "over-time",
+            cadence: Cadence::Interval(Duration::from_millis(1)),
+            ..spec()
+        };
+        let on_event = InvariantSpec {
+            name: "on-step",
+            cadence: Cadence::OnEvent("ledger/appended"),
+            ..spec()
+        };
+        runner.collect_specs(vec![
+            (EntryId::new("a"), timed),
+            (EntryId::new("b"), on_event),
+            (EntryId::new("c"), spec()),
+        ]);
+
+        let unsupported = runner.unsupported();
+        assert_eq!(
+            unsupported.iter().map(|(_, n)| *n).collect::<Vec<_>>(),
+            vec!["over-time", "on-step"],
+            "an undispatched cadence must be named, not swallowed"
+        );
+
+        runner.run_on_quiesce().await;
+        assert_eq!(
+            runner.violations().len(),
+            1,
+            "only the OnQuiesce spec ran, which is exactly why the other two must be reported"
+        );
     }
 
     #[tokio::test]

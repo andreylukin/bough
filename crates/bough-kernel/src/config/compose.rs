@@ -218,7 +218,16 @@ fn validate_rows(
             .get(&r.id)
             .map(|p| p.created_by.clone())
             .unwrap_or_else(|| fallback.clone());
-        if let Some(name) = &r.plugin {
+        let Some(name) = &r.plugin else {
+            // The mount path rejects a plugin-less row (`PluginFactory::parse` looks `""` up in
+            // the catalog), so the composer must too — otherwise `--dump-config` exits 0 on a tree
+            // that cannot boot, and the dump stops being what boots (§0.5, V6).
+            return Err(ComposeError::MissingPlugin {
+                entry: r.id.clone(),
+                layer: layer.clone(),
+            });
+        };
+        {
             let plugin = catalog
                 .lookup(name)
                 .ok_or_else(|| ComposeError::UnknownPlugin {
@@ -477,6 +486,20 @@ mod tests {
     }
 
     const BASE: &str = "- id: ledger\n  plugin: ledger-sqlite\n  config:\n    path: /a\n";
+
+    /// §0.5, V6: `--dump-config` renders exactly what boots. The mount path rejects a row that
+    /// names no plugin, so the composer must reject it too — a dump that exits 0 on a tree the
+    /// kernel refuses is a dump that lies.
+    #[test]
+    fn a_row_naming_no_plugin_is_rejected_by_the_composer() {
+        let err = try_compose(&[("bundle:b", "- id: pure.group\n")], &cat(), env())
+            .expect_err("a plugin-less row must not compose");
+        assert!(
+            matches!(err, ComposeError::MissingPlugin { ref entry, .. } if entry.as_str() == "pure.group"),
+            "{err}"
+        );
+        assert!(err.to_string().contains("D18"), "{err}");
+    }
 
     #[test]
     fn layers_apply_in_order() {
