@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 
 use bough_plugin_agents::MailClass;
 use bough_plugin_collect_core::{refs, Collected, WakeClass};
+use bough_plugin_gh_cli::Actor;
 use chrono::{DateTime, Utc};
 
 /// The sources this collector sweeps; each has its own watermark, per repo.
@@ -155,14 +156,33 @@ pub fn check_of(repo: &str, row: &serde_json::Value) -> Option<Collected> {
     })
 }
 
-/// PURE: the mail class of a collected item, given the row's configured wake classes. Everything
-/// not named is [`MailClass::Ordinary`] (§5).
-pub fn class_of(kind: WakeClass, wake_classes: &[WakeClass]) -> MailClass {
+/// PURE: the mail class of a collected item, given the row's configured wake classes and WHO
+/// wrote it. Everything not named is [`MailClass::Ordinary`] (§5), and so is anything a BOT
+/// wrote: `known_bots` on this row is what makes a renovate mention arrive as reading rather than
+/// as an interruption. Uncertain counts as human, exactly as it does on the write side.
+pub fn class_of(kind: WakeClass, wake_classes: &[WakeClass], author: Actor) -> MailClass {
+    if author == Actor::Bot {
+        return MailClass::Ordinary;
+    }
     if wake_classes.contains(&kind) {
         MailClass::Wake
     } else {
         MailClass::Ordinary
     }
+}
+
+/// PURE: who wrote this `search/issues` item, classified against the row's allowlist.
+pub fn author_of(row: &serde_json::Value, known_bots: &[String]) -> Actor {
+    let user = row.get("user");
+    let login = user
+        .and_then(|u| u.get("login"))
+        .and_then(|l| l.as_str())
+        .unwrap_or("");
+    let account_type = user
+        .and_then(|u| u.get("type"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    bough_plugin_gh_cli::classify(account_type, login, known_bots)
 }
 
 /// PURE: the `search/issues` query one source sends for one repo.
@@ -235,9 +255,39 @@ mod tests {
     #[test]
     fn only_a_configured_wake_class_wakes() {
         let cfg = [WakeClass::ReviewRequest];
-        assert_eq!(class_of(WakeClass::ReviewRequest, &cfg), MailClass::Wake);
-        assert_eq!(class_of(WakeClass::Mention, &cfg), MailClass::Ordinary);
-        assert_eq!(class_of(WakeClass::Assigned, &[]), MailClass::Ordinary);
+        let h = Actor::Human;
+        assert_eq!(class_of(WakeClass::ReviewRequest, &cfg, h), MailClass::Wake);
+        assert_eq!(class_of(WakeClass::Mention, &cfg, h), MailClass::Ordinary);
+        assert_eq!(class_of(WakeClass::Assigned, &[], h), MailClass::Ordinary);
+    }
+
+    /// `known_bots` is the row's own allowlist and it is LIVE here: a bot's review request or
+    /// mention arrives as reading, never as an interruption. Before this the field was declared,
+    /// shipped and read by nothing on the collector.
+    #[test]
+    fn a_bot_authored_item_never_wakes_even_on_a_configured_wake_class() {
+        let cfg = [WakeClass::ReviewRequest, WakeClass::Mention];
+        assert_eq!(
+            class_of(WakeClass::ReviewRequest, &cfg, Actor::Bot),
+            MailClass::Ordinary
+        );
+        assert_eq!(
+            class_of(WakeClass::Mention, &cfg, Actor::Human),
+            MailClass::Wake
+        );
+    }
+
+    #[test]
+    fn the_allowlist_and_the_account_type_both_make_an_author_a_bot_and_uncertain_is_human() {
+        let bots = ["renovate[bot]".to_string()];
+        let row =
+            |login: &str, ty: &str| serde_json::json!({ "user": { "login": login, "type": ty } });
+        assert_eq!(author_of(&row("some-linter", "Bot"), &bots), Actor::Bot);
+        assert_eq!(author_of(&row("renovate[bot]", "User"), &bots), Actor::Bot);
+        assert_eq!(author_of(&row("a-teammate", "User"), &bots), Actor::Human);
+        // Uncertain is human, on the read side as on the write side.
+        assert_eq!(author_of(&row("mystery", ""), &bots), Actor::Human);
+        assert_eq!(author_of(&serde_json::json!({}), &bots), Actor::Human);
     }
 
     #[test]

@@ -7,6 +7,10 @@
 //! a refusal quotes.
 //!
 //! NO ROW: a library both `collector-github` and `actions-github` depend on.
+//!
+//! No runtime invariant: no row, and the two claims above are structural (one spawn site, a total
+//! classification function), so they are unit tests rather than a check over a stream. The stream
+//! consequences belong to `collector-github` and `actions-github`, which own them.
 
 use std::path::PathBuf;
 use std::time::Duration;

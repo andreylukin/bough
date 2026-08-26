@@ -76,6 +76,8 @@ fn bundle(record: &std::path::Path) -> String {
         max_restarts: 3
         min_uptime_ms: 1000
         restart_delay_ms: 20
+        call_timeout_ms: 5000
+        boot_timeout_ms: 10000
 ",
         server(),
         record.display()

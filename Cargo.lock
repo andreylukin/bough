@@ -845,6 +845,7 @@ dependencies = [
  "bough-plugin-commands",
  "bough-plugin-ledger",
  "bough-plugin-ledger-memory",
+ "bough-plugin-power",
  "bough-plugin-runtime-actions",
  "bough-plugin-schedule",
  "bough-plugin-workers",

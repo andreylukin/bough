@@ -19,7 +19,23 @@ fn pr_view(author: &str, state: &str) -> serde_json::Value {
 }
 
 fn comment_by(login: &str, account_type: &str) -> serde_json::Value {
-    serde_json::json!({ "user": { "login": login, "type": account_type } })
+    serde_json::json!({
+        "user": { "login": login, "type": account_type },
+        "node_id": "PRRC_comment77",
+    })
+}
+
+/// What the GraphQL bridge between the two id spaces answers: thread `PRRT_1` opens with the
+/// review comment whose REST database id is 77.
+fn threads_for_77() -> serde_json::Value {
+    serde_json::json!({
+        "data": { "repository": { "pullRequest": { "reviewThreads": { "nodes": [
+            { "id": "PRRT_other", "isResolved": false,
+              "comments": { "nodes": [{ "databaseId": 5 }] } },
+            { "id": "PRRT_1", "isResolved": false,
+              "comments": { "nodes": [{ "databaseId": 77 }] } },
+        ]}}}}
+    })
 }
 
 fn push_payload() -> serde_json::Value {
@@ -107,12 +123,13 @@ async fn bot_thread_op_resolves_a_bot_typed_thread() {
     let gh = Arc::new(
         FakeGh::new("andrey")
             .read("pulls/comments/77", comment_by("some-linter", "Bot"))
+            .read("reviewThreads", threads_for_77())
             .stdout(r#"{"html_url":"https://github.com/owner/repo/pull/12#discussion_r99"}"#),
     );
     let req = exec(
         ActionKind::BotThreadOp,
         "owner/repo#12",
-        serde_json::json!({ "thread": "77", "op": "resolve", "body": null }),
+        serde_json::json!({ "comment_id": 77, "op": "resolve", "body": null }),
     );
     let artifact = provider(&gh)
         .execute(&req)
@@ -141,6 +158,129 @@ async fn bot_thread_op_resolves_a_bot_typed_thread() {
         "{:?}",
         writes[1].argv
     );
+    // The mutation is handed the THREAD's GraphQL node id, looked up from the REST comment id —
+    // never the REST id itself, which is a different id space and which GitHub would reject.
+    assert!(
+        writes[1].argv.iter().any(|a| a == "threadId=PRRT_1"),
+        "{:?}",
+        writes[1].argv
+    );
+    assert!(
+        !writes[1].argv.iter().any(|a| a.contains("threadId=77")),
+        "the REST comment id is never passed as a GraphQL ID!: {:?}",
+        writes[1].argv
+    );
+}
+
+/// `close` and `resolve` are two DIFFERENT acts. Before this test they took the same branch, so a
+/// request to close a bot thread was silently answered with a resolve while the journalled
+/// artifact still said `close`.
+#[tokio::test]
+async fn close_is_a_different_call_from_resolve_and_the_artifact_says_which() {
+    let gh = Arc::new(
+        FakeGh::new("andrey")
+            .read("pulls/comments/77", comment_by("some-linter", "Bot"))
+            .read("reviewThreads", threads_for_77())
+            .stdout("{}"),
+    );
+    let closed = provider(&gh)
+        .execute(&exec(
+            ActionKind::BotThreadOp,
+            "owner/repo#12",
+            serde_json::json!({ "comment_id": 77, "op": "close", "body": null }),
+        ))
+        .await
+        .expect("a bot thread closes");
+    let writes: Vec<_> = gh.log().into_iter().filter(|c| c.write).collect();
+    assert_eq!(writes.len(), 2, "one comment, then the close: {writes:?}");
+    assert!(
+        writes[1].argv.iter().any(|a| a.contains("minimizeComment")),
+        "close folds the comment away, it does not resolve the thread: {:?}",
+        writes[1].argv
+    );
+    assert!(
+        !writes[1]
+            .argv
+            .iter()
+            .any(|a| a.contains("resolveReviewThread")),
+        "{:?}",
+        writes[1].argv
+    );
+    assert!(
+        writes[1]
+            .argv
+            .iter()
+            .any(|a| a == "subjectId=PRRC_comment77"),
+        "{:?}",
+        writes[1].argv
+    );
+    assert_eq!(closed.detail["op"], "close");
+    assert_eq!(closed.detail["comment_node_id"], "PRRC_comment77");
+    assert!(
+        closed.detail.get("thread_node_id").is_none(),
+        "a close never touched a thread node: {}",
+        closed.detail
+    );
+}
+
+/// `reply` stops after the comment: it is neither of the other two.
+#[tokio::test]
+async fn reply_leaves_the_comment_and_nothing_else() {
+    let gh = Arc::new(
+        FakeGh::new("andrey")
+            .read("pulls/comments/77", comment_by("some-linter", "Bot"))
+            .stdout("{}"),
+    );
+    provider(&gh)
+        .execute(&exec(
+            ActionKind::BotThreadOp,
+            "owner/repo#12",
+            serde_json::json!({ "comment_id": 77, "op": "reply", "body": "on it" }),
+        ))
+        .await
+        .expect("a reply is a comment");
+    let writes: Vec<_> = gh.log().into_iter().filter(|c| c.write).collect();
+    assert_eq!(writes.len(), 1, "a reply is ONE write: {writes:?}");
+    assert!(
+        writes[0]
+            .argv
+            .iter()
+            .any(|a| a == "repos/owner/repo/pulls/12/comments/77/replies"),
+        "{:?}",
+        writes[0].argv
+    );
+}
+
+/// A comment id that opens no review thread on this PR is refused BY NAME, after the reply and
+/// before the mutation — never handed to GraphQL as if it were a thread id.
+#[tokio::test]
+async fn a_comment_that_opens_no_thread_is_refused_by_name() {
+    let gh = Arc::new(
+        FakeGh::new("andrey")
+            .read("pulls/comments/77", comment_by("some-linter", "Bot"))
+            .read(
+                "reviewThreads",
+                serde_json::json!({ "data": { "repository": { "pullRequest": {
+                    "reviewThreads": { "nodes": [] } } } } }),
+            )
+            .stdout("{}"),
+    );
+    let e = provider(&gh)
+        .execute(&exec(
+            ActionKind::BotThreadOp,
+            "owner/repo#12",
+            serde_json::json!({ "comment_id": 77, "op": "resolve", "body": null }),
+        ))
+        .await
+        .expect_err("there is no such thread");
+    let text = refusal(e);
+    assert!(text.contains("no review thread"), "{text}");
+    assert!(
+        gh.log()
+            .iter()
+            .all(|c| !c.argv.iter().any(|a| a.contains("resolveReviewThread"))),
+        "the mutation was never attempted"
+    );
 }
 
 #[tokio::test]
@@ -151,7 +291,7 @@ async fn bot_thread_op_refuses_a_human_thread() {
         .execute(&exec(
             ActionKind::BotThreadOp,
             "owner/repo#12",
-            serde_json::json!({ "thread": "77", "op": "resolve", "body": null }),
+            serde_json::json!({ "comment_id": 77, "op": "resolve", "body": null }),
         ))
         .await
         .expect_err("a human thread is never auto-resolved");
@@ -170,7 +310,7 @@ async fn bot_thread_op_refuses_an_uncertain_thread_as_human() {
         .execute(&exec(
             ActionKind::BotThreadOp,
             "owner/repo#12",
-            serde_json::json!({ "thread": "77", "op": "resolve", "body": null }),
+            serde_json::json!({ "comment_id": 77, "op": "resolve", "body": null }),
         ))
         .await
         .expect_err("uncertain is human");
@@ -192,7 +332,7 @@ async fn an_allowlisted_login_is_a_bot_thread() {
         .execute(&exec(
             ActionKind::BotThreadOp,
             "owner/repo#12",
-            serde_json::json!({ "thread": "77", "op": "reply", "body": "on it" }),
+            serde_json::json!({ "comment_id": 77, "op": "reply", "body": "on it" }),
         ))
         .await
         .expect("the allowlist makes it a bot thread");

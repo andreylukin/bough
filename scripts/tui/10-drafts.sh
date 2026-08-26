@@ -63,8 +63,15 @@ submit_until_echoed() {
 t the_composer_takes_the_message \
   submit_until_echoed "tell the eng channel the deploy is green"
 
+# PANE-ONLY STRINGS. This used to look for "the deploy is green", which is a substring of the
+# message `submit_until_echoed` has already forced onto the screen — so the bullet passed with an
+# empty pane, a missing pane, or no draft at all. `1 draft` is the pane's own header (it counts
+# rows), and `message →` is `row_line`'s own rendering; neither can come from the composer echo.
 t a_drafted_message_appears_in_the_drafts_pane \
-  see "the deploy is green" --timeout 20000
+  see "1 draft" --timeout 20000
+
+t the_drafts_pane_renders_it_as_a_draft_row \
+  see "message →" --timeout 5000
 
 t the_pane_says_nothing_was_sent \
   see "NOT sent" --timeout 5000

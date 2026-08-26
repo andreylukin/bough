@@ -1367,7 +1367,13 @@ nothing else (asserted on the composed tree, not on a run).
 
 ---
 
-## 3. Verification map
+## 3. Verification map (SUPERSEDED — see §8)
+
+> **This map is the map as PLANNED, kept for the record. It is stale: roughly a quarter of its
+> `path.rs::name` bullets name a function that does not exist, and eleven name files that were
+> never created, because the work landed under different names and in different files. The
+> AUTHORITATIVE map — the one that resolves against the tree — is
+> **§8.2, "Verification map, as built"**. Read that one; this one only says what was intended.
 
 Each bullet of the phase brief, and the named test that proves it. Every test below is offline and
 hermetic unless it says `BOUGH_LIVE=1`.
@@ -1699,3 +1705,208 @@ merge agent. They are wants, not blockers: everything above is implementable wit
    both), wanted for anything that should differ between them.
 8. **`plugins/tui-shell/src/pane.rs`** — the deferred-work outcome named in phase-3-plan §6.2. The
    drafts pane reads the ledger in `handle` and inherits the same event-loop blocking.
+
+---
+
+## 8. Deviations and open items (written by the review-fix pass)
+
+This section is the honest close of Phase 6. §8.1 is what the review found and what was done about
+it; §8.2 replaces the stale §3 map; §8.3 is what is deliberately NOT done and why.
+
+### 8.1 Review findings and their fixes
+
+**High**
+
+1. **`bot_thread_op` spoke two GitHub id spaces through one bare `thread: String`, and `close`
+   silently did `resolve`** (`plugins/actions-github`). The payload now names the thread by its
+   REST review-comment id as a branded `ReviewCommentId` (`plugins/actions-github/src/ids.rs`,
+   alongside `ReviewThreadNodeId` and `CommentNodeId`, each documented as its own id space). The
+   GraphQL thread node id is LOOKED UP from the REST id (`GithubActions::thread_node_id`, one
+   `reviewThreads` query matching on `databaseId`) rather than assumed to be the same string. The
+   three ops are now three different calls: `reply` = the comment only, `resolve` = the comment
+   then `resolveReviewThread(threadId)`, `close` = the comment then
+   `minimizeComment(subjectId, classifier: RESOLVED)`. Proven by
+   `plugins/actions-github/tests/refusals.rs::{bot_thread_op_resolves_a_bot_typed_thread,
+   close_is_a_different_call_from_resolve_and_the_artifact_says_which,
+   reply_leaves_the_comment_and_nothing_else, a_comment_that_opens_no_thread_is_refused_by_name}`.
+2. **The live V4 probe booted the shipped tree with a live `gh` and the real Linear endpoint**
+   (`crates/bough/tests/boundary_probe_live.rs`). Three isolation measures now precede every run:
+   a `$BOUGH_HOME` patch layer repointing `actions.github`'s `gh_bin` at a refusing shim and
+   `actions.linear`'s endpoint at a closed loopback port; `$PATH` replaced by the shim directory
+   alone; `$HOME` set to the temp home. The shim APPENDS to `gh.log`, and every case asserts that
+   log is empty — the run is safe by observation, not by assumption. The module doc that said
+   "nothing outward-facing is reachable from that profile" is corrected in place.
+3. **`skills.dir` and `wards.dir` resolved against `$HOME`, not `$BOUGH_HOME`**
+   (`bundles/bough-base.yml`). Both are now `!!expr bough_path(...)`. Verified:
+   `BOUGH_HOME=/tmp/x bough --profile headless --dump-config` prints `/tmp/x/skills` and
+   `/tmp/x/wards`. Every subprocess test that isolates only `$BOUGH_HOME` is hermetic again, and
+   the live boundary probe no longer injects the developer's real skill files into the agent whose
+   instruction-following it measures.
+4. **The §3 verification map was stale and largely unresolvable.** §3 is now marked SUPERSEDED and
+   §8.2 below is the map that resolves against the tree.
+
+**Medium**
+
+5. **`eval_timeout_ms` was a validated, shipped config field nothing read** (`plugins/wards-rhai`).
+   `engine::start` arms a per-thread deadline that `on_progress` checks every `TIME_CHECK_OPS`
+   operations and terminates the script on; `WardError::Timeout` now names the budget it hit
+   (`engine::budget_ms`) instead of reporting `0ms`, and is reachable. `evaluate` and `dry_run`
+   take the budget explicitly, so both paths are bounded by the same number.
+   `plugins/wards-rhai/tests/wards.rs::{a_ward_that_outruns_eval_timeout_ms_is_terminated_and_named,
+   the_op_limit_is_still_what_stops_a_runaway_under_a_generous_timeout}`.
+6. **`tick_ms` was a config field the scheduler does not honour** (`plugins/schedule-cron`).
+   `tokio-cron-scheduler` 0.15 sleeps a hardcoded 500ms and exposes no setter, so the field is gone
+   and `SCHEDULER_TICK_MS` is a documented protocol constant of the dependency. The cadence floor
+   is measured against it. `plugins/schedule-cron/tests/jobs.rs::a_cadence_finer_than_the_librarys_tick_is_refused_by_name`.
+7. **`teams` and `projects` reached no query** (`plugins/collector-linear`). `graphql::filter_for`
+   builds the `$filter` variable both queries now take, and the issues filter additionally pins
+   `assignee.isMe` — which is what makes the `WakeClass::Assigned` the sweep stamps true by
+   construction rather than by assumption. A row with NEITHER scope set reports itself off every
+   sweep (a `scope` entry in `disabled` plus a WARN) instead of sweeping the whole workspace into
+   `deliver_to`. `plugins/collector-linear/tests/sweep.rs::{the_configured_scope_is_in_the_query_the_stub_receives,
+   an_unscoped_row_reports_itself_off_and_sends_nothing}` and four `graphql::tests` cases.
+8. **`known_bots` was dead config on the collector** (`plugins/collector-github`).
+   `sweep::author_of` classifies the author of every `search/issues` item through
+   `gh_cli::classify` and the row's own allowlist, and `sweep::class_of` refuses to wake-class a
+   bot-authored item. Uncertain is human, as on the write side.
+   `plugins/collector-github/src/sweep.rs::tests::{a_bot_authored_item_never_wakes_even_on_a_configured_wake_class,
+   the_allowlist_and_the_account_type_both_make_an_author_a_bot_and_uncertain_is_human}`.
+9. **Two of three `HARNESS_POINTS` were declared and unwired, and no point name was validated**
+   (`plugins/hooks-exec`). `schedule/fired` and `power/changed` now have listeners on
+   `bough_plugin_schedule::ScheduleFired` and `bough_plugin_power::PowerChanged`; their `hook/fired`
+   rows land on the `system` trajectory with a synthetic trigger. `is_point_shaped` refuses a
+   mis-shaped point at load, and a new invariant
+   (`every_configured_point_is_a_point_that_exists`) refuses, at quiesce, a well-shaped point that
+   names no harness point and no step type this tree declares.
+   `crates/bough/tests/hooks_journal.rs::{the_power_changed_harness_point_fires_on_a_real_power_event,
+   the_schedule_fired_harness_point_fires_on_a_real_job_run}`,
+   `plugins/hooks-exec/tests/hooks.rs::a_point_that_is_not_shaped_like_a_point_is_refused_at_load`,
+   `plugins/hooks-exec/src/invariant.rs::exists_tests::*`. Merge note 11 is now closed.
+10. **The Linear API key was inserted into a process-global set and never removed**
+    (`plugins/collector-linear`). `hold_key`/`release_key` are refcounted and the row registers a
+    disposer, so unloading takes the credential with it.
+    `plugins/collector-linear/tests/sweep.rs::releasing_a_rows_key_takes_it_out_of_process_memory`.
+11. **`actions-linear` registered `linear_write` with no API key** and failed every call as an
+    opaque HTTP 401 inside an idempotency journal row. With no key the row now activates (a machine
+    without a Linear key must still boot) and registers NOTHING, so the kind is refused by the
+    executor as `NoProvider`. `crates/bough/tests/actions_boundary_rows.rs::with_no_linear_key_the_row_activates_and_linear_write_is_not_a_registered_kind`.
+12. **An empty `repos` swept nothing and reported success** (`plugins/collector-github`). It now
+    reports a `repos` entry in `disabled` with a WARN and spends no `gh` call.
+    `plugins/collector-github/tests/sweep.rs::a_row_with_no_repos_reports_itself_off_and_spends_no_gh_call`.
+13. **`bough wards test` dry-fired under a second set of limits.** The `wards` host publishes its
+    config as `wards.config`; the CLI row reads it (and warns when there is no host row to read).
+    The dry run also fills `agent_names` from the agents seam, as the live path does. The CLI row
+    is a dependent of the host, so it re-applies on a rebind — `DRY_RUN_DONE` keeps the dry run to
+    once per process, which is what stopped it printing twice.
+14. **`mcp-subprocess` derived a call deadline from the crash-loop window.** `call_timeout_ms` and
+    `boot_timeout_ms` are their own validated `ProcessRow` fields, and the backoff fallback is the
+    row's own `restart_delay_ms`.
+    `plugins/mcp-subprocess/tests/subprocess.rs::the_call_and_boot_deadlines_are_their_own_validated_fields`.
+15. **`catch-up-on-wake` closed its in-flight window on a bare `tokio::spawn`.** The wait is now an
+    `effect_spawn` on the row's own context, polled against `is_halted`, with the claim released
+    from a `defer` so it comes back whether the wake ends or the row goes down under it.
+    `plugins/catch-up-on-wake/tests/wake.rs::disposing_the_row_mid_catch_up_reaches_quiescence_and_releases_the_claim`.
+16. **The macOS sleep listener had an unload-while-loading race that hung teardown.** `stop` now
+    re-issues `CFRunLoopStop` until the thread is actually gone, takes the join handle out of the
+    mutex before joining, and the thread `CFRetain`s its run loop so a re-issued stop cannot land
+    on a freed object. `plugins/sleep-listener/tests/macos_ffi.rs::starting_and_immediately_stopping_never_hangs`.
+17. **`WardView::acted` grew without bound and was cloned per firing.** Bounded by `ACTED_PEEK`,
+    beside `RECENT_PEEK`, and documented as a protocol bound.
+18. **`boundary_injection.rs` compared two `Option<usize>`**, so the bullet passed when the
+    spawner's block was absent entirely. Both positions are resolved before the comparison.
+19. **`scripts/tui/10-drafts.sh` matched a string it had itself typed.** The pane bullets are now
+    `1 draft` (the pane's own header, which counts rows) and `message →` (`row_line`'s own
+    rendering); neither can come from the composer echo.
+20. **`plugins/drafts/tests/probe.rs` had a dead assertion and names that overclaimed.** The
+    `request/header` is now asserted to carry the `boundary` section, tying "the boundary was
+    shown" to "this prompt was answered" inside one test; the eight cases are renamed
+    `..._is_refused_by_the_registry_and_only_the_draft_writes_a_row`, which is what they prove.
+
+**Low**
+
+21. `mcp-rmcp`'s `shutdown` still depends on holding the last `Arc` (rmcp's `cancel()` consumes the
+    service), but a lost race is now REPORTED with the holder count instead of silently leaving a
+    child process running.
+22. `schedule-cron`'s invariant keyed its live-Provider slot globally; it is now keyed per
+    `FiberUid`, like every sibling, so two rows cannot blind each other's check.
+23. `runtime-actions`, `collect-core` and `gh-cli` each carry the literal `No runtime invariant:`
+    statement with its reason.
+24. A ward child's entry id is `<host row's entry id>.<file stem>`, like `skills` and `mcp-rmcp`.
+25. Three ward "sandbox" tests asserted only that an identifier is unknown, which a default rhai
+    engine would also say. `a_function_a_default_rhai_engine_has_is_absent_from_the_ward_engine` is
+    the differential that actually pins `new_raw()` plus five packages.
+26. The NSWorkspace observer object is released on `Drop`, not just unregistered.
+27. `scripts/tui/12-swap-collector.sh` says in the file what its two `--dump-config` bullets do and
+    do not prove.
+28. `BUILD.md`'s Phase 6 and 7 rows are filled in.
+
+### 8.2 Verification map, as built
+
+Authoritative. Every name below exists in the tree and ran green in `make gates` unless marked
+`BOUGH_LIVE=1`.
+
+- **V1 sweeps, dedupe, schedule job** — `plugins/collector-github/tests/sweep.rs` (5, incl.
+  `a_row_with_no_repos_reports_itself_off_and_spends_no_gh_call`),
+  `plugins/collector-linear/tests/sweep.rs` (12, incl. the two scope cases and the key release),
+  `crates/bough/tests/collector_schedule.rs::disabling_the_row_removes_its_job_from_schedule_jobs`.
+- **V2 exactly four kinds** — `plugins/actions-github/tests/kinds.rs` (5),
+  `plugins/actions-linear/tests/kinds.rs`, `plugins/tool-actions/tests/refusal.rs` (2),
+  `crates/bough/tests/actions_boundary_rows.rs` (1).
+- **V3 the boundary on both paths** — `crates/bough/tests/boundary_injection.rs` (2),
+  `plugins/boundary-instructions/tests/projection.rs` (4) plus the crate's unit tests. PARTIAL: see
+  §8.3.1.
+- **V4 the adversarial probe** — `plugins/drafts/tests/probe.rs` (9),
+  `crates/bough/tests/boundary_probe_live.rs` (1, `BOUGH_LIVE=1`), `scripts/tui/10-drafts.sh` (8).
+- **V5 the three GitHub acts and the Linear write** — `plugins/actions-github/tests/refusals.rs`
+  (12), `plugins/actions-linear/tests/writes.rs` (3), `crates/bough/tests/worker_pr.rs` (1).
+- **V6 reconciliation is a lookup** — `plugins/actions-github/tests/reconcile_lookup.rs` (3),
+  `plugins/actions-reconcile/tests/reconcile.rs` (4).
+- **V7 mcp** — `plugins/mcp-rmcp/tests/stdio_fixture.rs` (2),
+  `plugins/tool-mcp/tests/registry.rs` (4), `crates/bough/tests/mcp_call.rs` (2),
+  `scripts/tui/11-mcp-tool.sh` (7).
+- **V8 urgency** — `plugins/collector-github/tests/urgency.rs` (3).
+- **V9 `bough wards test` and the ward host's seams** — `crates/bough/tests/wards_v9.rs` (4).
+- **V10 engine limits and the runtime-action boundary** — `plugins/wards-rhai/tests/wards.rs` (10,
+  incl. the two timeout cases and the differential sandbox case),
+  `plugins/wards-rhai/tests/reload.rs` (3), `plugins/runtime-actions/src/lib.rs::tests` (3).
+- **V11 hooks** — `plugins/hooks-exec/tests/hooks.rs` (5),
+  `plugins/hooks-exec/src/invariant.rs::exists_tests` (2), `crates/bough/tests/hooks_journal.rs`
+  (4, incl. the two harness points).
+- **V12 resident subprocesses and skills** — `plugins/mcp-subprocess/tests/subprocess.rs` (8),
+  `plugins/mcp-subprocess/tests/end_to_end.rs` (1), `plugins/skills/tests/skills.rs` (11),
+  `plugins/skills/tests/watch.rs` (1).
+- **V13 sleep, catch-up, system schedules** — `plugins/catch-up-on-wake/tests/wake.rs` (6),
+  `plugins/sleep-listener/tests/macos_ffi.rs` (4), `plugins/system-schedules/tests/system.rs` (4),
+  `crates/bough/tests/system_schedules.rs` (2).
+- **SWAP** — `crates/bough/tests/phase6_swap.rs` (4), `scripts/tui/12-swap-collector.sh`.
+
+### 8.3 Open items, deliberately not done
+
+1. **V3's "one crate" is still two texts.** `BOUNDARY_BLOCK` is the one projection source, and
+   `crates/bough/tests/boundary_injection.rs` proves BOTH a resident's and a spawned worker's
+   request carry it byte for byte. What is not folded is `plugins/worker-spawn::WRITE_BOUNDARY`, a
+   second, worker-framed statement the spawner prepends. `plugins/worker-spawn` is off-limits to
+   track B; merge note 1 carries the exact `concat!` and the three tests that guard the fold in
+   both directions. Until then two prompts must be edited in step, and the `SANCTIONED_ACTS` table
+   is what keeps them saying the same four things.
+2. **V10's "refused by the executor" is still refused one step earlier for an unspellable kind.**
+   `runtime_actions::parse_kind` refuses `slack_send` before `ActionsHandle::execute` is reached;
+   only a spellable-but-unprovided kind produces `NoProvider` from the executor. Both refusals are
+   tested. `ActionsHandle::execute_by_name` (merge note 3) is what would move the first one.
+3. **`plugins/sleep-listener/tests/live.rs::the_iokit_listener_receives_a_real_wake` does not
+   exist under any name.** A real sleep/wake cannot be driven from a test process; the IOKit
+   registration and teardown are covered by `macos_ffi.rs`, and the dispatch half by the
+   NSWorkspace posting test and by `power-test`'s synthetic pair. The genuinely uncovered claim is
+   "a real machine sleep reaches the gate", and it is a MANUAL gate, not an automated one.
+4. **`bough wards test`'s `cx.already(ref)` is always false.** `acted` is the live child's memory
+   of what it has acted on and a dry run has not acted on anything, so a ward that guards on
+   `already` fires in the dry run where live it would skip. Said in the code rather than papered
+   over; closing it would mean persisting `acted`, which nothing yet asks for.
+5. **`plugins/drafts/tests/probe.rs`'s prompts are inert.** `attempt_then_draft` scripts the tool
+   calls, so the offline probe proves the SURFACE (no send-shaped tool exists; only drafting writes
+   a row) and not the INSTRUCTION. The instruction half is the live probe, and only the live probe.
+6. **The first message after a cold TUI boot can be swallowed** (merge note 16). Unchanged: the
+   crates that own that path are off-limits here, and `scripts/tui/10-drafts.sh` retries.
+7. **`mcp-rmcp`'s shutdown is still refcount-conditional** (finding 21). Making it unconditional
+   means holding the `RunningService` behind an async mutex on the call path; not worth it for a
+   disposal that is now loud when it misses.

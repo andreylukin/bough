@@ -20,7 +20,6 @@ fn cfg(dir: &std::path::Path, timeout_ms: u64) -> Arc<CronConfig> {
     Arc::new(CronConfig {
         state_db: dir.join("schedule.db"),
         job_timeout_ms: timeout_ms,
-        tick_ms: 50,
     })
 }
 
@@ -185,7 +184,10 @@ async fn a_stale_stored_last_run_fires_once_as_catch_up_and_then_follows_cadence
         .expect("a scheduler");
     let job = Arc::new(Counting::default());
     sched
-        .register(&ctx, spec("sweep", every(100), true, job.clone()))
+        .register(
+            &ctx, // The finest cadence the library's own 500ms tick can honour (`SCHEDULER_TICK_MS`).
+            spec("sweep", every(500), true, job.clone()),
+        )
         .await
         .expect("registered");
 
@@ -328,4 +330,40 @@ async fn every_fire_leaves_exactly_one_recorded_run_that_survives_a_restart() {
     // A fresh process reads the same last run — which is what `catch_up` depends on.
     let store = RunStore::open(&dir.path().join("schedule.db")).expect("the same store");
     assert_eq!(store.get(&JobName::new("sweep")).unwrap(), Some(run));
+}
+
+/// The floor is the LIBRARY's tick, not a config field a deployment could lower under it. Before
+/// this, `tick_ms` was a shipped, validated field nothing gave to `tokio-cron-scheduler` — so a
+/// row that set `tick_ms: 50` had its `every_ms: 50` job ACCEPTED and then fired ~10x slower.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cadence_finer_than_the_librarys_tick_is_refused_by_name() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let ctx = ctx();
+    let sched = CronScheduler::start(cfg(dir.path(), 2000), ctx.clone())
+        .await
+        .expect("a scheduler");
+    let job = Arc::new(Counting::default());
+    let e = sched
+        .register(
+            &ctx,
+            spec(
+                "too-fine",
+                every(bough_plugin_schedule_cron::SCHEDULER_TICK_MS - 1),
+                false,
+                job.clone(),
+            ),
+        )
+        .await
+        .err()
+        .expect("finer than the tick is refused");
+    let text = e.to_string();
+    assert!(text.contains("499"), "{text}");
+    assert!(
+        text.contains(&format!(
+            "{}",
+            bough_plugin_schedule_cron::SCHEDULER_TICK_MS
+        )),
+        "the refusal names the tick it is measured against: {text}"
+    );
+    assert!(sched.jobs().is_empty(), "nothing was registered");
 }

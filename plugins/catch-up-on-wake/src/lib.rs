@@ -69,6 +69,10 @@ pub struct CatchUpOnWake {
     cfg: Arc<CatchUpOnWakeConfig>,
     agents: AgentsHandle,
     in_flight: parking_lot::Mutex<HashSet<AgentId>>,
+    /// The window-closing effects this row has open. They are registered on the row's fiber and
+    /// unwind with it; they are ALSO kept here so `close_all` can do by hand exactly what the
+    /// fiber's unwind does, which is how the ownership is testable without a kernel.
+    closers: parking_lot::Mutex<Vec<bough_kernel::EffectHandle>>,
     fiber: bough_kernel::FiberUid,
 }
 
@@ -82,6 +86,7 @@ impl CatchUpOnWake {
             cfg,
             agents,
             in_flight: parking_lot::Mutex::new(HashSet::new()),
+            closers: parking_lot::Mutex::new(Vec::new()),
             fiber,
         }
     }
@@ -107,6 +112,22 @@ impl CatchUpOnWake {
     }
 
     /// One `DidWake`: request a wake per eligible agent, skipping those already in flight.
+    /// Keep a window-closing effect, and drop the ones that have already finished.
+    pub fn remember_closer(&self, handle: bough_kernel::EffectHandle) {
+        let mut closers = self.closers.lock();
+        closers.retain(|h| !h.is_disposed());
+        closers.push(handle);
+    }
+
+    /// Dispose every open window-closer, exactly as unloading the row's fiber does. Awaited, so
+    /// this reaches quiescence (§0.2): no kill is issued that is not also waited on.
+    pub async fn close_all(&self) {
+        let open: Vec<bough_kernel::EffectHandle> = std::mem::take(&mut *self.closers.lock());
+        for h in open {
+            h.dispose().await;
+        }
+    }
+
     /// Returns whom it woke, so the test asserts on the set rather than on a count.
     pub async fn on_wake(&self, ev: &PowerEvent) -> Vec<AgentId> {
         if !asks_for_catch_up(ev, self.cfg.min_sleep_ms) {
@@ -149,26 +170,64 @@ pub async fn listen(
     ctx: &Context,
     state: Arc<CatchUpOnWake>,
 ) -> Result<bough_kernel::EffectHandle, PluginError> {
+    let owner = ctx.clone();
     ctx.on_parallel::<PowerChanged, _, _>(move |ev| {
         let state = Arc::clone(&state);
+        let owner = owner.clone();
         async move {
+            let keeper = Arc::clone(&state);
             for id in state.on_wake(&ev).await {
-                // The window closes when the wake this row opened goes idle. Held on the
-                // listener's own task: the parallel dispatch is awaited by the Provider, and
-                // waiting for the wake to FINISH here would make a sleep listener block on a
-                // model.
+                // The window closes when the wake this row opened goes idle. Held OFF the
+                // dispatch — the parallel dispatch is awaited by the Provider, and waiting for
+                // the wake to FINISH here would make a sleep listener block on a model — but ON
+                // THE ROW'S OWN EFFECT ACCUMULATOR, not on a bare `tokio::spawn`. A bare spawn is
+                // owned by nobody: disposing the row would leave it running against a live agent
+                // handle and disposal would not reach quiescence (§0.2).
+                //
+                // The wait is POLLED against `is_halted` rather than awaited outright, for the
+                // same reason the two file-watching hosts poll: `EffectInner` awaits a spawned
+                // body before running the inverses, so an uninterruptible await here is a
+                // teardown hang.
                 let state = Arc::clone(&state);
-                tokio::spawn(async move {
-                    if let Some(agent) = state.agents().get(&id) {
-                        agent.when_idle().await;
+                let handle = owner.effect_spawn(move |e| {
+                    let releaser = Arc::clone(&state);
+                    let released = id.clone();
+                    async move {
+                        // THE INVERSE, registered before the wait: the claim is released whether
+                        // the wake ends or the row goes down under it. A disposal that abandons
+                        // the body mid-wait still runs this.
+                        e.defer(move || {
+                            let releaser = Arc::clone(&releaser);
+                            let released = released.clone();
+                            async move { releaser.finish(&released) }
+                        });
+                        if let Some(agent) = state.agents().get(&id) {
+                            while !e.is_halted() {
+                                tokio::select! {
+                                    _ = agent.when_idle() => break,
+                                    _ = tokio::time::sleep(IDLE_POLL) => {}
+                                }
+                            }
+                        }
+                        // The ordinary path: the wake ended, so the next one may ask again long
+                        // before the row unloads.
+                        state.finish(&id);
+                        Ok(())
                     }
-                    state.finish(&id);
                 });
+                // The handle stays on the fiber's accumulator until the row unloads. One
+                // finished effect per machine wake per agent is not growth worth a second task
+                // to reclaim; an UNOWNED task is what this fixes.
+                keeper.remember_closer(handle);
             }
         }
     })
     .await
 }
+
+/// How often the in-flight wait looks at its halt flag. A PROTOCOL BOUND on teardown latency, not
+/// a deployment knob.
+const IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// The row.
 pub struct CatchUpOnWakePlugin;

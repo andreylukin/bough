@@ -40,6 +40,8 @@ fn row(name: &str, env: BTreeMap<String, String>) -> ProcessRow {
         max_restarts: 2,
         min_uptime_ms: 1000,
         restart_delay_ms: 20,
+        call_timeout_ms: 5000,
+        boot_timeout_ms: 10000,
     }
 }
 
@@ -274,4 +276,31 @@ fn one_child_entry_per_process_named_for_the_server() {
     assert_eq!(e.plugin.as_deref(), Some("mcp-process"));
     let parsed: McpProcessConfig = serde_yaml::from_value(e.config).expect("round-trips");
     assert_eq!(parsed.row.name, "echo");
+}
+
+/// A call deadline is its own validated field. It used to be
+/// `min_uptime_ms.max(2000)` — a request deadline derived from the crash-loop detection window,
+/// with a hardcoded floor — so a deployment tightening crash detection silently retuned every
+/// call, and there was no field to set.
+#[test]
+fn the_call_and_boot_deadlines_are_their_own_validated_fields() {
+    use bough_plugin_mcp_subprocess::validate_row;
+    let base = row("fixture", BTreeMap::new());
+    assert!(validate_row(&base).is_ok());
+
+    let mut zero_call = base.clone();
+    zero_call.call_timeout_ms = 0;
+    let e = validate_row(&zero_call).expect_err("zero is refused");
+    assert!(format!("{e}").contains("call_timeout_ms"), "{e}");
+
+    let mut zero_boot = base.clone();
+    zero_boot.boot_timeout_ms = 0;
+    let e = validate_row(&zero_boot).expect_err("zero is refused");
+    assert!(format!("{e}").contains("boot_timeout_ms"), "{e}");
+
+    // …and the call deadline no longer moves when the crash window does.
+    let mut tight = base.clone();
+    tight.min_uptime_ms = 1;
+    assert_eq!(tight.call_timeout_ms, base.call_timeout_ms);
+    assert!(validate_row(&tight).is_ok());
 }

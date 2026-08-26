@@ -53,6 +53,15 @@ pub struct ProcessRow {
     pub max_restarts: u32,
     pub min_uptime_ms: u64,
     pub restart_delay_ms: u64,
+    /// How long ONE JSON-RPC call to this process may take. Its own field, because it is its own
+    /// deployment-varying value: it used to be derived from `min_uptime_ms` (the crash-loop
+    /// detection window) with a hardcoded 2s floor, so tightening crash detection silently
+    /// shortened every request deadline.
+    pub call_timeout_ms: u64,
+    /// How long the process gets to finish its MCP handshake at mount. A process that never
+    /// handshakes must not hold up the whole tree's boot, and how long "not holding it up" is
+    /// depends on what a deployment runs.
+    pub boot_timeout_ms: u64,
 }
 
 /// PURE: what makes one [`ProcessRow`] impossible. Shared by the parent and the child so a row
@@ -74,6 +83,20 @@ pub fn validate_row(row: &ProcessRow) -> Result<(), ConfigError> {
     if row.min_uptime_ms == 0 {
         return Err(bad(format!(
             "`{}`: min_uptime_ms must be greater than zero, or no death is ever `too fast` and a              crash loop never quarantines",
+            row.name
+        )));
+    }
+    if row.call_timeout_ms == 0 {
+        return Err(bad(format!(
+            "`{}`: call_timeout_ms must be greater than zero; every call would time out before it \
+             was written",
+            row.name
+        )));
+    }
+    if row.boot_timeout_ms == 0 {
+        return Err(bad(format!(
+            "`{}`: boot_timeout_ms must be greater than zero; the handshake would never be \
+             awaited and no tool would ever be listed",
             row.name
         )));
     }

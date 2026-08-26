@@ -9,6 +9,11 @@
 //!   - it does, but no Provider registered it ⇒ `ActionError::NoProvider`, from the executor.
 //!
 //! NO ROW: a library the three hosts share.
+//!
+//! No runtime invariant: this crate mounts no row, owns no event stream and no data relation of
+//! its own. What it enforces is enforced per call and asserted by its unit tests; the durable
+//! consequences it writes are the ledger rows the HOSTS own, and each host's `invariant` module
+//! checks those (`wards-rhai`, `hooks-exec`, `mcp-subprocess`).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

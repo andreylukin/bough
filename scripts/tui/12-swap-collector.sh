@@ -17,6 +17,15 @@ USER_PATCH="$HOME_DIR/bough.patch.yml"
 dump() { BOUGH_HOME="$HOME_DIR" "$BOUGH_BIN" --profile tui --dump-format json --dump-config 2>/dev/null; }
 
 # `row_disabled <id>`: the composed tree says this row is disabled.
+# NOTE ON WHAT THESE TWO PROVE. `row_disabled`/`row_enabled` shell out to a SEPARATE
+# `bough --dump-config` process reading the same $BOUGH_HOME patch file this script just wrote.
+# That asserts THE COMPOSER re-reads the file — Phase-0 behaviour — not that the RUNNING TUI
+# process recomposed and dropped the collector's schedule job. The SWAP claim
+# ("schedule.jobs() lists no job for it, every other row's fingerprint is unchanged") is carried
+# by `crates/bough/tests/phase6_swap.rs`, which asserts the live job table and per-row
+# fingerprints. The live evidence in THIS script is `the_surface_still_answers_after_the_swap`
+# and `the_process_never_restarted`; the two bullets below are a cheap consistency check beside
+# them and must not be read as independent confirmation.
 row_disabled() {
   dump | python3 -c '
 import json, sys

@@ -3,10 +3,11 @@
 //! filesystem, no process, no network, no `print`/`debug` sink beyond a captured string. `eval` is
 //! DISABLED explicitly — rhai enables it by default, and §13 names this.
 //!
-//! Which limits are set is code (all five, always). Their VALUES are config, bounded by
-//! `Plugin::validate`.
+//! Which limits are set is code (all five, plus the wall-clock bound `eval_timeout_ms`, always).
+//! Their VALUES are config, bounded by `Plugin::validate`.
 
 use std::cell::Cell;
+use std::time::{Duration, Instant};
 
 use rhai::packages::Package;
 
@@ -17,7 +18,28 @@ thread_local! {
     /// which is the only place the number exists; `ward/fired` records it, so a ward that is
     /// slowly growing is visible in the ledger rather than only in a timeout.
     static OPS: Cell<u64> = const { Cell::new(0) };
+
+    /// When the evaluation running on this thread must stop. `on_progress` returning `Some`
+    /// aborts the script with rhai's `ErrorTerminated`, which is what `WardError::Timeout` is
+    /// made from — so `eval_timeout_ms` is a bound the engine actually enforces and not a
+    /// documented promise. Checked every `TIME_CHECK_OPS` operations, because `Instant::now()`
+    /// on every single one would cost more than the scripts do.
+    static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
 }
+
+thread_local! {
+    /// The budget [`start`] armed, in ms, so `WardError::Timeout` can NAME the bound it hit
+    /// rather than reporting `0ms`.
+    static BUDGET_MS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The budget the evaluation on this thread was given, in ms.
+pub fn budget_ms() -> u64 {
+    BUDGET_MS.with(|b| b.get())
+}
+
+/// How often the deadline is looked at, in rhai operations.
+const TIME_CHECK_OPS: u64 = 1024;
 
 /// Reset the counter before an evaluation.
 pub fn reset_ops() {
@@ -27,6 +49,14 @@ pub fn reset_ops() {
 /// Operations the last evaluation on this thread used.
 pub fn last_ops() -> u64 {
     OPS.with(|o| o.get())
+}
+
+/// Start the wall clock for the evaluation about to run on this thread. Called by [`reset_ops`]'s
+/// caller through [`start`], never by the engine.
+pub fn start(budget: Duration) {
+    DEADLINE.with(|d| d.set(Some(Instant::now() + budget)));
+    BUDGET_MS.with(|b| b.set(budget.as_millis() as u64));
+    reset_ops();
 }
 
 /// Build the sandboxed engine. PURE, so the limits are testable without a tree.
@@ -59,6 +89,14 @@ pub fn build_engine(cfg: &WardHostConfig) -> rhai::Engine {
 
     engine.on_progress(|ops| {
         OPS.with(|o| o.set(ops));
+        if ops % TIME_CHECK_OPS == 0
+            && DEADLINE
+                .with(|d| d.get())
+                .is_some_and(|at| Instant::now() >= at)
+        {
+            // Any non-`None` token terminates the script; rhai reports `ErrorTerminated`.
+            return Some(rhai::Dynamic::from(true));
+        }
         None
     });
     engine

@@ -12,6 +12,10 @@ use bough_plugin_wards_rhai::{
 };
 use chrono::{TimeZone, Utc};
 
+/// The wall-clock bound these calls run under. Generous: these tests bound OPS and DEPTH,
+/// and the timeout has its own test.
+const BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+
 fn host() -> WardHostConfig {
     WardHostConfig {
         dir: std::path::PathBuf::from("/nonexistent"),
@@ -89,7 +93,7 @@ fn a_file_cannot_be_opened() {
     )
     .expect("it compiles; there is simply no such function");
     let ev = event("thought/text", 1, serde_json::json!({}));
-    let err = evaluate(&ward, &ev, &view(&[]), &e).expect_err("no file function exists");
+    let err = evaluate(&ward, &ev, &view(&[]), &e, BUDGET).expect_err("no file function exists");
     assert!(
         matches!(&err, WardError::Runtime { detail, .. } if detail.contains("open_file")),
         "{err}"
@@ -102,7 +106,7 @@ fn the_environment_cannot_be_read() {
     let ward =
         CompiledWard::compile("probe", r#"fn on_event(ev, cx) { env("HOME") }"#, &e).unwrap();
     let ev = event("thought/text", 1, serde_json::json!({}));
-    assert!(evaluate(&ward, &ev, &view(&[]), &e).is_err());
+    assert!(evaluate(&ward, &ev, &view(&[]), &e, BUDGET).is_err());
 }
 
 #[test]
@@ -120,6 +124,7 @@ fn a_network_call_is_not_spellable() {
                 &event("thought/text", 1, serde_json::json!({})),
                 &view(&[]),
                 &e,
+                BUDGET,
             )
             .is_err(),
         };
@@ -138,6 +143,7 @@ fn a_runaway_script_is_terminated_and_named() {
         &event("thought/text", 1, serde_json::json!({})),
         &view(&[]),
         &e,
+        BUDGET,
     )
     .expect_err("it never returns on its own");
     assert!(
@@ -151,7 +157,8 @@ fn a_runaway_script_is_terminated_and_named() {
             &quiet,
             &event("thought/text", 2, serde_json::json!({})),
             &view(&[]),
-            &e
+            &e,
+            BUDGET,
         )
         .unwrap(),
         Vec::<RuntimeAction>::new()
@@ -197,6 +204,7 @@ fn a_ward_that_returns_something_else_is_a_named_failure() {
         &event("thought/text", 1, serde_json::json!({})),
         &view(&[]),
         &e,
+        BUDGET,
     )
     .unwrap_err();
     assert!(
@@ -224,8 +232,8 @@ async fn evaluate_is_pure_and_touches_no_seam() {
     let ledger = bough_plugin_ledger::LedgerHandle(MemoryStore::new(ctx.clone()));
     let actions = bough_plugin_actions::ActionsHandle::new(ledger.clone());
 
-    let first = evaluate(&ward, &ev, &view(&[]), &e).unwrap();
-    let second = evaluate(&ward, &ev, &view(&[]), &e).unwrap();
+    let first = evaluate(&ward, &ev, &view(&[]), &e, BUDGET).unwrap();
+    let second = evaluate(&ward, &ev, &view(&[]), &e, BUDGET).unwrap();
     assert_eq!(first, second, "the same event twice is the same list");
     assert_eq!(first.len(), 1);
 
@@ -268,14 +276,14 @@ fn the_dry_fire_and_the_live_path_call_the_same_evaluate() {
     let v = view(&events);
 
     // The dry-fire path.
-    let d = dry_run(&ward, &events, &v, &e);
+    let d = dry_run(&ward, &events, &v, &e, BUDGET);
 
     // The live path's own call, event by event — the SAME function the host's listener calls.
     let live: Vec<(Seq, Vec<RuntimeAction>)> = events
         .iter()
         .filter(|ev| ward.wants(&ev.kind))
         .filter_map(|ev| {
-            let a = evaluate(&ward, ev, &v, &e).unwrap();
+            let a = evaluate(&ward, ev, &v, &e, BUDGET).unwrap();
             (!a.is_empty()).then_some((ev.seq, a))
         })
         .collect();
@@ -386,5 +394,90 @@ fn an_out_of_order_timestamp_does_not_reset_the_window() {
     assert!(
         !admit_firing(&mut firings, 99_000, 2),
         "an earlier step is still inside the same minute"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// the sandbox, DIFFERENTIALLY
+// ---------------------------------------------------------------------------
+
+/// `a_file_cannot_be_opened`, `the_environment_cannot_be_read` and half of
+/// `a_network_call_is_not_spellable` above assert that an identifier is unknown — which rhai's own
+/// `Engine::new()` would also say, so on their own they hold against a fully privileged engine and
+/// prove nothing about `new_raw()` plus five selected packages.
+///
+/// This one is the differential: `timestamp()` is a real function a DEFAULT rhai engine has
+/// (`BasicTimePackage`), and the ward engine does not. If someone ever swaps `new_raw()` for
+/// `new()`, this test goes red and those three stay green.
+#[test]
+fn a_function_a_default_rhai_engine_has_is_absent_from_the_ward_engine() {
+    let default = rhai::Engine::new();
+    let got: rhai::Dynamic = default
+        .eval("timestamp()")
+        .expect("a DEFAULT rhai engine can read the clock — that is the point of this test");
+    assert!(!got.is_unit());
+
+    let e = build_engine(&host());
+    let ward =
+        CompiledWard::compile("probe", r#"fn on_event(ev, cx) { timestamp() }"#, &e).unwrap();
+    let ev = event("thought/text", 1, serde_json::json!({}));
+    let err = evaluate(&ward, &ev, &view(&[]), &e, BUDGET)
+        .expect_err("the ward engine has no clock, no fs and no process");
+    assert!(
+        matches!(&err, WardError::Runtime { detail, .. } if detail.contains("timestamp")),
+        "{err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// the wall clock
+// ---------------------------------------------------------------------------
+
+/// `eval_timeout_ms` is a bound the ENGINE enforces, not a documented promise. The op limit is set
+/// far out of reach so the only thing that can stop this script is the clock, and the error must
+/// be `Timeout` — the variant that used to be unconstructible.
+#[test]
+fn a_ward_that_outruns_eval_timeout_ms_is_terminated_and_named() {
+    let mut cfg = host();
+    cfg.max_ops = 5_000_000;
+    cfg.eval_timeout_ms = 50;
+    let e = build_engine(&cfg);
+    let ward = CompiledWard::compile("slow", &fixture("runaway.rhai"), &e).unwrap();
+    let started = std::time::Instant::now();
+    let err = evaluate(
+        &ward,
+        &event("thought/text", 1, serde_json::json!({})),
+        &view(&[]),
+        &e,
+        std::time::Duration::from_millis(cfg.eval_timeout_ms),
+    )
+    .expect_err("the clock stops it");
+    assert!(
+        matches!(&err, WardError::Timeout { ward, ms } if ward == "slow" && *ms == 50),
+        "{err}"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "it stopped on the clock, not on the op limit"
+    );
+}
+
+/// The SAME script under a generous timeout stops on `max_ops` instead — so the two bounds are
+/// separate and the timeout is not merely renaming the op limit.
+#[test]
+fn the_op_limit_is_still_what_stops_a_runaway_under_a_generous_timeout() {
+    let e = build_engine(&host());
+    let ward = CompiledWard::compile("runaway", &fixture("runaway.rhai"), &e).unwrap();
+    let err = evaluate(
+        &ward,
+        &event("thought/text", 1, serde_json::json!({})),
+        &view(&[]),
+        &e,
+        std::time::Duration::from_secs(60),
+    )
+    .expect_err("it never returns on its own");
+    assert!(
+        matches!(&err, WardError::TooManyOps { ward, .. } if ward == "runaway"),
+        "{err}"
     );
 }

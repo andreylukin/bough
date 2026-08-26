@@ -7,6 +7,10 @@
 //!
 //! P6-D15: the guard is per (trajectory, ref). Two agents both configured for one repo each get
 //! their own copy; deduping globally would silently starve the second.
+//!
+//! No runtime invariant: no row, no stream of its own. The at-least-once-with-a-ref-guard
+//! ordering this crate exists to hold is checked over the real delivery stream by the two
+//! collector rows that use it (`collector-github`, `collector-linear`).
 
 pub mod dedupe;
 pub mod delivery;

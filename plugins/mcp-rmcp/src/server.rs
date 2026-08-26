@@ -87,9 +87,26 @@ impl RmcpClient {
     }
 
     /// Shut the client (and, for stdio, its child process) down.
+    ///
+    /// `rmcp`'s `cancel()` CONSUMES the service, so this can only run when the disposer holds the
+    /// last reference. It normally does: the row's disposer withdraws the registration first, and
+    /// `tool-mcp`'s tool registrations unwind before it. If some clone is still in flight the
+    /// cancel cannot happen, and that case is now REPORTED rather than silent — a stdio child
+    /// left running with nobody logging it is the shape this was hiding.
     pub async fn shutdown(self: Arc<RmcpClient>) {
-        if let Ok(client) = Arc::try_unwrap(self) {
-            let _ = client.service.cancel().await;
+        let name = self.name.clone();
+        match Arc::try_unwrap(self) {
+            Ok(client) => {
+                let _ = client.service.cancel().await;
+            }
+            Err(still_held) => {
+                tracing::warn!(
+                    server = %name,
+                    holders = Arc::strong_count(&still_held),
+                    "MCP client could not be cancelled at disposal: another reference is still \
+                     live, so a stdio child process may be left running"
+                );
+            }
         }
     }
 }

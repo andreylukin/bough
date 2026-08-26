@@ -11,6 +11,7 @@
 //!
 //! [`Actor::Bot`]: bough_plugin_gh_cli::Actor::Bot
 
+pub mod ids;
 pub mod invariant;
 pub mod marker;
 pub mod runner;
@@ -25,6 +26,7 @@ use bough_plugin_actions::{
 use bough_plugin_actions_reconcile::{ActionLookup, ArtifactLookup};
 use bough_plugin_gh_cli::{Actor, Gh};
 
+pub use ids::{CommentNodeId, ReviewCommentId, ReviewThreadNodeId};
 pub use runner::{GhCli, GhRunner};
 
 /// The catalog name of this row.
@@ -60,16 +62,26 @@ pub struct PushToPrPayload {
     pub commits: Vec<String>,
 }
 
-/// `bot_thread_op`'s payload.
+/// `bot_thread_op`'s payload. The thread is named by its FIRST comment's REST database id — the
+/// only id a reader of `gh api .../pulls/comments` has. The GraphQL ids the resolve and close
+/// mutations need live in a different id space and are LOOKED UP from this one (see
+/// [`crate::ids`]); they are never spelled by the caller.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BotThreadPayload {
-    pub thread: String,
+    pub comment_id: ReviewCommentId,
     pub op: ThreadOp,
     pub body: Option<String>,
 }
 
 /// What may be done to a BOT review thread. There is no `create` and no human variant.
+///
+/// The three are three DIFFERENT acts against GitHub and each one is a different call:
+///
+/// - `Reply` leaves the comment and stops.
+/// - `Resolve` leaves the comment, then `resolveReviewThread` on the THREAD's node id.
+/// - `Close` leaves the comment, then `minimizeComment` (classifier `RESOLVED`) on the
+///   COMMENT's node id — the thread is folded away rather than marked resolved.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -189,10 +201,14 @@ impl GithubActions {
     /// id is only addressable under its repo (`repos/{o}/{r}/pulls/comments/{id}`).
     ///
     /// [`Actor::Human`]: bough_plugin_gh_cli::Actor::Human
-    pub async fn check_bot_thread(&self, repo: &str, thread: &str) -> Result<(), GhActionError> {
+    pub async fn check_bot_thread(
+        &self,
+        repo: &str,
+        comment: ReviewCommentId,
+    ) -> Result<CommentNodeId, GhActionError> {
         let v = self
             .gh
-            .json(&["api", &format!("repos/{repo}/pulls/comments/{thread}")])
+            .json(&["api", &format!("repos/{repo}/pulls/comments/{comment}")])
             .await?;
         let login = v
             .pointer("/user/login")
@@ -204,17 +220,83 @@ impl GithubActions {
             .and_then(|x| x.as_str())
             .unwrap_or("");
         match bough_plugin_gh_cli::classify(account_type, &login, &self.cfg.known_bots) {
-            Actor::Bot => Ok(()),
-            Actor::Human => Err(GhActionError::NotABot {
-                thread: thread.to_string(),
-                reason: bough_plugin_gh_cli::classify_reason(
-                    account_type,
-                    &login,
-                    &self.cfg.known_bots,
-                ),
-                login,
-            }),
+            Actor::Bot => {}
+            Actor::Human => {
+                return Err(GhActionError::NotABot {
+                    thread: comment.to_string(),
+                    reason: bough_plugin_gh_cli::classify_reason(
+                        account_type,
+                        &login,
+                        &self.cfg.known_bots,
+                    ),
+                    login,
+                });
+            }
         }
+        let node =
+            v.get("node_id")
+                .and_then(|x| x.as_str())
+                .ok_or_else(|| GhActionError::BadPayload {
+                    kind: "bot_thread_op",
+                    detail: format!("review comment {comment} carries no `node_id`"),
+                })?;
+        Ok(CommentNodeId(node.to_string()))
+    }
+
+    /// The GRAPHQL thread node id for a REST review-comment id. The two live in different id
+    /// spaces (see [`crate::ids`]), so `resolveReviewThread` cannot be handed the number: this
+    /// walks the PR's review threads and matches on the first comment's `databaseId`.
+    pub async fn thread_node_id(
+        &self,
+        repo: &str,
+        number: u64,
+        comment: ReviewCommentId,
+    ) -> Result<ReviewThreadNodeId, GhActionError> {
+        let (owner, name) = repo
+            .split_once('/')
+            .ok_or_else(|| GhActionError::BadPayload {
+                kind: "bot_thread_op",
+                detail: format!("`{repo}` is not owner/repo"),
+            })?;
+        let v = self
+            .gh
+            .json(&[
+                "api",
+                "graphql",
+                "-f",
+                THREADS_QUERY,
+                "-F",
+                &format!("owner={owner}"),
+                "-F",
+                &format!("name={name}"),
+                "-F",
+                &format!("number={number}"),
+            ])
+            .await?;
+        let nodes = v
+            .pointer("/data/repository/pullRequest/reviewThreads/nodes")
+            .and_then(|x| x.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for t in nodes {
+            let hit = t
+                .pointer("/comments/nodes")
+                .and_then(|x| x.as_array())
+                .map(|cs| {
+                    cs.iter()
+                        .any(|c| c.get("databaseId").and_then(|d| d.as_u64()) == Some(comment.0))
+                })
+                .unwrap_or(false);
+            if hit {
+                if let Some(id) = t.get("id").and_then(|x| x.as_str()) {
+                    return Ok(ReviewThreadNodeId(id.to_string()));
+                }
+            }
+        }
+        Err(GhActionError::NoSuchThread {
+            comment: comment.to_string(),
+            target: format!("{repo}#{number}"),
+        })
     }
 
     // ---- the three acts ------------------------------------------------------------------
@@ -311,12 +393,13 @@ impl GithubActions {
         })
     }
 
+    /// Reply, resolve and close are THREE acts and each one takes a different call. Every one of
+    /// them leaves the comment first, because the comment is what carries the marker: an act with
+    /// no trace in the world could not be reconciled after a crash.
     async fn bot_thread_op(&self, req: &ExecuteRequest) -> Result<ActionArtifact, GhActionError> {
         let p: BotThreadPayload = payload(req, "bot_thread_op")?;
         let (repo, number) = split_pr(&req.canonical_target)?;
-        self.check_bot_thread(&repo, &p.thread).await?;
-        // Every op leaves a comment, and the comment is what carries the marker: a resolve with no
-        // trace in the world could not be reconciled after a crash.
+        let comment_node = self.check_bot_thread(&repo, p.comment_id).await?;
         let body = marker::comment_suffix(
             p.body.as_deref().unwrap_or(match p.op {
                 ThreadOp::Reply => "",
@@ -332,7 +415,10 @@ impl GithubActions {
                     "api",
                     "--method",
                     "POST",
-                    &format!("repos/{repo}/pulls/{number}/comments/{}/replies", p.thread),
+                    &format!(
+                        "repos/{repo}/pulls/{number}/comments/{}/replies",
+                        p.comment_id
+                    ),
                     "-f",
                     &format!("body={body}"),
                 ],
@@ -347,29 +433,67 @@ impl GithubActions {
                     .and_then(|x| x.as_str())
                     .map(str::to_string)
             })
-            .unwrap_or_else(|| format!("{repo}#{number}:{}", p.thread));
-        if matches!(p.op, ThreadOp::Resolve | ThreadOp::Close) {
-            self.gh
-                .run(
-                    &[
-                        "api",
-                        "graphql",
-                        "-f",
-                        "query=mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}",
-                        "-f",
-                        &format!("id={}", p.thread),
-                    ],
-                    None,
-                )
-                .await?;
+            .unwrap_or_else(|| format!("{repo}#{number}:{}", p.comment_id));
+        let mut detail = serde_json::json!({
+            "op": p.op.as_str(),
+            "comment_id": p.comment_id,
+        });
+        match p.op {
+            ThreadOp::Reply => {}
+            ThreadOp::Resolve => {
+                let thread = self.thread_node_id(&repo, number, p.comment_id).await?;
+                self.gh
+                    .run(
+                        &[
+                            "api",
+                            "graphql",
+                            "-f",
+                            RESOLVE_MUTATION,
+                            "-F",
+                            &format!("threadId={thread}"),
+                        ],
+                        None,
+                    )
+                    .await?;
+                detail["thread_node_id"] = serde_json::json!(thread.0);
+            }
+            ThreadOp::Close => {
+                self.gh
+                    .run(
+                        &[
+                            "api",
+                            "graphql",
+                            "-f",
+                            MINIMIZE_MUTATION,
+                            "-F",
+                            &format!("subjectId={comment_node}"),
+                        ],
+                        None,
+                    )
+                    .await?;
+                detail["comment_node_id"] = serde_json::json!(comment_node.0);
+            }
         }
         Ok(ActionArtifact {
             locator,
             marker: req.marker.clone(),
-            detail: serde_json::json!({ "op": p.op.as_str(), "thread": p.thread }),
+            detail,
         })
     }
 }
+
+/// The review threads of one PR, with each thread's node id beside its comments' REST database
+/// ids. This is the ONLY bridge between the two id spaces (see [`crate::ids`]).
+const THREADS_QUERY: &str = "query=query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved comments(first:10){nodes{databaseId}}}}}}}";
+
+/// `Resolve`: marks the THREAD resolved. Takes a [`ReviewThreadNodeId`].
+const RESOLVE_MUTATION: &str =
+    "query=mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}";
+
+/// `Close`: folds the bot's comment away. Takes a [`CommentNodeId`] — a different id space and a
+/// different mutation from [`RESOLVE_MUTATION`], which is what keeps `close` from being `resolve`.
+const MINIMIZE_MUTATION: &str =
+    "query=mutation($subjectId:ID!){minimizeComment(input:{subjectId:$subjectId,classifier:RESOLVED}){minimizedComment{isMinimized}}}";
 
 /// The payload of one request, typed. `deny_unknown_fields` is what refuses a creation-shaped
 /// field on a kind that has no business with one.
@@ -526,6 +650,8 @@ pub enum GhActionError {
         login: String,
         reason: &'static str,
     },
+    #[error("bot_thread_op refused: no review thread on {target} opens with comment {comment}")]
+    NoSuchThread { comment: String, target: String },
     #[error("payload for `{kind}` is not what §7 sanctions: {detail}")]
     BadPayload { kind: &'static str, detail: String },
     #[error(transparent)]

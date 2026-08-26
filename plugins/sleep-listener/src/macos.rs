@@ -56,6 +56,8 @@ extern "C" {
     fn CFRunLoopRemoveSource(rl: CfRunLoopRef, source: CfRunLoopSourceRef, mode: CfStringRef);
     fn CFRunLoopRun();
     fn CFRunLoopStop(rl: CfRunLoopRef);
+    fn CFRetain(cf: *const c_void) -> *const c_void;
+    fn CFRelease(cf: *const c_void);
 }
 
 /// What the callback is handed. Reached from the run-loop thread ONLY, through a raw pointer this
@@ -105,6 +107,10 @@ pub struct IokitSource {
 unsafe impl Send for IokitSource {}
 unsafe impl Sync for IokitSource {}
 
+/// How often `stop` re-issues `CFRunLoopStop` while waiting for the listener thread to leave its
+/// run loop. A PROTOCOL BOUND on a documented CoreFoundation race, not a deployment knob.
+const STOP_RETRY: std::time::Duration = std::time::Duration::from_millis(5);
+
 impl IokitSource {
     /// Register with IOKit and start the run loop on a dedicated thread. `Err` when
     /// `IORegisterForSystemPower` returns a null port — the caller then falls back to NSWorkspace.
@@ -143,12 +149,17 @@ impl IokitSource {
                 let (rl, rl_source) = unsafe {
                     let rl_source = IONotificationPortGetRunLoopSource(port);
                     let rl = CFRunLoopGetCurrent();
+                    // RETAINED for the stopper. `stop` re-issues `CFRunLoopStop` until this
+                    // thread is gone, and without a retain the last re-issue can land on a run
+                    // loop this thread has already let go of. Released in `stop`, after the join.
+                    CFRetain(rl as *const c_void);
                     CFRunLoopAddSource(rl, rl_source, kCFRunLoopDefaultMode);
                     (rl, rl_source)
                 };
                 if tx.send(Ok(rl as usize)).is_err() {
                     // Nobody is holding the source; unwind rather than run a loop forever.
                     unsafe {
+                        CFRelease(rl as *const c_void);
                         CFRunLoopRemoveSource(rl, rl_source, kCFRunLoopDefaultMode);
                         IODeregisterForSystemPower(&mut notifier);
                         IOServiceClose(root_port);
@@ -190,14 +201,34 @@ impl IokitSource {
     }
 
     /// Stop the run loop and join the thread.
+    ///
+    /// THE STOP IS RETRIED. `start` returns as soon as the thread has published its run-loop
+    /// pointer, which happens BEFORE the thread calls `CFRunLoopRun`; a `CFRunLoopStop` issued in
+    /// that window lands on a run loop whose `_currentMode` is still NULL and is a documented
+    /// no-op. The stop was then lost, the thread went on to block in `CFRunLoopRun` forever, and
+    /// `stop` blocked forever in `join` — while holding the `thread` mutex, so `Drop` and any
+    /// concurrent `stop` blocked behind it too. Re-issuing until the thread is actually gone
+    /// closes the window without needing the thread to hand-shake from inside the loop.
+    ///
+    /// The handle is TAKEN OUT of the mutex before the join, so nothing waits on this holding a
+    /// lock either.
     pub fn stop(&self) {
-        if let Some(rl) = self.run_loop.lock().take() {
-            // SAFETY: `rl` is the run loop the thread published; stopping a run loop from another
-            // thread is the documented way to end `CFRunLoopRun`.
-            unsafe { CFRunLoopStop(rl as CfRunLoopRef) };
-        }
-        if let Some(t) = self.thread.lock().take() {
+        let rl = self.run_loop.lock().take();
+        let thread = self.thread.lock().take();
+        if let (Some(rl), Some(t)) = (rl, thread) {
+            let rl = rl as CfRunLoopRef;
+            loop {
+                // SAFETY: `rl` is the run loop the thread published; stopping a run loop from
+                // another thread is the documented way to end `CFRunLoopRun`.
+                unsafe { CFRunLoopStop(rl) };
+                if t.is_finished() {
+                    break;
+                }
+                std::thread::sleep(STOP_RETRY);
+            }
             let _ = t.join();
+            // SAFETY: the thread is joined; this balances the `CFRetain` it took.
+            unsafe { CFRelease(rl as *const c_void) };
         }
         if let Some(refcon) = self.refcon.lock().take() {
             // SAFETY: the thread is joined, so no callback can be running.
@@ -420,5 +451,10 @@ impl Drop for NsWorkspaceSource {
             send1(center, sel("removeObserver:"), self.observer as Id);
         }
         OBSERVERS.lock().retain(|(p, _)| *p != self.observer);
+        // The observer object itself. `start` created it with `alloc`/`init`, so this side owns
+        // it; without the release, every mount/unmount cycle of the row leaked one instance.
+        // Done LAST: the OBSERVERS entry is keyed by this address and must be gone before the
+        // address can be reused by a later allocation.
+        send0(self.observer as Id, sel("release"));
     }
 }

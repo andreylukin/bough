@@ -34,8 +34,40 @@ pub use vocabulary::{HookFired, HOOK_FIRED};
 /// The catalog name of this row.
 pub const PLUGIN_NAME: &str = "hooks-exec";
 
-/// The three HARNESS points, alongside every ledger step type (P6-D13).
+/// The three HARNESS points, alongside every ledger step type (P6-D13). ALL THREE ARE WIRED:
+/// `boot` fires once in `apply`, `schedule/fired` off the schedule seam's emit event, and
+/// `power/changed` off the power seam's parallel event.
 pub const HARNESS_POINTS: [&str; 3] = ["boot", "schedule/fired", "power/changed"];
+
+/// The trajectory a harness-point `hook/fired` row lands on. A schedule fire and a power change
+/// belong to no agent's trajectory; this is the system one, and it is a protocol constant.
+pub const SYSTEM_TRAJ: &str = "system";
+
+/// PURE: is `point` a spellable hook point at all? A harness point, or a `family/name` step type.
+///
+/// This is the SHAPE half of the check, which is self-contained and therefore belongs in
+/// `validate` (§0.2). Whether a well-shaped step type is one any row in this tree actually
+/// declares is not knowable at load — the declarations arrive as rows activate — so it is the
+/// crate's `every_configured_point_is_a_point_that_exists` invariant, at quiesce.
+pub fn is_point_shaped(point: &str) -> bool {
+    let p = point.trim();
+    if p != point || p.is_empty() {
+        return false;
+    }
+    if HARNESS_POINTS.contains(&p) {
+        return true;
+    }
+    match p.split_once('/') {
+        Some((a, b)) => {
+            !a.is_empty()
+                && !b.is_empty()
+                && !b.contains('/')
+                && p.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '-' | '_'))
+        }
+        None => false,
+    }
+}
 
 /// The row's config.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -392,8 +424,13 @@ impl Plugin for HooksExecPlugin {
             ));
         }
         for p in &cfg.points {
-            if p.point.trim().is_empty() {
-                return Err(bad("point: a hook point needs a name".into()));
+            if !is_point_shaped(&p.point) {
+                return Err(bad(format!(
+                    "point `{}`: a hook point is either a harness point ({}) or a ledger step \
+                     type spelled `family/name` — a typo used to mount green and never fire",
+                    p.point,
+                    HARNESS_POINTS.join(", ")
+                )));
             }
             if !p.exec.is_absolute() {
                 return Err(bad(format!(
@@ -438,6 +475,21 @@ impl Plugin for HooksExecPlugin {
             .get::<bough_plugin_schedule::Schedule>()
             .map_err(|e| PluginError::new(entry.clone(), e))?;
 
+        // What this row configured, for the `every_configured_point_is_a_point_that_exists`
+        // invariant to read at quiesce. Withdrawn with the row.
+        {
+            let fiber = ctx.fiber_uid();
+            crate::invariant::publish_points(
+                fiber,
+                cfg.points.iter().map(|p| p.point.clone()).collect(),
+            );
+            ctx.effect(move |e| async move {
+                e.defer(move || async move { crate::invariant::withdraw_points(fiber) });
+                Ok(())
+            })
+            .await?;
+        }
+
         let host = Arc::new(HooksHost::new(cfg.clone()));
         let sink: Arc<dyn ActionSink> = Arc::new(RuntimeSink {
             cx: RuntimeCx {
@@ -459,8 +511,6 @@ impl Plugin for HooksExecPlugin {
         // so the trigger is synthetic (`Trigger::synthetic`) and the `hook/fired` row cites
         // nothing — there is nothing to cite.
         //
-        // The other two harness points (`schedule/fired`, `power/changed`) are NOT wired: their
-        // events belong to rows this work package does not own. See `docs/track-b-merge-notes.md`.
         {
             let h = Arc::clone(&host);
             let s = Arc::clone(&sink);
@@ -474,6 +524,87 @@ impl Plugin for HooksExecPlugin {
             {
                 tracing::info!(point = %f.point, exec = %f.exec, ok = f.ok, "boot hook fired");
             }
+        }
+
+        // `schedule/fired` — the schedule seam's EMIT event, one dispatch per job fire. No
+        // triggering step exists (a job fire is not model-visible and is not a step type), so the
+        // trigger is synthetic and the `hook/fired` row is appended on the SYSTEM trajectory.
+        {
+            let h = Arc::clone(&host);
+            let s = Arc::clone(&sink);
+            let l = ledger.clone();
+            ctx.on::<bough_plugin_schedule::ScheduleFired, _, _>(move |run| {
+                let (h, s, l) = (Arc::clone(&h), Arc::clone(&s), l.clone());
+                async move {
+                    if h.for_point("schedule/fired").is_empty() {
+                        return;
+                    }
+                    let event = serde_json::json!({
+                        "reason": format!("{:?}", run.reason),
+                        "at": run.at.to_rfc3339(),
+                        "outcome": format!("{:?}", run.outcome),
+                    });
+                    let trigger =
+                        Trigger::synthetic(&RuntimeSource::Hook("schedule/fired".to_string()));
+                    for f in h
+                        .fire("schedule/fired", event, run.at, &trigger, s.as_ref())
+                        .await
+                    {
+                        let row = fired_step(
+                            &TrajId::new(SYSTEM_TRAJ),
+                            &trigger.wake,
+                            &f,
+                            None,
+                            run.at,
+                        );
+                        if let Err(e) = l.0.append(row).await {
+                            tracing::warn!(point = %f.point, error = %e, "`hook/fired` did not append");
+                        }
+                    }
+                }
+            })
+            .await?;
+        }
+
+        // `power/changed` — the power seam's PARALLEL event. Same shape as `schedule/fired`.
+        {
+            let h = Arc::clone(&host);
+            let s = Arc::clone(&sink);
+            let l = ledger.clone();
+            ctx.on_parallel::<bough_plugin_power::PowerChanged, _, _>(move |ev| {
+                let (h, s, l) = (Arc::clone(&h), Arc::clone(&s), l.clone());
+                async move {
+                    if h.for_point("power/changed").is_empty() {
+                        return;
+                    }
+                    let at = ev.at();
+                    let event = match &ev {
+                        bough_plugin_power::PowerEvent::WillSleep { .. } => {
+                            serde_json::json!({ "what": "will_sleep", "at": at.to_rfc3339() })
+                        }
+                        bough_plugin_power::PowerEvent::DidWake { asleep_for, .. } => {
+                            serde_json::json!({
+                                "what": "did_wake",
+                                "at": at.to_rfc3339(),
+                                "asleep_for_ms": asleep_for.map(|d| d.as_millis() as u64),
+                            })
+                        }
+                    };
+                    let trigger =
+                        Trigger::synthetic(&RuntimeSource::Hook("power/changed".to_string()));
+                    for f in h
+                        .fire("power/changed", event, at, &trigger, s.as_ref())
+                        .await
+                    {
+                        let row =
+                            fired_step(&TrajId::new(SYSTEM_TRAJ), &trigger.wake, &f, None, at);
+                        if let Err(e) = l.0.append(row).await {
+                            tracing::warn!(point = %f.point, error = %e, "`hook/fired` did not append");
+                        }
+                    }
+                }
+            })
+            .await?;
         }
 
         // ONE listener for every ledger-step point: `ledger/step` is the ledger's only event, and

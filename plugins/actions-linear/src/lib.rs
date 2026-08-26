@@ -372,6 +372,12 @@ impl Plugin for LinearActionsPlugin {
                 detail: "timeout_ms: 0 would make every Linear call fail immediately".into(),
             });
         }
+        // An ABSENT `api_key` is deliberately NOT a load error: the shipped row defaults it to
+        // `env_or("LINEAR_API_KEY", "")` and a machine without the variable must still boot
+        // (§0.2), exactly as `collector-linear` does. It is handled in `apply` instead, and
+        // LOUDLY: the row activates and registers NOTHING, so `linear_write` is refused by the
+        // executor as an unprovided kind rather than advertised to the model and then failing at
+        // the far end as an opaque HTTP 401 inside an idempotency journal row.
         Ok(())
     }
 
@@ -380,6 +386,14 @@ impl Plugin for LinearActionsPlugin {
         let actions = ctx
             .get::<Actions>()
             .map_err(|e| PluginError::new(entry.clone(), e))?;
+        if cfg.api_key.trim().is_empty() {
+            tracing::warn!(
+                target: "actions-linear",
+                "no Linear API key resolved: `linear_write` is NOT registered, so it is refused \
+                 by the executor rather than failing at the endpoint"
+            );
+            return Ok(());
+        }
         let provider = LinearActions::open(cfg)
             .map_err(|e| PluginError::new(entry.clone(), anyhow::Error::new(e)))?;
         ActionsHandle::provider(&actions, &ctx, provider.clone() as Arc<dyn ActionProvider>)

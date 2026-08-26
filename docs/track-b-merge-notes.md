@@ -176,13 +176,17 @@ the only way in is `ctx.kernel().unwrap().runtime().dispose(uid)` —
 `plugins/skills/src/lib.rs::reconcile` does exactly that. It works and it is public, but it reaches
 through `Kernel` and `FiberRuntime` for something a plugin should be able to say on its own handle.
 
-## 11. `plugins/hooks-exec` — two harness points are declared and not wired
+## 11. `plugins/hooks-exec` — two harness points are declared and not wired ✅ CLOSED
 
-`HARNESS_POINTS` names `boot`, `schedule/fired` and `power/changed` (P6-D13). `boot` is fired by
-`HooksExecPlugin::apply`; the other two are not, because their events belong to `plugins/schedule`
-and `plugins/power`, which WP-1 and WP-8 own. Wiring them is two `ctx.on::<…>` listeners calling
-`HooksHost::fire` with the point's name — no new API on either crate, just the two subscriptions,
-once both event types exist on the merged branch.
+**Closed by the review-fix pass.** Both events are defined by track-B crates on this branch
+(`bough_plugin_schedule::ScheduleFired`, `bough_plugin_power::PowerChanged`), so the two listeners
+are wired here and no merge action is needed. Their `hook/fired` rows land on the `system`
+trajectory with a synthetic trigger, because a job fire and a power change belong to no agent's
+trajectory. `HooksConfig` also gained a point-name check in two halves: `is_point_shaped` at load
+(self-contained) and the `every_configured_point_is_a_point_that_exists` invariant at quiesce (the
+step-type vocabulary is not complete until the tree is up). Proven by
+`crates/bough/tests/hooks_journal.rs::{the_power_changed_harness_point_fires_on_a_real_power_event,
+the_schedule_fired_harness_point_fires_on_a_real_job_run}`.
 
 ## 12. `plugins/agents/src/agent.rs` — a way to know when a requested wake FINISHED
 
@@ -318,3 +322,33 @@ rate bound stays as the backstop for loops that close through something else (tw
 each other, a hook, a schedule), so this is an ADDITION, not a replacement.
 
 Merge note 7 (`Sender::Ward(String)`) is the first half of that plumbing and should land first.
+
+
+---
+
+## 18. What the review-fix pass changed that the merge should know about
+
+- **`plugins/actions-github`'s `bot_thread_op` payload changed shape.** `thread: String` is now
+  `comment_id: ReviewCommentId` (a branded u64 — the REST review-comment database id). The
+  GraphQL ids the resolve and close mutations need are LOOKED UP (`GithubActions::thread_node_id`)
+  and never spelled by the caller. `close` is now `minimizeComment`, a different mutation from
+  `resolve`'s `resolveReviewThread`. Anything on the merge branch that constructs a
+  `bot_thread_op` payload must be updated.
+- **`bundles/bough-base.yml`: `skills.dir` and `wards.dir` are `bough_path(...)`, not
+  `home_path(".bough/...")`.** Same location for a real user; hermetic for any test that isolates
+  only `$BOUGH_HOME`. Any other row whose default should follow bough's home rather than the
+  user's home wants the same treatment — `old-feed`'s `bough_db`/`jungler_db` are deliberately
+  `home_path`, because they name the OLD installation's files.
+- **`schedule-cron`'s `tick_ms` config field is GONE**, replaced by
+  `bough_plugin_schedule_cron::SCHEDULER_TICK_MS`. A bundle on the merge branch that still sets it
+  will be refused by `deny_unknown_fields`.
+- **`mcp-subprocess`'s `ProcessRow` gained `call_timeout_ms` and `boot_timeout_ms`**, both
+  validated as non-zero. A `processes:` entry written before this pass will not deserialize.
+- **`plugins/wards-rhai` publishes a `wards.config` service key** (the mounted host row's
+  `Arc<WardHostConfig>`) so `bough wards test` dry-fires under the deployment's own limits. The CLI
+  row declares it OPTIONAL, which makes the row a dependent and therefore re-appliable — hence
+  `DRY_RUN_DONE`, which keeps the dry run to once per process.
+- **`plugins/collector-linear` exposes `hold_key`/`release_key`.** The row's disposer releases;
+  the set is refcounted so two rows on one key do not blind each other's invariant.
+- **`plugins/wards-rhai::evaluate` and `::dry_run` take a `Duration` budget.** Any caller on the
+  merge branch needs the extra argument.

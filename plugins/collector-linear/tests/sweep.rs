@@ -206,3 +206,105 @@ async fn graphql_errors_are_reported_as_a_failed_source() {
         .iter()
         .all(|(_, why)| why.contains("returned errors")));
 }
+
+/// The configured scope REACHES THE QUERY. `teams`/`projects` used to be config nothing read: the
+/// query carried no filter, so the sweep collected every issue and comment in the workspace and
+/// stamped `WakeClass::Assigned` on all of them.
+#[tokio::test]
+async fn the_configured_scope_is_in_the_query_the_stub_receives() {
+    let fx = Fx::new().await;
+    let stub = Stub::start(Mode::Ok).await;
+    let _sol = fx.agent("sol").await;
+    let mut cfg = fx.cfg(&stub.url);
+    cfg.projects = vec!["Rebuild".to_string()];
+    fx.collector(cfg).sweep_at(at()).await.expect("a sweep");
+
+    // The stub records inside the connection task, which may finish just after the client's
+    // response has been read; wait, bounded, for both queries rather than racing it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while stub.requests().len() < 2 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let bodies: Vec<serde_json::Value> = stub
+        .requests()
+        .iter()
+        .map(|(_, body)| serde_json::from_str(body).expect("the stub saw JSON"))
+        .collect();
+    assert!(!bodies.is_empty(), "the stub saw a request");
+    let issues = bodies
+        .iter()
+        .find(|b| b["query"].as_str().unwrap_or("").contains("BoughIssues"))
+        .expect("the issues query was sent");
+    let and = issues["variables"]["filter"]["and"]
+        .as_array()
+        .expect("the issues query carries a filter");
+    assert_eq!(and[0]["assignee"]["isMe"]["eq"], true, "{issues}");
+    assert!(
+        and.iter().any(|c| c["team"]["key"]["in"][0] == "TEAM"),
+        "the configured team is in the filter: {issues}"
+    );
+    assert!(
+        and.iter()
+            .any(|c| c["project"]["name"]["in"][0] == "Rebuild"),
+        "the configured project is in the filter: {issues}"
+    );
+
+    let comments = bodies
+        .iter()
+        .find(|b| b["query"].as_str().unwrap_or("").contains("BoughComments"))
+        .expect("the comments query was sent");
+    assert_eq!(
+        comments["variables"]["filter"]["and"][0]["issue"]["team"]["key"]["in"][0], "TEAM",
+        "a comment is scoped through its issue: {comments}"
+    );
+}
+
+/// A row with neither `teams` nor `projects` — which is what `bundles/bough-base.yml` ships —
+/// says so, every sweep, instead of quietly sweeping the whole workspace into `deliver_to`.
+#[tokio::test]
+async fn an_unscoped_row_reports_itself_off_and_sends_nothing() {
+    let fx = Fx::new().await;
+    let stub = Stub::start(Mode::Ok).await;
+    let _sol = fx.agent("sol").await;
+    let mut cfg = fx.cfg(&stub.url);
+    cfg.teams = Vec::new();
+    cfg.projects = Vec::new();
+    let report = fx.collector(cfg).sweep_at(at()).await.expect("a sweep");
+
+    assert!(
+        report
+            .disabled
+            .iter()
+            .any(|(what, why)| what == "scope" && why.contains("neither `teams` nor `projects`")),
+        "{:?}",
+        report.disabled
+    );
+    assert!(report.sources.is_empty(), "{:?}", report.sources);
+    assert!(stub.requests().is_empty(), "no query was sent at all");
+    assert!(fx.delivered("sol").await.is_empty());
+}
+
+/// A row's key leaves process memory with the row. `open` takes a reference on it for the
+/// invariant to scan by; nothing used to give it back, so a disabled or reloaded row left the
+/// secret behind.
+#[test]
+fn releasing_a_rows_key_takes_it_out_of_process_memory() {
+    use bough_plugin_collector_linear::{active_keys, hold_key, release_key};
+    // A key of its own, so a collector another test in this binary built cannot hold it.
+    const MINE: &str = "lin_api_release_test";
+    // Two rows holding one key: the first release must not blind the second's invariant.
+    hold_key(MINE);
+    hold_key(MINE);
+    assert!(active_keys().iter().any(|k| k == MINE));
+    release_key(MINE);
+    assert!(
+        active_keys().iter().any(|k| k == MINE),
+        "the second row still holds it"
+    );
+    release_key(MINE);
+    assert!(
+        !active_keys().iter().any(|k| k == MINE),
+        "the last release takes it out: {:?}",
+        active_keys()
+    );
+}

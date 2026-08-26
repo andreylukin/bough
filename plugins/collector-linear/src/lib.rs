@@ -9,7 +9,7 @@
 pub mod graphql;
 pub mod invariant;
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -34,11 +34,46 @@ pub const REDACTED: &str = "<redacted>";
 /// The keys live rows activated with. The invariant's `check` is a fn pointer that captures
 /// nothing, so this is how it knows what to scan the ledger FOR — the value is never rendered,
 /// logged or returned anywhere else.
-static ACTIVE_KEYS: parking_lot::Mutex<BTreeSet<String>> = parking_lot::Mutex::new(BTreeSet::new());
+static ACTIVE_KEYS: parking_lot::Mutex<Option<BTreeMap<String, usize>>> =
+    parking_lot::Mutex::new(None);
 
 /// The secrets this tree's live Linear rows hold. Used by `invariant.rs` only.
 pub fn active_keys() -> Vec<String> {
-    ACTIVE_KEYS.lock().iter().cloned().collect()
+    ACTIVE_KEYS
+        .lock()
+        .as_ref()
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Take a reference on `key` for a row that is activating. REFCOUNTED, because two rows in one
+/// process may legitimately hold the same key and the first to unload must not blind the other's
+/// invariant.
+pub fn hold_key(key: &str) {
+    if key.trim().is_empty() {
+        return;
+    }
+    *ACTIVE_KEYS
+        .lock()
+        .get_or_insert_with(BTreeMap::new)
+        .entry(key.to_string())
+        .or_insert(0) += 1;
+}
+
+/// Release it. The LAST holder's release takes the secret out of process memory, which is what
+/// makes "unloading a row leaves no trace" true of the credential too.
+pub fn release_key(key: &str) {
+    if key.trim().is_empty() {
+        return;
+    }
+    let mut slot = ACTIVE_KEYS.lock();
+    let Some(map) = slot.as_mut() else { return };
+    if let Some(n) = map.get_mut(key) {
+        *n = n.saturating_sub(1);
+        if *n == 0 {
+            map.remove(key);
+        }
+    }
 }
 
 /// The row's config.
@@ -114,9 +149,7 @@ impl LinearCollector {
             .timeout(std::time::Duration::from_millis(cfg.timeout_ms))
             .build()
             .map_err(|e| CollectError::Transport(e.to_string()))?;
-        if !cfg.api_key.trim().is_empty() {
-            ACTIVE_KEYS.lock().insert(cfg.api_key.clone());
-        }
+        hold_key(&cfg.api_key);
         Ok(LinearCollector {
             cfg,
             http,
@@ -149,6 +182,21 @@ impl LinearCollector {
             report.disabled.push((
                 "api_key".to_string(),
                 "no Linear API key resolved; every source is off".to_string(),
+            ));
+            *self.last.lock() = report.clone();
+            return Ok(report);
+        }
+        if self.cfg.teams.is_empty() && self.cfg.projects.is_empty() {
+            // LOUD, every sweep, and never a boot failure — the same shape as the absent key. An
+            // unscoped row would sweep the whole workspace and wake `deliver_to` for every
+            // ticket in the org, which is not something a shipped default may do by omission.
+            tracing::warn!(
+                target: "collector-linear",
+                "neither `teams` nor `projects` is set: this row collects nothing"
+            );
+            report.disabled.push((
+                "scope".to_string(),
+                "neither `teams` nor `projects` is set; this row collects nothing".to_string(),
             ));
             *self.last.lock() = report.clone();
             return Ok(report);
@@ -264,7 +312,13 @@ impl LinearCollector {
     ) -> Result<(Vec<Collected>, Option<String>), CollectError> {
         let body = serde_json::json!({
             "query": graphql::query_for(source),
-            "variables": { "first": self.cfg.batch, "after": after },
+            "variables": {
+                "first": self.cfg.batch,
+                "after": after,
+                // THE SCOPE. `teams` and `projects` are what a deployment sets to say which
+                // slice of the workspace this row is for; before this they reached no query.
+                "filter": graphql::filter_for(source, &self.cfg.teams, &self.cfg.projects),
+            },
         });
         let response = self
             .http
@@ -404,10 +458,24 @@ impl Plugin for LinearCollectorPlugin {
         .clone();
 
         let cadence = cfg.cadence.clone();
+        let key = cfg.api_key.clone();
         let collector = Arc::new(
             LinearCollector::open(cfg, LedgerHandle(ledger.0.clone()), (*agents).clone())
                 .map_err(|e| PluginError::new(entry.clone(), e))?,
         );
+        // The key `open` took a reference on comes back out with the row. Without this, disabling
+        // or reloading the row left the secret in process memory and left the crate's own
+        // invariant scanning the ledger for a key whose row has gone.
+        ctx.effect(move |e| async move {
+            e.defer(move || {
+                let key = key.clone();
+                async move {
+                    crate::release_key(&key);
+                }
+            });
+            Ok(())
+        })
+        .await?;
 
         schedule
             .0

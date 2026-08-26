@@ -85,3 +85,23 @@ fn the_nsworkspace_observer_receives_a_posted_sleep_and_wake() {
     NsWorkspaceSource::post("NSWorkspaceDidWakeNotification");
     assert_eq!(out.lock().len(), 2, "a removed observer hears nothing");
 }
+
+/// The unload-while-loading race, driven directly. `IokitSource::start` returns as soon as the
+/// thread has published its run-loop pointer, which is BEFORE the thread reaches `CFRunLoopRun`;
+/// a `CFRunLoopStop` issued in that window is a documented no-op on a run loop whose
+/// `_currentMode` is NULL. Before the retry loop in `stop`, the stop was simply lost — the thread
+/// then blocked in `CFRunLoopRun` forever and `stop` blocked forever in `join`, holding the
+/// `thread` mutex so `Drop` blocked behind it too.
+///
+/// Twenty start-then-immediately-stop cycles is enough to land inside the window on this machine;
+/// if the race is back, this hangs rather than failing, which is exactly what it did in
+/// production.
+#[test]
+fn starting_and_immediately_stopping_never_hangs() {
+    for _ in 0..20 {
+        let (g, out) = gate(1);
+        let source = IokitSource::start(Arc::clone(&g)).expect("a port");
+        source.stop();
+        assert!(out.lock().is_empty());
+    }
+}

@@ -271,3 +271,27 @@ async fn a_prs_ref_carried_for_the_router_is_not_a_delivery_of_that_pr() {
         "{cited:?}"
     );
 }
+
+/// An empty `repos` — which is what `bundles/bough-base.yml` ships — SAYS SO. Before this the
+/// sweep looped over nothing and reported `Ran { "0 delivered from 0 sources" }`, so the shipped
+/// row activated, scheduled, fired every five minutes and reported success while collecting
+/// nothing.
+#[tokio::test]
+async fn a_row_with_no_repos_reports_itself_off_and_spends_no_gh_call() {
+    let fx = Fx::new().await;
+    let _sol = fx.agent("sol").await;
+    let mut cfg = fx.cfg();
+    cfg.repos = Vec::new();
+    let report = fx.collector(cfg).sweep_at(at()).await.expect("a sweep");
+
+    assert!(
+        report
+            .disabled
+            .iter()
+            .any(|(what, why)| what == "repos" && why.contains("collects nothing")),
+        "{:?}",
+        report.disabled
+    );
+    assert!(report.sources.is_empty(), "{:?}", report.sources);
+    assert!(fx.gh_log().is_empty(), "no `gh` was spawned");
+}

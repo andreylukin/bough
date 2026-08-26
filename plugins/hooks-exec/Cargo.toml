@@ -27,6 +27,7 @@ bough-plugin-agents = { workspace = true }
 bough-plugin-actions = { workspace = true }
 bough-plugin-workers = { workspace = true }
 bough-plugin-schedule = { workspace = true }
+bough-plugin-power = { workspace = true }
 bough-plugin-commands = { workspace = true }
 
 [dev-dependencies]

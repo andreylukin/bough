@@ -126,7 +126,7 @@ async fn editing_one_ward_file_remounts_exactly_that_child() {
     let before = wards(&kernel);
     assert_eq!(
         before.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
-        vec!["ward.a".to_string(), "ward.b".to_string()],
+        vec!["wards.a".to_string(), "wards.b".to_string()],
         "one child entry per ward file"
     );
     // One listener per ward, on top of whatever the ledger row itself keeps.
@@ -141,8 +141,8 @@ async fn editing_one_ward_file_remounts_exactly_that_child() {
 
     let changed = until(|| {
         wards(&kernel).iter().any(|(id, uid)| {
-            id == "ward.b"
-                && Some(*uid) != before.iter().find(|(i, _)| i == "ward.b").map(|(_, u)| *u)
+            id == "wards.b"
+                && Some(*uid) != before.iter().find(|(i, _)| i == "wards.b").map(|(_, u)| *u)
         })
     })
     .await;
@@ -160,13 +160,13 @@ async fn editing_one_ward_file_remounts_exactly_that_child() {
     );
     let uid_of = |v: &[(String, u64)], id: &str| v.iter().find(|(i, _)| i == id).map(|(_, u)| *u);
     assert_eq!(
-        uid_of(&after, "ward.a"),
-        uid_of(&before, "ward.a"),
+        uid_of(&after, "wards.a"),
+        uid_of(&before, "wards.a"),
         "the untouched ward kept its fiber"
     );
     assert_ne!(
-        uid_of(&after, "ward.b"),
-        uid_of(&before, "ward.b"),
+        uid_of(&after, "wards.b"),
+        uid_of(&before, "wards.b"),
         "the edited ward is a NEW fiber"
     );
     assert!(
@@ -191,7 +191,7 @@ async fn editing_one_ward_file_remounts_exactly_that_child() {
         .collect();
     assert_eq!(
         moved,
-        vec![&"ward.b".to_string()],
+        vec![&"wards.b".to_string()],
         "exactly one child entry reconciles; these moved: {moved:?}"
     );
 
@@ -214,7 +214,7 @@ async fn deleting_a_ward_file_takes_its_row_and_its_listener_with_it() {
         "the deleted ward's row stayed: {:?}",
         wards(&kernel)
     );
-    assert_eq!(wards(&kernel)[0].0, "ward.a");
+    assert_eq!(wards(&kernel)[0].0, "wards.a");
     assert!(
         until(|| kernel.core().listener_count("ledger/step") == before - 1).await,
         "the deleted ward left its listener behind: {} (was {before})",
@@ -242,13 +242,13 @@ async fn a_ward_that_does_not_compile_fails_its_own_row_and_leaves_its_sibling_r
         }
         None
     }
-    let bad = find(&rows, "ward.bad").expect("the bad ward is still a row");
+    let bad = find(&rows, "wards.bad").expect("the bad ward is still a row");
     assert!(
         format!("{:?}", bad.state).to_lowercase().contains("failed"),
         "an uncompilable ward fails its own row: {:?}",
         bad.state
     );
-    let good = find(&rows, "ward.a").expect("the good ward is a row");
+    let good = find(&rows, "wards.a").expect("the good ward is a row");
     assert!(
         format!("{:?}", good.state)
             .to_lowercase()

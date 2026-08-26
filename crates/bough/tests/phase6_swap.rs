@@ -423,7 +423,7 @@ async fn disabling_the_host_row_unmounts_every_ward_child_entry() {
 
     assert_eq!(
         ward_rows(&kernel),
-        vec!["ward.a".to_string(), "ward.b".to_string()],
+        vec!["wards.a".to_string(), "wards.b".to_string()],
         "one child entry per ward file"
     );
     let listeners_with_wards = kernel.core().listener_count("ledger/step");
@@ -450,7 +450,7 @@ async fn disabling_the_host_row_unmounts_every_ward_child_entry() {
         .map(|(id, _, _)| id.clone())
         .filter(|id| !after.iter().any(|(a, _, _)| a == id))
         .collect();
-    assert_eq!(gone, vec!["ward.a".to_string(), "ward.b".to_string()]);
+    assert_eq!(gone, vec!["wards.a".to_string(), "wards.b".to_string()]);
 
     // --- and re-enabling returns them ----------------------------------------------------------
     clear_patch(&dir);
@@ -460,7 +460,7 @@ async fn disabling_the_host_row_unmounts_every_ward_child_entry() {
 
     assert_eq!(
         ward_rows(&kernel),
-        vec!["ward.a".to_string(), "ward.b".to_string()],
+        vec!["wards.a".to_string(), "wards.b".to_string()],
         "every ward came back"
     );
     assert_eq!(row(&kernel, "wards").state, FiberState::Active);

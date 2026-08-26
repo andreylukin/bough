@@ -120,7 +120,7 @@
   plugin: schedule
 - id: schedule.cron
   plugin: schedule-cron
-  config: { state_db: !!expr 'bough_path("schedule.db")', job_timeout_ms: 300000, tick_ms: 500 }
+  config: { state_db: !!expr 'bough_path("schedule.db")', job_timeout_ms: 300000 }
 
 # §7: the boundary block, one source, every agent's projection.
 - id: boundary
@@ -154,6 +154,9 @@
   config:
     cadence: { every_ms: 300000 }
     gh_bin: gh
+    # EMPTY BY DEFAULT, and the row says so: every sweep reports a `repos` entry in `disabled`
+    # and warns, rather than reporting success over nothing. Name repositories in the patch layer
+    # to turn this collector on.
     repos: []
     prs: true
     review_requests: true
@@ -171,6 +174,8 @@
     cadence: { every_ms: 600000 }
     endpoint: "https://api.linear.app/graphql"
     api_key: !!expr 'env_or("LINEAR_API_KEY", "")'
+    # EMPTY BY DEFAULT, like `collect.github`'s `repos`: with neither set the row reports itself
+    # off every sweep instead of sweeping the whole Linear workspace into `deliver_to`.
     teams: []
     projects: []
     deliver_to: [sol]
@@ -193,7 +198,9 @@
 - id: wards
   plugin: wards-rhai
   config:
-    dir: !!expr 'home_path(".bough/wards")'
+    # `bough_path`, NOT `home_path`: these dirs must follow `$BOUGH_HOME`, or every subprocess
+    # test that isolates only `$BOUGH_HOME` scans and watches the developer's real `~/.bough`.
+    dir: !!expr 'bough_path("wards")'
     glob: "*.rhai"
     watch: true
     debounce_ms: 400
@@ -222,7 +229,8 @@
 - id: skills
   plugin: skills
   config:
-    dir: !!expr 'home_path(".bough/skills")'
+    # `bough_path`, NOT `home_path` — see the `wards` row.
+    dir: !!expr 'bough_path("skills")'
     glob: "*.md"
     watch: true
     debounce_ms: 400

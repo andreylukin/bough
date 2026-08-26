@@ -9,23 +9,38 @@
 
 use std::collections::BTreeMap;
 
-use bough_kernel::{Cadence, Context, InvariantSpec, InvariantViolation};
+use bough_kernel::{Cadence, Context, FiberUid, InvariantSpec, InvariantViolation};
 use bough_plugin_schedule::{JobInfo, JobRun};
 use parking_lot::Mutex;
 
 use crate::CronScheduler;
 
-/// The live Provider, if this process has one. Set by `apply`, cleared by its disposer.
-static LIVE: Mutex<Option<std::sync::Weak<CronScheduler>>> = Mutex::new(None);
+/// The live Providers of this process, KEYED BY FIBER. A single global slot would be clobbered by
+/// a second `schedule-cron` row (two trees in one test binary, or an isolate), and either row's
+/// disposer would clear it for both — after which the check would take the `None` path and pass
+/// vacuously. Sibling crates key per `FiberUid` for exactly this reason.
+static LIVE: Mutex<Option<BTreeMap<FiberUid, std::sync::Weak<CronScheduler>>>> = Mutex::new(None);
 
-/// Publish the live scheduler for the invariant to read.
-pub fn publish(me: &std::sync::Arc<CronScheduler>) {
-    *LIVE.lock() = Some(std::sync::Arc::downgrade(me));
+/// Publish this row's scheduler for its own invariant to read.
+pub fn publish(fiber: FiberUid, me: &std::sync::Arc<CronScheduler>) {
+    LIVE.lock()
+        .get_or_insert_with(BTreeMap::new)
+        .insert(fiber, std::sync::Arc::downgrade(me));
 }
 
-/// Withdraw it.
-pub fn withdraw() {
-    *LIVE.lock() = None;
+/// Withdraw exactly this row's.
+pub fn withdraw(fiber: FiberUid) {
+    if let Some(m) = LIVE.lock().as_mut() {
+        m.remove(&fiber);
+    }
+}
+
+/// This row's live scheduler, if it is still up.
+fn live(fiber: FiberUid) -> Option<std::sync::Arc<CronScheduler>> {
+    LIVE.lock()
+        .as_ref()
+        .and_then(|m| m.get(&fiber).cloned())
+        .and_then(|w| w.upgrade())
 }
 
 /// PURE: the whole check.
@@ -69,8 +84,7 @@ async fn check(ctx: Context) -> Result<(), InvariantViolation> {
         entry: ctx.entry_id().clone(),
         detail,
     };
-    let live = LIVE.lock().clone();
-    let Some(me) = live.and_then(|w| w.upgrade()) else {
+    let Some(me) = live(ctx.fiber_uid()) else {
         // The row is gone: there is nothing to state about a scheduler that has left.
         return Ok(());
     };

@@ -114,6 +114,21 @@ impl GithubCollector {
     /// One sweep with its clock injected (AGENTS.md: `now` is passed in).
     pub async fn sweep_at(&self, now: DateTime<Utc>) -> Result<SweepReport, CollectError> {
         let mut report = empty_report(Some(now));
+        if self.cfg.repos.is_empty() {
+            // LOUD, every sweep, and never a boot failure — the same shape as an absent
+            // `deliver_to` agent. A row that fires every five minutes and reports
+            // `0 delivered from 0 sources` reads as working; it is not.
+            tracing::warn!(
+                target: "collector-github",
+                "`repos` is empty: this row collects nothing"
+            );
+            report.disabled.push((
+                "repos".to_string(),
+                "`repos` is empty; this row collects nothing".to_string(),
+            ));
+            *self.last.lock() = report.clone();
+            return Ok(report);
+        }
         let targets = self.targets(&mut report).await?;
         if targets.is_empty() {
             // Nothing to deliver to, so nothing is fetched either: a sweep with no destination
@@ -281,10 +296,12 @@ impl GithubCollector {
                     (WakeClass::Mention, sweep::mention_of)
                 };
                 rows.iter()
-                    .filter_map(|r| parse(repo, r))
-                    .map(|mut c| {
-                        c.class = sweep::class_of(kind, &self.cfg.wake_classes);
-                        c
+                    .filter_map(|r| {
+                        let author = sweep::author_of(r, &self.cfg.known_bots);
+                        parse(repo, r).map(|mut c| {
+                            c.class = sweep::class_of(kind, &self.cfg.wake_classes, author);
+                            c
+                        })
                     })
                     .collect()
             }

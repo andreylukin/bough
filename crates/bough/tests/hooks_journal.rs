@@ -220,3 +220,83 @@ async fn a_failing_hook_is_reported_and_quarantined_rather_than_retried_into_a_l
     kernel.shutdown().await;
     let _ = std::fs::remove_file(&p);
 }
+
+/// A `--patch` file that puts one HARNESS point on the shipped `hooks` row.
+fn harness_patch(tag: &str, point: &str, record: &std::path::Path) -> PathBuf {
+    let yaml = format!(
+        "entries:\n  hooks:\n    config:\n      points:\n        - point: {point}\n          \
+         exec: {exec}\n          args: []\n          timeout_ms: 4000\n          env:\n            \
+         HOOK_RECORD: {record}\n      max_output_bytes: 65536\n      max_failures: 3\n      \
+         limits: {{ max_actions: 16, max_spawns: 2, max_text_bytes: 8192 }}\n",
+        exec = fixture("echo-input.sh").display(),
+        record = record.display(),
+    );
+    let path = std::env::temp_dir().join(format!("bough-v11-{tag}-{}.yml", std::process::id()));
+    std::fs::write(&path, yaml).expect("the patch file is writable");
+    path
+}
+
+/// `power/changed` is a WIRED harness point. It used to be declared in `HARNESS_POINTS`, shipped
+/// as a spellable value, and subscribed to by nothing — a hook bound to it mounted green and
+/// never fired.
+#[tokio::test]
+async fn the_power_changed_harness_point_fires_on_a_real_power_event() {
+    let _guard = trace::test_lock();
+    let record = std::env::temp_dir().join(format!("bough-v11-power-{}.jsonl", std::process::id()));
+    let _ = std::fs::remove_file(&record);
+    let p = harness_patch("power", "power/changed", &record);
+    let (kernel, _dir) = boot_real("headless", std::slice::from_ref(&p)).await;
+
+    // The synthetic source the SWAP test uses, through the seam the Provider dispatches on.
+    bough_plugin_power_test::PowerTestHandle::new(row_ctx(&kernel, "hooks"))
+        .wake(Some(std::time::Duration::from_secs(8 * 3600)))
+        .await;
+
+    for _ in 0..200 {
+        if lines(&record) >= 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let written = std::fs::read_to_string(&record).expect("the hook recorded its stdin");
+    let input: serde_json::Value =
+        serde_json::from_str(written.lines().next().expect("a line")).expect("one JSON object");
+    assert_eq!(input["point"], "power/changed");
+    assert_eq!(input["event"]["what"], "did_wake");
+    let _ = std::fs::remove_file(&p);
+}
+
+/// `schedule/fired`, the other point that was declared and unwired. The shipped
+/// `schedule.catch-up` job is fired through the real scheduler.
+#[tokio::test]
+async fn the_schedule_fired_harness_point_fires_on_a_real_job_run() {
+    let _guard = trace::test_lock();
+    let record = std::env::temp_dir().join(format!("bough-v11-sched-{}.jsonl", std::process::id()));
+    let _ = std::fs::remove_file(&record);
+    let p = harness_patch("sched", "schedule/fired", &record);
+    let (kernel, _dir) = boot_real("headless", std::slice::from_ref(&p)).await;
+
+    let schedule = row_ctx(&kernel, "hooks")
+        .get::<bough_plugin_schedule::Schedule>()
+        .expect("`schedule` is bound");
+    schedule
+        .0
+        .fire_now(&bough_plugin_schedule::JobName::new(
+            bough_plugin_system_schedules::CATCH_UP_JOB,
+        ))
+        .await
+        .expect("the shipped catch-up job fires");
+
+    for _ in 0..200 {
+        if lines(&record) >= 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let written = std::fs::read_to_string(&record).expect("the hook recorded its stdin");
+    let input: serde_json::Value =
+        serde_json::from_str(written.lines().next().expect("a line")).expect("one JSON object");
+    assert_eq!(input["point"], "schedule/fired");
+    assert!(input["event"]["outcome"].is_string(), "{input}");
+    let _ = std::fs::remove_file(&p);
+}

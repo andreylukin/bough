@@ -83,9 +83,14 @@ pub fn ward_name(path: &Path) -> String {
         .to_string()
 }
 
-/// The child row's id, derived from the path so a remount reuses exactly one id.
-pub fn child_id(path: &Path) -> String {
-    format!("ward.{}", ward_name(path))
+/// The child row's id: `<the host row's own entry id>.<ward name>`, so a ward reads as belonging
+/// to its host in `--dump-config` and two `wards-rhai` rows over different directories cannot
+/// collide on one child id. Derived from the path, so a remount reuses exactly one id.
+///
+/// The two other child-mounting hosts spell it the same way (`plugins/skills`,
+/// `plugins/mcp-rmcp`).
+pub fn child_id(parent: &str, path: &Path) -> String {
+    format!("{parent}.{}", ward_name(path))
 }
 
 #[cfg(test)]

@@ -170,9 +170,19 @@ async fn the_boundary_block_reaches_the_adapter_on_both_paths_with_identical_byt
         .filter_map(text_of)
         .find(|t| t.contains(TASK))
         .expect("the seeded task is a message");
+    // Both positions are resolved BEFORE they are compared. `Option<usize>` orders `None`
+    // below `Some(_)`, so `body.find(WRITE_BOUNDARY) < body.find(TASK)` was TRUE when the
+    // spawner's block was absent from the message altogether — vacuous in exactly the failure
+    // mode this bullet exists to catch.
+    let at_boundary = body
+        .find(WRITE_BOUNDARY)
+        .expect("the spawner's block is in the worker's message at all");
+    let at_task = body
+        .find(TASK)
+        .expect("the seeded task is in the message it was found by");
     assert!(
-        body.find(WRITE_BOUNDARY) < body.find(TASK),
-        "the spawner's block precedes the task it bounds: {body:?}"
+        at_boundary < at_task,
+        "the spawner's block precedes the task it bounds ({at_boundary} vs {at_task}): {body:?}"
     );
 
     disposer.dispose().await;

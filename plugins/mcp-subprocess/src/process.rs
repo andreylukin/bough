@@ -88,13 +88,14 @@ impl ResidentProcess {
             spawns: AtomicU32::new(0),
             ready: AtomicBool::new(false),
             on_actions,
-            call_timeout: Duration::from_millis(cfg.row.min_uptime_ms.max(2000)),
+            call_timeout: Duration::from_millis(cfg.row.call_timeout_ms),
         });
         let (settled_tx, settled_rx) = tokio::sync::oneshot::channel::<()>();
         let sup = Arc::clone(&me);
         let handle = tokio::spawn(async move { sup.supervise(settled_tx).await });
         // Bounded: a process that never handshakes must not hold up the whole tree's boot.
-        let _ = tokio::time::timeout(Duration::from_secs(10), settled_rx).await;
+        let _ =
+            tokio::time::timeout(Duration::from_millis(cfg.row.boot_timeout_ms), settled_rx).await;
         (me, handle)
     }
 
@@ -161,7 +162,11 @@ impl ResidentProcess {
             };
             tracing::warn!(server = %self.name, cause = %cause, attempt = fast_deaths,
                            "resident MCP process exited; restarting");
-            let delay = backoff.next().unwrap_or(Duration::from_millis(50));
+            // The builder is finite; once it is exhausted the delay is the row's own configured
+            // one, not a number written here.
+            let delay = backoff
+                .next()
+                .unwrap_or(Duration::from_millis(row.restart_delay_ms));
             tokio::time::sleep(delay).await;
         }
     }

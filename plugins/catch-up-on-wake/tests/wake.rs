@@ -350,3 +350,42 @@ async fn nothing_queued_is_no_wake_and_leaves_nothing_in_flight() {
     );
     disposer.dispose().await;
 }
+
+/// The in-flight window is closed by an effect THE ROW OWNS, not by a bare `tokio::spawn`.
+///
+/// The recording driver reports a wake it never finishes, so the agent this row woke is never
+/// idle and the closer is still waiting when the row goes down. Disposing the listener must
+/// nonetheless reach quiescence and must release the claim — before this fix the wait was owned
+/// by nobody, so it survived the fiber, kept an `Arc<CatchUpOnWake>` alive and held its
+/// `in_flight` entry for the life of the process.
+#[tokio::test(flavor = "multi_thread")]
+async fn disposing_the_row_mid_catch_up_reaches_quiescence_and_releases_the_claim() {
+    let f = fixture().await;
+    let sol = f.agent("sol", AgentKind::Resident).await;
+    f.queue_mail(&sol).await;
+    let state = f.state(60_000);
+    let handle = bough_plugin_catch_up_on_wake::listen(&f.ctx, Arc::clone(&state))
+        .await
+        .expect("the listener registers");
+
+    let power = PowerTestHandle::new(f.ctx.clone());
+    power.wake(Some(Duration::from_secs(8 * 3600))).await;
+    assert_eq!(f.woken(), vec!["sol".to_string()], "the catch-up was asked");
+    assert_eq!(state.in_flight().len(), 1, "and the claim is held open");
+
+    // The row goes down while the wake it opened is still running: the listener, and then the
+    // window-closers the listener opened — which is exactly what unwinding the row's fiber does,
+    // and what a bare `tokio::spawn` would have been left out of.
+    tokio::time::timeout(Duration::from_secs(5), handle.dispose())
+        .await
+        .expect("disposing the listener reaches quiescence");
+    tokio::time::timeout(Duration::from_secs(5), state.close_all())
+        .await
+        .expect("disposal reaches quiescence rather than hanging on a wake that never ends");
+
+    assert!(
+        state.in_flight().is_empty(),
+        "the claim left with the row: {:?}",
+        state.in_flight()
+    );
+}

@@ -8,15 +8,21 @@ use bough_plugin_agents::MailClass;
 use bough_plugin_collect_core::{refs, Collected};
 use chrono::{DateTime, Utc};
 
-/// Issues assigned to, or mentioning, the authenticated user, newest first.
-pub const ISSUES_QUERY: &str = "query BoughIssues($after: String, $first: Int!) { \
-issues(first: $first, after: $after) { \
+/// Issues assigned to the authenticated user, inside the row's configured scope.
+///
+/// The `$filter` is what makes the doc comment true. Without it this query returned EVERY issue
+/// in the workspace and the sweep stamped `WakeClass::Assigned` on all of them, so a row scoped
+/// to one team woke its `deliver_to` agent for every ticket in the org.
+pub const ISSUES_QUERY: &str =
+    "query BoughIssues($after: String, $first: Int!, $filter: IssueFilter) { \
+issues(first: $first, after: $after, filter: $filter) { \
 pageInfo { hasNextPage endCursor } \
 nodes { id identifier title url updatedAt description assignee { name } state { name } } } }";
 
-/// Comments on those issues since a cursor.
-pub const COMMENTS_QUERY: &str = "query BoughComments($after: String, $first: Int!) { \
-comments(first: $first, after: $after) { \
+/// Comments on issues inside the row's configured scope.
+pub const COMMENTS_QUERY: &str =
+    "query BoughComments($after: String, $first: Int!, $filter: CommentFilter) { \
+comments(first: $first, after: $after, filter: $filter) { \
 pageInfo { hasNextPage endCursor } \
 nodes { id body url createdAt updatedAt user { name } issue { identifier title url } } } }";
 
@@ -29,6 +35,54 @@ pub fn query_for(source: &str) -> &'static str {
         "issues" => ISSUES_QUERY,
         _ => COMMENTS_QUERY,
     }
+}
+
+/// PURE: the `$filter` variable one source sends, from the row's `teams` and `projects`.
+///
+/// `issues` additionally pins `assignee.isMe`, because `WakeClass::Assigned` is what the sweep
+/// stamps on every issue it returns — the class has to be true by construction of the query, not
+/// asserted by the config.
+///
+/// Returns `None` for "no filter", which the caller sends as a JSON `null`: a legal GraphQL
+/// value for an optional argument. Only reachable for `comments` with no scope at all, which the
+/// row refuses to sweep anyway.
+pub fn filter_for(
+    source: &str,
+    teams: &[String],
+    projects: &[String],
+) -> Option<serde_json::Value> {
+    let mut and: Vec<serde_json::Value> = Vec::new();
+    let (team_path, project_path) = match source {
+        // A comment is scoped through the issue it hangs off.
+        "comments" => ("issue", "issue"),
+        _ => ("", ""),
+    };
+    let nest = |path: &str, inner: serde_json::Value| -> serde_json::Value {
+        if path.is_empty() {
+            inner
+        } else {
+            serde_json::json!({ path: inner })
+        }
+    };
+    if source == "issues" {
+        and.push(serde_json::json!({ "assignee": { "isMe": { "eq": true } } }));
+    }
+    if !teams.is_empty() {
+        and.push(nest(
+            team_path,
+            serde_json::json!({ "team": { "key": { "in": teams } } }),
+        ));
+    }
+    if !projects.is_empty() {
+        and.push(nest(
+            project_path,
+            serde_json::json!({ "project": { "name": { "in": projects } } }),
+        ));
+    }
+    if and.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({ "and": and }))
 }
 
 /// PURE: `{ data: { <field>: { nodes: [...], pageInfo: { endCursor } } } }` → its nodes and its
@@ -172,8 +226,40 @@ mod tests {
     }
 
     #[test]
+    fn the_issue_filter_pins_the_assignee_and_the_configured_scope() {
+        let f = filter_for("issues", &["ENG".into()], &["Rebuild".into()]).expect("a filter");
+        let and = f["and"].as_array().expect("an `and` list");
+        assert_eq!(and.len(), 3, "{f}");
+        assert_eq!(
+            and[0],
+            serde_json::json!({ "assignee": { "isMe": { "eq": true } } })
+        );
+        assert_eq!(and[1]["team"]["key"]["in"][0], "ENG");
+        assert_eq!(and[2]["project"]["name"]["in"][0], "Rebuild");
+    }
+
+    /// An unscoped `issues` sweep is still pinned to the viewer: `WakeClass::Assigned` is stamped
+    /// on everything this query returns, so the query has to be the thing that makes it true.
+    #[test]
+    fn an_unscoped_issue_filter_still_pins_the_assignee() {
+        let f = filter_for("issues", &[], &[]).expect("a filter");
+        assert_eq!(f["and"].as_array().unwrap().len(), 1);
+        assert_eq!(f["and"][0]["assignee"]["isMe"]["eq"], true);
+    }
+
+    /// A comment is scoped through its issue, and an unscoped one has no filter at all.
+    #[test]
+    fn a_comment_filter_reaches_through_the_issue() {
+        let f = filter_for("comments", &["ENG".into()], &[]).expect("a filter");
+        assert_eq!(f["and"][0]["issue"]["team"]["key"]["in"][0], "ENG");
+        assert_eq!(filter_for("comments", &[], &[]), None);
+    }
+
+    #[test]
     fn each_source_sends_its_own_named_query() {
         assert!(query_for("issues").contains("BoughIssues"));
         assert!(query_for("comments").contains("BoughComments"));
+        assert!(query_for("issues").contains("$filter: IssueFilter"));
+        assert!(query_for("comments").contains("$filter: CommentFilter"));
     }
 }

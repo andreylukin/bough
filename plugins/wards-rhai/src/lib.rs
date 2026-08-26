@@ -68,6 +68,15 @@ pub struct WardHostConfig {
     pub limits: RuntimeLimits,
 }
 
+/// The `wards.config` service key: the MOUNTED host row's config, so `bough wards test` dry-fires
+/// under the deployment's own limits rather than a second set written in this file.
+pub struct WardsConfig;
+
+impl bough_kernel::ServiceKey for WardsConfig {
+    type Value = Arc<WardHostConfig>;
+    const NAME: &'static str = "wards.config";
+}
+
 /// The floor and ceiling `validate` enforces on `max_ops` (P6-D10).
 pub const MAX_OPS_FLOOR: u64 = 1;
 /// See [`MAX_OPS_FLOOR`].
@@ -198,9 +207,13 @@ pub fn evaluate(
     ev: &WardEvent,
     cx: &WardView,
     engine: &rhai::Engine,
+    timeout: std::time::Duration,
 ) -> Result<Vec<RuntimeAction>, WardError> {
     let mut scope = rhai::Scope::new();
-    engine::reset_ops();
+    // The wall-clock bound `eval_timeout_ms` promises. `engine::start` arms the deadline the
+    // engine's `on_progress` reads; without it `max_ops` would be the only bound and
+    // `WardError::Timeout` would be unreachable.
+    engine::start(timeout);
     let returned: rhai::Dynamic = engine
         .call_fn(
             &mut scope,
@@ -249,9 +262,11 @@ fn runtime_error(ward: &str, e: &rhai::EvalAltResult) -> WardError {
             ward: ward.to_string(),
             max_depth: 0,
         },
+        // The engine terminates a script for exactly one reason: `engine::start`'s deadline
+        // passed. The bound it hit is the budget that evaluation was armed with.
         rhai::EvalAltResult::ErrorTerminated(_, _) => WardError::Timeout {
             ward: ward.to_string(),
-            ms: 0,
+            ms: engine::budget_ms(),
         },
         other => WardError::Runtime {
             ward: ward.to_string(),
@@ -267,6 +282,7 @@ pub fn dry_run(
     events: &[WardEvent],
     cx: &WardView,
     engine: &rhai::Engine,
+    timeout: std::time::Duration,
 ) -> DryRun {
     let mut fired = Vec::new();
     let mut errors = Vec::new();
@@ -276,7 +292,7 @@ pub fn dry_run(
             continue;
         }
         considered += 1;
-        match evaluate(script, ev, cx, engine) {
+        match evaluate(script, ev, cx, engine, timeout) {
             Ok(actions) if actions.is_empty() => {}
             Ok(actions) => fired.push((ev.seq, actions)),
             Err(e) => errors.push((ev.seq, e.to_string())),
@@ -382,6 +398,10 @@ impl Plugin for WardHostPlugin {
         LedgerHandle(ledger.0.clone())
             .declare_step_types(&ctx, vocabulary::step_types())
             .await?;
+        // The deployment's own limits, published so `bough wards test` dry-fires under THEM.
+        ctx.provide::<WardsConfig>(cfg.clone())
+            .await
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
         let found = host::scan(&cfg.dir, &cfg.glob)
             .map_err(|e| PluginError::new(entry.clone(), anyhow::Error::from(e)))?;
         let mounted: MountedWards = Arc::new(parking_lot::Mutex::new(BTreeMap::new()));
@@ -481,6 +501,7 @@ impl Plugin for WardPlugin {
                 acted: acted.clone(),
                 firings: firings.clone(),
                 max_firings_per_minute: cfg.host.max_firings_per_minute,
+                eval_timeout_ms: cfg.host.eval_timeout_ms,
             };
             async move {
                 if let Err(e) = live.fire(step).await {
@@ -522,6 +543,9 @@ pub struct WardTestConfig {
     pub exit_when_done: bool,
 }
 
+/// Whether this process has already printed a dry run. See `WardTestPlugin::apply`.
+static DRY_RUN_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// The CLI row.
 pub struct WardTestPlugin;
 
@@ -535,7 +559,12 @@ impl Plugin for WardTestPlugin {
     /// (§3, P1-D7) — so this row must activate after the rows that declare the vocabulary that
     /// history was written in, or `bough wards test` fails on a chain a live bough wrote.
     fn inject() -> bough_kernel::Inject {
+        // `wards.config` is OPTIONAL: it is what orders this row after the `wards` host, so the
+        // dry run reads the deployment's own limits rather than the fallback. Being a dependent
+        // means a rebind RE-APPLIES this row, which is why `apply` runs the dry run at most once
+        // per process (`DRY_RUN_DONE`).
         bough_kernel::Inject::required(["ledger", "agents", "tools", "workers"])
+            .union(&bough_kernel::Inject::optional(["wards.config"]))
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
@@ -554,6 +583,12 @@ impl Plugin for WardTestPlugin {
         if cfg.file.is_empty() {
             return Ok(());
         }
+        // ONCE PER PROCESS. `bough wards test` is a one-shot CLI row, and it is a dependent of
+        // the `wards` host (see `inject`), so it re-applies when that host rebinds — which
+        // printed the dry run twice.
+        if DRY_RUN_DONE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Ok(());
+        }
         let entry = ctx.entry_id().clone();
         let ledger = ctx
             .get::<Ledger>()
@@ -563,7 +598,19 @@ impl Plugin for WardTestPlugin {
         let source = std::fs::read_to_string(&path).map_err(|e| {
             PluginError::new(entry.clone(), anyhow::anyhow!("{}: {e}", path.display()))
         })?;
-        let engine = engine::build_engine(&dry_run_host(&path));
+        // THE MOUNTED HOST'S LIMITS, not a second set. A dry run under limits that are neither
+        // the deployment's nor derivable from it can report a `TooManyOps` for a ward the live
+        // host would run fine, which is the one thing `bough wards test` must not do.
+        let host_cfg: Arc<WardHostConfig> = match ctx.get::<WardsConfig>() {
+            Ok(c) => (*c).clone(),
+            Err(_) => {
+                tracing::warn!(
+                    "wards.test: no `wards` row in this tree, so the dry run uses the fallback                      limits in `dry_run_host` and may not match a live host's"
+                );
+                Arc::new(dry_run_host(&path))
+            }
+        };
+        let engine = engine::build_engine(&host_cfg);
         let script = CompiledWard::compile(&host::ward_name(&path), &source, &engine)
             .map_err(|e| PluginError::new(entry.clone(), anyhow::Error::from(e)))?;
         let steps = ledger
@@ -584,14 +631,30 @@ impl Plugin for WardTestPlugin {
             })
             .map(|s| event_of(s, None))
             .collect();
+        let agents = ctx
+            .get::<bough_plugin_agents::Agents>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
         let view = WardView {
             ward: script.name.clone(),
-            agent_names: Vec::new(),
+            // The live path fills this from the agents seam; so does the dry run, or a ward that
+            // branches on the roster would take a different branch here than in production.
+            agent_names: agents.list().iter().map(|a| a.name().to_string()).collect(),
             now_ms: chrono::Utc::now().timestamp_millis(),
             recent: events.clone(),
+            // EMPTY, and this is the one place the two paths differ by construction: `acted` is
+            // the LIVE child's memory of what it has already acted on, and a dry run has not
+            // acted on anything. `cx.already(ref)` is therefore always false here, so a ward that
+            // guards on it fires in the dry run where live it would have skipped. Said in the
+            // printed output rather than papered over.
             acted: Vec::new(),
         };
-        let d = dry_run(&script, &events, &view, &engine);
+        let d = dry_run(
+            &script,
+            &events,
+            &view,
+            &engine,
+            std::time::Duration::from_millis(host_cfg.eval_timeout_ms),
+        );
         let text = match cfg.print {
             Print::Text => render_dry_run(&d),
             Print::Json => serde_json::to_string_pretty(&json_dry_run(&d))
@@ -653,9 +716,9 @@ pub fn json_dry_run(d: &DryRun) -> serde_json::Value {
     })
 }
 
-/// The engine limits `bough wards test` dry-fires under. The CLI row has no host config of its
-/// own, and a dry run must be at least as strict as the live path, so it uses the DEFAULTS rather
-/// than a looser set: a ward that would be terminated live is terminated here too.
+/// The FALLBACK engine limits `bough wards test` dry-fires under when there is no `wards` row in
+/// the tree to read them off (`wards.config`). Reached only in that case, and the CLI warns when
+/// it is.
 pub fn dry_run_host(dir: &std::path::Path) -> WardHostConfig {
     WardHostConfig {
         dir: dir
@@ -761,7 +824,7 @@ async fn mount_ward(
 ) -> Result<(), PluginError> {
     let entry_id = ctx.entry_id().clone();
     let child = bough_kernel::Entry {
-        id: bough_kernel::EntryId::new(host::child_id(path)),
+        id: bough_kernel::EntryId::new(host::child_id(entry_id.as_str(), path)),
         plugin: Some(WARD_PLUGIN_NAME.to_string()),
         config: serde_yaml::to_value(WardConfig {
             path: path.to_path_buf(),
@@ -882,6 +945,8 @@ struct Live {
     /// ONE ward child, so it unwinds with the row like everything else the child owns.
     firings: Arc<parking_lot::Mutex<std::collections::VecDeque<i64>>>,
     max_firings_per_minute: u32,
+    /// The wall-clock bound one evaluation gets, from the host row's `eval_timeout_ms`.
+    eval_timeout_ms: u64,
 }
 
 impl Live {
@@ -932,7 +997,13 @@ impl Live {
             acted: self.acted.lock().clone(),
         };
         let started = std::time::Instant::now();
-        let actions = evaluate(&self.script, &ev, &view, &self.engine)?;
+        let actions = evaluate(
+            &self.script,
+            &ev,
+            &view,
+            &self.engine,
+            std::time::Duration::from_millis(self.eval_timeout_ms),
+        )?;
         let ops = last_ops();
         if actions.is_empty() {
             return Ok(());
@@ -953,7 +1024,17 @@ impl Live {
             at: step.at,
         };
         let outcomes = bough_plugin_runtime_actions::execute_all(&cx, &actions, &self.limits).await;
-        self.acted.lock().extend(ev.refs.iter().cloned());
+        // BOUNDED, like `recent`: `already(ref)` is a "did I already act on this" peek, not an
+        // audit log, and an unbounded Vec here is cloned into the `WardView` on every single
+        // firing. The oldest refs fall off the back.
+        {
+            let mut acted = self.acted.lock();
+            acted.extend(ev.refs.iter().cloned());
+            let over = acted.len().saturating_sub(ACTED_PEEK);
+            if over > 0 {
+                acted.drain(0..over);
+            }
+        }
         let body = serde_json::to_value(WardFired {
             ward: self.script.name.clone(),
             on: step.seq,
@@ -1012,6 +1093,10 @@ impl Live {
 /// How many past steps `cx.recent` may see. A PROTOCOL bound, not a tunable: it is what keeps
 /// `evaluate` cheap and its input bounded.
 pub const RECENT_PEEK: usize = 50;
+
+/// How many refs `cx.already(ref)` remembers. A PROTOCOL BOUND, like [`RECENT_PEEK`]: the view is
+/// cloned per firing, so the memory a ward may consult is finite by construction.
+pub const ACTED_PEEK: usize = 500;
 
 bough_kernel::register_plugin!(WardHostPlugin);
 bough_kernel::register_plugin!(WardPlugin);

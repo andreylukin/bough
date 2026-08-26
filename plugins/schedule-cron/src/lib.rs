@@ -34,10 +34,15 @@ pub struct CronConfig {
     pub state_db: PathBuf,
     /// How long a single job run may take before it is abandoned and recorded `Failed`.
     pub job_timeout_ms: u64,
-    /// The scheduler's tick. It is the FLOOR on a cadence: an interval finer than the tick cannot
-    /// be honoured, so [`CronScheduler::register`] refuses it rather than firing late in silence.
-    pub tick_ms: u64,
 }
+
+/// The scheduler's tick, in ms. NOT a config field: `tokio-cron-scheduler` 0.15 sleeps a
+/// hardcoded 500ms between ticks (`scheduler.rs`) and exposes no setter, so a `tick_ms` a
+/// deployment could set would be a number the scheduler does not honour — and the floor check
+/// below, which is the whole reason the tick is named anywhere, would be calibrated against
+/// fiction. It is a PROTOCOL CONSTANT of the library this Provider is built on, and it moves
+/// only when the dependency does.
+pub const SCHEDULER_TICK_MS: u64 = 500;
 
 /// The live scheduler: the tokio-cron-scheduler instance, the job table and the state store.
 pub struct CronScheduler {
@@ -195,11 +200,11 @@ impl Scheduler for CronScheduler {
         let fail = |e: ScheduleError| PluginError::new(entry.clone(), e);
         spec.cadence.check().map_err(fail)?;
         if let Cadence::Every { every_ms } = &spec.cadence {
-            if *every_ms < self.cfg.tick_ms {
+            if *every_ms < SCHEDULER_TICK_MS {
                 return Err(fail(ScheduleError::BadCadence(format!(
-                    "`{}` asks for every {every_ms}ms but the scheduler ticks every {}ms: a \
-                     cadence finer than the tick cannot be honoured",
-                    spec.name, self.cfg.tick_ms
+                    "`{}` asks for every {every_ms}ms but the scheduler ticks every \
+                     {SCHEDULER_TICK_MS}ms: a cadence finer than the tick cannot be honoured",
+                    spec.name
                 ))));
             }
         }
@@ -315,11 +320,6 @@ impl Plugin for SchedulerCronPlugin {
     type Config = CronConfig;
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
-        if cfg.tick_ms == 0 {
-            return Err(ConfigError::Rejected {
-                detail: "`tick_ms` is 0: the scheduler would spin".to_string(),
-            });
-        }
         if cfg.job_timeout_ms == 0 {
             return Err(ConfigError::Rejected {
                 detail: "`job_timeout_ms` is 0: every run would be abandoned before it started"
@@ -334,13 +334,14 @@ impl Plugin for SchedulerCronPlugin {
         let sched = CronScheduler::start(cfg, ctx.clone())
             .await
             .map_err(|e| PluginError::new(entry.clone(), e))?;
-        crate::invariant::publish(&sched);
+        let fiber = ctx.fiber_uid();
+        crate::invariant::publish(fiber, &sched);
         let stopping = sched.clone();
         ctx.effect(move |e| async move {
             e.defer(move || {
                 let stopping = stopping.clone();
                 async move {
-                    crate::invariant::withdraw();
+                    crate::invariant::withdraw(fiber);
                     stopping.stop().await
                 }
             });

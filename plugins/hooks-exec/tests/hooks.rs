@@ -309,3 +309,25 @@ async fn dispatch_returns_what_the_hook_returned_without_executing_it() {
         }]
     );
 }
+
+/// `validate` refuses a point that is not spellable as one. Before this it checked only that the
+/// name was non-empty, so `power/changed` (unwired at the time) and every typo mounted green.
+#[test]
+fn a_point_that_is_not_shaped_like_a_point_is_refused_at_load() {
+    use bough_plugin_hooks_exec::is_point_shaped;
+    for good in ["boot", "schedule/fired", "power/changed", "mail/delivered"] {
+        assert!(is_point_shaped(good), "{good}");
+    }
+    for bad in [
+        "",
+        " ",
+        "boot ",
+        "mail",
+        "mail/",
+        "/delivered",
+        "a/b/c",
+        "mail delivered",
+    ] {
+        assert!(!is_point_shaped(bad), "{bad:?} is not a point");
+    }
+}
