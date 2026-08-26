@@ -1578,7 +1578,17 @@ pub async fn connected_writes_nothing(f: &Fixture) {
         let _ = f.ledger.0.connected(&name).await.expect("connected");
     }
     let after = f.ledger.0.row_hashes(HashScope::All).await.expect("hashes");
-    assert_eq!(before.len(), after.len(), "connected() appended a row");
+    assert_eq!(
+        before
+            .iter()
+            .map(|r| (r.table, r.id.clone(), r.hash.clone()))
+            .collect::<Vec<_>>(),
+        after
+            .iter()
+            .map(|r| (r.table, r.id.clone(), r.hash.clone()))
+            .collect::<Vec<_>>(),
+        "connected() wrote a row"
+    );
     assert_eq!(f.ledger.0.head_seq(&own).await.expect("head"), head);
     assert_eq!(
         f.tap.seen().len(),

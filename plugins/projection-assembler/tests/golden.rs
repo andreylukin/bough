@@ -129,6 +129,21 @@ impl Harness {
         .await
     }
 
+    async fn retire(&self, id: &str, retires: &[&str]) -> StepId {
+        self.append(
+            id,
+            "w1",
+            "pin/retire",
+            Class::Thought,
+            serde_json::json!({
+                "retires": retires.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                "reason": "withdrawn",
+            }),
+            Vec::new(),
+        )
+        .await
+    }
+
     async fn mail(&self, id: &str, class: &str, from: &str, subject: &str) -> StepId {
         self.append(
             id,
@@ -365,6 +380,29 @@ async fn seed(case: &str, h: &Harness) -> (AssemblerConfig, Vec<SectionSpec>) {
                 ],
             )
         }
+        "pins_superseded" => {
+            // §3: a pin rides every projection verbatim regardless of age, and the projector
+            // honors the supersession/retirement markers rather than the raw pin/set rows.
+            h.put_agent(None).await;
+            h.pin(
+                "p-keep",
+                "gates",
+                "run `make gates` before every commit",
+                &[],
+            )
+            .await;
+            h.pin("p-old", "budget", "assembly under 50ms", &[]).await;
+            h.pin("p-gone", "temporary", "until friday", &[]).await;
+            // Enough steps that `p-old` is far outside the verbatim tail window (tail_steps = 12).
+            for n in 1..=40 {
+                h.note(&format!("s{n}"), "w1", "step").await;
+            }
+            // Re-accepting the requirement supersedes its old pin.
+            h.pin("p-new", "budget", "assembly under 40ms", &["p-old"])
+                .await;
+            h.retire("r-gone", &["p-gone"]).await;
+            (cfg(100_000), vec![])
+        }
         "zero_rollups" => {
             // Phase 4 produces tiers and digests. With none, the bands render NOTHING — not an
             // empty header — and assembly still succeeds.
@@ -384,6 +422,7 @@ const CASES: &[&str] = &[
     "mail_headers_collapse",
     "agent_section_shadows_global",
     "zero_rollups",
+    "pins_superseded",
 ];
 
 // ---- the golden mechanism ---------------------------------------------------------------------
@@ -450,6 +489,11 @@ golden_case!(
     "agent_section_shadows_global"
 );
 golden_case!(
+    pins_superseded_on_sqlite,
+    pins_superseded_on_memory,
+    "pins_superseded"
+);
+golden_case!(
     zero_rollups_assembles_on_sqlite,
     zero_rollups_assembles_on_memory,
     "zero_rollups"
@@ -496,6 +540,42 @@ async fn the_six_bands_appear_in_slot_order() {
 }
 
 #[tokio::test]
+async fn a_superseded_pin_leaves_the_assembled_projection() {
+    let text = run("pins_superseded", Which::Memory).await;
+    assert!(
+        text.contains("assembly under 40ms"),
+        "the superseding pin stands:\n{text}"
+    );
+    assert!(
+        !text.contains("assembly under 50ms"),
+        "the superseded pin is retired from the projection (\u{a7}3):\n{text}"
+    );
+    assert!(
+        !text.contains("until friday"),
+        "a retired pin leaves the projection:\n{text}"
+    );
+    assert!(!text.starts_with("> DEGRADED:"), "no budget pressure here");
+}
+
+#[tokio::test]
+async fn a_pin_far_older_than_the_tail_still_rides_verbatim() {
+    let text = run("pins_superseded", Which::Memory).await;
+    let pins = text.find("## Pins").expect("a pins band");
+    let tail = text.find("## Recent steps").expect("a tail band");
+    let body = &text[pins..tail];
+    // `p-keep` is seq 1 of 45; the verbatim tail window is the last 12 steps. Age is never a
+    // criterion for a pin (\u{a7}3), so it renders in full anyway.
+    assert!(
+        body.contains("run `make gates` before every commit") && body.contains("gates"),
+        "the oldest pin renders verbatim with its title:\n{body}"
+    );
+    assert!(
+        !text[tail..].contains("make gates"),
+        "it is in the pins band, not merely surviving in the tail:\n{text}"
+    );
+}
+
+#[tokio::test]
 async fn a_collapsed_pin_set_says_so_in_context() {
     let text = run("pins_collapse", Which::Memory).await;
     assert!(
@@ -539,4 +619,81 @@ async fn the_agent_scoped_about_line_is_the_one_that_renders() {
     let text = run("agent_section_shadows_global", Which::Memory).await;
     assert!(text.contains("sol's own about-line"), "{text}");
     assert!(!text.contains("the global about-line"), "{text}");
+}
+
+/// The `degradation_order` golden is a single over-budget snapshot; it shows the END state, not the
+/// ORDER. This walks the same real fixture (real ledger, real assembler) down a budget ramp and
+/// asserts what §5 requires: fine tiers go before the coarse tier, and the verbatim tail is only
+/// shortened after the fine tier is already gone — never the other way round.
+#[tokio::test]
+async fn degradation_walks_the_ladder_in_order_on_both_providers() {
+    for which in [Which::Sqlite, Which::Memory] {
+        let mut seen: Vec<(usize, bool, bool, usize)> = Vec::new();
+        for budget in [100_000usize, 260, 240, 220, 200, 180, 160, 140, 120] {
+            let text = run_with_budget("degradation_order", which, budget).await;
+            let fine = text.contains("the fine tier goes first");
+            let coarse = text.contains("the coarse tier survives it");
+            let tail = text.matches("step/start").count();
+            seen.push((budget, fine, coarse, tail));
+        }
+        let full = seen[0];
+        assert!(
+            full.1 && full.2 && full.3 > 3,
+            "the unconstrained projection must carry both tiers and a full tail: {seen:?}"
+        );
+        for w in seen.windows(2) {
+            let (_, fine_a, coarse_a, tail_a) = w[0];
+            let (b, fine_b, coarse_b, tail_b) = w[1];
+            assert!(
+                fine_a || !fine_b,
+                "a dropped fine tier came back at budget {b}: {seen:?}"
+            );
+            assert!(
+                coarse_a || !coarse_b,
+                "a dropped coarse tier came back at budget {b}: {seen:?}"
+            );
+            assert!(
+                tail_b <= tail_a,
+                "the tail grew as the budget shrank at {b}: {seen:?}"
+            );
+            assert!(
+                !(tail_b < tail_a && fine_b),
+                "the tail was cut at budget {b} while the fine tier was still present: {seen:?}"
+            );
+            assert!(
+                !(!coarse_b && coarse_a && tail_b > 3),
+                "§5 keeps the coarse tier until the tail is at its floor; it went at budget {b}: {seen:?}"
+            );
+            assert!(
+                !(!coarse_b && coarse_a && fine_b),
+                "the coarse tier was dropped at budget {b} before the fine one: {seen:?}"
+            );
+        }
+        let last = seen.last().copied().unwrap();
+        assert!(
+            !last.1 && last.3 >= 3,
+            "at the tightest budget the fine tier is gone and the tail holds its floor: {seen:?}"
+        );
+    }
+}
+
+/// `run`, with the case's configured budget overridden.
+async fn run_with_budget(case: &str, which: Which, budget: usize) -> String {
+    let h = Harness::open(which);
+    let (mut config, specs) = seed(case, &h).await;
+    config.budget_tokens = budget;
+    let assembler = Assembler::new(Arc::new(config), h.ledger.clone(), h.ctx.clone());
+    for s in specs {
+        std::mem::forget(assembler.section(s).expect("a fresh section registers"));
+    }
+    assembler
+        .assemble(&AssembleRequest {
+            agent: agent(),
+            wake: None,
+            at: at(),
+            budget: None,
+        })
+        .await
+        .unwrap_or_else(|e| panic!("assemble {case} @ {budget}: {e}"))
+        .to_text()
 }

@@ -160,11 +160,23 @@ fn index_of(draft: &Draft, id: &str) -> Option<usize> {
 }
 
 /// Drop the FINEST tier section present, or — when no tier is left — one `Fine` section.
+///
+/// §5 is "drop fine tiers first (KEEP COARSE), then shrink the verbatim tail": the coarsest tier
+/// standing is not this rung's to take, or the tail would be cut only after every summary was
+/// already gone. Rung 3 takes it, after the tail has reached its floor.
 fn rung_fine(draft: &mut Draft, cut: &Cut) -> bool {
-    if drop_finest_tier(draft) {
+    if tier_count(draft) > 1 && drop_finest_tier(draft) {
         return true;
     }
     drop_priority(draft, cut, DropPriority::Fine)
+}
+
+fn tier_count(draft: &Draft) -> usize {
+    draft
+        .sections
+        .iter()
+        .filter(|s| bands::tier_of(&s.id).is_some())
+        .count()
 }
 
 /// Drop a remaining tier (there are none by the time rung 3 runs, unless a listener added one) or
