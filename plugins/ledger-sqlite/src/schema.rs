@@ -58,6 +58,9 @@ pub fn envelope() -> Vec<(&'static str, Vec<&'static str>)> {
                 "ignorable",
             ],
         ),
+        // `step_refs` is CANONICAL for matching/routing (§3), so a column change there is an
+        // envelope change: the drift test must see this table too.
+        ("step_refs", vec!["step_id", "ref"]),
         (
             "edges",
             vec!["child_traj", "parent_traj", "at_seq", "kind", "at"],

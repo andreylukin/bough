@@ -245,3 +245,60 @@ async fn the_retired_provider_leaves_no_binding_and_no_listener() {
 
     kernel.shutdown().await;
 }
+
+/// §0.2, "unload leaves no trace": a store handle that outlives its row (the assembler captures
+/// one for its whole life) must not keep writing through a retired Context whose `ledger/step`
+/// listener is already disposed.
+#[tokio::test]
+async fn a_handle_that_outlives_its_row_refuses_to_write() {
+    let _guard = trace::test_lock();
+    bough_plugin_projection_probe::clear();
+    let (kernel, dir) = boot_with(P1).await;
+    // A clone kept deliberately, exactly as a consumer would hold it.
+    let retained = kernel
+        .root()
+        .peek_live::<bough_plugin_ledger::Ledger>()
+        .expect("ledger is bound")
+        .as_ref()
+        .clone();
+    retained
+        .0
+        .append(bough_plugin_ledger::Append {
+            traj: bough_plugin_ledger::TrajId::new("t-retire"),
+            wake: bough_plugin_ledger::WakeId::new("w1"),
+            kind: bough_plugin_ledger::StepType::new("wake/start"),
+            class: bough_plugin_ledger::Class::Thought,
+            body: serde_json::json!({ "urgency": "immediate" }),
+            cites: Vec::new(),
+            at: chrono::Utc::now(),
+            id: None,
+        })
+        .await
+        .expect("the live row accepts an append");
+
+    write_patch(&dir, SWAP);
+    recompose(&kernel, P1, &dir)
+        .await
+        .expect("the swap composes");
+
+    let err = retained
+        .0
+        .append(bough_plugin_ledger::Append {
+            traj: bough_plugin_ledger::TrajId::new("t-retire"),
+            wake: bough_plugin_ledger::WakeId::new("w1"),
+            kind: bough_plugin_ledger::StepType::new("wake/start"),
+            class: bough_plugin_ledger::Class::Thought,
+            body: serde_json::json!({ "urgency": "immediate" }),
+            cites: Vec::new(),
+            at: chrono::Utc::now(),
+            id: None,
+        })
+        .await
+        .expect_err("a retired store must refuse, not write unobserved");
+    assert!(
+        err.to_string().contains("retired"),
+        "the refusal must say why: {err}"
+    );
+
+    kernel.shutdown().await;
+}

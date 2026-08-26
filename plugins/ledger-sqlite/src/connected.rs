@@ -15,7 +15,7 @@ pub async fn connected(store: &SqliteStore, agent: &AgentName) -> Result<Connect
             move |conn| crate::read::read_agent(conn, &name)
         })
         .await?
-        .ok_or_else(|| LedgerError::Store(anyhow::anyhow!("no such agent `{name}`")))?;
+        .ok_or_else(|| LedgerError::NoSuchAgent(name.clone()))?;
 
     let ancestry = crate::read::ancestry(store, &row.traj).await?;
 

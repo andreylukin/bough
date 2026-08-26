@@ -886,7 +886,7 @@ skipped is not done.
 | **V3** | pins ride every projection verbatim regardless of age and are never demoted; a superseding pin retires its predecessor; re-accepting a requirement supersedes its old pin | `bough_plugin_projection_assembler::bands::tests::{pins_ride_every_projection_verbatim, a_pin_older_than_the_tail_still_renders, a_superseding_pin_retires_its_predecessor, a_retired_pin_leaves_the_projection, re_accepting_a_requirement_supersedes_its_old_pin}` · `…::degrade::tests::pins_are_never_dropped_before_rung_four` · `conformance::{live_pins_excludes_superseded_pins, live_pins_ignores_age, a_supersession_writes_nothing_onto_the_old_pin}` (both providers) · golden case `pins_superseded` in `tests/golden.rs::{fixed_section_order_on_sqlite, fixed_section_order_on_memory}` |
 | **V4** | projection golden tests (fixed section order, degradation order, DEGRADED pin collapse, mail-header collapse, per-agent section shadowing a global one) run against BOTH ledger providers and produce byte-identical output | `bough-plugin-projection-assembler` `tests/golden.rs::{fixed_section_order_on_sqlite, fixed_section_order_on_memory, degradation_order_on_sqlite, degradation_order_on_memory, pins_collapse_flags_degraded_on_sqlite, pins_collapse_flags_degraded_on_memory, mail_headers_collapse_on_sqlite, mail_headers_collapse_on_memory, agent_section_shadows_global_on_sqlite, agent_section_shadows_global_on_memory, zero_rollups_assembles_on_sqlite, zero_rollups_assembles_on_memory, every_golden_is_byte_identical_between_providers}` · `…::registry::tests::agent_scope_shadows_global_for_that_agent_only` · `bough_plugin_projection::order::tests::ties_break_by_section_id_not_registration_order` |
 | **V5** | a synthetic 100k-step trajectory keeps projection assembly under 50ms on ledger-sqlite (env-gated, prints the number, asserts the bound), plus a cheaper always-on 10k check | `bough` `tests/projection_bench.rs::assembly_over_100k_steps_is_under_50ms` (runs only with `BOUGH_BENCH=1`; prints `assemble(100k) = N.NNms`) · `bough` `tests/projection_bench.rs::assembly_over_10k_steps_is_under_the_bound` (always on, best of three, same 50ms bound) |
-| **V6** | a fork requires its prefix to end outside an open wake and rejects one that does not (no silent clipping); the child's first live step is end-seed; connected(agent) is computed at need and a late-linked ref includes its history retroactively with nothing written onto entries | `conformance::{fork_at_a_closed_prefix_succeeds, fork_inside_an_open_wake_is_refused_naming_the_wake, a_refused_fork_writes_nothing, a_fork_never_clips_the_prefix, the_childs_first_step_is_the_end_seed_marker, the_end_seed_carries_the_parent_and_at_seq, connected_is_own_chain_plus_ancestry_plus_ref_matches, connected_reads_the_agents_row_at_call_time, a_late_linked_ref_includes_history_retroactively, linking_a_ref_changes_no_step_row_hash, connected_writes_nothing}` (both providers) · `bough_plugin_ledger_sqlite::fork::tests::{open_wake_scan_stops_at_at_seq, a_wake_closed_before_at_seq_is_not_open}` |
+| **V6** | a fork requires its prefix to end outside an open wake and rejects one that does not (no silent clipping); the child's first live step is end-seed; connected(agent) is computed at need and a late-linked ref includes its history retroactively with nothing written onto entries | `conformance::{fork_at_a_closed_prefix_succeeds, fork_inside_an_open_wake_is_refused_naming_the_wake, a_refused_fork_writes_nothing, a_fork_never_clips_the_prefix, the_childs_first_step_is_the_end_seed_marker, the_end_seed_carries_the_parent_and_at_seq, connected_is_own_chain_plus_ancestry_plus_ref_matches, connected_reads_the_agents_row_at_call_time, a_late_linked_ref_includes_history_retroactively, linking_a_ref_changes_no_step_row_hash, connected_writes_nothing}` (both providers) · `bough_plugin_ledger_sqlite::fork::tests::{markers_after_the_cut_are_ignored, a_closed_prefix_has_no_open_wake, a_prefix_inside_a_wake_names_it, interleaved_wakes_are_tracked_per_wake_id}` |
 | **V7** | `ledger/step` is emitted post-commit; a listener that panics or blocks never fails or delays the append; seq strictly grows per trajectory; wake/step enclosure holds | `bough-plugin-ledger-sqlite` `tests/events.rs::{ledger_step_arrives_after_the_row_is_readable, a_panicking_listener_does_not_fail_the_append, a_blocking_listener_does_not_delay_the_append, batch_appends_emit_one_event_per_step_in_seq_order}` · the same four in `bough-plugin-ledger-memory` `tests/events.rs` · `conformance::{seq_starts_at_one_per_trajectory, seq_has_no_gaps, concurrent_appends_produce_a_contiguous_seq_run}` · `bough_plugin_ledger_sqlite::store::tests::thirty_two_concurrent_appends_produce_seqs_one_to_thirty_two` · `bough_plugin_ledger::invariant::tests::{seq_regression_is_a_violation, a_seq_gap_is_a_violation, wake_step_enclosure_holds, a_step_pair_outside_a_wake_is_a_violation}` · `bough` `tests/ledger_invariants.rs::{a_planted_seq_gap_is_reported, a_planted_unenclosed_step_pair_is_reported}` |
 | **V8** | FTS search over steps across trajectories returns hits with their cites; file-view projection renders a trajectory to a file and the render is a pure function of the ledger | `conformance::{search_finds_a_step_in_another_trajectory, a_hit_carries_its_cites, search_respects_the_trajectory_filter, search_ordering_is_deterministic}` (both providers) · `bough_plugin_ledger_sqlite::search::tests::{fts_matches_body_text, fts_matches_cite_text, hits_are_ordered_deterministically}` · `bough_plugin_projection::file_view::tests::{render_is_a_pure_function_of_the_view, render_is_stable_across_calls, rollups_and_edges_appear_in_the_render}` · `bough-plugin-projection-assembler` `tests/file_view.rs::{file_view_writes_the_trajectory_to_a_file, file_view_is_byte_identical_on_both_providers}` |
 | **SWAP** | the ledger provider row switches from `ledger-sqlite` to `ledger-memory` by patch with no compile and the projection golden suite still passes; disabling the `projection-assembler` row by patch leaves every consumer of `ctx.projection` PENDING with nothing FAILED, and re-enabling restores them | `bough` `tests/ledger_swap.rs::{the_base_tree_boots_with_ledger_sqlite, a_patch_swaps_the_row_to_ledger_memory_without_a_recompile, the_assembler_reloads_against_the_new_provider, the_golden_suite_passes_against_the_swapped_provider, the_retired_provider_leaves_no_binding_and_no_listener}` · `bough` `tests/projection_swap.rs::{disabling_the_assembler_leaves_consumers_pending, disabling_the_assembler_fails_nothing, re_enabling_the_assembler_restores_every_consumer, the_probes_sections_are_gone_while_the_assembler_is_disabled}` |
@@ -1017,3 +1017,111 @@ Interval` / `OnEvent` stay undispatched (P1-D14) and the fiber poll loop stays a
   Definitions, never the reverse). The check itself is unchanged — every section's cited step and
   rollup ids must exist in the ledger — and it reads the ledger through the injected handle, so
   the rule holds wherever the provider is mounted.
+
+## 8. Deviations and open items (post-review, phase close)
+
+The Phase 1 review found 22 items. Everything HIGH and MEDIUM is fixed and covered by a named test;
+the cheap LOW items are fixed; the rest are recorded here with their reason.
+
+### Fixed
+
+- **`seal_once` was structurally dead (HIGH).** `invariant::record_supersession` had no caller, so
+  `evaluate_seal_once` always ran against an empty `observed` slice and could not report anything.
+  Both providers now record the transition after the write commits
+  (`ledger-sqlite::read::supersede_rollup`, `ledger-memory::supersede_rollup`), the record is kept
+  per fiber, and `check_seal_once` reads `HashScope::Rollups` only (one table, not a second full
+  scan) and returns early when nothing was superseded.
+  Verified by `bough tests/ledger_invariants.rs::a_planted_second_supersession_is_reported`, which
+  drives a REAL supersession through the live provider, asserts the record was written, and then
+  plants the second transition no API can produce and collects the violation through the runner.
+- **The enclosure invariant forbade concurrent wakes (HIGH).** §3/§5 make concurrent wakes per
+  trajectory first-class and this phase's own `fork::open_wake_at` already tracks a `Vec` of open
+  wakes. `Fold::open` is now a `BTreeSet<WakeId>` per trajectory: several wakes may be open at
+  once, re-opening an open wake is a violation, and a step under a closed wake is a violation.
+  Verified by `invariant::tests::concurrent_wakes_in_one_trajectory_are_legal` (plus the existing
+  `wake_step_enclosure_holds` / `a_step_pair_outside_a_wake_is_a_violation`).
+- **The invariant record was an unbounded transcript (MEDIUM).** `SEEN` is now a FOLD per fiber
+  (last seq per trajectory, open wakes, first violation, count) instead of a `Vec<Obs>` cloned and
+  walked at every quiesce; `HASHES` and `SUPERSESSIONS` are keyed by `FiberUid`, so one provider's
+  unload no longer wipes a sibling's baseline and two providers' streams no longer merge into one
+  seq check. `projection::invariant::record` de-duplicates per `(fiber, section)` rather than
+  appending once per section per assembly, and its check does ONE `HashScope::All` scan instead of
+  two. Verified by `invariant::tests::{two_fibers_are_two_streams,
+  forgetting_a_fiber_lets_a_reload_start_over}` and the unchanged launcher invariant suite.
+- **No `resolve(request) -> Spec` step (MEDIUM).** New `projection-assembler::resolve` holds every
+  request-time default: `resolve_assemble` (budget, and the drop priority of a waterfall-added
+  section, which `Cut` now takes explicitly) and `resolve_file_view` (directory + file name). The
+  ledger Definition gained `resolve_append` (`AppendSpec { id, refs }`), which both providers call
+  instead of minting the id and deriving refs inline. Verified by `resolve::tests` (3).
+- **A contributed `Place::Before` section did not precede its band (MEDIUM).** `bands::section`
+  now builds `Position::band(slot)` (`Place::Band`) rather than `Place::Before`. Verified by
+  `assemble::tests::a_contributed_before_section_precedes_its_band`, which checks an id sorting
+  before AND after the band's own id.
+- **Nothing reserved the built-in band ids (MEDIUM).** `Registry::add` refuses a spec whose id is a
+  built-in band (new `ProjectionError::ReservedSection`), so `is_builtin` and every rung's
+  `index_of` are unambiguous. Verified by
+  `assemble::tests::a_contributed_section_cannot_claim_a_built_in_band_id`.
+- **A projection refused for an agent with no `agents` row (MEDIUM).** `connected` now returns the
+  typed `LedgerError::NoSuchAgent`, and `assemble` maps it to `Connected::rowless()` — §5's "an
+  answer wake must always be buildable". Verified by
+  `assemble::tests::an_agent_with_no_row_still_gets_a_projection`.
+- **`write_file_view` joined an unvalidated `TrajId` as a path (MEDIUM).** `resolve_file_view`
+  sanitises the id into a single file name, so `lane/sol`, `/etc/passwd` and `../escape` all land
+  inside the view dir. Verified by `resolve::tests::a_slash_bearing_traj_id_stays_inside_the_view_dir`
+  and `tests/file_view.rs::a_slash_bearing_traj_id_writes_inside_the_view_dir`.
+- **Three tests skipped by early `return` and reported `ok` (MEDIUM).**
+  `assembly_over_100k_steps_is_under_50ms` and the two `token_calibration` cases are now
+  `#[ignore]`d and assert their env gate. Re-measured after the change:
+  `assemble(100k) = 32.6ms` under `BOUGH_BENCH=1 … -- --ignored`; both live calibration tests pass
+  under `BOUGH_LIVE=1 … -- --ignored`. The tautological `assert!(line.contains("ratio="))` is gone.
+- **The conformance suite ran on a current-thread runtime (MEDIUM).** `ledger_conformance_cases!`
+  now expands to `#[tokio::test(flavor = "multi_thread", worker_threads = 4)]`, so
+  `concurrent_appends_produce_a_contiguous_seq_run` is a real race on the memory provider too.
+- **The sqlite provider had no teardown for its store (MEDIUM).** `SqliteStore` carries a `retired`
+  flag set by a disposer the row registers; `with_conn` refuses once retired, so a handle that
+  outlives its row cannot write unobserved through a disposed listener. Verified by
+  `bough tests/ledger_swap.rs::a_handle_that_outlives_its_row_refuses_to_write`.
+- **Cheap LOW fixes.** `Inject::required([<Ledger as ServiceKey>::NAME])` instead of a string
+  literal; `schema::envelope()` now lists `step_refs`, so the drift test covers the table the
+  ENVELOPE constant already declared; `a_blocking_listener_does_not_delay_the_append` (sqlite) now
+  asserts the listener actually started; the 100k bench returns its `TempDir` instead of
+  `std::mem::forget`ing it, so `$BOUGH_HOME` is removed; `UPDATE_GOLDEN` is compared against
+  `Some("1")` like every other env gate; the dead `bands::pins` band function is gone (the inline
+  copy in `assemble` is the real one); `StepTypeDef::try_of` returns a `LedgerError` for a
+  plugin-supplied schema jsonschema cannot compile (`of` still panics, documented as for types this
+  binary owns); V6's test names in §7's map now name the tests that exist.
+
+### Taken, not fixed
+
+- **`row_to_step` re-derives `Step.refs` from cites + body instead of reading the canonical
+  `step_refs` table** (LOW). Reading the table would add a join or a second query to every step
+  read on the hot path the V5 bench measures; the two computations are the same function called
+  twice, and Phase 4 (which touches the read path for tiers) is the place to make the canonical
+  table the only source. The risk is a future change to `derive_step_refs` desynchronising old
+  rows.
+- **`RowHash.id` / `RowHash.superseded_by` cross the `LedgerStore` boundary as bare `String`s**
+  (LOW). The field carries a step id, a rollup id or a synthesised composite edge key, so branding
+  it needs a small enum in the Definition and a re-brand at three call sites. Recorded rather than
+  done at phase close.
+- **`bough-plugin-projection-probe` ships as a normal dependency of `crates/bough`** (P1-D16,
+  LOW). Phase 8's fixture audit removes it; a dev-dependency plus a test-only binary target is the
+  shape it should take. Related: `bough-plugin-ledger`'s `conformance` module is public and not
+  `cfg(test)`, because the provider crates' integration tests expand it.
+- **`action_done` reads the wall clock inside the store** (LOW, already labelled a §2.5 deviation
+  in the code). Phase 2 owns the actions seam and threads `now` through with it. `seal_rollup`,
+  `action_intent` and `action_done` still write their rows without appending the corresponding
+  `rollup/sealed` / `action/*` steps (P1-D11).
+- **`append_only_rows_never_change` still has no planted-violation test through the runner** (LOW).
+  Every path that could mutate or delete an append-only row is refused by a trigger and by the API,
+  so planting one would need a test-only hole in the invariant's own baseline record. The pure
+  evaluator is covered (`a_changed_row_hash_is_a_violation`), and the runtime path is exercised by
+  `a_scripted_session_reports_no_ledger_violation`.
+- **`assembly_reads_no_clock` asserts two assemblies 20ms apart render identically** (LOW). The
+  property holds, but a second-granularity clock read would usually survive that test. A structural
+  assertion (no `Utc::now()` on the path) is the right shape and is left for the Phase 8 audit.
+- **`registering_a_step_type_does_not_bump_the_format_version` compares two compile-time
+  constants** (LOW). Kept as documentation of the rule; `envelope_fingerprint_matches_the_declared_format_version`
+  is the test that carries the weight.
+- **Phase 0's deferrals stand** (P1-D14): the fiber lifecycle is a poll loop, `emit` dispatch is
+  spawned and not awaited at shutdown (so every test observing `ledger/step` awaits a receipt),
+  and `Cadence::Interval`/`OnEvent` are undispatched, so every Phase 1 invariant is `OnQuiesce`.

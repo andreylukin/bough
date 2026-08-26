@@ -44,6 +44,8 @@ pub enum LedgerError {
         found: u32,
         expected: u32,
     },
+    #[error("no such agent `{0}`; agents are mutable config and a row can be deleted")]
+    NoSuchAgent(crate::id::AgentName),
     #[error("no such trajectory `{0}`")]
     NoSuchTrajectory(TrajId),
     #[error(transparent)]

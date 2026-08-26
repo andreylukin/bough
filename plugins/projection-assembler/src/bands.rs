@@ -10,8 +10,8 @@ use bough_plugin_ledger::{
     AgentRow, Class, Pin, Ref, Rollup, RollupKind, RollupQuery, Step, StepType,
 };
 use bough_plugin_projection::{
-    tokens, Place, Position, ProjectionError, RenderedSection, SectionCites, SectionId,
-    SectionRequest, Slot,
+    tokens, Position, ProjectionError, RenderedSection, SectionCites, SectionId, SectionRequest,
+    Slot,
 };
 
 use crate::AssemblerConfig;
@@ -31,10 +31,10 @@ pub(crate) fn section(
     let tokens = tokens::count(&format!("## {title}\n\n{body}\n"));
     RenderedSection {
         id: SectionId::new(id),
-        position: Position {
-            slot,
-            place: Place::Before,
-        },
+        // The band's OWN place, not `Before`: a contributed `Place::Before` section must sort
+        // ahead of the band and a `Place::After` one behind it, and only a place of its own can
+        // make both true (`Place::Band` sits between them).
+        position: Position::band(slot),
         title: title.to_string(),
         body,
         cites,
@@ -113,17 +113,9 @@ fn join(refs: &BTreeSet<Ref>) -> String {
 // ---- pins -------------------------------------------------------------------------------------
 
 /// **Pins** — `live_pins(connected)`, verbatim, oldest first, each with its step id. Never
-/// filtered by age, never demoted (§5).
-pub async fn pins(
-    req: &SectionRequest,
-    _cfg: &AssemblerConfig,
-) -> Result<Option<RenderedSection>, ProjectionError> {
-    let trajs: Vec<_> = req.connected.trajectories().into_iter().collect();
-    let mut live = req.ledger.0.live_pins(&trajs).await?;
-    sort_pins(&mut live);
-    Ok(pins_section(&live))
-}
-
+/// filtered by age, never demoted (§5). Selected inline by `assemble`, which needs the
+/// `Vec<Pin>` itself for the degradation ladder; the two halves are [`sort_pins`] and
+/// [`pins_section`], so there is only ever ONE copy of the selection.
 /// Oldest first, and deterministic when two trajectories share a seq.
 pub fn sort_pins(pins: &mut [Pin]) {
     pins.sort_by(|a, b| (a.seq, a.traj.as_str()).cmp(&(b.seq, b.traj.as_str())));

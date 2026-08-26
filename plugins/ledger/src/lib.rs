@@ -35,7 +35,7 @@ pub use query::{
 pub use rows::{
     ActionRow, ActionStatus, AgentRow, Edge, EdgeKind, NewAction, NewRollup, Rollup, RollupKind,
 };
-pub use step::{Append, Cite, Class, SeqRange, Step};
+pub use step::{resolve_append, Append, AppendSpec, Cite, Class, SeqRange, Step};
 pub use types::{builtin_step_types, ClassRule, StepTypeDef, StepTypeMap, StepTypeToken};
 
 /// The `ledger` service key.

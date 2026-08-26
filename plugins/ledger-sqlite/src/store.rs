@@ -3,7 +3,7 @@
 //! `MAX(seq)+1` INSIDE the insert transaction, so two concurrent appends can neither collide nor
 //! gap (P1-D9, P1-D15).
 
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use bough_kernel::Context;
@@ -24,6 +24,11 @@ pub struct SqliteStore {
     pub(crate) ctx: Context,
     /// Rows skipped on read because their type was unknown AND ignorable.
     pub(crate) skipped: Arc<AtomicU64>,
+    /// Set by the row's teardown. A retired store refuses every call: an `Arc<dyn LedgerStore>`
+    /// clone that outlives the row (the assembler captures one) must not keep writing through a
+    /// retired Context whose `ledger/step` listener is already disposed (§0.2, "unload leaves no
+    /// trace").
+    pub(crate) retired: Arc<AtomicBool>,
 }
 
 impl SqliteStore {
@@ -55,7 +60,18 @@ impl SqliteStore {
             types: Arc::new(StepTypeMap::with_builtins()),
             ctx,
             skipped: Arc::new(AtomicU64::new(0)),
+            retired: Arc::new(AtomicBool::new(false)),
         }))
+    }
+
+    /// Poison the store. Called by the row's teardown; irreversible for this store instance.
+    pub fn retire(&self) {
+        self.retired.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether this store has been retired.
+    pub fn is_retired(&self) -> bool {
+        self.retired.load(Ordering::SeqCst)
     }
 
     /// Run `f` against the single connection on a blocking thread.
@@ -64,6 +80,11 @@ impl SqliteStore {
         T: Send + 'static,
         F: FnOnce(&mut Connection) -> Result<T, LedgerError> + Send + 'static,
     {
+        if self.is_retired() {
+            return Err(LedgerError::Store(anyhow::anyhow!(
+                "ledger-sqlite: this store was retired with its row; the handle is no longer usable"
+            )));
+        }
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
             let mut guard = conn.lock();

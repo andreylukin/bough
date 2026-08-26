@@ -69,6 +69,13 @@ impl Plugin for SqliteLedgerPlugin {
         let store = SqliteStore::open(&cfg, ctx.clone())
             .map_err(|e| PluginError::new(entry.clone(), anyhow::Error::new(e)))?;
 
+        let retire_me = store.clone();
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || retire_me.retire());
+            Ok(())
+        })
+        .await?;
+
         ctx.provide::<Ledger>(LedgerHandle(store))
             .await
             .map_err(|e| PluginError::new(entry.clone(), e))?;

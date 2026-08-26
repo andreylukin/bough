@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use bough_plugin_ledger::{refs, Append, LedgerError, LedgerStep, Seq, Step, StepId, StepTypeDef};
+use bough_plugin_ledger::{Append, LedgerError, LedgerStep, Seq, Step, StepId, StepTypeDef};
 use rusqlite::Transaction;
 
 use crate::schema::store_err;
@@ -15,23 +15,33 @@ pub(crate) struct Ready {
     pub(crate) req: Append,
     pub(crate) def: StepTypeDef,
     pub(crate) id: StepId,
+    /// The canonical refs, resolved with the id and never re-derived downstream.
+    pub(crate) refs: std::collections::BTreeSet<bough_plugin_ledger::Ref>,
 }
 
 /// Everything that can refuse an append happens here, OUTSIDE the transaction: the class rule,
 /// the cite requirement of evidence, and the body schema (§3).
 pub(crate) fn prepare(store: &SqliteStore, req: Append) -> Result<Ready, LedgerError> {
     let def = store.types.validate_append(&req)?;
-    let id = req
-        .id
-        .clone()
-        .unwrap_or_else(|| StepId::new(uuid::Uuid::now_v7().to_string()));
-    Ok(Ready { req, def, id })
+    // Every request-time default is resolved HERE, in one explicit step (§0.2).
+    let spec = bough_plugin_ledger::resolve_append(&req);
+    Ok(Ready {
+        req,
+        def,
+        id: spec.id,
+        refs: spec.refs,
+    })
 }
 
 /// Insert one step and its DERIVED refs inside `tx`, allocating `seq` as `MAX(seq)+1` for the
 /// trajectory in this same transaction.
 pub(crate) fn insert_step(tx: &Transaction<'_>, ready: &Ready) -> Result<Step, LedgerError> {
-    let Ready { req, def, id } = ready;
+    let Ready {
+        req,
+        def,
+        id,
+        refs: step_refs,
+    } = ready;
     let seq: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(seq), 0) + 1 FROM steps WHERE traj_id = ?1",
@@ -42,7 +52,6 @@ pub(crate) fn insert_step(tx: &Transaction<'_>, ready: &Ready) -> Result<Step, L
 
     let body = serde_json::to_string(&req.body).map_err(json_err)?;
     let cites = serde_json::to_string(&req.cites).map_err(json_err)?;
-    let step_refs = refs::derive_step_refs(&req.cites, &req.body);
 
     tx.execute(
         "INSERT INTO steps (id, traj_id, seq, at, wake_id, type, class, body, cites, ignorable) \
@@ -66,7 +75,7 @@ pub(crate) fn insert_step(tx: &Transaction<'_>, ready: &Ready) -> Result<Step, L
         let mut stmt = tx
             .prepare("INSERT OR IGNORE INTO step_refs (step_id, ref) VALUES (?1, ?2)")
             .map_err(store_err)?;
-        for r in &step_refs {
+        for r in step_refs.iter() {
             stmt.execute(rusqlite::params![id.as_str(), r.as_str()])
                 .map_err(store_err)?;
         }
@@ -82,7 +91,7 @@ pub(crate) fn insert_step(tx: &Transaction<'_>, ready: &Ready) -> Result<Step, L
         class: req.class,
         body: Arc::new(req.body.clone()),
         cites: Arc::new(req.cites.clone()),
-        refs: Arc::new(step_refs),
+        refs: Arc::new(step_refs.clone()),
         ignorable: def.ignorable,
     })
 }

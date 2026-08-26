@@ -239,7 +239,7 @@ impl LedgerStore for MemoryStore {
         let row = inner
             .agents
             .get(agent)
-            .ok_or_else(|| LedgerError::Store(anyhow::anyhow!("no such agent `{agent}`")))?
+            .ok_or_else(|| LedgerError::NoSuchAgent(agent.clone()))?
             .clone();
         let ancestry = store::ancestry_from(&inner.edges, &row.traj);
         let mut ref_matches: BTreeSet<TrajId> = BTreeSet::new();
@@ -285,6 +285,9 @@ impl LedgerStore for MemoryStore {
             ));
         }
         row.superseded_by = Some(new.clone());
+        drop(inner);
+        // Committed and unrepeatable: this is the one place the `seal_once` record can be written.
+        bough_plugin_ledger::invariant::record_supersession(self.ctx.fiber_uid(), old, new);
         Ok(())
     }
 

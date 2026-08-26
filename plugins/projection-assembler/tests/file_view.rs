@@ -141,3 +141,29 @@ async fn file_view_is_byte_identical_on_both_providers() {
         .unwrap();
     assert_eq!(s, m, "the file view differs between the two providers");
 }
+
+/// A `TrajId` is an unvalidated branded string and the codebase's own fixtures use slash-bearing
+/// ids (`lane/sol`). The write must land inside the view dir whatever the id says.
+#[tokio::test]
+async fn a_slash_bearing_traj_id_writes_inside_the_view_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("views");
+    let a = memory(out.clone()).await;
+    for id in ["lane/sol", "/etc/passwd", "../escape"] {
+        let req = FileViewRequest {
+            traj: TrajId::new(id),
+            at: at(),
+        };
+        let path = a
+            .write_file_view(&req, None)
+            .await
+            .unwrap_or_else(|e| panic!("`{id}`: {e}"));
+        assert_eq!(
+            path.parent(),
+            Some(out.as_path()),
+            "`{id}` wrote to {}",
+            path.display()
+        );
+        assert!(path.exists(), "`{id}` named a file that was not written");
+    }
+}

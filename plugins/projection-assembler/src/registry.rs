@@ -47,6 +47,12 @@ impl Registry {
         if spec.scope == SectionScope::Agent && spec.agent.is_none() {
             return Err(ProjectionError::AgentScopeWithoutAgent { id: spec.id });
         }
+        // The six built-in band ids are the assembler's own: a contributed section carrying one
+        // would be undroppable (`is_builtin`) and would shadow the real band in every rung's
+        // `index_of` lookup.
+        if crate::resolve::is_reserved_section_id(&spec.id) {
+            return Err(ProjectionError::ReservedSection { id: spec.id });
+        }
         let mut guard = self.inner.write();
         if guard.iter().any(|s| {
             s.spec.id == spec.id && s.spec.scope == spec.scope && s.spec.agent == spec.agent

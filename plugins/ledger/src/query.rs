@@ -105,10 +105,32 @@ pub struct Connected {
 }
 
 impl Connected {
+    /// The membership of an agent with NO `agents` row.
+    ///
+    /// `agents` is mutable config a merge may delete (§3), and "an answer wake must always be
+    /// buildable" (§5): a projection for such an agent degrades to identity-only rather than
+    /// refusing. There is no head pointer, so `own` is the empty trajectory id, which matches no
+    /// row in any query.
+    pub fn rowless() -> Self {
+        Connected {
+            own: TrajId::new(""),
+            ancestry: Vec::new(),
+            ref_matches: Vec::new(),
+            refs: BTreeSet::new(),
+        }
+    }
+
+    /// Whether this membership was built for an agent with no row.
+    pub fn is_rowless(&self) -> bool {
+        self.own.as_str().is_empty()
+    }
+
     /// Every trajectory in the membership, deduplicated and sorted.
     pub fn trajectories(&self) -> BTreeSet<TrajId> {
         let mut out = BTreeSet::new();
-        out.insert(self.own.clone());
+        if !self.is_rowless() {
+            out.insert(self.own.clone());
+        }
         out.extend(self.ancestry.iter().cloned());
         out.extend(self.ref_matches.iter().cloned());
         out

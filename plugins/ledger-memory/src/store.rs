@@ -137,10 +137,9 @@ pub(crate) fn insert_for_fork(inner: &mut Inner, req: Append, ignorable: bool) -
 fn insert_locked(inner: &mut Inner, req: Append, ignorable: bool) -> Step {
     let chain = inner.steps.entry(req.traj.clone()).or_default();
     let seq = Seq(chain.last().map(|s| s.seq.0).unwrap_or(0) + 1);
-    let id = req
-        .id
-        .unwrap_or_else(|| StepId::new(uuid::Uuid::now_v7().to_string()));
-    let refs = bough_plugin_ledger::refs::derive_step_refs(&req.cites, &req.body);
+    // Every request-time default is resolved HERE, in one explicit step (§0.2).
+    let spec = bough_plugin_ledger::resolve_append(&req);
+    let (id, refs) = (spec.id, spec.refs);
     let step = Step {
         id: id.clone(),
         traj: req.traj.clone(),

@@ -31,8 +31,30 @@ pub struct Obs {
 static SEEN: Mutex<Vec<Obs>> = Mutex::new(Vec::new());
 
 /// Record one assembled section. Called by the assembler at the end of `assemble`.
+///
+/// The record is a SET over `(fiber, section)`, not a transcript: the rule is "every cited id
+/// exists in the ledger", so re-recording the same section's cites adds nothing to judge and an
+/// assembler that runs for the life of the process would otherwise grow the record without bound.
 pub fn record(obs: Obs) {
-    SEEN.lock().push(obs);
+    let mut guard = SEEN.lock();
+    match guard
+        .iter_mut()
+        .find(|o| o.fiber == obs.fiber && o.section == obs.section)
+    {
+        Some(existing) => {
+            for id in obs.cites.steps {
+                if !existing.cites.steps.contains(&id) {
+                    existing.cites.steps.push(id);
+                }
+            }
+            for id in obs.cites.rollups {
+                if !existing.cites.rollups.contains(&id) {
+                    existing.cites.rollups.push(id);
+                }
+            }
+        }
+        None => guard.push(obs),
+    }
 }
 
 /// Everything recorded so far.
@@ -84,21 +106,22 @@ async fn check(ctx: Context) -> Result<(), InvariantViolation> {
             ))
         }
     };
+    // ONE scan, not one per table: `HashScope::All` already covers both and each row names the
+    // table it came from.
+    let rows = ledger.0.row_hashes(HashScope::All).await.map_err(|e| {
+        _violation(
+            &ctx,
+            ctx.plugin_name(),
+            format!("cannot check model-visible ⟺ ledgered: {e}"),
+        )
+    })?;
     let mut steps = Vec::new();
     let mut rollups = Vec::new();
-    for scope in [HashScope::Steps, HashScope::Rollups] {
-        let rows = ledger.0.row_hashes(scope).await.map_err(|e| {
-            _violation(
-                &ctx,
-                ctx.plugin_name(),
-                format!("cannot check model-visible ⟺ ledgered: {e}"),
-            )
-        })?;
-        for row in rows {
-            match scope {
-                HashScope::Steps => steps.push(StepId::new(row.id)),
-                _ => rollups.push(RollupId::new(row.id)),
-            }
+    for row in rows {
+        match row.table {
+            "steps" => steps.push(StepId::new(row.id)),
+            "rollups" => rollups.push(RollupId::new(row.id)),
+            _ => {}
         }
     }
     evaluate(&stream, &steps, &rollups)

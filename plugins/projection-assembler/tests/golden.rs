@@ -436,7 +436,9 @@ fn golden_path(case: &str) -> PathBuf {
 /// Compare against the golden, or rewrite it under `UPDATE_GOLDEN=1`.
 fn assert_golden(case: &str, got: &str) {
     let path = golden_path(case);
-    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+    // `Some("1")`, like every other env gate in the phase: `UPDATE_GOLDEN=0` or a stray empty
+    // export must not silently regenerate every golden and report green.
+    if std::env::var("UPDATE_GOLDEN").ok().as_deref() == Some("1") {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, got.as_bytes()).unwrap();
         return;

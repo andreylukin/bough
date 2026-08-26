@@ -73,21 +73,35 @@ impl std::fmt::Debug for StepTypeDef {
 impl StepTypeDef {
     /// Derive the body schema from `T`. `ignorable` defaults to `false` and `class_rule` to
     /// [`ClassRule::Thought`]; the builders below change them.
+    ///
+    /// PANICS if `T`'s schema cannot be compiled — for a type THIS binary owns that is a build
+    /// bug, not a runtime condition. A plugin declaring step types for a `JsonSchema` impl it did
+    /// not write should call [`StepTypeDef::try_of`], which fails that fiber instead of the
+    /// process.
     pub fn of<T: schemars::JsonSchema>(name: &str, owner: &'static str) -> Self {
+        Self::try_of::<T>(name, owner)
+            .unwrap_or_else(|e| panic!("step type `{name}`: uncompilable body schema: {e}"))
+    }
+
+    /// [`StepTypeDef::of`] as a refusal rather than a panic.
+    pub fn try_of<T: schemars::JsonSchema>(
+        name: &str,
+        owner: &'static str,
+    ) -> Result<Self, LedgerError> {
         let schema = schemars::SchemaGenerator::default().into_root_schema_for::<T>();
         let value = schema.as_value().clone();
-        // A schemars-derived schema that jsonschema cannot compile is a bug in this binary, not a
-        // runtime condition: fail at construction rather than let every append pass unvalidated.
-        let validator = jsonschema::validator_for(&value)
-            .unwrap_or_else(|e| panic!("step type `{name}`: uncompilable body schema: {e}"));
-        Self {
+        let validator = jsonschema::validator_for(&value).map_err(|e| LedgerError::BodySchema {
+            kind: StepType::new(name),
+            detail: format!("uncompilable body schema: {e}"),
+        })?;
+        Ok(Self {
             name: StepType::new(name),
             schema,
             ignorable: false,
             class_rule: ClassRule::Thought,
             owner,
             validator: Arc::new(validator),
-        }
+        })
     }
 
     /// Validate one body against this type's schema.

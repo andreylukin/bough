@@ -34,9 +34,11 @@ use crate::AssemblerConfig;
 pub struct Cut {
     pub cfg: AssemblerConfig,
     /// Declared drop priority per contributed section. A section the waterfall added is not in
-    /// here and is treated as [`DropPriority::Coarse`] — budgeted, and dropped no earlier than
-    /// rung 3.
+    /// here and takes `default_priority`, which `resolve_assemble` names.
     pub priorities: BTreeMap<SectionId, DropPriority>,
+    /// The priority of a section nobody declared one for, resolved by
+    /// [`crate::resolve::resolve_assemble`] rather than defaulted here.
+    pub default_priority: DropPriority,
     /// The tail window as it was selected, so rung 2 can re-render a shorter one.
     pub tail: Vec<Step>,
     /// The pins as `live_pins` returned them, so rung 4 can collapse them to titles.
@@ -51,6 +53,7 @@ impl Cut {
     pub fn new(
         cfg: AssemblerConfig,
         priorities: BTreeMap<SectionId, DropPriority>,
+        default_priority: DropPriority,
         tail: Vec<Step>,
         pins: Vec<Pin>,
         mail: Vec<Step>,
@@ -59,6 +62,7 @@ impl Cut {
         Cut {
             cfg,
             priorities,
+            default_priority,
             tail,
             pins,
             mail,
@@ -70,7 +74,7 @@ impl Cut {
         self.priorities
             .get(id)
             .copied()
-            .unwrap_or(DropPriority::Coarse)
+            .unwrap_or(self.default_priority)
     }
 }
 
@@ -347,6 +351,7 @@ mod tests {
             prio.iter()
                 .map(|(id, p)| (SectionId::new(id), *p))
                 .collect(),
+            DropPriority::Coarse,
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -383,7 +388,14 @@ mod tests {
         let mut d = draft(vec![measured(filler("identity", Slot::Identity, 1)), tail]);
         let mut cfg = cfg_small();
         cfg.tail_floor_steps = 10;
-        let c = Cut::new(cfg, Default::default(), steps, Vec::new(), Vec::new());
+        let c = Cut::new(
+            cfg,
+            Default::default(),
+            DropPriority::Coarse,
+            steps,
+            Vec::new(),
+            Vec::new(),
+        );
         degrade(&mut d, &c, 1); // unsatisfiable: the rung runs to its floor
         let body = &d.sections[1].body;
         let kept = body.lines().filter(|l| l.starts_with("- #")).count();
@@ -411,6 +423,7 @@ mod tests {
             [(SectionId::new("extra"), DropPriority::Fine)]
                 .into_iter()
                 .collect(),
+            DropPriority::Coarse,
             Vec::new(),
             pins,
             Vec::new(),
@@ -445,6 +458,7 @@ mod tests {
         let c = Cut::new(
             cfg_small(),
             Default::default(),
+            DropPriority::Coarse,
             Vec::new(),
             pins,
             Vec::new(),
@@ -469,7 +483,14 @@ mod tests {
         let mut d = draft(vec![bands::mail_section(&mail).unwrap()]);
         let mut cfg = cfg_small();
         cfg.mail_newest_n = 2;
-        let c = Cut::new(cfg, Default::default(), Vec::new(), Vec::new(), mail);
+        let c = Cut::new(
+            cfg,
+            Default::default(),
+            DropPriority::Coarse,
+            Vec::new(),
+            Vec::new(),
+            mail,
+        );
         degrade(&mut d, &c, 1);
         assert!(d.flags.contains(&Flag::MailDegraded));
         let body = &d.sections[0].body;
@@ -495,6 +516,7 @@ mod tests {
         let c = Cut::new(
             cfg_small(),
             Default::default(),
+            DropPriority::Coarse,
             Vec::new(),
             pins,
             Vec::new(),

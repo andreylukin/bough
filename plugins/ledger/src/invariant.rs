@@ -17,7 +17,7 @@
 //! Every cadence is [`Cadence::OnQuiesce`] (P1-D14): Phase 0 left `Interval`/`OnEvent`
 //! undispatched and Phase 1 takes no kernel change.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bough_kernel::{Cadence, Context, FiberUid, InvariantSpec, InvariantViolation};
 use parking_lot::Mutex;
@@ -36,53 +36,183 @@ pub struct Obs {
     pub kind: StepType,
 }
 
-/// What the listener has seen, in arrival order.
-static SEEN: Mutex<Vec<Obs>> = Mutex::new(Vec::new());
+/// The running fold of one fiber's observed stream.
+///
+/// The record is a FOLD, not a transcript: the two stream invariants are statements about each
+/// observation against its predecessor, so the only state worth keeping is the last seq per
+/// trajectory, the wakes currently open, and the first violation seen. A ledger appends for the
+/// life of the process, so a transcript would grow without bound and every quiesce would walk it.
+#[derive(Clone, Debug, Default)]
+struct Fold {
+    last: BTreeMap<TrajId, Seq>,
+    /// Wakes open per trajectory. Concurrent wakes in one trajectory are first-class (§3: "the
+    /// projector de-interleaves concurrent wakes by wake_id"), so this is a SET, not one id.
+    open: BTreeMap<TrajId, BTreeSet<WakeId>>,
+    seq_violation: Option<String>,
+    enclosure_violation: Option<String>,
+    count: u64,
+}
 
-/// Row hashes as first observed, per session. Populated at each quiesce and compared against.
-static HASHES: Mutex<Option<BTreeMap<(&'static str, String), String>>> = Mutex::new(None);
+impl Fold {
+    fn push(&mut self, obs: &Obs) {
+        self.count += 1;
+        if let Some(prev) = self.last.get(&obs.traj) {
+            if obs.seq.0 != prev.0 + 1 && self.seq_violation.is_none() {
+                let word = if obs.seq.0 <= prev.0 {
+                    "regressed to"
+                } else {
+                    "jumped to"
+                };
+                self.seq_violation = Some(format!(
+                    "trajectory `{}` {} seq {} after seq {}; seq is contiguous and strictly \
+                     increasing per trajectory",
+                    obs.traj, word, obs.seq.0, prev.0
+                ));
+            }
+        }
+        self.last.insert(obs.traj.clone(), obs.seq);
+        if let Some(d) = self.enclosure_of(obs) {
+            if self.enclosure_violation.is_none() {
+                self.enclosure_violation = Some(d);
+            }
+        }
+    }
 
-/// Every `superseded_by` transition observed, in order.
-static SUPERSESSIONS: Mutex<Vec<(RollupId, RollupId)>> = Mutex::new(Vec::new());
+    /// Judge one observation against the open wakes, updating them. Returns a detail on violation.
+    fn enclosure_of(&mut self, obs: &Obs) -> Option<String> {
+        if obs.wake.as_str().is_empty() {
+            return Some(format!(
+                "step at seq {} of trajectory `{}` carries no wake id; every step carries one",
+                obs.seq.0, obs.traj
+            ));
+        }
+        let open = self.open.entry(obs.traj.clone()).or_default();
+        match obs.kind.as_str() {
+            "wake/start" => {
+                if !open.insert(obs.wake.clone()) {
+                    return Some(format!(
+                        "wake `{}` opened at seq {} of trajectory `{}` while it was already open",
+                        obs.wake, obs.seq.0, obs.traj
+                    ));
+                }
+                None
+            }
+            "wake/end" => {
+                if !open.remove(&obs.wake) {
+                    return Some(format!(
+                        "wake/end for `{}` at seq {} of trajectory `{}` closes no open wake",
+                        obs.wake, obs.seq.0, obs.traj
+                    ));
+                }
+                None
+            }
+            "step/start" | "step/end" => {
+                if open.contains(&obs.wake) {
+                    None
+                } else if open.is_empty() {
+                    Some(format!(
+                        "`{}` at seq {} of trajectory `{}` lies outside any open wake",
+                        obs.kind, obs.seq.0, obs.traj
+                    ))
+                } else {
+                    Some(format!(
+                        "`{}` at seq {} of trajectory `{}` carries wake `{}`, which is not open; \
+                         open wakes are {:?}",
+                        obs.kind,
+                        obs.seq.0,
+                        obs.traj,
+                        obs.wake,
+                        open.iter().map(|w| w.as_str()).collect::<Vec<_>>()
+                    ))
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+/// One fold per fiber. Two ledger providers may be mounted at once, and one fiber's unload must
+/// not touch the other's baseline or merge the two streams into one seq check.
+static SEEN: Mutex<BTreeMap<FiberUid, Fold>> = Mutex::new(BTreeMap::new());
+
+/// Row hashes as first observed, per fiber. Populated at each quiesce and compared against.
+#[allow(clippy::type_complexity)]
+static HASHES: Mutex<BTreeMap<FiberUid, BTreeMap<(&'static str, String), String>>> =
+    Mutex::new(BTreeMap::new());
+
+/// Every `superseded_by` transition observed, per fiber, in order.
+static SUPERSESSIONS: Mutex<BTreeMap<FiberUid, Vec<(RollupId, RollupId)>>> =
+    Mutex::new(BTreeMap::new());
 
 /// Record one observation. Called from the listener the provider's `apply` registers.
 pub fn record(obs: Obs) {
-    SEEN.lock().push(obs);
+    SEEN.lock().entry(obs.fiber).or_default().push(&obs);
 }
 
-/// Record one `superseded_by` transition. Called by a provider's `supersede_rollup`, which is the
-/// only place the transition can happen, so the record cannot miss one.
-pub fn record_supersession(old: RollupId, new: RollupId) {
-    SUPERSESSIONS.lock().push((old, new));
+/// Record one `superseded_by` transition. Called by a provider's `supersede_rollup` AFTER the
+/// write commits, which is the only place the transition can happen, so the record cannot miss
+/// one.
+pub fn record_supersession(fiber: FiberUid, old: &RollupId, new: &RollupId) {
+    SUPERSESSIONS
+        .lock()
+        .entry(fiber)
+        .or_default()
+        .push((old.clone(), new.clone()));
 }
 
-/// Everything recorded so far, oldest first.
-pub fn seen() -> Vec<Obs> {
-    SEEN.lock().clone()
+/// How many observations have been recorded, over every fiber.
+pub fn observed() -> u64 {
+    SEEN.lock().values().map(|f| f.count).sum()
 }
 
-/// Every supersession recorded so far, oldest first.
+/// The highest seq observed for `traj`, over every fiber. Test scaffolding: a planted observation
+/// has to continue the real stream.
+pub fn last_seq(traj: &TrajId) -> Option<Seq> {
+    SEEN.lock()
+        .values()
+        .filter_map(|f| f.last.get(traj).copied())
+        .max_by_key(|s| s.0)
+}
+
+/// The first `seq_strictly_grows_per_trajectory` violation observed, if any.
+pub fn seq_violation() -> Option<String> {
+    SEEN.lock().values().find_map(|f| f.seq_violation.clone())
+}
+
+/// The first `wake_step_enclosure` violation observed, if any.
+pub fn enclosure_violation() -> Option<String> {
+    SEEN.lock()
+        .values()
+        .find_map(|f| f.enclosure_violation.clone())
+}
+
+/// Every supersession recorded so far, oldest first, over every fiber.
 pub fn supersessions() -> Vec<(RollupId, RollupId)> {
-    SUPERSESSIONS.lock().clone()
+    SUPERSESSIONS
+        .lock()
+        .values()
+        .flat_map(|v| v.iter().cloned())
+        .collect()
 }
 
-/// Drop the recorded stream. Test setup only.
+/// Drop every record. Test setup only.
 pub fn clear() {
     SEEN.lock().clear();
     SUPERSESSIONS.lock().clear();
-    *HASHES.lock() = None;
+    HASHES.lock().clear();
 }
 
 /// Forget everything recorded for `fiber`, so a reload starts a fresh stream.
 ///
 /// A RELOAD keeps the `FiberUid` and a new provider starts its trajectories over, so without this
-/// the swap test's own headline behaviour would falsify `seq_strictly_grows_per_trajectory`.
+/// the swap test's own headline behaviour would falsify `seq_strictly_grows_per_trajectory`. Only
+/// THIS fiber's records go: a sibling provider's baseline is none of this unload's business.
 pub fn forget(fiber: FiberUid) {
-    SEEN.lock().retain(|o| o.fiber != fiber);
+    SEEN.lock().remove(&fiber);
     // The row-hash baseline belongs to a store, and a reload may be a DIFFERENT store: drop it so
     // the next quiesce re-baselines instead of comparing two providers' rows to each other.
-    *HASHES.lock() = None;
-    SUPERSESSIONS.lock().clear();
+    HASHES.lock().remove(&fiber);
+    SUPERSESSIONS.lock().remove(&fiber);
 }
 
 /// The four specs a provider's `Plugin::invariants()` returns. `plugin` is the provider's catalog
@@ -95,7 +225,7 @@ pub fn specs(plugin: &'static str) -> Vec<InvariantSpec> {
             cadence: Cadence::OnQuiesce,
             check: |ctx| {
                 Box::pin(async move {
-                    evaluate_seq(&seen()).map_err(|d| {
+                    seq_violation().map_or(Ok(()), Err).map_err(|d| {
                         violation(
                             &ctx,
                             "seq_strictly_grows_per_trajectory",
@@ -112,7 +242,8 @@ pub fn specs(plugin: &'static str) -> Vec<InvariantSpec> {
             cadence: Cadence::OnQuiesce,
             check: |ctx| {
                 Box::pin(async move {
-                    evaluate_enclosure(&seen())
+                    enclosure_violation()
+                        .map_or(Ok(()), Err)
                         .map_err(|d| violation(&ctx, "wake_step_enclosure", ctx.plugin_name(), d))
                 })
             },
@@ -135,23 +266,23 @@ pub fn specs(plugin: &'static str) -> Vec<InvariantSpec> {
 /// Read the store's row hashes. A store that cannot be read is reported as a violation of nothing:
 /// the check returns `Ok(())`, because the invariant runner REPORTS and a missing binding is the
 /// kernel's business, not this invariant's.
-async fn current_hashes(ctx: &Context) -> Option<Vec<RowHash>> {
+async fn current_hashes(ctx: &Context, scope: crate::query::HashScope) -> Option<Vec<RowHash>> {
     let handle = ctx.try_get::<crate::Ledger>().ok().flatten()?;
-    handle.0.row_hashes(crate::query::HashScope::All).await.ok()
+    handle.0.row_hashes(scope).await.ok()
 }
 
 async fn check_row_hashes(ctx: Context) -> Result<(), InvariantViolation> {
-    let Some(now) = current_hashes(&ctx).await else {
+    let Some(now) = current_hashes(&ctx, crate::query::HashScope::All).await else {
         return Ok(());
     };
     let baseline = {
         let mut guard = HASHES.lock();
-        match guard.as_ref() {
+        match guard.get(&ctx.fiber_uid()) {
             Some(first) => first.clone(),
             None => {
-                // First quiesce of the session establishes the baseline; there is nothing to
+                // First quiesce of this fiber's life establishes the baseline; there is nothing to
                 // compare it against yet.
-                *guard = Some(snapshot(&now));
+                guard.insert(ctx.fiber_uid(), snapshot(&now));
                 return Ok(());
             }
         }
@@ -169,9 +300,22 @@ async fn check_row_hashes(ctx: Context) -> Result<(), InvariantViolation> {
         .map_err(|d| violation(&ctx, "append_only_rows_never_change", ctx.plugin_name(), d))
 }
 
+/// Only `rollups` carries `superseded_by`, so this reads that scope alone rather than a second
+/// full scan of every table.
 async fn check_seal_once(ctx: Context) -> Result<(), InvariantViolation> {
-    let rows = current_hashes(&ctx).await.unwrap_or_default();
-    evaluate_seal_once(&rows, &supersessions())
+    let observed = SUPERSESSIONS
+        .lock()
+        .get(&ctx.fiber_uid())
+        .cloned()
+        .unwrap_or_default();
+    if observed.is_empty() {
+        // Nothing was superseded on this fiber: vacuously true, and no store read at all.
+        return Ok(());
+    }
+    let rows = current_hashes(&ctx, crate::query::HashScope::Rollups)
+        .await
+        .unwrap_or_default();
+    evaluate_seal_once(&rows, &observed)
         .map_err(|d| violation(&ctx, "seal_once", ctx.plugin_name(), d))
 }
 
@@ -181,95 +325,33 @@ fn snapshot(rows: &[RowHash]) -> BTreeMap<(&'static str, String), String> {
         .collect()
 }
 
-/// **`seq_strictly_grows_per_trajectory`**, as a pure function of the observed stream.
+/// **`seq_strictly_grows_per_trajectory`**, as a pure function of a stream.
+///
+/// The runtime check reads the running fold instead (`seq_violation`); this is the same fold over
+/// an explicit slice, which is what the tests and the launcher's planted-stream assertions use.
 ///
 /// The FIRST observation of a trajectory is accepted whatever its seq: a listener may start
 /// recording partway through a trajectory's life (a reload, a fork's parent), and "seq 7 arrived
 /// first" is not a ledger fault. Every observation after it must be exactly its predecessor + 1.
 pub fn evaluate_seq(stream: &[Obs]) -> Result<(), String> {
-    let mut last: BTreeMap<TrajId, Seq> = BTreeMap::new();
-    for obs in stream {
-        if let Some(prev) = last.get(&obs.traj) {
-            if obs.seq.0 != prev.0 + 1 {
-                let word = if obs.seq.0 <= prev.0 {
-                    "regressed to"
-                } else {
-                    "jumped to"
-                };
-                return Err(format!(
-                    "trajectory `{}` {} seq {} after seq {}; seq is contiguous and strictly \
-                     increasing per trajectory",
-                    obs.traj, word, obs.seq.0, prev.0
-                ));
-            }
-        }
-        last.insert(obs.traj.clone(), obs.seq);
-    }
-    Ok(())
+    fold(stream).seq_violation.map_or(Ok(()), Err)
 }
 
-/// **`wake_step_enclosure`**, as a pure function of the observed stream.
+/// **`wake_step_enclosure`**, as a pure function of a stream.
 ///
 /// Every step carries a wake id, and every `step/start`..`step/end` pair lies inside a
-/// `wake/start`..`wake/end` pair of the SAME wake.
+/// `wake/start`..`wake/end` pair of the SAME wake. Several wakes may be open at once in one
+/// trajectory (§3, §5: concurrent wakes are first-class and de-interleaved by wake id).
 pub fn evaluate_enclosure(stream: &[Obs]) -> Result<(), String> {
-    let mut open: BTreeMap<TrajId, WakeId> = BTreeMap::new();
+    fold(stream).enclosure_violation.map_or(Ok(()), Err)
+}
+
+fn fold(stream: &[Obs]) -> Fold {
+    let mut f = Fold::default();
     for obs in stream {
-        if obs.wake.as_str().is_empty() {
-            return Err(format!(
-                "step at seq {} of trajectory `{}` carries no wake id; every step carries one",
-                obs.seq.0, obs.traj
-            ));
-        }
-        match obs.kind.as_str() {
-            "wake/start" => {
-                if let Some(already) = open.get(&obs.traj) {
-                    return Err(format!(
-                        "wake `{}` opened at seq {} of trajectory `{}` while wake `{already}` was \
-                         still open",
-                        obs.wake, obs.seq.0, obs.traj
-                    ));
-                }
-                open.insert(obs.traj.clone(), obs.wake.clone());
-            }
-            "wake/end" => match open.get(&obs.traj) {
-                Some(w) if *w == obs.wake => {
-                    open.remove(&obs.traj);
-                }
-                Some(w) => {
-                    return Err(format!(
-                        "wake/end for `{}` at seq {} of trajectory `{}` closes a wake that is not \
-                         the open one (`{w}`)",
-                        obs.wake, obs.seq.0, obs.traj
-                    ))
-                }
-                None => {
-                    return Err(format!(
-                        "wake/end for `{}` at seq {} of trajectory `{}` closes no open wake",
-                        obs.wake, obs.seq.0, obs.traj
-                    ))
-                }
-            },
-            "step/start" | "step/end" => match open.get(&obs.traj) {
-                Some(w) if *w == obs.wake => {}
-                Some(w) => {
-                    return Err(format!(
-                        "`{}` at seq {} of trajectory `{}` carries wake `{}` but the open wake is \
-                         `{w}`",
-                        obs.kind, obs.seq.0, obs.traj, obs.wake
-                    ))
-                }
-                None => {
-                    return Err(format!(
-                        "`{}` at seq {} of trajectory `{}` lies outside any open wake",
-                        obs.kind, obs.seq.0, obs.traj
-                    ))
-                }
-            },
-            _ => {}
-        }
+        f.push(obs);
     }
-    Ok(())
+    f
 }
 
 /// **`append_only_rows_never_change`**, as a pure function of two row-hash snapshots. A row that
@@ -356,6 +438,9 @@ fn violation(
 mod tests {
     use super::*;
 
+    /// The records are process-global; the tests that write them run one at a time.
+    static RECORD_LOCK: Mutex<()> = Mutex::new(());
+
     fn obs(traj: &str, seq: u64, wake: &str, kind: &str) -> Obs {
         Obs {
             fiber: FiberUid(1),
@@ -438,7 +523,10 @@ mod tests {
             obs("a", 2, "w2", "step/start"),
         ])
         .expect_err("a step carrying another wake id is a violation");
-        assert!(detail.contains("open wake is `w1`"), "unhelpful: {detail}");
+        assert!(
+            detail.contains("not open") && detail.contains("`w2`"),
+            "unhelpful: {detail}"
+        );
         // A step with no wake id at all is the other half of the statement.
         assert!(evaluate_enclosure(&[obs("a", 1, "", "pin/set")])
             .expect_err("every step carries a wake id")
@@ -525,14 +613,99 @@ mod tests {
     /// `forget`, the restarted seq 1 reads as a regression.
     #[test]
     fn forgetting_a_fiber_lets_a_reload_start_over() {
+        let _g = RECORD_LOCK.lock();
         clear();
         record(obs("a", 1, "w", "pin/set"));
         record(obs("a", 2, "w", "pin/set"));
-        assert_eq!(evaluate_seq(&seen()), Ok(()));
+        assert_eq!(observed(), 2);
+        assert_eq!(seq_violation(), None);
         forget(FiberUid(1));
-        assert!(seen().is_empty());
+        assert_eq!(observed(), 0);
         record(obs("a", 1, "w", "pin/set"));
-        assert_eq!(evaluate_seq(&seen()), Ok(()));
+        assert_eq!(seq_violation(), None);
         clear();
+    }
+
+    /// Two providers mounted at once are two streams: one fiber's unload must not wipe the
+    /// other's baseline, and their observations must not merge into one seq check.
+    #[test]
+    fn two_fibers_are_two_streams() {
+        let _g = RECORD_LOCK.lock();
+        clear();
+        record(obs("a", 1, "w", "pin/set"));
+        record(Obs {
+            fiber: FiberUid(2),
+            ..obs("a", 1, "w", "pin/set")
+        });
+        // Same trajectory id on two fibers, both at seq 1: not a regression.
+        assert_eq!(seq_violation(), None);
+        record_supersession(FiberUid(2), &RollupId::new("r1"), &RollupId::new("r2"));
+        forget(FiberUid(1));
+        // Fiber 2's record survives its sibling's unload.
+        assert_eq!(observed(), 1);
+        assert_eq!(
+            supersessions(),
+            vec![(RollupId::new("r1"), RollupId::new("r2"))]
+        );
+        clear();
+    }
+
+    /// §3/§5 make concurrent wakes in one trajectory first-class (the projector de-interleaves
+    /// them by wake id), and `fork::open_wake_at` already tracks a VEC of open wakes. The
+    /// enclosure invariant must agree with them.
+    #[test]
+    fn concurrent_wakes_in_one_trajectory_are_legal() {
+        let stream = vec![
+            obs("a", 1, "w1", "wake/start"),
+            obs("a", 2, "w2", "wake/start"),
+            obs("a", 3, "w2", "step/start"),
+            obs("a", 4, "w1", "step/start"),
+            obs("a", 5, "w2", "step/end"),
+            obs("a", 6, "w2", "wake/end"),
+            obs("a", 7, "w1", "step/end"),
+            obs("a", 8, "w1", "wake/end"),
+        ];
+        assert_eq!(evaluate_enclosure(&stream), Ok(()));
+        // A step under a wake that CLOSED is still a violation, concurrency or not.
+        let detail = evaluate_enclosure(&[
+            obs("a", 1, "w1", "wake/start"),
+            obs("a", 2, "w2", "wake/start"),
+            obs("a", 3, "w1", "wake/end"),
+            obs("a", 4, "w1", "step/start"),
+        ])
+        .expect_err("a closed wake encloses nothing");
+        assert!(detail.contains("not open"), "unhelpful: {detail}");
+        // Re-opening a wake that is already open is a violation.
+        assert!(evaluate_enclosure(&[
+            obs("a", 1, "w1", "wake/start"),
+            obs("a", 2, "w1", "wake/start"),
+        ])
+        .expect_err("a wake opens once")
+        .contains("already open"));
+    }
+
+    /// The `seal_once` record is written by a provider's `supersede_rollup`; a second transition
+    /// for the same rollup is the violation.
+    #[test]
+    fn a_second_recorded_supersession_is_a_seal_once_violation() {
+        let rows = vec![RowHash {
+            table: "rollups",
+            id: "r1".into(),
+            hash: "aa".into(),
+            superseded_by: Some("r2".into()),
+        }];
+        assert_eq!(
+            evaluate_seal_once(&rows, &[(RollupId::new("r1"), RollupId::new("r2"))]),
+            Ok(())
+        );
+        let detail = evaluate_seal_once(
+            &rows,
+            &[
+                (RollupId::new("r1"), RollupId::new("r2")),
+                (RollupId::new("r1"), RollupId::new("r3")),
+            ],
+        )
+        .expect_err("superseded_by is set once");
+        assert!(detail.contains("set once"), "unhelpful: {detail}");
     }
 }

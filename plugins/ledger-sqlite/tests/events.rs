@@ -174,6 +174,18 @@ async fn a_blocking_listener_does_not_delay_the_append() {
         elapsed < Duration::from_secs(1),
         "the append waited on a listener: {elapsed:?}"
     );
+    // ... and the listener really was dispatched: "never ran" would satisfy the timing alone.
+    for _ in 0..100 {
+        if started.load(Ordering::SeqCst) == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        started.load(Ordering::SeqCst),
+        1,
+        "the blocking listener never started, so the timing proves nothing"
+    );
 }
 
 #[tokio::test]

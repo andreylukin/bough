@@ -8,6 +8,7 @@ pub mod bands;
 pub mod degrade;
 pub mod invariant;
 pub mod registry;
+pub mod resolve;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -120,13 +121,15 @@ impl Projector for Assembler {
         dir: Option<&Path>,
     ) -> Result<PathBuf, ProjectionError> {
         let text = self.file_view(req).await?;
-        let dir = dir.unwrap_or(&self.cfg.file_view_dir).to_path_buf();
-        let path = dir.join(format!("{}.txt", req.traj));
+        // Defaults and the file NAME are resolved in one explicit step (§0.2); a traj id never
+        // becomes a path.
+        let spec = crate::resolve::resolve_file_view(req, &self.cfg, dir)?;
+        let path = spec.path();
         let fail = |detail: String| ProjectionError::FileView {
             path: path.display().to_string(),
             detail,
         };
-        std::fs::create_dir_all(&dir).map_err(|e| fail(e.to_string()))?;
+        std::fs::create_dir_all(&spec.dir).map_err(|e| fail(e.to_string()))?;
         std::fs::write(&path, text.as_bytes()).map_err(|e| fail(e.to_string()))?;
         Ok(path)
     }
@@ -141,7 +144,9 @@ impl Plugin for AssemblerPlugin {
     type Config = AssemblerConfig;
 
     fn inject() -> Inject {
-        Inject::required(["ledger"])
+        // The typed key names itself: a rename on the Definition is a compile error here, not a
+        // boot failure (§13).
+        Inject::required([<Ledger as bough_kernel::ServiceKey>::NAME])
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {

@@ -151,12 +151,12 @@ async fn measure() -> (usize, usize, f64) {
     (o200k, anthropic, ratio)
 }
 
+/// `#[ignore]` and not an early `return`: a skipped test that reports `ok` is indistinguishable
+/// from coverage. Run with `BOUGH_LIVE=1 cargo test -- --ignored`.
 #[tokio::test]
+#[ignore = "live: needs the API; run with BOUGH_LIVE=1 --ignored"]
 async fn o200k_estimate_stays_within_the_headroom_factor() {
-    if !live() {
-        eprintln!("skipped: set BOUGH_LIVE=1 to run the token calibration against the API");
-        return;
-    }
+    assert!(live(), "set BOUGH_LIVE=1 to run the token calibration");
     let _guard = trace::test_lock();
     bough_plugin_projection_probe::clear();
 
@@ -171,20 +171,18 @@ async fn o200k_estimate_stays_within_the_headroom_factor() {
     );
 }
 
+/// `#[ignore]` for the same reason as its sibling.
 #[tokio::test]
+#[ignore = "live: needs the API; run with BOUGH_LIVE=1 --ignored"]
 async fn the_measured_ratio_is_printed_and_recorded() {
-    if !live() {
-        eprintln!("skipped: set BOUGH_LIVE=1 to run the token calibration against the API");
-        return;
-    }
+    assert!(live(), "set BOUGH_LIVE=1 to run the token calibration");
     let _guard = trace::test_lock();
     bough_plugin_projection_probe::clear();
 
     let (o200k, anthropic, ratio) = measure().await;
     // The printed line is the artefact P1-D20 asks for; the recorded one is what makes the 0.6 in
     // the bundle a MEASURED number rather than an inherited one.
-    let line = format!("o200k={o200k} anthropic={anthropic} ratio={ratio:.3}");
-    assert!(line.contains("ratio="));
+    println!("MEASURED o200k={o200k} anthropic={anthropic} ratio={ratio:.3}");
 
     let build = std::fs::read_to_string(support::repo_root().join("BUILD.md"))
         .expect("BUILD.md is readable");

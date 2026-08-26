@@ -103,13 +103,13 @@ async fn a_scripted_session_reports_no_ledger_violation() {
 
     // Precondition: the probe really did append, so a green report is not the report of an empty
     // stream.
-    let stream = bough_plugin_ledger::invariant::seen();
+    let observed = bough_plugin_ledger::invariant::observed();
     assert!(
-        stream.len() >= 4,
-        "the probe must have appended a scripted trajectory: {stream:?}"
+        observed >= 4,
+        "the probe must have appended a scripted trajectory: {observed} observations"
     );
-    assert!(bough_plugin_ledger::invariant::evaluate_seq(&stream).is_ok());
-    assert!(bough_plugin_ledger::invariant::evaluate_enclosure(&stream).is_ok());
+    assert_eq!(bough_plugin_ledger::invariant::seq_violation(), None);
+    assert_eq!(bough_plugin_ledger::invariant::enclosure_violation(), None);
 
     assert!(
         kernel.violations().is_empty(),
@@ -135,12 +135,9 @@ async fn a_planted_seq_gap_is_reported() {
     // A real append cannot produce a gap — the single writer allocates seq inside the commit — so
     // the violation is planted on the OBSERVED stream, which is exactly what the invariant is a
     // statement about.
-    let last = bough_plugin_ledger::invariant::seen()
-        .into_iter()
-        .filter(|o| o.traj == TrajId::new("t1"))
-        .map(|o| o.seq.0)
-        .max()
-        .expect("the probe appended to t1");
+    let last = bough_plugin_ledger::invariant::last_seq(&TrajId::new("t1"))
+        .expect("the probe appended to t1")
+        .0;
     bough_plugin_ledger::invariant::record(Obs {
         fiber,
         traj: TrajId::new("t1"),
@@ -149,8 +146,7 @@ async fn a_planted_seq_gap_is_reported() {
         kind: StepType::new("probe/note"),
     });
     assert!(
-        bough_plugin_ledger::invariant::evaluate_seq(&bough_plugin_ledger::invariant::seen())
-            .is_err(),
+        bough_plugin_ledger::invariant::seq_violation().is_some(),
         "the planted stream must itself violate the invariant"
     );
 
@@ -182,12 +178,9 @@ async fn a_planted_unenclosed_step_pair_is_reported() {
     // A `step/start`..`step/end` pair under a wake that was never opened.
     let traj = TrajId::new("t1");
     let wake = WakeId::new("t1-never-opened");
-    let last = bough_plugin_ledger::invariant::seen()
-        .into_iter()
-        .filter(|o| o.traj == traj)
-        .map(|o| o.seq.0)
-        .max()
-        .expect("the probe appended to t1");
+    let last = bough_plugin_ledger::invariant::last_seq(&traj)
+        .expect("the probe appended to t1")
+        .0;
     for (n, kind) in ["step/start", "step/end"].into_iter().enumerate() {
         bough_plugin_ledger::invariant::record(Obs {
             fiber,
@@ -198,8 +191,7 @@ async fn a_planted_unenclosed_step_pair_is_reported() {
         });
     }
     assert!(
-        bough_plugin_ledger::invariant::evaluate_enclosure(&bough_plugin_ledger::invariant::seen())
-            .is_err(),
+        bough_plugin_ledger::invariant::enclosure_violation().is_some(),
         "the planted stream must itself violate the invariant"
     );
 
@@ -266,5 +258,83 @@ async fn a_projection_citing_a_missing_step_is_reported() {
     );
 
     assert_eq!(row(&kernel, "projection").state, FiberState::Active);
+    kernel.shutdown().await;
+}
+
+/// `seal_once` is a statement about REAL supersessions, so this test drives one through the live
+/// provider first — which is what proves `supersede_rollup` records the transition at all — and
+/// only then plants a second transition for the same rollup, which no API can produce.
+#[tokio::test]
+async fn a_planted_second_supersession_is_reported() {
+    let _guard = trace::test_lock();
+    bough_plugin_projection_probe::clear();
+    bough_plugin_ledger::invariant::clear();
+    bough_plugin_projection::invariant::clear();
+    let (kernel, dir) = boot_with_profile(P1, "dev").await;
+    let fiber = row(&kernel, "ledger").uid.expect("uid");
+    let ledger = kernel
+        .root()
+        .peek_live::<bough_plugin_ledger::Ledger>()
+        .expect("ledger is bound")
+        .as_ref()
+        .clone();
+
+    let at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+        .unwrap()
+        .into();
+    let mut sealed = Vec::new();
+    for id in ["r1", "r2", "r3"] {
+        sealed.push(
+            ledger
+                .0
+                .seal_rollup(bough_plugin_ledger::NewRollup {
+                    id: Some(bough_plugin_ledger::RollupId::new(id)),
+                    traj: TrajId::new("t1"),
+                    kind: bough_plugin_ledger::RollupKind::Tier,
+                    tier: 1,
+                    from_seq: bough_plugin_ledger::Seq(1),
+                    to_seq: bough_plugin_ledger::Seq(2),
+                    src_trajs: vec![TrajId::new("t1")],
+                    body: serde_json::json!({ "text": id }),
+                    notable_refs: Default::default(),
+                    prompt_ver: "v1".into(),
+                    sealed_at: at,
+                })
+                .await
+                .unwrap_or_else(|e| panic!("seal {id}: {e}"))
+                .id,
+        );
+    }
+    ledger
+        .0
+        .supersede_rollup(&sealed[0], &sealed[1])
+        .await
+        .expect("the first supersession is the permitted one");
+    // THE wiring this invariant depends on: the provider recorded the transition.
+    assert_eq!(
+        bough_plugin_ledger::invariant::supersessions(),
+        vec![(sealed[0].clone(), sealed[1].clone())],
+        "supersede_rollup must record the transition, or `seal_once` can never fire"
+    );
+    // A second one is refused by the API and by the trigger, so it is PLANTED on the record.
+    assert!(ledger
+        .0
+        .supersede_rollup(&sealed[0], &sealed[2])
+        .await
+        .is_err());
+    bough_plugin_ledger::invariant::record_supersession(fiber, &sealed[0], &sealed[2]);
+
+    write_patch(&dir, NUDGE);
+    recompose(&kernel, P1, &dir)
+        .await
+        .expect("the nudge composes");
+    let vs = kernel.violations();
+    let v = violation(&vs, "seal_once");
+    assert_eq!(v.plugin, "ledger-sqlite");
+    assert_eq!(v.entry.as_str(), "ledger");
+    assert!(v.detail.contains("set once"), "unhelpful: {}", v.detail);
+
+    assert_eq!(row(&kernel, "ledger").state, FiberState::Active);
+    bough_plugin_ledger::invariant::clear();
     kernel.shutdown().await;
 }

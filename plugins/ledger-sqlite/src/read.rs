@@ -523,7 +523,8 @@ pub async fn supersede_rollup(
     old: &RollupId,
     new: &RollupId,
 ) -> Result<(), LedgerError> {
-    let (old, new) = (old.clone(), new.clone());
+    let (owned_old, owned_new) = (old.clone(), new.clone());
+    let (old, new) = (owned_old.clone(), owned_new.clone());
     store
         .with_conn(move |conn| {
             let tx = conn.transaction().map_err(store_err)?;
@@ -560,7 +561,15 @@ pub async fn supersede_rollup(
             tx.commit().map_err(store_err)?;
             Ok(())
         })
-        .await
+        .await?;
+    // The transition is now committed and can never happen again for this rollup, so the
+    // `seal_once` invariant's record is written here — the one place it can be written from.
+    bough_plugin_ledger::invariant::record_supersession(
+        store.ctx.fiber_uid(),
+        &owned_old,
+        &owned_new,
+    );
+    Ok(())
 }
 
 /// [`bough_plugin_ledger::LedgerStore::rollups`].

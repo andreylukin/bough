@@ -7,6 +7,8 @@ use crate::section::SectionId;
 pub enum ProjectionError {
     #[error("section `{id}` is already registered at this scope")]
     DuplicateSection { id: SectionId },
+    #[error("section `{id}` is a built-in band id and is reserved by the assembler")]
+    ReservedSection { id: SectionId },
     #[error("section `{id}` declares agent scope but names no agent")]
     AgentScopeWithoutAgent { id: SectionId },
     #[error("section `{id}` failed to render: {detail}")]

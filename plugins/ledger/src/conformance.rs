@@ -2036,7 +2036,11 @@ macro_rules! ledger_conformance {
 macro_rules! ledger_conformance_cases {
     ($fixture:expr; $($case:ident),* $(,)?) => {
         $(
-            #[tokio::test]
+            // multi_thread, not the current-thread default: `concurrent_appends_produce_a
+            // _contiguous_seq_run` spawns 16 tasks, and a synchronous provider (the memory one)
+            // would run them strictly one after another on a current-thread runtime — the case
+            // would degenerate into 16 sequential appends and prove nothing about the writer.
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
             async fn $case() {
                 let f = ($fixture)().await;
                 $crate::conformance::$case(&f).await;

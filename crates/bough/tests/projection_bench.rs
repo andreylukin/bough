@@ -127,10 +127,16 @@ fn one(
 }
 
 /// Boot the tree, grow the trajectory to `n` steps, and return the best of three `assemble()`s.
-async fn best_of_three(n: usize) -> (Duration, std::sync::Arc<bough_kernel::Kernel>) {
+async fn best_of_three(
+    n: usize,
+) -> (
+    Duration,
+    std::sync::Arc<bough_kernel::Kernel>,
+    support::TempDir,
+) {
+    // The dir is RETURNED, not leaked: its `Drop` is the only thing that removes `$BOUGH_HOME`,
+    // and a 100k-step db left in the system temp dir on every `make gates` is litter.
     let (kernel, dir) = support::boot_with(P1).await;
-    // Kept alive for the whole measurement: dropping it removes `$BOUGH_HOME` and the db with it.
-    std::mem::forget(dir);
     let ledger = kernel
         .root()
         .peek_live::<Ledger>()
@@ -178,14 +184,14 @@ async fn best_of_three(n: usize) -> (Duration, std::sync::Arc<bough_kernel::Kern
             "an empty projection is not a measurement"
         );
     }
-    (best, kernel)
+    (best, kernel, dir)
 }
 
 #[tokio::test]
 async fn assembly_over_10k_steps_is_under_the_bound() {
     let _guard = trace::test_lock();
     bough_plugin_projection_probe::clear();
-    let (best, kernel) = best_of_three(10_000).await;
+    let (best, kernel, _dir) = best_of_three(10_000).await;
     println!("assemble(10k) = {:.2}ms", best.as_secs_f64() * 1000.0);
     assert!(
         best <= BOUND,
@@ -196,15 +202,14 @@ async fn assembly_over_10k_steps_is_under_the_bound() {
     kernel.shutdown().await;
 }
 
+/// `#[ignore]` and not an early `return`: a skipped test that reports `ok` is indistinguishable
+/// from coverage. Run it with `BOUGH_BENCH=1 cargo test -- --ignored`.
 #[tokio::test]
+#[ignore = "the 100k bench is slow; run with --ignored"]
 async fn assembly_over_100k_steps_is_under_50ms() {
-    if std::env::var("BOUGH_BENCH").ok().as_deref() != Some("1") {
-        eprintln!("skipped: set BOUGH_BENCH=1 to run the 100k projection bench");
-        return;
-    }
     let _guard = trace::test_lock();
     bough_plugin_projection_probe::clear();
-    let (best, kernel) = best_of_three(100_000).await;
+    let (best, kernel, _dir) = best_of_three(100_000).await;
     println!("assemble(100k) = {:.2}ms", best.as_secs_f64() * 1000.0);
     assert!(
         best <= BOUND,

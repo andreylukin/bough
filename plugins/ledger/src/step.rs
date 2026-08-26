@@ -56,6 +56,32 @@ pub struct Append {
     pub id: Option<StepId>,
 }
 
+/// What an [`Append`] request resolves to before any store touches it.
+///
+/// §0.2: defaulting is an explicit `resolve(request) -> Spec` step, never a hidden `?? default`
+/// inside the write path. Both providers call [`resolve_append`], so "the provider mints a uuid
+/// v7" and "refs are derived, never caller-supplied" are ONE rule with one implementation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AppendSpec {
+    /// The id the row will carry: the caller's, or a freshly minted uuid v7.
+    pub id: StepId,
+    /// The canonical refs, derived from cites + body. A caller cannot set these.
+    pub refs: std::collections::BTreeSet<crate::id::Ref>,
+}
+
+/// Resolve an append request against the ledger's defaults.
+pub fn resolve_append(req: &Append) -> AppendSpec {
+    AppendSpec {
+        id: req.id.clone().unwrap_or_else(mint_step_id),
+        refs: crate::refs::derive_step_refs(&req.cites, &req.body),
+    }
+}
+
+/// The one place a step id is minted.
+pub fn mint_step_id() -> StepId {
+    StepId::new(uuid::Uuid::now_v7().to_string())
+}
+
 /// A committed row. Cheap to clone; the payload of `ledger/step`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Step {

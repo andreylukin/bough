@@ -31,7 +31,17 @@ pub fn flag_line(flags: &BTreeSet<Flag>) -> String {
 /// The seven steps, in order.
 pub async fn assemble(a: &Assembler, req: &AssembleRequest) -> Result<Assembled, ProjectionError> {
     // 1. Membership, derived at need (§3). Writes nothing.
-    let connected = Arc::new(a.ledger.0.connected(&req.agent).await?);
+    //
+    // `agents` is MUTABLE config a merge may delete (§3), and "an answer wake must always be
+    // buildable" (§5): an agent whose row is gone gets the rowless membership and an
+    // identity-only projection, never a refusal.
+    let connected = Arc::new(match a.ledger.0.connected(&req.agent).await {
+        Ok(c) => c,
+        Err(bough_plugin_ledger::LedgerError::NoSuchAgent(_)) => {
+            bough_plugin_ledger::Connected::rowless()
+        }
+        Err(e) => return Err(e.into()),
+    });
 
     let sreq = SectionRequest {
         agent: req.agent.clone(),
@@ -41,6 +51,8 @@ pub async fn assemble(a: &Assembler, req: &AssembleRequest) -> Result<Assembled,
         connected: Arc::clone(&connected),
     };
     let cfg = &*a.cfg;
+    // Every request-time default, resolved once and explicitly (§0.2).
+    let spec = crate::resolve::resolve_assemble(req, cfg);
 
     // 2. The six built-in bands, in `Slot` order. A band with no input renders NOTHING — not an
     //    empty header — so a zero-rollup ledger assembles cleanly (Phase 4 produces tiers).
@@ -103,7 +115,7 @@ pub async fn assemble(a: &Assembler, req: &AssembleRequest) -> Result<Assembled,
     order::order(&mut sections);
 
     // 5. The waterfall, BETWEEN rendering and degradation, so a listener's section is budgeted.
-    let budget = req.budget.unwrap_or(cfg.budget_tokens);
+    let budget = spec.budget;
     let draft = Draft {
         request: Arc::new(req.clone()),
         sections,
@@ -116,7 +128,14 @@ pub async fn assemble(a: &Assembler, req: &AssembleRequest) -> Result<Assembled,
 
     // 6. Degrade in the fixed reverse order, stopping as soon as it fits.
     let effective = bough_plugin_projection::tokens::effective_budget(draft.budget, cfg.headroom);
-    let cut = Cut::new(cfg.clone(), priorities, tail_steps, pins, mail_steps);
+    let cut = Cut::new(
+        cfg.clone(),
+        priorities,
+        spec.default_priority,
+        tail_steps,
+        pins,
+        mail_steps,
+    );
     degrade::degrade(&mut draft, &cut, effective);
 
     // 7. Finalize. `cites` is the union of every SURVIVING section's cites — exactly what the
@@ -261,5 +280,111 @@ mod tests {
             b.to_text(),
             "the text is a function of (ledger, request, config) alone"
         );
+    }
+
+    /// §5: "an answer wake must always be buildable, leader or no leader". `agents` is mutable
+    /// config a merge may delete (§3), so an agent with no row degrades to identity-only rather
+    /// than refusing the whole projection.
+    #[tokio::test]
+    async fn an_agent_with_no_row_still_gets_a_projection() {
+        let f = Fixture::memory().await;
+        // No `seed_agent()`: the row does not exist.
+        assert!(matches!(
+            f.ledger
+                .0
+                .connected(&bough_plugin_ledger::AgentName::new("ghost"))
+                .await,
+            Err(bough_plugin_ledger::LedgerError::NoSuchAgent(_))
+        ));
+        let out = f
+            .assembler()
+            .assemble(&assemble_request("ghost"))
+            .await
+            .expect("an answer wake must always be buildable");
+        assert_eq!(
+            out.sections
+                .iter()
+                .map(|s| s.id.to_string())
+                .collect::<Vec<_>>(),
+            vec!["identity".to_string()],
+            "identity is never dropped, and nothing else has a trajectory to read"
+        );
+        assert!(out.to_text().contains("trajectory: -"));
+    }
+
+    /// A contributed `Place::Before` section sorts ahead of the built-in band whatever its id —
+    /// which is only true because the band carries `Place::Band` and not `Place::Before`.
+    #[tokio::test]
+    async fn a_contributed_before_section_precedes_its_band() {
+        for id in ["about", "zeta"] {
+            let f = Fixture::memory().await;
+            f.seed_agent().await;
+            let _tok = f
+                .assembler()
+                .section(bough_plugin_projection::SectionSpec {
+                    id: SectionId::new(id),
+                    position: Position {
+                        slot: Slot::Identity,
+                        place: Place::Before,
+                    },
+                    scope: bough_plugin_projection::SectionScope::Global,
+                    agent: None,
+                    priority: bough_plugin_projection::DropPriority::Never,
+                    render: std::sync::Arc::new(Fixed),
+                })
+                .expect("a contributed section registers");
+            let out = f
+                .assembler()
+                .assemble(&assemble_request("sol"))
+                .await
+                .unwrap();
+            let ids: Vec<String> = out.sections.iter().map(|s| s.id.to_string()).collect();
+            let (a, b) = (
+                ids.iter().position(|x| x == id).expect("contributed"),
+                ids.iter().position(|x| x == "identity").expect("band"),
+            );
+            assert!(a < b, "`{id}` declared Before but sorted {ids:?}");
+        }
+    }
+
+    /// The six built-in band ids are reserved: a contributed section carrying one would be
+    /// undroppable and would shadow the real band in every rung's `index_of`.
+    #[tokio::test]
+    async fn a_contributed_section_cannot_claim_a_built_in_band_id() {
+        let f = Fixture::memory().await;
+        for id in ["identity", "pins", "digest", "tail", "mail", "tier-1"] {
+            let outcome = f.assembler().section(bough_plugin_projection::SectionSpec {
+                id: SectionId::new(id),
+                position: Position {
+                    slot: Slot::Tail,
+                    place: Place::After,
+                },
+                scope: bough_plugin_projection::SectionScope::Global,
+                agent: None,
+                priority: bough_plugin_projection::DropPriority::Coarse,
+                render: std::sync::Arc::new(Fixed),
+            });
+            match outcome {
+                Err(ProjectionError::ReservedSection { .. }) => {}
+                Err(other) => panic!("`{id}`: wrong refusal: {other}"),
+                Ok(_) => panic!("`{id}` is a built-in band id and must be refused"),
+            }
+        }
+    }
+
+    struct Fixed;
+
+    #[async_trait::async_trait]
+    impl bough_plugin_projection::SectionRender for Fixed {
+        async fn render(
+            &self,
+            _req: &bough_plugin_projection::SectionRequest,
+        ) -> Result<Option<bough_plugin_projection::SectionBody>, ProjectionError> {
+            Ok(Some(bough_plugin_projection::SectionBody {
+                title: "Contributed".into(),
+                body: "contributed".into(),
+                cites: SectionCites::default(),
+            }))
+        }
     }
 }
