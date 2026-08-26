@@ -6,3 +6,14 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bough-kernel = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+schemars = { workspace = true }
+inventory = { workspace = true }
+parking_lot = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

@@ -1,0 +1,4 @@
+# profiles/tui.yml — the default profile (§0.5).
+name: tui
+bundles: [bough-base, bough-tui-app]
+invariants: false

@@ -1,0 +1,12 @@
+# bundles/bough-base.yml — REQUIREMENTS §0.5. Phase 0: the verification fixture only.
+#
+# Two rows, not the literal one of §17: a consumer row with no provider cannot boot, because an
+# enabled row that never activates is a boot failure (§0.2, Decision D14).
+- id: greeting.provider
+  plugin: greeting-echo
+  config: { suffix: "" }
+- id: hello.greeter
+  plugin: hello
+  config:
+    who: world
+    log_level: info

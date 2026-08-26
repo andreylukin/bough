@@ -22,7 +22,7 @@ tokio-util   = { version = "0.7", features = ["rt"] }
 # bridged through OAuthHttpClient. The dual-version arrangement STANDS (§13, Phase 0).
 reqwest      = { version = "0.12", features = ["json", "stream", "blocking"] }
 rusqlite     = { version = "0.37", features = ["bundled"] }          # ledger-sqlite
-serde        = { version = "1", features = ["derive"] }
+serde        = { version = "1", features = ["derive", "rc"] }   # "rc": brand_id! newtypes over Arc<str>
 serde_json   = "1"
 serde_yaml   = "0.9"                                                  # config tree + patch layers (kernel loader)
 schemars     = "1"                                                    # plugin Config schemas, seal schemas
@@ -49,7 +49,11 @@ tiktoken-rs  = "0.7"                                                  # o200k_ba
 backon       = "1"                                                    # llm-retry
 libc         = "0.2"
 clap         = { version = "4", features = ["derive"] }               # the launcher's CLI
+parking_lot  = "0.12"                                                 # kernel binding store / fiber state lock
+include_dir  = "0.7"                                                  # profiles/ + bundles/ embedded in the launcher
+pin-project-lite = "0.2"                                              # effect halt futures (EffectCtx::checkpoint)
 
 bough-llm    = { path = "crates/bough-llm" }
 bough-util   = { path = "crates/bough-util" }
 bough-kernel = { path = "crates/bough-kernel" }
+bough-plugin-hello = { path = "plugins/hello" }

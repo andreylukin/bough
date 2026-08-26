@@ -1,0 +1,4 @@
+# profiles/headless.yml — no terminal surface (§0.5).
+name: headless
+bundles: [bough-base, bough-headless]
+invariants: false
