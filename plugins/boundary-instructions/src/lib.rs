@@ -15,7 +15,10 @@ pub mod invariant;
 use std::sync::Arc;
 
 use bough_kernel::{ConfigError, Context, InvariantSpec, Plugin, PluginError};
-use bough_plugin_projection::SectionId;
+use bough_plugin_projection::{
+    DropPriority, Place, Position, Projection, SectionBody, SectionCites, SectionId, SectionRender,
+    SectionRequest, SectionScope, SectionSpec,
+};
 
 /// The catalog name of this row.
 pub const PLUGIN_NAME: &str = "boundary-instructions";
@@ -49,6 +52,44 @@ pub fn block() -> &'static str {
     BOUNDARY_BLOCK
 }
 
+/// The section's title. The BODY is [`BOUNDARY_BLOCK`] and nothing else, byte for byte: a title
+/// woven into the text would be a second spelling of the boundary.
+pub const SECTION_TITLE: &str = "Write boundary";
+
+/// The renderer: a constant. It reads no ledger, so `as_of` cannot change it and a reconstructed
+/// past request carries the same boundary the live one did.
+pub struct BoundarySection;
+
+#[async_trait::async_trait]
+impl SectionRender for BoundarySection {
+    async fn render(
+        &self,
+        _req: &SectionRequest,
+    ) -> Result<Option<SectionBody>, bough_plugin_projection::ProjectionError> {
+        Ok(Some(SectionBody {
+            title: SECTION_TITLE.to_string(),
+            body: BOUNDARY_BLOCK.to_string(),
+            cites: SectionCites::default(),
+        }))
+    }
+}
+
+/// The one spec this row contributes. `Global`, so it reaches residents AND workers; `Never`, so
+/// no degradation rung can take it away.
+pub fn section_spec() -> SectionSpec {
+    SectionSpec {
+        id: section_id(),
+        position: Position {
+            slot: bough_plugin_projection::Slot::Identity,
+            place: Place::After,
+        },
+        scope: SectionScope::Global,
+        agent: None,
+        priority: DropPriority::Never,
+        render: Arc::new(BoundarySection),
+    }
+}
+
 /// No configuration: the boundary is not a deployment's to vary (§0.2).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -62,8 +103,11 @@ impl Plugin for BoundaryPlugin {
     const NAME: &'static str = PLUGIN_NAME;
     type Config = BoundaryConfig;
 
+    /// `ledger` is OPTIONAL and DECLARED: the runtime invariant lists the agents it re-assembles
+    /// for. Without it the check is vacuous rather than a capability escape (§0.3).
     fn inject() -> bough_kernel::Inject {
         bough_kernel::Inject::required(["projection"])
+            .union(&bough_kernel::Inject::optional(["ledger"]))
     }
 
     fn validate(_cfg: &Self::Config) -> Result<(), ConfigError> {
@@ -73,8 +117,15 @@ impl Plugin for BoundaryPlugin {
     /// Register ONE global section: `Position { slot: Slot::Identity, place: Place::After }`,
     /// `SectionScope::Global`, `DropPriority::Never` — a buildable wake without the boundary is
     /// worse than no wake — rendering [`BOUNDARY_BLOCK`] verbatim. WP-4.
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-4")
+    async fn apply(ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let projection = ctx
+            .get::<Projection>()
+            .map_err(|e| PluginError::new(entry, e))?;
+        // A REGISTRATION IS AN EFFECT: unloading this row removes the section and leaves the
+        // registry as if the boundary had never mounted.
+        projection.section(&ctx, section_spec()).await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

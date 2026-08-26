@@ -42,7 +42,9 @@ release: ## cargo build --release
 audit-plugins: release ## REQUIREMENTS §17 Phase 8: boot with each bough-base row disabled, assert the tree settles
 	./scripts/audit-plugins.sh
 
-# REQUIREMENTS §17 Phase 3: the shell-use suite. It drives the RELEASE binary in a real PTY, with
+# REQUIREMENTS §17 Phase 3 (and Phase 6: 10-drafts, 11-mcp-tool, 12-swap-collector,
+# 13-swap-wards). Both halves glob `scripts/tui/[0-9]*.sh`, so a new script is wired in by
+# existing there. The shell-use suite. It drives the RELEASE binary in a real PTY, with
 # `$$BOUGH_HOME` pointed at a scratch directory and a generated patch that swaps `llm.anthropic`
 # for `llm-replay` — so the offline half needs no network and no key.
 #

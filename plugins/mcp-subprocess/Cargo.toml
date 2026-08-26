@@ -33,3 +33,4 @@ serde_yaml = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+bough-plugin-ledger-memory = { workspace = true }

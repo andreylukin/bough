@@ -23,5 +23,10 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 bough-plugin-mcp = { workspace = true }
 serde_yaml = { workspace = true }
-# rmcp is wired by WP-5: rmcp 3.x wants reqwest 0.13 bridged through OAuthHttpClient (§13).
-# rmcp = { workspace = true }
+rmcp = { workspace = true }
+tokio-util = { workspace = true }
+http = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+bough-plugin-ledger = { workspace = true }

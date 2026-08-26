@@ -29,3 +29,4 @@ bough-plugin-ledger = { workspace = true }
 [dev-dependencies]
 bough-plugin-schedule-manual = { workspace = true }
 bough-plugin-ledger-memory = { workspace = true }
+tokio = { workspace = true }

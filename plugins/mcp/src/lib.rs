@@ -75,7 +75,6 @@ pub trait McpClient: Send + Sync + 'static {
 pub struct McpHandle(pub Arc<McpInner>);
 
 /// The seam's live state: the server registry and the per-server tool cache.
-#[allow(dead_code)] // scaffold: filled by the work package that owns this crate
 pub struct McpInner {
     servers: parking_lot::Mutex<Vec<(u64, Arc<dyn McpClient>)>>,
     tools: parking_lot::Mutex<Vec<(ServerName, Vec<McpToolInfo>)>>,
@@ -94,48 +93,170 @@ impl McpHandle {
 
     /// Register a server. An EFFECT: the disposer withdraws it AND emits
     /// [`ServerChange::Removed`], which is what makes `tool-mcp` unregister its tools when a
-    /// server row is disabled. WP-5.
+    /// server row is disabled.
+    ///
+    /// The `Added` event is emitted only AFTER the registration is visible, so a listener that
+    /// wakes on it and immediately asks for the server's tools always finds it.
     pub async fn server(
         &self,
         ctx: &Context,
         client: Arc<dyn McpClient>,
     ) -> Result<EffectHandle, PluginError> {
-        let _ = (ctx, client);
-        todo!("WP-5")
+        let name = client.server().clone();
+        if self
+            .0
+            .servers
+            .lock()
+            .iter()
+            .any(|(_, c)| c.server() == &name)
+        {
+            return Err(PluginError::new(
+                ctx.entry_id().clone(),
+                anyhow::anyhow!("MCP server `{name}` is already registered"),
+            ));
+        }
+        let id = self
+            .0
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.0.servers.lock().push((id, client));
+
+        let inner = self.0.clone();
+        let disposer_ctx = ctx.clone();
+        let gone = name.clone();
+        let handle = ctx
+            .effect(move |e| async move {
+                e.defer_sync(move || {
+                    inner.servers.lock().retain(|(i, _)| *i != id);
+                    inner.tools.lock().retain(|(s, _)| s != &gone);
+                    disposer_ctx.emit::<McpServersChanged>(ServerChange::Removed(gone.clone()));
+                });
+                Ok(())
+            })
+            .await?;
+        ctx.emit::<McpServersChanged>(ServerChange::Added(name));
+        Ok(handle)
     }
 
-    /// Every registered server, sorted. WP-5.
+    /// Every registered server, sorted.
     pub fn servers(&self) -> Vec<ServerName> {
-        todo!("WP-5")
+        let mut out: Vec<ServerName> = self
+            .0
+            .servers
+            .lock()
+            .iter()
+            .map(|(_, c)| c.server().clone())
+            .collect();
+        out.sort();
+        out
     }
 
-    /// Cached per server; refreshed on `mcp/servers-changed` and on an explicit
-    /// [`McpHandle::refresh`]. `None` ⇒ every server. WP-5.
+    fn client(&self, server: &ServerName) -> Result<Arc<dyn McpClient>, McpError> {
+        self.0
+            .servers
+            .lock()
+            .iter()
+            .find(|(_, c)| c.server() == server)
+            .map(|(_, c)| c.clone())
+            .ok_or_else(|| McpError::UnknownServer(server.clone()))
+    }
+
+    fn cached(&self, server: &ServerName) -> Option<Vec<McpToolInfo>> {
+        self.0
+            .tools
+            .lock()
+            .iter()
+            .find(|(s, _)| s == server)
+            .map(|(_, t)| t.clone())
+    }
+
+    fn store(&self, server: &ServerName, tools: Vec<McpToolInfo>) {
+        let mut held = self.0.tools.lock();
+        held.retain(|(s, _)| s != server);
+        held.push((server.clone(), tools));
+    }
+
+    /// Cached per server; refilled by [`McpHandle::refresh`] and on a cache miss. `None` ⇒ every
+    /// server, in server order.
     pub async fn tools(&self, server: Option<&ServerName>) -> Result<Vec<McpToolInfo>, McpError> {
-        let _ = server;
-        todo!("WP-5")
+        let wanted: Vec<ServerName> = match server {
+            Some(s) => {
+                // An unknown name is an error, not an empty list: `tools()` is how a caller finds
+                // out a server row never mounted.
+                self.client(s)?;
+                vec![s.clone()]
+            }
+            None => self.servers(),
+        };
+        let mut out = Vec::new();
+        for name in wanted {
+            match self.cached(&name) {
+                Some(t) => out.extend(t),
+                None => {
+                    let listed = self.client(&name)?.list_tools().await?;
+                    self.store(&name, listed.clone());
+                    out.extend(listed);
+                }
+            }
+        }
+        Ok(out)
     }
 
-    /// One call, whose result carries [`McpHandle::cite_of`]'s cite. WP-5.
+    /// One call, whose result carries [`McpHandle::cite_of`]'s cite — the seam's, never the
+    /// server's.
     pub async fn call(
         &self,
         r: &McpToolRef,
         args: serde_json::Value,
     ) -> Result<McpCallResult, McpError> {
-        let _ = (r, args);
-        todo!("WP-5")
+        let client = self.client(&r.server)?;
+        if !client.is_ready() {
+            return Err(McpError::Unavailable(r.server.clone()));
+        }
+        let known = self.tools(Some(&r.server)).await?;
+        if !known.iter().any(|t| t.tool == r.tool) {
+            return Err(McpError::UnknownTool {
+                server: r.server.clone(),
+                tool: r.tool.clone(),
+            });
+        }
+        let mut result = client.call(&r.tool, args.clone()).await?;
+        // The seam MINTS the citation (module invariant): whatever the server said is discarded.
+        let minted = McpHandle::cite_of(r, &args);
+        let supplied: Vec<String> = result.cites.iter().map(|c| c.r#ref.to_string()).collect();
+        result.cites = vec![minted.clone()];
+        invariant::record(invariant::Obs {
+            minted: minted.r#ref.to_string(),
+            client_supplied: supplied,
+            delivered: result.cites.iter().map(|c| c.r#ref.to_string()).collect(),
+        });
+        Ok(result)
     }
 
-    /// Re-list one server's tools; returns how many it now has. WP-5.
+    /// Re-list one server's tools; returns how many it now has.
     pub async fn refresh(&self, server: &ServerName) -> Result<usize, McpError> {
-        let _ = server;
-        todo!("WP-5")
+        let listed = self.client(server)?.list_tools().await?;
+        let n = listed.len();
+        self.store(server, listed);
+        Ok(n)
     }
 
-    /// PURE: the cite a call's result carries. Stable across builds for the same args. WP-5.
+    /// PURE: the cite a call's result carries. Stable across builds for the same args, because
+    /// `serde_json::Value` maps are `BTreeMap`s and `to_string` is therefore key-ordered.
     pub fn cite_of(r: &McpToolRef, args: &serde_json::Value) -> Cite {
-        let _ = (r, args);
-        todo!("WP-5: `mcp:<server>:<tool>:<sha256(canonical args)[..16]>`")
+        use sha2::Digest;
+        let mut h = sha2::Sha256::new();
+        h.update(args.to_string().as_bytes());
+        let digest = format!("{:x}", h.finalize());
+        Cite {
+            r#ref: bough_plugin_ledger::Ref::new(format!(
+                "mcp:{}:{}:{}",
+                r.server,
+                r.tool,
+                &digest[..16]
+            )),
+            url: None,
+        }
     }
 }
 
@@ -192,8 +313,11 @@ impl Plugin for McpPlugin {
         Ok(())
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-5: provide `mcp` with an empty seam")
+    async fn apply(ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        ctx.provide::<Mcp>(McpHandle::new())
+            .await
+            .map_err(|e| PluginError::new(ctx.entry_id().clone(), e))?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {
@@ -202,3 +326,209 @@ impl Plugin for McpPlugin {
 }
 
 bough_kernel::register_plugin!(McpPlugin);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bough_kernel::KernelCore;
+
+    fn ctx() -> Context {
+        Context::root(KernelCore::new())
+    }
+
+    struct Stub {
+        name: ServerName,
+        tools: Vec<&'static str>,
+        ready: bool,
+        listed: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Stub {
+        fn new(name: &str, tools: Vec<&'static str>) -> Arc<Stub> {
+            Arc::new(Stub {
+                name: ServerName::new(name),
+                tools,
+                ready: true,
+                listed: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl McpClient for Stub {
+        fn server(&self) -> &ServerName {
+            &self.name
+        }
+        async fn list_tools(&self) -> Result<Vec<McpToolInfo>, McpError> {
+            self.listed
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self
+                .tools
+                .iter()
+                .map(|t| McpToolInfo {
+                    server: self.name.clone(),
+                    tool: (*t).to_string(),
+                    description: format!("the {t} tool"),
+                    input_schema: serde_json::json!({ "type": "object" }),
+                })
+                .collect())
+        }
+        async fn call(
+            &self,
+            tool: &str,
+            _args: serde_json::Value,
+        ) -> Result<McpCallResult, McpError> {
+            Ok(McpCallResult {
+                content: format!("ran {tool}"),
+                value: None,
+                // A server that tries to cite for itself: the seam must discard this.
+                cites: vec![Cite {
+                    r#ref: bough_plugin_ledger::Ref::new("gh:o/r#1"),
+                    url: None,
+                }],
+                is_error: tool == "boom",
+            })
+        }
+        fn is_ready(&self) -> bool {
+            self.ready
+        }
+    }
+
+    #[test]
+    fn cite_of_is_pure_and_stable_across_two_builds_of_the_same_args() {
+        let r = McpToolRef {
+            server: ServerName::new("fixture"),
+            tool: "echo".into(),
+        };
+        let a = McpHandle::cite_of(&r, &serde_json::json!({ "b": 2, "a": 1 }));
+        let b = McpHandle::cite_of(&r, &serde_json::json!({ "a": 1, "b": 2 }));
+        assert_eq!(a, b, "key order is not part of the identity");
+        assert!(
+            a.r#ref.to_string().starts_with("mcp:fixture:echo:"),
+            "{}",
+            a.r#ref
+        );
+        assert_eq!(a.r#ref.to_string().len(), "mcp:fixture:echo:".len() + 16);
+        let other = McpHandle::cite_of(&r, &serde_json::json!({ "a": 2 }));
+        assert_ne!(a, other, "different args, different cite");
+    }
+
+    #[tokio::test]
+    async fn registering_a_server_is_an_effect_whose_disposer_withdraws_it() {
+        let ctx = ctx();
+        let mcp = McpHandle::new();
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::<ServerChange>::new()));
+        let sink = seen.clone();
+        ctx.on::<McpServersChanged, _, _>(move |c| {
+            let sink = sink.clone();
+            async move {
+                sink.lock().push(c);
+            }
+        })
+        .await
+        .unwrap();
+
+        let handle = mcp
+            .server(&ctx, Stub::new("fixture", vec!["echo"]))
+            .await
+            .unwrap();
+        assert_eq!(mcp.servers(), vec![ServerName::new("fixture")]);
+        handle.dispose().await;
+        assert!(
+            mcp.servers().is_empty(),
+            "the disposer withdraws the server"
+        );
+        // Give the emitted events a turn to land.
+        tokio::task::yield_now().await;
+        let seen = seen.lock().clone();
+        assert_eq!(
+            seen,
+            vec![
+                ServerChange::Added(ServerName::new("fixture")),
+                ServerChange::Removed(ServerName::new("fixture")),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn tools_caches_and_refresh_refills() {
+        let ctx = ctx();
+        let mcp = McpHandle::new();
+        let stub = Stub::new("fixture", vec!["echo", "boom"]);
+        let listed = stub.listed.clone();
+        mcp.server(&ctx, stub).await.unwrap();
+
+        assert_eq!(mcp.tools(None).await.unwrap().len(), 2);
+        assert_eq!(listed.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(mcp.tools(None).await.unwrap().len(), 2);
+        assert_eq!(
+            listed.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the second read is served from the cache"
+        );
+        assert_eq!(mcp.refresh(&ServerName::new("fixture")).await.unwrap(), 2);
+        assert_eq!(
+            listed.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "refresh always goes to the server"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_server_and_an_unknown_tool_are_the_right_typed_errors() {
+        let ctx = ctx();
+        let mcp = McpHandle::new();
+        mcp.server(&ctx, Stub::new("fixture", vec!["echo"]))
+            .await
+            .unwrap();
+
+        let nowhere = McpToolRef {
+            server: ServerName::new("nope"),
+            tool: "echo".into(),
+        };
+        assert!(matches!(
+            mcp.call(&nowhere, serde_json::json!({})).await,
+            Err(McpError::UnknownServer(s)) if s == ServerName::new("nope")
+        ));
+        let missing = McpToolRef {
+            server: ServerName::new("fixture"),
+            tool: "absent".into(),
+        };
+        assert!(matches!(
+            mcp.call(&missing, serde_json::json!({})).await,
+            Err(McpError::UnknownTool { tool, .. }) if tool == "absent"
+        ));
+        assert!(matches!(
+            mcp.tools(Some(&ServerName::new("nope"))).await,
+            Err(McpError::UnknownServer(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_calls_result_carries_the_seams_cite_and_never_the_servers() {
+        let ctx = ctx();
+        let mcp = McpHandle::new();
+        mcp.server(&ctx, Stub::new("fixture", vec!["echo", "boom"]))
+            .await
+            .unwrap();
+        let r = McpToolRef {
+            server: ServerName::new("fixture"),
+            tool: "echo".into(),
+        };
+        let args = serde_json::json!({ "text": "hi" });
+        let out = mcp.call(&r, args.clone()).await.unwrap();
+        assert_eq!(out.cites, vec![McpHandle::cite_of(&r, &args)]);
+        assert!(!out.is_error);
+
+        let boom = McpToolRef {
+            server: ServerName::new("fixture"),
+            tool: "boom".into(),
+        };
+        assert!(
+            mcp.call(&boom, serde_json::json!({}))
+                .await
+                .unwrap()
+                .is_error
+        );
+    }
+}

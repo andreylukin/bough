@@ -50,7 +50,8 @@ pub enum LayerSource {
 /// `--dump-config` and boot both go through here; nothing else stacks layers.
 pub fn plan_layers(cli: &Cli) -> Result<(Profile, Sources, Vec<Layer>), BootError> {
     let root = cli.root.as_deref();
-    let (profile, sources) = profile::resolve_profile(&cli.profile, root)?;
+    // A subcommand selects the profile; `--profile` selects it otherwise (§0.1 item 2).
+    let (profile, sources) = profile::resolve_profile(cli.effective_profile(), root)?;
 
     let mut layers = Vec::new();
     for b in &profile.bundles {
@@ -130,22 +131,131 @@ fn include_base(origin: &profile::SourceOrigin) -> PathBuf {
 pub fn compose_plan(cli: &Cli, catalog: &Catalog) -> Result<(Profile, Composition), BootError> {
     let (profile, _sources, mut layers) = plan_layers(cli)?;
 
-    if let Some(crate::cli::Command::Exec(args)) = &cli.command {
+    if let Some(cmd) = &cli.command {
+        // Composing TWICE is the point: the first pass exists only to read the row's configured
+        // defaults, so the synthetic layer can write what the invocation named without restating
+        // fields the bundle already set.
         let first = stack(catalog, &profile, &layers)?;
-        let base = exec_row_config(&first);
-        layers.push(crate::exec::exec_layer(args, &base));
+        match cmd {
+            crate::cli::Command::Exec(args) => {
+                let base = row_config(&first, crate::exec::EXEC_ROW);
+                layers.push(crate::exec::exec_layer(args, &base));
+            }
+            crate::cli::Command::Mcp(args) => {
+                let base = row_config(&first, MCP_CALL_ROW);
+                layers.push(mcp_call_layer(args, &base));
+            }
+            crate::cli::Command::Wards(args) => {
+                let base = row_config(&first, WARD_TEST_ROW);
+                layers.push(wards_test_layer(args, &base));
+            }
+        }
     }
 
     let composition = stack(catalog, &profile, &layers)?;
     Ok((profile, composition))
 }
 
-/// The `exec` row's config as the bundles left it, or an empty mapping if no such row exists —
-/// in which case composing will fail on the absent row id, loudly, which is the right failure.
-fn exec_row_config(c: &Composition) -> serde_yaml::Value {
-    find_row(&c.tree, &bough_kernel::EntryId::new(crate::exec::EXEC_ROW))
+/// The row `bough mcp call` writes. It lives in `bundles/bough-headless.yml`.
+pub const MCP_CALL_ROW: &str = "mcp.call";
+/// The row `bough wards test` writes. It lives in `bundles/bough-headless.yml`.
+pub const WARD_TEST_ROW: &str = "wards.test";
+
+/// A row's config as the bundles left it, or an empty mapping if no such row exists — in which
+/// case composing will fail on the absent row id, loudly, which is the right failure.
+fn row_config(c: &Composition, id: &str) -> serde_yaml::Value {
+    find_row(&c.tree, &bough_kernel::EntryId::new(id))
         .map(|e| e.config.clone())
         .unwrap_or_else(|| serde_yaml::Value::Mapping(Default::default()))
+}
+
+/// Write `fields` onto `base`, per field. §0.5 replaces a config wholesale, so the unnamed fields
+/// are carried over from the bundle here rather than restated on the command line.
+fn write_fields(
+    base: &serde_yaml::Value,
+    fields: Vec<(&str, serde_yaml::Value)>,
+) -> serde_yaml::Value {
+    let mut config = match base {
+        serde_yaml::Value::Mapping(m) => serde_yaml::Value::Mapping(m.clone()),
+        _ => serde_yaml::Value::Mapping(Default::default()),
+    };
+    if let serde_yaml::Value::Mapping(map) = &mut config {
+        for (k, v) in fields {
+            map.insert(serde_yaml::Value::String(k.to_string()), v);
+        }
+    }
+    config
+}
+
+/// One row's config as a whole patch layer.
+fn one_row_layer(id: &str, layer: &str, config: serde_yaml::Value) -> Layer {
+    let mut entries = std::collections::BTreeMap::new();
+    entries.insert(
+        bough_kernel::EntryId::new(id),
+        bough_kernel::EntryPatch {
+            config: Some(config),
+            ..Default::default()
+        },
+    );
+    Layer {
+        id: LayerId::new(layer),
+        base: bough_util::bough_home(),
+        source: LayerSource::Synthetic(Patch {
+            entries,
+            insert: Vec::new(),
+            remove: Vec::new(),
+        }),
+    }
+}
+
+/// The synthetic layer for one `bough mcp call`.
+///
+/// The JSON argument is written as DATA — a YAML string — for the same reason `bough exec`'s task
+/// is: a shell-quoted `{...}` re-parsed as YAML would stop being the JSON the tool was handed.
+pub fn mcp_call_layer(args: &crate::cli::McpArgs, base: &serde_yaml::Value) -> Layer {
+    let crate::cli::McpCommand::Call {
+        server,
+        tool,
+        args: json,
+        print,
+        keep_running,
+    } = &args.command;
+    let mut fields: Vec<(&str, serde_yaml::Value)> = vec![
+        ("server", serde_yaml::Value::String(server.clone())),
+        ("tool", serde_yaml::Value::String(tool.clone())),
+        ("args", serde_yaml::Value::String(json.clone())),
+        ("exit_when_done", serde_yaml::Value::Bool(!keep_running)),
+    ];
+    if let Some(p) = print {
+        fields.push(("print", serde_yaml::Value::String(p.as_str().to_string())));
+    }
+    one_row_layer(MCP_CALL_ROW, MCP_CALL_LAYER, write_fields(base, fields))
+}
+
+/// The layer id, so a `--dump-config` reader can see where the call came from.
+pub const MCP_CALL_LAYER: &str = "mcp-call";
+/// See [`MCP_CALL_LAYER`].
+pub const WARD_TEST_LAYER: &str = "wards-test";
+
+/// The synthetic layer for one `bough wards test`.
+pub fn wards_test_layer(args: &crate::cli::WardsArgs, base: &serde_yaml::Value) -> Layer {
+    let crate::cli::WardsCommand::Test {
+        file,
+        since,
+        print,
+        keep_running,
+    } = &args.command;
+    let mut fields: Vec<(&str, serde_yaml::Value)> = vec![
+        ("file", serde_yaml::Value::String(file.clone())),
+        ("exit_when_done", serde_yaml::Value::Bool(!keep_running)),
+    ];
+    if let Some(s) = since {
+        fields.push(("since", serde_yaml::Value::String(s.clone())));
+    }
+    if let Some(p) = print {
+        fields.push(("print", serde_yaml::Value::String(p.as_str().to_string())));
+    }
+    one_row_layer(WARD_TEST_ROW, WARD_TEST_LAYER, write_fields(base, fields))
 }
 
 fn find_row<'a>(
@@ -267,5 +377,150 @@ mod tests {
             ],
             "--patch layers come after the user patch, in argument order"
         );
+    }
+
+    fn cli_with(command: crate::cli::Command) -> Cli {
+        let mut c = cli("tui", vec![]);
+        c.command = Some(command);
+        c
+    }
+
+    fn synthetic(layers: &[Layer]) -> &Patch {
+        match &layers.last().expect("a synthetic layer").source {
+            LayerSource::Synthetic(p) => p,
+            other => panic!("the last layer must be synthetic, got {other:?}"),
+        }
+    }
+
+    fn config_of(p: &Patch, id: &str) -> serde_yaml::Value {
+        p.entries
+            .get(&bough_kernel::EntryId::new(id))
+            .unwrap_or_else(|| panic!("the patch writes `{id}`"))
+            .config
+            .clone()
+            .expect("a config")
+    }
+
+    fn compose_with(command: crate::cli::Command) -> (Cli, Vec<Layer>) {
+        let cli = cli_with(command);
+        let catalog = Catalog::from_inventory().expect("the catalog");
+        let (profile, _s, mut layers) = plan_layers(&cli).expect("the plan");
+        let first = stack(&catalog, &profile, &layers).expect("the first pass composes");
+        match &cli.command {
+            Some(crate::cli::Command::Mcp(a)) => {
+                layers.push(mcp_call_layer(a, &row_config(&first, MCP_CALL_ROW)))
+            }
+            Some(crate::cli::Command::Wards(a)) => {
+                layers.push(wards_test_layer(a, &row_config(&first, WARD_TEST_ROW)))
+            }
+            other => panic!("this helper is for the two Phase-6 subcommands, got {other:?}"),
+        }
+        (cli, layers)
+    }
+
+    fn mcp_call(server: &str, tool: &str, args: &str) -> crate::cli::Command {
+        crate::cli::Command::Mcp(crate::cli::McpArgs {
+            command: crate::cli::McpCommand::Call {
+                server: server.to_string(),
+                tool: tool.to_string(),
+                args: args.to_string(),
+                print: None,
+                keep_running: false,
+            },
+        })
+    }
+
+    fn wards_test(file: &str, since: Option<&str>) -> crate::cli::Command {
+        crate::cli::Command::Wards(crate::cli::WardsArgs {
+            command: crate::cli::WardsCommand::Test {
+                file: file.to_string(),
+                since: since.map(String::from),
+                print: None,
+                keep_running: false,
+            },
+        })
+    }
+
+    #[test]
+    fn a_subcommand_selects_the_headless_profile_whatever_profile_said() {
+        let cli = cli_with(mcp_call("fs", "read_file", "{}"));
+        assert_eq!(cli.profile, "tui", "as typed");
+        assert_eq!(
+            cli.effective_profile(),
+            crate::exec::EXEC_PROFILE,
+            "as composed"
+        );
+        let (_p, _s, layers) = plan_layers(&cli).expect("the plan");
+        let ids: Vec<String> = layers.iter().map(|l| l.id.to_string()).collect();
+        assert!(
+            ids.contains(&"bundle:bough-headless".to_string()),
+            "the headless bundle is what carries the row: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn mcp_call_writes_the_mcp_call_row_and_nothing_else() {
+        let (_cli, layers) = compose_with(mcp_call("fs", "read_file", r#"{"path":"/tmp/x"}"#));
+        let patch = synthetic(&layers);
+        assert_eq!(patch.entries.len(), 1, "one row");
+        assert!(patch.insert.is_empty() && patch.remove.is_empty());
+        let cfg = config_of(patch, MCP_CALL_ROW);
+        assert_eq!(cfg["server"].as_str().unwrap(), "fs");
+        assert_eq!(cfg["tool"].as_str().unwrap(), "read_file");
+        assert_eq!(
+            cfg["args"].as_str().unwrap(),
+            r#"{"path":"/tmp/x"}"#,
+            "the JSON is DATA, never re-parsed as YAML"
+        );
+        assert_eq!(cfg["exit_when_done"], serde_yaml::Value::Bool(true));
+        assert_eq!(
+            cfg["print"].as_str().unwrap(),
+            "text",
+            "an unnamed field keeps the bundle's value"
+        );
+    }
+
+    #[test]
+    fn wards_test_writes_the_wards_test_row_and_nothing_else() {
+        let (_cli, layers) = compose_with(wards_test("/tmp/w.rhai", Some("24h")));
+        let patch = synthetic(&layers);
+        assert_eq!(patch.entries.len(), 1);
+        assert!(patch.insert.is_empty() && patch.remove.is_empty());
+        let cfg = config_of(patch, WARD_TEST_ROW);
+        assert_eq!(cfg["file"].as_str().unwrap(), "/tmp/w.rhai");
+        assert_eq!(cfg["since"].as_str().unwrap(), "24h");
+        assert_eq!(cfg["exit_when_done"], serde_yaml::Value::Bool(true));
+    }
+
+    #[test]
+    fn an_unnamed_since_keeps_the_bundles_empty_default() {
+        let (_cli, layers) = compose_with(wards_test("/tmp/w.rhai", None));
+        let cfg = config_of(synthetic(&layers), WARD_TEST_ROW);
+        assert_eq!(cfg["since"].as_str().unwrap(), "");
+    }
+
+    #[test]
+    fn keep_running_is_the_negation_of_exit_when_done() {
+        let cmd = crate::cli::Command::Mcp(crate::cli::McpArgs {
+            command: crate::cli::McpCommand::Call {
+                server: "fs".into(),
+                tool: "t".into(),
+                args: "{}".into(),
+                print: Some(crate::cli::PrintFormat::Json),
+                keep_running: true,
+            },
+        });
+        let (_cli, layers) = compose_with(cmd);
+        let cfg = config_of(synthetic(&layers), MCP_CALL_ROW);
+        assert_eq!(cfg["exit_when_done"], serde_yaml::Value::Bool(false));
+        assert_eq!(cfg["print"].as_str().unwrap(), "json");
+    }
+
+    #[test]
+    fn a_subcommand_stops_the_patch_watch() {
+        let mut cli = cli_with(wards_test("/tmp/w.rhai", None));
+        cli.no_watch = false;
+        cli.normalize();
+        assert!(cli.no_watch);
     }
 }

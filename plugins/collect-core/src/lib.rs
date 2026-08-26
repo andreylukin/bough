@@ -8,6 +8,7 @@
 //! P6-D15: the guard is per (trajectory, ref). Two agents both configured for one repo each get
 //! their own copy; deduping globally would silently starve the second.
 
+pub mod dedupe;
 pub mod delivery;
 pub mod guard;
 pub mod state;
@@ -18,6 +19,7 @@ use bough_plugin_agents::MailClass;
 use bough_plugin_ledger::Ref;
 use chrono::{DateTime, Utc};
 
+pub use dedupe::no_duplicate_cited_ref;
 pub use delivery::delivery_of;
 pub use guard::already_delivered;
 pub use state::{Watermark, WatermarkStore};

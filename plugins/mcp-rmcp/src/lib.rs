@@ -59,15 +59,70 @@ pub enum Transport {
     },
 }
 
-/// PURE: the child entry one enabled [`ServerRow`] mounts as. WP-5.
+/// A row name must be a single, filename-safe token: it becomes half of a child ENTRY ID and half
+/// of every tool name `tool-mcp` derives, and a dot there would split the entry id.
+pub fn validate_row_name(name: &str) -> Result<(), ConfigError> {
+    if name.is_empty() {
+        return Err(ConfigError::Rejected {
+            detail: "a server row needs a non-empty `name`".into(),
+        });
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(ConfigError::Rejected {
+            detail: format!("server name `{name}` must be ascii alphanumeric, `-` or `_`"),
+        });
+    }
+    Ok(())
+}
+
+/// A transport must be reachable in principle: a non-empty command, or a parseable http(s) url.
+pub fn validate_transport(name: &str, t: &Transport) -> Result<(), ConfigError> {
+    match t {
+        Transport::Stdio { command, .. } => {
+            if command.trim().is_empty() {
+                return Err(ConfigError::Rejected {
+                    detail: format!("server `{name}` has an empty stdio `command`"),
+                });
+            }
+        }
+        Transport::Http { url, .. } => {
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                return Err(ConfigError::Rejected {
+                    detail: format!("server `{name}` has a url that is not http(s): `{url}`"),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// PURE: the child entry one enabled [`ServerRow`] mounts as.
 pub fn child_entry(
     parent: &bough_kernel::EntryId,
     row: &ServerRow,
     connect_timeout_ms: u64,
     call_timeout_ms: u64,
 ) -> Result<bough_kernel::Entry, PluginError> {
-    let _ = (parent, row, connect_timeout_ms, call_timeout_ms);
-    todo!("WP-5: one child Entry per server, id `<parent>.<name>`, plugin `mcp-server`")
+    let config = serde_yaml::to_value(server::McpServerConfig {
+        name: row.name.clone(),
+        transport: row.transport.clone(),
+        connect_timeout_ms,
+        call_timeout_ms,
+    })
+    .map_err(|e| PluginError::new(parent.clone(), anyhow::Error::new(e)))?;
+    Ok(bough_kernel::Entry {
+        id: bough_kernel::EntryId::new(format!("{}.{}", parent.as_str(), row.name)),
+        plugin: Some(SERVER_PLUGIN_NAME.to_string()),
+        config,
+        disabled: Default::default(),
+        isolate: Default::default(),
+        inject: Default::default(),
+        group: Vec::new(),
+        include: None,
+    })
 }
 
 /// The parent row.
@@ -83,12 +138,38 @@ impl Plugin for McpRmcpPlugin {
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
-        let _ = cfg;
-        todo!("WP-5: unique names, non-empty command / parseable url, non-zero timeouts")
+        if cfg.connect_timeout_ms == 0 || cfg.call_timeout_ms == 0 {
+            return Err(ConfigError::Rejected {
+                detail: "timeouts must be greater than zero".into(),
+            });
+        }
+        let mut seen: Vec<&str> = Vec::new();
+        for row in &cfg.servers {
+            validate_row_name(&row.name)?;
+            validate_transport(&row.name, &row.transport)?;
+            if seen.contains(&row.name.as_str()) {
+                return Err(ConfigError::Rejected {
+                    detail: format!("two server rows are both named `{}`", row.name),
+                });
+            }
+            seen.push(&row.name);
+        }
+        Ok(())
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-5: mount one child entry per enabled server row")
+    async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        for row in cfg.servers.iter().filter(|r| !r.disabled) {
+            let entry = child_entry(
+                ctx.entry_id(),
+                row,
+                cfg.connect_timeout_ms,
+                cfg.call_timeout_ms,
+            )?;
+            ctx.mount(entry)
+                .await
+                .map_err(|e| PluginError::new(ctx.entry_id().clone(), e))?;
+        }
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {
@@ -98,3 +179,89 @@ impl Plugin for McpRmcpPlugin {
 
 bough_kernel::register_plugin!(McpRmcpPlugin);
 bough_kernel::register_plugin!(server::McpServerPlugin);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stdio_row(name: &str) -> ServerRow {
+        ServerRow {
+            name: name.to_string(),
+            transport: Transport::Stdio {
+                command: "python3".into(),
+                args: vec!["server.py".into()],
+                env: BTreeMap::new(),
+                cwd: None,
+            },
+            disabled: false,
+        }
+    }
+
+    #[test]
+    fn one_enabled_row_becomes_one_child_entry_named_after_the_parent() {
+        let parent = bough_kernel::EntryId::new("mcp.rmcp");
+        let entry = child_entry(&parent, &stdio_row("fixture"), 5_000, 9_000).unwrap();
+        assert_eq!(entry.id.as_str(), "mcp.rmcp.fixture");
+        assert_eq!(entry.plugin.as_deref(), Some(SERVER_PLUGIN_NAME));
+        let cfg: server::McpServerConfig = serde_yaml::from_value(entry.config).unwrap();
+        assert_eq!(cfg.name, "fixture");
+        assert_eq!(cfg.connect_timeout_ms, 5_000);
+        assert_eq!(cfg.call_timeout_ms, 9_000);
+    }
+
+    #[test]
+    fn validate_refuses_duplicate_names_zero_timeouts_and_unreachable_transports() {
+        let two = McpRmcpConfig {
+            servers: vec![stdio_row("fixture"), stdio_row("fixture")],
+            connect_timeout_ms: 1,
+            call_timeout_ms: 1,
+        };
+        assert!(McpRmcpPlugin::validate(&two)
+            .unwrap_err()
+            .to_string()
+            .contains("both named"));
+
+        let zero = McpRmcpConfig {
+            servers: vec![],
+            connect_timeout_ms: 0,
+            call_timeout_ms: 1,
+        };
+        assert!(McpRmcpPlugin::validate(&zero)
+            .unwrap_err()
+            .to_string()
+            .contains("greater than zero"));
+
+        let mut bad = stdio_row("fixture");
+        bad.transport = Transport::Http {
+            url: "ftp://nope".into(),
+            headers: BTreeMap::new(),
+        };
+        let cfg = McpRmcpConfig {
+            servers: vec![bad],
+            connect_timeout_ms: 1,
+            call_timeout_ms: 1,
+        };
+        assert!(McpRmcpPlugin::validate(&cfg)
+            .unwrap_err()
+            .to_string()
+            .contains("not http(s)"));
+
+        let dotted = ServerRow {
+            name: "one.two".into(),
+            ..stdio_row("x")
+        };
+        assert!(validate_row_name(&dotted.name).is_err());
+    }
+
+    #[test]
+    fn a_disabled_row_mounts_no_child() {
+        let mut row = stdio_row("fixture");
+        row.disabled = true;
+        let cfg = McpRmcpConfig {
+            servers: vec![row],
+            connect_timeout_ms: 1,
+            call_timeout_ms: 1,
+        };
+        assert_eq!(cfg.servers.iter().filter(|r| !r.disabled).count(), 0);
+    }
+}

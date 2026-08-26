@@ -25,3 +25,6 @@ bough-plugin-actions = { workspace = true }
 bough-plugin-ledger = { workspace = true }
 bough-plugin-actions-reconcile = { workspace = true }
 reqwest = { workspace = true }
+
+[dev-dependencies]
+bough-plugin-ledger-memory = { workspace = true }

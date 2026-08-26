@@ -16,7 +16,16 @@ use bough_plugin_old_feed_adapter::OldFeed;
 use support::{boot_real, row_ctx, TempDir};
 
 async fn boot_tui() -> (std::sync::Arc<bough_kernel::Kernel>, TempDir) {
-    boot_real("tui", &[support::fixture("llm-replay.yml")]).await
+    boot_real(
+        "tui",
+        &[
+            support::fixture("llm-replay.yml"),
+            // §17 Phase 6 disabled the shipped row; this file tests the adapter, so it turns
+            // exactly that row back on — which is also the revert path working.
+            support::fixture("old-feed-on.yml"),
+        ],
+    )
+    .await
 }
 
 /// `/prime` is registered by the shipped tree and dispatching it runs the priming query — no

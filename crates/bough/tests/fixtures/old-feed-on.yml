@@ -1,0 +1,11 @@
+# §17 Phase 6 disables the shipped `old-feed` row: the collectors replace it, and it stays in
+# `bundles/bough-tui-app.yml` for one week only as the documented revert path.
+#
+# `old_feed_surface.rs` is about the ADAPTER's surface — that the priming query is reachable as a
+# human command, and that the shipped defaults resolve under the test home — not about whether the
+# shipped tree still boots it. So those tests re-enable exactly this one row, which is also the
+# live proof that the revert path works: flipping `disabled` back brings `/prime` and the row's
+# `$HOME`-relative defaults back with it.
+entries:
+  old-feed:
+    disabled: false

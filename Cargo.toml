@@ -105,7 +105,8 @@ tokio-cron-scheduler = "0.15"                                            # sched
 cron         = "0.15"                                                    # schedule: Cadence::next_after (pure)
 # rmcp 3.x wants reqwest 0.13 and bough-llm holds 0.12; the dual-version arrangement STANDS and is
 # bridged through OAuthHttpClient (Phase 0, §13). Wired by WP-5.
-rmcp         = { version = "3.1", features = ["client", "transport-child-process"] }
+rmcp         = { version = "3.1", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+http         = "1.3"                                                     # mcp-rmcp: the HeaderName/HeaderValue rmcp's HTTP transport config takes
 
 bough-plugin-schedule = { path = "plugins/schedule" }                         # §9 schedule Service Definition
 bough-plugin-schedule-cron = { path = "plugins/schedule-cron" }               # §9 tokio-cron-scheduler Provider

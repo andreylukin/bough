@@ -18,3 +18,15 @@ pub struct HookFired {
     pub ms: u64,
     pub ok: bool,
 }
+
+/// The step type this crate owns.
+///
+/// `Thought` and `ignorable: true`: it is the harness's own bookkeeping, and a binary that knows
+/// nothing of hooks may skip these rows on read (§3).
+pub fn step_types() -> Vec<bough_plugin_ledger::StepTypeDef> {
+    vec![
+        bough_plugin_ledger::StepTypeDef::of::<HookFired>(HOOK_FIRED, crate::PLUGIN_NAME)
+            .class_rule(bough_plugin_ledger::ClassRule::Thought)
+            .ignorable(true),
+    ]
+}

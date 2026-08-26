@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bough_kernel::{
-    ConfigError, Context, InvariantSpec, ParallelEvent, Plugin, PluginError, ServiceKey,
+    ConfigError, Context, Inject, InvariantSpec, ParallelEvent, Plugin, PluginError, ServiceKey,
 };
 use chrono::{DateTime, Utc};
 
@@ -38,6 +38,23 @@ pub enum PowerEvent {
     },
 }
 
+impl PowerEvent {
+    /// When the machine did it.
+    pub fn at(&self) -> DateTime<Utc> {
+        match self {
+            PowerEvent::WillSleep { at } => *at,
+            PowerEvent::DidWake { at, .. } => *at,
+        }
+    }
+    /// `"will-sleep"` | `"did-wake"`. For a log line and for the invariant's detail.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            PowerEvent::WillSleep { .. } => "will-sleep",
+            PowerEvent::DidWake { .. } => "did-wake",
+        }
+    }
+}
+
 /// `power/changed` — PARALLEL.
 pub struct PowerChanged;
 
@@ -58,6 +75,18 @@ pub trait PowerSource: Send + Sync + 'static {
     fn last(&self) -> Option<PowerEvent>;
 }
 
+/// The dispatch every Provider goes through: RECORD the payload, then dispatch it, AWAITED.
+///
+/// It lives here and not in each Provider so the seam's invariant sees one stream whatever source
+/// is mounted, and so a Provider cannot dispatch without recording.
+pub async fn dispatch(ctx: &Context, ev: PowerEvent) {
+    invariant::record(invariant::Obs {
+        fiber: ctx.fiber_uid(),
+        event: ev.clone(),
+    });
+    ctx.parallel::<PowerChanged>(ev).await;
+}
+
 /// No configuration: the sources belong to the Provider rows.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -71,12 +100,27 @@ impl Plugin for PowerPlugin {
     const NAME: &'static str = PLUGIN_NAME;
     type Config = PowerConfig;
 
+    /// The Definition reads the key it defines for ONE reason: its invariant compares the stream
+    /// it recorded against the mounted source's `last()`. It is optional because the Definition
+    /// boots before any Provider does.
+    fn inject() -> Inject {
+        Inject::optional(["power"])
+    }
+
     fn validate(_cfg: &Self::Config) -> Result<(), ConfigError> {
         Ok(())
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-8: declare the seam; a Provider provides `power`")
+    async fn apply(ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        // A reload keeps the FiberUid, so the record is cleared rather than accumulated.
+        let fiber = ctx.fiber_uid();
+        invariant::forget(fiber);
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || invariant::forget(fiber));
+            Ok(())
+        })
+        .await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {
@@ -85,3 +129,20 @@ impl Plugin for PowerPlugin {
 }
 
 bough_kernel::register_plugin!(PowerPlugin);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wake_carries_its_own_timestamp_and_kind() {
+        let at = Utc::now();
+        let ev = PowerEvent::DidWake {
+            at,
+            asleep_for: Some(Duration::from_secs(90)),
+        };
+        assert_eq!(ev.at(), at);
+        assert_eq!(ev.kind(), "did-wake");
+        assert_eq!(PowerEvent::WillSleep { at }.kind(), "will-sleep");
+    }
+}

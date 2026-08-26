@@ -57,7 +57,10 @@ async fn the_tui_bundle_boots_with_all_five_rows_active() {
     }
     // The two rows this phase adds that are NOT terminal features, and are in the same bundle.
     assert_eq!(row(&kernel, "residents").state, FiberState::Active);
-    assert_eq!(row(&kernel, "old-feed").state, FiberState::Active);
+    // §17 Phase 6 retired `old-feed`: the collectors replace it, and the row stays in the bundle
+    // for one week as the documented revert path only. `old_feed_surface.rs` re-enables it by
+    // patch and proves that path still works; here it must be OFF in the shipped tree.
+    assert_eq!(row(&kernel, "old-feed").state, FiberState::Inactive);
 
     // The fixture rows must be in NO bundle (the `projection-probe` precedent, P1-D16).
     let shipped = std::fs::read_to_string(support::repo_root().join("bundles/bough-tui-app.yml"))
@@ -89,6 +92,13 @@ async fn disabling_the_search_row_removes_its_pane_and_reflows() {
     let focus_before = tui
         .rect_of(&bough_plugin_tui_shell::pane::PaneId::new("tui.focus"))
         .expect("the focus pane has a rectangle");
+    let rects_before: std::collections::BTreeMap<String, (u16, u16)> = before
+        .iter()
+        .filter_map(|id| {
+            tui.rect_of(&bough_plugin_tui_shell::pane::PaneId::new(id))
+                .map(|r| (id.clone(), (r.width, r.height)))
+        })
+        .collect();
     assert!(search_before.height > 0);
 
     write_patch(&dir, DISABLE_SEARCH);
@@ -117,12 +127,37 @@ async fn disabling_the_search_row_removes_its_pane_and_reflows() {
         None,
         "a retired pane has no rectangle"
     );
-    let focus_after = tui
-        .rect_of(&bough_plugin_tui_shell::pane::PaneId::new("tui.focus"))
-        .expect("the focus pane still has a rectangle");
+    let _ = focus_before;
+    // The rectangles are the LAST DRAW's (`TuiHandle::rect_of`), and unregistering a pane drops
+    // its rect without waiting for one — so membership updates instantly while geometry only
+    // catches up on the next frame. Wait for that frame rather than racing it.
+    let grew_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    // The freed rows go to SOME remaining pane. Which one depends on the slot the retired pane sat
+    // in and on who else is mounted (§17 Phase 6 added `tui.drafts` to this bundle), so the claim
+    // is about the layout as a whole rather than about `tui.focus` by name.
+    let grew = loop {
+        let g = after.iter().any(|id| {
+            let pid = bough_plugin_tui_shell::pane::PaneId::new(id);
+            match (rects_before.get(id), tui.rect_of(&pid)) {
+                (Some((w, h)), Some(a)) => a.height > *h || a.width > *w,
+                _ => false,
+            }
+        });
+        if g || std::time::Instant::now() >= grew_deadline {
+            break g;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    };
+    let rects_after: std::collections::BTreeMap<String, (u16, u16)> = after
+        .iter()
+        .filter_map(|id| {
+            tui.rect_of(&bough_plugin_tui_shell::pane::PaneId::new(id))
+                .map(|r| (id.clone(), (r.width, r.height)))
+        })
+        .collect();
     assert!(
-        focus_after.height > focus_before.height,
-        "the freed rows go to the remaining panes: {focus_before:?} -> {focus_after:?}"
+        grew,
+        "the freed rows go to the remaining panes: {rects_before:?} -> {rects_after:?}"
     );
 
     kernel.shutdown().await;

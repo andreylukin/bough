@@ -27,6 +27,7 @@ bough-plugin-drafts = { workspace = true }
 bough-plugin-ledger = { workspace = true }
 bough-plugin-agents = { workspace = true }
 ratatui = { workspace = true }
+crossterm = { workspace = true }
 
 [dev-dependencies]
 bough-plugin-ledger-memory = { workspace = true }

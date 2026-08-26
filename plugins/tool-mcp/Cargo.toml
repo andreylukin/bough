@@ -25,3 +25,12 @@ bough-plugin-mcp = { workspace = true }
 bough-plugin-tools = { workspace = true }
 bough-plugin-commands = { workspace = true }
 bough-plugin-ledger = { workspace = true }
+jsonschema = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+bough-plugin-mcp-rmcp = { workspace = true }
+bough-plugin-llm = { workspace = true }
+serde_yaml = { workspace = true }
+bough-plugin-ledger-memory = { workspace = true }
+bough-plugin-tools = { workspace = true }

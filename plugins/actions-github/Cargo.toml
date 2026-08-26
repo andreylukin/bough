@@ -28,3 +28,4 @@ bough-plugin-actions-reconcile = { workspace = true }
 
 [dev-dependencies]
 bough-plugin-ledger-memory = { workspace = true }
+bough-plugin-actions-linear = { workspace = true }

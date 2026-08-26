@@ -22,3 +22,8 @@ parking_lot = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 bough-plugin-schedule = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }

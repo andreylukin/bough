@@ -15,7 +15,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use bough_kernel::{ConfigError, Context, InvariantSpec, Plugin, PluginError, ServiceKey};
-use bough_plugin_ledger::{AgentName, LedgerHandle, Ref, StepId, WakeId};
+use bough_plugin_ledger::{
+    AgentName, Append, Class, ClassRule, Ledger, LedgerHandle, Order, Ref, Step, StepId, StepQuery,
+    StepType, StepTypeDef, TrajId, WakeId,
+};
 use chrono::{DateTime, Utc};
 
 pub use vocabulary::{DraftMessage, DraftTicket, DRAFT_MESSAGE, DRAFT_TICKET};
@@ -101,7 +104,6 @@ pub struct DraftQuery {
 pub struct DraftsHandle(pub Arc<DraftsInner>);
 
 /// The seam's state: the ledger it appends into, and the retention the pane reads with.
-#[allow(dead_code)] // scaffold: filled by the work package that owns this crate
 pub struct DraftsInner {
     ledger: LedgerHandle,
     retain: usize,
@@ -113,17 +115,170 @@ impl DraftsHandle {
         DraftsHandle(Arc::new(DraftsInner { ledger, retain }))
     }
 
-    /// Append a `draft/message` or `draft/ticket` step and return it. Nothing else happens. WP-4.
-    pub async fn draft(&self, d: NewDraft) -> Result<DraftRow, DraftError> {
-        let _ = d;
-        todo!("WP-4")
+    /// The default read-back size, from the row's config.
+    pub fn retain(&self) -> usize {
+        self.0.retain
     }
 
-    /// Read drafts back out of the ledger. WP-4.
-    pub async fn list(&self, q: &DraftQuery) -> Result<Vec<DraftRow>, DraftError> {
-        let _ = q;
-        todo!("WP-4")
+    /// Append a `draft/message` or `draft/ticket` step and return it. NOTHING ELSE HAPPENS: the
+    /// only call this function makes is `LedgerStore::append`.
+    pub async fn draft(&self, d: NewDraft) -> Result<DraftRow, DraftError> {
+        if d.audience.trim().is_empty() {
+            return Err(DraftError::NoAudience);
+        }
+        if d.body.trim().is_empty() {
+            return Err(DraftError::Empty);
+        }
+        // A draft belongs to an agent's own chain: without an `agents` row there is no
+        // trajectory to append to, and inventing one would file the draft where nobody looks.
+        let traj = self.traj_of(&d.agent).await?;
+        let id = DraftId::new(uuid::Uuid::now_v7().to_string());
+        let refs: Vec<Ref> = d.refs.iter().cloned().collect();
+        let (kind, body) = match d.kind {
+            DraftKind::Message => (
+                DRAFT_MESSAGE,
+                serde_json::to_value(DraftMessage {
+                    draft: id.clone(),
+                    audience: d.audience.clone(),
+                    subject: d.subject.clone(),
+                    body: d.body.clone(),
+                    refs: refs.clone(),
+                }),
+            ),
+            DraftKind::Ticket => (
+                DRAFT_TICKET,
+                serde_json::to_value(DraftTicket {
+                    draft: id.clone(),
+                    audience: d.audience.clone(),
+                    title: d.subject.clone(),
+                    body: d.body.clone(),
+                    refs: refs.clone(),
+                }),
+            ),
+        };
+        let body = body.map_err(|e| DraftError::Body(e.to_string()))?;
+        let step = self
+            .0
+            .ledger
+            .0
+            .append(Append {
+                traj,
+                wake: d.wake.clone(),
+                kind: StepType::new(kind),
+                class: Class::Thought,
+                body,
+                // P6-D4: a draft is a THOUGHT. Its refs ride on the body, so a citation the agent
+                // may not have is never forced on it.
+                cites: Vec::new(),
+                at: d.at,
+                id: None,
+            })
+            .await?;
+        Ok(DraftRow {
+            id,
+            step: step.id,
+            kind: d.kind,
+            agent: d.agent,
+            audience: d.audience,
+            subject: d.subject,
+            body: d.body,
+            refs,
+            at: d.at,
+        })
     }
+
+    /// Read drafts back out of the ledger, newest first. A pure query: this reads what `draft`
+    /// wrote and nothing else.
+    pub async fn list(&self, q: &DraftQuery) -> Result<Vec<DraftRow>, DraftError> {
+        let rows = self.0.ledger.0.agents().await?;
+        let wanted: Vec<&bough_plugin_ledger::AgentRow> = rows
+            .iter()
+            .filter(|a| q.agents.is_empty() || q.agents.contains(&a.name))
+            .collect();
+        // An agent filter naming nobody must return nothing, NOT everything: an empty `trajs` is
+        // "no filter" at the ledger, which would leak another agent's drafts into the answer.
+        if wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+        let kinds = match q.kind {
+            None => vec![StepType::new(DRAFT_MESSAGE), StepType::new(DRAFT_TICKET)],
+            Some(DraftKind::Message) => vec![StepType::new(DRAFT_MESSAGE)],
+            Some(DraftKind::Ticket) => vec![StepType::new(DRAFT_TICKET)],
+        };
+        let steps = self
+            .0
+            .ledger
+            .0
+            .steps(&StepQuery {
+                trajs: wanted.iter().map(|a| a.traj.clone()).collect(),
+                kinds,
+                order: Order::SeqDesc,
+                limit: Some(q.limit.unwrap_or(self.0.retain)),
+                ..Default::default()
+            })
+            .await?;
+        Ok(steps
+            .iter()
+            .filter_map(|s| {
+                let agent = wanted.iter().find(|a| a.traj == s.traj)?;
+                row_of(s, &agent.name)
+            })
+            .collect())
+    }
+
+    async fn traj_of(&self, agent: &AgentName) -> Result<TrajId, DraftError> {
+        self.0
+            .ledger
+            .0
+            .agent(agent)
+            .await?
+            .map(|a| a.traj)
+            .ok_or_else(|| DraftError::UnknownAgent(agent.clone()))
+    }
+}
+
+/// PURE: one committed step read back as a draft. A row whose body does not parse is SKIPPED
+/// rather than guessed at — a half-read draft shown to Andrey would be a lie about what an agent
+/// wrote.
+pub fn row_of(step: &Step, agent: &AgentName) -> Option<DraftRow> {
+    let kind = match step.kind.as_str() {
+        DRAFT_MESSAGE => DraftKind::Message,
+        DRAFT_TICKET => DraftKind::Ticket,
+        _ => return None,
+    };
+    let (id, audience, subject, body, refs) = match kind {
+        DraftKind::Message => {
+            let m: DraftMessage = serde_json::from_value((*step.body).clone()).ok()?;
+            (m.draft, m.audience, m.subject, m.body, m.refs)
+        }
+        DraftKind::Ticket => {
+            let t: DraftTicket = serde_json::from_value((*step.body).clone()).ok()?;
+            (t.draft, t.audience, t.title, t.body, t.refs)
+        }
+    };
+    Some(DraftRow {
+        id,
+        step: step.id.clone(),
+        kind,
+        agent: agent.clone(),
+        audience,
+        subject,
+        body,
+        refs,
+        at: step.at,
+    })
+}
+
+/// The two step types this crate owns (P6-D4: `Thought`, never ignorable).
+pub fn step_types() -> Vec<StepTypeDef> {
+    vec![
+        StepTypeDef::of::<DraftMessage>(DRAFT_MESSAGE, PLUGIN_NAME)
+            .class_rule(ClassRule::Thought)
+            .ignorable(false),
+        StepTypeDef::of::<DraftTicket>(DRAFT_TICKET, PLUGIN_NAME)
+            .class_rule(ClassRule::Thought)
+            .ignorable(false),
+    ]
 }
 
 /// What a draft refuses.
@@ -135,6 +290,8 @@ pub enum DraftError {
     Empty,
     #[error("`{0}` is not a live agent")]
     UnknownAgent(AgentName),
+    #[error("a draft body would not serialise: {0}")]
+    Body(String),
     #[error(transparent)]
     Ledger(#[from] bough_plugin_ledger::LedgerError),
 }
@@ -160,13 +317,30 @@ impl Plugin for DraftsPlugin {
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
-        let _ = cfg;
-        todo!("WP-4: `retain > 0`")
+        if cfg.retain == 0 {
+            // A pane that reads back nothing shows Andrey no draft, silently — which is the one
+            // failure mode a draft surface cannot have.
+            return Err(ConfigError::Rejected {
+                detail: "retain must be greater than zero".to_string(),
+            });
+        }
+        Ok(())
     }
 
-    /// Declare the two step types as an effect, then provide `drafts`. WP-4.
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-4")
+    /// Declare the two step types as an effect, then provide `drafts`.
+    async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let ledger = ctx
+            .get::<Ledger>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        ledger.declare_step_types(&ctx, step_types()).await?;
+        ctx.provide::<Drafts>(DraftsHandle::new(
+            LedgerHandle(ledger.0.clone()),
+            cfg.retain,
+        ))
+        .await
+        .map_err(|e| PluginError::new(entry, e))?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

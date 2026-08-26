@@ -111,3 +111,136 @@
   plugin: actions
 - id: tool.actions
   plugin: tool-actions
+
+# ---- Phase 6 (track B): context, the write boundary, the runtime-code hosts ----
+# The reading order is the seam order: Definition, Provider, Consumer.
+
+# §9: scheduling is a seam. `schedule-manual` is in the catalog and in NO bundle.
+- id: schedule
+  plugin: schedule
+- id: schedule.cron
+  plugin: schedule-cron
+  config: { state_db: !!expr 'bough_path("schedule.db")', job_timeout_ms: 300000, tick_ms: 500 }
+
+# §7: the boundary block, one source, every agent's projection.
+- id: boundary
+  plugin: boundary-instructions
+- id: drafts
+  plugin: drafts
+  config: { retain: 500 }
+- id: tool.drafts
+  plugin: tool-drafts
+
+# §7: the four kinds get their Providers. `actions` (Phase 2) refuses everything until they mount.
+- id: actions.github
+  plugin: actions-github
+  config:
+    gh_bin: gh
+    known_bots: ["dependabot[bot]", "github-actions[bot]", "renovate[bot]", "codecov[bot]"]
+    timeout_ms: 60000
+- id: actions.linear
+  plugin: actions-linear
+  config:
+    endpoint: "https://api.linear.app/graphql"
+    api_key: !!expr 'env_or("LINEAR_API_KEY", "")'
+    timeout_ms: 30000
+- id: actions.reconcile
+  plugin: actions-reconcile
+  config: { at_boot: true, surface_to: sol }
+
+# §6: collectors, each ONE row on ctx.schedule.
+- id: collect.github
+  plugin: collector-github
+  config:
+    cadence: { every_ms: 300000 }
+    gh_bin: gh
+    repos: []
+    prs: true
+    review_requests: true
+    mentions: true
+    checks: false
+    deliver_to: [sol]
+    wake_classes: [review_request, mention]
+    known_bots: ["dependabot[bot]", "github-actions[bot]", "renovate[bot]"]
+    state_db: !!expr 'bough_path("collect-github.db")'
+    batch: 50
+    timeout_ms: 30000
+- id: collect.linear
+  plugin: collector-linear
+  config:
+    cadence: { every_ms: 600000 }
+    endpoint: "https://api.linear.app/graphql"
+    api_key: !!expr 'env_or("LINEAR_API_KEY", "")'
+    teams: []
+    projects: []
+    deliver_to: [sol]
+    wake_classes: [assigned, mention]
+    state_db: !!expr 'bough_path("collect-linear.db")'
+    batch: 50
+    timeout_ms: 30000
+
+# §6: the mcp seam.
+- id: mcp
+  plugin: mcp
+- id: mcp.rmcp
+  plugin: mcp-rmcp
+  config: { servers: [], connect_timeout_ms: 15000, call_timeout_ms: 120000 }
+- id: tool.mcp
+  plugin: tool-mcp
+  config: { prefix: "mcp__", max_result_bytes: 20000 }
+
+# §9: the runtime-code hosts.
+- id: wards
+  plugin: wards-rhai
+  config:
+    dir: !!expr 'home_path(".bough/wards")'
+    glob: "*.rhai"
+    watch: true
+    debounce_ms: 400
+    max_ops: 200000
+    max_depth: 32
+    max_string_bytes: 65536
+    max_array_size: 4096
+    eval_timeout_ms: 2000
+    limits: { max_actions: 16, max_spawns: 2, max_text_bytes: 8192 }
+- id: hooks
+  plugin: hooks-exec
+  config:
+    points: []
+    max_output_bytes: 65536
+    max_failures: 3
+    limits: { max_actions: 16, max_spawns: 2, max_text_bytes: 8192 }
+- id: mcp.subprocess
+  plugin: mcp-subprocess
+  config:
+    processes: []
+    limits: { max_actions: 16, max_spawns: 2, max_text_bytes: 8192 }
+- id: skills
+  plugin: skills
+  config:
+    dir: !!expr 'home_path(".bough/skills")'
+    glob: "*.md"
+    watch: true
+    debounce_ms: 400
+    max_bytes: 65536
+    max_injected: 3
+    scan_steps: 40
+
+# §13: the sleep listener, and the one thing that consumes it. `power-test` is in the catalog and
+# in NO bundle: the SWAP patch names it.
+- id: power
+  plugin: power
+- id: power.sleep
+  plugin: sleep-listener
+  config: { enabled: true, min_sleep_ms: 60000, source: auto }
+- id: catch-up.on-wake
+  plugin: catch-up-on-wake
+  config: { min_sleep_ms: 60000, kinds: [resident] }
+
+# §8/§5: the two system passes as schedule rows.
+- id: schedule.catch-up
+  plugin: schedule-catch-up
+  config: { cadence: { every_ms: 1800000 }, catch_up: true, kinds: [resident] }
+- id: schedule.reconsolidate
+  plugin: schedule-reconsolidate
+  config: { cadence: { cron: "0 0 4 * * *" }, catch_up: true, command: "reconsolidate", agent: sol }

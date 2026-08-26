@@ -5,7 +5,7 @@
 //! `ClassRule::Thought`, `ignorable: true`: a ward firing is the harness's own reasoning, and a
 //! binary that does not know about wards may skip these rows safely.
 
-use bough_plugin_ledger::Seq;
+use bough_plugin_ledger::{ClassRule, Seq, StepTypeDef};
 use bough_plugin_runtime_actions::RuntimeAction;
 
 /// `ward/fired`.
@@ -22,4 +22,13 @@ pub struct WardFired {
     pub outcomes: Vec<String>,
     pub ops: u64,
     pub ms: u64,
+}
+
+/// The step type this crate owns, for `declare_step_types`.
+///
+/// `ignorable: true`: a binary that does not know about wards may SKIP these rows on read (§3).
+pub fn step_types() -> Vec<StepTypeDef> {
+    vec![StepTypeDef::of::<WardFired>(WARD_FIRED, crate::PLUGIN_NAME)
+        .class_rule(ClassRule::Thought)
+        .ignorable(true)]
 }
