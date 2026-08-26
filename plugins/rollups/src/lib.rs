@@ -22,11 +22,13 @@ use std::sync::Arc;
 use bough_kernel::ServiceKey;
 
 pub use block::{
-    notable_refs, refs_of, Beneath, DigestBlock, Standing, Theme, TierBlock, WindowRef,
+    is_domain_ref, notable_refs, refs_of, Beneath, DigestBlock, Standing, Theme, TierBlock,
+    WindowRef,
 };
+pub use conformance::Conformance;
 pub use error::RollupsError;
-pub use expiry::{Expired, NEVER_EXPIRABLE};
-pub use plan::{coverage, is_ours, plan, tier_id, TierCfg};
+pub use expiry::{is_expirable, Expired, ExpiredBody, EXPIRED_STEP_TYPE, NEVER_EXPIRABLE};
+pub use plan::{coverage, generation_of, is_ours, plan, tier_id, TierCfg, TIER_NAMESPACE};
 pub use request::{
     Attribution, DigestReport, DigestRequest, Inputs, PassId, PlannedBlock, SealPlan, SealReport,
     SealRequest, Skip, SkipReason, Stop, SupersedeReport, SupersedeRequest,

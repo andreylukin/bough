@@ -13,6 +13,7 @@ repository.workspace = true
 bough-kernel = { workspace = true }
 bough-plugin-ledger = { workspace = true }
 bough-plugin-rollups = { workspace = true }
+bough-plugin-commands = { workspace = true }
 async-trait = { workspace = true }
 inventory = { workspace = true }
 serde = { workspace = true }

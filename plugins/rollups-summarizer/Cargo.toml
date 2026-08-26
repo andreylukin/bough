@@ -16,6 +16,7 @@ bough-plugin-ledger = { workspace = true }
 bough-plugin-rollups = { workspace = true }
 bough-plugin-llm = { workspace = true }
 bough-plugin-agents = { workspace = true }
+bough-plugin-projection = { workspace = true }
 bough-plugin-commands = { workspace = true }
 async-trait = { workspace = true }
 inventory = { workspace = true }
@@ -29,8 +30,13 @@ parking_lot = { workspace = true }
 futures = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
+sha2 = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 bough-llm = { workspace = true }
 bough-plugin-ledger-memory = { workspace = true }
 bough-plugin-llm-replay = { workspace = true }
+bough-plugin-llm-anthropic = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

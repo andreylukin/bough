@@ -1110,8 +1110,23 @@ The bench is `bough-plugin-rollups-summarizer` `tests/cost_bench.rs::cost_per_li
 4. asserts a ceiling — `calls <= steps / min_window_steps` and `usd < CEILING` — so the bench is
    also a regression guard against a summarizer that starts calling the model per step.
 
-**The measured number: NOT YET MEASURED.** WP-2 records it here, in this paragraph, on the first
-green run, replacing this sentence with the printed line and the date. The design PREDICTION,
+**The measured number (2026-08-26, `make bench`, offline):**
+
+```
+cost_per_lived_day steps=210 windows=18 calls=19 passes=4 tier1=18 tier2=1
+  tokens_in=8919 tokens_out=1064 usd=0.0142 token_source={"estimate": 19}
+  models=["claude-haiku-4-5-20251001"]
+```
+
+**$0.0142 per lived day** — an order of magnitude BELOW the $0.12 prediction and far under the
+$0.50 ceiling that would have condemned the design. The SHAPE matches the prediction closely (19
+calls for 210 steps, 18 tier-1 + 1 tier-2); only the per-call token size is understated, and the
+reason is honest and worth naming: a synthetic step is one short sentence, so a 10-step window
+renders to ~450 tokens where a real day's tool output is far larger. Read the number as a floor on
+call COUNT and a soft lower bound on dollars, not as a measurement of a real workday. The bench
+runs the ESTIMATE path deliberately (`token_source=estimate`): with a static transcript a declared
+usage chunk would measure the fixture, not the summarizer. The provider path is covered separately
+by `cost_bench.rs::provider_reported_usage_reaches_the_step`. The design PREDICTION,
 recorded now so a wrong order of magnitude is visible immediately: ~210 steps/day → ~21 tier-1
 windows → ~21 map calls + ~3 tier-2 reduce calls ≈ 24 calls; ~83k input and ~6.5k output tokens; at
 `claude-haiku-4-5-20251001`'s catalogued $1/M in and $5/M out, **≈ $0.12 per lived day**. Tier 3
@@ -1325,3 +1340,119 @@ Named so a reviewer does not look for them:
   broadcast `ledger/step`. A `rollups/sealed` event would be a second channel for a fact that has
   one, and §15 item 7's event-catalog gate counts events. The running count after Phase 4 is
   unchanged from Phase 3.
+
+---
+
+## 7. WP-6 integration notes (2026-08-26)
+
+What the integration package changed at the seam, beyond the files §1 lists for it.
+
+**Three defects only a whole-tree boot could see.**
+
+1. **The four Phase-4 rows were in no catalog.** `crates/bough/Cargo.toml` carrying a dependency is
+   not enough: `crates/bough/src/lib.rs` holds one `use bough_plugin_<name> as _;` per plugin so the
+   `inventory` registration is not dropped by the linker, and the Phase-4 lines were missing. The
+   shipped tree refused to compose with `UnknownPlugin { plugin: "rollups-summarizer" }`. Four lines
+   added; `memory_invariants.rs::the_three_rows_activate_in_the_default_profile` is the guard.
+
+2. **`memory/expired` has two declarers and one map entry.** `reconsolidation` owns the marker
+   (§2.4) and `rollups-summarizer`'s supersession note appends the same kind. The summarizer already
+   filtered out a type another row had declared; `reconsolidation` did not, so whichever row mounted
+   second failed with "step type `memory/expired` is already registered". The same filter is now on
+   both sides. This is the smallest fix that keeps either row usable without the other.
+
+3. **`/seal` vanished under the stub.** The command was registered by the summarizer alone, so the
+   swap replaced a working `/seal` with "unknown command `seal`", which tells an operator nothing
+   about why nothing is being sealed. `rollups-none` now registers its own `/seal`
+   (`plugins/rollups-none/src/command.rs`): same first line as the summarizer's report, plus
+   "this provider seals nothing" and the row it is bound to. §16 — the stub must be REACHABLE, not
+   merely silent — and it is also what makes `11-swap-rollups.sh` able to observe the swap at all.
+   The stub therefore injects `commands` as OPTIONAL alongside `ledger`.
+
+**Deviations from §2.3 and §2.9, recorded rather than hidden.**
+
+- The stub's `Inject` is `required(["ledger"]).union(optional(["commands"]))`, not `ledger` alone
+  (defect 3 above). It still changes no other row's satisfaction: `commands` is optional and absent
+  in `headless`, where `memory_invariants.rs::the_three_rows_activate_headless_without_commands`
+  boots it.
+- The stub's `SealReport.pass` is the constant `PassId::new("pass:none")` rather than a fresh uuid.
+  A uuid would assert a pass happened; no pass happened, and the crate takes no `uuid` dependency.
+- No `Makefile` target was needed: `make bench` already filters on `bench`, and
+  `make tui-test`'s `scripts/tui/[0-9]*.sh` glob picks up `10-memory.sh` and `11-swap-rollups.sh`.
+
+**Two harness facts the scripts had to learn** (both cost a red run first, both now commented in
+place):
+
+- A ledger left in WAL by a TUI process is a zero-byte file to `sqlite3` until some process has
+  opened and closed it cleanly. Both scripts run one `bough --profile headless --check` before
+  seeding — the `06-catch-up.sh` precedent, and without it the seed reports "no such table: steps".
+- The launcher's patch watch is DEBOUNCED, and a seal pass is capped at `max_calls_per_pass`. So
+  `11-swap-rollups.sh` does not seal once and look: `took_over` re-runs `/seal` until the stub's
+  refusal is on screen and fails loudly if it never is, and `seal_until` re-runs it until the tier
+  count actually moves. "Seal once and assert" was flaky in both directions.
+
+**Vacuity guarded.** Every `see_any` pattern in `10-memory.sh` is text the REPORT writes and nothing
+else on screen does — `call(s),`, `contradictions proposed`, `tool entropy`,
+`claim rejection: inactive`, `from raw evidence`, `seals nothing, ever`. The first draft matched
+`sealed`, `tier` and `thought`, which the seeded trajectory carries on its own: those bullets would
+have passed whether or not a report ever reached the pane.
+
+**V4 is MEASURED** (integration pass, 2026-08-26): `make bench` green, $0.0142 per lived day,
+recorded with its caveats in §3's V4 paragraph. WP-6 did not run it; the integrator did.
+
+## §8 — the integration pass (2026-08-26)
+
+`make gates` is GREEN end to end: `cargo build --workspace --all-targets`, `cargo fmt --all
+--check`, `cargo clippy --workspace --all-targets -D warnings`, `cargo test --workspace` (**1145
+passed, 0 failed, 11 ignored**), and the shell-use replay half (**61 `ok`, 0 `not ok`** across all
+eleven `scripts/tui/*.sh`, `10-memory.sh` and `11-swap-rollups.sh` included). `make bench` green,
+V4 recorded above. No `todo!()` or `unimplemented!()` remains anywhere under `plugins/` or
+`crates/`.
+
+### P4-D20 — the expiry marker body had TWO spellings, and the reader saw neither field
+
+The one seam defect integration found. §2.7 declares the `memory/expired` body as
+`{ targets, reason, kind }`, and all three writers — `rollups-summarizer::MemoryExpired`,
+`reconsolidation::vocabulary::MemoryExpired`, and drift-watch's test double — serialize exactly
+that. But the one READER, `bough_plugin_rollups::expiry::ExpiredBody` (P4-D7: one implementation,
+which the projector folds through), declared `{ targets, why }`.
+
+This did not fail a test, which is why five work packages shipped past it: `serde_json` ignores
+unknown fields by default and `why` was `#[serde(default)]`, so a real `{targets, reason, kind}`
+marker DID deserialize — with `reason` silently dropped to `""`. Expiry therefore worked (the
+projector only reads `targets`), while the human-facing half of every marker ever written was
+unreadable through the seam that owns reading it.
+
+Fixed by aligning the reader with §2.7 and with the three writers rather than the other way round:
+`ExpiredBody` is now `{ targets, reason, kind }`, both `kind` and `reason` `#[serde(default)]` so a
+marker missing either is still data and never an error. `kind` is a `String` on this seam
+deliberately — the two governance rows spell it with two different enums (`ReconKind` and a bare
+string), and the projector only reads it back. The assembler's two `expire(..)` fixtures and
+`tests/golden/real_tiers.txt` moved to the aligned spelling with it; the golden's drift is the
+marker row rendering `{"kind":"expiry","reason":…,"targets":…}` where it used to render `why`.
+
+WP-5 flagged the mismatch and proposed a DOC fix (change §2.7 to match the code). That is the wrong
+direction: REQUIREMENTS and the plan win over code (AGENTS.md), three of three writers already
+agreed with the plan, and the reader was the outlier.
+
+### Carried forward, NOT fixed here, each with its reason
+
+1. **`ledger-memory` does not refuse a duplicate rollup id.** WP-2 found that `seal_rollup` with an
+   already-sealed id returns `Ok` and silently REPLACES the row, so the store is not the belt §3's
+   "immutable after sealing" assumes. The summarizer guards it in front (`seal::refuse_if_sealed`
+   → `RollupsError::AlreadySealed`, asserted by `re_sealing_the_same_range_is_refused`), so the
+   shipped behaviour is correct. The gap is a Phase-1 ledger defect, it is in a row this phase does
+   not own, and fixing it would change a store contract three phases depend on — it belongs to a
+   ledger work package, not to a Phase-4 integration commit.
+2. **`reconsolidation`'s integration suites judge a test double, not the real summarizer.** WP-3
+   dropped the `rollups-summarizer` dev-dependency because WP-2 did not compile at the time, and
+   mounts `tests/support/mod.rs::DigestOnly` instead. Now that WP-2 lands, "reconsolidation never
+   seals a tier and never supersedes" is enforced by an `unreachable!()` on a double rather than
+   against the row that will actually be mounted. Re-adding the dependency is a real improvement
+   and a real risk of a dependency cycle between two rows that both declare `memory/expired`; it is
+   left as named follow-up rather than done blind at the close of the phase.
+3. **`drift-watch::Plugin::apply` has no test of its own in its crate** (WP-4's own note). It is
+   covered at the tree level by `crates/bough/tests/memory_invariants.rs`.
+4. **The live half was not re-run by the integrator.** WP-2 reports
+   `a_live_haiku_pass_seals_a_readable_block` green against real haiku; this pass ran the OFFLINE
+   gates only, per AGENTS.md's rule that `make gates` is hermetic.

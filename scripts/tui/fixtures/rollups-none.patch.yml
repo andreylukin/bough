@@ -1,0 +1,7 @@
+# The Phase 4 SWAP fixture: `rollups` becomes the stub Provider while the binary runs. No compile,
+# no restart — the launcher's patch watch recomposes and the row's provider changes underneath
+# every consumer of `ctx.rollups`.
+entries:
+  rollups:
+    plugin: rollups-none
+    config: {}

@@ -31,6 +31,9 @@ tiktoken-rs = { workspace = true }      # thought-length in o200k tokens (§8)
 tokio = { workspace = true }
 
 [dev-dependencies]
+# The behavioural twin of `ledger-sqlite`, so the reset's durable path runs against a REAL store.
 bough-plugin-ledger-memory = { workspace = true }
-bough-plugin-rollups-summarizer = { workspace = true }
-bough-plugin-llm-replay = { workspace = true }
+# NOT `rollups-summarizer`: this crate's tests judge THIS row, and a fake `Summarizer` written to
+# the seam's contract is what lets `/reset` and `/supersede` be tested without a model, a replay
+# fixture, or a second row's bugs (the summarizer's own conformance suite lives in `rollups`).
+serde_json = { workspace = true }

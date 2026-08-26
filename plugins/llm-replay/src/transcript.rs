@@ -42,6 +42,18 @@ pub enum RecordedChunk {
         #[serde(default)]
         delay_ms: u64,
     },
+    /// Provider usage for the round (P4-D10). Recorded so an OFFLINE bench measures
+    /// provider-shaped token counts rather than the harness's own tokenizer twice.
+    Usage {
+        input_tokens: i64,
+        output_tokens: i64,
+        #[serde(default)]
+        cache_read_tokens: Option<i64>,
+        #[serde(default)]
+        cache_write_tokens: Option<i64>,
+        #[serde(default)]
+        delay_ms: u64,
+    },
     End {
         stop: String,
         #[serde(default)]
@@ -72,6 +84,20 @@ impl RecordedChunk {
                 name: ToolName::new(name),
                 input: input.clone(),
             },
+            RecordedChunk::Usage {
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                ..
+            } => Chunk::Usage(bough_plugin_llm::Usage {
+                input_tokens: *input_tokens,
+                output_tokens: *output_tokens,
+                reasoning_tokens: None,
+                cache_read_tokens: *cache_read_tokens,
+                cache_write_tokens: *cache_write_tokens,
+                cost_usd: None,
+            }),
             RecordedChunk::End { stop, .. } => Chunk::End {
                 stop: match stop.as_str() {
                     "tool_use" => StopReason::ToolUse,
@@ -101,6 +127,7 @@ impl RecordedChunk {
             RecordedChunk::Text { delay_ms, .. }
             | RecordedChunk::Reasoning { delay_ms, .. }
             | RecordedChunk::ToolCall { delay_ms, .. }
+            | RecordedChunk::Usage { delay_ms, .. }
             | RecordedChunk::End { delay_ms, .. }
             | RecordedChunk::Failed { delay_ms, .. } => *delay_ms,
         }
@@ -281,6 +308,23 @@ rounds:
                 stop: StopReason::EndTurn
             }
         ));
+        // P4-D10: a recorded usage chunk maps to the seam's own `Usage`, cache fields included.
+        let usage = RecordedChunk::Usage {
+            input_tokens: 1200,
+            output_tokens: 300,
+            cache_read_tokens: Some(900),
+            cache_write_tokens: None,
+            delay_ms: 0,
+        }
+        .to_chunk();
+        match usage {
+            Chunk::Usage(u) => {
+                assert_eq!((u.input_tokens, u.output_tokens), (1200, 300));
+                assert_eq!(u.cache_read_tokens, Some(900));
+                assert_eq!(u.cache_write_tokens, None);
+            }
+            other => panic!("a recorded usage must map to Chunk::Usage, got {other:?}"),
+        }
         assert_eq!(parse_kind("nonsense"), FailureKind::Other);
         assert_eq!(parse_kind("rate_limit"), FailureKind::RateLimit);
     }

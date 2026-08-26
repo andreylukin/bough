@@ -52,13 +52,13 @@ pub struct ReconInner {
 
 impl ReconHandle {
     /// What a pass WOULD do. No model call, no write.
-    pub async fn plan(&self, _req: &PassRequest) -> Result<PassPlan, ReconError> {
-        todo!("WP-3: plan a reconsolidation pass")
+    pub async fn plan(&self, req: &PassRequest) -> Result<PassPlan, ReconError> {
+        pass::plan(&self.0, req).await
     }
 
     /// Run it. ADDS ONLY (§8).
-    pub async fn run(&self, _req: &PassRequest) -> Result<PassReport, ReconError> {
-        todo!("WP-3: run a reconsolidation pass")
+    pub async fn run(&self, req: &PassRequest) -> Result<PassReport, ReconError> {
+        pass::run(&self.0, req).await
     }
 }
 
@@ -159,8 +159,74 @@ impl Plugin for ReconsolidationPlugin {
         resolve::validate(cfg)
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-3: provide `reconsolidation`, declare `memory/expired`, register /reconsolidate")
+    async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let fail = |e: bough_kernel::KernelError| PluginError::new(entry.clone(), e);
+
+        let ledger = bough_plugin_ledger::LedgerHandle(
+            ctx.get::<bough_plugin_ledger::Ledger>()
+                .map_err(fail)?
+                .0
+                .clone(),
+        );
+        // Model-visible ⟺ ledgered (§0.2): the marker this row appends is a declared step type,
+        // and the declaration is an EFFECT, so unloading the row leaves the map untouched.
+        // A type another row already declared is left alone: `memory/expired` has TWO possible
+        // declarers — this row and `rollups-summarizer`'s supersession note — and one map entry.
+        // Whichever mounts first owns it; the second would otherwise fail the whole row (found by
+        // `crates/bough/tests/memory_invariants.rs`, which boots both).
+        let already: std::collections::BTreeSet<String> = ledger
+            .0
+            .step_types()
+            .into_iter()
+            .map(|d| d.name.to_string())
+            .collect();
+        let mine: Vec<bough_plugin_ledger::StepTypeDef> = vocabulary::step_types()
+            .into_iter()
+            .filter(|d| !already.contains(d.name.as_str()))
+            .collect();
+        ledger.declare_step_types(&ctx, mine).await?;
+
+        let llm = bough_plugin_llm::LlmHandle(
+            ctx.get::<bough_plugin_llm::Llm>().map_err(fail)?.0.clone(),
+        );
+        let agents = bough_plugin_agents::AgentsHandle(
+            ctx.get::<bough_plugin_agents::Agents>()
+                .map_err(fail)?
+                .0
+                .clone(),
+        );
+        let rollups = bough_plugin_rollups::RollupsHandle(
+            ctx.get::<bough_plugin_rollups::Rollups>()
+                .map_err(fail)?
+                .0
+                .clone(),
+        );
+
+        let handle = ReconHandle(Arc::new(ReconInner {
+            ctx: ctx.clone(),
+            cfg,
+            ledger,
+            llm,
+            agents,
+            rollups,
+        }));
+        ctx.provide::<Reconsolidation>(handle.clone())
+            .await
+            .map_err(fail)?;
+
+        // The recorded stream this row's invariant reads is per fiber LIFE: a reload starts
+        // clean, or the reload itself would look like an edit.
+        ctx.effect(move |e| async move {
+            e.defer_sync(invariant::reset);
+            Ok(())
+        })
+        .await?;
+
+        // `commands` is OPTIONAL: a headless profile mounts this row with no surface at all and
+        // still reconsolidates.
+        command::register(&ctx, &handle).await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

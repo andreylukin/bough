@@ -4,14 +4,16 @@
 //! which is what makes it a truthful stub rather than a slow one — the swap test reads exactly
 //! that difference.
 
+pub mod command;
 pub mod invariant;
 
 use std::sync::Arc;
 
 use bough_kernel::{Context, Inject, InvariantSpec, Plugin, PluginError};
+use bough_plugin_ledger::Seq;
 use bough_plugin_rollups::{
-    DigestReport, DigestRequest, RollupsError, SealPlan, SealReport, SealRequest, Summarizer,
-    SupersedeReport, SupersedeRequest,
+    DigestReport, DigestRequest, PassId, Rollups, RollupsError, RollupsHandle, SealPlan,
+    SealReport, SealRequest, Skip, SkipReason, Stop, Summarizer, SupersedeReport, SupersedeRequest,
 };
 
 /// The catalog name of this row.
@@ -25,7 +27,7 @@ pub struct NoneConfig {}
 /// The stub summarizer.
 #[derive(Clone)]
 pub struct NoneSummarizer {
-    pub ledger: bough_plugin_ledger::LedgerHandle,
+    pub ledger: Arc<bough_plugin_ledger::LedgerHandle>,
 }
 
 #[async_trait::async_trait]
@@ -39,20 +41,60 @@ impl Summarizer for NoneSummarizer {
         ""
     }
 
-    async fn plan(&self, _req: &SealRequest) -> Result<SealPlan, RollupsError> {
-        todo!("WP-6: an honest plan whose every candidate is Refused")
+    /// Reads the ledger — and NOTHING else. The plan is total: the whole candidate range is one
+    /// [`SkipReason::Refused`] skip, so a caller rendering the plan is told the truth rather than
+    /// shown an empty list it could read as "already sealed".
+    async fn plan(&self, req: &SealRequest) -> Result<SealPlan, RollupsError> {
+        let head = self.ledger.0.head_seq(&req.traj).await?.unwrap_or(Seq(0));
+        let upto = req.upto.unwrap_or(head).min(head);
+        let skipped = if upto.0 == 0 {
+            Vec::new()
+        } else {
+            vec![Skip {
+                tier: 1,
+                from_seq: Seq(1),
+                to_seq: upto,
+                why: SkipReason::Refused,
+            }]
+        };
+        Ok(SealPlan {
+            traj: req.traj.clone(),
+            head,
+            upto,
+            blocks: Vec::new(),
+            skipped,
+        })
     }
 
-    async fn seal(&self, _req: &SealRequest) -> Result<SealReport, RollupsError> {
-        todo!("WP-6: Stop::NothingToDo, no step, no call")
+    /// No model call, no appended step, no rollup row: [`Stop::NothingToDo`], every time.
+    async fn seal(&self, req: &SealRequest) -> Result<SealReport, RollupsError> {
+        let plan = self.plan(req).await?;
+        Ok(SealReport {
+            // The stub runs no pass, so the id is a CONSTANT naming exactly that rather than a
+            // fresh uuid pretending a pass happened.
+            pass: PassId::new("pass:none"),
+            planned: 0,
+            sealed: Vec::new(),
+            skipped: plan.skipped,
+            calls: 0,
+            tokens_in: 0,
+            tokens_out: 0,
+            stop: Stop::NothingToDo,
+        })
     }
 
-    async fn supersede(&self, _req: &SupersedeRequest) -> Result<SupersedeReport, RollupsError> {
-        todo!("WP-6: RollupsError::Refused")
+    async fn supersede(&self, req: &SupersedeRequest) -> Result<SupersedeReport, RollupsError> {
+        Err(RollupsError::Refused(format!(
+            "`{}` seals nothing, so it cannot supersede `{}`",
+            PLUGIN_NAME, req.block
+        )))
     }
 
-    async fn rebuild_digest(&self, _req: &DigestRequest) -> Result<DigestReport, RollupsError> {
-        todo!("WP-6: RollupsError::Refused")
+    async fn rebuild_digest(&self, req: &DigestRequest) -> Result<DigestReport, RollupsError> {
+        Err(RollupsError::Refused(format!(
+            "`{}` seals nothing, so it cannot rebuild `{}`'s digest",
+            PLUGIN_NAME, req.agent
+        )))
     }
 }
 
@@ -67,11 +109,22 @@ impl Plugin for RollupsNonePlugin {
     fn inject() -> Inject {
         // `ledger` only — it needs the store to answer `plan` honestly — so the swap changes no
         // other row's satisfaction.
-        Inject::required(["ledger"])
+        Inject::required(["ledger"]).union(&Inject::optional(["commands"]))
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-6: provide `rollups` with the stub")
+    async fn apply(ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let ledger = ctx
+            .get::<bough_plugin_ledger::Ledger>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        let stub = NoneSummarizer { ledger };
+        ctx.provide::<Rollups>(RollupsHandle(Arc::new(stub.clone())))
+            .await
+            .map_err(|e| PluginError::new(entry, e))?;
+        // §16: the stub is REACHABLE. `/seal` must not vanish with the summarizer — under the
+        // stub it reports, truthfully, that nothing will ever be sealed.
+        crate::command::register(&ctx, &stub).await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

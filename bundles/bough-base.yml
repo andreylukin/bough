@@ -111,3 +111,38 @@
   plugin: actions
 - id: tool.actions
   plugin: tool-actions
+# Phase 4 (§8, §17 Phase 4): memory governance, non-optional — §8 puts these three rows in
+# `bough-base`. `rollups-none` is in the catalog and in NO bundle (the `ledger-memory` /
+# `projection-probe` / `tui-probe` precedent); the swap patch names it.
+- id: rollups
+  plugin: rollups-summarizer
+  config:
+    prompt_ver: "r4.1"
+    gap_minutes: 45
+    max_window_steps: 10
+    min_window_steps: 2
+    fanout: 10
+    max_tier: 3
+    seal_lag_steps: 20
+    max_calls_per_pass: 8
+    max_notable_refs: 12
+    max_evidence_refs: 24
+    max_block_chars: 1200
+    map_max_tokens: 1024
+    reduce_max_tokens: 1536
+- id: reconsolidation
+  plugin: reconsolidation
+  config:
+    batch_steps: 400
+    stale_after_days: 90
+    expirable_kinds: ["mail/delivered", "tool/result"]
+    max_contradiction_pairs: 24
+    max_calls_per_pass: 6
+    distill_max_tokens: 2048
+- id: drift.watch
+  plugin: drift-watch
+  config:
+    window_steps: 500
+    min_samples: 20
+    thought_len_cv_flag: 1.2
+    tool_entropy_flag: 0.35

@@ -16,8 +16,12 @@ pub mod vocabulary;
 use std::sync::Arc;
 
 use bough_kernel::{Context, Inject, InvariantSpec, Plugin, PluginError, ServiceKey};
-use bough_plugin_ledger::{AgentName, RollupId, SeqRange, StepId, TrajId};
-use bough_plugin_rollups::Attribution;
+use bough_plugin_agents::Agents;
+use bough_plugin_ledger::{
+    AgentName, Ledger, LedgerHandle, Order, Rollup, RollupId, RollupKind, RollupQuery, SeqRange,
+    Step, StepId, StepQuery, TrajId,
+};
+use bough_plugin_rollups::{Attribution, Rollups, SupersedeReport, SupersedeRequest};
 use chrono::{DateTime, Utc};
 
 pub use vocabulary::{DriftError, DriftReset, DRIFT_RESET};
@@ -48,18 +52,104 @@ pub struct DriftInner {
 
 impl DriftHandle {
     /// Per-agent stability signals, computed from the ledger. Reads only; appends nothing.
+    ///
+    /// `at` is injected and unused by the arithmetic today: every signal of §8 is a shape of the
+    /// last `window_steps` rows, not an age. It stays in the signature because the
+    /// claim-rejection signal Phase 5 activates is a RATE, and a rate needs the instant it was
+    /// taken at — adding the parameter later would change every caller.
     pub async fn signals(
         &self,
-        _agent: &AgentName,
+        agent: &AgentName,
         _at: DateTime<Utc>,
     ) -> Result<Signals, DriftError> {
-        todo!("WP-4: compute the signals")
+        let traj = traj_of(&self.0, agent).await?;
+        let (window, steps) = read_window(&self.0, &traj).await?;
+        Ok(signals::compute(agent, window, &steps, &self.0.cfg))
     }
 
     /// §8's one-command reset.
-    pub async fn reset(&self, _req: &ResetRequest) -> Result<ResetReport, DriftError> {
-        todo!("WP-4: rebuild identity from raw evidence")
+    pub async fn reset(&self, req: &ResetRequest) -> Result<ResetReport, DriftError> {
+        reset::run(&self.0, req).await
     }
+
+    /// Supersede a suspected-bad tier block: a thin call through the rollups seam (§3's relief
+    /// valve). It lives here because §8 puts "if a tier block itself is suspected bad" inside the
+    /// drift-watch paragraph, and the suspicion is what this row surfaces. Nothing here writes a
+    /// sealed row: the provider mints generation n+1 and sets `superseded_by` once.
+    pub async fn supersede(&self, req: &SupersedeRequest) -> Result<SupersedeReport, DriftError> {
+        Ok(self.0.rollups.0.supersede(req).await?)
+    }
+
+    /// The trajectory of an agent, as the ledger's mutable `agents` row records it.
+    pub async fn trajectory(&self, agent: &AgentName) -> Result<TrajId, DriftError> {
+        traj_of(&self.0, agent).await
+    }
+}
+
+/// The agent's trajectory, refused loudly when there is none. The explicit resolution step (§0.2):
+/// never a `?? default` trajectory, which would compute signals over somebody else's rows.
+async fn traj_of(inner: &DriftInner, agent: &AgentName) -> Result<TrajId, DriftError> {
+    let row = inner
+        .ledger
+        .0
+        .agent(agent)
+        .await?
+        .ok_or_else(|| DriftError::NoSuchAgent(agent.to_string()))?;
+    if row.traj.as_str().is_empty() {
+        return Err(DriftError::NoTrajectory(agent.to_string()));
+    }
+    Ok(row.traj)
+}
+
+/// The signal window and the steps in it. READS ONLY.
+pub(crate) async fn read_window(
+    inner: &DriftInner,
+    traj: &TrajId,
+) -> Result<(SeqRange, Vec<Step>), DriftError> {
+    let head = inner.ledger.0.head_seq(traj).await?;
+    let window = resolve::window(head, &inner.cfg);
+    if window.from > window.to {
+        return Ok((window, Vec::new()));
+    }
+    let steps = inner
+        .ledger
+        .0
+        .steps(&StepQuery {
+            trajs: vec![traj.clone()],
+            // `after` is exclusive on both providers, so the window's first seq is included by
+            // asking for everything above the seq below it.
+            after: Some(bough_plugin_ledger::Seq(window.from.0.saturating_sub(1))),
+            before: Some(bough_plugin_ledger::Seq(window.to.0 + 1)),
+            order: Order::SeqAsc,
+            ..Default::default()
+        })
+        .await?;
+    Ok((window, steps))
+}
+
+/// Sealed `tier` rollups on a trajectory, superseded ones included.
+///
+/// SUPERSEDED ROWS COUNT. They are still sealed rows, and excluding them would let a reset that
+/// superseded a tier report an unchanged count — which is precisely the violation the count
+/// exists to catch.
+pub(crate) async fn count_tiers(inner: &DriftInner, traj: &TrajId) -> Result<usize, DriftError> {
+    Ok(tier_rollups(inner, traj).await?.len())
+}
+
+pub(crate) async fn tier_rollups(
+    inner: &DriftInner,
+    traj: &TrajId,
+) -> Result<Vec<Rollup>, DriftError> {
+    Ok(inner
+        .ledger
+        .0
+        .rollups(&RollupQuery {
+            trajs: vec![traj.clone()],
+            kind: Some(RollupKind::Tier),
+            include_superseded: true,
+            ..Default::default()
+        })
+        .await?)
 }
 
 /// One agent's stability signals.
@@ -172,8 +262,33 @@ impl Plugin for DriftWatchPlugin {
         resolve::validate(cfg)
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-4: provide `drift`, declare `drift/reset`, register /drift /reset /supersede")
+    async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let fail = |e: bough_kernel::KernelError| PluginError::new(entry.clone(), e);
+
+        let ledger = LedgerHandle(ctx.get::<Ledger>().map_err(fail)?.0.clone());
+        let agents = (*ctx.get::<Agents>().map_err(fail)?).clone();
+        let rollups = (*ctx.get::<Rollups>().map_err(fail)?).clone();
+
+        // Model-visible ⟺ ledgered (§0.2): the reset's own step type, declared as an EFFECT so
+        // unloading this row leaves the type map as if it had never mounted.
+        ledger
+            .declare_step_types(&ctx, vocabulary::step_types())
+            .await?;
+
+        let handle = DriftHandle(Arc::new(DriftInner {
+            ctx: ctx.clone(),
+            cfg,
+            ledger,
+            agents,
+            rollups,
+        }));
+        ctx.provide::<Drift>(handle.clone())
+            .await
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+
+        command::register(&ctx, &handle).await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

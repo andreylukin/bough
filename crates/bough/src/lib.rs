@@ -41,6 +41,12 @@ use bough_plugin_tui_probe as _;
 use bough_plugin_tui_search as _;
 use bough_plugin_tui_shell as _;
 use bough_plugin_tui_strip as _;
+// Phase 4's rows (§17 Phase 4). `rollups-none` is a FIXTURE provider: linked into the catalog,
+// named by no bundle, selected only by a swap patch.
+use bough_plugin_drift_watch as _;
+use bough_plugin_reconsolidation as _;
+use bough_plugin_rollups_none as _;
+use bough_plugin_rollups_summarizer as _;
 
 pub mod boot;
 pub mod cli;

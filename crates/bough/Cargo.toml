@@ -52,6 +52,14 @@ bough-plugin-tui-search = { workspace = true }
 bough-plugin-tui-probe = { workspace = true }
 bough-plugin-residents = { workspace = true }
 bough-plugin-old-feed-adapter = { workspace = true }
+# Phase 4 (§17 Phase 4): memory governance. `rollups` is the Service Definition (no row of its
+# own); `rollups-none` is a FIXTURE provider — in the catalog, in no bundle — exactly as
+# `ledger-memory` and `tui-probe` are, and the swap patch names it.
+bough-plugin-rollups = { workspace = true }
+bough-plugin-rollups-summarizer = { workspace = true }
+bough-plugin-rollups-none = { workspace = true }
+bough-plugin-reconsolidation = { workspace = true }
+bough-plugin-drift-watch = { workspace = true }
 serde_yaml = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }

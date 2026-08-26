@@ -112,6 +112,9 @@ fn join(refs: &BTreeSet<Ref>) -> String {
 
 // ---- pins -------------------------------------------------------------------------------------
 
+/// DELIBERATELY does not honour expiry (§3, V7): a pin's only relief valve is supersession, which
+/// `live_pins` already implements, so an expiry marker naming a pin is IGNORED here.
+///
 /// **Pins** — `live_pins(connected)`, verbatim, oldest first, each with its step id. Never
 /// filtered by age, never demoted (§5). Selected inline by `assemble`, which needs the
 /// `Vec<Pin>` itself for the degradation ladder; the two halves are [`sort_pins`] and
@@ -177,6 +180,11 @@ pub async fn digest(
         // Phase 4 produces digests. A dangling pointer renders nothing rather than a lie.
         return Ok(None);
     };
+    // §8: an expired digest renders NOTHING. The pointer is `agents` (mutable config) and the
+    // marker is a step; the marker wins, and the row itself is never edited.
+    if crate::expiry::load(req).await?.rollups.contains(&r.id) {
+        return Ok(None);
+    }
     Ok(Some(digest_section(&r)))
 }
 
@@ -233,9 +241,13 @@ pub async fn tiers(
         .await?;
     // §2.7 item 3: a rollup covering rows above `as_of` did not exist for the request being
     // reproduced.
+    // §8: a block named by an appended expiry marker leaves the band. (A SUPERSEDED block is
+    // already gone: `RollupQuery::include_superseded` defaults to false.)
+    let expired = crate::expiry::load(req).await?;
     let rollups: Vec<Rollup> = rollups
         .into_iter()
         .filter(|r| req.visible(r.to_seq))
+        .filter(|r| !expired.rollups.contains(&r.id))
         .collect();
     Ok(tier_sections(&rollups, &req.connected.refs, cfg.max_tiers))
 }
@@ -331,6 +343,14 @@ pub async fn tail(
             window
         }
     };
+    // §8: an expired step leaves the verbatim tail. The floor rung 2 shrinks toward therefore
+    // counts SURVIVING steps: `steps` is what the ladder is handed, and the expired rows are gone
+    // from it before it ever gets there.
+    let expired = crate::expiry::load(req).await?;
+    let steps: Vec<Step> = steps
+        .into_iter()
+        .filter(|s| !expired.steps.contains(&s.id))
+        .collect();
     Ok((tail_section(&steps), steps))
 }
 
@@ -388,6 +408,9 @@ pub fn de_interleave(steps: &[Step]) -> Vec<Vec<Step>> {
 
 // ---- mail -------------------------------------------------------------------------------------
 
+/// DELIBERATELY does not honour expiry (§5): unconsumed mail has its own consumption mechanism —
+/// the union of the `wake/end` sets — and a marker must never silently un-deliver a message.
+///
 /// **Mail** — `unconsumed_mail`, newest first, grouped by class.
 pub async fn mail(
     req: &SectionRequest,

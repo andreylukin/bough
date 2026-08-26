@@ -31,6 +31,9 @@ pub enum DriftError {
     NoSuchAgent(String),
     #[error("agent `{0}` has no trajectory yet")]
     NoTrajectory(String),
+    /// A rebuild "from raw evidence" with no raw evidence would have to invent the state half.
+    #[error("agent `{0}` has no raw evidence to rebuild an identity from")]
+    NoEvidence(String),
     #[error(transparent)]
     Rollups(#[from] bough_plugin_rollups::RollupsError),
     #[error(transparent)]

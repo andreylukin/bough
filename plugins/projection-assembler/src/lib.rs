@@ -231,11 +231,12 @@ pub(crate) mod test_support {
 
     use bough_kernel::{Context, KernelCore};
     use bough_plugin_ledger::{
-        AgentName, AgentRow, Append, Cite, Class, LedgerHandle, Pin, Ref, Rollup, RollupKind, Seq,
-        Step, StepId, StepType, TrajId, WakeId,
+        AgentName, AgentRow, Append, Cite, Class, ClassRule, Connected, LedgerHandle, Pin, Ref,
+        Rollup, RollupKind, Seq, Step, StepId, StepType, StepTypeDef, StepTypeToken, TrajId,
+        WakeId,
     };
     use bough_plugin_ledger_memory::store::MemoryStore;
-    use bough_plugin_projection::AssembleRequest;
+    use bough_plugin_projection::{AssembleRequest, SectionRequest};
     use chrono::{DateTime, TimeZone, Utc};
 
     use crate::{Assembler, AssemblerConfig};
@@ -466,6 +467,64 @@ pub(crate) mod test_support {
                 .expect("live_pins is a read");
             crate::bands::sort_pins(&mut p);
             p
+        }
+
+        /// A `SectionRequest` over this fixture's ledger, at `as_of`.
+        pub fn section_request(&self, as_of: Option<Seq>) -> SectionRequest {
+            SectionRequest {
+                agent: AgentName::new("sol"),
+                wake: None,
+                at: at(),
+                ledger: self.ledger.clone(),
+                connected: Arc::new(Connected {
+                    own: self.traj.clone(),
+                    ancestry: Vec::new(),
+                    ref_matches: Vec::new(),
+                    refs: BTreeSet::new(),
+                }),
+                as_of,
+            }
+        }
+
+        /// The trajectory's high-water.
+        pub async fn head(&self) -> Seq {
+            self.ledger
+                .0
+                .head_seq(&self.traj)
+                .await
+                .expect("head_seq is a read")
+                .expect("the fixture appended rows")
+        }
+
+        /// Register `memory/expired` for this fixture's ledger. The real type is
+        /// `reconsolidation`'s (§2.7); a unit test of the PROJECTOR declares its own so the two
+        /// crates stay independent, and the token is returned so the registration is an effect.
+        pub fn register_expiry_type(&self) -> StepTypeToken {
+            self.ledger
+                .0
+                .register_step_type(
+                    StepTypeDef::of::<bough_plugin_rollups::expiry::ExpiredBody>(
+                        crate::expiry::MEMORY_EXPIRED,
+                        "test",
+                    )
+                    .class_rule(ClassRule::Evidence),
+                )
+                .expect("a fresh step type registers")
+        }
+
+        /// Append one `memory/expired` marker naming `targets`.
+        pub async fn expire(&self, targets: &[&str], reason: &str) -> StepId {
+            self.append(
+                crate::expiry::MEMORY_EXPIRED,
+                Class::Evidence,
+                serde_json::json!({ "targets": targets, "reason": reason, "kind": "expiry" }),
+                vec![Cite {
+                    r#ref: Ref::new("step:why"),
+                    url: None,
+                }],
+            )
+            .await
+            .id
         }
 
         pub async fn unconsumed(&self) -> Vec<Step> {

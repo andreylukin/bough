@@ -17,10 +17,10 @@ pub mod seal;
 use std::sync::Arc;
 
 use bough_kernel::{Context, Inject, InvariantSpec, Plugin, PluginError};
-use bough_plugin_ledger::{ClassRule, StepTypeDef};
+use bough_plugin_ledger::{ClassRule, Ledger, Ref, StepTypeDef};
 use bough_plugin_rollups::{
-    DigestReport, DigestRequest, RollupsError, SealPlan, SealReport, SealRequest, Summarizer,
-    SupersedeReport, SupersedeRequest,
+    DigestReport, DigestRequest, Rollups, RollupsError, RollupsHandle, SealPlan, SealReport,
+    SealRequest, Summarizer, SupersedeReport, SupersedeRequest,
 };
 
 /// The catalog name of this row.
@@ -28,6 +28,20 @@ pub const PLUGIN_NAME: &str = "rollups-summarizer";
 
 /// The step type this crate owns, spelled once.
 pub const ROLLUP_REQUEST: &str = "rollup/request";
+
+/// §8's APPENDED expiry marker. The kind is DECLARED here as well as by `reconsolidation`, because
+/// a supersession leaves one and this row must work in a composition where `reconsolidation` is
+/// not mounted; the declaration is skipped when the type is already registered, so the two rows
+/// coexist rather than colliding (see the report on WP-2).
+pub const MEMORY_EXPIRED: &str = "memory/expired";
+
+/// The step kinds a governance pass itself writes. They ride the agent's own trajectory (P4-D2)
+/// and are therefore EXCLUDED from the material a pass windows: a summarizer must not summarize
+/// its own request log, and a pass's own appends must not move the seal-lag ceiling.
+pub const GOVERNANCE_KINDS: &[&str] = &[ROLLUP_REQUEST, "rollup/sealed", MEMORY_EXPIRED];
+
+/// The `kind` a supersession's marker carries.
+pub const EXPIRY_KIND_SUPERSESSION: &str = "supersession";
 
 /// `rollup/request` — a THOUGHT. Model-visible ⟺ ledgered (§0.2): the summarizer's request is
 /// reconstructible from `(range, prompt_ver, model)`, and this is the row that records the last
@@ -48,11 +62,22 @@ pub struct RollupRequest {
     pub token_source: call::TokenSource,
 }
 
+/// `memory/expired` — EVIDENCE. An expiry that cannot say what justified it is not appendable.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct MemoryExpired {
+    pub targets: Vec<Ref>,
+    pub reason: String,
+    /// `expiry` or `supersession`.
+    pub kind: String,
+}
+
 /// The step types this crate owns.
 pub fn step_types() -> Vec<StepTypeDef> {
     vec![
         StepTypeDef::of::<RollupRequest>(ROLLUP_REQUEST, PLUGIN_NAME)
             .class_rule(ClassRule::Thought),
+        StepTypeDef::of::<MemoryExpired>(MEMORY_EXPIRED, PLUGIN_NAME)
+            .class_rule(ClassRule::Evidence),
     ]
 }
 
@@ -80,13 +105,37 @@ pub struct SummarizerConfig {
     pub reduce_max_tokens: i64,
 }
 
+/// The values the `rollups` row carries in `bough-base`, spelled once so a test and the bundle
+/// cannot drift apart.
+pub fn bundle_config() -> SummarizerConfig {
+    SummarizerConfig {
+        prompt_ver: prompts::R4_1.to_string(),
+        gap_minutes: 45,
+        max_window_steps: 10,
+        min_window_steps: 2,
+        fanout: 10,
+        max_tier: 3,
+        seal_lag_steps: 20,
+        max_calls_per_pass: 8,
+        max_notable_refs: 12,
+        max_evidence_refs: 24,
+        max_block_chars: 1200,
+        map_max_tokens: 1024,
+        reduce_max_tokens: 1536,
+    }
+}
+
 /// The provider's live state: everything a seal pass needs, resolved once at `apply`.
 pub struct SummarizerInner {
     pub ctx: Context,
     pub cfg: Arc<SummarizerConfig>,
     pub ledger: bough_plugin_ledger::LedgerHandle,
     pub llm: bough_plugin_llm::LlmHandle,
-    pub agents: bough_plugin_agents::AgentsHandle,
+    pub agents: Option<bough_plugin_agents::AgentsHandle>,
+    /// The composition fingerprint, for the facts a policy listener reads. Empty when the kernel
+    /// resolves none — a pass appends no `request/header`, so an absent fingerprint is a missing
+    /// FACT rather than a missing stamp, and stating it empty is honest.
+    pub composition: String,
 }
 
 /// The recap summarizer.
@@ -103,20 +152,20 @@ impl Summarizer for RecapSummarizer {
         &self.0.cfg.prompt_ver
     }
 
-    async fn plan(&self, _req: &SealRequest) -> Result<SealPlan, RollupsError> {
-        todo!("WP-2: plan a seal pass from the ledger's own rows")
+    async fn plan(&self, req: &SealRequest) -> Result<SealPlan, RollupsError> {
+        seal::plan(&self.0, req).await
     }
 
-    async fn seal(&self, _req: &SealRequest) -> Result<SealReport, RollupsError> {
-        todo!("WP-2: map over episode windows, reduce to themes, seal each block")
+    async fn seal(&self, req: &SealRequest) -> Result<SealReport, RollupsError> {
+        seal::run(&self.0, req).await
     }
 
-    async fn supersede(&self, _req: &SupersedeRequest) -> Result<SupersedeReport, RollupsError> {
-        todo!("WP-2: mint generation n+1 and append the expiry note")
+    async fn supersede(&self, req: &SupersedeRequest) -> Result<SupersedeReport, RollupsError> {
+        seal::supersede(&self.0, req).await
     }
 
-    async fn rebuild_digest(&self, _req: &DigestRequest) -> Result<DigestReport, RollupsError> {
-        todo!("WP-2: rebuild the standing digest from raw evidence")
+    async fn rebuild_digest(&self, req: &DigestRequest) -> Result<DigestReport, RollupsError> {
+        digest::rebuild(&self.0, req).await
     }
 }
 
@@ -138,8 +187,50 @@ impl Plugin for RollupsSummarizerPlugin {
         resolve::validate(cfg)
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-2: provide `rollups`, declare the step type, register `/seal`")
+    async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let err = |e: anyhow::Error| PluginError::new(ctx.entry_id().clone(), e);
+        let ledger = ctx
+            .get::<Ledger>()
+            .map_err(|e| PluginError::new(ctx.entry_id().clone(), e))?;
+        let llm = ctx
+            .get::<bough_plugin_llm::Llm>()
+            .map_err(|e| PluginError::new(ctx.entry_id().clone(), e))?;
+        let agents = ctx
+            .try_get::<bough_plugin_agents::Agents>()
+            .map_err(|e| PluginError::new(ctx.entry_id().clone(), e))?;
+
+        // Declaration is an EFFECT, so unloading this row leaves the step-type map as it was.
+        // A type another row already declared is left alone: `memory/expired` has two possible
+        // declarers and only one map entry.
+        let already: std::collections::BTreeSet<String> = ledger
+            .0
+            .step_types()
+            .into_iter()
+            .map(|d| d.name.to_string())
+            .collect();
+        let mine: Vec<StepTypeDef> = step_types()
+            .into_iter()
+            .filter(|d| !already.contains(d.name.as_str()))
+            .collect();
+        ledger.declare_step_types(&ctx, mine).await?;
+
+        let summarizer = RecapSummarizer(Arc::new(SummarizerInner {
+            ctx: ctx.clone(),
+            cfg: cfg.clone(),
+            ledger: (*ledger).clone(),
+            llm: (*llm).clone(),
+            agents: agents.map(|a| (*a).clone()),
+            composition: ctx
+                .kernel()
+                .and_then(|k| k.composition())
+                .map(|c| c.fingerprint.as_str().to_string())
+                .unwrap_or_default(),
+        }));
+        command::register(&ctx, &summarizer).await?;
+        ctx.provide::<Rollups>(RollupsHandle(Arc::new(summarizer)))
+            .await
+            .map_err(|e| err(anyhow::anyhow!(e)))?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {
