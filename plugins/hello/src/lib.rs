@@ -12,9 +12,7 @@ pub mod provider;
 
 use std::sync::Arc;
 
-use bough_kernel::{
-    Context, Inject, InvariantSpec, KernelError, Plugin, PluginError, Reconfigure, ServiceKey,
-};
+use bough_kernel::{Context, Inject, InvariantSpec, Plugin, PluginError, Reconfigure, ServiceKey};
 
 pub use provider::{EchoProvider, ProviderConfig, ShoutProvider};
 
@@ -124,17 +122,17 @@ impl Plugin for HelloPlugin {
 
         // V8: read a key this row never declared. The failure is the point.
         if cfg.read_undeclared.is_some() {
+            // The recorded line is whatever the KERNEL did. If the capability check ever stops
+            // firing, the trace says so instead of quietly reproducing the expected message.
             let err = match ctx.get::<LedgerProbe>() {
-                Ok(_) => KernelError::UndeclaredService {
-                    plugin: Self::NAME,
-                    entry: entry.clone(),
-                    key: LedgerProbe::NAME,
-                },
-                Err(e) => e,
+                Ok(_) => anyhow::anyhow!(
+                    "ctx.get::<LedgerProbe>() returned Ok: the capability check did not fire"
+                ),
+                Err(e) => anyhow::Error::new(e),
             };
             trace::record_error(err.to_string());
             t.push(Self::NAME, "undeclared");
-            return Err(PluginError::new(entry, anyhow::Error::new(err)));
+            return Err(PluginError::new(entry, err));
         }
 
         let greeting = ctx

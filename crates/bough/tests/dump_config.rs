@@ -72,6 +72,27 @@ async fn dump_config_equals_the_booted_tree() {
     kernel.quiesce().await;
 
     let live = render(&kernel.composition(), bough_kernel::DumpFormat::Yaml);
+
+    // Tie the dump to the RUNNING kernel, not merely to the composition it was handed: every
+    // enabled row named in the dump is a row that actually reached ACTIVE, and the fingerprint the
+    // dump printed is the fingerprint the live tree reports.
+    let snapshot = kernel.snapshot();
+    assert!(
+        dump.contains(snapshot.fingerprint.as_str()),
+        "the dumped fingerprint must be the live tree's fingerprint"
+    );
+    assert!(
+        snapshot.unresolved().is_empty(),
+        "the dumped tree must be one that fully boots: {:?}",
+        snapshot.unresolved()
+    );
+    for row in &snapshot.rows {
+        assert!(
+            dump.contains(row.id.as_str()),
+            "row {} booted but is missing from the dump:\n{dump}",
+            row.id
+        );
+    }
     kernel.shutdown().await;
 
     assert_eq!(

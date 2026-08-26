@@ -85,3 +85,29 @@ async fn invariant_runner_is_silent_in_the_tui_profile() {
 
     kernel.shutdown().await;
 }
+
+/// Negative control: the same `dev` profile, the same runner, an unplanted tree. Without this,
+/// a runner that reports unconditionally would pass the two tests above.
+#[tokio::test]
+async fn a_clean_tree_reports_nothing_in_the_dev_profile() {
+    let _guard = trace::test_lock();
+    let (kernel, _dir) = boot_with_profile(support::BASE, "dev").await;
+
+    let stream = bough_plugin_hello::invariant::seen();
+    assert!(
+        stream.len() >= 2,
+        "the fixture must still have emitted hello/greeted: {stream:?}"
+    );
+    assert!(
+        bough_plugin_hello::invariant::evaluate(&stream).is_ok(),
+        "the unplanted stream must satisfy the invariant: {stream:?}"
+    );
+    assert!(
+        kernel.violations().is_empty(),
+        "the runner reported on a clean tree: {:?}",
+        kernel.violations()
+    );
+
+    assert_eq!(row(&kernel, "hello.greeter").state, FiberState::Active);
+    kernel.shutdown().await;
+}

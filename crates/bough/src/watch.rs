@@ -1,6 +1,8 @@
 //! Invariant: a rejected candidate never disturbs the running tree. The watch recomposes and calls
-//! `kernel.update`; a failed recompose is logged and watching continues, because the kernel has
-//! already broadcast `config-update-failed` and the last good tree is still running (§0.3).
+//! `kernel.update`; a failed recompose is logged, broadcast as `config-update-failed`, and
+//! watching continues, because the last good tree is still running (§0.3). An `update` that fails
+//! has already broadcast from inside the kernel; a candidate that fails to COMPOSE never reaches
+//! the kernel, so the broadcast is issued here.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -8,7 +10,7 @@ use std::time::Duration;
 
 use bough_kernel::{Catalog, Kernel};
 
-use crate::cli::Cli;
+use crate::cli::{BootError, Cli};
 use crate::compose::compose_for;
 
 /// Debounce window for the patch file: an editor's write-truncate-rename dance is one change.
@@ -49,9 +51,15 @@ pub fn watch_user_patch(kernel: Arc<Kernel>, cli: Arc<Cli>) -> WatchHandle {
         .map(Path::to_path_buf)
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     let _ = bough_util::ensure_dir(&dir);
+    // Canonicalise: on macOS `$BOUGH_HOME` under `/var` is a symlink and the OS reports events
+    // under `/private/var`, so an uncanonicalised comparison never matches and the watch is silent.
+    let dir = dir.canonicalize().unwrap_or(dir);
+    let watched = dir.join(
+        path.file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("bough.patch.yml")),
+    );
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
-    let watched = path.clone();
     let mut debouncer = notify_debouncer_full::new_debouncer(
         DEBOUNCE,
         None,
@@ -103,6 +111,19 @@ async fn recompose_once(kernel: &Kernel, cli: &Cli) {
         }
         Err(e) => {
             tracing::warn!("bough: patch rejected, last good tree still running: {e}");
+            kernel.report_config_update_failed(Arc::new(compose_error(e)));
         }
+    }
+}
+
+/// The broadcast payload is an `Arc<ComposeError>`; a `BootError` that already carries one hands
+/// it over, and anything else (a missing bundle, an unreadable file) is reported by its message.
+fn compose_error(e: BootError) -> bough_kernel::ComposeError {
+    match e {
+        BootError::Compose(c) => c,
+        other => bough_kernel::ComposeError::BadYaml {
+            layer: bough_kernel::LayerId::new("user"),
+            detail: other.to_string(),
+        },
     }
 }

@@ -229,6 +229,15 @@ impl Kernel {
         self.apply_composition(c).await
     }
 
+    /// Broadcast `config-update-failed` for a candidate that never reached [`Kernel::update`].
+    ///
+    /// A candidate that fails to COMPOSE is rejected before the kernel ever sees a tree, so the
+    /// launcher's watch path reports it here; §0.3 makes the broadcast unconditional on the
+    /// rejection, not on where the rejection happened.
+    pub fn report_config_update_failed(&self, error: Arc<ComposeError>) {
+        self.events.config_update_failed(error);
+    }
+
     async fn apply_composition(&self, c: Composition) -> Result<(), KernelError> {
         let fingerprint = c.fingerprint.clone();
         self.update_tree(c.tree.clone()).await?;
@@ -1215,6 +1224,16 @@ pub(crate) mod tests {
                 .lock()
                 .get(&EntryId::new(id))
                 .and_then(|r| r.entry.isolate.get(key).map(|r| r.as_str().to_string()))
+        }
+        /// The realm map the RESOLVER actually consults for this fiber, not the config echo.
+        pub(crate) fn fiber_realm(&self, id: &str, key: &str) -> Option<String> {
+            let uid = self.fiber(id)?.uid();
+            self.kernel
+                .rt
+                .get(uid)?
+                .realms()
+                .get(key)
+                .map(|r| r.as_str().to_string())
         }
     }
 

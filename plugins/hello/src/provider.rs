@@ -7,7 +7,7 @@ use std::sync::Arc;
 use bough_kernel::{Context, Inject, Plugin, PluginError, ServiceSlot};
 use parking_lot::Mutex;
 
-use crate::{trace, Greeting, GreetingHandle, GreetingSink};
+use crate::{trace, GreetedEvent, Greeting, GreetingHandle, GreetingSink};
 
 /// One provider's config: a suffix appended to the greeting.
 #[derive(
@@ -67,6 +67,12 @@ async fn provide_greeting(
         .await
         .map_err(|e| PluginError::new(entry, e))?;
     *LAST_SLOT.lock() = Some(Arc::new(slot));
+
+    // A listener owned by THIS fiber. It does nothing; it exists so that a swap test can assert
+    // on `listener_count` directly — "the retired provider leaks no listeners" is otherwise only
+    // observable indirectly.
+    ctx.on_parallel::<GreetedEvent, _, _>(|_g| async move {})
+        .await?;
 
     ctx.effect(move |e| async move {
         e.defer_sync(move || t.push(name, "unload"));

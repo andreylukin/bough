@@ -93,12 +93,32 @@ async fn swapped_out_provider_leaves_no_listeners_and_no_bindings() {
     let _guard = trace::test_lock();
     let (kernel, dir) = boot_with(BASE).await;
     let echo_uid = row(&kernel, "greeting.provider").uid.expect("uid");
+    // The counts the retired fiber must give back exactly. Each provider activation registers one
+    // `hello/greeted` listener and one `greeting` binding, so if the outgoing fiber leaked either,
+    // these would be one higher after the swap.
+    let listeners_before = kernel.core().listener_count("hello/greeted");
+    let bindings_before = kernel.core().binding_count();
+    // Both counts must be non-trivial, or the equality below would be vacuous: `hello` and the
+    // provider each hold one `hello/greeted` listener, and the provider holds the one binding.
+    assert_eq!(listeners_before, 2, "the fixture registers two listeners");
+    assert_eq!(bindings_before, 1, "the fixture holds one binding");
 
     write_patch(&dir, SWAP);
     recompose(&kernel, BASE, &dir)
         .await
         .expect("the swap composes");
     let after_swap = trace::global().lines().len();
+
+    assert_eq!(
+        kernel.core().listener_count("hello/greeted"),
+        listeners_before,
+        "the retired provider left a listener behind"
+    );
+    assert_eq!(
+        kernel.core().binding_count(),
+        bindings_before,
+        "the retired provider left a service binding behind"
+    );
 
     // Exactly one row provides `greeting`, and it is not the fiber that was swapped out.
     let snapshot = kernel.snapshot();

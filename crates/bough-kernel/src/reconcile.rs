@@ -286,6 +286,11 @@ mod tests {
         ])
         .await;
         assert_eq!(h.realm("c", "greeting").as_deref(), Some("session-a"));
+        // Not just the config echo: the realm map the resolver consults moved too, and the
+        // fiber recaptured a committed view under it.
+        assert_eq!(h.fiber_realm("c", "greeting").as_deref(), Some("session-a"));
+        assert!(h.fiber("c").unwrap().committed_view().is_some());
+        assert_eq!(h.state("c"), FiberState::Active);
         let t = h.trace.entries();
         let base = t.iter().position(|e| e == "--").unwrap();
         assert!(
@@ -334,13 +339,39 @@ mod tests {
                 .await;
             let permuted: Vec<_> = order.iter().map(|i| target[*i].clone()).collect();
             h.apply(permuted).await;
-            states.push(vec![(h.state("p"), h.state("c"), h.state("d"))]);
+            // The WHOLE quiescent state, not three enum values: id, plugin, disabled, unmet
+            // keys, provided keys and realms of every row. `uid` is excluded because it is
+            // allocated per harness and carries no cross-run meaning.
+            let mut rows: Vec<_> = h
+                .kernel
+                .rows_snapshot()
+                .into_iter()
+                .map(|r| {
+                    (
+                        r.id, r.plugin, r.state, r.disabled, r.unmet, r.provides, r.realms,
+                    )
+                })
+                .collect();
+            rows.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+            states.push(rows);
         }
-        assert_eq!(states[0], states[1]);
-        assert_eq!(states[1], states[2]);
         assert_eq!(
-            states[0][0],
-            (FiberState::Active, FiberState::Active, FiberState::Inactive)
+            states[0], states[1],
+            "row order changed the quiescent state"
+        );
+        assert_eq!(
+            states[1], states[2],
+            "row order changed the quiescent state"
+        );
+        let by_id: Vec<(&str, FiberState)> =
+            states[0].iter().map(|r| (r.0.as_str(), r.2)).collect();
+        assert_eq!(
+            by_id,
+            vec![
+                ("c", FiberState::Active),
+                ("d", FiberState::Inactive),
+                ("p", FiberState::Active)
+            ]
         );
     }
 
