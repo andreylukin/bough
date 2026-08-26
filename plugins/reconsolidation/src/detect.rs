@@ -37,6 +37,7 @@ pub fn pairs(steps: &[Step], max: usize) -> Vec<Pair> {
             }
             out.push(Pair {
                 older: evidence[i].id.clone(),
+                older_kind: evidence[i].kind.clone(),
                 newer: evidence[j].id.clone(),
                 shared,
             });
@@ -152,6 +153,7 @@ mod tests {
             max_contradiction_pairs: 24,
             max_calls_per_pass: 6,
             distill_max_tokens: 2048,
+            judge_prompt_ver: crate::prompts::RECON_1.to_string(),
         }
     }
 
@@ -267,6 +269,7 @@ mod tests {
     fn a_contradiction_claim_cites_both_steps() {
         let pair = Pair {
             older: StepId::new("a"),
+            older_kind: bough_plugin_ledger::StepType::new("tool/result"),
             newer: StepId::new("b"),
             shared: vec![Ref::new("gh:o/r#1")],
         };

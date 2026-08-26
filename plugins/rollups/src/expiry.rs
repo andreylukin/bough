@@ -6,7 +6,7 @@
 
 use std::collections::BTreeSet;
 
-use bough_plugin_ledger::{Ref, RollupId, Step, StepId, StepType};
+use bough_plugin_ledger::{ClassRule, Ref, RollupId, Step, StepId, StepType, StepTypeDef};
 
 /// What a run of `memory/expired` markers expires.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -45,10 +45,43 @@ pub fn parse(markers: &[Step]) -> Expired {
     out
 }
 
-/// The step type an expiry marker is appended as. The type is REGISTERED by `reconsolidation`
-/// (which owns the write); the name lives here so the projector and the governance rows agree on
-/// one spelling.
+/// The step type an expiry marker is appended as. The name AND the definition live here because
+/// the type has TWO declarers — `reconsolidation` (stale evidence) and `rollups-summarizer` (the
+/// note a supersession leaves) — and a composition may mount either, both, or neither. Both
+/// declare THIS definition, so the accepted body set does not depend on which row mounted first
+/// and unloading one leaves the type standing for the other (the map refcounts identical
+/// declarations).
 pub const EXPIRED_STEP_TYPE: &str = "memory/expired";
+
+/// The owner named in a duplicate-type error, and the identity both declarers share.
+pub const EXPIRED_OWNER: &str = "rollups";
+
+/// The one definition of `memory/expired`. Called by every row that appends one.
+pub fn step_type_def() -> StepTypeDef {
+    StepTypeDef::of::<ExpiredBody>(EXPIRED_STEP_TYPE, EXPIRED_OWNER).class_rule(ClassRule::Evidence)
+}
+
+/// Why a marker was appended. Closed: a marker whose `kind` this seam does not know is not a
+/// marker it can be asked to honour.
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Debug,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum ExpiryKind {
+    /// Stale evidence, expired by a reconsolidation pass.
+    #[default]
+    Expiry,
+    /// The note a supersession appends naming the block it replaced.
+    Supersession,
+}
 
 /// The body of a `memory/expired` marker.
 #[derive(
@@ -61,11 +94,10 @@ pub struct ExpiredBody {
     /// Why, in one line. Rendered nowhere; read by a human grepping the ledger.
     #[serde(default)]
     pub reason: String,
-    /// `expiry` (stale evidence) or `supersession` (the note a replaced block leaves). Carried as
-    /// a `String` because the two governance rows spell it with two different enums; this seam
-    /// only reads it back.
+    /// `expiry` (stale evidence) or `supersession` (the note a replaced block leaves). ONE
+    /// spelling for both declarers: the body they declare and the body they write are this type.
     #[serde(default)]
-    pub kind: String,
+    pub kind: ExpiryKind,
 }
 
 /// `true` iff a step of this kind may EVER be named by an expiry marker (§3, V7).

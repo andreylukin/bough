@@ -74,6 +74,12 @@ async fn existing(inner: &SummarizerInner, traj: &TrajId) -> Result<Vec<Rollup>,
 
 /// The seq a pass may seal up to. `None` on the request ⇒ `head - seal_lag_steps` (P4-D11), and a
 /// caller-supplied `upto` never RAISES that ceiling: the lag is the row's rule, not a suggestion.
+/// The call budget for one pass. A named `resolve(request) -> Spec` step beside `upto_of`, never
+/// a `?? default` inside `run` (§0.2).
+fn budget_of(req: &SealRequest, cfg: &crate::SummarizerConfig) -> usize {
+    req.max_calls.unwrap_or(cfg.max_calls_per_pass)
+}
+
 fn upto_of(req: &SealRequest, head: Seq, lag: usize) -> Seq {
     let lagged = Seq(head.0.saturating_sub(lag as u64));
     match req.upto {
@@ -122,7 +128,7 @@ pub async fn run(inner: &SummarizerInner, req: &SealRequest) -> Result<SealRepor
         return Ok(report);
     }
 
-    let max_calls = req.max_calls.unwrap_or(cfg.max_calls_per_pass);
+    let max_calls = budget_of(req, &cfg);
     let facts = Arc::new(governance_facts(inner, &req.agent, &req.traj, &pass).await?);
     let all: Vec<Step> = material(inner, &req.traj)
         .await?
@@ -142,6 +148,7 @@ pub async fn run(inner: &SummarizerInner, req: &SealRequest) -> Result<SealRepor
             });
             continue;
         }
+        let budget_spent = report.stop == Stop::CallBudget;
         match seal_one(inner, req, &facts, &wake, planned, &all).await? {
             Some(sealed) => {
                 report.calls += 1;
@@ -149,13 +156,18 @@ pub async fn run(inner: &SummarizerInner, req: &SealRequest) -> Result<SealRepor
                 report.tokens_out += sealed.tokens_out;
                 report.sealed.push(sealed.id);
             }
-            // A child that was planned but never sealed (the budget ran out below it): the parent
-            // is a SKIP with the reason, not a failure and not a block over missing children.
+            // A parent whose children are not all sealed. WHY they are not is the operator's
+            // question: when this pass ran out of calls below it, the cause is the budget, and
+            // saying "not enough children" would send them looking at `fanout` instead.
             None => report.skipped.push(Skip {
                 tier: planned.tier,
                 from_seq: planned.from_seq,
                 to_seq: planned.to_seq,
-                why: SkipReason::NotEnoughChildren,
+                why: if budget_spent {
+                    SkipReason::CallBudget
+                } else {
+                    SkipReason::NotEnoughChildren
+                },
             }),
         }
     }
@@ -231,6 +243,13 @@ async fn seal_one(
         }
     };
 
+    // THE BELT to the planner's braces, BEFORE the call: the planner refuses a sealed range
+    // before the model is ever reached, and this refuses it again over a store that may have
+    // moved since the plan was made. Below the call it would still refuse, but only after paying
+    // for a block it then throws away — and the `?` would lose the report for everything this
+    // pass already sealed.
+    refuse_if_sealed(inner, &req.traj, planned).await?;
+
     let system = crate::prompts::system(phase, &cfg.prompt_ver).ok_or_else(|| {
         RollupsError::BadBlock(format!(
             "no {phase:?} prompt at version `{}`; the row should not have booted",
@@ -256,11 +275,6 @@ async fn seal_one(
         },
     )
     .await?;
-
-    // THE BELT to the planner's braces. The planner refuses a sealed range before the model is
-    // ever called; this refuses it again at the write, so a stale plan cannot double-seal even
-    // though `ledger-memory` currently accepts a duplicate id (see the WP-2 report).
-    refuse_if_sealed(inner, &req.traj, planned).await?;
 
     let mut block = crate::render::parse_block(&outcome.text, &planned.inputs, &covered, &cfg)?;
     crate::render::stamp(&mut block, planned.tier, &planned.windows);
@@ -388,17 +402,16 @@ async fn write_block(
             sealed_at: at,
         })
         .await?;
-    announce(inner, wake, &sealed, block, at).await?;
+    announce(inner, wake, &sealed, at).await?;
     Ok(sealed.id)
 }
 
-/// The `rollup/sealed` step and the invariant observation, written as a pair so a sealed row is
-/// never invisible to the stream half of seal-once.
+/// The `rollup/sealed` step a sealed row gets. The seam's invariants read the ROW, not this step,
+/// so a sealed block is never invisible to them whatever a provider announces.
 pub async fn announce(
     inner: &SummarizerInner,
     wake: &WakeId,
     sealed: &Rollup,
-    block: &TierBlock,
     at: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), RollupsError> {
     inner
@@ -423,17 +436,6 @@ pub async fn announce(
             id: None,
         })
         .await?;
-    let (steps, rollups) = block::refs_of(block);
-    crate::invariant::observe(bough_plugin_rollups::invariant::Obs {
-        rollup: sealed.id.clone(),
-        traj: sealed.traj.clone(),
-        tier: sealed.tier,
-        from_seq: sealed.from_seq,
-        to_seq: sealed.to_seq,
-        generation: generation_of(&sealed.id),
-        beneath_steps: steps,
-        beneath_rollups: rollups,
-    });
     Ok(())
 }
 
@@ -538,7 +540,7 @@ pub async fn expiry_note(
             body: serde_json::to_value(MemoryExpired {
                 targets: vec![Ref::new(format!("rollup:{old}"))],
                 reason: reason.to_string(),
-                kind: EXPIRY_KIND_SUPERSESSION.to_string(),
+                kind: EXPIRY_KIND_SUPERSESSION,
             })
             .expect("MemoryExpired serialises"),
             cites: vec![call::rollup_cite(old)],

@@ -45,6 +45,7 @@ pub fn cfg() -> ReconConfig {
         max_contradiction_pairs: 24,
         max_calls_per_pass: 6,
         distill_max_tokens: 2048,
+        judge_prompt_ver: bough_plugin_reconsolidation::prompts::RECON_1.to_string(),
     }
 }
 
@@ -142,12 +143,38 @@ pub struct Mounted {
 
 /// Everything a pass needs, wired by hand — the plugin's `apply` in miniature, with no runtime.
 pub async fn mount(rounds: serde_json::Value) -> Mounted {
+    mount_with_rollups(rounds, |m| {
+        RollupsHandle(Arc::new(DigestOnly {
+            ledger: m.ledger.clone(),
+            sealed: parking_lot::Mutex::new(0),
+        }))
+    })
+    .await
+}
+
+/// The pieces every mount shares, before the rollups provider is chosen.
+pub struct Wired {
+    pub ctx: Context,
+    pub ledger: LedgerHandle,
+    pub llm: LlmHandle,
+}
+
+/// `mount`, with the rollups provider chosen by the caller: `DigestOnly` for the suites that are
+/// about the PASS, and the real `rollups-summarizer` for the one that is about the seam.
+pub async fn mount_with_rollups(
+    rounds: serde_json::Value,
+    provider: impl FnOnce(&Wired) -> RollupsHandle,
+) -> Mounted {
     let ctx = Context::root(KernelCore::new());
     let ledger = LedgerHandle(MemoryStore::new(ctx.clone()));
     // `tool/result` is Phase 2's, declared by `tools-baseline`. This suite never mounts that row,
     // so it declares the type itself: the batch a pass reads must contain an EXPIRABLE kind for
     // any of these tests to mean anything.
     let mut defs = bough_plugin_reconsolidation::vocabulary::step_types();
+    // The real `rollups-summarizer` appends `rollup/request` when it is the mounted provider.
+    // `memory/expired` is the seam's one definition, declared identically by both rows, so the
+    // map refcounts it rather than refusing the second declaration.
+    defs.extend(bough_plugin_rollups_summarizer::step_types());
     defs.push(
         bough_plugin_ledger::StepTypeDef::of::<ProbeResult>("tool/result", "reconsolidation-tests")
             .class_rule(bough_plugin_ledger::ClassRule::Either),
@@ -181,11 +208,33 @@ pub async fn mount(rounds: serde_json::Value) -> Mounted {
     )
     .await
     .expect("the replay adapter registers");
+    // The stand-in for `model-policy`: the row deliberately leaves `call.model` empty, so
+    // SOMETHING must choose. In the tree that is the policy row, and terra is what it chooses
+    // for an unattended wake (P4-D3).
+    ctx.on_waterfall::<bough_plugin_llm::AgentRequest, _, _>(|mut call, next| async move {
+        assert_eq!(call.facts.wake_kind, bough_plugin_llm::WakeKind::Scheduled);
+        assert!(
+            !call.facts.answers_andrey,
+            "a governance pass must never present itself as answering Andrey"
+        );
+        if call.call.model.is_empty() {
+            call.call.model = "claude-haiku-4-5-20251001".to_string();
+        }
+        next.run(call).await
+    })
+    .await
+    .expect("the policy listener registers");
 
-    let rollups = RollupsHandle(Arc::new(DigestOnly {
+    // The `llm` key, so a provider mounted over this fixture can read it the way `apply` does.
+    ctx.provide::<bough_plugin_llm::Llm>(llm.clone())
+        .await
+        .expect("the llm key binds");
+    let wired = Wired {
+        ctx: ctx.clone(),
         ledger: ledger.clone(),
-        sealed: parking_lot::Mutex::new(0),
-    }));
+        llm: llm.clone(),
+    };
+    let rollups = provider(&wired);
     let recon = ReconHandle(Arc::new(ReconInner {
         ctx: ctx.clone(),
         cfg: Arc::new(cfg()),
@@ -271,4 +320,14 @@ pub fn always_contradiction(n: usize) -> serde_json::Value {
 /// A transcript that CLEARS every pair.
 pub fn always_clear(n: usize) -> serde_json::Value {
     rounds("CLEAR", n)
+}
+
+/// A recap-shaped answer: what the REAL summarizer's digest call needs to parse, and text no
+/// judge reads as a confirmation.
+pub fn recap_rounds(n: usize) -> serde_json::Value {
+    rounds(
+        "The agent read some tool output and recorded what it found.\n\n## Open question\nWhether \
+         any of it still holds.",
+        n,
+    )
 }

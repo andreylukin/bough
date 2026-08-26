@@ -11,13 +11,9 @@ use support::*;
 
 #[tokio::test]
 async fn the_recap_provider_passes_the_rollups_conformance_suite() {
-    // The suite runs against a trajectory it names and never prepares, so a lenient replay is the
-    // honest adapter here: no round is expected, and no round is consumed.
-    let fx = fx_with(
-        cfg(),
-        serde_json::json!([{ "chunks": [{ "type": "end", "stop": "end_turn" }] }]),
-    )
-    .await;
+    // The suite's second half PREPARES a history and expects this provider to seal over it, so
+    // the fixture supplies real recap answers — one per call the pass and the digest rebuild make.
+    let fx = fx(cfg(), 32).await;
     let handle = RollupsHandle(Arc::new(fx.summarizer.clone()));
     Conformance { seals: true }
         .run(&handle, &fx.ledger)

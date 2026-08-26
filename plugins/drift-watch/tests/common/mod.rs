@@ -58,14 +58,24 @@ pub fn cfg() -> DriftConfig {
         min_samples: 4,
         thought_len_cv_flag: 1.2,
         tool_entropy_flag: 0.35,
+        max_evidence_cites: 24,
+        max_state_chars: 400,
     }
 }
+
+/// `bough_plugin_drift_watch::invariant`'s record is process-global, and `harness()` clears it.
+/// Every `#[tokio::test]` in a binary runs concurrently, so without this a second harness could
+/// empty the record between the reset that produced an observation and the assertion that reads
+/// it — leaving `evaluate(&[])`, which is trivially `Ok`, with nothing to say it happened.
+static INVARIANT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 pub struct Harness {
     pub ctx: Context,
     pub ledger: LedgerHandle,
     pub drift: DriftHandle,
     pub summarizer: Arc<FakeSummarizer>,
+    /// Held for the test's whole life: see [`INVARIANT_LOCK`].
+    _guard: tokio::sync::MutexGuard<'static, ()>,
 }
 
 /// A store with every step type this phase's reset touches, and a drift handle over it.
@@ -90,12 +100,14 @@ pub async fn harness() -> Harness {
         agents: AgentsHandle::new(ctx.clone(), ledger.clone()),
         rollups: RollupsHandle(summarizer.clone()),
     }));
+    let guard = INVARIANT_LOCK.lock().await;
     bough_plugin_drift_watch::invariant::reset();
     Harness {
         ctx,
         ledger,
         drift,
         summarizer,
+        _guard: guard,
     }
 }
 

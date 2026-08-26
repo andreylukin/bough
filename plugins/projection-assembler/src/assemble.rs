@@ -74,11 +74,15 @@ pub async fn assemble(a: &Assembler, req: &AssembleRequest) -> Result<Assembled,
     } else {
         pins = Vec::new();
     }
-    if let Some(s) = bands::digest(&sreq, cfg).await? {
+    // ONE read of the expiry markers per assembly. Three bands honour them and all three want
+    // the same set for the same `as_of`; projection assembly is the per-wake hot path (§5), and
+    // three identical scans of it is three times the work for one answer.
+    let expired = crate::expiry::load(&sreq).await?;
+    if let Some(s) = bands::digest(&sreq, cfg, &expired).await? {
         sections.push(s);
     }
-    sections.extend(bands::tiers(&sreq, cfg).await?);
-    let (tail_section, tail_steps) = bands::tail(&sreq, cfg).await?;
+    sections.extend(bands::tiers(&sreq, cfg, &expired).await?);
+    let (tail_section, tail_steps) = bands::tail(&sreq, cfg, &expired).await?;
     if let Some(s) = tail_section {
         sections.push(s);
     }

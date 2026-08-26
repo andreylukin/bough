@@ -19,8 +19,12 @@ use crate::{PassPlan, PassReport, PassRequest, ReconHandle};
 /// /reconsolidate [agent] [--plan] [--since <seq>]
 /// ```
 pub async fn register(ctx: &Context, recon: &ReconHandle) -> Result<(), PluginError> {
-    let Ok(Some(commands)) = ctx.try_get::<Commands>() else {
-        return Ok(());
+    // ABSENT is headless: the row works with no surface at all. An ERROR is the kernel refusing
+    // the read and is a boot failure, never a row that silently registered nothing (§0.2).
+    let commands = match ctx.try_get::<Commands>() {
+        Ok(Some(c)) => c,
+        Ok(None) => return Ok(()),
+        Err(e) => return Err(PluginError::new(ctx.entry_id().clone(), e)),
     };
     commands
         .register(

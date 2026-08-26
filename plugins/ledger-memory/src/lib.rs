@@ -267,6 +267,15 @@ impl LedgerStore for MemoryStore {
     async fn seal_rollup(&self, r: NewRollup) -> Result<Rollup, LedgerError> {
         let rollup = store::sealed(r);
         let mut inner = self.inner.write();
+        // §3: a sealed row is IMMUTABLE. Sealing an id that already exists is refused, not
+        // silently replaced — `ledger-sqlite` refuses it (the primary key does), and two
+        // providers of one seam must not answer the same call two different ways.
+        if inner.rollups.contains_key(&rollup.id) {
+            return Err(LedgerError::Store(anyhow::anyhow!(
+                "rollup `{}` is already sealed; a sealed row is immutable (§3)",
+                rollup.id
+            )));
+        }
         inner.rollups.insert(rollup.id.clone(), rollup.clone());
         Ok(rollup)
     }

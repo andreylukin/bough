@@ -20,10 +20,13 @@ use crate::RecapSummarizer;
 /// /seal [agent] [--plan]      run (or, with --plan, only report) a seal pass for the agent
 /// ```
 pub async fn register(ctx: &Context, summarizer: &RecapSummarizer) -> Result<(), PluginError> {
-    let Ok(Some(commands)) = ctx.try_get::<Commands>() else {
-        // Headless: the seam works with no surface at all, and the schedule hook is the seam
-        // method, not the command (P4-D8, P4-D14).
-        return Ok(());
+    // ABSENT is headless — the seam works with no surface at all, and the schedule hook is the
+    // seam method, not the command (P4-D8, P4-D14). An ERROR is the kernel refusing the read
+    // (an undeclared key, an access fault) and is a boot failure, never a row with no commands.
+    let commands = match ctx.try_get::<Commands>() {
+        Ok(Some(c)) => c,
+        Ok(None) => return Ok(()),
+        Err(e) => return Err(PluginError::new(ctx.entry_id().clone(), e)),
     };
     commands
         .register(

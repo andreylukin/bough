@@ -156,6 +156,7 @@ pub fn pins_collapsed_body(pins: &[Pin]) -> String {
 pub async fn digest(
     req: &SectionRequest,
     _cfg: &AssemblerConfig,
+    expired: &bough_plugin_rollups::Expired,
 ) -> Result<Option<RenderedSection>, ProjectionError> {
     let Some(row) = req.ledger.0.agent(&req.agent).await? else {
         return Ok(None);
@@ -182,7 +183,7 @@ pub async fn digest(
     };
     // §8: an expired digest renders NOTHING. The pointer is `agents` (mutable config) and the
     // marker is a step; the marker wins, and the row itself is never edited.
-    if crate::expiry::load(req).await?.rollups.contains(&r.id) {
+    if expired.rollups.contains(&r.id) {
         return Ok(None);
     }
     Ok(Some(digest_section(&r)))
@@ -228,6 +229,7 @@ pub fn rollup_text(r: &Rollup) -> String {
 pub async fn tiers(
     req: &SectionRequest,
     cfg: &AssemblerConfig,
+    expired: &bough_plugin_rollups::Expired,
 ) -> Result<Vec<RenderedSection>, ProjectionError> {
     let rollups = req
         .ledger
@@ -243,7 +245,7 @@ pub async fn tiers(
     // reproduced.
     // §8: a block named by an appended expiry marker leaves the band. (A SUPERSEDED block is
     // already gone: `RollupQuery::include_superseded` defaults to false.)
-    let expired = crate::expiry::load(req).await?;
+
     let rollups: Vec<Rollup> = rollups
         .into_iter()
         .filter(|r| req.visible(r.to_seq))
@@ -317,6 +319,7 @@ pub fn tier_of(id: &SectionId) -> Option<u8> {
 pub async fn tail(
     req: &SectionRequest,
     cfg: &AssemblerConfig,
+    expired: &bough_plugin_rollups::Expired,
 ) -> Result<(Option<RenderedSection>, Vec<Step>), ProjectionError> {
     // §2.7 item 3: with `as_of` the window is the newest `tail_steps` rows AT OR BELOW it, not
     // the newest rows overall — a post-filter would silently shrink the tail instead.
@@ -346,7 +349,7 @@ pub async fn tail(
     // §8: an expired step leaves the verbatim tail. The floor rung 2 shrinks toward therefore
     // counts SURVIVING steps: `steps` is what the ladder is handed, and the expired rows are gone
     // from it before it ever gets there.
-    let expired = crate::expiry::load(req).await?;
+
     let steps: Vec<Step> = steps
         .into_iter()
         .filter(|s| !expired.steps.contains(&s.id))

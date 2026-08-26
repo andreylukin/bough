@@ -35,6 +35,13 @@ pub fn validate(cfg: &ReconConfig) -> Result<(), ConfigError> {
     if cfg.distill_max_tokens <= 0 {
         return reject("`distill_max_tokens` must be positive".into());
     }
+    if crate::prompts::system(&cfg.judge_prompt_ver).is_none() {
+        return reject(format!(
+            "`judge_prompt_ver` names `{}`, which is not in this binary's prompt catalog; a \
+             stamp that resolves to no prompt cannot be reconstructed from the ledger",
+            cfg.judge_prompt_ver
+        ));
+    }
     for kind in &cfg.expirable_kinds {
         if bough_plugin_rollups::NEVER_EXPIRABLE.contains(&kind.as_str()) {
             return reject(format!(
@@ -58,6 +65,7 @@ mod tests {
             max_contradiction_pairs: 24,
             max_calls_per_pass: 6,
             distill_max_tokens: 2048,
+            judge_prompt_ver: crate::prompts::RECON_1.to_string(),
         }
     }
 
@@ -83,6 +91,7 @@ mod tests {
             |c| c.stale_after_days = -1,
             |c| c.max_contradiction_pairs = 0,
             |c| c.distill_max_tokens = 0,
+            |c| c.judge_prompt_ver = "recon-0".into(),
         ] {
             let mut c = cfg();
             mutate(&mut c);

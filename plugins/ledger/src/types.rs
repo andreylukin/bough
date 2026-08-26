@@ -178,13 +178,31 @@ pub fn builtin_step_types() -> Vec<StepTypeDef> {
     ]
 }
 
+/// Whether two definitions of the same name say exactly the same thing. Two rows may declare a
+/// shared vocabulary; they may not disagree about it, or the accepted body set would depend on
+/// which row mounted first.
+fn same_def(a: &StepTypeDef, b: &StepTypeDef) -> bool {
+    a.name == b.name
+        && a.owner == b.owner
+        && a.ignorable == b.ignorable
+        && a.class_rule == b.class_rule
+        && a.schema.as_value() == b.schema.as_value()
+}
+
 /// The map itself, shared by both providers so registration behaviour cannot diverge.
 #[derive(Default)]
 pub struct StepTypeMap {
     /// `Arc` so an unregister token can outlive the borrow that made it, which is what lets
     /// registration be an EFFECT rather than a `Drop` guard (§0.2).
+    ///
+    /// The `usize` is a REFERENCE COUNT. A step type may have more than one declarer — a
+    /// vocabulary two rows both write (`memory/expired`) is declared by both, so which row
+    /// mounts first carries no meaning and unloading one leaves the type standing for the other
+    /// (§0.2: "row order in a bundle carries no load semantics", and unload unwinds only the
+    /// effects that row added). A second declaration is accepted ONLY when it is byte-identical
+    /// to the standing one; a different definition under the same name is still a duplicate.
     #[doc(hidden)]
-    pub(crate) inner: Arc<RwLock<BTreeMap<StepType, StepTypeDef>>>,
+    pub(crate) inner: Arc<RwLock<BTreeMap<StepType, (StepTypeDef, usize)>>>,
 }
 
 impl StepTypeMap {
@@ -200,33 +218,54 @@ impl StepTypeMap {
         }
         map
     }
-    /// Add one type. `Err(DuplicateStepType)` if the name is taken.
+    /// Add one type. `Err(DuplicateStepType)` if the name is taken by a DIFFERENT definition.
+    ///
+    /// An identical redeclaration takes a reference instead: the token returned removes the type
+    /// only when the last declarer spends it.
     pub fn register(&self, def: StepTypeDef) -> Result<StepTypeToken, LedgerError> {
         let name = def.name.clone();
         {
             let mut guard = self.inner.write();
-            if let Some(existing) = guard.get(&name) {
-                return Err(LedgerError::DuplicateStepType {
-                    kind: name,
-                    owner: existing.owner,
-                });
+            if let Some((existing, refs)) = guard.get_mut(&name) {
+                if !same_def(existing, &def) {
+                    return Err(LedgerError::DuplicateStepType {
+                        kind: name,
+                        owner: existing.owner,
+                    });
+                }
+                *refs += 1;
+            } else {
+                guard.insert(name.clone(), (def, 1));
             }
-            guard.insert(name.clone(), def);
         }
         let inner = self.inner.clone();
         Ok(StepTypeToken {
             inner: Arc::new(move || {
-                inner.write().remove(&name);
+                let mut guard = inner.write();
+                let drop_it = match guard.get_mut(&name) {
+                    Some((_, refs)) => {
+                        *refs = refs.saturating_sub(1);
+                        *refs == 0
+                    }
+                    None => false,
+                };
+                if drop_it {
+                    guard.remove(&name);
+                }
             }),
         })
     }
     /// Every registered type, sorted by name.
     pub fn all(&self) -> Vec<StepTypeDef> {
-        self.inner.read().values().cloned().collect()
+        self.inner.read().values().map(|(d, _)| d.clone()).collect()
     }
     /// Look one up.
     pub fn get(&self, kind: &StepType) -> Option<StepTypeDef> {
-        self.inner.read().get(kind).cloned()
+        self.inner.read().get(kind).map(|(d, _)| d.clone())
+    }
+    /// How many live declarations a type has. Tests only; nothing in the hot path reads it.
+    pub fn declarations(&self, kind: &StepType) -> usize {
+        self.inner.read().get(kind).map(|(_, n)| *n).unwrap_or(0)
     }
     /// Validate an append against the type's class rule, cite requirement and body schema.
     /// The whole of the pre-transaction check, so both providers refuse identically.

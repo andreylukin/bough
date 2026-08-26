@@ -244,6 +244,12 @@ pub struct DriftConfig {
     pub thought_len_cv_flag: f64,
     /// Normalised entropy below which [`DriftFlag::ToolUseCollapsed`] is raised.
     pub tool_entropy_flag: f64,
+    /// How many raw steps a `/reset` cites under the rebuilt state half.
+    pub max_evidence_cites: usize,
+    /// How long the rebuilt STATE half may be, in characters. The same quantity the `about-line`
+    /// row carries as `max_state_chars`; both are patchable, so a deployment that widens the line
+    /// widens it in both places rather than having one of them frozen in code (§0.2).
+    pub max_state_chars: usize,
 }
 
 /// The drift-watch row.
@@ -272,8 +278,21 @@ impl Plugin for DriftWatchPlugin {
 
         // Model-visible ⟺ ledgered (§0.2): the reset's own step type, declared as an EFFECT so
         // unloading this row leaves the type map as if it had never mounted.
+        //
+        // `about/line` is declared here TOO, from the `about-line` row's own definition. `/reset`
+        // appends one (§8 requires it to), and `about-line` is an ordinary bundle row a patch may
+        // disable — without this, a composition with `drift-watch` and no `about-line` would boot
+        // clean and fail at `/reset` with `UnknownStepTypeOnAppend`, which is the "silently skip a
+        // missing referent, then fail late" shape §0.2 forbids. Identical declarations are
+        // refcounted, so both rows may declare it and unloading either leaves it standing.
         ledger
-            .declare_step_types(&ctx, vocabulary::step_types())
+            .declare_step_types(
+                &ctx,
+                vocabulary::step_types()
+                    .into_iter()
+                    .chain(bough_plugin_about_line::step_types())
+                    .collect(),
+            )
             .await?;
 
         let handle = DriftHandle(Arc::new(DriftInner {
@@ -286,6 +305,15 @@ impl Plugin for DriftWatchPlugin {
         ctx.provide::<Drift>(handle.clone())
             .await
             .map_err(|e| PluginError::new(entry.clone(), e))?;
+
+        // The recorded stream this row's invariant reads is per fiber LIFE: a reload starts
+        // clean, or observations from a previous instance would be judged against this one's
+        // store (the `reconsolidation` precedent).
+        ctx.effect(move |e| async move {
+            e.defer_sync(invariant::reset);
+            Ok(())
+        })
+        .await?;
 
         command::register(&ctx, &handle).await?;
         Ok(())

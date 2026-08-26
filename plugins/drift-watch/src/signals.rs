@@ -207,6 +207,8 @@ mod tests {
             min_samples: 4,
             thought_len_cv_flag: 1.2,
             tool_entropy_flag: 0.35,
+            max_evidence_cites: 24,
+            max_state_chars: 400,
         }
     }
 

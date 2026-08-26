@@ -8,6 +8,7 @@ pub mod command;
 pub mod detect;
 pub mod invariant;
 pub mod pass;
+pub mod prompts;
 pub mod resolve;
 pub mod vocabulary;
 
@@ -18,7 +19,9 @@ use bough_plugin_ledger::{AgentName, RollupId, SeqRange, StepId, StepType, TrajI
 use bough_plugin_rollups::Attribution;
 use chrono::{DateTime, Utc};
 
-pub use vocabulary::{MemoryExpired, ReconError, ReconKind, MEMORY_EXPIRED};
+pub use vocabulary::{
+    MemoryExpired, ReconError, ReconKind, ReconRequest, MEMORY_EXPIRED, RECON_REQUEST,
+};
 
 /// The catalog name of this row.
 pub const PLUGIN_NAME: &str = "reconsolidation";
@@ -91,6 +94,10 @@ pub struct PassPlan {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pair {
     pub older: StepId,
+    /// The older half's KIND, carried so the expiry path can refuse a `NEVER_EXPIRABLE` one
+    /// without a second ledger read. A pin may legitimately be one half of a contradiction — the
+    /// claim is still surfaced — but it is never expired by it (§3, V7).
+    pub older_kind: StepType,
     pub newer: StepId,
     pub shared: Vec<bough_plugin_ledger::Ref>,
 }
@@ -140,6 +147,11 @@ pub struct ReconConfig {
     pub max_contradiction_pairs: usize,
     pub max_calls_per_pass: usize,
     pub distill_max_tokens: i64,
+    /// The judge prompt's version, stamped on every `recon/request` step. Validated at boot: it
+    /// must name a prompt in [`prompts::PROMPTS`], so editing the prompt without bumping the
+    /// stamp is a boot failure rather than a silent re-use (§0.2, the `rollups-summarizer`
+    /// precedent).
+    pub judge_prompt_ver: String,
 }
 
 /// The reconsolidation row.
@@ -170,22 +182,14 @@ impl Plugin for ReconsolidationPlugin {
                 .clone(),
         );
         // Model-visible ⟺ ledgered (§0.2): the marker this row appends is a declared step type,
-        // and the declaration is an EFFECT, so unloading the row leaves the map untouched.
-        // A type another row already declared is left alone: `memory/expired` has TWO possible
-        // declarers — this row and `rollups-summarizer`'s supersession note — and one map entry.
-        // Whichever mounts first owns it; the second would otherwise fail the whole row (found by
-        // `crates/bough/tests/memory_invariants.rs`, which boots both).
-        let already: std::collections::BTreeSet<String> = ledger
-            .0
-            .step_types()
-            .into_iter()
-            .map(|d| d.name.to_string())
-            .collect();
-        let mine: Vec<bough_plugin_ledger::StepTypeDef> = vocabulary::step_types()
-            .into_iter()
-            .filter(|d| !already.contains(d.name.as_str()))
-            .collect();
-        ledger.declare_step_types(&ctx, mine).await?;
+        // and the declaration is an EFFECT, so unloading the row leaves the map as it was.
+        // `memory/expired` has TWO declarers — this row and `rollups-summarizer`'s supersession
+        // note. Both declare the SEAM's definition unconditionally: the map refcounts identical
+        // declarations, so neither row's presence, absence or position decides the schema, and
+        // unloading one leaves the type standing for the other.
+        ledger
+            .declare_step_types(&ctx, vocabulary::step_types())
+            .await?;
 
         let llm = bough_plugin_llm::LlmHandle(
             ctx.get::<bough_plugin_llm::Llm>().map_err(fail)?.0.clone(),

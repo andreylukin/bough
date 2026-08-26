@@ -172,7 +172,6 @@ impl Fx {
             cfg: Arc::new(cfg.clone()),
             ledger: ledger.clone(),
             llm: llm.clone(),
-            agents: None,
             composition: "test-composition".into(),
         }));
         Fx {
@@ -193,7 +192,6 @@ impl Fx {
             cfg: Arc::new(cfg),
             ledger: self.ledger.clone(),
             llm: self.llm.clone(),
-            agents: None,
             composition: "test-composition".into(),
         }))
     }

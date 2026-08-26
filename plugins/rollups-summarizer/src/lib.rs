@@ -17,7 +17,7 @@ pub mod seal;
 use std::sync::Arc;
 
 use bough_kernel::{Context, Inject, InvariantSpec, Plugin, PluginError};
-use bough_plugin_ledger::{ClassRule, Ledger, Ref, StepTypeDef};
+use bough_plugin_ledger::{ClassRule, Ledger, StepTypeDef};
 use bough_plugin_rollups::{
     DigestReport, DigestRequest, Rollups, RollupsError, RollupsHandle, SealPlan, SealReport,
     SealRequest, Summarizer, SupersedeReport, SupersedeRequest,
@@ -29,11 +29,12 @@ pub const PLUGIN_NAME: &str = "rollups-summarizer";
 /// The step type this crate owns, spelled once.
 pub const ROLLUP_REQUEST: &str = "rollup/request";
 
-/// §8's APPENDED expiry marker. The kind is DECLARED here as well as by `reconsolidation`, because
-/// a supersession leaves one and this row must work in a composition where `reconsolidation` is
-/// not mounted; the declaration is skipped when the type is already registered, so the two rows
-/// coexist rather than colliding (see the report on WP-2).
-pub const MEMORY_EXPIRED: &str = "memory/expired";
+/// §8's APPENDED expiry marker. This row declares it as well as `reconsolidation` does, because a
+/// supersession leaves one and this row must work in a composition where `reconsolidation` is not
+/// mounted. BOTH declare the seam's one definition unconditionally: the step-type map refcounts
+/// identical declarations, so mount order decides nothing and unloading either row leaves the
+/// type standing for the other (§0.2).
+pub use bough_plugin_rollups::EXPIRED_STEP_TYPE as MEMORY_EXPIRED;
 
 /// The step kinds a governance pass itself writes. They ride the agent's own trajectory (P4-D2)
 /// and are therefore EXCLUDED from the material a pass windows: a summarizer must not summarize
@@ -41,7 +42,8 @@ pub const MEMORY_EXPIRED: &str = "memory/expired";
 pub const GOVERNANCE_KINDS: &[&str] = &[ROLLUP_REQUEST, "rollup/sealed", MEMORY_EXPIRED];
 
 /// The `kind` a supersession's marker carries.
-pub const EXPIRY_KIND_SUPERSESSION: &str = "supersession";
+pub const EXPIRY_KIND_SUPERSESSION: bough_plugin_rollups::ExpiryKind =
+    bough_plugin_rollups::ExpiryKind::Supersession;
 
 /// `rollup/request` — a THOUGHT. Model-visible ⟺ ledgered (§0.2): the summarizer's request is
 /// reconstructible from `(range, prompt_ver, model)`, and this is the row that records the last
@@ -60,24 +62,24 @@ pub struct RollupRequest {
     pub tokens_in: u64,
     pub tokens_out: u64,
     pub token_source: call::TokenSource,
+    /// `true` when the stream failed before it ended. The call still happened and may still have
+    /// been billed, so it is still recorded: a model call the ledger cannot see is exactly what
+    /// §0.2 forbids, and the cost bench reads its dollars from these rows.
+    #[serde(default)]
+    pub failed: bool,
 }
 
-/// `memory/expired` — EVIDENCE. An expiry that cannot say what justified it is not appendable.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct MemoryExpired {
-    pub targets: Vec<Ref>,
-    pub reason: String,
-    /// `expiry` or `supersession`.
-    pub kind: String,
-}
+/// `memory/expired` — EVIDENCE, and the SEAM's body, not this row's own: one field, one spelling
+/// (see [`bough_plugin_rollups::ExpiredBody`]).
+pub use bough_plugin_rollups::ExpiredBody as MemoryExpired;
 
-/// The step types this crate owns.
+/// The step types this row declares. `rollup/request` is its own; `memory/expired` is the seam's,
+/// declared identically by every row that appends one.
 pub fn step_types() -> Vec<StepTypeDef> {
     vec![
         StepTypeDef::of::<RollupRequest>(ROLLUP_REQUEST, PLUGIN_NAME)
             .class_rule(ClassRule::Thought),
-        StepTypeDef::of::<MemoryExpired>(MEMORY_EXPIRED, PLUGIN_NAME)
-            .class_rule(ClassRule::Evidence),
+        bough_plugin_rollups::expiry::step_type_def(),
     ]
 }
 
@@ -131,7 +133,6 @@ pub struct SummarizerInner {
     pub cfg: Arc<SummarizerConfig>,
     pub ledger: bough_plugin_ledger::LedgerHandle,
     pub llm: bough_plugin_llm::LlmHandle,
-    pub agents: Option<bough_plugin_agents::AgentsHandle>,
     /// The composition fingerprint, for the facts a policy listener reads. Empty when the kernel
     /// resolves none — a pass appends no `request/header`, so an absent fingerprint is a missing
     /// FACT rather than a missing stamp, and stating it empty is honest.
@@ -180,6 +181,11 @@ impl Plugin for RollupsSummarizerPlugin {
     fn inject() -> Inject {
         // `commands` is OPTIONAL: a headless profile mounts this row with no surface at all and
         // still seals on the schedule hook.
+        // `agents` is REQUIRED and no handle is kept: this row reads and repoints agent ROWS
+        // through the ledger (`agent`, `put_agent`, `agents`), and those rows are the `agents`
+        // row's to own. The key is the activation gate that says so — a digest rebuild that
+        // repoints a row nobody manages is not a rebuild — and holding a handle it never calls
+        // would misstate the contract in the other direction.
         Inject::required(["ledger", "llm", "agents"]).union(&Inject::optional(["commands"]))
     }
 
@@ -195,31 +201,22 @@ impl Plugin for RollupsSummarizerPlugin {
         let llm = ctx
             .get::<bough_plugin_llm::Llm>()
             .map_err(|e| PluginError::new(ctx.entry_id().clone(), e))?;
-        let agents = ctx
-            .try_get::<bough_plugin_agents::Agents>()
+        // Read to PROVE the required key is bound at this point, then dropped: see `inject`.
+        let _agents = ctx
+            .get::<bough_plugin_agents::Agents>()
             .map_err(|e| PluginError::new(ctx.entry_id().clone(), e))?;
 
         // Declaration is an EFFECT, so unloading this row leaves the step-type map as it was.
-        // A type another row already declared is left alone: `memory/expired` has two possible
-        // declarers and only one map entry.
-        let already: std::collections::BTreeSet<String> = ledger
-            .0
-            .step_types()
-            .into_iter()
-            .map(|d| d.name.to_string())
-            .collect();
-        let mine: Vec<StepTypeDef> = step_types()
-            .into_iter()
-            .filter(|d| !already.contains(d.name.as_str()))
-            .collect();
-        ledger.declare_step_types(&ctx, mine).await?;
+        // `memory/expired` is declared unconditionally even though `reconsolidation` declares it
+        // too: identical declarations are refcounted, so neither row depends on the other's
+        // presence or position.
+        ledger.declare_step_types(&ctx, step_types()).await?;
 
         let summarizer = RecapSummarizer(Arc::new(SummarizerInner {
             ctx: ctx.clone(),
             cfg: cfg.clone(),
             ledger: (*ledger).clone(),
             llm: (*llm).clone(),
-            agents: agents.map(|a| (*a).clone()),
             composition: ctx
                 .kernel()
                 .and_then(|k| k.composition())

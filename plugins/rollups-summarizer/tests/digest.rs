@@ -14,6 +14,7 @@ fn request(from_raw: bool, day: i64) -> DigestRequest {
         traj: traj(),
         at: base() + chrono::Duration::days(day),
         attribution: Attribution::System,
+        parents: Vec::new(),
         from_raw,
     }
 }
@@ -27,7 +28,7 @@ async fn rebuild_digest_supersedes_and_repoints_the_agent_row() {
 
     let first = fx
         .summarizer
-        .rebuild_digest(&request(true, 2))
+        .rebuild_digest(&request(false, 2))
         .await
         .expect("a rebuild");
     assert_eq!(first.replaced, None, "there was no digest to replace");
@@ -47,7 +48,7 @@ async fn rebuild_digest_supersedes_and_repoints_the_agent_row() {
 
     let second = fx
         .summarizer
-        .rebuild_digest(&request(true, 3))
+        .rebuild_digest(&request(false, 3))
         .await
         .expect("a second rebuild");
     assert_eq!(second.replaced.as_ref(), Some(&first.digest));
@@ -83,6 +84,48 @@ async fn rebuild_digest_supersedes_and_repoints_the_agent_row() {
     assert_eq!(body.from_blocks.len(), 3, "it named the sealed tiers");
     assert_eq!(body.replaces, None);
     assert_eq!(body.prompt_ver, cfg().prompt_ver);
+}
+
+/// §8: "`/reset` rebuilds the digest … from raw evidence; sealed tiers are never re-summarized by
+/// it." The reset's block therefore names NO tier — not in its prompt, and not in `from_blocks`.
+#[tokio::test]
+async fn a_reset_rebuild_names_no_sealed_tier() {
+    let fx = fx(cfg(), 32).await;
+    fx.put_agent().await;
+    fx.seed(4, 10).await;
+    fx.seal().await;
+    let tiers = fx
+        .rollups()
+        .await
+        .into_iter()
+        .filter(|r| r.kind == RollupKind::Tier)
+        .count();
+    assert!(tiers > 0, "this test is vacuous with no sealed tiers");
+
+    let report = fx
+        .summarizer
+        .rebuild_digest(&request(true, 2))
+        .await
+        .expect("a reset rebuild");
+    assert_eq!(
+        report.tiers_read, tiers,
+        "the report still says how many tiers stand, so the count can be checked"
+    );
+    let body: DigestBlock = serde_json::from_value(
+        fx.rollups()
+            .await
+            .into_iter()
+            .find(|r| r.id == report.digest)
+            .expect("the digest")
+            .body,
+    )
+    .expect("a digest body");
+    assert!(
+        body.from_blocks.is_empty(),
+        "a reset's digest is built from RAW evidence and names no tier: {:?}",
+        body.from_blocks
+    );
+    assert!(!body.evidence.is_empty(), "and it does index the raw");
 }
 
 /// The property `/reset` rests on: a rebuild is not a re-seal.

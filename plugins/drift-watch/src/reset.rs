@@ -10,14 +10,6 @@ use bough_plugin_rollups::DigestRequest;
 use crate::vocabulary::{DriftReset, DRIFT_RESET};
 use crate::{DriftError, DriftInner, ResetReport, ResetRequest};
 
-/// How many raw steps a reset cites. A BOUND, not a tunable: the state half is a line, and a line
-/// resting on a hundred citations is not a line. The evidence beneath it stays reachable through
-/// the ledger either way.
-pub const MAX_EVIDENCE_CITES: usize = 24;
-
-/// How long the rebuilt STATE half may be.
-pub const MAX_STATE_CHARS: usize = 400;
-
 /// Run the reset.
 pub async fn run(inner: &DriftInner, req: &ResetRequest) -> Result<ResetReport, DriftError> {
     let ledger = &inner.ledger;
@@ -29,7 +21,7 @@ pub async fn run(inner: &DriftInner, req: &ResetRequest) -> Result<ResetReport, 
     let (window, steps) = crate::read_window(inner, &req.traj).await?;
     let signals = crate::signals::compute(&req.agent, window, &steps, &inner.cfg);
 
-    let evidence = raw_evidence(&steps);
+    let evidence = raw_evidence(&steps, inner.cfg.max_evidence_cites);
     if evidence.is_empty() {
         // A rebuild "from raw evidence" with no raw evidence would have to invent the state half,
         // and the ledger would refuse the evidence-class step anyway. Refuse first, and say why.
@@ -47,6 +39,8 @@ pub async fn run(inner: &DriftInner, req: &ResetRequest) -> Result<ResetReport, 
             at: req.at,
             attribution: req.attribution.clone(),
             from_raw: true,
+            // A `/reset` rebuilds THIS agent's own standing digest, never an inherited one.
+            parents: Vec::new(),
         })
         .await?;
 
@@ -62,7 +56,7 @@ pub async fn run(inner: &DriftInner, req: &ResetRequest) -> Result<ResetReport, 
             kind: StepType::new(ABOUT_LINE),
             class: Class::Evidence,
             body: serde_json::to_value(AboutLine {
-                state: state_from_raw(&steps, &evidence),
+                state: state_from_raw(&steps, &evidence, inner.cfg.max_state_chars),
                 // §8: the intent half starts EMPTY.
                 intent: String::new(),
                 of_wake: wake.clone(),
@@ -117,10 +111,20 @@ pub async fn run(inner: &DriftInner, req: &ResetRequest) -> Result<ResetReport, 
 
     let tiers_after = crate::count_tiers(inner, &req.traj).await?;
 
+    // The intent half is READ BACK out of the row that was actually appended, never restated as
+    // the literal this function passed in: an invariant whose input is a constant cannot fail,
+    // and one that cannot fail is not an invariant.
+    let intent = ledger
+        .0
+        .step(&about.id)
+        .await?
+        .and_then(|s| serde_json::from_value::<AboutLine>((*s.body).clone()).ok())
+        .map(|l| l.intent)
+        .unwrap_or_else(|| "<unreadable>".to_string());
     crate::invariant::record(crate::invariant::Obs {
         reset_step: reset_step.id.clone(),
         about_line: about.id.clone(),
-        intent: String::new(),
+        intent,
         tiers_before,
         tiers_after,
     });
@@ -137,15 +141,18 @@ pub async fn run(inner: &DriftInner, req: &ResetRequest) -> Result<ResetReport, 
 
 /// The raw steps a rebuild reads, newest first, capped at [`MAX_EVIDENCE_CITES`].
 ///
+/// `max_cites` is a config field, not a constant: the state half is a line, and how many
+/// citations a line may rest on is a deployment choice (§0.2).
+///
 /// PURE. "Raw" means the agent's own trajectory rows — never a rollup and never another reset's
 /// about-line: a reset that cited the identity it is replacing would be rebuilding from itself.
-pub fn raw_evidence(steps: &[Step]) -> Vec<StepId> {
+pub fn raw_evidence(steps: &[Step], max_cites: usize) -> Vec<StepId> {
     let mut out: Vec<StepId> = steps
         .iter()
         .rev()
         .filter(|s| is_raw(s))
         .map(|s| s.id.clone())
-        .take(MAX_EVIDENCE_CITES)
+        .take(max_cites)
         .collect();
     out.reverse();
     out
@@ -171,7 +178,7 @@ fn cite_step(id: &StepId) -> Cite {
 /// It says what the raw rows say and nothing more — counts, and the last thing the agent actually
 /// did. There is no model call here: §8's reset is a rebuild FROM EVIDENCE, and a sentence a model
 /// wrote about the evidence would be a new claim rather than a restatement of an old one.
-pub fn state_from_raw(steps: &[Step], evidence: &[StepId]) -> String {
+pub fn state_from_raw(steps: &[Step], evidence: &[StepId], max_chars: usize) -> String {
     let thoughts = steps
         .iter()
         .filter(|s| s.kind.as_str() == crate::signals::THOUGHT_TEXT)
@@ -191,8 +198,12 @@ pub fn state_from_raw(steps: &[Step], evidence: &[StepId]) -> String {
         out.push_str("; last: ");
         out.push_str(&one_line(last));
     }
-    if out.chars().count() > MAX_STATE_CHARS {
-        out = out.chars().take(MAX_STATE_CHARS - 1).collect::<String>() + "…";
+    if out.chars().count() > max_chars {
+        out = out
+            .chars()
+            .take(max_chars.saturating_sub(1))
+            .collect::<String>()
+            + "…";
     }
     out
 }
@@ -233,6 +244,10 @@ fn first_line(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The values `bough-base` carries, so a unit test and the bundle cannot drift apart.
+    const MAX_EVIDENCE_CITES: usize = 24;
+    const MAX_STATE_CHARS: usize = 400;
+
     use super::*;
     use bough_plugin_ledger::{Seq, TrajId};
     use std::collections::BTreeSet;
@@ -265,7 +280,7 @@ mod tests {
             step(2, "rollup/sealed", serde_json::json!({})),
         ];
         assert!(
-            raw_evidence(&steps).is_empty(),
+            raw_evidence(&steps, MAX_EVIDENCE_CITES).is_empty(),
             "a summary is not raw evidence"
         );
 
@@ -276,7 +291,7 @@ mod tests {
                 serde_json::json!({ "text": "x" }),
             ));
         }
-        let ev = raw_evidence(&steps);
+        let ev = raw_evidence(&steps, MAX_EVIDENCE_CITES);
         assert_eq!(ev.len(), MAX_EVIDENCE_CITES);
         // The NEWEST rows survive the cap, in seq order.
         assert_eq!(ev.last().unwrap().as_str(), "s50");
@@ -289,8 +304,8 @@ mod tests {
             step(1, "thought/text", serde_json::json!({ "text": "thinking" })),
             step(2, "tool/call", serde_json::json!({ "name": "bash" })),
         ];
-        let ev = raw_evidence(&steps);
-        let state = state_from_raw(&steps, &ev);
+        let ev = raw_evidence(&steps, MAX_EVIDENCE_CITES);
+        let state = state_from_raw(&steps, &ev, MAX_STATE_CHARS);
         assert!(state.contains("2 steps read"), "{state}");
         assert!(state.contains("1 thought,"), "{state}");
         assert!(state.contains("1 tool call"), "{state}");

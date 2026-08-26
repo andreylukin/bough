@@ -59,10 +59,12 @@ pub fn windows(steps: &[Step], cfg: &WindowCfg) -> Vec<Window> {
     if !cur.is_empty() {
         out.push(close(&cur, Cut::Head));
     }
-    // A window thinner than `min_steps` is not worth a model call and is dropped here rather
-    // than planned and skipped: the planner's `TooShort` is the defensive second statement of the
-    // same rule, for a caller that builds windows by hand.
-    out.retain(|w| w.steps.len() >= cfg.min_steps);
+    // NOTHING is dropped here. A window thinner than `min_steps` is not worth a model call, and
+    // the PLANNER says so with `SkipReason::TooShort` — dropping it from the partition instead
+    // would make the two properties this function states ("no overlap and no gap, and the last
+    // window is always `Cut::Head`") false, and would make the dropped steps material that never
+    // appears in a plan at all: not planned, not skipped, and gone for good, since every later
+    // pass recomputes the same cut.
     out
 }
 
@@ -176,10 +178,45 @@ mod tests {
         // last window is MARKED open, which is what makes it unsealable.
     }
 
+    /// A run shorter than `min_steps` is still CUT into a window: the cut is a partition of the
+    /// run and drops nothing. Whether that window is worth a model call is the PLANNER's answer,
+    /// and it says so with `SkipReason::TooShort` — which keeps the steps visible in the plan
+    /// instead of deleting them from the partition, where no later pass would ever see them
+    /// again (every pass recomputes the same cut).
     #[test]
-    fn a_run_shorter_than_min_steps_yields_no_window() {
-        assert!(windows(&run(3), &cfg(3600, 100, 5)).is_empty());
+    fn a_run_shorter_than_min_steps_is_still_a_window_and_is_skipped_by_the_planner() {
+        let ws = windows(&run(3), &cfg(3600, 100, 5));
+        assert_eq!(ws.len(), 1, "the short run is one window, not none");
+        assert_eq!(ws[0].steps.len(), 3, "and it holds every step of the run");
+        // Only an EMPTY run yields no window.
         assert!(windows(&[], &cfg(3600, 100, 1)).is_empty());
+    }
+
+    /// The loss the retain used to cause, stated as a property: every step of the run appears in
+    /// exactly one window, whatever `min_steps` says.
+    #[test]
+    fn every_step_lands_in_exactly_one_window_whatever_min_steps_says() {
+        let steps = vec![
+            step(1, 0),
+            step(2, 1),
+            // A lone step behind a gap: the window it makes is one step long.
+            step(3, 9_000),
+            step(4, 18_000),
+            step(5, 18_001),
+        ];
+        for min in [1usize, 2, 5] {
+            let ws = windows(&steps, &cfg(3600, 100, min));
+            let seen: Vec<u64> = ws
+                .iter()
+                .flat_map(|w| w.steps.iter())
+                .map(|id| id.as_str()[1..].parse::<u64>().expect("s<n>"))
+                .collect();
+            assert_eq!(
+                seen,
+                vec![1, 2, 3, 4, 5],
+                "min_steps={min} dropped steps from the partition"
+            );
+        }
     }
 
     #[test]

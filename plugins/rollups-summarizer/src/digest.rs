@@ -28,31 +28,87 @@ pub fn digest_id(traj: &bough_plugin_ledger::TrajId, gen: u32) -> RollupId {
     }
 }
 
+/// The id of an INHERITANCE digest (§3): a digest of the parent chain, held BY the child. Its own
+/// namespace again, so the child's standing digest and what it inherited are two rows and neither
+/// supersedes the other.
+pub fn inheritance_id(traj: &bough_plugin_ledger::TrajId, gen: u32) -> RollupId {
+    if gen == 0 {
+        RollupId::new(format!("digest:{traj}:inherited"))
+    } else {
+        RollupId::new(format!("digest:{traj}:inherited#g{gen}"))
+    }
+}
+
+/// PURE: which trajectories a rebuild reads raw evidence from, and which id namespace it writes.
+/// The one place the standing/inheritance split is decided (§0.2: `resolve(request) -> Spec`).
+pub struct DigestSpec {
+    /// The trajectories the raw evidence comes from.
+    pub sources: Vec<bough_plugin_ledger::TrajId>,
+    /// `src_trajs` on the sealed row: what this digest is a digest OF.
+    pub src_trajs: Vec<bough_plugin_ledger::TrajId>,
+    pub inheritance: bool,
+}
+
+pub fn spec_of(req: &DigestRequest) -> DigestSpec {
+    if req.parents.is_empty() {
+        DigestSpec {
+            sources: vec![req.traj.clone()],
+            src_trajs: vec![req.traj.clone()],
+            inheritance: false,
+        }
+    } else {
+        DigestSpec {
+            sources: req.parents.clone(),
+            src_trajs: req.parents.clone(),
+            inheritance: true,
+        }
+    }
+}
+
 /// Rebuild the standing digest. `from_raw` ignores the existing digest entirely.
 pub async fn rebuild(
     inner: &SummarizerInner,
     req: &DigestRequest,
 ) -> Result<DigestReport, RollupsError> {
     let cfg = inner.cfg.clone();
+    let spec = spec_of(req);
     // Sealed tiers are READ. Nothing below writes one, and the report says how many were read so
     // a test can say the count did not move.
-    let tiers: Vec<Rollup> = inner
+    let all_tiers: Vec<Rollup> = inner
         .ledger
         .0
         .rollups(&RollupQuery {
-            trajs: vec![req.traj.clone()],
+            trajs: spec.sources.clone(),
             kind: Some(RollupKind::Tier),
             ..Default::default()
         })
         .await?;
-    let tiers_read = tiers.len();
+    let tiers_read = all_tiers.len();
+    // §8: `/reset` rebuilds from RAW EVIDENCE, and "sealed tiers are never re-summarized by it".
+    // `from_raw` therefore hides the tiers from the prompt as well as the previous digest — a
+    // rebuild that reads the tier prose is a summary of the tiers, not a rebuild from the raw.
+    let tiers: Vec<Rollup> = if req.from_raw { Vec::new() } else { all_tiers };
 
-    let previous = match inner.ledger.0.agent(&req.agent).await? {
-        Some(row) => match row.digest_rollup {
-            Some(id) => crate::seal::find_rollup(inner, &id).await?,
+    // The block this rebuild replaces. A STANDING digest's predecessor is the one the agents row
+    // points at; an INHERITANCE digest's is the live row in its own namespace, which no agents
+    // row names. Reading it back from the store — rather than from the agents row alone — is
+    // also what stops a rebuild whose repoint never happened from re-minting generation 0 over
+    // an id that is already sealed (`ledger-sqlite` refuses the duplicate; `ledger-memory` used
+    // to replace it silently).
+    let previous = if spec.inheritance {
+        live_in_namespace(inner, req, true).await?
+    } else {
+        let by_row = match inner.ledger.0.agent(&req.agent).await? {
+            Some(row) => match row.digest_rollup {
+                Some(id) => crate::seal::find_rollup(inner, &id).await?,
+                None => None,
+            },
             None => None,
-        },
-        None => None,
+        };
+        match by_row {
+            Some(r) => Some(r),
+            None => live_in_namespace(inner, req, false).await?,
+        }
     };
 
     // §8's "rebuilds … from raw evidence": the raw steps are the SOURCE, and the sealed tiers are
@@ -63,7 +119,7 @@ pub async fn rebuild(
         .ledger
         .0
         .steps(&StepQuery {
-            trajs: vec![req.traj.clone()],
+            trajs: spec.sources.clone(),
             class: Some(Class::Evidence),
             order: Order::SeqDesc,
             limit: Some(raw_limit),
@@ -116,7 +172,11 @@ pub async fn rebuild(
         .as_ref()
         .map(|r| crate::seal::generation_of(&r.id).saturating_add(1))
         .unwrap_or(0);
-    let id = digest_id(&req.traj, gen);
+    let id = if spec.inheritance {
+        inheritance_id(&req.traj, gen)
+    } else {
+        digest_id(&req.traj, gen)
+    };
     let sealed = inner
         .ledger
         .0
@@ -131,7 +191,9 @@ pub async fn rebuild(
             // 1..head, not 0..head.
             from_seq: Seq(1),
             to_seq: Seq(head.0.max(1)),
-            src_trajs: vec![req.traj.clone()],
+            // §3: `src_trajs` names what the digest is a digest OF — the agent's own trajectory
+            // for a standing digest, the parent chain for an inheritance digest.
+            src_trajs: spec.src_trajs.clone(),
             body: serde_json::to_value(&block).expect("a DigestBlock serialises"),
             // A digest is the agent's OWN standing summary: notable to it and to nobody by ref,
             // which P1-D13 spells as the empty set.
@@ -141,7 +203,7 @@ pub async fn rebuild(
         })
         .await?;
 
-    announce_digest(inner, &wake, &sealed, &block, req.at).await?;
+    announce_digest(inner, &wake, &sealed, req.at).await?;
 
     if let Some(prev) = &previous {
         inner
@@ -151,10 +213,13 @@ pub async fn rebuild(
             .await?;
     }
     // Identity renders from the agents row + the digest (§3), so repointing the row IS the
-    // identity rebuild; there is nothing else to write.
-    if let Some(mut row) = inner.ledger.0.agent(&req.agent).await? {
-        row.digest_rollup = Some(sealed.id.clone());
-        inner.ledger.0.put_agent(row).await?;
+    // identity rebuild; there is nothing else to write. An INHERITANCE digest is not the agent's
+    // standing digest and never repoints the row.
+    if !spec.inheritance {
+        if let Some(mut row) = inner.ledger.0.agent(&req.agent).await? {
+            row.digest_rollup = Some(sealed.id.clone());
+            inner.ledger.0.put_agent(row).await?;
+        }
     }
 
     Ok(DigestReport {
@@ -165,28 +230,49 @@ pub async fn rebuild(
     })
 }
 
-/// The `rollup/sealed` step a digest gets, and its observation on the seam's stream.
+/// The live (never-superseded) digest in one namespace on this trajectory. The belt to the agents
+/// row's braces: a rebuild whose repoint failed still sees its own predecessor.
+async fn live_in_namespace(
+    inner: &SummarizerInner,
+    req: &DigestRequest,
+    inheritance: bool,
+) -> Result<Option<Rollup>, RollupsError> {
+    let rows = inner
+        .ledger
+        .0
+        .rollups(&RollupQuery {
+            trajs: vec![req.traj.clone()],
+            kind: Some(RollupKind::Digest),
+            include_superseded: true,
+            ..Default::default()
+        })
+        .await?;
+    let prefix = if inheritance {
+        format!("digest:{}:inherited", req.traj)
+    } else {
+        format!("digest:{}", req.traj)
+    };
+    Ok(rows
+        .into_iter()
+        .filter(|r| {
+            r.superseded_by.is_none()
+                && r.id.as_str().starts_with(&prefix)
+                // `digest:<t>` is a prefix of `digest:<t>:inherited`; the standing namespace must
+                // not claim the inheritance rows.
+                && (inheritance
+                    || !r.id.as_str().starts_with(&format!("digest:{}:", req.traj)))
+        })
+        .max_by_key(|r| crate::seal::generation_of(&r.id)))
+}
+
+/// The `rollup/sealed` step a digest gets.
 async fn announce_digest(
     inner: &SummarizerInner,
     wake: &bough_plugin_ledger::WakeId,
     sealed: &Rollup,
-    block: &DigestBlock,
     at: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), RollupsError> {
-    // A digest's `beneath` is its `from_blocks` and its `evidence`; the tier vocabulary's
-    // `refs_of` reads a `TierBlock`, so the digest states its own here rather than pretending.
-    let tier_shaped = bough_plugin_rollups::TierBlock {
-        text: block.text.clone(),
-        themes: Vec::new(),
-        beneath: bough_plugin_rollups::Beneath::Blocks {
-            rollups: block.from_blocks.clone(),
-        },
-        evidence: block.evidence.clone(),
-        windows: Vec::new(),
-        tier: 0,
-        prompt_ver: block.prompt_ver.clone(),
-    };
-    crate::seal::announce(inner, wake, sealed, &tier_shaped, at).await
+    crate::seal::announce(inner, wake, sealed, at).await
 }
 
 /// PURE: what the digest call sees.
@@ -196,6 +282,10 @@ pub fn render_digest_input(
     previous: Option<&Rollup>,
     from_raw: bool,
 ) -> String {
+    // `/reset` sets `from_raw`: NEITHER the previous digest nor the sealed tiers are shown, so
+    // the rebuild rests on raw evidence alone (§8). The caller already passes an empty tier list
+    // in that case; this is the belt to those braces.
+    let tiers: &[Rollup] = if from_raw { &[] } else { tiers };
     let mut out = String::new();
     // `/reset` sets `from_raw`: the previous digest is not shown at all, so a drifted digest
     // cannot seed its own replacement (§8).
@@ -300,5 +390,35 @@ mod tests {
         assert!(with.contains("I am the stale digest"));
         assert!(!without.contains("I am the stale digest"));
         assert!(without.contains("no sealed tiers"), "{without}");
+    }
+
+    /// §8: "the reset rebuilds the digest … from raw evidence; sealed tiers are never
+    /// re-summarized by it". `from_raw` therefore hides the TIERS as well as the previous digest
+    /// — a rebuild that reads the tier prose is a summary of tiers, not a rebuild from the raw.
+    #[test]
+    fn from_raw_hides_the_sealed_tiers_too() {
+        let tier = Rollup {
+            id: RollupId::new("tier:t:1:1-10"),
+            traj: TrajId::new("t"),
+            kind: RollupKind::Tier,
+            tier: 1,
+            from_seq: Seq(1),
+            to_seq: Seq(10),
+            src_trajs: vec![],
+            body: serde_json::json!({ "text": "I am a sealed tier block" }),
+            notable_refs: Default::default(),
+            prompt_ver: "r4.1".into(),
+            sealed_at: chrono::Utc::now(),
+            superseded_by: None,
+        };
+        let ordinary = render_digest_input(std::slice::from_ref(&tier), &[], None, false);
+        assert!(ordinary.contains("I am a sealed tier block"));
+        // A `/reset` never passes the tiers in at all, so `render_digest_input` is given none.
+        // This is the belt: even handed them, `from_raw` must not render them.
+        let reset = render_digest_input(std::slice::from_ref(&tier), &[], None, true);
+        assert!(
+            !reset.contains("I am a sealed tier block"),
+            "a reset re-summarised a sealed tier: {reset}"
+        );
     }
 }

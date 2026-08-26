@@ -31,6 +31,7 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 futures = { workspace = true }
 uuid = { workspace = true }
+sha2 = { workspace = true }            # the `recon/request` input digest
 
 [dev-dependencies]
 bough-plugin-ledger-memory = { workspace = true }
@@ -39,3 +40,7 @@ bough-plugin-llm-replay = { workspace = true }
 # projection-assembler does not depend on this row.
 bough-plugin-projection = { workspace = true }
 bough-plugin-projection-assembler = { workspace = true }
+# V5's distillation half against the row that actually mounts, not the `DigestOnly` double.
+# Acyclic — `rollups-summarizer` does not depend on this row.
+bough-plugin-rollups-summarizer = { workspace = true }
+bough-plugin-rollups-none = { workspace = true }

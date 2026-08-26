@@ -139,6 +139,9 @@
     max_contradiction_pairs: 24
     max_calls_per_pass: 6
     distill_max_tokens: 2048
+    # The judge prompt's version, stamped on every `recon/request`. Must resolve in the binary's
+    # prompt catalog or the row refuses to boot.
+    judge_prompt_ver: recon-1
 - id: drift.watch
   plugin: drift-watch
   config:
@@ -146,3 +149,7 @@
     min_samples: 20
     thought_len_cv_flag: 1.2
     tool_entropy_flag: 0.35
+    # How many raw steps a `/reset` cites, and how long the rebuilt state half may be. The second
+    # is the same quantity the `about-line` row carries as `max_state_chars`: patch both together.
+    max_evidence_cites: 24
+    max_state_chars: 400

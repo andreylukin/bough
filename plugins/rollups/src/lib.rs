@@ -27,7 +27,10 @@ pub use block::{
 };
 pub use conformance::Conformance;
 pub use error::RollupsError;
-pub use expiry::{is_expirable, Expired, ExpiredBody, EXPIRED_STEP_TYPE, NEVER_EXPIRABLE};
+pub use expiry::{
+    is_expirable, Expired, ExpiredBody, ExpiryKind, EXPIRED_OWNER, EXPIRED_STEP_TYPE,
+    NEVER_EXPIRABLE,
+};
 pub use plan::{coverage, generation_of, is_ours, plan, tier_id, TierCfg, TIER_NAMESPACE};
 pub use request::{
     Attribution, DigestReport, DigestRequest, Inputs, PassId, PlannedBlock, SealPlan, SealReport,

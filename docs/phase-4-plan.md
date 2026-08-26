@@ -1456,3 +1456,203 @@ agreed with the plan, and the reader was the outlier.
 4. **The live half was not re-run by the integrator.** WP-2 reports
    `a_live_haiku_pass_seals_a_readable_block` green against real haiku; this pass ran the OFFLINE
    gates only, per AGENTS.md's rule that `make gates` is hermetic.
+
+---
+
+## Deviations and open items (review pass, 2026-08-26)
+
+A code review of the closed phase raised 30 findings. Every **high** and **medium** is fixed below;
+the cheap **low**s are fixed and the rest are recorded here with their reason. Each fix names the
+test that holds it.
+
+### High
+
+**H1 — the contradiction path routed around both pin locks (`pass.rs`).** `detect::stale` intersects
+`expirable_kinds` with `NEVER_EXPIRABLE` and `resolve::validate` refuses a pin kind at boot, but the
+CONTRADICTION path pushed the older half of every confirmed pair straight into the candidate list
+with no kind check — and `pin/set` is `ClassRule::Either`, so a pin can legally be EVIDENCE and
+`detect::pairs` will pair it. A `memory/expired` marker naming a pin could therefore be written, and
+the verbatim-tail band honours it. Fixed: `Pair` now carries `older_kind`, and the candidate is
+dropped unless `bough_plugin_rollups::is_expirable(&kind)`. The claim is still surfaced — a
+disagreement about a pin is exactly what a pass is for; only the expiry is refused. The fabricated
+`kind: "claim/proposed"` on the synthesised candidate is gone with it: the field now carries the
+kind of the step being expired. Held by
+`reconsolidation tests/expiry.rs::a_confirmed_contradiction_never_expires_a_pin`, which builds the
+pin as EVIDENCE sharing a ref with newer evidence and runs the confirming transcript.
+
+**H2 — `memory/expired` had two declarers and one non-refcounted map entry.** Each row skipped the
+declaration if the other got there first, so ownership depended on activation order, and unloading
+the owner removed the type for everyone: the other row's appends would fail
+`UnknownStepTypeOnAppend` and every already-written marker would fail `UnknownStepTypeOnRead`,
+taking the whole projection with it. Fixed at the root: `StepTypeMap::register` is now REFCOUNTED
+and accepts a second declaration only when it is byte-identical to the standing one (`same_def`
+compares name, owner, ignorable, class rule and schema). The definition itself moved to the seam
+(`bough_plugin_rollups::expiry::step_type_def`, body `ExpiredBody`, `kind` now the closed enum
+`ExpiryKind`), and BOTH rows declare exactly it, unconditionally — which also collapses the "one
+field, three spellings" low finding. `drift-watch` uses the same mechanism to declare `about/line`
+from `about-line`'s own definition (see M4 below). Held by `plugins/ledger` types tests plus the
+existing `memory_invariants.rs` boot, which mounts both rows.
+
+**H3 — `memory_invariants.rs` filtered violations by ROW name; the two rollups specs report under
+the SEAM's name.** The filter could never match a seal-once or tiers-are-an-index violation, so the
+assertion was vacuous for two of the four Phase-4 specs. Fixed: the test now derives the expected
+set from `Plugin::invariants()` — the spec NAMES the four rows actually collect — and asserts
+`a_range_is_sealed_once_and_generations_never_skip` is among them, so the filter cannot silently
+stop matching again.
+
+### Medium
+
+**M1 — the rollups invariant read a process-global buffer, not an authoritative relation.**
+`seal_once` and `tiers_are_an_index` judged `static SEEN`, which the provider itself pushed to. A
+block sealed without announcing was invisible (including the old-feed adapter's interim tier-1
+rollups, which this phase's brief requires be covered by the same vocabulary), the buffer was never
+cleared on unload, and at a clean boot it was empty so both checks returned `Ok` early. Rewritten to
+read the SEALED ROWS themselves (`invariant::sealed_blocks`). The statement changed with it, and got
+stronger: for every `(traj, tier, from, to)`, the generations present must be contiguous with no
+duplicates AND every generation but the highest must LINK its replacement through `superseded_by`.
+That catches a re-seal, a skipped generation, a mislinked supersession, a dangling link, and — new —
+two live blocks over one range, which is the state a supersession whose second call failed would
+leave (the low finding about `supersede`'s write-then-link ordering; the ordering is unchanged
+because the replacement must exist before it can be linked, but the resulting state is now REPORTED
+rather than assumed impossible). `SEEN`, `record`, `seen`, `reset` and the summarizer's `observe`
+are deleted. Held by `invariant::tests` (5 planted cases) and by the rewritten
+`rollups-summarizer tests/seal_once_stream.rs::the_store_a_real_pass_leaves_satisfies_seal_once`,
+which judges the same reader the runner uses, over a real pass and a real supersession.
+
+**M2 — `/reset` re-summarized the sealed tiers.** `from_raw` hid only the previous digest; the tier
+prose was rendered into the digest prompt unconditionally, so the "rebuild from raw evidence" was a
+summary of tiers plus a raw sample. Fixed in two places: `rebuild` passes no tiers at all when
+`from_raw`, and `render_digest_input` refuses to render them even if handed some. The block's
+`from_blocks` is consequently empty for a reset. Held by
+`digest::tests::from_raw_hides_the_sealed_tiers_too` and
+`rollups-summarizer tests/digest.rs::a_reset_rebuild_names_no_sealed_tier`.
+
+**M3 — the judge's `prompt_ver` was a bare literal resolving to no catalog.** Added
+`plugins/reconsolidation/src/prompts.rs` (the `recon-1` catalog), a validated `judge_prompt_ver`
+config field that must resolve in it or the row refuses to boot, and `pass::SYSTEM` now delegates to
+the catalog — so editing the prompt without adding a version is a change the catalog cannot express.
+The bundle row carries `judge_prompt_ver: recon-1`. Held by
+`prompts::tests::the_bundle_version_resolves_and_an_unknown_one_does_not` and
+`resolve::tests::the_degenerate_numbers_are_refused`.
+
+**M4 — the judge ran under a fabricated wake and appended no step.** `RequestFacts.wake` was the
+constant `recon:plan`, matching no step in the ledger, and the call left no record at all: no model
+name, no token counts. Both fixed. The running pass's wake is threaded into `judge`, and every call
+appends a `recon/request` step (new step type, `ReconRequest` body) naming the pass, the prompt
+version, the model, both judged steps, an input digest and the token counts — including for a FAILED
+call, which still clears the pair but is no longer invisible. `composition` carries the real kernel
+fingerprint instead of `""`, and a call with no model chosen is now a loud refusal (§12), matching
+the sibling row. Held by
+`reconsolidation tests/expiry.rs::every_judge_call_is_recorded_as_a_step_under_the_pass_wake`.
+
+**M5 — `drift-watch` hardcoded two tunables and depended on an undeclared step type.**
+`MAX_EVIDENCE_CITES` and `MAX_STATE_CHARS` are now `DriftConfig` fields (`max_evidence_cites`,
+`max_state_chars`) validated at boot and set from `bough-base`; `max_state_chars` is the same
+quantity the `about-line` row carries, and both are now patchable rather than one being frozen in
+code. And `/reset` appends `about/line`, a type the `about-line` row owns — an ordinary bundle row a
+patch may disable — so `drift-watch` now declares `about-line`'s own definition itself; the
+refcounted map makes both declarations legal and unloading either leaves the type standing. Held by
+`resolve::tests::the_reset_bounds_are_config_and_a_zero_is_refused` and the existing reset suite.
+
+**M6 — the reset invariant's intent half was structurally unfalsifiable.** `reset::run` recorded
+`intent: String::new()` as a literal rather than reading back the row it had just appended, so
+`evaluate`'s intent branch could never fire in production. It now re-reads the `about/line` step by
+id and records what is actually in it.
+
+**M7 — distillation sat outside the call budget and was fatal under the stub.** `rebuild_digest` ran
+on every non-empty pass regardless of how many judge calls had already been made, and its cost was
+added after the loop — so `max_calls_per_pass` was not the cap P4-D15 claims. Worse, the call was
+`?`-propagated, so under `rollups-none` (`RollupsError::Refused`) `/reconsolidate` failed outright
+AFTER the claim and marker steps had landed and BEFORE `invariant::record`, leaving partial writes
+off the invariant stream. Fixed: the distil is gated on `calls < budget`, and `Refused` is treated as
+a composition choice (no distilled block, everything else stands) while any other error still fails
+the pass. Held by
+`reconsolidation tests/distill_real_summarizer.rs::a_refusing_provider_leaves_the_pass_and_its_appends_standing`.
+
+**M8 — `windows()` deleted short windows from the partition.** `out.retain(|w| w.steps.len() >=
+min_steps)` dropped material after the cut, so both properties the module states could be false and
+the dropped steps were never planned, never skipped, and gone for good (every pass recomputes the
+same cut). The `retain` is removed; `plan`'s `SkipReason::TooShort` — which was dead code for every
+caller using `windows()` — is now the live statement of the same rule, and the steps stay visible.
+Held by `window::tests::every_step_lands_in_exactly_one_window_whatever_min_steps_says` and
+`window::tests::a_run_shorter_than_min_steps_is_still_a_window_and_is_skipped_by_the_planner`.
+
+**M9 — the provider-conformance suite was near-vacuous.** Every case ran against a trajectory it
+"names and never prepares", so "seals nothing" was satisfied by there being nothing to seal, and
+`rebuild_digest_writes_no_tier_rollup` discarded the outcome with `let _ =`. The suite now runs in
+two halves: the empty-trajectory cases as before, then it PREPARES 24 steps over 3 episodes (builtin
+step types only) and judges the second half over a real history — a new
+`seal_seals_exactly_what_it_planned` case, plan totality against the episode count, idempotence over
+a non-empty ledger, and `rebuild_digest`'s OUTCOME (a sealing provider must succeed, a non-sealing
+one must refuse, and a reported digest must have cost a call). Both providers still run one
+statement. Held by both crates' `tests/conformance.rs`.
+
+**M10 — `drift-watch`'s six reset tests raced on a process-global record.** `harness()` clears it and
+all six run concurrently in one binary, so a concurrent harness could empty the record between the
+reset that produced an observation and the assertion that reads it, degrading the check to
+`evaluate(&[])`. `harness()` now holds a `tokio::sync::Mutex` guard for the test's whole life.
+
+**M11 — reconsolidation's suites judged a test double.** Carried-forward item 2 of the previous pass
+is now closed: `plugins/reconsolidation/tests/distill_real_summarizer.rs` mounts the REAL
+`rollups-summarizer` behind the same handle (no cycle — the summarizer does not depend on this row)
+and asserts a pass adds a DIGEST row, seals no tier, changes no pre-existing row hash, and leaves the
+provider's own `rollup/sealed` and `rollup/request` bookkeeping. `support::mount` is refactored into
+`mount_with_rollups`, so the existing three suites keep the `DigestOnly` double for the pass-shaped
+properties it is good at.
+
+**M12 — the digest seal had no belt, and the two ledger providers disagreed about a duplicate id.**
+`ledger-memory::seal_rollup` silently REPLACED a sealed row where `ledger-sqlite` errors — carried
+forward as item 1 of the previous pass on the grounds that the summarizer guarded it in front, which
+the digest path did not. Both halves fixed: `ledger-memory` now refuses a duplicate id (§3
+immutability, one answer across both providers), and the digest's predecessor is read back from its
+own id namespace as well as from the agents row, so a rebuild whose repoint never happened sees its
+own generation instead of re-minting 0.
+
+**M13 — there was no inheritance digest.** §3's "an inheritance digest summarizes the parent chain
+FOR a child (`src_trajs` names it)" had no shape in the seam. `DigestRequest` now carries `parents:
+Vec<TrajId>`: empty is the ordinary standing digest, non-empty makes the rebuild read raw evidence
+from the parent trajectories, write into its own id namespace (`digest:<traj>:inherited`), stamp
+`src_trajs` with the parents, and NOT repoint `agents.digest_rollup` — a child's inherited digest is
+not its standing one. `digest::spec_of` is the pure resolve step that decides it. Phase 5's graph-ops
+consumer is still to come; what shipped here is the shape and the write, not a caller.
+
+### Low — fixed
+
+- `refuse_if_sealed` moved ABOVE the model call in `seal_one`: a stale plan no longer costs a call,
+  and the `?` no longer discards the report for blocks already sealed in the same pass.
+- The call budget and the pass budget are named `resolve(request) -> Spec` functions (`seal::
+  budget_of`, `pass::budget_of`) rather than `?? default` inside `run()`.
+- A parent skipped because the pass ran out of calls below it now reports `SkipReason::CallBudget`
+  instead of `NotEnoughChildren`.
+- All three governance rows' command registration distinguishes ABSENT (headless: return `Ok`) from
+  an ERROR (a kernel refusal: fail the row) instead of swallowing both.
+- `resolve::validate` now refuses `max_evidence_refs: 0`, `max_notable_refs: 0` and
+  `seal_lag_steps: 0`, each of which silently broke a property the row exists to hold.
+- A `Chunk::Failed` in `call::call` now writes its `rollup/request` row (with `failed: true`) BEFORE
+  returning the error, so a failed — possibly billed — call is not invisible to the cost bench.
+- `rollups-summarizer` no longer holds an `Option<AgentsHandle>` it never called; `agents` stays a
+  REQUIRED key with the reason written down (this row repoints agent ROWS through the ledger, and
+  the key is the activation gate that says those rows are managed).
+- `expiry::load` is called ONCE per assembly in `assemble.rs` and threaded into the three bands that
+  honour it, instead of three identical scans on the per-wake hot path.
+
+### Low — recorded, not fixed
+
+1. **A governance pass is uncancellable.** `llm.stream(..., CancellationToken::new())` builds a fresh
+   token unlinked to the row's fiber, in both rows. An unload mid-pass disposes the registrations
+   while the pass keeps streaming through the `Arc` the command still holds. The fix is a
+   fiber-scoped cancellation token on `Context`, which is a KERNEL change touching every streaming
+   caller in the tree — not a Phase-4 integration edit. P4-D15 accepts the freeze; this names the
+   escape hatch it does not have.
+2. **`RollupRequest.pass`/`from_seq`/`to_seq` are bare `String`/`u64` at the ledger-body boundary.**
+   Branding them means the ledger body types depend on `PassId`/`Seq` serde shapes; the `kind` half
+   of this finding IS fixed (one closed `ExpiryKind` for all three spellings). The id half is a
+   vocabulary change that would move a written body's schema, so it wants a migration note rather
+   than a quiet edit at a phase close.
+3. **`claim_rejection` is a constant function and its test compares constants.** True, and
+   deliberate: the signal is INACTIVE until Phase 5's accept/reject surface exists. The existing test
+   does pass real `claim/proposed` and `claim/rejected` steps and asserts the state does NOT flip,
+   which is the whole of the Phase-4 contract; the boundary the finding asks for is a test of code
+   that has not been written.
+4. **The live half was not re-run by this pass.** `make gates` is hermetic by rule (AGENTS.md); the
+   `#[ignore]`d live cases are unchanged by this work.

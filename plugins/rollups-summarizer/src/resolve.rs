@@ -65,6 +65,29 @@ pub fn validate(cfg: &SummarizerConfig) -> Result<(), ConfigError> {
             "`map_max_tokens` and `reduce_max_tokens` must be positive",
         ));
     }
+    // V2: "every block carries refs into the raw beneath it". `max_evidence_refs: 0` is a config
+    // that makes every block carry none — an index that indexes nothing — and it must fail at
+    // boot rather than quietly produce blocks that break the property.
+    if cfg.max_evidence_refs == 0 {
+        return Err(rejected(
+            "`max_evidence_refs: 0` would seal blocks that name no raw evidence at all; a tier is \
+             an INDEX over the raw beneath it (§3)",
+        ));
+    }
+    if cfg.max_notable_refs == 0 {
+        return Err(rejected(
+            "`max_notable_refs: 0` would seal every block as notable to everyone (P1-D13), which \
+             is the empty set's meaning and not a bound anyone chose",
+        ));
+    }
+    // P4-D11's lag is a FLOOR: zero would let a pass seal the steps the verbatim tail is still
+    // showing, so a sealed tier and the tail would describe the same steps.
+    if cfg.seal_lag_steps == 0 {
+        return Err(rejected(
+            "`seal_lag_steps: 0` would seal into the verbatim tail; a sealed tier and the tail \
+             must never describe the same steps (P4-D11)",
+        ));
+    }
     Ok(())
 }
 
@@ -137,6 +160,27 @@ mod tests {
         assert!(err.to_string().contains("fanout"), "{err}");
         c.fanout = 0;
         assert!(validate(&c).is_err());
+    }
+
+    /// The three fields that used to be accepted at any value, including the values that break
+    /// the properties the row exists to hold.
+    #[test]
+    fn validate_refuses_the_degenerate_bounds() {
+        for (name, mutate) in [
+            (
+                "max_evidence_refs",
+                (|c: &mut SummarizerConfig| c.max_evidence_refs = 0) as fn(&mut SummarizerConfig),
+            ),
+            ("max_notable_refs", |c| c.max_notable_refs = 0),
+            ("seal_lag_steps", |c| c.seal_lag_steps = 0),
+        ] {
+            let mut c = cfg();
+            mutate(&mut c);
+            let err = validate(&c)
+                .expect_err(&format!("`{name}: 0` must fail the boot"))
+                .to_string();
+            assert!(err.contains(name), "the refusal must name the field: {err}");
+        }
     }
 
     #[test]

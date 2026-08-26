@@ -91,10 +91,24 @@ async fn every_phase_four_invariant_runs_at_quiesce() {
     // …and the shipped tree quiesces with none of them reported. `boot_real` turns the runner ON
     // regardless of what the profile says, so this is a real run of every collected spec.
     let (kernel, _dir) = boot_real("tui", &[fixture("llm-replay.yml")]).await;
+    // Filter by the SPEC NAMES the four rows collect, not by the row names. A violation carries
+    // the name the spec reports under, and the two rollups specs report under the SEAM's name
+    // (`rollups`) rather than the provider's — so a row-name filter silently dropped both of
+    // them and this assertion was vacuous for half of Phase 4.
+    let expected: std::collections::BTreeSet<&'static str> = ROWS
+        .iter()
+        .filter_map(|(_, plugin)| catalog.get(plugin))
+        .flat_map(|p| p.invariants())
+        .map(|s| s.name)
+        .collect();
+    assert!(
+        expected.contains("a_range_is_sealed_once_and_generations_never_skip"),
+        "the seal-once spec must be among the ones this test watches: {expected:?}"
+    );
     let phase_four: Vec<_> = kernel
         .violations()
         .into_iter()
-        .filter(|v| ROWS.iter().any(|(_, p)| v.plugin == *p))
+        .filter(|v| expected.contains(v.invariant))
         .collect();
     assert!(
         phase_four.is_empty(),

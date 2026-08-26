@@ -176,9 +176,6 @@ pub async fn call(
         }
     }
     drop(stream);
-    if let Some(message) = failure {
-        return Err(RollupsError::Model(message));
-    }
 
     let (tokens_in, tokens_out, source) = match &usage {
         Some(u) => (
@@ -216,6 +213,7 @@ pub async fn call(
                 tokens_in,
                 tokens_out,
                 token_source: source,
+                failed: failure.is_some(),
             })
             .expect("RollupRequest serialises"),
             cites: Vec::new(),
@@ -223,6 +221,12 @@ pub async fn call(
             id: None,
         })
         .await?;
+
+    // The record is written FIRST, then the failure is reported: a failed call that left no row
+    // is a billed call the ledger cannot see.
+    if let Some(message) = failure {
+        return Err(RollupsError::Model(message));
+    }
 
     Ok(CallOutcome {
         text,

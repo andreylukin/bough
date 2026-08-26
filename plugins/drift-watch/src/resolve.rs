@@ -35,6 +35,20 @@ pub fn validate(cfg: &DriftConfig) -> Result<(), ConfigError> {
             cfg.tool_entropy_flag
         ));
     }
+    if cfg.max_evidence_cites == 0 {
+        return reject(
+            "max_evidence_cites must be > 0: the rebuilt about-line is EVIDENCE, and the ledger \
+             refuses an evidence step with no cites"
+                .to_string(),
+        );
+    }
+    if cfg.max_state_chars == 0 {
+        return reject(
+            "max_state_chars must be > 0: a state half of zero characters is not a \
+                       rebuild"
+                .to_string(),
+        );
+    }
     Ok(())
 }
 
@@ -66,12 +80,26 @@ mod tests {
             min_samples: 20,
             thought_len_cv_flag: 1.2,
             tool_entropy_flag: 0.35,
+            max_evidence_cites: 24,
+            max_state_chars: 400,
         }
     }
 
     #[test]
     fn a_sane_row_validates() {
         validate(&cfg()).expect("the shipped row is valid");
+    }
+
+    #[test]
+    fn the_reset_bounds_are_config_and_a_zero_is_refused() {
+        for mutate in [
+            (|c: &mut DriftConfig| c.max_evidence_cites = 0) as fn(&mut DriftConfig),
+            |c| c.max_state_chars = 0,
+        ] {
+            let mut c = cfg();
+            mutate(&mut c);
+            validate(&c).expect_err("a zero reset bound must fail the boot");
+        }
     }
 
     #[test]

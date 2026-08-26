@@ -145,8 +145,17 @@ pub struct DigestRequest {
     pub traj: TrajId,
     pub at: DateTime<Utc>,
     pub attribution: Attribution,
-    /// `true` ⇒ ignore the existing digest entirely and read raw evidence only. `/reset` sets it.
+    /// `true` ⇒ ignore the existing digest AND the sealed tiers entirely, and read raw evidence
+    /// only. `/reset` sets it: §8's "rebuilds the digest from raw evidence" is a rebuild from the
+    /// raw, so nothing a suspected-drifted tier says can seed the replacement.
     pub from_raw: bool,
+    /// §3's INHERITANCE digest: the parent chain this digest summarizes FOR the child named by
+    /// `traj`. Empty ⇒ the agent's own standing digest, which is the ordinary case. When it is
+    /// non-empty the raw evidence is read from these trajectories, the block is written on the
+    /// CHILD's trajectory in its own id namespace, and `src_trajs` names the parents — which is
+    /// what makes an inheritance digest distinguishable from a standing one in the store, for
+    /// graph-ops.
+    pub parents: Vec<TrajId>,
 }
 
 /// What a digest rebuild did.

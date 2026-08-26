@@ -170,3 +170,133 @@ async fn expiring_the_same_step_twice_appends_one_more_marker_and_changes_nothin
         "and exactly two rows were added: the marker and the second `rollup/sealed`"
     );
 }
+
+/// V7, the PASS side. `detect::stale` refuses a pin by kind and `resolve::validate` refuses one at
+/// boot, but the CONTRADICTION path reaches the expiry writer without going through either: a
+/// confirmed pair pushes its older half straight into the candidate list. `pin/set` is
+/// `ClassRule::Either`, so a pin can legally be EVIDENCE and `detect::pairs` will pair it.
+///
+/// The claim still stands — surfacing a disagreement about a pin is exactly what a pass is for —
+/// but no `memory/expired` marker may ever name it. A pin's only relief valve is supersession.
+#[tokio::test]
+async fn a_confirmed_contradiction_never_expires_a_pin() {
+    let m = mount(always_contradiction(8)).await;
+    // A PIN and a newer ordinary fact, sharing a ref so they pair.
+    let pin = m
+        .ledger
+        .0
+        .append(bough_plugin_ledger::Append {
+            traj: bough_plugin_ledger::TrajId::new(TRAJ),
+            wake: bough_plugin_ledger::WakeId::new("w1"),
+            kind: bough_plugin_ledger::StepType::new("pin/set"),
+            class: Class::Evidence,
+            body: serde_json::json!({
+                "title": "the port",
+                "text": "the service listens on 8080",
+                "supersedes": []
+            }),
+            cites: vec![bough_plugin_ledger::Cite {
+                r#ref: bough_plugin_ledger::Ref::new("svc:port"),
+                url: None,
+            }],
+            at: t0() - chrono::Duration::days(10),
+            id: None,
+        })
+        .await
+        .expect("the pin appends");
+    let newer = evidence(
+        &m.ledger,
+        "tool/result",
+        &["svc:port"],
+        serde_json::json!({ "text": "the service listens on 9090" }),
+        t0(),
+    )
+    .await;
+
+    let report = m.recon.run(&request(t0())).await.expect("the pass runs");
+
+    assert_eq!(
+        report.contradictions.len(),
+        1,
+        "the disagreement is still SURFACED as a claim"
+    );
+    let markers = steps_of(&m.ledger, MEMORY_EXPIRED).await;
+    for marker in &markers {
+        let body: MemoryExpired =
+            serde_json::from_value((*marker.body).clone()).expect("a memory/expired body");
+        assert!(
+            !body
+                .targets
+                .iter()
+                .any(|t| t.as_str() == format!("step:{}", pin.id)),
+            "a marker named the pin `{}`: a pin is NEVER expired (§3, V7): {body:?}",
+            pin.id
+        );
+    }
+    // The pin's row is untouched, and the newer half was never a candidate either (it stands).
+    assert_eq!(
+        m.ledger
+            .0
+            .step(&pin.id)
+            .await
+            .expect("read")
+            .expect("still there")
+            .body,
+        pin.body
+    );
+    assert!(!report.expired.contains(&newer.id));
+}
+
+/// §0.2, model-visible ⟺ ledgered: every judge call leaves a `recon/request` step naming the model
+/// and the tokens, under the RUNNING pass's wake — not a fabricated constant one.
+#[tokio::test]
+async fn every_judge_call_is_recorded_as_a_step_under_the_pass_wake() {
+    let m = mount(always_clear(8)).await;
+    let a = evidence(
+        &m.ledger,
+        "tool/result",
+        &["svc:x"],
+        serde_json::json!({ "text": "one" }),
+        t0(),
+    )
+    .await;
+    let b = evidence(
+        &m.ledger,
+        "tool/result",
+        &["svc:x"],
+        serde_json::json!({ "text": "two" }),
+        t0(),
+    )
+    .await;
+
+    let report = m.recon.run(&request(t0())).await.expect("the pass runs");
+    assert!(report.calls >= 1);
+
+    let requests = steps_of(&m.ledger, bough_plugin_reconsolidation::RECON_REQUEST).await;
+    assert_eq!(
+        requests.len(),
+        1,
+        "one pair judged, one request row: {requests:?}"
+    );
+    let body: bough_plugin_reconsolidation::ReconRequest =
+        serde_json::from_value((*requests[0].body).clone()).expect("a recon/request body");
+    assert_eq!(
+        body.prompt_ver,
+        bough_plugin_reconsolidation::prompts::RECON_1
+    );
+    assert!(
+        !body.model.is_empty(),
+        "the model that answered is recorded"
+    );
+    assert!(!body.failed);
+    assert_eq!(body.older, a.id.to_string());
+    assert_eq!(body.newer, b.id.to_string());
+    assert!(!body.input_digest.is_empty());
+    // The wake is the RUNNING pass's, so the row is greppable back to the pass that wrote it.
+    assert_eq!(
+        requests[0].wake.to_string(),
+        format!("recon:{}", report.pass),
+        "the request rides the pass's own wake (P4-D2)"
+    );
+    assert_ne!(requests[0].wake.to_string(), "recon:plan");
+}

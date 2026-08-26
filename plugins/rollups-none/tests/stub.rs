@@ -165,6 +165,7 @@ async fn supersede_and_rebuild_digest_refuse_and_say_why() {
             traj: traj(),
             at: at(0),
             attribution: Attribution::System,
+            parents: Vec::new(),
             from_raw: true,
         })
         .await
