@@ -97,3 +97,8 @@ bough-plugin-tui-search = { path = "plugins/tui-search" }                      #
 bough-plugin-residents = { path = "plugins/residents" }                        # §5 catch-up at launch
 bough-plugin-old-feed-adapter = { path = "plugins/old-feed-adapter" }          # §14 throwaway bridge
 bough-plugin-tui-probe = { path = "plugins/tui-probe" }                        # §17 Phase 3 fixture
+bough-plugin-rollups = { path = "plugins/rollups" }                            # §8 rollups Service Definition
+bough-plugin-rollups-summarizer = { path = "plugins/rollups-summarizer" }      # §8 the recap Provider
+bough-plugin-rollups-none = { path = "plugins/rollups-none" }                  # §8 stub Provider (swap subject)
+bough-plugin-reconsolidation = { path = "plugins/reconsolidation" }            # §8 batched distillation
+bough-plugin-drift-watch = { path = "plugins/drift-watch" }                    # §8 stability signals + /reset

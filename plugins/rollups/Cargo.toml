@@ -1,0 +1,27 @@
+[package]
+name = "bough-plugin-rollups"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The rollups Service Definition (P4-D1): the `rollups` key, the `Summarizer` trait, the sealed
+# block vocabulary and the four pure algorithms every provider shares (windowing, tier planning,
+# block-ref extraction, expiry folding). No `Plugin` impl, no `register_plugin!`, no bundle row.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true, features = ["chrono04"] }
+chrono = { workspace = true, features = ["serde"] }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

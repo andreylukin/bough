@@ -6,6 +6,7 @@
 pub mod assemble;
 pub mod bands;
 pub mod degrade;
+pub mod expiry;
 pub mod invariant;
 pub mod registry;
 pub mod resolve;

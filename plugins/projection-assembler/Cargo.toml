@@ -13,6 +13,7 @@ bough-kernel = { workspace = true }
 bough-util = { workspace = true }
 bough-plugin-ledger = { workspace = true }
 bough-plugin-projection = { workspace = true }
+bough-plugin-rollups = { workspace = true }      # §8: the expiry set the projector honours
 async-trait = { workspace = true }
 inventory = { workspace = true }
 serde = { workspace = true }
