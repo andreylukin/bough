@@ -1,0 +1,5 @@
+-- The §3 ledger schema (phase-1-plan §2.8). Append-only is enforced by the triggers at the bottom,
+-- so a raw connection cannot get around the Rust API. `agents` is deliberately trigger-free: §3
+-- makes it MUTABLE CONFIG, explicitly exempt.
+--
+-- WP-2 fills this file in. The statements below are the contract, not a suggestion.

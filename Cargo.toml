@@ -51,8 +51,15 @@ libc         = "0.2"
 clap         = { version = "4", features = ["derive"] }               # the launcher's CLI
 parking_lot  = "0.12"                                                 # kernel binding store / fiber state lock
 include_dir  = "0.7"                                                  # profiles/ + bundles/ embedded in the launcher
+tempfile     = "3"                                                    # dev-only: provider tests that want a real db file
 
 bough-llm    = { path = "crates/bough-llm" }
 bough-util   = { path = "crates/bough-util" }
 bough-kernel = { path = "crates/bough-kernel" }
 bough-plugin-hello = { path = "plugins/hello" }
+bough-plugin-ledger = { path = "plugins/ledger" }                             # §3 ledger Service Definition
+bough-plugin-ledger-sqlite = { path = "plugins/ledger-sqlite" }               # §3 production ledger Provider
+bough-plugin-ledger-memory = { path = "plugins/ledger-memory" }               # §3 test ledger Provider
+bough-plugin-projection = { path = "plugins/projection" }                     # §5 projection Service Definition
+bough-plugin-projection-assembler = { path = "plugins/projection-assembler" } # §5 projection Provider
+bough-plugin-projection-probe = { path = "plugins/projection-probe" }         # §17 Phase 1 fixture
