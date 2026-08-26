@@ -1,0 +1,20 @@
+## Identity
+
+name: sol
+trajectory: t-sol
+routing refs: gh:bough/rebuild#1
+wake classes: ordinary
+digest: none
+
+
+## Pins
+
+- the one pin (step:p1)
+  still standing
+
+
+## Recent steps
+
+### wake w1
+- #1 pin/set [thought] {"supersedes":[],"text":"still standing","title":"the one pin"}
+- #2 step/start [thought] {"index":3}

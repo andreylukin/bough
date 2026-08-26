@@ -5,10 +5,6 @@
 //! PROVIDERS' `Plugin::invariants()`.
 //!
 //! Consumers depend on this crate, never on a provider crate.
-//!
-//! SCAFFOLD: `unused_variables` and `dead_code` are allowed while the bodies are `todo!()` and the
-//! private state they thread has no reader yet. Both allows go away with the last `todo!()`.
-#![allow(unused_variables, dead_code)]
 
 pub mod conformance;
 pub mod error;
@@ -156,6 +152,72 @@ impl LedgerHandle {
         ctx: &Context,
         defs: Vec<StepTypeDef>,
     ) -> Result<EffectHandle, PluginError> {
-        todo!("WP-1: LedgerHandle::declare_step_types")
+        let store = self.0.clone();
+        let entry = ctx.entry_id().clone();
+        ctx.effect(move |ectx| async move {
+            for def in defs {
+                match store.register_step_type(def) {
+                    Ok(token) => ectx.defer_sync(token.into_inverse()),
+                    // A partial declaration is not a state anyone can reason about: the effect
+                    // fails, and `Context::effect` unwinds the inverses already deferred, so the
+                    // map is exactly as it was before the call.
+                    Err(e) => return Err(PluginError::new(entry.clone(), e)),
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+}
+
+/// The on-disk ENVELOPE, as a version and a fingerprint over it.
+///
+/// Its own module so the rule has a name: only a structural envelope change bumps
+/// [`LEDGER_FORMAT_VERSION`], and registering a step type is not one (§3).
+pub mod format {
+    pub use crate::id::{envelope_fingerprint, ENVELOPE, LEDGER_FORMAT_VERSION};
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// The fingerprint of the envelope declared in `id.rs`, recorded here. If a column is
+        /// added, renamed, reordered or removed, this test fails and the fix is to bump
+        /// `LEDGER_FORMAT_VERSION` and paste the new digest — which is the point: the bump cannot
+        /// be forgotten.
+        #[test]
+        fn envelope_fingerprint_matches_the_declared_format_version() {
+            assert_eq!(LEDGER_FORMAT_VERSION, 1);
+            assert_eq!(
+                envelope_fingerprint(),
+                "824283423bd318f3864d3c9af1446268652aad0886c8e8938c92b8b7ccd89f92",
+                "the envelope changed: bump LEDGER_FORMAT_VERSION and record the new fingerprint"
+            );
+            // Stable across calls: it is a digest of a constant, not of anything runtime.
+            assert_eq!(envelope_fingerprint(), envelope_fingerprint());
+        }
+
+        /// §3: "Only structural envelope changes bump the ledger format version." A plugin
+        /// declaring a step type is the ordinary case and must move neither number.
+        #[test]
+        fn registering_a_step_type_does_not_bump_the_format_version() {
+            #[derive(schemars::JsonSchema)]
+            #[allow(dead_code)]
+            struct ProbeNote {
+                text: String,
+            }
+
+            let before = (LEDGER_FORMAT_VERSION, envelope_fingerprint());
+            let map = crate::types::StepTypeMap::with_builtins();
+            let token = map
+                .register(crate::types::StepTypeDef::of::<ProbeNote>(
+                    "probe/note",
+                    "probe",
+                ))
+                .expect("a fresh step type registers");
+            assert_eq!((LEDGER_FORMAT_VERSION, envelope_fingerprint()), before);
+            token.unregister();
+            assert_eq!((LEDGER_FORMAT_VERSION, envelope_fingerprint()), before);
+        }
     }
 }

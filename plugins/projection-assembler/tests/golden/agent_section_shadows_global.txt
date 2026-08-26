@@ -1,0 +1,18 @@
+## Identity
+
+name: sol
+trajectory: t-sol
+routing refs: gh:bough/rebuild#1
+wake classes: ordinary
+digest: none
+
+
+## About
+
+sol's own about-line
+
+
+## Recent steps
+
+### wake w1
+- #1 step/start [thought] {"index":3}

@@ -4,10 +4,6 @@
 //! This crate owns the key, the vocabulary and the three pure algorithms every provider shares;
 //! it has no `Plugin` impl and no bundle row.
 //!
-//! SCAFFOLD: `unused_variables` and `dead_code` are allowed while the bodies are `todo!()` and the
-//! private state they thread has no reader yet. Both allows go away with the last `todo!()`.
-#![allow(unused_variables, dead_code)]
-
 pub mod error;
 pub mod file_view;
 pub mod invariant;
@@ -67,7 +63,18 @@ impl ProjectionHandle {
         ctx: &Context,
         spec: SectionSpec,
     ) -> Result<EffectHandle, PluginError> {
-        todo!("WP-4: ProjectionHandle::section")
+        let projector = self.0.clone();
+        let entry = ctx.entry_id().clone();
+        ctx.effect(move |e| async move {
+            let token = projector
+                .section(spec)
+                .map_err(|err| PluginError::new(entry, anyhow::Error::new(err)))?;
+            // Disposal removes the section, so unloading the contributor leaves the registry as if
+            // it had never mounted (§0.2).
+            e.defer_sync(move || token.remove());
+            Ok(())
+        })
+        .await
     }
 }
 
@@ -121,6 +128,18 @@ pub enum Flag {
     OverBudget,
 }
 
+impl Flag {
+    /// The word this flag contributes to the `> DEGRADED:` line.
+    pub fn word(&self) -> &'static str {
+        match self {
+            Flag::PinsDegraded => "pins",
+            Flag::MailDegraded => "mail",
+            Flag::DigestDegraded => "digest",
+            Flag::OverBudget => "over-budget",
+        }
+    }
+}
+
 /// One assembled projection.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Assembled {
@@ -139,7 +158,27 @@ impl Assembled {
     /// `> DEGRADED: pins, mail` line when `flags` is non-empty, and nothing else. No timestamps
     /// and no process ids — the text is a function of (ledger contents, request, config) alone.
     pub fn to_text(&self) -> String {
-        todo!("WP-4: Assembled::to_text")
+        let mut out = String::new();
+        if !self.flags.is_empty() {
+            let words: Vec<&str> = self.flags.iter().map(Flag::word).collect();
+            out.push_str("> DEGRADED: ");
+            out.push_str(&words.join(", "));
+            out.push_str("\n\n");
+        }
+        for s in &self.sections {
+            out.push_str("## ");
+            out.push_str(&s.title);
+            out.push_str("\n\n");
+            out.push_str(&s.body);
+            out.push_str("\n\n");
+        }
+        while out.ends_with('\n') {
+            out.pop();
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out
     }
 }
 
@@ -159,4 +198,54 @@ pub struct Draft {
     pub sections: Vec<RenderedSection>,
     pub budget: usize,
     pub flags: BTreeSet<Flag>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::section::{Place, Position, Slot};
+
+    fn sec(title: &str, body: &str) -> RenderedSection {
+        RenderedSection {
+            id: SectionId::new(title),
+            position: Position {
+                slot: Slot::Identity,
+                place: Place::Band,
+            },
+            title: title.into(),
+            body: body.into(),
+            cites: SectionCites::default(),
+            tokens: 0,
+            degraded: None,
+        }
+    }
+
+    fn assembled(flags: &[Flag]) -> Assembled {
+        Assembled {
+            agent: AgentName::new("sol"),
+            sections: vec![sec("Identity", "sol / lane/sol"), sec("Pins", "- a pin")],
+            flags: flags.iter().copied().collect(),
+            tokens: 0,
+            budget: 100,
+            cites: SectionCites::default(),
+        }
+    }
+
+    #[test]
+    fn to_text_is_headers_and_bodies_and_nothing_else() {
+        assert_eq!(
+            assembled(&[]).to_text(),
+            "## Identity\n\nsol / lane/sol\n\n## Pins\n\n- a pin\n"
+        );
+    }
+
+    /// §5: pins, digest and mail never degrade SILENTLY.
+    #[test]
+    fn degradation_shows_up_as_a_leading_flag_line() {
+        let text = assembled(&[Flag::MailDegraded, Flag::PinsDegraded]).to_text();
+        assert!(
+            text.starts_with("> DEGRADED: pins, mail\n\n"),
+            "flags render in their fixed order, whatever order they were raised in: {text}"
+        );
+    }
 }

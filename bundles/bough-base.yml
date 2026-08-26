@@ -10,3 +10,22 @@
   config:
     who: world
     log_level: info
+
+# Phase 1 (§3, §5): the ledger and the projection seam. `ledger-memory` and `projection-probe` are
+# in the binary's catalog but in NO bundle — the swap patch names the one, the tests' own
+# `$BOUGH_HOME` mounts the other.
+- id: ledger
+  plugin: ledger-sqlite
+  config:
+    path: !!expr 'bough_path("ledger.db")'
+    busy_timeout_ms: 5000
+- id: projection
+  plugin: projection-assembler
+  config:
+    budget_tokens: 160000
+    headroom: 0.6
+    tail_steps: 60
+    tail_floor_steps: 10
+    mail_newest_n: 5
+    max_tiers: 3
+    file_view_dir: !!expr 'bough_path("views")'

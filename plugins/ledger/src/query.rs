@@ -107,7 +107,11 @@ pub struct Connected {
 impl Connected {
     /// Every trajectory in the membership, deduplicated and sorted.
     pub fn trajectories(&self) -> BTreeSet<TrajId> {
-        todo!("WP-1: Connected::trajectories")
+        let mut out = BTreeSet::new();
+        out.insert(self.own.clone());
+        out.extend(self.ancestry.iter().cloned());
+        out.extend(self.ref_matches.iter().cloned());
+        out
     }
 }
 

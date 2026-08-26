@@ -21,7 +21,10 @@ pub enum Class {
 impl Class {
     /// The lowercase spelling stored in the `class` column and used in error messages.
     pub fn as_str(&self) -> &'static str {
-        todo!("WP-1: Class::as_str")
+        match self {
+            Class::Evidence => "evidence",
+            Class::Thought => "thought",
+        }
     }
 }
 
@@ -94,10 +97,101 @@ pub struct SeqRange {
 impl SeqRange {
     /// Order-independent union: overlapping and adjacent ranges coalesce, the result is sorted.
     pub fn union(ranges: &[SeqRange]) -> Vec<SeqRange> {
-        todo!("WP-1: SeqRange::union")
+        let mut sorted: Vec<SeqRange> = ranges.iter().copied().filter(|r| r.from <= r.to).collect();
+        sorted.sort();
+        let mut out: Vec<SeqRange> = Vec::with_capacity(sorted.len());
+        for r in sorted {
+            match out.last_mut() {
+                // Overlapping OR adjacent (`to + 1 == from`) coalesce, so a union is a canonical
+                // form and two different orders cannot produce two different answers.
+                Some(last) if r.from.0 <= last.to.0.saturating_add(1) => {
+                    if r.to > last.to {
+                        last.to = r.to;
+                    }
+                }
+                _ => out.push(r),
+            }
+        }
+        out
     }
     /// Whether `seq` lies inside this range.
     pub fn contains(&self, seq: Seq) -> bool {
-        todo!("WP-1: SeqRange::contains")
+        self.from <= seq && seq <= self.to
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::id::Ref;
+
+    fn r(from: u64, to: u64) -> SeqRange {
+        SeqRange {
+            from: Seq(from),
+            to: Seq(to),
+        }
+    }
+
+    /// The rule §3 states: anything rendered as truth is EVIDENCE and evidence carries citations.
+    /// The refusal itself lives in [`crate::types::StepTypeMap::validate_append`]; this pins that
+    /// the class + cites pair is what decides it, for the builtin `pin/set` (`ClassRule::Either`).
+    #[test]
+    fn evidence_without_cites_is_refused() {
+        let map = crate::types::StepTypeMap::with_builtins();
+        let req = crate::step::Append {
+            traj: crate::id::TrajId::new("t"),
+            wake: crate::id::WakeId::new("w"),
+            kind: crate::id::StepType::new("pin/set"),
+            class: Class::Evidence,
+            body: serde_json::json!({ "title": "t", "text": "x" }),
+            cites: vec![],
+            at: chrono::Utc::now(),
+            id: None,
+        };
+        let err = map
+            .validate_append(&req)
+            .expect_err("evidence with no cites must be refused");
+        assert!(
+            matches!(err, crate::LedgerError::EvidenceWithoutCites { .. }),
+            "wrong refusal: {err}"
+        );
+    }
+
+    /// A thought MAY cite; it simply never becomes evidence by doing so.
+    #[test]
+    fn thought_may_carry_cites() {
+        let map = crate::types::StepTypeMap::with_builtins();
+        let req = crate::step::Append {
+            traj: crate::id::TrajId::new("t"),
+            wake: crate::id::WakeId::new("w"),
+            kind: crate::id::StepType::new("pin/set"),
+            class: Class::Thought,
+            body: serde_json::json!({ "title": "t", "text": "x" }),
+            cites: vec![Cite {
+                r#ref: Ref::new("gh:o/r#1"),
+                url: None,
+            }],
+            at: chrono::Utc::now(),
+            id: None,
+        };
+        let def = map.validate_append(&req).expect("a thought may cite");
+        assert_eq!(def.name.as_str(), "pin/set");
+    }
+
+    #[test]
+    fn seq_range_union_is_order_independent() {
+        let a = vec![r(1, 3), r(4, 5), r(9, 9)];
+        let b = vec![r(9, 9), r(4, 5), r(1, 3)];
+        // 1-3 and 4-5 are adjacent, so they coalesce; 9 stands alone.
+        assert_eq!(SeqRange::union(&a), vec![r(1, 5), r(9, 9)]);
+        assert_eq!(SeqRange::union(&a), SeqRange::union(&b));
+        // Overlap, containment and duplication all collapse to the same canonical form.
+        assert_eq!(
+            SeqRange::union(&[r(1, 10), r(3, 4), r(1, 10)]),
+            vec![r(1, 10)]
+        );
+        assert_eq!(SeqRange::union(&[]), vec![]);
+        assert!(r(1, 5).contains(Seq(5)));
+        assert!(!r(1, 5).contains(Seq(6)));
     }
 }

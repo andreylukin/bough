@@ -8,5 +8,32 @@ use crate::store::SqliteStore;
 
 /// Three indexed queries and no writes.
 pub async fn connected(store: &SqliteStore, agent: &AgentName) -> Result<Connected, LedgerError> {
-    todo!("WP-2: connected::connected")
+    let name = agent.clone();
+    let row = store
+        .with_conn({
+            let name = name.clone();
+            move |conn| crate::read::read_agent(conn, &name)
+        })
+        .await?
+        .ok_or_else(|| LedgerError::Store(anyhow::anyhow!("no such agent `{name}`")))?;
+
+    let ancestry = crate::read::ancestry(store, &row.traj).await?;
+
+    let own = row.traj.clone();
+    let refs = row.routing_refs.clone();
+    let matching = store
+        .with_conn({
+            let refs = refs.clone();
+            move |conn| crate::read::trajs_matching_refs(conn, &refs)
+        })
+        .await?;
+    // The agent's own trajectory is `own`, not a ref match; ancestry is reported on its own axis.
+    let ref_matches = matching.into_iter().filter(|t| *t != own).collect();
+
+    Ok(Connected {
+        own,
+        ancestry,
+        ref_matches,
+        refs,
+    })
 }

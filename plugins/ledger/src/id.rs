@@ -41,18 +41,18 @@ bough_util::brand_id!(
 impl Ref {
     /// The one canonical spelling of a citation of a step (P1-D5).
     pub fn step(id: &StepId) -> Ref {
-        todo!("WP-1: Ref::step")
+        Ref::new(format!("step:{id}"))
     }
     /// The one canonical spelling of a citation of a rollup (P1-D5).
     pub fn rollup(id: &RollupId) -> Ref {
-        todo!("WP-1: Ref::rollup")
+        Ref::new(format!("rollup:{id}"))
     }
 }
 
 impl WakeId {
     /// The synthetic wake a fork's end-seed marker is written under: `seed:<traj>`.
     pub fn seed(child: &TrajId) -> WakeId {
-        todo!("WP-1: WakeId::seed")
+        WakeId::new(format!("seed:{child}"))
     }
 }
 
@@ -69,8 +69,63 @@ pub const LEDGER_FORMAT_VERSION: u32 = 1;
 /// sha256 over the declared envelope only (table + column names of `steps`/`edges`/`rollups`, in
 /// order). Changing it without bumping [`LEDGER_FORMAT_VERSION`] fails a test. Step types are not
 /// part of it.
+pub const ENVELOPE: &[(&str, &[&str])] = &[
+    (
+        "steps",
+        &[
+            "id",
+            "traj_id",
+            "seq",
+            "at",
+            "wake_id",
+            "type",
+            "class",
+            "body",
+            "cites",
+            "ignorable",
+        ],
+    ),
+    ("step_refs", &["step_id", "ref"]),
+    (
+        "edges",
+        &["child_traj", "parent_traj", "at_seq", "kind", "at"],
+    ),
+    (
+        "rollups",
+        &[
+            "id",
+            "traj_id",
+            "kind",
+            "tier",
+            "from_seq",
+            "to_seq",
+            "src_trajs",
+            "body",
+            "notable_refs",
+            "prompt_ver",
+            "sealed_at",
+            "superseded_by",
+        ],
+    ),
+];
+
 pub fn envelope_fingerprint() -> &'static str {
-    todo!("WP-1: envelope_fingerprint")
+    static FP: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    FP.get_or_init(|| {
+        use sha2::Digest;
+        let mut h = sha2::Sha256::new();
+        for (table, cols) in ENVELOPE {
+            h.update(table.as_bytes());
+            h.update(b"(");
+            for c in *cols {
+                h.update(c.as_bytes());
+                h.update(b",");
+            }
+            h.update(b")");
+        }
+        format!("{:x}", h.finalize())
+    })
+    .as_str()
 }
 
 /// A branded id is a plain string in a body schema. `brand_id!` lives in `bough-util`, which has

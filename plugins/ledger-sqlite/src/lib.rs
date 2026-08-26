@@ -2,9 +2,6 @@
 //! the rules and the conformance suite belong to `bough-plugin-ledger`, which this crate depends
 //! on and which never depends back. Its bundle row is `ledger-sqlite`.
 //!
-//! SCAFFOLD: `unused_variables` and `dead_code` are allowed while the bodies are `todo!()` and the
-//! private state they thread has no reader yet. Both allows go away with the last `todo!()`.
-#![allow(unused_variables, dead_code)]
 
 pub mod append;
 pub mod connected;
@@ -50,14 +47,51 @@ impl Plugin for SqliteLedgerPlugin {
     type Config = SqliteConfig;
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
-        todo!("WP-2: SqliteLedgerPlugin::validate")
+        // Purely, synchronously, no I/O (§0.5): the file is opened in `apply`, not here.
+        if cfg.path.as_os_str().is_empty() {
+            return Err(ConfigError::Rejected {
+                detail: "path: the ledger needs a db file path, or `:memory:`".into(),
+            });
+        }
+        if cfg.busy_timeout_ms == 0 {
+            return Err(ConfigError::Rejected {
+                detail: "busy_timeout_ms: 0 would make every contended write fail immediately"
+                    .into(),
+            });
+        }
+        Ok(())
     }
 
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!(
-            "WP-2: SqliteLedgerPlugin::apply — open the store, provide `ledger`, register the \
-               ledger/step listener the invariants read, and defer the per-life forget"
-        )
+        let entry = ctx.entry_id().clone();
+        // Opening fails LOUD: a ledger whose format this binary does not speak is a boot failure,
+        // never a silent migration (§0.5).
+        let store = SqliteStore::open(&cfg, ctx.clone())
+            .map_err(|e| PluginError::new(entry.clone(), anyhow::Error::new(e)))?;
+
+        ctx.provide::<Ledger>(LedgerHandle(store))
+            .await
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+
+        // The stream `invariant.rs` polices. Recorded per LIFE: a reload keeps the FiberUid, so
+        // this fiber's observations are forgotten when it unloads (the `hello` lesson, §0.3).
+        let mine = ctx.fiber_uid();
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || bough_plugin_ledger::invariant::forget(mine));
+            Ok(())
+        })
+        .await?;
+        ctx.on::<LedgerStep, _, _>(move |step| async move {
+            bough_plugin_ledger::invariant::record(bough_plugin_ledger::invariant::Obs {
+                fiber: mine,
+                traj: step.traj.clone(),
+                seq: step.seq,
+                wake: step.wake.clone(),
+                kind: step.kind.clone(),
+            });
+        })
+        .await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {
@@ -77,13 +111,13 @@ impl LedgerStore for SqliteStore {
     }
 
     fn register_step_type(&self, def: StepTypeDef) -> Result<StepTypeToken, LedgerError> {
-        todo!("WP-2: register_step_type")
+        self.types.register(def)
     }
     fn step_types(&self) -> Vec<StepTypeDef> {
-        todo!("WP-2: step_types")
+        self.types.all()
     }
     fn skipped_ignorable(&self) -> u64 {
-        todo!("WP-2: skipped_ignorable")
+        self.skipped.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     async fn append(&self, req: Append) -> Result<Step, LedgerError> {
@@ -94,16 +128,16 @@ impl LedgerStore for SqliteStore {
     }
 
     async fn step(&self, id: &StepId) -> Result<Option<Step>, LedgerError> {
-        todo!("WP-2: step")
+        crate::read::step(self, id).await
     }
     async fn steps(&self, q: &StepQuery) -> Result<Vec<Step>, LedgerError> {
         crate::read::steps(self, q).await
     }
     async fn tail(&self, traj: &TrajId, n: usize) -> Result<Vec<Step>, LedgerError> {
-        todo!("WP-2: tail")
+        crate::read::tail(self, traj, n).await
     }
     async fn head_seq(&self, traj: &TrajId) -> Result<Option<Seq>, LedgerError> {
-        todo!("WP-2: head_seq")
+        crate::read::head_seq(self, traj).await
     }
     async fn search(&self, q: &SearchQuery) -> Result<Vec<SearchHit>, LedgerError> {
         crate::search::search(self, q).await
@@ -116,13 +150,13 @@ impl LedgerStore for SqliteStore {
     }
 
     async fn add_edge(&self, e: Edge) -> Result<(), LedgerError> {
-        todo!("WP-2: add_edge")
+        crate::read::add_edge(self, e).await
     }
     async fn edges(&self, traj: &TrajId) -> Result<Vec<Edge>, LedgerError> {
-        todo!("WP-2: edges")
+        crate::read::edges(self, traj).await
     }
     async fn ancestry(&self, traj: &TrajId) -> Result<Vec<TrajId>, LedgerError> {
-        todo!("WP-2: ancestry")
+        crate::read::ancestry(self, traj).await
     }
     async fn fork(&self, req: Fork) -> Result<ForkOutcome, LedgerError> {
         crate::fork::fork(self, req).await
@@ -132,30 +166,30 @@ impl LedgerStore for SqliteStore {
     }
 
     async fn seal_rollup(&self, r: NewRollup) -> Result<Rollup, LedgerError> {
-        todo!("WP-2: seal_rollup")
+        crate::read::seal_rollup(self, r).await
     }
     async fn supersede_rollup(&self, old: &RollupId, new: &RollupId) -> Result<(), LedgerError> {
-        todo!("WP-2: supersede_rollup")
+        crate::read::supersede_rollup(self, old, new).await
     }
     async fn rollups(&self, q: &RollupQuery) -> Result<Vec<Rollup>, LedgerError> {
         crate::read::rollups(self, q).await
     }
 
     async fn put_agent(&self, a: AgentRow) -> Result<(), LedgerError> {
-        todo!("WP-2: put_agent")
+        crate::read::put_agent(self, a).await
     }
     async fn agent(&self, name: &AgentName) -> Result<Option<AgentRow>, LedgerError> {
-        todo!("WP-2: agent")
+        crate::read::agent(self, name).await
     }
     async fn agents(&self) -> Result<Vec<AgentRow>, LedgerError> {
-        todo!("WP-2: agents")
+        crate::read::agents(self).await
     }
     async fn delete_agent(&self, name: &AgentName) -> Result<(), LedgerError> {
-        todo!("WP-2: delete_agent")
+        crate::read::delete_agent(self, name).await
     }
 
     async fn action_intent(&self, a: NewAction) -> Result<ActionRow, LedgerError> {
-        todo!("WP-2: action_intent")
+        crate::read::action_intent(self, a).await
     }
     async fn action_done(
         &self,
@@ -163,10 +197,12 @@ impl LedgerStore for SqliteStore {
         status: ActionStatus,
         result: serde_json::Value,
     ) -> Result<(), LedgerError> {
-        todo!("WP-2: action_done")
+        // DEVIATION (§2.5): the trait passes no clock, so `done_at` is stamped here. Phase 2 owns
+        // the actions seam and can thread `now` through when it takes the policy.
+        crate::read::action_done(self, id, status, result, chrono::Utc::now()).await
     }
     async fn actions(&self, q: &ActionQuery) -> Result<Vec<ActionRow>, LedgerError> {
-        todo!("WP-2: actions")
+        crate::read::actions(self, q).await
     }
 
     async fn row_hashes(&self, scope: HashScope) -> Result<Vec<RowHash>, LedgerError> {

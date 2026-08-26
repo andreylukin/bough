@@ -28,10 +28,17 @@ pub enum Slot {
     Mail,
 }
 
-/// Which side of a band a contributed section sits on.
+/// Where a section sits relative to its band.
+///
+/// DEVIATION from plan §2.7, which lists `Before` and `After` only: the built-in band itself needs
+/// a place of its own, or `before_precedes_the_band_and_after_follows_it` cannot hold — a
+/// `Before` section and the band would tie and break by [`SectionId`]. [`Place::Band`] is that
+/// place, and the derived `Ord` (declaration order) is the order.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Place {
     Before,
+    /// The built-in band itself.
+    Band,
     After,
 }
 
@@ -45,7 +52,15 @@ pub struct Position {
 impl Position {
     /// `(slot, place, id)`. Ties break by [`SectionId`], NEVER by registration order (P1-D8).
     pub fn sort_key<'a>(&self, id: &'a SectionId) -> (Slot, Place, &'a str) {
-        todo!("WP-4: Position::sort_key")
+        (self.slot, self.place, id.as_str())
+    }
+
+    /// The position of a built-in band.
+    pub fn band(slot: Slot) -> Position {
+        Position {
+            slot,
+            place: Place::Band,
+        }
     }
 }
 
@@ -115,11 +130,27 @@ pub struct SectionCites {
 impl SectionCites {
     /// The union of two cite sets, deduplicated and sorted. Used to finalize [`crate::Assembled`].
     pub fn union(&self, other: &SectionCites) -> SectionCites {
-        todo!("WP-4: SectionCites::union")
+        let mut steps: Vec<StepId> = self
+            .steps
+            .iter()
+            .chain(other.steps.iter())
+            .cloned()
+            .collect();
+        steps.sort();
+        steps.dedup();
+        let mut rollups: Vec<RollupId> = self
+            .rollups
+            .iter()
+            .chain(other.rollups.iter())
+            .cloned()
+            .collect();
+        rollups.sort();
+        rollups.dedup();
+        SectionCites { steps, rollups }
     }
     /// Whether this section cites nothing at all.
     pub fn is_empty(&self) -> bool {
-        todo!("WP-4: SectionCites::is_empty")
+        self.steps.is_empty() && self.rollups.is_empty()
     }
 }
 
@@ -130,8 +161,18 @@ pub struct SectionToken {
 }
 
 impl SectionToken {
+    /// A token over a provider's own removal closure.
+    ///
+    /// DEVIATION from plan §2.7, which leaves the field `pub(crate)`: a provider lives in another
+    /// crate, so the Definition must offer a constructor or no provider can return a token.
+    pub fn new(remove: impl Fn() + Send + Sync + 'static) -> SectionToken {
+        SectionToken {
+            inner: Arc::new(remove),
+        }
+    }
+
     /// Remove the section from the registry.
     pub fn remove(self) {
-        todo!("WP-4: SectionToken::remove")
+        (self.inner)();
     }
 }

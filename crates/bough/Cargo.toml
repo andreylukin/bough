@@ -20,6 +20,10 @@ path = "src/main.rs"
 bough-kernel = { workspace = true }
 bough-util = { workspace = true }
 bough-plugin-hello = { workspace = true }
+bough-plugin-ledger-sqlite = { workspace = true }
+bough-plugin-ledger-memory = { workspace = true }
+bough-plugin-projection-assembler = { workspace = true }
+bough-plugin-projection-probe = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -36,3 +40,11 @@ tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
 tempfile = "3"
 libc = { workspace = true }
+# Phase 1 integration gates: the swap/bench/invariant/calibration tests speak the ledger and
+# projection vocabularies directly, and the live calibration talks to Anthropic through bough-llm.
+bough-plugin-ledger = { workspace = true }
+bough-plugin-projection = { workspace = true }
+bough-llm = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+futures = { workspace = true }

@@ -23,3 +23,8 @@ uuid = { workspace = true }
 anyhow = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+serde_json = { workspace = true }
+chrono = { workspace = true }

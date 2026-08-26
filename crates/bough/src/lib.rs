@@ -9,6 +9,10 @@
 // dependency can be dropped. This `as _` import is the whole of the launcher's relationship with
 // every plugin crate — it never names a plugin type (§0.1 item 2).
 use bough_plugin_hello as _;
+use bough_plugin_ledger_memory as _;
+use bough_plugin_ledger_sqlite as _;
+use bough_plugin_projection_assembler as _;
+use bough_plugin_projection_probe as _;
 
 pub mod boot;
 pub mod cli;
