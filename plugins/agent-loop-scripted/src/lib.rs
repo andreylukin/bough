@@ -140,10 +140,38 @@ impl ScriptedDriver {
     /// inside the spawned task left a window in which the mail was durable, a wake was armed and
     /// `when_idle()` still resolved immediately — a caller could read the chain before the wake
     /// had appended anything.
-    async fn spawn_wake(self: &Arc<Self>, trigger: Option<bough_plugin_ledger::StepId>) {
+    /// Whether anything is queued for this agent: either queue of the live inbox, or delivered
+    /// ordinary mail the ledger shows unconsumed (the shape a restart leaves behind).
+    async fn has_queued_work(&self) -> bool {
+        if !self.cell.agent().inbox().is_empty() {
+            return true;
+        }
+        let Ok(steps) = self
+            .env
+            .ledger
+            .0
+            .steps(&bough_plugin_ledger::StepQuery {
+                trajs: vec![self.cell.agent().traj().clone()],
+                ..Default::default()
+            })
+            .await
+        else {
+            return false;
+        };
+        let consumed = bough_plugin_agent_loop::mail::consumed_union(&steps);
+        bough_plugin_agent_loop::mail::unconsumed(&steps, &consumed)
+            .iter()
+            .any(bough_plugin_agent_loop::mail::is_ordinary)
+    }
+
+    /// Returns the id of the wake it opened, or `None` when none was.
+    async fn spawn_wake(
+        self: &Arc<Self>,
+        trigger: Option<bough_plugin_ledger::StepId>,
+    ) -> Option<bough_plugin_ledger::WakeId> {
         use std::sync::atomic::Ordering;
         if self.stopping.load(Ordering::SeqCst) {
-            return;
+            return None;
         }
         if self.in_flight.fetch_add(1, Ordering::SeqCst) == 0
             && self
@@ -153,7 +181,7 @@ impl ScriptedDriver {
                 .is_err()
         {
             self.in_flight.fetch_sub(1, Ordering::SeqCst);
-            return;
+            return None;
         }
         let index = {
             let mut n = self.next_wake.lock();
@@ -162,6 +190,8 @@ impl ScriptedDriver {
             i
         };
         let me = self.clone();
+        let wake = bough_plugin_ledger::WakeId::new(uuid::Uuid::now_v7().to_string());
+        let opened = wake.clone();
         tokio::spawn(async move {
             // See `agent-loop`'s driver: the pending-wake flag goes down when the wake starts, and
             // for a concurrent second wake there is no status edge to do it.
@@ -169,7 +199,6 @@ impl ScriptedDriver {
             let _permit = me.wakes.clone().acquire_owned().await.ok();
             let agent = me.cell.agent().clone();
             let at = chrono::Utc::now();
-            let wake = bough_plugin_ledger::WakeId::new(uuid::Uuid::now_v7().to_string());
             // Claim both queues: a `steer` to an idle agent must not open a wake that claims
             // nothing (the same rule `agent-loop` follows).
             let mut claimed = Vec::new();
@@ -229,6 +258,7 @@ impl ScriptedDriver {
                 let _ = me.cell.set_status(bough_plugin_agents::Status::Idle).await;
             }
         });
+        Some(opened)
     }
 }
 
@@ -244,7 +274,25 @@ impl AgentDriver for ScriptedDriver {
         _kind: bough_plugin_agents::WakeKind,
         _cause: bough_plugin_agents::WakeCause,
     ) -> bough_plugin_agents::WakeRequest {
-        todo!("WP-1")
+        use bough_plugin_agents::WakeRequest;
+        let Some(me) = self.me.upgrade() else {
+            return WakeRequest::Nothing;
+        };
+        // TWO conditions, both necessary. §5's catch-up is over QUEUED MAIL, so an agent with
+        // nothing queued gets no wake from either Provider — the seam's contract cannot differ by
+        // driver or `residents` would behave differently under the test profile. And a wake with
+        // no transcript entry left would run off the end of the script, which is what strict mode
+        // exists to refuse.
+        if *me.next_wake.lock() >= me.env.script.wakes.len() {
+            return WakeRequest::Nothing;
+        }
+        if !me.has_queued_work().await {
+            return WakeRequest::Nothing;
+        }
+        match me.spawn_wake(None).await {
+            Some(wake) => WakeRequest::Started(wake),
+            None => WakeRequest::Nothing,
+        }
     }
 
     async fn notify(

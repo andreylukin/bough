@@ -258,6 +258,7 @@ dependencies = [
  "bough-plugin-agent-loop",
  "bough-plugin-agent-loop-scripted",
  "bough-plugin-agents",
+ "bough-plugin-commands",
  "bough-plugin-exec-headless",
  "bough-plugin-hello",
  "bough-plugin-ledger",
@@ -268,13 +269,20 @@ dependencies = [
  "bough-plugin-llm-replay",
  "bough-plugin-llm-retry",
  "bough-plugin-model-policy",
+ "bough-plugin-old-feed-adapter",
  "bough-plugin-projection",
  "bough-plugin-projection-assembler",
  "bough-plugin-projection-probe",
+ "bough-plugin-residents",
  "bough-plugin-tool-actions",
  "bough-plugin-tool-workers",
  "bough-plugin-tools",
  "bough-plugin-tools-baseline",
+ "bough-plugin-tui-focus",
+ "bough-plugin-tui-probe",
+ "bough-plugin-tui-search",
+ "bough-plugin-tui-shell",
+ "bough-plugin-tui-strip",
  "bough-plugin-worker-spawn",
  "bough-plugin-workers",
  "bough-util",
@@ -292,6 +300,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+ "tracing-appender",
  "tracing-subscriber",
 ]
 
@@ -417,6 +426,7 @@ dependencies = [
  "bough-plugin-ledger-memory",
  "bough-plugin-llm",
  "bough-plugin-projection",
+ "bough-plugin-projection-assembler",
  "bough-plugin-tools",
  "chrono",
  "futures",
@@ -429,6 +439,7 @@ dependencies = [
  "sha2",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]
@@ -461,10 +472,12 @@ dependencies = [
 name = "bough-plugin-commands"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bough-kernel",
  "bough-plugin-agents",
  "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
  "bough-util",
  "chrono",
  "futures",
@@ -680,6 +693,7 @@ dependencies = [
  "bough-plugin-ledger",
  "bough-plugin-ledger-memory",
  "bough-plugin-ledger-sqlite",
+ "bough-plugin-projection",
  "bough-plugin-projection-assembler",
  "bough-util",
  "chrono",
@@ -759,6 +773,7 @@ dependencies = [
 name = "bough-plugin-residents"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bough-kernel",
  "bough-plugin-agent-loop-scripted",
@@ -873,6 +888,7 @@ dependencies = [
  "bough-plugin-tui-shell",
  "bough-util",
  "chrono",
+ "crossterm",
  "futures",
  "inventory",
  "parking_lot",
@@ -881,6 +897,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -892,6 +909,7 @@ dependencies = [
  "bough-kernel",
  "bough-plugin-tui-shell",
  "bough-util",
+ "crossterm",
  "inventory",
  "parking_lot",
  "ratatui",
@@ -913,6 +931,7 @@ dependencies = [
  "similar 3.2.0",
  "syntect",
  "two-face",
+ "unicode-segmentation",
  "unicode-width",
 ]
 
@@ -922,17 +941,20 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bough-kernel",
+ "bough-plugin-agents",
  "bough-plugin-ledger",
  "bough-plugin-ledger-memory",
  "bough-plugin-tui-render",
  "bough-plugin-tui-shell",
  "bough-util",
  "chrono",
+ "crossterm",
  "inventory",
  "parking_lot",
  "ratatui",
  "schemars",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]
@@ -944,10 +966,12 @@ dependencies = [
  "anyhow",
  "arboard",
  "async-trait",
+ "base64",
  "bough-kernel",
  "bough-plugin-agents",
  "bough-plugin-commands",
  "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
  "bough-util",
  "chrono",
  "crossterm",
@@ -964,6 +988,7 @@ dependencies = [
  "tokio",
  "tracing",
  "unicode-width",
+ "uuid",
 ]
 
 [[package]]
@@ -1280,6 +1305,21 @@ name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
+name = "crossbeam-channel"
+version = "0.5.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d85363c37faeca707aef026efa9f3b34d077bce547e48f770770625c6013679e"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 
 [[package]]
 name = "crossterm"
@@ -3863,6 +3903,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
+name = "symlink"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
+
+[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4283,6 +4329,19 @@ dependencies = [
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",
+]
+
+[[package]]
+name = "tracing-appender"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "050686193eb999b4bb3bc2acfa891a13da00f79734704c4b8b4ef1a10b368a3c"
+dependencies = [
+ "crossbeam-channel",
+ "symlink",
+ "thiserror 2.0.19",
+ "time",
+ "tracing-subscriber",
 ]
 
 [[package]]

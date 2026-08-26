@@ -22,6 +22,7 @@ chrono = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+anyhow = { workspace = true }
 
 [dev-dependencies]
 bough-plugin-ledger-memory = { workspace = true }

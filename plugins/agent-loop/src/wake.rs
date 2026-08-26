@@ -41,7 +41,7 @@ use bough_plugin_llm::{
 };
 use bough_plugin_projection::{AssembleRequest, ProjectionHandle};
 use bough_plugin_tools::vocabulary::{ToolCallBody, ToolOutcomeKind, ToolResultBody};
-use bough_plugin_tools::{RenderIntent, ToolCall, ToolsHandle};
+use bough_plugin_tools::{ToolCall, ToolsHandle};
 use chrono::Utc;
 use futures::StreamExt;
 
@@ -629,7 +629,11 @@ async fn run_step(
                         call: id.clone(),
                         name: name.clone(),
                         args: input.clone(),
-                        render: RenderIntent::Generic,
+                        // §9: the SPEC's declared intent, not a fixed word. This is what a
+                        // surface renders the call with — a hardcoded `Generic` here made
+                        // `RenderIntent` dead weight and drew every bash call and every diff as
+                        // a key/value block.
+                        render: deps.tools.render_intent(agent.name(), &name),
                         step_index,
                     })
                     .map_err(|e| e.to_string())?,

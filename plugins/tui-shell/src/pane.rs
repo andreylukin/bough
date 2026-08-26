@@ -109,39 +109,97 @@ pub trait Pane: Send + Sync + 'static {
 }
 
 /// This frame's clickable regions, one map per frame.
+///
+/// A `Vec` and not a quadtree on purpose: a frame records tens of regions, the lookup happens once
+/// per click, and a later record must win on overlap — which a reverse linear scan gives for free.
 #[derive(Clone, Debug, Default)]
 pub struct HitMap {
-    _private: (),
+    regions: Vec<(Rect, HitId)>,
 }
 
 impl HitMap {
     /// An empty map.
     pub fn new() -> HitMap {
-        todo!("WP-2")
+        HitMap {
+            regions: Vec::new(),
+        }
     }
     /// Record a region. Later records win on overlap.
-    pub fn push(&mut self, _rect: Rect, _id: HitId) {
-        todo!("WP-2")
+    pub fn push(&mut self, rect: Rect, id: HitId) {
+        self.regions.push((rect, id));
     }
     /// The topmost region covering a cell.
-    pub fn at(&self, _col: u16, _row: u16) -> Option<HitId> {
-        todo!("WP-2")
+    pub fn at(&self, col: u16, row: u16) -> Option<HitId> {
+        self.regions
+            .iter()
+            .rev()
+            .find(|(r, _)| {
+                col >= r.x
+                    && col < r.x.saturating_add(r.width)
+                    && row >= r.y
+                    && row < r.y.saturating_add(r.height)
+            })
+            .map(|(_, id)| id.clone())
+    }
+    /// How many regions this frame recorded.
+    pub fn len(&self) -> usize {
+        self.regions.len()
+    }
+    /// Whether nothing was recorded.
+    pub fn is_empty(&self) -> bool {
+        self.regions.is_empty()
+    }
+}
+
+/// The drawing surface a pane is handed.
+///
+/// It stands in for `ratatui::Frame`, which cannot appear behind a `&'a mut Frame<'a>` in a struct:
+/// `Frame` is INVARIANT in its buffer lifetime, so that type is uninhabited from inside
+/// `Terminal::draw`. The methods a pane uses are the same ones (P3-D21, this document's §5).
+pub struct PaneFrame<'a> {
+    buf: &'a mut ratatui::buffer::Buffer,
+}
+
+impl<'a> PaneFrame<'a> {
+    /// Wrap the frame's buffer.
+    pub fn new(buf: &'a mut ratatui::buffer::Buffer) -> PaneFrame<'a> {
+        PaneFrame { buf }
+    }
+    /// The whole drawable area, not the pane's slot.
+    pub fn area(&self) -> Rect {
+        self.buf.area
+    }
+    /// Draw a widget into `area`.
+    pub fn render_widget<W: ratatui::widgets::Widget>(&mut self, widget: W, area: Rect) {
+        widget.render(area, self.buf);
+    }
+    /// Draw a stateful widget into `area`.
+    pub fn render_stateful_widget<W: ratatui::widgets::StatefulWidget>(
+        &mut self,
+        widget: W,
+        area: Rect,
+        state: &mut W::State,
+    ) {
+        widget.render(area, self.buf, state);
+    }
+    /// The buffer itself, for a pane that writes cells directly.
+    pub fn buffer_mut(&mut self) -> &mut ratatui::buffer::Buffer {
+        self.buf
     }
 }
 
 /// What a pane renders into.
 pub struct RenderCx<'a> {
-    pub frame: &'a mut ratatui::Frame<'a>,
+    pub frame: PaneFrame<'a>,
     pub area: Rect,
     pub view: &'a ShellView,
-    #[allow(dead_code)] // WP-2 fills `hit`, which is the only reader.
     pub(crate) hits: &'a mut HitMap,
 }
 
 impl RenderCx<'_> {
     /// Record a clickable region for THIS frame. Later records win on overlap.
-    pub fn hit(&mut self, _rect: Rect, _id: HitId) {
-        todo!("WP-2")
+    pub fn hit(&mut self, rect: Rect, id: HitId) {
+        self.hits.push(rect, id);
     }
 
     /// The active theme's named roles.
@@ -208,8 +266,215 @@ pub struct PaneCx {
     pub at: DateTime<Utc>,
 }
 
+// ---------------------------------------------------------------------------
+// Layout
+// ---------------------------------------------------------------------------
+
+/// The order panes lay out in: slot, then order, then id. Total and deterministic, so two rows in
+/// one slot cannot swap places between frames.
+pub fn sorted(panes: &[PaneInfo]) -> Vec<PaneInfo> {
+    let mut v = panes.to_vec();
+    v.sort_by(|a, b| {
+        a.slot
+            .cmp(&b.slot)
+            .then(a.order.cmp(&b.order))
+            .then(a.id.cmp(&b.id))
+    });
+    v
+}
+
+/// One pane's requested length along its slot's axis, against a total. `Fill` is resolved in the
+/// second pass and reports zero here.
+fn fixed_len(size: SlotSize, total: u16) -> u16 {
+    match size {
+        SlotSize::Cells(n) => n.min(total),
+        SlotSize::Percent(p) => ((total as u32 * p.min(100) as u32) / 100) as u16,
+        SlotSize::Fill(_) => 0,
+    }
+}
+
+/// Split `total` among `sizes`: fixed requests first, then what is left shared by `Fill` weight.
+/// A pane that would get zero cells still gets zero — the caller decides whether that is a bug;
+/// a SLOT with no panes at all is what takes no space, and that is decided before this runs.
+fn split(total: u16, sizes: &[SlotSize]) -> Vec<u16> {
+    let mut out: Vec<u16> = sizes.iter().map(|s| fixed_len(*s, total)).collect();
+    let fixed: u32 = out.iter().map(|n| *n as u32).sum();
+    let mut left = (total as u32).saturating_sub(fixed) as u16;
+    let weights: Vec<u16> = sizes
+        .iter()
+        .map(|s| match s {
+            SlotSize::Fill(w) => (*w).max(1),
+            _ => 0,
+        })
+        .collect();
+    let total_weight: u32 = weights.iter().map(|w| *w as u32).sum();
+    if let Some(total_weight) = std::num::NonZeroU32::new(total_weight) {
+        let total_weight = total_weight.get();
+        let mut given = 0u16;
+        let last = weights.iter().rposition(|w| *w > 0).unwrap();
+        for (i, w) in weights.iter().enumerate() {
+            if *w == 0 {
+                continue;
+            }
+            let share = if i == last {
+                left - given
+            } else {
+                ((left as u32 * *w as u32) / total_weight) as u16
+            };
+            out[i] = share;
+            given += share;
+        }
+        left = 0;
+    }
+    // Whatever is left over when nothing asked to fill goes to the last fixed pane, so a slot
+    // never renders a gap it did not ask for.
+    if left > 0 {
+        if let Some(last) = out.last_mut() {
+            *last += left;
+        }
+    }
+    out
+}
+
+/// Stack rectangles down `area`, one per length.
+fn stack_v(area: Rect, lens: &[u16]) -> Vec<Rect> {
+    let mut y = area.y;
+    let mut out = Vec::with_capacity(lens.len());
+    for len in lens {
+        let h = (*len).min(area.y + area.height - y.min(area.y + area.height));
+        out.push(Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: h,
+        });
+        y = y.saturating_add(h);
+    }
+    out
+}
+
 /// PURE: the slot rectangles, given the terminal and the live panes. A slot whose panes are all
 /// gone takes ZERO rows/columns, and that is what makes the SWAP gate's reflow observable.
-pub fn layout(_size: Rect, _panes: &[PaneInfo], _composer_height: u16) -> Vec<(PaneId, Rect)> {
-    todo!("WP-2")
+///
+/// Geometry: the composer takes `composer_height` rows off the bottom; `Status` takes its rows off
+/// what is left; `Strip` takes its columns off the left of the remainder; `Aux` takes its rows off
+/// the bottom of what remains; `Main` gets everything still standing.
+pub fn layout(size: Rect, panes: &[PaneInfo], composer_height: u16) -> Vec<(PaneId, Rect)> {
+    let ordered = sorted(panes);
+    let of = |slot: Slot| -> Vec<PaneInfo> {
+        ordered.iter().filter(|p| p.slot == slot).cloned().collect()
+    };
+    let mut out: Vec<(PaneId, Rect)> = Vec::new();
+
+    let mut rest = size;
+    // The composer.
+    let ch = composer_height.min(rest.height);
+    rest.height -= ch;
+
+    // Status: rows off the bottom of what is left.
+    let status = of(Slot::Status);
+    if !status.is_empty() {
+        let lens: Vec<u16> = status
+            .iter()
+            .map(|p| match p.size {
+                SlotSize::Fill(_) => 1,
+                other => fixed_len(other, rest.height).max(1),
+            })
+            .collect();
+        let total: u16 = lens.iter().sum::<u16>().min(rest.height);
+        let band = Rect {
+            x: rest.x,
+            y: rest.y + rest.height - total,
+            width: rest.width,
+            height: total,
+        };
+        rest.height -= total;
+        for (p, r) in status.iter().zip(stack_v(band, &lens)) {
+            out.push((p.id.clone(), r));
+        }
+    }
+
+    // Strip: columns off the left.
+    let strip = of(Slot::Strip);
+    if !strip.is_empty() {
+        let width = strip
+            .iter()
+            .map(|p| match p.size {
+                SlotSize::Fill(_) => rest.width / 5,
+                other => fixed_len(other, rest.width),
+            })
+            .max()
+            .unwrap_or(0)
+            .min(rest.width);
+        let column = Rect {
+            x: rest.x,
+            y: rest.y,
+            width,
+            height: rest.height,
+        };
+        rest.x += width;
+        rest.width -= width;
+        // Inside the rail, panes stack vertically and share the height.
+        // A rail pane's `size` names its WIDTH; its height is an equal share of the rail.
+        let heights = split(column.height, &vec![SlotSize::Fill(1); strip.len()]);
+        for (p, r) in strip.iter().zip(stack_v(column, &heights)) {
+            out.push((p.id.clone(), r));
+        }
+    }
+
+    // Aux: rows off the bottom of the remainder.
+    let aux = of(Slot::Aux);
+    if !aux.is_empty() {
+        let lens: Vec<u16> = aux
+            .iter()
+            .map(|p| match p.size {
+                SlotSize::Fill(_) => rest.height / 3,
+                other => fixed_len(other, rest.height),
+            })
+            .collect();
+        let total: u16 = lens.iter().sum::<u16>().min(rest.height);
+        let band = Rect {
+            x: rest.x,
+            y: rest.y + rest.height - total,
+            width: rest.width,
+            height: total,
+        };
+        rest.height -= total;
+        for (p, r) in aux.iter().zip(stack_v(band, &lens)) {
+            out.push((p.id.clone(), r));
+        }
+    }
+
+    // Main: everything still standing, shared by weight.
+    let main = of(Slot::Main);
+    if !main.is_empty() {
+        let heights = split(
+            rest.height,
+            &main.iter().map(|p| p.size).collect::<Vec<_>>(),
+        );
+        for (p, r) in main.iter().zip(stack_v(rest, &heights)) {
+            out.push((p.id.clone(), r));
+        }
+    }
+
+    // Back into (slot, order, id) order, so the caller renders in the order it registered against.
+    let rank: std::collections::HashMap<PaneId, usize> = ordered
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.id.clone(), i))
+        .collect();
+    out.sort_by_key(|(id, _)| rank[id]);
+    out
+}
+
+/// The composer's rectangle for a terminal of `size`. The one place the composer's geometry is
+/// decided, so `layout` and the draw loop cannot disagree about it.
+pub fn composer_rect(size: Rect, composer_height: u16) -> Rect {
+    let h = composer_height.min(size.height);
+    Rect {
+        x: size.x,
+        y: size.y + size.height - h,
+        width: size.width,
+        height: h,
+    }
 }

@@ -31,6 +31,16 @@ use bough_plugin_tools as _;
 use bough_plugin_tools_baseline as _;
 use bough_plugin_worker_spawn as _;
 use bough_plugin_workers as _;
+// Phase 3's rows (§17 Phase 3). `tui-probe` is a FIXTURE: linked into the catalog, named by no
+// bundle, mounted only by a test's or a script's own `--patch`.
+use bough_plugin_commands as _;
+use bough_plugin_old_feed_adapter as _;
+use bough_plugin_residents as _;
+use bough_plugin_tui_focus as _;
+use bough_plugin_tui_probe as _;
+use bough_plugin_tui_search as _;
+use bough_plugin_tui_shell as _;
+use bough_plugin_tui_strip as _;
 
 pub mod boot;
 pub mod cli;

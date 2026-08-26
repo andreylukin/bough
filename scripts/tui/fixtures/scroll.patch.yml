@@ -1,0 +1,29 @@
+# The transcript V3 (`03-scroll-and-copy.sh`) boots with, layered ON TOP of the suite's shared
+# replay patch. It exists because the shared transcript answers in ONE short sentence: a trajectory
+# that fits on screen has nothing to scroll, so every scroll bullet passed or failed vacuously.
+#
+# Each round answers with numbered lines, far more than the focus pane is tall at 120x40. The
+# numbers are what makes "the top line changed" and "the top line did NOT change while new steps
+# streamed" precise assertions rather than diffs of whitespace.
+entries:
+  llm.anthropic:
+    plugin: llm-replay
+    config:
+      strict: true
+      models: "*"
+      rounds:
+        - chunks:
+            - { type: text, text: "trajectory line 01\ntrajectory line 02\ntrajectory line 03\ntrajectory line 04\ntrajectory line 05\ntrajectory line 06\ntrajectory line 07\ntrajectory line 08\ntrajectory line 09\ntrajectory line 10\ntrajectory line 11\ntrajectory line 12\ntrajectory line 13\ntrajectory line 14\ntrajectory line 15\ntrajectory line 16\ntrajectory line 17\ntrajectory line 18\ntrajectory line 19\ntrajectory line 20\ntrajectory line 21\ntrajectory line 22\ntrajectory line 23\ntrajectory line 24\ntrajectory line 25\ntrajectory line 26\ntrajectory line 27\ntrajectory line 28\ntrajectory line 29\ntrajectory line 30\ntrajectory line 31\ntrajectory line 32\ntrajectory line 33\ntrajectory line 34\ntrajectory line 35\ntrajectory line 36\ntrajectory line 37\ntrajectory line 38\ntrajectory line 39\ntrajectory line 40\ntrajectory line 41\ntrajectory line 42\ntrajectory line 43\ntrajectory line 44\ntrajectory line 45\ntrajectory line 46\ntrajectory line 47\ntrajectory line 48\ntrajectory line 49\ntrajectory line 50\ntrajectory line 51\ntrajectory line 52\ntrajectory line 53\ntrajectory line 54\ntrajectory line 55\ntrajectory line 56\ntrajectory line 57\ntrajectory line 58\ntrajectory line 59\ntrajectory line 60" }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "second turn line 01\nsecond turn line 02\nsecond turn line 03\nsecond turn line 04\nsecond turn line 05\nsecond turn line 06\nsecond turn line 07\nsecond turn line 08\nsecond turn line 09\nsecond turn line 10\nsecond turn line 11\nsecond turn line 12\nsecond turn line 13\nsecond turn line 14\nsecond turn line 15\nsecond turn line 16\nsecond turn line 17\nsecond turn line 18\nsecond turn line 19\nsecond turn line 20" }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "second turn line 01\nsecond turn line 02\nsecond turn line 03\nsecond turn line 04\nsecond turn line 05\nsecond turn line 06\nsecond turn line 07\nsecond turn line 08\nsecond turn line 09\nsecond turn line 10\nsecond turn line 11\nsecond turn line 12\nsecond turn line 13\nsecond turn line 14\nsecond turn line 15\nsecond turn line 16\nsecond turn line 17\nsecond turn line 18\nsecond turn line 19\nsecond turn line 20" }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "second turn line 01\nsecond turn line 02\nsecond turn line 03\nsecond turn line 04\nsecond turn line 05\nsecond turn line 06\nsecond turn line 07\nsecond turn line 08\nsecond turn line 09\nsecond turn line 10\nsecond turn line 11\nsecond turn line 12\nsecond turn line 13\nsecond turn line 14\nsecond turn line 15\nsecond turn line 16\nsecond turn line 17\nsecond turn line 18\nsecond turn line 19\nsecond turn line 20" }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "second turn line 01\nsecond turn line 02\nsecond turn line 03\nsecond turn line 04\nsecond turn line 05\nsecond turn line 06\nsecond turn line 07\nsecond turn line 08\nsecond turn line 09\nsecond turn line 10\nsecond turn line 11\nsecond turn line 12\nsecond turn line 13\nsecond turn line 14\nsecond turn line 15\nsecond turn line 16\nsecond turn line 17\nsecond turn line 18\nsecond turn line 19\nsecond turn line 20" }
+            - { type: end, stop: end_turn }

@@ -15,7 +15,7 @@ use crate::error::AgentError;
 use crate::events::{AgentInbox, AgentStatusChanged, StatusChange};
 use crate::factory::AgentDriver;
 use crate::ids::{AgentId, SessionId};
-use crate::mail::{Delivery, Inbox, InboxReceipt, Message, Target};
+use crate::mail::{Delivery, Inbox, InboxReceipt, MailClass, Message, Target};
 use bough_plugin_llm::WakeKind;
 
 /// Whether the agent is inside a wake.
@@ -256,16 +256,74 @@ impl Agent {
     /// anything to process, and does nothing at all otherwise. Never appends a synthetic message:
     /// the driver already knows whether there is work, so asking it is one method — and it is the
     /// same method Phase 7's `sleep-listener` needs.
-    pub async fn request_wake(&self, _kind: WakeKind, _cause: WakeCause) -> WakeRequest {
-        todo!("WP-1: delegate to the driver's `wake_now`, or `Nothing` with no driver")
+    pub async fn request_wake(&self, kind: WakeKind, cause: WakeCause) -> WakeRequest {
+        // A disposed agent is terminal (§2): nothing may arm work on it, and asking a driver that
+        // is already stopping would be exactly that.
+        if self.is_disposed() {
+            return WakeRequest::Nothing;
+        }
+        match self.driver() {
+            // No driver yet is not an error and not a wake: the factory has not attached, so
+            // there is nothing that could run.
+            None => WakeRequest::Nothing,
+            Some(driver) => driver.wake_now(kind, cause).await,
+        }
     }
 
     /// DELIVERED mail (§3, §5): appends `mail/delivered` (EVIDENCE, cited) and then splices the
     /// message carrying that step's seq, so the pair can never be half-written by a producer
     /// (P3-D15). This is what Phase 6's collectors will use; the old-feed adapter is its first
     /// caller.
-    pub async fn deliver(&self, _mail: Delivery) -> Result<InboxReceipt, AgentError> {
-        todo!("WP-1: the mail/delivered step FIRST, then the splice carrying its seq")
+    pub async fn deliver(&self, mail: Delivery) -> Result<InboxReceipt, AgentError> {
+        if self.is_disposed() {
+            return Err(AgentError::Disposed {
+                name: self.0.name.clone(),
+            });
+        }
+        // ORDER IS THE POINT (P3-D15). The `mail/delivered` step goes first, because the splice
+        // has to CARRY its seq: §5's consumption is per (agent, mail seq), and a message spliced
+        // without one would never be consumable. The step is EVIDENCE, so a delivery that cannot
+        // say where it came from is refused by the ledger rather than by a rule written here.
+        let body = serde_json::to_value(bough_plugin_ledger::vocabulary::MailDelivered {
+            class: mail.class,
+            from: bough_plugin_ledger::Ref::new(mail.from.as_ref_str()),
+            subject: mail.subject.clone(),
+            summary: mail.summary.clone(),
+            refs: mail.refs.iter().cloned().collect(),
+        })
+        .expect("MailDelivered serializes");
+        let step = self
+            .0
+            .ledger
+            .0
+            .append(bough_plugin_ledger::Append {
+                traj: self.0.session.traj.clone(),
+                wake: crate::mail::outside_wake(),
+                kind: bough_plugin_ledger::StepType::new("mail/delivered"),
+                class: bough_plugin_ledger::Class::Evidence,
+                body,
+                cites: mail.cites.clone(),
+                at: mail.at,
+                id: None,
+            })
+            .await?;
+
+        let msg = Message {
+            id: crate::ids::MessageId::new(uuid::Uuid::now_v7().to_string()),
+            from: mail.from,
+            class: mail.class,
+            text: mail.text,
+            subject: mail.subject,
+            cites: mail.cites,
+            refs: mail.refs,
+            // The seq of the step appended a moment ago: the pair is what makes delivered mail
+            // consumable, and neither half is written without the other.
+            mail_seq: Some(step.seq),
+            at: mail.at,
+        };
+        // Wake-class mail is itself a wake reason (§5); ordinary delivered mail waits for a drain.
+        let wake = mail.class == MailClass::Wake;
+        self.send(msg, Target::NextWake, wake).await
     }
 
     /// Publish a status transition. `AgentCell::set_status` is the only caller.

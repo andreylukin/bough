@@ -228,8 +228,21 @@ pub trait Pane: Send + Sync + 'static {
     }
 }
 
+/// Stands in for `ratatui::Frame`, which cannot appear as `&'a mut Frame<'a>` in a struct:
+/// `Frame` is INVARIANT in its buffer lifetime, so that type is uninhabited from inside
+/// `Terminal::draw`. Same methods, one lifetime (P3-D21).
+pub struct PaneFrame<'a> { /* &'a mut Buffer */ }
+
+impl PaneFrame<'_> {
+    pub fn render_widget<W: Widget>(&mut self, widget: W, area: Rect);
+    pub fn render_stateful_widget<W: StatefulWidget>(&mut self, widget: W, area: Rect,
+                                                     state: &mut W::State);
+    pub fn buffer_mut(&mut self) -> &mut Buffer;
+    pub fn area(&self) -> Rect;
+}
+
 pub struct RenderCx<'a> {
-    pub frame: &'a mut ratatui::Frame<'a>,
+    pub frame: PaneFrame<'a>,
     pub area: ratatui::layout::Rect,
     pub view: &'a ShellView,
     hits: &'a mut HitMap,
@@ -1448,7 +1461,56 @@ package may mark Phase 3 done without that line, and no test in this document as
   minutes-scale integration suite, not a unit suite. `make gates` stays the fast hermetic gate
   (AGENTS.md), and `make tui-test` is the surface gate, run before every Phase-3 commit and named
   in `BUILD.md`.
+- **P3-D21 — `RenderCx` carries a `PaneFrame`, not `&'a mut ratatui::Frame<'a>`.** That type
+  cannot be constructed: `Frame<'a>` holds `&'a mut Buffer` and is therefore INVARIANT in `'a`,
+  while `Terminal::draw` hands the callback a `&'x mut Frame<'y>` with `'x` strictly shorter than
+  `'y`, and `Frame` has no public constructor. `PaneFrame<'a>` wraps the frame's buffer and
+  re-exposes the four methods a pane uses (`render_widget`, `render_stateful_widget`,
+  `buffer_mut`, `area`), so `cx.frame.render_widget(w, rect)` at a pane call site is unchanged and
+  `RenderCx<'_>` keeps its single lifetime. Found by WP-2 when the seam first compiled.
+
 - **P3-D20 — `llm-replay` gains a per-chunk `delay_ms`.** Without it a replayed answer arrives in
   one poll and "streams token by token" is unobservable offline, which would leave V1's first
   half provable only against a live model. The field defaults to 0, so every existing transcript
   and every Phase-2 test behaves exactly as before.
+
+- **P3-D23 — keyboard focus defaults to the `Slot::Main` pane, and PageUp/PageDown are routed past
+  the composer.** Two rules that the integration pass found were unreachable in the assembled
+  tree, not in any one work package.
+  The shell picked "the first focusable pane" when nothing held focus. Rows load in bundle order,
+  so `tui.strip` registered before `tui.focus` and the RAIL held the keyboard for the whole
+  session. `default_focus` now prefers `Slot::Main` and is re-derived on every registration until
+  something CHOOSES a pane (a click, Tab, a `FocusRequest`) — `focus_chosen`. Tested by
+  `tui-shell` `tests/layout.rs::{keyboard_focus_defaults_to_the_main_slot_however_the_rows_registered,
+  a_chosen_focus_survives_a_later_registration}`.
+  Even with the right pane focused, the composer holds the KEYBOARD for the whole session, so a
+  pane could never be paged. `run::on_key` now routes PageUp/PageDown to the focused pane before
+  the composer sees them. Up/Down/Home/End are deliberately NOT in that set: those move the
+  composer's own cursor, and a user reaches the trajectory's `End` by clicking it — which is the
+  click-to-focus the phase already owes. Tested by
+  `tui-shell` `tests/input.rs::page_keys_reach_the_focused_pane_while_the_composer_holds_the_keyboard`.
+
+- **P3-D24 — the focus pane's scroll clamps against RENDERED LINES, not rows.** `render` scrolls a
+  `Paragraph` by a line index; one row wraps to many lines and an expanded tool call to dozens.
+  Clamping the scroll maths against `rows.len()` made `max_top` zero for any trajectory whose few
+  steps still filled the screen, so every wheel and key scroll re-armed `Follow` and the viewport
+  never moved. `FocusState.lines` records what the last frame produced and is what `scrolled`
+  clamps against. Tested by
+  `tui-focus` `tests/scroll.rs::a_page_up_scrolls_when_few_rows_rendered_many_lines`, and at the
+  screen by `scripts/tui/03-scroll-and-copy.sh`.
+
+- **P3-D25 — V4's bad-query bullet is renamed, because no input can produce an FTS5 syntax
+  error.** `ledger-sqlite::match_expr` splits a query into alphanumeric runs and quotes each one
+  (P1-D19), so `"unbalanced` reaches FTS5 as `"unbalanced"` — a valid query with no hits. The
+  screen bullet is therefore `a_query_that_matches_nothing_clears_the_list`, which is what is
+  actually true and what actually matters (a stale hit list beside a fresh query would be a lie).
+  The `SearchState::apply(gen, Err(msg))` transition that renders `! <error>` inline stays covered
+  as a unit test in `plugins/tui-search/tests/search.rs`; nothing in this build claims the error
+  string is reachable through the pane.
+
+- **P3-D26 — a shell-use script that needs a fixture ROW gets a scratch `--root`, not a patch.** A
+  `--patch` layer can only modify a row some layer already created; naming a new id is reported as
+  "names row `x`, which no layer created" and then IGNORED, so a script that mounted `tui-probe`
+  or `tui-never` through `--patch` booted the ordinary tree and asserted nothing. `lib.sh`'s
+  `add_row` copies the shipped `profiles/` + `bundles/` into the script's scratch home, appends
+  the row to `bough-tui-app.yml`, and echoes the `--root` argument that boots it.

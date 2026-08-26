@@ -30,6 +30,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 bough-plugin-ledger-memory = { workspace = true }
+bough-plugin-projection = { workspace = true }
 bough-plugin-ledger-sqlite = { workspace = true }
 bough-plugin-projection-assembler = { workspace = true }
 tempfile = { workspace = true }

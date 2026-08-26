@@ -23,8 +23,11 @@ jsonschema = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
+anyhow = { workspace = true }
 futures = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+bough-plugin-ledger-memory = { workspace = true }
+parking_lot = { workspace = true }

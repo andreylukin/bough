@@ -18,6 +18,7 @@ inventory = { workspace = true }
 anyhow = { workspace = true }
 parking_lot = { workspace = true }
 tokio-util = { workspace = true }
+tokio = { workspace = true }                 # the per-chunk delay of P3-D20
 
 [dev-dependencies]
 tempfile = { workspace = true }

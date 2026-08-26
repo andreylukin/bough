@@ -226,6 +226,18 @@ impl ToolsHandle {
             .collect()
     }
 
+    /// The DECLARED render intent for a tool (§9), which is what a surface draws its call with.
+    ///
+    /// A name the agent cannot see answers `Generic`: the intent is presentation, so an unknown
+    /// tool must degrade to the neutral shape rather than fail a wake that is otherwise fine.
+    pub fn render_intent(&self, agent: &AgentName, name: &ToolName) -> RenderIntent {
+        self.visible_specs(agent)
+            .into_iter()
+            .find(|s| &s.name == name)
+            .map(|s| s.render)
+            .unwrap_or(RenderIntent::Generic)
+    }
+
     /// A filtered-away tool answers `NotFound`, indistinguishably from a nonexistent one (§9).
     pub fn resolve(&self, agent: &AgentName, name: &ToolName) -> Result<Arc<dyn Tool>, ToolsError> {
         self.visible_specs(agent)

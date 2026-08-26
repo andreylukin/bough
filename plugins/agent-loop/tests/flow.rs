@@ -418,3 +418,157 @@ async fn durable_tool_results_stay_model_ordered_in_the_ledger() {
         kinds_of(&steps)
     );
 }
+
+/// §2 / §2.5: the ambient INITIATOR is set for the whole wake — every waterfall the wake
+/// dispatches inline sees it, the `llm/stream` tee among them. Without it a listener watching a
+/// stream has no way to name the agent whose work it is watching (which is exactly what the focus
+/// pane needs).
+#[tokio::test]
+async fn the_initiator_is_set_for_the_whole_wake_including_the_llm_stream_waterfall() {
+    let f = Fixture::mounted().await;
+    let seen_at_stream: Arc<Mutex<Vec<Option<bough_plugin_agents::AgentId>>>> = Default::default();
+    let seen_at_pre_step: Arc<Mutex<Vec<Option<bough_plugin_agents::AgentId>>>> =
+        Default::default();
+
+    {
+        let seen = seen_at_stream.clone();
+        f.ctx
+            .on_waterfall::<bough_plugin_llm::LlmStreamEvent, _, _>(move |call, next| {
+                let seen = seen.clone();
+                async move {
+                    // Read it BEFORE delegating: the tee runs inline in the dispatching task, so
+                    // the task-local is visible here or nowhere.
+                    seen.lock().push(bough_plugin_agents::initiator::current());
+                    next.run(call).await
+                }
+            })
+            .await
+            .expect("the tee registers");
+    }
+    {
+        let seen = seen_at_pre_step.clone();
+        f.ctx
+            .on_waterfall::<AgentPreStep, _, _>(move |pre, next| {
+                let seen = seen.clone();
+                async move {
+                    seen.lock().push(bough_plugin_agents::initiator::current());
+                    next.run(pre).await
+                }
+            })
+            .await
+            .expect("the listener registers");
+    }
+
+    assert_eq!(
+        bough_plugin_agents::initiator::current(),
+        None,
+        "outside a wake there is no initiator"
+    );
+
+    let (agent, _d) = f.agent("sol").await;
+    agent.followup(andrey("hello")).await.expect("mail lands");
+    f.wait_for_wake_ends(1).await;
+
+    let want = Some(agent.id().clone());
+    assert_eq!(
+        *seen_at_pre_step.lock(),
+        vec![want.clone()],
+        "the wake's first waterfall already runs under the initiator"
+    );
+    let streams = seen_at_stream.lock().clone();
+    assert!(!streams.is_empty(), "the wake made a model call");
+    assert!(
+        streams.iter().all(|s| *s == want),
+        "the llm/stream waterfall runs under the same initiator: {streams:?}"
+    );
+    assert_eq!(
+        bough_plugin_agents::initiator::current(),
+        None,
+        "and it does not leak out of the wake"
+    );
+}
+
+/// §2.5 / P3-D16 on the LIVE driver: nothing queued is nothing to do.
+#[tokio::test]
+async fn request_wake_with_nothing_queued_starts_no_wake() {
+    let f = Fixture::mounted().await;
+    let (agent, _d) = f.agent("sol").await;
+    let before = f.kinds().await;
+
+    let req = agent
+        .request_wake(
+            bough_plugin_llm::WakeKind::Catchup,
+            bough_plugin_agents::WakeCause::CatchUp,
+        )
+        .await;
+
+    assert_eq!(req, bough_plugin_agents::WakeRequest::Nothing);
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    assert_eq!(
+        f.kinds().await,
+        before,
+        "no wake/start, and no synthetic message"
+    );
+    assert_eq!(agent.status(), Status::Idle);
+}
+
+/// §2.5 / P3-D16 on the LIVE driver: queued mail gets exactly ONE catch-up wake, whose durable
+/// urgency says what it was.
+#[tokio::test]
+async fn request_wake_with_queued_mail_starts_exactly_one() {
+    let f = Fixture::mounted().await;
+    let (agent, _d) = f.agent("sol").await;
+    // The catch-up SHAPE: ordinary mail is delivered and unconsumed in the ledger, and no
+    // notification ever reached this driver — which is exactly the state a restart leaves behind.
+    // Seeding the step directly is what lets the test own that boundary (P3-D14).
+    f.ledger
+        .0
+        .append(bough_plugin_ledger::Append {
+            traj: agent.traj().clone(),
+            wake: bough_plugin_ledger::WakeId::new("wake:outside"),
+            kind: bough_plugin_ledger::StepType::new("mail/delivered"),
+            class: bough_plugin_ledger::Class::Evidence,
+            body: serde_json::json!({
+                "class": "ordinary",
+                "from": "collector:github",
+                "subject": "CI is red",
+                "summary": "the delegate test failed again",
+            }),
+            cites: vec![bough_plugin_ledger::Cite {
+                r#ref: bough_plugin_ledger::Ref::new("gh:bough/bough#12"),
+                url: None,
+            }],
+            at: now(),
+            id: None,
+        })
+        .await
+        .expect("the seed appends");
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    assert!(
+        !f.kinds().await.iter().any(|k| k == "wake/start"),
+        "mail that never reached the driver starts nothing by itself"
+    );
+
+    let req = agent
+        .request_wake(
+            bough_plugin_llm::WakeKind::Catchup,
+            bough_plugin_agents::WakeCause::CatchUp,
+        )
+        .await;
+    let wake = match req {
+        bough_plugin_agents::WakeRequest::Started(w) => w,
+        bough_plugin_agents::WakeRequest::Nothing => panic!("queued mail is something to do"),
+    };
+
+    let steps = f.wait_for_wake_ends(1).await;
+    let starts: Vec<_> = steps
+        .iter()
+        .filter(|s| s.kind.as_str() == "wake/start")
+        .collect();
+    assert_eq!(starts.len(), 1, "exactly one wake, not two");
+    assert_eq!(starts[0].wake, wake, "and it is the wake that was reported");
+    assert_eq!(
+        starts[0].body["urgency"], "catchup",
+        "the durable urgency says it was a catch-up (§5)"
+    );
+}

@@ -18,6 +18,8 @@ bough-plugin-tools = { workspace = true }
 bough-plugin-tui-shell = { workspace = true }
 bough-plugin-tui-render = { workspace = true }
 ratatui = { workspace = true }
+# The keymap: `PaneEvent::Key` carries a crossterm `KeyEvent` (§2.1).
+crossterm = { workspace = true }
 async-trait = { workspace = true }
 inventory = { workspace = true }
 serde = { workspace = true }
@@ -30,4 +32,6 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+# The tee tests build a real `StreamCall`, which carries a cancellation token.
+tokio-util = { workspace = true }
 bough-plugin-ledger-memory = { workspace = true }

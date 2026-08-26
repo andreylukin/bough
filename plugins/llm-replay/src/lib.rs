@@ -91,31 +91,52 @@ impl ReplayAdapter {
     ///
     /// Pure but for the cursor, so the strict-mode refusal is testable without a runtime.
     pub fn answer(&self, req: &LlmRequest) -> Vec<Chunk> {
+        self.answer_timed(req).into_iter().map(|(c, _)| c).collect()
+    }
+
+    /// [`ReplayAdapter::answer`] with each chunk's delay (P3-D20). The delay is the round's own
+    /// `delay_ms` when it names one, and the row's `delay_ms` otherwise, so a whole transcript can
+    /// be slowed from one config line without editing a fixture.
+    pub fn answer_timed(&self, req: &LlmRequest) -> Vec<(Chunk, u64)> {
+        let fallback = self.cfg.delay_ms;
         let mut cursor = self.cursor.lock();
         match self.transcript.select(*cursor, req) {
             Some((index, round)) => {
                 *cursor = index + 1;
-                round.chunks.iter().map(RecordedChunk::to_chunk).collect()
+                round
+                    .chunks
+                    .iter()
+                    .map(|c| {
+                        let d = c.delay_ms();
+                        (c.to_chunk(), if d == 0 { fallback } else { d })
+                    })
+                    .collect()
             }
-            None if self.cfg.strict => vec![Chunk::Failed(LlmFailure {
-                kind: FailureKind::BadRequest,
-                // Names the request, because "the transcript ran out" and "no round matches this
-                // message" are different bugs and the message must say which.
-                message: format!(
-                    "llm-replay: no unconsumed round matches this request (model `{}`, \
+            None if self.cfg.strict => vec![(
+                Chunk::Failed(LlmFailure {
+                    kind: FailureKind::BadRequest,
+                    // Names the request, because "the transcript ran out" and "no round matches this
+                    // message" are different bugs and the message must say which.
+                    message: format!(
+                        "llm-replay: no unconsumed round matches this request (model `{}`, \
                      {} round(s) in the transcript, {} consumed)",
-                    req.model,
-                    self.transcript.rounds.len(),
-                    *cursor
-                ),
-                retryable: false,
-                status: None,
-                adapter: AdapterName::new(PLUGIN_NAME),
-            })],
+                        req.model,
+                        self.transcript.rounds.len(),
+                        *cursor
+                    ),
+                    retryable: false,
+                    status: None,
+                    adapter: AdapterName::new(PLUGIN_NAME),
+                }),
+                0,
+            )],
             // Lenient mode: an empty turn, terminated honestly.
-            None => vec![Chunk::End {
-                stop: bough_plugin_llm::StopReason::EndTurn,
-            }],
+            None => vec![(
+                Chunk::End {
+                    stop: bough_plugin_llm::StopReason::EndTurn,
+                },
+                0,
+            )],
         }
     }
 }
@@ -138,15 +159,28 @@ impl LlmAdapter for ReplayAdapter {
                 })
             }));
         }
-        let mut chunks = self.answer(&req);
+        let mut chunks = self.answer_timed(&req);
         // A recorded round with no terminal chunk would violate the seam's invariant; the
         // transcript is data, so the adapter closes it rather than trusting the file.
-        if !chunks.last().map(Chunk::is_terminal).unwrap_or(false) {
-            chunks.push(Chunk::End {
-                stop: bough_plugin_llm::StopReason::EndTurn,
-            });
+        if !chunks.last().map(|(c, _)| c.is_terminal()).unwrap_or(false) {
+            chunks.push((
+                Chunk::End {
+                    stop: bough_plugin_llm::StopReason::EndTurn,
+                },
+                0,
+            ));
         }
-        Box::pin(futures::stream::iter(chunks))
+        // Every delay is 0 unless a transcript or the row asked for one, and then this is
+        // ordinary `stream::iter` with a sleep in front of each item: the answer ARRIVES rather
+        // than lands (P3-D20), which is what makes streaming observable offline.
+        let queue = std::collections::VecDeque::from(chunks);
+        Box::pin(futures::stream::unfold(queue, |mut queue| async move {
+            let (chunk, delay) = queue.pop_front()?;
+            if delay > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
+            Some((chunk, queue))
+        }))
     }
 }
 

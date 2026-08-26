@@ -12,10 +12,12 @@ repository.workspace = true
 [dependencies]
 bough-kernel = { workspace = true }
 bough-util = { workspace = true }
+bough-plugin-agents = { workspace = true }
 bough-plugin-ledger = { workspace = true }
 bough-plugin-tui-shell = { workspace = true }
 bough-plugin-tui-render = { workspace = true }
 ratatui = { workspace = true }
+crossterm = { workspace = true }
 async-trait = { workspace = true }
 inventory = { workspace = true }
 serde = { workspace = true }
@@ -27,3 +29,6 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 bough-plugin-ledger-memory = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+schemars = { workspace = true }

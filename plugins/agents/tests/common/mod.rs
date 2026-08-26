@@ -103,6 +103,7 @@ impl AgentFactory for RecordingFactory {
             cell,
             mode,
             calls: Mutex::new(Vec::new()),
+            wakes: Mutex::new(Vec::new()),
         });
         self.attached.lock().push(driver.clone());
         Ok(driver as Arc<dyn AgentDriver>)
@@ -113,6 +114,8 @@ pub struct RecordingDriver {
     pub cell: AgentCell,
     pub mode: Attach,
     pub calls: Mutex<Vec<DriverCall>>,
+    /// Every wake `wake_now` opened, so "exactly one" is countable.
+    pub wakes: Mutex<Vec<bough_plugin_ledger::WakeId>>,
 }
 
 impl RecordingDriver {
@@ -154,13 +157,21 @@ impl AgentDriver for RecordingDriver {
     fn driver(&self) -> &'static str {
         "recording-loop"
     }
+    /// The documented rule (§2.5), implemented the way a driver must: nothing queued is NOTHING —
+    /// no wake, no synthetic message — and anything queued is exactly one wake.
     async fn wake_now(
         &self,
         _kind: bough_plugin_agents::WakeKind,
         _cause: bough_plugin_agents::WakeCause,
     ) -> bough_plugin_agents::WakeRequest {
         self.calls.lock().push(DriverCall::WakeNow);
-        bough_plugin_agents::WakeRequest::Nothing
+        if self.cell.agent().inbox().is_empty() {
+            return bough_plugin_agents::WakeRequest::Nothing;
+        }
+        let wake = bough_plugin_ledger::WakeId::new(uuid::Uuid::now_v7().to_string());
+        self.cell.wake_started();
+        self.wakes.lock().push(wake.clone());
+        bough_plugin_agents::WakeRequest::Started(wake)
     }
     async fn notify(&self, receipt: &InboxReceipt, _msg: &Message) {
         self.calls

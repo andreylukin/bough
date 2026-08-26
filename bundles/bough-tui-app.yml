@@ -1,3 +1,63 @@
-# bundles/bough-tui-app.yml — the terminal surface. Empty in Phase 0; the TUI rows arrive at
-# Phase 3 (§17).
-[]
+# bundles/bough-tui-app.yml — the terminal surface (§11, §17 Phase 3), stacked on `bough-base`.
+#
+# Reading order is the seam order of the phase plan: the human-command Definition, the shell that
+# owns the terminal, the three panes that register into its slots, then the two rows that are NOT
+# terminal features at all — §5's catch-up at launch and §14's throwaway old-feed bridge, both of
+# which work headless and live here only because this is the profile that boots them.
+#
+# `tui-probe`/`tui-never`, `llm-replay` and `agent-loop-scripted` are in the binary's catalog and
+# in NO bundle (the `projection-probe` precedent): the tests' and `scripts/tui/`'s own `--patch`
+# mounts them.
+- id: commands
+  plugin: commands
+  config: { prefix: "/", suggestions: true }
+
+- id: tui
+  plugin: tui-shell
+  config:
+    backend: auto
+    size: [120, 40]
+    frame_ms: 16
+    tick_ms: 250
+    theme: dark
+    mouse: true
+    osc52: true
+    clipboard: true
+    composer_max_lines: 6
+
+- id: tui.strip
+  plugin: tui-strip
+  config: { width: 34, show_about: true, about_lines: 2, refresh_ms: 1000 }
+
+- id: tui.focus
+  plugin: tui-focus
+  config:
+    max_rows: 2000
+    max_tool_lines: 200
+    page_lines: 20
+    expand_new_tools: false
+    show_reasoning: true
+
+- id: tui.search
+  plugin: tui-search
+  config: { height: 12, limit: 50, debounce_ms: 150 }
+
+- id: residents
+  plugin: residents
+  config:
+    bootstrap: [sol]
+    traj_prefix: "lane/"
+    resume_all: true
+    catch_up: true
+
+- id: old-feed
+  plugin: old-feed-adapter
+  config:
+    jungler_db: !!expr 'home_path(".jungler/jungler.db")'
+    bough_db:   !!expr 'home_path(".bough/bough.db")'
+    state_db:   !!expr 'bough_path("old-feed.db")'
+    poll_ms: 30000
+    batch: 200
+    deliver_to: sol
+    priming_limit: 40
+    tier1: true

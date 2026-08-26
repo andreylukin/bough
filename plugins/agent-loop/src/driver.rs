@@ -166,13 +166,15 @@ impl LoopDriver {
 
     /// Start one wake on its own task. The driver returns immediately: §5's latency promise is
     /// that an answer wake starts NOW, concurrently with whatever it interrupted.
+    /// Returns the id of the wake it opened, or `None` when the driver is stopping and no wake
+    /// was opened. `wake_now` is the caller that needs the answer (§2.5's `WakeRequest`).
     fn spawn_wake(
         self: &Arc<Self>,
         kind: WakeKind,
         trigger: Option<bough_plugin_agents::MessageId>,
-    ) {
+    ) -> Option<WakeId> {
         if self.stopping.load(Ordering::SeqCst) {
-            return;
+            return None;
         }
         let wake = self.mint_wake();
         let streamed = Arc::new(AtomicBool::new(false));
@@ -190,6 +192,7 @@ impl LoopDriver {
             st.interrupts.insert(wake.clone(), interrupt.clone());
             st.resume_from.take()
         };
+        let opened = wake.clone();
         let spec = WakeSpec {
             wake,
             kind,
@@ -226,7 +229,15 @@ impl LoopDriver {
             } else {
                 me.cell.wake_started();
             }
-            let out = crate::wake::run_wake(&me.cell, spec.clone(), &me.deps).await;
+            // §2's ambient initiator, set for the WHOLE wake — the tool pipeline, the journal
+            // rows and every waterfall the wake dispatches inline (the `llm/stream` tee among
+            // them) run inside this scope, which is the only way a listener can name the agent
+            // whose work it is watching.
+            let out = bough_plugin_agents::initiator::with(
+                me.cell.agent().id().clone(),
+                crate::wake::run_wake(&me.cell, spec.clone(), &me.deps),
+            )
+            .await;
             with_live(me.fiber(), |l| {
                 l.open.remove(spec.wake.as_str());
             });
@@ -252,6 +263,7 @@ impl LoopDriver {
             }
             out
         });
+        Some(opened)
     }
 
     /// §5's standing invariant, checked after every wake and repaired rather than reported: if
@@ -278,6 +290,29 @@ impl LoopDriver {
         if ordinary > 0 && !self.drain.in_flight() {
             self.arm_drain();
         }
+    }
+
+    /// Whether delivered ordinary mail is still unconsumed. The same fold `enforce_standing_
+    /// invariant` runs; a read failure answers "nothing", because a catch-up wake opened on a
+    /// failed read would be a wake over nothing.
+    async fn has_unconsumed_ordinary_mail(&self) -> bool {
+        let traj = self.cell.agent().traj().clone();
+        let Ok(steps) = self
+            .deps
+            .ledger
+            .0
+            .steps(&bough_plugin_ledger::StepQuery {
+                trajs: vec![traj],
+                ..Default::default()
+            })
+            .await
+        else {
+            return false;
+        };
+        let consumed = crate::mail::consumed_union(&steps);
+        crate::mail::unconsumed(&steps, &consumed)
+            .iter()
+            .any(crate::mail::is_ordinary)
     }
 
     /// Start the wake §5 owes any queued wake-class mail once the agent is free again.
@@ -360,7 +395,12 @@ impl LoopDriver {
         let me = self.clone();
         let agent = self.cell.agent().clone();
         tokio::spawn(async move {
-            if let Some(id) = me.jot_for(&wake, kind).await {
+            // The grace jot is a real model step belonging to the interrupted wake, so it runs
+            // under the same ambient initiator the wake did (§2).
+            let jot =
+                bough_plugin_agents::initiator::with(agent.id().clone(), me.jot_for(&wake, kind))
+                    .await;
+            if let Some(id) = jot {
                 me.state.lock().resume_from = Some(id);
             }
             me.deps
@@ -405,10 +445,34 @@ impl AgentDriver for LoopDriver {
     /// ordinary mail exists; otherwise ONE wake with the oldest queued item as trigger.
     async fn wake_now(
         &self,
-        _kind: bough_plugin_agents::WakeKind,
+        kind: bough_plugin_agents::WakeKind,
         _cause: bough_plugin_agents::WakeCause,
     ) -> bough_plugin_agents::WakeRequest {
-        todo!("WP-1")
+        use bough_plugin_agents::WakeRequest;
+        let Some(me) = self.self_arc() else {
+            return WakeRequest::Nothing;
+        };
+        if me.stopping.load(Ordering::SeqCst) {
+            return WakeRequest::Nothing;
+        }
+        // The oldest queued item is the trigger: catch-up is a wake OVER queued mail, and the
+        // thing that has waited longest is what it is about.
+        let trigger = me
+            .cell
+            .agent()
+            .inbox()
+            .pending(Target::NextWake)
+            .first()
+            .map(|m| m.id.clone());
+        if trigger.is_none() && !me.has_unconsumed_ordinary_mail().await {
+            // NOTHING AT ALL: no synthetic message, no empty wake, no ledger row. §5's catch-up
+            // is over queued mail, and an agent with nothing queued has nothing to catch up on.
+            return WakeRequest::Nothing;
+        }
+        match me.spawn_wake(kind, trigger) {
+            Some(wake) => WakeRequest::Started(wake),
+            None => WakeRequest::Nothing,
+        }
     }
 
     /// IMMEDIATE for an Andrey message or wake-class mail; a debounced drain otherwise, with one
@@ -457,7 +521,9 @@ impl AgentDriver for LoopDriver {
             return;
         }
         match crate::mail::schedule_for(msg, receipt.target, receipt.wake, me.drain.in_flight()) {
-            Schedule::Now { kind, trigger } => me.spawn_wake(kind, Some(trigger)),
+            Schedule::Now { kind, trigger } => {
+                me.spawn_wake(kind, Some(trigger));
+            }
             Schedule::Debounce => me.arm_drain(),
             Schedule::Wait => {}
         }

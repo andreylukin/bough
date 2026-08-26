@@ -25,21 +25,33 @@ pub struct Round {
 pub enum RecordedChunk {
     Text {
         text: String,
+        /// Milliseconds to wait BEFORE yielding this chunk (P3-D20). `0` — the default, and what
+        /// every existing transcript says — is exactly the Phase-2 behaviour.
+        #[serde(default)]
+        delay_ms: u64,
     },
     Reasoning {
         text: String,
+        #[serde(default)]
+        delay_ms: u64,
     },
     ToolCall {
         id: String,
         name: String,
         input: serde_json::Value,
+        #[serde(default)]
+        delay_ms: u64,
     },
     End {
         stop: String,
+        #[serde(default)]
+        delay_ms: u64,
     },
     Failed {
         kind: String,
         message: String,
+        #[serde(default)]
+        delay_ms: u64,
     },
 }
 
@@ -48,17 +60,19 @@ impl RecordedChunk {
     /// default rather than a panic — a transcript is data, and bad data must not take the process.
     pub fn to_chunk(&self) -> Chunk {
         match self {
-            RecordedChunk::Text { text } => Chunk::TextDelta { text: text.clone() },
-            RecordedChunk::Reasoning { text } => Chunk::ReasoningDelta {
+            RecordedChunk::Text { text, .. } => Chunk::TextDelta { text: text.clone() },
+            RecordedChunk::Reasoning { text, .. } => Chunk::ReasoningDelta {
                 text: text.clone(),
                 meta: None,
             },
-            RecordedChunk::ToolCall { id, name, input } => Chunk::ToolCall {
+            RecordedChunk::ToolCall {
+                id, name, input, ..
+            } => Chunk::ToolCall {
                 id: ToolCallId::new(id),
                 name: ToolName::new(name),
                 input: input.clone(),
             },
-            RecordedChunk::End { stop } => Chunk::End {
+            RecordedChunk::End { stop, .. } => Chunk::End {
                 stop: match stop.as_str() {
                     "tool_use" => StopReason::ToolUse,
                     "max_tokens" => StopReason::MaxTokens,
@@ -66,7 +80,7 @@ impl RecordedChunk {
                     _ => StopReason::EndTurn,
                 },
             },
-            RecordedChunk::Failed { kind, message } => Chunk::Failed(LlmFailure {
+            RecordedChunk::Failed { kind, message, .. } => Chunk::Failed(LlmFailure {
                 kind: parse_kind(kind),
                 message: message.clone(),
                 retryable: matches!(
@@ -76,6 +90,19 @@ impl RecordedChunk {
                 status: None,
                 adapter: AdapterName::new(crate::PLUGIN_NAME),
             }),
+        }
+    }
+}
+
+impl RecordedChunk {
+    /// How long to wait before this chunk is yielded. `0` unless the transcript says otherwise.
+    pub fn delay_ms(&self) -> u64 {
+        match self {
+            RecordedChunk::Text { delay_ms, .. }
+            | RecordedChunk::Reasoning { delay_ms, .. }
+            | RecordedChunk::ToolCall { delay_ms, .. }
+            | RecordedChunk::End { delay_ms, .. }
+            | RecordedChunk::Failed { delay_ms, .. } => *delay_ms,
         }
     }
 }
@@ -222,10 +249,21 @@ rounds:
     }
 
     #[test]
+    fn a_chunk_delay_defaults_to_zero_and_is_read_when_given() {
+        let t = Transcript::parse(
+            "- chunks: [{ type: text, text: hi, delay_ms: 25 }, { type: end, stop: end_turn }]",
+        )
+        .expect("parses");
+        assert_eq!(t.rounds[0].chunks[0].delay_ms(), 25);
+        assert_eq!(t.rounds[0].chunks[1].delay_ms(), 0, "the default is 0");
+    }
+
+    #[test]
     fn every_recorded_spelling_maps_to_a_chunk() {
         assert!(matches!(
             RecordedChunk::End {
-                stop: "tool_use".into()
+                stop: "tool_use".into(),
+                delay_ms: 0
             }
             .to_chunk(),
             Chunk::End {
@@ -235,7 +273,8 @@ rounds:
         // An unknown word does not panic.
         assert!(matches!(
             RecordedChunk::End {
-                stop: "who knows".into()
+                stop: "who knows".into(),
+                delay_ms: 0
             }
             .to_chunk(),
             Chunk::End {

@@ -69,9 +69,13 @@ pub async fn boot(mut cli: Cli) -> Result<ExitCode, BootError> {
 
     let snapshot = kernel.snapshot();
     if !quiesced || assert_all_activated(&snapshot).is_err() {
-        eprint!("{}", describe_unresolved(&snapshot));
-        // Teardown BEFORE exit, always (§0.1 item 2).
+        // Teardown FIRST, then the report (§0.1 item 2, P3-D3's neighbour). A Phase-3 surface row
+        // owns the alt screen, so a report printed before `shutdown()` is written INTO the alt
+        // screen and then wiped by the restore — the failure would be invisible on the very path
+        // that most needs to be readable. Shutting down first leaves the normal screen, raw mode
+        // off and the cursor back, and the report lands where Andrey can read it (V8).
         kernel.shutdown().await;
+        eprint!("{}", describe_unresolved(&snapshot));
         return Ok(ExitCode::FAILURE);
     }
 

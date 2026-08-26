@@ -175,3 +175,69 @@ async fn an_unreadable_transcript_is_refused_not_silently_empty() {
     .expect_err("a missing transcript must fail loud (§0.2)");
     assert!(err.contains("cannot read transcript"), "{err}");
 }
+
+/// P3-D20 / V1: a delayed round ARRIVES rather than lands. The first chunk is on the stream
+/// while the rest of the answer is still to come — which is what makes "it streams" assertable
+/// offline, with no live model.
+#[tokio::test]
+async fn a_delayed_round_yields_its_chunks_over_time() {
+    const DELAYED: &str = r#"
+rounds:
+  - chunks:
+      - { type: text, text: "first " }
+      - { type: text, text: "second", delay_ms: 120 }
+      - { type: end, stop: end_turn }
+"#;
+    let adapter = ReplayAdapter::new(
+        cfg(true),
+        Transcript::parse(DELAYED).expect("the transcript parses"),
+    );
+    let started = std::time::Instant::now();
+    let mut stream = adapter
+        .start(req("anything"), CancellationToken::new())
+        .await;
+
+    let first = stream.next().await.expect("a first chunk");
+    assert!(
+        matches!(&first, Chunk::TextDelta { text } if text == "first "),
+        "the head of the answer is on the stream first"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(100),
+        "the first chunk did not wait for the rest of the answer"
+    );
+
+    let rest: Vec<Chunk> = stream.collect().await;
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(110),
+        "the delayed chunk really waited: {:?}",
+        started.elapsed()
+    );
+    assert!(
+        matches!(&rest[0], Chunk::TextDelta { text } if text == "second"),
+        "and then the tail arrived"
+    );
+    assert!(matches!(
+        rest.last(),
+        Some(Chunk::End {
+            stop: StopReason::EndTurn
+        })
+    ));
+}
+
+/// The default is 0, so every Phase-2 transcript behaves exactly as it did.
+#[tokio::test]
+async fn an_undelayed_round_still_lands_at_once() {
+    let adapter = ReplayAdapter::new(
+        cfg(true),
+        Transcript::parse(TRANSCRIPT).expect("the transcript parses"),
+    );
+    let started = std::time::Instant::now();
+    let chunks: Vec<Chunk> = adapter
+        .start(req("plan"), CancellationToken::new())
+        .await
+        .collect()
+        .await;
+    assert_eq!(chunks.len(), 4);
+    assert!(started.elapsed() < std::time::Duration::from_millis(50));
+}

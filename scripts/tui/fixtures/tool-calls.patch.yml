@@ -1,0 +1,46 @@
+# The transcript V2 (`02-tool-calls.sh`) boots with, layered ON TOP of the suite's shared replay
+# patch. It exists as its own file because `llm-replay` answers rounds IN ORDER: a transcript that
+# opened with tool calls would break V1/V3/V4, which want the first round to be plain text.
+#
+# The three calls are one per DECLARED RENDER INTENT (§9), which is the whole point of the bullet:
+#   bash        → RenderIntent::Terminal  (monospace output + the exit code)
+#   read_file   → RenderIntent::Generic   (a key/value block)
+#   write_file  → RenderIntent::Diff      (added lines, in the theme's `added` colour)
+# The names and argument shapes are `tools-baseline`'s real specs, not invented ones — a call the
+# row cannot match would render as a failure and prove nothing about the intents.
+#
+# Round 1 stops on `tool_use`, so the loop executes the calls and asks again; round 2 closes the
+# turn. `write_file`'s target does not exist, so its diff is all-added — which is what gives the
+# `+` lines a green foreground for the `shell-use cells` half of the bullet.
+entries:
+  llm.anthropic:
+    plugin: llm-replay
+    config:
+      strict: true
+      models: "*"
+      rounds:
+        - chunks:
+            - type: tool_call
+              id: call-bash-1
+              name: bash
+              input: { command: "echo scripted-tool-output" }
+            - type: tool_call
+              id: call-read-1
+              name: read_file
+              input: { path: "notes/demo.txt" }
+            - type: tool_call
+              id: call-write-1
+              name: write_file
+              input:
+                path: "notes/demo.rs"
+                content: "fn main() {\n    println!(\"added line\");\n}\n"
+            - { type: end, stop: tool_use }
+        - chunks:
+            - { type: text, text: "the scripted tools ran" }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "the scripted tools ran" }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "the scripted tools ran" }
+            - { type: end, stop: end_turn }
