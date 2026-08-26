@@ -15,7 +15,8 @@ use crate::error::AgentError;
 use crate::events::{AgentInbox, AgentStatusChanged, StatusChange};
 use crate::factory::AgentDriver;
 use crate::ids::{AgentId, SessionId};
-use crate::mail::{Inbox, InboxReceipt, Message, Target};
+use crate::mail::{Delivery, Inbox, InboxReceipt, Message, Target};
+use bough_plugin_llm::WakeKind;
 
 /// Whether the agent is inside a wake.
 #[derive(
@@ -251,6 +252,22 @@ impl Agent {
         self.send(msg, Target::NextStep, false).await
     }
 
+    /// §5's catch-up / schedule entry point (P3-D16). Opens ONE wake of `kind` if there is
+    /// anything to process, and does nothing at all otherwise. Never appends a synthetic message:
+    /// the driver already knows whether there is work, so asking it is one method — and it is the
+    /// same method Phase 7's `sleep-listener` needs.
+    pub async fn request_wake(&self, _kind: WakeKind, _cause: WakeCause) -> WakeRequest {
+        todo!("WP-1: delegate to the driver's `wake_now`, or `Nothing` with no driver")
+    }
+
+    /// DELIVERED mail (§3, §5): appends `mail/delivered` (EVIDENCE, cited) and then splices the
+    /// message carrying that step's seq, so the pair can never be half-written by a producer
+    /// (P3-D15). This is what Phase 6's collectors will use; the old-feed adapter is its first
+    /// caller.
+    pub async fn deliver(&self, _mail: Delivery) -> Result<InboxReceipt, AgentError> {
+        todo!("WP-1: the mail/delivered step FIRST, then the splice carrying its seq")
+    }
+
     /// Publish a status transition. `AgentCell::set_status` is the only caller.
     pub(crate) fn set_status(&self, to: Status) -> Result<(), AgentError> {
         let from = {
@@ -286,4 +303,21 @@ impl std::fmt::Debug for Agent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Agent({:?})", self.0.name)
     }
+}
+
+/// Why a wake was asked for. Attribution for `request_wake`, never authorization.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WakeCause {
+    /// §5's lid-open catch-up. TUI launch is the proxy until Phase 7's `sleep-listener`.
+    CatchUp,
+    /// A schedule fired; the `&'static str` names it.
+    Schedule(&'static str),
+}
+
+/// What [`Agent::request_wake`] did. `Nothing` is the answer for an agent with nothing queued —
+/// V6's "and none when nothing is queued".
+#[derive(Clone, Debug, PartialEq)]
+pub enum WakeRequest {
+    Started(bough_plugin_ledger::WakeId),
+    Nothing,
 }

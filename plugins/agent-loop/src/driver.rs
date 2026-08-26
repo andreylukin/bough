@@ -401,6 +401,16 @@ impl AgentDriver for LoopDriver {
         crate::PLUGIN_NAME
     }
 
+    /// §5's catch-up (P3-D16): `Nothing` unless `pending(NextWake)` is non-empty or unconsumed
+    /// ordinary mail exists; otherwise ONE wake with the oldest queued item as trigger.
+    async fn wake_now(
+        &self,
+        _kind: bough_plugin_agents::WakeKind,
+        _cause: bough_plugin_agents::WakeCause,
+    ) -> bough_plugin_agents::WakeRequest {
+        todo!("WP-1")
+    }
+
     /// IMMEDIATE for an Andrey message or wake-class mail; a debounced drain otherwise, with one
     /// drain wake in flight per agent (§5).
     async fn notify(&self, receipt: &InboxReceipt, msg: &Message) {

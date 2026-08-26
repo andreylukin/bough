@@ -70,6 +70,7 @@ pub enum DriverCall {
     Notify(String),
     Cancel(CancelCause, bool),
     Stop,
+    WakeNow,
 }
 
 #[derive(Default)]
@@ -152,6 +153,14 @@ impl RecordingDriver {
 impl AgentDriver for RecordingDriver {
     fn driver(&self) -> &'static str {
         "recording-loop"
+    }
+    async fn wake_now(
+        &self,
+        _kind: bough_plugin_agents::WakeKind,
+        _cause: bough_plugin_agents::WakeCause,
+    ) -> bough_plugin_agents::WakeRequest {
+        self.calls.lock().push(DriverCall::WakeNow);
+        bough_plugin_agents::WakeRequest::Nothing
     }
     async fn notify(&self, receipt: &InboxReceipt, _msg: &Message) {
         self.calls

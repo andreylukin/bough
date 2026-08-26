@@ -36,6 +36,11 @@ pub struct ReplayConfig {
     /// Which models this adapter claims. `"*"` by default, so a swap patch needs one line.
     #[serde(default = "star")]
     pub models: String,
+    /// Milliseconds to wait between chunks, so a replayed answer can be OBSERVED ARRIVING rather
+    /// than landing whole (P3-D20, V1's first half). `0` — the default — is exactly the Phase-2
+    /// behaviour, so every existing transcript and test is unaffected.
+    #[serde(default)]
+    pub delay_ms: u64,
 }
 
 fn yes() -> bool {

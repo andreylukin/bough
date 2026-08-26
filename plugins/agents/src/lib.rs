@@ -28,7 +28,7 @@ use bough_plugin_ledger::{Ledger, LedgerHandle, StepQuery};
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 
-pub use agent::{Agent, AgentKind, CancelCause, Session, Status};
+pub use agent::{Agent, AgentKind, CancelCause, Session, Status, WakeCause, WakeRequest};
 pub use create::{AgentDisposer, AgentSetup, CreateAgent, CreateSpec, ResumeAgent};
 pub use error::AgentError;
 pub use events::{
@@ -38,7 +38,7 @@ pub use events::{
 };
 pub use factory::{AgentCell, AgentDriver, AgentFactory, Attach, ClaimSelector};
 pub use ids::{AgentId, MessageId, SessionId, WorkerId};
-pub use mail::{ClaimedMessage, Inbox, InboxReceipt, MailClass, Message, Sender, Target};
+pub use mail::{ClaimedMessage, Delivery, Inbox, InboxReceipt, MailClass, Message, Sender, Target};
 
 /// §2's request vocabulary, re-exported so a consumer has ONE import (P2-D3). The types live in
 /// `plugins/llm` because §12 puts those waterfalls in the llm Definition; the names live here

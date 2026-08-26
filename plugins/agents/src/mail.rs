@@ -501,3 +501,19 @@ impl Inbox {
         out
     }
 }
+
+/// One piece of DELIVERED mail, as a producer hands it to [`crate::Agent::deliver`] (P3-D15).
+///
+/// The `mail/delivered` step is EVIDENCE, so `cites` is what makes it appendable at all: mail that
+/// cannot say where it came from is not deliverable.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Delivery {
+    pub from: Sender,
+    pub class: MailClass,
+    pub subject: String,
+    pub summary: String,
+    pub text: String,
+    pub cites: Vec<Cite>,
+    pub refs: BTreeSet<Ref>,
+    pub at: DateTime<Utc>,
+}

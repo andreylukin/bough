@@ -52,6 +52,12 @@ clap         = { version = "4", features = ["derive"] }               # the laun
 parking_lot  = "0.12"                                                 # kernel binding store / fiber state lock
 include_dir  = "0.7"                                                  # profiles/ + bundles/ embedded in the launcher
 tempfile     = "3"                                                    # dev-only: provider tests that want a real db file
+ratatui-textarea = "0.9"                                              # bough-tui-app: the composer (P3-D1)
+similar      = "3"                                                    # tui-render: diff rendering
+syntect      = { version = "5", default-features = false, features = ["default-fancy"] }  # tui-render
+two-face     = { version = "0.5", default-features = false, features = ["syntect-default-fancy"] }  # tui-render
+arboard      = "3"                                                    # tui-shell: OS clipboard, best effort
+insta        = "1"                                                    # dev-only: TestBackend snapshots, sparingly
 
 bough-llm    = { path = "crates/bough-llm" }
 bough-util   = { path = "crates/bough-util" }
@@ -80,3 +86,12 @@ bough-plugin-tool-actions = { path = "plugins/tool-actions" }                 # 
 bough-plugin-model-policy = { path = "plugins/model-policy" }                 # §12 sol/terra prepend listener
 bough-plugin-about-line = { path = "plugins/about-line" }                     # §2 the two-half about-line
 bough-plugin-exec-headless = { path = "plugins/exec-headless" }               # §17 Phase 2 `bough exec`
+bough-plugin-commands = { path = "plugins/commands" }                          # §11 commands Service Definition
+bough-plugin-tui-shell = { path = "plugins/tui-shell" }                        # §11 tui Provider
+bough-plugin-tui-render = { path = "plugins/tui-render" }                      # §11 render library (no row)
+bough-plugin-tui-strip = { path = "plugins/tui-strip" }                        # §11 the agent rail pane
+bough-plugin-tui-focus = { path = "plugins/tui-focus" }                        # §11 the focused trajectory pane
+bough-plugin-tui-search = { path = "plugins/tui-search" }                      # §11 FTS pane (swap subject)
+bough-plugin-residents = { path = "plugins/residents" }                        # §5 catch-up at launch
+bough-plugin-old-feed-adapter = { path = "plugins/old-feed-adapter" }          # §14 throwaway bridge
+bough-plugin-tui-probe = { path = "plugins/tui-probe" }                        # §17 Phase 3 fixture

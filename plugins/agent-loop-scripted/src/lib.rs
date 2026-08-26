@@ -238,6 +238,15 @@ impl AgentDriver for ScriptedDriver {
         PLUGIN_NAME
     }
 
+    /// §5's catch-up (P3-D16): one scripted wake if the transcript has one left.
+    async fn wake_now(
+        &self,
+        _kind: bough_plugin_agents::WakeKind,
+        _cause: bough_plugin_agents::WakeCause,
+    ) -> bough_plugin_agents::WakeRequest {
+        todo!("WP-1")
+    }
+
     async fn notify(
         &self,
         receipt: &bough_plugin_agents::InboxReceipt,

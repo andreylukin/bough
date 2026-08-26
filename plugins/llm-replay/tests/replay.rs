@@ -32,6 +32,7 @@ fn cfg(strict: bool) -> Arc<ReplayConfig> {
         rounds: None,
         strict,
         models: "*".into(),
+        delay_ms: 0,
     })
 }
 
@@ -148,6 +149,7 @@ async fn a_transcript_file_and_inline_rounds_load_the_same_rounds() {
         rounds: None,
         strict: true,
         models: "*".into(),
+        delay_ms: 0,
     })
     .expect("loads");
     let inline = ReplayAdapter::load(&ReplayConfig {
@@ -155,6 +157,7 @@ async fn a_transcript_file_and_inline_rounds_load_the_same_rounds() {
         rounds: Some(serde_json::to_value(&Transcript::parse(TRANSCRIPT).unwrap().rounds).unwrap()),
         strict: true,
         models: "*".into(),
+        delay_ms: 0,
     })
     .expect("loads");
     assert_eq!(from_file, inline);
@@ -167,6 +170,7 @@ async fn an_unreadable_transcript_is_refused_not_silently_empty() {
         rounds: None,
         strict: true,
         models: "*".into(),
+        delay_ms: 0,
     })
     .expect_err("a missing transcript must fail loud (§0.2)");
     assert!(err.contains("cannot read transcript"), "{err}");

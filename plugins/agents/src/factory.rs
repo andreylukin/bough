@@ -9,11 +9,12 @@ use bough_plugin_ledger::LedgerHandle;
 use chrono::{DateTime, Utc};
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::{Agent, CancelCause, Status};
+use crate::agent::{Agent, CancelCause, Status, WakeCause, WakeRequest};
 use crate::error::AgentError;
 use crate::ids::MessageId;
 use crate::mail::{ClaimedMessage, InboxReceipt, MailClass, Message, Target};
 use bough_plugin_ledger::WakeId;
+use bough_plugin_llm::WakeKind;
 
 /// Whether the driver is attaching to a fresh agent or a resumed one.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -44,6 +45,11 @@ pub trait AgentDriver: Send + Sync + 'static {
     async fn cancel(&self, cause: CancelCause, keep_inbox: bool);
     /// Stop and drain: no new wake starts, the in-flight wake ends, returns when idle.
     async fn stop(&self);
+    /// §5's catch-up entry point (P3-D16). Both drivers implement it. `agent-loop`: `Nothing`
+    /// unless `pending(NextWake)` is non-empty or unconsumed ordinary mail exists; otherwise one
+    /// wake with the oldest queued item as trigger. `agent-loop-scripted`: one scripted wake if
+    /// the transcript has one left.
+    async fn wake_now(&self, kind: WakeKind, cause: WakeCause) -> WakeRequest;
 }
 
 /// The driver's private view of an agent: the only way to publish status or claim inbox items.

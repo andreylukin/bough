@@ -1,0 +1,25 @@
+[package]
+name = "bough-plugin-tui-render"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# A LIBRARY with no catalog row and no service key (P3-D5, the `plugins/ledger` precedent): the
+# three §9 render intents as pure `Vec<Line>` functions, `similar` diffs, syntect+two-face
+# highlighting and grapheme-aware wrapping. Its consumers are `tui-focus` and `tui-strip`.
+
+[dependencies]
+bough-plugin-ledger = { workspace = true }
+bough-plugin-tools = { workspace = true }
+bough-plugin-tui-shell = { workspace = true }
+ratatui = { workspace = true }
+similar = { workspace = true }
+syntect = { workspace = true }
+two-face = { workspace = true }
+unicode-width = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+bough-plugin-tools-baseline = { workspace = true }
+insta = { workspace = true }

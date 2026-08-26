@@ -1,0 +1,33 @@
+[package]
+name = "bough-plugin-tui-focus"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# A Consumer (§11): the focused agent's chat/trajectory in `Slot::Main` — streaming turns,
+# clickable expanding tool calls, and the scrollback. It IS §11's `trajectory` pane (P3-D4).
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-agents = { workspace = true }
+bough-plugin-llm = { workspace = true }
+bough-plugin-tools = { workspace = true }
+bough-plugin-tui-shell = { workspace = true }
+bough-plugin-tui-render = { workspace = true }
+ratatui = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+bough-plugin-ledger-memory = { workspace = true }
