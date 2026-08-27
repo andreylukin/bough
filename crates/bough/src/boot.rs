@@ -93,6 +93,11 @@ pub async fn boot(mut cli: Cli) -> Result<ExitCode, BootError> {
         ))
     };
 
+    // M15: the reload result reaches the SCREEN. The launcher is the only place that knows both
+    // `ConfigReloadEvent` (its own type) and the live `Tui` handle, so the listener is installed
+    // here rather than inside a row; a profile with no TUI installs nothing.
+    let _reload_notice = install_reload_notice(&kernel).await;
+
     // The launcher owns composition and teardown, and nothing else. A surface is a ROW, and it
     // keeps the process alive by holding the runtime; the two ways out are SIGINT and a row
     // asking through `Kernel::request_exit` (P2-D23). Both tear down first.
@@ -103,7 +108,14 @@ pub async fn boot(mut cli: Cli) -> Result<ExitCode, BootError> {
     if let Some(w) = watch {
         w.stop().await;
     }
-    kernel.shutdown().await;
+    // B8: teardown is BOUNDED. A row that never quiesces used to hang the process with the alt
+    // screen still up; now the terminal comes back and the launcher leaves.
+    shutdown_bounded(&kernel, cli.shutdown_ms, code).await;
+    // Whichever restore path ran took the farewell with it. If none did — a headless profile,
+    // where there was no terminal to restore — the launcher still owes the user the line.
+    if let Some(farewell) = bough_plugin_tui_shell::term::take_farewell() {
+        println!("{farewell}");
+    }
     Ok(ExitCode::from(code))
 }
 
@@ -240,8 +252,23 @@ mod tests {
 /// with `code`. The deadline is [`crate::cli::Cli::shutdown_ms`], never a constant at the call
 /// site — a hang with the alt screen still up is the worst exit the product has.
 pub async fn shutdown_bounded(kernel: &bough_kernel::Kernel, ms: u64, code: u8) -> ExitOutcome {
-    let _ = (kernel, ms, code);
-    todo!("WP-1")
+    let _ = code;
+    bounded(kernel.shutdown(), ms).await
+}
+
+/// The deadline, over ANY teardown future. Split out so the timeout path is testable against a
+/// fiber that genuinely never quiesces — which is not something a `Kernel` can be asked to be.
+pub async fn bounded<F: std::future::Future<Output = ()>>(shutdown: F, ms: u64) -> ExitOutcome {
+    match tokio::time::timeout(std::time::Duration::from_millis(ms), shutdown).await {
+        Ok(()) => ExitOutcome::Clean,
+        Err(_) => {
+            // The terminal comes back BEFORE the message: a report printed into a live alt screen
+            // is a report nobody reads (the same lesson `boot` already carries above).
+            bough_plugin_tui_shell::restore_now();
+            eprintln!("bough: shutdown timed out after {ms}ms; leaving anyway");
+            ExitOutcome::TimedOut
+        }
+    }
 }
 
 /// How teardown ended.
@@ -249,4 +276,69 @@ pub async fn shutdown_bounded(kernel: &bough_kernel::Kernel, ms: u64, code: u8) 
 pub enum ExitOutcome {
     Clean,
     TimedOut,
+}
+
+#[cfg(test)]
+mod bounded_teardown_tests {
+    use super::*;
+
+    /// A teardown that finishes inside the deadline is CLEAN, and restores nothing itself.
+    #[tokio::test]
+    async fn a_teardown_that_finishes_is_clean() {
+        assert_eq!(
+            bounded(std::future::ready(()), 2000).await,
+            ExitOutcome::Clean
+        );
+    }
+
+    /// B8, the case that hung the product: a fiber whose teardown never returns. The deadline
+    /// expires, the terminal is restored, and the launcher LEAVES. `arm_for_test` makes the
+    /// restore observable without a terminal to enter.
+    #[tokio::test]
+    async fn a_teardown_that_never_finishes_times_out_and_still_restores_the_terminal() {
+        bough_plugin_tui_shell::term::arm_for_test();
+        let before = bough_plugin_tui_shell::term::restores();
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            bounded(std::future::pending::<()>(), 50),
+        )
+        .await
+        .expect("the deadline is the point: this must not be what times out");
+
+        assert_eq!(outcome, ExitOutcome::TimedOut);
+        assert_eq!(
+            bough_plugin_tui_shell::term::restores(),
+            before + 1,
+            "the terminal came back before the launcher left"
+        );
+        assert!(
+            !bough_plugin_tui_shell::term::is_entered(),
+            "and nothing is left entered"
+        );
+    }
+}
+
+/// Show every `config/reload` on the status band, in the log's own words (M15). `None` when this
+/// tree has no TUI — a headless profile keeps the log and nothing else.
+async fn install_reload_notice(kernel: &Kernel) -> Option<bough_kernel::EffectHandle> {
+    use bough_plugin_tui_shell::{NoticeKind, Tui};
+    let ctx = kernel.root();
+    // `peek_live`, not `get`: the launcher declares no injects, and §0.3's capability check is
+    // exactly what would refuse the root context this key. The doc comment on `peek_live` names
+    // the launcher as one of its two sanctioned callers.
+    let tui = ctx.peek_live::<Tui>()?;
+    ctx.on::<crate::watch::ConfigReloadEvent, _, _>(move |what: crate::watch::ConfigReload| {
+        let tui = tui.clone();
+        async move {
+            let kind = if what.is_rejection() {
+                NoticeKind::Error
+            } else {
+                NoticeKind::Config
+            };
+            tui.notify_kind(what.line(), kind);
+        }
+    })
+    .await
+    .ok()
 }

@@ -54,8 +54,19 @@ pub fn diff_block(spec: &DiffSpec, width: u16, theme: &Theme) -> Vec<Line<'stati
         let last = group.last().expect("a group is never empty");
         let (os, oe) = (first.old_range().start, last.old_range().end);
         let (ns, ne) = (first.new_range().start, last.new_range().end);
+        // Nit 35: `@@ -12,7 +12,9 @@` is unified-diff shorthand nobody outside a code review
+        // reads. The same two ranges, in words.
         out.push(Line::from(Span::styled(
-            format!("@@ -{},{} +{},{} @@", os + 1, oe - os, ns + 1, ne - ns),
+            truncate_cols(
+                &format!(
+                    "lines {}\u{2013}{} \u{2192} {}\u{2013}{}",
+                    os + 1,
+                    oe.max(os + 1),
+                    ns + 1,
+                    ne.max(ns + 1)
+                ),
+                width,
+            ),
             dim,
         )));
         for op in group {

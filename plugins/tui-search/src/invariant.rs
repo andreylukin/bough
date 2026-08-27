@@ -14,15 +14,15 @@ use parking_lot::Mutex;
 
 const NAME: &str = "every_rendered_hit_names_a_live_step";
 
-static LAST_RENDERED: Mutex<Vec<crate::HitRow>> = Mutex::new(Vec::new());
+static LAST_RENDERED: Mutex<Vec<crate::Hit>> = Mutex::new(Vec::new());
 
 /// What the last frame put on screen. Called from `Pane::render`; allocation-only, no I/O.
-pub fn record(rows: &[crate::HitRow]) {
+pub fn record(rows: &[crate::Hit]) {
     *LAST_RENDERED.lock() = rows.to_vec();
 }
 
 /// The rows the last frame painted.
-pub fn rendered() -> Vec<crate::HitRow> {
+pub fn rendered() -> Vec<crate::Hit> {
     LAST_RENDERED.lock().clone()
 }
 
@@ -32,13 +32,15 @@ pub fn forget() {
 }
 
 /// PURE: the check, over the rendered rows and the step ids the ledger still holds.
-pub fn check_rows(rendered: &[crate::HitRow], known: &[StepId]) -> Result<(), String> {
+pub fn check_rows(rendered: &[crate::Hit], known: &[StepId]) -> Result<(), String> {
     for row in rendered {
         if !known.contains(&row.step) {
             return Err(format!(
-                "the search pane rendered a hit naming step `{}` (traj `{}`, seq {}), which the \
-                 ledger no longer holds",
-                row.step, row.traj, row.seq.0
+                "the search pane rendered a hit naming step `{}` (agent `{}`, speaker `{}`), \
+                 which the ledger no longer holds",
+                row.step,
+                row.agent.as_str(),
+                row.speaker
             ));
         }
     }
@@ -88,16 +90,15 @@ async fn run(ctx: Context) -> Result<(), InvariantViolation> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bough_plugin_ledger::{AgentName, Seq, StepType, TrajId};
+    use bough_plugin_ledger::AgentName;
 
-    fn row(step: &str) -> crate::HitRow {
-        crate::HitRow {
-            agent: Some(AgentName::new("sol")),
-            traj: TrajId::new("lane/sol"),
+    fn row(step: &str) -> crate::Hit {
+        crate::Hit {
+            agent: AgentName::new("sol"),
             step: StepId::new(step),
-            seq: Seq(3),
-            kind: StepType::new("thought/text"),
+            speaker: "sol".into(),
             snippet: "the swap gate".into(),
+            at: 4..8,
         }
     }
 

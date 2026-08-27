@@ -42,6 +42,10 @@ pub enum ThemeName {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Theme {
     pub bg: Color,
+    /// The terminal background this palette was DESIGNED for. `bg` is [`Color::Reset`] — "whatever
+    /// the user's terminal is" — and a contrast ratio against that is not a number, so the audit
+    /// (phase ux1 §2.5, V9) measures against this instead.
+    pub measure_bg: Color,
     pub fg: Color,
     pub dim: Color,
     pub accent: Color,
@@ -61,8 +65,10 @@ impl Theme {
         match name {
             ThemeName::Dark => Theme {
                 bg: Color::Reset,
+                measure_bg: Color::Rgb(0x1a, 0x1b, 0x26),
                 fg: Color::Rgb(0xd0, 0xd0, 0xd0),
-                dim: Color::Rgb(0x70, 0x76, 0x80),
+                // 3.7:1 at #707680; the audit requires 4.5:1 (M22).
+                dim: Color::Rgb(0x8b, 0x92, 0xa1),
                 accent: Color::Rgb(0x7a, 0xa2, 0xf7),
                 evidence: Color::Rgb(0x9e, 0xce, 0x6a),
                 thought: Color::Rgb(0xbb, 0x9a, 0xf7),
@@ -71,10 +77,12 @@ impl Theme {
                 added: Color::Rgb(0x9e, 0xce, 0x6a),
                 removed: Color::Rgb(0xf7, 0x76, 0x8e),
                 sel_bg: Color::Rgb(0x2d, 0x3f, 0x60),
-                hint: Color::Rgb(0x56, 0x5f, 0x89),
+                // Was #565f89 — 2.8:1, the least legible text in the product. Now body contrast.
+                hint: Color::Rgb(0xa9, 0xb1, 0xd6),
             },
             ThemeName::Light => Theme {
                 bg: Color::Reset,
+                measure_bg: Color::Rgb(0xff, 0xff, 0xff),
                 fg: Color::Rgb(0x24, 0x28, 0x2f),
                 dim: Color::Rgb(0x6a, 0x70, 0x7a),
                 accent: Color::Rgb(0x2e, 0x5c, 0xb8),
@@ -85,7 +93,8 @@ impl Theme {
                 added: Color::Rgb(0x2c, 0x77, 0x2c),
                 removed: Color::Rgb(0xb3, 0x1f, 0x3c),
                 sel_bg: Color::Rgb(0xcf, 0xdd, 0xf7),
-                hint: Color::Rgb(0x8a, 0x90, 0x9a),
+                // Was #8a909a — 3.2:1.
+                hint: Color::Rgb(0x5f, 0x65, 0x70),
             },
         }
     }

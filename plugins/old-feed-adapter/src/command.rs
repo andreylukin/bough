@@ -23,7 +23,7 @@ pub async fn register(ctx: &Context, feed: &OldFeedHandle) -> Result<(), PluginE
             ctx,
             CommandSpec {
                 name: CommandName::new("oldfeed"),
-                summary: "what the old-feed bridge last swept".to_string(),
+                summary: SUMMARY_OLDFEED.to_string(),
                 usage: "/oldfeed".to_string(),
                 args: schemars::json_schema!({ "type": "object", "properties": {} }),
                 scope: CommandScope::Global,
@@ -42,7 +42,7 @@ pub async fn register(ctx: &Context, feed: &OldFeedHandle) -> Result<(), PluginE
             ctx,
             CommandSpec {
                 name: CommandName::new("prime"),
-                summary: "command memory and note evidence from the old bough db".to_string(),
+                summary: SUMMARY_PRIME.to_string(),
                 usage: "/prime [text]".to_string(),
                 args: schemars::json_schema!({ "type": "array", "items": { "type": "string" } }),
                 scope: CommandScope::Global,
@@ -52,6 +52,10 @@ pub async fn register(ctx: &Context, feed: &OldFeedHandle) -> Result<(), PluginE
         .await?;
     Ok(())
 }
+
+/// The plain-language summaries these two commands are listed under (phase ux1 §2.8, M16).
+pub const SUMMARY_OLDFEED: &str = "show what the old bough feed last imported";
+pub const SUMMARY_PRIME: &str = "load past shell history for a topic into the agent's context";
 
 struct PrimeCommand {
     feed: OldFeedHandle,
@@ -116,7 +120,10 @@ pub fn render_priming(cmds: &[CommandMemory], notes: &[NoteEvidence]) -> String 
             out.push_str(&format!("  {} · {}\n", n.cite.r#ref, n.heading));
         }
     }
-    out.push_str("not mail: command history is competence memory and is never delivered\n");
+    out.push_str(
+        "this is context for you to read: past commands are never delivered to an agent as a \
+         message\n",
+    );
     out
 }
 
@@ -127,12 +134,33 @@ struct OldFeedCommand {
 #[async_trait::async_trait]
 impl Command for OldFeedCommand {
     async fn run(&self, _inv: Invocation, _cx: CommandCx) -> Result<CommandOutput, CommandError> {
+        // M27: a bridge with no live source rendered `last sweep: never` and looked like a
+        // working command that found nothing. It is OFF, and the reason is a missing FILE the
+        // reader can go and look at, so it is an error with that path in it.
+        if let Some(why) = off_reason(self.feed.0.enabled.is_empty(), &self.feed.0.cfg.jungler_db) {
+            return Err(CommandError::Failed(why));
+        }
         Ok(CommandOutput {
             text: render(&self.feed.status()),
             render: OutputRender::KeyValue,
             cites: Vec::new(),
         })
     }
+}
+
+/// PURE: why `/oldfeed` has nothing to show, when it has nothing to show. `None` means at least
+/// one source is live and the command renders the sweep instead.
+///
+/// The PATH is the whole point: "the bridge is off" is not actionable and "no jungler.db at
+/// ~/.jungler/jungler.db" is.
+pub fn off_reason(no_live_source: bool, jungler_db: &std::path::Path) -> Option<String> {
+    if !no_live_source {
+        return None;
+    }
+    Some(format!(
+        "the old-feed bridge is off (no jungler.db at {})",
+        jungler_db.display()
+    ))
 }
 
 /// PURE: the last sweep as `/oldfeed` shows it.
@@ -158,6 +186,28 @@ pub fn render(status: &FeedStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M16: no summary this row registers may use the tree's internal vocabulary.
+    #[test]
+    fn every_summary_is_plain_language() {
+        for s in [SUMMARY_OLDFEED, SUMMARY_PRIME] {
+            assert_eq!(bough_plugin_commands::palette::house_word(s), None, "{s}");
+        }
+    }
+
+    /// M27: no `jungler.db` is a stated reason naming the file, not an empty answer.
+    #[test]
+    fn an_off_bridge_names_the_file_it_wanted() {
+        let why = off_reason(true, std::path::Path::new("/home/a/.jungler/jungler.db"))
+            .expect("no live source is a reason");
+        assert!(why.contains("jungler.db"), "{why}");
+        assert!(why.contains("/home/a/.jungler/jungler.db"), "{why}");
+        // A live source renders the sweep instead.
+        assert_eq!(
+            off_reason(false, std::path::Path::new("/x/jungler.db")),
+            None
+        );
+    }
 
     #[test]
     fn a_never_swept_bridge_says_so() {

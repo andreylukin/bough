@@ -165,7 +165,11 @@ impl Plugin for AssemblerPlugin {
     fn inject() -> Inject {
         // The typed key names itself: a rename on the Definition is a compile error here, not a
         // boot failure (§13).
-        Inject::required([<Ledger as bough_kernel::ServiceKey>::NAME])
+        // phase ux1 §2.10 (M25): `tools` is OPTIONAL — a profile with no tool registry still
+        // assembles, and its identity band honestly says `tools: none`.
+        Inject::required([<Ledger as bough_kernel::ServiceKey>::NAME]).union(&Inject::optional([
+            <bough_plugin_tools::Tools as bough_kernel::ServiceKey>::NAME,
+        ]))
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {

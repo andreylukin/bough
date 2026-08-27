@@ -409,3 +409,126 @@ mod tests {
         assert!(matches!(orphan[0], Row::Other { .. }), "{orphan:?}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// WP-3 / phase ux1 §2.6: the golden — history re-wraps, it does not re-space (M13, nit 39)
+// ---------------------------------------------------------------------------
+
+/// A trajectory with one of everything the transcript can draw.
+fn trajectory() -> Vec<Step> {
+    vec![
+        step(1, "wake/start", serde_json::json!({ "urgency": "now" })),
+        step(
+            2,
+            "mail/delivered",
+            serde_json::json!({ "from": "andrey", "subject": "hi", "summary": "ONE" }),
+        ),
+        step(
+            3,
+            "thought/text",
+            serde_json::json!({ "step_index": 0, "text": "## Core Capabilities\n\n**Code & File" }),
+        ),
+        step(
+            4,
+            "thought/text",
+            serde_json::json!({ "step_index": 0, "text": " Operations:**\n\n- I'll create a file named notes.txt for you\n" }),
+        ),
+        step(
+            5,
+            "tool/call",
+            serde_json::json!({
+                "call": "c1", "name": "write_file", "render": "diff",
+                "args": { "path": "notes.txt", "content": "hello\n" }
+            }),
+        ),
+        step(
+            6,
+            "tool/result",
+            serde_json::json!({
+                "call": "c1", "name": "write_file", "outcome": "ok", "content": "wrote 6 bytes"
+            }),
+        ),
+        step(
+            7,
+            "thought/text",
+            serde_json::json!({ "step_index": 1, "text": "TWO" }),
+        ),
+        step(8, "wake/end", serde_json::json!({ "reason": "completed" })),
+    ]
+}
+
+fn paint(rows: &[Row], width: u16) -> Vec<String> {
+    use bough_plugin_tui_focus::{FocusConfig, FocusPane, FocusState, LiveText};
+    let cfg = Arc::new(FocusConfig {
+        max_rows: 100,
+        max_tool_lines: 50,
+        page_lines: 10,
+        expand_new_tools: false,
+        show_reasoning: true,
+    });
+    let pane = FocusPane::new(
+        cfg,
+        Arc::new(parking_lot::Mutex::new(FocusState::default())),
+        Arc::new(parking_lot::Mutex::new(LiveText::default())),
+    );
+    let state = FocusState {
+        rows: rows.to_vec(),
+        ..Default::default()
+    };
+    let (lines, _, _) = pane.lines(
+        &state,
+        &LiveText::default(),
+        width,
+        &bough_plugin_tui_shell::Theme::of(bough_plugin_tui_shell::ThemeName::Dark),
+    );
+    lines
+        .iter()
+        .map(|l| l.spans.iter().map(|s| s.content.to_string()).collect())
+        .collect()
+}
+
+/// The golden: the SAME trajectory renders identically before and after a width change.
+///
+/// This is the whole no-stored-wrap rule as one assertion. Nothing about the previous paint is
+/// remembered, so 80 → 200 → 80 is the identity — and the audit's `resize 80 24` / `resize 200 50`
+/// walk, which found history frozen at its first width, cannot recur (M13).
+#[test]
+fn the_same_trajectory_renders_identically_before_and_after_a_width_change() {
+    let rows = rows_from_steps(&trajectory());
+    let at80 = paint(&rows, 80);
+    let at200 = paint(&rows, 200);
+    let back = paint(&rows, 80);
+    assert_eq!(at80, back, "80 → 200 → 80 is the identity");
+    assert_ne!(at80, at200, "and the width genuinely changed the wrap");
+
+    // Nit 39: the number of blank lines is a property of the document, not of the width. A
+    // resize re-wraps; it never injects spacing.
+    let blanks = |v: &Vec<String>| v.iter().filter(|l| l.trim().is_empty()).count();
+    for w in [80u16, 100, 140, 200] {
+        assert_eq!(
+            blanks(&paint(&rows, w)),
+            blanks(&at80),
+            "a resize to {w} injected or dropped blank lines"
+        );
+    }
+}
+
+/// Nit 37 and M19 on the real trajectory: turn/message vocabulary, and no marker on screen.
+#[test]
+fn the_painted_transcript_says_turn_and_shows_no_markdown_markers() {
+    let rows = rows_from_steps(&trajectory());
+    for w in [80u16, 200] {
+        let out = paint(&rows, w).join("\n");
+        assert!(out.contains("── turn "), "@{w}: {out}");
+        assert!(out.contains("── turn ended · completed"), "@{w}: {out}");
+        assert!(
+            !out.contains("wake"),
+            "@{w}: internal vocabulary on screen:\n{out}"
+        );
+        assert!(!out.contains("**"), "@{w}: {out}");
+        assert!(!out.contains("## "), "@{w}: {out}");
+        assert!(out.contains("Core Capabilities"), "@{w}: {out}");
+        // The chunk split through the bold pair is gone: one phrase, one style run.
+        assert!(out.contains("Code & File Operations:"), "@{w}: {out}");
+    }
+}

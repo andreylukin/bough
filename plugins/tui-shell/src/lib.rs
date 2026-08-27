@@ -16,8 +16,8 @@ pub mod events;
 pub mod invariant;
 pub mod keymap;
 pub mod notice;
-pub mod pane;
 pub mod palette;
+pub mod pane;
 pub mod run;
 pub mod select;
 pub mod term;
@@ -42,13 +42,15 @@ use tokio::sync::Notify;
 pub use clip::{copy, CopyOutcome};
 pub use composer::{Composer, ComposerAction};
 pub use events::{FocusRequest, KeyDispatch, TuiFocusEvent, TuiKeyEvent};
-pub use keymap::{action_for, Action, ExitArm, ExitStep, Focus, KeyContext};
+pub use keymap::{
+    action_for, hints, snaps_to_composer, Action, ExitArm, ExitStep, Focus, KeyContext,
+};
 pub use notice::{Notice, NoticeKind};
+pub use pane::{measure, responsive_width};
 pub use pane::{
     HitId, HitMap, Pane, PaneCx, PaneEvent, PaneFrame, PaneId, PaneInfo, PaneOutcome, PaneSpec,
     RenderCx, ShellView, Slot, SlotSize,
 };
-pub use pane::measure;
 pub use select::{text_from_buffer, Selection};
 pub use term::{install_panic_hook, restore_now, TerminalGuard};
 pub use theme::{Backend, Theme, ThemeName};
@@ -126,7 +128,18 @@ pub struct TuiInner {
     pub(crate) composer: Mutex<Composer>,
     pub(crate) selection: Mutex<Option<Selection>>,
     pub(crate) last_frame: RwLock<Arc<Buffer>>,
-    pub(crate) notice: Mutex<Option<String>>,
+    pub(crate) notice: Mutex<Option<Notice>>,
+    /// The two-press exit window (B7). Behind a mutex because `on_key` is the only writer and a
+    /// lock is cheaper than making every reader async.
+    pub(crate) exit_arm: Mutex<ExitArm>,
+    /// The paste detector (B4). `run::on_key` feeds it BEFORE the composer sees the key, and
+    /// passes its answer in — the sequencing rule of phase ux1 §2.3, stated once.
+    pub(crate) burst: Mutex<draft::PasteBurst>,
+    /// The `/` palette. State lives in `bough-plugin-commands`; the shell owns WHEN it is open.
+    pub(crate) palette: Mutex<bough_plugin_commands::palette::Palette>,
+    /// When the focused agent's wake was first SEEN running, for the elapsed clock (M32). Written
+    /// by `note_running` on the idle→running edge, which `draw` calls once a frame.
+    pub(crate) running_since: RwLock<Option<chrono::DateTime<chrono::Utc>>>,
     pub(crate) anchored: RwLock<Option<StepId>>,
     /// The last line the shell handed to `ctx.commands`. Observability: the status line shows it,
     /// and it is how "a slash line never became a send" is asserted.
@@ -154,6 +167,8 @@ impl TuiHandle {
             source: e,
         })?;
         let area = terminal.get_frame().area();
+        let arm_ms = cfg.exit_arm_ms;
+        let burst_ms = cfg.paste_burst_ms;
         let mut composer = Composer::new(&cfg);
         if let Some(c) = commands.as_ref() {
             composer.set_prefix(c.prefix());
@@ -177,6 +192,12 @@ impl TuiHandle {
             selection: Mutex::new(None),
             last_frame: RwLock::new(Arc::new(Buffer::empty(area))),
             notice: Mutex::new(None),
+            exit_arm: Mutex::new(ExitArm::new(std::time::Duration::from_millis(arm_ms))),
+            burst: Mutex::new(draft::PasteBurst::new(std::time::Duration::from_millis(
+                burst_ms,
+            ))),
+            palette: Mutex::new(Default::default()),
+            running_since: RwLock::new(None),
             anchored: RwLock::new(None),
             last_command: Mutex::new(None),
             redraw: Notify::new(),
@@ -390,6 +411,22 @@ impl TuiHandle {
     }
 
     /// Give the composer keyboard focus.
+    /// The composer takes the keyboard back, TELLING the pane that had it. `focus_composer` alone
+    /// cannot: it is sync, and a pane's `FocusChanged` handler is async — which is why the search
+    /// field kept its stale query after Esc (minor 30).
+    pub async fn give_keyboard_to_composer(&self) {
+        if self.composer_focused() {
+            return;
+        }
+        let previous = self.focused_pane();
+        self.focus_composer();
+        if let Some(e) = self.entry(&previous) {
+            let cx = self.pane_cx();
+            let _ = e.pane.handle(PaneEvent::FocusChanged(false), cx).await;
+        }
+        self.redraw();
+    }
+
     pub fn focus_composer(&self) {
         self.0.composer_focused.store(true, Ordering::SeqCst);
         self.redraw();
@@ -400,15 +437,24 @@ impl TuiHandle {
         self.0.redraw.notify_one();
     }
 
-    /// One-line transient message in [`Slot::Status`].
+    /// One-line transient message in [`Slot::Status`]. Kind [`NoticeKind::Info`].
     pub fn notify(&self, text: impl Into<String>) {
-        *self.0.notice.lock() = Some(text.into());
-        self.redraw();
+        self.notify_kind(text, NoticeKind::Info);
     }
 
-    /// The current notice, if any.
+    /// The current notice's text, if any.
     pub fn notice(&self) -> Option<String> {
+        self.0.notice.lock().as_ref().map(|n| n.text.clone())
+    }
+
+    /// The current notice with its role, TTL not yet applied.
+    pub fn notice_raw(&self) -> Option<Notice> {
         self.0.notice.lock().clone()
+    }
+
+    /// Drop the notice (any key does this for an error notice, which has no TTL).
+    pub fn clear_notice(&self) {
+        *self.0.notice.lock() = None;
     }
 
     /// The last line handed to `ctx.commands`. Never a message that was sent to an agent (V5).
@@ -426,10 +472,9 @@ impl TuiHandle {
             let _ = stdout.write_all(&out);
             let _ = stdout.flush();
         }
-        match outcome.notice() {
-            Some(n) => self.notify(n),
-            None => self.notify(format!("copied {} chars", text.chars().count())),
-        }
+        // The flash is ALWAYS a line (WP-7): a silent success is the audit's "did it copy?".
+        let (text, kind) = outcome.flash();
+        self.notify_kind(text, kind);
         outcome
     }
 
@@ -562,35 +607,116 @@ impl TuiHandle {
     /// The pane the focus-independent scroll keys drive: [`TuiConfig::transcript_pane`], matched
     /// EXACTLY. `None` when no such pane is registered (B2).
     pub fn transcript_pane(&self) -> Option<PaneId> {
-        todo!("WP-1")
+        let want = self.0.cfg.transcript_pane.as_str();
+        self.panes()
+            .into_iter()
+            .find(|p| p.id.as_str() == want)
+            .map(|p| p.id)
     }
 
     /// Whether the focused agent has a wake open right now. The status line's spinner and the
     /// `esc to interrupt` hint read this; `keymap` reads it to decide what Esc means.
     pub fn running(&self) -> bool {
-        todo!("WP-1")
+        matches!(
+            self.agent().map(|a| a.status()),
+            Some(bough_plugin_agents::Status::Running)
+        )
     }
 
     /// When the running wake started, for the elapsed clock (M32).
     pub fn running_since(&self) -> Option<chrono::DateTime<chrono::Utc>> {
-        todo!("WP-1")
+        *self.0.running_since.read()
+    }
+
+    /// Latch the idle→running edge. Called once a frame by `draw`, which is the only place with a
+    /// `now` that is not a clock read inside a pure function.
+    pub(crate) fn note_running(&self, now: chrono::DateTime<chrono::Utc>) {
+        let running = self.running();
+        let mut held = self.0.running_since.write();
+        match (running, *held) {
+            (true, None) => *held = Some(now),
+            (false, Some(_)) => *held = None,
+            _ => {}
+        }
     }
 
     /// `Ctrl+C` has been pressed once and the window has not lapsed (B7).
     pub fn exit_armed(&self) -> bool {
-        todo!("WP-1")
+        self.0.exit_arm.lock().is_armed(chrono::Utc::now())
+    }
+
+    /// One `Ctrl+C` while idle: arm, or exit if the window is still open (B7).
+    pub fn exit_step(&self, now: chrono::DateTime<chrono::Utc>) -> ExitStep {
+        self.0.exit_arm.lock().press(now)
+    }
+
+    /// Any other key disarms: `press Ctrl+C again to exit` must not survive a change of mind.
+    pub fn disarm_exit(&self) {
+        self.0.exit_arm.lock().disarm();
     }
 
     /// A transient notice with a ROLE, so the theme can colour an error like an error (M22).
     pub fn notify_kind(&self, text: impl Into<String>, kind: NoticeKind) {
-        let _ = (text.into(), kind);
-        todo!("WP-1")
+        // An ERROR has no TTL: it waits for the next key, because a message that fades before it
+        // is read is a message that was never shown (M22).
+        let ttl = match kind {
+            NoticeKind::Error | NoticeKind::Command => None,
+            NoticeKind::Copied => Some(std::time::Duration::from_millis(self.0.cfg.flash_ms)),
+            _ => Some(std::time::Duration::from_millis(self.0.cfg.notice_ms)),
+        };
+        *self.0.notice.lock() = Some(Notice {
+            text: text.into(),
+            kind,
+            at: chrono::Utc::now(),
+            ttl,
+        });
+        self.redraw();
     }
 
     /// The notice that is still live at `now`, TTL applied.
     pub fn notice_now(&self, now: chrono::DateTime<chrono::Utc>) -> Option<Notice> {
-        let _ = now;
-        todo!("WP-1")
+        let held = self.0.notice.lock().clone()?;
+        match held.ttl {
+            None => Some(held),
+            Some(ttl) => match (now - held.at).to_std() {
+                Ok(age) if age >= ttl => None,
+                _ => Some(held),
+            },
+        }
+    }
+
+    /// Whether the `/` palette is open (M12: an overlay Esc dismisses).
+    pub fn palette_open(&self) -> bool {
+        self.0.palette.lock().open
+    }
+
+    /// Open the palette on a query, or close it. The shell owns WHEN; `commands` owns WHAT.
+    pub fn set_palette(&self, open: bool, query: &str) {
+        let mut p = self.0.palette.lock();
+        if open && !p.open {
+            p.selected = 0;
+        }
+        p.open = open;
+        p.query = query.to_string();
+        drop(p);
+        self.redraw();
+    }
+
+    /// Whether ANY overlay is up: today the palette, or a notice that waits for a key.
+    pub fn overlay_open(&self) -> bool {
+        self.palette_open() || matches!(self.notice_raw().map(|n| n.ttl), Some(None))
+    }
+
+    /// The keymap's whole input, read ONCE (phase ux1 §2.1).
+    pub fn key_context(&self) -> KeyContext {
+        KeyContext {
+            focus_is_composer: self.composer_focused(),
+            draft_is_empty: self.0.composer.lock().is_empty(),
+            running: self.running(),
+            overlay_open: self.overlay_open(),
+            palette_open: self.palette_open(),
+            exit_armed: self.exit_armed(),
+        }
     }
 
     /// Quit, with the one-line farewell printed AFTER the terminal is restored (B8).

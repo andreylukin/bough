@@ -271,6 +271,7 @@ async fn the_retired_loop_leaves_no_factory_no_listeners_and_no_bindings() {
         .uid
         .expect("the live row has a uid");
     let core = kernel.core();
+    let stream_hops_before = core.listener_count(bough_plugin_llm::LlmStreamEvent::NAME);
     let counts_before: Vec<(&'static str, usize)> = [
         bough_plugin_agents::AgentPreStep::NAME,
         bough_plugin_llm::AgentRequest::NAME,
@@ -312,9 +313,12 @@ async fn the_retired_loop_leaves_no_factory_no_listeners_and_no_bindings() {
             "retiring `agent.loop` changed the listener count on `{event}`"
         );
     }
+    // NOT zero: other rows hold PERMANENT `llm/stream` hops (`model-policy`'s usage tee, and the
+    // TUI's text tee). What must be gone is the loop's own per-round hop, which is exactly "the
+    // count is back where it started".
     assert_eq!(
         core.listener_count(bough_plugin_llm::LlmStreamEvent::NAME),
-        0,
+        stream_hops_before,
         "the retired loop left a per-round `llm/stream` hop behind"
     );
     assert!(

@@ -127,10 +127,17 @@ pub fn watch_user_patch(kernel: Arc<Kernel>, cli: Arc<Cli>) -> WatchHandle {
 /// `pub` so the launcher's integration tests drive the REAL live path rather than a reproduction
 /// of it; `boot()` reaches it only through the watch task.
 pub async fn recompose_once(kernel: &Kernel, cli: &Cli) -> Result<(), BootError> {
+    let before = row_uids(kernel);
     let catalog = match Catalog::from_inventory() {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("bough: catalog: {e}");
+            reload(
+                kernel,
+                ConfigReload::Rejected {
+                    detail: e.to_string(),
+                },
+            );
             return Err(BootError::Catalog(e));
         }
     };
@@ -140,11 +147,25 @@ pub async fn recompose_once(kernel: &Kernel, cli: &Cli) -> Result<(), BootError>
             // path is the one a user actually edits patches through, so it must say so too.
             crate::boot::report_warnings(&c.warnings);
             match kernel.update(c).await {
-                Ok(()) => Ok(()),
+                Ok(()) => {
+                    reload(
+                        kernel,
+                        ConfigReload::Applied {
+                            rows_changed: changed(&before, &row_uids(kernel)),
+                        },
+                    );
+                    Ok(())
+                }
                 Err(e) => {
                     // The kernel has already broadcast `config-update-failed` from inside
                     // `update_tree`; it is not re-broadcast here.
                     tracing::warn!("bough: patch rejected, last good tree still running: {e}");
+                    reload(
+                        kernel,
+                        ConfigReload::Rejected {
+                            detail: e.to_string(),
+                        },
+                    );
                     Err(BootError::Kernel(e))
                 }
             }
@@ -153,6 +174,12 @@ pub async fn recompose_once(kernel: &Kernel, cli: &Cli) -> Result<(), BootError>
             tracing::warn!("bough: patch rejected, last good tree still running: {c}");
             let shared = Arc::new(c);
             kernel.report_config_update_failed(shared.clone());
+            reload(
+                kernel,
+                ConfigReload::Rejected {
+                    detail: shared.to_string(),
+                },
+            );
             Err(BootError::ComposeShared(shared))
         }
         Err(other) => {
@@ -163,6 +190,12 @@ pub async fn recompose_once(kernel: &Kernel, cli: &Cli) -> Result<(), BootError>
                 layer: bough_kernel::LayerId::new("user"),
                 detail: other.to_string(),
             }));
+            reload(
+                kernel,
+                ConfigReload::Rejected {
+                    detail: other.to_string(),
+                },
+            );
             Err(other)
         }
     }
@@ -187,4 +220,110 @@ impl bough_kernel::EmitEvent for ConfigReloadEvent {
 pub enum ConfigReload {
     Applied { rows_changed: usize },
     Rejected { detail: String },
+}
+
+impl ConfigReload {
+    /// PURE: the ONE LINE the screen shows, which is the same text the log gets (M15). A user who
+    /// edited a patch and saw nothing happen could not tell a no-op from a rejection.
+    pub fn line(&self) -> String {
+        match self {
+            ConfigReload::Applied { rows_changed: 0 } => {
+                "config reloaded — no row changed".to_string()
+            }
+            ConfigReload::Applied { rows_changed: 1 } => {
+                "config reloaded — 1 row changed".to_string()
+            }
+            ConfigReload::Applied { rows_changed } => {
+                format!("config reloaded — {rows_changed} rows changed")
+            }
+            ConfigReload::Rejected { detail } => {
+                format!("config rejected, last good tree still running: {detail}")
+            }
+        }
+    }
+
+    pub fn is_rejection(&self) -> bool {
+        matches!(self, ConfigReload::Rejected { .. })
+    }
+}
+
+/// Raise `config/reload`. EMIT, so a profile with no listener pays nothing and the watch task is
+/// never blocked by a surface.
+fn reload(kernel: &Kernel, what: ConfigReload) {
+    kernel.root().emit::<ConfigReloadEvent>(what);
+}
+
+/// The live rows, by fiber uid: the coordinate that changes when a row is reloaded, added or
+/// removed. Counting THIS rather than trusting the patch means "no row changed" is a measurement.
+fn row_uids(kernel: &Kernel) -> std::collections::BTreeMap<String, Option<u64>> {
+    kernel
+        .rows_snapshot()
+        .into_iter()
+        .map(|r| (r.id.to_string(), r.uid.map(|u| u.0)))
+        .collect()
+}
+
+fn changed(
+    before: &std::collections::BTreeMap<String, Option<u64>>,
+    after: &std::collections::BTreeMap<String, Option<u64>>,
+) -> usize {
+    let mut n = 0;
+    for (id, uid) in after {
+        if before.get(id) != Some(uid) {
+            n += 1;
+        }
+    }
+    for id in before.keys() {
+        if !after.contains_key(id) {
+            n += 1;
+        }
+    }
+    n
+}
+
+#[cfg(test)]
+mod reload_tests {
+    use super::*;
+
+    #[test]
+    fn the_line_says_what_happened_in_the_logs_own_words() {
+        assert_eq!(
+            ConfigReload::Applied { rows_changed: 0 }.line(),
+            "config reloaded — no row changed"
+        );
+        assert_eq!(
+            ConfigReload::Applied { rows_changed: 1 }.line(),
+            "config reloaded — 1 row changed"
+        );
+        assert!(ConfigReload::Applied { rows_changed: 3 }
+            .line()
+            .contains("3 rows changed"));
+        let r = ConfigReload::Rejected {
+            detail: "unknown field `wat`".into(),
+        };
+        assert!(r.line().contains("unknown field `wat`"), "{}", r.line());
+        assert!(r.line().contains("last good tree still running"));
+        assert!(r.is_rejection());
+    }
+
+    #[test]
+    fn changed_counts_reloads_additions_and_removals() {
+        use std::collections::BTreeMap;
+        let before: BTreeMap<String, Option<u64>> = [
+            ("a".to_string(), Some(1)),
+            ("b".to_string(), Some(2)),
+            ("gone".to_string(), Some(3)),
+        ]
+        .into_iter()
+        .collect();
+        let after: BTreeMap<String, Option<u64>> = [
+            ("a".to_string(), Some(1)),   // untouched
+            ("b".to_string(), Some(9)),   // reloaded
+            ("new".to_string(), Some(4)), // added
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(changed(&before, &after), 3);
+        assert_eq!(changed(&before, &before), 0);
+    }
 }

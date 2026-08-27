@@ -69,9 +69,18 @@ impl Plugin for SqliteLedgerPlugin {
         let store = SqliteStore::open(&cfg, ctx.clone())
             .map_err(|e| PluginError::new(entry.clone(), anyhow::Error::new(e)))?;
 
+        // Teardown, in order (phase ux1 §2.10, M28): CHECKPOINT the WAL back into the db, THEN
+        // poison the store. A relaunch after an unclosed shutdown was reading a 4.1k db beside a
+        // 231k WAL, which is how the audit lost a session's history.
         let retire_me = store.clone();
         ctx.effect(move |e| async move {
-            e.defer_sync(move || retire_me.retire());
+            e.defer(move || {
+                let store = retire_me.clone();
+                async move {
+                    let _ = store.checkpoint().await;
+                    store.retire();
+                }
+            });
             Ok(())
         })
         .await?;

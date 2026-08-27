@@ -195,7 +195,7 @@ t a_dormant_lane_runs_no_wake_while_mail_arrives \
         && [ \"\$(wakes_on lane/luna)\" = \"$luna_wakes_before\" ]"
 
 # …and reactivation drains the backlog in ONE wake (§5's standing invariant).
-shell-use submit "/wake luna"
+shell-use submit "/resume luna"
 drained_in_one() {
   local i
   for i in $(seq 1 60); do

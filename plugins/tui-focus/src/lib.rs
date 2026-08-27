@@ -39,10 +39,11 @@ use ratatui::widgets::Paragraph;
 pub use branches::{branches_from_edges, Branch, BranchPicker, PickerOutcome};
 pub use claims::{claim_action_of_hit, hit_for_claim, ClaimAction};
 pub use expand::{call_of_hit, hit_for_call, Expanded};
+pub use rowfocus::{focus_marker, RowFocus};
 pub use rows::{
     rows_from_steps, trailing_durable, trailing_text_row, trailing_text_rows, ClaimState, Row,
 };
-pub use scroll::Scroll;
+pub use scroll::{Scroll, Viewport};
 pub use stream::{apply_tee, tee_for, tee_stream, trailing_text, LiveText};
 
 /// The catalog name of this row.
@@ -71,6 +72,10 @@ pub struct FocusState {
     pub steps: Vec<Step>,
     pub rows: Vec<Row>,
     pub scroll: Scroll,
+    /// Rows that arrived while the viewport was NOT at the tail — what the `↓ N new` affordance
+    /// counts (phase ux1 §2.2, B2). Zeroed by every route back to the tail, so the badge and the
+    /// scroll state can never disagree.
+    pub unseen: usize,
     pub expanded: Expanded,
     /// The step a `FocusRequest { step: Some(..) }` asked to show, flashed in `theme.accent`.
     pub anchor: Option<StepId>,
@@ -89,6 +94,11 @@ pub struct FocusState {
     pub home_traj: Option<TrajId>,
     /// The branch picker, `^b`.
     pub picker: BranchPicker,
+    /// The roving row focus (B6). `None` until the keyboard arrives in this pane.
+    pub row_focus: RowFocus,
+    /// Where each row's FIRST line landed in the last frame, by row index. `handle` has no
+    /// geometry of its own, and moving the row focus has to be able to bring the row into view.
+    pub row_lines: Vec<u16>,
 }
 
 impl FocusState {
@@ -122,9 +132,11 @@ impl FocusState {
         }
         let before = self.rows.len();
         self.rows = rows_from_steps(&self.steps);
-        self.scroll = self
-            .scroll
-            .on_rows_appended(self.rows.len().saturating_sub(before));
+        let added = self.rows.len().saturating_sub(before);
+        self.scroll = self.scroll.on_rows_appended(added);
+        if !self.scroll.is_following() {
+            self.unseen = self.unseen.saturating_add(added);
+        }
     }
 
     /// The oldest seq held, for paging further back.
@@ -141,6 +153,7 @@ impl FocusState {
         self.traj = Some(traj);
         self.set_steps(steps);
         self.scroll = Scroll::Follow;
+        self.unseen = 0;
         self.anchor = None;
     }
 
@@ -152,6 +165,7 @@ impl FocusState {
         self.traj = Some(home);
         self.set_steps(steps);
         self.scroll = Scroll::Follow;
+        self.unseen = 0;
         self.anchor = None;
         true
     }
@@ -220,10 +234,35 @@ impl FocusPane {
         Vec<(bough_plugin_llm::ToolCallId, u16)>,
         Vec<claims::ClaimHit>,
     ) {
+        let (lines, headers, hits, _) = self.lines_with_rows(state, live, width, theme);
+        (lines, headers, hits)
+    }
+
+    /// The same pass, plus WHERE each row started. `render` needs the row geometry to draw the
+    /// roving focus and to record a hit region for a whole tool block; `lines` is the three-value
+    /// view every existing caller already has.
+    #[allow(clippy::type_complexity)]
+    pub fn lines_with_rows(
+        &self,
+        state: &FocusState,
+        live: &LiveText,
+        width: u16,
+        theme: &Theme,
+    ) -> (
+        Vec<Line<'static>>,
+        Vec<(bough_plugin_llm::ToolCallId, u16)>,
+        Vec<claims::ClaimHit>,
+        Vec<u16>,
+    ) {
         // The picker takes the whole pane while it is open: it is a choice about WHAT the pane
         // shows, and showing it beside the thing it would replace reads as two trajectories.
         if state.picker.open {
-            return (state.picker.lines(width, theme), Vec::new(), Vec::new());
+            return (
+                state.picker.lines(width, theme),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
         }
         let durable = trailing_durable(&state.rows);
         // Since P5-D14 the flushes of one step index are already ONE row, so the only choice left
@@ -242,8 +281,11 @@ impl FocusPane {
             ));
         }
 
+        let mut row_lines: Vec<u16> = Vec::with_capacity(state.rows.len());
         for (i, row) in state.rows.iter().enumerate() {
             let flash = state.anchor.as_ref() == Some(row.step());
+            let row_start = lines.len();
+            row_lines.push(row_start as u16);
             match row {
                 Row::Andrey { text, .. } => {
                     lines.push(label("andrey", theme.accent));
@@ -307,13 +349,12 @@ impl FocusPane {
                     }
                 }
                 Row::WakeMark { phase, reason, .. } => {
-                    let word = match phase {
-                        Phase::Start => "wake".to_string(),
-                        Phase::End => format!("wake end · {}", reason.clone().unwrap_or_default()),
-                    };
+                    // Turn/message vocabulary at BODY contrast (nit 37, M22): the rhythm the
+                    // personas praised, in words they use.
+                    let word = rows::turn_mark_words(phase, reason.as_deref());
                     lines.push(Line::styled(
                         format!("── {word} "),
-                        Style::default().fg(theme.dim),
+                        Style::default().fg(theme.fg),
                     ));
                 }
                 Row::About { view, .. } => {
@@ -351,6 +392,18 @@ impl FocusPane {
                     ));
                 }
             }
+            // The roving row focus, drawn NEVER BY COLOUR ALONE (audit delight 3): a marker glyph
+            // in the gutter column of every line of the row, and a `sel_bg` fill behind it.
+            if state.row_focus.is_on(i) {
+                for (n, line) in lines.iter_mut().enumerate().skip(row_start) {
+                    let marker = if n == row_start { focus_marker() } else { ' ' };
+                    line.spans.insert(
+                        0,
+                        Span::styled(marker.to_string(), Style::default().fg(theme.accent)),
+                    );
+                    *line = line.clone().style(Style::default().bg(theme.sel_bg));
+                }
+            }
             if flash {
                 if let Some(last) = lines.last_mut() {
                     // The accent has to reach the SPANS, not only the line: a span's own `fg`
@@ -371,7 +424,7 @@ impl FocusPane {
                 &live.text, width, theme,
             ));
         }
-        (lines, headers, claim_hits)
+        (lines, headers, claim_hits, row_lines)
     }
 
     /// Compute the focused agent's branches and open the picker over them. With no injected
@@ -434,6 +487,23 @@ impl FocusPane {
     }
 }
 
+/// PURE: the scroll that brings `line` into a `height`-tall window, leaving an already-visible
+/// line — and `Follow` — exactly where it is. A focus indicator off screen is not an indicator.
+pub fn reveal(scroll: Scroll, line: usize, lines: usize, height: u16) -> Scroll {
+    if height == 0 {
+        return scroll;
+    }
+    let top = scroll.top(lines, height);
+    let h = height as usize;
+    if line < top {
+        Scroll::anchored_on(line)
+    } else if line >= top + h {
+        Scroll::anchored_on(line + 1 - h)
+    } else {
+        scroll
+    }
+}
+
 fn label(who: &str, color: ratatui::style::Color) -> Line<'static> {
     Line::styled(
         format!("{who}:"),
@@ -452,28 +522,60 @@ impl Pane for FocusPane {
         let live = self.live.lock().clone();
         let theme = *cx.theme();
         let area = cx.area;
-        let (lines, headers, claim_hits) = self.lines(&state, &live, area.width, &theme);
+        let (lines, headers, claim_hits, row_lines) =
+            self.lines_with_rows(&state, &live, area.width, &theme);
         state.lines = lines.len();
+        state.row_lines = row_lines.clone();
+        let tool_rows: Vec<(usize, bough_plugin_llm::ToolCallId)> = state
+            .rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| match r {
+                Row::Tool { call, .. } => Some((i, call.clone())),
+                _ => None,
+            })
+            .collect();
         invariant::record_frame(&state.rows, &live);
         let top = state.scroll.top(lines.len(), area.height);
+        // The unread affordance (phase ux1 §2.2, B2): scrolled up with rows arriving below, the
+        // pane SAYS how many and what to press. Nothing is drawn while following, so a reader at
+        // the tail never sees chrome for a state they are not in.
+        let badge = (!state.scroll.is_following() && state.unseen > 0)
+            .then(|| format!("\u{2193} {} new · End", state.unseen));
         drop(state);
 
-        for (call, line) in headers {
-            if line < top as u16 {
+        // The clickable region of a tool call is its WHOLE BLOCK — the header AND, when it is
+        // open, its body (M26). A one-line target on a row a user has to aim at with a mouse is
+        // what made every click a guess; a block-sized target cannot be missed by one row, and
+        // clicking an open tool anywhere collapses it.
+        //
+        // The block is the ROW's line span, so a text row that follows a tool call is never
+        // swallowed into it: `row_lines[i]..row_lines[i + 1]`.
+        let total = lines.len() as u16;
+        let _ = &headers;
+        for (i, call) in tool_rows.iter() {
+            let first = row_lines.get(*i).copied().unwrap_or(0);
+            let last = row_lines
+                .get(i + 1)
+                .copied()
+                .unwrap_or(total)
+                .max(first + 1);
+            if last <= top as u16 {
                 continue;
             }
-            let y = line - top as u16;
+            let y = first.saturating_sub(top as u16);
             if y >= area.height {
                 break;
             }
+            let height = (last - top as u16 - y).min(area.height - y);
             cx.hit(
                 Rect {
                     x: area.x,
                     y: area.y + y,
                     width: area.width,
-                    height: 1,
+                    height,
                 },
-                expand::hit_for_call(&call),
+                expand::hit_for_call(call),
             );
         }
         for hit in claim_hits {
@@ -496,6 +598,24 @@ impl Pane for FocusPane {
         }
         cx.frame
             .render_widget(Paragraph::new(lines).scroll((top as u16, 0)), area);
+        if let Some(text) = badge {
+            if area.height > 0 {
+                let w = (text.chars().count() as u16).min(area.width);
+                let rect = Rect {
+                    x: area.x + area.width.saturating_sub(w),
+                    y: area.y + area.height - 1,
+                    width: w,
+                    height: 1,
+                };
+                cx.frame.render_widget(
+                    Paragraph::new(Line::styled(
+                        text,
+                        Style::default().fg(cx.theme().bg).bg(cx.theme().accent),
+                    )),
+                    rect,
+                );
+            }
+        }
     }
 
     async fn handle(&self, ev: PaneEvent, cx: PaneCx) -> PaneOutcome {
@@ -542,6 +662,9 @@ impl Pane for FocusPane {
                 state.scroll = state
                     .scroll
                     .scrolled(delta as i32, state.lines, state.height);
+                if state.scroll.is_following() {
+                    state.unseen = 0;
+                }
                 drop(state);
                 cx.tui.redraw();
                 PaneOutcome::Handled
@@ -562,13 +685,63 @@ impl Pane for FocusPane {
                     cx.tui.redraw();
                     return PaneOutcome::Handled;
                 }
+                // B6: with the keyboard in this pane, Up/Down move the ROVING ROW FOCUS and
+                // Enter/Space toggle the focused row's disclosure. There was no keyboard path to
+                // a tool call at all before this: the diff behind a write was mouse-only.
+                match key.code {
+                    KeyCode::Up | KeyCode::Down => {
+                        let delta = if key.code == KeyCode::Up { -1 } else { 1 };
+                        let mut state = self.state.lock();
+                        let rows = state.rows.len();
+                        state.row_focus = std::mem::take(&mut state.row_focus).moved(delta, rows);
+                        // Bring it into view: a focus indicator off screen is not an indicator.
+                        if let Some(i) = state.row_focus.index {
+                            if let Some(line) = state.row_lines.get(i).copied() {
+                                let (lines, height) = (state.lines, state.height);
+                                state.scroll = reveal(state.scroll, line as usize, lines, height);
+                            }
+                        }
+                        drop(state);
+                        cx.tui.redraw();
+                        return PaneOutcome::Handled;
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        let toggled = {
+                            let mut state = self.state.lock();
+                            let call =
+                                state.row_focus.index.and_then(|i| match state.rows.get(i) {
+                                    Some(Row::Tool { call, .. }) => Some(call.clone()),
+                                    _ => None,
+                                });
+                            match call {
+                                Some(call) => {
+                                    state.expanded.toggle(&call);
+                                    true
+                                }
+                                None => false,
+                            }
+                        };
+                        if toggled {
+                            cx.tui.redraw();
+                            return PaneOutcome::Handled;
+                        }
+                        return PaneOutcome::Ignored;
+                    }
+                    _ => {}
+                }
                 let next = {
                     let state = self.state.lock();
                     self.scroll_for_key(key, &state)
                 };
                 match next {
                     Some(s) => {
-                        self.state.lock().scroll = s;
+                        {
+                            let mut state = self.state.lock();
+                            state.scroll = s;
+                            if s.is_following() {
+                                state.unseen = 0;
+                            }
+                        }
                         // Scrolling to the very top is the request for older rows: the pane pages
                         // rather than pretending the trajectory starts where its window does.
                         if matches!(s, Scroll::Anchored { top: 0 }) {
@@ -635,6 +808,7 @@ pub async fn retarget(
             held.picker = BranchPicker::default();
             held.set_steps(steps);
             held.scroll = Scroll::Follow;
+            held.unseen = 0;
             held.anchor = None;
         }
     }

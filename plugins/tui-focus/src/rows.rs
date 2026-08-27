@@ -459,6 +459,24 @@ pub fn trailing_text_rows(rows: &[Row]) -> Vec<usize> {
     trailing_text_row(rows).into_iter().collect()
 }
 
+/// PURE: the words a [`Row::WakeMark`] shows, in the USER-FACING vocabulary (nit 37).
+///
+/// The ledger keeps `wake/start` and `wake/end` — REQUIREMENTS §3's step-type map does not move.
+/// What moves is the chrome: nobody outside this codebase calls a turn a wake, and the audit's
+/// personas read `── wake end · completed` as a machine talking to itself.
+pub fn turn_mark_words(phase: &Phase, reason: Option<&str>) -> String {
+    match phase {
+        Phase::Start => "turn".to_string(),
+        Phase::End => match reason.map(str::trim).filter(|r| !r.is_empty()) {
+            // The interrupt marker the audit asked for by name (B7): the user pressed Esc and
+            // wants to see, where they are looking, that it landed.
+            Some("interrupted") => "turn interrupted".to_string(),
+            Some(r) => format!("turn ended \u{b7} {r}"),
+            None => "turn ended".to_string(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,6 +484,24 @@ mod tests {
     /// `ANDREY_REF` is a re-spelling of the sender encoding `agents` owns. The two are pinned
     /// equal here: if the encoding ever changes, Andrey's messages would silently stop rendering
     /// as `Row::Andrey` and lose their accent label, with nothing failing.
+    /// The chrome speaks turn/message; the ledger keeps `wake/*`. Both halves pinned here.
+    #[test]
+    fn turn_marks_never_say_wake() {
+        assert_eq!(turn_mark_words(&Phase::Start, None), "turn");
+        assert_eq!(
+            turn_mark_words(&Phase::End, Some("completed")),
+            "turn ended \u{b7} completed"
+        );
+        assert_eq!(
+            turn_mark_words(&Phase::End, Some("interrupted")),
+            "turn interrupted"
+        );
+        assert_eq!(turn_mark_words(&Phase::End, Some("  ")), "turn ended");
+        for phase in [Phase::Start, Phase::End] {
+            assert!(!turn_mark_words(&phase, Some("done")).contains("wake"));
+        }
+    }
+
     #[test]
     fn andrey_ref_is_the_spelling_agents_writes() {
         assert_eq!(

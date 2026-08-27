@@ -60,12 +60,28 @@ tui_open
 tui_start_recording_exit "$EXIT_FILE" "$PROBE"
 see "PROBE-PANE-OK" --timeout 20000 >/dev/null \
   || { echo "not ok - the probe pane never rendered"; tui_close; exit 1; }
-# CLICK the pane first. The composer holds the keyboard by default, so a bare `p` is typed into
-# the composer and the pane's `handle` never sees the key that arms the panic.
-shell-use mouse click --on-text "PROBE-PANE-OK"
-shell-use wait idle --timeout 5000 >/dev/null 2>&1 || true
-shell-use press p
-shell-use wait idle --timeout 20000
+# Give the PANE the keyboard first. Since phase ux1 a click never steals typing (B1) — the
+# composer stays live — so the keyboard is moved the way a keyboard user moves it: Tab. The ring
+# order is not this script's business, so it walks it: i Tabs from the composer, then `p`. A `p`
+# that reaches the composer instead is typed into the draft, which returns the keyboard to the
+# composer, so the next iteration starts from the same place and walks one stop further.
+arm_the_probe() {
+  local i j
+  # `Ctrl+F` is the one keystroke that names a pane, so it is the fixed point the walk starts
+  # from: focus the search pane, then take `i` Tabs around the ring and offer `p`. A `p` that
+  # reaches the composer is typed into the draft and moves the keyboard back — which is why the
+  # next iteration re-anchors with `Ctrl+F` rather than assuming where it ended up.
+  for i in $(seq 1 6); do
+    shell-use keys "Ctrl+f" >/dev/null 2>&1 || true
+    for j in $(seq 1 "$i"); do shell-use keys Tab >/dev/null; done
+    shell-use press p >/dev/null
+    shell-use wait idle --timeout 10000 >/dev/null 2>&1 || true
+    if see "panic" --timeout 1000 >/dev/null 2>&1 || [ -s "$EXIT_FILE" ]; then return 0; fi
+    shell-use keys "Ctrl+u" >/dev/null 2>&1 || true
+  done
+  return 0
+}
+arm_the_probe
 
 t a_panic_inside_a_pane_restores_the_terminal_and_exits_non_zero \
   bash -c 'see "panic" --timeout 20000'

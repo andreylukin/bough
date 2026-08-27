@@ -209,3 +209,74 @@ mod tests {
         assert!(matches!(&rows[0], Row::Text { parts, .. } if parts.len() == 3));
     }
 }
+
+// ---------------------------------------------------------------------------
+// WP-3 / phase ux1 §2.6: chunk boundaries are not durable (M10, M19)
+// ---------------------------------------------------------------------------
+
+/// The chunks the audit actually saw, verbatim from M10: the network split this answer inside a
+/// word (`distin` / `ctions`), inside a sentence, and — worst — through the middle of a `**bold**`
+/// marker pair, which is why `**Code & File` rendered its asterisks.
+const CHUNKS: &[&str] = &[
+    "## Core Capabilities\n\n**Code & File",
+    " Operations:**\n\n- I'll create",
+    " a file named notes.txt\n- This script featured lowercase letters with clear distin",
+    "ctions\n- Update Linear ticket stat",
+    "uses\n\n| Scenario | Use |\n|---|---|\n| ship | now |\n",
+];
+
+/// The package's headline property: a replayed multi-chunk answer renders BYTE-IDENTICALLY to the
+/// same text delivered in one chunk.
+///
+/// It holds because `document` is a pure function of the ACCUMULATED string and the width — there
+/// is nowhere for a chunk boundary to be stored. This is the assertion that made M10 impossible to
+/// reintroduce without a red test.
+#[test]
+fn a_replayed_multi_chunk_answer_renders_identically_to_one_chunk() {
+    let theme = bough_plugin_tui_shell::Theme::of(bough_plugin_tui_shell::ThemeName::Dark);
+    let whole: String = CHUNKS.concat();
+
+    for width in [40u16, 80, 90, 200] {
+        let one = bough_plugin_tui_render::document(&whole, width, &theme);
+
+        // Replay: accumulate chunk by chunk exactly as the tee does, rendering at every step.
+        let mut acc = String::new();
+        for c in CHUNKS {
+            acc.push_str(c);
+            // Every intermediate render is TOTAL — half a bold pair, half a table, a heading with
+            // no blank line after it — and never panics.
+            let _ = bough_plugin_tui_render::document(&acc, width, &theme);
+        }
+        let replayed = bough_plugin_tui_render::document(&acc, width, &theme);
+
+        assert_eq!(acc, whole);
+        assert_eq!(
+            format!("{replayed:?}"),
+            format!("{one:?}"),
+            "@{width}: a chunk boundary survived into the paint"
+        );
+    }
+}
+
+/// And the damage the boundaries used to do is gone from the screen: no split word, no literal
+/// marker, no orphan backtick.
+#[test]
+fn the_chunk_boundaries_leave_no_trace_on_screen() {
+    let theme = bough_plugin_tui_shell::Theme::of(bough_plugin_tui_shell::ThemeName::Dark);
+    let whole: String = CHUNKS.concat();
+    for width in [40u16, 80, 90, 200] {
+        let out: Vec<String> = bough_plugin_tui_render::document(&whole, width, &theme)
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.to_string()).collect())
+            .collect();
+        let joined = out.join("\n");
+        assert!(!joined.contains("**"), "@{width}: {joined}");
+        assert!(!joined.contains("##"), "@{width}: {joined}");
+        for word in ["distinctions", "statuses"] {
+            assert!(
+                out.iter().any(|l| l.contains(word)),
+                "@{width}: {word} is still split: {out:?}"
+            );
+        }
+    }
+}

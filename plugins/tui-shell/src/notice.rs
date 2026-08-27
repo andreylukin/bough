@@ -24,4 +24,7 @@ pub enum NoticeKind {
     Config,
     /// A copy flash (M21).
     Copied,
+    /// The OUTPUT of a `/` command. Like an error it has no TTL: a report the user asked for that
+    /// fades before it is read was never rendered at all (M27).
+    Command,
 }

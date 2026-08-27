@@ -55,12 +55,10 @@ pub(crate) fn remeasure(s: &mut RenderedSection) {
 pub async fn identity(
     req: &SectionRequest,
     _cfg: &AssemblerConfig,
+    tools: &[bough_plugin_tools::ToolName],
 ) -> Result<Option<RenderedSection>, ProjectionError> {
     let row = req.ledger.0.agent(&req.agent).await?;
-    // phase ux1 §2.10 (M25): WP-7 replaces `&[]` with the tools registered in THIS agent's
-    // scope, read from the injected `tools` handle — so "what can you do" cannot advertise a
-    // tool the agent was never offered.
-    Ok(Some(identity_section(&req.agent, row.as_ref(), &[])))
+    Ok(Some(identity_section(&req.agent, row.as_ref(), tools)))
 }
 
 /// Pure: the identity band as a function of the (mutable) agents row alone.
@@ -71,8 +69,6 @@ pub fn identity_section(
     row: Option<&AgentRow>,
     tools: &[bough_plugin_tools::ToolName],
 ) -> RenderedSection {
-    // WP-7 renders `tools` into the body below.
-    let _ = tools;
     let mut body = format!("name: {name}\n");
     let mut cites = SectionCites::default();
     match row {
@@ -105,6 +101,21 @@ pub fn identity_section(
         // An agent with no row is still an agent: identity is never dropped, so it never refuses.
         None => body.push_str("trajectory: -\nrouting refs: -\nwake classes: -\ndigest: none\n"),
     }
+    // phase ux1 §2.10 (M25): the tools this agent is ACTUALLY offered, named. The line is always
+    // present — an agent with no tools says so, because "none" is the answer that stops the model
+    // inventing `open_pr`.
+    body.push_str(&format!(
+        "tools: {}\n",
+        if tools.is_empty() {
+            "none".to_string()
+        } else {
+            tools
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    ));
     section("identity", Slot::Identity, "Identity", body, cites)
 }
 
@@ -723,5 +734,36 @@ mod tests {
 
     fn seqs(block: &[Step]) -> Vec<u64> {
         block.iter().map(|s| s.seq.0).collect()
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use bough_plugin_ledger::AgentName;
+    use bough_plugin_tools::ToolName;
+
+    /// phase ux1 §2.10 (M25): the band names EXACTLY the tools it was handed — no more (the
+    /// audit's invented `open_pr`) and no fewer.
+    #[test]
+    fn identity_section_lists_exactly_the_tools_passed() {
+        let tools = vec![
+            ToolName::new("bash"),
+            ToolName::new("read_file"),
+            ToolName::new("write_file"),
+        ];
+        let s = identity_section(&AgentName::new("sol"), None, &tools);
+        assert!(
+            s.body.contains("tools: bash, read_file, write_file"),
+            "{}",
+            s.body
+        );
+        assert!(!s.body.contains("open_pr"));
+    }
+
+    #[test]
+    fn an_agent_with_no_tools_says_none() {
+        let s = identity_section(&AgentName::new("sol"), None, &[]);
+        assert!(s.body.contains("tools: none"), "{}", s.body);
     }
 }

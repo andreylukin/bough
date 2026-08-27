@@ -69,7 +69,16 @@ impl SqliteStore {
     /// beside a 4.1k db is what an unclosed shutdown looks like, and the history the user typed
     /// is what it loses.
     pub async fn checkpoint(&self) -> Result<(), LedgerError> {
-        todo!("WP-7")
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock();
+            // `query_row` and not `execute`: the pragma RETURNS a row (busy, log, checkpointed),
+            // and rusqlite refuses `execute` on a statement that yields one.
+            c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+                .map_err(store_err)
+        })
+        .await
+        .map_err(|e| LedgerError::Store(anyhow::anyhow!("checkpoint task failed: {e}")))?
     }
 
     /// Poison the store. Called by the row's teardown; irreversible for this store instance.

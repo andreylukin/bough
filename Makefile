@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help check build test lint gates release audit-plugins live bench tui-test tui-test-replay
+.PHONY: help check build test lint gates release audit-plugins live bench tui-test tui-test-replay ux2
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-16s %s\n", $$1, $$2}'
@@ -92,3 +92,15 @@ tui-test: tui-test-replay ## REQUIREMENTS §17 Phase 3: the whole suite, replay 
 	 else \
 	   echo "== tui-test: no ANTHROPIC_API_KEY and no $(HOME)/.bough/env; skipping the live half =="; \
 	 fi
+
+# phase ux1 §3 V11: the UX re-audit. Three personas re-walk the top twelve findings of
+# `docs/ux-audit-1.md` against the RELEASE binary, live haiku for both tiers, capturing an SVG per
+# step into `docs/ux-audit-2-shots/<persona>/`. It exits non-zero if any blocker or major verdict
+# is not `fixed` — those are the rows of the residuals table in `docs/ux-audit-2.md`.
+#
+# NOT in `make gates`: it is live, it is slow, and it is a report rather than a regression test.
+# The regressions it found are pinned by `scripts/tui/16-*.sh` … `25-*.sh`, which ARE in the gates.
+ux2: release ## the phase ux1 UX re-audit (live; needs ~/.bough/env with ANTHROPIC_API_KEY)
+	@test -f $(HOME)/.bough/env || test -n "$$ANTHROPIC_API_KEY" || \
+	  { echo "make ux2: no ANTHROPIC_API_KEY and no $(HOME)/.bough/env"; exit 1; }
+	@BOUGH_BIN=$(CURDIR)/target/release/bough ./scripts/ux2/run.sh

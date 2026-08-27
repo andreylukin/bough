@@ -58,6 +58,8 @@ use bough_plugin_leader as _;
 use bough_plugin_mail_router as _;
 use bough_plugin_tool_leader as _;
 use bough_plugin_worker_fork as _;
+// Phase ux1's one new row (§17 Phase 3 / phase ux1 §2.13): the status line.
+use bough_plugin_tui_status as _;
 
 pub mod boot;
 pub mod cli;

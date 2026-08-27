@@ -60,6 +60,26 @@ pub enum SlotSize {
     Percent(u16),
     /// Share of what is left, by weight.
     Fill(u16),
+    /// A BREAKPOINT (phase ux1 §2.5, M13): zero columns below `collapse`, else `preferred`
+    /// clamped to `min..=max`. A rail that is 34 columns at 80 and at 200 is the bug this
+    /// variant removes; a slot size is the only place the rule can live, because layout — not
+    /// the pane — decides how many columns the slot costs.
+    Responsive {
+        collapse: u16,
+        preferred: u16,
+        min: u16,
+        max: u16,
+    },
+}
+
+/// PURE: the breakpoint rule of [`SlotSize::Responsive`], spelled once so the pane that registers
+/// the size and the layout that honours it cannot disagree.
+pub fn responsive_width(total: u16, collapse: u16, preferred: u16, min: u16, max: u16) -> u16 {
+    if total < collapse {
+        return 0;
+    }
+    let hi = max.max(min);
+    preferred.clamp(min.min(hi), hi).min(total)
 }
 
 /// What a row hands to [`TuiHandle::register_pane`].
@@ -306,6 +326,12 @@ fn fixed_len(size: SlotSize, total: u16) -> u16 {
         SlotSize::Cells(n) => n.min(total),
         SlotSize::Percent(p) => ((total as u32 * p.min(100) as u32) / 100) as u16,
         SlotSize::Fill(_) => 0,
+        SlotSize::Responsive {
+            collapse,
+            preferred,
+            min,
+            max,
+        } => responsive_width(total, collapse, preferred, min, max),
     }
 }
 
@@ -384,8 +410,6 @@ pub fn layout(
     composer_height: u16,
     gutter: u16,
 ) -> Vec<(PaneId, Rect)> {
-    // WP-4 gives `gutter` its meaning; until then the layout is exactly the Phase 5 one.
-    let _ = gutter;
     let ordered = sorted(panes);
     let of = |slot: Slot| -> Vec<PaneInfo> {
         ordered.iter().filter(|p| p.slot == slot).cloned().collect()
@@ -432,14 +456,23 @@ pub fn layout(
             .max()
             .unwrap_or(0)
             .min(rest.width);
+        // The gutter (M9): the SLOT costs `width + gutter` columns and the pane is handed only
+        // `width`, so the blank column between the rail and the transcript belongs to NOBODY and
+        // neither side can paint a text run onto the other's baseline. A collapsed rail (zero
+        // columns) costs no gutter either — an empty slot takes zero, as it always has.
+        let g = if width == 0 {
+            0
+        } else {
+            gutter.min(rest.width - width)
+        };
         let column = Rect {
             x: rest.x,
             y: rest.y,
             width,
             height: rest.height,
         };
-        rest.x += width;
-        rest.width -= width;
+        rest.x += width + g;
+        rest.width -= width + g;
         // Inside the rail, panes stack vertically and share the height.
         // A rail pane's `size` names its WIDTH; its height is an equal share of the rail.
         let heights = split(column.height, &vec![SlotSize::Fill(1); strip.len()]);

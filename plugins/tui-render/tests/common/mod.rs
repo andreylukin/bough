@@ -6,6 +6,8 @@ use ratatui::style::Color;
 pub fn theme() -> Theme {
     Theme {
         bg: Color::Rgb(16, 16, 20),
+        // phase ux1 §2.5: the background the palette is MEASURED against (`bg` may be `Reset`).
+        measure_bg: Color::Rgb(16, 16, 20),
         fg: Color::Rgb(220, 220, 220),
         dim: Color::Rgb(120, 120, 120),
         accent: Color::Rgb(120, 180, 255),

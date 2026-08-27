@@ -13,7 +13,7 @@ use bough_kernel::{Context, Plugin, PluginError};
 use bough_plugin_ledger::{Cite, Ref};
 use bough_plugin_tools::{
     FailureClass, PostExecute, RenderIntent, Tool, ToolCall, ToolCx, ToolFailure, ToolName,
-    ToolOutcome, ToolScope, ToolSpec, Tools, ToolsPostExecute,
+    ToolOutcome, ToolScope, ToolSpec, Tools, ToolsPostExecute, Workspace, WorkspaceRoot,
 };
 
 /// The catalog name of this row.
@@ -115,11 +115,9 @@ impl Tool for Bash {
         let command = arg_str(&call, "command")?;
         let cwd = match arg_str_opt(&call, "cwd") {
             Some(c) => fs::contain(&self.0.root, &c).map_err(|m| err(FailureClass::Denied, m))?,
-            None => self
-                .0
-                .root
-                .canonicalize()
-                .map_err(|e| err(FailureClass::Error, format!("unreadable root: {e}")))?,
+            // The pinned root is already absolute and canonical (phase ux1 §2.10): resolving it
+            // again here is what let a later `chdir` retarget the call.
+            None => self.0.root.clone(),
         };
         let timeout = std::time::Duration::from_millis(self.0.bash_timeout_ms);
         let child = tokio::process::Command::new("sh")
@@ -289,11 +287,9 @@ impl Tool for Glob {
         let pattern = arg_str(&call, "pattern")?;
         let root = match arg_str_opt(&call, "path") {
             Some(p) => fs::contain(&self.0.root, &p).map_err(|m| err(FailureClass::Denied, m))?,
-            None => self
-                .0
-                .root
-                .canonicalize()
-                .map_err(|e| err(FailureClass::Error, format!("unreadable root: {e}")))?,
+            // The pinned root is already absolute and canonical (phase ux1 §2.10): resolving it
+            // again here is what let a later `chdir` retarget the call.
+            None => self.0.root.clone(),
         };
         let re = regex::Regex::new(&fs::glob_to_regex(&pattern))
             .map_err(|e| err(FailureClass::Error, format!("bad pattern: {e}")))?;
@@ -334,11 +330,9 @@ impl Tool for Grep {
         let pattern = arg_str(&call, "pattern")?;
         let root = match arg_str_opt(&call, "path") {
             Some(p) => fs::contain(&self.0.root, &p).map_err(|m| err(FailureClass::Denied, m))?,
-            None => self
-                .0
-                .root
-                .canonicalize()
-                .map_err(|e| err(FailureClass::Error, format!("unreadable root: {e}")))?,
+            // The pinned root is already absolute and canonical (phase ux1 §2.10): resolving it
+            // again here is what let a later `chdir` retarget the call.
+            None => self.0.root.clone(),
         };
         let re = regex::Regex::new(&pattern)
             .map_err(|e| err(FailureClass::Error, format!("bad regex: {e}")))?;
@@ -527,6 +521,23 @@ impl Plugin for BaselineToolsPlugin {
         let tools = ctx
             .get::<Tools>()
             .map_err(|e| PluginError::new(entry.clone(), e))?;
+
+        // phase ux1 §2.10 (B5): the root is resolved ONCE, HERE, against the process cwd this
+        // binary booted in — and then published, so the directory the tools use and the one the
+        // status line shows are the same object. A root that does not exist is a LOAD failure.
+        let cwd = std::env::current_dir()
+            .map_err(|e| PluginError::new(entry.clone(), anyhow::anyhow!("no process cwd: {e}")))?;
+        let pinned = fs::pin_root(&cfg.root, &cwd)
+            .map_err(|m| PluginError::new(entry.clone(), anyhow::anyhow!(m)))?;
+        ctx.provide::<Workspace>(WorkspaceRoot::new(pinned.clone()))
+            .await
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        // Every tool holds the PINNED root, never the configured spelling of it.
+        let cfg = Arc::new(BaselineConfig {
+            root: pinned,
+            ..(*cfg).clone()
+        });
+
         for spec in specs(cfg.clone()) {
             tools.register(&ctx, spec).await?;
         }

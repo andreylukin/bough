@@ -38,7 +38,7 @@ pub async fn register(ctx: &Context, drift: &DriftHandle) -> Result<(), PluginEr
             ctx,
             CommandSpec {
                 name: CommandName::new("drift"),
-                summary: "per-agent stability signals from the ledger".to_string(),
+                summary: SUMMARY_DRIFT.to_string(),
                 usage: "/drift [agent]".to_string(),
                 args: positional(&["agent"], 0),
                 scope: CommandScope::Global,
@@ -53,7 +53,7 @@ pub async fn register(ctx: &Context, drift: &DriftHandle) -> Result<(), PluginEr
             ctx,
             CommandSpec {
                 name: CommandName::new("reset"),
-                summary: "rebuild an agent's identity from raw evidence".to_string(),
+                summary: SUMMARY_RESET.to_string(),
                 usage: "/reset <agent>".to_string(),
                 args: positional(&["agent"], 1),
                 scope: CommandScope::Global,
@@ -68,7 +68,7 @@ pub async fn register(ctx: &Context, drift: &DriftHandle) -> Result<(), PluginEr
             ctx,
             CommandSpec {
                 name: CommandName::new("supersede"),
-                summary: "supersede a suspected-bad tier block".to_string(),
+                summary: SUMMARY_SUPERSEDE.to_string(),
                 usage: "/supersede <rollup-id> <reason…>".to_string(),
                 args: positional_rest(&["rollup", "reason"], 2),
                 scope: CommandScope::Global,
@@ -80,6 +80,12 @@ pub async fn register(ctx: &Context, drift: &DriftHandle) -> Result<(), PluginEr
         .await?;
     Ok(())
 }
+
+/// The plain-language summaries these three commands are listed under (phase ux1 §2.8, M16).
+/// Consts, so the lint below reads exactly the strings that are registered.
+pub const SUMMARY_DRIFT: &str = "show how much an agent's stated goal has moved lately";
+pub const SUMMARY_RESET: &str = "rebuild an agent's identity from raw evidence";
+pub const SUMMARY_SUPERSEDE: &str = "replace a block of the agent's memory that looks wrong";
 
 /// The agent a command acts on: the argument, else the focused agent.
 fn target(inv: &Invocation, cx: &CommandCx, usage: &str) -> Result<AgentName, CommandError> {
@@ -306,6 +312,14 @@ mod tests {
                 since: crate::signals::CLAIM_REJECTION_SINCE.to_string(),
             },
             flags: vec![DriftFlag::ToolUseCollapsed],
+        }
+    }
+
+    /// M16: no summary this row registers may use the tree's internal vocabulary.
+    #[test]
+    fn every_summary_is_plain_language() {
+        for s in [SUMMARY_DRIFT, SUMMARY_RESET, SUMMARY_SUPERSEDE] {
+            assert_eq!(bough_plugin_commands::palette::house_word(s), None, "{s}");
         }
     }
 

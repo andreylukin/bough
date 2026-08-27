@@ -30,7 +30,8 @@ pub async fn register(ctx: &Context, recon: &ReconHandle) -> Result<(), PluginEr
             ctx,
             CommandSpec {
                 name: CommandName::new("reconsolidate"),
-                summary: "distil, surface contradictions and expire stale evidence".to_string(),
+                summary: "re-read the agent's memory and flag anything that now contradicts"
+                    .to_string(),
                 usage: "/reconsolidate [agent] [--plan] [--since <seq>]".to_string(),
                 args: schemars::json_schema!({ "type": "array", "items": { "type": "string" } }),
                 scope: CommandScope::Global,

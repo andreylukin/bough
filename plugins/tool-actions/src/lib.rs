@@ -173,11 +173,10 @@ impl Plugin for ToolActionsPlugin {
         let actions = ctx
             .get::<Actions>()
             .map_err(|e| PluginError::new(entry, e))?;
-        // FOUR registrations, one per kind, each its own effect: §7's set is closed, so this loop
-        // is the whole model-facing surface of the write boundary.
-        for kind in ActionKind::all() {
-            tools.register(&ctx, spec(*kind, actions.clone())).await?;
-        }
+        // One registration per kind THAT HAS A LIVE PROVIDER (phase ux1 §2.10, M25). §7's set is
+        // closed, but a kind nothing can perform is not a capability: offering it makes the first
+        // answer every user reads confident fiction.
+        reconcile_action_tools(&ctx, &actions, &tools).await?;
         Ok(())
     }
 }
@@ -196,10 +195,31 @@ bough_kernel::register_plugin!(ToolActionsPlugin);
 /// raise it before Phase 6. When `actions-github` lands, that event replaces the tick.)
 ///
 /// Returns the tool names live after the reconcile.
-pub fn reconcile_action_tools(
-    actions: &bough_plugin_actions::ActionsHandle,
+///
+/// DEVIATION from §2.10's signature: registration is an EFFECT, so it needs the `Context` that
+/// owns the effect and it is `async`. The pure half — WHICH kinds get a tool — is
+/// [`kinds_with_providers`], and that is what the unit tests read.
+pub async fn reconcile_action_tools(
+    ctx: &Context,
+    actions: &Arc<bough_plugin_actions::ActionsHandle>,
     tools: &bough_plugin_tools::ToolsHandle,
-) -> Vec<ToolName> {
-    let _ = (actions, tools);
-    todo!("WP-7")
+) -> Result<Vec<ToolName>, PluginError> {
+    let mut live = Vec::new();
+    for kind in kinds_with_providers(actions) {
+        tools.register(ctx, spec(kind, actions.clone())).await?;
+        live.push(ToolName::new(tool_name(kind)));
+    }
+    Ok(live)
+}
+
+/// PURE over the seam: the kinds a Provider actually claims, in §7's declaration order so the
+/// prompt's tool list is stable. Empty with no Provider mounted — and then `open_pr` is absent
+/// from the prompt entirely, which is the honest reading of §9 (phase ux1 D-ux1-8).
+pub fn kinds_with_providers(actions: &bough_plugin_actions::ActionsHandle) -> Vec<ActionKind> {
+    let live = actions.kinds();
+    ActionKind::all()
+        .iter()
+        .copied()
+        .filter(|k| live.contains(k))
+        .collect()
 }

@@ -10,10 +10,12 @@ use std::path::{Component, Path, PathBuf};
 /// The target need not exist (a write creates it), so the deepest EXISTING ancestor is
 /// canonicalised and the rest is appended lexically: that is what makes a symlink pointing out of
 /// the tree refusable without requiring the leaf to be there already.
+///
+/// `root` is the PINNED root — absolute and already canonicalised by [`pin_root`] at activation.
+/// This function never canonicalises it again: doing so on every call is exactly what let a later
+/// `chdir` retarget every tool (phase ux1 §2.10, B5).
 pub fn contain(root: &Path, path: &str) -> Result<PathBuf, String> {
-    let root = root
-        .canonicalize()
-        .map_err(|e| format!("tool root `{}` is unreadable: {e}", root.display()))?;
+    let root = root.to_path_buf();
     let joined = if Path::new(path).is_absolute() {
         PathBuf::from(path)
     } else {
@@ -121,15 +123,45 @@ pub fn glob_to_regex(pattern: &str) -> String {
     re
 }
 
+/// PURE: a configured root against the process cwd, resolved ONCE at activation (phase ux1
+/// §2.10, B5). A relative root joins the cwd; an absolute one is taken as given; the result is
+/// canonicalised, and a root that does not exist is a LOAD failure, not a per-call error
+/// (§0.2 fail loud).
+///
+/// `contain` then takes this ABSOLUTE root and never canonicalises again — the per-call
+/// canonicalisation is exactly what let a later `chdir` retarget every tool.
+pub fn pin_root(configured: &Path, process_cwd: &Path) -> Result<PathBuf, String> {
+    let joined = if configured.is_absolute() {
+        configured.to_path_buf()
+    } else {
+        process_cwd.join(configured)
+    };
+    let normalized = normalize(&joined);
+    normalized.canonicalize().map_err(|e| {
+        format!(
+            "tool root `{}` (resolved to `{}`) is unreadable: {e}",
+            configured.display(),
+            normalized.display()
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The root as a row actually holds it: pinned once, absolute and canonical. `TempDir::path`
+    /// is NOT canonical on macOS (`/var` -> `/private/var`), and `contain` no longer canonicalises
+    /// per call, so every test resolves its root the way activation does.
+    fn root(dir: &tempfile::TempDir) -> PathBuf {
+        pin_root(Path::new("."), dir.path()).unwrap()
+    }
 
     #[test]
     fn a_relative_path_resolves_under_the_root() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.txt"), "hi").unwrap();
-        let p = contain(dir.path(), "a.txt").unwrap();
+        let p = contain(&root(&dir), "a.txt").unwrap();
         assert!(p.ends_with("a.txt"));
         assert_eq!(std::fs::read_to_string(p).unwrap(), "hi");
     }
@@ -137,21 +169,21 @@ mod tests {
     #[test]
     fn a_path_that_does_not_exist_yet_still_resolves() {
         let dir = tempfile::tempdir().unwrap();
-        let p = contain(dir.path(), "sub/new.txt").unwrap();
+        let p = contain(&root(&dir), "sub/new.txt").unwrap();
         assert!(p.ends_with("sub/new.txt"));
     }
 
     #[test]
     fn a_dotdot_escape_is_refused_and_names_the_root() {
         let dir = tempfile::tempdir().unwrap();
-        let err = contain(dir.path(), "../outside.txt").unwrap_err();
+        let err = contain(&root(&dir), "../outside.txt").unwrap_err();
         assert!(err.contains("outside the tool root"), "{err}");
     }
 
     #[test]
     fn an_absolute_path_elsewhere_is_refused() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(contain(dir.path(), "/etc/hosts").is_err());
+        assert!(contain(&root(&dir), "/etc/hosts").is_err());
     }
 
     #[test]
@@ -169,16 +201,4 @@ mod tests {
         assert!(re.is_match("src/a/main.rs"));
         assert!(!re.is_match("main.toml"));
     }
-}
-
-/// PURE: a configured root against the process cwd, resolved ONCE at activation (phase ux1
-/// §2.10, B5). A relative root joins the cwd; an absolute one is taken as given; the result is
-/// canonicalised, and a root that does not exist is a LOAD failure, not a per-call error
-/// (§0.2 fail loud).
-///
-/// `contain` then takes this ABSOLUTE root and never canonicalises again — the per-call
-/// canonicalisation is exactly what let a later `chdir` retarget every tool.
-pub fn pin_root(configured: &Path, process_cwd: &Path) -> Result<PathBuf, String> {
-    let _ = (configured, process_cwd);
-    todo!("WP-7")
 }

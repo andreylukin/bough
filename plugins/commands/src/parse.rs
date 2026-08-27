@@ -81,18 +81,27 @@ pub fn did_you_mean(name: &str, known: &[CommandName]) -> Option<String> {
         .map(|(_, k)| k.to_string())
 }
 
-/// Levenshtein distance, two rows.
+/// Damerau-Levenshtein distance, two rows plus one. A TRANSPOSITION costs one edit, not two:
+/// `hepl` for `help` and `qiut` for `quit` are the typos a keyboard actually makes, and under
+/// plain Levenshtein they cost 2 and fall outside a four-letter name's budget — which is how
+/// `/hepl` came back with no suggestion at all (M19).
 fn distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
+    let mut prev2: Vec<usize> = vec![0; b.len() + 1];
     let mut prev: Vec<usize> = (0..=b.len()).collect();
     let mut cur = vec![0usize; b.len() + 1];
     for (i, ca) in a.iter().enumerate() {
         cur[0] = i + 1;
         for (j, cb) in b.iter().enumerate() {
             let cost = usize::from(ca != cb);
-            cur[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1);
+            let mut best = (prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1);
+            if i > 0 && j > 0 && *ca == b[j - 1] && a[i - 1] == *cb {
+                best = best.min(prev2[j - 1] + 1);
+            }
+            cur[j + 1] = best;
         }
+        std::mem::swap(&mut prev2, &mut prev);
         std::mem::swap(&mut prev, &mut cur);
     }
     prev[b.len()]
@@ -124,5 +133,25 @@ mod tests {
         let known = [CommandName::new("focus"), CommandName::new("quit")];
         assert_eq!(did_you_mean("fcus", &known), Some("focus".into()));
         assert_eq!(did_you_mean("zzzzzzzz", &known), None);
+    }
+}
+
+#[cfg(test)]
+mod transposition_tests {
+    use super::did_you_mean;
+    use crate::CommandName;
+
+    /// M19: the typo a keyboard actually makes is two letters swapped, and it must suggest.
+    #[test]
+    fn a_transposed_typo_suggests_the_command_it_meant() {
+        let known = vec![
+            CommandName::new("help"),
+            CommandName::new("quit"),
+            CommandName::new("agents"),
+        ];
+        assert_eq!(did_you_mean("hepl", &known).as_deref(), Some("help"));
+        assert_eq!(did_you_mean("qiut", &known).as_deref(), Some("quit"));
+        // …and a word that is nothing like any of them still suggests nothing.
+        assert_eq!(did_you_mean("xyzzy", &known), None);
     }
 }

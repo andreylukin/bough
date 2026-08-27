@@ -81,14 +81,20 @@ pub struct Viewport {
 impl Viewport {
     /// PURE: rows were appended. Following ⇒ nothing to count; anchored ⇒ `unseen += added`.
     pub fn on_rows_appended(&mut self, added: usize) {
-        let _ = added;
-        todo!("WP-3")
+        self.scroll = self.scroll.on_rows_appended(added);
+        if !self.scroll.is_following() {
+            self.unseen = self.unseen.saturating_add(added);
+        }
     }
 
     /// PURE: a scroll input. Landing at the bottom re-arms `Follow` and zeroes `unseen`.
     pub fn scrolled(&mut self, delta: i32, rows: usize, height: u16) {
-        let _ = (delta, rows, height);
-        todo!("WP-3")
+        self.scroll = self.scroll.scrolled(delta, rows, height);
+        if self.scroll.is_following() {
+            // Landing at the bottom IS having seen everything: an unread count that outlived the
+            // scroll back to the tail is the disagreement this type exists to make impossible.
+            self.unseen = 0;
+        }
     }
 
     /// `End`, and what sending a message does: back to the tail, `unseen = 0` (B2).
@@ -100,11 +106,13 @@ impl Viewport {
     /// Anchor on a row (a search hit, a `FocusRequest { step }`).
     pub fn anchor_on(&mut self, row: usize) {
         self.scroll = Scroll::anchored_on(row);
+        // Arriving at a hit is not reading the tail: what came in while detached is still unseen,
+        // and a jump that silently zeroed the badge would hide it.
     }
 
     /// PURE: the affordance text, or `None` while following. `"↓ 3 new"`.
     pub fn badge(&self) -> Option<String> {
-        todo!("WP-3")
+        (!self.is_following() && self.unseen > 0).then(|| format!("\u{2193} {} new", self.unseen))
     }
 
     pub fn top(&self, rows: usize, height: u16) -> usize {

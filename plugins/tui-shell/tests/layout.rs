@@ -92,7 +92,8 @@ async fn a_resize_relayouts_without_losing_pane_state() {
     let (focus, _) = add_pane(&ctx, &tui, "focus", Slot::Main, 0, SlotSize::Fill(1)).await;
 
     bough_plugin_tui_shell::run::draw(&tui);
-    assert_eq!(tui.rect_of(&PaneId::new("focus")).unwrap().width, 60);
+    // 80 − 20 rail − 1 gutter: the shell draws with `TuiConfig::gutter`, which is 1 (M9).
+    assert_eq!(tui.rect_of(&PaneId::new("focus")).unwrap().width, 59);
     // Give both panes some state, so "without losing" is a claim about something.
     bough_plugin_tui_shell::run::route(
         &tui,
@@ -107,7 +108,7 @@ async fn a_resize_relayouts_without_losing_pane_state() {
 
     assert_eq!(tui.size(), Rect::new(0, 0, 120, 40));
     assert_eq!(tui.rect_of(&PaneId::new("rail")).unwrap().width, 20);
-    assert_eq!(tui.rect_of(&PaneId::new("focus")).unwrap().width, 100);
+    assert_eq!(tui.rect_of(&PaneId::new("focus")).unwrap().width, 99);
     assert_eq!(
         focus.scrolled(),
         7,
@@ -170,4 +171,74 @@ async fn a_chosen_focus_survives_a_later_registration() {
 
     add_pane(&ctx, &tui, "focus", Slot::Main, 0, SlotSize::Fill(1)).await;
     assert_eq!(tui.focused_pane(), PaneId::new("rail"));
+}
+
+// ---------------------------------------------------------------------------
+// phase ux1 §2.5: the gutter, and the rail's breakpoint
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_strip_slot_pays_for_the_gutter_and_the_pane_never_gets_it() {
+    let (ctx, tui) = shell();
+    add_pane(&ctx, &tui, "rail", Slot::Strip, 0, SlotSize::Cells(20)).await;
+    add_pane(&ctx, &tui, "focus", Slot::Main, 0, SlotSize::Fill(1)).await;
+    let rects = layout(Rect::new(0, 0, 80, 24), &tui.panes(), 1, 1);
+    let of = |id: &str| rects.iter().find(|(p, _)| p.as_str() == id).unwrap().1;
+    // The pane is handed `width`…
+    assert_eq!(of("rail").width, 20);
+    // …and the blank column between belongs to nobody: Main starts at width + gutter.
+    assert_eq!(of("focus").x, 21);
+    assert_eq!(of("focus").width, 59);
+}
+
+#[tokio::test]
+async fn a_collapsed_rail_costs_no_columns_and_no_gutter() {
+    let (ctx, tui) = shell();
+    // The rail's own breakpoint: zero below 100 columns, clamped to 22..=40 above it.
+    let size = SlotSize::Responsive {
+        collapse: 100,
+        preferred: 28,
+        min: 22,
+        max: 40,
+    };
+    add_pane(&ctx, &tui, "rail", Slot::Strip, 0, size).await;
+    add_pane(&ctx, &tui, "focus", Slot::Main, 0, SlotSize::Fill(1)).await;
+
+    let narrow = layout(Rect::new(0, 0, 80, 24), &tui.panes(), 1, 1);
+    let main = narrow
+        .iter()
+        .find(|(p, _)| p.as_str() == "focus")
+        .unwrap()
+        .1;
+    assert_eq!(
+        main.x, 0,
+        "under the breakpoint the transcript gets everything"
+    );
+    assert_eq!(main.width, 80);
+
+    let wide = layout(Rect::new(0, 0, 120, 24), &tui.panes(), 1, 1);
+    let of = |id: &str| wide.iter().find(|(p, _)| p.as_str() == id).unwrap().1;
+    assert_eq!(of("rail").width, 28);
+    assert_eq!(of("focus").x, 29);
+}
+
+#[test]
+fn the_breakpoint_rule_is_zero_then_clamped() {
+    use bough_plugin_tui_shell::responsive_width;
+    assert_eq!(responsive_width(80, 100, 28, 22, 40), 0);
+    assert_eq!(responsive_width(120, 100, 28, 22, 40), 28);
+    assert_eq!(responsive_width(120, 100, 4, 22, 40), 22, "never under min");
+    assert_eq!(
+        responsive_width(200, 100, 500, 22, 40),
+        40,
+        "never over max"
+    );
+}
+
+#[test]
+fn the_prose_measure_is_capped_so_a_wide_terminal_gets_margin() {
+    use bough_plugin_tui_shell::measure;
+    assert_eq!(measure(200, 90), 90);
+    assert_eq!(measure(60, 90), 60);
+    assert_eq!(measure(0, 90), 1, "a measure is never zero");
 }

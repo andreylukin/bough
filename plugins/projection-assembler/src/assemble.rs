@@ -58,7 +58,16 @@ pub async fn assemble(a: &Assembler, req: &AssembleRequest) -> Result<Assembled,
     // 2. The six built-in bands, in `Slot` order. A band with no input renders NOTHING — not an
     //    empty header — so a zero-rollup ledger assembles cleanly (Phase 4 produces tiers).
     let mut sections: Vec<RenderedSection> = Vec::new();
-    if let Some(s) = bands::identity(&sreq, cfg).await? {
+    // phase ux1 §2.10 (M25): the identity band names the tools registered in THIS agent's scope.
+    // `tools` is injected OPTIONALLY, so a profile with no tool registry assembles unchanged.
+    let visible: Vec<bough_plugin_tools::ToolName> = a
+        .ctx
+        .try_get::<bough_plugin_tools::Tools>()
+        .ok()
+        .flatten()
+        .map(|t| t.visible(&req.agent))
+        .unwrap_or_default();
+    if let Some(s) = bands::identity(&sreq, cfg, &visible).await? {
         sections.push(s);
     }
     let mut pins = {

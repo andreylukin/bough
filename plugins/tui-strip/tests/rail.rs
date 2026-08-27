@@ -20,6 +20,7 @@ fn theme() -> Theme {
     // structure, and a role's exact colour is `tui-shell`'s to decide.
     Theme {
         bg: ratatui::style::Color::Black,
+        measure_bg: ratatui::style::Color::Black,
         fg: ratatui::style::Color::White,
         dim: ratatui::style::Color::DarkGray,
         accent: ratatui::style::Color::Cyan,
@@ -287,6 +288,100 @@ mod tests {
         for (_, top, height) in &spans {
             assert!(*top >= cursor, "rails overlap: {spans:?}");
             cursor = top + height;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// phase ux1 §2.5: the rail's breakpoint, and a clip that cannot overflow
+// ---------------------------------------------------------------------------
+
+fn cfg() -> bough_plugin_tui_strip::StripConfig {
+    bough_plugin_tui_strip::StripConfig {
+        width: 28,
+        show_about: true,
+        about_lines: 2,
+        collapse_cols: 100,
+        min_width: 22,
+        max_width: 40,
+        gutter: 1,
+    }
+}
+
+#[test]
+fn the_rail_collapses_under_a_hundred_columns_and_is_clamped_above_it() {
+    let c = cfg();
+    assert_eq!(
+        rail::rail_width(80, &c),
+        0,
+        "M13: at 80 columns a 34-cell rail left the conversation 46"
+    );
+    assert_eq!(rail::rail_width(99, &c), 0);
+    let at_120 = rail::rail_width(120, &c);
+    assert!(
+        at_120 >= c.min_width && at_120 <= c.max_width,
+        "{at_120} is outside {}..={}",
+        c.min_width,
+        c.max_width
+    );
+    let at_200 = rail::rail_width(200, &c);
+    assert!(at_200 <= c.max_width, "the rail never grows past max_width");
+
+    // A preferred width outside the band is pulled into it rather than honoured.
+    let narrow = bough_plugin_tui_strip::StripConfig { width: 4, ..cfg() };
+    assert_eq!(rail::rail_width(120, &narrow), 22);
+    let huge = bough_plugin_tui_strip::StripConfig {
+        width: 200,
+        ..cfg()
+    };
+    assert_eq!(rail::rail_width(200, &huge), 40);
+}
+
+#[test]
+fn a_clipped_line_never_exceeds_its_width_and_says_that_it_cut() {
+    use ratatui::text::{Line, Span};
+    let long = Line::from(vec![
+        Span::raw("● ".to_string()),
+        Span::raw("a-very-long-agent-name-that-runs-on".to_string()),
+        Span::raw("  running".to_string()),
+    ]);
+    let cut = rail::clip(long.clone(), 12);
+    let text: String = cut.spans.iter().map(|s| s.content.to_string()).collect();
+    assert_eq!(text.chars().count(), 12, "hard clip: exactly the width");
+    assert!(
+        text.ends_with('…'),
+        "a cut that nobody can see is a lie: {text:?}"
+    );
+
+    // A line that fits is handed back untouched — no ellipsis, no padding.
+    let short = Line::from(vec![Span::raw("● lane".to_string())]);
+    let kept = rail::clip(short, 12);
+    let text: String = kept.spans.iter().map(|s| s.content.to_string()).collect();
+    assert_eq!(text, "● lane");
+
+    // Zero columns paint nothing at all, which is what a collapsed rail is handed.
+    assert!(rail::clip(long, 0).spans.is_empty());
+}
+
+#[test]
+fn every_rendered_rail_line_fits_the_column_it_was_given() {
+    let long = row(
+        "an-agent-with-a-really-quite-long-name",
+        Some(AboutView {
+            state: "rewrote the whole of the projection assembler and then some".into(),
+            intent: "keep going until the suite is green".into(),
+            cites: Vec::new(),
+        }),
+    );
+    for width in [8u16, 22, 28, 40] {
+        let (lines, _) = rail::rail(std::slice::from_ref(&long), None, true, 2, width, &theme());
+        for line in lines {
+            let cut = rail::clip(line, width);
+            let n: usize = cut.spans.iter().map(|s| s.content.chars().count()).sum();
+            assert!(
+                n <= width as usize,
+                "a rail line overflowed {width} columns"
+            );
         }
     }
 }

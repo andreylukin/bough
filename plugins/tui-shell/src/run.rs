@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bough_kernel::{Context, EffectCtx};
-use bough_plugin_agents::{CancelCause, MailClass, Message, MessageId, Sender, Status};
+use bough_plugin_agents::{CancelCause, MailClass, Message, MessageId, Sender};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -108,7 +108,19 @@ pub fn draw(tui: &TuiHandle) {
     let selection = tui.selection().map(|s| s.rect());
     let sel_bg = tui.0.theme.sel_bg;
     let theme = tui.0.theme;
-    let notice = tui.notice();
+    tui.note_running(now);
+    let notice = tui.notice_now(now);
+    let palette_items = if tui.palette_open() {
+        tui.commands().map(|c| {
+            let query = tui.0.palette.lock().query.clone();
+            (
+                bough_plugin_commands::palette::filter(&c.list(None), &query),
+                tui.0.palette.lock().selected,
+            )
+        })
+    } else {
+        None
+    };
     let mut hits: std::collections::HashMap<PaneId, HitMap> = Default::default();
     let mut published: Option<Buffer> = None;
 
@@ -157,7 +169,8 @@ pub fn draw(tui: &TuiHandle) {
         // was already in the rail. It is an OVERLAY, drawn after the panes and before the
         // selection: the shell owns no slot of its own, and a notice is ephemeral, so it borrows
         // the rows immediately above the composer rather than reflowing the layout under it.
-        if let Some(text) = notice {
+        if let Some(notice) = notice {
+            let text = notice.text.clone();
             // `pane::notice_band` decides WHAT is painted: the cap, the rows actually available
             // above the composer, and — when the two together drop lines — the marker that says
             // so. See its doc comment for why a silent truncation is not an option here.
@@ -174,13 +187,42 @@ pub fn draw(tui: &TuiHandle) {
                     width: size.width,
                     height: h,
                 };
-                let style = Style::default().fg(theme.hint).bg(theme.bg);
+                // The ROLE decides the colour: an error reads like an error (M22).
+                let fg = match notice.kind {
+                    crate::NoticeKind::Error => theme.error,
+                    crate::NoticeKind::Config => theme.evidence,
+                    crate::NoticeKind::Copied => theme.accent,
+                    crate::NoticeKind::Command => theme.fg,
+                    crate::NoticeKind::Info => theme.fg,
+                };
+                let style = Style::default().fg(fg).bg(theme.bg);
                 let body: Vec<Line> = body_text
                     .into_iter()
                     .map(|l| Line::styled(l, style))
                     .collect();
                 Clear.render(rect, buf);
                 Paragraph::new(body).style(style).render(rect, buf);
+            }
+        }
+
+        // The `/` palette. An OVERLAY for the same reason the notice is one: it is ephemeral,
+        // and reflowing the layout under a filtering list would move the transcript on every
+        // keystroke. It is sized to its content — it never reserves rows it has no content for.
+        if let Some((items, selected)) = palette_items {
+            let max_rows = crect.y.saturating_sub(size.y).min(10);
+            let lines = crate::palette::lines(&items, selected, size.width, max_rows, &theme);
+            let h = lines.len() as u16;
+            if h > 0 && crect.y >= h {
+                let rect = Rect {
+                    x: size.x,
+                    y: crect.y - h,
+                    width: size.width,
+                    height: h,
+                };
+                Clear.render(rect, buf);
+                Paragraph::new(lines)
+                    .style(Style::default().bg(theme.bg))
+                    .render(rect, buf);
             }
         }
 
@@ -231,12 +273,29 @@ pub fn on_paste(tui: &TuiHandle, text: &str) {
     tui.focus_composer();
 }
 
-/// One key, through the whole chain: `tui/key` waterfall → the keymap → the composer or the
-/// focused pane.
+/// One key, through the whole chain: `tui/key` waterfall → [`crate::action_for`] → the palette,
+/// the composer or the focused pane.
+///
+/// The keymap is consulted ONCE, on a snapshot of shell state read once. There is no second place
+/// that reinterprets a key, which is what makes "who has focus" unable to change what PageUp does
+/// (B1, B2).
 pub async fn on_key(tui: &TuiHandle, key: KeyEvent) {
     if key.kind == KeyEventKind::Release {
         return;
     }
+    let now = chrono::Utc::now();
+    // BEFORE anything else (the sequencing rule of phase ux1 §2.3): the paste detector sees every
+    // key, so an Enter arriving inside a burst is a newline in the draft and not a send (B4).
+    // Only a REAL terminal can deliver a paste as keystrokes; a headless shell is driven by a
+    // caller that means every key it sends, so the detector never fires there. Without this gate
+    // a test (and a scripted PTY) would have every Enter swallowed as "part of a paste".
+    // …and where the terminal DOES speak bracketed paste, `Event::Paste` already carries a paste
+    // whole, so the timing heuristic is off: it could only ever mistake a fast typist (or a
+    // scripted PTY) for one.
+    let in_burst = tui.0.burst.lock().on_key(now)
+        && tui.backend() == crate::Backend::Crossterm
+        && !crate::term::bracketed_paste_active();
+
     // The extension point first (P3-D18): a listener that sets `handled` consumes the key.
     let dispatch = tui
         .0
@@ -253,33 +312,101 @@ pub async fn on_key(tui: &TuiHandle, key: KeyEvent) {
         return;
     }
 
-    if keymap(tui, key).await {
+    // An ERROR notice has no TTL and waits for a key. This is that key.
+    if matches!(tui.notice_raw().map(|n| n.ttl), Some(None)) {
+        tui.clear_notice();
+    }
+
+    let cx = tui.key_context();
+    let action = crate::action_for(key, cx, tui.0.cfg.page_lines);
+    // Anything but a second Ctrl+C disarms: `press Ctrl+C again to exit` must not outlive a
+    // change of mind (B7).
+    if action != crate::Action::ExitStep {
+        tui.disarm_exit();
+    }
+
+    match action {
+        crate::Action::Scroll { delta } => {
+            scroll_transcript(tui, delta).await;
+            return;
+        }
+        crate::Action::JumpLatest => {
+            scroll_transcript(tui, i16::MAX).await;
+            return;
+        }
+        crate::Action::CycleFocus(step) => {
+            cycle_focus(tui, step).await;
+            return;
+        }
+        crate::Action::Interrupt => {
+            interrupt(tui).await;
+            return;
+        }
+        crate::Action::DismissOverlay => {
+            dismiss_overlay(tui).await;
+            return;
+        }
+        crate::Action::ExitStep => {
+            exit_step(tui, now).await;
+            return;
+        }
+        crate::Action::FocusSearch => {
+            focus_search(tui).await;
+            return;
+        }
+        crate::Action::Redraw => {
+            let _ = tui.0.terminal.lock().clear();
+            tui.redraw();
+            return;
+        }
+        crate::Action::Pass => {}
+    }
+
+    // The palette owns Up/Down/Tab/Enter while it is open, and nothing else.
+    if tui.palette_open() && palette_key(tui, key).await {
         return;
     }
 
-    // PageUp/PageDown belong to the TRAJECTORY, not to the composer. The composer is a few lines
-    // tall, has no page to turn, and holds keyboard focus for the whole session — so without this
-    // the focused pane could never be paged from the keyboard at all (V3,
-    // `page_up_and_arrow_keys_scroll_the_trajectory`). Up/Down/Home/End are deliberately NOT in
-    // this set: those move the composer's own cursor, and the wheel and PageUp/PageDown are the
-    // trajectory's.
-    if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+    // B1: any printable key takes the keyboard back to the composer — UNLESS the pane holding
+    // the keyboard is itself a text field (the search query), which is recognised by its taking
+    // the key. So typing at a focused TRANSCRIPT lands in the draft (the audit's finding), while
+    // `Ctrl+F` then typing still fills the search box.
+    if !tui.composer_focused() && crate::snaps_to_composer(&key) {
         let target = tui.focused_pane();
-        if route(tui, target.clone(), PaneEvent::Key(key)).await == PaneOutcome::Ignored {
-            if let Some(delta) = scroll_delta(key, tui.0.cfg.page_lines) {
-                route(tui, target, PaneEvent::Scroll { delta }).await;
-            }
+        if target != no_pane()
+            && route(tui, target, PaneEvent::Key(key)).await == PaneOutcome::Handled
+        {
+            tui.redraw();
+            return;
         }
-        return;
+        tui.give_keyboard_to_composer().await;
     }
 
     if tui.composer_focused() {
-        let action = tui.0.composer.lock().on_key(key);
+        let action = tui.0.composer.lock().on_key(key, in_burst);
         match action {
-            ComposerAction::Send(text) => send(tui, &text).await,
+            ComposerAction::Send(text) => {
+                tui.0.composer.lock().clear();
+                tui.0.burst.lock().reset();
+                send(tui, &text).await
+            }
             ComposerAction::Command(line) => dispatch_line(tui, &line).await,
             ComposerAction::Cleared | ComposerAction::Newline | ComposerAction::None => {
                 tui.redraw()
+            }
+        }
+        // M17: a `/` at line start opens the filtering palette, and every later keystroke narrows
+        // it. It is driven from the DRAFT rather than from the key, so backspacing back to `/`
+        // reopens it and backspacing past it closes it — the list can never disagree with the
+        // line it is filtering.
+        let draft = tui.0.composer.lock().text();
+        let one_line = !draft.contains('\n');
+        match draft.strip_prefix('/') {
+            Some(rest) if one_line && !rest.starts_with('/') => tui.set_palette(true, rest),
+            _ => {
+                if tui.palette_open() {
+                    tui.set_palette(false, "");
+                }
             }
         }
         return;
@@ -293,51 +420,121 @@ pub async fn on_key(tui: &TuiHandle, key: KeyEvent) {
     }
 }
 
-/// The fixed keymap (P3-D18). `true` means the key was consumed here.
-async fn keymap(tui: &TuiHandle, key: KeyEvent) -> bool {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    match key.code {
-        KeyCode::Char('c') if ctrl => {
-            // Cancel a running wake; with nothing running, quit.
-            match tui.agent() {
-                Some(a) if a.status() == Status::Running => {
-                    a.cancel(CancelCause::User, true).await;
-                    tui.notify("cancelled");
-                }
-                _ => tui.quit(0),
-            }
-            true
+/// The paging keys drive the TRANSCRIPT, whatever has focus (B2). `transcript_pane` is matched
+/// exactly; with no such pane the keys fall back to whatever does have the keyboard, so a tree
+/// that renamed or disabled the row still scrolls something rather than nothing.
+pub async fn scroll_transcript(tui: &TuiHandle, delta: i16) {
+    let target = tui.transcript_pane().unwrap_or_else(|| tui.focused_pane());
+    if target == no_pane() {
+        return;
+    }
+    route(tui, target, PaneEvent::Scroll { delta }).await;
+}
+
+/// Esc / Ctrl+C while a turn is running: cancel it, and SAY SO where the user is looking (B7).
+pub async fn interrupt(tui: &TuiHandle) {
+    match tui.agent() {
+        Some(a) => {
+            a.cancel(CancelCause::User, true).await;
+            tui.notify_kind("interrupted", crate::NoticeKind::Info);
         }
-        KeyCode::Char('l') if ctrl => {
-            let _ = tui.0.terminal.lock().clear();
+        None => tui.notify_kind("nothing is running", crate::NoticeKind::Info),
+    }
+}
+
+/// Esc with something up: dismiss the topmost overlay. With nothing up this is a deliberate
+/// NO-OP — the draft is never destroyed (B3, V3).
+pub async fn dismiss_overlay(tui: &TuiHandle) {
+    if tui.palette_open() {
+        tui.set_palette(false, "");
+        return;
+    }
+    if tui.notice_raw().is_some() {
+        tui.clear_notice();
+        tui.redraw();
+        return;
+    }
+    // A focused pane may own an overlay of its own (the branch picker, the search query): give it
+    // the key before concluding that there is nothing to dismiss.
+    let target = tui.focused_pane();
+    if target != no_pane() && !tui.composer_focused() {
+        let _ = route(
+            tui,
+            target,
+            PaneEvent::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        )
+        .await;
+        // …and then the keyboard comes back to the composer, whatever the pane did with the key.
+        // Esc means one thing everywhere — "I am done here" — and a pane that ate the key while
+        // silently keeping the keyboard is how a typed sentence ends up in the search box
+        // (phase ux1 (a): one always-live composer).
+        tui.give_keyboard_to_composer().await;
+    }
+}
+
+/// `Ctrl+C`: interrupt while running, else arm, then leave (B7).
+pub async fn exit_step(tui: &TuiHandle, now: chrono::DateTime<chrono::Utc>) {
+    if tui.running() {
+        interrupt(tui).await;
+        return;
+    }
+    match tui.exit_step(now) {
+        crate::ExitStep::Arm => {
+            tui.notify_kind("press Ctrl+C again to exit", crate::NoticeKind::Info)
+        }
+        crate::ExitStep::Exit => tui.quit_with(0, farewell()),
+    }
+}
+
+/// The one line printed after the terminal is restored. Spelled once, so `/quit` and `Ctrl+C`
+/// cannot say different things.
+pub fn farewell() -> &'static str {
+    "bough: bye."
+}
+
+/// `Ctrl+F`.
+pub async fn focus_search(tui: &TuiHandle) {
+    match tui
+        .panes()
+        .into_iter()
+        .find(|p| p.focusable && p.id.as_str() == tui.0.cfg.search_pane)
+    {
+        Some(p) => tui.focus_pane(p.id).await,
+        // The row can be disabled by patch; the binding is then a no-op, not an error.
+        None => tui.notify_kind("no search pane", crate::NoticeKind::Error),
+    }
+}
+
+/// One key into the open palette. `true` when the palette consumed it.
+async fn palette_key(tui: &TuiHandle, key: KeyEvent) -> bool {
+    use bough_plugin_commands::palette::{self, PaletteAction};
+    let Some(commands) = tui.commands() else {
+        return false;
+    };
+    let items = {
+        let p = tui.0.palette.lock();
+        palette::filter(&commands.list(None), &p.query)
+    };
+    let out = {
+        let mut p = tui.0.palette.lock();
+        palette::on_key(&mut p, key, &items)
+    };
+    match out {
+        PaletteAction::None => false,
+        PaletteAction::Moved | PaletteAction::Close => {
             tui.redraw();
             true
         }
-        KeyCode::Char('f') if ctrl => {
-            match tui
-                .panes()
-                .into_iter()
-                .find(|p| p.focusable && p.id.as_str() == tui.0.cfg.search_pane)
-            {
-                Some(p) => tui.focus_pane(p.id).await,
-                // The row can be disabled by patch; the binding is then a no-op, not an error.
-                None => tui.notify("no search pane"),
-            }
+        PaletteAction::Complete(name) => {
+            let prefix = tui.0.composer.lock().prefix();
+            tui.set_composer_text(&format!("{prefix}{name} "));
             true
         }
-        KeyCode::Tab => {
-            cycle_focus(tui, 1).await;
+        PaletteAction::Accept(name) => {
+            let prefix = tui.0.composer.lock().prefix();
+            dispatch_line(tui, &format!("{prefix}{name}")).await;
             true
         }
-        KeyCode::BackTab => {
-            cycle_focus(tui, -1).await;
-            true
-        }
-        KeyCode::Esc if !tui.composer_focused() => {
-            tui.focus_composer();
-            true
-        }
-        _ => false,
     }
 }
 
@@ -388,11 +585,16 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
     match me.kind {
         MouseEventKind::Down(button) => {
             let Some(pane) = tui.pane_at(col, row) else {
-                // A click on the composer's band gives it focus.
+                // A click on the composer's band gives it focus, and puts the caret where the
+                // pointer landed (minor 33).
+                let area = composer_rect(tui);
+                tui.0.composer.lock().caret_at(col, row, area);
                 tui.focus_composer();
                 return;
             };
-            tui.focus_pane(pane.clone()).await;
+            // B1: a click on a pane ACTS on the row it landed on and does NOT move the keyboard.
+            // Focus is moved by Tab, by Ctrl+F and by a pane that asks for it — never by a click,
+            // because a click is how a user reads, and reading must not silently redirect typing.
             *tui.0.selection.lock() = Some(crate::Selection {
                 anchor: (col, row),
                 head: (col, row),
@@ -434,10 +636,14 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
             } else {
                 notch
             };
-            if let Some(pane) = tui.pane_at(col, row) {
-                // Focus is deliberately untouched: a wheel over another pane reads it, it does
-                // not select it.
-                route(tui, pane, PaneEvent::Scroll { delta }).await;
+            // Focus is deliberately untouched: a wheel over another pane reads it, it does not
+            // select it. Over the composer band or a zero-size slot the wheel still means "scroll
+            // the conversation" (M23), which is the only thing a wheel can sensibly mean there.
+            match tui.pane_at(col, row) {
+                Some(pane) => {
+                    route(tui, pane, PaneEvent::Scroll { delta }).await;
+                }
+                None => scroll_transcript(tui, delta).await,
             }
         }
         _ => {}
@@ -481,15 +687,24 @@ pub async fn send(tui: &TuiHandle, text: &str) {
 }
 
 /// A slash line: through `ctx.commands`, and NEVER to an agent (V5). Appends no step (P3-D8).
+/// A slash line: through `ctx.commands`, and NEVER to an agent (V5). Appends no step (P3-D8).
+///
+/// THE TEXT IS NOT DESTROYED (B3). The composer is cleared only where the name RESOLVED; on a
+/// miss the draft stays, `arm_send_as_message` is set, and the notice says both what was near and
+/// that a second Enter sends the line as a message.
 pub async fn dispatch_line(tui: &TuiHandle, line: &str) {
     *tui.0.last_command.lock() = Some(line.to_string());
+    let miss = |tui: &TuiHandle, text: String| {
+        tui.0.composer.lock().arm_send_as_message();
+        tui.notify_kind(text, crate::NoticeKind::Error);
+    };
     let Some(commands) = tui.0.commands.clone() else {
-        tui.notify(format!("no commands registry for `{line}`"));
+        miss(tui, format!("no commands registry for `{line}`"));
         return;
     };
     let prefix = tui.0.composer.lock().prefix();
     let Some(inv) = bough_plugin_commands::parse(line, prefix) else {
-        tui.notify(format!("not a command: `{line}`"));
+        miss(tui, bough_plugin_commands::palette::miss_notice(line, None));
         return;
     };
     let cx = bough_plugin_commands::CommandCx {
@@ -497,9 +712,25 @@ pub async fn dispatch_line(tui: &TuiHandle, line: &str) {
         agent: tui.agent(),
         at: chrono::Utc::now(),
     };
+    let raw = line.to_string();
     match commands.dispatch(inv, cx).await {
-        Ok(out) => tui.notify(out.text),
-        Err(e) => tui.notify(e.to_string()),
+        Ok(out) => {
+            // Resolved: NOW the line may go.
+            tui.0.composer.lock().clear();
+            tui.set_palette(false, "");
+            tui.notify_kind(
+                bough_plugin_commands::palette::echoed(&raw, &out.text),
+                crate::NoticeKind::Command,
+            );
+        }
+        Err(bough_plugin_commands::CommandError::Unknown { name, did_you_mean }) => miss(
+            tui,
+            bough_plugin_commands::palette::miss_notice(&name, did_you_mean.as_deref()),
+        ),
+        Err(e) => {
+            tui.0.composer.lock().clear();
+            tui.notify_kind(e.to_string(), crate::NoticeKind::Error);
+        }
     }
 }
 

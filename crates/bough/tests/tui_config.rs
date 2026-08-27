@@ -44,6 +44,8 @@ fn search() -> SearchConfig {
         height: 12,
         limit: 50,
         debounce_ms: 150,
+        snippet_radius: 40,
+        window: 400,
     }
 }
 

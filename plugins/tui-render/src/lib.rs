@@ -37,6 +37,9 @@ pub struct ToolCallView<'a> {
 }
 
 /// The glyph a result gets in the header. A call with no result yet is still running.
+///
+/// The `bool` is "this outcome is bad", which is what picks the glyph's COLOUR: nit 35 found a
+/// neutral `✓` eighty columns from the tool's name, saying nothing the glyph shape did not.
 fn outcome_glyph(result: Option<&ToolResultBody>) -> (&'static str, bool) {
     use bough_plugin_tools::ToolOutcomeKind::*;
     match result.map(|r| r.outcome) {
@@ -83,7 +86,13 @@ pub fn tool_header(v: &ToolCallView<'_>) -> Line<'static> {
         .fg(v.theme.accent)
         .add_modifier(Modifier::BOLD);
     let dim = Style::default().fg(v.theme.dim);
-    let glyph_style = Style::default().fg(if bad { v.theme.error } else { v.theme.fg });
+    // Never colour alone (audit delight 3) and never colour NOTHING either: a good outcome is
+    // the `added` role, a bad one the `error` role, and a call still in flight stays dim.
+    let glyph_style = Style::default().fg(match (v.result.is_some(), bad) {
+        (false, _) => v.theme.dim,
+        (true, false) => v.theme.added,
+        (true, true) => v.theme.error,
+    });
 
     if width == 0 {
         return Line::from(Vec::<Span<'static>>::new());

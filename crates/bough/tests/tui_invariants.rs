@@ -112,14 +112,13 @@ async fn a_planted_search_hit_on_a_missing_step_is_reported() {
     // the last one.
     kernel.quiesce().await;
 
-    use bough_plugin_ledger::{Seq, StepId, StepType, TrajId};
-    bough_plugin_tui_search::invariant::record(&[bough_plugin_tui_search::HitRow {
-        agent: None,
-        traj: TrajId::new("lane/nowhere"),
+    use bough_plugin_ledger::{AgentName, StepId};
+    bough_plugin_tui_search::invariant::record(&[bough_plugin_tui_search::Hit {
+        agent: AgentName::new("nowhere"),
         step: StepId::new("planted-missing-step"),
-        seq: Seq(1),
-        kind: StepType::new("thought/text"),
+        speaker: "nowhere".to_string(),
         snippet: "a hit on a step the ledger does not hold".to_string(),
+        at: 0..1,
     }]);
 
     kernel.run_invariants().await;

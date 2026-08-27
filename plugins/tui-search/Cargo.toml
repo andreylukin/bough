@@ -23,6 +23,7 @@ crossterm = { workspace = true }
 async-trait = { workspace = true }
 inventory = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 schemars = { workspace = true }
 chrono = { workspace = true }
 parking_lot = { workspace = true }

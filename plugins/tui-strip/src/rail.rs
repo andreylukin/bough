@@ -275,8 +275,13 @@ pub fn rail(
 
 /// PURE: the rail's column count at a terminal width. `0` below `collapse_cols` (M13).
 pub fn rail_width(total: u16, cfg: &crate::StripConfig) -> u16 {
-    let _ = (total, cfg);
-    todo!("WP-4")
+    bough_plugin_tui_shell::responsive_width(
+        total,
+        cfg.collapse_cols,
+        cfg.width,
+        cfg.min_width,
+        cfg.max_width,
+    )
 }
 
 /// PURE: hard-clip one rail line to `width`, with a `…` when it clipped.
@@ -284,6 +289,36 @@ pub fn rail_width(total: u16, cfg: &crate::StripConfig) -> u16 {
 /// The audit's `idlePlease` and `running──` were two text runs sharing one baseline. A clip that
 /// CANNOT overflow is what makes that impossible rather than unlikely (M9).
 pub fn clip(line: Line<'static>, width: u16) -> Line<'static> {
-    let _ = (line, width);
-    todo!("WP-4")
+    let width = width as usize;
+    if width == 0 {
+        return Line::from(Vec::<Span<'static>>::new());
+    }
+    let total: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+    if total <= width {
+        return line;
+    }
+    // The cut costs a cell, so the visible text is one shorter than the room.
+    let room = width - 1;
+    let mut out: Vec<Span<'static>> = Vec::new();
+    let mut used = 0usize;
+    for span in line.spans.into_iter() {
+        if used >= room {
+            break;
+        }
+        let n = span.content.chars().count();
+        if used + n <= room {
+            used += n;
+            out.push(span);
+        } else {
+            let keep = room - used;
+            let text: String = span.content.chars().take(keep).collect();
+            used = room;
+            out.push(Span::styled(text, span.style));
+        }
+    }
+    // The ellipsis carries the style of the run it cut, so a clipped status word does not change
+    // colour halfway through.
+    let style = out.last().map(|s| s.style).unwrap_or_default();
+    out.push(Span::styled("\u{2026}".to_string(), style));
+    Line::from(out)
 }

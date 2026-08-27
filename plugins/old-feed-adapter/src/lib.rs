@@ -683,7 +683,19 @@ impl Plugin for OldFeedPlugin {
                     // is a bridge, and a bad read of it never takes the harness down.
                     tracing::warn!(target: "old-feed", error = %e, "sweep failed");
                 }
-                tokio::time::sleep(poll).await;
+                // Sleep in SLICES, not in one 30-second block. A plain `sleep(poll)` is not a
+                // checkpoint: the fiber cannot settle until it returns, so the kernel's 5s
+                // dispose ceiling expired on EVERY exit and the whole process took five seconds
+                // to leave (phase ux1 B8, found by bounding the launcher's teardown).
+                let deadline = tokio::time::Instant::now() + poll;
+                while tokio::time::Instant::now() < deadline {
+                    if ectx.is_halted() {
+                        return Ok(());
+                    }
+                    let slice = (deadline - tokio::time::Instant::now())
+                        .min(std::time::Duration::from_millis(100));
+                    tokio::time::sleep(slice).await;
+                }
             }
         });
         Ok(())

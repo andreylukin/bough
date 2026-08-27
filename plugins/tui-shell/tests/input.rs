@@ -57,7 +57,13 @@ async fn enter_on_a_slash_line_dispatches_a_command_and_never_sends() {
     // `/help` ran, and its output — not a message — is what the surface shows.
     let notice = tui.notice().unwrap_or_default();
     assert!(notice.contains("/quit"), "the help text: {notice:?}");
-    assert!(notice.contains("cycle focus"), "the keymap: {notice:?}");
+    // The key list is GENERATED from `keymap::hints`, in plain language (M16): the help and the
+    // keymap cannot disagree because there is only one table.
+    assert!(notice.contains("tab"), "the keymap: {notice:?}");
+    assert!(
+        notice.contains("move the keyboard to the next pane"),
+        "the keymap, in plain language: {notice:?}"
+    );
 }
 
 #[tokio::test]
@@ -121,12 +127,12 @@ async fn a_click_focuses_the_pane_under_the_pointer_and_forwards_its_hit() {
     )
     .await;
 
-    assert_eq!(
-        tui.focused_pane(),
-        PaneId::new("rail"),
-        "the click focused it"
+    // phase ux1 B1: a click ACTS on the row it landed on and does NOT move the keyboard. The
+    // composer keeps it, so the next thing typed still goes into the message being written.
+    assert!(
+        tui.composer_focused(),
+        "the click did not steal the keyboard"
     );
-    assert!(!tui.composer_focused());
     let events = rail.events();
     assert!(
         events
@@ -184,10 +190,12 @@ async fn page_keys_reach_the_focused_pane_while_the_composer_holds_the_keyboard(
 
     run::on_key(&tui, key(KeyCode::PageUp)).await;
     run::on_key(&tui, key(KeyCode::PageDown)).await;
+    // phase ux1 B2: the paging keys are a SCROLL of the transcript from every context. They are
+    // no longer offered to the pane as a key first — one meaning, decided once, in `action_for`.
     assert_eq!(
         pane.events(),
-        vec!["key:PageUp", "scroll:-10", "key:PageDown", "scroll:10"],
-        "the pane saw the key, and the scroll fallback after it ignored the key"
+        vec!["scroll:-10", "scroll:10"],
+        "the paging keys scrolled the transcript"
     );
     assert!(
         tui.composer_focused(),
@@ -197,7 +205,7 @@ async fn page_keys_reach_the_focused_pane_while_the_composer_holds_the_keyboard(
     run::on_key(&tui, key(KeyCode::Up)).await;
     assert_eq!(
         pane.events().len(),
-        4,
+        2,
         "Up is the composer's cursor and never reaches the pane"
     );
     assert_eq!(pane.scrolled(), 0, "the two page scrolls cancelled out");

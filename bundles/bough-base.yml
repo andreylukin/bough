@@ -88,6 +88,16 @@
   config:
     sol: claude-haiku-4-5-20251001
     terra: claude-haiku-4-5-20251001
+    # phase ux1 §2.13: the price table the status line's running cost sums (M24). USD per million
+    # tokens, from Anthropic's published pricing for Claude Haiku 4.5 (input $1, output $5, cache
+    # read $0.10, 5-minute cache write $1.25). A model with NO row here has an unknown cost and
+    # the status line shows `—` for it, never `$0.00`.
+    prices:
+      claude-haiku-4-5-20251001:
+        input_per_mtok: 1.0
+        output_per_mtok: 5.0
+        cache_read_per_mtok: 0.1
+        cache_write_per_mtok: 1.25
 - id: about.line
   plugin: about-line
   config:

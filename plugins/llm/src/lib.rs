@@ -25,11 +25,11 @@ pub use request::{
     AgentRequest, AgentRequestError, CallConfig, Effort, LlmContentBlock, LlmMessage, LlmRequest,
     LlmRole, LlmToolDef, Recovery, RequestCall, RequestErrorCall, RequestFacts, WakeKind,
 };
-pub use usage::{UsageRound, USAGE_ROUND};
 pub use stream::{
     Chunk, FailureKind, LlmFailure, LlmStream, LlmStreamEvent, StopReason, StreamCall, StreamSlot,
     Usage,
 };
+pub use usage::{step_types as usage_step_types, UsageRound, USAGE_ROUND};
 
 /// The catalog name of this row.
 pub const PLUGIN_NAME: &str = "llm";

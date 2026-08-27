@@ -30,11 +30,43 @@
     # `/help` lists every registered command; Phase 5's seven pushed the list past eight rows.
     # The band is clamped to the rows above the composer anyway, and an overflow now names how
     # many lines it dropped, so this is a ceiling rather than a silent knife.
-    notice_max_lines: 24
+    notice_max_lines: 40
+    # phase ux1 §2.13. `transcript_pane` is what makes PageUp/PageDown/Home/End work from EVERY
+    # focus (B2): the shell routes them here without asking who has the keyboard.
+    transcript_pane: tui.focus
+    measure_cols: 90
+    gutter: 1
+    exit_arm_ms: 3000
+    paste_burst_ms: 20
+    history_cap: 200
+    notice_ms: 6000
+    flash_ms: 900
 
 - id: tui.strip
   plugin: tui-strip
-  config: { width: 34, show_about: true, about_lines: 2 }
+  config:
+    width: 34
+    show_about: true
+    about_lines: 2
+    # phase ux1 §2.5 (M13): the rail was 34 columns at 80 and at 200. Below `collapse_cols` it
+    # takes ZERO columns and the conversation gets the terminal; above it, it is clamped.
+    collapse_cols: 100
+    min_width: 22
+    max_width: 40
+    # The blank column between rail and transcript belongs to NEITHER pane (M9).
+    gutter: 1
+
+# phase ux1 §2.5, §2.13: the status line. A row of its own — not a field of `tui.strip` — because
+# this phase's SWAP gate disables it by patch while the TUI runs and asserts the layout reflows
+# (`scripts/tui/25-swap-status.sh`). A pane that is a field of another row cannot be disabled by a
+# patch, and a swap test that cannot fail proves nothing.
+- id: tui.status
+  plugin: tui-status
+  config:
+    cwd_max: 40
+    spinner: "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    spinner_ms: 80
+    hints: ["? = help", "esc = interrupt", "^f = search"]
 
 - id: tui.focus
   plugin: tui-focus
@@ -47,7 +79,7 @@
 
 - id: tui.search
   plugin: tui-search
-  config: { height: 12, limit: 50, debounce_ms: 150 }
+  config: { height: 12, limit: 50, debounce_ms: 150, snippet_radius: 40, window: 400 }
 
 - id: residents
   plugin: residents

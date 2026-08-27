@@ -7,6 +7,7 @@ trajectory: t-sol
 routing refs: gh:bough/rebuild#1
 wake classes: ordinary
 digest: none
+tools: none
 
 
 ## Recent steps

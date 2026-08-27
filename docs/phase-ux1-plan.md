@@ -768,6 +768,17 @@ recompile:
 `ComposerAction` gains a `Newline` variant (matched only inside `tui-shell`). If `rebuild-b` matches on
 `ComposerAction` exhaustively it needs one arm; that is the whole migration.
 
+**Integration addendum (what the work packages actually landed).** Two further additive deltas, so
+`rebuild-b` has the whole list in one place:
+
+3. `SlotSize` gains a `Responsive { collapse, preferred, min, max }` variant (WP-4). `Cells`,
+   `Percent` and `Fill` are untouched; a pane that registers one of those renders exactly as
+   before. It exists because `PaneInfo::size` — not `rail_width` — is what `layout` reads, so the
+   rail's collapse breakpoint could not otherwise make its slot cost zero columns. A `rebuild-b`
+   pane needs an arm only if it matches `SlotSize` exhaustively.
+4. `Composer::on_key` takes a second parameter, `in_burst: bool` (WP-2). Internal to `tui-shell`;
+   listed only because a pane that reuses the composer would see it.
+
 ### 2.13 Bundle rows and config added
 
 ```yaml
@@ -1236,3 +1247,45 @@ Phase 3 SWAP subject because nothing depends on *it*.
 **D5 — the `tui.status` bundle row is NOT in `bundles/bough-tui-app.yml` yet.** The crate, its
 `StatusConfig` and its catalog registration exist; WP-8 adds the row and the config block of §2.13,
 which is where the SWAP test that disables it also lands.
+
+---
+
+## Appendix: WP-8 seam notes (integration)
+
+Recorded by WP-8 as it wired the rows and wrote the suite. Everything here is a note about the SEAM
+between the packages, not a change to any package's public API.
+
+**W1 — the `tui.status` row is linked from `crates/bough/src/lib.rs`, not only from `Cargo.toml`.**
+The scaffold added `bough-plugin-tui-status` as a dependency of the launcher but not the
+`use bough_plugin_tui_status as _;` line that every other row has. Without it `inventory::submit!`
+never lands in the binary's catalog and the new bundle row fails to compose with "names plugin
+`tui-status`, which the catalog does not have" — a fail-loud boot, correctly, but one whose cause is
+a missing link line rather than a missing crate. WP-8 adds the one line. §2.13's D5 covers the
+bundle row; this covers the catalog.
+
+**W2 — the phase's new `tui` and `tui.strip` config fields are written into the bundle even though
+every one of them has a `#[serde(default)]`.** A default that is never written down is a tunable
+nobody can find: AGENTS.md's rule is that a deployment-varying value is a bundle field, and the
+whole point of `transcript_pane` and `collapse_cols` is that a deployment might want them
+different. `--dump-config` therefore shows the real numbers rather than an empty map.
+
+**W3 — `n`/`N` in the search pane became `Ctrl+n`/`Ctrl+Shift+n`.** WP-6 changed this at the seam
+while WP-8 was writing `22-search.sh`, and it is right: the query field is a TEXT input, so a bare
+`n` has to stay typable or root cause (c) is violated in the one pane that exists to find text.
+§3 V7's "`n`/`N` to step" reads as the chord in the shipped keymap; `/help` lists the chord.
+
+**W4 — the swap script is `scripts/tui/25-swap-status.sh` and it re-runs the Phase 3 search swap.**
+§3's SWAP bullet describes four steps; the script does all four in one file so the "both disabled at
+once" state is reached from a tree that has already proven each row individually. `09-swap-search.sh`
+is untouched and still runs.
+
+**W5 — three fixtures were added under `scripts/tui/fixtures/`:** `markdown.patch.yml` (chunk
+boundaries deliberately mid-word and mid-marker, for V6), `slow.patch.yml` (a round with seconds of
+`delay_ms` between chunks, for V4's interrupt and V9's spinner — against the shared fixture every
+"while it is running" bullet raced the end of the turn), and `cwd.patch.yml` (one `write_file` with
+a bare relative path, for V10's disk assertion).
+
+**W6 — `lib.sh` gained six helpers, not three.** §3 names `t_cells`, `t_disk` and `t_size`; the
+walk also needs `no_blank_run` (nit 39's assertion, which `t_size` calls), `screen_rows` (the swap's
+one-row screen diff) and `write_patch`/`clear_patch` (the patch-file write every swap script was
+open-coding). All are exported for the `bash -c` subshells the suite drives assertions through.

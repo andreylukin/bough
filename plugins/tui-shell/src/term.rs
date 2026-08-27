@@ -107,7 +107,20 @@ pub fn restore_now() {
     if done & RAW != 0 {
         let _ = terminal::disable_raw_mode();
     }
+    // B8: the farewell prints HERE, on the normal screen, once — never into the alt screen that
+    // is about to be wiped, and never as the last thing a black rectangle shows.
+    if let Some(text) = take_farewell() {
+        let _ = writeln!(out, "{text}");
+    }
     let _ = out.flush();
+}
+
+/// Whether BRACKETED PASTE is in effect. When it is, a paste arrives whole as `Event::Paste` and
+/// the newline-burst heuristic (B4) is not only unnecessary but harmful: it would turn a fast
+/// typist's — or a scripted PTY's — Enter into a newline. The heuristic is for the terminals that
+/// cannot do this, which is exactly where a paste does arrive as N key events.
+pub fn bracketed_paste_active() -> bool {
+    ENTERED.load(Ordering::SeqCst) & PASTE != 0
 }
 
 /// Whether the terminal is currently entered.

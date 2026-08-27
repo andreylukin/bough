@@ -11,6 +11,7 @@ repository.workspace = true
 
 [dependencies]
 bough-plugin-ledger = { workspace = true }
+bough-util = { workspace = true }
 bough-plugin-tools = { workspace = true }
 bough-plugin-tui-shell = { workspace = true }
 ratatui = { workspace = true }
@@ -22,5 +23,6 @@ unicode-segmentation = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+chrono = { workspace = true }
 bough-plugin-tools-baseline = { workspace = true }
 insta = { workspace = true }

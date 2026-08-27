@@ -168,35 +168,70 @@ enum Piece {
     Code(String),
 }
 
+/// PURE: split one source line into styled pieces.
+///
+/// An UNTERMINATED marker styles to the end of the line rather than printing itself. That is not
+/// leniency, it is the streaming rule: on a live tail the closing `` ` `` or `**` has simply not
+/// arrived yet, and an orphan backtick on screen is the thing the audit saw (M19).
 fn inline(text: &str) -> Vec<Piece> {
     let mut out = Vec::new();
     let mut rest = text;
     let mut plain = String::new();
-    while !rest.is_empty() {
-        if let Some(i) = rest.find("**") {
-            if let Some(j) = rest[i + 2..].find("**") {
-                plain.push_str(&rest[..i]);
+    loop {
+        let bold = rest.find("**");
+        let code = rest.find('`');
+        // Whichever opener comes first wins; a backtick inside `**bold**` is still code.
+        let (at, is_bold) = match (bold, code) {
+            (None, None) => break,
+            (Some(b), None) => (b, true),
+            (None, Some(c)) => (c, false),
+            (Some(b), Some(c)) => {
+                if b <= c {
+                    (b, true)
+                } else {
+                    (c, false)
+                }
+            }
+        };
+        let (open, close) = if is_bold {
+            (2usize, "**")
+        } else {
+            (1usize, "`")
+        };
+        plain.push_str(&rest[..at]);
+        let body_from = at + open;
+        match rest[body_from..].find(close) {
+            Some(j) => {
                 if !plain.is_empty() {
                     out.push(Piece::Text(std::mem::take(&mut plain)));
                 }
-                out.push(Piece::Bold(rest[i + 2..i + 2 + j].to_string()));
-                rest = &rest[i + 4 + j..];
-                continue;
+                let body = rest[body_from..body_from + j].to_string();
+                out.push(if is_bold {
+                    Piece::Bold(body)
+                } else {
+                    Piece::Code(body)
+                });
+                rest = &rest[body_from + j + open..];
             }
-        }
-        if let Some(i) = rest.find('`') {
-            if let Some(j) = rest[i + 1..].find('`') {
-                plain.push_str(&rest[..i]);
+            None => {
                 if !plain.is_empty() {
                     out.push(Piece::Text(std::mem::take(&mut plain)));
                 }
-                out.push(Piece::Code(rest[i + 1..i + 1 + j].to_string()));
-                rest = &rest[i + 2 + j..];
-                continue;
+                let body = rest[body_from..].to_string();
+                if !body.is_empty() {
+                    out.push(if is_bold {
+                        Piece::Bold(body)
+                    } else {
+                        Piece::Code(body)
+                    });
+                }
+                rest = "";
+                break;
             }
         }
+    }
+    if !rest.is_empty() {
         plain.push_str(rest);
-        rest = "";
     }
     if !plain.is_empty() {
         out.push(Piece::Text(plain));
@@ -204,45 +239,29 @@ fn inline(text: &str) -> Vec<Piece> {
     out
 }
 
-/// Assistant text: wrap at `width`, style `**bold**` and `` `code` ``, and highlight fenced
-/// blocks through [`crate::highlight`]. No termimad in this phase (P3-D10).
+/// Assistant text: the whole markdown path, at the width of the frame being painted.
+///
+/// Kept as a thin shim over [`crate::md::document`] so the tool-result renderers and `tui-strip`
+/// do not all change at once (phase ux1 §2.6).
 pub fn markdownish(text: &str, width: u16, theme: &Theme) -> Vec<Line<'static>> {
-    let width = width.max(1);
-    let mut out: Vec<Line<'static>> = Vec::new();
-    let mut fence: Option<(String, Vec<String>)> = None;
-    for raw in text.split('\n') {
-        let raw = raw.strip_suffix('\r').unwrap_or(raw);
-        let trimmed = raw.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("```") {
-            match fence.take() {
-                Some((lang, body)) => {
-                    let ext = if lang.is_empty() { None } else { Some(lang) };
-                    out.extend(crate::highlight(&body.join("\n"), ext.as_deref(), theme));
-                }
-                None => fence = Some((rest.trim().to_string(), Vec::new())),
-            }
-            continue;
-        }
-        if let Some((_, body)) = fence.as_mut() {
-            body.push(raw.to_string());
-            continue;
-        }
-        out.extend(paragraph(raw, width, theme));
-    }
-    if let Some((lang, body)) = fence {
-        let ext = if lang.is_empty() { None } else { Some(lang) };
-        out.extend(crate::highlight(&body.join("\n"), ext.as_deref(), theme));
-    }
-    out
+    crate::md::document(text, width, theme)
 }
 
-/// One source line of prose, wrapped across spans so a style never splits a cluster.
-fn paragraph(raw: &str, width: u16, theme: &Theme) -> Vec<Line<'static>> {
+/// One source line of prose as styled, wrapped lines, hanging-indented by `hang` columns.
+///
+/// EVERY returned line starts with a `hang`-wide raw pad span, so a caller that owns the gutter
+/// (a list marker, a quote bar) replaces `spans[0]` and nothing else has to know about it.
+pub(crate) fn styled_wrap(raw: &str, width: u16, hang: usize, theme: &Theme) -> Vec<Line<'static>> {
+    let width = width.max(1) as usize;
+    let hang = hang.min(width.saturating_sub(1));
+    let body_w = width.saturating_sub(hang).max(1) as u16;
     let plain = Style::default().fg(theme.fg);
     let bold = plain.add_modifier(Modifier::BOLD);
     let code = Style::default().fg(theme.accent);
+    let pad = || Span::raw(" ".repeat(hang));
+
     let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut cur: Vec<Span<'static>> = Vec::new();
+    let mut cur: Vec<Span<'static>> = vec![pad()];
     let mut used = 0usize;
     for piece in inline(raw) {
         let (body, style) = match piece {
@@ -250,9 +269,10 @@ fn paragraph(raw: &str, width: u16, theme: &Theme) -> Vec<Line<'static>> {
             Piece::Bold(t) => (t, bold),
             Piece::Code(t) => (t, code),
         };
-        for (i, chunk) in wrap_from(&body, width, used).into_iter().enumerate() {
+        for (i, chunk) in wrap_from(&body, body_w, used).into_iter().enumerate() {
             if i > 0 {
                 lines.push(Line::from(std::mem::take(&mut cur)));
+                cur.push(pad());
                 used = 0;
             }
             if !chunk.is_empty() {

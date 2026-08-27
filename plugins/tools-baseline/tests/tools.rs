@@ -17,7 +17,10 @@ use tokio_util::sync::CancellationToken;
 
 fn cfg(root: &TempDir) -> Arc<BaselineConfig> {
     Arc::new(BaselineConfig {
-        root: root.path().to_path_buf(),
+        // The root a row actually holds is the PINNED one (phase ux1 §2.10): absolute and
+        // canonical. `TempDir::path` is neither on macOS, where `/var` is a symlink.
+        root: bough_plugin_tools_baseline::fs::pin_root(std::path::Path::new("."), root.path())
+            .unwrap(),
         bash_timeout_ms: 2_000,
         max_output_bytes: 1_000,
         max_read_bytes: 1_000,

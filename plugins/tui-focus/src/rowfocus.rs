@@ -17,14 +17,26 @@ impl RowFocus {
     /// on the LAST row: a keyboard user arriving from the composer is at the bottom of the
     /// conversation, not the top.
     pub fn moved(self, delta: i32, rows: usize) -> RowFocus {
-        let _ = (self, delta, rows);
-        todo!("WP-1")
+        if rows == 0 {
+            return RowFocus { index: None };
+        }
+        let last = rows - 1;
+        let index = match self.index {
+            // Arriving from the composer: the newest row, whichever way the user pressed.
+            None => last,
+            Some(i) => {
+                let next = i.min(last) as i64 + delta as i64;
+                next.clamp(0, last as i64) as usize
+            }
+        };
+        RowFocus { index: Some(index) }
     }
 
     /// The row a `FocusRequest { step }` names, so a search hit and the keyboard agree.
     pub fn on_step(rows: &[Row], step: &StepId) -> RowFocus {
-        let _ = (rows, step);
-        todo!("WP-1")
+        RowFocus {
+            index: rows.iter().position(|r| r.step() == step),
+        }
     }
 
     /// PURE: whether this row index should paint the focus indicator this frame.

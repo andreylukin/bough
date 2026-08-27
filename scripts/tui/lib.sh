@@ -142,6 +142,9 @@ tui_start() {
 
 # Ask the running TUI to quit, then wait for the shell prompt back.
 tui_quit() {
+  # A draft the test left in the composer would make `/quit` a suffix of it, so the line is
+  # cleared first (phase ux1: nothing the user typed is destroyed, so nothing clears itself).
+  shell-use keys "Ctrl+u" >/dev/null 2>&1 || true
   shell-use submit "/quit" >/dev/null 2>&1 || true
   shell-use wait idle --timeout 10000 >/dev/null 2>&1 || true
 }
@@ -393,9 +396,180 @@ sys.exit(0)
   return 1
 }
 
+# ---------------------------------------------------------------------------
+# phase ux1 helpers (§3, WP-8)
+# ---------------------------------------------------------------------------
+
+# `cells_have <x> <y> <w> <h> <field> <value> [--all]`: some cell of the region carries
+# `<field> == <value>` (`--all`: every cell does). `field` is a `shell-use cells --json` key:
+# `fg`, `bg`, `bold`, `char`.
+#
+# Polled, for the same reason `expect_selected` is: a focus ring, a highlight and a flash are all
+# painted on a LATER frame than the key that caused them, and reading the cells once raced the
+# repaint. This is the colour half of the phase — a ring or a highlight asserted as TEXT would
+# pass on a screen that draws neither.
+cells_have() {
+  local i out
+  for i in $(seq 1 25); do
+    if out="$(_cells_have_once "$@" 2>&1)"; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "$out"
+  return 1
+}
+
+_cells_have_once() {
+  local x="$1" y="$2" w="$3" h="$4" field="$5" want="$6" mode="${7:-any}"
+  shell-use cells "$x" "$y" "$w" "$h" --json \
+    | FIELD="$field" WANT="$want" MODE="$mode" python3 -c '
+import json, os, sys
+field, want, mode = os.environ["FIELD"], os.environ["WANT"], os.environ["MODE"]
+cells = json.load(sys.stdin)["data"]["cells"]
+if not cells:
+    sys.exit("the region is empty")
+def val(c):
+    return str(c.get(field))
+if mode == "--all":
+    bad = [c for c in cells if val(c) != want]
+    if bad:
+        c = bad[0]
+        sys.exit("cell %s,%s has %s=%s, expected %s" % (c["x"], c["y"], field, val(c), want))
+else:
+    if not any(val(c) == want for c in cells):
+        got = sorted({val(c) for c in cells})
+        sys.exit("no cell of the region has %s=%s (saw %s)" % (field, want, ", ".join(got)))
+'
+}
+
+# `t_cells <name> <x> <y> <w> <h> <field> <value> [--all]`: the NAMED colour assertion the
+# verification map cites.
+t_cells() {
+  local name="$1"; shift
+  t "$name" cells_have "$@"
+}
+
+# `disk_has <path> [needle]`: the file exists on disk (and contains `needle`). Polled: a tool call
+# lands on disk a frame or two after the screen says it did.
+#
+# The plan calls this "the disk assertion, not a string one" (V10): B5 was a file that the screen
+# claimed to have written to the current directory and that was not there. Only the filesystem can
+# refute that, so only the filesystem is asked.
+disk_has() {
+  local path="$1" needle="${2:-}" i
+  for i in $(seq 1 40); do
+    if [ -f "$path" ]; then
+      if [ -z "$needle" ] || grep -qF -- "$needle" "$path"; then
+        return 0
+      fi
+    fi
+    sleep 0.5
+  done
+  if [ ! -f "$path" ]; then
+    echo "no file at $path"
+    echo "# siblings: $(ls -A "$(dirname "$path")" 2>/dev/null | tr '\n' ' ')"
+  else
+    echo "$path exists but does not contain: $needle"
+    sed 's/^/# /' "$path" | head -20
+  fi
+  return 1
+}
+
+t_disk() {
+  local name="$1"; shift
+  t "$name" disk_has "$@"
+}
+
+# `t_size <name> <fn>`: the three-size resize walk (V5). `fn` is called once per size with the
+# columns and rows as arguments, at 120x36, then 80x24, then 200x50 — the sizes the audit's
+# resize findings (M9, M13, nit 39) were taken at. The terminal is returned to 120x40 afterwards
+# whether the walk passed or not, so a later bullet in the same script sees the boot geometry.
+#
+# It is one NAMED assertion and not three because the claim is about the walk: history that
+# re-wraps at every size with nothing injected and nothing lost.
+TUI_SIZES="120x36 80x24 200x50"
+
+resize_walk() {
+  local fn="$1" spec cols rows out rc=0
+  for spec in $TUI_SIZES; do
+    cols="${spec%x*}"; rows="${spec#*x}"
+    shell-use resize "$cols" "$rows" >/dev/null
+    shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
+    sleep 0.4
+    if ! out="$("$fn" "$cols" "$rows" 2>&1)"; then
+      echo "at ${cols}x${rows}: $out"
+      rc=1
+      break
+    fi
+  done
+  shell-use resize 120 40 >/dev/null 2>&1 || true
+  shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
+  return $rc
+}
+
+t_size() {
+  local name="$1" fn="$2"
+  t "$name" resize_walk "$fn"
+}
+
+# `no_blank_run <n>`: no run of `n` or more consecutive blank rows inside the drawn frame (nit 39:
+# a resize used to inject blank lines between wrapped paragraphs). Trailing blank rows below the
+# last content row are the empty transcript, not an injection, so they are trimmed first.
+no_blank_run() {
+  shell-use text | N="${1:-3}" MARK="${2:-}" python3 -c '
+import os, sys
+n = int(os.environ["N"])
+mark = os.environ.get("MARK") or ""
+rows = [r.rstrip() for r in sys.stdin.read().split("\n")]
+# Everything below the last CONTENT row is the empty part of the frame — the unfilled transcript,
+# the empty search field, the gap above the status line. Only what sits BETWEEN content rows can
+# be an injected blank (nit 39), so the tail is trimmed to the last row that carries content.
+if mark:
+    last = max((i for i, r in enumerate(rows) if mark in r), default=-1)
+    rows = rows[: last + 1]
+while rows and not rows[-1].strip():
+    rows.pop()
+run = worst = 0
+for r in rows:
+    run = run + 1 if not r.strip() else 0
+    worst = max(worst, run)
+if worst >= n:
+    sys.exit("a run of %d blank rows is inside the frame" % worst)
+'
+}
+
+# `screen_rows`: the drawn screen as one string, trailing blank rows trimmed. Used by the swap
+# script to diff two screens row by row.
+screen_rows() {
+  shell-use text | python3 -c '
+import sys
+rows = [r.rstrip() for r in sys.stdin.read().split("\n")]
+while rows and not rows[-1].strip():
+    rows.pop()
+print("\n".join(rows))
+'
+}
+
+# `write_patch <yaml…>` / `clear_patch`: the launcher watches `$BOUGH_HOME/bough.patch.yml` and
+# reloads it WHILE the TUI runs (§0.5). The swap scripts of every phase drive that file; this
+# phase's swap disables a ROW through it, so the write is here rather than copied into each.
+PATCH_FILE="$HOME_DIR/bough.patch.yml"
+
+write_patch() {
+  cat > "$PATCH_FILE.tmp"
+  mv "$PATCH_FILE.tmp" "$PATCH_FILE"
+  sleep 2
+}
+
+clear_patch() {
+  rm -f "$PATCH_FILE"
+  sleep 2
+}
+
 # Several scripts drive assertions through `bash -c`, which is a FRESH shell: without these the
 # helpers above would silently not exist there, and a comparison against their empty output would
 # be reported as a failed bullet rather than as the harness bug it is. The variables the ledger
 # helpers close over have to travel too.
-export LEDGER HOME_DIR BOUGH_BIN
-export -f see expect_absent row_with no_row_is_exactly wheel select_drag expect_selected _expect_selected_once expect_diff_gutter _expect_diff_gutter_py sql steps_of expect_steps expect_steps_exactly await_exit_code
+export LEDGER HOME_DIR BOUGH_BIN PATCH_FILE TUI_SIZES
+export -f see expect_absent row_with no_row_is_exactly wheel select_drag expect_selected _expect_selected_once expect_diff_gutter _expect_diff_gutter_py sql steps_of expect_steps expect_steps_exactly await_exit_code cells_have _cells_have_once disk_has no_blank_run screen_rows write_patch clear_patch resize_walk

@@ -117,3 +117,104 @@ fn a_page_up_scrolls_when_few_rows_rendered_many_lines() {
         "three lines in a twenty-row viewport genuinely cannot scroll"
     );
 }
+
+// ---------------------------------------------------------------------------
+// WP-3 / phase ux1 §2.2: `Viewport` — follow, count, badge, re-arm (B2)
+// ---------------------------------------------------------------------------
+
+use bough_plugin_tui_focus::Viewport;
+
+/// The default is FOLLOWING, and following counts nothing: a viewport pinned to the tail has
+/// already shown everything that arrived, so a `↓ N new` badge there would be a lie.
+#[test]
+fn a_following_viewport_counts_nothing_and_badges_nothing() {
+    let mut v = Viewport::default();
+    assert!(v.is_following());
+    v.on_rows_appended(7);
+    v.on_rows_appended(90);
+    assert_eq!(v.unseen, 0);
+    assert_eq!(v.badge(), None);
+    // And it stays pinned to the bottom, wherever the bottom now is.
+    assert_eq!(v.top(100, 20), 80);
+}
+
+/// Scrolled up, the viewport is ANCHORED: it does not move, and everything appended under it is
+/// counted, so the affordance can say how much is waiting.
+#[test]
+fn an_anchored_viewport_counts_what_arrives_and_badges_it() {
+    let mut v = Viewport::default();
+    v.scrolled(-10, 100, 20);
+    assert!(!v.is_following());
+    let top = v.top(100, 20);
+
+    v.on_rows_appended(1);
+    assert_eq!(v.badge().as_deref(), Some("↓ 1 new"));
+    v.on_rows_appended(2);
+    assert_eq!(v.badge().as_deref(), Some("↓ 3 new"));
+    // V3: the rows arriving underneath did NOT move the reader.
+    assert_eq!(v.top(103, 20), top);
+}
+
+/// The re-arm, by every route the keymap offers: `End`, a scroll back to the bottom, and sending
+/// a message. All three land at the tail with nothing outstanding.
+#[test]
+fn the_badge_clears_on_every_route_back_to_the_tail() {
+    let anchored = || {
+        let mut v = Viewport::default();
+        v.scrolled(-10, 100, 20);
+        v.on_rows_appended(5);
+        assert_eq!(v.badge().as_deref(), Some("↓ 5 new"));
+        v
+    };
+
+    // `End` (and sending a message, which calls the same thing).
+    let mut v = anchored();
+    v.to_latest();
+    assert!(v.is_following());
+    assert_eq!(v.badge(), None);
+
+    // Scrolling back down by hand — all the way, including the five rows that arrived while
+    // the reader was up here.
+    let mut v = anchored();
+    v.scrolled(15, 105, 20);
+    assert!(v.is_following(), "landing at the bottom re-arms follow");
+    assert_eq!(v.badge(), None);
+
+    // A partial scroll back is still anchored, and still owes the reader the count.
+    let mut v = anchored();
+    v.scrolled(3, 105, 20);
+    assert!(!v.is_following());
+    assert_eq!(v.badge().as_deref(), Some("↓ 5 new"));
+
+    // And once re-armed it counts again from zero the next time it detaches.
+    let mut v = anchored();
+    v.to_latest();
+    v.scrolled(-4, 105, 20);
+    v.on_rows_appended(2);
+    assert_eq!(v.badge().as_deref(), Some("↓ 2 new"));
+}
+
+/// A jump to a search hit anchors WITHOUT pretending the tail has been read: the badge is what
+/// tells the reader there is somewhere to come back to.
+#[test]
+fn anchoring_on_a_hit_keeps_the_outstanding_count() {
+    let mut v = Viewport::default();
+    v.scrolled(-10, 100, 20);
+    v.on_rows_appended(4);
+    v.anchor_on(12);
+    assert_eq!(v.top(104, 20), 12);
+    assert_eq!(v.badge().as_deref(), Some("↓ 4 new"));
+    v.to_latest();
+    assert_eq!(v.badge(), None);
+}
+
+/// Nothing to scroll is following: a short transcript can never show a badge, because there is
+/// no way for the reader to be anywhere but at the end of it.
+#[test]
+fn a_transcript_that_fits_on_screen_never_badges() {
+    let mut v = Viewport::default();
+    v.scrolled(-30, 4, 40);
+    v.on_rows_appended(1);
+    assert!(v.is_following());
+    assert_eq!(v.badge(), None);
+}

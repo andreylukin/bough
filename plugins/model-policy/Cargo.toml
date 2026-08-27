@@ -15,6 +15,11 @@ schemars = { workspace = true }
 inventory = { workspace = true }
 parking_lot = { workspace = true }
 anyhow = { workspace = true }
+# phase ux1 §2.10 (M24): the `usage/round` tee appends a durable step from the stream.
+futures = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -3,12 +3,13 @@
 //! mounted it — no pane, no listener, no binding left behind (§17 Phase 3).
 //!
 //! It reads `ctx.ledger` and never `ctx.agents`' loop: a hit is a step id, and clicking one is a
-//! `FocusRequest`, not a wake.
+//! `FocusRequest`, not a wake. What it INDEXES is the rendered conversation (`index`), never the
+//! ledger's FTS over raw JSON (phase ux1 M11).
 //!
 //! Everything a test needs is a PURE function over state the pane already holds: `RenderCx`,
 //! `PaneCx` and `TuiHandle` are only constructible inside `tui-shell`, so `render` and `handle`
-//! are thin shells over `hit_rows`, `hit_line`, `SearchState` and `on_click` (deviation D-WP5-1,
-//! reported at the seam).
+//! are thin shells over `index::{entries, search, lines}`, `SearchState` and `on_click`
+//! (deviation D-WP5-1, reported at the seam).
 
 pub mod index;
 pub mod invariant;
@@ -17,19 +18,16 @@ use std::sync::Arc;
 
 use bough_kernel::{ConfigError, Context, Inject, InvariantSpec, Plugin, PluginError};
 use bough_plugin_agents::{AgentId, Agents, AgentsHandle};
-use bough_plugin_ledger::{
-    AgentName, AgentRow, Ledger, LedgerHandle, SearchHit, SearchQuery, Seq, StepId, StepType,
-    TrajId,
-};
+use bough_plugin_ledger::{AgentName, Ledger, LedgerHandle, Order, StepId, StepQuery};
 use bough_plugin_tui_shell::pane::{
     Pane, PaneCx, PaneEvent, PaneId, PaneOutcome, PaneSpec, RenderCx, Slot, SlotSize,
 };
 use bough_plugin_tui_shell::{FocusRequest, HitId, Tui, TuiHandle};
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
-use ratatui::style::Style;
-use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+
+pub use crate::index::{counter, Entry, Hit};
 
 /// The catalog name of this row.
 pub const PLUGIN_NAME: &str = "tui-search";
@@ -45,49 +43,20 @@ pub const HIT_PREFIX: &str = "hit:";
 #[serde(deny_unknown_fields)]
 pub struct SearchConfig {
     pub height: u16,
+    /// The most hits a query reports.
     pub limit: usize,
     pub debounce_ms: u64,
+    /// Characters either side of a match in a snippet.
+    pub snippet_radius: usize,
+    /// How many steps of each trajectory the index covers. The index is over RENDERED rows held
+    /// in memory, so the window is what bounds the work.
+    pub window: usize,
 }
 
-/// One rendered hit.
-#[derive(Clone, Debug, PartialEq)]
-pub struct HitRow {
-    /// Resolved traj → `agents` row; `None` for a rowless traj.
-    pub agent: Option<AgentName>,
-    pub traj: TrajId,
-    pub step: StepId,
-    pub seq: Seq,
-    pub kind: StepType,
-    pub snippet: String,
-}
-
-/// PURE: `SearchHit` + the agents rows ⇒ display rows (agent, seq, kind, snippet).
-pub fn hit_rows(hits: &[SearchHit], agents: &[AgentRow]) -> Vec<HitRow> {
-    hits.iter()
-        .map(|h| HitRow {
-            agent: agents
-                .iter()
-                .find(|a| a.traj == h.step.traj)
-                .map(|a| a.name.clone()),
-            traj: h.step.traj.clone(),
-            step: h.step.id.clone(),
-            seq: h.step.seq,
-            kind: h.step.kind.clone(),
-            snippet: one_line(&h.snippet),
-        })
-        .collect()
-}
-
-/// PURE: the one line a hit row draws. A rowless trajectory renders NO agent name — not an empty
-/// column and not the trajectory id dressed up as one.
-pub fn hit_line(row: &HitRow) -> String {
-    let mut out = String::new();
-    if let Some(agent) = &row.agent {
-        out.push_str(agent.as_str());
-        out.push(' ');
-    }
-    out.push_str(&format!("s{} {}  {}", row.seq.0, row.kind, row.snippet));
-    out
+/// PURE: the one line a hit draws, without styling. The pane paints the styled version through
+/// [`index::lines`]; this is what a test and a log read.
+pub fn hit_line(hit: &Hit) -> String {
+    format!("{}  {}", hit.speaker, hit.snippet)
 }
 
 /// The `HitId` for a hit row.
@@ -98,10 +67,6 @@ pub fn hit_id(step: &StepId) -> HitId {
 /// The step a `HitId` names, when it is one of ours.
 pub fn step_of_hit(hit: &HitId) -> Option<StepId> {
     hit.as_str().strip_prefix(HIT_PREFIX).map(StepId::new)
-}
-
-fn one_line(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The debounce, as a pure generation counter over a clock passed in.
@@ -157,7 +122,7 @@ impl Debounce {
 pub struct SearchState {
     /// The one-line input the pane owns (the composer belongs to the shell).
     pub input: String,
-    pub rows: Vec<HitRow>,
+    pub rows: Vec<Hit>,
     /// Set by a failed query; rendered inline in `theme.error`, and the list is empty beside it.
     pub error: Option<String>,
     pub debounce: Debounce,
@@ -220,16 +185,33 @@ impl SearchState {
         self.debounce.on_input(now)
     }
 
-    pub fn clear_input(&mut self, now: DateTime<Utc>) -> u64 {
+    /// `Esc`: query, hits and rows all go in ONE call (minor 30 — the field "never clears").
+    pub fn clear(&mut self, now: DateTime<Utc>) -> u64 {
         self.input.clear();
         self.rows.clear();
         self.error = None;
+        self.selected = 0;
+        self.scroll = 0;
         self.debounce.on_input(now)
+    }
+
+    /// `n` / `N`: step to the next or previous match, wrapping.
+    pub fn step_match(&mut self, forward: bool) {
+        self.selected = index::step_selection(self.selected, self.rows.len(), forward);
+        self.follow_selection();
+    }
+
+    /// What the counter reads: `""` while the query is empty (D-WP6-2).
+    pub fn counter(&self) -> String {
+        if self.input.trim().is_empty() {
+            return String::new();
+        }
+        index::counter(self.selected, self.rows.len())
     }
 
     /// Land a query result. A STALE generation is dropped: a slow query for an older keystroke can
     /// never overwrite the answer to what is on screen now. Returns whether anything changed.
-    pub fn apply(&mut self, generation: u64, result: Result<Vec<HitRow>, String>) -> bool {
+    pub fn apply(&mut self, generation: u64, result: Result<Vec<Hit>, String>) -> bool {
         if generation != self.debounce.generation() {
             return false;
         }
@@ -251,19 +233,26 @@ impl SearchState {
     }
 }
 
-/// PURE: the lines the pane paints, each with the `HitId` its row is clickable under.
-pub fn lines(state: &SearchState, prompt_focused: bool) -> Vec<(String, Option<HitId>)> {
-    let cursor = if prompt_focused { "_" } else { "" };
-    // The prompt NAMES itself. A bare "/" was indistinguishable from the composer's command
-    // prefix on screen, so neither a reader nor V4's assertion could tell which line was the
-    // search pane; the label is the pane's only chrome.
-    let mut out = vec![(format!("search / {}{}", state.input, cursor), None)];
+/// PURE: the plain-text lines the pane paints, each with the `HitId` its row is clickable under.
+/// The STYLED version is [`index::lines`]; this one is what a text assertion reads.
+pub fn lines(state: &SearchState, _prompt_focused: bool) -> Vec<(String, Option<HitId>)> {
+    let counter = state.counter();
+    let head = if counter.is_empty() {
+        format!("{} [{}\u{258f}]", index::FIELD_LABEL, state.input)
+    } else {
+        format!(
+            "{} [{}\u{258f}]  {counter}",
+            index::FIELD_LABEL,
+            state.input
+        )
+    };
+    let mut out = vec![(head, None)];
     if let Some(err) = &state.error {
         out.push((format!("! {err}"), None));
         return out;
     }
-    for row in &state.rows {
-        out.push((hit_line(row), Some(hit_id(&row.step))));
+    for hit in &state.rows {
+        out.push((hit_line(hit), Some(hit_id(&hit.step))));
     }
     out
 }
@@ -272,7 +261,7 @@ pub fn lines(state: &SearchState, prompt_focused: bool) -> Vec<(String, Option<H
 /// `FocusRequest` — never a wake.
 pub fn on_click(
     hit: Option<&HitId>,
-    rows: &[HitRow],
+    rows: &[Hit],
     focus_pane: Option<PaneId>,
     resolve: impl Fn(&AgentName) -> Option<AgentId>,
 ) -> PaneOutcome {
@@ -286,32 +275,50 @@ pub fn on_click(
         return PaneOutcome::Ignored;
     };
     PaneOutcome::Focus(FocusRequest {
-        agent: row.agent.as_ref().and_then(&resolve),
+        agent: resolve(&row.agent),
         pane: focus_pane,
         step: Some(row.step.clone()),
     })
 }
 
 /// Run one query. The only I/O in the crate, and it is never called from `render`.
+///
+/// The I/O is a READ of steps; the search itself is [`index::search`] over rows the focus pane's
+/// own projection built. Nothing here touches `LedgerStore::search`: FTS over ledger JSON is what
+/// put `request/header  {"as_of":53,…}` on screen (M11).
 pub async fn run_query(
     ledger: &LedgerHandle,
     cfg: &SearchConfig,
     text: &str,
-) -> Result<Vec<HitRow>, String> {
+) -> Result<Vec<Hit>, String> {
     if text.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let hits = ledger
-        .0
-        .search(&SearchQuery {
-            text: text.to_string(),
-            trajs: Vec::new(),
-            limit: cfg.limit,
-        })
-        .await
-        .map_err(|e| e.to_string())?;
     let agents = ledger.0.agents().await.map_err(|e| e.to_string())?;
-    Ok(hit_rows(&hits, &agents))
+    let mut hits = Vec::new();
+    for agent in &agents {
+        let steps = ledger
+            .0
+            .steps(&StepQuery {
+                trajs: vec![agent.traj.clone()],
+                order: Order::SeqDesc,
+                limit: Some(cfg.window),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        // Newest-first is how the window is taken; the projection wants seq order.
+        let mut steps = steps;
+        steps.reverse();
+        let rows = bough_plugin_tui_focus::rows::rows_from_steps(&steps);
+        let entries = index::entries(&agent.name, &rows);
+        hits.extend(index::search(&entries, text, cfg.snippet_radius));
+        if hits.len() >= cfg.limit {
+            hits.truncate(cfg.limit);
+            break;
+        }
+    }
+    Ok(hits)
 }
 
 /// The pane: a one-line input it owns, debounced, over `LedgerStore::search`.
@@ -397,27 +404,35 @@ impl Pane for SearchPane {
         // The invariant's recorder: what this frame ACTUALLY put on screen.
         invariant::record(&state.rows);
         let theme = *cx.theme();
-        let painted = lines(&state, cx.view.is_focused);
         let area = cx.area;
+        let painted = index::lines(
+            &state.rows,
+            state.selected,
+            &state.input,
+            area.width,
+            &theme,
+        );
         let top = state.top(painted.len(), area.height);
-        let mut out: Vec<Line> = Vec::with_capacity(painted.len().saturating_sub(top));
-        for (i, (text, hit)) in painted.iter().enumerate() {
+        let mut out: Vec<ratatui::text::Line> =
+            Vec::with_capacity(painted.len().saturating_sub(top));
+        for (i, (line, hit)) in painted.into_iter().enumerate() {
             if i < top {
                 continue;
             }
-            let style = if state.error.is_some() && i == 1 {
-                Style::default().fg(theme.error)
-            } else if i == 0 {
-                Style::default().fg(theme.dim)
-            } else if i.saturating_sub(1) == state.selected {
-                Style::default().fg(theme.accent)
-            } else {
-                Style::default().fg(theme.fg)
-            };
-            out.push(Line::from(Span::styled(text.clone(), style)));
-            if let (Some(hit), Some(row)) = (hit.clone(), row_rect(area, i - top)) {
+            let hit = hit.clone();
+            out.push(line);
+            if let (Some(hit), Some(row)) = (hit, row_rect(area, i - top)) {
                 cx.hit(row, hit);
             }
+        }
+        if let Some(err) = &state.error {
+            out.insert(
+                1.min(out.len()),
+                ratatui::text::Line::from(ratatui::text::Span::styled(
+                    format!("! {err}"),
+                    ratatui::style::Style::default().fg(theme.error),
+                )),
+            );
         }
         let widget = Paragraph::new(out);
         drop(state);
@@ -437,6 +452,7 @@ impl Pane for SearchPane {
         vec![
             ("type", "search"),
             ("↑/↓", "select a hit"),
+            ("^n/^N", "next / previous match"),
             ("enter/click", "focus that step"),
             ("esc", "clear"),
         ]
@@ -465,17 +481,48 @@ impl Pane for SearchPaneArc {
                         st.push_char(c, cx.at)
                     }
                     KeyCode::Backspace => st.backspace(cx.at),
-                    KeyCode::Esc => st.clear_input(cx.at),
+                    KeyCode::Esc => st.clear(cx.at),
+                    // Backwards FIRST: a terminal may report `Ctrl+Shift+n` as `n` with both
+                    // modifiers or as `N` with control, and both mean "the previous match".
+                    KeyCode::Char('n' | 'N')
+                        if key.modifiers.contains(KeyModifiers::CONTROL)
+                            && key.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
+                        st.step_match(false);
+                        drop(st);
+                        cx.tui.redraw();
+                        return PaneOutcome::Handled;
+                    }
+                    KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        st.step_match(true);
+                        drop(st);
+                        // The selection moved, so the SCREEN has to: nothing else repaints for a
+                        // key a pane handled.
+                        cx.tui.redraw();
+                        return PaneOutcome::Handled;
+                    }
+                    KeyCode::Char('N') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        st.step_match(false);
+                        drop(st);
+                        // The selection moved, so the SCREEN has to: nothing else repaints for a
+                        // key a pane handled.
+                        cx.tui.redraw();
+                        return PaneOutcome::Handled;
+                    }
                     KeyCode::Down => {
-                        if !st.rows.is_empty() {
-                            st.selected = (st.selected + 1).min(st.rows.len() - 1);
-                        }
-                        st.follow_selection();
+                        st.step_match(true);
+                        drop(st);
+                        // The selection moved, so the SCREEN has to: nothing else repaints for a
+                        // key a pane handled.
+                        cx.tui.redraw();
                         return PaneOutcome::Handled;
                     }
                     KeyCode::Up => {
-                        st.selected = st.selected.saturating_sub(1);
-                        st.follow_selection();
+                        st.step_match(false);
+                        drop(st);
+                        // The selection moved, so the SCREEN has to: nothing else repaints for a
+                        // key a pane handled.
+                        cx.tui.redraw();
                         return PaneOutcome::Handled;
                     }
                     KeyCode::Enter => {
@@ -494,6 +541,33 @@ impl Pane for SearchPaneArc {
                 let rows = self.0.state.lock().rows.clone();
                 click(&self.0, hit.as_ref(), &rows, &cx)
             }
+            // Minor 30, "the field never clears": `Esc` is the SHELL's "give the composer the
+            // keyboard back" binding and never reaches a pane (`keymap.rs`), so the pane clears on
+            // LOSING focus. Query, hits and selection go together, which is what reopening `^f`
+            // on a fresh field means.
+            // …and it opens FRESH. `Ctrl+F` is "start a search", not "resume the last one": the
+            // keyboard can leave this pane by paths that never reach it (the composer takes it
+            // back), so gaining focus is the moment that can be relied on.
+            PaneEvent::FocusChanged(true) => {
+                let mut st = self.0.state.lock();
+                if st.input.is_empty() && st.rows.is_empty() {
+                    return PaneOutcome::Ignored;
+                }
+                st.clear(cx.at);
+                drop(st);
+                cx.tui.redraw();
+                PaneOutcome::Handled
+            }
+            PaneEvent::FocusChanged(false) => {
+                let mut st = self.0.state.lock();
+                if st.input.is_empty() && st.rows.is_empty() {
+                    return PaneOutcome::Ignored;
+                }
+                st.clear(cx.at);
+                drop(st);
+                cx.tui.redraw();
+                PaneOutcome::Handled
+            }
             PaneEvent::Scroll { delta } => {
                 let mut st = self.0.state.lock();
                 let painted = 1 + if st.error.is_some() { 1 } else { st.rows.len() };
@@ -511,7 +585,7 @@ impl Pane for SearchPaneArc {
     }
 }
 
-fn click(pane: &Arc<SearchPane>, hit: Option<&HitId>, rows: &[HitRow], cx: &PaneCx) -> PaneOutcome {
+fn click(pane: &Arc<SearchPane>, hit: Option<&HitId>, rows: &[Hit], cx: &PaneCx) -> PaneOutcome {
     let focus_pane = cx
         .tui
         .panes()
@@ -564,6 +638,15 @@ impl Plugin for SearchPlugin {
         // `limit: 0` is a pane that searches and always reports nothing, silently.
         if cfg.limit == 0 {
             return reject("limit must be > 0".to_string());
+        }
+        if cfg.window == 0 {
+            return reject("window must be > 0; a zero-step index can match nothing".to_string());
+        }
+        if cfg.snippet_radius == 0 {
+            return reject(
+                "snippet_radius must be > 0; a zero-width window shows the match with no context"
+                    .to_string(),
+            );
         }
         Ok(())
     }

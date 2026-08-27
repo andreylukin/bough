@@ -12,12 +12,12 @@ before_wakes="$(steps_of 'wake/start')"
 before_steps="$(steps_of 'step/start')"
 before_reqs="$(steps_of 'request/header')"
 
-# `queued` is written ONLY by the `/agents` roster command (builtins.rs::Roster). The agent name
-# `sol` would have matched the rail, which is on screen before any command runs, so that bullet
-# was vacuous whether or not the dispatch produced anything.
+# `waiting` is written ONLY by the `/agents` roster header (builtins.rs::ROSTER_HEADER). The agent
+# name `sol` would have matched the rail, which is on screen before any command runs, so that
+# bullet was vacuous whether or not the dispatch produced anything.
 shell-use submit "/agents"
 t a_slash_command_renders_its_output_in_the_pane \
-  see "queued" --timeout 10000
+  see "waiting" --timeout 10000
 
 t the_slash_command_started_no_wake \
   bash -c "[ \"\$(steps_of 'wake/start')\" = \"$before_wakes\" ] \
@@ -28,9 +28,20 @@ shell-use submit "/nosuchcommand"
 t an_unknown_command_reports_an_error_inline \
   see 'unknown command `nosuchcommand`' --timeout 10000
 
+# The miss KEPT the text in the composer on purpose (phase ux1 (c): a slash line that is not a
+# known command is never destroyed) — so the next command has to clear the line first, exactly as
+# a user would. `Ctrl+U` doing that is itself the bullet below.
+shell-use keys "Ctrl+u"
+t ctrl_u_clears_the_kept_miss_out_of_the_composer \
+  expect_absent "nosuchcommand" --timeout 5000
+
 shell-use submit "/help"
+# The KEYS come first in `/help` and the command list last (builtins.rs): the band is only as tall
+# as the rows above the composer, and the commands are also one keystroke away in the `/` palette,
+# so the commands section is the half that may be cut. What this bullet pins is that the section
+# is there and says how to reach the rest; `23-commands.sh` owns the key list itself.
 t help_lists_the_registered_commands \
-  see "/quit" --timeout 10000
+  see "commands  (or press / for the same list" --timeout 10000
 
 # The CONTROL for the bullet above. Equal counters prove nothing unless the counters can move:
 # a PLAIN line (no prefix) is a model turn, and it must raise exactly the three kinds the slash

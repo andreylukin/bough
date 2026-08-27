@@ -103,3 +103,36 @@ async fn a_fifth_spelling_is_not_a_tool_at_all() {
     let failure = results[0].failure.as_ref().expect("an unknown tool fails");
     assert_eq!(failure.kind, FailureClass::NotFound);
 }
+
+/// phase ux1 §2.10 (M25), and the sharper reading of §9: a kind no Provider claims produces NO
+/// TOOL AT ALL. The refusals above are what the model meets when a Provider exists and declines;
+/// with none mounted the agent is never offered the capability, so it cannot advertise it.
+#[tokio::test]
+async fn no_provider_means_no_tool_in_the_registry() {
+    use bough_plugin_tool_actions::{kinds_with_providers, reconcile_action_tools};
+
+    let ctx = Context::root(KernelCore::new());
+    let ledger = LedgerHandle(MemoryStore::new(ctx.clone()) as Arc<_>);
+    let actions = Arc::new(ActionsHandle::new(ledger));
+    let tools = ToolsHandle::with_limits(8, 5_000);
+
+    assert!(
+        kinds_with_providers(&actions).is_empty(),
+        "no Provider is mounted, so no kind is live"
+    );
+
+    let live = reconcile_action_tools(&ctx, &actions, &tools)
+        .await
+        .expect("reconciling with nothing to register is not an error");
+    assert!(live.is_empty());
+
+    let visible = tools.visible(&AgentName::new("sol"));
+    for kind in ActionKind::all() {
+        let name = ToolName::new(bough_plugin_tool_actions::tool_name(*kind));
+        assert!(
+            !visible.contains(&name),
+            "`{name}` must be absent from the prompt, not present-and-refusing"
+        );
+    }
+    assert!(!visible.iter().any(|n| n.as_str() == "open_pr"));
+}

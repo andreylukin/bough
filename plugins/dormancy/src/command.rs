@@ -1,7 +1,12 @@
-//! Invariant (§16): dormancy is REACHABLE from the surface. `/sleep`, `/wake` and `/dormant` are
+//! Invariant (§16): dormancy is REACHABLE from the surface. `/sleep`, `/resume` and `/paused` are
 //! registered only when a `commands` registry is bound — headless binds none and the row activates
-//! anyway (the P4-D8 precedent). None of them dispatches a model turn (P3-D8): `/wake` arms a
+//! anyway (the P4-D8 precedent). None of them dispatches a model turn (P3-D8): `/resume` arms a
 //! drain, and the loop decides whether there is anything to drain.
+//!
+//! WP-5 rename: `/wake` and `/dormant` became `/resume` and `/paused`. `wake` is this tree's
+//! internal word for one unit of work and the surface does not get to use it (phase ux1 §2.8,
+//! M16); the STEP TYPES and the `agent/wake-request` event keep their names, which is exactly the
+//! line the vocabulary rule draws.
 
 use std::sync::Arc;
 
@@ -15,7 +20,7 @@ use bough_plugin_rollups::Attribution;
 
 use crate::{DormancyChange, DormancyHandle, ReactivateCause, SleepRequest, WakeUpRequest};
 
-/// Register `/sleep <agent> [reason]`, `/wake <agent>` and `/dormant`, if `commands` is bound.
+/// Register `/sleep <agent> [reason]`, `/resume <agent>` and `/paused`, if `commands` is bound.
 pub async fn register(ctx: &Context, dormancy: &DormancyHandle) -> Result<(), PluginError> {
     // ABSENT is headless: the row works with no surface at all. An ERROR is the kernel refusing
     // the read and is a boot failure, never a row that silently registered nothing (§0.2).
@@ -29,7 +34,7 @@ pub async fn register(ctx: &Context, dormancy: &DormancyHandle) -> Result<(), Pl
             ctx,
             CommandSpec {
                 name: CommandName::new("sleep"),
-                summary: "put a lane to sleep: no ticks, no wakes, mail keeps queuing".to_string(),
+                summary: SUMMARY_SLEEP.to_string(),
                 usage: "/sleep <agent> [reason…]".to_string(),
                 args: positional_rest(&["agent", "reason"], 1),
                 scope: CommandScope::Global,
@@ -43,9 +48,9 @@ pub async fn register(ctx: &Context, dormancy: &DormancyHandle) -> Result<(), Pl
         .register(
             ctx,
             CommandSpec {
-                name: CommandName::new("wake"),
-                summary: "reactivate a sleeping lane and drain its backlog".to_string(),
-                usage: "/wake <agent>".to_string(),
+                name: CommandName::new("resume"),
+                summary: SUMMARY_RESUME.to_string(),
+                usage: "/resume <agent>".to_string(),
                 args: positional(&["agent"], 1),
                 scope: CommandScope::Global,
                 run: Arc::new(WakeCommand {
@@ -58,9 +63,9 @@ pub async fn register(ctx: &Context, dormancy: &DormancyHandle) -> Result<(), Pl
         .register(
             ctx,
             CommandSpec {
-                name: CommandName::new("dormant"),
-                summary: "which lanes are asleep".to_string(),
-                usage: "/dormant".to_string(),
+                name: CommandName::new("paused"),
+                summary: SUMMARY_PAUSED.to_string(),
+                usage: "/paused".to_string(),
                 args: positional(&[], 0),
                 scope: CommandScope::Global,
                 run: Arc::new(DormantCommand {
@@ -71,6 +76,13 @@ pub async fn register(ctx: &Context, dormancy: &DormancyHandle) -> Result<(), Pl
         .await?;
     Ok(())
 }
+
+/// The plain-language summaries these three commands are listed under (phase ux1 §2.8, M16).
+/// The ledger's step types keep the house words; a sentence shown to a human does not.
+pub const SUMMARY_SLEEP: &str =
+    "pause an agent: no new turns, and anything sent to it keeps queuing";
+pub const SUMMARY_RESUME: &str = "restart a paused agent and let it work through its backlog";
+pub const SUMMARY_PAUSED: &str = "list the agents that are paused";
 
 /// The agent a command acts on: the argument, else the focused agent.
 fn target(inv: &Invocation, cx: &CommandCx, usage: &str) -> Result<AgentName, CommandError> {
@@ -125,7 +137,7 @@ struct WakeCommand {
 #[async_trait::async_trait]
 impl Command for WakeCommand {
     async fn run(&self, inv: Invocation, cx: CommandCx) -> Result<CommandOutput, CommandError> {
-        let agent = target(&inv, &cx, "/wake <agent>")?;
+        let agent = target(&inv, &cx, "/resume <agent>")?;
         let change = self
             .dormancy
             .wake_up(WakeUpRequest {
@@ -159,7 +171,7 @@ impl Command for DormantCommand {
     }
 }
 
-/// PURE: what `/sleep` and `/wake` show.
+/// PURE: what `/sleep` and `/resume` show.
 pub fn render_change(c: &DormancyChange) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -171,17 +183,17 @@ pub fn render_change(c: &DormancyChange) -> String {
     match &c.drain {
         Some(w) => out.push_str(&format!("drain: {w}\n")),
         None if c.dormant => out.push_str(
-            "mail keeps arriving and keeps queuing; no ticks and no wakes until reactivation\n",
+            "messages keep arriving and keep queuing; the agent takes no turns until it is\n restarted\n",
         ),
         None => out.push_str("drain: nothing was queued\n"),
     }
     out
 }
 
-/// PURE: what `/dormant` shows.
+/// PURE: what `/paused` shows.
 pub fn render_list(dormant: &[AgentName]) -> String {
     if dormant.is_empty() {
-        return "no lane is asleep\n".to_string();
+        return "no agent is paused\n".to_string();
     }
     let mut out = String::new();
     for a in dormant {
@@ -195,8 +207,16 @@ mod tests {
     use super::*;
     use bough_plugin_ledger::{StepId, WakeId};
 
+    /// M16: no summary this row registers may use the tree's internal vocabulary.
     #[test]
-    fn sleeping_says_the_mail_keeps_queuing() {
+    fn every_summary_is_plain_language() {
+        for s in [SUMMARY_SLEEP, SUMMARY_RESUME, SUMMARY_PAUSED] {
+            assert_eq!(bough_plugin_commands::palette::house_word(s), None, "{s}");
+        }
+    }
+
+    #[test]
+    fn sleeping_says_the_queue_survives() {
         let text = render_change(&DormancyChange {
             agent: AgentName::new("terra"),
             dormant: true,
@@ -204,7 +224,7 @@ mod tests {
             drain: None,
         });
         assert!(text.contains("terra: dormant"), "{text}");
-        assert!(text.contains("keeps queuing"), "{text}");
+        assert!(text.contains("keep queuing"), "{text}");
     }
 
     #[test]
@@ -220,8 +240,8 @@ mod tests {
     }
 
     #[test]
-    fn the_list_says_so_when_nobody_is_asleep() {
-        assert!(render_list(&[]).contains("no lane is asleep"));
+    fn the_list_says_so_when_nobody_is_paused() {
+        assert!(render_list(&[]).contains("no agent is paused"));
         assert_eq!(render_list(&[AgentName::new("terra")]), "terra\n");
     }
 }

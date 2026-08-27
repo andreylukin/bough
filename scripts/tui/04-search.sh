@@ -16,39 +16,39 @@ shell-use wait idle --timeout 30000
 shell-use expect text --no-strict "and the rest of it" --timeout 30000 >/dev/null
 
 shell-use keys "Ctrl+f"
-# The pane's prompt NAMES itself, and its trailing `_` is the pane's focus cursor (`lines()` draws
-# it only when `view.is_focused`). Asserting the cursor and not the bare word is what makes this a
-# focus bullet: "search" alone is on screen whether or not Ctrl+F did anything.
+# The field wears CHROME (phase ux1 §2.7): a `search` label and a boxed input with a caret. The
+# empty box is what Ctrl+F puts on screen; "search" alone is there whether or not it did anything.
 t ctrl_f_focuses_the_search_pane \
-  see "search / _" --timeout 5000
+  see "search [" --timeout 5000
 
 # The hit list, read as the SEARCH PANE's own rows rather than as text anywhere on screen. The
 # trajectory beside it quotes the same words, so `see "fragment"` passed whether the query ran or
-# not; these bullets poll for a row UNDER the `search /` prompt matching the shape `hit_line`
-# paints: `<agent> s<seq> <kind>  <snippet>`.
+# not; these bullets poll for a row UNDER the `search [` field matching the shape `index::lines`
+# paints: a selection marker, the SPEAKER, two spaces, then the snippet. The step id is not on
+# screen any more — the index is over rendered conversation text, not over ledger JSON.
 hits_file="$HOME_DIR/hits.txt"
 await_hits() {
   local i n
   for i in $(seq 1 40); do
     shell-use text > "$hits_file.raw"
-    n="$(grep -n "search / " "$hits_file.raw" | head -1 | cut -d: -f1)"
+    n="$(grep -n "search \[" "$hits_file.raw" | head -1 | cut -d: -f1)"
     if [ -n "$n" ]; then
-      sed -n "$((n + 1)),\$p" "$hits_file.raw" | grep -E "^ *[a-z]+ s[0-9]+ [a-z]+/[a-z]+ " > "$hits_file" || true
+      sed -n "$((n + 1)),\$p" "$hits_file.raw" | grep -E "^ *(›)? *[a-z][a-z_]*  +[^ ]" > "$hits_file" || true
       [ -s "$hits_file" ] && return 0
     fi
     sleep 0.25
   done
-  echo "no hit row of the shape '<agent> s<seq> <kind>' ever appeared under the search prompt"
+  echo "no hit row of the shape '<speaker>  <snippet>' ever appeared under the search prompt"
   return 1
 }
 
 shell-use type "fragment"
 t a_query_lists_hits_with_agent_and_step_id \
   await_hits
-# Every hit names its OWN agent — the only agent in this profile with a trajectory is `sol`, and a
-# rowless trajectory would render no name at all (`hit_line`).
+# Every hit names its speaker — for the model's own answer that is the agent, and the only agent
+# in this profile with a trajectory is `sol`.
 t a_hit_names_the_agent_that_owns_it \
-  bash -c 'grep -qE "^ *sol s[0-9]+ " "'"$hits_file"'" || { cat "'"$hits_file"'"; exit 1; }'
+  bash -c 'grep -qE "^ *(›)? *sol  +" "'"$hits_file"'" || { cat "'"$hits_file"'"; exit 1; }'
 
 # Click the hit that names the answer STEP (`thought/text`), and assert the trajectory row for that
 # step is the flashed one: `tui-focus` paints an anchored row in `theme.accent` (#7aa2f7 in the
@@ -57,14 +57,15 @@ t clicking_a_hit_focuses_that_step_in_the_trajectory \
   bash -c '
     set -e
     shell-use text > "$HOME_DIR/pre.txt"
-    y="$(grep -n "s[0-9]* thought/text" "$HOME_DIR/pre.txt" | head -1 | cut -d: -f1)"
-    [ -n "$y" ] || { echo "no thought/text hit row on screen"; exit 1; }
+    n="$(grep -n "search \[" "$HOME_DIR/pre.txt" | head -1 | cut -d: -f1)"
+    y="$((n + 1))"
+    [ -n "$n" ] || { echo "no search field on screen"; exit 1; }
     shell-use mouse click 40 "$((y - 1))" >/dev/null
     for i in $(seq 1 25); do
       shell-use text > "$HOME_DIR/post.txt"
       ty="$(grep -n "the first fragment and the rest of it" "$HOME_DIR/post.txt" | head -1 | cut -d: -f1)"
       if [ -n "$ty" ]; then
-        fg="$(shell-use cells 34 "$((ty - 1))" 3 1 --json | python3 -c "
+        fg="$(shell-use cells 35 "$((ty - 1))" 3 1 --json | python3 -c "
 import json,sys
 print(\",\".join(c[\"fg\"] for c in json.load(sys.stdin)[\"data\"][\"cells\"]))
 ")"
@@ -93,7 +94,7 @@ shell-use type '"unbalanced'
 t a_query_that_matches_nothing_clears_the_list \
   bash -c '
     for i in $(seq 1 25); do
-      n="$(shell-use text | grep -n "search / " | head -1 | cut -d: -f1)"
+      n="$(shell-use text | grep -n "search \[" | head -1 | cut -d: -f1)"
       if [ -n "$n" ] && [ -z "$(shell-use text | sed -n "$((n + 1))p" | tr -d " ")" ]; then
         exit 0
       fi

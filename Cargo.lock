@@ -877,10 +877,13 @@ dependencies = [
  "bough-kernel",
  "bough-plugin-ledger",
  "bough-plugin-llm",
+ "chrono",
+ "futures",
  "inventory",
  "parking_lot",
  "schemars",
  "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -1263,6 +1266,8 @@ dependencies = [
  "bough-plugin-tools",
  "bough-plugin-tools-baseline",
  "bough-plugin-tui-shell",
+ "bough-util",
+ "chrono",
  "insta",
  "ratatui",
  "serde_json",

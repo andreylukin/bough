@@ -27,8 +27,8 @@ use ratatui::layout::Rect;
 use ratatui::widgets::Paragraph;
 
 pub use rail::{
-    focus_for_hit, glyph, hit_for_agent, on_click, rail, row_lines, status_word, RailRow,
-    INTENT_LABEL,
+    clip, focus_for_hit, glyph, hit_for_agent, on_click, rail, rail_width, row_lines, status_word,
+    RailRow, INTENT_LABEL,
 };
 
 /// The catalog name of this row.
@@ -100,6 +100,11 @@ impl Pane for StripPane {
     fn render(&self, cx: &mut RenderCx<'_>) {
         let rows = self.rows.lock().clone();
         let area = cx.area;
+        // Collapsed (under `collapse_cols`) the slot hands the pane no columns at all, and a rail
+        // that draws into zero columns is exactly the overlap M9 reported.
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
         let theme = *cx.theme();
         let focused = cx.view.focused_agent.clone();
         let (lines, spans) = rail::rail(
@@ -128,6 +133,13 @@ impl Pane for StripPane {
                 rail::hit_for_agent(&agent),
             );
         }
+        // HARD clip: every line, every frame. `Paragraph` would wrap or overflow a long about-line
+        // onto the transcript's baseline; a clip that cannot overflow is what makes the audit's
+        // `idlePlease` impossible rather than unlikely (M9).
+        let lines: Vec<_> = lines
+            .into_iter()
+            .map(|l| rail::clip(l, area.width))
+            .collect();
         cx.frame.render_widget(Paragraph::new(lines), area);
     }
 
@@ -198,6 +210,22 @@ impl Plugin for StripPlugin {
         let reject = |detail: String| Err(ConfigError::Rejected { detail });
         if cfg.width == 0 {
             return reject("width must be > 0; a zero-cell rail shows no agent".to_string());
+        }
+        if cfg.min_width == 0 {
+            return reject("min_width must be > 0; a zero-cell rail shows no agent".to_string());
+        }
+        if cfg.max_width < cfg.min_width {
+            return reject(format!(
+                "max_width ({}) is below min_width ({}); the rail would have no width to clamp to",
+                cfg.max_width, cfg.min_width
+            ));
+        }
+        if cfg.collapse_cols < cfg.min_width {
+            return reject(format!(
+                "collapse_cols ({}) is below min_width ({}): the rail would render at a width \
+                 that leaves the transcript nothing",
+                cfg.collapse_cols, cfg.min_width
+            ));
         }
         if cfg.show_about && cfg.about_lines == 0 {
             return reject(
@@ -279,7 +307,14 @@ impl Plugin for StripPlugin {
                 id: PaneId::new("tui.strip"),
                 slot: Slot::Strip,
                 order: 0,
-                size: SlotSize::Cells(cfg.width),
+                // The breakpoint lives in the SLOT SIZE, because layout — not the pane — decides
+                // how many columns the rail costs (phase ux1 §2.5, M13).
+                size: SlotSize::Responsive {
+                    collapse: cfg.collapse_cols,
+                    preferred: cfg.width,
+                    min: cfg.min_width,
+                    max: cfg.max_width,
+                },
                 title: "agents".into(),
                 focusable: true,
                 pane: pane.clone(),

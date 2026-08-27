@@ -22,7 +22,9 @@ pub enum Focus {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     /// Scroll the transcript, whatever has focus (V2). Positive `delta` moves toward the newest row.
-    Scroll { delta: i16 },
+    Scroll {
+        delta: i16,
+    },
     /// `End`: back to the tail.
     JumpLatest,
     /// Tab / BackTab: one step around the focus ring.
@@ -52,23 +54,83 @@ pub struct KeyContext {
 
 /// PURE: the whole keymap, as a function. `page` is [`crate::TuiConfig::page_lines`].
 ///
-/// WP-1 owns the body.
+/// Order matters and is spelled once, here:
+/// 1. the control chords, which mean the same thing everywhere;
+/// 2. `Esc`, whose meaning depends on `running` then on an open overlay — and is NEVER draft
+///    destruction (B3/M14);
+/// 3. the paging keys, which drive the TRANSCRIPT from every context (B2) with exactly one
+///    exception: `Home`/`End` in a non-empty composer draft move the caret;
+/// 4. everything else falls through to whatever holds the keyboard.
 pub fn action_for(key: KeyEvent, cx: KeyContext, page: u16) -> Action {
-    let _ = (key, cx, page);
-    todo!("WP-1: the keymap table of phase ux1 §2.1")
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let page = page.clamp(1, i16::MAX as u16) as i16;
+
+    match key.code {
+        KeyCode::Char('c') if ctrl => return Action::ExitStep,
+        KeyCode::Char('l') if ctrl => return Action::Redraw,
+        KeyCode::Char('f') if ctrl => return Action::FocusSearch,
+        KeyCode::Tab => return Action::CycleFocus(1),
+        KeyCode::BackTab => return Action::CycleFocus(-1),
+        KeyCode::Esc => {
+            // The running turn wins: `esc to interrupt` is the only stop key the status line
+            // names, and it must mean that whatever else is on screen.
+            if cx.running {
+                return Action::Interrupt;
+            }
+            // With nothing to dismiss this is a deliberate NO-OP rather than `Pass`: passing Esc
+            // to the composer is how the draft used to be destroyed (B3).
+            return Action::DismissOverlay;
+        }
+        KeyCode::PageUp => return Action::Scroll { delta: -page },
+        KeyCode::PageDown => return Action::Scroll { delta: page },
+        KeyCode::Home | KeyCode::End => {
+            // The ONE exception to "the paging keys drive the transcript from everywhere": a
+            // draft with text in it owns its own line ends.
+            if cx.focus_is_composer && !cx.draft_is_empty {
+                return Action::Pass;
+            }
+            return match key.code {
+                KeyCode::Home => Action::Scroll { delta: i16::MIN },
+                _ => Action::JumpLatest,
+            };
+        }
+        _ => {}
+    }
+    Action::Pass
 }
 
 /// PURE: does this key take the keyboard back to the composer? A printable character with no
 /// CONTROL and no ALT — and nothing else (B1: "any printable key snaps focus back").
 pub fn snaps_to_composer(key: &KeyEvent) -> bool {
-    let _ = key;
-    todo!("WP-1: printable, no CONTROL, no ALT")
+    use crossterm::event::{KeyCode, KeyModifiers};
+    match key.code {
+        KeyCode::Char(_) => {
+            !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT)
+        }
+        _ => false,
+    }
 }
 
 /// The key hints `/help` and the status line are BOTH generated from, so they cannot disagree
 /// with each other or with [`action_for`] (M16).
 pub fn hints() -> Vec<(&'static str, &'static str)> {
-    todo!("WP-1: the fixed binding table of phase ux1 §2.1")
+    vec![
+        ("enter", "send the message, or run a / command"),
+        ("shift+enter", "start a new line in the message"),
+        ("esc", "interrupt the running turn, or close an overlay"),
+        ("ctrl+u", "clear the line"),
+        ("up/down", "recall a sent message, or move the row focus"),
+        ("enter/space", "open or close the focused tool row"),
+        ("pgup/pgdn", "scroll the conversation"),
+        ("home/end", "jump to the start, or to the latest"),
+        ("tab", "move the keyboard to the next pane"),
+        ("ctrl+f", "search the conversation"),
+        ("ctrl+c", "interrupt, or press twice to exit"),
+        ("ctrl+l", "redraw the screen"),
+        ("?", "this help"),
+    ]
 }
 
 /// The two-press exit (B7).
@@ -97,13 +159,24 @@ impl ExitArm {
     /// PURE in `now`: first press arms and returns [`ExitStep::Arm`]; a second inside the window
     /// returns [`ExitStep::Exit`]; a press after the window re-arms.
     pub fn press(&mut self, now: DateTime<Utc>) -> ExitStep {
-        let _ = (now, &self.armed_at, &self.window);
-        todo!("WP-1")
+        if self.is_armed(now) {
+            self.armed_at = None;
+            return ExitStep::Exit;
+        }
+        self.armed_at = Some(now);
+        ExitStep::Arm
     }
 
     pub fn is_armed(&self, now: DateTime<Utc>) -> bool {
-        let _ = now;
-        todo!("WP-1")
+        match self.armed_at {
+            // A clock that went backwards must not count as "inside the window": `to_std` fails
+            // on a negative delta, and the honest answer there is "not armed".
+            Some(at) => match (now - at).to_std() {
+                Ok(elapsed) => elapsed <= self.window,
+                Err(_) => false,
+            },
+            None => false,
+        }
     }
 
     pub fn disarm(&mut self) {
