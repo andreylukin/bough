@@ -45,7 +45,8 @@ CRATES="bough-plugin-a bough-plugin-b"` on the crates you touched.
 - A crate's integration tests are ONE target: `tests/main.rs` declares `mod <file>;` for every
   `tests/<file>.rs` (Cargo.toml has `autotests = false`). Adding a test file means adding its `mod`
   line, or `scripts/check-test-mods.sh` fails `make lint`. Shared helpers are `tests/support/` or
-  `tests/common/`, declared once in main.rs and reached as `use crate::support;`. `make test` is
+  `tests/common/`, declared once in main.rs and reached as `use crate::support;`. A crate that
+  arrives without a main.rs (a merged branch, a new crate) is folded by `scripts/fold-tests.py`. `make test` is
   nextest — one process per test — so process globals and env vars still never leak between tests.
 - Every module opens with a comment stating the invariant it holds. Dependencies (db, clock, LLM
   client) are injected. Parsing and core logic are pure with `now` passed in.
