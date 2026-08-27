@@ -4,7 +4,7 @@
 //! the LEDGER PROTOCOL, not the transcript. A replacement loop is held to exactly this sequence,
 //! which is why the assertion is a kind sequence per wake and not a golden file.
 
-mod support;
+use crate::support;
 
 use bough_kernel::EntryId;
 use bough_plugin_agents::{AgentKind, Agents, CreateAgent, MailClass, Message, MessageId, Sender};

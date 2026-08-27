@@ -3,7 +3,7 @@
 //! place. Seal-once survives it: the old row's content hash does not move, and the only write it
 //! ever accepts is `superseded_by`, set once.
 
-mod common;
+use crate::common;
 
 use bough_plugin_ledger::{HashScope, Ref, RollupId};
 use bough_plugin_rollups::{Attribution, SupersedeRequest};

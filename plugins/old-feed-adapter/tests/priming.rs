@@ -2,7 +2,7 @@
 //! NEVER delivered — no agent should receive every shell command as an event (§14, §17) — while
 //! `note_sections` is the other half: cited evidence naming the section it came from.
 
-mod common;
+use crate::common;
 
 use bough_plugin_old_feed_adapter::invariant::{check_steps, EVENT_PREFIX, FORBIDDEN_PREFIXES};
 use bough_plugin_old_feed_adapter::{NoteQuery, PrimingQuery};

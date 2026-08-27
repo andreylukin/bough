@@ -7,7 +7,7 @@
 //! The shell runs on the HEADLESS backend here (P3-D2: no TTY means `TestBackend`, not a boot
 //! failure), which is what lets this be an ordinary `cargo test`.
 
-mod support;
+use crate::support;
 
 use bough_kernel::FiberState;
 use bough_plugin_hello::trace;

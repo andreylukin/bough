@@ -4,7 +4,7 @@
 //! the bytes the pass writes are the bytes the projector reads. This suite closes it, and it is
 //! the only place in the tree where nothing about the marker is written by a fixture.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

@@ -6,7 +6,7 @@
 //! get wrong — the report must be printed AFTER `kernel.shutdown()`, because a Phase-3 surface row
 //! owns the alt screen and anything written before the restore is wiped by it.
 
-mod support;
+use crate::support;
 
 use bough_plugin_hello::trace;
 

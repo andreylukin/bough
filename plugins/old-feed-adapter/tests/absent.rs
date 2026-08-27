@@ -2,7 +2,7 @@
 //! one logged line — never a panic and never a boot failure. `~/.jungler/jungler.db` does not
 //! exist on this machine, so this is the case the row actually runs in today (§14, V7).
 
-mod common;
+use crate::common;
 
 use bough_plugin_old_feed_adapter::{probe, FeedProbe};
 use common::{at, Fx, Which};

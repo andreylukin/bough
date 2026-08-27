@@ -111,3 +111,12 @@ bough-plugin-leader = { path = "plugins/leader" }                              #
 bough-plugin-tool-leader = { path = "plugins/tool-leader" }                    # §2 the leader-scoped tools
 bough-plugin-lane-scope = { path = "plugins/lane-scope" }                      # §5 per-lane persona + tools.restrict
 bough-plugin-worker-fork = { path = "plugins/worker-fork" }                    # §10 WorkerKind::Fork
+
+# Build speed (2026-08-27). `debug = "line-tables-only"` keeps file:line in backtraces and drops
+# the full DWARF that made every one of the ~50 test binaries link slowly and target/debug run to
+# 100+ GB, and cuts the release link the TUI suite waits on the same way.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.release]
+debug = "line-tables-only"

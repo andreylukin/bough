@@ -2,7 +2,7 @@
 //! appended first; the inbox splice that follows carries its seq, so consumption — which is per
 //! (agent, mail seq) — can never be scheduled against a message whose evidence is missing.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeSet;
 

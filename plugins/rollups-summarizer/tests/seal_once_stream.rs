@@ -5,7 +5,7 @@
 //! `bough_plugin_rollups::invariant::sealed_blocks` is the same reader the kernel's check uses, so
 //! this suite judges exactly the relation the runner judges.
 
-mod support;
+use crate::support;
 
 use bough_plugin_rollups::invariant::{evaluate_seal_once, sealed_blocks};
 use bough_plugin_rollups::{Attribution, Summarizer, SupersedeRequest};

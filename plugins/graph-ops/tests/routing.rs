@@ -1,7 +1,7 @@
 //! §4: ambiguous routing becomes a leader QUESTION, never a guess — and nothing is written while
 //! the question is open.
 
-mod common;
+use crate::common;
 
 use bough_plugin_graph_ops::{ChildSpec, GraphError, GraphOps, OpRequest, SplitRequest};
 use bough_plugin_ledger::{AgentName, Ref};

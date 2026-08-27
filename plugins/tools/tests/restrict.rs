@@ -1,7 +1,7 @@
 //! §9: `restrict` is VISIBILITY COMPOSITION, not an authority boundary — and a filtered-away tool
 //! is indistinguishable from one that never existed, message included.
 
-mod support;
+use crate::support;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

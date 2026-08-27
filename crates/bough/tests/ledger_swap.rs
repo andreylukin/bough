@@ -7,7 +7,7 @@
 //! `$BOUGH_HOME` is process-global, so every test here holds `hello`'s process-wide test lock for
 //! its whole body — the same discipline the Phase 0 harness documents.
 
-mod support;
+use crate::support;
 
 use bough_kernel::FiberState;
 use bough_plugin_hello::trace;

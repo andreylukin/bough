@@ -6,7 +6,7 @@
 //! block, seals no tier and edits nothing" is judged against the real code path — including the
 //! `rollup/sealed` step, the `rollup/request` row and the digest's own generation.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

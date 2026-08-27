@@ -1,5 +1,6 @@
 [package]
 name = "bough-plugin-leader"
+autotests = false
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -37,3 +38,7 @@ tokio = { workspace = true }
 bough-plugin-ledger-memory = { workspace = true }
 bough-plugin-projection-assembler = { workspace = true }
 tempfile = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

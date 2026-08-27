@@ -1,7 +1,7 @@
 //! §1 at the seam: a dormant agent gets NO ticks and NO drain wakes, keeps its keep and its
 //! routing, and its ordinary mail is delivered and left queued on purpose.
 
-mod common;
+use crate::common;
 
 use bough_plugin_agents::{WakeCause, WakeKind, WakeRequest};
 use common::*;

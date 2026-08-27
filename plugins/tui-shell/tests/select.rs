@@ -2,7 +2,7 @@
 //! copy path is OSC52 (P3-D7), and a clipboard that is not there is a NOTICE — never an error the
 //! caller has to handle.
 
-mod common;
+use crate::common;
 
 use bough_plugin_tui_shell::clip::{copy, write_osc52, CopyOutcome};
 use bough_plugin_tui_shell::{run, text_from_buffer, Selection, Slot, SlotSize};

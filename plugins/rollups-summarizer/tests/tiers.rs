@@ -3,7 +3,7 @@
 //!
 //! Offline: `ledger-memory` + `llm-replay`.
 
-mod support;
+use crate::support;
 
 use bough_plugin_ledger::{RollupKind, Seq};
 use bough_plugin_rollups::{block, Beneath, TierBlock};

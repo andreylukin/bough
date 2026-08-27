@@ -1,6 +1,6 @@
 //! The three §9 render intents, asserted on the lines they produce.
 
-mod common;
+use crate::common;
 
 use bough_plugin_tools::{RenderIntent, ToolOutcomeKind, ToolResultBody};
 use bough_plugin_tools::{ToolCallId, ToolName};

@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use bough_kernel::{Context, Plugin, PluginError};
 use bough_plugin_agents::{
-    Agent, AgentKind, Agents, AgentsHandle, CreateAgent, MailClass, Message, ResumeAgent, Sender,
+    Agent, AgentError, AgentKind, Agents, AgentsHandle, CreateAgent, MailClass, Message,
+    ResumeAgent, Sender,
 };
 use bough_plugin_ledger::query::{Order, StepQuery};
 use bough_plugin_ledger::{AgentName, Ledger, LedgerHandle, TrajId};
@@ -106,7 +107,8 @@ async fn run(
     // taken the factory slot yet. Row order carries no load semantics (§0.2), so waiting for the
     // seam to be ready is the row's job — and waiting FOREVER would turn a missing loop row into
     // a hang instead of the boot failure it is.
-    wait_for_factory(&agents).await?;
+    let deadline = std::time::Instant::now() + FACTORY_WAIT;
+    wait_for_factory(&agents, deadline).await?;
 
     let name = AgentName::new(&cfg.agent);
     let traj = TrajId::new(&cfg.traj);
@@ -114,26 +116,39 @@ async fn run(
 
     // Resume-or-create: the ledger's `agents` row is the record of "this agent has a chain".
     let existing = ledger.0.agent(&name).await?;
-    let (agent, disposer) = if existing.is_some() {
-        agents
-            .resume(ResumeAgent {
-                name: name.clone(),
-                at: now,
-                setup: None,
-            })
-            .await?
-    } else {
-        agents
-            .create(CreateAgent {
-                name: name.clone(),
-                traj: traj.clone(),
-                kind: AgentKind::Resident,
-                scope: None,
-                setup: None,
-                seed: Vec::new(),
-                at: now,
-            })
-            .await?
+    // The slot can EMPTY AGAIN after the wait: a loop row reloads when one of its injected keys
+    // changes provider (§0.3) — a `--patch` swapping `llm.anthropic` for `llm-replay` does exactly
+    // that during boot — and its disposer nulls the factory until the reload re-sets it. Seen as
+    // one-in-three `bough exec` failures under a loaded machine. So `NoFactory` from the call
+    // itself is the same startup race as an unfilled slot, and it gets the same deadline.
+    let (agent, disposer) = loop {
+        let attempt = if existing.is_some() {
+            agents
+                .resume(ResumeAgent {
+                    name: name.clone(),
+                    at: now,
+                    setup: None,
+                })
+                .await
+        } else {
+            agents
+                .create(CreateAgent {
+                    name: name.clone(),
+                    traj: traj.clone(),
+                    kind: AgentKind::Resident,
+                    scope: None,
+                    setup: None,
+                    seed: Vec::new(),
+                    at: now,
+                })
+                .await
+        };
+        match attempt {
+            Err(AgentError::NoFactory) if std::time::Instant::now() < deadline => {
+                wait_for_factory(&agents, deadline).await?;
+            }
+            other => break other?,
+        }
     };
 
     let receipt = agent.followup(andrey_message(&cfg.task, now)).await?;
@@ -160,8 +175,10 @@ async fn run(
 /// tree genuinely has no loop.
 const FACTORY_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
-async fn wait_for_factory(agents: &AgentsHandle) -> Result<(), anyhow::Error> {
-    let deadline = std::time::Instant::now() + FACTORY_WAIT;
+async fn wait_for_factory(
+    agents: &AgentsHandle,
+    deadline: std::time::Instant,
+) -> Result<(), anyhow::Error> {
     while agents.factory().is_none() {
         if std::time::Instant::now() >= deadline {
             anyhow::bail!("no agent factory after {FACTORY_WAIT:?}; mount an `agent-loop` row");

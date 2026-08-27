@@ -8,7 +8,7 @@
 //! * re-assembling the parent AT THAT SEQ reproduces the pinned bytes, which is the whole reason
 //!   the anchor is worth writing.
 
-mod support;
+use crate::support;
 
 use bough_plugin_agents::AgentId;
 use bough_plugin_ledger::{AgentName, Seq, StepId, WakeId};

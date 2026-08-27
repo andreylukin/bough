@@ -4,7 +4,7 @@
 //! `wake-stopping` listener that steers runs another step and listener ORDER does not change the
 //! outcome, and a plugin failure ends the wake and not the loop.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

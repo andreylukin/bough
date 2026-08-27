@@ -3,7 +3,7 @@
 //! row untouched; removing the `disabled` line restores every consumer and its sections. No
 //! recompile, no restart.
 
-mod support;
+use crate::support;
 
 use bough_kernel::FiberState;
 use bough_plugin_hello::trace;

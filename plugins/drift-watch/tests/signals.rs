@@ -2,7 +2,7 @@
 //! nothing. The arithmetic itself is unit-tested in `signals.rs` without a ledger; what this file
 //! pins is the one property only a store can witness.
 
-mod common;
+use crate::common;
 
 use bough_plugin_drift_watch::{DriftFlag, SignalState};
 use bough_plugin_ledger::{HashScope, Seq};

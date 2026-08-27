@@ -9,7 +9,7 @@
 //! given up at a tighter budget than Y", and a sweep states that directly instead of encoding a
 //! token count that any wording change would move.
 
-mod support;
+use crate::support;
 
 use bough_plugin_projection::Flag;
 use bough_plugin_rollups::Beneath;

@@ -9,7 +9,7 @@
 //!   pauses (P5-D7);
 //! * a fork is not a way around §7's bounds: it counts against the same per-wake cap a spawn does.
 
-mod support;
+use crate::support;
 
 use bough_plugin_agents::AgentId;
 use bough_plugin_ledger::{Class, Seq, StepId, WakeId};

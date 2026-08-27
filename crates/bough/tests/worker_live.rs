@@ -8,7 +8,7 @@
 //! It lives in the launcher's test target because it needs the whole headless composition;
 //! `worker-spawn` cannot mount a tree from inside its own crate.
 
-mod support;
+use crate::support;
 
 use bough_plugin_agents::{AgentKind, Agents, CreateAgent};
 use bough_plugin_hello::trace;

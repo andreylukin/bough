@@ -8,7 +8,7 @@
 //!
 //! `$BOUGH_HOME` is process-global, so every test here holds `hello`'s process-wide test lock.
 
-mod support;
+use crate::support;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

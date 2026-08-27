@@ -2,7 +2,7 @@
 //! ancestor edges, two end-seed markers, one inheritance digest per child, a routing partition
 //! that loses nothing, and — LAST — one cited step naming all of it (P5-D8).
 
-mod common;
+use crate::common;
 
 use bough_plugin_graph_ops::{
     ChildSpec, GraphOps, GraphSplit, OpKind, OpRequest, SplitRequest, GRAPH_SPLIT,

@@ -5,7 +5,7 @@
 //! And NO WRAPPED LINE IS STORED — `document` takes the width of the frame being painted, so a
 //! resize re-wraps history and a network chunk boundary cannot survive a repaint (M10, nit 39).
 
-mod common;
+use crate::common;
 
 use bough_plugin_tui_render::{blocks, document, Block};
 use unicode_width::UnicodeWidthStr;
