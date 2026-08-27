@@ -60,6 +60,14 @@ use bough_plugin_tool_leader as _;
 use bough_plugin_worker_fork as _;
 // Phase ux1's one new row (§17 Phase 3 / phase ux1 §2.13): the status line.
 use bough_plugin_tui_status as _;
+// Phase c's rows (§11 "Digging", §8, §7, §17 Phase 8): the three digging panes, plus two
+// FIXTURES — `fault-inject` and `actions-shim` are linked into the catalog and named by no bundle,
+// exactly as `tui-probe` is; a test's or a script's own `--patch` mounts them.
+use bough_plugin_actions_shim as _;
+use bough_plugin_fault_inject as _;
+use bough_plugin_tui_drift as _;
+use bough_plugin_tui_preview as _;
+use bough_plugin_tui_timeline as _;
 
 pub mod boot;
 pub mod cli;

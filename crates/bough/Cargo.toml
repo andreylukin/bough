@@ -86,6 +86,16 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
 
+# Phase c (§11 digging, §8 drift dashboard, §7, §17 Phase 8): the three digging panes, plus the
+# two FIXTURE rows — `fault-inject` and `actions-shim` are in the catalog and in no bundle, exactly
+# as `tui-probe` is. Linked for the one reason every row above is: so `inventory::submit!` lands in
+# the binary's catalog.
+bough-plugin-tui-preview = { workspace = true }
+bough-plugin-tui-timeline = { workspace = true }
+bough-plugin-tui-drift = { workspace = true }
+bough-plugin-fault-inject = { workspace = true }
+bough-plugin-actions-shim = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3"

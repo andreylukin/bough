@@ -6,16 +6,13 @@
 //!
 //! `xtask` is a build tool: it is not shipped, holds no `ctx` key, and links nothing from the tree.
 //!
-//! SCAFFOLD: `allow(unused_variables)` covers the `todo!()` bodies and comes out with them.
-#![allow(unused_variables)]
-
 pub mod check;
 pub mod scan;
 pub mod table;
 
 pub use crate::check::{check, Finding};
 pub use crate::scan::{scan, Catalog, DispatchMode, DispatchSite, EventDecl, ScanError, SiteKind};
-pub use crate::table::{table, CATALOG_FLOOR};
+pub use crate::table::{event_count, table, CATALOG_FLOOR};
 
 /// The roots the gate scans, relative to the workspace root.
 pub const ROOTS: [&str; 2] = ["crates", "plugins"];

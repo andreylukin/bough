@@ -6,9 +6,6 @@
 //! `TooFewSamples` is a verdict of its own: this pane never turns thin evidence into a `Steady`
 //! glyph (§16).
 //!
-//! SCAFFOLD: `allow(unused_variables)` covers the `todo!()` bodies and comes out with them.
-#![allow(unused_variables)]
-
 pub mod command;
 pub mod dash;
 pub mod invariant;
@@ -18,6 +15,10 @@ pub mod render;
 use std::sync::Arc;
 
 use bough_kernel::{ConfigError, Context, Inject, InvariantSpec, Plugin, PluginError};
+use bough_plugin_drift_watch::Drift;
+use bough_plugin_ledger::{Ledger, LedgerHandle};
+use bough_plugin_tui_shell::pane::{PaneId, PaneSpec, Slot, SlotSize};
+use bough_plugin_tui_shell::Tui;
 
 pub use crate::dash::{arm, dash_row, reset_command, verdict, DashRow, ResetStep, Verdict};
 pub use crate::pane::{DriftPane, DriftState};
@@ -55,17 +56,81 @@ impl Plugin for DriftBoardPlugin {
     type Config = DriftPaneConfig;
 
     fn inject() -> Inject {
-        Inject::required(["tui", "drift"]).union(&Inject::optional(["agents", "commands"]))
+        Inject::required(["tui", "drift", "ledger"])
+            .union(&Inject::optional(["agents", "commands"]))
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
-        let _ = cfg;
-        todo!("WP-3: reject height 0, agents_shown 0, bar_cols 0, arm_ms 0")
+        let reject = |detail: String| Err(ConfigError::Rejected { detail });
+        if cfg.height == 0 {
+            return reject("height must be > 0; a zero-cell pane can show no agent".to_string());
+        }
+        if cfg.min_rows == 0 {
+            return reject("min_rows must be > 0".to_string());
+        }
+        if cfg.max_rows < cfg.min_rows {
+            return reject(format!(
+                "max_rows ({}) must be >= min_rows ({})",
+                cfg.max_rows, cfg.min_rows
+            ));
+        }
+        // A dashboard that shows nobody is a pane that renders a header and lies by omission.
+        if cfg.agents_shown == 0 {
+            return reject("agents_shown must be > 0".to_string());
+        }
+        // A zero-width bar is a column that says nothing where a share belongs.
+        if cfg.bar_cols == 0 {
+            return reject("bar_cols must be > 0".to_string());
+        }
+        // `refresh_ms: 0` polls the ledger on every tick, for every agent.
+        if cfg.refresh_ms == 0 {
+            return reject(
+                "refresh_ms must be > 0; a zero refresh polls on every tick".to_string(),
+            );
+        }
+        // `arm_ms: 0` collapses the two-step arm into a single keystroke that rebuilds an
+        // agent's identity (D-C5). That is the surface the arm exists to remove.
+        if cfg.arm_ms == 0 {
+            return reject(
+                "arm_ms must be > 0; a zero arm window makes a single `r` a reset".to_string(),
+            );
+        }
+        Ok(())
     }
 
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        let _ = (ctx, cfg);
-        todo!("WP-3: register the pane (Slot::Aux, order 30, Responsive) and /driftboard")
+        let entry = ctx.entry_id().clone();
+        let fail = |e: bough_kernel::KernelError| PluginError::new(entry.clone(), e);
+
+        let tui = ctx.get::<Tui>().map_err(fail)?;
+        let drift = (*ctx.get::<Drift>().map_err(fail)?).clone();
+        let ledger = LedgerHandle(ctx.get::<Ledger>().map_err(fail)?.0.clone());
+
+        let size = SlotSize::Responsive {
+            collapse: cfg.collapse_rows,
+            preferred: cfg.height,
+            min: cfg.min_rows,
+            max: cfg.max_rows,
+        };
+        let pane = DriftPane::new(Arc::clone(&cfg)).with_seams(drift, ledger);
+        // A REGISTRATION IS AN EFFECT: `register_pane` returns the disposer, so disabling this row
+        // by patch leaves no pane, no listener and no binding behind (§0.2, the swap gate).
+        tui.register_pane(
+            &ctx,
+            PaneSpec {
+                id: PaneId::new(PANE_ID),
+                slot: Slot::Aux,
+                order: 30,
+                size,
+                title: "drift".into(),
+                focusable: true,
+                pane: Arc::new(pane),
+            },
+        )
+        .await?;
+
+        command::register(&ctx).await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

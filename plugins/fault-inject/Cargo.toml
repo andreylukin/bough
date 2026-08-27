@@ -25,3 +25,12 @@ chrono = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+# The section fault is only observable through a real assembler over a real ledger.
+bough-plugin-projection-assembler = { workspace = true }
+bough-plugin-ledger-memory = { workspace = true }
+serde_yaml = { workspace = true }
+tokio = { workspace = true }
+

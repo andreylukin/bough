@@ -128,3 +128,13 @@
 - id: tool.leader
   plugin: tool-leader
   config: {}
+
+# Phase c (§11 "Digging", §8): the three digging panes — `tui-preview`, `tui-timeline`,
+# `tui-drift` — are in the CATALOG and in no bundle, the `tui-probe` precedent. They are mounted by
+# a patch (`scripts/tui/27-29`, and by hand when digging).
+#
+# WHY they are not on by default: `Slot::Aux` splits ONE column band between its panes, so three
+# more always-present panes squeezed the focus pane down to nothing — `scripts/tui/01-boot-and-turn`
+# caught it. Turning them on by default needs an Aux policy where a pane costs its band only while
+# it is open, which is a `tui-shell` change and not this track's to make
+# (`docs/track-c-merge-notes.md`).

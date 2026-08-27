@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help check build test lint gates release audit-plugins live bench tui-test tui-test-replay ux2
+.PHONY: help check build test lint gates release audit-plugins events live bench tui-test tui-test-replay ux2
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-16s %s\n", $$1, $$2}'
@@ -38,6 +38,9 @@ bench: ## run the #[ignore]d measurements (offline)
 
 release: ## cargo build --release
 	cargo build --release
+
+events: ## REQUIREMENTS §15 item 7: the event catalog, and the gate that it matches the tree
+	cargo run --quiet -p xtask -- events --check
 
 audit-plugins: release ## REQUIREMENTS §17 Phase 8: boot with each bough-base row disabled, assert the tree settles
 	./scripts/audit-plugins.sh

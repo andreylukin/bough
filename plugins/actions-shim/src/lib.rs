@@ -4,9 +4,6 @@
 //!
 //! CATALOG-ONLY (decision D-C8): in the binary, in no bundle, mounted by a test's own `--patch`.
 //! It is also the second Provider the plugin audit's provider half swaps on the `actions` seam.
-//!
-//! SCAFFOLD: `allow(unused_variables)` covers the `todo!()` bodies and comes out with them.
-#![allow(unused_variables)]
 
 pub mod invariant;
 pub mod provider;
@@ -14,7 +11,7 @@ pub mod provider;
 use std::sync::Arc;
 
 use bough_kernel::{ConfigError, Context, Inject, InvariantSpec, Plugin, PluginError};
-use bough_plugin_actions::ActionKind;
+use bough_plugin_actions::{ActionKind, Actions};
 
 pub use crate::provider::GhShimProvider;
 
@@ -51,13 +48,36 @@ impl Plugin for ActionsShimPlugin {
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
-        let _ = cfg;
-        todo!("WP-4: reject an empty `gh`, and an empty `kinds` (a Provider claiming nothing)")
+        if cfg.gh.trim().is_empty() {
+            return Err(ConfigError::Rejected {
+                detail: "gh: the binary to invoke must be named; there is no default".into(),
+            });
+        }
+        if cfg.kinds.is_empty() {
+            return Err(ConfigError::Rejected {
+                detail: "kinds: a Provider that claims no kind provides nothing".into(),
+            });
+        }
+        Ok(())
     }
 
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        let _ = (ctx, cfg);
-        todo!("WP-4: register GhShimProvider through ActionsHandle::provider (registration is an effect)")
+        let entry = ctx.entry_id().clone();
+        let actions = ctx
+            .get::<Actions>()
+            .map_err(|e| PluginError::new(entry, e))?;
+        // Registration is an effect (§0.2): unloading this row makes its kinds stop existing.
+        actions
+            .provider(&ctx, Arc::new(GhShimProvider::new(cfg)))
+            .await?;
+        // The invocation record is this fiber's, so unloading it leaves no trace of the acts it
+        // performed — the process-global record is the invariant's, and it forgets with the row.
+        ctx.effect(|e| async move {
+            e.defer_sync(crate::invariant::forget);
+            Ok(())
+        })
+        .await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

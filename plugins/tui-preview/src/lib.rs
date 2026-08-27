@@ -5,11 +5,12 @@
 //! The pane is a CONSUMER (§0.2): it registers no service key, owns no write path, and adds no
 //! second way to assemble a projection. Its only I/O is one `assemble` read per refresh.
 //!
-//! `PreviewAt::Seq` is byte-exact and is what V1 asserts; `PreviewAt::Head` states its delta on the
-//! header rather than claiming an exactness today's seam cannot give it (decision D-C1).
-//!
-//! SCAFFOLD: `allow(unused_variables)` covers the `todo!()` bodies and comes out with them.
-#![allow(unused_variables)]
+//! `PreviewAt::Seq` is anchored and `PreviewAt::Head` states its delta on the header rather than
+//! claiming an exactness today's seam cannot give it (decision D-C1). What V1 asserts
+//! (`crates/bough/tests/preview_bytes.rs`) is the pane's own responsibility: its text IS
+//! `assemble`'s text for that `as_of`. It does NOT assert that an anchored preview reproduces a
+//! past wake's `projection_digest` — it does not, because some sections read live state rather
+//! than the ledger below `as_of` (D-C8, `docs/track-c-merge-notes.md`).
 
 pub mod command;
 pub mod delta;
@@ -21,10 +22,14 @@ pub mod snapshot;
 use std::sync::Arc;
 
 use bough_kernel::{ConfigError, Context, Inject, InvariantSpec, Plugin, PluginError};
+use bough_plugin_ledger::{Ledger, LedgerHandle};
+use bough_plugin_projection::{Projection, ProjectionHandle};
+use bough_plugin_tui_shell::pane::{PaneId, PaneSpec, Slot, SlotSize};
+use bough_plugin_tui_shell::Tui;
 
 pub use crate::delta::{added_lines, only_preface, WAKE_PREFACE_KINDS};
 pub use crate::error::PreviewError;
-pub use crate::pane::{PreviewPane, PreviewState};
+pub use crate::pane::{on_key, KeyAction, PreviewPane, PreviewPaneArc, PreviewState};
 pub use crate::snapshot::{digest, snapshot, system_prefix, PreviewAt, Snapshot};
 
 /// The catalog name of this row.
@@ -63,13 +68,71 @@ impl Plugin for PreviewPlugin {
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
-        let _ = cfg;
-        todo!("WP-1: reject height 0, max_chars 0, min_rows > max_rows")
+        let reject = |detail: String| Err(ConfigError::Rejected { detail });
+        if cfg.height == 0 {
+            return reject("height must be > 0; a zero-cell pane can show no line".to_string());
+        }
+        if cfg.max_chars == 0 {
+            return reject(
+                "max_chars must be > 0; a preview clipped to nothing shows nothing".to_string(),
+            );
+        }
+        if cfg.min_rows > cfg.max_rows {
+            return reject(format!(
+                "min_rows ({}) must not exceed max_rows ({})",
+                cfg.min_rows, cfg.max_rows
+            ));
+        }
+        Ok(())
     }
 
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        let _ = (ctx, cfg);
-        todo!("WP-1: register the pane (Slot::Aux, order 10, Responsive) and /preview")
+        let entry = ctx.entry_id().clone();
+        let projection = ctx
+            .get::<Projection>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        let ledger = ctx
+            .get::<Ledger>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        let tui = ctx.get::<Tui>().map_err(|e| PluginError::new(entry, e))?;
+
+        // The recorded frame is per-process and this row owns it: unloading forgets what it drew.
+        ctx.effect(|e| async move {
+            e.defer_sync(invariant::forget);
+            Ok(())
+        })
+        .await?;
+
+        let pane = Arc::new(
+            PreviewPane::new(Arc::clone(&cfg))
+                .with_seams(
+                    ProjectionHandle(projection.0.clone()),
+                    LedgerHandle(ledger.0.clone()),
+                )
+                .with_ctx(ctx.clone()),
+        );
+        crate::command::register(&ctx, Arc::clone(&pane)).await?;
+        // A REGISTRATION IS AN EFFECT: `register_pane` returns the disposer, and unloading this
+        // row must leave no pane, no listener and no binding behind.
+        tui.register_pane(
+            &ctx,
+            PaneSpec {
+                id: PaneId::new(PANE_ID),
+                slot: Slot::Aux,
+                order: 10,
+                size: SlotSize::Responsive {
+                    collapse: cfg.collapse_rows,
+                    preferred: cfg.height,
+                    min: cfg.min_rows,
+                    max: cfg.max_rows,
+                },
+                title: "preview".into(),
+                focusable: true,
+                pane: Arc::new(crate::pane::PreviewPaneArc(pane)),
+            },
+        )
+        .await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

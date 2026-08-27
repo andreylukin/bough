@@ -20,6 +20,6 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 syn = { version = "2", features = ["full", "visit", "extra-traits", "parsing", "printing"] }
-proc-macro2 = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 thiserror = { workspace = true }

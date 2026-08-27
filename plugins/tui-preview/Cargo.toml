@@ -33,3 +33,4 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 bough-plugin-ledger-memory = { workspace = true }
+tokio = { workspace = true }

@@ -255,6 +255,7 @@ dependencies = [
  "bough-llm",
  "bough-plugin-about-line",
  "bough-plugin-actions",
+ "bough-plugin-actions-shim",
  "bough-plugin-agent-loop",
  "bough-plugin-agent-loop-scripted",
  "bough-plugin-agents",
@@ -263,6 +264,7 @@ dependencies = [
  "bough-plugin-dormancy",
  "bough-plugin-drift-watch",
  "bough-plugin-exec-headless",
+ "bough-plugin-fault-inject",
  "bough-plugin-graph-ops",
  "bough-plugin-hello",
  "bough-plugin-lane-scope",
@@ -290,12 +292,15 @@ dependencies = [
  "bough-plugin-tool-workers",
  "bough-plugin-tools",
  "bough-plugin-tools-baseline",
+ "bough-plugin-tui-drift",
  "bough-plugin-tui-focus",
+ "bough-plugin-tui-preview",
  "bough-plugin-tui-probe",
  "bough-plugin-tui-search",
  "bough-plugin-tui-shell",
  "bough-plugin-tui-status",
  "bough-plugin-tui-strip",
+ "bough-plugin-tui-timeline",
  "bough-plugin-worker-fork",
  "bough-plugin-worker-spawn",
  "bough-plugin-workers",
@@ -401,10 +406,12 @@ dependencies = [
 name = "bough-plugin-actions-shim"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bough-kernel",
  "bough-plugin-actions",
  "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
  "bough-util",
  "chrono",
  "inventory",
@@ -412,6 +419,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
 ]
@@ -633,11 +641,14 @@ dependencies = [
 name = "bough-plugin-fault-inject"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bough-kernel",
  "bough-plugin-agents",
  "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
  "bough-plugin-projection",
+ "bough-plugin-projection-assembler",
  "bough-plugin-tools",
  "bough-util",
  "chrono",
@@ -646,6 +657,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tokio",
  "tracing",
 ]
