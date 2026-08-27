@@ -6,6 +6,7 @@ members = [
   "crates/bough-kernel",
   "crates/bough",
   "plugins/*",
+  "bench/*",
 ]
 
 [workspace.package]
@@ -48,6 +49,7 @@ crossterm    = { version = "0.29", features = ["event-stream", "osc52"] }
 unicode-width = "0.2"
 unicode-segmentation = "1"                                            # tui-render: grapheme-aware wrapping
 tiktoken-rs  = "0.7"                                                  # o200k_base token estimate (§5, 0.6 headroom)
+rquickjs     = { version = "0.12", features = ["futures"] }   # js-quickjs: the embedded engine
 backon       = "1"                                                    # llm-retry
 libc         = "0.2"
 clap         = { version = "4", features = ["derive"] }               # the launcher's CLI
@@ -78,6 +80,10 @@ bough-plugin-llm-retry = { path = "plugins/llm-retry" }                       # 
 bough-plugin-agents = { path = "plugins/agents" }                             # §2 agents Service Definition
 bough-plugin-agent-loop = { path = "plugins/agent-loop" }                     # §5 the wake flow Provider
 bough-plugin-agent-loop-scripted = { path = "plugins/agent-loop-scripted" }   # §5 transcript loop Provider (swap gate)
+bough-plugin-js = { path = "plugins/js" }                                     # codemode §2.1 js Service Definition
+bough-plugin-js-quickjs = { path = "plugins/js-quickjs" }                     # codemode §2.2 embedded QuickJS Provider
+bough-plugin-tools-codemode = { path = "plugins/tools-codemode" }             # codemode §2.3 the run(program) Consumer
+bough-plugin-tools-operator = { path = "plugins/tools-operator" }             # codemode §2.4 view/patch/write/bg/ledger_read/inbox/schedule
 bough-plugin-tools = { path = "plugins/tools" }                               # §9 tools Service Definition
 bough-plugin-tools-baseline = { path = "plugins/tools-baseline" }             # §9 the six baseline tools
 bough-plugin-workers = { path = "plugins/workers" }                           # §10 workers Service Definition
