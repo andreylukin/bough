@@ -1,5 +1,6 @@
 [package]
 name = "bough-plugin-workers"
+autotests = false
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -26,3 +27,7 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

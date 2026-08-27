@@ -3,7 +3,7 @@
 //! the leader's inbox; and an envelope matching zero routing refs lands in the same unsorted
 //! queue. Both halves are asserted against what the ledger actually holds.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

@@ -5,7 +5,7 @@
 //! Every Phase 1 invariant is `Cadence::OnQuiesce` (P1-D14), so a planted violation is asserted
 //! after an explicit `quiesce()`, never after a sleep.
 
-mod support;
+use crate::support;
 
 use bough_kernel::FiberState;
 use bough_plugin_hello::trace;

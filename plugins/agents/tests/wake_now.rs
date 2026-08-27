@@ -2,7 +2,7 @@
 //! is anything to do and does nothing else: it never appends a synthetic message, never arms a
 //! wake of its own, and answers `Nothing` for an agent with nothing queued.
 
-mod common;
+use crate::common;
 
 use bough_plugin_agents::{CreateAgent, Status, Target, WakeCause, WakeKind, WakeRequest};
 use bough_plugin_ledger::StepQuery;

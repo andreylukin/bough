@@ -1,7 +1,7 @@
 //! V9 — crash repair (§5). An orphaned trailing wake closes as `interrupted`, a `tool/call` with
 //! no result gets `TOOL_OUTCOME_UNKNOWN`, and ROLLUPS ARE NEVER TOUCHED.
 
-mod support;
+use crate::support;
 
 use bough_plugin_agent_loop::repair;
 use bough_plugin_ledger::{

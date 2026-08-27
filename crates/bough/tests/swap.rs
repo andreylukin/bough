@@ -6,7 +6,7 @@
 //! The two providers emit EQUAL greeting text, so nothing here can be explained by the value
 //! changing; what moves is the binding identity (§0.3).
 
-mod support;
+use crate::support;
 
 use bough_kernel::FiberState;
 use bough_plugin_hello::{trace, Greeting};

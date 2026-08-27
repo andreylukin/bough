@@ -2,7 +2,7 @@
 //! adoption routes an unsorted item to a lane (or holds it), drafting a requirement produces a
 //! claim and never a pin, and a timeline entry is cited evidence.
 
-mod support;
+use crate::support;
 
 use bough_plugin_ledger::{AgentName, Order, StepQuery, StepType, TrajId};
 use support::Fixture;

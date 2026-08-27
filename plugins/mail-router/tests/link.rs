@@ -2,7 +2,7 @@
 //! reachable by query, never queued as backlog." All three tests here are about that one
 //! sentence, from the three sides it can be got wrong from.
 
-mod common;
+use crate::common;
 
 use bough_plugin_ledger::AgentName;
 use common::*;

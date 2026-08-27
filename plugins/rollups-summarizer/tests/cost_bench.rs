@@ -6,7 +6,7 @@
 //!
 //! `cargo test -p bough-plugin-rollups-summarizer --test cost_bench -- --ignored --nocapture`
 
-mod support;
+use crate::support;
 
 use std::collections::BTreeMap;
 

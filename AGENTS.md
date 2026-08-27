@@ -24,7 +24,9 @@ scripts/               shell-use TUI scripts, audit-plugins.sh
 docs/                  per-phase design notes written by the build (plan, decisions, deviations)
 ```
 
-One cargo workspace at the root. `make gates` (build + lint + test) must be green before every commit.
+One cargo workspace at the root. `make gates` (lint + test + the TUI replay suite) must be green before
+every commit at a phase's Integrate and close; between work packages run `make gate-crate
+CRATES="bough-plugin-a bough-plugin-b"` on the crates you touched.
 
 ## Rules the reviews enforce
 
@@ -40,6 +42,11 @@ One cargo workspace at the root. `make gates` (build + lint + test) must be gree
 - **Model-visible ⟺ ledgered** (§0.2, §3). A new model-visible input is a new step type.
 - Tests sit next to the module they cover; they are offline and hermetic. Anything needing a real
   model or the network is behind an env var (`BOUGH_LIVE=1`) and skipped otherwise.
+- A crate's integration tests are ONE target: `tests/main.rs` declares `mod <file>;` for every
+  `tests/<file>.rs` (Cargo.toml has `autotests = false`). Adding a test file means adding its `mod`
+  line, or `scripts/check-test-mods.sh` fails `make lint`. Shared helpers are `tests/support/` or
+  `tests/common/`, declared once in main.rs and reached as `use crate::support;`. `make test` is
+  nextest — one process per test — so process globals and env vars still never leak between tests.
 - Every module opens with a comment stating the invariant it holds. Dependencies (db, clock, LLM
   client) are injected. Parsing and core logic are pure with `now` passed in.
 - Every phase ends with a **swap test** (§17): one row introduced in the phase replaced or disabled

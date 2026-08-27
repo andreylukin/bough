@@ -2,7 +2,7 @@
 //! live inbox is a cache of that fold (P2-D8). The three presets are the documented (target, wake)
 //! pairs and nothing else.
 
-mod common;
+use crate::common;
 
 use bough_plugin_agents::{ClaimSelector, Inbox, MailClass, Target};
 use bough_plugin_ledger::vocabulary::{InboxSpliced, SpliceOp};

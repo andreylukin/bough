@@ -2,7 +2,7 @@
 //! nothing is deleted — checked against the ledger's own row hashes rather than against a reading
 //! of the code.
 
-mod support;
+use crate::support;
 
 use bough_plugin_ledger::HashScope;
 use support::*;

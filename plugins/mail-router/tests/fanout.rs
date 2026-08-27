@@ -2,7 +2,7 @@
 //! `mail/delivered` step, its own seq and its own consumption state — and the `mail/route`
 //! waterfall is a real extension point over that decision, not decoration.
 
-mod common;
+use crate::common;
 
 use bough_plugin_ledger::AgentName;
 use bough_plugin_mail_router::{MailRoute, RouteDecision};

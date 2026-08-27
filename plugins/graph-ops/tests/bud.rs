@@ -2,7 +2,7 @@
 //! a FORK — a trajectory and an edge, no row and no routing — and promoting it is adding the row
 //! and nothing else.
 
-mod common;
+use crate::common;
 
 use bough_plugin_graph_ops::{
     BudRequest, ChildSpec, GraphBud, GraphOps, OpKind, OpRequest, GRAPH_BUD,

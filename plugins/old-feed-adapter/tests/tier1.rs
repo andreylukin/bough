@@ -2,7 +2,7 @@
 //! ONCE and reach the agent through the ordinary tiers band — which is the whole of §17's
 //! "softening the no-tiers window" (§2.6).
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

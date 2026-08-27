@@ -2,7 +2,7 @@
 //! `rollups-none` runs the same suite with `seals: false`, so both providers are judged by one
 //! statement of the contract rather than by two specs written twice.
 
-mod support;
+use crate::support;
 
 use bough_plugin_rollups::conformance::Conformance;
 use bough_plugin_rollups::RollupsHandle;

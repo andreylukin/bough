@@ -3,7 +3,7 @@
 //! that jot, a preempted wake refreshes no about-line, and a message that arrives during an
 //! answer wake joins it before the first streamed token and queues after it.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

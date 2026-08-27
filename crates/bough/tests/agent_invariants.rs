@@ -7,7 +7,7 @@
 //! the honest way to prove the check fires — the pure evaluator is unit-tested in its own crate,
 //! and what this file adds is that the RUNNER surfaces it.
 
-mod support;
+use crate::support;
 
 use bough_kernel::{FiberUid, Kernel};
 use bough_plugin_hello::trace;

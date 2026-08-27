@@ -4,7 +4,7 @@
 //! `/reconsolidate`, `/drift` or `/reset` to attach to. And each of them must carry the runtime
 //! invariants §0.2 requires, at the only cadence the kernel dispatches.
 
-mod support;
+use crate::support;
 
 use bough_kernel::{Catalog, FiberState};
 use bough_plugin_hello::trace;

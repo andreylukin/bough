@@ -1,7 +1,7 @@
 //! §3/§4's merge: two lanes into ONE new head, one reconciliation digest, the union of the refs,
 //! the SURVIVOR's overrides, the losing ROW deleted and both TRAJECTORIES kept.
 
-mod common;
+use crate::common;
 
 use bough_plugin_graph_ops::{GraphMerge, GraphOps, MergeRequest, OpKind, OpRequest, GRAPH_MERGE};
 use bough_plugin_ledger::{AgentName, EdgeKind, NewRollup, RollupId, RollupKind, Seq, TrajId};

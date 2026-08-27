@@ -8,7 +8,7 @@
 //! `$HOME`, so a test that boots the shipped bundle must point `$HOME` at its own scratch dir or
 //! it reads the developer's real databases.
 
-mod support;
+use crate::support;
 
 use bough_plugin_commands::{CommandCx, Commands};
 use bough_plugin_hello::trace;

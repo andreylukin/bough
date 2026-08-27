@@ -1,7 +1,7 @@
 //! §4's undo rules. An UNUSED split undoes as POINTERS and calls no model at all; a LIVED-IN one
 //! undoes as a MERGE, which reconciles and leaves the divergent heads behind by construction.
 
-mod common;
+use crate::common;
 
 use bough_plugin_graph_ops::{
     ChildSpec, GraphOps, GraphUndo, OpKind, OpRequest, SplitRequest, UndoRequest, UndoShape,

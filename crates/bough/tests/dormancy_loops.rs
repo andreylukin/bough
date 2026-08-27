@@ -6,7 +6,7 @@
 //! These tests do NOT go through the `dormancy` row. They stand a listener in its place, because
 //! what is under test is the LOOP's obligation to dispatch and to obey, not the fold that decides.
 
-mod support;
+use crate::support;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

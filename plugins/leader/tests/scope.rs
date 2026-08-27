@@ -3,7 +3,7 @@
 //! to the target and to nobody else, unloading the row leaves no trace of it, and re-applying the
 //! row against a different `config.agent` moves everything with it — no compile, no restart.
 
-mod support;
+use crate::support;
 
 use bough_plugin_ledger::AgentName;
 use bough_plugin_projection::AssembleRequest;

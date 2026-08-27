@@ -3,7 +3,7 @@
 //! agent, an Andrey message always gets a fresh answer wake whatever queue it arrived through,
 //! and a drain wake never answers him.
 
-mod support;
+use crate::support;
 
 use bough_plugin_agent_loop::mail;
 use bough_plugin_agent_loop::testing::{delivered, ordinary as ordinary_msg, wake_end, wake_of};

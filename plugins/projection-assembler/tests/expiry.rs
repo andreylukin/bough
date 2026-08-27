@@ -6,7 +6,7 @@
 //! non-edits get tests of their own, because "we chose not to filter here" is a decision that only
 //! a test can hold.
 
-mod support;
+use crate::support;
 
 use bough_plugin_rollups::Beneath;
 use support::*;

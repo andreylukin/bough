@@ -8,7 +8,7 @@
 //! `plugins/worker-spawn/tests/roundtrip.rs`, which could not reach a mounted tree from inside
 //! its own crate.
 
-mod support;
+use crate::support;
 
 use bough_plugin_agents::{AgentKind, Agents, CreateAgent};
 use bough_plugin_hello::trace;

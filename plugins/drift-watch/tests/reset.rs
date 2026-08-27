@@ -2,7 +2,7 @@
 //! fresh about-line whose STATE half cites the raw steps and whose INTENT half is empty, repoints
 //! the agent row, and leaves every sealed tier exactly as it was.
 
-mod common;
+use crate::common;
 
 use bough_plugin_about_line::{AboutLine, ABOUT_LINE};
 use bough_plugin_drift_watch::{ResetRequest, DRIFT_RESET};

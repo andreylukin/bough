@@ -5,7 +5,7 @@
 //! Phase 1 could assert the second half only over an empty tiers band. With real sealed tiers the
 //! claim finally has something to be true against.
 
-mod support;
+use crate::support;
 
 use bough_plugin_projection::Flag;
 use bough_plugin_rollups::Beneath;

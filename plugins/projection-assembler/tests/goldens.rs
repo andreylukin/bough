@@ -13,7 +13,7 @@
 //! depend on a prompt, a transcript and another work package's crate. `rollups-summarizer`'s own
 //! tests are what prove the summarizer writes rows of this shape.
 
-mod support;
+use crate::support;
 
 use bough_plugin_ledger::{RollupId, StepId};
 use bough_plugin_rollups::Beneath;

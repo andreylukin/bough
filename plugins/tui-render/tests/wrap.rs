@@ -1,7 +1,7 @@
 //! Wrapping is grapheme-aware and column-correct: a CJK cell is two columns, a combining mark is
 //! zero, and neither may be split or overflow.
 
-mod common;
+use crate::common;
 
 use bough_plugin_tui_render::wrap;
 use unicode_width::UnicodeWidthStr;

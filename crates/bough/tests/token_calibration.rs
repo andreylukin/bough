@@ -11,7 +11,7 @@
 //!
 //! `BOUGH_LIVE=1` only: an offline gate cannot call the API, so `make gates` never depends on it.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

@@ -7,7 +7,7 @@
 //!
 //! The 10k case is always on. The 100k case runs only with `BOUGH_BENCH=1` and prints its number.
 
-mod support;
+use crate::support;
 
 use std::time::{Duration, Instant};
 

@@ -2,7 +2,7 @@
 //! repoints `agents.digest_rollup` — which IS the identity rebuild, since §3 says identity renders
 //! from the agents row plus the digest rather than being stored.
 
-mod support;
+use crate::support;
 
 use bough_plugin_ledger::{HashScope, RollupKind};
 use bough_plugin_rollups::{Attribution, DigestBlock, DigestRequest, Summarizer};
