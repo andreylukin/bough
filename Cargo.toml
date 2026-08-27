@@ -5,6 +5,7 @@ members = [
   "crates/bough-util",
   "crates/bough-kernel",
   "crates/bough",
+  "crates/xtask",
   "plugins/*",
 ]
 
@@ -111,3 +112,8 @@ bough-plugin-leader = { path = "plugins/leader" }                              #
 bough-plugin-tool-leader = { path = "plugins/tool-leader" }                    # §2 the leader-scoped tools
 bough-plugin-lane-scope = { path = "plugins/lane-scope" }                      # §5 per-lane persona + tools.restrict
 bough-plugin-worker-fork = { path = "plugins/worker-fork" }                    # §10 WorkerKind::Fork
+bough-plugin-tui-preview = { path = "plugins/tui-preview" }                    # §11 the byte-exact projection preview pane
+bough-plugin-tui-timeline = { path = "plugins/tui-timeline" }                  # §11 the cross-agent timeline pane
+bough-plugin-tui-drift = { path = "plugins/tui-drift" }                        # §8 the drift dashboard pane
+bough-plugin-fault-inject = { path = "plugins/fault-inject" }                  # §17 Phase 8 failure injection (catalog only)
+bough-plugin-actions-shim = { path = "plugins/actions-shim" }                  # §7 the gh-shaped actions Provider (catalog only)

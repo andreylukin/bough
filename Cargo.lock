@@ -398,6 +398,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "bough-plugin-actions-shim"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-actions",
+ "bough-plugin-ledger",
+ "bough-util",
+ "chrono",
+ "inventory",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bough-plugin-agent-loop"
 version = "0.1.0"
 dependencies = [
@@ -608,6 +627,27 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "bough-plugin-fault-inject"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "bough-plugin-projection",
+ "bough-plugin-tools",
+ "bough-util",
+ "chrono",
+ "inventory",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1221,6 +1261,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "bough-plugin-tui-drift"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-commands",
+ "bough-plugin-drift-watch",
+ "bough-plugin-ledger",
+ "bough-plugin-tui-render",
+ "bough-plugin-tui-shell",
+ "bough-util",
+ "chrono",
+ "crossterm",
+ "inventory",
+ "parking_lot",
+ "ratatui",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bough-plugin-tui-focus"
 version = "0.1.0"
 dependencies = [
@@ -1245,6 +1310,34 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "bough-plugin-tui-preview"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-commands",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-projection",
+ "bough-plugin-tui-render",
+ "bough-plugin-tui-shell",
+ "bough-util",
+ "chrono",
+ "crossterm",
+ "inventory",
+ "parking_lot",
+ "ratatui",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.19",
+ "tokio",
  "tracing",
 ]
 
@@ -1384,6 +1477,32 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "bough-plugin-tui-timeline"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-commands",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-tui-render",
+ "bough-plugin-tui-shell",
+ "bough-util",
+ "chrono",
+ "crossterm",
+ "inventory",
+ "parking_lot",
+ "ratatui",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
 ]
@@ -5426,6 +5545,17 @@ name = "x11rb-protocol"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "thiserror 2.0.19",
+]
 
 [[package]]
 name = "yaml-rust"

@@ -1,0 +1,25 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# NOT a plugin and NOT shipped: the build tool behind `cargo xtask events`, §15 item 7's event
+# catalog gate. It owns no `ctx` key and links nothing from the tree — it READS the tree's source.
+
+[lib]
+name = "xtask"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+syn = { version = "2", features = ["full", "visit", "extra-traits", "parsing", "printing"] }
+proc-macro2 = "1"
+quote = "1"
+thiserror = { workspace = true }
