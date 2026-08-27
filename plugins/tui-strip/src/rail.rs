@@ -30,6 +30,9 @@ pub struct RailRow {
     pub status: Status,
     pub wake_pending: bool,
     pub disposed: bool,
+    /// Folded from `agent/dormancy` steps BY NAME (P3-D11): the rail gains no dependency on the
+    /// `dormancy` row, and with that row disabled no agent is ever dormant.
+    pub dormant: bool,
     /// `None` when the agent has never written an `about/line` — with the `about-line` row
     /// disabled that is every agent, and the rail still renders (P3-D11).
     pub about: Option<AboutView>,
@@ -39,10 +42,21 @@ pub struct RailRow {
 ///
 /// The role is a [`Theme`] field name, never a colour: call sites name roles (`tui-shell`'s theme
 /// invariant), and `shell-use cells` assertions then have a name to test against.
-pub fn glyph(status: Status, wake_pending: bool, disposed: bool) -> (char, &'static str) {
+pub fn glyph(
+    status: Status,
+    wake_pending: bool,
+    disposed: bool,
+    dormant: bool,
+) -> (char, &'static str) {
     // Disposed first: a disposed agent can still carry a stale status, and what it IS is gone.
     if disposed {
         return ('×', "dim");
+    }
+    // Dormant next, ahead of the status arms: a dormant agent keeps whatever status it had when
+    // it went to sleep (§1 — dormancy is not a status), and drawing `idle` for it would say the
+    // one thing that is not true, that a wake would run.
+    if dormant {
+        return ('\u{25CC}', "dim");
     }
     match (status, wake_pending) {
         (Status::Running, _) => ('●', "accent"),
@@ -69,6 +83,8 @@ pub fn role_color(theme: &Theme, role: &str) -> ratatui::style::Color {
 pub fn status_word(row: &RailRow) -> &'static str {
     if row.disposed {
         "disposed"
+    } else if row.dormant {
+        "dormant"
     } else {
         match (row.status, row.wake_pending) {
             (Status::Running, _) => "running",
@@ -140,7 +156,7 @@ pub fn row_lines(
     width: u16,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    let (g, role) = glyph(row.status, row.wake_pending, row.disposed);
+    let (g, role) = glyph(row.status, row.wake_pending, row.disposed, row.dormant);
     let mut head_style = Style::default().fg(role_color(theme, role));
     if focused {
         head_style = head_style.add_modifier(Modifier::BOLD);

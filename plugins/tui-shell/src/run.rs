@@ -158,24 +158,26 @@ pub fn draw(tui: &TuiHandle) {
         // selection: the shell owns no slot of its own, and a notice is ephemeral, so it borrows
         // the rows immediately above the composer rather than reflowing the layout under it.
         if let Some(text) = notice {
-            let wrapped: Vec<&str> = text.lines().collect();
-            let want = wrapped
-                .len()
-                .clamp(1, tui.0.cfg.notice_max_lines.max(1) as usize) as u16;
-            let top = crect.y.saturating_sub(want);
-            let h = crect.y.saturating_sub(top);
+            // `pane::notice_band` decides WHAT is painted: the cap, the rows actually available
+            // above the composer, and — when the two together drop lines — the marker that says
+            // so. See its doc comment for why a silent truncation is not an option here.
+            let body_text = pane::notice_band(
+                &text,
+                tui.0.cfg.notice_max_lines,
+                crect.y.saturating_sub(size.y),
+            );
+            let h = body_text.len() as u16;
             if h > 0 {
                 let rect = Rect {
                     x: size.x,
-                    y: top,
+                    y: crect.y - h,
                     width: size.width,
                     height: h,
                 };
                 let style = Style::default().fg(theme.hint).bg(theme.bg);
-                let body: Vec<Line> = wrapped
-                    .iter()
-                    .take(h as usize)
-                    .map(|l| Line::styled((*l).to_string(), style))
+                let body: Vec<Line> = body_text
+                    .into_iter()
+                    .map(|l| Line::styled(l, style))
                     .collect();
                 Clear.render(rect, buf);
                 Paragraph::new(body).style(style).render(rect, buf);

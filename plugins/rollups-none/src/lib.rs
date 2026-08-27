@@ -90,6 +90,9 @@ impl Summarizer for NoneSummarizer {
         )))
     }
 
+    /// P5-D13's `reconcile` changes what a SEALING provider writes; it does not make this one
+    /// start writing. A merge against `rollups-none` refuses here, exactly as every other rebuild
+    /// does, and `graph-ops` reports the refusal rather than inventing a reconciliation.
     async fn rebuild_digest(&self, req: &DigestRequest) -> Result<DigestReport, RollupsError> {
         Err(RollupsError::Refused(format!(
             "`{}` seals nothing, so it cannot rebuild `{}`'s digest",

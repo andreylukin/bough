@@ -27,7 +27,8 @@ use ratatui::layout::Rect;
 use ratatui::widgets::Paragraph;
 
 pub use rail::{
-    focus_for_hit, glyph, hit_for_agent, on_click, rail, row_lines, RailRow, INTENT_LABEL,
+    focus_for_hit, glyph, hit_for_agent, on_click, rail, row_lines, status_word, RailRow,
+    INTENT_LABEL,
 };
 
 /// The catalog name of this row.
@@ -126,6 +127,26 @@ pub fn set_status(rows: &mut [RailRow], agent: &AgentId, status: Status) {
     }
 }
 
+/// The step type the dormant set is folded from, read BY NAME (P3-D11).
+pub const DORMANCY_STEP: &str = "agent/dormancy";
+
+/// PURE: what an `agent/dormancy` step says, or `None` for every other step type. The filter and
+/// the parse are one call, exactly as `about_from_step` is for the about-line.
+pub fn dormant_from_step(step: &bough_plugin_ledger::Step) -> Option<bool> {
+    if step.kind.as_str() != DORMANCY_STEP {
+        return None;
+    }
+    // TOTAL: a body that does not carry the flag leaves the rail alone rather than guessing.
+    step.body.get("dormant").and_then(|v| v.as_bool())
+}
+
+/// PURE: what an `agent/dormancy` step does to the row list.
+pub fn set_dormant(rows: &mut [RailRow], traj: &TrajId, dormant: bool) {
+    if let Some(r) = rows.iter_mut().find(|r| r.traj.as_ref() == Some(traj)) {
+        r.dormant = dormant;
+    }
+}
+
 /// PURE: what an `about/line` step does to the row list. A step on a trajectory the rail does not
 /// know is ignored rather than creating a rowless rail entry.
 pub fn set_about(rows: &mut [RailRow], traj: &TrajId, view: AboutView) {
@@ -201,6 +222,24 @@ impl Plugin for StripPlugin {
                 {
                     if let Some(view) = steps.first().and_then(about_from_step) {
                         set_about(&mut rows.lock(), &traj, view);
+                    }
+                }
+                // The same backfill for dormancy: a rail that mounts after a lane went to sleep
+                // must draw it asleep, not idle (§1 — a dormant agent's rail row is how Andrey
+                // sees that no wake is coming).
+                if let Ok(steps) = ledger
+                    .0
+                    .steps(&StepQuery {
+                        trajs: vec![traj.clone()],
+                        kinds: vec![StepType::new(DORMANCY_STEP)],
+                        order: Order::SeqDesc,
+                        limit: Some(1),
+                        ..Default::default()
+                    })
+                    .await
+                {
+                    if let Some(d) = steps.first().and_then(dormant_from_step) {
+                        set_dormant(&mut rows.lock(), &traj, d);
                     }
                 }
             }
@@ -284,6 +323,10 @@ impl Plugin for StripPlugin {
                     set_about(&mut r.lock(), &step.traj, view);
                     t.redraw();
                 }
+                if let Some(dormant) = dormant_from_step(&step) {
+                    set_dormant(&mut r.lock(), &step.traj, dormant);
+                    t.redraw();
+                }
             }
         })
         .await?;
@@ -305,6 +348,9 @@ pub fn row_for(agent: &bough_plugin_agents::Agent) -> RailRow {
         status: agent.status(),
         wake_pending: agent.has_pending_wake(),
         disposed: agent.is_disposed(),
+        // Reloaded from the ledger fold by the `dormancy` row at activation; the rail learns it
+        // from the next `agent/dormancy` step it sees.
+        dormant: false,
         about: None,
     }
 }

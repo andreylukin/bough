@@ -43,12 +43,16 @@ pub fn last_frame() -> Option<(Vec<Row>, LiveText)> {
 pub fn check_frame(rows: &[Row], live: &LiveText) -> Result<(), String> {
     let mut seen = std::collections::BTreeSet::new();
     for row in rows {
-        if !seen.insert(row.step().clone()) {
-            return Err(format!(
-                "step `{}` produced TWO rows: the live tail and the durable rows must be disjoint, \
-                 and so must the rows among themselves",
-                row.step()
-            ));
+        // Every FOLDED step, not only the anchor: since P5-D14 a joined `Text` row carries the
+        // whole group, and a step that reached two groups would be on screen twice with two
+        // different anchors to point at.
+        for step in row.parts() {
+            if !seen.insert(step.clone()) {
+                return Err(format!(
+                    "step `{step}` produced TWO rows: the live tail and the durable rows must be \
+                     disjoint, and so must the rows among themselves"
+                ));
+            }
         }
     }
     if live.text.is_empty() {
@@ -100,6 +104,7 @@ mod tests {
     fn text(step: &str, s: &str) -> Row {
         Row::Text {
             step: StepId::new(step),
+            parts: vec![StepId::new(step)],
             wake: WakeId::new("w1"),
             index: 0,
             text: s.into(),

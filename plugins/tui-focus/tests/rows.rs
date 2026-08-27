@@ -185,3 +185,227 @@ fn an_unknown_step_type_renders_as_other_and_never_panics() {
     // Total over the empty list, too.
     assert!(rows_from_steps(&[]).is_empty());
 }
+
+/// WP-7 / §2.8 + P5-D14: the paragraph join (the field bug), and the claim card fold.
+mod tests {
+    use super::*;
+    use bough_plugin_tui_focus::rows::ClaimState;
+
+    /// A `thought/text` step as the loop's flush writes it: `step_index` is the MODEL step it
+    /// belongs to, and the flush boundary inside it is a timer.
+    fn text(n: u64, wake: &str, index: u32, s: &str) -> Step {
+        let mut st = step(
+            n,
+            "thought/text",
+            serde_json::json!({ "text": s, "step_index": index }),
+        );
+        st.wake = WakeId::new(wake);
+        st
+    }
+
+    fn reasoning(n: u64, index: u32, s: &str) -> Step {
+        step(
+            n,
+            "thought/reasoning",
+            serde_json::json!({ "text": s, "step_index": index }),
+        )
+    }
+
+    fn text_of(row: &Row) -> &str {
+        match row {
+            Row::Text { text, .. } | Row::Reasoning { text, .. } => text,
+            other => panic!("expected a text row, got {other:?}"),
+        }
+    }
+
+    /// THE FIELD BUG. Two durable steps of one model step rendered as two lines
+    /// (`"I'll run that"` / `" shell command for you."`); they are one answer and they are one row.
+    #[test]
+    fn two_text_steps_of_one_step_index_join_into_one_row() {
+        let rows = rows_from_steps(&[
+            text(1, "w1", 0, "I'll run that"),
+            text(2, "w1", 0, " shell command for you."),
+        ]);
+        assert_eq!(rows.len(), 1, "one model step is one row: {rows:?}");
+        assert_eq!(text_of(&rows[0]), "I'll run that shell command for you.");
+    }
+
+    /// RAW concatenation. The chunks are a split of one stream, so anything inserted between them
+    /// — a space, a newline — is text the model never wrote, and a space is exactly what produced
+    /// the doubled space in the field report.
+    #[test]
+    fn the_join_is_raw_concatenation_with_no_separator() {
+        let rows = rows_from_steps(&[
+            text(1, "w1", 0, "half"),
+            text(2, "w1", 0, "way"),
+            text(3, "w1", 0, " there"),
+        ]);
+        assert_eq!(text_of(&rows[0]), "halfway there");
+    }
+
+    /// A tool call between two texts is a real break: the model spoke, acted, and spoke again,
+    /// and joining across the call would put the answer before the tool after it.
+    #[test]
+    fn a_tool_call_between_two_texts_breaks_the_group() {
+        let rows = rows_from_steps(&[
+            text(1, "w1", 0, "let me look"),
+            step(
+                2,
+                "tool/call",
+                serde_json::json!({
+                    "call": "c1", "name": "shell", "args": {}, "render": "generic"
+                }),
+            ),
+            text(3, "w1", 0, "found it"),
+        ]);
+        assert_eq!(rows.len(), 3, "{rows:?}");
+        assert_eq!(text_of(&rows[0]), "let me look");
+        assert!(matches!(rows[1], Row::Tool { .. }));
+        assert_eq!(text_of(&rows[2]), "found it");
+    }
+
+    /// A new model step is a new answer, whatever the timing looked like.
+    #[test]
+    fn a_new_step_index_breaks_the_group() {
+        let rows = rows_from_steps(&[text(1, "w1", 0, "first"), text(2, "w1", 1, "second")]);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(text_of(&rows[0]), "first");
+        assert_eq!(text_of(&rows[1]), "second");
+    }
+
+    /// Two wakes can each carry a step index 0. They are different turns and never one paragraph.
+    #[test]
+    fn a_new_wake_breaks_the_group() {
+        let rows = rows_from_steps(&[text(1, "w1", 0, "yesterday"), text(2, "w2", 0, "today")]);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(text_of(&rows[0]), "yesterday");
+    }
+
+    /// The anchor is the FIRST step of the group — that is where a search hit, a citation and a
+    /// flash point — and every folded step is listed, so nothing becomes unaddressable by joining.
+    #[test]
+    fn the_joined_row_anchors_on_the_first_step_and_lists_every_part() {
+        let rows = rows_from_steps(&[
+            text(1, "w1", 0, "a"),
+            text(2, "w1", 0, "b"),
+            text(3, "w1", 0, "c"),
+        ]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].step(), &StepId::new("s1"));
+        assert_eq!(
+            rows[0].parts(),
+            vec![StepId::new("s1"), StepId::new("s2"), StepId::new("s3")]
+        );
+        // An unjoined row still names itself, so `parts()` is total.
+        let one = rows_from_steps(&[text(9, "w1", 0, "solo")]);
+        assert_eq!(one[0].parts(), vec![StepId::new("s9")]);
+    }
+
+    /// Reasoning is flushed on the same timer and joins on the same rule — and it never joins
+    /// with text: the two are drawn differently, and merging them would present a private thought
+    /// as part of the answer.
+    #[test]
+    fn two_reasoning_steps_join_on_the_same_rule() {
+        let rows = rows_from_steps(&[reasoning(1, 0, "think"), reasoning(2, 0, "ing")]);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert!(matches!(rows[0], Row::Reasoning { .. }));
+        assert_eq!(text_of(&rows[0]), "thinking");
+
+        let mixed = rows_from_steps(&[reasoning(1, 0, "hmm"), text(2, "w1", 0, "answer")]);
+        assert_eq!(mixed.len(), 2, "reasoning and text never join: {mixed:?}");
+    }
+
+    /// §16 at the surface: a claim is a PROPOSAL, and it renders as a card Andrey can decide.
+    #[test]
+    fn a_claim_proposed_step_renders_as_a_card() {
+        let rows = rows_from_steps(&[step(
+            1,
+            "claim/proposed",
+            serde_json::json!({
+                "claim": "c1",
+                "kind": "requirement",
+                "title": "the leader drafts requirements",
+                "body": "Andrey's words become a claim.",
+            }),
+        )]);
+        let Row::Claim {
+            claim,
+            kind,
+            title,
+            body,
+            state,
+            ..
+        } = &rows[0]
+        else {
+            panic!("expected a claim card, got {rows:?}");
+        };
+        assert_eq!(claim, "c1");
+        assert_eq!(kind, "requirement");
+        assert_eq!(title, "the leader drafts requirements");
+        assert_eq!(body, "Andrey's words become a claim.");
+        assert_eq!(*state, ClaimState::Open, "undecided until Andrey decides");
+    }
+
+    /// The decision folds INTO the card (P3-D11: by step-type name, no dependency on `claims`),
+    /// so an accepted claim is one row that says so rather than two rows to reconcile by eye.
+    #[test]
+    fn an_accepted_claim_card_shows_its_state() {
+        let rows = rows_from_steps(&[
+            step(
+                1,
+                "claim/proposed",
+                serde_json::json!({ "claim": "c1", "kind": "lane", "title": "t", "body": "b" }),
+            ),
+            step(
+                2,
+                "claim/accepted",
+                serde_json::json!({ "claim": "c1", "proposal": "s1", "edited": true }),
+            ),
+        ]);
+        assert_eq!(rows.len(), 1, "the decision folds in: {rows:?}");
+        let Row::Claim { state, .. } = &rows[0] else {
+            panic!("{rows:?}");
+        };
+        assert_eq!(*state, ClaimState::Accepted { edited: true });
+        assert_eq!(state.word(), "accepted (edited)");
+        assert!(!state.is_open(), "a decided card offers no buttons");
+    }
+
+    /// A rejection without its reason would leave the agent's proposal looking arbitrary, so the
+    /// reason travels with the state.
+    #[test]
+    fn a_rejected_claim_card_shows_its_reason() {
+        let rows = rows_from_steps(&[
+            step(
+                1,
+                "claim/proposed",
+                serde_json::json!({ "claim": "c1", "kind": "lane", "title": "t", "body": "b" }),
+            ),
+            step(
+                2,
+                "claim/rejected",
+                serde_json::json!({
+                    "claim": "c1", "proposal": "s1", "reason": "that lane already exists"
+                }),
+            ),
+        ]);
+        assert_eq!(rows.len(), 1);
+        let Row::Claim { state, .. } = &rows[0] else {
+            panic!("{rows:?}");
+        };
+        assert_eq!(
+            *state,
+            ClaimState::Rejected {
+                reason: "that lane already exists".to_string()
+            }
+        );
+
+        // A decision whose proposal paged out is still shown — the decision is the news.
+        let orphan = rows_from_steps(&[step(
+            3,
+            "claim/rejected",
+            serde_json::json!({ "claim": "c9", "proposal": "s0", "reason": "no" }),
+        )]);
+        assert!(matches!(orphan[0], Row::Other { .. }), "{orphan:?}");
+    }
+}

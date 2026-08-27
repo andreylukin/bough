@@ -2,6 +2,7 @@
 //! `agents`. §3 makes membership derived and never stamped, and a column would mean a schema
 //! change in two ledger Providers plus the conformance suite for one boolean.
 
+use bough_plugin_ledger::{ClassRule, StepTypeDef};
 use bough_plugin_rollups::Attribution;
 
 use crate::ReactivateCause;
@@ -13,9 +14,9 @@ pub const OWNER: &str = "dormancy";
 /// this crate.
 pub const STEP_TYPE: &str = "agent/dormancy";
 
-/// `agent/dormancy` — [`bough_plugin_ledger::ClassRule::Either`]. Appended to the agent's OWN
-/// trajectory, so the fold is one `StepQuery { trajs: [traj], kinds: ["agent/dormancy"], order:
-/// SeqDesc, limit: 1 }` per agent at activation.
+/// `agent/dormancy` — [`ClassRule::Either`]. Appended to the agent's OWN trajectory, so the fold
+/// is one `StepQuery { trajs: [traj], kinds: ["agent/dormancy"], order: SeqDesc, limit: 1 }` per
+/// agent at activation.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct AgentDormancy {
     pub dormant: bool,
@@ -26,7 +27,7 @@ pub struct AgentDormancy {
     pub cause: Option<ReactivateCause>,
 }
 
-/// Declare the step type on the bound ledger. Called once, from `apply`.
-pub fn declare(_ledger: &bough_plugin_ledger::LedgerHandle) -> Result<(), crate::DormancyError> {
-    todo!("WP-2: declare agent/dormancy with ClassRule::Either")
+/// The step types this crate owns, for `LedgerHandle::declare_step_types`.
+pub fn step_types() -> Vec<StepTypeDef> {
+    vec![StepTypeDef::of::<AgentDormancy>(STEP_TYPE, OWNER).class_rule(ClassRule::Either)]
 }

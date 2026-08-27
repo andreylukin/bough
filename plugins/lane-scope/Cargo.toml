@@ -22,7 +22,11 @@ serde_json = { workspace = true }
 schemars = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
 bough-plugin-ledger-memory = { workspace = true }
+bough-plugin-projection-assembler = { workspace = true }
+tempfile = { workspace = true }

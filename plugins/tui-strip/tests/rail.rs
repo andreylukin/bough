@@ -42,6 +42,7 @@ fn row(name: &str, about: Option<AboutView>) -> RailRow {
         status: Status::Idle,
         wake_pending: false,
         disposed: false,
+        dormant: false,
         about,
     }
 }
@@ -57,10 +58,10 @@ fn text_of(lines: &[ratatui::text::Line<'static>]) -> Vec<String> {
 /// so a glance at the rail is unambiguous.
 #[test]
 fn each_status_maps_to_its_glyph() {
-    let idle = glyph(Status::Idle, false, false);
-    let waking = glyph(Status::Idle, true, false);
-    let running = glyph(Status::Running, false, false);
-    let disposed = glyph(Status::Running, true, true);
+    let idle = glyph(Status::Idle, false, false, false);
+    let waking = glyph(Status::Idle, true, false, false);
+    let running = glyph(Status::Running, false, false, false);
+    let disposed = glyph(Status::Running, true, true, false);
 
     assert_eq!(idle.0, '○');
     assert_eq!(running.0, '●');
@@ -187,4 +188,105 @@ fn a_click_on_a_rail_row_returns_a_focus_outcome() {
         PaneOutcome::Ignored
     );
     assert_eq!(rail::on_click(None), PaneOutcome::Ignored);
+}
+
+/// WP-7 / §1 + §11: the dormancy surface, and the click-to-focus check Phase 3 deferred because
+/// there was only ever one agent to click on.
+mod tests {
+    use super::*;
+    use bough_plugin_ledger::Step;
+    use bough_plugin_tui_strip::{dormant_from_step, glyph, row_lines, set_dormant, status_word};
+    use std::sync::Arc;
+
+    fn dormancy_step(traj: &str, dormant: bool) -> Step {
+        Step {
+            id: StepId::new("d1"),
+            traj: TrajId::new(traj),
+            seq: Seq(7),
+            at: chrono::Utc::now(),
+            wake: WakeId::new("op:1"),
+            kind: StepType::new("agent/dormancy"),
+            class: Class::Evidence,
+            body: Arc::new(serde_json::json!({
+                "dormant": dormant,
+                "reason": "the lane has nothing to do",
+                "by": "andrey",
+            })),
+            cites: Arc::new(vec![]),
+            refs: Arc::new(BTreeSet::new()),
+            ignorable: false,
+        }
+    }
+
+    /// §1: a dormant lane gets no ticks and no wakes. It keeps whatever status it had when it
+    /// went to sleep, so the rail must say `dormant` rather than `idle` — the one word that would
+    /// otherwise promise a wake that is never coming.
+    #[test]
+    fn a_dormant_row_draws_the_dormant_glyph_and_word() {
+        let mut r = row("sol", None);
+        r.dormant = true;
+        assert_eq!(glyph(r.status, false, false, true), ('\u{25CC}', "dim"));
+        assert_eq!(status_word(&r), "dormant");
+        let text = text_of(&row_lines(&r, false, false, 0, 40, &theme()));
+        assert!(text[0].contains('\u{25CC}'), "{text:?}");
+        assert!(text[0].contains("dormant"), "{text:?}");
+        // And it is its OWN mark: not the idle circle, not the disposed cross.
+        assert_ne!(glyph(r.status, false, false, true).0, '\u{25CB}');
+        assert_ne!(glyph(r.status, false, false, true).0, '\u{00D7}');
+    }
+
+    /// A disposed agent that was asleep when it was disposed is GONE, which outranks asleep.
+    #[test]
+    fn disposed_still_wins_over_dormant() {
+        let mut r = row("sol", None);
+        r.dormant = true;
+        r.disposed = true;
+        assert_eq!(glyph(r.status, true, true, true), ('\u{00D7}', "dim"));
+        assert_eq!(status_word(&r), "disposed");
+    }
+
+    /// P3-D11: the rail reads `agent/dormancy` by step-type NAME out of the ledger body. It has
+    /// no dependency on the `dormancy` row, and every other step type leaves it alone.
+    #[test]
+    fn dormancy_is_read_from_the_step_by_name() {
+        assert_eq!(
+            dormant_from_step(&dormancy_step("lane/sol", true)),
+            Some(true)
+        );
+        assert_eq!(
+            dormant_from_step(&dormancy_step("lane/sol", false)),
+            Some(false)
+        );
+        let mut other = dormancy_step("lane/sol", true);
+        other.kind = StepType::new("thought/text");
+        assert_eq!(dormant_from_step(&other), None);
+
+        let mut rows = vec![row("sol", None), row("terra", None)];
+        set_dormant(&mut rows, &TrajId::new("lane/sol"), true);
+        assert!(rows[0].dormant);
+        assert!(!rows[1].dormant, "one step touches one lane");
+        // A step on a trajectory the rail does not know changes nothing.
+        set_dormant(&mut rows, &TrajId::new("lane/nobody"), true);
+        assert!(!rows[1].dormant);
+    }
+
+    /// §11's click-to-focus, over a POPULATION: three rails, three hit regions, and each one maps
+    /// to its own agent. Phase 3 deferred this check because one agent cannot show a mix-up.
+    #[test]
+    fn focus_for_hit_maps_each_of_three_rails_to_its_own_agent() {
+        let rows = vec![row("sol", None), row("terra", None), row("luna", None)];
+        let (_, spans) = rail::rail(&rows, None, false, 0, 40, &theme());
+        assert_eq!(spans.len(), 3);
+        for (agent, _, _) in &spans {
+            let req = rail::focus_for_hit(&rail::hit_for_agent(agent))
+                .expect("the rail's own region must parse back");
+            assert_eq!(req.agent.as_ref(), Some(agent));
+        }
+        // The three regions do not overlap: each rail's span starts after the previous one ends.
+        let mut cursor = 0;
+        for (_, top, height) in &spans {
+            assert!(*top >= cursor, "rails overlap: {spans:?}");
+            cursor = top + height;
+        }
+    }
 }

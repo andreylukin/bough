@@ -6,6 +6,8 @@
 //!
 //! This pane IS §11's `trajectory` pane (P3-D4): it owns the live tail AND the scrollback.
 
+pub mod branches;
+pub mod claims;
 pub mod expand;
 pub mod invariant;
 pub mod rows;
@@ -33,8 +35,12 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+pub use branches::{branches_from_edges, Branch, BranchPicker, PickerOutcome};
+pub use claims::{claim_action_of_hit, hit_for_claim, ClaimAction};
 pub use expand::{call_of_hit, hit_for_call, Expanded};
-pub use rows::{rows_from_steps, trailing_durable, trailing_text_rows, Row};
+pub use rows::{
+    rows_from_steps, trailing_durable, trailing_text_row, trailing_text_rows, ClaimState, Row,
+};
 pub use scroll::Scroll;
 pub use stream::{apply_tee, tee_for, tee_stream, trailing_text, LiveText};
 
@@ -77,6 +83,11 @@ pub struct FocusState {
     pub lines: usize,
     /// `false` once the ledger has been paged back to the beginning of the trajectory.
     pub more_above: bool,
+    /// The focused agent's OWN trajectory, remembered while `traj` is overridden by a branch, so
+    /// `Esc` always returns to it (§11, `branches`).
+    pub home_traj: Option<TrajId>,
+    /// The branch picker, `^b`.
+    pub picker: BranchPicker,
 }
 
 impl FocusState {
@@ -118,6 +129,35 @@ impl FocusState {
     /// The oldest seq held, for paging further back.
     pub fn oldest_seq(&self) -> Option<Seq> {
         self.steps.first().map(|s| s.seq)
+    }
+
+    /// Show a branch: a PANE-LOCAL trajectory override. A fork has no agent, so this is never a
+    /// `FocusRequest`; `agent` deliberately does not move.
+    pub fn show_branch(&mut self, traj: TrajId, steps: Vec<Step>) {
+        if self.home_traj.is_none() {
+            self.home_traj = self.traj.clone();
+        }
+        self.traj = Some(traj);
+        self.set_steps(steps);
+        self.scroll = Scroll::Follow;
+        self.anchor = None;
+    }
+
+    /// Back to the agent's own chain. A no-op when no branch is being shown.
+    pub fn restore_own_chain(&mut self, steps: Vec<Step>) -> bool {
+        let Some(home) = self.home_traj.take() else {
+            return false;
+        };
+        self.traj = Some(home);
+        self.set_steps(steps);
+        self.scroll = Scroll::Follow;
+        self.anchor = None;
+        true
+    }
+
+    /// Whether the pane is showing a branch rather than the focused agent's own chain.
+    pub fn on_branch(&self) -> bool {
+        self.home_traj.is_some()
     }
 
     /// The row index of a step, for anchoring.
@@ -174,15 +214,23 @@ impl FocusPane {
         live: &LiveText,
         width: u16,
         theme: &Theme,
-    ) -> (Vec<Line<'static>>, Vec<(bough_plugin_llm::ToolCallId, u16)>) {
+    ) -> (
+        Vec<Line<'static>>,
+        Vec<(bough_plugin_llm::ToolCallId, u16)>,
+        Vec<claims::ClaimHit>,
+    ) {
+        // The picker takes the whole pane while it is open: it is a choice about WHAT the pane
+        // shows, and showing it beside the thing it would replace reads as two trajectories.
+        if state.picker.open {
+            return (state.picker.lines(width, theme), Vec::new(), Vec::new());
+        }
         let durable = trailing_durable(&state.rows);
-        // The flushes of ONE step index CONCATENATE into `durable`, so exactly one row of the
-        // trailing group may be drawn — the last — and it carries the whole concatenation. Drawing
-        // the earlier ones as well painted `chunk1` and then `chunk1+chunk2`, which is every
-        // answer that streamed for longer than the loop's `text_flush_ms` drawn twice.
-        let group = rows::trailing_text_rows(&state.rows);
+        // Since P5-D14 the flushes of one step index are already ONE row, so the only choice left
+        // here is P3-D12's: the trailing row draws either its durable text or the live tail.
+        let trailing = rows::trailing_text_row(&state.rows);
         let mut lines: Vec<Line<'static>> = Vec::new();
         let mut headers = Vec::new();
+        let mut claim_hits: Vec<claims::ClaimHit> = Vec::new();
 
         // The window is not the trajectory: `max_rows` steps back is as far as this pane holds,
         // and saying so is what stops an elided beginning from reading as the whole story.
@@ -209,21 +257,14 @@ impl FocusPane {
                     ]));
                 }
                 Row::Text { text, .. } => {
-                    match group.iter().position(|&g| g == i) {
-                        // An earlier flush of the trailing step: its text is already inside
-                        // `durable`, so drawing it here would draw it a second time.
-                        Some(pos) if pos + 1 != group.len() => continue,
-                        // The last flush of the trailing step. P3-D12: exactly one of the durable
-                        // concatenation and the live tail is drawn, chosen by length.
-                        Some(_) => lines.extend(bough_plugin_tui_render::markdownish(
-                            trailing_text(&durable, &live.text),
-                            width,
-                            theme,
-                        )),
-                        None => {
-                            lines.extend(bough_plugin_tui_render::markdownish(text, width, theme))
-                        }
-                    }
+                    // ONE paragraph, wrapped at `width`: the joined row is a single string, so it
+                    // flows rather than breaking at every flush boundary (the field bug).
+                    let shown = if Some(i) == trailing {
+                        trailing_text(&durable, &live.text)
+                    } else {
+                        text.as_str()
+                    };
+                    lines.extend(bough_plugin_tui_render::markdownish(shown, width, theme));
                 }
                 Row::Reasoning { text, .. } => {
                     if self.cfg.show_reasoning {
@@ -280,6 +321,27 @@ impl FocusPane {
                         Style::default().fg(theme.evidence),
                     ));
                 }
+                Row::Claim {
+                    claim,
+                    kind,
+                    title,
+                    body,
+                    state,
+                    ..
+                } => {
+                    let (card, regions) = claims::card(
+                        claim,
+                        kind,
+                        title,
+                        body,
+                        state,
+                        lines.len() as u16,
+                        width,
+                        theme,
+                    );
+                    lines.extend(card);
+                    claim_hits.extend(regions);
+                }
                 Row::Other { kind, .. } => {
                     // TOTAL: a type this binary does not know still gets a line, and never a panic.
                     lines.push(Line::styled(
@@ -303,12 +365,56 @@ impl FocusPane {
         }
         // The live tail of a turn whose first `thought/text` has not landed yet: without this the
         // first token of every answer would be invisible until the first flush.
-        if group.is_empty() && !live.text.is_empty() {
+        if trailing.is_none() && !live.text.is_empty() {
             lines.extend(bough_plugin_tui_render::markdownish(
                 &live.text, width, theme,
             ));
         }
-        (lines, headers)
+        (lines, headers, claim_hits)
+    }
+
+    /// Compute the focused agent's branches and open the picker over them. With no injected
+    /// handles the picker opens EMPTY rather than not at all: "no branches" is an answer.
+    pub async fn open_picker(&self) {
+        let traj = {
+            let held = self.state.lock();
+            held.home_traj.clone().or_else(|| held.traj.clone())
+        };
+        let branches = match (&self.deps, traj) {
+            (Some(deps), Some(traj)) => branches_for(&deps.ledger, &deps.agents, &traj).await,
+            _ => Vec::new(),
+        };
+        self.state.lock().picker.open_with(branches);
+    }
+
+    /// What the pane does with the picker's answer.
+    async fn after_picker(&self, out: PickerOutcome, cx: &PaneCx) -> PaneOutcome {
+        match out {
+            PickerOutcome::Ignored => PaneOutcome::Ignored,
+            PickerOutcome::Moved => {
+                cx.tui.redraw();
+                PaneOutcome::Handled
+            }
+            PickerOutcome::Show(traj) => {
+                let steps = match &self.deps {
+                    Some(deps) => newest_steps(&deps.ledger, &traj, self.cfg.max_rows).await,
+                    None => Vec::new(),
+                };
+                self.state.lock().show_branch(traj, steps);
+                cx.tui.redraw();
+                PaneOutcome::Handled
+            }
+            PickerOutcome::Restore => {
+                let home = self.state.lock().home_traj.clone();
+                let steps = match (&self.deps, &home) {
+                    (Some(deps), Some(t)) => newest_steps(&deps.ledger, t, self.cfg.max_rows).await,
+                    _ => Vec::new(),
+                };
+                self.state.lock().restore_own_chain(steps);
+                cx.tui.redraw();
+                PaneOutcome::Handled
+            }
+        }
     }
 
     /// PURE: a key ⇒ the next scroll state, or `None` if the key is not the pane's.
@@ -345,7 +451,7 @@ impl Pane for FocusPane {
         let live = self.live.lock().clone();
         let theme = *cx.theme();
         let area = cx.area;
-        let (lines, headers) = self.lines(&state, &live, area.width, &theme);
+        let (lines, headers, claim_hits) = self.lines(&state, &live, area.width, &theme);
         state.lines = lines.len();
         invariant::record_frame(&state.rows, &live);
         let top = state.scroll.top(lines.len(), area.height);
@@ -369,6 +475,24 @@ impl Pane for FocusPane {
                 expand::hit_for_call(&call),
             );
         }
+        for hit in claim_hits {
+            if hit.line < top as u16 {
+                continue;
+            }
+            let y = hit.line - top as u16;
+            if y >= area.height {
+                break;
+            }
+            cx.hit(
+                Rect {
+                    x: area.x + hit.x.min(area.width),
+                    y: area.y + y,
+                    width: hit.width.min(area.width.saturating_sub(hit.x)),
+                    height: 1,
+                },
+                hit.id,
+            );
+        }
         cx.frame
             .render_widget(Paragraph::new(lines).scroll((top as u16, 0)), area);
     }
@@ -376,6 +500,30 @@ impl Pane for FocusPane {
     async fn handle(&self, ev: PaneEvent, cx: PaneCx) -> PaneOutcome {
         match ev {
             PaneEvent::Click { hit, .. } => {
+                // A claim card's button. A click is Andrey's hand on the keyboard (§16), and it
+                // dispatches the SAME command line the keyboard path types, so the two surfaces
+                // cannot drift apart.
+                if let Some((claim, action)) = hit.as_ref().and_then(claims::claim_action_of_hit) {
+                    let body = {
+                        let state = self.state.lock();
+                        state
+                            .rows
+                            .iter()
+                            .find_map(|r| match r {
+                                Row::Claim { claim: c, body, .. } if *c == claim => {
+                                    Some(body.clone())
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_default()
+                    };
+                    let (line, run) = claims::line_for(&claim, action, &body);
+                    return if run {
+                        PaneOutcome::Command(line)
+                    } else {
+                        PaneOutcome::Compose(line)
+                    };
+                }
                 let out = {
                     let mut state = self.state.lock();
                     let mut expanded = std::mem::take(&mut state.expanded);
@@ -398,6 +546,21 @@ impl Pane for FocusPane {
                 PaneOutcome::Handled
             }
             PaneEvent::Key(key) => {
+                // The picker owns the keyboard while it is open, and `^b` is what opens it.
+                let picking = self.state.lock().picker.open;
+                if picking {
+                    let out = self.state.lock().picker.on_key(key);
+                    return self.after_picker(out, &cx).await;
+                }
+                if key.code == KeyCode::Char('b')
+                    && key
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::CONTROL)
+                {
+                    self.open_picker().await;
+                    cx.tui.redraw();
+                    return PaneOutcome::Handled;
+                }
                 let next = {
                     let state = self.state.lock();
                     self.scroll_for_key(key, &state)
@@ -442,6 +605,7 @@ impl Pane for FocusPane {
             ("PgUp/PgDn", "page"),
             ("End", "follow"),
             ("click", "expand a tool call"),
+            ("^b", "branches"),
         ]
     }
 }
@@ -465,6 +629,9 @@ pub async fn retarget(
             let mut held = state.lock();
             held.agent = Some(id);
             held.traj = traj;
+            // A new agent ends any branch view: the override belonged to the agent left behind.
+            held.home_traj = None;
+            held.picker = BranchPicker::default();
             held.set_steps(steps);
             held.scroll = Scroll::Follow;
             held.anchor = None;
@@ -477,6 +644,41 @@ pub async fn retarget(
         }
         held.anchor = Some(step);
     }
+}
+
+/// The focused trajectory's branches: its `EdgeKind::Ancestor` children, each labelled a LANE if
+/// an `agents` row lives on it and a FORK if none does (§4). Oldest first.
+pub async fn branches_for(
+    ledger: &LedgerHandle,
+    agents: &AgentsHandle,
+    traj: &TrajId,
+) -> Vec<Branch> {
+    let edges = ledger.0.edges(traj).await.unwrap_or_else(|e| {
+        tracing::warn!(target: "tui.focus", %traj, error = %e, "reading the trajectory's edges failed");
+        Vec::new()
+    });
+    // One snapshot of the roster, so the label is decided from ONE view of the world rather than
+    // re-read per child.
+    let lanes: Vec<(TrajId, bough_plugin_ledger::AgentName)> = agents
+        .list()
+        .iter()
+        .map(|a| (a.traj().clone(), a.name().clone()))
+        .collect();
+    let lane_of = |t: &TrajId| lanes.iter().find(|(lt, _)| lt == t).map(|(_, n)| n.clone());
+    let mut counted = branches_from_edges(&edges, traj, &lane_of, &|_| 0);
+    for b in counted.iter_mut() {
+        b.steps = ledger
+            .0
+            .steps(&StepQuery {
+                trajs: vec![b.traj.clone()],
+                order: Order::SeqDesc,
+                ..Default::default()
+            })
+            .await
+            .map(|s| s.len())
+            .unwrap_or(0);
+    }
+    counted
 }
 
 /// The newest `limit` steps of a trajectory, oldest first.

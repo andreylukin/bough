@@ -164,13 +164,51 @@ impl ScriptedDriver {
             .any(bough_plugin_agent_loop::mail::is_ordinary)
     }
 
+    /// Dispatch `agent/wake-request` at the agent's scope. The facts are the CALLER's: `notify`
+    /// has the message in hand, and reading "the oldest pending" here instead would name the
+    /// wrong trigger whenever a deferred item is still sitting in the queue.
+    async fn admission(
+        self: &Arc<Self>,
+        kind: bough_plugin_llm::WakeKind,
+        cause: bough_plugin_agents::WakeCause,
+        facts: Option<bough_plugin_agents::TriggerFacts>,
+    ) -> bough_plugin_agents::Admit {
+        let agent = self.cell.agent();
+        let out = bough_kernel::scope::scope_target(&self.env.ctx, agent.scope_key())
+            .waterfall::<bough_plugin_agents::AgentWakeRequest>(
+                bough_plugin_agents::WakeAdmission {
+                    agent: agent.name().clone(),
+                    id: agent.id().clone(),
+                    kind,
+                    cause,
+                    trigger: facts,
+                    at: chrono::Utc::now(),
+                    decision: bough_plugin_agents::Admit::Open,
+                },
+            )
+            .await;
+        out.decision
+    }
+
     /// Returns the id of the wake it opened, or `None` when none was.
     async fn spawn_wake(
         self: &Arc<Self>,
+        kind: bough_plugin_llm::WakeKind,
+        cause: bough_plugin_agents::WakeCause,
         trigger: Option<bough_plugin_ledger::StepId>,
+        facts: Option<bough_plugin_agents::TriggerFacts>,
     ) -> Option<bough_plugin_ledger::WakeId> {
         use std::sync::atomic::Ordering;
         if self.stopping.load(Ordering::SeqCst) {
+            return None;
+        }
+        // P5-D1: the SAME admission point the live loop has, so every test that proves dormancy
+        // proves it for both Providers. A `Defer` opens no wake and touches no status.
+        if let bough_plugin_agents::Admit::Defer { by, reason } =
+            self.admission(kind, cause, facts).await
+        {
+            tracing::debug!(agent = %self.cell.agent().name(), by, reason, "scripted wake deferred");
+            self.cell.wake_refused();
             return None;
         }
         if self.in_flight.fetch_add(1, Ordering::SeqCst) == 0
@@ -271,8 +309,8 @@ impl AgentDriver for ScriptedDriver {
     /// §5's catch-up (P3-D16): one scripted wake if the transcript has one left.
     async fn wake_now(
         &self,
-        _kind: bough_plugin_agents::WakeKind,
-        _cause: bough_plugin_agents::WakeCause,
+        kind: bough_plugin_agents::WakeKind,
+        cause: bough_plugin_agents::WakeCause,
     ) -> bough_plugin_agents::WakeRequest {
         use bough_plugin_agents::WakeRequest;
         let Some(me) = self.me.upgrade() else {
@@ -289,7 +327,15 @@ impl AgentDriver for ScriptedDriver {
         if !me.has_queued_work().await {
             return WakeRequest::Nothing;
         }
-        match me.spawn_wake(None).await {
+        let facts = [
+            bough_plugin_agents::Target::NextWake,
+            bough_plugin_agents::Target::NextStep,
+        ]
+        .into_iter()
+        .flat_map(|t| me.cell.agent().inbox().pending(t))
+        .next()
+        .map(|m| facts_of(&m));
+        match me.spawn_wake(kind, cause, None, facts).await {
             Some(wake) => WakeRequest::Started(wake),
             None => WakeRequest::Nothing,
         }
@@ -298,13 +344,27 @@ impl AgentDriver for ScriptedDriver {
     async fn notify(
         &self,
         receipt: &bough_plugin_agents::InboxReceipt,
-        _msg: &bough_plugin_agents::Message,
+        msg: &bough_plugin_agents::Message,
     ) {
         if !receipt.wake {
             return;
         }
+        // The cause is what an admission listener reads (P5-D1): Andrey always reactivates, and
+        // wake-class mail only reactivates a lane that asked for its class.
+        let (kind, cause) = if msg.is_andrey() {
+            (
+                bough_plugin_llm::WakeKind::Answer,
+                bough_plugin_agents::WakeCause::Andrey,
+            )
+        } else {
+            (
+                bough_plugin_llm::WakeKind::Catchup,
+                bough_plugin_agents::WakeCause::Mail { class: msg.class },
+            )
+        };
         if let Some(me) = self.me.upgrade() {
-            me.spawn_wake(Some(receipt.step.clone())).await;
+            me.spawn_wake(kind, cause, Some(receipt.step.clone()), Some(facts_of(msg)))
+                .await;
         }
     }
 
@@ -317,6 +377,17 @@ impl AgentDriver for ScriptedDriver {
             .store(true, std::sync::atomic::Ordering::SeqCst);
         // Drain: every permit back means every wake in flight has ended.
         let _ = self.wakes.acquire_many(MAX_WAKES_IN_FLIGHT).await;
+    }
+}
+
+/// The trigger facts of one message, so an admission listener never re-reads the inbox.
+fn facts_of(m: &bough_plugin_agents::Message) -> bough_plugin_agents::TriggerFacts {
+    bough_plugin_agents::TriggerFacts {
+        message: m.id.clone(),
+        from_andrey: m.is_andrey(),
+        class: m.class,
+        refs: m.refs.clone(),
+        mail_seq: m.mail_seq,
     }
 }
 

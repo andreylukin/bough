@@ -152,15 +152,36 @@ fn projection_digest(of_wake: &[Step], step_index: u32) -> Option<String> {
         .next_back()
 }
 
-/// The standing mail invariant, as a pure function (§5).
+/// The standing mail invariant, as a pure function (§5, and §1's dormancy clause).
+///
+/// Dormancy is folded PER TRAJECTORY from the `agent/dormancy` steps in the same stream (by step
+/// -type name, P3-D11): a sleeping lane's backlog is the state §5 describes, not a violation, and
+/// one lane's sleep must never excuse another's.
 pub fn evaluate_mail(steps: &[Step], drain_scheduled: bool) -> Result<(), String> {
     let consumed = crate::mail::consumed_union(steps);
     let unconsumed = crate::mail::unconsumed(steps, &consumed);
+    let dormant: BTreeSet<&str> = steps
+        .iter()
+        .map(|s| s.traj.as_str())
+        .collect::<BTreeSet<&str>>()
+        .into_iter()
+        .filter(|traj| {
+            let of_traj: Vec<Step> = steps
+                .iter()
+                .filter(|s| s.traj.as_str() == *traj)
+                .cloned()
+                .collect();
+            crate::mail::dormant_from_steps(&of_traj)
+        })
+        .collect();
     let ordinary = unconsumed
         .iter()
         .filter(|s| crate::mail::is_ordinary(s))
+        .filter(|s| !dormant.contains(s.traj.as_str()))
         .count();
-    if crate::mail::standing_invariant_holds(ordinary, drain_scheduled) {
+    // `dormant` is spent above, per trajectory; the predicate's own flag is `false` here because
+    // a stream with no sleeping lane left in it is an ordinary one.
+    if crate::mail::standing_invariant_holds(ordinary, drain_scheduled, false) {
         Ok(())
     } else {
         Err(format!(

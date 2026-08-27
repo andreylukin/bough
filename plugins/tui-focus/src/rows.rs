@@ -45,14 +45,32 @@ pub enum Row {
         text: String,
     },
     Text {
+        /// The FIRST step of the group: the click/flash anchor, and what [`Row::step`] returns.
         step: StepId,
+        /// Every step folded into this row, oldest first. `parts.len() > 1` is the joined case.
+        parts: Vec<StepId>,
         wake: WakeId,
         index: u32,
         text: String,
     },
     Reasoning {
         step: StepId,
+        /// Every step folded into this row, oldest first (the same rule as [`Row::Text`]).
+        parts: Vec<StepId>,
+        wake: WakeId,
+        index: u32,
         text: String,
+    },
+    /// A `claim/proposed` step, with its decision (if any) folded in from later `claim/accepted`
+    /// or `claim/rejected` steps of the same trajectory — BY NAME (P3-D11), so this crate gains
+    /// no dependency on `claims`.
+    Claim {
+        step: StepId,
+        claim: String,
+        kind: String,
+        title: String,
+        body: String,
+        state: ClaimState,
     },
     Tool {
         call: ToolCallId,
@@ -78,6 +96,36 @@ pub enum Row {
     },
 }
 
+/// Where a claim card stands. Folded from the `claim/accepted` / `claim/rejected` steps that
+/// name the same claim id, never asked of the `claims` seam: the pane reads the LEDGER BODY.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClaimState {
+    /// Proposed and undecided: the card draws its three hit regions.
+    Open,
+    Accepted {
+        edited: bool,
+    },
+    Rejected {
+        reason: String,
+    },
+}
+
+impl ClaimState {
+    /// The word the card shows.
+    pub fn word(&self) -> &'static str {
+        match self {
+            ClaimState::Open => "open",
+            ClaimState::Accepted { edited: false } => "accepted",
+            ClaimState::Accepted { edited: true } => "accepted (edited)",
+            ClaimState::Rejected { .. } => "rejected",
+        }
+    }
+
+    pub fn is_open(&self) -> bool {
+        matches!(self, ClaimState::Open)
+    }
+}
+
 impl Row {
     /// The step this row was built from. A `Tool` row names its CALL step: the result folded into
     /// it is the same row, which is what "no step is rendered twice" means for a tool call.
@@ -89,8 +137,18 @@ impl Row {
             | Row::Reasoning { step, .. }
             | Row::WakeMark { step, .. }
             | Row::About { step, .. }
+            | Row::Claim { step, .. }
             | Row::Other { step, .. } => step,
             Row::Tool { call_step, .. } => call_step,
+        }
+    }
+
+    /// Every durable step folded into this row, oldest first. One step for every row except a
+    /// joined `Text`/`Reasoning` group (P5-D14).
+    pub fn parts(&self) -> Vec<StepId> {
+        match self {
+            Row::Text { parts, .. } | Row::Reasoning { parts, .. } => parts.clone(),
+            other => vec![other.step().clone()],
         }
     }
 
@@ -111,30 +169,108 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
     let mut out: Vec<Row> = Vec::with_capacity(steps.len());
     // Where each call id's row sits, so a result folds into the call instead of appending.
     let mut by_call: BTreeMap<ToolCallId, usize> = BTreeMap::new();
+    // Where each claim id's card sits, so a decision folds into the card instead of appending.
+    let mut by_claim: BTreeMap<String, usize> = BTreeMap::new();
+    // P5-D14, the field bug: the durable steps of ONE model step are a SPLIT of one stream, so
+    // consecutive `thought/text` (or `thought/reasoning`) steps sharing `(wake, step_index)` are
+    // ONE row. `None` means the last row pushed cannot be joined onto — anything else in between
+    // (a tool call, a wake mark, a new step index, a new wake) breaks the group.
+    let mut open_group: Option<(usize, GroupKey)> = None;
 
     for step in steps {
         let kind = step.kind.as_str();
         if ENVELOPE.contains(&kind) {
             continue;
         }
+        // Every arm below except the two joining ones ends the open group; the joining arms set
+        // it. Spelled once here so a new row type cannot silently keep a group open across itself.
+        let was = open_group.take();
         match kind {
             "mail/delivered" => out.push(mail_row(step)),
-            "thought/text" => out.push(match body_str(step, "text") {
-                Some(text) => Row::Text {
-                    step: step.id.clone(),
+            "thought/text" | "thought/reasoning" => {
+                let text = match body_str(step, "text") {
+                    Some(text) => text,
+                    None => {
+                        out.push(other(step));
+                        continue;
+                    }
+                };
+                let key = GroupKey {
+                    text: kind == "thought/text",
                     wake: step.wake.clone(),
                     index: body_u32(step, "step_index"),
-                    text,
-                },
-                None => other(step),
-            }),
-            "thought/reasoning" => out.push(match body_str(step, "text") {
-                Some(text) => Row::Reasoning {
-                    step: step.id.clone(),
-                    text,
-                },
-                None => other(step),
-            }),
+                };
+                match was {
+                    // The join, and it is RAW CONCATENATION: the flush boundary is a timer, not a
+                    // sentence, and inserting a separator is exactly what put `"I'll run that"`
+                    // and `" shell command for you."` on two lines.
+                    Some((at, ref k)) if *k == key && at + 1 == out.len() => {
+                        match &mut out[at] {
+                            Row::Text { parts, text: t, .. }
+                            | Row::Reasoning { parts, text: t, .. } => {
+                                t.push_str(&text);
+                                parts.push(step.id.clone());
+                            }
+                            _ => {}
+                        }
+                        open_group = Some((at, key));
+                    }
+                    _ => {
+                        let row = if key.text {
+                            Row::Text {
+                                step: step.id.clone(),
+                                parts: vec![step.id.clone()],
+                                wake: key.wake.clone(),
+                                index: key.index,
+                                text,
+                            }
+                        } else {
+                            Row::Reasoning {
+                                step: step.id.clone(),
+                                parts: vec![step.id.clone()],
+                                wake: key.wake.clone(),
+                                index: key.index,
+                                text,
+                            }
+                        };
+                        open_group = Some((out.len(), key));
+                        out.push(row);
+                    }
+                }
+            }
+            // The claim card, read BY NAME (P3-D11).
+            "claim/proposed" => match claim_row(step) {
+                Some((claim, row)) => {
+                    by_claim.insert(claim, out.len());
+                    out.push(row);
+                }
+                None => out.push(other(step)),
+            },
+            "claim/accepted" | "claim/rejected" => {
+                let id = body_str(step, "claim").unwrap_or_default();
+                match by_claim.get(&id).copied() {
+                    Some(at) => {
+                        if let Row::Claim { state, .. } = &mut out[at] {
+                            *state = if kind == "claim/accepted" {
+                                ClaimState::Accepted {
+                                    edited: step
+                                        .body
+                                        .get("edited")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false),
+                                }
+                            } else {
+                                ClaimState::Rejected {
+                                    reason: body_str(step, "reason").unwrap_or_default(),
+                                }
+                            };
+                        }
+                    }
+                    // A decision whose proposal is not in this window (it paged out). Shown as
+                    // itself rather than dropped: the decision is the news.
+                    None => out.push(other(step)),
+                }
+            }
             "tool/call" => match tool_call_row(step) {
                 Some((call, row)) => {
                     by_call.insert(call, out.len());
@@ -194,6 +330,31 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
         }
     }
     out
+}
+
+/// What makes two consecutive durable steps ONE row: the same kind of thought, in the same wake,
+/// at the same model step index (P5-D14).
+#[derive(Clone, Debug, PartialEq)]
+struct GroupKey {
+    /// `true` for `thought/text`, `false` for `thought/reasoning`. The two never join together.
+    text: bool,
+    wake: WakeId,
+    index: u32,
+}
+
+fn claim_row(step: &Step) -> Option<(String, Row)> {
+    let claim = body_str(step, "claim")?;
+    Some((
+        claim.clone(),
+        Row::Claim {
+            step: step.id.clone(),
+            claim,
+            kind: body_str(step, "kind").unwrap_or_default(),
+            title: body_str(step, "title").unwrap_or_default(),
+            body: body_str(step, "body").unwrap_or_default(),
+            state: ClaimState::Open,
+        },
+    ))
 }
 
 fn other(step: &Step) -> Row {
@@ -269,51 +430,33 @@ fn body_u32(step: &Step, key: &str) -> u32 {
         .min(u32::MAX as u64) as u32
 }
 
-/// PURE: the durable text of the trailing step of `rows` — every `thought/text` row of the LAST
-/// step index, concatenated in order. That is the string the live tail is compared against
-/// (P3-D12), because `flush_text` drains its accumulator and the flushes concatenate.
+/// PURE: the durable text of the trailing [`Row::Text`] of `rows`. Since P5-D14 the flushes of
+/// one step index are already ONE row, so this is that row's text — the string the live tail is
+/// compared against (P3-D12).
 pub fn trailing_durable(rows: &[Row]) -> String {
-    let Some((wake, index)) = rows.iter().rev().find_map(|r| match r {
-        Row::Text { wake, index, .. } => Some((wake.clone(), *index)),
-        _ => None,
-    }) else {
-        return String::new();
-    };
     rows.iter()
-        .filter_map(|r| match r {
-            Row::Text {
-                wake: w,
-                index: i,
-                text,
-                ..
-            } if *w == wake && *i == index => Some(text.as_str()),
+        .rev()
+        .find_map(|r| match r {
+            Row::Text { text, .. } => Some(text.clone()),
             _ => None,
         })
-        .collect()
+        .unwrap_or_default()
 }
 
-/// PURE: the row indices of the trailing step's `thought/text` rows, oldest first.
-///
-/// The flushes of ONE step index concatenate (`trailing_durable`), so exactly one of them may be
-/// drawn — the last — carrying the whole concatenation. Rendering each of them with its own chunk
-/// as well painted `chunk1` and then `chunk1+chunk2` on screen: every answer that streamed for
-/// longer than `text_flush_ms` was drawn twice (the crate's own "no step is rendered twice").
-pub fn trailing_text_rows(rows: &[Row]) -> Vec<usize> {
-    let Some((wake, index)) = rows.iter().rev().find_map(|r| match r {
-        Row::Text { wake, index, .. } => Some((wake.clone(), *index)),
-        _ => None,
-    }) else {
-        return Vec::new();
-    };
+/// PURE: the row index of the trailing [`Row::Text`], or nothing. At most ONE index since the
+/// join (P5-D14): `lines()` chooses between that row's durable text and the live tail, and no
+/// longer has to skip earlier flushes of the same step.
+pub fn trailing_text_row(rows: &[Row]) -> Option<usize> {
     rows.iter()
         .enumerate()
-        .filter_map(|(i, r)| match r {
-            Row::Text {
-                wake: w, index: j, ..
-            } if *w == wake && *j == index => Some(i),
-            _ => None,
-        })
-        .collect()
+        .rev()
+        .find_map(|(i, r)| matches!(r, Row::Text { .. }).then_some(i))
+}
+
+/// The pre-join spelling, kept so the shape of the old call sites stays honest: a `Vec` of at
+/// most one index.
+pub fn trailing_text_rows(rows: &[Row]) -> Vec<usize> {
+    trailing_text_row(rows).into_iter().collect()
 }
 
 #[cfg(test)]

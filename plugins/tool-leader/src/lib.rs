@@ -32,8 +32,15 @@ impl Plugin for ToolLeaderPlugin {
         Inject::required(["leader", "tools", "claims", "graph"])
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-5: read ctx.leader.target() and register the five scoped tools")
+    async fn apply(ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        // The target comes from the BINDING, never from this row's config (P5-D10). Injecting
+        // `leader` is also what makes the move atomic: when the `leader` row reloads against a
+        // new `config.agent`, `ctx.leader` is withdrawn, this row unloads with it — taking the
+        // five tools out of the old agent's scope — and reloads against the new binding.
+        let leader = ctx
+            .get::<bough_plugin_leader::Leader>()
+            .map_err(|e| PluginError::new(ctx.entry_id().clone(), e))?;
+        tools::register(&ctx, &leader).await
     }
 
     fn invariants() -> Vec<InvariantSpec> {

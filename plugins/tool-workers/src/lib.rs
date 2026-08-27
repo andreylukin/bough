@@ -2,8 +2,8 @@
 //! nothing but translate arguments into a `StartWorker` / an `ask`, so the bounds, the seal and
 //! the durable chain cannot be bypassed by calling a tool instead of the handle.
 //!
-//! Two catalog rows in one crate (`tool-spawn_worker`, `tool-ask`): they share one argument
-//! vocabulary and neither has a life without the other.
+//! Three catalog rows in one crate (`tool-spawn_worker`, `tool-ask`, `tool-fork`): they share one
+//! argument vocabulary and one translation, and none has a life without the others.
 
 pub mod invariant;
 
@@ -29,6 +29,14 @@ pub struct SpawnArgs {
     pub tools: Option<Vec<String>>,
 }
 
+/// What `fork` takes from the model. No `tools` field: a fork continues the PARENT's line of work
+/// with the parent's own prefix, and narrowing its tools would make it something else.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct ForkArgs {
+    /// What the fork should do from where you are now.
+    pub task: String,
+}
+
 /// What `ask` takes from the model.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct AskArgs {
@@ -39,6 +47,53 @@ fn args_of<T: serde::de::DeserializeOwned>(call: &ToolCall) -> Result<T, ToolFai
     serde_json::from_value(call.args.clone()).map_err(|e| ToolFailure {
         kind: FailureClass::Error,
         message: format!("bad arguments for `{}`: {e}", call.name),
+    })
+}
+
+/// The translation both worker tools do: a `ToolCall` into a `StartWorker`. ONE spelling, so a
+/// fork and a spawn cannot drift apart in what they tell the seam (§10).
+async fn start_request(
+    kind: WorkerKind,
+    call: &ToolCall,
+    cx: &ToolCx,
+    task: String,
+    tools: Option<Restrict>,
+) -> Result<StartWorker, ToolFailure> {
+    let workers = cx.ctx.get::<Workers>().map_err(|e| ToolFailure {
+        kind: FailureClass::NotFound,
+        message: format!("workers seam unavailable: {e}"),
+    })?;
+    // §2: an opaque id is a BRAND, not a spelling. `AgentId` is a uuidv7 minted by
+    // `AgentsHandle`, so it is looked up from the live registry by name.
+    let agents = cx
+        .ctx
+        .get::<bough_plugin_agents::Agents>()
+        .map_err(|e| ToolFailure {
+            kind: FailureClass::NotFound,
+            message: format!("agents registry unavailable: {e}"),
+        })?;
+    let spawner_id = agents
+        .by_name(&call.agent)
+        .map(|a| a.id().clone())
+        .ok_or_else(|| ToolFailure {
+            kind: FailureClass::NotFound,
+            message: format!("no live agent named `{}` to start a worker for", call.agent),
+        })?;
+    Ok(StartWorker {
+        kind,
+        spawner: call.agent.clone(),
+        spawner_id,
+        wake: call.wake.clone(),
+        // §7's idem/cite formula wants the TRIGGERING step. A `ToolCall` carries no step id
+        // (P2 seam gap), so the call id names the trigger; it is unique per step and is what
+        // the durable `tool/call` row is keyed by.
+        step: bough_plugin_ledger::StepId::new(format!("toolcall:{}", call.id)),
+        depth: workers.depth_of(&call.agent).saturating_add(1),
+        task,
+        seal: SealSpec::report(),
+        tools,
+        ask_mode: workers.default_ask_mode(),
+        at: chrono::Utc::now(),
     })
 }
 
@@ -73,41 +128,12 @@ impl Tool for SpawnWorkerTool {
 
     async fn call(&self, call: Arc<ToolCall>, cx: ToolCx) -> Result<ToolOutcome, ToolFailure> {
         let args: SpawnArgs = args_of(&call)?;
-        let workers = cx.ctx.get::<Workers>().map_err(|e| ToolFailure {
-            kind: FailureClass::NotFound,
-            message: format!("workers seam unavailable: {e}"),
-        })?;
-        // §2: an opaque id is a BRAND, not a spelling. `AgentId` is a uuidv7 minted by
-        // `AgentsHandle`, so it is looked up from the live registry by name; stuffing the NAME
-        // into the brand made the type look authoritative while carrying a value no registry
-        // lookup could ever match.
-        let agents = cx
-            .ctx
-            .get::<bough_plugin_agents::Agents>()
-            .map_err(|e| ToolFailure {
-                kind: FailureClass::NotFound,
-                message: format!("agents registry unavailable: {e}"),
-            })?;
-        let spawner_id = agents
-            .by_name(&call.agent)
-            .map(|a| a.id().clone())
-            .ok_or_else(|| ToolFailure {
-                kind: FailureClass::NotFound,
-                message: format!("no live agent named `{}` to spawn a worker for", call.agent),
-            })?;
-        let req = StartWorker {
-            kind: WorkerKind::Spawn,
-            spawner: call.agent.clone(),
-            spawner_id,
-            wake: call.wake.clone(),
-            // §7's idem/cite formula wants the TRIGGERING step. A `ToolCall` carries no step id
-            // (P2 seam gap), so the call id names the trigger; it is unique per step and is what
-            // the durable `tool/call` row is keyed by.
-            step: bough_plugin_ledger::StepId::new(format!("toolcall:{}", call.id)),
-            depth: workers.depth_of(&call.agent).saturating_add(1),
-            task: args.task,
-            seal: SealSpec::report(),
-            tools: args.tools.map(|names| Restrict {
+        let req = start_request(
+            WorkerKind::Spawn,
+            &call,
+            &cx,
+            args.task,
+            args.tools.map(|names| Restrict {
                 allow: Some(
                     names
                         .into_iter()
@@ -116,9 +142,12 @@ impl Tool for SpawnWorkerTool {
                 ),
                 deny: BTreeSet::new(),
             }),
-            ask_mode: workers.default_ask_mode(),
-            at: chrono::Utc::now(),
-        };
+        )
+        .await?;
+        let workers = cx.ctx.get::<Workers>().map_err(|e| ToolFailure {
+            kind: FailureClass::NotFound,
+            message: format!("workers seam unavailable: {e}"),
+        })?;
         let result = workers.start(&cx.ctx, req).await.map_err(|e| ToolFailure {
             kind: FailureClass::Blocked,
             message: e.to_string(),
@@ -225,6 +254,52 @@ impl Tool for AskTool {
     }
 }
 
+/// The `fork` tool.
+pub struct ForkTool;
+
+impl ForkTool {
+    pub fn spec() -> ToolSpec {
+        ToolSpec {
+            name: ToolName::new("fork"),
+            description: "Continue a line of work in a branch of THIS conversation: the fork sees \
+                          everything you see, does one task, reports once, and disappears. Use it \
+                          when the task needs your context; use `spawn_worker` when it does not."
+                .to_string(),
+            input_schema: schemars::SchemaGenerator::default().into_root_schema_for::<ForkArgs>(),
+            render: RenderIntent::Generic,
+            scope: ToolScope::Global,
+            tool: Arc::new(ForkTool),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for ForkTool {
+    /// A fork holds no lock on the parent: the bound, not this flag, is what limits how many run.
+    fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
+        true
+    }
+
+    async fn call(&self, call: Arc<ToolCall>, cx: ToolCx) -> Result<ToolOutcome, ToolFailure> {
+        let args: ForkArgs = args_of(&call)?;
+        let req = start_request(WorkerKind::Fork, &call, &cx, args.task, None).await?;
+        let workers = cx.ctx.get::<Workers>().map_err(|e| ToolFailure {
+            kind: FailureClass::NotFound,
+            message: format!("workers seam unavailable: {e}"),
+        })?;
+        let result = workers.start(&cx.ctx, req).await.map_err(|e| ToolFailure {
+            // A kind with no Provider is a COMPOSITION fact, not a transient block: the model is
+            // told the door does not exist here rather than invited to retry it.
+            kind: match e {
+                bough_plugin_workers::WorkerError::NoProvider(_) => FailureClass::NotFound,
+                _ => FailureClass::Blocked,
+            },
+            message: e.to_string(),
+        })?;
+        Ok(render(&result))
+    }
+}
+
 /// No configuration: everything that varies is on the `workers` row.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -272,7 +347,30 @@ impl Plugin for AskToolPlugin {
     }
 }
 
+/// The `tool-fork` row. Registered whether or not a fork Provider is mounted: a tool that
+/// vanishes with its provider would make the model's schema a function of the composition, and
+/// `workers` already answers `NoProvider` in one clear sentence (§10).
+pub struct ForkToolPlugin;
+
+#[async_trait::async_trait]
+impl Plugin for ForkToolPlugin {
+    const NAME: &'static str = "tool-fork";
+    type Config = ToolWorkersConfig;
+
+    fn inject() -> bough_kernel::Inject {
+        bough_kernel::Inject::required(["tools", "workers", "agents"])
+    }
+
+    async fn apply(ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let tools = ctx.get::<Tools>().map_err(|e| PluginError::new(entry, e))?;
+        tools.register(&ctx, ForkTool::spec()).await?;
+        Ok(())
+    }
+}
+
 bough_kernel::register_plugin!(SpawnWorkerToolPlugin);
+bough_kernel::register_plugin!(ForkToolPlugin);
 bough_kernel::register_plugin!(AskToolPlugin);
 
 #[cfg(test)]

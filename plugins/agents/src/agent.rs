@@ -137,6 +137,14 @@ impl Agent {
     pub(crate) fn arm_pending_wake(&self) {
         self.0.pending_wake.store(true, Ordering::SeqCst);
     }
+    /// A wake that was ARMED and then refused admission (P5-D1): the flag goes down and the
+    /// idle waiters are told, because no wake will ever come to clear it. Without this a lane put
+    /// to sleep between the splice and the wake latches `pending_wake` forever and `when_idle()`
+    /// never returns.
+    pub(crate) fn refuse_pending_wake(&self) {
+        self.0.pending_wake.store(false, Ordering::SeqCst);
+        self.0.idle.notify_waiters();
+    }
     pub(crate) fn clear_pending_wake(&self) {
         self.0.pending_wake.store(false, Ordering::SeqCst);
     }

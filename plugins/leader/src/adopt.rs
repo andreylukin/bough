@@ -24,3 +24,57 @@ pub struct AdoptReport {
     /// Items the leader could not place. They stay in the queue.
     pub held: Vec<StepId>,
 }
+
+/// PURE: which candidates are placed and which are held.
+///
+/// `candidates` is the queue as read (oldest first); `placements` is what the leader decided. An
+/// item with no placement is HELD — the whole point of the type: holding is a legitimate outcome,
+/// and a leader that had to name a lane for every item would push mail into the nearest one.
+///
+/// A placement naming a step that is not a candidate is IGNORED rather than obeyed: `adopt` may be
+/// called with an explicit, bounded batch, and honouring a placement outside it would let one
+/// pass consume items the caller never looked at.
+pub fn plan(
+    candidates: &[StepId],
+    placements: &[(StepId, AgentName)],
+) -> (Vec<(StepId, AgentName)>, Vec<StepId>) {
+    let mut adopted = Vec::new();
+    let mut held = Vec::new();
+    for step in candidates {
+        match placements.iter().find(|(s, _)| s == step) {
+            Some((_, agent)) => adopted.push((step.clone(), agent.clone())),
+            None => held.push(step.clone()),
+        }
+    }
+    (adopted, held)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s(id: &str) -> StepId {
+        StepId::new(id)
+    }
+
+    #[test]
+    fn an_item_with_no_placement_is_held() {
+        let (adopted, held) = plan(&[s("u1"), s("u2")], &[(s("u1"), AgentName::new("terra"))]);
+        assert_eq!(adopted, vec![(s("u1"), AgentName::new("terra"))]);
+        assert_eq!(held, vec![s("u2")]);
+    }
+
+    #[test]
+    fn a_placement_outside_the_batch_is_ignored() {
+        let (adopted, held) = plan(&[s("u1")], &[(s("u9"), AgentName::new("terra"))]);
+        assert!(adopted.is_empty());
+        assert_eq!(held, vec![s("u1")], "the batch's own item is still held");
+    }
+
+    #[test]
+    fn the_plan_is_total_over_the_batch() {
+        let batch = vec![s("u1"), s("u2"), s("u3")];
+        let (adopted, held) = plan(&batch, &[(s("u2"), AgentName::new("sol"))]);
+        assert_eq!(adopted.len() + held.len(), batch.len());
+    }
+}

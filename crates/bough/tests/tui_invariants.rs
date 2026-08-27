@@ -72,6 +72,7 @@ async fn a_planted_focus_frame_that_renders_a_step_twice_is_reported() {
     use bough_plugin_tui_focus::{LiveText, Row};
     let row = |n: u64| Row::Text {
         step: StepId::new(format!("planted-{n}")),
+        parts: vec![StepId::new(format!("planted-{n}"))],
         wake: WakeId::new("w-planted"),
         index: 0,
         text: "the durable text".to_string(),

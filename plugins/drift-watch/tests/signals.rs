@@ -42,7 +42,7 @@ async fn signals_are_read_only_and_append_nothing() {
     );
     assert!(
         matches!(signals.claim_rejection, SignalState::Inactive { .. }),
-        "the claim-rejection signal is inactive until Phase 5: {signals:?}"
+        "the seeded window decides no claim, so the rate is not a number: {signals:?}"
     );
     assert!(
         !signals.flags.contains(&DriftFlag::TooFewSamples),

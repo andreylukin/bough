@@ -10,6 +10,15 @@ use crate::plan::UndoShape;
 /// The owner string every step type below is registered under.
 pub const OWNER: &str = "graph-ops";
 
+/// `graph/split`.
+pub const GRAPH_SPLIT: &str = "graph/split";
+/// `graph/merge`.
+pub const GRAPH_MERGE: &str = "graph/merge";
+/// `graph/bud` — a fork is a bud with `agent: None`.
+pub const GRAPH_BUD: &str = "graph/bud";
+/// `graph/undo`.
+pub const GRAPH_UNDO: &str = "graph/undo";
+
 /// One child of a split or a bud, as the step records it.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ChildRecord {
@@ -69,7 +78,14 @@ pub struct GraphUndo {
     pub by: Attribution,
 }
 
-/// Declare this crate's four step types on the bound ledger. Called once, from `apply`.
-pub fn declare(_ledger: &bough_plugin_ledger::LedgerHandle) -> Result<(), crate::GraphError> {
-    todo!("WP-3: declare graph/split, graph/merge, graph/bud, graph/undo as Evidence")
+/// The four step types this row declares. All EVIDENCE: a structure change is a fact and the
+/// ledger itself refuses one that cannot say what justified it.
+pub fn step_types() -> Vec<bough_plugin_ledger::StepTypeDef> {
+    use bough_plugin_ledger::{ClassRule, StepTypeDef};
+    vec![
+        StepTypeDef::of::<GraphSplit>(GRAPH_SPLIT, OWNER).class_rule(ClassRule::Evidence),
+        StepTypeDef::of::<GraphMerge>(GRAPH_MERGE, OWNER).class_rule(ClassRule::Evidence),
+        StepTypeDef::of::<GraphBud>(GRAPH_BUD, OWNER).class_rule(ClassRule::Evidence),
+        StepTypeDef::of::<GraphUndo>(GRAPH_UNDO, OWNER).class_rule(ClassRule::Evidence),
+    ]
 }

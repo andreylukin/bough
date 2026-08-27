@@ -87,6 +87,32 @@ impl ProjectionHandle {
         })
         .await
     }
+
+    /// [`Projector::pin_prefix`] as an EFFECT (P5-D12). The pin unwinds with whatever registered
+    /// it — in practice the child agent's setup — so nothing global remembers a fork's prefix
+    /// once the fork is gone.
+    ///
+    /// DEVIATION from plan §2.7, which lists the trait method alone: a Provider lives in another
+    /// crate and every other registration on this handle is an effect, so the Definition offers
+    /// the wrapper rather than leaving each caller to write it.
+    pub async fn pin_prefix(
+        &self,
+        ctx: &Context,
+        agent: AgentName,
+        prefix: Assembled,
+        source: PrefixSource,
+    ) -> Result<EffectHandle, PluginError> {
+        let projector = self.0.clone();
+        let entry = ctx.entry_id().clone();
+        ctx.effect(move |e| async move {
+            let token = projector
+                .pin_prefix(agent, prefix, source)
+                .map_err(|err| PluginError::new(entry, anyhow::Error::new(err)))?;
+            e.defer_sync(move || token.remove());
+            Ok(())
+        })
+        .await
+    }
 }
 
 /// Where a pinned prefix came from. Written durably as `fork/prefix` by `worker-fork`, so §0.2's

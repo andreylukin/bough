@@ -80,6 +80,13 @@ impl AgentCell {
         self.agent.clear_pending_wake();
     }
 
+    /// The other outcome of an armed wake: `agent/wake-request` refused it, so no wake will start
+    /// and nothing else would ever lower the flag (P5-D1). Idle waiters are notified, because an
+    /// agent whose only pending wake was refused IS idle.
+    pub fn wake_refused(&self) {
+        self.agent.refuse_pending_wake();
+    }
+
     /// A pure DELETION splice (§5): appends one `inbox/spliced { op: claim }` per message.
     pub async fn claim(
         &self,

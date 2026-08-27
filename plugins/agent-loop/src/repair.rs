@@ -20,6 +20,10 @@ pub struct Repair {
     pub at: DateTime<Utc>,
 }
 
+/// The only step types [`plan_all`] reads. Kept next to it so the read filter in [`run`] and the
+/// pure planner cannot drift apart.
+pub const REPAIR_KINDS: [&str; 4] = ["wake/start", "wake/end", "tool/call", "tool/result"];
+
 /// Decide the repair for one trajectory's tail: one [`Repair`] per orphaned wake, oldest first.
 ///
 /// EVERY unclosed wake is repaired, not only the trailing one. §5's checkpoint-and-answer opens
@@ -101,6 +105,13 @@ pub async fn run(
             .0
             .steps(&StepQuery {
                 trajs: vec![row.traj.clone()],
+                // Only the four types repair reasons about. This is not an optimisation: repair
+                // runs inside `apply`, BEFORE every other row has declared its own step types, and
+                // an unfiltered read refuses any row whose type is not yet registered
+                // (`UnknownStepTypeOnRead`, §3/P1-D7). A tree that had once written a step owned by
+                // a later-applying row could therefore never boot a second time. The kinds below
+                // are ledger-core vocabulary, always declared, so the filter is total.
+                kinds: REPAIR_KINDS.iter().map(|k| StepType::new(*k)).collect(),
                 ..Default::default()
             })
             .await

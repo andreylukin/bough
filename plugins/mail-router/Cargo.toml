@@ -27,4 +27,5 @@ parking_lot = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+uuid = { workspace = true }
 bough-plugin-ledger-memory = { workspace = true }

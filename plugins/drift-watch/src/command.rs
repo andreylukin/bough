@@ -317,7 +317,10 @@ mod tests {
         assert!(text.contains("cv=0.17"), "{text}");
         assert!(text.contains("bash 100%"), "{text}");
         assert!(text.contains("claim rejection: inactive"), "{text}");
-        assert!(text.contains("phase 5"), "{text}");
+        assert!(
+            text.contains("no claim in the window has been decided"),
+            "{text}"
+        );
         assert!(text.contains("flags: tool_use_collapsed"), "{text}");
     }
 

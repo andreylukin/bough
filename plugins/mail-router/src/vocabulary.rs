@@ -48,7 +48,17 @@ pub struct AgentRouting {
     pub by: Attribution,
 }
 
-/// Declare this crate's four step types on the bound ledger. Called once, from `apply`.
-pub fn declare(_ledger: &bough_plugin_ledger::LedgerHandle) -> Result<(), crate::MailError> {
-    todo!("WP-1: declare mail/unrouted, mail/adopted, leader/question, agent/routing")
+/// This crate's four step types, for `LedgerHandle::declare_step_types`.
+///
+/// Three are Evidence, so the ledger itself refuses one without cites: an unrouted item that
+/// cannot say where it came from, or an adoption nobody can attribute, is not appendable.
+/// `leader/question` is the Thought, because a question is not truth (§16).
+pub fn step_types() -> Vec<bough_plugin_ledger::StepTypeDef> {
+    use bough_plugin_ledger::{ClassRule, StepTypeDef};
+    vec![
+        StepTypeDef::of::<MailUnrouted>("mail/unrouted", OWNER).class_rule(ClassRule::Evidence),
+        StepTypeDef::of::<MailAdopted>("mail/adopted", OWNER).class_rule(ClassRule::Evidence),
+        StepTypeDef::of::<LeaderQuestion>("leader/question", OWNER).class_rule(ClassRule::Thought),
+        StepTypeDef::of::<AgentRouting>("agent/routing", OWNER).class_rule(ClassRule::Evidence),
+    ]
 }

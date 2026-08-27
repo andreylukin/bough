@@ -70,6 +70,7 @@
     deny_globs: []
 - id: agents
   plugin: agents
+
 - id: agent.loop
   plugin: agent-loop
   config:
@@ -153,3 +154,43 @@
     # is the same quantity the `about-line` row carries as `max_state_chars`: patch both together.
     max_evidence_cites: 24
     max_state_chars: 400
+# Phase 5 (§17 Phase 5): routing, dormancy, claims and graph ops are NOT terminal features, so
+# they live here and not in `bough-tui-app` — a headless tree routes mail, sleeps a lane and
+# splits a trajectory exactly as the TUI one does. The `leader` set is the exception and lives in
+# `bough-tui-app`: it is a per-agent scope mount, and which agent holds it is Andrey's choice.
+#
+# `dormancy` is the row that owns the `agent/wake-request` admission point (P5-D1); with it
+# absent the waterfall's default is `Admit::Open` and the tree behaves exactly as Phase 4's did.
+- id: mail
+  plugin: mail-router
+  config:
+    unsorted_traj: "unsorted"
+    unsorted_limit: 200
+    # NOT a dormancy switch: §5 says mail QUEUES for a dormant agent, so delivery happens and the
+    # WAKE is what dormancy suppresses.
+    deliver_to_dormant: true
+- id: dormancy
+  plugin: dormancy
+  config:
+    reload_at_activation: true
+- id: graph
+  plugin: graph-ops
+  config:
+    max_children: 2
+    digest_on_fork: false
+    question_on_ambiguity: true
+- id: claims
+  plugin: claims
+  config:
+    open_limit: 50
+- id: lane.scope
+  plugin: lane-scope
+  config:
+    default_persona: null
+    lanes: []
+- id: worker.fork
+  plugin: worker-fork
+  config:
+    max_steps: 24
+- id: tool.fork
+  plugin: tool-fork

@@ -565,6 +565,50 @@ pub async fn an_unknown_type_is_refused_on_read(f: &Fixture) {
     }
 }
 
+/// Conformance case: `a_kind_restricted_read_never_meets_an_unknown_type`.
+///
+/// A reader that names the types it wants must be able to read them out of a chain that also
+/// holds a row of a type this binary has not declared. Crash repair is the caller this exists
+/// for: it runs at `apply`, before every other row has declared its own vocabulary, and an
+/// unfiltered read of a tree that had ever written a later row's step type would refuse — so the
+/// tree could never boot a second time. The kind filter is therefore part of what is READ, not a
+/// filter applied to rows already materialized.
+pub async fn a_kind_restricted_read_never_meets_an_unknown_type(f: &Fixture) {
+    let t = traj("t1");
+    let w = wake("w1");
+    let token = f
+        .ledger
+        .0
+        .register_step_type(StepTypeDef::of::<ProbeNote>("probe/opaque", "probe"))
+        .expect("a fresh type registers");
+    let kept = ok(f, thought(&t, &w, "pin/set", pin_set("t", "x", &[]))).await;
+    ok(
+        f,
+        thought(
+            &t,
+            &w,
+            "probe/opaque",
+            serde_json::json!({ "text": "hello" }),
+        ),
+    )
+    .await;
+    token.unregister();
+
+    // Unrestricted, the same chain is refused — that half is `an_unknown_type_is_refused_on_read`.
+    let steps = f
+        .ledger
+        .0
+        .steps(&StepQuery {
+            trajs: vec![t.clone()],
+            kinds: vec![StepType::new("pin/set")],
+            ..Default::default()
+        })
+        .await
+        .expect("a read restricted to a declared type is not refused by an undeclared row");
+    assert_eq!(steps.len(), 1, "only the named type comes back");
+    assert_eq!(steps[0].id, kept.id);
+}
+
 /// Conformance case: `an_unknown_ignorable_type_is_skipped_and_counted`.
 pub async fn an_unknown_ignorable_type_is_skipped_and_counted(f: &Fixture) {
     let t = traj("t1");
@@ -2060,6 +2104,7 @@ macro_rules! ledger_conformance {
             step_refs_are_the_union_and_the_caller_cannot_set_them,
             an_unregistered_type_is_refused_on_append,
             an_unknown_type_is_refused_on_read,
+            a_kind_restricted_read_never_meets_an_unknown_type,
             an_unknown_ignorable_type_is_skipped_and_counted,
             seq_starts_at_one_per_trajectory,
             seq_has_no_gaps,

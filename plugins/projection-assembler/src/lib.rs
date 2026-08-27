@@ -8,6 +8,7 @@ pub mod bands;
 pub mod degrade;
 pub mod expiry;
 pub mod invariant;
+pub mod pin;
 pub mod registry;
 pub mod resolve;
 
@@ -80,6 +81,8 @@ pub struct Assembler {
     pub(crate) cfg: Arc<AssemblerConfig>,
     pub(crate) ledger: LedgerHandle,
     pub(crate) registry: Arc<Registry>,
+    /// Standing pinned prefixes, by agent (P5-D12). A pin short-circuits assembly for ONE agent.
+    pub(crate) pins: Arc<crate::pin::PinStore>,
     /// The provider's captured context: the `projection/assemble` waterfall dispatches from it.
     pub(crate) ctx: Context,
 }
@@ -91,6 +94,7 @@ impl Assembler {
             cfg,
             ledger,
             registry: Arc::new(Registry::default()),
+            pins: Arc::new(crate::pin::PinStore::default()),
             ctx,
         })
     }
@@ -109,17 +113,22 @@ impl Projector for Assembler {
     fn section(&self, spec: SectionSpec) -> Result<SectionToken, ProjectionError> {
         self.registry.add(spec)
     }
+    /// A PINNED agent's projection is not assembled at all: the pinned bytes are returned
+    /// verbatim, whatever the request's budget or `as_of` says (P5-D12). Every other agent
+    /// assembles normally.
     async fn assemble(&self, req: &AssembleRequest) -> Result<Assembled, ProjectionError> {
+        if let Some(pinned) = self.pins.get(&req.agent) {
+            return Ok(pinned);
+        }
         crate::assemble::assemble(self, req).await
     }
-    /// WP-6 fills this: the pin store lives in `pin.rs` and `assemble` short-circuits on it.
     fn pin_prefix(
         &self,
-        _agent: bough_plugin_ledger::AgentName,
-        _prefix: bough_plugin_projection::Assembled,
-        _source: bough_plugin_projection::PrefixSource,
+        agent: bough_plugin_ledger::AgentName,
+        prefix: bough_plugin_projection::Assembled,
+        source: bough_plugin_projection::PrefixSource,
     ) -> Result<bough_plugin_projection::PrefixToken, ProjectionError> {
-        todo!("WP-6: pin the prefix for one agent and return its disposer")
+        Ok(self.pins.pin(agent, prefix, source))
     }
     async fn file_view(&self, req: &FileViewRequest) -> Result<String, ProjectionError> {
         let view = self.ledger.0.trajectory_view(&req.traj).await?;

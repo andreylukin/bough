@@ -96,8 +96,27 @@ impl MemoryStore {
 
     /// Every readable row of `traj`, oldest first.
     pub(crate) fn readable(&self, inner: &Inner, traj: &TrajId) -> Result<Vec<Step>, LedgerError> {
+        self.readable_of_kinds(inner, traj, &[])
+    }
+
+    /// Every readable row of `traj` whose type is in `kinds` (empty ⇒ every type), oldest first.
+    ///
+    /// The kind filter is applied BEFORE the unknown-type rule, because on the sqlite provider it
+    /// is a `WHERE s.type IN (…)` and a row the query excluded is never materialized at all. A
+    /// caller that names the types it reads — crash repair naming its four — therefore gets the
+    /// same answer from both providers even when the chain also holds a row of a type this binary
+    /// has not declared (§3, P1-D7).
+    pub(crate) fn readable_of_kinds(
+        &self,
+        inner: &Inner,
+        traj: &TrajId,
+        kinds: &[bough_plugin_ledger::StepType],
+    ) -> Result<Vec<Step>, LedgerError> {
         let mut out = Vec::new();
         for s in inner.steps.get(traj).map(Vec::as_slice).unwrap_or(&[]) {
+            if !kinds.is_empty() && !kinds.contains(&s.kind) {
+                continue;
+            }
             if self.admit(s)? {
                 out.push(s.clone());
             }
@@ -111,15 +130,16 @@ impl MemoryStore {
         &self,
         inner: &Inner,
         trajs: &[TrajId],
+        kinds: &[bough_plugin_ledger::StepType],
     ) -> Result<Vec<Step>, LedgerError> {
         let mut out = Vec::new();
         if trajs.is_empty() {
             for traj in inner.steps.keys() {
-                out.extend(self.readable(inner, traj)?);
+                out.extend(self.readable_of_kinds(inner, traj, kinds)?);
             }
         } else {
             for traj in trajs {
-                out.extend(self.readable(inner, traj)?);
+                out.extend(self.readable_of_kinds(inner, traj, kinds)?);
             }
         }
         Ok(out)

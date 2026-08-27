@@ -39,6 +39,18 @@ pub fn inheritance_id(traj: &bough_plugin_ledger::TrajId, gen: u32) -> RollupId 
     }
 }
 
+/// The id of a RECONCILIATION digest (P5-D13): the one block a merge produces over the two
+/// trajectories it joined. A third namespace, for the same reason as the second — a reconciliation
+/// is not the head's standing digest and neither supersedes the other — and the kind on the row is
+/// [`RollupKind::Reconciliation`], so `graph-ops` can find it by kind alone.
+pub fn recon_id(traj: &bough_plugin_ledger::TrajId, gen: u32) -> RollupId {
+    if gen == 0 {
+        RollupId::new(format!("recon:{traj}"))
+    } else {
+        RollupId::new(format!("recon:{traj}#g{gen}"))
+    }
+}
+
 /// PURE: which trajectories a rebuild reads raw evidence from, and which id namespace it writes.
 /// The one place the standing/inheritance split is decided (§0.2: `resolve(request) -> Spec`).
 pub struct DigestSpec {
@@ -47,6 +59,42 @@ pub struct DigestSpec {
     /// `src_trajs` on the sealed row: what this digest is a digest OF.
     pub src_trajs: Vec<bough_plugin_ledger::TrajId>,
     pub inheritance: bool,
+    /// P5-D13: the same two-parent input, in the `recon:` namespace and at
+    /// [`RollupKind::Reconciliation`]. `false` everywhere but a merge.
+    pub reconcile: bool,
+}
+
+impl DigestSpec {
+    /// The id namespace this spec writes in, at generation `gen`.
+    pub fn id(&self, traj: &bough_plugin_ledger::TrajId, gen: u32) -> RollupId {
+        if self.reconcile {
+            recon_id(traj, gen)
+        } else if self.inheritance {
+            inheritance_id(traj, gen)
+        } else {
+            digest_id(traj, gen)
+        }
+    }
+
+    /// The id prefix of the live block this spec would replace.
+    pub fn prefix(&self, traj: &bough_plugin_ledger::TrajId) -> String {
+        if self.reconcile {
+            format!("recon:{traj}")
+        } else if self.inheritance {
+            format!("digest:{traj}:inherited")
+        } else {
+            format!("digest:{traj}")
+        }
+    }
+
+    /// The kind the sealed row carries.
+    pub fn kind(&self) -> RollupKind {
+        if self.reconcile {
+            RollupKind::Reconciliation
+        } else {
+            RollupKind::Digest
+        }
+    }
 }
 
 pub fn spec_of(req: &DigestRequest) -> DigestSpec {
@@ -55,12 +103,14 @@ pub fn spec_of(req: &DigestRequest) -> DigestSpec {
             sources: vec![req.traj.clone()],
             src_trajs: vec![req.traj.clone()],
             inheritance: false,
+            reconcile: false,
         }
     } else {
         DigestSpec {
             sources: req.parents.clone(),
             src_trajs: req.parents.clone(),
             inheritance: true,
+            reconcile: req.reconcile,
         }
     }
 }
@@ -96,7 +146,7 @@ pub async fn rebuild(
     // an id that is already sealed (`ledger-sqlite` refuses the duplicate; `ledger-memory` used
     // to replace it silently).
     let previous = if spec.inheritance {
-        live_in_namespace(inner, req, true).await?
+        live_in_namespace(inner, req, &spec).await?
     } else {
         let by_row = match inner.ledger.0.agent(&req.agent).await? {
             Some(row) => match row.digest_rollup {
@@ -107,7 +157,7 @@ pub async fn rebuild(
         };
         match by_row {
             Some(r) => Some(r),
-            None => live_in_namespace(inner, req, false).await?,
+            None => live_in_namespace(inner, req, &spec).await?,
         }
     };
 
@@ -172,18 +222,14 @@ pub async fn rebuild(
         .as_ref()
         .map(|r| crate::seal::generation_of(&r.id).saturating_add(1))
         .unwrap_or(0);
-    let id = if spec.inheritance {
-        inheritance_id(&req.traj, gen)
-    } else {
-        digest_id(&req.traj, gen)
-    };
+    let id = spec.id(&req.traj, gen);
     let sealed = inner
         .ledger
         .0
         .seal_rollup(NewRollup {
             id: Some(id),
             traj: req.traj.clone(),
-            kind: RollupKind::Digest,
+            kind: spec.kind(),
             // A digest is not a tier: it spans the whole trajectory and sits at tier 0, so the
             // degradation ladder's per-tier arithmetic never counts it as fine detail.
             tier: 0,
@@ -235,23 +281,20 @@ pub async fn rebuild(
 async fn live_in_namespace(
     inner: &SummarizerInner,
     req: &DigestRequest,
-    inheritance: bool,
+    spec: &DigestSpec,
 ) -> Result<Option<Rollup>, RollupsError> {
     let rows = inner
         .ledger
         .0
         .rollups(&RollupQuery {
             trajs: vec![req.traj.clone()],
-            kind: Some(RollupKind::Digest),
+            kind: Some(spec.kind()),
             include_superseded: true,
             ..Default::default()
         })
         .await?;
-    let prefix = if inheritance {
-        format!("digest:{}:inherited", req.traj)
-    } else {
-        format!("digest:{}", req.traj)
-    };
+    let prefix = spec.prefix(&req.traj);
+    let inheritance = spec.inheritance;
     Ok(rows
         .into_iter()
         .filter(|r| {
@@ -366,6 +409,43 @@ mod tests {
         assert_eq!(digest_id(&t, 0).as_str(), "digest:lane/sol");
         assert_eq!(digest_id(&t, 2).as_str(), "digest:lane/sol#g2");
         assert_eq!(crate::seal::generation_of(&digest_id(&t, 2)), 2);
+    }
+
+    /// P5-D13: three namespaces, three kinds, and none of them a prefix trap for the others.
+    #[test]
+    fn a_reconciliation_is_its_own_namespace_and_kind() {
+        let t = TrajId::new("lane/sol+lane/terra");
+        assert_eq!(recon_id(&t, 0).as_str(), "recon:lane/sol+lane/terra");
+        assert_eq!(recon_id(&t, 3).as_str(), "recon:lane/sol+lane/terra#g3");
+        assert_eq!(crate::seal::generation_of(&recon_id(&t, 3)), 3);
+
+        let recon = spec_of(&bough_plugin_rollups::DigestRequest {
+            agent: bough_plugin_ledger::AgentName::new("sol"),
+            traj: t.clone(),
+            at: chrono::Utc::now(),
+            attribution: bough_plugin_rollups::Attribution::Andrey,
+            from_raw: false,
+            parents: vec![TrajId::new("lane/sol"), TrajId::new("lane/terra")],
+            reconcile: true,
+        });
+        assert!(recon.reconcile && recon.inheritance);
+        assert_eq!(recon.kind(), RollupKind::Reconciliation);
+        assert_eq!(recon.id(&t, 0), recon_id(&t, 0));
+        // The same two-parent input WITHOUT the flag is an inheritance digest: one field, one
+        // difference, and the sources are identical either way.
+        let inherited = spec_of(&bough_plugin_rollups::DigestRequest {
+            agent: bough_plugin_ledger::AgentName::new("sol"),
+            traj: t.clone(),
+            at: chrono::Utc::now(),
+            attribution: bough_plugin_rollups::Attribution::Andrey,
+            from_raw: false,
+            parents: vec![TrajId::new("lane/sol"), TrajId::new("lane/terra")],
+            reconcile: false,
+        });
+        assert_eq!(inherited.sources, recon.sources);
+        assert_eq!(inherited.kind(), RollupKind::Digest);
+        assert_eq!(inherited.id(&t, 0), inheritance_id(&t, 0));
+        assert_ne!(inherited.prefix(&t), recon.prefix(&t));
     }
 
     /// §8: a reset must not let a drifted digest seed its own replacement.

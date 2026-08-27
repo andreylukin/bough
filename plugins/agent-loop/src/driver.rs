@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bough_plugin_agents::{
-    AgentCell, AgentDriver, AgentError, AgentFactory, Attach, CancelCause, InboxReceipt, Message,
-    Target,
+    Admit, AgentCell, AgentDriver, AgentError, AgentFactory, AgentWakeRequest, Attach, CancelCause,
+    InboxReceipt, Message, Target, TriggerFacts, WakeAdmission,
 };
 use bough_plugin_ledger::{StepId, WakeId};
 use bough_plugin_llm::WakeKind;
@@ -168,12 +168,23 @@ impl LoopDriver {
     /// that an answer wake starts NOW, concurrently with whatever it interrupted.
     /// Returns the id of the wake it opened, or `None` when the driver is stopping and no wake
     /// was opened. `wake_now` is the caller that needs the answer (§2.5's `WakeRequest`).
-    fn spawn_wake(
+    async fn spawn_wake(
         self: &Arc<Self>,
         kind: WakeKind,
+        cause: bough_plugin_agents::WakeCause,
         trigger: Option<bough_plugin_agents::MessageId>,
     ) -> Option<WakeId> {
         if self.stopping.load(Ordering::SeqCst) {
+            return None;
+        }
+        // P5-D1: the ADMISSION point. Dispatched immediately before the wake id is minted, so a
+        // listener that defers stops the wake from existing at all — no `wake/start`, no claim,
+        // no step. `Defer` returns `None`, which is exactly what the `stopping` guard above
+        // already returns, so no caller grows a branch.
+        if let Admit::Defer { by, reason } = self.admission(kind, cause, trigger.as_ref()).await {
+            tracing::debug!(agent = %self.cell.agent().name(), by, reason, "wake deferred");
+            // The armed flag has to come down: no wake will start to lower it.
+            self.cell.wake_refused();
             return None;
         }
         let wake = self.mint_wake();
@@ -266,6 +277,43 @@ impl LoopDriver {
         Some(opened)
     }
 
+    /// Dispatch `agent/wake-request` at the AGENT's scope (§5's most-specific-wins), with the
+    /// trigger's facts read from the inbox WITHOUT claiming anything. The default with no
+    /// listener is `Open`, so a tree without the `dormancy` row behaves exactly as it did before.
+    async fn admission(
+        self: &Arc<Self>,
+        kind: WakeKind,
+        cause: bough_plugin_agents::WakeCause,
+        trigger: Option<&bough_plugin_agents::MessageId>,
+    ) -> Admit {
+        let agent = self.cell.agent();
+        let facts = trigger.and_then(|id| {
+            [Target::NextWake, Target::NextStep]
+                .into_iter()
+                .flat_map(|t| agent.inbox().pending(t))
+                .find(|m| m.id == *id)
+                .map(|m| TriggerFacts {
+                    message: m.id.clone(),
+                    from_andrey: m.is_andrey(),
+                    class: m.class,
+                    refs: m.refs.clone(),
+                    mail_seq: m.mail_seq,
+                })
+        });
+        let out = bough_kernel::scope::scope_target(&self.deps.ctx, agent.scope_key())
+            .waterfall::<AgentWakeRequest>(WakeAdmission {
+                agent: agent.name().clone(),
+                id: agent.id().clone(),
+                kind,
+                cause,
+                trigger: facts,
+                at: chrono::Utc::now(),
+                decision: Admit::Open,
+            })
+            .await;
+        out.decision
+    }
+
     /// §5's standing invariant, checked after every wake and repaired rather than reported: if
     /// ordinary mail is unconsumed, a drain wake is scheduled here and now.
     async fn enforce_standing_invariant(self: &Arc<Self>) {
@@ -287,6 +335,11 @@ impl LoopDriver {
             .iter()
             .filter(|s| crate::mail::is_ordinary(s))
             .count();
+        // §1: a dormant lane's backlog is not a repair job. Arming a drain here would open a wake
+        // the admission listener defers, forever; the reactivation arms exactly one instead.
+        if crate::mail::dormant_from_steps(&steps) {
+            return;
+        }
         if ordinary > 0 && !self.drain.in_flight() {
             self.arm_drain();
         }
@@ -316,6 +369,9 @@ impl LoopDriver {
     }
 
     /// Start the wake §5 owes any queued wake-class mail once the agent is free again.
+    ///
+    /// It stays SYNC and spawns: `spawn_wake` is now async and is what calls this, so awaiting it
+    /// here would make one future contain itself.
     fn wake_for_queued_mail(self: &Arc<Self>) {
         let pending = self.cell.agent().inbox().pending(Target::NextWake);
         let Some(msg) = pending
@@ -329,7 +385,15 @@ impl LoopDriver {
         } else {
             WakeKind::Catchup
         };
-        self.spawn_wake(kind, Some(msg.id.clone()));
+        let cause = if msg.is_andrey() {
+            bough_plugin_agents::WakeCause::Andrey
+        } else {
+            bough_plugin_agents::WakeCause::Mail { class: msg.class }
+        };
+        let me = self.clone();
+        tokio::spawn(async move {
+            me.spawn_wake(kind, cause, Some(msg.id.clone())).await;
+        });
     }
 
     /// Open (or join) the debounce window. Only the first caller owns the slot: §5's one drain
@@ -353,7 +417,14 @@ impl LoopDriver {
                 with_live(me.fiber(), |l| l.drains = l.drains.saturating_sub(1));
                 return;
             }
-            me.spawn_wake(WakeKind::Drain, None);
+            me.spawn_wake(
+                WakeKind::Drain,
+                bough_plugin_agents::WakeCause::Mail {
+                    class: bough_plugin_agents::MailClass::Ordinary,
+                },
+                None,
+            )
+            .await;
         });
     }
 
@@ -446,7 +517,7 @@ impl AgentDriver for LoopDriver {
     async fn wake_now(
         &self,
         kind: bough_plugin_agents::WakeKind,
-        _cause: bough_plugin_agents::WakeCause,
+        cause: bough_plugin_agents::WakeCause,
     ) -> bough_plugin_agents::WakeRequest {
         use bough_plugin_agents::WakeRequest;
         let Some(me) = self.self_arc() else {
@@ -469,7 +540,7 @@ impl AgentDriver for LoopDriver {
             // is over queued mail, and an agent with nothing queued has nothing to catch up on.
             return WakeRequest::Nothing;
         }
-        match me.spawn_wake(kind, trigger) {
+        match me.spawn_wake(kind, cause, trigger).await {
             Some(wake) => WakeRequest::Started(wake),
             None => WakeRequest::Nothing,
         }
@@ -507,7 +578,12 @@ impl AgentDriver for LoopDriver {
                 Preemption::Checkpoint { answer } => {
                     // ORDER IS THE POINT: his wake opens first, and only then is the interrupted
                     // wake told to stop and jot.
-                    me.spawn_wake(WakeKind::Answer, Some(msg.id.clone()));
+                    me.spawn_wake(
+                        WakeKind::Answer,
+                        bough_plugin_agents::WakeCause::Andrey,
+                        Some(msg.id.clone()),
+                    )
+                    .await;
                     if let Some(wake) = interrupted {
                         me.checkpoint(wake, msg.id.clone(), answer);
                     }
@@ -522,7 +598,12 @@ impl AgentDriver for LoopDriver {
         }
         match crate::mail::schedule_for(msg, receipt.target, receipt.wake, me.drain.in_flight()) {
             Schedule::Now { kind, trigger } => {
-                me.spawn_wake(kind, Some(trigger));
+                let cause = if msg.is_andrey() {
+                    bough_plugin_agents::WakeCause::Andrey
+                } else {
+                    bough_plugin_agents::WakeCause::Mail { class: msg.class }
+                };
+                me.spawn_wake(kind, cause, Some(trigger)).await;
             }
             Schedule::Debounce => me.arm_drain(),
             Schedule::Wait => {}

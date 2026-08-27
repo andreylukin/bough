@@ -25,6 +25,8 @@ schemars = { workspace = true, features = ["chrono04"] }
 chrono = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+parking_lot = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

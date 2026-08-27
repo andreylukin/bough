@@ -122,9 +122,8 @@ impl LedgerStore for MemoryStore {
     async fn steps(&self, q: &StepQuery) -> Result<Vec<Step>, LedgerError> {
         let inner = self.inner.read();
         let mut out: Vec<Step> = self
-            .readable_many(&inner, &q.trajs)?
+            .readable_many(&inner, &q.trajs, &q.kinds)?
             .into_iter()
-            .filter(|s| q.kinds.is_empty() || q.kinds.contains(&s.kind))
             .filter(|s| q.class.map(|c| c == s.class).unwrap_or(true))
             .filter(|s| q.wake.as_ref().map(|w| w == &s.wake).unwrap_or(true))
             .filter(|s| q.after.map(|a| s.seq > a).unwrap_or(true))
@@ -162,7 +161,7 @@ impl LedgerStore for MemoryStore {
 
     async fn live_pins(&self, trajs: &[TrajId]) -> Result<Vec<Pin>, LedgerError> {
         let inner = self.inner.read();
-        let steps = self.readable_many(&inner, trajs)?;
+        let steps = self.readable_many(&inner, trajs, &[])?;
         Ok(store::live_pins_from(&steps))
     }
 

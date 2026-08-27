@@ -483,3 +483,61 @@ pub fn composer_rect(size: Rect, composer_height: u16) -> Rect {
         height: h,
     }
 }
+
+/// PURE: the lines a notice band actually paints, given how many rows it may borrow.
+///
+/// Two rules, both learned the hard way when Phase 5 added seven commands and `/help` grew past
+/// the band: a notice is capped by the rows above the composer AND by `notice_max_lines`, and a
+/// cap that DROPS lines says so on its last row. A truncation nobody can see is indistinguishable
+/// from a command that never printed the line — which is exactly how `/quit` disappeared from
+/// `/help` without a single test going red.
+pub fn notice_band(text: &str, cap: u16, available: u16) -> Vec<String> {
+    let all: Vec<&str> = text.lines().collect();
+    let room = cap.max(1).min(available) as usize;
+    if room == 0 {
+        return Vec::new();
+    }
+    if all.len() <= room {
+        return all.into_iter().map(str::to_string).collect();
+    }
+    // The marker costs a row, so it replaces the last row that WOULD have fitted.
+    let shown = room - 1;
+    let mut out: Vec<String> = all[..shown].iter().map(|l| (*l).to_string()).collect();
+    out.push(format!("… {} more lines", all.len() - shown));
+    out
+}
+
+#[cfg(test)]
+mod notice_tests {
+    use super::notice_band;
+
+    #[test]
+    fn a_notice_that_fits_is_painted_whole() {
+        let band = notice_band("a\nb\nc", 8, 20);
+        assert_eq!(
+            band,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_notice_over_the_cap_says_how_many_lines_it_dropped() {
+        let band = notice_band("a\nb\nc\nd\ne", 3, 20);
+        assert_eq!(
+            band,
+            vec![
+                "a".to_string(),
+                "b".to_string(),
+                "… 3 more lines".to_string()
+            ],
+            "the cap must never drop lines silently"
+        );
+    }
+
+    #[test]
+    fn the_rows_above_the_composer_bound_the_cap() {
+        let band = notice_band("a\nb\nc\nd\ne", 50, 2);
+        assert_eq!(band.len(), 2, "the band never paints over the composer");
+        assert_eq!(band[1], "… 4 more lines");
+    }
+}

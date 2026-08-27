@@ -140,3 +140,72 @@ async fn a_stream_with_no_initiator_is_delegated_untouched() {
     ));
     assert_eq!(*live.lock(), LiveText::default());
 }
+
+/// WP-7 / P5-D14: streaming and landing now flow through the SAME joined row, which is what makes
+/// "one paragraph" hold both while the answer is streaming and after it lands.
+mod tests {
+    use super::*;
+    use bough_plugin_ledger::{Class, Seq, Step, StepId, StepType, TrajId, WakeId};
+    use bough_plugin_tui_focus::{rows_from_steps, trailing_durable, trailing_text_row, Row};
+    use std::collections::BTreeSet;
+
+    fn text_step(n: u64, text: &str) -> Step {
+        Step {
+            id: StepId::new(format!("s{n}")),
+            traj: TrajId::new("lane/sol"),
+            seq: Seq(n),
+            at: chrono::Utc::now(),
+            wake: WakeId::new("w1"),
+            kind: StepType::new("thought/text"),
+            class: Class::Thought,
+            body: Arc::new(serde_json::json!({ "text": text, "step_index": 0 })),
+            cites: Arc::new(vec![]),
+            refs: Arc::new(BTreeSet::new()),
+            ignorable: false,
+        }
+    }
+
+    /// Mid-stream: two flushes have landed and joined into one row, and the tail is ahead of them.
+    /// The tail is what the pane draws, and it REPLACES the joined text rather than following it.
+    #[test]
+    fn the_live_tail_replaces_the_joined_durable_text_while_streaming() {
+        let rows = rows_from_steps(&[
+            text_step(1, "I'll run that"),
+            text_step(2, " shell command"),
+        ]);
+        assert_eq!(rows.len(), 1, "one joined row: {rows:?}");
+        assert_eq!(
+            trailing_text_row(&rows),
+            Some(0),
+            "and it is the trailing one"
+        );
+
+        let durable = trailing_durable(&rows);
+        assert_eq!(durable, "I'll run that shell command");
+        let live = "I'll run that shell command for you.";
+        assert_eq!(
+            trailing_text(&durable, live),
+            live,
+            "the tail supersedes the joined durable text, never appends to it"
+        );
+    }
+
+    /// And when the last flush lands the two are the same bytes: the handover changes nothing on
+    /// screen, which is the whole point of the length rule.
+    #[test]
+    fn the_landed_text_equals_the_streamed_text() {
+        let streamed = "I'll run that shell command for you.";
+        let rows = rows_from_steps(&[
+            text_step(1, "I'll run that"),
+            text_step(2, " shell command"),
+            text_step(3, " for you."),
+        ]);
+        let durable = trailing_durable(&rows);
+        assert_eq!(durable, streamed, "the joined row IS what streamed");
+        assert_eq!(trailing_text(&durable, streamed), streamed);
+        // The tail is cleared at `agent/step` Start and `agent/wake` End; the durable text alone
+        // then reads identically.
+        assert_eq!(trailing_text(&durable, ""), streamed);
+        assert!(matches!(&rows[0], Row::Text { parts, .. } if parts.len() == 3));
+    }
+}

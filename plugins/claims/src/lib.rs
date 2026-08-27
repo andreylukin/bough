@@ -22,10 +22,14 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use bough_kernel::{Context, EmitEvent, Inject, InvariantSpec, Plugin, PluginError, ServiceKey};
-use bough_plugin_graph_ops::OpOutcome;
-use bough_plugin_ledger::{AgentName, Cite, Ref, Seq, StepId, TrajId};
+use bough_plugin_agents::Agents;
+use bough_plugin_graph_ops::{Graph, OpOutcome};
+use bough_plugin_ledger::{
+    AgentName, Append, Cite, Class, Ledger, Ref, Seq, StepId, StepQuery, StepType, TrajId, WakeId,
+};
 use chrono::{DateTime, Utc};
 
+pub use decide::lane_traj;
 pub use error::ClaimsError;
 pub use kind::{parse, ClaimKind};
 pub use query::ClaimQuery;
@@ -54,14 +58,11 @@ pub struct ClaimsHandle(pub Arc<ClaimsInner>);
 
 /// The seam's bound dependencies. No live state: "open" is derived from the ledger every read.
 pub struct ClaimsInner {
-    #[allow(dead_code)]
-    ledger: bough_plugin_ledger::LedgerHandle,
-    #[allow(dead_code)]
-    agents: bough_plugin_agents::AgentsHandle,
-    #[allow(dead_code)]
-    graph: bough_plugin_graph_ops::GraphHandle,
-    #[allow(dead_code)]
-    cfg: Arc<ClaimsConfig>,
+    pub(crate) ctx: Context,
+    pub(crate) ledger: bough_plugin_ledger::LedgerHandle,
+    pub(crate) agents: bough_plugin_agents::AgentsHandle,
+    pub(crate) graph: bough_plugin_graph_ops::GraphHandle,
+    pub(crate) cfg: Arc<ClaimsConfig>,
 }
 
 /// A structural proposal: what a split WOULD be, before Andrey has seen it.
@@ -138,6 +139,9 @@ pub struct DecideRequest {
 pub struct ProposeRequest {
     pub by: AgentName,
     pub traj: TrajId,
+    /// The wake the proposal is a step of. `None` ⇒ a synthetic `claim:<id>` wake, for a proposal
+    /// made outside any wake (§0.2: the default is explicit, at the boundary).
+    pub wake: Option<WakeId>,
     pub kind: ClaimKind,
     pub title: String,
     pub body: String,
@@ -161,33 +165,96 @@ pub struct DecideOutcome {
 
 impl ClaimsHandle {
     /// A seam over the three bound keys.
+    ///
+    /// DEVIATION from the plan's `new(ledger, agents, graph, cfg)`: the context is a parameter
+    /// too, because `claim/decided` is an EMIT event and a handle that cannot emit would make the
+    /// event a promise rather than a contract.
     pub fn new(
-        _ledger: bough_plugin_ledger::LedgerHandle,
-        _agents: bough_plugin_agents::AgentsHandle,
-        _graph: bough_plugin_graph_ops::GraphHandle,
-        _cfg: Arc<ClaimsConfig>,
+        ctx: Context,
+        ledger: bough_plugin_ledger::LedgerHandle,
+        agents: bough_plugin_agents::AgentsHandle,
+        graph: bough_plugin_graph_ops::GraphHandle,
+        cfg: Arc<ClaimsConfig>,
     ) -> ClaimsHandle {
-        todo!("WP-4: construct the inner")
+        ClaimsHandle(Arc::new(ClaimsInner {
+            ctx,
+            ledger,
+            agents,
+            graph,
+            cfg,
+        }))
     }
 
     /// Open claims, newest first.
-    pub async fn open(&self, _q: &ClaimQuery) -> Result<Vec<OpenClaim>, ClaimsError> {
-        todo!("WP-4: proposals with no decision naming them")
+    pub async fn open(&self, q: &ClaimQuery) -> Result<Vec<OpenClaim>, ClaimsError> {
+        let steps = self
+            .0
+            .ledger
+            .0
+            .steps(&StepQuery {
+                trajs: q.traj.clone().into_iter().collect(),
+                kinds: query::kinds(),
+                ..Default::default()
+            })
+            .await?;
+        Ok(query::open(&steps, q, self.0.cfg.open_limit))
     }
 
     /// One claim, decided or not.
-    pub async fn get(&self, _claim: &ClaimId) -> Result<Option<OpenClaim>, ClaimsError> {
-        todo!("WP-4: read one claim by id")
+    pub async fn get(&self, claim: &ClaimId) -> Result<Option<OpenClaim>, ClaimsError> {
+        match decide::load(&self.0, claim).await {
+            Ok((c, _)) => Ok(Some(c)),
+            Err(ClaimsError::NoSuchClaim(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Whether a claim has been decided.
+    pub async fn is_decided(&self, claim: &ClaimId) -> Result<bool, ClaimsError> {
+        Ok(decide::load(&self.0, claim).await?.1)
     }
 
     /// The only writer of `claim/accepted` and `claim/rejected`. See [`crate::decide`].
-    pub async fn decide(&self, _req: DecideRequest) -> Result<DecideOutcome, ClaimsError> {
-        todo!("WP-4: refuse a wake, then accept/edit/reject and follow through")
+    pub async fn decide(&self, req: DecideRequest) -> Result<DecideOutcome, ClaimsError> {
+        let outcome = decide::run(&self.0, req).await?;
+        self.0.ctx.emit::<ClaimDecided>(outcome.clone());
+        Ok(outcome)
     }
 
     /// A PROPOSAL: appends `claim/proposed`. Agents and plugins may call it; nothing else.
-    pub async fn propose(&self, _req: ProposeRequest) -> Result<OpenClaim, ClaimsError> {
-        todo!("WP-4: append claim/proposed and return the open claim")
+    pub async fn propose(&self, req: ProposeRequest) -> Result<OpenClaim, ClaimsError> {
+        let claim = ClaimId::new(uuid::Uuid::now_v7().to_string());
+        let body = serde_json::json!({
+            "claim": claim.as_str(),
+            "kind": req.kind.as_str(),
+            "title": req.title,
+            "body": req.body,
+            kind::DETAIL_KEY: req.kind.detail(),
+            query::BY_KEY: req.by.as_str(),
+        });
+        let step = self
+            .0
+            .ledger
+            .0
+            .append(Append {
+                traj: req.traj.clone(),
+                // A proposal made outside a wake (a command, a test) still needs a wake id; a
+                // proposal made inside one is a step of that wake and the caller passes it.
+                wake: req
+                    .wake
+                    .clone()
+                    .unwrap_or_else(|| WakeId::new(format!("claim:{claim}"))),
+                kind: StepType::new("claim/proposed"),
+                class: Class::Thought,
+                body,
+                cites: req.cites.clone(),
+                at: req.at,
+                id: None,
+            })
+            .await?;
+        query::as_claim(&step).ok_or_else(|| {
+            ClaimsError::Other(anyhow::anyhow!("a claim/proposed step that is not a claim"))
+        })
     }
 
     /// Rejection rate over a window, for drift-watch (§8). PURE over the steps it is handed.
@@ -224,8 +291,30 @@ impl Plugin for ClaimsPlugin {
             .union(&Inject::optional(["tools", "commands"]))
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-4: provide `claims`, register the global propose_claim tool and the commands")
+    async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let fail = |e: bough_kernel::KernelError| PluginError::new(entry.clone(), e);
+
+        let ledger = (*ctx.get::<Ledger>().map_err(fail)?).clone();
+        let agents = (*ctx.get::<Agents>().map_err(fail)?).clone();
+        let graph = (*ctx.get::<Graph>().map_err(fail)?).clone();
+
+        let handle = ClaimsHandle::new(ctx.clone(), ledger, agents, graph, cfg);
+        ctx.provide::<Claims>(handle.clone())
+            .await
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+
+        // The recorded stream this row's invariants read is per fiber LIFE: a reload starts
+        // clean, or a previous instance's decisions would be judged against this one's store.
+        ctx.effect(move |e| async move {
+            e.defer_sync(invariant::reset);
+            Ok(())
+        })
+        .await?;
+
+        tool::register(&ctx, &handle).await?;
+        command::register(&ctx, &handle).await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

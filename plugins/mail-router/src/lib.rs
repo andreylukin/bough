@@ -22,15 +22,18 @@ use bough_kernel::{
     Context, EffectHandle, EmitEvent, Inject, InvariantSpec, Plugin, PluginError, ServiceKey,
     WaterfallEvent,
 };
-use bough_plugin_agents::InboxReceipt;
-use bough_plugin_ledger::{AgentName, Ref, Step, StepId};
+use bough_plugin_agents::{Delivery, InboxReceipt, MailClass};
+use bough_plugin_ledger::{
+    AgentName, Append, Cite, Class, Order, Ref, Step, StepId, StepQuery, StepType, TrajId,
+};
+use bough_plugin_rollups::Attribution;
 use chrono::{DateTime, Utc};
 
 pub use envelope::{Envelope, LinkReport, Question, RouteReport};
 pub use error::MailError;
 pub use link::{linked, unlinked};
 pub use matching::{recipients, wake_classes_of, CLASS_NAMESPACE};
-pub use question::{ask_ref, ASK_CLASS_REF};
+pub use question::{ask_ref, envelope_for, ASK_CLASS_REF};
 pub use unsorted::{Adoption, NullSink, UnsortedSink};
 pub use vocabulary::{AgentRouting, LeaderQuestion, MailAdopted, MailUnrouted, OWNER};
 
@@ -51,85 +54,436 @@ pub struct MailHandle(pub Arc<MailInner>);
 
 /// The seam's live state: the bound ledger and agents seams, the config, and the sink slot.
 pub struct MailInner {
-    #[allow(dead_code)]
+    /// Where `mail/route` is dispatched and `mail/routed` emitted from. The plan's constructor
+    /// omitted it; a waterfall has to be dispatched from somewhere (see the WP-1 report).
+    ctx: Context,
     ledger: bough_plugin_ledger::LedgerHandle,
-    #[allow(dead_code)]
     agents: bough_plugin_agents::AgentsHandle,
-    #[allow(dead_code)]
     cfg: Arc<MailConfig>,
-    /// P5-D4: leaderless by default. [`NullSink`] until a `leader` row installs its own.
-    #[allow(dead_code)]
+    /// P5-D4: leaderless by default. `None` — for which [`NullSink`] is the named stand-in — until
+    /// a `leader` row installs its own.
     sink: parking_lot::Mutex<Option<Arc<dyn UnsortedSink>>>,
 }
 
 impl MailHandle {
     /// A seam with no sink mounted.
     pub fn new(
-        _ledger: bough_plugin_ledger::LedgerHandle,
-        _agents: bough_plugin_agents::AgentsHandle,
-        _cfg: Arc<MailConfig>,
+        ctx: Context,
+        ledger: bough_plugin_ledger::LedgerHandle,
+        agents: bough_plugin_agents::AgentsHandle,
+        cfg: Arc<MailConfig>,
     ) -> MailHandle {
-        todo!("WP-1: construct the inner with a null sink")
+        MailHandle(Arc::new(MailInner {
+            ctx,
+            ledger,
+            agents,
+            cfg,
+            sink: parking_lot::Mutex::new(None),
+        }))
+    }
+
+    /// The trajectory zero-match mail lands on.
+    pub fn unsorted_traj(&self) -> TrajId {
+        TrajId::new(&self.0.cfg.unsorted_traj)
+    }
+
+    /// The mounted sink, if one names a real agent. [`NullSink`] reads as no sink at all.
+    pub fn sink(&self) -> Option<Arc<dyn UnsortedSink>> {
+        self.0
+            .sink
+            .lock()
+            .clone()
+            .filter(|s| !s.is_null() && !s.agent().as_str().is_empty())
     }
 
     /// Fan out. Seeds a [`RouteDecision`] from the pure matcher, dispatches the `mail/route`
     /// waterfall (P5-D5), then delivers once per surviving recipient. Appends nothing when
     /// `matched` is empty except the unsorted step.
-    pub async fn route(&self, _env: Envelope) -> Result<RouteReport, MailError> {
-        todo!("WP-1: seed, dispatch mail/route, deliver per recipient, else queue unsorted")
+    pub async fn route(&self, env: Envelope) -> Result<RouteReport, MailError> {
+        let rows = self.0.ledger.0.agents().await?;
+        let seeded = matching::recipients(&env.refs, &rows);
+        let env = Arc::new(env);
+
+        // P5-D5: the matcher SEEDS the decision. A listener that skips `next()` short-circuits to
+        // a decision that already has the true owners in it, never to an empty one.
+        let decision = self
+            .0
+            .ctx
+            .waterfall::<MailRoute>(RouteDecision {
+                env: env.clone(),
+                to: seeded,
+            })
+            .await;
+
+        // A listener may add a recipient twice; delivering twice would be a double consumption.
+        let mut to: Vec<AgentName> = Vec::new();
+        for name in decision.to {
+            if !to.contains(&name) {
+                to.push(name);
+            }
+        }
+
+        let report = if to.is_empty() {
+            self.queue_unsorted(&env).await?
+        } else {
+            self.fan_out(&env, to).await?
+        };
+        self.0.ctx.emit::<MailRouted>(report.clone());
+        Ok(report)
+    }
+
+    /// One `mail/delivered` step and one splice per recipient, through the agents seam.
+    async fn fan_out(
+        &self,
+        env: &Arc<Envelope>,
+        to: Vec<AgentName>,
+    ) -> Result<RouteReport, MailError> {
+        let mut delivered: Vec<(AgentName, InboxReceipt)> = Vec::new();
+        for name in &to {
+            let Some(agent) = self.0.agents.by_name(name) else {
+                // A matched lane with no live handle. With `deliver_to_dormant` (the default) the
+                // fan-out continues and the report shows it matched but was not delivered to; a
+                // deployment that wants that to be loud turns the flag off.
+                if self.0.cfg.deliver_to_dormant {
+                    continue;
+                }
+                return Err(MailError::NotLive(name.clone()));
+            };
+            match agent.deliver(self.delivery(env, env.class)).await {
+                Ok(receipt) => delivered.push((name.clone(), receipt)),
+                Err(e) => {
+                    return Err(MailError::PartialFanOut {
+                        agent: name.clone(),
+                        delivered: delivered.len(),
+                        detail: e.to_string(),
+                    })
+                }
+            }
+        }
+        Ok(RouteReport {
+            matched: to,
+            delivered,
+            unsorted: None,
+            adopted: false,
+        })
+    }
+
+    /// The zero-match path: one durable `mail/unrouted` step, plus — only when a sink is mounted —
+    /// ONE ordinary-class delivery to the sink's agent. Ordinary, never wake: an unsorted item is
+    /// the leader's inbox work, not a reason to interrupt it (§5).
+    async fn queue_unsorted(&self, env: &Arc<Envelope>) -> Result<RouteReport, MailError> {
+        let step = self
+            .0
+            .ledger
+            .0
+            .append(Append {
+                traj: self.unsorted_traj(),
+                wake: bough_plugin_agents::mail::outside_wake(),
+                kind: StepType::new("mail/unrouted"),
+                class: Class::Evidence,
+                body: serde_json::to_value(MailUnrouted {
+                    from: Ref::new(env.from.as_ref_str()),
+                    subject: env.subject.clone(),
+                    summary: env.summary.clone(),
+                    refs: env.refs.iter().cloned().collect(),
+                })
+                .expect("MailUnrouted serializes"),
+                cites: self.cites(env),
+                at: env.at,
+                id: None,
+            })
+            .await
+            .map_err(|e| MailError::Unsorted(e.to_string()))?;
+
+        let mut delivered = Vec::new();
+        let mut adopted = false;
+        if let Some(sink) = self.sink() {
+            let name = sink.agent();
+            if let Some(agent) = self.0.agents.by_name(&name) {
+                let receipt = agent
+                    .deliver(self.delivery(env, MailClass::Ordinary))
+                    .await
+                    .map_err(|e| MailError::PartialFanOut {
+                        agent: name.clone(),
+                        delivered: 0,
+                        detail: e.to_string(),
+                    })?;
+                delivered.push((name, receipt));
+                adopted = true;
+            }
+        }
+        Ok(RouteReport {
+            matched: Vec::new(),
+            delivered,
+            unsorted: Some(step.id),
+            adopted,
+        })
+    }
+
+    /// The `Delivery` an envelope becomes, at `class`.
+    fn delivery(&self, env: &Arc<Envelope>, class: MailClass) -> Delivery {
+        Delivery {
+            from: env.from.clone(),
+            class,
+            subject: env.subject.clone(),
+            summary: env.summary.clone(),
+            text: env.text.clone(),
+            cites: self.cites(env),
+            refs: env.refs.clone(),
+            at: env.at,
+        }
+    }
+
+    /// Evidence needs cites, and the ledger refuses it without them. An envelope that carried
+    /// none still knows who sent it, and that is the honest citation.
+    fn cites(&self, env: &Arc<Envelope>) -> Vec<Cite> {
+        if env.cites.is_empty() {
+            vec![Cite {
+                r#ref: Ref::new(env.from.as_ref_str()),
+                url: None,
+            }]
+        } else {
+            env.cites.clone()
+        }
     }
 
     /// Add routing refs to an agent's row and append `agent/routing`. No backfill, by
     /// construction: this method never queries for history.
     pub async fn link_ref(
         &self,
-        _agent: &AgentName,
-        _refs: BTreeSet<Ref>,
-        _at: DateTime<Utc>,
+        agent: &AgentName,
+        refs: BTreeSet<Ref>,
+        at: DateTime<Utc>,
     ) -> Result<LinkReport, MailError> {
-        todo!("WP-1: put_agent with the union, append agent/routing, report backfilled: 0")
+        let row = self
+            .0
+            .ledger
+            .0
+            .agent(agent)
+            .await?
+            .ok_or_else(|| MailError::NoSuchAgent(agent.clone()))?;
+        let (after, added) = link::linked(&row, &refs);
+        self.write_routing(row, after, added.clone(), BTreeSet::new(), at)
+            .await
     }
 
     /// Remove routing refs from an agent's row and append `agent/routing`.
     pub async fn unlink_ref(
         &self,
-        _agent: &AgentName,
-        _refs: BTreeSet<Ref>,
-        _at: DateTime<Utc>,
+        agent: &AgentName,
+        refs: BTreeSet<Ref>,
+        at: DateTime<Utc>,
     ) -> Result<LinkReport, MailError> {
-        todo!("WP-1: put_agent with the difference, append agent/routing")
+        let row = self
+            .0
+            .ledger
+            .0
+            .agent(agent)
+            .await?
+            .ok_or_else(|| MailError::NoSuchAgent(agent.clone()))?;
+        let (after, removed) = link::unlinked(&row, &refs);
+        self.write_routing(row, after, BTreeSet::new(), removed.clone(), at)
+            .await
+    }
+
+    /// The one write path both links share: rewrite the row, append the evidence, then report
+    /// what the new refs REACH. `connected()` writes nothing (§3), so reading it here does not
+    /// smuggle a backfill in through the back door.
+    async fn write_routing(
+        &self,
+        row: bough_plugin_ledger::AgentRow,
+        after: BTreeSet<Ref>,
+        added: BTreeSet<Ref>,
+        removed: BTreeSet<Ref>,
+        at: DateTime<Utc>,
+    ) -> Result<LinkReport, MailError> {
+        let name = row.name.clone();
+        let traj = row.traj.clone();
+        self.0
+            .ledger
+            .0
+            .put_agent(bough_plugin_ledger::AgentRow {
+                routing_refs: after,
+                ..row
+            })
+            .await?;
+        self.0
+            .ledger
+            .0
+            .append(Append {
+                traj,
+                wake: bough_plugin_agents::mail::outside_wake(),
+                kind: StepType::new("agent/routing"),
+                class: Class::Evidence,
+                body: serde_json::to_value(AgentRouting {
+                    agent: name.clone(),
+                    added: added.iter().cloned().collect(),
+                    removed: removed.iter().cloned().collect(),
+                    by: Attribution::System,
+                })
+                .expect("AgentRouting serializes"),
+                cites: vec![Cite {
+                    r#ref: Ref::new(format!("agent:{name}")),
+                    url: None,
+                }],
+                at,
+                id: None,
+            })
+            .await?;
+        let connected = self.0.ledger.0.connected(&name).await?;
+        Ok(LinkReport {
+            agent: name,
+            added,
+            removed,
+            // Never queried, never queued: §5's rule made a fact by construction.
+            backfilled: 0,
+            now_connected: connected.ref_matches,
+        })
     }
 
     /// §4's "ambiguous routing becomes a leader question, never a guess". Appends
-    /// `leader/question` to the unsorted trajectory and routes it at `MailClass::Wake` with the
+    /// `leader/question` to the unsorted trajectory and routes it at [`MailClass::Wake`] with the
     /// `class:ask` ref, so it reactivates a dormant leader.
-    pub async fn ask_leader(&self, _q: Question) -> Result<StepId, MailError> {
-        todo!("WP-1: append leader/question, then route the wake-class envelope for it")
+    pub async fn ask_leader(&self, q: Question) -> Result<StepId, MailError> {
+        let step = self
+            .0
+            .ledger
+            .0
+            .append(Append {
+                traj: self.unsorted_traj(),
+                wake: bough_plugin_agents::mail::outside_wake(),
+                kind: StepType::new("leader/question"),
+                class: Class::Thought,
+                body: serde_json::to_value(LeaderQuestion {
+                    asked_by: q.asked_by.to_string(),
+                    about: q.about.clone(),
+                    options: q.options.clone(),
+                })
+                .expect("LeaderQuestion serializes"),
+                cites: q.cites.clone(),
+                at: q.at,
+                id: None,
+            })
+            .await?;
+
+        let mut env = question::envelope_for(&q);
+        if env.cites.is_empty() {
+            env.cites = vec![Cite {
+                r#ref: Ref::new(format!("step:{}", step.id)),
+                url: None,
+            }];
+        }
+        self.route(env).await?;
+        Ok(step.id)
     }
 
     /// The unsorted queue, oldest first: what the leader's `adopt_unsorted` reads.
-    pub async fn unsorted(&self, _limit: usize) -> Result<Vec<Step>, MailError> {
-        todo!("WP-1: query the unsorted trajectory for mail/unrouted, seq-ascending")
+    pub async fn unsorted(&self, limit: usize) -> Result<Vec<Step>, MailError> {
+        Ok(self
+            .0
+            .ledger
+            .0
+            .steps(&StepQuery {
+                trajs: vec![self.unsorted_traj()],
+                kinds: vec![StepType::new("mail/unrouted")],
+                order: Order::SeqAsc,
+                limit: Some(limit.min(self.0.cfg.unsorted_limit)),
+                ..Default::default()
+            })
+            .await?)
     }
 
     /// Mark unsorted items adopted by an agent: appends `mail/adopted` and re-routes them to it.
     pub async fn adopt(
         &self,
-        _to: &AgentName,
-        _steps: &[StepId],
-        _at: DateTime<Utc>,
+        to: &AgentName,
+        steps: &[StepId],
+        at: DateTime<Utc>,
     ) -> Result<Vec<InboxReceipt>, MailError> {
-        todo!("WP-1: append mail/adopted per step and deliver each to `to`")
+        let agent = self
+            .0
+            .agents
+            .by_name(to)
+            .ok_or_else(|| MailError::NotLive(to.clone()))?;
+        let mut out = Vec::with_capacity(steps.len());
+        for id in steps {
+            let step = self
+                .0
+                .ledger
+                .0
+                .step(id)
+                .await?
+                .ok_or_else(|| MailError::Unsorted(format!("no step `{id}` to adopt")))?;
+            let item: MailUnrouted = serde_json::from_value((*step.body).clone()).map_err(|e| {
+                MailError::Unsorted(format!("step `{id}` is not unrouted mail: {e}"))
+            })?;
+            let cite = Cite {
+                r#ref: Ref::new(format!("step:{id}")),
+                url: None,
+            };
+            self.0
+                .ledger
+                .0
+                .append(Append {
+                    traj: self.unsorted_traj(),
+                    wake: bough_plugin_agents::mail::outside_wake(),
+                    kind: StepType::new("mail/adopted"),
+                    class: Class::Evidence,
+                    body: serde_json::to_value(MailAdopted {
+                        unrouted: id.clone(),
+                        to: to.clone(),
+                        by: Attribution::Agent { name: to.clone() },
+                    })
+                    .expect("MailAdopted serializes"),
+                    cites: vec![cite.clone()],
+                    at,
+                    id: None,
+                })
+                .await?;
+            let receipt = agent
+                .deliver(Delivery {
+                    from: bough_plugin_agents::Sender::System("mail-router"),
+                    class: MailClass::Ordinary,
+                    subject: item.subject.clone(),
+                    summary: item.summary.clone(),
+                    text: item.summary.clone(),
+                    cites: vec![cite],
+                    refs: item.refs.iter().cloned().collect(),
+                    at,
+                })
+                .await
+                .map_err(|e| MailError::PartialFanOut {
+                    agent: to.clone(),
+                    delivered: out.len(),
+                    detail: e.to_string(),
+                })?;
+            out.push(receipt);
+        }
+        Ok(out)
     }
 
     /// Install the unsorted sink. An EFFECT: the `leader` row installs it in its own fiber, so
-    /// moving the leader set moves the sink with it, and unloading restores the null sink.
+    /// moving the leader set moves the sink with it, and unloading restores what was there before.
     pub async fn unsorted_sink(
         &self,
-        _ctx: &Context,
-        _sink: Arc<dyn UnsortedSink>,
+        ctx: &Context,
+        sink: Arc<dyn UnsortedSink>,
     ) -> Result<EffectHandle, PluginError> {
-        todo!("WP-1: set the slot, defer restoring the null sink")
+        let inner = self.0.clone();
+        let previous = { inner.sink.lock().replace(sink.clone()) };
+        let mine = sink;
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || {
+                let mut slot = inner.sink.lock();
+                // Only give the slot back if it is still OURS: a later installer is not ours to
+                // evict.
+                if slot.as_ref().is_some_and(|held| Arc::ptr_eq(held, &mine)) {
+                    *slot = previous;
+                }
+            });
+            Ok(())
+        })
+        .await
     }
 }
 
@@ -172,7 +526,9 @@ pub struct MailConfig {
     /// How many unsorted items one `unsorted()` read returns at most.
     pub unsorted_limit: usize,
     /// Defaults `true`, and NOT a dormancy switch: §5 says mail QUEUES for a dormant agent, so
-    /// delivery happens and the WAKE is what dormancy suppresses.
+    /// delivery happens and the WAKE is what dormancy suppresses. What it governs is the ONE case
+    /// this seam can observe on its own: a matched lane with no live handle at all. `true` keeps
+    /// the fan-out going past it; `false` makes it a loud [`MailError::NotLive`].
     pub deliver_to_dormant: bool,
 }
 
@@ -188,8 +544,25 @@ impl Plugin for MailRouterPlugin {
         Inject::required(["ledger", "agents"])
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-1: declare the step types, provide `mail`, register the invariants")
+    async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let ledger = ctx
+            .get::<bough_plugin_ledger::Ledger>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        let ledger = (*ledger).clone();
+        let agents = ctx
+            .get::<bough_plugin_agents::Agents>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        let agents = (*agents).clone();
+
+        ledger
+            .declare_step_types(&ctx, vocabulary::step_types())
+            .await?;
+
+        ctx.provide::<Mail>(MailHandle::new(ctx.clone(), ledger, agents, cfg))
+            .await
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {

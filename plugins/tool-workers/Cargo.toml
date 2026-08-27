@@ -18,3 +18,9 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 bough-plugin-agents = { workspace = true }
 bough-plugin-ledger = { workspace = true }
+
+# WP-6: `tests/fork_tool.rs` drives the tool against a real `workers` seam and a live agent.
+[dev-dependencies]
+tokio = { workspace = true }
+parking_lot = { workspace = true }
+bough-plugin-ledger-memory = { workspace = true }

@@ -179,10 +179,31 @@ pub fn is_ordinary(step: &Step) -> bool {
     step.body.get("class").and_then(|v| v.as_str()) == Some("ordinary")
 }
 
-/// The standing invariant, as a pure predicate: given the unconsumed ordinary mail and whether a
-/// drain wake is scheduled, is the loop in a legal state?
-pub fn standing_invariant_holds(unconsumed_ordinary: usize, drain_scheduled: bool) -> bool {
-    unconsumed_ordinary == 0 || drain_scheduled
+/// The standing invariant, as a pure predicate: given the unconsumed ordinary mail, whether a
+/// drain wake is scheduled, and whether the agent is DORMANT, is the loop in a legal state?
+///
+/// The dormancy clause is Phase 5's (§1, P5-D1). §5 says ordinary mail QUEUES for a dormant agent
+/// and drains at reactivation, so unconsumed mail with no drain scheduled is the CORRECT state for
+/// a sleeping lane. Without the clause a dormant agent with a backlog is a permanent violation and
+/// `enforce_standing_invariant` arms a drain the admission listener then defers, forever.
+pub fn standing_invariant_holds(
+    unconsumed_ordinary: usize,
+    drain_scheduled: bool,
+    dormant: bool,
+) -> bool {
+    dormant || unconsumed_ordinary == 0 || drain_scheduled
+}
+
+/// The `agent/dormancy` fold, BY STEP-TYPE NAME (P3-D11): the last such step on the trajectory
+/// wins, no step means awake. Read by name so `agent-loop` gains no dependency on the `dormancy`
+/// row — a tree without it simply has no such steps and folds to `false`.
+pub fn dormant_from_steps(steps: &[Step]) -> bool {
+    steps
+        .iter()
+        .filter(|s| s.kind.as_str() == "agent/dormancy")
+        .max_by_key(|s| s.seq)
+        .and_then(|s| s.body.get("dormant").and_then(|v| v.as_bool()))
+        .unwrap_or(false)
 }
 
 /// One agent's drain gate: §5's "one drain wake in flight per agent", as data rather than as a
@@ -226,4 +247,53 @@ pub fn consumed_of(claimed: &[bough_plugin_agents::ClaimedMessage]) -> Vec<SeqRa
         .map(|s: Seq| SeqRange { from: s, to: s })
         .collect();
     SeqRange::union(&ranges)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bough_plugin_ledger::{Class, StepId, StepType, TrajId, WakeId};
+
+    fn step(seq: u64, kind: &str, body: serde_json::Value) -> Step {
+        Step {
+            id: StepId::new(format!("s{seq}")),
+            traj: TrajId::new("lane/sol"),
+            seq: Seq(seq),
+            wake: WakeId::new("w1"),
+            kind: StepType::new(kind),
+            class: Class::Evidence,
+            body: std::sync::Arc::new(body),
+            cites: Default::default(),
+            refs: Default::default(),
+            at: chrono::Utc::now(),
+            ignorable: false,
+        }
+    }
+
+    /// §1 + §5: a sleeping lane with a backlog and NO drain scheduled is legal, and the same
+    /// state is illegal the moment it is awake again.
+    #[test]
+    fn the_standing_invariant_is_satisfied_by_dormancy() {
+        assert!(
+            !standing_invariant_holds(3, false, false),
+            "an awake agent with a backlog and no drain violates the standing invariant"
+        );
+        assert!(
+            standing_invariant_holds(3, false, true),
+            "a DORMANT agent with a backlog and no drain is exactly what §5 describes"
+        );
+        assert!(standing_invariant_holds(3, true, false));
+        assert!(standing_invariant_holds(0, false, false));
+    }
+
+    #[test]
+    fn the_dormancy_fold_takes_the_last_step_and_defaults_to_awake() {
+        assert!(!dormant_from_steps(&[]), "no step means awake");
+        let asleep = step(1, "agent/dormancy", serde_json::json!({ "dormant": true }));
+        let awake = step(2, "agent/dormancy", serde_json::json!({ "dormant": false }));
+        assert!(dormant_from_steps(std::slice::from_ref(&asleep)));
+        assert!(!dormant_from_steps(&[asleep.clone(), awake.clone()]));
+        // Order in the slice does not decide it; the SEQ does.
+        assert!(!dormant_from_steps(&[awake, asleep]));
+    }
 }

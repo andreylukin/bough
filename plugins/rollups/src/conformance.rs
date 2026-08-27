@@ -68,6 +68,91 @@ impl Conformance {
             .await?;
         self.rebuild_digest_writes_no_tier_rollup(handle, ledger)
             .await?;
+        self.a_reconciliation_digest_is_its_own_kind_and_namespace(handle, ledger)
+            .await?;
+        Ok(())
+    }
+
+    /// P5-D13: `DigestRequest.reconcile` over the same two-parent input selects
+    /// [`bough_plugin_ledger::RollupKind::Reconciliation`] and its own id namespace. A merge's one
+    /// block must be findable BY KIND — `graph-ops`' invariant looks for exactly that — and it must
+    /// not sit in the namespace an inheritance digest supersedes, or a merge and a fork would
+    /// overwrite each other's summaries.
+    async fn a_reconciliation_digest_is_its_own_kind_and_namespace(
+        &self,
+        handle: &RollupsHandle,
+        ledger: &LedgerHandle,
+    ) -> Result<(), String> {
+        let head = TrajId::new("conformance:rollups+merged");
+        let outcome = handle
+            .0
+            .rebuild_digest(&DigestRequest {
+                agent: agent(),
+                traj: head.clone(),
+                at: seal_request().at,
+                attribution: Attribution::System,
+                from_raw: false,
+                parents: vec![traj()],
+                reconcile: true,
+            })
+            .await;
+        let report = match (outcome, self.seals) {
+            // A provider that seals nothing refuses this exactly as it refuses every other
+            // rebuild: the field changes what a SEALING provider writes, never whether the stub
+            // starts writing.
+            (Err(_), false) => return Ok(()),
+            (Ok(report), false) => {
+                return Err(format!(
+                    "a_reconciliation_digest_is_its_own_kind_and_namespace: a non-sealing \
+                     provider minted `{}`",
+                    report.digest
+                ))
+            }
+            (Err(e), true) => {
+                return Err(format!(
+                    "a_reconciliation_digest_is_its_own_kind_and_namespace: a sealing provider \
+                     refused a reconciliation: {e}"
+                ))
+            }
+            (Ok(report), true) => report,
+        };
+        let rows = ledger
+            .0
+            .rollups(&RollupQuery {
+                trajs: vec![head.clone()],
+                include_superseded: true,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| format!("a_reconciliation_digest_is_its_own_kind_and_namespace: {e}"))?;
+        let row = rows.iter().find(|r| r.id == report.digest).ok_or_else(|| {
+            format!(
+                "a_reconciliation_digest_is_its_own_kind_and_namespace: `{}` is not in the \
+                     ledger",
+                report.digest
+            )
+        })?;
+        if row.kind != bough_plugin_ledger::RollupKind::Reconciliation {
+            return Err(format!(
+                "a_reconciliation_digest_is_its_own_kind_and_namespace: `{}` was sealed as {:?}, \
+                 not Reconciliation",
+                row.id, row.kind
+            ));
+        }
+        if !row.id.as_str().starts_with("recon:") {
+            return Err(format!(
+                "a_reconciliation_digest_is_its_own_kind_and_namespace: `{}` is not in the \
+                 `recon:` namespace",
+                row.id
+            ));
+        }
+        if row.src_trajs != vec![traj()] {
+            return Err(format!(
+                "a_reconciliation_digest_is_its_own_kind_and_namespace: `{}` names src_trajs \
+                 {:?}, not the parents it reconciled",
+                row.id, row.src_trajs
+            ));
+        }
         Ok(())
     }
 

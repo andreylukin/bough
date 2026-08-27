@@ -27,7 +27,10 @@
     search_pane: tui.search
     page_lines: 10
     wheel_lines: 3
-    notice_max_lines: 8
+    # `/help` lists every registered command; Phase 5's seven pushed the list past eight rows.
+    # The band is clamped to the rows above the composer anyway, and an overflow now names how
+    # many lines it dropped, so this is a ceiling rather than a silent knife.
+    notice_max_lines: 24
 
 - id: tui.strip
   plugin: tui-strip
@@ -49,7 +52,9 @@
 - id: residents
   plugin: residents
   config:
-    bootstrap: [sol]
+    # Phase 5: the roster BREATHES. `sol` and `terra` are the two lanes Andrey starts with; a
+    # third is born by accepting a `claim/proposed` of kind `lane`, not by editing this list.
+    bootstrap: [sol, terra]
     traj_prefix: "lane/"
     resume_all: true
     catch_up: true
@@ -65,3 +70,27 @@
     deliver_to: sol
     priming_limit: 40
     tier1: true
+
+# Phase 5 (§2, §17 Phase 5): the leader is an ORDINARY agent row with a plugin set mounted in its
+# scope. One `disabled: true` on `leader` takes the whole set down, and one `leader.config.agent`
+# edit moves it to another lane — which is this phase's SWAP gate
+# (`crates/bough/tests/leader_swap.rs`, `scripts/tui/15-leader-swap.sh`).
+#
+# DEVIATION from the phase plan's `leader.set` GROUP row: the composer REFUSES a plugin-less row
+# (`ComposeError::MissingPlugin`, `config/compose.rs`) — Decision D18's "pure group row" is a
+# comment in `config/entry.rs` that the composer never implemented, and Phase 5 touches no kernel.
+# Nesting `tool.leader` INSIDE the `leader` row gives the group its one property that mattered:
+# one `disabled: true` on the parent takes both rows down.
+- id: leader
+  plugin: leader
+  config:
+    agent: sol
+    persona: |
+      You hold the whole population in view. You adopt mail nobody claimed, draft Andrey's
+      words into requirement claims, and propose splits, merges and new lanes as claims.
+      You accept nothing: acceptance is Andrey's act alone.
+    adopt_batch: 20
+    attribute_reconsolidation: true
+- id: tool.leader
+  plugin: tool-leader
+  config: {}

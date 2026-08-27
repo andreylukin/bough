@@ -60,6 +60,17 @@ bough-plugin-rollups-summarizer = { workspace = true }
 bough-plugin-rollups-none = { workspace = true }
 bough-plugin-reconsolidation = { workspace = true }
 bough-plugin-drift-watch = { workspace = true }
+# Phase 5 (§17 Phase 5): many agents, the leader, graph ops. Linked for the same one reason as
+# every row above — so `inventory::submit!` lands in the binary's catalog. The launcher never
+# names a plugin type.
+bough-plugin-mail-router = { workspace = true }
+bough-plugin-dormancy = { workspace = true }
+bough-plugin-graph-ops = { workspace = true }
+bough-plugin-claims = { workspace = true }
+bough-plugin-lane-scope = { workspace = true }
+bough-plugin-worker-fork = { workspace = true }
+bough-plugin-leader = { workspace = true }
+bough-plugin-tool-leader = { workspace = true }
 serde_yaml = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }

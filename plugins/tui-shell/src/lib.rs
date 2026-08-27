@@ -614,7 +614,10 @@ fn default_wheel_lines() -> u16 {
     3
 }
 fn default_notice_lines() -> u16 {
-    8
+    // `/help` lists every registered command, and Phase 5 added seven. Eight rows cut the list
+    // off mid-alphabet; the band is bounded by the rows above the composer anyway, so the cap's
+    // job is only to stop an enormous notice from swallowing the screen.
+    24
 }
 
 /// The config every test in this crate starts from: headless, deterministic, no clipboard.

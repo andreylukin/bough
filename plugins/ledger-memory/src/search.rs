@@ -14,7 +14,7 @@ pub fn search(store: &MemoryStore, q: &SearchQuery) -> Result<Vec<SearchHit>, Le
     }
     let inner = store.inner.read();
     let mut hits: Vec<SearchHit> = Vec::new();
-    for step in store.readable_many(&inner, &q.trajs)? {
+    for step in store.readable_many(&inner, &q.trajs, &[])? {
         let hay = haystack(&step);
         let tokens = tokenize(&hay);
         // FTS5 joins bare terms with AND, so every term must be present as a whole token.

@@ -29,3 +29,12 @@ parking_lot = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true }
 bough-plugin-ledger-memory = { workspace = true }
+bough-plugin-agent-loop = { workspace = true }
+bough-plugin-agent-loop-scripted = { workspace = true }
+bough-plugin-projection = { workspace = true }
+bough-plugin-projection-assembler = { workspace = true }
+bough-plugin-tools = { workspace = true }
+bough-plugin-llm = { workspace = true }
+serde_yaml = { workspace = true }
+futures = { workspace = true }
+tokio-util = { workspace = true }

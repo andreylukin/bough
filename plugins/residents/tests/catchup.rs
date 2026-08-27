@@ -6,8 +6,9 @@ use std::sync::Arc;
 
 use bough_kernel::{Context, KernelCore};
 use bough_plugin_agents::{
-    AgentCell, AgentDriver, AgentError, AgentFactory, AgentsHandle, Attach, CancelCause,
-    InboxReceipt, MailClass, Message, Sender, Target, WakeCause, WakeKind, WakeRequest,
+    Admit, AgentCell, AgentDriver, AgentError, AgentFactory, AgentWakeRequest, AgentsHandle,
+    Attach, CancelCause, InboxReceipt, MailClass, Message, Sender, Target, WakeAdmission,
+    WakeCause, WakeKind, WakeRequest,
 };
 use bough_plugin_ledger::{AgentName, LedgerHandle, TrajId, WakeId};
 use bough_plugin_ledger_memory::store::MemoryStore;
@@ -23,6 +24,11 @@ struct Recorder {
 
 struct RecordingDriver {
     name: String,
+    id: bough_plugin_agents::AgentId,
+    /// The driver's own context, so `wake_now` can dispatch the admission waterfall the way a
+    /// real loop Provider does (P5-D1). Without it a "dormant" lane in this binary would be a
+    /// mock rather than the seam.
+    ctx: Context,
     rec: Arc<Recorder>,
 }
 
@@ -34,13 +40,31 @@ impl AgentDriver for RecordingDriver {
     async fn notify(&self, _receipt: &InboxReceipt, _msg: &Message) {}
     async fn cancel(&self, _cause: CancelCause, _keep_inbox: bool) {}
     async fn stop(&self) {}
-    async fn wake_now(&self, _kind: WakeKind, cause: WakeCause) -> WakeRequest {
+    async fn wake_now(&self, kind: WakeKind, cause: WakeCause) -> WakeRequest {
+        // P5-D1: EVERY loop Provider dispatches `agent/wake-request` immediately before it opens
+        // a wake, and a `Defer` means the wake never exists at all.
+        let admitted = self
+            .ctx
+            .waterfall::<AgentWakeRequest>(WakeAdmission {
+                agent: AgentName::new(&self.name),
+                id: self.id.clone(),
+                kind,
+                cause,
+                trigger: None,
+                at: chrono::Utc::now(),
+                decision: Admit::Open,
+            })
+            .await;
+        if admitted.decision != Admit::Open {
+            return WakeRequest::Nothing;
+        }
         self.rec.wakes.lock().push((self.name.clone(), cause));
         WakeRequest::Started(WakeId::new("w-1"))
     }
 }
 
 struct RecordingFactory {
+    ctx: Context,
     rec: Arc<Recorder>,
 }
 
@@ -56,6 +80,8 @@ impl AgentFactory for RecordingFactory {
     ) -> Result<Arc<dyn AgentDriver>, AgentError> {
         Ok(Arc::new(RecordingDriver {
             name: cell.agent().name().to_string(),
+            id: cell.agent().id().clone(),
+            ctx: self.ctx.clone(),
             rec: Arc::clone(&self.rec),
         }) as Arc<dyn AgentDriver>)
     }
@@ -82,6 +108,7 @@ async fn fixture() -> Fixture {
         .set_factory(
             &ctx,
             Arc::new(RecordingFactory {
+                ctx: ctx.clone(),
                 rec: Arc::clone(&rec),
             }) as Arc<dyn AgentFactory>,
         )
@@ -265,4 +292,120 @@ async fn disabling_the_row_disposes_the_roster_and_leaves_the_ledger_untouched()
         "the ledger is untouched: a trajectory outlives its handle"
     );
     assert_eq!(after[0].name.to_string(), "sol");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: the roster BREATHES, and the roster no longer implies a wake.
+//
+// `residents` gains no dependency on `dormancy`: it asks for the catch-up wake exactly as before
+// and the ADMISSION POINT (P5-D1) is what declines it. These two bullets pin that division —
+// a listener standing in for the `dormancy` row defers `terra`, and the row raises it anyway.
+// ---------------------------------------------------------------------------
+
+/// Register an admission listener that defers every wake for `agent`: what the `dormancy` row
+/// does for a lane that is asleep.
+async fn defer_wakes_for(ctx: &Context, agent: &'static str) -> bough_kernel::EffectHandle {
+    ctx.on_waterfall::<AgentWakeRequest, _, _>(move |mut v, next| async move {
+        if v.agent.to_string() == agent {
+            v.decision = Admit::Defer {
+                by: "dormancy",
+                reason: "the lane is dormant".to_string(),
+            };
+            return v;
+        }
+        next.run(v).await
+    })
+    .await
+    .expect("the listener registers")
+}
+
+#[tokio::test]
+async fn many_lanes_are_bootstrapped_from_one_list() {
+    let f = fixture().await;
+    let roster = Arc::new(Roster::default());
+    let up = raise_roster(
+        &f.agents,
+        &f.ledger,
+        &cfg(&["sol", "terra", "luna"]),
+        &roster,
+    )
+    .await
+    .expect("the roster comes up");
+
+    let mut names: Vec<String> = up.iter().map(|n| n.to_string()).collect();
+    names.sort();
+    assert_eq!(
+        names,
+        vec!["luna".to_string(), "sol".to_string(), "terra".to_string()],
+        "one bootstrap list mints one lane per name"
+    );
+    let mut rows: Vec<String> = f
+        .ledger
+        .0
+        .agents()
+        .await
+        .expect("rows")
+        .into_iter()
+        .map(|r| r.traj.to_string())
+        .collect();
+    rows.sort();
+    assert_eq!(
+        rows,
+        vec![
+            "lane/luna".to_string(),
+            "lane/sol".to_string(),
+            "lane/terra".to_string()
+        ],
+        "each lane got `traj_prefix` + its own name"
+    );
+    assert_eq!(roster.len(), 3, "three disposers are held");
+}
+
+#[tokio::test]
+async fn a_dormant_lane_is_resumed_and_never_woken() {
+    let f = fixture().await;
+    seed_row(&f.ledger, "sol").await;
+    seed_row(&f.ledger, "terra").await;
+    let _deferred = defer_wakes_for(&f.ctx, "terra").await;
+
+    let roster = Arc::new(Roster::default());
+    let up = raise_roster(&f.agents, &f.ledger, &cfg(&[]), &roster)
+        .await
+        .expect("the roster comes up");
+    assert_eq!(up.len(), 2, "the dormant lane is RESUMED like any other");
+
+    // Queue ordinary mail on BOTH lanes, so the only difference between them is admission.
+    for name in ["sol", "terra"] {
+        let agent = f
+            .agents
+            .by_name(&AgentName::new(name))
+            .expect("the lane is live");
+        let mut msg = Message::new(Sender::Andrey, "hello", "hello", chrono::Utc::now());
+        msg.class = MailClass::Ordinary;
+        msg.from = Sender::Agent(AgentName::new("someone"));
+        agent
+            .send(msg, Target::NextWake, false)
+            .await
+            .expect("the mail lands");
+    }
+
+    catch_up(&f.agents, &up, f.fiber)
+        .await
+        .expect("catch-up runs");
+
+    let wakes = f.rec.wakes.lock().clone();
+    assert_eq!(
+        wakes.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+        vec!["sol"],
+        "the dormant lane got no wake, and the awake one got exactly one: {wakes:?}"
+    );
+    assert!(
+        f.agents.by_name(&AgentName::new("terra")).is_some(),
+        "the dormant lane is still live — dormancy suppresses WAKES, not the roster"
+    );
+    assert_eq!(
+        bough_plugin_residents::invariant::check_stream(&mine(&f)),
+        Ok(()),
+        "asking and being declined is not a violation"
+    );
 }
