@@ -36,7 +36,7 @@ pub fn about_from_step(step: &Step) -> Option<AboutView> {
     // phase ux1 (minor 29): the state half reaches the SCREEN as one clean sentence — markdown
     // markers stripped, clause splices dropped, whitespace collapsed. The ledger keeps what the
     // writer wrote; only the rendering is cleaned, so no evidence is rewritten.
-    let state = bough_util::text::one_sentence(step.body.get("state")?.as_str()?, STATE_MAX_CHARS);
+    let state = crate::sentence::one_sentence(step.body.get("state")?.as_str()?, STATE_MAX_CHARS);
     // The intent half is optional in practice (an agent may decline to declare one); the state
     // half is not, because it is the half that is rendered as truth.
     let intent = step

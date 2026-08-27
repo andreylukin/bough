@@ -381,3 +381,31 @@ async fn an_object_args_schema_validates_the_same_typed_line() {
         Err(CommandError::BadArgs { .. })
     ));
 }
+
+/// D-ux1-9, over the REGISTRY. The lint used to be applied only to four hand-written literal
+/// lists, so a command registered by any other row could ship engine vocabulary in its summary
+/// and nothing would fail. `register` refuses it, which makes the boundary hold for rows that do
+/// not exist yet.
+#[tokio::test]
+async fn registering_a_house_word_summary_is_refused_and_plain_language_is_not() {
+    let ctx = Context::root(KernelCore::new());
+    let h = handle(&ctx);
+
+    let mut bad = spec("queue", CommandScope::Global, no_args(), "bad");
+    bad.summary = "show what is waiting in the mail".into();
+    let msg = match h.register(&ctx, bad).await {
+        Ok(_) => panic!("a house word in a user-facing summary is a load failure"),
+        Err(e) => format!("{e}"),
+    };
+    assert!(msg.contains("mail"), "the refusal names the word: {msg}");
+
+    let mut good = spec("queue", CommandScope::Global, no_args(), "good");
+    good.summary = "show the messages waiting to be answered".into();
+    h.register(&ctx, good)
+        .await
+        .expect("plain language registers");
+    assert!(h
+        .list(None)
+        .iter()
+        .any(|c| c.name == CommandName::new("queue")));
+}

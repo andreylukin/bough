@@ -10,6 +10,7 @@ pub mod diff;
 pub mod highlight;
 pub mod invariant;
 pub mod md;
+pub mod sentence;
 pub mod text;
 
 use bough_plugin_tools::{RenderIntent, ToolResultBody};

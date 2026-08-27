@@ -53,17 +53,28 @@ pub enum Field {
     Context,
     Cost,
     Elapsed,
+    /// `esc to interrupt` — present ONLY while a turn is running (M14).
+    ///
+    /// It used to be one of the STATIC `hints`, rendered at every width that fits, idle or not.
+    /// That made the bullet claiming to pin M14 (`the_stop_key_is_named_while_running`) a `see
+    /// "esc"` over a string that was always there: it could not fail on a build that never varied
+    /// the hint with `running`. A field that only exists while running can.
+    StopKey,
     Hints,
 }
 
+/// What [`Field::StopKey`] says. One string, so the test and the product cannot drift.
+pub const STOP_KEY: &str = "esc to interrupt";
+
 /// The order fields are RENDERED in, left to right.
-pub const RENDER_ORDER: [Field; 7] = [
+pub const RENDER_ORDER: [Field; 8] = [
     Field::Product,
     Field::Cwd,
     Field::Model,
     Field::Context,
     Field::Cost,
     Field::Elapsed,
+    Field::StopKey,
     Field::Hints,
 ];
 
@@ -74,12 +85,13 @@ pub const RENDER_ORDER: [Field; 7] = [
 /// knows where they are; money and context are numbers you glance at, not act on; the model
 /// matters more; and the LAST two things to go are the spinner — the only thing on screen saying
 /// the harness is alive (M32) — and the product's own name.
-pub const DROP_ORDER: [Field; 7] = [
+pub const DROP_ORDER: [Field; 8] = [
     Field::Hints,
     Field::Cwd,
     Field::Cost,
     Field::Context,
     Field::Model,
+    Field::StopKey,
     Field::Elapsed,
     Field::Product,
 ];
@@ -88,7 +100,7 @@ pub const DROP_ORDER: [Field; 7] = [
 /// to go rather than the first: `esc interrupt` is the stop key, and the audit's blocker was not
 /// that Esc did nothing but that nobody was ever told it was there (phase ux1 §2.4). An idle
 /// screen can afford to teach; a running one has to.
-pub fn drop_order(v: &StatusView) -> [Field; 7] {
+pub fn drop_order(v: &StatusView) -> [Field; 8] {
     if v.running {
         [
             Field::Cwd,
@@ -97,6 +109,9 @@ pub fn drop_order(v: &StatusView) -> [Field; 7] {
             Field::Model,
             Field::Hints,
             Field::Elapsed,
+            // The stop key outlives everything but the product name while a turn runs: it is the
+            // one thing a person needs at that moment.
+            Field::StopKey,
             Field::Product,
         ]
     } else {
@@ -149,6 +164,7 @@ pub fn field_text(v: &StatusView, f: Field) -> Option<String> {
                 None => format!("{frame} running"),
             })
         }
+        Field::StopKey => v.running.then(|| STOP_KEY.to_string()),
         Field::Hints => {
             if v.hints.is_empty() {
                 return None;
@@ -287,6 +303,8 @@ fn role(f: Field, v: &StatusView, theme: &Theme) -> ratatui::style::Color {
         },
         Field::Cost => theme.dim,
         Field::Elapsed => theme.accent,
+        // The stop key is chrome you must be able to READ under pressure, not a dim hint.
+        Field::StopKey => theme.fg,
         Field::Hints => theme.hint,
     }
 }

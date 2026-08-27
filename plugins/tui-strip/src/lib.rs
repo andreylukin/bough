@@ -52,10 +52,11 @@ pub struct StripConfig {
     /// …and never wider.
     #[serde(default = "default_max_width")]
     pub max_width: u16,
-    /// Blank columns between the rail and the transcript, painted by nobody (M9).
-    #[serde(default = "default_strip_gutter")]
-    pub gutter: u16,
 }
+// NOTE (phase ux1 review): the gutter between the rail and the transcript is `tui.gutter`, read
+// once by the shell's layout (`tui-shell/src/run.rs`). This row used to declare a SECOND `gutter`
+// that nothing read, so a patch setting `tui.strip.gutter: 3` was silently ignored while
+// `--dump-config` showed it as meaningful. One column, one knob.
 
 fn default_collapse_cols() -> u16 {
     100
@@ -65,9 +66,6 @@ fn default_min_width() -> u16 {
 }
 fn default_max_width() -> u16 {
     40
-}
-fn default_strip_gutter() -> u16 {
-    1
 }
 
 /// Re-exported from the render library, which owns it because both panes read it (§1).

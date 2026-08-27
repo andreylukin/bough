@@ -11,7 +11,27 @@
 # not a field of `tui.strip` (plan §1).
 source "$(dirname "$0")/lib.sh"
 
-[ -n "$BOUGH_LIVE" ] && { skip the_status_row_is_on_screen_before_the_patch "the swap gate is composition, not a model"; exit 0; }
+# The live half does not run this script. Every bullet it carries is named here, so the
+# skip COUNT matches the count the replay half prints (a whole-script skip printing one
+# `ok` line for ten assertions is the dishonesty `skip` exists to avoid).
+[ -n "$BOUGH_LIVE" ] && {
+  skip_all "the swap gate is composition, not a model" \
+  the_scroll_fixture_filled_the_transcript \
+  the_status_row_is_on_screen_before_the_patch \
+  disabling_the_status_row_removes_the_line_without_a_restart \
+  the_transcript_grew_by_exactly_one_row \
+  nothing_else_moved \
+  removing_the_patch_returns_the_status_row \
+  the_layout_reflowed_back \
+  the_search_row_is_on_screen_before_its_patch \
+  disabling_the_search_row_removes_the_pane \
+  ctrl_f_degrades_to_a_notice_with_the_row_disabled \
+  removing_the_patch_returns_the_search_row \
+  both_rows_disabled_at_once_leaves_a_working_shell \
+  both_rows_restored \
+  the_process_never_restarted
+  exit 0
+}
 
 tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/scroll.patch.yml"
@@ -39,7 +59,7 @@ pid_of() { pgrep -f "$BOUGH_BIN" | head -1; }
 pid_before="$(pid_of)"
 
 t the_status_row_is_on_screen_before_the_patch \
-  bash -c 'see "esc" --timeout 20000 && see "bough" --timeout 8000'
+  bash -c 'see "? help" --timeout 20000 && see "bough" --timeout 8000'
 
 rows_before="$(traj_rows)"
 

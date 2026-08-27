@@ -7,7 +7,7 @@
 
 pub mod invariant;
 
-pub use bough_util::text::one_sentence;
+pub use bough_plugin_tui_render::sentence::one_sentence;
 
 use std::sync::Arc;
 

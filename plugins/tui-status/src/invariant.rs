@@ -43,6 +43,14 @@ pub fn last_frame() -> Option<Frame> {
     LAST_FRAME.lock().clone()
 }
 
+/// Forget it. The recorded frame is per-process and this row owns it: unloading must leave the
+/// tree as if the row had never mounted (§0.2), and this row is the phase's own SWAP subject — it
+/// is disabled and re-enabled while the TUI runs, so a frame left behind would be checked against
+/// a screen no live row drew.
+pub fn forget() {
+    *LAST_FRAME.lock() = None;
+}
+
 /// PURE: the check, over what the line rendered.
 pub fn check_frame(f: &Frame) -> Result<(), String> {
     if f.rows != 1 {

@@ -4,7 +4,6 @@
 
 pub mod home;
 pub mod id;
-pub mod text;
 pub mod time;
 
 pub use home::{bough_home, bough_path, ensure_dir, home_dir, user_patch_path};

@@ -9,7 +9,21 @@
 # disabled by patch degrades to a notice). This script owns what the audit asked for on top.
 source "$(dirname "$0")/lib.sh"
 
-[ -n "$BOUGH_LIVE" ] && { skip hits_are_snippets_with_a_highlight_and_a_count "search indexes a scripted transcript"; exit 0; }
+# The live half does not run this script. Every bullet it carries is named here, so the
+# skip COUNT matches the count the replay half prints (a whole-script skip printing one
+# `ok` line for ten assertions is the dishonesty `skip` exists to avoid).
+[ -n "$BOUGH_LIVE" ] && {
+  skip_all "search indexes a scripted transcript" \
+  the_search_pane_took_the_keyboard \
+  hits_are_snippets_with_a_highlight_and_a_count \
+  the_match_is_highlighted \
+  no_hit_row_contains_a_brace \
+  n_and_N_step_through_the_hits \
+  enter_moves_the_transcript_to_the_hit \
+  click_moves_the_transcript_to_the_hit \
+  esc_clears_the_query_and_the_hits
+  exit 0
+}
 
 tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/scroll.patch.yml"

@@ -113,16 +113,29 @@ fn the_chords_mean_one_thing_each_from_every_context() {
             Action::FocusSearch,
             "{cx:?}"
         );
-        assert_eq!(
+        // Tab/BackTab are the ONE pair whose meaning is context-dependent, and deliberately so:
+        // while the palette is open they belong to it (that is what completes the selected
+        // command), and cycling panes out from under it is what made `PaletteAction::Complete`
+        // unreachable in the shipped binary. Everywhere else they cycle pane focus.
+        let (tab, backtab) = (
             action_for(k(KeyCode::Tab), cx, PAGE),
-            Action::CycleFocus(1),
-            "{cx:?}"
-        );
-        assert_eq!(
             action_for(k(KeyCode::BackTab), cx, PAGE),
-            Action::CycleFocus(-1),
-            "{cx:?}"
         );
+        if cx.palette_open {
+            assert_eq!(
+                tab,
+                Action::Pass,
+                "Tab must reach the OPEN palette, not the pane ring ({cx:?})"
+            );
+            assert_eq!(
+                backtab,
+                Action::Pass,
+                "BackTab must reach the OPEN palette, not the pane ring ({cx:?})"
+            );
+        } else {
+            assert_eq!(tab, Action::CycleFocus(1), "{cx:?}");
+            assert_eq!(backtab, Action::CycleFocus(-1), "{cx:?}");
+        }
     }
 }
 

@@ -122,6 +122,7 @@ pub fn draw(tui: &TuiHandle) {
         None
     };
     let mut hits: std::collections::HashMap<PaneId, HitMap> = Default::default();
+    let mut reports: std::collections::HashMap<PaneId, pane::RowReport> = Default::default();
     let mut published: Option<Buffer> = None;
 
     let _ = terminal.draw(|frame| {
@@ -136,16 +137,19 @@ pub fn draw(tui: &TuiHandle) {
             };
             let view = tui.view(id, now, size);
             let mut map = HitMap::new();
+            let mut report = pane::RowReport::default();
             {
                 let mut cx = RenderCx {
                     frame: PaneFrame::new(buf),
                     area: *rect,
                     view: &view,
                     hits: &mut map,
+                    report: &mut report,
                 };
                 entry.pane.render(&mut cx);
             }
             hits.insert(id.clone(), map);
+            reports.insert(id.clone(), report);
         }
 
         // The composer is the shell's own, and it is drawn last so no pane can paint over it.
@@ -153,11 +157,13 @@ pub fn draw(tui: &TuiHandle) {
         if crect.height > 0 {
             let view = tui.view(&no_pane(), now, size);
             let mut map = HitMap::new();
+            let mut report = pane::RowReport::default();
             let mut cx = RenderCx {
                 frame: PaneFrame::new(buf),
                 area: crect,
                 view: &view,
                 hits: &mut map,
+                report: &mut report,
             };
             tui.0.composer.lock().render(&mut cx);
         }
@@ -239,6 +245,7 @@ pub fn draw(tui: &TuiHandle) {
     });
 
     *tui.0.hits.write() = hits;
+    *tui.0.reports.write() = reports;
     if let Some(buf) = published {
         *tui.0.last_frame.write() = Arc::new(buf);
     }
@@ -348,6 +355,11 @@ pub async fn on_key(tui: &TuiHandle, key: KeyEvent) {
         }
         crate::Action::ExitStep => {
             exit_step(tui, now).await;
+            return;
+        }
+        crate::Action::Help => {
+            let prefix = tui.0.composer.lock().prefix();
+            dispatch_line(tui, &format!("{prefix}help")).await;
             return;
         }
         crate::Action::FocusSearch => {
@@ -686,7 +698,6 @@ pub async fn send(tui: &TuiHandle, text: &str) {
     }
 }
 
-/// A slash line: through `ctx.commands`, and NEVER to an agent (V5). Appends no step (P3-D8).
 /// A slash line: through `ctx.commands`, and NEVER to an agent (V5). Appends no step (P3-D8).
 ///
 /// THE TEXT IS NOT DESTROYED (B3). The composer is cleared only where the name RESOLVED; on a

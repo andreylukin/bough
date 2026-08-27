@@ -155,10 +155,18 @@ pub fn miss_notice(typed: &str, did_you_mean: Option<&str>) -> String {
 pub fn echoed(raw: &str, text: &str) -> String {
     let raw = raw.trim();
     if text.trim().is_empty() {
-        return raw.to_string();
+        // M27: "every command renders output OR A REASON". Echoing the bare line for an empty
+        // answer made a complete no-op indistinguishable from a command that worked — and it made
+        // the two shell-use bullets that decide "rendered something" by diffing the screen pass
+        // for a command that renders nothing, because its own name appeared in the notice band.
+        return format!("{raw}\n{NO_OUTPUT}");
     }
     format!("{raw}\n{text}")
 }
+
+/// What a command that answered with nothing at all says instead of nothing at all. A test
+/// asserting M27 looks for the ABSENCE of this string, which is a check that can fail.
+pub const NO_OUTPUT: &str = "(no output \u{2014} this command did nothing)";
 
 /// The words no user-facing command summary may use: this tree's INTERNAL vocabulary, which the
 /// audit caught leaking into `/help` (M16). The ledger's step types keep these names; a sentence
@@ -207,7 +215,9 @@ mod tests {
     #[test]
     fn the_echo_puts_the_typed_line_first() {
         assert_eq!(echoed("/agents ", "sol  idle"), "/agents\nsol  idle");
-        assert_eq!(echoed("/quit", "  "), "/quit");
+        // M27: a command that answered with nothing SAYS so. The bare-line form made "worked
+        // silently" and "did nothing at all" the same pixels.
+        assert_eq!(echoed("/quit", "  "), format!("/quit\n{NO_OUTPUT}"));
     }
 
     #[test]

@@ -53,8 +53,7 @@
     collapse_cols: 100
     min_width: 22
     max_width: 40
-    # The blank column between rail and transcript belongs to NEITHER pane (M9).
-    gutter: 1
+    # The blank column between rail and transcript is `tui.gutter` above: ONE column, ONE knob.
 
 # phase ux1 §2.5, §2.13: the status line. A row of its own — not a field of `tui.strip` — because
 # this phase's SWAP gate disables it by patch while the TUI runs and asserts the layout reflows
@@ -66,7 +65,10 @@
     cwd_max: 40
     spinner: "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
     spinner_ms: 80
-    hints: ["? = help", "esc = interrupt", "^f = search"]
+    # `esc to interrupt` is NOT here: it is `Field::StopKey`, which exists only while a turn is
+    # running (M14). A static hint that reads the same idle and running teaches nothing and pins
+    # nothing.
+    hints: ["? = help", "^f = search"]
 
 - id: tui.focus
   plugin: tui-focus

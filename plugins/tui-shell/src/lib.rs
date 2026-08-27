@@ -46,7 +46,7 @@ pub use keymap::{
     action_for, hints, snaps_to_composer, Action, ExitArm, ExitStep, Focus, KeyContext,
 };
 pub use notice::{Notice, NoticeKind};
-pub use pane::{measure, responsive_width};
+pub use pane::{measure, responsive_width, RowReport};
 pub use pane::{
     HitId, HitMap, Pane, PaneCx, PaneEvent, PaneFrame, PaneId, PaneInfo, PaneOutcome, PaneSpec,
     RenderCx, ShellView, Slot, SlotSize,
@@ -119,6 +119,9 @@ pub struct TuiInner {
     pub(crate) panes: RwLock<Vec<PaneEntry>>,
     pub(crate) rects: RwLock<Vec<(PaneId, Rect)>>,
     pub(crate) hits: RwLock<HashMap<PaneId, HitMap>>,
+    /// What each pane REPORTED about its own roving state on the last frame (§2.12). The shell
+    /// cannot read inside a pane, so `ShellView::row_focus` / `following` are fed from here.
+    pub(crate) reports: RwLock<HashMap<PaneId, pane::RowReport>>,
     pub(crate) focused_agent: RwLock<Option<AgentId>>,
     pub(crate) focused_pane: RwLock<PaneId>,
     pub(crate) composer_focused: AtomicBool,
@@ -184,6 +187,7 @@ impl TuiHandle {
             panes: RwLock::new(Vec::new()),
             rects: RwLock::new(Vec::new()),
             hits: RwLock::new(HashMap::new()),
+            reports: RwLock::new(HashMap::new()),
             focused_agent: RwLock::new(None),
             focused_pane: RwLock::new(no_pane()),
             composer_focused: AtomicBool::new(true),
@@ -594,9 +598,17 @@ impl TuiHandle {
             theme: self.0.theme,
             now,
             composer_focused: self.composer_focused(),
-            // WP-1/WP-3 fill these from the focused pane's `RowFocus` and `Viewport`.
-            row_focus: None,
-            following: true,
+            // What the panes REPORTED on the last frame (`RenderCx::report_rows`). A pane's
+            // roving row focus and the transcript's follow state live inside the pane — the
+            // shell cannot read them — so the honest shape is a report, not a guess. A pane
+            // that reports nothing leaves the documented defaults, which is what "a pane that
+            // ignores them renders exactly as before" means (§2.12).
+            row_focus: self.0.reports.read().get(pane).and_then(|r| r.row_focus),
+            following: self
+                .transcript_pane()
+                .and_then(|t| self.0.reports.read().get(&t).map(|r| r.following))
+                .unwrap_or(true),
+            measure_cols: self.0.cfg.measure_cols,
         }
     }
 
@@ -918,6 +930,37 @@ impl Plugin for TuiShellPlugin {
         if cfg.size[0] == 0 || cfg.size[1] == 0 {
             return reject("size must be a non-zero width and height".to_string());
         }
+        // The eight fields phase ux1 added. Each one of these silently degraded a behaviour
+        // rather than failing the load: `exit_arm_ms: 0` makes `ExitArm::is_armed` never true,
+        // so the two-press exit is simply gone; `history_cap: 0` was clamped by a `.max(1)` at
+        // the use site, the exact anti-pattern this block exists to replace; an empty
+        // `transcript_pane` degrades every PageUp to whatever holds the keyboard (B2).
+        if cfg.transcript_pane.trim().is_empty() {
+            return reject("transcript_pane must name a pane id".to_string());
+        }
+        if cfg.measure_cols == 0 {
+            return reject("measure_cols must be > 0".to_string());
+        }
+        if cfg.exit_arm_ms == 0 {
+            return reject("exit_arm_ms must be > 0".to_string());
+        }
+        if cfg.paste_burst_ms == 0 {
+            return reject("paste_burst_ms must be > 0".to_string());
+        }
+        if cfg.history_cap == 0 {
+            return reject("history_cap must be > 0".to_string());
+        }
+        if cfg.notice_ms == 0 {
+            return reject("notice_ms must be > 0".to_string());
+        }
+        if cfg.flash_ms == 0 {
+            return reject("flash_ms must be > 0".to_string());
+        }
+        // `gutter` is the one field a zero is MEANINGFUL for: no blank column between the rail
+        // and the transcript. It is bounded above instead, so a patch cannot eat the transcript.
+        if cfg.gutter > 16 {
+            return reject("gutter must be <= 16 columns".to_string());
+        }
         Ok(())
     }
 
@@ -974,6 +1017,27 @@ impl Plugin for TuiShellPlugin {
             .map_err(|e| PluginError::new(ctx.entry_id().clone(), e))?;
 
         builtins::register(&ctx, &tui).await?;
+
+        // M15: the reload result reaches the SCREEN, in the log's own words. The listener is an
+        // EFFECT OF THIS ROW (§0.1 item 2, §0.2): it holds the handle this row provides, it is
+        // rebuilt whenever this row reloads — which a saved patch file, the very event being
+        // reported, can cause — and disabling `tui` by patch takes it away. It used to live in
+        // the launcher, holding an Arc captured once at boot, so M15 stopped reaching the screen
+        // the first time the `tui` row reloaded, with nothing failing.
+        let notice_tui = tui.clone();
+        ctx.on::<bough_kernel::ConfigReloadEvent, _, _>(move |what: bough_kernel::ConfigReload| {
+            let tui = notice_tui.clone();
+            async move {
+                let kind = if what.is_rejection() {
+                    NoticeKind::Error
+                } else {
+                    NoticeKind::Config
+                };
+                tui.notify_kind(what.line(), kind);
+            }
+        })
+        .await
+        .map_err(|e| PluginError::new(ctx.entry_id().clone(), e))?;
 
         // The loop is an effect: disposing the row halts it at its next checkpoint.
         let (loop_ctx, loop_tui, loop_cfg) = (ctx.clone(), tui.clone(), cfg.clone());

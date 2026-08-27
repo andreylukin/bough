@@ -135,6 +135,12 @@ pub struct SearchState {
     /// The viewport height of the LAST frame. `handle` has no `area`, and clamping the scroll
     /// needs one.
     pub height: u16,
+    /// How many steps per agent the last query actually looked at ([`SearchConfig::window`]).
+    pub window: usize,
+    /// Whether that window was FULL for at least one agent — i.e. there are older steps this
+    /// query did not read. The counter SAYS so: "no matches" for a word said 500 steps ago and
+    /// "no matches" for a word never said must not read the same (M11).
+    pub windowed: bool,
 }
 
 impl SearchState {
@@ -144,6 +150,8 @@ impl SearchState {
             rows: Vec::new(),
             error: None,
             debounce: Debounce::new(cfg.debounce_ms),
+            window: cfg.window,
+            windowed: false,
             selected: 0,
             scroll: 0,
             height: 0,
@@ -206,24 +214,32 @@ impl SearchState {
         if self.input.trim().is_empty() {
             return String::new();
         }
-        index::counter(self.selected, self.rows.len())
+        let base = index::counter(self.selected, self.rows.len());
+        if self.windowed {
+            format!("{base} \u{b7} newest {} steps", self.window)
+        } else {
+            base
+        }
     }
 
     /// Land a query result. A STALE generation is dropped: a slow query for an older keystroke can
     /// never overwrite the answer to what is on screen now. Returns whether anything changed.
-    pub fn apply(&mut self, generation: u64, result: Result<Vec<Hit>, String>) -> bool {
+    pub fn apply<F: Into<Found>>(&mut self, generation: u64, result: Result<F, String>) -> bool {
         if generation != self.debounce.generation() {
             return false;
         }
         match result {
-            Ok(rows) => {
-                self.rows = rows;
+            Ok(found) => {
+                let found: Found = found.into();
+                self.rows = found.hits;
+                self.windowed = found.windowed;
                 self.error = None;
             }
             Err(msg) => {
                 // An FTS syntax error renders inline AND clears the list: a stale result list
                 // beside a fresh error would be a lie about what matched.
                 self.rows.clear();
+                self.windowed = false;
                 self.error = Some(msg);
             }
         }
@@ -290,11 +306,12 @@ pub async fn run_query(
     ledger: &LedgerHandle,
     cfg: &SearchConfig,
     text: &str,
-) -> Result<Vec<Hit>, String> {
+) -> Result<Found, String> {
     if text.trim().is_empty() {
-        return Ok(Vec::new());
+        return Ok(Found::default());
     }
     let agents = ledger.0.agents().await.map_err(|e| e.to_string())?;
+    let mut windowed = false;
     let mut hits = Vec::new();
     for agent in &agents {
         let steps = ledger
@@ -307,6 +324,9 @@ pub async fn run_query(
             })
             .await
             .map_err(|e| e.to_string())?;
+        // A FULL window means there are older steps this query never read. Silence about that
+        // is what makes "no matches" ambiguous (M11's other half).
+        windowed |= steps.len() >= cfg.window;
         // Newest-first is how the window is taken; the projection wants seq order.
         let mut steps = steps;
         steps.reverse();
@@ -318,7 +338,26 @@ pub async fn run_query(
             break;
         }
     }
-    Ok(hits)
+    Ok(Found { hits, windowed })
+}
+
+/// What one query found, and whether it reached its horizon.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Found {
+    pub hits: Vec<Hit>,
+    /// `true` when at least one agent's step window was full: older steps exist and were NOT
+    /// searched. The pane says so on the counter rather than letting an unread step look like a
+    /// word that was never written.
+    pub windowed: bool,
+}
+
+impl From<Vec<Hit>> for Found {
+    fn from(hits: Vec<Hit>) -> Found {
+        Found {
+            hits,
+            windowed: false,
+        }
+    }
 }
 
 /// The pane: a one-line input it owns, debounced, over `LedgerStore::search`.

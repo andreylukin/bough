@@ -85,6 +85,9 @@ pub enum Row {
         wake: WakeId,
         phase: Phase,
         reason: Option<String>,
+        /// `wake/end.cause`. `aborted` is what an explicit cancel produces, and only the CAUSE
+        /// says whether that cancel was Andrey's Esc or a parent tearing a worker down.
+        cause: Option<String>,
     },
     About {
         step: StepId,
@@ -312,12 +315,14 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
                 wake: step.wake.clone(),
                 phase: Phase::Start,
                 reason: body_str(step, "urgency"),
+                cause: None,
             }),
             "wake/end" => out.push(Row::WakeMark {
                 step: step.id.clone(),
                 wake: step.wake.clone(),
                 phase: Phase::End,
                 reason: body_str(step, "reason"),
+                cause: body_str(step, "cause"),
             }),
             _ => match about_from_step(step) {
                 // `about/line` BY NAME (P3-D11): the pane does not depend on the row that writes it.
@@ -464,12 +469,17 @@ pub fn trailing_text_rows(rows: &[Row]) -> Vec<usize> {
 /// The ledger keeps `wake/start` and `wake/end` — REQUIREMENTS §3's step-type map does not move.
 /// What moves is the chrome: nobody outside this codebase calls a turn a wake, and the audit's
 /// personas read `── wake end · completed` as a machine talking to itself.
-pub fn turn_mark_words(phase: &Phase, reason: Option<&str>) -> String {
+pub fn turn_mark_words(phase: &Phase, reason: Option<&str>, cause: Option<&str>) -> String {
     match phase {
         Phase::Start => "turn".to_string(),
         Phase::End => match reason.map(str::trim).filter(|r| !r.is_empty()) {
-            // The interrupt marker the audit asked for by name (B7): the user pressed Esc and
-            // wants to see, where they are looking, that it landed.
+            // §5 reserves `interrupted` for a PREEMPTED wake and for crash repair: "`interrupted`
+            // is the one reason no loop emits" for a user's Esc. What Esc actually produces is
+            // `aborted` with `cause: user` — so THAT is the pair the interrupt marker reads from.
+            // Rendering it as `turn ended · aborted` is what made B7's marker invisible.
+            Some("aborted") if cause.map(str::trim) == Some("user") => {
+                "turn interrupted".to_string()
+            }
             Some("interrupted") => "turn interrupted".to_string(),
             Some(r) => format!("turn ended \u{b7} {r}"),
             None => "turn ended".to_string(),
@@ -487,18 +497,34 @@ mod tests {
     /// The chrome speaks turn/message; the ledger keeps `wake/*`. Both halves pinned here.
     #[test]
     fn turn_marks_never_say_wake() {
-        assert_eq!(turn_mark_words(&Phase::Start, None), "turn");
+        assert_eq!(turn_mark_words(&Phase::Start, None, None), "turn");
         assert_eq!(
-            turn_mark_words(&Phase::End, Some("completed")),
+            turn_mark_words(&Phase::End, Some("completed"), None),
             "turn ended \u{b7} completed"
         );
         assert_eq!(
-            turn_mark_words(&Phase::End, Some("interrupted")),
+            turn_mark_words(&Phase::End, Some("interrupted"), None),
             "turn interrupted"
         );
-        assert_eq!(turn_mark_words(&Phase::End, Some("  ")), "turn ended");
+        assert_eq!(turn_mark_words(&Phase::End, Some("  "), None), "turn ended");
+        // B7, the marker Esc actually produces. §5 reserves `interrupted` for a PREEMPTED wake,
+        // so a user's Esc lands as `aborted` + `cause: user` — and that pair has to read as an
+        // interrupt, or the audit's marker is invisible on the one path a person can take.
+        assert_eq!(
+            turn_mark_words(&Phase::End, Some("aborted"), Some("user")),
+            "turn interrupted"
+        );
+        // A worker torn down by its spawner is NOT the user interrupting.
+        assert_eq!(
+            turn_mark_words(&Phase::End, Some("aborted"), Some("parent")),
+            "turn ended \u{b7} aborted"
+        );
+        assert_eq!(
+            turn_mark_words(&Phase::End, Some("aborted"), None),
+            "turn ended \u{b7} aborted"
+        );
         for phase in [Phase::Start, Phase::End] {
-            assert!(!turn_mark_words(&phase, Some("done")).contains("wake"));
+            assert!(!turn_mark_words(&phase, Some("done"), None).contains("wake"));
         }
     }
 

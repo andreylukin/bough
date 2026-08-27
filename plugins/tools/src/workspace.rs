@@ -24,8 +24,29 @@ impl ServiceKey for Workspace {
 pub struct WorkspaceRoot(Arc<PathBuf>);
 
 impl WorkspaceRoot {
-    pub fn new(p: PathBuf) -> WorkspaceRoot {
-        WorkspaceRoot(Arc::new(p))
+    /// The ONLY constructor, and it ENFORCES the type's invariant instead of documenting it.
+    /// `new` used to take any `PathBuf`, which left "absolute and canonical" resting on the single
+    /// call site in `tools-baseline` — and `fs::contain` now trusts absoluteness without
+    /// re-canonicalising, so a root built anywhere else would silently reintroduce B5.
+    pub fn new(p: PathBuf) -> Result<WorkspaceRoot, String> {
+        if !p.is_absolute() {
+            return Err(format!(
+                "the workspace root must be an ABSOLUTE path; got {}",
+                p.display()
+            ));
+        }
+        if p.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        }) {
+            return Err(format!(
+                "the workspace root must be CANONICAL: {} still contains `.` or `..`",
+                p.display()
+            ));
+        }
+        Ok(WorkspaceRoot(Arc::new(p)))
     }
 
     pub fn path(&self) -> &Path {

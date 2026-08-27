@@ -77,7 +77,11 @@ impl Plugin for SqliteLedgerPlugin {
             e.defer(move || {
                 let store = retire_me.clone();
                 async move {
-                    let _ = store.checkpoint().await;
+                    // NOT `let _ =`: a checkpoint that fails is exactly M28's symptom (a session
+                    // left in the WAL), and swallowing the result is what made it invisible.
+                    if let Err(e) = store.checkpoint().await {
+                        tracing::error!("ledger-sqlite: WAL checkpoint failed on disposal: {e}");
+                    }
                     store.retire();
                 }
             });

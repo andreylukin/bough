@@ -58,12 +58,15 @@ pub struct SentHistory {
 }
 
 impl SentHistory {
+    /// `cap` is [`crate::TuiConfig::history_cap`], which `validate` rejects at zero. It used to
+    /// be `cap.max(1)` here — a silent clamp at the use site, which is precisely what §0.2 asks a
+    /// loud load failure to replace.
     pub fn new(cap: usize) -> SentHistory {
         SentHistory {
             items: VecDeque::new(),
             cursor: None,
             held: None,
-            cap: cap.max(1),
+            cap,
         }
     }
 

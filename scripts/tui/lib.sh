@@ -57,6 +57,20 @@ skip() {
   echo "ok - $1 # SKIP $2"
 }
 
+# `skip_all <why> <name>...`: every bullet of a script this half deliberately does not run.
+#
+# A whole-script `skip one-name; exit 0` guard printed ONE `ok` line for a script carrying eight
+# or ten named assertions, which is exactly the dishonest count `skip` exists to avoid. One line
+# per bullet, and the names are the same ones the other half prints.
+skip_all() {
+  local why="$1"
+  shift
+  local name
+  for name in "$@"; do
+    echo "ok - $name # SKIP $why"
+  done
+}
+
 # ---------------------------------------------------------------------------
 # the binary under test
 # ---------------------------------------------------------------------------
@@ -142,9 +156,18 @@ tui_start() {
 
 # Ask the running TUI to quit, then wait for the shell prompt back.
 tui_quit() {
-  # A draft the test left in the composer would make `/quit` a suffix of it, so the line is
-  # cleared first (phase ux1: nothing the user typed is destroyed, so nothing clears itself).
-  shell-use keys "Ctrl+u" >/dev/null 2>&1 || true
+  # A draft the test left in the composer would make `/quit` a suffix of it, so the composer is
+  # emptied first (phase ux1: nothing the user typed is destroyed, so nothing clears itself).
+  #
+  # Ctrl+U kills the current LINE and is a no-op at column 0, so ONE of them cannot empty a
+  # MULTI-LINE draft — `18-draft.sh` ends with a three-line one, and `/quit` was being appended
+  # as a fourth line and SENT AS A MESSAGE. Every failure here is swallowed, so the script still
+  # reported all-ok and the process was killed by the EXIT trap instead of exiting cleanly.
+  local i
+  for i in $(seq 1 12); do
+    shell-use keys "Ctrl+u" >/dev/null 2>&1 || true
+    shell-use press Backspace >/dev/null 2>&1 || true
+  done
   shell-use submit "/quit" >/dev/null 2>&1 || true
   shell-use wait idle --timeout 10000 >/dev/null 2>&1 || true
 }

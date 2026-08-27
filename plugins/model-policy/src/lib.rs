@@ -13,7 +13,7 @@ pub use price::{cost_usd, Price};
 use std::sync::Arc;
 
 use bough_kernel::{Context, InvariantSpec, Plugin, PluginError};
-use bough_plugin_ledger::{Append, Class, Ledger, LedgerHandle, StepType, TrajId, WakeId};
+use bough_plugin_ledger::{Append, Class, Ledger, StepType, TrajId, WakeId};
 use bough_plugin_llm::{Chunk, LlmStreamEvent, RequestCall, StreamCall, UsageRound, USAGE_ROUND};
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -132,10 +132,39 @@ impl Plugin for ModelPolicyPlugin {
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), bough_kernel::ConfigError> {
+        let reject = |detail: String| Err(bough_kernel::ConfigError::Rejected { detail });
         if cfg.sol.trim().is_empty() || cfg.terra.trim().is_empty() {
-            return Err(bough_kernel::ConfigError::Rejected {
-                detail: "both `sol` and `terra` must name a model".to_string(),
-            });
+            return reject("both `sol` and `terra` must name a model".to_string());
+        }
+        // The price table is self-contained data, so §0.5's pure-validator rule applies: a
+        // negative, NaN or absurd rate would flow through `price::cost_usd` into a DURABLE
+        // `usage/round.cost_usd` and onto the status line, where `status::money` would render a
+        // negative running total quite happily. A price is wrong once, at load, or never.
+        for (model, p) in cfg.prices.iter() {
+            if model.trim().is_empty() {
+                return reject("a price row must name a model".to_string());
+            }
+            for (what, v) in [
+                ("input_per_mtok", p.input_per_mtok),
+                ("output_per_mtok", p.output_per_mtok),
+                ("cache_read_per_mtok", p.cache_read_per_mtok),
+                ("cache_write_per_mtok", p.cache_write_per_mtok),
+            ] {
+                if !v.is_finite() || v < 0.0 {
+                    return reject(format!(
+                        "prices[{model:?}].{what} is {v}: a price is a finite, non-negative number \
+                         of dollars per million tokens"
+                    ));
+                }
+                // A sanity ceiling. Nothing on the market is within two orders of magnitude of
+                // this, and a fat-fingered patch that is silently 1000x wrong is a durable lie.
+                if v > 10_000.0 {
+                    return reject(format!(
+                        "prices[{model:?}].{what} is {v} $/Mtok, which is not a price anyone \
+                         charges; the units are dollars per MILLION tokens"
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -228,10 +257,44 @@ impl Plugin for ModelPolicyPlugin {
         })
         .await?;
 
+        // The `usage/round` WRITER. One task, owned by this row through `effect_spawn`, fed by a
+        // channel the stream tee sends into. It used to be a bare `tokio::spawn` per round: a
+        // task owned by nothing, holding a `LedgerHandle` cloned out of this row's committed
+        // view, neither cancelled nor awaited on unload, and free to race `ledger.sqlite`'s
+        // `checkpoint()`-then-`retire()` disposer on shutdown (the M28 class). It is registered
+        // BEFORE the tee so LIFO recovery disposes it AFTER the tee has stopped producing.
+        let (usage_tx, mut usage_rx) =
+            tokio::sync::mpsc::unbounded_channel::<(Attribution, UsageRound)>();
+        let writer_ledger = ledger.clone();
+        ctx.effect_spawn(move |_e| async move {
+            while let Some((a, body)) = usage_rx.recv().await {
+                if let Err(e) = writer_ledger
+                    .0
+                    .append(Append {
+                        traj: a.traj,
+                        wake: a.wake,
+                        kind: StepType::new(USAGE_ROUND),
+                        class: Class::Thought,
+                        body: serde_json::to_value(&body).unwrap_or(serde_json::Value::Null),
+                        cites: vec![],
+                        at: chrono::Utc::now(),
+                        id: None,
+                    })
+                    .await
+                {
+                    // A cost line that failed to write is a missing number on the status line,
+                    // never a failed model round — but it is no longer SILENT, which is what made
+                    // M24's "$— forever" indistinguishable from "nothing has cost anything yet".
+                    tracing::warn!("model-policy: usage/round append failed: {e}");
+                }
+            }
+            Ok(())
+        });
+
         // The usage tee: an OBSERVER on `llm/stream`, exactly the shape `tui-focus`'s text tee
         // has — `next` runs first, nothing is replaced, nothing is short-circuited, and every
         // chunk passes through byte-identical.
-        let (p, l, prices) = (pending.clone(), ledger.clone(), Arc::new(prices));
+        let (p, l, prices) = (pending.clone(), usage_tx, Arc::new(prices));
         ctx.on_waterfall::<LlmStreamEvent, _, _>(move |call, next| {
             let (p, l, prices) = (p.clone(), l.clone(), prices.clone());
             async move {
@@ -249,7 +312,9 @@ impl Plugin for ModelPolicyPlugin {
                                 if let Some(a) = p.get(&model) {
                                     let body =
                                         usage_round(&model, a.step_index, u, prices.get(&model));
-                                    append_usage((*l).clone(), a, body);
+                                    // The writer owns the append; a closed channel means the row
+                                    // is going away and there is nothing to write into.
+                                    let _ = l.send((a, body));
                                 }
                             }
                             chunk
@@ -269,26 +334,6 @@ impl Plugin for ModelPolicyPlugin {
 }
 
 bough_kernel::register_plugin!(ModelPolicyPlugin);
-
-/// Append one `usage/round`. Fire-and-forget on the runtime: a cost line that failed to write is
-/// a missing number on the status line, never a failed model round.
-fn append_usage(ledger: LedgerHandle, a: Attribution, body: UsageRound) {
-    tokio::spawn(async move {
-        let _ = ledger
-            .0
-            .append(Append {
-                traj: a.traj,
-                wake: a.wake,
-                kind: StepType::new(USAGE_ROUND),
-                class: Class::Thought,
-                body: serde_json::to_value(&body).unwrap_or(serde_json::Value::Null),
-                cites: vec![],
-                at: chrono::Utc::now(),
-                id: None,
-            })
-            .await;
-    });
-}
 
 #[cfg(test)]
 mod usage_tests {

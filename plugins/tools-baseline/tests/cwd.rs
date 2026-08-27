@@ -130,3 +130,18 @@ async fn a_relative_path_lands_under_the_pinned_root() {
     );
     assert!(!elsewhere.path().join("notes.txt").exists());
 }
+
+/// B5's brand actually enforces its own doc comment now. A relative or non-canonical path cannot
+/// construct a `WorkspaceRoot` at all, so the invariant rests on the TYPE and not on the single
+/// call site in this crate.
+#[test]
+fn a_workspace_root_refuses_a_relative_or_uncanonical_path() {
+    use bough_plugin_tools::WorkspaceRoot;
+    let err = WorkspaceRoot::new(std::path::PathBuf::from("notes"))
+        .expect_err("a relative root is not a root");
+    assert!(err.contains("ABSOLUTE"), "{err}");
+    let err = WorkspaceRoot::new(std::path::PathBuf::from("/tmp/../etc"))
+        .expect_err("`..` is not canonical");
+    assert!(err.contains("CANONICAL"), "{err}");
+    assert!(WorkspaceRoot::new(std::path::PathBuf::from("/tmp")).is_ok());
+}

@@ -242,3 +242,49 @@ fn the_prose_measure_is_capped_so_a_wide_terminal_gets_margin() {
     assert_eq!(measure(60, 90), 60);
     assert_eq!(measure(0, 90), 1, "a measure is never zero");
 }
+
+/// …and the measure is REACHABLE from a pane, which is the half that was missing: `measure` had no
+/// production call site and `TuiConfig::measure_cols` was read by nothing, so a 200-column terminal
+/// got a full-width paragraph however the field was set (M13).
+#[tokio::test]
+async fn a_render_cx_hands_a_pane_the_capped_measure_and_not_the_pane_width() {
+    use bough_plugin_tui_shell::{measure, test_config};
+    let cfg = test_config();
+    // The field the shell publishes into every `ShellView`, and the function a pane applies to it.
+    assert_eq!(cfg.measure_cols, 90);
+    assert_eq!(measure(200, cfg.measure_cols), 90);
+    assert_eq!(measure(75, cfg.measure_cols), 75);
+}
+
+/// §0.2, "misconfiguration fails loud": the eight config fields phase ux1 added were unchecked, so
+/// each of them silently DEGRADED a behaviour instead of refusing the load. `exit_arm_ms: 0` is the
+/// worst of them — `ExitArm::is_armed` compares `elapsed <= window`, so a zero window means a
+/// second Ctrl+C can never land inside it and the only idle exit path is simply gone.
+#[test]
+fn the_fields_this_phase_added_are_rejected_at_zero_rather_than_clamped() {
+    use bough_kernel::Plugin;
+    use bough_plugin_tui_shell::{test_config, TuiConfig, TuiShellPlugin};
+
+    let check = |mutate: fn(&mut TuiConfig), want: &str| {
+        let mut cfg = test_config();
+        mutate(&mut cfg);
+        let err = TuiShellPlugin::validate(&cfg).expect_err("a nonsense value is a load failure");
+        let msg = format!("{err:?}");
+        assert!(msg.contains(want), "the refusal names the field: {msg}");
+    };
+
+    check(|c| c.transcript_pane = String::new(), "transcript_pane");
+    check(|c| c.measure_cols = 0, "measure_cols");
+    check(|c| c.exit_arm_ms = 0, "exit_arm_ms");
+    check(|c| c.paste_burst_ms = 0, "paste_burst_ms");
+    check(|c| c.history_cap = 0, "history_cap");
+    check(|c| c.notice_ms = 0, "notice_ms");
+    check(|c| c.flash_ms = 0, "flash_ms");
+    check(|c| c.gutter = 100, "gutter");
+
+    // …and a zero GUTTER is meaningful (no blank column), so it is not rejected.
+    let mut ok = test_config();
+    ok.gutter = 0;
+    TuiShellPlugin::validate(&ok).expect("gutter: 0 is a real choice");
+    TuiShellPlugin::validate(&test_config()).expect("the shipped defaults validate");
+}

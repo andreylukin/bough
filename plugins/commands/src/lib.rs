@@ -240,6 +240,22 @@ impl CommandsHandle {
         spec: CommandSpec,
     ) -> Result<EffectHandle, PluginError> {
         let entry = ctx.entry_id().clone();
+        // D-ux1-9, over the REGISTRY rather than over four hand-written literal lists. The lint
+        // used to run only on the lists inside `tui-shell`, `old-feed-adapter`, `dormancy` and
+        // `drift-watch`, so a command registered by any other row could ship engine vocabulary in
+        // its summary and nothing would fail. Here it is a refusal at registration: every row
+        // passes through this function, so the boundary holds for rows that do not exist yet.
+        if let Some(word) = crate::palette::house_word(&spec.summary) {
+            return Err(PluginError::new(
+                entry,
+                anyhow::anyhow!(
+                    "command `/{}` summary uses the house word `{word}`: {:?}. The ledger's step \
+                     types keep these names; a sentence shown to a human does not (M16).",
+                    spec.name,
+                    spec.summary
+                ),
+            ));
+        }
         let id = NEXT_REGISTRATION.fetch_add(1, Ordering::Relaxed);
         let name = spec.name.to_string();
         let scope = scope_str(&spec.scope);

@@ -205,47 +205,11 @@ pub async fn recompose_once(kernel: &Kernel, cli: &Cli) -> Result<(), BootError>
 // phase ux1 §2.9 (M15): the reload result reaches the SCREEN, not only the log
 // ---------------------------------------------------------------------------
 
-/// `config/reload` — EMIT. The launcher raises it after every recompose attempt; `tui-shell`
-/// listens and renders the SAME TEXT the log gets, which is M15's whole complaint. A headless
-/// profile simply has no listener, so the behaviour there is unchanged.
-pub struct ConfigReloadEvent;
-
-impl bough_kernel::EmitEvent for ConfigReloadEvent {
-    const NAME: &'static str = "config/reload";
-    type Payload = ConfigReload;
-}
-
-/// What one recompose attempt did.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ConfigReload {
-    Applied { rows_changed: usize },
-    Rejected { detail: String },
-}
-
-impl ConfigReload {
-    /// PURE: the ONE LINE the screen shows, which is the same text the log gets (M15). A user who
-    /// edited a patch and saw nothing happen could not tell a no-op from a rejection.
-    pub fn line(&self) -> String {
-        match self {
-            ConfigReload::Applied { rows_changed: 0 } => {
-                "config reloaded — no row changed".to_string()
-            }
-            ConfigReload::Applied { rows_changed: 1 } => {
-                "config reloaded — 1 row changed".to_string()
-            }
-            ConfigReload::Applied { rows_changed } => {
-                format!("config reloaded — {rows_changed} rows changed")
-            }
-            ConfigReload::Rejected { detail } => {
-                format!("config rejected, last good tree still running: {detail}")
-            }
-        }
-    }
-
-    pub fn is_rejection(&self) -> bool {
-        matches!(self, ConfigReload::Rejected { .. })
-    }
-}
+/// The event and its payload live in `bough-kernel` (loader vocabulary, same family as
+/// `config-update-failed`): the LISTENER must be an effect of the row whose surface it drives, so
+/// it cannot be reachable only from the launcher. Re-exported here because this is where it is
+/// raised.
+pub use bough_kernel::{ConfigReload, ConfigReloadEvent};
 
 /// Raise `config/reload`. EMIT, so a profile with no listener pays nothing and the watch task is
 /// never blocked by a surface.

@@ -117,12 +117,19 @@ print("\n".join(rows[start:end]))
 export -f answer_block
 
 before="$(answer_block)"
+# `answer_block` writes its failure to stderr and exits 1, so a MISS yields an empty string — and
+# the comparison below would then be `"" = ""` and pass while comparing nothing. Both captures
+# have to be non-empty for the equality to mean anything.
+t the_live_answer_was_actually_captured \
+  bash -c '[ -n "'"$before"'" ] && [ "$(printf "%s\n" "'"$before"'" | wc -l)" -ge 3 ]'
+
 tui_quit
 tui_start "$REPO_ROOT/scripts/tui/fixtures/markdown.patch.yml"
 t the_same_answer_renders_identically_after_a_relaunch \
   bash -c '
     see "'"$SPLIT_WORD"'" --timeout 30000 || exit 1
     after="$(answer_block)"
+    [ -n "$after" ] || { echo "the restored answer block is empty: nothing was compared"; exit 1; }
     [ "$after" = "'"$before"'" ] || {
       echo "the restored render differs from the live one"
       diff <(printf "%s\n" "'"$before"'") <(printf "%s\n" "$after") | head -20

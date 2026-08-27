@@ -10,7 +10,26 @@
 # with real tool rows can have one focused, toggled or clicked.
 source "$(dirname "$0")/lib.sh"
 
-[ -n "$BOUGH_LIVE" ] && { skip click_then_type_still_sends "the focus model is composition and keys, not a model"; exit 0; }
+# The live half does not run this script. Every bullet it carries is named here, so the
+# skip COUNT matches the count the replay half prints (a whole-script skip printing one
+# `ok` line for ten assertions is the dishonesty `skip` exists to avoid).
+[ -n "$BOUGH_LIVE" ] && {
+  skip_all "the focus model is composition and keys, not a model" \
+  the_tool_rows_are_on_screen \
+  the_click_did_not_steal_the_keyboard \
+  click_then_type_still_sends \
+  tab_paints_a_focus_ring \
+  arrows_move_a_visible_row_focus \
+  enter_toggles_the_focused_row \
+  enter_toggles_the_focused_row_back \
+  space_toggles_the_focused_row \
+  a_printable_key_snaps_focus_back_to_the_composer \
+  the_first_click_expands_the_row_it_landed_on \
+  click_toggles_the_row_it_landed_on \
+  the_four_audit_paths_lose_nothing \
+  no_ring_before_tab
+  exit 0
+}
 
 tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/tool-calls.patch.yml"
@@ -34,29 +53,30 @@ t click_then_type_still_sends \
 # `Tab` first, deliberately: §2.1 is explicit that the arrows belong to the COMPOSER while the
 # composer has the keyboard, and that a pane only gets them once the user handed the keyboard over.
 # A bullet that pressed Down without Tab would be asserting the opposite of the design.
-shell-use press Tab
-shell-use wait idle --timeout 5000 >/dev/null 2>&1 || true
+# The ring: a BEFORE/AFTER pair on the one glyph that only the ring draws.
+#
+# This bullet used to count cells carrying `#7aa2f7` anywhere on a 120x40 screen and assert `> 0`,
+# with no baseline. That colour is `Theme::dark.accent`, which the status line's product name and
+# every user-message label already paint on every frame — and the walk sends a message before
+# pressing Tab. The assertion was true before Tab was ever pressed. (There was also no ring: the
+# `PaneView::is_focused` the shell writes was read by no pane in the tree.)
+#
+# `▎` (U+258E) is the ring column `tui-focus` reserves and paints in `theme.accent` only when it
+# holds the keyboard. It is not `▌` (the row-focus marker) and not `▏` (the search field's caret),
+# so its presence is the ring and nothing else.
+t no_ring_before_tab \
+  bash -c '[ "$(shell-use text | grep -c "▎" || true)" -eq 0 ]'
 
-# The ring is a colour, so it is read as one. Counting accent cells rather than naming a column:
-# the pane's geometry is the layout's business and this bullet is about the ring EXISTING once the
-# pane has the keyboard.
-accent_count() {
-  shell-use cells 0 0 120 40 --json | python3 -c '
-import json, sys
-cells = json.load(sys.stdin)["data"]["cells"]
-print(sum(1 for c in cells if c["fg"] == "#7aa2f7"))
-'
-}
-export -f accent_count
-
+# Tab cycles over EVERY focusable stop, and only the transcript draws a ring, so the walk keeps
+# Tabbing until the keyboard reaches it. Which stop of the ring that is, is the layout's business.
 t tab_paints_a_focus_ring \
   bash -c '
-    for i in $(seq 1 25); do
-      n="$(accent_count)"
-      [ "${n:-0}" -gt 0 ] && exit 0
-      sleep 0.2
+    for i in $(seq 1 6); do
+      shell-use press Tab >/dev/null
+      sleep 0.5
+      [ "$(shell-use text | grep -c "▎" || true)" -gt 0 ] && exit 0
     done
-    echo "no cell carries the accent role after Tab: the pane with the keyboard draws no ring"
+    echo "no ring column after cycling the whole focus ring with Tab"
     exit 1
   '
 

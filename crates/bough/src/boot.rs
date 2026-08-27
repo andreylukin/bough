@@ -93,10 +93,10 @@ pub async fn boot(mut cli: Cli) -> Result<ExitCode, BootError> {
         ))
     };
 
-    // M15: the reload result reaches the SCREEN. The launcher is the only place that knows both
-    // `ConfigReloadEvent` (its own type) and the live `Tui` handle, so the listener is installed
-    // here rather than inside a row; a profile with no TUI installs nothing.
-    let _reload_notice = install_reload_notice(&kernel).await;
+    // M15's listener is NOT here. It is an effect of `tui-shell`, the row whose surface it
+    // drives (§0.1 item 2: the launcher owns no behaviour of its own): a handle captured here at
+    // boot goes stale the moment the `tui` row reloads — which a saved patch file, the very event
+    // being reported, can cause — and a `tui` row disabled by patch must take its listener with it.
 
     // The launcher owns composition and teardown, and nothing else. A surface is a ROW, and it
     // keeps the process alive by holding the runtime; the two ways out are SIGINT and a row
@@ -110,7 +110,7 @@ pub async fn boot(mut cli: Cli) -> Result<ExitCode, BootError> {
     }
     // B8: teardown is BOUNDED. A row that never quiesces used to hang the process with the alt
     // screen still up; now the terminal comes back and the launcher leaves.
-    shutdown_bounded(&kernel, cli.shutdown_ms, code).await;
+    shutdown_bounded(&kernel, cli.shutdown_ms).await;
     // Whichever restore path ran took the farewell with it. If none did — a headless profile,
     // where there was no terminal to restore — the launcher still owes the user the line.
     if let Some(farewell) = bough_plugin_tui_shell::term::take_farewell() {
@@ -248,11 +248,11 @@ mod tests {
 }
 
 /// Await `kernel.shutdown()` under a deadline (phase ux1 §2.4, B8). On timeout: restore the
-/// terminal, print `bough: shutdown timed out after {ms}ms; leaving anyway` to stderr, and exit
-/// with `code`. The deadline is [`crate::cli::Cli::shutdown_ms`], never a constant at the call
-/// site — a hang with the alt screen still up is the worst exit the product has.
-pub async fn shutdown_bounded(kernel: &bough_kernel::Kernel, ms: u64, code: u8) -> ExitOutcome {
-    let _ = code;
+/// terminal and print `bough: shutdown timed out after {ms}ms; leaving anyway` to stderr. It does
+/// NOT exit — the caller owns the process's exit code, and this used to take a `code` it ignored.
+/// The deadline is [`crate::cli::Cli::shutdown_ms`], never a constant at the call site: a hang
+/// with the alt screen still up is the worst exit the product has.
+pub async fn shutdown_bounded(kernel: &bough_kernel::Kernel, ms: u64) -> ExitOutcome {
     bounded(kernel.shutdown(), ms).await
 }
 
@@ -317,28 +317,4 @@ mod bounded_teardown_tests {
             "and nothing is left entered"
         );
     }
-}
-
-/// Show every `config/reload` on the status band, in the log's own words (M15). `None` when this
-/// tree has no TUI — a headless profile keeps the log and nothing else.
-async fn install_reload_notice(kernel: &Kernel) -> Option<bough_kernel::EffectHandle> {
-    use bough_plugin_tui_shell::{NoticeKind, Tui};
-    let ctx = kernel.root();
-    // `peek_live`, not `get`: the launcher declares no injects, and §0.3's capability check is
-    // exactly what would refuse the root context this key. The doc comment on `peek_live` names
-    // the launcher as one of its two sanctioned callers.
-    let tui = ctx.peek_live::<Tui>()?;
-    ctx.on::<crate::watch::ConfigReloadEvent, _, _>(move |what: crate::watch::ConfigReload| {
-        let tui = tui.clone();
-        async move {
-            let kind = if what.is_rejection() {
-                NoticeKind::Error
-            } else {
-                NoticeKind::Config
-            };
-            tui.notify_kind(what.line(), kind);
-        }
-    })
-    .await
-    .ok()
 }

@@ -8,7 +8,24 @@
 # needs a particular answer.
 source "$(dirname "$0")/lib.sh"
 
-[ -n "$BOUGH_LIVE" ] && { skip a_missed_command_keeps_the_sentence "the draft is keys, not a model"; exit 0; }
+# The live half does not run this script. Every bullet it carries is named here, so the
+# skip COUNT matches the count the replay half prints (a whole-script skip printing one
+# `ok` line for ten assertions is the dishonesty `skip` exists to avoid).
+[ -n "$BOUGH_LIVE" ] && {
+  skip_all "the draft is keys, not a model" \
+  a_missed_command_keeps_the_sentence \
+  the_miss_says_what_to_do_instead \
+  a_second_enter_sends_the_missed_line_as_a_message \
+  a_raw_three_line_paste_is_one_draft \
+  a_raw_three_line_paste_is_one_draft_and_one_send \
+  esc_leaves_the_draft \
+  ctrl_u_clears_the_line \
+  up_recalls_the_last_sent_message \
+  down_returns_the_live_draft \
+  shift_enter_inserts_a_newline \
+  alt_enter_inserts_a_newline
+  exit 0
+}
 
 tui_open
 tui_start
@@ -59,7 +76,9 @@ t a_raw_three_line_paste_is_one_draft_and_one_send \
     sleep 1
     after="$(sql "select count(*) from steps where type = '"'"'mail/delivered'"'"';")"
     delta=$(( ${after:-0} - '"${before_sends:-0}"' ))
-    [ "$delta" -le 1 ] || { echo "the paste produced $delta sends, expected 1"; exit 1; }
+    # EXACTLY one. `-le 1` also passed on a build where Enter after a paste sent NOTHING, which
+    # is the other half of the failure this bullet is named for.
+    [ "$delta" -eq 1 ] || { echo "the paste produced $delta sends, expected exactly 1"; exit 1; }
   '
 
 # --- Esc on a non-empty draft leaves it alone. -------------------------------------------------

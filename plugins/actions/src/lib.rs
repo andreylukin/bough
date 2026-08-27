@@ -125,9 +125,20 @@ impl ActionsHandle {
         let id = NEXT_PROVIDER.fetch_add(1, Ordering::Relaxed);
         self.0.providers.lock().push((id, p));
         let inner = self.0.clone();
+        // The set of performable kinds just CHANGED, and a Consumer that offers one tool per kind
+        // has to hear about it. Registration mutates this handle IN PLACE, so the `actions`
+        // service binding does not change and §0.3's activation-driven reload never fires — this
+        // event is the seam that stands in for it (§0.2: a capability event attaches policy to a
+        // seam without importing the loop).
+        ctx.emit::<ProvidersChangedEvent>(ProvidersChanged {
+            kinds: ActionsHandle(self.0.clone()).kinds(),
+        });
+        let ectx = ctx.clone();
         ctx.effect(move |e| async move {
             e.defer_sync(move || {
                 inner.providers.lock().retain(|(i, _)| *i != id);
+                let kinds = ActionsHandle(inner.clone()).kinds();
+                ectx.emit::<ProvidersChangedEvent>(ProvidersChanged { kinds });
             });
             Ok(())
         })
@@ -300,6 +311,23 @@ fn pending_of(row: &ActionRow) -> Option<PendingAction> {
 }
 
 static NEXT_PROVIDER: AtomicU64 = AtomicU64::new(0);
+
+/// `actions/providers-changed` — EMIT (a CAPABILITY event, §0.2). Raised whenever a Provider is
+/// registered or its registration is disposed. Providers register INTO this handle rather than by
+/// re-providing the `actions` key, so a Consumer cannot learn about them from the fiber lifecycle;
+/// this is how it learns instead.
+pub struct ProvidersChangedEvent;
+
+impl bough_kernel::EmitEvent for ProvidersChangedEvent {
+    const NAME: &'static str = "actions/providers-changed";
+    type Payload = ProvidersChanged;
+}
+
+/// The kinds that have a live Provider, after the change.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProvidersChanged {
+    pub kinds: Vec<ActionKind>,
+}
 
 /// No configuration: the four kinds are §7's, not a deployment's.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]

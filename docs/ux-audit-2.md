@@ -18,6 +18,24 @@ findings a mouseless walk could not reach the first time).
 > one added probe of minor severity (R1 below). The raw verdicts are `target/ux2/verdicts.tsv`; the
 > tables below are rendered from them by `scripts/ux2/report.py`.
 
+> **Caveat added by the phase's review pass (read this before trusting three rows below).** Three
+> of the twenty checks could not fail as written, so the `fixed` verdicts they produced are not
+> evidence:
+>
+> * **`M13-rail`** asserted that no screen row exceeds 80 columns in an 80-column PTY. A PTY grid
+>   cannot emit a wider row, so the check was structurally incapable of failing and said nothing
+>   about whether the rail collapsed.
+> * **`B6-rowkeys`** grepped for `notes.txt` / `hello from the re-audit` after `Tab; Down; Enter`.
+>   Both strings were already on screen — from the walk's own prompt, from the rail, from the
+>   model's answer, and (mouse persona) from the click the script had just made.
+> * **`M14-stopkey`** grepped case-insensitively for `esc`, which was a STATIC status-line hint at
+>   the time, present idle or running.
+>
+> All three are rewritten in `scripts/ux2/run.sh` to assert the thing they are named for (the rail
+> giving its columns back; the ring, the row marker and a screen change on the toggle key; the
+> exact phrase `esc to interrupt`, with an idle baseline). **`make ux2` has NOT been re-run since**,
+> so M13, B6 and M14 above are unconfirmed against the current gate. Every other verdict stands.
+
 ---
 
 ## 1. What the re-audit is for

@@ -348,10 +348,15 @@ impl FocusPane {
                         ));
                     }
                 }
-                Row::WakeMark { phase, reason, .. } => {
+                Row::WakeMark {
+                    phase,
+                    reason,
+                    cause,
+                    ..
+                } => {
                     // Turn/message vocabulary at BODY contrast (nit 37, M22): the rhythm the
                     // personas praised, in words they use.
-                    let word = rows::turn_mark_words(phase, reason.as_deref());
+                    let word = rows::turn_mark_words(phase, reason.as_deref(), cause.as_deref());
                     lines.push(Line::styled(
                         format!("── {word} "),
                         Style::default().fg(theme.fg),
@@ -521,9 +526,23 @@ impl Pane for FocusPane {
         state.height = cx.area.height;
         let live = self.live.lock().clone();
         let theme = *cx.theme();
-        let area = cx.area;
+        // The FOCUS RING (B1/M16): one column, ALWAYS reserved, painted only when this pane holds
+        // the keyboard. Reserving it unconditionally is the point — the transcript must not
+        // reflow every time Tab moves the keyboard, and a ring drawn over column 0 would eat a
+        // character of every line.
+        let full = cx.area;
+        let ring_w = 1u16.min(full.width);
+        let area = Rect {
+            x: full.x + ring_w,
+            y: full.y,
+            width: full.width - ring_w,
+            height: full.height,
+        };
+        // THE PROSE MEASURE (M13): text a human reads wraps at `min(width, measure_cols)`, so a
+        // 200-column terminal gets a 90-column paragraph and the rest is margin.
+        let measure = bough_plugin_tui_shell::measure(area.width, cx.view.measure_cols);
         let (lines, headers, claim_hits, row_lines) =
-            self.lines_with_rows(&state, &live, area.width, &theme);
+            self.lines_with_rows(&state, &live, measure, &theme);
         state.lines = lines.len();
         state.row_lines = row_lines.clone();
         let tool_rows: Vec<(usize, bough_plugin_llm::ToolCallId)> = state
@@ -542,6 +561,8 @@ impl Pane for FocusPane {
         // the tail never sees chrome for a state they are not in.
         let badge = (!state.scroll.is_following() && state.unseen > 0)
             .then(|| format!("\u{2193} {} new · End", state.unseen));
+        let is_following = state.scroll.is_following();
+        let row_focus_ix = state.row_focus.index;
         drop(state);
 
         // The clickable region of a tool call is its WHOLE BLOCK — the header AND, when it is
@@ -598,6 +619,24 @@ impl Pane for FocusPane {
         }
         cx.frame
             .render_widget(Paragraph::new(lines).scroll((top as u16, 0)), area);
+        // The ring itself. A GLYPH and a colour, never a colour alone.
+        if ring_w > 0 {
+            let glyph = if cx.view.is_focused { "\u{258e}" } else { " " };
+            let style = Style::default().fg(cx.theme().accent);
+            for dy in 0..full.height {
+                cx.frame.render_widget(
+                    Paragraph::new(Line::styled(glyph, style)),
+                    Rect {
+                        x: full.x,
+                        y: full.y + dy,
+                        width: ring_w,
+                        height: 1,
+                    },
+                );
+            }
+        }
+        // What only this pane can see, for the next frame's `ShellView` (§2.12).
+        cx.report_rows(row_focus_ix, is_following);
         if let Some(text) = badge {
             if area.height > 0 {
                 let w = (text.chars().count() as u16).min(area.width);

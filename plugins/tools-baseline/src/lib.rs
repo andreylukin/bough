@@ -529,9 +529,12 @@ impl Plugin for BaselineToolsPlugin {
             .map_err(|e| PluginError::new(entry.clone(), anyhow::anyhow!("no process cwd: {e}")))?;
         let pinned = fs::pin_root(&cfg.root, &cwd)
             .map_err(|m| PluginError::new(entry.clone(), anyhow::anyhow!(m)))?;
-        ctx.provide::<Workspace>(WorkspaceRoot::new(pinned.clone()))
-            .await
-            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        ctx.provide::<Workspace>(
+            WorkspaceRoot::new(pinned.clone())
+                .map_err(|e| PluginError::new(ctx.entry_id().clone(), anyhow::anyhow!(e)))?,
+        )
+        .await
+        .map_err(|e| PluginError::new(entry.clone(), e))?;
         // Every tool holds the PINNED root, never the configured spelling of it.
         let cfg = Arc::new(BaselineConfig {
             root: pinned,

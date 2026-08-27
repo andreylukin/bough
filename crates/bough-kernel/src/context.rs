@@ -509,8 +509,12 @@ impl Context {
         Ok(self.resolve(K::NAME).and_then(downcast::<K>))
     }
 
-    /// The live store, bypassing the committed view. Only the kernel's own diagnostics and the
-    /// launcher use this; a plugin calling it is a review failure.
+    /// The live store, bypassing the committed view. Only the kernel's own diagnostics and TESTS
+    /// asserting on a composed tree use this; a plugin calling it is a review failure.
+    ///
+    /// The launcher used to be the other sanctioned caller, for M15's `config/reload` notice. It
+    /// is not any more: a handle read off the root context and captured once goes stale the
+    /// moment its providing row reloads, so that listener is an effect of `tui-shell` now.
     pub fn peek_live<K: ServiceKey>(&self) -> Option<Arc<K::Value>> {
         resolve_live(
             &self.inner.core,

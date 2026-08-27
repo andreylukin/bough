@@ -11,6 +11,7 @@ repository.workspace = true
 
 [dependencies]
 bough-kernel = { workspace = true }
+bough-plugin-tui-render = { workspace = true }
 bough-util = { workspace = true }
 bough-plugin-ledger = { workspace = true }
 bough-plugin-agents = { workspace = true }

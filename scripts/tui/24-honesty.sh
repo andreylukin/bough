@@ -74,6 +74,36 @@ t a_running_turn_shows_a_spinner_and_an_elapsed_clock \
 shell-use press Escape
 shell-use wait idle --timeout 30000 >/dev/null 2>&1 || true
 
+# --- M24: a REAL cost, not `—` forever. -------------------------------------------------------
+#
+# No bullet anywhere asserted an actual dollar amount: `20-frame.sh` accepts `[$]\|—`, and `—` is
+# exactly what `Field::Cost` renders when nothing has landed. Only the live half can have a cost,
+# because only a real model round appends `usage/round`.
+if [ -n "$BOUGH_LIVE" ]; then
+  # A turn that RUNS TO COMPLETION: the round above was interrupted, and an interrupted stream
+  # need never deliver its `usage` chunk, so there is nothing for `usage/round` to be built from.
+  shell-use submit "Reply with the single word: ok."
+  shell-use wait idle --timeout 90000 >/dev/null 2>&1 || true
+  t a_finished_turn_puts_a_real_cost_on_the_status_line \
+    bash -c '
+      for i in $(seq 1 40); do
+        shell-use text | grep -qE "\\$[0-9]+\.[0-9]+" && exit 0
+        sleep 0.5
+      done
+      echo "the status line still shows an unknown cost after a finished turn"
+      shell-use text | tail -4
+      exit 1
+    '
+  t the_cost_came_from_a_durable_usage_round \
+    bash -c '
+      n="$(sql "select count(*) from steps where type = '"'"'usage/round'"'"';")"
+      [ "${n:-0}" -ge 1 ] || { echo "no usage/round in the ledger: the number on screen has no fact behind it"; exit 1; }
+    '
+else
+  skip a_finished_turn_puts_a_real_cost_on_the_status_line "a cost needs a real model round"
+  skip the_cost_came_from_a_durable_usage_round "a cost needs a real model round"
+fi
+
 # ==============================================================================================
 # V9 — the copy flash and OSC52 (M21)
 # ==============================================================================================
@@ -181,8 +211,29 @@ else
           echo "the identity band names $phantom with no Provider mounted"; exit 1; }
       done
       # …and the band says what it DOES have, rather than nothing at all (M25).
-      printf "%s" "$body" | grep -q '"tools"' || {
-        echo "the identity band lists no tools at all"; exit 1; }
+      #
+      # `grep -q tools` could not fail: `RequestHeader` has ALWAYS carried a `tools` field, so the
+      # word is in every header body whatever `identity_section` wrote — and the shell collapsed
+      # the quoting to the bare word anyway. The falsifiable form parses the body and asserts the
+      # LIST is non-empty, which an empty `"tools": []` fails.
+      printf "%s" "$body" | python3 -c "
+import json, sys
+raw = sys.stdin.read()
+objs, depth, start = [], 0, None
+for i, ch in enumerate(raw):
+    if ch == chr(123):
+        if depth == 0: start = i
+        depth += 1
+    elif ch == chr(125):
+        depth -= 1
+        if depth == 0 and start is not None:
+            objs.append(raw[start:i+1]); start = None
+assert objs, chr(34) + chr(34)
+h = json.loads(objs[-1])
+tools = h.get(chr(116) + chr(111) + chr(111) + chr(108) + chr(115))
+assert isinstance(tools, list) and tools
+print(len(tools))
+" || exit 1
       exit 0
     '
 fi

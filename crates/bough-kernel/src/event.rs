@@ -451,6 +451,57 @@ impl EmitEvent for InvariantViolated {
     type Payload = Arc<InvariantViolation>;
 }
 
+// ---------------------------------------------------------------------------
+// `config/reload`: the outcome of one live recompose attempt
+// ---------------------------------------------------------------------------
+
+/// `config/reload` — EMIT. The launcher raises it after every recompose attempt; whichever row
+/// owns a surface listens and renders the SAME TEXT the log gets (phase ux1 M15). It lives in the
+/// kernel, not in the launcher, because the LISTENER has to be an effect of the row whose surface
+/// it drives: a launcher-held handle captured once at boot goes stale the moment that row reloads,
+/// and a row disabled by patch must take its listener with it.
+///
+/// This is loader vocabulary, not domain vocabulary: the kernel already owns
+/// `config-update-failed`, and this is the same fact with its successful half.
+pub struct ConfigReloadEvent;
+
+impl EmitEvent for ConfigReloadEvent {
+    const NAME: &'static str = "config/reload";
+    type Payload = ConfigReload;
+}
+
+/// What one recompose attempt did.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConfigReload {
+    Applied { rows_changed: usize },
+    Rejected { detail: String },
+}
+
+impl ConfigReload {
+    /// PURE: the ONE LINE the screen shows, which is the same text the log gets (M15). A user who
+    /// edited a patch and saw nothing happen could not tell a no-op from a rejection.
+    pub fn line(&self) -> String {
+        match self {
+            ConfigReload::Applied { rows_changed: 0 } => {
+                "config reloaded \u{2014} no row changed".to_string()
+            }
+            ConfigReload::Applied { rows_changed: 1 } => {
+                "config reloaded \u{2014} 1 row changed".to_string()
+            }
+            ConfigReload::Applied { rows_changed } => {
+                format!("config reloaded \u{2014} {rows_changed} rows changed")
+            }
+            ConfigReload::Rejected { detail } => {
+                format!("config rejected, last good tree still running: {detail}")
+            }
+        }
+    }
+
+    pub fn is_rejection(&self) -> bool {
+        matches!(self, ConfigReload::Rejected { .. })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

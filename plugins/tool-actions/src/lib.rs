@@ -7,7 +7,7 @@ pub mod invariant;
 
 use std::sync::Arc;
 
-use bough_kernel::{Context, Plugin, PluginError};
+use bough_kernel::{Context, EffectHandle, Plugin, PluginError};
 use bough_plugin_actions::{ActionError, ActionKind, ActionRequest, ActionTarget, Actions};
 use bough_plugin_ledger::StepId;
 use bough_plugin_tools::{
@@ -15,6 +15,7 @@ use bough_plugin_tools::{
     ToolScope, ToolSpec, Tools,
 };
 use chrono::{DateTime, Utc};
+use parking_lot::Mutex;
 
 /// The catalog name of this row.
 pub const PLUGIN_NAME: &str = "tool-actions";
@@ -176,7 +177,46 @@ impl Plugin for ToolActionsPlugin {
         // One registration per kind THAT HAS A LIVE PROVIDER (phase ux1 §2.10, M25). §7's set is
         // closed, but a kind nothing can perform is not a capability: offering it makes the first
         // answer every user reads confident fiction.
-        reconcile_action_tools(&ctx, &actions, &tools).await?;
+        //
+        // The set is RECONCILED, not registered once, and the thing that drives the reconcile is
+        // `actions/providers-changed` — NOT a tick, which this row does not have and which its
+        // doc comment used to claim. A Provider registers into the `actions` HANDLE rather than
+        // by re-providing the key, so the fiber lifecycle never notices it; without the event a
+        // Provider that activated after this row left the agent permanently without its tool.
+        let live: Arc<Mutex<Vec<EffectHandle>>> = Arc::new(Mutex::new(Vec::new()));
+        *live.lock() = reconcile_action_tools(&ctx, &actions, &tools).await?;
+
+        let (rctx, ractions, rtools, rlive) =
+            (ctx.clone(), actions.clone(), tools.clone(), live.clone());
+        ctx.on::<bough_plugin_actions::ProvidersChangedEvent, _, _>(move |_ev| {
+            let (rctx, ractions, rtools, rlive) = (
+                rctx.clone(),
+                ractions.clone(),
+                rtools.clone(),
+                rlive.clone(),
+            );
+            async move {
+                // Drop the old registrations FIRST: a tool whose kind withdrew has to stop being
+                // in the prompt, and `ToolsHandle::register` refuses a duplicate name.
+                let old: Vec<EffectHandle> = std::mem::take(&mut *rlive.lock());
+                for h in old {
+                    h.dispose().await;
+                }
+                match reconcile_action_tools(&rctx, &ractions, &rtools).await {
+                    Ok(next) => *rlive.lock() = next,
+                    Err(e) => tracing::warn!("tool-actions: reconcile failed: {e}"),
+                }
+            }
+        })
+        .await
+        .map_err(|e| PluginError::new(ctx.entry_id().clone(), e))?;
+
+        // The handles are held for the row's life; disposing the row disposes them.
+        ctx.effect(move |e| async move {
+            e.defer_sync(move || drop(live.lock().drain(..).collect::<Vec<_>>()));
+            Ok(())
+        })
+        .await?;
         Ok(())
     }
 }
@@ -189,12 +229,12 @@ bough_kernel::register_plugin!(ToolActionsPlugin);
 /// from the prompt entirely: §9's rule that a filtered-away tool is indistinguishable from one
 /// that never existed.
 ///
-/// Registrations are effects, so the set is RECONCILED, not registered once: the row re-reads
-/// `kinds()` on its tick and disposes the tools whose kind withdrew. (There is no
-/// `actions/provider-changed` event today and this phase does not add one — no Provider exists to
-/// raise it before Phase 6. When `actions-github` lands, that event replaces the tick.)
+/// Registrations are effects, so the set is RECONCILED, not registered once: `apply` listens for
+/// `actions/providers-changed`, disposes what it registered, and calls this again. There is no
+/// tick and there never was one.
 ///
-/// Returns the tool names live after the reconcile.
+/// Returns the registration handles, in `kinds_with_providers` order. Dropping them is what makes
+/// a withdrawn kind's tool stop existing.
 ///
 /// DEVIATION from §2.10's signature: registration is an EFFECT, so it needs the `Context` that
 /// owns the effect and it is `async`. The pure half — WHICH kinds get a tool — is
@@ -203,11 +243,10 @@ pub async fn reconcile_action_tools(
     ctx: &Context,
     actions: &Arc<bough_plugin_actions::ActionsHandle>,
     tools: &bough_plugin_tools::ToolsHandle,
-) -> Result<Vec<ToolName>, PluginError> {
+) -> Result<Vec<EffectHandle>, PluginError> {
     let mut live = Vec::new();
     for kind in kinds_with_providers(actions) {
-        tools.register(ctx, spec(kind, actions.clone())).await?;
-        live.push(ToolName::new(tool_name(kind)));
+        live.push(tools.register(ctx, spec(kind, actions.clone())).await?);
     }
     Ok(live)
 }

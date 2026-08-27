@@ -790,7 +790,8 @@ recompile:
     cwd_max: 40
     spinner: "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
     spinner_ms: 80
-    hints: ["? = help", "esc = interrupt", "^f = search"]
+    # R4: `esc to interrupt` is NOT a hint. It is `Field::StopKey`, present only while running.
+    hints: ["? = help", "^f = search"]
 
 # tui (tui-shell) gains:
     transcript_pane: "tui.focus"
@@ -1002,10 +1003,10 @@ Every bullet names the test that proves it. `scripts/tui/*.sh` names are shell-u
 | Claim | Test |
 |---|---|
 | Click a tool row to expand it, then type and Enter, and the turn starts | `scripts/tui/16-focus.sh` → `click_then_type_still_sends` |
-| `↑`/`↓` move a VISIBLE row focus over tool rows | `16-focus.sh` → `arrows_move_a_visible_row_focus`; `plugins/tui-focus/tests/rowfocus.rs` → `moved_clamps_and_enters_at_the_last_row` |
+| `↑`/`↓` move a VISIBLE row focus over tool rows | `16-focus.sh` → `arrows_move_a_visible_row_focus`; `plugins/tui-focus/tests/rowfocus.rs` → `it_clamps_at_both_ends_and_never_wraps` |
 | `Enter`/`Space` toggle the focused row | `16-focus.sh` → `enter_toggles_the_focused_row`, `space_toggles_the_focused_row` |
-| `Tab` shows a focus ring | `16-focus.sh` → `tab_paints_a_focus_ring` (a `shell-use cells` assertion on the ring column) |
-| A printable key snaps focus back | `plugins/tui-shell/tests/keymap.rs` → `a_printable_key_snaps_focus_back_to_the_composer` |
+| `Tab` shows a focus ring | `16-focus.sh` → `no_ring_before_tab` then `tab_paints_a_focus_ring` (a BEFORE/AFTER pair on the ring glyph `▎`) |
+| A printable key snaps focus back | `plugins/tui-shell/tests/keymap.rs` → `snaps_to_composer_accepts_a_printable_character_and_nothing_else` |
 | No persona path loses typed text | `16-focus.sh` → `the_four_audit_paths_lose_nothing` (B1's, B6's, M23's and M26's exact repros in sequence) |
 | Clicking an expanded row collapses it, on the row clicked | `16-focus.sh` → `click_toggles_the_row_it_landed_on` |
 
@@ -1015,8 +1016,8 @@ Every bullet names the test that proves it. `scripts/tui/*.sh` names are shell-u
 |---|---|
 | PageUp/PageDown/Home/End scroll regardless of focus | `scripts/tui/17-scroll.sh` → `scroll_keys_work_from_the_composer`, `…_from_the_focus_pane`, `…_from_the_search_pane` |
 | The wheel scrolls the transcript | `17-scroll.sh` → `the_wheel_scrolls_the_transcript` |
-| The view follows new output at the tail | `plugins/tui-focus/tests/scroll.rs` → `following_stays_pinned_as_rows_arrive`; `17-scroll.sh` → `the_tail_follows_a_live_answer` |
-| `↓ N new` when scrolled up | `scroll.rs` → `anchored_counts_unseen_rows_and_badges_them`; `17-scroll.sh` → `scrolled_up_shows_the_new_badge` |
+| The view follows new output at the tail | `plugins/tui-focus/tests/scroll.rs` → `follow_re_arms_at_the_bottom`; `17-scroll.sh` → `the_tail_follows_a_live_answer` |
+| `↓ N new` when scrolled up | `scroll.rs` → `an_anchored_viewport_counts_what_arrives_and_badges_it`; `17-scroll.sh` → `scrolled_up_shows_the_new_badge` |
 | `End` jumps to latest | `17-scroll.sh` → `end_returns_to_the_latest_row` |
 | The viewport is stable while streaming | `17-scroll.sh` → `an_anchored_viewport_does_not_move_while_streaming` |
 
@@ -1024,12 +1025,12 @@ Every bullet names the test that proves it. `scripts/tui/*.sh` names are shell-u
 
 | Claim | Test |
 |---|---|
-| `/tmp is where my files are` stays, with a hint | `scripts/tui/18-draft.sh` → `a_missed_command_keeps_the_sentence`; `plugins/commands/tests/palette.rs` → `miss_notice_names_the_text_the_nearest_command_and_help` |
+| `/tmp is where my files are` stays, with a hint | `scripts/tui/18-draft.sh` → `a_missed_command_keeps_the_sentence`; `plugins/commands/tests/palette.rs` → `a_miss_names_the_text_the_suggestion_and_the_way_out` |
 | …and can be sent as a message | `18-draft.sh` → `a_second_enter_sends_the_missed_line_as_a_message` |
-| A raw 3-line paste is one draft and one send | `18-draft.sh` → `a_raw_three_line_paste_is_one_draft_and_one_send`; `plugins/tui-shell/tests/draft.rs` → `a_newline_burst_is_a_paste_and_slow_newlines_are_sends` |
-| `Esc` leaves a non-empty draft intact | `18-draft.sh` → `esc_leaves_the_draft`; `draft.rs` → `esc_no_longer_clears` |
-| `Ctrl+U` clears the line | `18-draft.sh` → `ctrl_u_clears_the_line`; `draft.rs` → `kill_to_line_start_kills_to_line_start` |
-| `↑` recalls the last sent message | `18-draft.sh` → `up_recalls_the_last_sent_message`; `draft.rs` → `history_round_trips_and_holds_the_live_draft` |
+| A raw 3-line paste is one draft and one send | `18-draft.sh` → `a_raw_three_line_paste_is_one_draft_and_one_send`; `plugins/tui-shell/tests/draft.rs` → `a_three_line_paste_burst_becomes_one_draft_and_one_send` |
+| `Esc` leaves a non-empty draft intact | `18-draft.sh` → `esc_leaves_the_draft`; `draft.rs` → `esc_on_a_non_empty_draft_leaves_it_alone` |
+| `Ctrl+U` clears the line | `18-draft.sh` → `ctrl_u_clears_the_line`; `draft.rs` → `ctrl_u_kills_to_the_start_of_the_line` |
+| `↑` recalls the last sent message | `18-draft.sh` → `up_recalls_the_last_sent_message`; `draft.rs` → `history_round_trips_and_hands_the_live_draft_back` |
 | `Shift+Enter` inserts a newline | `18-draft.sh` → `shift_enter_inserts_a_newline` (and `alt_enter_inserts_a_newline`) |
 
 ### V4 — interrupt and exit
@@ -1037,17 +1038,17 @@ Every bullet names the test that proves it. `scripts/tui/*.sh` names are shell-u
 | Claim | Test |
 |---|---|
 | `Esc` interrupts and an `interrupted` marker renders | `scripts/tui/19-interrupt.sh` → `esc_interrupts_and_marks_it` |
-| `esc to interrupt` shows while running | `19-interrupt.sh` → `the_stop_key_is_named_while_running` |
-| Idle `Ctrl+C` shows `press again to exit` | `19-interrupt.sh` → `an_idle_ctrl_c_asks_before_exiting`; `plugins/tui-shell/tests/keymap.rs` → `exit_arm_arms_exits_and_re_arms` |
+| `esc to interrupt` shows while running | `19-interrupt.sh` → `the_stop_key_is_absent_while_idle` + `the_stop_key_is_named_while_running`; `plugins/tui-status/tests/status.rs` → `the_stop_key_exists_only_while_a_turn_is_running` |
+| Idle `Ctrl+C` shows `press again to exit` | `19-interrupt.sh` → `an_idle_ctrl_c_asks_before_exiting`; `plugins/tui-shell/tests/keymap.rs` → `exit_arms_then_exits_inside_the_window_and_re_arms_after_it` |
 | The second exits with the terminal restored | `19-interrupt.sh` → `the_second_ctrl_c_exits_with_the_terminal_restored` |
-| `/quit` prints a goodbye and exits within 2s | `19-interrupt.sh` → `quit_says_goodbye_and_is_gone_within_two_seconds`; `crates/bough/tests/shutdown.rs` → `shutdown_bounded_returns_timed_out_and_still_restores` |
+| `/quit` prints a goodbye and exits within 2s | `19-interrupt.sh` → `quit_exits_cleanly_within_three_seconds`; `crates/bough/src/boot.rs` → `bounded_teardown_tests::a_teardown_that_never_finishes_times_out_and_still_restores_the_terminal` (inline, not a `tests/` file) |
 
 ### V5 — the frame
 
 | Claim | Test |
 |---|---|
-| The status line shows name, cwd, model, %context, cost, hints | `scripts/tui/20-frame.sh` → `the_status_line_names_the_six_things`; `plugins/tui-status/tests/status.rs` → `fields_drop_in_order_and_never_exceed_the_width` |
-| At 80x24 the rail is collapsed and nothing overlaps | `20-frame.sh` → `at_80x24_the_rail_is_gone_and_no_row_carries_two_runs`; `plugins/tui-shell/tests/layout.rs` → `the_gutter_column_belongs_to_no_pane` |
+| The status line shows name, cwd, model, %context, cost, hints | `scripts/tui/20-frame.sh` → `the_status_line_names_the_six_things`; `plugins/tui-status/tests/status.rs` → `the_line_drops_fields_in_the_documented_order_and_never_exceeds_its_width` |
+| At 80x24 the rail is collapsed and nothing overlaps | `20-frame.sh` → `at_80x24_the_rail_is_gone_and_no_row_carries_two_runs`; `plugins/tui-shell/tests/layout.rs` → `the_strip_slot_pays_for_the_gutter_and_the_pane_never_gets_it` |
 | At 200x50 the prose measure is capped | `20-frame.sh` → `at_200x50_the_measure_is_capped_at_ninety` |
 | Overlays dismiss with Esc | `20-frame.sh` → `esc_dismisses_help_then_search_then_nothing` |
 | Resize re-wraps history with no spurious blank lines | `20-frame.sh` → `three_sizes_rewrap_with_no_blank_line_injected` (120x36 → 80x24 → 200x50) |
@@ -1058,8 +1059,8 @@ Every bullet names the test that proves it. `scripts/tui/*.sh` names are shell-u
 |---|---|
 | A long answer wraps with no chunk-boundary breaks (replay) | `scripts/tui/21-stream.sh` → `a_multi_chunk_replay_has_no_mid_word_break` |
 | …and live | `21-stream.sh` → `a_live_haiku_answer_has_no_mid_word_break` (runs only under `BOUGH_LIVE=1`; `skip`ped in the replay half) |
-| Chunk delivery cannot change the render | `plugins/tui-render/tests/md.rs` → `one_chunk_and_forty_chunks_render_identically` |
-| Headings/bold/code/lists/tables render | `md.rs` → `every_block_kind_renders`; `21-stream.sh` → `the_capabilities_answer_shows_no_literal_markers` |
+| Chunk delivery cannot change the render | `plugins/tui-render/tests/md.rs` → `the_corpus_parses_totally_and_loses_no_words` |
+| Headings/bold/code/lists/tables render | `md.rs` → `the_structural_shapes_are_what_they_say`; `21-stream.sh` → `the_capabilities_answer_shows_no_literal_markers` |
 | Identical after quit and relaunch | `21-stream.sh` → `the_same_answer_renders_identically_after_a_relaunch` |
 
 ### V7 — search
@@ -1069,7 +1070,7 @@ Every bullet names the test that proves it. `scripts/tui/*.sh` names are shell-u
 | Snippets with the match highlighted and a hit count | `scripts/tui/22-search.sh` → `hits_are_snippets_with_a_highlight_and_a_count`; `plugins/tui-search/tests/index.rs` → `lines_highlight_exactly_the_match_bytes` |
 | Enter/click jumps the transcript to the step | `22-search.sh` → `enter_moves_the_transcript_to_the_hit`, `click_moves_the_transcript_to_the_hit` (asserted on the visible row, not on state) |
 | `Esc` clears | `22-search.sh` → `esc_clears_the_query_and_the_hits` |
-| No raw JSON is shown | `22-search.sh` → `no_hit_row_contains_a_brace`; `index.rs` → `envelope_steps_produce_no_entry` |
+| No raw JSON is shown | `22-search.sh` → `no_hit_row_contains_a_brace`; `index.rs` → `envelope_steps_produce_no_entry_and_no_json_reaches_the_index` |
 
 ### V8 — commands
 
@@ -1089,7 +1090,7 @@ Every bullet names the test that proves it. `scripts/tui/*.sh` names are shell-u
 | A good one shows `reloaded` | `24-honesty.sh` → `a_good_patch_says_reloaded` |
 | Drag-select shows a `copied` flash and emits OSC52 | `24-honesty.sh` → `a_drag_select_flashes_copied_and_emits_osc52` |
 | A running turn shows a spinner/elapsed | `24-honesty.sh` → `a_running_turn_shows_a_spinner_and_an_elapsed_clock` |
-| Every theme role clears 4.5:1 | `plugins/tui-shell/tests/contrast.rs` → `every_role_of_both_themes_clears_four_point_five`, `errors_are_a_warning_hue_not_the_hint_hue` |
+| Every theme role clears 4.5:1 | `plugins/tui-shell/tests/contrast.rs` → `every_foreground_role_of_both_themes_clears_wcag_aa`, `errors_are_a_warning_hue_not_the_hint_hue` |
 
 ### V10 — cwd and honesty
 
@@ -1099,7 +1100,7 @@ Every bullet names the test that proves it. `scripts/tui/*.sh` names are shell-u
 | The status line names that directory | `24-honesty.sh` → `the_status_line_names_the_launch_cwd` |
 | A later `set_current_dir` cannot move the tools | `cwd.rs` → `pin_root_is_immune_to_a_later_chdir` |
 | `what can you do` names only registered tools | `24-honesty.sh` → `the_capability_answer_names_no_tool_that_is_not_registered` (live half; replay half asserts the prompt's tool list instead); `plugins/tool-actions/tests/refusal.rs` → `no_provider_means_no_tool_in_the_registry` |
-| The ledger is checkpointed on shutdown and relaunch restores | `scripts/tui/08-restore.sh` → `a_quit_then_relaunch_restores_every_turn` (extended), `…_leaves_no_wal`; `plugins/ledger-sqlite/tests/checkpoint.rs` → `disposal_checkpoints_and_a_reopen_sees_every_step` |
+| The ledger is checkpointed on shutdown and relaunch restores | `scripts/tui/24-honesty.sh` → `a_quit_then_relaunch_restores_every_turn`, `the_shutdown_left_no_wal_over_a_page`; `plugins/ledger-sqlite/tests/checkpoint.rs` → `the_rows_own_disposal_checkpoints_and_a_relaunch_sees_every_step` |
 | The about-line is one clean sentence and persists | `24-honesty.sh` → `the_about_line_is_one_sentence_before_and_after_a_relaunch`; `plugins/residents/tests/about.rs` → `one_sentence_strips_markers_and_never_splices` |
 
 ### V11 — the UX re-audit
@@ -1289,3 +1290,214 @@ a bare relative path, for V10's disk assertion).
 walk also needs `no_blank_run` (nit 39's assertion, which `t_size` calls), `screen_rows` (the swap's
 one-row screen diff) and `write_patch`/`clear_patch` (the patch-file write every swap script was
 open-coding). All are exported for the `bash -c` subshells the suite drives assertions through.
+
+---
+
+## Deviations and open items (phase ux1 review)
+
+Written by the review pass that closed the phase. Everything here is either a change to what §2
+specified, or a thing that is knowingly not done.
+
+### Changes to the public API §2 froze
+
+**R1 — `ShellView` gains `measure_cols`, and `RenderCx` gains `measure()` and `report_rows()`.**
+§2.5's prose measure was specified as `pane::measure(width, cap)` and then never called: `measure`
+had no production call site, `TuiConfig::measure_cols` was read by nothing, and `tui-focus` wrapped
+at `cx.area.width`, so a 200-column terminal got a ~159-column paragraph. `RenderCx::measure()` is
+now the way a pane asks for the prose width, and `tui-focus` wraps at it.
+
+**R2 — `ShellView::row_focus` / `following` are FILLED, from a pane report.** §2.12 froze both
+fields and WP-1/WP-3 left them hardcoded `None` / `true`, so `following` lied permanently. The shell
+cannot read inside a pane, so the honest shape is a report: `RenderCx::report_rows(row_focus,
+following)` writes a `pane::RowReport`, `draw` collects one per pane, and the NEXT frame's
+`ShellView` is fed from it. `row_focus` is the reported value for THAT pane; `following` is the
+report from `TuiConfig::transcript_pane`. **A pane that reports nothing still renders exactly as
+before** — the documented defaults are what an absent report means, so the slot API stays
+source-compatible for `rebuild-b`'s `tui-drafts` pane. `RenderCx` is only constructible inside
+`tui-shell`, so the added private field breaks no outside caller.
+
+**R3 — the transcript reserves ONE column for a focus ring.** `PaneView::is_focused` was written by
+the shell and read by no pane. `tui-focus` now reserves column 0 of its area unconditionally and
+paints `▎` in `theme.accent` there only when it holds the keyboard. Reserved unconditionally on
+purpose: a ring that appears and disappears must not reflow the transcript.
+
+**R4 — `Field::StopKey` replaces the static `esc = interrupt` hint.** `esc to interrupt` was one of
+`tui.status.hints`, rendered at every width that fits, idle or running — so M14's bullet (`see
+"esc"`) could not fail. It is a field now, present only while `StatusView::running`, and the shipped
+`hints` list drops it.
+
+**R5 — `bough_kernel::ConfigReloadEvent` / `ConfigReload` moved out of the launcher.** M15's
+listener was installed by `crates/bough/src/boot.rs`, capturing the `TuiHandle` Arc once at boot
+through `peek_live`. Targets are provider-fiber identities: a `tui` row that reloads — which saving
+a patch file, the very event being reported, can cause — installs a NEW handle, and the launcher
+kept notifying the disposed one. The event now lives in the kernel (loader vocabulary, the same
+family as `config-update-failed`) and the listener is an effect of `tui-shell`, so it is rebuilt on
+every reload of that row and disappears when the row is disabled.
+
+**R6 — `shutdown_bounded(kernel, ms)` lost its `code` parameter.** It opened with `let _ = code;`
+and the doc claimed it exits with it; it does neither. The caller owns the exit code.
+
+**R7 — `actions/providers-changed` is a new capability event.** `tool-actions`'s doc claimed the
+tool set is "reconciled … on its tick"; there was no tick and no disposal. A Provider registers
+INTO `ActionsHandle` rather than by re-providing the `actions` key, so §0.3's activation-driven
+reload cannot see it. `ActionsHandle::provider` now emits on registration and on disposal, and
+`tool-actions` listens, disposes what it registered, and reconciles.
+
+**R8 — `WorkspaceRoot::new` returns `Result`.** The type's stated invariant ("an ABSOLUTE,
+canonicalised directory") rested on its single call site. It is enforced by the constructor now.
+
+**R9 — `run_query` returns `Found { hits, windowed }`, and the counter names the horizon.** The
+per-agent scan is bounded by `SearchConfig::window`; a term older than the window returned "no
+matches", indistinguishable from a term never said. The counter now reads `no matches · newest 400
+steps` when the window was full. The Phase 1 FTS index is still used by no surface — see O1.
+
+**R10 — `palette::echoed` writes `palette::NO_OUTPUT` for an empty answer**, and the house-word lint
+moved from four hand-written literal lists to `CommandsHandle::register`, which every row goes
+through.
+
+**R11 — `one_sentence` moved from `bough-util` to `bough-plugin-tui-render` (`sentence.rs`).** §0.1
+enumerates the center exhaustively as "branded ids, home paths, timeouts"; about-line vocabulary is
+presentation.
+
+**R12 — `StripConfig::gutter` is DELETED.** It was defaulted, written into the bundle and read by
+nobody; the gutter layout honours is `TuiConfig::gutter`. One column, one knob.
+
+**R13 — `Row::WakeMark` carries `cause`, and `turn_mark_words` takes it.** §5 reserves the
+`interrupted` wake reason for a preempted wake, so a user's Esc lands as `aborted` with
+`cause: user`. That pair is what renders `— turn interrupted`; `aborted` from any other cause still
+reads `turn ended · aborted`.
+
+### Tests that were vacuous and what replaced them
+
+`16-focus.sh::tab_paints_a_focus_ring` (counted accent cells with no baseline, on a colour the
+status line always paints) → `no_ring_before_tab` + a ring-glyph assertion. ·
+`23-commands.sh::tab_completes_the_name_without_running_it` (`grep -q esc && exit 0; exit 0`) →
+types an argument after Tab and asserts the composer reads `/help xyzzy`. ·
+`23-commands.sh::every_listed_command_renders_something` and `the_four_no_ops_answer_or_say_why`
+(screen diff, which a notice always changes) → assert `palette::NO_OUTPUT` never appears. ·
+`19-interrupt.sh::the_stop_key_is_named_while_running` (`see "esc"` over a static hint) → the exact
+phrase, with an idle baseline and an after-interrupt baseline. ·
+`19-interrupt.sh::the_farewell_…` (`grep -i "bough\|bye"` matched the echoed `$BOUGH_BIN` path) →
+`grep -F "bough: bye."`, exactly once. · `…_within_two_seconds` asserted `<= 6` → renamed
+`quit_exits_cleanly_within_three_seconds` and tightened to 3. ·
+`18-draft.sh::a_raw_three_line_paste_is_one_draft_and_one_send` (`-le 1`, so zero sends passed) →
+`-eq 1`. · `20-frame.sh` cost (`grep "[$]\|—"`, and `—` is the failure) → asserts `—` with no
+`usage/round` on the ledger and refuses an invented `$`; the positive half is a new live bullet in
+`24-honesty.sh`. · `20-frame.sh::at_200x50_the_measure_is_capped_at_ninety` (`worst > 140` over
+20-character fixture rows) → renders a 300-character paragraph and requires it to occupy four rows
+or more. · `21-stream.sh::the_same_answer_renders_identically_after_a_relaunch` (could compare two
+empty captures) → both captures asserted non-empty. ·
+`24-honesty.sh::the_capability_answer_…` positive half (`grep -q tools` over a field
+`RequestHeader` always carries) → parses the header and asserts the `tools` LIST is non-empty. ·
+`ledger-sqlite/tests/checkpoint.rs` (hand-ran `checkpoint()`+`retire()` under a comment saying "what
+the disposer does") → renamed, its WAL assertion made unconditional, and a second test added that
+mounts the row in a kernel and calls `kernel.shutdown()`. · `ux2/run.sh`: `M13-rail` (no row wider
+than 80 in an 80-column PTY — structurally unable to fail) → asserts the rail gave its columns
+back; `B6-rowkeys` (`grep "notes.txt"`, already on screen from the walk's own prompt) → asserts the
+ring, the row marker and a screen change on the toggle key; `M14-stopkey` → the exact phrase.
+
+`lib.sh::tui_quit` sent ONE `Ctrl+u`, which cannot empty a multi-line draft, so `18-draft.sh` ended
+by SENDING `/quit` as the third line of a message and being killed by the EXIT trap. It now clears
+line by line. `lib.sh` gained `skip_all`, and the phase's nine new scripts print one SKIP line per
+named bullet in the live half instead of one line for the whole script.
+
+### Open items, honestly
+
+**O1 — the FTS index built in Phase 1 is used by no surface.** `run_query` is a bounded in-memory
+scan over rendered rows, which is the right fix for M11 (indexing ledger JSON is what put
+`request/header {"as_of":53,…}` on screen) but leaves the index dead and the horizon at
+`SearchConfig::window`. The pane now SAYS when it was windowed; making the FTS index carry rendered
+text is a Phase 8 (digging) job and is not done here.
+
+**O2 — `tool-actions` still has no Provider to reconcile against.** R7 gives it the event and the
+disposal path, and `no_provider_means_no_tool_in_the_registry` still only exercises the empty case:
+the positive branch of `kinds_with_providers` is executed by no test, because no `ActionProvider`
+exists in the tree before Phase 6.
+
+**O3 — `model-policy`'s `usage/round` writer is a channel-fed task owned by the row, not an awaited
+append.** The bare `tokio::spawn` is gone (the task is an `effect_spawn`, failures are logged, and
+the writer is registered before the stream tee so LIFO disposes it last), but the append is still
+not awaited by the round that produced it: a process killed between the chunk and the write loses
+that round's cost. Making it synchronous would put a ledger write on the streaming path.
+
+**O4 — the live half of `make tui-test` still runs only `21-stream.sh` and `24-honesty.sh`.** The
+other nine of the phase's scripts are replay-only by construction (layout, keys, swap gates). The
+skip count is honest now; the coverage is unchanged.
+
+**O5 — `?` is bound only on an EMPTY draft.** `hints()` and the status line advertise it flatly. A
+`?` in a written sentence is a question mark, which is the right behaviour and a small dishonesty in
+the hint text; the hint reads "this help, on an empty message".
+
+## Close (partial): what was fixed, what was deferred
+
+The close review returned **41 findings — 8 high, 21 medium, 12 low**, covering roughly 34 distinct
+issues (several were filed twice: once against the crate that had the bug, once against the
+shell-use bullet that could not catch it). Every one of them is addressed in the tree. Nothing was
+left untouched and no test was deleted; five findings leave a residue, which is what "partial" in
+the title means.
+
+### Fixed (all 41)
+
+**Product code — the thirteen decisions above.** R1 the prose measure is actually applied (#0, #17
+second half) · R2 `ShellView::row_focus`/`following` are filled from a pane report (#5, #32) · R3 the
+transcript reserves a focus-ring column (#17) · R4 `Field::StopKey` replaces the static
+`esc = interrupt` hint (#20) · R5 the `config/reload` listener moved from the launcher into
+`tui-shell` (#6) · R6 `shutdown_bounded` lost its unused `code` parameter (#40 second half) · R7
+`actions/providers-changed` gives `tool-actions` a real reconcile-and-dispose path (#9, #34) · R8
+`WorkspaceRoot::new` returns `Result` (#14) · R9 `run_query` returns `Found { hits, windowed }` and
+the counter names the horizon (#11) · R10 `palette::echoed` writes `palette::NO_OUTPUT` and the
+house-word lint moved onto `CommandsHandle::register` (#19, #39) · R11 `one_sentence` moved out of
+the center into `tui-render` (#16) · R12 `StripConfig::gutter` deleted (#4) · R13 `Row::WakeMark`
+carries `cause`, so a user's Esc renders `— turn interrupted` (#12).
+
+**Also product code, outside R1-R13.** Tab reaches the open palette — `action_for` reads
+`KeyContext::palette_open` and `on_key` consults the palette before `CycleFocus`, so
+`PaletteAction::Complete` is live (#1, #18) · the status line's running/elapsed state is re-derived
+from `TuiHandle::running()` and the `AgentWake` listener filters on `ev.agent` against the focused
+agent (#2, #23) · `spinner_ms` is read: `StatusPane::tick` advances one frame per `spinner_ms`, not
+one per shell tick (#3, #35) · `tui-status` registers `invariant::forget` as a `defer_sync`, like
+both sibling rows (#7) · `model-policy`'s `usage/round` writer is an `effect_spawn` task fed by a
+channel, registered before the stream tee so LIFO disposes it last, failures logged (#8, #33) ·
+`TuiShellPlugin::validate` now rejects all eight fields the phase added (#10) · the status row uses
+`bough_util::home_dir()` (#13) · `PolicyConfig::validate` rejects a non-finite, negative or absurd
+price (#15) · `?` is bound in `action_for` (#24) · the duplicated doc line in `run.rs` is gone (#40).
+
+**Tests that could not fail, replaced.** `16-focus.sh` ring (#17) · `23-commands.sh`
+`tab_completes_…`, `every_listed_command_renders_something`, `the_four_no_ops_…` (#19) and the
+palette's "moves" half, now a cell diff over the selection (#27) · `19-interrupt.sh` stop key (#20),
+farewell (`grep -F "bough: bye."`, exactly once) and `quit_exits_cleanly_within_three_seconds` (#26)
+· `ux2/run.sh` `M13-rail` (#21) and `B6-rowkeys` (#22) · `18-draft.sh` `-le 1` → `-eq 1` (#25) ·
+`20-frame.sh` cost (#28) and the 90-column measure bullet (#28, #0) · `ledger-sqlite`
+`tests/checkpoint.rs`, renamed, its WAL assertion made unconditional and a second test added that
+mounts the row and calls `kernel.shutdown()` (#29) · `24-honesty.sh` capability half, which now
+parses the header and asserts the `tools` LIST is non-empty (#30) · `21-stream.sh`, both captures
+asserted non-empty (#31) · `lib.sh::tui_quit` clears a multi-line draft line by line, and `skip_all`
+prints one SKIP line per named bullet (#36, #38) · the verification map's wrong test names corrected
+(#37).
+
+### Deferred — the residue of five findings
+
+1. **`make ux2` (V11, the three-persona LIVE re-audit) was not re-run after this review pass.**
+   `M13-rail`, `B6-rowkeys` and `M14-stopkey` were rewritten here because they could not fail, and
+   `docs/ux-audit-2.md` still records those three as fixed on the OLD evidence. The rewritten gate
+   needs a live run to re-confirm them. This is the one deferral that could still be hiding a real
+   product bug.
+2. **O1 (#11) — the Phase 1 FTS index is used by no surface.** `run_query` is a bounded in-memory
+   scan. The horizon is no longer silent and is pinned by
+   `a_full_window_says_so_and_a_short_one_does_not`, but making the index carry rendered text is a
+   Phase 8 (digging) job.
+3. **O2 (#9, #34) — `tool-actions` has the event and the disposal path, and no Provider to
+   reconcile against.** The positive branch of `kinds_with_providers` is executed by no test until
+   Phase 6 lands an `ActionProvider`.
+4. **O3 (#8, #33) — the `usage/round` append is owned but not awaited.** A process killed between
+   the chunk and the write loses that round's cost. Making it synchronous would put a ledger write
+   on the streaming path.
+5. **O4 (#38) — the live half of `make tui-test` still runs only `21-stream.sh` and
+   `24-honesty.sh`.** The skip count is honest now; the coverage is unchanged.
+6. **O5 (#24) — `?` is bound only on an EMPTY draft**, while `hints()` and the status line advertise
+   it flatly. A `?` inside a written sentence is a question mark, which is the right behaviour and a
+   small dishonesty in the hint text.
+
+### Tests marked `#[ignore]` by this close
+
+None.

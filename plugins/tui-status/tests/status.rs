@@ -45,7 +45,9 @@ fn the_line_drops_fields_in_the_documented_order_and_never_exceeds_its_width() {
 
     // Wide: everything.
     assert_eq!(at(200), status::RENDER_ORDER.to_vec());
-    assert_eq!(at(120), status::RENDER_ORDER.to_vec());
+    // 140 and not 120: `Field::StopKey` (M14) is a real field now rather than a word inside the
+    // static hints, so "everything fits" needs its columns too.
+    assert_eq!(at(140), status::RENDER_ORDER.to_vec());
 
     // 80, IDLE: the hints are the first thing to go — they are learnable.
     let idle = StatusView {
@@ -59,12 +61,13 @@ fn the_line_drops_fields_in_the_documented_order_and_never_exceeds_its_width() {
         "the cwd survives at 80 (B5)"
     );
 
-    // 80, RUNNING: the hints are the LAST thing to go, because one of them is the stop key and
-    // blocker 7 was that nobody knew it existed (phase ux1 §2.4).
+    // 80, RUNNING: the STOP KEY outlives everything but the product name, because blocker 7 was
+    // that nobody knew it existed (phase ux1 §2.4). It is `Field::StopKey` now rather than a word
+    // inside the static hints, which is what makes its absence while idle assertable.
     let eighty = at(80);
     assert!(
-        eighty.contains(&Field::Hints),
-        "a running line keeps `esc interrupt`: {eighty:?}"
+        eighty.contains(&Field::StopKey),
+        "a running line keeps the stop key: {eighty:?}"
     );
     assert!(!eighty.contains(&Field::Cwd), "the cwd goes first instead");
 
@@ -287,4 +290,37 @@ fn the_model_id_drops_its_snapshot_date_and_nothing_else() {
     );
     assert_eq!(status::short_model("gpt-4o-mini"), "gpt-4o-mini");
     assert_eq!(status::short_model("a-2025"), "a-2025");
+}
+
+/// M14, the half no test had. `esc to interrupt` must be ABSENT while nothing runs, or the bullet
+/// that claims to pin it is a `see "esc"` over a string that is always there.
+#[test]
+fn the_stop_key_exists_only_while_a_turn_is_running() {
+    let running = StatusView {
+        running: true,
+        ..view()
+    };
+    let idle = StatusView {
+        running: false,
+        ..view()
+    };
+    assert_eq!(
+        status::field_text(&running, Field::StopKey).as_deref(),
+        Some(status::STOP_KEY)
+    );
+    assert_eq!(status::field_text(&idle, Field::StopKey), None);
+
+    let text = |v: &StatusView| -> String {
+        status::status_line(v, 200, &Theme::of(ThemeName::Dark))
+            .spans
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect()
+    };
+    assert!(text(&running).contains(status::STOP_KEY));
+    assert!(
+        !text(&idle).contains(status::STOP_KEY),
+        "an idle line names no stop key: {:?}",
+        text(&idle)
+    );
 }

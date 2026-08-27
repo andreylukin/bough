@@ -46,6 +46,9 @@ pub struct StatusConfig {
     pub cwd_max: u16,
     /// Spinner frames, as one string. Deployment-varying (a terminal without a good font).
     pub spinner: String,
+    /// How long ONE spinner frame is held. The pane is ticked at the shell's `tui.tick_ms`, which
+    /// is a different (coarser) cadence: this field is what decides the spin, so the two knobs do
+    /// not have to agree. A `spinner_ms` finer than `tick_ms` simply spins once per tick.
     pub spinner_ms: u64,
     /// Key hints, in order, as `"key=meaning"` pairs. The hint list is config, not a constant,
     /// because it is the one chrome a user might want shortened.
@@ -102,6 +105,9 @@ pub struct StatusPane {
     since: parking_lot::Mutex<Option<DateTime<Utc>>>,
     /// How many ticks have gone by, for the spinner.
     tick: parking_lot::Mutex<u64>,
+    /// When the spinner last advanced a frame. `spinner_ms` is measured against this, so the
+    /// spin rate is the row's own config and not the shell's tick cadence.
+    spun_at: parking_lot::Mutex<Option<DateTime<Utc>>>,
 }
 
 impl StatusPane {
@@ -120,6 +126,7 @@ impl StatusPane {
             view: parking_lot::Mutex::new(view),
             since: parking_lot::Mutex::new(None),
             tick: parking_lot::Mutex::new(0),
+            spun_at: parking_lot::Mutex::new(None),
         }
     }
 
@@ -163,13 +170,29 @@ impl StatusPane {
     /// One spinner step and one elapsed step, from a clock the CALLER owns (a pane never reads
     /// one: `render` is synchronous and `handle` is where time arrives).
     pub fn tick(&self, now: DateTime<Utc>) {
-        let mut n = self.tick.lock();
-        *n = n.wrapping_add(1);
-        let frames: Vec<char> = self.cfg.spinner.chars().collect();
-        let mut v = self.view.lock();
-        if !frames.is_empty() {
-            v.spinner_frame = frames[(*n as usize) % frames.len()];
+        // ONE frame per `spinner_ms`, not one per shell tick. The two cadences are independent
+        // knobs and a patch that sets `spinner_ms` has to move the spinner.
+        let due = {
+            let mut last = self.spun_at.lock();
+            let ms = (now - last.unwrap_or(now - chrono::Duration::days(1)))
+                .num_milliseconds()
+                .max(0) as u64;
+            let due = last.is_none() || ms >= self.cfg.spinner_ms;
+            if due {
+                *last = Some(now);
+            }
+            due
+        };
+        if due {
+            let mut n = self.tick.lock();
+            *n = n.wrapping_add(1);
+            let frames: Vec<char> = self.cfg.spinner.chars().collect();
+            let mut v = self.view.lock();
+            if !frames.is_empty() {
+                v.spinner_frame = frames[(*n as usize) % frames.len()];
+            }
         }
+        let mut v = self.view.lock();
         if let Some(started) = *self.since.lock() {
             let secs = (now - started).num_seconds().max(0) as u64;
             v.elapsed = Some(Duration::from_secs(secs));
@@ -193,6 +216,12 @@ impl Pane for StatusPane {
     async fn handle(&self, ev: PaneEvent, cx: PaneCx) -> PaneOutcome {
         match ev {
             PaneEvent::Tick => {
+                // Re-derive from the ONE authority (`TuiHandle::running`, focused-agent scoped)
+                // so a focus change between agents cannot leave the spinner behind.
+                let running = cx.tui.running();
+                if running != self.view.lock().running {
+                    self.set_running(running, cx.tui.running_since().unwrap_or(cx.at));
+                }
                 self.tick(cx.at);
                 // Not `Handled`: a tick is not input, and claiming it would stop the shell from
                 // handing the same tick to every other pane.
@@ -262,10 +291,7 @@ impl Plugin for TuiStatusPlugin {
         // B5 at the surface: the cwd on the line is the SAME object the tools resolve against,
         // because it comes from `ctx.workspace` and not from `std::env::current_dir`.
         if let Ok(root) = ctx.get::<Workspace>() {
-            pane.set_cwd(
-                root.path().to_path_buf(),
-                std::env::var_os("HOME").map(PathBuf::from),
-            );
+            pane.set_cwd(root.path().to_path_buf(), Some(bough_util::home_dir()));
         }
 
         // Backfill: the newest header, and every cost this ledger holds. A status line that shows
@@ -321,10 +347,25 @@ impl Plugin for TuiStatusPlugin {
         })
         .await?;
 
+        // The recorded frame is per-process and this row owns it: unloading forgets what it drew,
+        // so a reload is never checked against its predecessor's screen (§0.2).
+        ctx.effect(|e| async move {
+            e.defer_sync(invariant::forget);
+            Ok(())
+        })
+        .await?;
+
         let (p, t) = (pane.clone(), tui.clone());
         ctx.on::<AgentWake, _, _>(move |ev| {
             let (p, t) = (p.clone(), t.clone());
             async move {
+                // §2.5: the spinner and the `esc to interrupt` hint are about the FOCUSED agent.
+                // Unfiltered, terra's background wake started sol's clock and terra's `wake/end`
+                // stopped it while sol was still answering — and the chrome then disagreed with
+                // `TuiHandle::running()`, which is what decides whether Esc means interrupt.
+                if t.focused_agent().as_ref() != Some(&ev.agent) {
+                    return;
+                }
                 p.set_running(ev.phase == Phase::Start, Utc::now());
                 t.redraw();
             }

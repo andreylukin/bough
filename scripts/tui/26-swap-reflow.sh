@@ -12,7 +12,25 @@
 #   4. both disabled at once           -> both gone, the composer still takes keys; both restored.
 source "$(dirname "$0")/lib.sh"
 
-[ -n "$BOUGH_LIVE" ] && { skip the_status_row_reflows_the_layout "the swap gate is composition, not a model"; exit 0; }
+# The live half does not run this script. Every bullet it carries is named here, so the
+# skip COUNT matches the count the replay half prints (a whole-script skip printing one
+# `ok` line for ten assertions is the dishonesty `skip` exists to avoid).
+[ -n "$BOUGH_LIVE" ] && {
+  skip_all "the swap gate is composition, not a model" \
+  the_status_row_and_the_search_row_are_both_on_screen \
+  the_search_row_has_a_measurable_position \
+  disabling_the_status_row_removes_the_line_without_a_restart \
+  the_layout_reflowed_by_exactly_one_row \
+  the_composer_still_takes_keys \
+  removing_the_patch_returns_the_status_row \
+  the_layout_reflowed_back \
+  disabling_the_search_row_removes_the_pane_and_leaves_the_status_row \
+  removing_the_patch_returns_the_search_row \
+  both_rows_disabled_at_once_leaves_a_working_shell \
+  both_rows_restored \
+  the_process_never_restarted
+  exit 0
+}
 
 # The 1-based screen row a marker is on. The reflow measurement: `search [` is drawn by the search
 # pane, which sits ABOVE the status line, so it moves when the status row leaves.

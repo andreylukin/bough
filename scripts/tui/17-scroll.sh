@@ -8,7 +8,22 @@
 # measures: a whole screen row also spans the rail, whose about-line legitimately changes on its own.
 source "$(dirname "$0")/lib.sh"
 
-[ -n "$BOUGH_LIVE" ] && { skip scroll_keys_work_from_the_composer "scroll geometry needs the replay transcript"; exit 0; }
+# The live half does not run this script. Every bullet it carries is named here, so the
+# skip COUNT matches the count the replay half prints (a whole-script skip printing one
+# `ok` line for ten assertions is the dishonesty `skip` exists to avoid).
+[ -n "$BOUGH_LIVE" ] && {
+  skip_all "scroll geometry needs the replay transcript" \
+  the_trajectory_is_long_enough_to_scroll \
+  scroll_keys_work_from_the_composer \
+  scroll_keys_work_from_the_focus_pane \
+  scroll_keys_work_from_the_search_pane \
+  the_wheel_scrolls_the_transcript \
+  the_tail_follows_a_live_answer \
+  an_anchored_viewport_does_not_move_while_streaming \
+  scrolled_up_shows_the_new_badge \
+  end_returns_to_the_latest_row
+  exit 0
+}
 
 tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/scroll.patch.yml"

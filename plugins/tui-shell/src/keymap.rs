@@ -29,6 +29,8 @@ pub enum Action {
     JumpLatest,
     /// Tab / BackTab: one step around the focus ring.
     CycleFocus(i32),
+    /// `?` on an empty draft: the help the status line and `hints()` both advertise (M16).
+    Help,
     /// Esc while a wake is running.
     Interrupt,
     /// Esc with an overlay open: dismiss the topmost one.
@@ -70,8 +72,18 @@ pub fn action_for(key: KeyEvent, cx: KeyContext, page: u16) -> Action {
         KeyCode::Char('c') if ctrl => return Action::ExitStep,
         KeyCode::Char('l') if ctrl => return Action::Redraw,
         KeyCode::Char('f') if ctrl => return Action::FocusSearch,
-        KeyCode::Tab => return Action::CycleFocus(1),
-        KeyCode::BackTab => return Action::CycleFocus(-1),
+        // Tab belongs to the PALETTE while it is open — that is what completes the selected
+        // command (§2.8). Cycling panes out from under an open palette is what made
+        // `PaletteAction::Complete` unreachable.
+        KeyCode::Tab if !cx.palette_open => return Action::CycleFocus(1),
+        KeyCode::BackTab if !cx.palette_open => return Action::CycleFocus(-1),
+        // `?` is advertised by `hints()` AND by the status line, so it has to mean something.
+        // Only on an EMPTY draft: a `?` inside a sentence is a question mark.
+        KeyCode::Char('?')
+            if cx.focus_is_composer && cx.draft_is_empty && !cx.palette_open && !ctrl =>
+        {
+            return Action::Help
+        }
         KeyCode::Esc => {
             // The running turn wins: `esc to interrupt` is the only stop key the status line
             // names, and it must mean that whatever else is on screen.
@@ -129,7 +141,7 @@ pub fn hints() -> Vec<(&'static str, &'static str)> {
         ("ctrl+f", "search the conversation"),
         ("ctrl+c", "interrupt, or press twice to exit"),
         ("ctrl+l", "redraw the screen"),
-        ("?", "this help"),
+        ("?", "this help, on an empty message"),
     ]
 }
 

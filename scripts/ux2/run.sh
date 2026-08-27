@@ -177,12 +177,24 @@ for y in range(len(rows) - 1):
         || { echo "the click killed the composer: nothing echoed"; exit 1; }
     '
     shell-use keys "Ctrl+u" >/dev/null
+    # `grep "notes.txt\|hello from the re-audit"` could not fail: both strings are already on
+    # screen from the walk's own prompt, the rail, the model's answer and the click just made.
+    # What a keyboard path to a row IS: the ring appears (Tab), a row focus MARKER appears (Down),
+    # and the toggle key CHANGES the screen (Enter/Space).
     verdict B6-rowkeys blocker keyboard-row bash -c '
-      shell-use press Tab; sleep 0.8
-      shell-use press Down; sleep 0.5
-      shell-use press Enter; sleep 0.8
-      shell-use text | grep -qi "notes.txt\|hello from the re-audit" \
-        || { echo "Tab/Down/Enter reached no row"; exit 1; }
+      [ "$(shell-use text | grep -c "▎")" -eq 0 ] || { echo "a ring is painted before Tab"; exit 1; }
+      # Tab cycles every focusable stop; only the transcript draws a ring.
+      ring=0
+      for i in 1 2 3 4 5 6; do
+        shell-use press Tab; sleep 0.7
+        [ "$(shell-use text | grep -c "▎")" -gt 0 ] && { ring=1; break; }
+      done
+      [ "$ring" = 1 ] || { echo "Tab painted no focus ring anywhere on the ring"; exit 1; }
+      shell-use press Down; sleep 0.6
+      shell-use text | grep -q "▌" || { echo "Down painted no row-focus marker"; exit 1; }
+      before="$(shell-use text)"
+      shell-use press Enter; sleep 1.0
+      [ "$before" != "$(shell-use text)" ] || { echo "Enter on the focused row changed nothing"; exit 1; }
     '
   else
     verdict B1-focus blocker keyboard-focus bash -c '
@@ -192,12 +204,21 @@ for y in range(len(rows) - 1):
         || { echo "a printable key did not snap the keyboard back to the composer"; exit 1; }
     '
     shell-use keys "Ctrl+u" >/dev/null
+    # See the mouse branch: the old grep was over strings the walk itself put on screen.
     verdict B6-rowkeys blocker keyboard-row bash -c '
-      shell-use press Tab; sleep 0.8
-      shell-use press Down; sleep 0.5
-      shell-use press Space; sleep 0.8
-      shell-use text | grep -qi "notes.txt\|hello from the re-audit" \
-        || { echo "there is still no keyboard path to a tool row"; exit 1; }
+      [ "$(shell-use text | grep -c "▎")" -eq 0 ] || { echo "a ring is painted before Tab"; exit 1; }
+      # Tab cycles every focusable stop; only the transcript draws a ring.
+      ring=0
+      for i in 1 2 3 4 5 6; do
+        shell-use press Tab; sleep 0.7
+        [ "$(shell-use text | grep -c "▎")" -gt 0 ] && { ring=1; break; }
+      done
+      [ "$ring" = 1 ] || { echo "Tab painted no focus ring anywhere on the ring"; exit 1; }
+      shell-use press Down; sleep 0.6
+      shell-use text | grep -q "▌" || { echo "Down painted no row-focus marker"; exit 1; }
+      before="$(shell-use text)"
+      shell-use press Space; sleep 1.0
+      [ "$before" != "$(shell-use text)" ] || { echo "Space on the focused row changed nothing"; exit 1; }
     '
   fi
   shot 03-focus
@@ -301,14 +322,21 @@ for y in range(len(rows) - 1):
   shell-use submit "Write eight paragraphs about the history of the terminal emulator." >/dev/null
   sleep 4
   shot 09-running
+  # `grep -qi "esc"` could not fail: `esc = interrupt` used to be a STATIC status hint, on screen
+  # idle or running. It is `Field::StopKey` now — the exact phrase, present only while a turn is
+  # open — so this is a check about the RUNNING state and not about a constant.
   verdict M14-stopkey major stop-key bash -c '
-    shell-use text | grep -qi "esc" || { echo "nothing on screen names the interrupt key"; exit 1; }
+    shell-use text | grep -qF "esc to interrupt" \
+      || { echo "nothing on screen names the interrupt key while a turn runs"; exit 1; }
   '
   shell-use press Escape >/dev/null
   sleep 3
   shot 10-interrupted
+  # The DURABLE transcript marker, in its own words, not the transient notice band.
   verdict B7-interrupt blocker interrupt bash -c '
-    shell-use text | grep -qi "interrupt" || { echo "Esc left no interrupted marker"; exit 1; }
+    shell-use text | grep -qF "turn interrupted" || { echo "Esc left no interrupted marker"; exit 1; }
+    shell-use text | grep -qF "esc to interrupt" && { echo "the stop key is still named with nothing running"; exit 1; }
+    exit 0
   '
   shell-use keys "Ctrl+c" >/dev/null
   sleep 1
@@ -322,13 +350,29 @@ for y in range(len(rows) - 1):
   settle 10000
   sleep 1
   shot 11-80x24
+  # A PTY grid at 80 columns can never emit a row wider than 80, so the old "no row exceeds 80"
+  # check was structurally incapable of failing and said nothing about the rail. What collapse IS:
+  # `collapse_cols` is 100, so at 80 the rail takes ZERO columns — the transcript starts at column
+  # 0 and the agent names the rail draws are gone from the left edge.
   verdict M13-rail major rail-collapse bash -c '
     shell-use text | python3 -c "
 import sys
-rows = sys.stdin.read().split(chr(10))
-worst = max((len(r.rstrip()) for r in rows), default=0)
-if worst > 80:
-    sys.exit(\"a row is %d columns wide in an 80-column terminal\" % worst)
+rows = [r for r in sys.stdin.read().split(chr(10))]
+body = [r for r in rows[:-2] if r.strip()]
+if not body:
+    sys.exit(\"nothing on screen at 80x24\")
+# With the rail collapsed nothing is drawn in its old 34 columns except the transcript itself:
+# no row may carry text, a gutter-wide gap, and then a SECOND run, which is what a rail sharing a
+# baseline with the conversation looks like.
+import re
+for y, row in enumerate(body):
+    if re.search(r\"\\S {6,}\\S\", row[:60]):
+        sys.exit(\"row %d still looks like a rail beside the transcript: %r\" % (y, row[:60]))
+# …and the transcript actually uses the left edge it was given.
+# The transcript own left edge, allowing for the ONE column the focus pane reserves for its
+# ring (phase ux1 review R3).
+if not any(r[:2].strip() for r in body):
+    sys.exit(\"every row is indented: the rail did not give its columns back\")
 "
   '
   shell-use resize 120 36 >/dev/null

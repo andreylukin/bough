@@ -11,7 +11,7 @@ use bough_plugin_ledger::{
 };
 use bough_plugin_ledger_memory::store::MemoryStore;
 use bough_plugin_tui_search::{
-    hit_id, hit_line, lines, on_click, run_query, step_of_hit, Debounce, Hit, SearchConfig,
+    hit_id, hit_line, lines, on_click, run_query, step_of_hit, Debounce, Found, Hit, SearchConfig,
     SearchState,
 };
 use bough_plugin_tui_shell::pane::{PaneId, PaneOutcome};
@@ -117,7 +117,10 @@ async fn a_query_returns_hits_across_two_trajectories() {
     agent_row(&l, "terra", "lane/terra").await;
     thought(&l, "lane/sol", 0, "the swap gate is green").await;
     thought(&l, "lane/terra", 0, "the swap gate held").await;
-    let hits = run_query(&l, &cfg(), "swap gate").await.expect("a query");
+    let hits = run_query(&l, &cfg(), "swap gate")
+        .await
+        .expect("a query")
+        .hits;
     assert_eq!(hits.len(), 2, "{hits:#?}");
     let agents: BTreeSet<String> = hits.iter().map(|h| h.agent.as_str().to_string()).collect();
     assert_eq!(
@@ -136,7 +139,7 @@ async fn an_envelope_step_can_never_be_a_hit() {
     agent_row(&l, "sol", "lane/sol").await;
     put(&l, "lane/sol", HEADER, header_body()).await;
     thought(&l, "lane/sol", 1, "the budget is fine").await;
-    let hits = run_query(&l, &cfg(), "budget").await.expect("a query");
+    let hits = run_query(&l, &cfg(), "budget").await.expect("a query").hits;
     assert_eq!(hits.len(), 1, "{hits:#?}");
     assert_eq!(hits[0].speaker, "sol");
     assert!(!hits[0].snippet.contains("as_of"), "{:?}", hits[0].snippet);
@@ -148,7 +151,7 @@ async fn a_hit_names_the_step_it_came_from() {
     agent_row(&l, "sol", "lane/sol").await;
     thought(&l, "lane/sol", 0, "nothing here").await;
     let want = thought(&l, "lane/sol", 1, "the swap gate").await;
-    let hits = run_query(&l, &cfg(), "swap").await.expect("a query");
+    let hits = run_query(&l, &cfg(), "swap").await.expect("a query").hits;
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].step, want);
     assert_eq!(
@@ -178,7 +181,7 @@ fn a_failed_query_renders_an_inline_error_and_clears_the_list() {
     assert_eq!(st.rows.len(), 1);
 
     let g = st.push_char('"', now);
-    assert!(st.apply(g, Err("fts5: syntax error".into())));
+    assert!(st.apply::<Found>(g, Err("fts5: syntax error".into())));
     assert!(
         st.rows.is_empty(),
         "a stale list beside a fresh error is a lie"
@@ -326,4 +329,46 @@ fn the_hit_list_scrolls_so_every_hit_can_be_reached() {
         "the selected hit is inside the viewport: top {top}, selected {}",
         st.selected
     );
+}
+
+/// The horizon is NOT silent (phase ux1 review). `run_query` reads the newest `window` steps per
+/// agent; a word said before that returns nothing, and "nothing" must not read the same as "never
+/// said". The counter says which of the two it is.
+#[tokio::test]
+async fn a_full_window_says_so_and_a_short_one_does_not() {
+    let l = ledger();
+    agent_row(&l, "sol", "lane/sol").await;
+    thought(&l, "lane/sol", 0, "the oldest word is quokka").await;
+    for i in 1..4u32 {
+        thought(&l, "lane/sol", i, "filler").await;
+    }
+
+    // A window that does not reach the oldest step: no hit, and the counter SAYS the search was
+    // windowed rather than letting the reader believe the word was never written.
+    let narrow = SearchConfig { window: 2, ..cfg() };
+    let found = run_query(&l, &narrow, "quokka").await.expect("a query");
+    assert!(found.hits.is_empty(), "{:#?}", found.hits);
+    assert!(
+        found.windowed,
+        "a full window means older steps went unread"
+    );
+    let mut st = SearchState::new(&narrow);
+    let g = st.debounce.generation();
+    st.input = "quokka".into();
+    assert!(st.apply(g, Ok(found)));
+    let counter = st.counter();
+    assert!(
+        counter.contains("no matches") && counter.contains("newest 2 steps"),
+        "the counter names the horizon it searched: {counter:?}"
+    );
+
+    // A window that covers the whole trajectory finds it, and says nothing about a horizon.
+    let wide = run_query(&l, &cfg(), "quokka").await.expect("a query");
+    assert_eq!(wide.hits.len(), 1, "{:#?}", wide.hits);
+    assert!(!wide.windowed, "the whole trajectory fit in the window");
+    let mut st = SearchState::new(&cfg());
+    let g = st.debounce.generation();
+    st.input = "quokka".into();
+    assert!(st.apply(g, Ok(wide)));
+    assert_eq!(st.counter(), "1 of 1");
 }

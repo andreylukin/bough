@@ -7,7 +7,19 @@
 # The bullets here are geometric, so they are asserted at three sizes rather than at the boot one.
 source "$(dirname "$0")/lib.sh"
 
-[ -n "$BOUGH_LIVE" ] && { skip the_status_line_names_the_six_things "the frame is layout, not a model"; exit 0; }
+# The live half does not run this script. Every bullet it carries is named here, so the
+# skip COUNT matches the count the replay half prints (a whole-script skip printing one
+# `ok` line for ten assertions is the dishonesty `skip` exists to avoid).
+[ -n "$BOUGH_LIVE" ] && {
+  skip_all "the frame is layout, not a model" \
+  the_status_line_names_the_six_things \
+  the_status_line_is_exactly_one_row \
+  at_80x24_the_rail_is_gone_and_no_row_carries_two_runs \
+  at_200x50_the_measure_is_capped_at_ninety \
+  esc_dismisses_help_then_search_then_nothing \
+  three_sizes_rewrap_with_no_blank_line_injected
+  exit 0
+}
 
 tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/scroll.patch.yml"
@@ -32,15 +44,28 @@ t the_status_line_names_the_six_things \
     see "'"$HOME_DIR"'/work" --timeout 8000 || see "work" --timeout 8000 || { echo "no cwd on the status line"; exit 1; }
     see "haiku" --timeout 8000 || { echo "no model on the status line"; exit 1; }
     see "%" --timeout 8000 || { echo "no context percentage on the status line"; exit 1; }
-    shell-use text | grep -q "[$]\|—" || { echo "no cost field on the status line"; exit 1; }
+    # The cost field. `grep "[$]\|—"` could not fail: `—` is what `Field::Cost` renders when the
+    # ledger holds NO `usage/round`, and it is also what Model and Context render when unknown —
+    # so the bullet passed on exactly the M24 failure it exists to catch. This replay profile
+    # never calls a model, so the honest assertion here is the NEGATIVE one the invariant states:
+    # with no `usage/round` on the ledger, the line shows `—` and never invents a number. The
+    # positive half (a real `$0.00xx`) is `24-honesty.sh`, live, where a cost can exist.
+    n="$(sql "select count(*) from steps where type = '"'"'usage/round'"'"';")"
+    if [ "${n:-0}" -eq 0 ]; then
+      shell-use text | grep -q "—" || { echo "no cost field on the status line"; exit 1; }
+      shell-use text | grep -qE "[\$][0-9]" && { echo "the status line invented a cost with no usage/round behind it"; exit 1; }
+    else
+      shell-use text | grep -qE "[\$][0-9]" || { echo "the ledger holds a usage/round but the line shows no cost"; exit 1; }
+    fi
     see "help" --timeout 8000 || { echo "no key hints on the status line"; exit 1; }
   '
 
 t the_status_line_is_exactly_one_row \
   bash -c '
-    n="$(shell-use text | grep -c "esc")"
-    [ "${n:-0}" -ge 1 ] || { echo "the interrupt hint is on no row"; exit 1; }
-    [ "${n:-0}" -le 2 ] || { echo "the status hints are on $n rows; the line is one row"; exit 1; }
+    # Keyed on `? help`, a STATIC hint. It used to be keyed on "esc", which is `Field::StopKey`
+    # now and exists only while a turn runs — nothing runs here.
+    n="$(shell-use text | grep -c "? help")"
+    [ "${n:-0}" -eq 1 ] || { echo "the status hints are on $n rows; the line is one row"; exit 1; }
   '
 
 # --- 80x24: the rail collapses, and nothing shares a baseline with the transcript. -------------
@@ -73,7 +98,12 @@ if bad:
 shell-use resize 200 50
 shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
 sleep 0.6
-shell-use submit "one more turn"
+# A paragraph long enough that the cap is the only thing that can wrap it. The old bullet
+# asserted `worst > 140` over a fixture whose rows are about twenty characters: the check could
+# not fail, whatever `measure_cols` was set to (and nothing read it at all). Andrey's own message
+# goes through the same wrap as the answer, so a long one is a paragraph this script controls.
+LOREM="$(python3 -c "print(chr(32).join([chr(108)+chr(111)+chr(114)+chr(101)+chr(109)]*60))")"
+shell-use submit "$LOREM"
 shell-use wait idle --timeout 30000
 
 t at_200x50_the_measure_is_capped_at_ninety \
@@ -82,14 +112,18 @@ t at_200x50_the_measure_is_capped_at_ninety \
     # transcript row may reach the right edge of a 200-column terminal.
     shell-use text | python3 -c "
 import sys
-worst = 0
-for row in sys.stdin.read().split(chr(10)):
-    if \"turn line\" in row or \"trajectory line\" in row:
-        worst = max(worst, len(row.rstrip()))
+rows = [r.rstrip() for r in sys.stdin.read().split(chr(10)) if chr(108)+chr(111)+chr(114)+chr(101)+chr(109) in r]
+if not rows:
+    sys.exit(\"the long paragraph is not on screen at 200x50\")
+worst = max(len(r) for r in rows)
+# The rail is clamped at max_width 40, plus a one-column gutter and the pane ring: a capped
+# paragraph cannot pass ~132. UNCAPPED it would run to about 200.
 if worst > 140:
     sys.exit(\"a transcript row is %d columns wide at 200: the measure is not capped\" % worst)
-if worst == 0:
-    sys.exit(\"no transcript row on screen at 200x50\")
+# …and the paragraph really was long enough to test the cap: an uncapped render would have put
+# it on FEWER, WIDER rows. Two rows at 200 columns would mean nothing was measured.
+if len(rows) < 4:
+    sys.exit(\"the long paragraph rendered on only %d rows: nothing here tests a cap\" % len(rows))
 "
   '
 

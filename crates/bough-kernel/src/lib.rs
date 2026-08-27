@@ -29,7 +29,8 @@ pub use context::{default_realm, CommittedView, Context, KernelCore};
 pub use effect::{EffectCtx, EffectHandle, Halted};
 pub use error::{ConfigError, KernelError, PluginError};
 pub use event::{
-    DispatchMode, EmitEvent, ListenerOpts, Next, ParallelEvent, SerialEvent, WaterfallEvent,
+    ConfigReload, ConfigReloadEvent, DispatchMode, EmitEvent, ListenerOpts, Next, ParallelEvent,
+    SerialEvent, WaterfallEvent,
 };
 pub use fiber::{EntryId, FiberHandle, FiberState, FiberUid};
 pub use invariant::{Cadence, InvariantSpec, InvariantViolation};

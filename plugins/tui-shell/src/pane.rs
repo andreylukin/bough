@@ -214,6 +214,26 @@ pub struct RenderCx<'a> {
     pub area: Rect,
     pub view: &'a ShellView,
     pub(crate) hits: &'a mut HitMap,
+    pub(crate) report: &'a mut RowReport,
+}
+
+/// What a pane tells the shell about state only the pane can see (§2.12): its roving row focus,
+/// and — for the transcript — whether the viewport is pinned to the tail. The shell folds this
+/// into the NEXT frame's [`ShellView`], so a sibling pane can read it. A pane that never reports
+/// leaves the documented defaults and renders exactly as before.
+#[derive(Clone, Copy, Debug)]
+pub struct RowReport {
+    pub row_focus: Option<usize>,
+    pub following: bool,
+}
+
+impl Default for RowReport {
+    fn default() -> RowReport {
+        RowReport {
+            row_focus: None,
+            following: true,
+        }
+    }
 }
 
 impl RenderCx<'_> {
@@ -225,6 +245,20 @@ impl RenderCx<'_> {
     /// The active theme's named roles.
     pub fn theme(&self) -> &Theme {
         &self.view.theme
+    }
+
+    /// The PROSE MEASURE for this pane: `min(area.width, TuiConfig::measure_cols)` (M13). Text a
+    /// human reads is wrapped to this, not to the pane width, so a 200-column terminal gets a
+    /// 90-column paragraph and the rest is margin. A pane drawing a table or a rule still uses
+    /// `area.width`.
+    pub fn measure(&self) -> u16 {
+        measure(self.area.width, self.view.measure_cols)
+    }
+
+    /// Report this pane's roving state to the shell, for the next frame's [`ShellView`].
+    pub fn report_rows(&mut self, row_focus: Option<usize>, following: bool) {
+        self.report.row_focus = row_focus;
+        self.report.following = following;
     }
 }
 
@@ -243,8 +277,12 @@ pub struct ShellView {
     /// The pane's roving row focus this frame, when it has one (phase ux1 §2.1, B6). A pane that
     /// ignores it renders exactly as before.
     pub row_focus: Option<usize>,
-    /// Whether the transcript is pinned to the tail (phase ux1 §2.2, B2).
+    /// Whether the transcript is pinned to the tail (phase ux1 §2.2, B2). Reported by the
+    /// pane named by [`crate::TuiConfig::transcript_pane`]; `true` when it reported nothing.
     pub following: bool,
+    /// The prose measure cap in columns ([`crate::TuiConfig::measure_cols`]). Read through
+    /// [`RenderCx::measure`] rather than directly.
+    pub measure_cols: u16,
 }
 
 /// PURE: the prose measure. `min(width, cap)`; `cap` is [`crate::TuiConfig::measure_cols`].

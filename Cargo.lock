@@ -762,10 +762,12 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sha2",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -885,6 +887,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1021,6 +1024,7 @@ dependencies = [
  "bough-plugin-agents",
  "bough-plugin-ledger",
  "bough-plugin-ledger-memory",
+ "bough-plugin-tui-render",
  "bough-util",
  "chrono",
  "inventory",
@@ -1115,11 +1119,13 @@ dependencies = [
  "bough-plugin-tools",
  "chrono",
  "inventory",
+ "parking_lot",
  "schemars",
  "serde",
  "serde_json",
  "tokio",
  "tokio-util",
+ "tracing",
 ]
 
 [[package]]
