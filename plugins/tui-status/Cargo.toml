@@ -1,0 +1,32 @@
+[package]
+name = "bough-plugin-tui-status"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# A Consumer (§11, phase ux1 §2.5): the one-row status line in `Slot::Status` — product name,
+# cwd, model, % context left, cost, spinner and key hints. It is a ROW and not a field of another
+# pane because the phase's SWAP gate disables it by patch while the TUI runs.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-agents = { workspace = true }
+bough-plugin-tools = { workspace = true }
+bough-plugin-tui-shell = { workspace = true }
+bough-plugin-tui-render = { workspace = true }
+ratatui = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+bough-plugin-ledger-memory = { workspace = true }

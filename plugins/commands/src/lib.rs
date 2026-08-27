@@ -7,6 +7,7 @@
 //! It holds live state (the registry), so it IS a catalog row and provides its own key.
 
 pub mod invariant;
+pub mod palette;
 pub mod parse;
 
 use std::sync::Arc;

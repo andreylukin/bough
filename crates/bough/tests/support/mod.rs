@@ -138,6 +138,7 @@ fn cli_for(profile: &str) -> Cli {
         check: false,
         // The tests drive `recompose_once` directly rather than waiting on a file watcher.
         no_watch: true,
+        shutdown_ms: 2000,
         root: None,
         command: None,
     }

@@ -196,6 +196,7 @@ mod tests {
             dump_format: crate::cli::DumpFormat::Yaml,
             check: false,
             no_watch: false,
+            shutdown_ms: 2000,
             root: None,
             command: Some(Command::Exec(args("hi"))),
         };
@@ -213,6 +214,7 @@ mod tests {
             dump_format: crate::cli::DumpFormat::Yaml,
             check: false,
             no_watch: false,
+            shutdown_ms: 2000,
             root: None,
             command: None,
         };

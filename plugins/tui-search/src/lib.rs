@@ -10,6 +10,7 @@
 //! are thin shells over `hit_rows`, `hit_line`, `SearchState` and `on_click` (deviation D-WP5-1,
 //! reported at the seam).
 
+pub mod index;
 pub mod invariant;
 
 use std::sync::Arc;

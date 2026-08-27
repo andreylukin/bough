@@ -47,6 +47,8 @@ pub fn header_of(inputs: &RequestInputs) -> RequestHeader {
         prompt_ver: inputs.facts.prompt_ver.clone(),
         as_of: inputs.as_of,
         budget: inputs.budget,
+        // phase ux1 §2.10 (M24): the numerator of "% context left".
+        projection_tokens: inputs.projection.tokens,
         projection_digest: digest(&inputs.projection.to_text()),
         sections: inputs
             .projection

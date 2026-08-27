@@ -5,7 +5,10 @@
 //! The row holds every resumed agent's `AgentDisposer` inside its own effect, so disabling
 //! `residents` by patch tears the roster down and leaves the ledger untouched (P3-D17).
 
+pub mod about;
 pub mod invariant;
+
+pub use about::one_sentence;
 
 use std::sync::Arc;
 

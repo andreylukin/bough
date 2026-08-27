@@ -57,14 +57,22 @@ pub async fn identity(
     _cfg: &AssemblerConfig,
 ) -> Result<Option<RenderedSection>, ProjectionError> {
     let row = req.ledger.0.agent(&req.agent).await?;
-    Ok(Some(identity_section(&req.agent, row.as_ref())))
+    // phase ux1 §2.10 (M25): WP-7 replaces `&[]` with the tools registered in THIS agent's
+    // scope, read from the injected `tools` handle — so "what can you do" cannot advertise a
+    // tool the agent was never offered.
+    Ok(Some(identity_section(&req.agent, row.as_ref(), &[])))
 }
 
 /// Pure: the identity band as a function of the (mutable) agents row alone.
+/// `tools` names the tools registered IN THIS AGENT'S SCOPE; the band renders them as a `tools:`
+/// line, so the identity text and the offered tool set are the same set (phase ux1 §2.10, M25).
 pub fn identity_section(
     name: &bough_plugin_ledger::AgentName,
     row: Option<&AgentRow>,
+    tools: &[bough_plugin_tools::ToolName],
 ) -> RenderedSection {
+    // WP-7 renders `tools` into the body below.
+    let _ = tools;
     let mut body = format!("name: {name}\n");
     let mut cites = SectionCites::default();
     match row {

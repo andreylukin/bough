@@ -156,3 +156,22 @@ pub fn install_panic_hook() -> impl FnOnce() {
 pub fn stdout_is_tty() -> bool {
     crossterm::tty::IsTty::is_tty(&std::io::stdout())
 }
+
+// ---------------------------------------------------------------------------
+// phase ux1 §2.4 (B8): the farewell is printed AFTER the terminal is restored
+// ---------------------------------------------------------------------------
+
+/// The line printed after the terminal is restored, once, by whichever restore path runs first.
+/// Storing it here — rather than printing it at the quit site — is what makes it impossible for
+/// `/quit` to leave a black rectangle: the alt screen is already gone when it prints.
+static FAREWELL: parking_lot::Mutex<Option<String>> = parking_lot::Mutex::new(None);
+
+/// Remember the farewell. The LAST caller wins; a second `quit_with` overwrites.
+pub fn set_farewell(text: String) {
+    *FAREWELL.lock() = Some(text);
+}
+
+/// Take the farewell, leaving none — so it prints exactly once however many restore paths run.
+pub fn take_farewell() -> Option<String> {
+    FAREWELL.lock().take()
+}

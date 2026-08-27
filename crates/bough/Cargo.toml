@@ -49,6 +49,8 @@ bough-plugin-tui-shell = { workspace = true }
 bough-plugin-tui-strip = { workspace = true }
 bough-plugin-tui-focus = { workspace = true }
 bough-plugin-tui-search = { workspace = true }
+# phase ux1: the status line row (the phase's SWAP subject).
+bough-plugin-tui-status = { workspace = true }
 bough-plugin-tui-probe = { workspace = true }
 bough-plugin-residents = { workspace = true }
 bough-plugin-old-feed-adapter = { workspace = true }

@@ -63,3 +63,55 @@ impl Scroll {
 fn max_top(rows: usize, height: u16) -> usize {
     rows.saturating_sub(height as usize)
 }
+
+// ---------------------------------------------------------------------------
+// phase ux1 §2.2: follow + the unread affordance
+// ---------------------------------------------------------------------------
+
+/// Where the transcript is looking, and how much it has not shown. One per transcript pane.
+///
+/// "Auto-follow at the tail" and "`↓ N new` when detached" are the same state machine, so they
+/// live in one type: an unread count that could disagree with the scroll state is the bug (B2).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Viewport {
+    pub scroll: Scroll,
+    pub unseen: usize,
+}
+
+impl Viewport {
+    /// PURE: rows were appended. Following ⇒ nothing to count; anchored ⇒ `unseen += added`.
+    pub fn on_rows_appended(&mut self, added: usize) {
+        let _ = added;
+        todo!("WP-3")
+    }
+
+    /// PURE: a scroll input. Landing at the bottom re-arms `Follow` and zeroes `unseen`.
+    pub fn scrolled(&mut self, delta: i32, rows: usize, height: u16) {
+        let _ = (delta, rows, height);
+        todo!("WP-3")
+    }
+
+    /// `End`, and what sending a message does: back to the tail, `unseen = 0` (B2).
+    pub fn to_latest(&mut self) {
+        self.scroll = Scroll::Follow;
+        self.unseen = 0;
+    }
+
+    /// Anchor on a row (a search hit, a `FocusRequest { step }`).
+    pub fn anchor_on(&mut self, row: usize) {
+        self.scroll = Scroll::anchored_on(row);
+    }
+
+    /// PURE: the affordance text, or `None` while following. `"↓ 3 new"`.
+    pub fn badge(&self) -> Option<String> {
+        todo!("WP-3")
+    }
+
+    pub fn top(&self, rows: usize, height: u16) -> usize {
+        self.scroll.top(rows, height)
+    }
+
+    pub fn is_following(&self) -> bool {
+        self.scroll.is_following()
+    }
+}

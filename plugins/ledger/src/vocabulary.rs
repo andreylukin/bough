@@ -93,6 +93,10 @@ pub struct RequestHeader {
     pub as_of: Seq,
     /// The token budget the projection was assembled under.
     pub budget: usize,
+    /// `Assembled::tokens` — the numerator of "% context left" (phase ux1 §2.10, M24). Additive
+    /// and defaulted: it moves with every step, so it is NOT part of the change comparison.
+    #[serde(default)]
+    pub projection_tokens: usize,
     /// sha256 of `Assembled::to_text()`, hex.
     pub projection_digest: String,
     /// The projection sections that made up the context, in rendered order.
@@ -265,6 +269,7 @@ mod tests {
             prompt_ver: "p1".into(),
             as_of: Seq(42),
             budget: 8000,
+            projection_tokens: 5120,
             projection_digest: "abc123".into(),
             sections: vec!["identity".into(), "tail".into()],
             step_index: 2,

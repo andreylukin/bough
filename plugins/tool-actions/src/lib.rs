@@ -183,3 +183,23 @@ impl Plugin for ToolActionsPlugin {
 }
 
 bough_kernel::register_plugin!(ToolActionsPlugin);
+
+/// Register one tool per action kind THAT HAS A LIVE PROVIDER (phase ux1 §2.10, M25).
+/// `ActionsHandle::kinds()` already answers this and is "empty in Phase 2, on purpose" — this row
+/// just stops ignoring it. With no `actions-github` row, `open_pr` and `push_to_pr` are absent
+/// from the prompt entirely: §9's rule that a filtered-away tool is indistinguishable from one
+/// that never existed.
+///
+/// Registrations are effects, so the set is RECONCILED, not registered once: the row re-reads
+/// `kinds()` on its tick and disposes the tools whose kind withdrew. (There is no
+/// `actions/provider-changed` event today and this phase does not add one — no Provider exists to
+/// raise it before Phase 6. When `actions-github` lands, that event replaces the tick.)
+///
+/// Returns the tool names live after the reconcile.
+pub fn reconcile_action_tools(
+    actions: &bough_plugin_actions::ActionsHandle,
+    tools: &bough_plugin_tools::ToolsHandle,
+) -> Vec<ToolName> {
+    let _ = (actions, tools);
+    todo!("WP-7")
+}

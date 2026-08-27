@@ -16,6 +16,8 @@ bough-plugin-agents = { workspace = true }
 bough-plugin-ledger = { workspace = true }
 bough-plugin-tui-shell = { workspace = true }
 bough-plugin-tui-render = { workspace = true }
+# phase ux1 §2.7: the index is built from the FOCUS pane's rendered rows, not from ledger JSON.
+bough-plugin-tui-focus = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 async-trait = { workspace = true }

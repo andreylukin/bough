@@ -13,6 +13,7 @@ pub mod pipeline;
 pub mod registry;
 pub mod tool;
 pub mod vocabulary;
+pub mod workspace;
 
 use std::sync::Arc;
 
@@ -31,6 +32,7 @@ pub use tool::{
     ToolResult, ToolScope, ToolSpec,
 };
 pub use vocabulary::{ToolCallBody, ToolOutcomeKind, ToolResultBody};
+pub use workspace::{Workspace, WorkspaceRoot};
 
 /// The tool identifiers, re-exported: §9 spells them here, `plugins/llm` declares them because
 /// the chunk vocabulary names them and `tools` depends on `llm` for `LlmToolDef`.

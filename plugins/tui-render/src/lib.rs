@@ -9,6 +9,7 @@ pub mod about;
 pub mod diff;
 pub mod highlight;
 pub mod invariant;
+pub mod md;
 pub mod text;
 
 use bough_plugin_tools::{RenderIntent, ToolResultBody};
@@ -19,6 +20,7 @@ use ratatui::text::{Line, Span};
 pub use about::{about_from_step, AboutView};
 pub use diff::{diff_block, diff_spec_from_args, DiffSpec};
 pub use highlight::highlight;
+pub use md::{blocks, document, Block};
 pub use text::{markdownish, strip_ansi, wrap};
 
 use text::{cols, pad_cols, truncate_cols};

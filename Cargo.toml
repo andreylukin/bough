@@ -93,6 +93,7 @@ bough-plugin-tui-shell = { path = "plugins/tui-shell" }                        #
 bough-plugin-tui-render = { path = "plugins/tui-render" }                      # §11 render library (no row)
 bough-plugin-tui-strip = { path = "plugins/tui-strip" }                        # §11 the agent rail pane
 bough-plugin-tui-focus = { path = "plugins/tui-focus" }                        # §11 the focused trajectory pane
+bough-plugin-tui-status = { path = "plugins/tui-status" }                      # §11 the status line (phase ux1)
 bough-plugin-tui-search = { path = "plugins/tui-search" }                      # §11 FTS pane (swap subject)
 bough-plugin-residents = { path = "plugins/residents" }                        # §5 catch-up at launch
 bough-plugin-old-feed-adapter = { path = "plugins/old-feed-adapter" }          # §14 throwaway bridge

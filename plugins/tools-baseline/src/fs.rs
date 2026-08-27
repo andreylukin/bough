@@ -170,3 +170,15 @@ mod tests {
         assert!(!re.is_match("main.toml"));
     }
 }
+
+/// PURE: a configured root against the process cwd, resolved ONCE at activation (phase ux1
+/// §2.10, B5). A relative root joins the cwd; an absolute one is taken as given; the result is
+/// canonicalised, and a root that does not exist is a LOAD failure, not a per-call error
+/// (§0.2 fail loud).
+///
+/// `contain` then takes this ABSOLUTE root and never canonicalises again — the per-call
+/// canonicalisation is exactly what let a later `chdir` retarget every tool.
+pub fn pin_root(configured: &Path, process_cwd: &Path) -> Result<PathBuf, String> {
+    let _ = (configured, process_cwd);
+    todo!("WP-7")
+}

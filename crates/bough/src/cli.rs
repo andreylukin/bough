@@ -32,6 +32,10 @@ pub struct Cli {
     /// Override the embedded `profiles/` + `bundles/` directory.
     #[arg(long)]
     pub root: Option<PathBuf>,
+    /// How long teardown may take before the launcher restores the terminal and leaves anyway
+    /// (phase ux1 §2.4, B8). Never a constant at the call site.
+    #[arg(long, default_value_t = 2000)]
+    pub shutdown_ms: u64,
     /// `bough exec "<task>"`. A subcommand is COMPOSITION, not behaviour: it selects the headless
     /// profile and overlays one synthetic patch layer on the `exec` row (§0.1 item 2).
     #[command(subcommand)]

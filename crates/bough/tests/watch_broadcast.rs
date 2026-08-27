@@ -43,6 +43,7 @@ async fn a_patch_that_stops_composing_broadcasts_and_leaves_the_tree_running() {
         dump_format: bough::cli::DumpFormat::Yaml,
         check: false,
         no_watch: false,
+        shutdown_ms: 2000,
         root: Some(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../..")

@@ -31,7 +31,7 @@ async fn panes_lay_out_by_slot_then_order_then_id() {
     );
 
     // And the geometry follows the same order: the rail is the left column, Aux is at the bottom.
-    let rects = layout(Rect::new(0, 0, 80, 24), &tui.panes(), 1);
+    let rects = layout(Rect::new(0, 0, 80, 24), &tui.panes(), 1, 0);
     let of = |id: &str| rects.iter().find(|(p, _)| p.as_str() == id).unwrap().1;
     assert_eq!(of("rail").x, 0);
     assert_eq!(of("rail").width, 20);
@@ -45,13 +45,13 @@ async fn a_slot_with_no_panes_takes_no_space() {
     // No Strip pane, no Aux pane, no Status pane: Main gets everything above the composer.
     add_pane(&ctx, &tui, "focus", Slot::Main, 0, SlotSize::Fill(1)).await;
     let size = Rect::new(0, 0, 80, 24);
-    let rects = layout(size, &tui.panes(), 1);
+    let rects = layout(size, &tui.panes(), 1, 0);
     assert_eq!(rects.len(), 1);
     assert_eq!(rects[0].1, Rect::new(0, 0, 80, 23));
 
     // Add the rail: now, and only now, the Strip slot costs columns.
     let (_, rail) = add_pane(&ctx, &tui, "rail", Slot::Strip, 0, SlotSize::Cells(20)).await;
-    let rects = layout(size, &tui.panes(), 1);
+    let rects = layout(size, &tui.panes(), 1, 0);
     let main = rects.iter().find(|(p, _)| p.as_str() == "focus").unwrap().1;
     assert_eq!(main, Rect::new(20, 0, 60, 23));
     rail.dispose().await;
@@ -64,7 +64,7 @@ async fn removing_a_pane_reflows_the_remaining_ones() {
     let (_, aux) = add_pane(&ctx, &tui, "search", Slot::Aux, 0, SlotSize::Cells(6)).await;
 
     let size = Rect::new(0, 0, 80, 24);
-    let before = layout(size, &tui.panes(), 1);
+    let before = layout(size, &tui.panes(), 1, 0);
     let main_before = before
         .iter()
         .find(|(p, _)| p.as_str() == "focus")
@@ -76,7 +76,7 @@ async fn removing_a_pane_reflows_the_remaining_ones() {
     aux.dispose().await;
 
     assert_eq!(tui.panes().len(), 1, "the pane left with its row");
-    let after = layout(size, &tui.panes(), 1);
+    let after = layout(size, &tui.panes(), 1, 0);
     let main_after = after.iter().find(|(p, _)| p.as_str() == "focus").unwrap().1;
     assert_eq!(
         main_after.height, 23,
@@ -124,7 +124,7 @@ async fn the_empty_three_slot_layout_is_stable() {
     add_pane(&ctx, &tui, "focus", Slot::Main, 0, SlotSize::Fill(1)).await;
     add_pane(&ctx, &tui, "search", Slot::Aux, 0, SlotSize::Cells(4)).await;
 
-    let rects: Vec<String> = layout(Rect::new(0, 0, 40, 12), &tui.panes(), 1)
+    let rects: Vec<String> = layout(Rect::new(0, 0, 40, 12), &tui.panes(), 1, 0)
         .into_iter()
         .map(|(id, r)| format!("{id} {},{} {}x{}", r.x, r.y, r.width, r.height))
         .collect();

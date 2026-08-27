@@ -234,3 +234,19 @@ mod tests {
         );
     }
 }
+
+/// Await `kernel.shutdown()` under a deadline (phase ux1 §2.4, B8). On timeout: restore the
+/// terminal, print `bough: shutdown timed out after {ms}ms; leaving anyway` to stderr, and exit
+/// with `code`. The deadline is [`crate::cli::Cli::shutdown_ms`], never a constant at the call
+/// site — a hang with the alt screen still up is the worst exit the product has.
+pub async fn shutdown_bounded(kernel: &bough_kernel::Kernel, ms: u64, code: u8) -> ExitOutcome {
+    let _ = (kernel, ms, code);
+    todo!("WP-1")
+}
+
+/// How teardown ended.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ExitOutcome {
+    Clean,
+    TimedOut,
+}

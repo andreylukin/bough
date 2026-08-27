@@ -64,6 +64,14 @@ impl SqliteStore {
         }))
     }
 
+    /// `PRAGMA wal_checkpoint(TRUNCATE)` (phase ux1 §2.10, M28). Called from the row's disposer
+    /// BEFORE [`SqliteStore::retire`], so a relaunch always sees the whole ledger: a 231k WAL
+    /// beside a 4.1k db is what an unclosed shutdown looks like, and the history the user typed
+    /// is what it loses.
+    pub async fn checkpoint(&self) -> Result<(), LedgerError> {
+        todo!("WP-7")
+    }
+
     /// Poison the store. Called by the row's teardown; irreversible for this store instance.
     pub fn retire(&self) {
         self.retired.store(true, Ordering::SeqCst);

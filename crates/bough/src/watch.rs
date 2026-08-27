@@ -167,3 +167,24 @@ pub async fn recompose_once(kernel: &Kernel, cli: &Cli) -> Result<(), BootError>
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// phase ux1 §2.9 (M15): the reload result reaches the SCREEN, not only the log
+// ---------------------------------------------------------------------------
+
+/// `config/reload` — EMIT. The launcher raises it after every recompose attempt; `tui-shell`
+/// listens and renders the SAME TEXT the log gets, which is M15's whole complaint. A headless
+/// profile simply has no listener, so the behaviour there is unchanged.
+pub struct ConfigReloadEvent;
+
+impl bough_kernel::EmitEvent for ConfigReloadEvent {
+    const NAME: &'static str = "config/reload";
+    type Payload = ConfigReload;
+}
+
+/// What one recompose attempt did.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConfigReload {
+    Applied { rows_changed: usize },
+    Rejected { detail: String },
+}

@@ -6,6 +6,9 @@
 //! For this build both are `claude-haiku-4-5-20251001` (Andrey's choice for the testing period).
 
 pub mod invariant;
+pub mod price;
+
+pub use price::{cost_usd, Price};
 
 use std::sync::Arc;
 
@@ -23,6 +26,10 @@ pub struct PolicyConfig {
     pub sol: String,
     /// The model for unattended work. `agents.model_override` applies to this one only.
     pub terra: String,
+    /// Per-model prices, keyed by the model name the provider reports (phase ux1 §2.10). A model
+    /// with no row here has an UNKNOWN cost and the status line shows `—` for it — never `$0.00`.
+    #[serde(default)]
+    pub prices: std::collections::BTreeMap<String, price::Price>,
 }
 
 /// The decision, as a pure function of the config and the request's facts — no waterfall, no

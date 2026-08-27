@@ -41,6 +41,33 @@ pub struct StripConfig {
     pub width: u16,
     pub show_about: bool,
     pub about_lines: u16,
+    /// Below this TOTAL terminal width the rail takes zero columns (phase ux1 §2.5, M13): a
+    /// 34-column rail at 80 columns left the conversation 46, and the rail is the less important
+    /// of the two.
+    #[serde(default = "default_collapse_cols")]
+    pub collapse_cols: u16,
+    /// The rail never renders narrower than this when it renders at all.
+    #[serde(default = "default_min_width")]
+    pub min_width: u16,
+    /// …and never wider.
+    #[serde(default = "default_max_width")]
+    pub max_width: u16,
+    /// Blank columns between the rail and the transcript, painted by nobody (M9).
+    #[serde(default = "default_strip_gutter")]
+    pub gutter: u16,
+}
+
+fn default_collapse_cols() -> u16 {
+    100
+}
+fn default_min_width() -> u16 {
+    22
+}
+fn default_max_width() -> u16 {
+    40
+}
+fn default_strip_gutter() -> u16 {
+    1
 }
 
 /// Re-exported from the render library, which owns it because both panes read it (§1).

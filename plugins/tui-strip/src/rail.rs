@@ -268,3 +268,22 @@ pub fn rail(
     }
     (lines, spans)
 }
+
+// ---------------------------------------------------------------------------
+// phase ux1 §2.5: the rail's width, and a clip that cannot overflow
+// ---------------------------------------------------------------------------
+
+/// PURE: the rail's column count at a terminal width. `0` below `collapse_cols` (M13).
+pub fn rail_width(total: u16, cfg: &crate::StripConfig) -> u16 {
+    let _ = (total, cfg);
+    todo!("WP-4")
+}
+
+/// PURE: hard-clip one rail line to `width`, with a `…` when it clipped.
+///
+/// The audit's `idlePlease` and `running──` were two text runs sharing one baseline. A clip that
+/// CANNOT overflow is what makes that impossible rather than unlikely (M9).
+pub fn clip(line: Line<'static>, width: u16) -> Line<'static> {
+    let _ = (line, width);
+    todo!("WP-4")
+}

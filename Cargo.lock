@@ -294,6 +294,7 @@ dependencies = [
  "bough-plugin-tui-probe",
  "bough-plugin-tui-search",
  "bough-plugin-tui-shell",
+ "bough-plugin-tui-status",
  "bough-plugin-tui-strip",
  "bough-plugin-worker-fork",
  "bough-plugin-worker-spawn",
@@ -520,6 +521,7 @@ dependencies = [
  "bough-plugin-ledger-memory",
  "bough-util",
  "chrono",
+ "crossterm",
  "futures",
  "inventory",
  "jsonschema",
@@ -940,6 +942,7 @@ dependencies = [
  "bough-plugin-ledger-sqlite",
  "bough-plugin-projection",
  "bough-plugin-rollups",
+ "bough-plugin-tools",
  "bough-util",
  "chrono",
  "inventory",
@@ -1279,6 +1282,7 @@ dependencies = [
  "bough-plugin-agents",
  "bough-plugin-ledger",
  "bough-plugin-ledger-memory",
+ "bough-plugin-tui-focus",
  "bough-plugin-tui-render",
  "bough-plugin-tui-shell",
  "bough-util",
@@ -1324,6 +1328,30 @@ dependencies = [
  "tracing",
  "unicode-width",
  "uuid",
+]
+
+[[package]]
+name = "bough-plugin-tui-status"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "bough-plugin-ledger-memory",
+ "bough-plugin-tools",
+ "bough-plugin-tui-render",
+ "bough-plugin-tui-shell",
+ "bough-util",
+ "chrono",
+ "inventory",
+ "parking_lot",
+ "ratatui",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

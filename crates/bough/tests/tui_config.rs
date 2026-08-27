@@ -32,6 +32,10 @@ fn strip() -> StripConfig {
         width: 34,
         show_about: true,
         about_lines: 2,
+        collapse_cols: 100,
+        min_width: 22,
+        max_width: 40,
+        gutter: 1,
     }
 }
 

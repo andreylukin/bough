@@ -18,6 +18,7 @@ fn cfg() -> PolicyConfig {
     PolicyConfig {
         sol: "sol-model".into(),
         terra: "terra-model".into(),
+        prices: Default::default(),
     }
 }
 

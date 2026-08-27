@@ -220,6 +220,17 @@ pub struct ShellView {
     pub theme: Theme,
     pub now: DateTime<Utc>,
     pub composer_focused: bool,
+    /// The pane's roving row focus this frame, when it has one (phase ux1 §2.1, B6). A pane that
+    /// ignores it renders exactly as before.
+    pub row_focus: Option<usize>,
+    /// Whether the transcript is pinned to the tail (phase ux1 §2.2, B2).
+    pub following: bool,
+}
+
+/// PURE: the prose measure. `min(width, cap)`; `cap` is [`crate::TuiConfig::measure_cols`].
+/// A 200-column terminal gets a 90-column paragraph and the rest is margin (M13).
+pub fn measure(width: u16, cap: u16) -> u16 {
+    width.min(cap.max(1)).max(1)
 }
 
 /// Input, as the shell routed it to one pane.
@@ -364,7 +375,17 @@ fn stack_v(area: Rect, lens: &[u16]) -> Vec<Rect> {
 /// Geometry: the composer takes `composer_height` rows off the bottom; `Status` takes its rows off
 /// what is left; `Strip` takes its columns off the left of the remainder; `Aux` takes its rows off
 /// the bottom of what remains; `Main` gets everything still standing.
-pub fn layout(size: Rect, panes: &[PaneInfo], composer_height: u16) -> Vec<(PaneId, Rect)> {
+/// `gutter` (phase ux1 §2.5, M9): blank columns between the Strip slot and the rest. The Strip
+/// slot takes `width + gutter` columns and the pane is handed only `width`, so the blank column
+/// belongs to nobody and cannot be painted over by either side.
+pub fn layout(
+    size: Rect,
+    panes: &[PaneInfo],
+    composer_height: u16,
+    gutter: u16,
+) -> Vec<(PaneId, Rect)> {
+    // WP-4 gives `gutter` its meaning; until then the layout is exactly the Phase 5 one.
+    let _ = gutter;
     let ordered = sorted(panes);
     let of = |slot: Slot| -> Vec<PaneInfo> {
         ordered.iter().filter(|p| p.slot == slot).cloned().collect()

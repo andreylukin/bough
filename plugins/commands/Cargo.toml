@@ -14,6 +14,8 @@ bough-kernel = { workspace = true }
 bough-util = { workspace = true }
 bough-plugin-ledger = { workspace = true }
 bough-plugin-agents = { workspace = true }
+# phase ux1 §2.8: the `/` palette's key handling takes a crossterm `KeyEvent`.
+crossterm = { workspace = true }
 async-trait = { workspace = true }
 inventory = { workspace = true }
 serde = { workspace = true }

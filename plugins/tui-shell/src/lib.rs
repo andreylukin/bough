@@ -10,9 +10,14 @@ pub mod backend;
 pub mod builtins;
 pub mod clip;
 pub mod composer;
+pub mod contrast;
+pub mod draft;
 pub mod events;
 pub mod invariant;
+pub mod keymap;
+pub mod notice;
 pub mod pane;
+pub mod palette;
 pub mod run;
 pub mod select;
 pub mod term;
@@ -37,10 +42,13 @@ use tokio::sync::Notify;
 pub use clip::{copy, CopyOutcome};
 pub use composer::{Composer, ComposerAction};
 pub use events::{FocusRequest, KeyDispatch, TuiFocusEvent, TuiKeyEvent};
+pub use keymap::{action_for, Action, ExitArm, ExitStep, Focus, KeyContext};
+pub use notice::{Notice, NoticeKind};
 pub use pane::{
     HitId, HitMap, Pane, PaneCx, PaneEvent, PaneFrame, PaneId, PaneInfo, PaneOutcome, PaneSpec,
     RenderCx, ShellView, Slot, SlotSize,
 };
+pub use pane::measure;
 pub use select::{text_from_buffer, Selection};
 pub use term::{install_panic_hook, restore_now, TerminalGuard};
 pub use theme::{Backend, Theme, ThemeName};
@@ -541,7 +549,54 @@ impl TuiHandle {
             theme: self.0.theme,
             now,
             composer_focused: self.composer_focused(),
+            // WP-1/WP-3 fill these from the focused pane's `RowFocus` and `Viewport`.
+            row_focus: None,
+            following: true,
         }
+    }
+
+    // -----------------------------------------------------------------------------------
+    // phase ux1 §2.1/§2.4: what the keymap, the status line and the exit machine read
+    // -----------------------------------------------------------------------------------
+
+    /// The pane the focus-independent scroll keys drive: [`TuiConfig::transcript_pane`], matched
+    /// EXACTLY. `None` when no such pane is registered (B2).
+    pub fn transcript_pane(&self) -> Option<PaneId> {
+        todo!("WP-1")
+    }
+
+    /// Whether the focused agent has a wake open right now. The status line's spinner and the
+    /// `esc to interrupt` hint read this; `keymap` reads it to decide what Esc means.
+    pub fn running(&self) -> bool {
+        todo!("WP-1")
+    }
+
+    /// When the running wake started, for the elapsed clock (M32).
+    pub fn running_since(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        todo!("WP-1")
+    }
+
+    /// `Ctrl+C` has been pressed once and the window has not lapsed (B7).
+    pub fn exit_armed(&self) -> bool {
+        todo!("WP-1")
+    }
+
+    /// A transient notice with a ROLE, so the theme can colour an error like an error (M22).
+    pub fn notify_kind(&self, text: impl Into<String>, kind: NoticeKind) {
+        let _ = (text.into(), kind);
+        todo!("WP-1")
+    }
+
+    /// The notice that is still live at `now`, TTL applied.
+    pub fn notice_now(&self, now: chrono::DateTime<chrono::Utc>) -> Option<Notice> {
+        let _ = now;
+        todo!("WP-1")
+    }
+
+    /// Quit, with the one-line farewell printed AFTER the terminal is restored (B8).
+    pub fn quit_with(&self, code: u8, farewell: impl Into<String>) {
+        term::set_farewell(farewell.into());
+        self.quit(code);
     }
 
     /// Ask the process to end. Delegates to `Kernel::request_exit` (P2-D23): the launcher still
@@ -602,6 +657,31 @@ pub struct TuiConfig {
     /// How many rows a notice may borrow above the composer before it is truncated.
     #[serde(default = "default_notice_lines")]
     pub notice_max_lines: u16,
+    /// The pane the focus-independent scroll keys drive (phase ux1 §2.2, B2). A pane id, matched
+    /// EXACTLY — the same lesson `search_pane` already carries.
+    #[serde(default = "default_transcript_pane")]
+    pub transcript_pane: String,
+    /// The prose measure cap, in columns (M13). A 200-column terminal gets a 90-column paragraph.
+    #[serde(default = "default_measure_cols")]
+    pub measure_cols: u16,
+    /// Blank columns between the rail and the transcript, owned by neither (M9).
+    #[serde(default = "default_gutter")]
+    pub gutter: u16,
+    /// How long a `Ctrl+C` stays armed before it re-arms (B7).
+    #[serde(default = "default_exit_arm_ms")]
+    pub exit_arm_ms: u64,
+    /// Two keys closer together than this are a PASTE, not typing (B4).
+    #[serde(default = "default_paste_burst_ms")]
+    pub paste_burst_ms: u64,
+    /// How many sent messages `Up` can recall (M20).
+    #[serde(default = "default_history_cap")]
+    pub history_cap: usize,
+    /// How long a transient notice stays up. An error notice has no TTL and waits for a key.
+    #[serde(default = "default_notice_ms")]
+    pub notice_ms: u64,
+    /// How long the copy flash and its selection stay painted (M21).
+    #[serde(default = "default_flash_ms")]
+    pub flash_ms: u64,
 }
 
 fn default_search_pane() -> String {
@@ -612,6 +692,30 @@ fn default_page_lines() -> u16 {
 }
 fn default_wheel_lines() -> u16 {
     3
+}
+fn default_transcript_pane() -> String {
+    "tui.focus".to_string()
+}
+fn default_measure_cols() -> u16 {
+    90
+}
+fn default_gutter() -> u16 {
+    1
+}
+fn default_exit_arm_ms() -> u64 {
+    3000
+}
+fn default_paste_burst_ms() -> u64 {
+    20
+}
+fn default_history_cap() -> usize {
+    200
+}
+fn default_notice_ms() -> u64 {
+    6000
+}
+fn default_flash_ms() -> u64 {
+    900
 }
 fn default_notice_lines() -> u16 {
     // `/help` lists every registered command, and Phase 5 added seven. Eight rows cut the list
@@ -637,6 +741,14 @@ pub fn test_config() -> TuiConfig {
         page_lines: default_page_lines(),
         wheel_lines: default_wheel_lines(),
         notice_max_lines: default_notice_lines(),
+        transcript_pane: default_transcript_pane(),
+        measure_cols: default_measure_cols(),
+        gutter: default_gutter(),
+        exit_arm_ms: default_exit_arm_ms(),
+        paste_burst_ms: default_paste_burst_ms(),
+        history_cap: default_history_cap(),
+        notice_ms: default_notice_ms(),
+        flash_ms: default_flash_ms(),
     }
 }
 

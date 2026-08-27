@@ -11,6 +11,7 @@ pub mod ids;
 pub mod invariant;
 pub mod request;
 pub mod stream;
+pub mod usage;
 
 use std::sync::Arc;
 
@@ -24,6 +25,7 @@ pub use request::{
     AgentRequest, AgentRequestError, CallConfig, Effort, LlmContentBlock, LlmMessage, LlmRequest,
     LlmRole, LlmToolDef, Recovery, RequestCall, RequestErrorCall, RequestFacts, WakeKind,
 };
+pub use usage::{UsageRound, USAGE_ROUND};
 pub use stream::{
     Chunk, FailureKind, LlmFailure, LlmStream, LlmStreamEvent, StopReason, StreamCall, StreamSlot,
     Usage,

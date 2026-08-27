@@ -10,6 +10,7 @@ pub mod branches;
 pub mod claims;
 pub mod expand;
 pub mod invariant;
+pub mod rowfocus;
 pub mod rows;
 pub mod scroll;
 pub mod stream;

@@ -102,7 +102,7 @@ pub fn draw(tui: &TuiHandle) {
     let mut terminal = tui.0.terminal.lock();
     let size = terminal.get_frame().area();
     let composer_h = tui.0.composer.lock().height(size.height / 2);
-    let rects = pane::layout(size, &infos, composer_h);
+    let rects = pane::layout(size, &infos, composer_h, tui.0.cfg.gutter);
     *tui.0.rects.write() = rects.clone();
 
     let selection = tui.selection().map(|s| s.rect());
@@ -278,7 +278,9 @@ pub async fn on_key(tui: &TuiHandle, key: KeyEvent) {
         match action {
             ComposerAction::Send(text) => send(tui, &text).await,
             ComposerAction::Command(line) => dispatch_line(tui, &line).await,
-            ComposerAction::Cleared | ComposerAction::None => tui.redraw(),
+            ComposerAction::Cleared | ComposerAction::Newline | ComposerAction::None => {
+                tui.redraw()
+            }
         }
         return;
     }

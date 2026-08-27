@@ -17,8 +17,12 @@ pub enum ComposerAction {
     Send(String),
     /// Enter on a buffer that starts with the command prefix.
     Command(String),
-    /// Esc on a non-empty buffer clears it; on an empty one the shell handles it.
+    /// `Ctrl+U` on a non-empty line. Esc no longer produces this (phase ux1 §2.3, V3): the draft
+    /// is never destroyed by anything except an explicit clear.
     Cleared,
+    /// A newline was inserted — by `Shift+Enter`/`Alt+Enter`, or by an Enter the shell told the
+    /// composer was part of a paste burst (B4).
+    Newline,
 }
 
 /// The message box, over `ratatui-textarea` (P3-D1).
@@ -91,6 +95,36 @@ impl Composer {
                 ComposerAction::None
             }
         }
+    }
+
+    /// Clear the buffer. The SHELL calls this, and only after `ctx.commands` resolved the name:
+    /// a command line that matched nothing keeps its text (phase ux1 §2.3, B3).
+    pub fn clear(&mut self) {
+        self.area.select_all();
+        self.area.cut();
+        self.area.clear();
+    }
+
+    /// Arm "a second Enter sends this line as a message" after a command miss. Any edit disarms
+    /// it. This is the way out of B3: the text stays and the user is told how to send it.
+    pub fn arm_send_as_message(&mut self) {
+        todo!("WP-2")
+    }
+
+    /// Whether the next unchanged Enter sends the line as a message.
+    pub fn send_as_message_armed(&self) -> bool {
+        todo!("WP-2")
+    }
+
+    /// Map a click's column/row to a caret offset (minor 33).
+    pub fn caret_at(&mut self, col: u16, row: u16, area: Rect) {
+        let _ = (col, row, area);
+        todo!("WP-2")
+    }
+
+    /// The placeholder, now a sentence rather than a fragment.
+    pub fn placeholder() -> &'static str {
+        "Type a message, or / for a command"
     }
 
     /// Bracketed paste. A pasted newline is text, never a send.
