@@ -67,6 +67,9 @@ async fn every_phase_three_invariant_reports_clean_over_a_boot() {
 async fn a_planted_focus_frame_that_renders_a_step_twice_is_reported() {
     let _guard = trace::test_lock();
     let (kernel, _dir) = boot_tui().await;
+    // As in the search plant: the recorder is a last-frame slot, so let the boot's own paints
+    // finish before planting.
+    kernel.quiesce().await;
 
     use bough_plugin_ledger::{StepId, WakeId};
     use bough_plugin_tui_focus::{LiveText, Row};
@@ -104,6 +107,10 @@ async fn a_planted_focus_frame_that_renders_a_step_twice_is_reported() {
 async fn a_planted_search_hit_on_a_missing_step_is_reported() {
     let _guard = trace::test_lock();
     let (kernel, _dir) = boot_tui().await;
+    // The recorder is a LAST-FRAME slot: a boot-time paint that lands after the plant would wipe
+    // it and the check would pass vacuously. Let the tree settle first, so the planted frame is
+    // the last one.
+    kernel.quiesce().await;
 
     use bough_plugin_ledger::{Seq, StepId, StepType, TrajId};
     bough_plugin_tui_search::invariant::record(&[bough_plugin_tui_search::HitRow {

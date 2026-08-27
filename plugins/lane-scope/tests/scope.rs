@@ -403,7 +403,15 @@ async fn a_workers_scope_inherits_nothing_from_its_spawner() {
 
     // A worker of terra's is its own agent with its own name, and every registration here is
     // scoped BY NAME — so nothing of the lane's world reaches it.
-    let worker = "terra:w1";
+    // The name a REAL worker of terra's gets, from the workers registry itself: if that naming
+    // ever collapsed a worker onto its spawner, this test would go red rather than pass by luck.
+    let worker = bough_plugin_workers::WorkersHandle::worker_agent_name(
+        &AgentName::new("terra"),
+        &bough_plugin_workers::WorkerId::new("1"),
+    )
+    .to_string();
+    let worker = worker.as_str();
+    assert_eq!(worker, "terra/worker-1");
     f.create(worker).await;
     assert_eq!(
         f.persona(worker).await.as_deref(),

@@ -215,3 +215,23 @@ async fn promoting_a_fork_is_adding_the_row_and_nothing_else() {
         .expect("readable");
     assert!(c.ancestry.contains(&traj("sol")));
 }
+
+#[tokio::test]
+async fn a_bud_takes_the_refs_it_claims_and_the_parent_keeps_the_rest() {
+    let f = fx();
+    f.lane("sol", &["gh:o/r", "gh:o/other"]).await;
+    f.graph
+        .apply(&bud(lane_child("scout", &["gh:o/r"]), Seq(3)))
+        .await
+        .expect("applies");
+    assert_eq!(
+        f.row("scout").await.unwrap().routing_refs,
+        refs(&["gh:o/r"]),
+        "the child took exactly the ref it claimed"
+    );
+    assert_eq!(
+        f.row("sol").await.unwrap().routing_refs,
+        refs(&["gh:o/other"]),
+        "the parent kept the rest and lost the reassigned one"
+    );
+}

@@ -307,6 +307,7 @@ pub async fn boot_real(profile: &str, patches: &[PathBuf]) -> (Arc<Kernel>, Temp
     // whole point is the recorded stream must be the only writer of it.
     bough_plugin_ledger::invariant::clear();
     bough_plugin_agents::invariant::clear();
+    bough_plugin_commands::invariant::clear();
 
     let mut dir = TempDir::new(&format!("phase2-{profile}"));
     // SAFETY: the caller holds the fixture's process-wide test lock.

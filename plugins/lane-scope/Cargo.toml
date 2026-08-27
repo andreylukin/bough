@@ -29,4 +29,5 @@ parking_lot = { workspace = true }
 tokio = { workspace = true }
 bough-plugin-ledger-memory = { workspace = true }
 bough-plugin-projection-assembler = { workspace = true }
+bough-plugin-workers = { workspace = true }
 tempfile = { workspace = true }

@@ -117,9 +117,21 @@ async fn disabling_the_search_row_removes_its_pane_and_reflows() {
         None,
         "a retired pane has no rectangle"
     );
-    let focus_after = tui
-        .rect_of(&bough_plugin_tui_shell::pane::PaneId::new("tui.focus"))
-        .expect("the focus pane still has a rectangle");
+    // `rect_of` reads the LAST PAINTED frame's rectangles: the disposer takes the retired pane out
+    // of the layout immediately, but the remaining panes only grow on the next paint. Ask for one
+    // and wait for it, rather than reading a frame from before the swap.
+    let focus_id = bough_plugin_tui_shell::pane::PaneId::new("tui.focus");
+    let mut focus_after = focus_before;
+    for _ in 0..200 {
+        tui.redraw();
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        if let Some(r) = tui.rect_of(&focus_id) {
+            focus_after = r;
+            if r.height > focus_before.height {
+                break;
+            }
+        }
+    }
     assert!(
         focus_after.height > focus_before.height,
         "the freed rows go to the remaining panes: {focus_before:?} -> {focus_after:?}"

@@ -660,6 +660,7 @@ dependencies = [
  "bough-plugin-projection",
  "bough-plugin-projection-assembler",
  "bough-plugin-tools",
+ "bough-plugin-workers",
  "chrono",
  "inventory",
  "parking_lot",

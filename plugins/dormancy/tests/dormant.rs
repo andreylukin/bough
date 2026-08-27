@@ -179,3 +179,48 @@ async fn request_wake_returns_nothing_for_a_dormant_agent() {
         "and nothing was appended by the attempt"
     );
 }
+
+/// §1's "no ticks" literally: a `Scheduled` wake — the tick a schedule fires — is deferred at the
+/// same admission point. Both lanes are given work first, so the tick has something to process and
+/// the control shows the identical tick opening a wake on the awake lane.
+#[tokio::test]
+async fn a_scheduled_tick_opens_no_wake_for_a_dormant_agent() {
+    let t = tree(&["repo:bough"], &["class:ask"]).await;
+    let agent = t.sol().await;
+    t.sleep().await;
+    agent
+        .deliver(ordinary("work for the tick", &["repo:bough"]))
+        .await
+        .expect("delivery");
+    settle(&agent).await;
+
+    let req = agent
+        .request_wake(WakeKind::Scheduled, WakeCause::Schedule("nightly"))
+        .await;
+    settle(&agent).await;
+
+    assert_eq!(req, WakeRequest::Nothing, "a dormant lane gets no ticks");
+    assert!(
+        t.steps_of("wake/start").await.is_empty(),
+        "and the tick appended nothing: {:?}",
+        t.steps_of("wake/start").await
+    );
+
+    // THE CONTROL: the identical tick, the identical work, awake — and it does open a wake.
+    let live = tree(&["repo:bough"], &["class:ask"]).await;
+    let other = live.sol().await;
+    other
+        .deliver(ordinary("work for the tick", &["repo:bough"]))
+        .await
+        .expect("delivery");
+    settle(&other).await;
+    let req = other
+        .request_wake(WakeKind::Scheduled, WakeCause::Schedule("nightly"))
+        .await;
+    settle(&other).await;
+    assert!(
+        matches!(req, WakeRequest::Started(_)),
+        "the suppression is dormancy's, not the fixture's: {req:?}"
+    );
+    assert_eq!(live.steps_of("wake/start").await.len(), 1);
+}
