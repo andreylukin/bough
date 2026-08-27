@@ -204,6 +204,35 @@ fn no_markdown_marker_reaches_the_screen() {
     }
 }
 
+/// A HEADING is inline-parsed too. Found live under `BOUGH_LIVE=1` while proving V6: haiku wrote
+/// `## Markdown **Response**` and the screen showed the asterisks, because headings wrapped as
+/// plain text while every other block went through the inline parser (M19).
+#[test]
+fn a_heading_parses_its_own_inline_spans() {
+    for doc in [
+        "## Markdown **Response**\n",
+        "# The `wrap` function\n",
+        "### a **bold** and a `code` word\n",
+        "## an unterminated **bold\n",
+    ] {
+        for width in [20u16, 40, 80, 200] {
+            let out = rendered(doc, width).join("\n");
+            assert!(!out.contains("**"), "{doc:?} @{width}: {out:?}");
+            assert!(!out.contains('`'), "{doc:?} @{width}: {out:?}");
+            assert!(!out.contains('#'), "{doc:?} @{width}: {out:?}");
+        }
+    }
+    // …and the words survive, in one heading weight.
+    let lines = document("## Markdown **Response**\n", 80, &common::theme());
+    let joined: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(joined, "Markdown Response");
+    let styles: Vec<_> = lines[0].spans.iter().map(|s| s.style).collect();
+    assert!(
+        styles.windows(2).all(|w| w[0] == w[1]),
+        "a heading is one weight: {styles:?}"
+    );
+}
+
 /// The orphan backtick the audit read as the program being broken: an inline span that OPENS and
 /// has not closed yet styles to the end of the line rather than printing its own marker.
 #[test]

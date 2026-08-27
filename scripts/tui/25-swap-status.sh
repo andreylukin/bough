@@ -17,6 +17,12 @@ tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/scroll.patch.yml"
 shell-use submit "fill the trajectory"
 shell-use wait idle --timeout 30000
+# `wait idle` returns when the PTY goes quiet, which on a loaded machine can happen BEFORE the
+# replayed turn has painted anything. Every row count below is a delta against this screen, so the
+# baseline has to be taken after the fixture's content is actually on it — a baseline of 0 turns
+# "grew by exactly one row" into an assertion about nothing.
+t the_scroll_fixture_filled_the_transcript \
+  see "trajectory line" --timeout 60000
 
 # How many TRAJECTORY rows the transcript is showing. The same measurement `09-swap-search.sh`
 # uses, and for the same reason: a count over the whole screen counts the chrome that is leaving.
@@ -46,7 +52,7 @@ YML
 
 t disabling_the_status_row_removes_the_line_without_a_restart \
   bash -c '
-    for i in $(seq 1 30); do
+    for i in $(seq 1 60); do
       shell-use text | grep -q "? help" || exit 0
       sleep 0.5
     done
@@ -56,7 +62,7 @@ t disabling_the_status_row_removes_the_line_without_a_restart \
 
 t the_transcript_grew_by_exactly_one_row \
   bash -c '
-    for i in $(seq 1 30); do
+    for i in $(seq 1 60); do
       now="$(traj_rows)"
       [ "${now:-0}" -eq $(( '"${rows_before:-0}"' + 1 )) ] && exit 0
       sleep 0.5
@@ -82,7 +88,7 @@ t removing_the_patch_returns_the_status_row \
 
 t the_layout_reflowed_back \
   bash -c '
-    for i in $(seq 1 30); do
+    for i in $(seq 1 60); do
       [ "$(traj_rows)" = "'"${rows_before:-0}"'" ] && exit 0
       sleep 0.5
     done
@@ -132,7 +138,7 @@ YML
 
 t both_rows_disabled_at_once_leaves_a_working_shell \
   bash -c '
-    for i in $(seq 1 30); do
+    for i in $(seq 1 60); do
       txt="$(shell-use text)"
       printf "%s" "$txt" | grep -q "? help" && { sleep 0.5; continue; }
       printf "%s" "$txt" | grep -q "trajectory line" || { sleep 0.5; continue; }

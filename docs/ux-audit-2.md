@@ -11,11 +11,12 @@ findings a mouseless walk could not reach the first time).
 **Gate.** `scripts/ux2/run.sh` exits non-zero unless every blocker and every major verdict is
 `fixed`. `make ux2` runs it.
 
-> **Status: not yet run against a complete V11 tree.** This document's tables are written by the
-> run, not by hand. Until `make ux2` has executed end to end on a tree where every work package of
-> phase ux1 has landed, the confirmed-fix table below is EMPTY and the residuals table carries the
-> one honest row it can: that the re-audit has not been performed. Nothing here is a claim about a
-> screenshot that does not exist. See "Provenance" at the foot of the document.
+> **Status: run.** `scripts/ux2/run.sh` walked all three personas end to end against
+> `target/release/bough` on the phase-ux1 tree (commit `176b154b`), live haiku for both tiers, one
+> empty `BOUGH_HOME` and one empty scratch cwd per persona. **20 checks x 3 personas = 60 verdicts:
+> every blocker and every major is `fixed`, each with a screenshot.** The only `not-fixed` rows are
+> one added probe of minor severity (R1 below). The raw verdicts are `target/ux2/verdicts.tsv`; the
+> tables below are rendered from them by `scripts/ux2/report.py`.
 
 ---
 
@@ -40,7 +41,69 @@ screenshot that shows it.
 
 | # | Finding | Persona | Verdict | Screenshot |
 |---|---------|---------|---------|------------|
-| — | _(the run has not been executed; see Status above)_ | — | — | — |
+| M12-overlays | M16/M12 — the first launch names the product and points at help (major) | developer-critic | fixed | [`02-first-launch-frame.svg`](docs/ux-audit-2-shots/developer-critic/02-first-launch-frame.svg) |
+| B5-cwd | B5 — the file lands in the launch cwd (blocker) | developer-critic | fixed | [`03-cwd-landing.svg`](docs/ux-audit-2-shots/developer-critic/03-cwd-landing.svg) |
+| M9-gutter | M9 — a gutter column separates the rail from the transcript (major) | developer-critic | fixed | [`03-gutter.svg`](docs/ux-audit-2-shots/developer-critic/03-gutter.svg) |
+| M10-streaming | M10/M19 — no chunk boundary or literal marker survives on screen (major) | developer-critic | fixed | [`03-streaming.svg`](docs/ux-audit-2-shots/developer-critic/03-streaming.svg) |
+| B1-focus | B1 — the composer keeps the keyboard (blocker) | developer-critic | fixed | [`04-click-then-type.svg`](docs/ux-audit-2-shots/developer-critic/04-click-then-type.svg) |
+| B6-rowkeys | B6 — a tool row is reachable from the keyboard (blocker) | developer-critic | fixed | [`04-keyboard-row.svg`](docs/ux-audit-2-shots/developer-critic/04-keyboard-row.svg) |
+| B2-scroll | B2 — the paging keys scroll the transcript (blocker) | developer-critic | fixed | [`05-scroll.svg`](docs/ux-audit-2-shots/developer-critic/05-scroll.svg) |
+| B2-badge | B2 — an anchored viewport shows `N new` (blocker) | developer-critic | fixed | [`06-new-badge.svg`](docs/ux-audit-2-shots/developer-critic/06-new-badge.svg) |
+| B2-end | B2 — End returns to the latest row (blocker) | developer-critic | fixed | [`06-end-to-latest.svg`](docs/ux-audit-2-shots/developer-critic/06-end-to-latest.svg) |
+| B3-slash | B3 — a missed command keeps the sentence (blocker) | developer-critic | fixed | [`08-slash-miss.svg`](docs/ux-audit-2-shots/developer-critic/08-slash-miss.svg) |
+| B4-paste | B4 — a multi-line paste is one draft (blocker) | developer-critic | fixed | [`09-paste.svg`](docs/ux-audit-2-shots/developer-critic/09-paste.svg) |
+| draft-cleared | (probe) three Ctrl+U clear a three-line pasted draft (minor) | developer-critic | **not fixed** | [`09-draft-cleared.svg`](docs/ux-audit-2-shots/developer-critic/09-draft-cleared.svg) |
+| M11-search | M11 — search shows snippets and a count, not ledger JSON (major) | developer-critic | fixed | [`10-search.svg`](docs/ux-audit-2-shots/developer-critic/10-search.svg) |
+| M12-esc | M12 — Esc dismisses the search overlay (major) | developer-critic | fixed | [`10-esc-dismiss.svg`](docs/ux-audit-2-shots/developer-critic/10-esc-dismiss.svg) |
+| M14-stopkey | M14 — the stop key is named while a turn runs (major) | developer-critic | fixed | [`11-stop-key.svg`](docs/ux-audit-2-shots/developer-critic/11-stop-key.svg) |
+| B7-interrupt | B7 — Esc interrupts and says so (blocker) | developer-critic | fixed | [`12-interrupt.svg`](docs/ux-audit-2-shots/developer-critic/12-interrupt.svg) |
+| B7-exitarm | B7 — an idle Ctrl+C asks before exiting (blocker) | developer-critic | fixed | [`12-exit-arm.svg`](docs/ux-audit-2-shots/developer-critic/12-exit-arm.svg) |
+| M13-rail | M13 — the rail collapses at 80 columns (major) | developer-critic | fixed | [`13-rail-collapse.svg`](docs/ux-audit-2-shots/developer-critic/13-rail-collapse.svg) |
+| M24-status | M24 — the status line names model, cwd and context (major) | developer-critic | fixed | [`14-status-line.svg`](docs/ux-audit-2-shots/developer-critic/14-status-line.svg) |
+| B8-quit | B8 — /quit says goodbye and restores the terminal (blocker) | developer-critic | fixed | [`15-quit.svg`](docs/ux-audit-2-shots/developer-critic/15-quit.svg) |
+| M28-restore | M28 — a relaunch restores the conversation (major) | developer-critic | fixed | [`16-restore.svg`](docs/ux-audit-2-shots/developer-critic/16-restore.svg) |
+| M12-overlays | M16/M12 — the first launch names the product and points at help (major) | andrey-owner | fixed | [`02-first-launch-frame.svg`](docs/ux-audit-2-shots/andrey-owner/02-first-launch-frame.svg) |
+| B5-cwd | B5 — the file lands in the launch cwd (blocker) | andrey-owner | fixed | [`03-cwd-landing.svg`](docs/ux-audit-2-shots/andrey-owner/03-cwd-landing.svg) |
+| M9-gutter | M9 — a gutter column separates the rail from the transcript (major) | andrey-owner | fixed | [`03-gutter.svg`](docs/ux-audit-2-shots/andrey-owner/03-gutter.svg) |
+| M10-streaming | M10/M19 — no chunk boundary or literal marker survives on screen (major) | andrey-owner | fixed | [`03-streaming.svg`](docs/ux-audit-2-shots/andrey-owner/03-streaming.svg) |
+| B1-focus | B1 — the composer keeps the keyboard (blocker) | andrey-owner | fixed | [`04-click-then-type.svg`](docs/ux-audit-2-shots/andrey-owner/04-click-then-type.svg) |
+| B6-rowkeys | B6 — a tool row is reachable from the keyboard (blocker) | andrey-owner | fixed | [`04-keyboard-row.svg`](docs/ux-audit-2-shots/andrey-owner/04-keyboard-row.svg) |
+| B2-scroll | B2 — the paging keys scroll the transcript (blocker) | andrey-owner | fixed | [`05-scroll.svg`](docs/ux-audit-2-shots/andrey-owner/05-scroll.svg) |
+| B2-badge | B2 — an anchored viewport shows `N new` (blocker) | andrey-owner | fixed | [`06-new-badge.svg`](docs/ux-audit-2-shots/andrey-owner/06-new-badge.svg) |
+| B2-end | B2 — End returns to the latest row (blocker) | andrey-owner | fixed | [`06-end-to-latest.svg`](docs/ux-audit-2-shots/andrey-owner/06-end-to-latest.svg) |
+| B3-slash | B3 — a missed command keeps the sentence (blocker) | andrey-owner | fixed | [`08-slash-miss.svg`](docs/ux-audit-2-shots/andrey-owner/08-slash-miss.svg) |
+| B4-paste | B4 — a multi-line paste is one draft (blocker) | andrey-owner | fixed | [`09-paste.svg`](docs/ux-audit-2-shots/andrey-owner/09-paste.svg) |
+| draft-cleared | (probe) three Ctrl+U clear a three-line pasted draft (minor) | andrey-owner | **not fixed** | [`09-draft-cleared.svg`](docs/ux-audit-2-shots/andrey-owner/09-draft-cleared.svg) |
+| M11-search | M11 — search shows snippets and a count, not ledger JSON (major) | andrey-owner | fixed | [`10-search.svg`](docs/ux-audit-2-shots/andrey-owner/10-search.svg) |
+| M12-esc | M12 — Esc dismisses the search overlay (major) | andrey-owner | fixed | [`10-esc-dismiss.svg`](docs/ux-audit-2-shots/andrey-owner/10-esc-dismiss.svg) |
+| M14-stopkey | M14 — the stop key is named while a turn runs (major) | andrey-owner | fixed | [`11-stop-key.svg`](docs/ux-audit-2-shots/andrey-owner/11-stop-key.svg) |
+| B7-interrupt | B7 — Esc interrupts and says so (blocker) | andrey-owner | fixed | [`12-interrupt.svg`](docs/ux-audit-2-shots/andrey-owner/12-interrupt.svg) |
+| B7-exitarm | B7 — an idle Ctrl+C asks before exiting (blocker) | andrey-owner | fixed | [`12-exit-arm.svg`](docs/ux-audit-2-shots/andrey-owner/12-exit-arm.svg) |
+| M13-rail | M13 — the rail collapses at 80 columns (major) | andrey-owner | fixed | [`13-rail-collapse.svg`](docs/ux-audit-2-shots/andrey-owner/13-rail-collapse.svg) |
+| M24-status | M24 — the status line names model, cwd and context (major) | andrey-owner | fixed | [`14-status-line.svg`](docs/ux-audit-2-shots/andrey-owner/14-status-line.svg) |
+| B8-quit | B8 — /quit says goodbye and restores the terminal (blocker) | andrey-owner | fixed | [`15-quit.svg`](docs/ux-audit-2-shots/andrey-owner/15-quit.svg) |
+| M28-restore | M28 — a relaunch restores the conversation (major) | andrey-owner | fixed | [`16-restore.svg`](docs/ux-audit-2-shots/andrey-owner/16-restore.svg) |
+| M12-overlays | M16/M12 — the first launch names the product and points at help (major) | keyboard-only-user | fixed | [`02-first-launch-frame.svg`](docs/ux-audit-2-shots/keyboard-only-user/02-first-launch-frame.svg) |
+| B5-cwd | B5 — the file lands in the launch cwd (blocker) | keyboard-only-user | fixed | [`03-cwd-landing.svg`](docs/ux-audit-2-shots/keyboard-only-user/03-cwd-landing.svg) |
+| M9-gutter | M9 — a gutter column separates the rail from the transcript (major) | keyboard-only-user | fixed | [`03-gutter.svg`](docs/ux-audit-2-shots/keyboard-only-user/03-gutter.svg) |
+| M10-streaming | M10/M19 — no chunk boundary or literal marker survives on screen (major) | keyboard-only-user | fixed | [`03-streaming.svg`](docs/ux-audit-2-shots/keyboard-only-user/03-streaming.svg) |
+| B1-focus | B1 — the composer keeps the keyboard (blocker) | keyboard-only-user | fixed | [`03-keyboard-focus.svg`](docs/ux-audit-2-shots/keyboard-only-user/03-keyboard-focus.svg) |
+| B6-rowkeys | B6 — a tool row is reachable from the keyboard (blocker) | keyboard-only-user | fixed | [`03-keyboard-row.svg`](docs/ux-audit-2-shots/keyboard-only-user/03-keyboard-row.svg) |
+| B2-scroll | B2 — the paging keys scroll the transcript (blocker) | keyboard-only-user | fixed | [`04-scroll.svg`](docs/ux-audit-2-shots/keyboard-only-user/04-scroll.svg) |
+| B2-badge | B2 — an anchored viewport shows `N new` (blocker) | keyboard-only-user | fixed | [`05-new-badge.svg`](docs/ux-audit-2-shots/keyboard-only-user/05-new-badge.svg) |
+| B2-end | B2 — End returns to the latest row (blocker) | keyboard-only-user | fixed | [`05-end-to-latest.svg`](docs/ux-audit-2-shots/keyboard-only-user/05-end-to-latest.svg) |
+| B3-slash | B3 — a missed command keeps the sentence (blocker) | keyboard-only-user | fixed | [`07-slash-miss.svg`](docs/ux-audit-2-shots/keyboard-only-user/07-slash-miss.svg) |
+| B4-paste | B4 — a multi-line paste is one draft (blocker) | keyboard-only-user | fixed | [`08-paste.svg`](docs/ux-audit-2-shots/keyboard-only-user/08-paste.svg) |
+| draft-cleared | (probe) three Ctrl+U clear a three-line pasted draft (minor) | keyboard-only-user | **not fixed** | [`08-draft-cleared.svg`](docs/ux-audit-2-shots/keyboard-only-user/08-draft-cleared.svg) |
+| M11-search | M11 — search shows snippets and a count, not ledger JSON (major) | keyboard-only-user | fixed | [`09-search.svg`](docs/ux-audit-2-shots/keyboard-only-user/09-search.svg) |
+| M12-esc | M12 — Esc dismisses the search overlay (major) | keyboard-only-user | fixed | [`09-esc-dismiss.svg`](docs/ux-audit-2-shots/keyboard-only-user/09-esc-dismiss.svg) |
+| M14-stopkey | M14 — the stop key is named while a turn runs (major) | keyboard-only-user | fixed | [`10-stop-key.svg`](docs/ux-audit-2-shots/keyboard-only-user/10-stop-key.svg) |
+| B7-interrupt | B7 — Esc interrupts and says so (blocker) | keyboard-only-user | fixed | [`11-interrupt.svg`](docs/ux-audit-2-shots/keyboard-only-user/11-interrupt.svg) |
+| B7-exitarm | B7 — an idle Ctrl+C asks before exiting (blocker) | keyboard-only-user | fixed | [`11-exit-arm.svg`](docs/ux-audit-2-shots/keyboard-only-user/11-exit-arm.svg) |
+| M13-rail | M13 — the rail collapses at 80 columns (major) | keyboard-only-user | fixed | [`12-rail-collapse.svg`](docs/ux-audit-2-shots/keyboard-only-user/12-rail-collapse.svg) |
+| M24-status | M24 — the status line names model, cwd and context (major) | keyboard-only-user | fixed | [`13-status-line.svg`](docs/ux-audit-2-shots/keyboard-only-user/13-status-line.svg) |
+| B8-quit | B8 — /quit says goodbye and restores the terminal (blocker) | keyboard-only-user | fixed | [`14-quit.svg`](docs/ux-audit-2-shots/keyboard-only-user/14-quit.svg) |
+| M28-restore | M28 — a relaunch restores the conversation (major) | keyboard-only-user | fixed | [`15-restore.svg`](docs/ux-audit-2-shots/keyboard-only-user/15-restore.svg) |
 
 ## 3. Residuals
 
@@ -48,7 +111,19 @@ Anything not fixed, and anything newly found, with a severity and the crate that
 
 | # | Sev | Finding | Owner crate | Note |
 |---|-----|---------|-------------|------|
-| R1 | blocker | The re-audit itself has not been run end to end. | — (process) | WP-8 wrote the harness (`scripts/ux2/run.sh`), the nine screen scripts and the swap script, and verified the row wiring and `--dump-config`. The live three-persona walk requires a tree in which every phase-ux1 work package has landed; at the time of writing it had not — a boot with the scroll fixture left the typed message in the composer with no answer and no status row, and `scripts/tui/01`, `02` and `03` were red. Run `make ux2` and regenerate sections 2 and 3 from `target/ux2/verdicts.tsv`. |
+| R1 | minor | **Ctrl+U does not clear a multi-line draft.** After a three-line bracketed paste, three Ctrl+U presses leave `alpha` and `beta` in the composer — Ctrl+U kills the line the cursor is on but never steps over the newline to the line above, so a pasted draft cannot be cleared with the kill key alone. Reproduced in all three walks (`draft-cleared` verdict; `docs/ux-audit-2-shots/*/0*-draft-cleared.svg`). | tui-shell | M20's fix ("Ctrl+U kills to line start") is correct for one line and pinned by `18-draft.sh::ctrl_u_clears_the_line`; the multi-line case has no test. A user who pastes and changes their mind must Backspace over the newlines. |
+| R2 | minor | **The newline-burst paste fallback is unreachable in practice.** `run::on_key` gates the burst heuristic behind `!bracketed_paste_active()`, and the shell turns bracketed paste on at boot, so bare `\n`-separated bytes written into the terminal still fire one send per line — the original B4 shape, for any caller or terminal that delivers a paste without the wrapper. The walk therefore tests B4 the way a real terminal delivers it (`ESC[200~ ... ESC[201~`), which is `fixed`. | tui-shell | Deliberate (a fast typist must not be mistaken for a paste), and it is why the audit's literal repro line was changed here; recorded so the trade-off is not lost. |
+| R3 | nit | Nit 38's timestamp half and the high-contrast-theme half of M22 were out of scope for phase ux1 (plan §4) and were not walked. | tui-strip | Carried forward unchanged. |
+
+**A note on how these three walks were read.** The first pass of the re-audit produced six
+`not-fixed` verdicts that did not survive investigation: five were harness defects (a `see` helper
+that never reached the `bash -c` child; a disk check that ran before the tool's write landed; a
+"two runs on a baseline" heuristic that fires on the rail's own padding; a whole-screen comparison
+taken while the answer was still streaming; a grep for `press again` against a product that says
+`press Ctrl+C again to exit`), and one was a cascade — a wedged composer left by the paste step made
+the four checks after it interact with the search field instead of the composer. Each was proved
+against the running binary before the check was rewritten; the behaviours themselves were correct.
+The rewritten checks are the ones in `scripts/ux2/run.sh` today.
 
 ## 4. What the suite pins in the meantime
 

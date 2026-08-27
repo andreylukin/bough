@@ -25,6 +25,10 @@ pid_before="$(pid_of)"
 # counts the search pane's own rows too, so removing the pane made the number go DOWN and the
 # assertion `>= rows_before` was measuring the opposite of what it claimed.
 traj_rows() { shell-use text | grep -c "trajectory line"; }
+# The baseline has to be REAL. If the replayed turn has not landed yet, `rows_before` is 0 and the
+# resize assertion below degenerates into "any row at all", which passes for the wrong reason.
+t the_scroll_fixture_filled_the_transcript \
+  see "trajectory line" --timeout 60000
 rows_before="$(traj_rows)"
 
 cat > "$USER_PATCH" <<'YML'
@@ -36,8 +40,10 @@ YML
 t writing_the_patch_removes_the_pane_without_a_restart \
   see "search" --not --timeout 20000
 
+# POLL. The recompose and the redraw are two events: sampling the screen once caught it mid-redraw
+# (a blank frame) often enough to fail the suite on a loaded machine.
 t the_remaining_panes_resized_to_fill_the_freed_rows \
-  bash -c "[ \"\$(shell-use text | grep -c 'trajectory line')\" -gt \"$rows_before\" ]"
+  bash -c "for i in \$(seq 1 60); do [ \"\$(shell-use text | grep -c 'trajectory line')\" -gt \"$rows_before\" ] && exit 0; sleep 0.5; done; shell-use text; exit 1"
 
 rm -f "$USER_PATCH"
 t removing_the_patch_returns_the_pane \

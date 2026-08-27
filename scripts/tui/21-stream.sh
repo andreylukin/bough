@@ -14,30 +14,30 @@ tui_open
 # A word that must never be split across two rows, whichever half is running: the fixture puts a
 # chunk boundary inside it.
 SPLIT_WORD="accumulated"
+export REPO_ROOT LIVE_PROMPT
 
 if [ -n "$BOUGH_LIVE" ]; then
   tui_start
-  shell-use submit "Reply in markdown with a level-two heading, one bold word, an inline code span and a two-item list. Keep it under 80 words."
+  # "Do not use any tools": a tool row carries a command VERBATIM, and a heredoc of markdown
+  # source is still a command — its `**` must stay literal, so it is not evidence either way.
+  # V6 is about the prose the model speaks.
+  LIVE_PROMPT="Answer directly without using any tools. Reply in markdown with a level-two heading, one bold word, an inline code span and a two-item list, and one paragraph of at least forty words of ordinary prose."
+  shell-use submit "$LIVE_PROMPT"
   shell-use wait idle --timeout 90000
+  # Narrow the frame so a forty-word paragraph MUST wrap: a bullet asserting the greedy-wrap
+  # invariant over an answer that never wrapped asserts nothing. This also re-wraps history at a
+  # width the answer never streamed at, which is the same property from the other side.
+  shell-use resize 70 40
+  shell-use wait idle --timeout 15000
 
   t a_live_haiku_answer_has_no_mid_word_break \
     bash -c '
-      # No screen row may END with a hyphenless word fragment that the next row completes: the
-      # renderer wraps at word boundaries or it does not wrap at all.
-      shell-use text | python3 -c "
-import sys
-rows = [r.rstrip() for r in sys.stdin.read().split(chr(10))]
-for y in range(len(rows) - 1):
-    a = rows[y]
-    if a.endswith(chr(45)):
-        sys.exit(\"row %d ends in a bare hyphen: a word was split\" % y)
-"
+      shell-use text | python3 "$REPO_ROOT/scripts/tui/live_prose.py" "$LIVE_PROMPT"
     '
 
   t a_live_answer_shows_no_literal_markdown_markers \
     bash -c '
-      shell-use text | grep -q "\*\*" && { echo "literal ** on screen: the markers were not parsed"; exit 1; }
-      exit 0
+      shell-use text | python3 "$REPO_ROOT/scripts/tui/live_prose.py" --markers-only "$LIVE_PROMPT"
     '
 
   skip a_multi_chunk_replay_has_no_mid_word_break "the live half has no scripted chunk boundaries"

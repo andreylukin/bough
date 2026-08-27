@@ -46,3 +46,36 @@ fn selection_stays_readable_under_the_body_colour() {
         );
     }
 }
+
+#[test]
+fn errors_are_a_warning_hue_not_the_hint_hue() {
+    // V9: an error must be legible AND distinguishable — the audit's finding was error text that
+    // read as ordinary chrome. Two measured facts, no taste: the hue is red/amber-dominant, and it
+    // is nowhere near `hint` in colour distance.
+    for name in [ThemeName::Dark, ThemeName::Light] {
+        let t = Theme::of(name);
+        let by_name: std::collections::HashMap<_, _> = audit(&t).into_iter().collect();
+        assert!(
+            by_name["error"] >= MIN_RATIO && by_name["warn"] >= MIN_RATIO,
+            "{name:?}: error/warn below {MIN_RATIO}:1"
+        );
+        let px = |c: ratatui::style::Color| match c {
+            ratatui::style::Color::Rgb(r, g, b) => (r as i32, g as i32, b as i32),
+            other => panic!("{name:?}: role is not an RGB colour: {other:?}"),
+        };
+        let (er, eg, eb) = px(t.error);
+        assert!(
+            er > eg && er > eb,
+            "{name:?}: error {:?} is not a warning hue (red must dominate)",
+            t.error
+        );
+        let (hr, hg, hb) = px(t.hint);
+        let d = (er - hr).pow(2) + (eg - hg).pow(2) + (eb - hb).pow(2);
+        assert!(
+            d > 100 * 100,
+            "{name:?}: error {:?} is too close to hint {:?} to read as an error",
+            t.error,
+            t.hint
+        );
+    }
+}

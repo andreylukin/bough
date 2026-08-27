@@ -218,4 +218,56 @@ t the_shutdown_left_no_wal_over_a_page \
     [ "${size:-0}" -le 4096 ] || { echo "the WAL is $size bytes after shutdown: no checkpoint ran"; exit 1; }
   '
 
+# ==============================================================================================
+# V10 — a relaunch restores the FULL history, and the about-line survives it (M28)
+# ==============================================================================================
+#
+# The audit's finding was a relaunch into an empty transcript. The checkpoint above proves the
+# rows are on disk; this proves the binary reads them back and DRAWS them — every turn of the
+# session, not just the last one. `Home` is the focus-independent jump to the oldest row, so the
+# FIRST turn of the session (the cwd fixture's, three restarts ago) is what is asserted.
+tui_start "$REPO_ROOT/scripts/tui/fixtures/slow.patch.yml"
+
+t the_about_line_is_one_sentence_after_the_relaunch \
+  bash -c '
+    see "start something long" --timeout 20000 >/dev/null 2>&1 || true
+    about() {
+      shell-use text | cut -c1-34 | python3 -c "
+import sys
+for r in sys.stdin.read().split(chr(10)):
+    if r.startswith(\"  \") and r.strip() and not r.strip().startswith(\"intent\"):
+        print(r.strip()); break
+"
+    }
+    line=""
+    for i in $(seq 1 30); do
+      line="$(about)"
+      [ -n "$line" ] && break
+      sleep 0.5
+    done
+    [ -n "$line" ] || { echo "no about-line on screen after the relaunch"; exit 1; }
+    printf "%s" "$line" | grep -q "\*\*\|\`" && { echo "markdown in the restored about-line: $line"; exit 1; }
+    n=$(printf "%s" "$line" | grep -o "\." | wc -l | tr -d " ")
+    [ "${n:-0}" -le 1 ] || { echo "the restored about-line is more than one sentence: $line"; exit 1; }
+    exit 0
+  '
+
+t a_quit_then_relaunch_restores_every_turn \
+  bash -c '
+    see "start something long" --timeout 20000 \
+      || { echo "the last turn did not come back after a relaunch"; exit 1; }
+    shell-use press Home
+    shell-use wait idle --timeout 5000 >/dev/null 2>&1 || true
+    for i in $(seq 1 20); do
+      shell-use text | grep -q "write the file in the current directory" && exit 0
+      shell-use press Home
+      sleep 0.3
+    done
+    echo "the FIRST turn of the session is not in the restored transcript"
+    shell-use text | tail -12
+    exit 1
+  '
+
+tui_quit
+
 tui_close

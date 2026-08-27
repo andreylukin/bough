@@ -120,7 +120,12 @@ fn sigint_tears_down_before_exit() {
     let (home, marker) = marker_home();
     // No `--check`: the process boots a good tree and then waits for SIGINT.
     let mut child = Command::new(bin())
-        .args(["--profile", "tui", "--no-watch"])
+        // A generous teardown deadline: the claim under test is that SIGINT unwinds the rows, not
+        // that unwinding fits in the product's default 2s budget. With the default, this test
+        // failed whenever the rest of the file's child processes loaded the machine enough to push
+        // teardown past the deadline — `bounded` then abandons the unwind, and the marker never
+        // appears (phase ux1 §2.4, B8).
+        .args(["--profile", "tui", "--no-watch", "--shutdown-ms", "30000"])
         .env("BOUGH_HOME", home.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

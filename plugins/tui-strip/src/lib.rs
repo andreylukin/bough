@@ -264,39 +264,7 @@ impl Plugin for StripPlugin {
         let known: Vec<RailRow> = rows.lock().clone();
         for row in known {
             if let Some(traj) = row.traj.clone() {
-                if let Ok(steps) = ledger
-                    .0
-                    .steps(&StepQuery {
-                        trajs: vec![traj.clone()],
-                        kinds: vec![StepType::new(ABOUT_LINE)],
-                        order: Order::SeqDesc,
-                        limit: Some(1),
-                        ..Default::default()
-                    })
-                    .await
-                {
-                    if let Some(view) = steps.first().and_then(about_from_step) {
-                        set_about(&mut rows.lock(), &traj, view);
-                    }
-                }
-                // The same backfill for dormancy: a rail that mounts after a lane went to sleep
-                // must draw it asleep, not idle (§1 — a dormant agent's rail row is how Andrey
-                // sees that no wake is coming).
-                if let Ok(steps) = ledger
-                    .0
-                    .steps(&StepQuery {
-                        trajs: vec![traj.clone()],
-                        kinds: vec![StepType::new(DORMANCY_STEP)],
-                        order: Order::SeqDesc,
-                        limit: Some(1),
-                        ..Default::default()
-                    })
-                    .await
-                {
-                    if let Some(d) = steps.first().and_then(dormant_from_step) {
-                        set_dormant(&mut rows.lock(), &traj, d);
-                    }
-                }
+                backfill(&ledger, &rows, &traj).await;
             }
         }
 
@@ -324,15 +292,19 @@ impl Plugin for StripPlugin {
 
         // The four listeners §2.4 names. Each keeps the row list current so `render` can stay
         // synchronous and query nothing.
-        let (r, t) = (rows.clone(), tui.clone());
+        let (r, t, l) = (rows.clone(), tui.clone(), ledger.clone());
         ctx.on::<AgentCreated, _, _>(move |agent| {
-            let (r, t) = (r.clone(), t.clone());
+            let (r, t, l) = (r.clone(), t.clone(), l.clone());
             async move {
-                let mut held = r.lock();
-                if !held.iter().any(|x| x.agent == *agent.id()) {
-                    held.push(row_for(&agent));
+                {
+                    let mut held = r.lock();
+                    if !held.iter().any(|x| x.agent == *agent.id()) {
+                        held.push(row_for(&agent));
+                    }
                 }
-                drop(held);
+                // A cold start creates the agents AFTER the rail activates, so this is where a
+                // restored about-line is read back (phase ux1 §2.10, M28).
+                backfill(&l, &r, agent.traj()).await;
                 t.redraw();
             }
         })
@@ -398,6 +370,48 @@ impl Plugin for StripPlugin {
 
     fn invariants() -> Vec<InvariantSpec> {
         crate::invariant::specs()
+    }
+}
+
+/// Re-read what the ledger already knows about one trajectory into its rail row: the newest
+/// `about/line`, and the newest dormancy.
+///
+/// phase ux1 §2.10 (M28): the about-line has to SURVIVE a relaunch. Doing this only over
+/// `agents.list()` at activation was not enough — on a cold start the rail activates before the
+/// agents are created, so the list is empty and every restored row drew blank until the agent
+/// happened to write a new about-line. It is called again from `AgentCreated` for that reason.
+async fn backfill(ledger: &LedgerHandle, rows: &Arc<Mutex<Vec<RailRow>>>, traj: &TrajId) {
+    if let Ok(steps) = ledger
+        .0
+        .steps(&StepQuery {
+            trajs: vec![traj.clone()],
+            kinds: vec![StepType::new(ABOUT_LINE)],
+            order: Order::SeqDesc,
+            limit: Some(1),
+            ..Default::default()
+        })
+        .await
+    {
+        if let Some(view) = steps.first().and_then(about_from_step) {
+            set_about(&mut rows.lock(), traj, view);
+        }
+    }
+    // The same backfill for dormancy: a rail that mounts after a lane went to sleep must draw it
+    // asleep, not idle (§1 — a dormant agent's rail row is how Andrey sees that no wake is coming).
+    if let Ok(steps) = ledger
+        .0
+        .steps(&StepQuery {
+            trajs: vec![traj.clone()],
+            kinds: vec![StepType::new(DORMANCY_STEP)],
+            order: Order::SeqDesc,
+            limit: Some(1),
+            ..Default::default()
+        })
+        .await
+    {
+        if let Some(d) = steps.first().and_then(dormant_from_step) {
+            set_dormant(&mut rows.lock(), traj, d);
+        }
     }
 }
 

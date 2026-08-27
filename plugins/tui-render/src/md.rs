@@ -285,9 +285,19 @@ fn block(b: &Block, width: u16, theme: &Theme) -> Vec<Line<'static>> {
                 .fg(if *level <= 2 { theme.accent } else { theme.fg })
                 .add_modifier(Modifier::BOLD);
             // Body contrast, never `dim`: a heading is the most readable line on screen (M22).
-            crate::text::wrap(text, width)
+            // Inline spans are parsed HERE too: `## A **bold** word` is a heading whose markers
+            // must not reach the screen any more than a paragraph's do (M19). The heading style
+            // wins over the inline one — a heading is one weight, not a patchwork.
+            styled_wrap(text, width, 0, theme)
                 .into_iter()
-                .map(|l| Line::from(Span::styled(l, style)))
+                .map(|l| {
+                    Line::from(
+                        l.spans
+                            .into_iter()
+                            .map(|s| Span::styled(s.content, style))
+                            .collect::<Vec<_>>(),
+                    )
+                })
                 .collect()
         }
         Block::Para(text) => {

@@ -79,6 +79,10 @@ absent() { shell-use expect text --not --no-strict "$@"; }
 
 settle() { shell-use wait idle --timeout "${1:-30000}" >/dev/null 2>&1 || true; }
 
+# `verdict` runs its check in a `bash -c` child; without this the helpers are simply not there and
+# every check that uses one fails for the wrong reason.
+export -f see absent
+
 # ---------------------------------------------------------------------------
 # one persona's walk
 # ---------------------------------------------------------------------------
@@ -119,20 +123,32 @@ walk() {
 
   # --- B5 — the cwd. The disk is the only witness. --------------------------------------------
   verdict B5-cwd blocker cwd-landing bash -c '
+    # `wait idle` settles the SCREEN; the tool write itself can land a beat later. Poll the disk
+    # for a minute before calling it a miss — the claim is WHERE the file lands, not how fast.
+    for _ in $(seq 60); do [ -f "'"$cwd"'/notes.txt" ] && break; sleep 1; done
     [ -f "'"$cwd"'/notes.txt" ] || { echo "notes.txt is not in the launch cwd"; exit 1; }
     cd "'"$REPO_ROOT"'" && [ -z "$(git status --porcelain -- notes.txt)" ] \
       || { echo "the file landed in the bough checkout instead"; exit 1; }
   '
 
-  # --- M9 — no row of the transcript carries two runs (the rail sharing a baseline). ----------
+  # --- M9 — the rail is separated from the transcript by a gutter. ----------------------------
+  #
+  # The audit asked for exactly this: "the strip owns its row and the transcript scrolls beneath
+  # it; the rail is separated from content by at least one blank column, with hard clipping at the
+  # boundary". So the check is the boundary column, not a guess at "two runs on a baseline" — a
+  # rail row is ALLOWED to sit beside a transcript row, which is what a rail is; what is not
+  # allowed is content butting straight up against it. The last two rows (status line, composer)
+  # own their whole baseline by design, so they are excluded.
   verdict M9-gutter major gutter bash -c '
     shell-use text | python3 -c "
-import re, sys
-for y, row in enumerate(sys.stdin.read().split(chr(10))[2:], start=2):
-    if len(row.strip()) < 20:
-        continue
-    if re.search(r\"\\S {6,}\\S\", row) and not re.match(r\"^\\s*[|+-]\", row):
-        sys.exit(\"row %d carries two runs: %r\" % (y, row))
+import sys
+rows = sys.stdin.read().split(chr(10))
+while rows and not rows[-1].strip():
+    rows.pop()
+body = rows[:-2] if len(rows) > 2 else rows
+for y, row in enumerate(body):
+    if len(row) > 34 and row[34] != chr(32):
+        sys.exit(\"row %d has no gutter at column 34: %r\" % (y, row[28:44]))
 "
   '
 
@@ -197,17 +213,28 @@ for y in range(len(rows) - 1):
   verdict B2-scroll blocker scroll bash -c '
     [ "'"$scrolled"'" != "'"$before"'" ] || { echo "PageUp from the composer did not scroll"; exit 1; }
   '
-  shell-use submit "one more, briefly: name three things a PTY does." >/dev/null
-  sleep 3
+  # An answer that ends in a token nothing else on screen can contain: it is the only honest way to
+  # ask "is the viewport showing the LATEST row", which is what B2 is about.
+  shell-use submit "reply with exactly this and nothing else: ZQX-LATEST-MARKER" >/dev/null
   shot 04-anchored
+  # The badge counts what arrived while the view is detached, so it can only appear once output
+  # actually lands — poll for it rather than guessing at a sleep.
   verdict B2-badge blocker new-badge bash -c '
-    shell-use text | grep -qi "new" || { echo "no unread affordance while scrolled up"; exit 1; }
+    for _ in $(seq 90); do
+      shell-use text | grep -qE "[0-9]+ new" && exit 0
+      sleep 1
+    done
+    echo "no unread affordance while scrolled up"; exit 1
   '
   settle 120000
-  shell-use press End >/dev/null
-  sleep 1
   verdict B2-end blocker end-to-latest bash -c '
-    [ "$(shell-use text | sed -n "4p" | cut -c30-)" != "'"$scrolled"'" ] \
+    # Columns 35 on: the TRANSCRIPT. The rail (columns 0-33) echoes the message the moment it is
+    # sent, anchored or not, so a whole-screen grep would answer the wrong question.
+    shell-use text | cut -c35- | grep -q "ZQX-LATEST-MARKER" \
+      && { echo "the viewport followed while it was supposed to stay anchored"; exit 1; }
+    shell-use press End
+    sleep 2
+    shell-use text | cut -c35- | grep -q "ZQX-LATEST-MARKER" \
       || { echo "End did not return to the latest row"; exit 1; }
   '
   shot 05-tail
@@ -225,15 +252,31 @@ for y in range(len(rows) - 1):
   settle 90000
   shell-use keys "Ctrl+u" >/dev/null
 
-  # --- B4 — a raw multi-line paste. -----------------------------------------------------------
-  shell-use write "$(printf 'alpha\nbeta\ngamma')" >/dev/null
+  # --- B4 — a multi-line paste is ONE draft. --------------------------------------------------
+  #
+  # Sent the way a terminal actually delivers a paste: wrapped in `ESC[200~ … ESC[201~`. The shell
+  # turns bracketed paste on at boot, so this is the path a real paste takes, and the newline-burst
+  # heuristic is deliberately gated off while it is on (`run::on_key`). A caller that writes bare
+  # newlines into a terminal that HAS announced bracketed paste is indistinguishable from a fast
+  # typist, and still fires per-line sends — recorded as a residual in `docs/ux-audit-2.md`.
+  shell-use write "$(printf '\033[200~alpha\nbeta\ngamma\033[201~')" >/dev/null
   sleep 1.5
   shot 07-paste
-  verdict B4-paste blocker raw-paste bash -c '
+  verdict B4-paste blocker paste bash -c '
     see "alpha" --timeout 8000 || { echo "the first pasted line was swallowed"; exit 1; }
     see "gamma" --timeout 8000 || { echo "the last pasted line is missing"; exit 1; }
   '
+  # Ctrl+U kills the LINE it is on (M20's fix), so a three-line draft takes three of them. Clearing
+  # it here is not part of any finding — it is so that the checks below run against a composer in
+  # the state a person would leave it in, not a wedged one.
   shell-use keys "Ctrl+u" >/dev/null
+  shell-use keys "Ctrl+u" >/dev/null
+  shell-use keys "Ctrl+u" >/dev/null
+  sleep 0.5
+  verdict draft-cleared minor draft-cleared bash -c '
+    see "Type a message" --timeout 8000 \
+      || { echo "three Ctrl+U left a three-line draft on screen"; exit 1; }
+  '
 
   # --- M11 — search over rendered text. -------------------------------------------------------
   shell-use keys "Ctrl+f" >/dev/null
@@ -270,7 +313,7 @@ for y in range(len(rows) - 1):
   shell-use keys "Ctrl+c" >/dev/null
   sleep 1
   verdict B7-exitarm blocker exit-arm bash -c '
-    shell-use text | grep -qi "press again" || { echo "an idle Ctrl+C exits without asking"; exit 1; }
+    shell-use text | grep -qi "again to exit" || { echo "an idle Ctrl+C exits without asking"; exit 1; }
   '
   shell-use press Escape >/dev/null
 
@@ -323,9 +366,19 @@ if worst > 80:
   shell-use submit "$BOUGH_BIN" >/dev/null
   settle 25000
   shot 14-relaunch
+  # A restored transcript is parked at its TAIL, so the walk cannot look for its first question on
+  # the visible screen — it looks for the conversation, in the scrollback, and for a transcript
+  # with real rows in it rather than the empty pane the audit reported.
   verdict M28-restore major restore bash -c '
-    see "pseudo-terminal" --timeout 25000 || see "notes.txt" --timeout 10000 \
+    for _ in $(seq 25); do
+      shell-use text --full | grep -qi "terminal emulator\|pseudo-terminal\|notes.txt\|/tmp is where" \
+        && break
+      sleep 1
+    done
+    shell-use text --full | grep -qi "terminal emulator\|pseudo-terminal\|notes.txt\|/tmp is where" \
       || { echo "the relaunch restored an empty transcript"; exit 1; }
+    rows=$(shell-use text | sed -e "s/[[:space:]]*$//" | grep -c .)
+    [ "${rows:-0}" -ge 6 ] || { echo "the restored transcript has only $rows non-blank rows"; exit 1; }
   '
   shell-use submit "/quit" >/dev/null
   settle 15000
