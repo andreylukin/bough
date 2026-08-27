@@ -356,9 +356,46 @@ expect_absent() {
   shell-use expect text --not --no-strict "$@"
 }
 
+# `row_with <needle…>`: some SINGLE screen row carries EVERY needle. `see` cannot answer this —
+# it matches the screen, so two needles on two stacked rows satisfy it — and "these things are on
+# one line together" is exactly what a rail row, a picker row and a wrapped paragraph are about.
+row_with() {
+  local i
+  for i in $(seq 1 40); do
+    if shell-use text | python3 -c '
+import sys
+needles = sys.argv[1:]
+for line in sys.stdin:
+    if all(n in line for n in needles):
+        sys.exit(0)
+sys.exit(1)
+' "$@"; then return 0; fi
+    sleep 0.5
+  done
+  echo "no single screen row carries all of: $*"
+  shell-use text | tail -30
+  return 1
+}
+
+# `no_row_is_exactly <text>`: no screen row is that text and nothing else (bar whitespace and any
+# leading gutter). The negative half of `row_with`: a paragraph that was joined correctly leaves
+# no row holding only its first fragment.
+no_row_is_exactly() {
+  if shell-use text | python3 -c '
+import sys
+want = sys.argv[1].strip()
+for line in sys.stdin:
+    if line.strip().rstrip("\u2502").strip() == want:
+        sys.exit(1)
+sys.exit(0)
+' "$1"; then return 0; fi
+  echo "a screen row is exactly, and only: $1"
+  return 1
+}
+
 # Several scripts drive assertions through `bash -c`, which is a FRESH shell: without these the
 # helpers above would silently not exist there, and a comparison against their empty output would
 # be reported as a failed bullet rather than as the harness bug it is. The variables the ledger
 # helpers close over have to travel too.
 export LEDGER HOME_DIR BOUGH_BIN
-export -f see expect_absent wheel select_drag expect_selected _expect_selected_once expect_diff_gutter _expect_diff_gutter_py sql steps_of expect_steps expect_steps_exactly await_exit_code
+export -f see expect_absent row_with no_row_is_exactly wheel select_drag expect_selected _expect_selected_once expect_diff_gutter _expect_diff_gutter_py sql steps_of expect_steps expect_steps_exactly await_exit_code

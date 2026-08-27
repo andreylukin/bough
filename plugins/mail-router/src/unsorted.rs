@@ -116,7 +116,7 @@ mod tests {
             Arc::new(MailConfig {
                 unsorted_traj: "unsorted".into(),
                 unsorted_limit: 200,
-                deliver_to_dormant: true,
+                tolerate_absent_lane: true,
             }),
         );
         let _ = ctx;
@@ -214,6 +214,9 @@ mod tests {
             .adopt(
                 &AgentName::new("ci"),
                 std::slice::from_ref(&unrouted),
+                bough_plugin_rollups::Attribution::Agent {
+                    name: AgentName::new("leader"),
+                },
                 now(),
             )
             .await

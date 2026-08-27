@@ -20,6 +20,7 @@ bough-plugin-graph-ops = { workspace = true }
 bough-plugin-claims = { workspace = true }
 bough-plugin-projection = { workspace = true }
 bough-plugin-rollups = { workspace = true }
+bough-plugin-reconsolidation = { workspace = true }
 async-trait = { workspace = true }
 inventory = { workspace = true }
 serde = { workspace = true }

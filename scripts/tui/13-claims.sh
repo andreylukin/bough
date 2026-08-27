@@ -58,8 +58,11 @@ t an_accepted_requirement_appears_as_a_pin \
 shell-use submit "/accept SEED-CLAIM-LANE"
 shell-use wait idle --timeout 30000 >/dev/null
 
+# THE RAIL, not the notice band: `/accept` prints `lane born: vega` into the band itself, so
+# `see "vega"` was satisfied by the command's own echo whether or not a rail row ever appeared.
+# A rail row carries the lane's name AND its state glyph on one line.
 t accepting_a_lane_claim_adds_a_rail_row \
-  see "vega" --timeout 20000
+  bash -c 'row_with "vega" "○" || row_with "vega" "◐" || row_with "vega" "●"'
 
 t the_new_lane_has_an_agents_row \
   bash -c "[ \"\$(sql \"select count(*) from agents where name = 'vega';\")\" = 1 ]"
@@ -67,22 +70,24 @@ t the_new_lane_has_an_agents_row \
 # ---------------------------------------------------------------------------
 # edit and reject
 # ---------------------------------------------------------------------------
-# A claim of its own: editing one that was already accepted is refused. And ONE token of text —
-# `/edit`'s args are two POSITIONALS, so a sentence is more arguments than the spec admits.
-shell-use submit "/edit SEED-CLAIM-EDIT citations-are-how-the-ledger-is-read"
+# A claim of its own: editing one that was already accepted is refused. The edited text is a real
+# SENTENCE: `/edit <claim> <text…>` advertises one, and its schema now admits the rest of the line
+# — the argument list used to be capped at two words, so the keyboard half of the
+# accept/edit/reject gate could only ever edit a claim to a single token.
+shell-use submit "/edit SEED-CLAIM-EDIT citations are how the ledger is read"
 shell-use wait idle --timeout 20000 >/dev/null
 
 t edit_pins_the_edited_text \
-  bash -c "[ \"\$(sql \"select count(*) from steps where type = 'pin/set' and body like '%citations-are-how-the-ledger-is-read%';\")\" -ge 1 ]"
+  bash -c "[ \"\$(sql \"select count(*) from steps where type = 'pin/set' and body like '%citations are how the ledger is read%';\")\" -ge 1 ]"
 
 rejected_before="$(steps_of 'claim/rejected')"
 agents_before="$(sql 'select count(*) from agents;')"
-shell-use submit "/reject SEED-CLAIM-REJ that-is-what-the-wards-are-for"
+shell-use submit "/reject SEED-CLAIM-REJ that is what the wards are for"
 shell-use wait idle --timeout 20000 >/dev/null
 
 t reject_records_the_reason_and_births_nothing \
   bash -c "[ \"\$(steps_of 'claim/rejected')\" -gt \"$rejected_before\" ] \
-        && [ \"\$(sql \"select count(*) from steps where type = 'claim/rejected' and body like '%that-is-what-the-wards-are-for%';\")\" -ge 1 ] \
+        && [ \"\$(sql \"select count(*) from steps where type = 'claim/rejected' and body like '%that is what the wards are for%';\")\" -ge 1 ] \
         && [ \"\$(sql 'select count(*) from agents;')\" = \"$agents_before\" ]"
 
 # ---------------------------------------------------------------------------

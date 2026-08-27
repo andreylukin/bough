@@ -19,9 +19,9 @@ use crate::{GraphError, GraphInner};
 
 /// A split: two heads from one, at the parent's head.
 pub async fn apply(inner: &GraphInner, req: &SplitRequest) -> Result<OpOutcome, GraphError> {
-    if req.children.len() != inner.cfg.max_children {
+    if req.children.len() != crate::SPLIT_CHILDREN {
         return Err(GraphError::ChildCount {
-            expected: inner.cfg.max_children,
+            expected: crate::SPLIT_CHILDREN,
             got: req.children.len(),
         });
     }

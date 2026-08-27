@@ -58,7 +58,7 @@ impl Fixture {
             Arc::new(MailConfig {
                 unsorted_traj: "t-unsorted".to_string(),
                 unsorted_limit: 50,
-                deliver_to_dormant: true,
+                tolerate_absent_lane: true,
             }),
         );
         let graph = GraphHandle(Arc::new(RefusingGraph) as Arc<dyn GraphOps>);

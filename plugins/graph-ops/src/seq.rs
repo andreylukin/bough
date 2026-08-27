@@ -5,12 +5,22 @@
 
 use bough_plugin_ledger::{Seq, Step};
 
-/// PURE: the last seq outside an open wake, given the chain newest-first. `None` for an empty
-/// chain.
-pub fn resolve_point(steps_desc: &[Step]) -> Option<Seq> {
+/// The two step types this module reads. The read filter and the pure walker are kept next to
+/// each other so they cannot drift apart (`agent-loop`'s `REPAIR_KINDS` is the precedent), and
+/// filtering the query is what keeps a chain readable when some OTHER row's step type has been
+/// un-registered by a patch — an unfiltered whole-chain read fails with `UnknownStepTypeOnRead`
+/// and takes every split, bud and fork on that lane down with it (D-WP8-5).
+pub const WAKE_KINDS: [&str; 2] = ["wake/start", "wake/end"];
+
+/// PURE: the last seq outside an open wake. `head` is the trajectory's true head seq — it is
+/// passed in rather than read off the chain because the chain is FILTERED to [`WAKE_KINDS`] and
+/// its last row is not the trajectory's last row.
+pub fn resolve_point(head: Seq, steps_desc: &[Step]) -> Option<Seq> {
+    if head.0 == 0 {
+        return None;
+    }
     let mut asc: Vec<&Step> = steps_desc.iter().collect();
     asc.sort_by_key(|s| s.seq);
-    let head = asc.last()?.seq;
     // Walk DOWN from the head to the first seq that is not inside an open wake. The chain is
     // short-circuited by construction: an open wake is a trailing suffix, so this stops at the
     // `wake/start` boundary at the latest.
@@ -82,7 +92,7 @@ mod tests {
             step(2, "thought/text", "w1"),
             step(3, "wake/end", "w1"),
         ]);
-        assert_eq!(resolve_point(&chain), Some(Seq(3)));
+        assert_eq!(resolve_point(Seq(3), &chain), Some(Seq(3)));
         assert!(!inside_open_wake(&chain, Seq(3)));
         assert!(inside_open_wake(&chain, Seq(2)));
     }
@@ -97,7 +107,7 @@ mod tests {
         ]);
         // 4 and 3 are inside the still-open `w2`; 2 is the last legal point, and the op reports
         // it rather than pausing the parent or clipping silently.
-        assert_eq!(resolve_point(&chain), Some(Seq(2)));
+        assert_eq!(resolve_point(Seq(4), &chain), Some(Seq(2)));
         assert!(inside_open_wake(&chain, Seq(4)));
         assert!(!inside_open_wake(&chain, Seq(2)));
         // A chain that is nothing BUT an open wake has no resolvable point at all.
@@ -105,8 +115,8 @@ mod tests {
             step(1, "wake/start", "w1"),
             step(2, "thought/text", "w1"),
         ]);
-        assert_eq!(resolve_point(&all_open), None);
-        assert_eq!(resolve_point(&[]), None);
+        assert_eq!(resolve_point(Seq(2), &all_open), None);
+        assert_eq!(resolve_point(Seq(0), &[]), None);
     }
 
     #[test]
@@ -121,7 +131,7 @@ mod tests {
         // the resolver's own answer would have been 3 too, but the point is that a past seq is
         // never moved up to the head.
         assert!(!inside_open_wake(&chain, Seq(3)));
-        assert_eq!(resolve_point(&chain), Some(Seq(3)));
+        assert_eq!(resolve_point(Seq(4), &chain), Some(Seq(3)));
         // A seq in the MIDDLE of a wake is inside it, whether or not that wake later ended: the
         // prefix ending there ends mid-wake, which is what §3 refuses. The ledger's own `fork`
         // uses the same rule, so a bud this module accepts is a bud the store accepts.

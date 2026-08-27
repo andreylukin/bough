@@ -181,8 +181,23 @@ pub fn no_args() -> schemars::Schema {
     .expect("a no-args schema is an object")
 }
 
-/// A positional-argument schema: `names` in order, the first `required` of them mandatory.
+/// A positional-argument schema whose LAST name absorbs everything after it: `/edit c1 tighten
+/// the wording` binds `text` to three words rather than being refused for having too many.
+///
+/// A command that advertises `<text…>` or `<reason…>` in its usage line and then caps the list at
+/// one word per name is not the command it documents — the cap is enforced by `jsonschema` before
+/// `run` is ever reached, so a handler written to join the rest never sees them.
+pub fn positional_rest(names: &[&str], required: usize) -> schemars::Schema {
+    schema_for(names, required, None)
+}
+
+/// A positional-argument schema: `names` in order, the first `required` of them mandatory, and no
+/// argument past the last name.
 pub fn positional(names: &[&str], required: usize) -> schemars::Schema {
+    schema_for(names, required, Some(names.len()))
+}
+
+fn schema_for(names: &[&str], required: usize, max: Option<usize>) -> schemars::Schema {
     let items: Vec<serde_json::Value> = names
         .iter()
         .map(|n| serde_json::json!({ "type": "string", "title": n }))
@@ -191,8 +206,10 @@ pub fn positional(names: &[&str], required: usize) -> schemars::Schema {
         "type": "array",
         "items": { "type": "string" },
         "minItems": required,
-        "maxItems": names.len(),
     });
+    if let Some(max) = max {
+        schema["maxItems"] = serde_json::json!(max);
+    }
     // `prefixItems` must be non-empty to be a legal schema, so a no-argument command simply says
     // `maxItems: 0` and names nothing.
     if !items.is_empty() {
@@ -514,3 +531,58 @@ impl Plugin for CommandsPlugin {
 }
 
 bough_kernel::register_plugin!(CommandsPlugin);
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    fn spec(args: schemars::Schema) -> CommandSpec {
+        CommandSpec {
+            name: CommandName::new("edit"),
+            usage: "/edit <claim> <text…>".to_string(),
+            summary: "edit a claim".to_string(),
+            scope: CommandScope::Global,
+            args,
+            run: Arc::new(NoopCommand) as Arc<dyn Command>,
+        }
+    }
+
+    struct NoopCommand;
+
+    #[async_trait::async_trait]
+    impl Command for NoopCommand {
+        async fn run(&self, _i: Invocation, _c: CommandCx) -> Result<CommandOutput, CommandError> {
+            Ok(CommandOutput {
+                text: String::new(),
+                render: OutputRender::Plain,
+                cites: Vec::new(),
+            })
+        }
+    }
+
+    fn args(words: &[&str]) -> Vec<String> {
+        words.iter().map(|w| w.to_string()).collect()
+    }
+
+    /// `/edit c1 tighten the wording` is the command as its own usage line advertises it. Under
+    /// `positional` the schema's `maxItems` refused it before `run` was ever reached, so the
+    /// accept/edit/reject gate could only edit a claim to ONE WORD.
+    #[test]
+    fn a_rest_argument_accepts_many_words() {
+        let s = spec(positional_rest(&["claim", "text"], 2));
+        assert_eq!(
+            validate_args(&s, &args(&["c1", "tighten", "the", "wording"])),
+            Ok(())
+        );
+        // The required minimum still bites.
+        assert!(validate_args(&s, &args(&["c1"])).is_err());
+    }
+
+    /// And the capped form still caps: `positional` is unchanged for the commands that want it.
+    #[test]
+    fn a_capped_positional_still_refuses_an_extra_word() {
+        let s = spec(positional(&["agent"], 1));
+        assert_eq!(validate_args(&s, &args(&["sol"])), Ok(()));
+        assert!(validate_args(&s, &args(&["sol", "terra"])).is_err());
+    }
+}

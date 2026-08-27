@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use bough_kernel::{Context, PluginError};
 use bough_plugin_commands::{
-    positional, Command, CommandCx, CommandError, CommandName, CommandOutput, CommandScope,
-    CommandSpec, Commands, Invocation, OutputRender,
+    positional, positional_rest, Command, CommandCx, CommandError, CommandName, CommandOutput,
+    CommandScope, CommandSpec, Commands, Invocation, OutputRender,
 };
 use bough_plugin_ledger::{AgentName, RollupId};
 use bough_plugin_rollups::{Attribution, SupersedeReport, SupersedeRequest};
@@ -20,7 +20,7 @@ use crate::{DriftHandle, ResetReport, ResetRequest, SignalState, Signals};
 /// ```text
 /// /drift [agent]                      render the signals and any flags
 /// /reset <agent>                      §8's one-command reset
-/// /supersede <rollup-id> <reason>     supersede a suspected-bad tier block
+/// /supersede <rollup-id> <reason…>     supersede a suspected-bad tier block
 /// ```
 ///
 /// The key is OPTIONAL injection: a headless profile mounts this row with no surface at all and
@@ -69,8 +69,8 @@ pub async fn register(ctx: &Context, drift: &DriftHandle) -> Result<(), PluginEr
             CommandSpec {
                 name: CommandName::new("supersede"),
                 summary: "supersede a suspected-bad tier block".to_string(),
-                usage: "/supersede <rollup-id> <reason>".to_string(),
-                args: positional(&["rollup", "reason"], 2),
+                usage: "/supersede <rollup-id> <reason…>".to_string(),
+                args: positional_rest(&["rollup", "reason"], 2),
                 scope: CommandScope::Global,
                 run: Arc::new(SupersedeCommand {
                     drift: drift.clone(),
@@ -157,7 +157,7 @@ struct SupersedeCommand {
 #[async_trait::async_trait]
 impl Command for SupersedeCommand {
     async fn run(&self, inv: Invocation, cx: CommandCx) -> Result<CommandOutput, CommandError> {
-        let usage = "/supersede <rollup-id> <reason>";
+        let usage = "/supersede <rollup-id> <reason…>";
         let (block, reason) = match inv.args.split_first() {
             Some((block, rest)) if !rest.is_empty() => (block.clone(), rest.join(" ")),
             _ => {

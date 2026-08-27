@@ -45,6 +45,11 @@ pub struct AgentRouting {
     pub added: Vec<Ref>,
     #[serde(default)]
     pub removed: Vec<Ref>,
+    /// The row's wake classes AFTER the change, when this step changed them. `None` ⇒ the change
+    /// was about routing refs alone. §5 makes wake classes MUTABLE CONFIG, so they need the same
+    /// evidence trail the refs have — a class that appeared without a step would explain nothing.
+    #[serde(default)]
+    pub wake_classes: Option<Vec<String>>,
     pub by: Attribution,
 }
 

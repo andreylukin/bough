@@ -1578,3 +1578,205 @@ Three script-level facts worth keeping, each found the hard way:
   suite passes is one token.
 - The focus pane's title is the word `trajectory` and carries no lane name, so "the pane followed
   the click" is only readable off the CONTENT — `12` plants a marker step on `terra` for it.
+
+---
+
+## 7. Deviations and open items (the closing review pass)
+
+A review of the phase raised 26 findings. What follows is what changed, and what deliberately did
+not. The rule throughout: REQUIREMENTS wins, and where the code stands against it and stays, the
+spec is amended rather than the disagreement left unrecorded (AGENTS.md).
+
+### 7.1 REQUIREMENTS.md amendments
+
+Three, all made in this pass. The plan had claimed the first of them was already made; it was not.
+
+- **§5, the wake flow** now begins at `-> agent/wake-request`, the admission waterfall both loop
+  Providers dispatch immediately before `wake/start`. P5-D1 said this "amends §5's wake flow and is
+  flagged as such"; `git log -- REQUIREMENTS.md` showed the file untouched since the initial
+  rebuild commit, so the spec of record did not describe the loop that ships. It does now.
+- **§4, merge** now states that the new head carries an `ancestor` edge to each parent BESIDE the
+  two `merge` edges, and that a reader who means "birth" must exclude a child that has a merge
+  edge. `connected()` derives membership from ancestry alone (frozen in Phase 1), so a head joined
+  only by merge edges would read neither past — the survivor would lose its own history the moment
+  it merged. The deviation was in a code comment; it is now in the spec.
+- **§4, undo** now says what "ambiguous" means: a ref two children BOTH claim. A ref neither claims
+  is not a tie and stays with the parent. `route.rs`'s module header claimed the opposite of its
+  own code and its own test; the header now states the rule the module actually holds.
+
+### 7.2 Fixed
+
+**The leader.**
+
+- `leader.config.attribute_reconsolidation` was set in the bundle and read by nothing:
+  `reconsolidation`'s `/reconsolidate` wrote `Attribution::System` unconditionally, so §8's
+  leader-attributed pass did not exist and a live config field was inert. `ReconHandle` gained a
+  standing-attribution slot installed as an EFFECT (`attribute_to`), and the leader row installs
+  its own name into it. It moves with the set and unwinds to `System` on unload, like every other
+  leader registration. Pinned by `bough` `tests/leader_swap.rs::the_reconsolidation_pass_is_
+  attributed_to_the_leader_and_moves_with_it`.
+- `MailHandle::adopt` attributed every adoption to the RECIPIENT lane, so each `mail/adopted` row
+  claimed a lane adopted its own mail. `adopt` now takes `by: Attribution` and the leader passes
+  its own name.
+- A leader question could never reactivate a dormant leader: `ask_leader` routes at
+  `MailClass::Wake` on `class:ask`, but no row carried `class:ask` in `routing_refs` and none
+  declared it as a wake class, so the question fell to the unsorted queue and was delivered
+  `Ordinary`. The leader row now gives its target both, idempotently and with `agent/routing`
+  evidence, retrying on `agent/created` when the lane is not born yet. Pinned by
+  `tests/leader_swap.rs::the_leader_row_is_routed_and_wakes_on_class_ask`.
+
+**Mail.**
+
+- **The unsorted queue never drained.** `unsorted()` filtered on `kind == "mail/unrouted"` alone,
+  so a leader reading the oldest N on every wake read the same N forever: duplicate delivery (the
+  crate's own `adoption_names_its_unrouted_step` invariant would report it at the next quiesce) and
+  starvation of everything queued behind them. `unsorted()` now excludes items a `mail/adopted`
+  step names, paging by seq so the answer is `limit` UNADOPTED items; `adopt` is idempotent.
+  Pinned by `mail-router` `tests/unsorted.rs::an_adopted_item_leaves_the_queue_and_a_second_pass_
+  is_a_no_op`, and the existing "later sink" test now asserts on `by`.
+- A matched recipient with no live handle was silently dropped: no delivery, no ledger row, and
+  the name still in `RouteReport.matched`. It now writes the event to the unsorted trajectory —
+  §3's recovery surface — and reports `undeliverable`. Pinned by `tests/fanout.rs::a_matched_lane_
+  with_no_live_agent_is_recorded_not_dropped`.
+- `MailConfig.deliver_to_dormant` was renamed `tolerate_absent_lane`. Dormancy never removes an
+  agent's handle, and `true` never meant "deliver" — it meant "do not fail".
+- `unsorted_sink` replaced the slot BEFORE registering the effect that restores it, so a failing
+  `ctx.effect` evicted the previous sink permanently. The replace now happens inside the effect.
+- `one_delivery_per_recipient` grouped by body + `at`, which missed the re-delivery it exists to
+  catch and reported two distinct events that shared a timestamp. It groups by body + CITES now.
+- **`routing_refs` and `wake_classes` had no configuration surface at all**, which made dormancy's
+  wake-class path unreachable outside tests. `MailHandle::set_wake_classes` was added (with
+  `agent/routing` evidence, an additive `wake_classes` field on that body), and the leader uses
+  both. See 7.4 for what is still missing here.
+
+**Graph ops.**
+
+- Every op wrote and deleted `agents` ROWS behind the live registry's back and nothing reconciled
+  them: after a merge the survivor kept appending to its PRE-MERGE chain while its row pointed at
+  the new head, the absorbed agent kept running with no row, and a split's children had rows but
+  no live agent — so mail matched to their new `routing_refs` hit `by_name(..) == None` and was
+  dropped. `graph-ops` now publishes `agents/rows-changed` (a new EMIT event on the `agents`
+  Definition) after every op, and `residents` — the row that owns the disposers — reconciles:
+  dispose a deleted row's agent, dispose-and-resume a row whose trajectory moved, resume a row
+  with no agent. `residents::reconcile_rows` is total and idempotent. This also closes the
+  separate finding that only `ClaimKind::Lane` brought its agent up: split, bud and merge now
+  reconcile through the same path.
+- `GraphConfig.max_children` was a config field whose only legal value was 2, with no `validate()`
+  — `max_children: 3` composed, booted, and turned a boot-time typo into a runtime invariant
+  violation. It is now the protocol constant `SPLIT_CHILDREN`.
+- `question_on_ambiguity` was a test seam shipped as a production field: setting it `false` in any
+  patch layer silently removed §4's notification path. **P5-D9 is withdrawn** and the field is
+  gone. The test it existed for is replaced by `tests/routing.rs::an_ask_that_fails_still_refuses_
+  and_is_not_swallowed`, which drives a failing `LeaderAsk` — a stronger claim, and one that also
+  covers the next item.
+- `merge::apply`'s no-survivor path did `let _ = refuse(..)`, so a failing mail seam meant the
+  caller was told "no survivor" while nobody was ever asked. The ask error now propagates.
+- `undo`'s merge-shaped `OpOutcome` hardcoded `edges: 2` while writing 4 per lived-in child. It is
+  summed from what `merge_rows` reports.
+- `resolve_point` read the WHOLE chain unfiltered while inspecting only `wake/start` / `wake/end`
+  — the same D-WP8-5 bug fixed once in `agent-loop`'s repair. So did `worker-fork`'s `fork_point`
+  and its invariant. All three now carry a `kinds` filter next to the walker that reads them
+  (`seq::WAKE_KINDS`, `point::WAKE_KINDS`, `REQUEST_HEADER`). The two point resolvers take the
+  trajectory's true `head` as a parameter, because a filtered chain's last row is not the
+  trajectory's last row — pinned by `point.rs::an_empty_chain_has_no_point`'s new clause.
+- `tui-focus`'s branch picker filtered on `EdgeKind::Ancestor`, which — given the merge head's
+  ancestor edges — showed a merge as a birth. It now excludes any child that has a merge edge to
+  the same parent. Pinned by `tui-focus` `tests/branches.rs::a_merge_head_is_not_offered_as_a_
+  branch_even_though_it_has_an_ancestor_edge`.
+- `tests/routing.rs`'s "the question names BOTH claimants" tested for the CHARACTERS `a` and `b`
+  in an English sentence. The children are named `lane-a` / `lane-b` and the assertion is on the
+  names.
+
+**The loop, claims, dormancy, drift.**
+
+- `spawn_wake`'s `stopping` early-return did not call `cell.wake_refused()` the way the new
+  `Defer` branch does, so a driver stopping in that window left `pending_wake` latched and
+  `Agent::when_idle()` never returned. It does now, in both the pre-admission and the new
+  post-admission check.
+- Making `spawn_wake` async put an `.await` between the `stopping` check and `mint_wake`, so two
+  concurrent callers could mint two wakes for one trigger where the sync path serialised them. An
+  `admit_gate` is held across admission-and-mint; the wake still runs on its own task.
+- **`/edit`, `/reject`, `/sleep` and `/supersede` refused any multi-word text**, despite
+  advertising `<text…>` / `<reason…>`: `positional`'s `maxItems` was enforced by `jsonschema`
+  before `run` was reached, so the keyboard half of the accept/edit/reject gate could only edit a
+  claim to ONE WORD. `commands::positional_rest` was added and those four use it. Pinned by
+  `commands` `schema_tests::a_rest_argument_accepts_many_words` and its capped twin; the shell-use
+  scripts now pass real sentences and assert the sentence lands in the ledger.
+- The lane-birth rollback deleted the `agents` row while the cited `graph/bud` step, the child
+  trajectory, the edge and the digest all stood — the exact failure P5-D8's append-last ordering
+  exists to prevent. It now UNDOES the bud through `graph.undo` and only then guarantees the row
+  is gone; an `AlreadyLive` from the new reconciler is treated as the success it is.
+- `drift-watch`'s claim-rejection rate was computed and rendered but read by no `flags()` clause,
+  so no rejection rate at any level ever raised a flag. `DriftFlag::ClaimsMostlyRejected` was
+  added with `claim_rejection_flag` and `claim_rejection_min_decided` thresholds (a single
+  rejected claim is a rate of 1.0 and says nothing). Pinned in `signals.rs`'s flag test.
+- `worker-fork`'s `ForkSetup::setup` used `expect("setup runs once")` on a fallible async trait
+  boundary; a second invocation panicked inside a tokio task instead of returning
+  `AgentError::SetupFailed`. It returns `SetupFailed`.
+
+**Test honesty.** Four shell-use bullets asserted something other than what they were named for,
+and are fixed rather than renamed away:
+
+- `13-claims.sh::accepting_a_lane_claim_adds_a_rail_row` asserted `see "vega"` immediately after
+  `/accept`, which the command's own `lane born: vega` echo in the notice band satisfies. It now
+  asserts the RAIL ROW: `vega` and a state glyph on ONE line.
+- `12-many-agents.sh::a_dormant_lane_shows_the_dormant_glyph` never checked the glyph — `see
+  "dormant"` was satisfied by `/sleep`'s echo. It now asserts `luna` + `◌` on one row, with the
+  word as a second bullet.
+- `14-forks.sh::a_lane_child_and_a_fork_child_are_labelled_differently` was `see "lane" && see
+  "fork"`, both already on screen from the fixture's own trajectory ids `lane/bud` and
+  `traj/fork-of-sol`: it would have passed if `Branch::word()` returned the empty string for both
+  kinds. The label is now asserted on the row it labels.
+- `12-many-agents.sh`'s "while streaming" bullet polled for up to 30 seconds, by which time the
+  durable steps had landed — it asserted the same state as the bullet after it. It is renamed to
+  what it tests, a second bullet asserts the first fragment is never a row of its own, and the
+  comment says plainly that the mid-stream rule is pinned purely in `tui-focus/tests/stream.rs`.
+- `mail-router` `tests/unsorted.rs::with_no_sink_the_queue_keeps_it_and_a_later_sink_adopts_it`
+  proved only the first half of its name and never asserted the item left the queue — which is why
+  the never-draining queue survived the suite. It now asserts `by`, and the drain is pinned by a
+  new sibling.
+
+New helpers `row_with` and `no_row_is_exactly` in `scripts/tui/lib.sh` make "these things are on
+ONE line" assertable; `see` matches the SCREEN, so it cannot tell one row from two stacked ones,
+and that gap is what three of the four vacuous bullets were made of.
+
+### 7.3 Deliberately NOT changed
+
+- **A split leaves the parent row alive beside its two children.** The review reads §4's "create
+  two heads" as requiring the parent row to go, which would make a split leave two lanes rather
+  than three. It is not changed, for three reasons: §4 distinguishes bud from split by the POINT
+  ("a split whose point is in the past"), not by whether the parent survives; §3 forbids a black
+  hole, and a ref no child claimed needs a home, which is what `route.rs`'s `keep` is; and
+  `undo::apply` restores the parent from `inner.row(&parent_name)`, so deleting the row on split
+  breaks both undo shapes and would need the parent's name and overrides carried in the
+  `graph/split` body to rebuild. That is a real change with real risk, and it is not one to make
+  in a closing pass. §4's undo bullet was amended to state the rule the code holds instead. **Open
+  item for a later phase.**
+- **`lane-scope` still cannot give a lane an EXTRA tool.** §5 names three per-lane registrations;
+  `LaneSpec` carries two (persona, `tools.restrict`). Scoped tool ADDITION is demonstrated by the
+  `leader`/`tool-leader` pair, which is a different mechanism — a named plugin set, not a list
+  entry — and adding a tool by config would mean naming an already-registered tool to re-scope,
+  which is not what §5's sentence is about either. Left as it is, and recorded here rather than
+  quietly.
+- **`residents`' catch-up can still race `dormancy`'s admission listener.** The declared-dependency
+  fix was written and REVERTED: adding `Inject::optional(["dormancy"])` makes an optional key that
+  arrives after activation change the committed view, which reloads the row — and reloading
+  `residents` disposes and re-raises the whole roster, leaving three disposed lanes on the strip
+  beside the three live ones (`12-many-agents.sh::the_focus_pane_follows_the_click` caught it). The
+  loop's `agent/wake-request` admission point still defers the catch-up whenever `dormancy`'s
+  listener is registered, and `catch_up` now takes an optional `is_dormant` predicate so a caller
+  that holds the handle can skip the request outright. Fixing the ORDER properly needs an
+  activation handshake this phase does not have — `residents` already waits for the factory slot,
+  and the equivalent for a listener does not exist. **Open item.**
+- **`claims::decide::load` and `ClaimsHandle::open` read every `claim/*` step in the ledger** on
+  every call, unbounded and untrimmed. Bounding `load` needs an id lookup the ledger has no index
+  for, and capping the scan would silently stop finding old claims — a wrong answer instead of a
+  slow one. Phase 5 touches no ledger vocabulary or schema, so this waits for a phase that does.
+- The mail invariant's "never zero deliveries" half still has no ledger witness for a delivery that
+  ERRORED mid-fan-out; nothing records an intent to deliver. The one case the router can observe
+  on its own — a matched row with no live agent — is now durable, and the module doc says exactly
+  that much and no more.
+- `graph-ops`' test double `RecordingDigests::rebuild_digest` reimplements the P5-D13 id/kind
+  mapping it is used to verify. The production mapping is separately pinned by `rollups`'
+  conformance case `a_reconciliation_digest_is_its_own_kind_and_namespace`, run against both
+  Providers, so this is a coupling smell rather than a hole. Left.

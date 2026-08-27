@@ -10,9 +10,11 @@
 //!    honest form of the check rather than the flattering one.
 //! 2. **`one_delivery_per_recipient`** — one routed envelope produced exactly one `mail/delivered`
 //!    step per recipient. The "never two" half is decidable from the ledger alone and is what this
-//!    clause checks; the "never zero" half has no ledger witness (nothing records an intent to
-//!    deliver) and is pinned instead by `tests/fanout.rs::a_misroute_to_a_third_agent_does_not_
-//!    strand_the_true_owner`.
+//!    clause checks. The "never zero" half still has no ledger witness for a delivery that ERRORED
+//!    mid-fan-out (nothing records an intent to deliver), and is pinned instead by
+//!    `tests/fanout.rs::a_misroute_to_a_third_agent_does_not_strand_the_true_owner`; the one case
+//!    the router can observe on its own — a matched row whose agent is not live — now writes a
+//!    `mail/unrouted` row rather than nothing, so THAT half is durable.
 //!
 //! Cadence is [`bough_kernel::Cadence::OnQuiesce`] for both (P1-D14).
 
@@ -118,11 +120,18 @@ pub fn evaluate(snap: &Snapshot) -> Result<(), String> {
     Ok(())
 }
 
-/// The digest clause 2 groups by. The body plus the step's own timestamp: the same envelope
-/// delivered to one agent twice is one digest twice, and two genuinely different routes differ in
-/// at least one of the two.
-pub fn fingerprint(body: &serde_json::Value, at: chrono::DateTime<chrono::Utc>) -> String {
-    format!("{}@{}", body, at.to_rfc3339())
+/// The digest clause 2 groups by: the delivered body plus its CITES.
+///
+/// It used to be the body plus the step's `at`, and that was wrong in both directions. A genuine
+/// double delivery of one envelope — a re-adoption of the same unsorted item, which is exactly
+/// the failure this clause exists to catch — carries two different `at` values and slipped
+/// through; two legitimately distinct collector events landing in one batch share an `at` and
+/// were reported. Cites are the honest discriminator: `mail/delivered` is EVIDENCE, so the ledger
+/// refuses it without them, and two deliveries of ONE envelope cite the same source while two
+/// distinct events cite different ones.
+pub fn fingerprint(body: &serde_json::Value, cites: &[bough_plugin_ledger::Cite]) -> String {
+    let cited: Vec<String> = cites.iter().map(|c| c.r#ref.to_string()).collect();
+    format!("{}|{}", body, cited.join(","))
 }
 
 /// Read the whole snapshot out of the bound ledger.
@@ -165,7 +174,7 @@ pub async fn snapshot(ledger: &bough_plugin_ledger::LedgerHandle) -> Result<Snap
         snap.delivered.push(DeliveredObs {
             traj: step.traj.clone(),
             seq: step.seq,
-            fingerprint: fingerprint(&step.body, step.at),
+            fingerprint: fingerprint(&step.body, &step.cites),
         });
     }
     for row in ledger.0.agents().await.map_err(|e| e.to_string())? {

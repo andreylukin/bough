@@ -30,7 +30,12 @@ pub struct Envelope {
 pub struct RouteReport {
     pub matched: Vec<AgentName>,
     pub delivered: Vec<(AgentName, InboxReceipt)>,
-    /// `Some` iff `matched` was empty: the `mail/unrouted` step on the unsorted trajectory.
+    /// Matched lanes with no live handle. They are in `matched` because the REFS matched, and
+    /// here because nothing was delivered to them: a caller that reads only `matched` would
+    /// otherwise be told an event was routed when it was not.
+    pub undeliverable: Vec<AgentName>,
+    /// The `mail/unrouted` step on the unsorted trajectory: `Some` when nobody matched, and also
+    /// `Some` when everyone who matched was `undeliverable`, so the event stays recoverable.
     pub unsorted: Option<StepId>,
     /// `true` iff an unsorted sink was mounted and took it as ordinary mail.
     pub adopted: bool,

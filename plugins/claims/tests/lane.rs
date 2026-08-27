@@ -28,6 +28,7 @@ use parking_lot::Mutex;
 struct RecordingGraph {
     ledger: LedgerHandle,
     seen: Mutex<Vec<OpRequest>>,
+    undone: Mutex<Vec<bough_plugin_ledger::StepId>>,
     refuse: bool,
 }
 
@@ -75,8 +76,28 @@ impl GraphOps for RecordingGraph {
             undo_shape: None,
         })
     }
-    async fn undo(&self, _req: &UndoRequest) -> Result<OpOutcome, GraphError> {
-        unreachable!("no test here undoes")
+    /// The real `graph-ops` undo of a bud deletes the child's row. `claims` calls it when the
+    /// lane cannot be brought up: the bud is already COMMITTED by then, so deleting the row alone
+    /// would leave a cited `graph/bud` naming an agent that does not exist (P5-D8).
+    async fn undo(&self, req: &UndoRequest) -> Result<OpOutcome, GraphError> {
+        self.undone.lock().push(req.of.clone());
+        let mut deleted = Vec::new();
+        for row in self.ledger.0.agents().await? {
+            if row.traj.as_str().contains("infra") || row.name.as_str() == "infra" {
+                self.ledger.0.delete_agent(&row.name).await?;
+                deleted.push(row.name);
+            }
+        }
+        Ok(OpOutcome {
+            kind: OpKind::Undo,
+            step: bough_plugin_ledger::StepId::new("graph-undo-step"),
+            trajs: Vec::new(),
+            edges: 0,
+            digests: Vec::new(),
+            rows_written: Vec::new(),
+            rows_deleted: deleted,
+            undo_shape: Some(bough_plugin_graph_ops::UndoShape::Pointers),
+        })
     }
 }
 
@@ -144,6 +165,7 @@ async fn fixture(graph_refuses: bool, factory_refuses: bool) -> Fixture {
     let graph = Arc::new(RecordingGraph {
         ledger: ledger.clone(),
         seen: Mutex::new(Vec::new()),
+        undone: Mutex::new(Vec::new()),
         refuse: graph_refuses,
     });
     let claims = ClaimsHandle::new(
@@ -329,6 +351,8 @@ async fn a_failed_birth_leaves_no_row_and_no_acceptance() {
         "and no acceptance: a lane claim births a row and a resident, or neither"
     );
     assert!(f.agents.by_name(&AgentName::new("infra")).is_none());
+    // The graph refused, so no bud committed and there is nothing to undo.
+    assert!(f.graph.undone.lock().is_empty(), "nothing to undo");
     // The claim is still open, so Andrey can decide it again once the ambiguity is settled.
     assert_eq!(
         f.claims
@@ -347,6 +371,15 @@ async fn a_failed_birth_leaves_no_row_and_no_acceptance() {
     assert!(
         g.ledger.0.agents().await.expect("rows read").is_empty(),
         "the row the graph wrote is rolled back with the failed birth"
+    );
+    // And the rollback is a real one: the bud had already COMMITTED — child trajectory, edge,
+    // digest and the cited `graph/bud` step — so deleting the row alone would leave that cited
+    // fact naming an agent that does not exist, which is exactly what P5-D8's append-last
+    // ordering exists to prevent. The op is UNDONE through the operation that exists for it.
+    assert_eq!(
+        g.graph.undone.lock().len(),
+        1,
+        "the committed bud is undone, not merely orphaned"
     );
     assert!(g
         .ledger

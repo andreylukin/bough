@@ -212,7 +212,7 @@ async fn no_wake_when_nothing_is_queued() {
         .await
         .expect("the roster comes up");
 
-    catch_up(&f.agents, &up, f.fiber)
+    catch_up(&f.agents, &up, None, f.fiber)
         .await
         .expect("catch-up runs");
 
@@ -248,7 +248,7 @@ async fn one_catch_up_wake_per_agent_with_queued_mail() {
         .await
         .expect("the mail lands");
 
-    catch_up(&f.agents, &up, f.fiber)
+    catch_up(&f.agents, &up, None, f.fiber)
         .await
         .expect("catch-up runs");
 
@@ -389,7 +389,7 @@ async fn a_dormant_lane_is_resumed_and_never_woken() {
             .expect("the mail lands");
     }
 
-    catch_up(&f.agents, &up, f.fiber)
+    catch_up(&f.agents, &up, None, f.fiber)
         .await
         .expect("catch-up runs");
 

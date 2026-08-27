@@ -242,6 +242,7 @@ pub async fn mount_with_rollups(
         llm,
         agents: AgentsHandle::new(ctx.clone(), ledger.clone()),
         rollups,
+        attribution: parking_lot::Mutex::new(None),
     }));
     Mounted { recon, ledger, ctx }
 }

@@ -15,6 +15,7 @@ bough-plugin-ledger = { workspace = true }
 bough-plugin-agents = { workspace = true }
 bough-plugin-graph-ops = { workspace = true }
 bough-plugin-rollups = { workspace = true }
+tracing = { workspace = true }
 bough-plugin-tools = { workspace = true }
 bough-plugin-commands = { workspace = true }
 async-trait = { workspace = true }

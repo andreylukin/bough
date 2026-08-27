@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use bough_kernel::{Context, PluginError};
 use bough_plugin_commands::{
-    positional, Command, CommandCx, CommandError, CommandName, CommandOutput, CommandScope,
-    CommandSpec, Commands, Invocation, OutputRender,
+    positional, positional_rest, Command, CommandCx, CommandError, CommandName, CommandOutput,
+    CommandScope, CommandSpec, Commands, Invocation, OutputRender,
 };
 use bough_plugin_ledger::AgentName;
 use bough_plugin_rollups::Attribution;
@@ -30,8 +30,8 @@ pub async fn register(ctx: &Context, dormancy: &DormancyHandle) -> Result<(), Pl
             CommandSpec {
                 name: CommandName::new("sleep"),
                 summary: "put a lane to sleep: no ticks, no wakes, mail keeps queuing".to_string(),
-                usage: "/sleep <agent> [reason]".to_string(),
-                args: positional(&["agent", "reason"], 1),
+                usage: "/sleep <agent> [reason…]".to_string(),
+                args: positional_rest(&["agent", "reason"], 1),
                 scope: CommandScope::Global,
                 run: Arc::new(SleepCommand {
                     dormancy: dormancy.clone(),

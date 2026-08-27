@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use bough_kernel::{Context, PluginError};
 use bough_plugin_commands::{
-    positional, Command, CommandCx, CommandError, CommandName, CommandOutput, CommandScope,
-    CommandSpec, Commands, Invocation, OutputRender,
+    positional, positional_rest, Command, CommandCx, CommandError, CommandName, CommandOutput,
+    CommandScope, CommandSpec, Commands, Invocation, OutputRender,
 };
 
 use crate::{
@@ -65,7 +65,17 @@ pub async fn register(ctx: &Context, claims: &ClaimsHandle) -> Result<(), Plugin
                     name: CommandName::new(name),
                     summary: summary.to_string(),
                     usage: usage.to_string(),
-                    args: positional(&["claim", "text"], min),
+                    // `/accept` takes a claim id and nothing else, so its list is CAPPED and a
+                    // stray word is refused rather than silently ignored. `/edit` and `/reject`
+                    // advertise `<text…>` / `<reason…>`, and a capped list made that a lie: the
+                    // schema's `maxItems` is enforced before `run` is reached, so the keyboard
+                    // half of the accept/edit/reject gate could only ever edit a claim to ONE
+                    // word.
+                    args: if min > 1 {
+                        positional_rest(&["claim", "text"], min)
+                    } else {
+                        positional(&["claim"], min)
+                    },
                     scope: CommandScope::Global,
                     run: Arc::new(DecideCommand {
                         claims: claims.clone(),

@@ -61,6 +61,26 @@ pub struct LeaderInner {
     cfg: Arc<LeaderConfig>,
 }
 
+/// Give the target row the `class:ask` routing ref AND the matching wake class, so a leader
+/// question reaches it and reactivates it when it is dormant (§4, §5).
+async fn link_ask_class(
+    mail: &MailHandle,
+    ledger: &LedgerHandle,
+    target: &AgentName,
+    at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), LeaderError> {
+    use std::collections::BTreeSet;
+    let ask = bough_plugin_ledger::Ref::new(bough_plugin_mail_router::ASK_CLASS_REF);
+    mail.link_ref(target, BTreeSet::from([ask]), at).await?;
+    // Union, never replace: the leader's own class is added to whatever the row already declares.
+    let mut classes = BTreeSet::from([bough_plugin_mail_router::ASK_CLASS_REF.to_string()]);
+    if let Some(row) = ledger.0.agent(target).await? {
+        classes.extend(row.wake_classes);
+    }
+    mail.set_wake_classes(target, classes, at).await?;
+    Ok(())
+}
+
 /// The unsorted sink the row installs: it names the TARGET, so moving the set moves the sink.
 struct LeaderSink(AgentName);
 
@@ -128,7 +148,14 @@ impl LeaderHandle {
             // One call per item, so a lane that cannot take it leaves the REST of the pass alone.
             self.0
                 .mail
-                .adopt(agent, std::slice::from_ref(step), req.at)
+                .adopt(
+                    agent,
+                    std::slice::from_ref(step),
+                    bough_plugin_rollups::Attribution::Agent {
+                        name: self.0.target.clone(),
+                    },
+                    req.at,
+                )
                 .await?;
         }
         Ok(AdoptReport { adopted, held })
@@ -246,6 +273,61 @@ impl Plugin for LeaderPlugin {
         persona::register(&ctx, &projection, &target, &cfg.persona).await?;
         mail.unsorted_sink(&ctx, Arc::new(LeaderSink(target.clone())))
             .await?;
+
+        // §4: an ambiguous routing decision becomes a leader QUESTION, routed at `MailClass::Wake`
+        // with the `class:ask` ref (P5-D3). A ref reaches nobody unless a row is routed on it, and
+        // a wake class reactivates nobody unless the row declares it — so the row that IS the
+        // leader is the row that must carry both, and it says so here rather than relying on a
+        // bundle to remember. Idempotent, and evidenced by `agent/routing`.
+        let now = chrono::Utc::now();
+        let exists = ledger
+            .0
+            .agent(&target)
+            .await
+            .map_err(|e| PluginError::new(entry.clone(), e))?
+            .is_some();
+        if exists {
+            link_ask_class(&mail, &ledger, &target, now)
+                .await
+                .map_err(|e| PluginError::new(entry.clone(), e))?;
+        } else {
+            // Lanes are born at runtime; a leader named before its agent exists is not a boot
+            // failure (the `lane-scope` precedent). The retry lands on `agent/created`.
+            let mail2 = (*mail).clone();
+            let ledger2 = (*ledger).clone();
+            let target2 = target.clone();
+            ctx.on::<bough_plugin_agents::AgentCreated, _, _>(move |agent| {
+                let mail = mail2.clone();
+                let ledger = ledger2.clone();
+                let target = target2.clone();
+                async move {
+                    if agent.name() != &target {
+                        return;
+                    }
+                    if let Err(e) = link_ask_class(&mail, &ledger, &target, chrono::Utc::now()).await
+                    {
+                        tracing::error!(agent = %target, error = %e, "leader: `class:ask` retry failed");
+                    }
+                }
+            })
+            .await?;
+        }
+
+        // §8: the reconsolidation pass is LEADER-ATTRIBUTED once the leader exists. The field is
+        // read here and nowhere else, and with `reconsolidation` unbound it does nothing at all —
+        // which is the honest reading of an OPTIONAL injection, not a silent misconfiguration.
+        if cfg.attribute_reconsolidation {
+            if let Ok(recon) = ctx.get::<bough_plugin_reconsolidation::Reconsolidation>() {
+                recon
+                    .attribute_to(
+                        &ctx,
+                        bough_plugin_rollups::Attribution::Agent {
+                            name: target.clone(),
+                        },
+                    )
+                    .await?;
+            }
+        }
 
         ctx.provide::<Leader>(LeaderHandle::new(
             target,

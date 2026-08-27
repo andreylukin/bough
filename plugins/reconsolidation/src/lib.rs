@@ -51,9 +51,48 @@ pub struct ReconInner {
     pub llm: bough_plugin_llm::LlmHandle,
     pub agents: bough_plugin_agents::AgentsHandle,
     pub rollups: bough_plugin_rollups::RollupsHandle,
+    /// Who a pass with no attribution of its own is written by. `None` ⇒ [`Attribution::System`],
+    /// which is what Phase 4 always wrote. §8 makes the pass leader-attributed ONCE A LEADER
+    /// EXISTS, and the leader is the only thing that knows its own name, so it installs itself
+    /// here as an effect: moving the leader set moves the attribution with it, and unloading it
+    /// puts `System` back.
+    pub attribution: parking_lot::Mutex<Option<Attribution>>,
 }
 
 impl ReconHandle {
+    /// The standing attribution for a pass whose caller does not name one.
+    pub fn attribution(&self) -> Attribution {
+        self.0
+            .attribution
+            .lock()
+            .clone()
+            .unwrap_or(Attribution::System)
+    }
+
+    /// Install the standing attribution. An EFFECT (§0.2): the `leader` row calls it from its own
+    /// fiber, and its inverse restores whatever was there before.
+    pub async fn attribute_to(
+        &self,
+        ctx: &Context,
+        by: Attribution,
+    ) -> Result<bough_kernel::EffectHandle, PluginError> {
+        let inner = self.0.clone();
+        let mine = by;
+        ctx.effect(move |e| async move {
+            let previous = { inner.attribution.lock().replace(mine.clone()) };
+            e.defer_sync(move || {
+                let mut slot = inner.attribution.lock();
+                // Only give the slot back if it is still OURS: a later installer is not ours to
+                // evict.
+                if slot.as_ref() == Some(&mine) {
+                    *slot = previous;
+                }
+            });
+            Ok(())
+        })
+        .await
+    }
+
     /// What a pass WOULD do. No model call, no write.
     pub async fn plan(&self, req: &PassRequest) -> Result<PassPlan, ReconError> {
         pass::plan(&self.0, req).await
@@ -214,6 +253,7 @@ impl Plugin for ReconsolidationPlugin {
             llm,
             agents,
             rollups,
+            attribution: parking_lot::Mutex::new(None),
         }));
         ctx.provide::<Reconsolidation>(handle.clone())
             .await

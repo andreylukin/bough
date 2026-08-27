@@ -110,6 +110,7 @@ impl AgentFactory for LoopFactory {
             drain: DrainGate::new(),
             stopping: AtomicBool::new(false),
             wakes: AtomicUsize::new(0),
+            admit_gate: tokio::sync::Mutex::new(()),
         });
         Ok(driver)
     }
@@ -152,6 +153,11 @@ pub struct LoopDriver {
     stopping: AtomicBool,
     /// Wakes in flight; `stop()` drains against it.
     wakes: AtomicUsize,
+    /// Held across admission-and-mint. The admission waterfall is an `.await` sitting between the
+    /// `stopping` check and `mint_wake`, so without it two concurrent callers — `wake_now` from a
+    /// reactivation and `notify` from the same message — can both pass admission for ONE trigger
+    /// and mint two wakes where the pre-Phase-5 sync path serialised them.
+    admit_gate: tokio::sync::Mutex<()>,
 }
 
 impl LoopDriver {
@@ -174,7 +180,15 @@ impl LoopDriver {
         cause: bough_plugin_agents::WakeCause,
         trigger: Option<bough_plugin_agents::MessageId>,
     ) -> Option<WakeId> {
+        // ONE admission-and-mint at a time. Everything from the `stopping` check to `mint_wake`
+        // is inside the gate; the wake itself still runs on its own task afterwards, so §5's
+        // latency promise is untouched.
+        let _admit = self.admit_gate.lock().await;
         if self.stopping.load(Ordering::SeqCst) {
+            // The armed flag has to come down here too: a driver that stops in this window would
+            // otherwise leave `pending_wake` latched forever, and `Agent::when_idle()` never
+            // returns. The `Defer` branch below has always done it; this one did not.
+            self.cell.wake_refused();
             return None;
         }
         // P5-D1: the ADMISSION point. Dispatched immediately before the wake id is minted, so a
@@ -184,6 +198,11 @@ impl LoopDriver {
         if let Admit::Defer { by, reason } = self.admission(kind, cause, trigger.as_ref()).await {
             tracing::debug!(agent = %self.cell.agent().name(), by, reason, "wake deferred");
             // The armed flag has to come down: no wake will start to lower it.
+            self.cell.wake_refused();
+            return None;
+        }
+        // Re-checked after the waterfall's await: `stop()` may have landed while it ran.
+        if self.stopping.load(Ordering::SeqCst) {
             self.cell.wake_refused();
             return None;
         }

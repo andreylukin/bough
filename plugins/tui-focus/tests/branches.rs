@@ -46,6 +46,22 @@ mod tests {
         assert_eq!(out[0].at_seq, Seq(10));
     }
 
+    /// A merge head carries BOTH kinds of edge to each parent — the merge edge is the fact of the
+    /// merge, the ancestor edge is what keeps the merged past readable through `connected()`. So
+    /// filtering on the kind alone shows a merge as a BIRTH, which is the one thing §4's
+    /// "distinguishing them from birth ancestry" is about.
+    #[test]
+    fn a_merge_head_is_not_offered_as_a_branch_even_though_it_has_an_ancestor_edge() {
+        let edges = vec![
+            edge("lane/luna", "lane/sol", 10, EdgeKind::Ancestor),
+            edge("merge/sol+terra", "lane/sol", 20, EdgeKind::Merge),
+            edge("merge/sol+terra", "lane/sol", 20, EdgeKind::Ancestor),
+        ];
+        let out = branches_from_edges(&edges, &TrajId::new("lane/sol"), &no_lanes, &no_steps);
+        let names: Vec<String> = out.iter().map(|b| b.traj.to_string()).collect();
+        assert_eq!(names, vec!["lane/luna"], "the merge head is not a birth");
+    }
+
     /// §4: a child with an `agents` row is a lane; one without is a fork, promotable by adding
     /// the row. The two are labelled differently because they behave differently — a fork gets no
     /// mail and no wakes.

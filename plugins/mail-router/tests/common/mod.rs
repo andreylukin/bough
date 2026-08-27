@@ -78,7 +78,7 @@ pub async fn fixture() -> Fixture {
         Arc::new(MailConfig {
             unsorted_traj: "unsorted".into(),
             unsorted_limit: 200,
-            deliver_to_dormant: true,
+            tolerate_absent_lane: true,
         }),
     );
     Fixture {

@@ -130,6 +130,22 @@ impl LeaderAsk for RecordingAsk {
     }
 }
 
+/// An ask seam that FAILS. §4's rule is that ambiguity reaches Andrey; a caller told "ambiguous"
+/// when the question went nowhere would have no way to learn that.
+pub struct FailingAsk;
+
+#[async_trait::async_trait]
+impl LeaderAsk for FailingAsk {
+    async fn ask(
+        &self,
+        _q: Question,
+    ) -> Result<bough_plugin_ledger::StepId, bough_plugin_graph_ops::GraphError> {
+        Err(bough_plugin_graph_ops::GraphError::Other(anyhow::anyhow!(
+            "the mail seam is down"
+        )))
+    }
+}
+
 pub struct Fx {
     pub ctx: Context,
     pub ledger: LedgerHandle,
@@ -140,14 +156,19 @@ pub struct Fx {
 
 pub fn cfg() -> GraphConfig {
     GraphConfig {
-        max_children: 2,
         digest_on_fork: false,
-        question_on_ambiguity: true,
     }
 }
 
 pub fn fx() -> Fx {
     fx_with(cfg())
+}
+
+/// The same fixture with an ask seam that fails.
+pub fn fx_with_failing_ask() -> Fx {
+    let mut f = fx_with(cfg());
+    f.graph.ask = Arc::new(FailingAsk) as Arc<dyn LeaderAsk>;
+    f
 }
 
 pub fn fx_with(cfg: GraphConfig) -> Fx {
@@ -162,6 +183,7 @@ pub fn fx_with(cfg: GraphConfig) -> Fx {
     });
     let ask = Arc::new(RecordingAsk::default());
     let graph = GraphInner {
+        ctx: ctx.clone(),
         ledger: ledger.clone(),
         rollups: RollupsHandle(digests.clone() as Arc<dyn Summarizer>),
         ask: ask.clone() as Arc<dyn LeaderAsk>,

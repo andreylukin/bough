@@ -184,3 +184,47 @@ async fn a_route_listener_that_skips_next_short_circuits() {
     assert_eq!(report.matched, names(&["ci"]));
     assert!(f.steps_on("t-audit", "mail/delivered").await.is_empty());
 }
+
+/// §3: "Misroutes stay recoverable via refs." A row whose agent is not up is the one case the
+/// router can observe on its own, and skipping it silently DROPPED the event: no `mail/delivered`,
+/// no `mail/unrouted`, nothing in the ledger naming it, while the report still said it matched.
+#[tokio::test]
+async fn a_matched_lane_with_no_live_agent_is_recorded_not_dropped() {
+    let f = fixture().await;
+    f.ledger
+        .0
+        .put_agent(bough_plugin_ledger::AgentRow {
+            name: AgentName::new("asleep"),
+            traj: bough_plugin_ledger::TrajId::new("t-asleep"),
+            routing_refs: set(&["repo:bough"]),
+            wake_classes: Default::default(),
+            model_override: None,
+            tick_floor: None,
+            digest_rollup: None,
+        })
+        .await
+        .expect("a row with no live agent");
+
+    let report = f
+        .mail
+        .route(envelope("CI is red", &["repo:bough"]))
+        .await
+        .expect("a route");
+
+    assert_eq!(report.matched, names(&["asleep"]));
+    assert!(report.delivered.is_empty());
+    assert_eq!(
+        report.undeliverable,
+        names(&["asleep"]),
+        "the caller is told who it could not reach"
+    );
+    // And the event is recoverable: it is on the unsorted trajectory, which is what the leader
+    // reads.
+    assert!(report.unsorted.is_some());
+    let queued = f.mail.unsorted(50).await.expect("a read");
+    assert_eq!(queued.len(), 1);
+    assert_eq!(
+        queued[0].body.get("subject").and_then(|s| s.as_str()),
+        Some("CI is red")
+    );
+}

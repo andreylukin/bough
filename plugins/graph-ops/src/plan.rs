@@ -169,11 +169,11 @@ pub fn plan_for(
             let Some(parent) = row(&r.parent) else {
                 return refused(OpKind::Split, at_seq, vec![no_such(&r.parent)]);
             };
-            if r.children.len() != cfg.max_children {
+            if r.children.len() != crate::SPLIT_CHILDREN {
                 questions.push(format!(
                     "a split of `{}` takes exactly {} children; {} were named",
                     r.parent,
-                    cfg.max_children,
+                    crate::SPLIT_CHILDREN,
                     r.children.len()
                 ));
             }
@@ -342,9 +342,7 @@ mod tests {
 
     fn cfg() -> crate::GraphConfig {
         crate::GraphConfig {
-            max_children: 2,
             digest_on_fork: false,
-            question_on_ambiguity: true,
         }
     }
 

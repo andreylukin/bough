@@ -96,7 +96,14 @@ impl AgentSetup for ForkSetup {
         };
         // (a) The pin, FIRST: the child must never assemble a projection of its own, not even
         //     once, or the request it sends is not the parent's.
-        let prefix = self.prefix.lock().take().expect("setup runs once");
+        let prefix = self
+            .prefix
+            .lock()
+            .take()
+            .ok_or_else(|| AgentError::SetupFailed {
+                name: agent.name().clone(),
+                detail: "the fork prefix was already consumed: setup runs once".to_string(),
+            })?;
         prefix::pin(agent.ctx(), agent.name(), prefix, self.source.clone())
             .await
             .map_err(|e| failed(format!("pin_prefix: {e}")))?;
@@ -139,7 +146,14 @@ impl AgentSetup for ForkSetup {
             .await
             .map_err(|e| failed(format!("step budget: {e}")))?;
 
-        let spec = self.spec.lock().take().expect("setup runs once");
+        let spec = self
+            .spec
+            .lock()
+            .take()
+            .ok_or_else(|| AgentError::SetupFailed {
+                name: agent.name().clone(),
+                detail: "the fork spec was already consumed: setup runs once".to_string(),
+            })?;
         self.tools
             .register(agent.ctx(), spec)
             .await
@@ -186,11 +200,20 @@ impl WorkerProvider for ForkProvider {
             .0
             .steps(&StepQuery {
                 trajs: vec![parent.clone()],
+                kinds: crate::point::WAKE_KINDS
+                    .iter()
+                    .map(bough_plugin_ledger::StepType::new)
+                    .collect(),
                 order: Order::SeqDesc,
                 ..Default::default()
             })
             .await?;
-        let at_seq = fork_point(&steps_desc).ok_or_else(|| {
+        let head = ledger
+            .0
+            .head_seq(&parent)
+            .await?
+            .unwrap_or(bough_plugin_ledger::Seq(0));
+        let at_seq = fork_point(head, &steps_desc).ok_or_else(|| {
             WorkerError::Seam(format!(
                 "`{parent}` has no closed prefix to fork at: a fork is never clipped into an \
                  open wake"

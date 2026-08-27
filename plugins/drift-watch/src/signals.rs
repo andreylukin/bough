@@ -164,6 +164,14 @@ pub fn flags(signals: &Signals, cfg: &DriftConfig) -> Vec<DriftFlag> {
     if !signals.tool_use.is_empty() && signals.tool_entropy < cfg.tool_entropy_flag {
         out.push(DriftFlag::ToolUseCollapsed);
     }
+    // §8's claim-rejection signal. `Inactive` means "no decided claim in the window", which is
+    // not a low rate and not a high one — it flags nothing, exactly as `TooFewSamples` does for
+    // the other two.
+    if let SignalState::Active { value, n } = &signals.claim_rejection {
+        if *n >= cfg.claim_rejection_min_decided && *value > cfg.claim_rejection_flag {
+            out.push(DriftFlag::ClaimsMostlyRejected);
+        }
+    }
     out
 }
 
@@ -233,6 +241,8 @@ mod tests {
             min_samples: 4,
             thought_len_cv_flag: 1.2,
             tool_entropy_flag: 0.35,
+            claim_rejection_flag: 0.5,
+            claim_rejection_min_decided: 4,
             max_evidence_cites: 24,
             max_state_chars: 400,
         }
@@ -357,6 +367,37 @@ mod tests {
         assert!(
             enough.flags.contains(&DriftFlag::ToolUseCollapsed),
             "{enough:?}"
+        );
+
+        // §8's claim-rejection signal is a FLAG, not merely a number on the `/drift` card. It
+        // was computed and rendered from the start and read by nothing, so no rejection rate at
+        // any level could ever raise anything.
+        let mut rejected: Vec<Step> = drifting.clone();
+        for (i, kind) in [
+            CLAIM_REJECTED,
+            CLAIM_REJECTED,
+            CLAIM_REJECTED,
+            CLAIM_ACCEPTED,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            rejected.push(step(100 + i as u64, kind, serde_json::json!({})));
+        }
+        let flagged = compute(&AgentName::new("a"), win(), &rejected, &cfg());
+        assert!(
+            flagged.flags.contains(&DriftFlag::ClaimsMostlyRejected),
+            "3 of 4 decided claims rejected: {flagged:?}"
+        );
+
+        // One rejected claim is a rate of 1.0 and says nothing: under the decided floor it does
+        // not flag.
+        let mut one: Vec<Step> = drifting.clone();
+        one.push(step(200, CLAIM_REJECTED, serde_json::json!({})));
+        let thin_claims = compute(&AgentName::new("a"), win(), &one, &cfg());
+        assert!(
+            !thin_claims.flags.contains(&DriftFlag::ClaimsMostlyRejected),
+            "{thin_claims:?}"
         );
 
         // A steady agent above the floor is flagged for nothing at all.

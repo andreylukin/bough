@@ -9,7 +9,6 @@ use bough_plugin_commands::{
     Commands, Invocation, OutputRender,
 };
 use bough_plugin_ledger::{AgentName, Seq};
-use bough_plugin_rollups::Attribution;
 
 use crate::{PassPlan, PassReport, PassRequest, ReconHandle};
 
@@ -147,8 +146,10 @@ impl Command for ReconsolidateCommand {
             traj: row.traj,
             at: cx.at,
             since: args.since.map(Seq),
-            // Phase 4 always `System`; Phase 5's leader writes `Agent { name }` unchanged (§8).
-            attribution: Attribution::System,
+            // §8: the pass is leader-attributed once a leader exists. The `leader` row installs
+            // its own name through `attribute_to`; with no leader in the tree this is `System`,
+            // which is what Phase 4 always wrote.
+            attribution: self.recon.attribution(),
             max_calls: None,
         };
         let text = if args.plan_only {

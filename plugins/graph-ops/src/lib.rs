@@ -95,6 +95,14 @@ impl LeaderAsk for MailAsk {
 
 /// The bound seams one graph op spends.
 pub struct GraphInner {
+    /// Where `agents/rows-changed` is published from. Every op writes and deletes `agents` ROWS,
+    /// and the LIVE registry is a different thing: an `Agent`'s trajectory is immutable for its
+    /// life, so after a merge the surviving agent would keep appending to its PRE-MERGE chain and
+    /// the absorbed one would keep running with no row at all, while a split's children would
+    /// have rows and no agent — invisible to `by_name`, so their mail is dropped. This crate does
+    /// not own the disposers and cannot fix that itself; it publishes the fact, and the row that
+    /// owns liveness reconciles.
+    pub ctx: Context,
     pub ledger: bough_plugin_ledger::LedgerHandle,
     pub rollups: bough_plugin_rollups::RollupsHandle,
     pub ask: Arc<dyn LeaderAsk>,
@@ -144,6 +152,20 @@ impl GraphInner {
             .unwrap_or(bough_plugin_ledger::Seq(0)))
     }
 
+    /// Publish what an op did to the `agents` rows, so the live registry can be brought into line
+    /// with them. Emitted only when something actually changed: an op that wrote no row has
+    /// nothing for a reconciler to do.
+    pub fn publish_rows(&self, out: &OpOutcome) {
+        if out.rows_written.is_empty() && out.rows_deleted.is_empty() {
+            return;
+        }
+        self.ctx
+            .emit::<bough_plugin_agents::AgentRowsChanged>(bough_plugin_agents::RowsChanged {
+                written: out.rows_written.clone(),
+                deleted: out.rows_deleted.clone(),
+            });
+    }
+
     /// P5-D7. An EXPLICIT point inside an open wake is an ERROR; an absent one is RESOLVED down to
     /// the last legal seq. Neither pauses the parent and neither clips silently.
     pub async fn resolve_point(
@@ -151,15 +173,24 @@ impl GraphInner {
         parent: &bough_plugin_ledger::AgentRow,
         at_seq: Option<bough_plugin_ledger::Seq>,
     ) -> Result<bough_plugin_ledger::Seq, GraphError> {
+        // FILTERED to the wake vocabulary, which is all this resolver reads. An unfiltered
+        // whole-chain read fails the moment any step type on the chain is un-registered — and
+        // `declare_step_types` is an effect, so disabling any row by patch does exactly that
+        // (D-WP8-5, the same bug, fixed once in `agent-loop`'s repair and left here).
         let chain = self
             .ledger
             .0
             .steps(&bough_plugin_ledger::StepQuery {
                 trajs: vec![parent.traj.clone()],
+                kinds: seq::WAKE_KINDS
+                    .iter()
+                    .map(bough_plugin_ledger::StepType::new)
+                    .collect(),
                 order: bough_plugin_ledger::Order::SeqDesc,
                 ..Default::default()
             })
             .await?;
+        let head = self.head(&parent.traj).await?;
         match at_seq {
             Some(at) => {
                 if let Some(wake) = open_wake_id(&chain, at) {
@@ -167,13 +198,17 @@ impl GraphInner {
                 }
                 Ok(at)
             }
-            None => seq::resolve_point(&chain)
+            None => seq::resolve_point(head, &chain)
                 .ok_or_else(|| GraphError::NoForkPoint(parent.name.clone())),
         }
     }
 
     /// Ask, then refuse. The question is asked FIRST and the op returns `Ambiguous`, so nothing is
     /// written while it is open (§4).
+    ///
+    /// An ask that FAILS is returned as its own error rather than folded into `Ambiguous`: §4's
+    /// rule is that ambiguity reaches Andrey, and a caller told "ambiguous" when nobody was ever
+    /// asked would have no way to learn that the question went nowhere.
     pub async fn refuse<T>(
         &self,
         questions: &[String],
@@ -181,7 +216,7 @@ impl GraphInner {
         at: chrono::DateTime<chrono::Utc>,
     ) -> Result<T, GraphError> {
         let detail = questions.join("; ");
-        if self.cfg.question_on_ambiguity {
+        {
             self.ask
                 .ask(bough_plugin_mail_router::Question {
                     asked_by: PLUGIN_NAME,
@@ -251,16 +286,20 @@ impl GraphOps for GraphInner {
     }
 
     async fn apply(&self, req: &OpRequest) -> Result<OpOutcome, GraphError> {
-        match req {
+        let out = match req {
             OpRequest::Split(r) => split::apply(self, r).await,
             OpRequest::Bud(r) => bud::apply(self, r).await,
             OpRequest::Fork(r) => bud::apply_fork(self, r).await,
             OpRequest::Merge(r) => merge::apply(self, r).await,
-        }
+        }?;
+        self.publish_rows(&out);
+        Ok(out)
     }
 
     async fn undo(&self, req: &UndoRequest) -> Result<OpOutcome, GraphError> {
-        undo::apply(self, req).await
+        let out = undo::apply(self, req).await?;
+        self.publish_rows(&out);
+        Ok(out)
     }
 }
 
@@ -268,15 +307,16 @@ impl GraphOps for GraphInner {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GraphConfig {
-    /// A split takes exactly this many children.
-    pub max_children: usize,
     /// Whether a headless fork gets an inheritance digest. `false` in `bough-base`: a fork has no
     /// row to carry one.
     pub digest_on_fork: bool,
-    /// P5-D9: a TEST SEAM, stated openly. `bough-base` never sets it `false`; it exists so the
-    /// ambiguity tests can assert the refusal path directly instead of through `plan()`.
-    pub question_on_ambiguity: bool,
 }
+
+/// How many children a split takes. §4 says "two heads", the row's own invariant hard-fails on
+/// anything else, and `split::apply` writes exactly this many — so it is a PROTOCOL CONSTANT and
+/// §0.2 keeps it in code. It was a config field, which meant `max_children: 3` composed, booted
+/// and then turned a boot-time typo into a runtime invariant violation.
+pub const SPLIT_CHILDREN: usize = 2;
 
 /// The `graph` row.
 pub struct GraphOpsPlugin;
@@ -327,6 +367,7 @@ impl Plugin for GraphOpsPlugin {
             .clone();
 
         let handle = GraphHandle(Arc::new(GraphInner {
+            ctx: ctx.clone(),
             ledger,
             rollups,
             ask: Arc::new(MailAsk(mail)),

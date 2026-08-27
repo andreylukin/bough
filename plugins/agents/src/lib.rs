@@ -33,9 +33,9 @@ pub use create::{AgentDisposer, AgentSetup, CreateAgent, CreateSpec, ResumeAgent
 pub use error::AgentError;
 pub use events::{
     Admit, AgentContinuation, AgentCreated, AgentDisposed, AgentInbox, AgentPreStep, AgentPreempt,
-    AgentStatusChanged, AgentStep, AgentWake, AgentWakeEnd, AgentWakeRequest, AgentWakeStopping,
-    Continuation, Phase, PreStep, PreStepDecision, Preempt, StatusChange, StepEvent, TriggerFacts,
-    WakeAdmission, WakeEnded, WakeEvent, WakeStopping,
+    AgentRowsChanged, AgentStatusChanged, AgentStep, AgentWake, AgentWakeEnd, AgentWakeRequest,
+    AgentWakeStopping, Continuation, Phase, PreStep, PreStepDecision, Preempt, RowsChanged,
+    StatusChange, StepEvent, TriggerFacts, WakeAdmission, WakeEnded, WakeEvent, WakeStopping,
 };
 pub use factory::{AgentCell, AgentDriver, AgentFactory, Attach, ClaimSelector};
 pub use ids::{AgentId, MessageId, SessionId, WorkerId};

@@ -69,9 +69,12 @@ export -f open_picker
 t the_picker_lists_the_agents_branches \
   bash -c 'open_picker && see "lane/bud" --timeout 15000'
 
-# A child WITH an `agents` row is a lane; one without is a fork. Both words are on the picker.
+# A child WITH an `agents` row is a LANE; one without is a FORK. The label is asserted ON THE ROW
+# it labels: `see "lane" && see "fork"` was vacuous, because the fixture's own trajectory ids are
+# `lane/bud` and `traj/fork-of-sol` and both were already on screen — the bullet would have passed
+# unchanged if `Branch::word()` returned the empty string for both kinds.
 t a_lane_child_and_a_fork_child_are_labelled_differently \
-  bash -c 'see "lane" --timeout 10000 && see "fork" --timeout 10000'
+  bash -c 'row_with "lane/bud" "lane" && row_with "traj/fork-of-sol" "fork"'
 
 # Select the FORK: the pane switches to a trajectory that has no agent at all. The picker is a
 # keyboard list (`branches::BranchPicker::on_key`), so selection is Down-until-then-Enter, not a

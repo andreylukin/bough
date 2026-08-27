@@ -71,10 +71,17 @@ if [ -z "$BOUGH_LIVE" ]; then
   shell-use type "say the whole sentence please"
   shell-use press Enter
 
-  # While STREAMING: the first fragment is a row of its own until the tail arrives, and the moment
-  # it does the two must be one row — never "the first fragment" over " and the rest of it".
-  t a_two_chunk_answer_renders_as_one_paragraph_while_streaming \
+  # The two chunks are ONE row, and — the half that actually catches the field bug — the first
+  # fragment is never left standing as a row of its own beside the tail.
+  #
+  # HONESTY: this does NOT pin the mid-stream moment. `one_line_with` polls for up to 30s, by
+  # which time the durable `thought/text` steps have landed, so an on-screen bullet named "while
+  # streaming" would assert exactly the same state as the one below it. The mid-stream rule (the
+  # renderer's `trailing_text` clause) is pinned purely, in `tui-focus/tests/stream.rs`.
+  t a_two_chunk_answer_renders_as_one_paragraph \
     one_line_with "the first fragment and the rest of it"
+  t the_first_fragment_is_never_a_row_of_its_own \
+    bash -c 'no_row_is_exactly "the first fragment"'
 
   shell-use wait idle --timeout 30000 >/dev/null
   t and_still_one_paragraph_after_the_step_lands \
@@ -85,7 +92,8 @@ if [ -z "$BOUGH_LIVE" ]; then
   # text flush folds its two chunks into ONE durable `thought/text` step, so "the ledger still
   # holds two" would be false here for a reason that has nothing to do with the render.
 else
-  skip a_two_chunk_answer_renders_as_one_paragraph_while_streaming "the live half cannot pin a chunk boundary"
+  skip a_two_chunk_answer_renders_as_one_paragraph "the live half cannot pin a chunk boundary"
+  skip the_first_fragment_is_never_a_row_of_its_own "the live half cannot pin a chunk boundary"
   skip and_still_one_paragraph_after_the_step_lands "the live half cannot pin a chunk boundary"
   skip the_ledger_still_holds_two_thought_text_steps "the live half cannot pin a chunk boundary"
 fi
@@ -114,15 +122,22 @@ t a_click_back_returns_to_the_first \
 # Back to the composer first: the click bullets above left the pane focus on the strip, and a
 # command submitted then goes to the pane under the pointer.
 focus_composer
-# ONE reason word: `/sleep`'s args are two POSITIONALS, so a sentence is more arguments than the
-# spec admits and the command answers with its usage line instead of sleeping.
-shell-use submit "/sleep luna nothing-to-do-this-week"
+# A REAL sentence. `/sleep <agent> [reason…]` advertises a reason, and its schema now admits the
+# rest of the line as one: the arg list used to be capped at two words, so every reason this suite
+# could give was a single hyphenated token.
+shell-use submit "/sleep luna nothing to do this week"
 shell-use wait idle --timeout 10000 >/dev/null
 
 # `◌` is the glyph and `dormant` is the word (§11: the strip carries both, so a terminal without
-# the glyph still says which state a rail is in).
+# the glyph still says which state a rail is in). The assertion is on LUNA'S RAIL ROW — the name
+# and the glyph on ONE line. Asserting `see "dormant"` alone would be satisfied by the command's
+# own echo in the notice band, whether or not the rail ever changed.
 t a_dormant_lane_shows_the_dormant_glyph \
-  bash -c 'see "dormant" --timeout 10000'
+  bash -c 'row_with "luna" "◌"'
+t and_the_word_beside_it \
+  bash -c 'row_with "luna" "dormant"'
+t the_reason_is_the_whole_sentence \
+  bash -c "[ \"\$(sql \"select count(*) from steps where type = 'agent/dormancy' and body like '%nothing to do this week%';\")\" -ge 1 ]"
 
 tui_quit
 tui_close

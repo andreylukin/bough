@@ -1,7 +1,12 @@
-//! Invariant: this module is PURE, and it is the reason ambiguity can NEVER be guessed. A ref
-//! claimed by two children, or a ref of the parent claimed by none while the parent is being
-//! absorbed, is AMBIGUOUS — never resolved by order, by name, or by "most specific". Breaking a
-//! tie silently is how mail ends up in the wrong lane with nobody able to say when it started.
+//! Invariant: this module is PURE, and it is the reason a CONTESTED ref can never be guessed. A
+//! ref claimed by two children is AMBIGUOUS — never resolved by order, by name, or by "most
+//! specific". Breaking a tie silently is how mail ends up in the wrong lane with nobody able to
+//! say when it started.
+//!
+//! A ref claimed by NOBODY is not ambiguous and is not a tie: it stays with the parent, whose row
+//! survives a split (see `split.rs` and the deviation recorded in `docs/phase-5-plan.md`). A
+//! parent that keeps a ref is a parent that keeps receiving that mail — the alternative is a
+//! black hole, which is the one outcome §3 forbids outright.
 
 use std::collections::{BTreeMap, BTreeSet};
 

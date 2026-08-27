@@ -139,12 +139,19 @@ impl MailHandle {
         to: Vec<AgentName>,
     ) -> Result<RouteReport, MailError> {
         let mut delivered: Vec<(AgentName, InboxReceipt)> = Vec::new();
+        let mut undeliverable: Vec<AgentName> = Vec::new();
+        let mut stranded: Option<StepId> = None;
         for name in &to {
             let Some(agent) = self.0.agents.by_name(name) else {
-                // A matched lane with no live handle. With `deliver_to_dormant` (the default) the
-                // fan-out continues and the report shows it matched but was not delivered to; a
-                // deployment that wants that to be loud turns the flag off.
-                if self.0.cfg.deliver_to_dormant {
+                // A matched lane with no live handle. Skipping it silently would DROP the event:
+                // no ledger row would name it and nothing could recover it. So the item is written
+                // to the unsorted trajectory exactly as a zero-match item is — the leader's queue
+                // is §3's recovery surface — and the report says who it could not reach.
+                if self.0.cfg.tolerate_absent_lane {
+                    undeliverable.push(name.clone());
+                    if stranded.is_none() {
+                        stranded = Some(self.append_unrouted(env).await?);
+                    }
                     continue;
                 }
                 return Err(MailError::NotLive(name.clone()));
@@ -163,15 +170,14 @@ impl MailHandle {
         Ok(RouteReport {
             matched: to,
             delivered,
-            unsorted: None,
+            undeliverable,
+            unsorted: stranded,
             adopted: false,
         })
     }
 
-    /// The zero-match path: one durable `mail/unrouted` step, plus — only when a sink is mounted —
-    /// ONE ordinary-class delivery to the sink's agent. Ordinary, never wake: an unsorted item is
-    /// the leader's inbox work, not a reason to interrupt it (§5).
-    async fn queue_unsorted(&self, env: &Arc<Envelope>) -> Result<RouteReport, MailError> {
+    /// The one durable write both the zero-match path and the absent-lane path share.
+    async fn append_unrouted(&self, env: &Arc<Envelope>) -> Result<StepId, MailError> {
         let step = self
             .0
             .ledger
@@ -194,6 +200,14 @@ impl MailHandle {
             })
             .await
             .map_err(|e| MailError::Unsorted(e.to_string()))?;
+        Ok(step.id)
+    }
+
+    /// The zero-match path: one durable `mail/unrouted` step, plus — only when a sink is mounted —
+    /// ONE ordinary-class delivery to the sink's agent. Ordinary, never wake: an unsorted item is
+    /// the leader's inbox work, not a reason to interrupt it (§5).
+    async fn queue_unsorted(&self, env: &Arc<Envelope>) -> Result<RouteReport, MailError> {
+        let step = self.append_unrouted(env).await?;
 
         let mut delivered = Vec::new();
         let mut adopted = false;
@@ -215,7 +229,8 @@ impl MailHandle {
         Ok(RouteReport {
             matched: Vec::new(),
             delivered,
-            unsorted: Some(step.id),
+            undeliverable: Vec::new(),
+            unsorted: Some(step),
             adopted,
         })
     }
@@ -319,6 +334,7 @@ impl MailHandle {
                     agent: name.clone(),
                     added: added.iter().cloned().collect(),
                     removed: removed.iter().cloned().collect(),
+                    wake_classes: None,
                     by: Attribution::System,
                 })
                 .expect("AgentRouting serializes"),
@@ -339,6 +355,62 @@ impl MailHandle {
             backfilled: 0,
             now_connected: connected.ref_matches,
         })
+    }
+
+    /// Set an agent's wake classes and append `agent/routing` naming them (§5: a wake class is
+    /// per-agent MUTABLE CONFIG, and the only thing that lets `MailClass::Wake` mail reactivate a
+    /// dormant lane). Idempotent: setting the classes a row already has appends nothing.
+    pub async fn set_wake_classes(
+        &self,
+        agent: &AgentName,
+        classes: BTreeSet<String>,
+        at: DateTime<Utc>,
+    ) -> Result<BTreeSet<String>, MailError> {
+        let row = self
+            .0
+            .ledger
+            .0
+            .agent(agent)
+            .await?
+            .ok_or_else(|| MailError::NoSuchAgent(agent.clone()))?;
+        if row.wake_classes == classes {
+            return Ok(classes);
+        }
+        let traj = row.traj.clone();
+        let name = row.name.clone();
+        self.0
+            .ledger
+            .0
+            .put_agent(bough_plugin_ledger::AgentRow {
+                wake_classes: classes.clone(),
+                ..row
+            })
+            .await?;
+        self.0
+            .ledger
+            .0
+            .append(Append {
+                traj,
+                wake: bough_plugin_agents::mail::outside_wake(),
+                kind: StepType::new("agent/routing"),
+                class: Class::Evidence,
+                body: serde_json::to_value(AgentRouting {
+                    agent: name.clone(),
+                    added: Vec::new(),
+                    removed: Vec::new(),
+                    wake_classes: Some(classes.iter().cloned().collect()),
+                    by: Attribution::System,
+                })
+                .expect("AgentRouting serializes"),
+                cites: vec![Cite {
+                    r#ref: Ref::new(format!("agent:{name}")),
+                    url: None,
+                }],
+                at,
+                id: None,
+            })
+            .await?;
+        Ok(classes)
     }
 
     /// §4's "ambiguous routing becomes a leader question, never a guess". Appends
@@ -378,26 +450,88 @@ impl MailHandle {
     }
 
     /// The unsorted queue, oldest first: what the leader's `adopt_unsorted` reads.
+    ///
+    /// An item that a `mail/adopted` step already names is NOT in it. Without that clause the
+    /// queue never drains: a leader that reads the oldest N on every wake reads the same N
+    /// forever, re-adopts them, re-delivers the mail, and starves everything queued behind them.
+    /// Adoption is the only thing that consumes an unsorted item, so it is the only thing that can
+    /// define the queue.
     pub async fn unsorted(&self, limit: usize) -> Result<Vec<Step>, MailError> {
-        Ok(self
+        let want = limit.min(self.0.cfg.unsorted_limit);
+        let taken = self.adopted_ids().await?;
+        let mut out: Vec<Step> = Vec::new();
+        let mut after: Option<bough_plugin_ledger::Seq> = None;
+        // Paged, because the ANSWER is `want` unadopted items and the page may be all adopted.
+        loop {
+            if out.len() >= want {
+                break;
+            }
+            let page = self
+                .0
+                .ledger
+                .0
+                .steps(&StepQuery {
+                    trajs: vec![self.unsorted_traj()],
+                    kinds: vec![StepType::new("mail/unrouted")],
+                    order: Order::SeqAsc,
+                    after,
+                    limit: Some(self.0.cfg.unsorted_limit.max(1)),
+                    ..Default::default()
+                })
+                .await?;
+            let Some(last) = page.last().map(|s| s.seq) else {
+                break;
+            };
+            after = Some(last);
+            for step in page {
+                if taken.contains(&step.id) {
+                    continue;
+                }
+                out.push(step);
+                if out.len() >= want {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Every unrouted step id a `mail/adopted` step already names.
+    async fn adopted_ids(&self) -> Result<std::collections::BTreeSet<StepId>, MailError> {
+        let mut taken = std::collections::BTreeSet::new();
+        for step in self
             .0
             .ledger
             .0
             .steps(&StepQuery {
                 trajs: vec![self.unsorted_traj()],
-                kinds: vec![StepType::new("mail/unrouted")],
+                kinds: vec![StepType::new("mail/adopted")],
                 order: Order::SeqAsc,
-                limit: Some(limit.min(self.0.cfg.unsorted_limit)),
                 ..Default::default()
             })
-            .await?)
+            .await?
+        {
+            if let Ok(body) = serde_json::from_value::<MailAdopted>((*step.body).clone()) {
+                taken.insert(body.unrouted);
+            }
+        }
+        Ok(taken)
     }
 
     /// Mark unsorted items adopted by an agent: appends `mail/adopted` and re-routes them to it.
+    ///
+    /// `by` is WHO ADOPTED — the leader — and `to` is the lane the item is being routed to. They
+    /// are almost never the same name, which is the whole point of the leader's curation being
+    /// attributable (§2).
+    ///
+    /// Idempotent: an item a `mail/adopted` step already names is skipped, appending nothing and
+    /// delivering nothing. Adoption is a delivery, and a delivery that can happen twice is a
+    /// double consumption.
     pub async fn adopt(
         &self,
         to: &AgentName,
         steps: &[StepId],
+        by: Attribution,
         at: DateTime<Utc>,
     ) -> Result<Vec<InboxReceipt>, MailError> {
         let agent = self
@@ -405,8 +539,12 @@ impl MailHandle {
             .agents
             .by_name(to)
             .ok_or_else(|| MailError::NotLive(to.clone()))?;
+        let taken = self.adopted_ids().await?;
         let mut out = Vec::with_capacity(steps.len());
         for id in steps {
+            if taken.contains(id) {
+                continue;
+            }
             let step = self
                 .0
                 .ledger
@@ -432,7 +570,7 @@ impl MailHandle {
                     body: serde_json::to_value(MailAdopted {
                         unrouted: id.clone(),
                         to: to.clone(),
-                        by: Attribution::Agent { name: to.clone() },
+                        by: by.clone(),
                     })
                     .expect("MailAdopted serializes"),
                     cites: vec![cite.clone()],
@@ -470,9 +608,12 @@ impl MailHandle {
         sink: Arc<dyn UnsortedSink>,
     ) -> Result<EffectHandle, PluginError> {
         let inner = self.0.clone();
-        let previous = { inner.sink.lock().replace(sink.clone()) };
         let mine = sink;
+        // The slot is replaced INSIDE the effect, after the effect exists. Replacing it first
+        // would evict the previous sink even when `ctx.effect` fails, leaving a row that reported
+        // failure quietly holding the routing of every unsorted item.
         ctx.effect(move |e| async move {
+            let previous = { inner.sink.lock().replace(mine.clone()) };
             e.defer_sync(move || {
                 let mut slot = inner.sink.lock();
                 // Only give the slot back if it is still OURS: a later installer is not ours to
@@ -525,11 +666,15 @@ pub struct MailConfig {
     pub unsorted_traj: String,
     /// How many unsorted items one `unsorted()` read returns at most.
     pub unsorted_limit: usize,
-    /// Defaults `true`, and NOT a dormancy switch: §5 says mail QUEUES for a dormant agent, so
-    /// delivery happens and the WAKE is what dormancy suppresses. What it governs is the ONE case
-    /// this seam can observe on its own: a matched lane with no live handle at all. `true` keeps
-    /// the fan-out going past it; `false` makes it a loud [`MailError::NotLive`].
-    pub deliver_to_dormant: bool,
+    /// What to do when a MATCHED lane has no live handle at all — a row that exists in the
+    /// registry while its agent is not up. `true` keeps the fan-out going past it and records the
+    /// undelivered item on the unsorted trajectory so it stays recoverable (§3); `false` makes it
+    /// a loud [`MailError::NotLive`].
+    ///
+    /// It was called `deliver_to_dormant` and that name was wrong twice over: dormancy never
+    /// removes an agent's handle (it defers WAKES), so this flag has nothing to do with dormancy,
+    /// and `true` never meant "deliver" — it meant "do not fail".
+    pub tolerate_absent_lane: bool,
 }
 
 /// The `mail` row.

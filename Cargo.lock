@@ -504,6 +504,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -687,6 +688,7 @@ dependencies = [
  "bough-plugin-mail-router",
  "bough-plugin-projection",
  "bough-plugin-projection-assembler",
+ "bough-plugin-reconsolidation",
  "bough-plugin-rollups",
  "bough-util",
  "chrono",

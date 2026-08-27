@@ -207,6 +207,9 @@ pub enum SignalState {
 pub enum DriftFlag {
     ThoughtLengthUnstable,
     ToolUseCollapsed,
+    /// §8's claim-rejection signal, over its threshold: Andrey is rejecting what this agent
+    /// proposes, which is drift no length or entropy statistic can see.
+    ClaimsMostlyRejected,
     TooFewSamples,
 }
 
@@ -244,6 +247,13 @@ pub struct DriftConfig {
     pub thought_len_cv_flag: f64,
     /// Normalised entropy below which [`DriftFlag::ToolUseCollapsed`] is raised.
     pub tool_entropy_flag: f64,
+    /// Rejected-over-decided above which [`DriftFlag::ClaimsMostlyRejected`] is raised. The
+    /// signal was computed and rendered from the start; without a threshold it could never become
+    /// a FLAG, which is what §8 asks a drift signal to be.
+    pub claim_rejection_flag: f64,
+    /// How many DECIDED claims the rate needs before it is allowed to flag. A single rejected
+    /// claim is a rate of 1.0 and says nothing (§16, the `min_samples` rule again).
+    pub claim_rejection_min_decided: usize,
     /// How many raw steps a `/reset` cites under the rebuilt state half.
     pub max_evidence_cites: usize,
     /// How long the rebuilt STATE half may be, in characters. The same quantity the `about-line`

@@ -85,15 +85,90 @@ async fn with_no_sink_the_queue_keeps_it_and_a_later_sink_adopts_it() {
         .await
         .expect("the sink mounts");
     f.lane("ci", &[]).await;
+    // The LEADER adopts, and routes the item to the lane that should have had it. `by` is the
+    // leader; `to` is `ci`. They are different names, and the ledger records both.
     let receipts = f
         .mail
-        .adopt(&AgentName::new("ci"), &[queued[0].id.clone()], now())
+        .adopt(
+            &AgentName::new("ci"),
+            &[queued[0].id.clone()],
+            bough_plugin_rollups::Attribution::Agent {
+                name: AgentName::new("leader"),
+            },
+            now(),
+        )
         .await
         .expect("an adoption");
 
     assert_eq!(receipts.len(), 1);
-    assert_eq!(f.steps_on("unsorted", "mail/adopted").await.len(), 1);
+    let adopted = f.steps_on("unsorted", "mail/adopted").await;
+    assert_eq!(adopted.len(), 1);
+    assert_eq!(
+        adopted[0].body.get("by").and_then(|b| b.get("name")),
+        Some(&serde_json::json!("leader")),
+        "the LEADER adopted; `ci` merely received"
+    );
     assert_eq!(f.steps_on("t-ci", "mail/delivered").await.len(), 1);
+}
+
+/// The queue is only a queue if adoption REMOVES from it. Without this, a leader that reads the
+/// oldest N on every wake reads the same N forever: duplicate delivery, and starvation of
+/// everything behind them.
+#[tokio::test]
+async fn an_adopted_item_leaves_the_queue_and_a_second_pass_is_a_no_op() {
+    let f = fixture().await;
+    f.lane("leader", &[]).await;
+    f.lane("ci", &[]).await;
+
+    for subject in ["first", "second"] {
+        f.mail
+            .route(envelope(subject, &["repo:bough"]))
+            .await
+            .expect("a route");
+    }
+    let queued = f.mail.unsorted(1).await.expect("a read");
+    assert_eq!(queued.len(), 1);
+    assert_eq!(
+        queued[0].body.get("subject").and_then(|s| s.as_str()),
+        Some("first"),
+        "oldest first"
+    );
+
+    let by = bough_plugin_rollups::Attribution::Agent {
+        name: AgentName::new("leader"),
+    };
+    f.mail
+        .adopt(
+            &AgentName::new("ci"),
+            &[queued[0].id.clone()],
+            by.clone(),
+            now(),
+        )
+        .await
+        .expect("an adoption");
+
+    // The window ADVANCES: the second item is now what a `limit: 1` read returns.
+    let next = f.mail.unsorted(1).await.expect("a read");
+    assert_eq!(next.len(), 1);
+    assert_eq!(
+        next[0].body.get("subject").and_then(|s| s.as_str()),
+        Some("second"),
+        "the adopted item left the queue"
+    );
+
+    // And adopting the same item again delivers nothing and appends nothing.
+    let again = f
+        .mail
+        .adopt(&AgentName::new("ci"), &[queued[0].id.clone()], by, now())
+        .await
+        .expect("a second pass");
+    assert!(again.is_empty(), "an already-adopted item is skipped");
+    assert_eq!(f.steps_on("unsorted", "mail/adopted").await.len(), 1);
+    assert_eq!(
+        f.steps_on("t-ci", "mail/delivered").await.len(),
+        1,
+        "never delivered twice"
+    );
 }
 
 #[tokio::test]

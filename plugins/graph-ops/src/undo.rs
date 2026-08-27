@@ -70,6 +70,9 @@ pub async fn apply(inner: &GraphInner, req: &UndoRequest) -> Result<OpOutcome, G
     let mut digests = Vec::new();
     let mut rows_deleted: Vec<AgentName> = Vec::new();
     let mut rows_written: Vec<AgentName> = Vec::new();
+    // Counted, never assumed: each absorbed child is a full merge, and a two-child split whose
+    // children were both lived in writes twice what a single merge does.
+    let mut edges = 0usize;
 
     if lived_in.is_empty() {
         // POINTERS. No digest, no model call, nothing summarised: there is nothing to reconcile.
@@ -144,6 +147,7 @@ pub async fn apply(inner: &GraphInner, req: &UndoRequest) -> Result<OpOutcome, G
         digests.extend(out.digests);
         rows_written.extend(out.rows_written);
         rows_deleted.extend(out.rows_deleted);
+        edges += out.edges;
     }
     for c in &unused {
         if let Some(name) = &c.agent {
@@ -158,7 +162,7 @@ pub async fn apply(inner: &GraphInner, req: &UndoRequest) -> Result<OpOutcome, G
         kind: OpKind::Undo,
         step,
         trajs,
-        edges: 2,
+        edges,
         digests,
         rows_written,
         rows_deleted,

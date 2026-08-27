@@ -222,6 +222,7 @@ async fn apply_structure(
     req: &DecideRequest,
 ) -> Result<(Option<OpOutcome>, Option<AgentName>), ClaimsError> {
     let by = Attribution::Andrey;
+    let undo_by = by.clone();
     let cites = vec![cite_step(&claim.proposal)];
     let reason = format!("claim {} accepted: {}", claim.claim, claim.title);
 
@@ -272,8 +273,41 @@ async fn apply_structure(
                     drop(disposer);
                     Ok((Some(outcome), Some(name.clone())))
                 }
+                // The row's own reconciler (`agents/rows-changed` → `residents`) may have brought
+                // the lane up between the bud and here. That IS the outcome this branch wants;
+                // treating it as a failure would tear down a healthy lane.
+                Err(bough_plugin_agents::AgentError::AlreadyLive(_)) => {
+                    Ok((Some(outcome), Some(name.clone())))
+                }
                 Err(e) => {
-                    inner.ledger.0.delete_agent(name).await?;
+                    // The bud is already COMMITTED — the child trajectory, the ancestor edge, the
+                    // inheritance digest and the cited `graph/bud` step. Deleting the row alone
+                    // would leave that cited fact naming an agent that no longer exists, which is
+                    // exactly what P5-D8's append-last ordering exists to prevent. So the op is
+                    // UNDONE through the operation that exists for it, and the undo is itself a
+                    // truthful record.
+                    let undo = inner
+                        .graph
+                        .0
+                        .undo(&bough_plugin_graph_ops::UndoRequest {
+                            of: outcome.step.clone(),
+                            by: undo_by.clone(),
+                            at: req.at,
+                        })
+                        .await;
+                    if let Err(ue) = &undo {
+                        tracing::error!(
+                            agent = %name,
+                            error = %ue,
+                            "claims: the lane could not be brought up AND the bud could not be \
+                             undone; the row is deleted and the bud step stands"
+                        );
+                    }
+                    // Belt and braces: the undo deletes the row, but a failed undo must not leave
+                    // a row with nobody in it.
+                    if inner.ledger.0.agent(name).await?.is_some() {
+                        inner.ledger.0.delete_agent(name).await?;
+                    }
                     Err(ClaimsError::Other(anyhow::anyhow!(
                         "lane `{name}` could not be brought up: {e}"
                     )))

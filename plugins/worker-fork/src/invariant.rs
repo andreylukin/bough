@@ -116,10 +116,14 @@ async fn check(ctx: Context) -> Result<(), InvariantViolation> {
                     anchor.traj, anchor.of_agent, anchor.as_of.0
                 ))
             })?;
+        // FILTERED: `newest_header_digest` reads `request/header` and nothing else, and an
+        // unfiltered whole-chain read fails as soon as any step type on the chain has been
+        // un-registered by a patch (D-WP8-5).
         let child = ledger
             .0
             .steps(&StepQuery {
                 trajs: vec![anchor.traj.clone()],
+                kinds: vec![bough_plugin_ledger::StepType::new(REQUEST_HEADER)],
                 ..Default::default()
             })
             .await

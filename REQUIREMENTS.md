@@ -288,12 +288,17 @@ A Consumer of `ledger` and `agents`; nothing in the ledger Provider knows about 
 - **Split**: append a cited split event, create two heads with ancestor edges, write one inheritance
   digest per child (the only LLM cost), reassign routing refs. The past is never partitioned.
 - **Merge**: one new head, two edges of kind `merge` (distinguishing them from birth ancestry), one
-  reconciliation digest. Both sides' sealed tiers stay valid.
+  reconciliation digest. Both sides' sealed tiers stay valid. The head ALSO carries an `ancestor`
+  edge to each parent, because `connected()` derives membership from ancestry alone and a head
+  joined only by merge edges would read neither past; the `merge` edges remain the fact of the
+  merge, and any reader that means "birth" must exclude a child that has one.
 - **Bud (retroactive birth)**: a split whose point is in the past; the parent never pauses.
 - **Fork** (interactive branching): a bud with no agents row and no routing: a headless scratch
   branch for exploration, promotable to an agent later by adding the row.
 - Undoing an unused split is pointers; undoing a lived-in one is a merge (reconciliation digest,
-  rerouting, divergent heads left behind). Ambiguous routing becomes a leader question, never a guess.
+  rerouting, divergent heads left behind). Ambiguous routing becomes a leader question, never a
+  guess. "Ambiguous" is a ref two children BOTH claim; a ref neither claims is not a tie and stays
+  with the parent, whose row survives the split rather than becoming a black hole.
 
 ## 5. Scheduling and activation (plugins `mail-router`, `wake-scheduler`, `preemption`, `projection`)
 
@@ -338,6 +343,13 @@ A Consumer of `ledger` and `agents`; nothing in the ledger Provider knows about 
   closes when nothing is owed. A STEP is one model request plus the tools it calls.
 
   ```
+  -> agent/wake-request            waterfall over ADMISSION, dispatched by every loop Provider
+                                   immediately BEFORE the wake is opened: open | defer{by,reason}.
+                                   A deferral means the wake never exists — no wake/start, no
+                                   claim, no step — which is what §1's "a dormant agent costs
+                                   nothing" requires; agent/pre-step is too late, because it
+                                   rejects inside an already-durable wake. Default with no
+                                   listener is open. (Added in Phase 5 by `dormancy`.)
   wake/start                       (durable)
     claim trigger + queued mail per the urgency rules above (a pure deletion splice from the
     inbox; between steps only next-step input is claimed)

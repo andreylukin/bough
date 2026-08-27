@@ -80,6 +80,8 @@ mod tests {
             min_samples: 20,
             thought_len_cv_flag: 1.2,
             tool_entropy_flag: 0.35,
+            claim_rejection_flag: 0.5,
+            claim_rejection_min_decided: 4,
             max_evidence_cites: 24,
             max_state_chars: 400,
         }

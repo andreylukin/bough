@@ -94,7 +94,7 @@ async fn live() -> Live {
         Arc::new(MailConfig {
             unsorted_traj: "unsorted".into(),
             unsorted_limit: 200,
-            deliver_to_dormant: true,
+            tolerate_absent_lane: true,
         }),
     );
     let digests = Arc::new(RecordingDigests {
@@ -102,14 +102,13 @@ async fn live() -> Live {
         calls: Mutex::new(Vec::new()),
     });
     let graph = GraphInner {
+        ctx: ctx.clone(),
         ledger: ledger.clone(),
         rollups: RollupsHandle(digests as Arc<dyn Summarizer>),
         // THE LIVE SEAM: the real `ctx.mail.ask_leader`, not a recorder.
         ask: Arc::new(MailAsk(mail.clone())) as Arc<dyn LeaderAsk>,
         cfg: Arc::new(GraphConfig {
-            max_children: 2,
             digest_on_fork: false,
-            question_on_ambiguity: true,
         }),
     };
     Live {

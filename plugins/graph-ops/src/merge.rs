@@ -21,10 +21,16 @@ pub async fn apply(inner: &GraphInner, req: &MergeRequest) -> Result<OpOutcome, 
             &inner.cfg,
         );
         // The question is asked; the refusal is the SPECIFIC one, so the caller learns what is
-        // missing rather than the generic "ambiguous".
-        let _ = inner
+        // missing rather than the generic "ambiguous". But an ask that FAILED is not discarded:
+        // `NoSurvivor` would then be a lie by omission — nobody was asked, and nobody would know.
+        if let Err(e) = inner
             .refuse::<OpOutcome>(&plan.questions, req.cites.clone(), req.at)
-            .await;
+            .await
+        {
+            if !matches!(e, GraphError::Ambiguous { .. }) {
+                return Err(e);
+            }
+        }
         return Err(GraphError::NoSurvivor);
     }
     let survivor = inner.row(&req.survivor).await?;

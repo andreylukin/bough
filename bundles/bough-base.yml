@@ -150,6 +150,8 @@
     min_samples: 20
     thought_len_cv_flag: 1.2
     tool_entropy_flag: 0.35
+    claim_rejection_flag: 0.5
+    claim_rejection_min_decided: 4
     # How many raw steps a `/reset` cites, and how long the rebuilt state half may be. The second
     # is the same quantity the `about-line` row carries as `max_state_chars`: patch both together.
     max_evidence_cites: 24
@@ -168,7 +170,7 @@
     unsorted_limit: 200
     # NOT a dormancy switch: §5 says mail QUEUES for a dormant agent, so delivery happens and the
     # WAKE is what dormancy suppresses.
-    deliver_to_dormant: true
+    tolerate_absent_lane: true
 - id: dormancy
   plugin: dormancy
   config:
@@ -176,9 +178,9 @@
 - id: graph
   plugin: graph-ops
   config:
-    max_children: 2
+    # (max_children is a protocol constant in code: §4 says two heads)
     digest_on_fork: false
-    question_on_ambiguity: true
+    # (question_on_ambiguity withdrawn: §4 always asks)
 - id: claims
   plugin: claims
   config:

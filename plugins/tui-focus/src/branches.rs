@@ -36,19 +36,32 @@ impl Branch {
 
 /// PURE: the ancestor CHILDREN of one trajectory, oldest first.
 ///
-/// `EdgeKind::Merge` edges are excluded: a merge edge points at history that flowed IN, and
-/// offering it as a branch to switch to would show the same steps under two names. Oldest first
-/// is by `at_seq` — where the branch left the parent — with the trajectory id breaking ties, so
-/// the order is total and a redraw never reshuffles the list under the cursor.
+/// A merge is excluded, and excluding it takes BOTH clauses: `graph-ops` writes a merge head an
+/// `EdgeKind::Merge` edge AND an `EdgeKind::Ancestor` edge to each parent (the ancestor edge is
+/// what keeps the merged past readable, since `connected()` follows ancestry only), so filtering
+/// on the kind alone would show a merge head as a birth. A child that has a merge edge to this
+/// parent is a merge, whatever else it also has.
+///
+/// A merge edge points at history that flowed IN, and offering it as a branch to switch to would
+/// show the same steps under two names. Oldest first is by `at_seq` — where the branch left the
+/// parent — with the trajectory id breaking ties, so the order is total and a redraw never
+/// reshuffles the list under the cursor.
 pub fn branches_from_edges(
     edges: &[Edge],
     parent: &TrajId,
     lane_of: &dyn Fn(&TrajId) -> Option<AgentName>,
     steps_of: &dyn Fn(&TrajId) -> usize,
 ) -> Vec<Branch> {
+    let merged: std::collections::BTreeSet<&TrajId> = edges
+        .iter()
+        .filter(|e| e.kind == EdgeKind::Merge && e.parent == *parent)
+        .map(|e| &e.child)
+        .collect();
     let mut out: Vec<Branch> = edges
         .iter()
-        .filter(|e| e.kind == EdgeKind::Ancestor && e.parent == *parent)
+        .filter(|e| {
+            e.kind == EdgeKind::Ancestor && e.parent == *parent && !merged.contains(&e.child)
+        })
         .map(|e| Branch {
             traj: e.child.clone(),
             at_seq: e.at_seq,

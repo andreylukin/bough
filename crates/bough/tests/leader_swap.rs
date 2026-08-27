@@ -411,3 +411,71 @@ async fn moving_it_back_restores_the_first_agent() {
     assert!(!has_persona(&kernel, "terra").await);
     kernel.shutdown().await;
 }
+
+/// §8: "the reconsolidation pass … leader-attributed once the leader exists in Phase 5". The
+/// `leader.config.attribute_reconsolidation` field is what turns it on, and this is the bullet
+/// that makes it a live field rather than an inert one — it moves with the set, like everything
+/// else the leader row owns.
+#[tokio::test]
+async fn the_reconsolidation_pass_is_attributed_to_the_leader_and_moves_with_it() {
+    let _guard = trace::test_lock();
+    let (kernel, dir) = boot().await;
+    let recon = kernel
+        .root()
+        .peek_live::<bough_plugin_reconsolidation::Reconsolidation>()
+        .expect("the `reconsolidation` row is in bough-base");
+    assert_eq!(
+        recon.attribution(),
+        bough_plugin_rollups::Attribution::Agent {
+            name: AgentName::new("sol")
+        },
+        "the pass is written by the leader, not by `System`"
+    );
+
+    write_patch(&dir, MOVE_TO_TERRA);
+    recompose(&kernel, "", &dir)
+        .await
+        .expect("the moved tree composes");
+
+    let recon = kernel
+        .root()
+        .peek_live::<bough_plugin_reconsolidation::Reconsolidation>()
+        .expect("still bound");
+    assert_eq!(
+        recon.attribution(),
+        bough_plugin_rollups::Attribution::Agent {
+            name: AgentName::new("terra")
+        },
+        "the attribution is the leader row's own effect, so it moved with the set"
+    );
+    kernel.shutdown().await;
+}
+
+/// §4 + §5: a leader question is routed at `MailClass::Wake` on the `class:ask` ref, and a ref
+/// reaches nobody unless a ROW is routed on it. The leader row gives itself both, so a graph op's
+/// ambiguity question actually arrives — and reactivates the leader when it is asleep.
+#[tokio::test]
+async fn the_leader_row_is_routed_and_wakes_on_class_ask() {
+    let _guard = trace::test_lock();
+    let (kernel, _dir) = boot().await;
+    let ledger = ledger(&kernel);
+    let row = ledger
+        .0
+        .agent(&AgentName::new("sol"))
+        .await
+        .expect("a read")
+        .expect("the leader's row");
+    assert!(
+        row.routing_refs
+            .contains(&Ref::new(bough_plugin_mail_router::ASK_CLASS_REF)),
+        "the leader routes on `class:ask`, or no question ever reaches it: {:?}",
+        row.routing_refs
+    );
+    assert!(
+        row.wake_classes
+            .contains(bough_plugin_mail_router::ASK_CLASS_REF),
+        "and it WAKES on it, or a dormant leader never answers: {:?}",
+        row.wake_classes
+    );
+    kernel.shutdown().await;
+}

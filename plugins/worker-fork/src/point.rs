@@ -20,7 +20,15 @@ pub const WAKE_END: &str = "wake/end";
 /// is one `Ledger::fork` accepts. More than one wake can be open at once (a worker's `worker/started`
 /// lands in the spawner's chain under the spawner's running wake), so it is the earliest that
 /// decides, never merely the head's own.
-pub fn fork_point(steps_desc: &[Step]) -> Option<Seq> {
+/// The two step types [`fork_point`] reads, and the filter its caller's query must carry. Kept
+/// next to the walker so the read and the rule cannot drift apart (`agent-loop`'s `REPAIR_KINDS`
+/// is the precedent). Reading the WHOLE chain instead fails with `UnknownStepTypeOnRead` as soon
+/// as any row that declared a step type on that chain is disabled by patch (D-WP8-5).
+pub const WAKE_KINDS: [&str; 2] = [WAKE_START, WAKE_END];
+
+/// `head` is the trajectory's true head seq: the chain is FILTERED to [`WAKE_KINDS`], so its last
+/// row is not the trajectory's last row.
+pub fn fork_point(head: Seq, steps_desc: &[Step]) -> Option<Seq> {
     let mut open: Vec<(&bough_plugin_ledger::WakeId, Seq)> = Vec::new();
     // Ascending, so a `wake/end` can only close a start already seen.
     let mut asc: Vec<&Step> = steps_desc.iter().collect();
@@ -34,13 +42,11 @@ pub fn fork_point(steps_desc: &[Step]) -> Option<Seq> {
     }
     match open.iter().map(|(_, seq)| *seq).min() {
         // Nothing open: the head is the point.
-        None => asc.last().map(|s| s.seq),
-        // Something open: the last row strictly below it, and never inside it.
-        Some(first_open) => asc
-            .iter()
-            .rev()
-            .map(|s| s.seq)
-            .find(|seq| *seq < first_open),
+        None => (head.0 > 0).then_some(head),
+        // Something open: the last row strictly below it, and never inside it. Seqs are dense per
+        // trajectory, so that row is exactly `first_open - 1`; reading it off the FILTERED chain
+        // would answer with the last wake row instead, which can be several steps too low.
+        Some(first_open) => (first_open.0 > 1).then(|| Seq(first_open.0 - 1)),
     }
 }
 
@@ -82,7 +88,7 @@ mod tests {
             step(2, "w1", "step/end"),
             step(3, "w1", WAKE_END),
         ]);
-        assert_eq!(fork_point(&steps), Some(Seq(3)));
+        assert_eq!(fork_point(Seq(3), &steps), Some(Seq(3)));
     }
 
     #[test]
@@ -94,7 +100,7 @@ mod tests {
             step(4, "w2", "step/start"),
         ]);
         assert_eq!(
-            fork_point(&steps),
+            fork_point(Seq(4), &steps),
             Some(Seq(2)),
             "the point is the last seq OUTSIDE the open wake, and the parent never pauses"
         );
@@ -111,15 +117,29 @@ mod tests {
             step(5, "w3", WAKE_START),
             step(6, "w3", "step/start"),
         ]);
-        assert_eq!(fork_point(&two), Some(Seq(2)));
+        assert_eq!(fork_point(Seq(6), &two), Some(Seq(2)));
     }
 
     #[test]
     fn an_empty_chain_has_no_point() {
-        assert_eq!(fork_point(&[]), None);
+        assert_eq!(fork_point(Seq(0), &[]), None);
         // And a chain that is nothing but one open wake has none either: there is no closed
         // prefix to fork at, and clipping into the open wake is what §3 refuses.
         let only_open = desc(vec![step(1, "w1", WAKE_START), step(2, "w1", "step/start")]);
-        assert_eq!(fork_point(&only_open), None);
+        assert_eq!(fork_point(Seq(2), &only_open), None);
+
+        // And the chain the caller passes is FILTERED to the wake vocabulary, so the answer must
+        // not be read off its last row: here the last legal point is the thought at seq 4, which
+        // is not a wake row at all.
+        let filtered = desc(vec![
+            step(1, "w1", WAKE_START),
+            step(2, "w1", WAKE_END),
+            step(5, "w2", WAKE_START),
+        ]);
+        assert_eq!(
+            fork_point(Seq(6), &filtered),
+            Some(Seq(4)),
+            "the last row below the open wake, not the last WAKE row below it"
+        );
     }
 }

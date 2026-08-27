@@ -25,6 +25,25 @@ impl EmitEvent for AgentDisposed {
     type Payload = AgentId;
 }
 
+/// What a structural op did to the `agents` ROWS. §3 makes the rows MUTABLE CONFIG, and the live
+/// registry is a separate thing: an `Agent`'s trajectory is immutable for its life, so a row whose
+/// `traj` moved under a merge, or a row born by a split, needs the LIVE half brought back into
+/// line with it. That reconciliation is not the registry's job — it does not own the disposers —
+/// so the fact is published and the row that owns liveness (`residents`) acts on it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RowsChanged {
+    pub written: Vec<AgentName>,
+    pub deleted: Vec<AgentName>,
+}
+
+/// `agents/rows-changed` — EMIT. Published by `graph-ops` after every op that writes or deletes an
+/// `agents` row.
+pub struct AgentRowsChanged;
+impl EmitEvent for AgentRowsChanged {
+    const NAME: &'static str = "agents/rows-changed";
+    type Payload = RowsChanged;
+}
+
 /// A status transition. Never a repeat (P2-D9).
 #[derive(Clone, Debug, PartialEq)]
 pub struct StatusChange {
