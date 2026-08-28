@@ -150,7 +150,11 @@ without them Shift+Enter arrived as `ESC [27;2;13~` and fused two lines into one
 **Borders (Andrey, 2026-08-28).** Heavy rules between the panels: `┃` down the gutter between the
 rail and the conversation, `━` across the row under the conversation, `┻` where they meet, in the
 dim colour. `TuiConfig.borders` (default true); `layout_with` takes the rule row from the
-conversation so no band moves. Off with `borders: false` on the `tui` row.
+conversation so no band moves. Off with `borders: false` on the `tui` row. The painter checks
+every cell against the BUFFER's area, not the frame size: on a resize the two differ for a frame,
+and an index past the buffer is a panic that took the process down at 80×24 (and froze the frame
+after a swap in 36-swap-digging) before the guard. Scripts that read the conversation with
+`cut -c35-` now see the gutter rule `┃` as their first character.
 
 **Fixed along the way:** the `search [▏]` ghost after Esc, Esc (the layout's focused pane is the
 KEYBOARD's pane, `run::layout_focus`); the welcome hint says `? for help`, the status line's
