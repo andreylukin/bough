@@ -125,7 +125,9 @@ left is `── turn ended · …`. The search index built from rows loses the e
 `power/changed` — produces no row. CLOSED list: an unknown type still renders as `· kind`, because
 a silent drop is how a new step type would vanish.
 
-**D-uxv-20 — click any row.** The click's absolute row, the pane's `area_y` and the scroll top
+**D-uxv-20 — click any row.** SUPERSEDED by the TUI brief (2026-08-28, D1): a click acts and
+leaves no marker; the marker is keyboard-only. The selection-clearing half stands.
+Original text: The click's absolute row, the pane's `area_y` and the scroll top
 give a transcript line; `RowFocus::row_at_line` gives the row; the marker moves there. The
 keyboard stays where it was (B1). A click that never dragged clears its one-cell selection on
 mouse-up — the highlighted cell it left mid-transcript was chrome for nothing. The fill is

@@ -104,9 +104,6 @@ pub struct FocusState {
     /// The focused agent's NAME, for the speaker label on its text (visual audit F2). `None`
     /// until `retarget` has looked it up; a text row then carries no label rather than a guess.
     pub agent_name: Option<String>,
-    /// The pane's top row on screen in the last frame, so a click's absolute row can be turned
-    /// into a line of the transcript (click-any-row, visual audit).
-    pub area_y: u16,
 }
 
 impl FocusState {
@@ -605,7 +602,6 @@ impl Pane for FocusPane {
         // last frame actually had. Nothing was writing it, which left every keyboard and wheel
         // scroll clamped against a height of 0.
         state.height = cx.area.height;
-        state.area_y = cx.area.y;
         let live = self.live.lock().clone();
         let theme = *cx.theme();
         // The FOCUS RING (B1/M16): one column, ALWAYS reserved, painted only when this pane holds
@@ -774,21 +770,11 @@ impl Pane for FocusPane {
 
     async fn handle(&self, ev: PaneEvent, cx: PaneCx) -> PaneOutcome {
         match ev {
-            PaneEvent::Click { hit, at, .. } => {
-                // Click-any-row (visual audit): the row marker goes to the row the click landed
-                // on, whatever the row is — before this only a tool header or a claim button
-                // answered a click, and a click on prose did nothing visible. The keyboard stays
-                // where it was (B1); the MARKER moves, so Up/Down and Enter continue from here
-                // once Tab brings the keyboard over.
-                {
-                    let mut state = self.state.lock();
-                    let top = state.scroll.top(state.lines, state.height);
-                    let line = top + usize::from(at.1.saturating_sub(state.area_y));
-                    if let Some(i) = RowFocus::row_at_line(&state.row_lines, line, state.lines) {
-                        state.row_focus = RowFocus { index: Some(i) };
-                    }
-                }
-                cx.tui.redraw();
+            PaneEvent::Click { hit, .. } => {
+                // A click ACTS and nothing else (the TUI brief, D1): it opens a program, presses
+                // a card's button, selects text by dragging. It leaves no row marker — the marker
+                // is the KEYBOARD's row, and a click never moves the keyboard (B1), so a marker
+                // placed by a click said the keys were somewhere they were not.
                 // A claim card's button. A click is Andrey's hand on the keyboard (§16), and it
                 // dispatches the SAME command line the keyboard path types, so the two surfaces
                 // cannot drift apart.
