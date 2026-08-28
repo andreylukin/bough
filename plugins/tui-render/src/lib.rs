@@ -124,7 +124,22 @@ pub fn tool_header(v: &ToolCallView<'_>) -> Line<'static> {
     // The outcome sits RIGHT AFTER the arguments (visual audit F7): flush against the pane's
     // far edge it was fifty columns from the tool it belonged to, and lost at 200 columns. The
     // header is still one line: the gist is cut to leave room for the glyph.
-    let right = format!(" {glyph}");
+    // A FAILED call says why on its own line (round 10): three bare `✗` rows read as "broken"
+    // to a reader who did not scroll to the narration. The reason is the result's first line,
+    // clipped so it can never eat the gist entirely.
+    let reason = if bad {
+        v.result
+            .map(|r| r.content.as_str())
+            .and_then(|c| c.lines().map(str::trim).find(|l| !l.is_empty()))
+            .map(|l| truncate_cols(l, (width / 2).max(12)))
+            .filter(|l| !l.is_empty())
+    } else {
+        None
+    };
+    let right = match &reason {
+        Some(why) => format!(" {glyph} {why}"),
+        None => format!(" {glyph}"),
+    };
     let right_w = cols(&right);
     let left_budget = width.saturating_sub(right_w);
     let head = format!("{marker} {} ", v.name);
@@ -302,5 +317,60 @@ mod unhandle_tests {
         assert_eq!(unhandle_head("ls -la"), "ls -la");
         assert_eq!(unhandle_head("[not a handle] x"), "[not a handle] x");
         assert_eq!(unhandle_head("[a#b c] x"), "[a#b c] x");
+    }
+}
+
+#[cfg(test)]
+mod failed_header_tests {
+    use super::*;
+    use bough_plugin_tools::{ToolOutcomeKind, ToolResultBody};
+    use bough_plugin_tui_shell::ThemeName;
+
+    #[test]
+    fn a_failed_call_says_why_on_its_line() {
+        let theme = Theme::of(ThemeName::Dark);
+        let result = ToolResultBody {
+            call: bough_plugin_tools::ToolCallId::new("c1"),
+            name: bough_plugin_tools::ToolName::new("draft_ticket"),
+            outcome: ToolOutcomeKind::Error,
+            content: "tags isn't a valid parameter for draft_ticket\nmore".to_string(),
+            value: None,
+            attached: vec![],
+            concludes_wake: false,
+            step_index: 0,
+        };
+        let args = serde_json::json!({ "title": "Add tests" });
+        let line = tool_header(&ToolCallView {
+            name: "draft_ticket",
+            intent: RenderIntent::Generic,
+            args: &args,
+            result: Some(&result),
+            expanded: false,
+            width: 100,
+            theme: &theme,
+        });
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(
+            text.contains("\u{2717} tags isn't a valid parameter"),
+            "{text}"
+        );
+        assert!(text.chars().count() <= 100, "{text}");
+        // A success carries no reason.
+        let ok = ToolResultBody {
+            outcome: ToolOutcomeKind::Ok,
+            content: "fine".to_string(),
+            ..result
+        };
+        let line = tool_header(&ToolCallView {
+            name: "draft_ticket",
+            intent: RenderIntent::Generic,
+            args: &args,
+            result: Some(&ok),
+            expanded: false,
+            width: 100,
+            theme: &theme,
+        });
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.trim_end().ends_with('\u{2713}'), "{text}");
     }
 }

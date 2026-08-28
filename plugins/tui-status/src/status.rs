@@ -183,7 +183,13 @@ pub fn field_text(v: &StatusView, f: Field) -> Option<String> {
         Field::StopKey => v.running.then(|| STOP_KEY.to_string()),
         // Esc means interrupt while a turn runs (the keymap's rule), so the close hint yields.
         Field::CloseKey => (v.notice_pinned && !v.running).then(|| CLOSE_KEY.to_string()),
-        Field::Agent => v.agent.clone(),
+        // With the rail collapsed the chip carries the STATE too (round 10, busy-executive): at
+        // 80 columns the rail is gone, and "who" without "idle / running" answers nothing at a
+        // glance.
+        Field::Agent => v.agent.as_ref().map(|name| {
+            let state = if v.running { "running" } else { "idle" };
+            format!("{name} \u{b7} {state}")
+        }),
         Field::Hints => {
             if v.hints.is_empty() {
                 return None;

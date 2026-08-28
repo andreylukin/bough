@@ -377,5 +377,12 @@ fn the_lane_is_named_on_the_line_only_while_the_rail_is_collapsed() {
         .iter()
         .map(|s| s.content.to_string())
         .collect::<String>();
-    assert!(text.contains("sol"), "{text}");
+    assert!(text.contains("sol · idle"), "{text}");
+    v.running = true;
+    let text = status::status_line(&v, 80, &Theme::of(ThemeName::Dark))
+        .spans
+        .iter()
+        .map(|s| s.content.to_string())
+        .collect::<String>();
+    assert!(text.contains("sol · running"), "{text}");
 }
