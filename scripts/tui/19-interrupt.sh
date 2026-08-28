@@ -122,7 +122,14 @@ t quit_exits_cleanly_within_three_seconds \
 
 t the_farewell_is_one_line_and_the_screen_is_not_blank \
   bash -c '
-    txt="$(shell-use text | sed "s/[[:space:]]*$//" | grep -v "^$" | tail -20)"
+    # Only THIS run of the binary. The primary buffer still carries the Ctrl+C exit earlier in
+    # this script, farewell and all, so a plain `tail -20` counted two `bough: bye.` lines and
+    # the "one line, not a banner" assertion went red on a screen that was in fact correct. The
+    # /quit launch is echoed by the shell and ends in the exit file path, so everything before
+    # the last echo of it belongs to an earlier run.
+    txt="$(shell-use text | sed "s/[[:space:]]*$//" | grep -v "^$" \
+           | awk "/quit[.]exit/ { out = \"\"; next } { out = out \$0 \"\\n\" } END { printf \"%s\", out }" \
+           | tail -20)"
     [ -n "$txt" ] || { echo "the screen is blank after /quit"; exit 1; }
     # `grep -qi "bough\|bye"` was VACUOUS: after the alt screen is left, the primary buffer still
     # carries the shell echo of the launch command, which is `$BOUGH_BIN …` — a path ENDING in

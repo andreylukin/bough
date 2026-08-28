@@ -191,3 +191,45 @@ list from going stale every time a row adds a step type.
   `28-timeline.sh` 6/6, `29-drift.sh` 6/6, `30-swap-digging.sh` 5/5.
 - `./scripts/audit-plugins.sh --self-test`: 6/6.
 - No `todo!()` or `unimplemented!()` anywhere under `crates/` or `plugins/`.
+
+## Reconciliation run (after the parallel verification pass)
+
+Four defects stood between this branch and a green `make gates`. Three are in ux1-owned test
+scripts and one is in this track's own test file; all four are fixed here, and the two ux1 script
+edits are small and self-contained so the merge can take either side knowingly.
+
+- `crates/bough/tests/crash_reconcile.rs` (track C's own): the throwaway `$BOUGH_HOME` was named
+  from the variant tag, the pid and the clock. Three cases share a tag and run concurrently in one
+  test binary, so two entering `Home::new` inside one clock tick shared a directory and the second
+  `remove_dir_all` deleted the first's home out from under a live child. Symptoms were "the
+  rendered layer is writable: NotFound" and "the child exited normally instead of being killed".
+  Fixed with a per-`Home` counter. Green under the full `make gates` afterwards.
+- `scripts/tui/19-interrupt.sh::the_farewell_is_one_line_and_the_screen_is_not_blank` (ux1): the
+  known double-`bough: bye.` read. The assertion now looks only at the screen AFTER the last echo
+  of the `/quit` launch line, so the earlier Ctrl+C exit's farewell is out of the window. The
+  product is unchanged.
+- `scripts/tui/23-commands.sh::slash_opens_a_palette_that_filters_and_moves` (ux1): `he` matches
+  exactly one command, and on a one-row palette `Down` correctly changes nothing — the bullet
+  asserted movement AFTER the filter, so it failed on a palette that was behaving. Movement is now
+  asserted on the unfiltered palette, filtering after it. Deterministic failure, not a flake.
+- `scripts/tui/23-commands.sh::enter_accepts_the_palette_selection` and
+  `an_unknown_command_suggests_and_keeps` (ux1): both were latent behind the bullet above and had
+  never run. The first pressed Enter on a palette whose selection was the FIRST row (`/accept`) and
+  then looked for the word `help` — which the `/help` palette row put on screen anyway, so the old
+  form was vacuous either way; it now narrows to `/he` first and asserts the help BODY
+  (`shift+enter`). The second typed `/hepl` and pressed Enter as two steps.
+
+PRODUCT FINDING for the ux1 track (not fixed here — `tui-shell` is not this track's to edit):
+with the palette open on a query that matches NOTHING, a standalone `Enter` is swallowed and the
+line is never submitted. `shell-use submit` (type and Enter in one go) still sends it, which is why
+`05-commands.sh` never saw this. From a user's seat: type `/hepl`, press Enter, nothing happens.
+
+Two race-shaped flakes were observed under load and are NOT fixed (they belong to crates this
+track may not edit); each reproduced once in five full gate runs and never in isolation:
+- `crates/bough/tests/exec_headless.rs::exec_runs_one_task_end_to_end_with_llm_replay` failed once
+  with `no agent factory is set; mount an agent-loop row` — the `exec` row requires the `agents`
+  SERVICE, but the factory slot is filled during the `agent-loop` row's activation, so the two
+  orders are both legal and only one works. 5/5 green when the test binary runs alone.
+- `scripts/tui/05-commands.sh` failed once at boot with `lane.scope ... read optional service
+  projection, which no active fiber provides`. 3/3 green in isolation. Same shape: an activation
+  order that is legal and unlucky.

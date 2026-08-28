@@ -37,19 +37,23 @@ t slash_opens_a_palette \
 
 t slash_opens_a_palette_that_filters_and_moves \
   bash -c '
-    # It FILTERS: typing narrows the list, and something that was listed is gone.
-    shell-use type "he"
-    sleep 0.8
-    see "/help" --timeout 8000 || { echo "the palette filtered /help away"; exit 1; }
-    shell-use text | grep -q "/quit" && { echo "the palette did not filter: /quit survived the query he"; exit 1; }
     # It MOVES: Down changes WHICH ROW is selected, and the selection is visible. The selected
     # row is drawn on `theme.sel_bg`, so the moved selection is a change in the painted cells —
     # this half used to be `press Down; sleep 0.5; exit 0`, which asserted nothing at all.
+    #
+    # Asserted on the UNFILTERED palette, BEFORE the query. `he` matches exactly one command
+    # (`/help`), and on a one-row list Down correctly changes nothing — so asserting movement
+    # after the filter failed on a palette that was behaving.
     before="$(shell-use cells 0 0 200 60 --json)"
     shell-use press Down
     sleep 0.8
     after="$(shell-use cells 0 0 200 60 --json)"
     [ "$before" = "$after" ] && { echo "Down changed nothing: the palette selection does not move"; exit 1; }
+    # It FILTERS: typing narrows the list, and something that was listed is gone.
+    shell-use type "he"
+    sleep 0.8
+    see "/help" --timeout 8000 || { echo "the palette filtered /help away"; exit 1; }
+    shell-use text | grep -q "/quit" && { echo "the palette did not filter: /quit survived the query he"; exit 1; }
     exit 0
   '
 
@@ -82,12 +86,20 @@ t tab_completes_the_name_without_running_it \
 # Put the composer back the way the rest of the script expects it.
 shell-use keys "Ctrl+u"
 shell-use press Escape
-shell-use type "/"
-sleep 0.4
+# The palette opens on its FIRST row, which is `/accept` — so a bare Enter here accepted
+# `/accept` and the bullet below looked for a help screen that was never asked for. The query
+# narrows the palette to `/help`, and Enter then accepts the row this bullet is named for.
+shell-use type "/he"
+sleep 0.6
 
 shell-use press Enter
 t enter_accepts_the_palette_selection \
-  see "help" --timeout 15000
+  bash -c '
+    # The help BODY, not the palette row: `see "help"` matched the `/help` row that was already
+    # on screen before Enter, so it passed whether or not Enter accepted anything.
+    see "shift+enter" --timeout 15000 || { echo "Enter did not run the selected command"; exit 1; }
+    exit 0
+  '
 
 # --- `/help` lists the keys that actually work. -----------------------------------------------
 #
@@ -131,8 +143,10 @@ t help_is_plain_language_and_not_engine_vocabulary \
 shell-use press Escape
 
 # --- An unknown command suggests, points at /help, and keeps the text. ------------------------
-shell-use type "/hepl"
-shell-use press Enter
+# `submit` rather than `type` + a separate `press Enter`: with the palette open on a query that
+# matches nothing, the standalone Enter was swallowed and the line was never sent, so this bullet
+# read a screen where nothing had run. `05-commands.sh` sends its miss the same way.
+shell-use submit "/hepl"
 t an_unknown_command_suggests_and_keeps \
   bash -c '
     see "/hepl" --timeout 10000 || { echo "the typed command was destroyed"; exit 1; }
