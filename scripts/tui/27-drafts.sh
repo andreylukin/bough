@@ -78,8 +78,10 @@ t the_card_says_what_kind_of_draft_it_is \
 
 t the_card_says_nothing_was_sent \
   see "not sent" --timeout 5000
+# The card's own button line, in the transcript's columns: `copy open` and nothing else — the
+# composer band has its own `send ⏎` chip (the TUI brief, D7), which is not the card's.
 t the_card_offers_copy_and_open_and_no_send \
-  bash -c 'see "copy" --timeout 5000 && see "open" --timeout 5000 && ! shell-use text | grep -qw "send"'
+  bash -c 'for i in $(seq 1 10); do shell-use text | cut -c35- | grep -qE "^ *copy (open|close) *$" && exit 0; sleep 0.5; done; echo "no copy/open button line on the card"; exit 1'
 
 t the_audience_is_shown_so_andrey_knows_where_it_would_have_gone \
   see "slack:#eng" --timeout 5000
