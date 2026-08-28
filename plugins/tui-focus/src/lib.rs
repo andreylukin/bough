@@ -8,6 +8,7 @@
 
 pub mod branches;
 pub mod claims;
+pub mod draft;
 pub mod expand;
 pub mod invariant;
 pub mod program;
@@ -456,6 +457,29 @@ impl FocusPane {
                     lines.extend(card);
                     claim_hits.extend(regions);
                 }
+                Row::Draft {
+                    draft,
+                    kind,
+                    audience,
+                    subject,
+                    body,
+                    ..
+                } => {
+                    let opened = state.expanded.is_expanded(&draft_key(draft));
+                    let (card, regions) = draft::card(
+                        draft,
+                        kind,
+                        audience,
+                        subject,
+                        body,
+                        opened,
+                        lines.len() as u16,
+                        width,
+                        theme,
+                    );
+                    lines.extend(card);
+                    claim_hits.extend(regions);
+                }
                 Row::Other { kind, .. } => {
                     // TOTAL: a type this binary does not know still gets a line, and never a panic.
                     lines.push(Line::styled(
@@ -585,6 +609,11 @@ pub fn reveal(scroll: Scroll, line: usize, lines: usize, height: u16) -> Scroll 
     } else {
         scroll
     }
+}
+
+/// The disclosure key a draft card's `open` toggles, in the same set tool calls use.
+fn draft_key(draft: &str) -> bough_plugin_llm::ToolCallId {
+    bough_plugin_llm::ToolCallId::new(format!("draft:{draft}"))
 }
 
 fn label(who: &str, color: ratatui::style::Color) -> Line<'static> {
@@ -775,6 +804,38 @@ impl Pane for FocusPane {
                 // a card's button, selects text by dragging. It leaves no row marker — the marker
                 // is the KEYBOARD's row, and a click never moves the keyboard (B1), so a marker
                 // placed by a click said the keys were somewhere they were not.
+                // A draft card's button (D6): copy puts the draft on the clipboard, open shows
+                // the whole body in place. Neither sends anything.
+                if let Some((id, action)) = hit.as_ref().and_then(draft::action_of_hit) {
+                    let text = {
+                        let state = self.state.lock();
+                        state.rows.iter().find_map(|r| match r {
+                            Row::Draft {
+                                draft,
+                                audience,
+                                subject,
+                                body,
+                                ..
+                            } if *draft == id => Some(draft::copy_text(audience, subject, body)),
+                            _ => None,
+                        })
+                    };
+                    match action {
+                        draft::DraftAction::Copy => {
+                            if let Some(text) = text {
+                                cx.tui.copy(&text).await;
+                            }
+                        }
+                        draft::DraftAction::Open => {
+                            let mut state = self.state.lock();
+                            let mut expanded = std::mem::take(&mut state.expanded);
+                            expanded.toggle(&draft_key(&id));
+                            state.expanded = expanded;
+                        }
+                    }
+                    cx.tui.redraw();
+                    return PaneOutcome::Handled;
+                }
                 // A claim card's button. A click is Andrey's hand on the keyboard (§16), and it
                 // dispatches the SAME command line the keyboard path types, so the two surfaces
                 // cannot drift apart.

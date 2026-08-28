@@ -9,7 +9,7 @@
 TYPED_TOOLS=1
 source "$(dirname "$0")/lib.sh"
 
-[ -n "$BOUGH_LIVE" ] && { skip a_drafted_message_appears_in_the_drafts_pane "the draft is replayed, not live"; exit 0; }
+[ -n "$BOUGH_LIVE" ] && { skip a_drafted_message_appears_as_a_card_in_the_transcript "the draft is replayed, not live"; exit 0; }
 
 # The transcript, written here rather than in `fixtures/`: it is this bullet's alone, and the
 # suite's shared transcripts are ordered for V1-V4.
@@ -45,8 +45,8 @@ YML
 tui_open
 tui_start "$DRAFTS_PATCH"
 
-t the_drafts_pane_is_on_screen_from_boot \
-  see "drafts" --timeout 20000
+t no_drafts_pane_takes_a_row_before_there_is_a_draft \
+  see "nothing written yet" --not --timeout 5000
 
 # The composer can be painted before the tree is ready to take a message: on a cold boot under
 # load the first submit is occasionally swallowed and NOTHING reaches the ledger (no user step, no
@@ -70,14 +70,16 @@ t the_composer_takes_the_message \
 # message `submit_until_echoed` has already forced onto the screen — so the bullet passed with an
 # empty pane, a missing pane, or no draft at all. `1 draft` is the pane's own header (it counts
 # rows), and `message →` is `row_line`'s own rendering; neither can come from the composer echo.
-t a_drafted_message_appears_in_the_drafts_pane \
-  see "1 draft" --timeout 20000
+t a_drafted_message_appears_as_a_card_in_the_transcript \
+  see "draft" --timeout 20000
 
-t the_drafts_pane_renders_it_as_a_draft_row \
-  see "message →" --timeout 5000
+t the_card_says_what_kind_of_draft_it_is \
+  see "draft · message" --timeout 5000
 
-t the_pane_says_nothing_was_sent \
-  see "NOT sent" --timeout 5000
+t the_card_says_nothing_was_sent \
+  see "not sent" --timeout 5000
+t the_card_offers_copy_and_open_and_no_send \
+  bash -c 'see "copy" --timeout 5000 && see "open" --timeout 5000 && ! shell-use text | grep -qw "send"'
 
 t the_audience_is_shown_so_andrey_knows_where_it_would_have_gone \
   see "slack:#eng" --timeout 5000

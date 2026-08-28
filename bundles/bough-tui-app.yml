@@ -134,10 +134,9 @@
   config: {}
 # §11/§7: the drafts pane. Everything outward-facing that is not one of the four action kinds is a
 # DRAFT, and this is where Andrey reads them.
-- id: tui.drafts
-  plugin: tui-drafts
-  config: { height_pct: 30, limit: 50, show_body_lines: 6 }
-
+# `tui.drafts` is no longer mounted (the TUI brief, D6): a draft is a card in the transcript,
+# where the agent wrote it, with `copy` and `open` — never a send. The pane stayed one row tall
+# saying "nothing written yet" on every fresh session; the card appears only when there is one.
 # Phase c (§11 "Digging", §8): the three digging panes — `tui-preview`, `tui-timeline`,
 # `tui-drift` — are in the CATALOG and in no bundle, the `tui-probe` precedent. They are mounted by
 # a patch (`scripts/tui/27-29`, and by hand when digging).

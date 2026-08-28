@@ -133,6 +133,18 @@ pub enum Row {
         step: StepId,
         view: AboutView,
     },
+    /// A `draft/message` or `draft/ticket` step, read BY NAME (the TUI brief, D6): the agent
+    /// wrote something outward-facing and did NOT send it. Rendered as a card with `copy` and
+    /// `open`; never a send.
+    Draft {
+        step: StepId,
+        draft: String,
+        /// `message` or `ticket`.
+        kind: String,
+        audience: String,
+        subject: String,
+        body: String,
+    },
     Other {
         step: StepId,
         kind: StepType,
@@ -180,6 +192,7 @@ impl Row {
             | Row::Reasoning { step, .. }
             | Row::WakeMark { step, .. }
             | Row::About { step, .. }
+            | Row::Draft { step, .. }
             | Row::Claim { step, .. }
             | Row::Other { step, .. } => step,
             Row::Tool { call_step, .. } | Row::Program { call_step, .. } => call_step,
@@ -389,6 +402,10 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
             // on its first words, its end by the `── turn ended · …` rule. `── turn` above the
             // label was a third chrome line saying what the label already says.
             "wake/start" => {}
+            "draft/message" | "draft/ticket" => match draft_row(step) {
+                Some(row) => out.push(row),
+                None => out.push(other(step)),
+            },
             // The rule only when the ending is NEWS (the TUI brief, D5): a completed turn is
             // already told by the next speaker label, so `── turn ended · completed` after every
             // turn was a second line saying the same thing. An interrupt, an abort, a crash
@@ -444,6 +461,21 @@ fn claim_row(step: &Step) -> Option<(String, Row)> {
             state: ClaimState::Open,
         },
     ))
+}
+
+/// A draft step as a card row; `None` when the body is not a draft's shape.
+fn draft_row(step: &Step) -> Option<Row> {
+    let kind = step.kind.as_str().strip_prefix("draft/")?.to_string();
+    Some(Row::Draft {
+        step: step.id.clone(),
+        draft: body_str(step, "draft")?,
+        audience: body_str(step, "audience").unwrap_or_default(),
+        subject: body_str(step, "subject")
+            .or_else(|| body_str(step, "title"))
+            .unwrap_or_default(),
+        body: body_str(step, "body").unwrap_or_default(),
+        kind,
+    })
 }
 
 fn other(step: &Step) -> Row {
@@ -561,7 +593,11 @@ pub fn opens_speech(rows: &[Row], i: usize) -> bool {
 pub fn is_agent_row(row: &Row) -> bool {
     matches!(
         row,
-        Row::Text { .. } | Row::Reasoning { .. } | Row::Tool { .. } | Row::Program { .. }
+        Row::Text { .. }
+            | Row::Reasoning { .. }
+            | Row::Tool { .. }
+            | Row::Program { .. }
+            | Row::Draft { .. }
     )
 }
 
