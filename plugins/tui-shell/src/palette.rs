@@ -26,26 +26,44 @@ pub fn lines(
     let first = selected
         .saturating_sub(rows.saturating_sub(1))
         .min(items.len() - rows);
-    items[first..first + rows]
+    let shown = &items[first..first + rows];
+    // ONE summary column for the rows on screen (visual audit): each summary used to start two
+    // columns after its own usage, so the list read as ragged sentences rather than a table of
+    // commands. Capped at half the width so one long usage cannot push every summary off the
+    // right edge.
+    let col = shown
+        .iter()
+        .map(|i| i.usage.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(width as usize / 2);
+    shown
         .iter()
         .enumerate()
-        .map(|(i, item)| row(item, first + i == selected, width, theme))
+        .map(|(i, item)| row(item, first + i == selected, width, col, theme))
         .collect()
 }
 
-/// PURE: one palette row, clipped to `width`, `usage` at body contrast and `summary` dimmed.
-fn row(item: &Item, is_selected: bool, width: u16, theme: &Theme) -> Line<'static> {
+/// PURE: one palette row, clipped to `width`, `usage` at body contrast padded to `col`, and
+/// `summary` dimmed. The ground is `field_bg`, the composer's and the notice band's (D-uxv-10):
+/// the palette is the composer's own overlay, so it wears the composer's colour.
+fn row(item: &Item, is_selected: bool, width: u16, col: usize, theme: &Theme) -> Line<'static> {
     let base = if is_selected {
         Style::default().fg(theme.fg).bg(theme.sel_bg)
     } else {
-        Style::default().fg(theme.fg).bg(theme.bg)
+        Style::default().fg(theme.fg).bg(theme.field_bg)
     };
     let dim = if is_selected {
         Style::default().fg(theme.fg).bg(theme.sel_bg)
     } else {
-        Style::default().fg(theme.dim).bg(theme.bg)
+        Style::default().fg(theme.dim).bg(theme.field_bg)
     };
-    let head = format!("{} {}", if is_selected { '>' } else { ' ' }, item.usage);
+    let head = format!(
+        "{} {:<col$}",
+        if is_selected { '>' } else { ' ' },
+        item.usage,
+        col = col
+    );
     let mut spans = vec![Span::styled(clip(&head, width as usize), base)];
     let used = head.chars().count();
     let left = (width as usize).saturating_sub(used + 2);
@@ -61,7 +79,7 @@ fn row(item: &Item, is_selected: bool, width: u16, theme: &Theme) -> Line<'stati
             if is_selected {
                 base
             } else {
-                Style::default().bg(theme.bg)
+                Style::default().bg(theme.field_bg)
             },
         ));
     }
