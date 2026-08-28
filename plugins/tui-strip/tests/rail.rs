@@ -51,6 +51,8 @@ fn row(name: &str, about: Option<AboutView>) -> RailRow {
         about,
         leader: false,
         waiting: 0,
+        since: None,
+        clock: String::new(),
     }
 }
 
@@ -455,4 +457,51 @@ fn the_about_halves_wrap_to_the_cap_and_only_then_elide() {
     );
     assert_eq!(rail::row_height(&r, true, 1, 34), 3);
     assert_eq!(rail::row_height(&r, true, 3, 34) as usize, text.len());
+}
+
+/// The TUI brief, D4: the state word carries how long it has held.
+#[test]
+fn the_state_word_carries_a_clock_once_the_status_is_known() {
+    use chrono::{TimeZone, Utc};
+    let t0 = Utc.with_ymd_and_hms(2026, 8, 28, 10, 0, 0).unwrap();
+    assert_eq!(rail::clock_text(None, t0), "");
+    assert_eq!(
+        rail::clock_text(Some(t0), t0 + chrono::Duration::seconds(41)),
+        "41s"
+    );
+    assert_eq!(
+        rail::clock_text(Some(t0), t0 + chrono::Duration::seconds(125)),
+        "2m"
+    );
+    assert_eq!(
+        rail::clock_text(Some(t0), t0 + chrono::Duration::seconds(3900)),
+        "1h05"
+    );
+    // A status change starts the clock; the same status again does not reset it.
+    let mut rows = vec![row("sol", None)];
+    let id = rows[0].agent.clone();
+    bough_plugin_tui_strip::set_status(&mut rows, &id, Status::Running, t0);
+    assert_eq!(rows[0].since, Some(t0));
+    bough_plugin_tui_strip::set_status(
+        &mut rows,
+        &id,
+        Status::Running,
+        t0 + chrono::Duration::seconds(30),
+    );
+    assert_eq!(rows[0].since, Some(t0), "re-announced, not restarted");
+    // On screen: the word and the clock, and the line still fits the rail.
+    rows[0].clock = rail::clock_text(rows[0].since, t0 + chrono::Duration::seconds(125));
+    let text = text_of(&rail::row_lines(&rows[0], false, false, 0, 34, &theme()));
+    assert!(text[0].contains("running 2m"), "{text:?}");
+    assert!(text[0].chars().count() <= 34, "{text:?}");
+    // No clock known: just the word, exactly as before.
+    let quiet = text_of(&rail::row_lines(
+        &row("terra", None),
+        false,
+        false,
+        0,
+        34,
+        &theme(),
+    ));
+    assert!(quiet[0].trim_end().ends_with("idle"), "{quiet:?}");
 }

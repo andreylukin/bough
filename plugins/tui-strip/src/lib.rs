@@ -126,6 +126,10 @@ impl Pane for StripPane {
         }
         let theme = *cx.theme();
         let focused = cx.view.focused_agent.clone();
+        // The clock is stamped per frame from the view's `now`, so the renderer stays pure.
+        for r in rows.iter_mut() {
+            r.clock = rail::clock_text(r.since, cx.view.now);
+        }
         let (lines, spans) = rail::rail(
             &rows,
             focused.as_ref(),
@@ -179,8 +183,17 @@ impl Pane for StripPane {
 }
 
 /// PURE: what a status change does to the row list.
-pub fn set_status(rows: &mut [RailRow], agent: &AgentId, status: Status) {
+pub fn set_status(
+    rows: &mut [RailRow],
+    agent: &AgentId,
+    status: Status,
+    at: chrono::DateTime<chrono::Utc>,
+) {
     if let Some(r) = rows.iter_mut().find(|r| &r.agent == agent) {
+        if r.status != status {
+            // A NEW status starts the clock; the same status re-announced does not reset it.
+            r.since = Some(at);
+        }
         r.status = status;
     }
 }
@@ -355,7 +368,7 @@ impl Plugin for StripPlugin {
         ctx.on::<AgentStatusChanged, _, _>(move |change| {
             let (r, t) = (r.clone(), t.clone());
             async move {
-                set_status(&mut r.lock(), &change.agent, change.to);
+                set_status(&mut r.lock(), &change.agent, change.to, chrono::Utc::now());
                 t.redraw();
             }
         })
@@ -459,6 +472,8 @@ pub fn row_for(agent: &bough_plugin_agents::Agent) -> RailRow {
         dormant: false,
         about: None,
         leader: false,
+        since: None,
+        clock: String::new(),
         waiting: agent.inbox().len(),
     }
 }

@@ -46,6 +46,13 @@ pub struct RailRow {
     /// The agent the `leader` set is mounted in (visual audit: "make it obvious who the leader
     /// is"). Folded from the `leader` key when the row is mounted; with no leader row nobody is.
     pub leader: bool,
+    /// When the CURRENT status began (the TUI brief, D4: "how long" was the runner-up rail
+    /// fact). `None` until the first status change this life; the row then shows no clock
+    /// rather than a guessed one.
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    /// The elapsed text the pane stamped for THIS frame (`clock_text`), empty when unknown.
+    /// Stamped by the pane, not computed in `row_lines`, so the pure renderer needs no clock.
+    pub clock: String,
     /// Messages in the lane's inbox that no wake has claimed. Read from the live handle whenever
     /// a mail step lands (visual audit follow-up): which lane needs attention is the rail's job.
     pub waiting: usize,
@@ -107,6 +114,25 @@ pub fn status_word(row: &RailRow) -> &'static str {
             (Status::Idle, true) => "waking",
             (Status::Idle, false) => "idle",
         }
+    }
+}
+
+/// PURE: how long a status has held, in the shortest honest unit — `41s`, `2m`, `1h05`. Empty
+/// for an unknown start (no clock is better than a wrong one).
+pub fn clock_text(
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let Some(since) = since else {
+        return String::new();
+    };
+    let secs = (now - since).num_seconds().max(0);
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{}h{:02}", secs / 3600, (secs % 3600) / 60)
     }
 }
 
@@ -203,7 +229,13 @@ pub fn row_lines(
     if focused {
         head_style = head_style.add_modifier(Modifier::BOLD);
     }
-    let word = status_word(row);
+    // The state word, and how long it has held (D4): `running 2m`, `idle 41s`.
+    let word = if row.clock.is_empty() {
+        status_word(row).to_string()
+    } else {
+        format!("{} {}", status_word(row), row.clock)
+    };
+    let word_w = word.chars().count() as u16;
     // Column 0 is the FOCUS MARKER (visual audit: the focused lane was bold and nothing else,
     // which no persona noticed). Same glyph the transcript's row focus uses, so one mark means
     // "the keyboard's conversation" everywhere.
@@ -217,7 +249,7 @@ pub fn row_lines(
         String::new()
     };
     let name_room = width.saturating_sub(
-        3 + leader_tag.chars().count() as u16 + mail.chars().count() as u16 + word.len() as u16 + 1,
+        3 + leader_tag.chars().count() as u16 + mail.chars().count() as u16 + word_w + 1,
     ) as usize;
     let name = elide(&row.name, name_room);
     let mut head = vec![
@@ -241,13 +273,13 @@ pub fn row_lines(
         ));
     }
     let used = 3 + name.chars().count() + leader_tag.chars().count();
-    let pad = (width as usize).saturating_sub(used + mail.chars().count() + word.len());
+    let pad = (width as usize).saturating_sub(used + mail.chars().count() + word_w as usize);
     head.push(Span::raw(" ".repeat(pad)));
     if !mail.is_empty() {
         head.push(Span::styled(mail, Style::default().fg(theme.evidence)));
     }
     head.push(Span::styled(
-        word.to_string(),
+        word,
         Style::default().fg(role_color(theme, role)),
     ));
     let mut out = vec![Line::from(head)];
