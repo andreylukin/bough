@@ -26,7 +26,9 @@ fn assets() -> &'static Assets {
         Assets {
             syntaxes: two_face::syntax::extra_no_newlines(),
             dark: themes.get(EmbeddedThemeName::Base16OceanDark).clone(),
-            light: themes.get(EmbeddedThemeName::Base16OceanLight).clone(),
+            // InspiredGithub, not Base16OceanLight: the latter's pale greys read as nothing on
+            // white (visual audit, light-theme pass).
+            light: themes.get(EmbeddedThemeName::InspiredGithub).clone(),
         }
     })
 }
@@ -35,7 +37,15 @@ fn assets() -> &'static Assets {
 /// which is the same thing the terminal shows.
 fn syntect_theme(theme: &Theme) -> &'static SynTheme {
     let a = assets();
-    if is_dark(theme.bg) {
+    // `bg` is `Color::Reset` in BOTH palettes ("whatever the terminal is"), and `is_dark(Reset)`
+    // is true — so the light palette was highlighting code with the dark syntect theme, on
+    // white. `measure_bg` is the ground the palette was designed for; that is the question.
+    let ground = if theme.bg == Color::Reset {
+        theme.measure_bg
+    } else {
+        theme.bg
+    };
+    if is_dark(ground) {
         &a.dark
     } else {
         &a.light

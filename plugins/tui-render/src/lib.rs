@@ -24,7 +24,7 @@ pub use highlight::highlight;
 pub use md::{blocks, document, Block};
 pub use text::{markdownish, strip_ansi, wrap};
 
-use text::{cols, pad_cols, truncate_cols};
+use text::{cols, truncate_cols};
 
 /// One tool call, as a surface wants to draw it.
 pub struct ToolCallView<'a> {
@@ -100,13 +100,16 @@ pub fn tool_header(v: &ToolCallView<'_>) -> Line<'static> {
     if width == 0 {
         return Line::from(Vec::<Span<'static>>::new());
     }
+    // The outcome sits RIGHT AFTER the arguments (visual audit F7): flush against the pane's
+    // far edge it was fifty columns from the tool it belonged to, and lost at 200 columns. The
+    // header is still one line: the gist is cut to leave room for the glyph.
     let right = format!(" {glyph}");
     let right_w = cols(&right);
     let left_budget = width.saturating_sub(right_w);
     let head = format!("{marker} {} ", v.name);
     let head = truncate_cols(&head, left_budget);
     let rest = left_budget.saturating_sub(cols(&head));
-    let gist = pad_cols(&truncate_cols(&arg_gist(v.args), rest), rest);
+    let gist = truncate_cols(&arg_gist(v.args), rest);
     let mut spans = vec![Span::styled(head, name_style), Span::styled(gist, dim)];
     if right_w <= width {
         spans.push(Span::styled(right, glyph_style));
@@ -226,10 +229,21 @@ pub fn terminal_block(
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     let width = width.max(1);
-    let out_style = Style::default().fg(theme.fg);
-    let mut out: Vec<Line<'static>> = wrap(&strip_ansi(content), width)
+    // Output on its OWN GROUND (visual audit follow-up to F10): the same `code_bg` a fenced
+    // block gets, padded to the measure, so a command's output has an edge and the prose
+    // around it does not run into it. The exit line below stays on the transcript's ground:
+    // it is the harness's verdict, not the command's output.
+    let out_style = Style::default().fg(theme.fg).bg(theme.code_bg);
+    let mut out: Vec<Line<'static>> = wrap(&strip_ansi(content), width.saturating_sub(1).max(1))
         .into_iter()
-        .map(|l| Line::from(Span::styled(l, out_style)))
+        .map(|l| {
+            let pad = (width as usize).saturating_sub(cols(&l) + 1);
+            Line::from(vec![
+                Span::styled(" ", out_style),
+                Span::styled(l, out_style),
+                Span::styled(" ".repeat(pad), out_style),
+            ])
+        })
         .collect();
     if let Some(r) = result {
         let code = r

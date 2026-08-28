@@ -373,9 +373,9 @@ impl Plugin for StripPlugin {
         })
         .await?;
 
-        let (r, t) = (rows.clone(), tui.clone());
+        let (r, t, a) = (rows.clone(), tui.clone(), (*agents).clone());
         ctx.on::<LedgerStep, _, _>(move |step| {
-            let (r, t) = (r.clone(), t.clone());
+            let (r, t, a) = (r.clone(), t.clone(), a.clone());
             async move {
                 // BY NAME (P3-D11). `about_from_step` returns `None` for every other type, so the
                 // filter and the parse are one call.
@@ -385,6 +385,10 @@ impl Plugin for StripPlugin {
                 }
                 if let Some(dormant) = dormant_from_step(&step) {
                     set_dormant(&mut r.lock(), &step.traj, dormant);
+                    t.redraw();
+                }
+                if MAIL_STEPS.contains(&step.kind.as_str()) {
+                    set_waiting(&mut r.lock(), &a, &step.traj);
                     t.redraw();
                 }
             }
@@ -455,7 +459,25 @@ pub fn row_for(agent: &bough_plugin_agents::Agent) -> RailRow {
         dormant: false,
         about: None,
         leader: false,
+        waiting: agent.inbox().len(),
     }
 }
+
+/// Re-read one lane's unread count from its live handle; a lane with no live agent keeps its
+/// last count.
+pub fn set_waiting(
+    rows: &mut [RailRow],
+    agents: &bough_plugin_agents::AgentsHandle,
+    traj: &TrajId,
+) {
+    if let Some(row) = rows.iter_mut().find(|r| r.traj.as_ref() == Some(traj)) {
+        if let Some(agent) = agents.get(&row.agent) {
+            row.waiting = agent.inbox().len();
+        }
+    }
+}
+
+/// The step types after which a lane's unread count can have changed, by NAME (P3-D11).
+const MAIL_STEPS: &[&str] = &["mail/delivered", "inbox/spliced", "wake/start", "wake/end"];
 
 bough_kernel::register_plugin!(StripPlugin);

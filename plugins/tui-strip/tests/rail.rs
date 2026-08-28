@@ -50,6 +50,7 @@ fn row(name: &str, about: Option<AboutView>) -> RailRow {
         dormant: false,
         about,
         leader: false,
+        waiting: 0,
     }
 }
 
@@ -390,4 +391,21 @@ fn every_rendered_rail_line_fits_the_column_it_was_given() {
             );
         }
     }
+}
+
+/// Visual audit follow-up: which lane needs attention is the rail's job. Unread mail shows as
+/// `✉ N` right before the state word, and NOT at all when nothing is waiting.
+#[test]
+fn a_lane_with_mail_waiting_shows_the_count_and_a_quiet_lane_shows_nothing() {
+    let mut r = row("sol", None);
+    let quiet = text_of(&rail::row_lines(&r, false, false, 0, 40, &theme()));
+    assert!(!quiet[0].contains('\u{2709}'), "{quiet:?}");
+    r.waiting = 3;
+    let loud = text_of(&rail::row_lines(&r, false, false, 0, 40, &theme()));
+    assert!(loud[0].contains("\u{2709} 3 idle"), "{loud:?}");
+    assert_eq!(
+        loud[0].chars().count(),
+        40,
+        "the head line still fills the rail: {loud:?}"
+    );
 }

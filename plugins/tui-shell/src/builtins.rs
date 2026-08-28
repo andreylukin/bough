@@ -225,6 +225,37 @@ pub const ROSTER_HEADER: &str = "agent        status    doing                   
 /// row only reads it.
 const DORMANCY_STEP: &str = "agent/dormancy";
 
+/// The about-line's state half, by NAME (`about/line`, `body.state`) — the newest one on `traj`.
+async fn about_state_now(
+    ledger: &bough_plugin_ledger::LedgerHandle,
+    traj: &bough_plugin_ledger::TrajId,
+) -> Option<String> {
+    use bough_plugin_ledger::{Order, StepQuery, StepType};
+    let steps = ledger
+        .0
+        .steps(&StepQuery {
+            trajs: vec![traj.clone()],
+            kinds: vec![StepType::new("about/line")],
+            order: Order::SeqDesc,
+            limit: Some(1),
+            ..Default::default()
+        })
+        .await
+        .ok()?;
+    let state = steps.first()?.body.get("state")?.as_str()?.trim();
+    (!state.is_empty()).then(|| state.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+/// The first `max` characters, marked with `…` when cut — a table cell, not a paragraph.
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
+    out.push('\u{2026}');
+    out
+}
+
 /// Whether the newest `agent/dormancy` step on `traj` says the lane is asleep.
 async fn dormant_now(
     ledger: &bough_plugin_ledger::LedgerHandle,
@@ -275,16 +306,23 @@ impl Command for Roster {
         let mut lines = vec![ROSTER_HEADER.to_string()];
         for a in roster {
             let mut status = format!("{:?}", a.status()).to_lowercase();
+            // `doing` is the about-line's STATE half — what the lane last said it did — not the
+            // trajectory id, which is an internal name (visual audit follow-up). The id stays as
+            // the fallback for a lane that has never written one.
+            let mut doing = a.traj().to_string();
             if let Some(ledger) = &ledger {
                 if dormant_now(ledger, a.traj()).await {
                     status = "dormant".to_string();
+                }
+                if let Some(state) = about_state_now(ledger, a.traj()).await {
+                    doing = state;
                 }
             }
             lines.push(format!(
                 "{:<12} {:<9} {:<30} {}",
                 a.name(),
                 status,
-                a.traj(),
+                clip(&doing, 30),
                 a.inbox().len()
             ));
         }

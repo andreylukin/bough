@@ -18,8 +18,9 @@ took twelve rows at every launch; at 200×50 that was half the frame empty (F1).
 frozen for the other tracks, so the mechanism is additive: `RenderCx::report_aux_rows(n)` joins
 `report_rows`, `RowReport` carries `aux_rows: Option<u16>`, and `pane::layout_with` gives an
 `Aux` pane the rows it reported last frame — except the FOCUSED pane, which always gets its
-registered size, which is how Ctrl+F opens a collapsed pane. A pane that never reports is laid out
-exactly as before (track C's panes). The shell carries a report forward for a pane that got no
+registered size clamped to what it reported (never less than one row, so the field is there to
+type in; never more than it can fill, so "no matches" is one row, not twelve), which is how Ctrl+F
+opens a collapsed pane. A pane that never reports is laid out exactly as before (track C's panes). The shell carries a report forward for a pane that got no
 rows, or a collapsed pane would forget it asked for zero and spring back. Esc on an empty search
 falls through to the shell, which already returns the keyboard to the composer.
 
@@ -33,6 +34,12 @@ buttons: things you click), `code` on `code_bg` (inline code and code blocks: a 
 colour), `field_bg` (the composer's band). Headings are weight and a rule, not the accent, so the
 accent means one thing: who is speaking. `dim` moves from `#8b92a1` to `#9aa2b1` — 4.3:1 on a
 `#282d35` terminal was under AA (F6). The contrast audit measures `code` against `code_bg`.
+
+**D-uxv-3a — the highlighter asks the palette's ground, not `bg`.** `Theme::bg` is `Color::Reset`
+in both palettes, and `is_dark(Reset)` was true, so the light theme highlighted code with the dark
+syntect theme on white — invisible. The choice now reads `measure_bg`, and the light theme is
+`InspiredGithub` (Base16OceanLight is pale greys on white). Found by rendering the light palette
+through the same screenshot walk; the ratio audit could not see it.
 
 **D-uxv-4 — dormant is `warn`, never `dim`.** The state that decides whether mail is answered
 was the faintest thing on the rail (F6). `/agents` reads the same `agent/dormancy` step the rail
@@ -53,8 +60,25 @@ nothing three times (F11). `ctx` reads `99% ctx left`. Nothing is ever invented 
 **D-uxv-7 — `/drift` is sentences first, numbers after.** The whole stats line survives as
 `raw: …` at the end (F14).
 
+**D-uxv-9 — the outcome glyph sits after the arguments (F7).** `▸ bash echo … ✓`, not a ✓ flush
+against the pane's far edge fifty columns away; the header no longer pads to the width.
+
+**D-uxv-10 — a command's output has its own ground.** The notice band paints on `field_bg`, the
+composer's band, so where the transcript ends and the output begins is visible; the search pane
+paints the same one-column focus ring the transcript does, so Tab into it shows.
+
+**D-uxv-11 — the rail shows unread mail.** `✉ 3` before the state word, in the evidence colour,
+read from the live inbox on every mail/inbox/wake step by name; nothing when the inbox is empty.
+"Which lane needs me" was answerable only by `/agents`.
+
 **D-uxv-8 — markdown rhythm.** Consecutive list items are one block (no blank between); a code
 block is padded to the measure on `code_bg`; h1/h2 are bold + underlined in the body colour (F10).
+A terminal tool's expanded output takes the same ground; its `exit N` verdict line stays on the
+transcript's, because it is the harness speaking, not the command.
+
+**D-uxv-12 — `/agents` says what a lane is doing, not its trajectory id.** The `doing` column is
+the about-line's state half (by name, newest `about/line`), clipped to the cell; the id remains
+the fallback for a lane that has never written one.
 
 ## Verification
 

@@ -234,7 +234,10 @@ pub fn draw(tui: &TuiHandle) {
                     crate::NoticeKind::Command => theme.fg,
                     crate::NoticeKind::Info => theme.fg,
                 };
-                let style = Style::default().fg(fg).bg(theme.bg);
+                // On its own ground (visual audit): a command's output used to sit on the
+                // transcript's colour directly above the composer, so where the answer ended
+                // and the output began was a guess. The band is `field_bg`, the composer's.
+                let style = Style::default().fg(fg).bg(theme.field_bg);
                 let body: Vec<Line> = body_text
                     .into_iter()
                     .map(|l| Line::styled(l, style))

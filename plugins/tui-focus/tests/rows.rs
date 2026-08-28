@@ -499,7 +499,17 @@ fn the_same_trajectory_renders_identically_before_and_after_a_width_change() {
     let at200 = paint(&rows, 200);
     let back = paint(&rows, 80);
     assert_eq!(at80, back, "80 → 200 → 80 is the identity");
-    assert_ne!(at80, at200, "and the width genuinely changed the wrap");
+    // Nothing in this fixture is longer than 80 columns, so 80 and 200 paint the SAME lines —
+    // the old inequality held only because the tool header padded itself to the width (gone,
+    // visual audit F7). A width the bullet line cannot fit is what genuinely changes the wrap.
+    let at30 = paint(&rows, 30);
+    assert_ne!(at80, at30, "and a narrow width genuinely changed the wrap");
+    assert_eq!(
+        paint(&rows, 80),
+        at80,
+        "…and back again is still the identity"
+    );
+    let _ = at200;
 
     // Nit 39: the number of blank lines is a property of the document, not of the width. A
     // resize re-wraps; it never injects spacing.

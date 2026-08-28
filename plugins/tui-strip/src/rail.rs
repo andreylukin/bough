@@ -46,6 +46,9 @@ pub struct RailRow {
     /// The agent the `leader` set is mounted in (visual audit: "make it obvious who the leader
     /// is"). Folded from the `leader` key when the row is mounted; with no leader row nobody is.
     pub leader: bool,
+    /// Messages in the lane's inbox that no wake has claimed. Read from the live handle whenever
+    /// a mail step lands (visual audit follow-up): which lane needs attention is the rail's job.
+    pub waiting: usize,
 }
 
 /// PURE, unit-tested: status + pending wake ⇒ glyph and style ROLE.
@@ -180,9 +183,16 @@ pub fn row_lines(
     // "the keyboard's conversation" everywhere.
     let marker = if focused { FOCUS_MARKER } else { ' ' };
     let leader_tag = if row.leader { LEADER_TAG } else { "" };
-    let name_room = width
-        .saturating_sub(3 + leader_tag.chars().count() as u16 + word.len() as u16 + 1)
-        as usize;
+    // Unread mail, right before the state word: `✉ 3 idle` says "asleep with three waiting"
+    // at a glance. Nothing when the inbox is empty — the rail stays quiet when nothing is owed.
+    let mail = if row.waiting > 0 {
+        format!("\u{2709} {} ", row.waiting)
+    } else {
+        String::new()
+    };
+    let name_room = width.saturating_sub(
+        3 + leader_tag.chars().count() as u16 + mail.chars().count() as u16 + word.len() as u16 + 1,
+    ) as usize;
     let name = elide(&row.name, name_room);
     let mut head = vec![
         Span::styled(marker.to_string(), Style::default().fg(theme.accent)),
@@ -205,8 +215,11 @@ pub fn row_lines(
         ));
     }
     let used = 3 + name.chars().count() + leader_tag.chars().count();
-    let pad = (width as usize).saturating_sub(used + word.len());
+    let pad = (width as usize).saturating_sub(used + mail.chars().count() + word.len());
     head.push(Span::raw(" ".repeat(pad)));
+    if !mail.is_empty() {
+        head.push(Span::styled(mail, Style::default().fg(theme.evidence)));
+    }
     head.push(Span::styled(
         word.to_string(),
         Style::default().fg(role_color(theme, role)),

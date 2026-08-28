@@ -558,8 +558,13 @@ pub fn layout_with(
                     other => fixed_len(other, rest.height),
                 };
                 match aux_rows.get(&p.id) {
+                    // Unfocused: exactly what it asked for (zero collapses it).
                     Some(&wanted) if focused != Some(&p.id) => wanted.min(registered),
-                    _ => registered,
+                    // Focused: what it asked for, but never nothing — the keyboard is there,
+                    // so its field must be. A pane that asked for zero gets one row to type in
+                    // and grows as it fills; a pane that never reported keeps its full size.
+                    Some(&wanted) => wanted.clamp(1, registered),
+                    None => registered,
                 }
             })
             .collect();
