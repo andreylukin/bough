@@ -128,6 +128,9 @@ pub struct TuiInner {
     pub(crate) focused_agent: RwLock<Option<AgentId>>,
     pub(crate) focused_pane: RwLock<PaneId>,
     pub(crate) composer_focused: AtomicBool,
+    /// Set the moment `quit` is asked for: panes stop touching the ledger from then on, so no
+    /// read transaction can straddle the shutdown checkpoint (24-honesty's WAL check).
+    pub(crate) quitting: AtomicBool,
     /// The `to:` lane picker (round 5): `Some(selected)` while open.
     pub(crate) lane_picker: Mutex<Option<usize>>,
     /// Set once anything CHOSE a pane (a click, Tab, a `FocusRequest`). Until then keyboard focus
@@ -222,6 +225,7 @@ impl TuiHandle {
             focused_pane: RwLock::new(no_pane()),
             lane_picker: Mutex::new(None),
             composer_focused: AtomicBool::new(true),
+            quitting: AtomicBool::new(false),
             focus_chosen: AtomicBool::new(false),
             composer: Mutex::new(composer),
             selection: Mutex::new(None),
@@ -647,6 +651,12 @@ impl TuiHandle {
             .unwrap_or((0, false))
     }
 
+    /// Whether quit has been asked for. A pane that reads the ledger on an event checks this
+    /// first: no reads once shutdown begins.
+    pub fn quitting(&self) -> bool {
+        self.0.quitting.load(Ordering::SeqCst)
+    }
+
     /// The lanes the `to:` picker lists, by name: every live agent, sorted.
     pub fn lanes(&self) -> Vec<Agent> {
         let mut lanes: Vec<Agent> = self.0.agents.as_ref().map(|a| a.list()).unwrap_or_default();
@@ -870,6 +880,7 @@ impl TuiHandle {
     /// Ask the process to end. Delegates to `Kernel::request_exit` (P2-D23): the launcher still
     /// owns teardown, and teardown is what restores the terminal.
     pub fn quit(&self, code: u8) {
+        self.0.quitting.store(true, Ordering::SeqCst);
         match self.0.ctx.kernel() {
             Some(k) => k.request_exit(code),
             // No kernel means no launcher to ask; restoring is then the only honest thing left.

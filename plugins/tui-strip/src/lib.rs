@@ -435,8 +435,10 @@ impl Plugin for StripPlugin {
                         None => None,
                     }
                 };
-                // A wake ending is when the owed facts change (round 10).
-                if ev.phase == Phase::End {
+                // A wake ending is when the owed facts change (round 10) — unless the shell is
+                // quitting: a read transaction straddling the shutdown checkpoint left the WAL
+                // un-truncated (24-honesty).
+                if ev.phase == Phase::End && !t.quitting() {
                     if let Some(traj) = traj {
                         backfill(&l, &r, &traj).await;
                     }
