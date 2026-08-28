@@ -689,11 +689,13 @@ fn the_empty_transcript_says_what_it_is_for() {
         text.contains("sol is waiting for your first message"),
         "{text}"
     );
-    assert!(text.contains("/ lists the commands"), "{text}");
+    assert!(text.contains("/ commands"), "{text}");
+    // One line at the measure: the hint is the status line's vocabulary, not a paragraph.
+    assert_eq!(out.len(), 2, "{out:?}");
     let unnamed = paint(&[], 80).join("\n");
     assert!(unnamed.starts_with("Nothing here yet."), "{unnamed}");
     // Narrow: the hint wraps rather than clipping.
-    assert!(paint_as(&[], 40, Some("sol")).len() > 2);
+    assert!(paint_as(&[], 30, Some("sol")).len() > 2);
     // With a row, no welcome.
     let rows = rows_from_steps(&[step(
         1,
