@@ -112,13 +112,18 @@ pub fn draw(tui: &TuiHandle) {
         .iter()
         .filter_map(|(id, r)| r.aux_rows.map(|n| (id.clone(), n)))
         .collect();
-    let focused = tui.focused_pane();
+    // For the LAYOUT, "focused" means "has the keyboard": while the composer has it, no Aux
+    // pane does, so a search pane that reported zero rows collapses instead of keeping the one
+    // row the focused rule guarantees — the `search [▏]` ghost the power-user persona found
+    // after Esc, Esc (the pane id stayed `focused_pane` while the keyboard had left it).
+    let focused_pane = tui.focused_pane();
+    let focused = layout_focus(&focused_pane, tui.composer_focused());
     let rects = pane::layout_with(
         size,
         &infos,
         composer_h,
         tui.0.cfg.gutter,
-        Some(&focused),
+        focused,
         &aux_rows,
     );
     *tui.0.rects.write() = rects.clone();
@@ -999,6 +1004,16 @@ pub async fn flush_pending_send(tui: &TuiHandle) {
     }
 }
 
+/// PURE: the pane the layout treats as focused — the focused pane only while the keyboard is
+/// there, never while the composer has it.
+pub fn layout_focus(focused_pane: &PaneId, composer_focused: bool) -> Option<&PaneId> {
+    if composer_focused {
+        None
+    } else {
+        Some(focused_pane)
+    }
+}
+
 /// A slash line: through `ctx.commands`, and NEVER to an agent (V5). Appends no step (P3-D8).
 ///
 /// THE TEXT IS NOT DESTROYED (B3). The composer is cleared only where the name RESOLVED; on a
@@ -1101,5 +1116,18 @@ pub fn to_agent(agent: bough_plugin_agents::AgentId) -> FocusRequest {
     FocusRequest {
         agent: Some(agent),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod layout_focus_tests {
+    use super::layout_focus;
+    use crate::pane::PaneId;
+
+    #[test]
+    fn the_layout_sees_no_focused_pane_while_the_composer_has_the_keyboard() {
+        let id = PaneId::new("tui.search");
+        assert_eq!(layout_focus(&id, false), Some(&id));
+        assert_eq!(layout_focus(&id, true), None);
     }
 }
