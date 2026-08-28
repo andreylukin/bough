@@ -131,7 +131,7 @@ impl Pane for StripPane {
         for r in rows.iter_mut() {
             r.clock = rail::clock_text(r.since, cx.view.now);
         }
-        let (lines, spans) = rail::rail(
+        let (mut lines, spans) = rail::rail(
             &rows,
             focused.as_ref(),
             self.cfg.show_about,
@@ -139,6 +139,19 @@ impl Pane for StripPane {
             area.width,
             &theme,
         );
+        // With the KEYBOARD in the rail (round 6), the focused lane's head line sits on the
+        // selection ground, so Up/Down visibly move something — the rail had no focus ring.
+        if cx.view.is_focused {
+            for (agent, top, _) in &spans {
+                if Some(agent) == focused.as_ref() {
+                    if let Some(line) = lines.get_mut(*top as usize) {
+                        *line = line
+                            .clone()
+                            .patch_style(ratatui::style::Style::default().bg(theme.sel_bg));
+                    }
+                }
+            }
+        }
         // §16 at the surface: whatever state halves this frame put on screen are recorded, and
         // the invariant checks that every one of them came from a CITED about-line.
         invariant::record_frame(&rows);
