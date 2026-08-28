@@ -29,6 +29,8 @@ fn view() -> StatusView {
         ],
         notice_pinned: false,
         agent: None,
+        owed_claims: 0,
+        owed_question: false,
     }
 }
 
@@ -385,4 +387,24 @@ fn the_lane_is_named_on_the_line_only_while_the_rail_is_collapsed() {
         .map(|s| s.content.to_string())
         .collect::<String>();
     assert!(text.contains("sol · running"), "{text}");
+}
+
+/// Round 10: the "what do I owe" chip is present only while something is owed, and outlives
+/// the cwd, cost and context at narrow widths.
+#[test]
+fn the_owed_chip_says_claims_and_questions_and_survives_narrow_widths() {
+    let mut v = view();
+    v.running = false;
+    assert!(!status::fields(&v, 200).contains(&Field::Owed));
+    v.owed_claims = 2;
+    v.owed_question = true;
+    let text = status::status_line(&v, 200, &Theme::of(ThemeName::Dark))
+        .spans
+        .iter()
+        .map(|s| s.content.to_string())
+        .collect::<String>();
+    assert!(text.contains("◇ 2 claims · ? question"), "{text}");
+    let narrow = status::fields(&v, 60);
+    assert!(narrow.contains(&Field::Owed), "{narrow:?}");
+    assert!(!narrow.contains(&Field::Cwd), "{narrow:?}");
 }

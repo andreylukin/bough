@@ -1189,3 +1189,56 @@ fn an_empty_program_draws_nothing() {
     let label = out.iter().position(|l| l.trim() == "sol:").expect("label");
     assert_eq!(out[label + 1].trim(), "Done.", "{out:?}");
 }
+
+/// Round 10: what the lane is waiting on — open claims, and a trailing question once the turn
+/// is over and nothing from Andrey followed it.
+#[test]
+fn owed_counts_open_claims_and_a_trailing_question() {
+    use bough_plugin_tui_focus::rows::{owed, Owed};
+    let rows = rows_from_steps(&[
+        step(
+            1,
+            "claim/proposed",
+            serde_json::json!({ "claim": "k1", "kind": "decision", "title": "T", "body": "B" }),
+        ),
+        step(
+            2,
+            "claim/proposed",
+            serde_json::json!({ "claim": "k2", "kind": "decision", "title": "T2", "body": "B" }),
+        ),
+        step(3, "claim/accepted", serde_json::json!({ "claim": "k2" })),
+        step(
+            4,
+            "thought/text",
+            serde_json::json!({ "step_index": 0, "text": "Which team should the ticket go to?" }),
+        ),
+    ]);
+    assert_eq!(
+        owed(&rows, false),
+        Owed {
+            claims: 1,
+            question: true
+        }
+    );
+    assert_eq!(
+        owed(&rows, true),
+        Owed {
+            claims: 1,
+            question: false
+        },
+        "still running: not yet a question to answer"
+    );
+    let answered = rows_from_steps(&[
+        step(
+            4,
+            "thought/text",
+            serde_json::json!({ "step_index": 0, "text": "Which team?" }),
+        ),
+        step(
+            5,
+            "mail/delivered",
+            serde_json::json!({ "from": "andrey", "subject": "x", "summary": "TEAM-1" }),
+        ),
+    ]);
+    assert_eq!(owed(&answered, false), Owed::default());
+}

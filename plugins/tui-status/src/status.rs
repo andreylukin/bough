@@ -49,6 +49,9 @@ pub struct StatusView {
     /// The focused agent's name, set ONLY while the rail is collapsed (visual audit, 80×24): the
     /// rail names the lane at every width it exists at; under `collapse_cols` nothing did.
     pub agent: Option<String>,
+    /// What the focused lane is waiting on from Andrey (round 10): open claims, a question.
+    pub owed_claims: usize,
+    pub owed_question: bool,
 }
 
 /// A field of the line.
@@ -57,6 +60,8 @@ pub enum Field {
     Product,
     /// The focused agent's name — present only while the rail is collapsed (`StatusView::agent`).
     Agent,
+    /// `◇ 1 claim · ? question` — present only while something is owed (round 10).
+    Owed,
     Cwd,
     Model,
     Context,
@@ -79,9 +84,10 @@ pub const STOP_KEY: &str = "esc to interrupt";
 pub const CLOSE_KEY: &str = "esc to close";
 
 /// The order fields are RENDERED in, left to right.
-pub const RENDER_ORDER: [Field; 10] = [
+pub const RENDER_ORDER: [Field; 11] = [
     Field::Product,
     Field::Agent,
+    Field::Owed,
     Field::Cwd,
     Field::Model,
     Field::Context,
@@ -99,7 +105,7 @@ pub const RENDER_ORDER: [Field; 10] = [
 /// knows where they are; money and context are numbers you glance at, not act on; the model
 /// matters more; and the LAST two things to go are the spinner — the only thing on screen saying
 /// the harness is alive (M32) — and the product's own name.
-pub const DROP_ORDER: [Field; 10] = [
+pub const DROP_ORDER: [Field; 11] = [
     Field::Hints,
     Field::Cwd,
     Field::Cost,
@@ -108,6 +114,9 @@ pub const DROP_ORDER: [Field; 10] = [
     Field::CloseKey,
     // Only ever present when the rail is gone, so it is the one place the lane is named.
     Field::Agent,
+    // What Andrey owes outlives everything but the stop key and the product name: it is the
+    // one fact a check-in glance is for (round 10).
+    Field::Owed,
     Field::StopKey,
     Field::Elapsed,
     Field::Product,
@@ -117,7 +126,7 @@ pub const DROP_ORDER: [Field; 10] = [
 /// to go rather than the first: `esc interrupt` is the stop key, and the audit's blocker was not
 /// that Esc did nothing but that nobody was ever told it was there (phase ux1 §2.4). An idle
 /// screen can afford to teach; a running one has to.
-pub fn drop_order(v: &StatusView) -> [Field; 10] {
+pub fn drop_order(v: &StatusView) -> [Field; 11] {
     if v.running {
         [
             // Never rendered while running (Esc means interrupt then), so it goes first.
@@ -128,6 +137,7 @@ pub fn drop_order(v: &StatusView) -> [Field; 10] {
             Field::Model,
             Field::Hints,
             Field::Agent,
+            Field::Owed,
             Field::Elapsed,
             // The stop key outlives everything but the product name while a turn runs: it is the
             // one thing a person needs at that moment.
@@ -186,6 +196,21 @@ pub fn field_text(v: &StatusView, f: Field) -> Option<String> {
         // With the rail collapsed the chip carries the STATE too (round 10, busy-executive): at
         // 80 columns the rail is gone, and "who" without "idle / running" answers nothing at a
         // glance.
+        Field::Owed => {
+            let mut parts = Vec::new();
+            if v.owed_claims > 0 {
+                let noun = if v.owed_claims == 1 {
+                    "claim"
+                } else {
+                    "claims"
+                };
+                parts.push(format!("\u{25c7} {} {noun}", v.owed_claims));
+            }
+            if v.owed_question {
+                parts.push("? question".to_string());
+            }
+            (!parts.is_empty()).then(|| parts.join(" \u{b7} "))
+        }
         Field::Agent => v.agent.as_ref().map(|name| {
             let state = if v.running { "running" } else { "idle" };
             format!("{name} \u{b7} {state}")
@@ -333,6 +358,8 @@ fn role(f: Field, v: &StatusView, theme: &Theme) -> ratatui::style::Color {
         Field::CloseKey => theme.fg,
         // The accent means one thing on this screen: who is speaking (D-uxv-3).
         Field::Agent => theme.accent,
+        // Owed is a warning colour: it is the thing to act on.
+        Field::Owed => theme.warn,
         Field::Hints => theme.hint,
     }
 }

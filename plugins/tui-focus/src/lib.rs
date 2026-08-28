@@ -792,6 +792,9 @@ impl Pane for FocusPane {
             })
             .collect();
         invariant::record_frame(&state.rows, &live);
+        // What this lane is waiting on from Andrey (round 10), for the status chip.
+        let owed = rows::owed(&state.rows, cx.view.running);
+        cx.report_owed(owed.claims, owed.question);
         let top = state.scroll.top(lines.len(), area.height);
         // The unread affordance (phase ux1 §2.2, B2): scrolled up with rows arriving below, the
         // pane SAYS how many and what to press. Nothing is drawn while following, so a reader at

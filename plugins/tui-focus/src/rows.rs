@@ -618,6 +618,34 @@ pub fn is_empty_program(row: &Row) -> bool {
     )
 }
 
+/// What the focused lane is WAITING ON FROM ANDREY (round 10): open claims, and whether its
+/// last message was a question to him.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Owed {
+    pub claims: usize,
+    pub question: bool,
+}
+
+/// PURE: the lane's open claims, and — with the turn over — whether its last message ends in a
+/// question that nothing from Andrey has answered yet. Heuristic by design (no model call):
+/// the last agent row is text ending with `?`, the turn is not running, and no Andrey row
+/// follows it.
+pub fn owed(rows: &[Row], running: bool) -> Owed {
+    let claims = rows
+        .iter()
+        .filter(|r| matches!(r, Row::Claim { state, .. } if state.is_open()))
+        .count();
+    let question = !running
+        && rows
+            .iter()
+            .rposition(|r| is_agent_row(r) || matches!(r, Row::Andrey { .. } | Row::Queued { .. }))
+            .is_some_and(|i| match &rows[i] {
+                Row::Text { text, .. } => text.trim_end().ends_with('?'),
+                _ => false,
+            });
+    Owed { claims, question }
+}
+
 /// Tools that change files, by name (typed rows and program sub-calls alike).
 pub fn changes_files(name: &str) -> bool {
     matches!(name, "patch" | "edit_file" | "write_file")
