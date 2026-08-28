@@ -57,15 +57,12 @@ fn body_str(step: &Step, field: &str) -> Option<String> {
 /// the first line of what it said, so the half is never empty for a turn that only talked.
 fn state_half(steps: &[&Step]) -> String {
     let mut clauses: Vec<String> = Vec::new();
-    let mut said: Option<String> = None;
+    // What it said, as MESSAGES: consecutive `thought/text` flushes of one model step are one
+    // message (the ledger splits a stream at flush boundaries — `I` then `'ve received…`).
+    let said = messages(steps).into_iter().next().map(|m| first_line(&m));
     for s in steps {
         let clause = match s.kind.as_str() {
-            "thought/text" => {
-                if said.is_none() {
-                    said = body_str(s, "text").map(|t| first_line(&t));
-                }
-                None
-            }
+            "thought/text" => None,
             // The code-mode `run` call is the program's envelope: its inner `program/call`
             // steps are the clauses, so the envelope itself says nothing.
             "tool/call" | "program/call" => body_str(s, "name")
@@ -151,13 +148,40 @@ fn first_line(t: &str) -> String {
 /// (`→ You'll need to create this ticket manually.`); the first line is where a model says what
 /// it is doing or about to do.
 fn intent_half(steps: &[&Step]) -> String {
-    steps
-        .iter()
-        .rev()
-        .filter(|s| s.kind.as_str() == "thought/text")
-        .find_map(|s| body_str(s, "text"))
-        .map(|t| first_line(&t))
+    messages(steps)
+        .into_iter()
+        .last()
+        .map(|m| first_line(&m))
         .unwrap_or_default()
+}
+
+/// PURE: the wake's `thought/text` steps as MESSAGES — consecutive flushes with the same
+/// `step_index` concatenated raw, exactly as the conversation joins them (P5-D14).
+fn messages(steps: &[&Step]) -> Vec<String> {
+    let mut out: Vec<(Option<u64>, String)> = Vec::new();
+    let mut last_was_text = false;
+    for s in steps {
+        if s.kind.as_str() != "thought/text" {
+            last_was_text = false;
+            continue;
+        }
+        let index = s.body.get("step_index").and_then(|v| v.as_u64());
+        let text = s
+            .body
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        match out.last_mut() {
+            Some((i, t)) if last_was_text && *i == index => t.push_str(&text),
+            _ => out.push((index, text)),
+        }
+        last_was_text = true;
+    }
+    out.into_iter()
+        .map(|(_, t)| t)
+        .filter(|t| !t.trim().is_empty())
+        .collect()
 }
 
 /// Compose the line for one COMPLETED wake.
@@ -382,6 +406,22 @@ mod clause_tests {
         let c = compose(&talk, &WakeId::new("w1"), &StepId::new("end"), &cfg());
         assert_eq!(c.line.state, "replied: Just a thought.");
         assert_eq!(c.line.intent, "Just a thought.");
+        // Two flushes of one model step are one message: never `replied: I`.
+        let split = vec![
+            step(
+                "t1",
+                "thought/text",
+                serde_json::json!({ "step_index": 0, "text": "I" }),
+            ),
+            step(
+                "t2",
+                "thought/text",
+                serde_json::json!({ "step_index": 0, "text": "'ve received your mail." }),
+            ),
+        ];
+        let c = compose(&split, &WakeId::new("w1"), &StepId::new("end"), &cfg());
+        assert_eq!(c.line.state, "replied: I've received your mail.");
+        assert_eq!(c.line.intent, "I've received your mail.");
         // Leading punctuation or a marker-only line is not the first line said.
         let odd = vec![step(
             "t1",

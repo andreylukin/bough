@@ -675,6 +675,10 @@ pub async fn on_chip(tui: &TuiHandle, kind: crate::composer::ChipKind) {
 /// Esc with something up: dismiss the topmost overlay. With nothing up this is a deliberate
 /// NO-OP — the draft is never destroyed (B3, V3).
 pub async fn dismiss_overlay(tui: &TuiHandle) {
+    if tui.lane_picker().is_some() {
+        tui.set_lane_picker(None);
+        return;
+    }
     if tui.palette_open() {
         tui.set_palette(false, "");
         return;
@@ -774,9 +778,18 @@ async fn cycle_focus(tui: &TuiHandle, step: i32) {
     // where the arrows did nothing visible — a dead stop before the pane a person wants.
     let mut panes = tui.panes();
     panes.sort_by_key(|p| p.slot == crate::pane::Slot::Strip);
+    // …and a pane with no rows on screen (a collapsed search pane) is not a stop: Tab landing
+    // on nothing visible was the "second Tab does nothing" the power-user persona hit. Ctrl+F
+    // is the way into search.
+    let rects = tui.0.rects.read().clone();
+    let visible = |id: &PaneId| {
+        rects
+            .iter()
+            .any(|(r, rect)| r == id && rect.height > 0 && rect.width > 0)
+    };
     let mut stops: Vec<Option<PaneId>> = panes
         .into_iter()
-        .filter(|p| p.focusable)
+        .filter(|p| p.focusable && visible(&p.id))
         .map(|p| Some(p.id))
         .collect();
     stops.push(None); // the composer
@@ -843,6 +856,20 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
                     }
                 }
                 tui.set_lane_picker(None);
+                // A click on the `to:` chip itself while the list was open CLOSES it and does
+                // nothing else — the chip is a toggle, not a reopen.
+                let area = composer_rect(tui);
+                let lane = tui.agent().map(|a| a.name().to_string());
+                let chips = crate::composer::chips(area.width, lane.as_deref(), tui.running());
+                let on_last_row = row == area.y + area.height.saturating_sub(1);
+                if on_last_row
+                    && col
+                        .checked_sub(area.x)
+                        .and_then(|c| crate::composer::chip_at(&chips, c))
+                        .is_some_and(|c| c.kind == crate::composer::ChipKind::Lane)
+                {
+                    return;
+                }
             }
             let Some(pane) = tui.pane_at(col, row) else {
                 // A click on the composer's band: a CHIP if one is under the pointer (D7) —
@@ -917,11 +944,18 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
             // Focus is deliberately untouched: a wheel over another pane reads it, it does not
             // select it. Over the composer band or a zero-size slot the wheel still means "scroll
             // the conversation" (M23), which is the only thing a wheel can sensibly mean there.
+            // A wheel over the RAIL scrolls the conversation too (round 8): the rail has nothing
+            // to scroll, and a wheel that does nothing over a third of the screen reads as broken.
+            let is_strip = |id: &PaneId| {
+                tui.panes()
+                    .iter()
+                    .any(|p| &p.id == id && p.slot == crate::pane::Slot::Strip)
+            };
             match tui.pane_at(col, row) {
-                Some(pane) => {
+                Some(pane) if !is_strip(&pane) => {
                     route(tui, pane, PaneEvent::Scroll { delta }).await;
                 }
-                None => scroll_transcript(tui, delta).await,
+                _ => scroll_transcript(tui, delta).await,
             }
         }
         _ => {}
