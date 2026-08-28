@@ -324,15 +324,40 @@ pub fn calls_gist(subs: &[ProgramSub], ms: u64, budget: usize) -> String {
         text = candidate;
         shown = i + 1;
     }
-    if shown == 0 {
+    if shown < parts.len() {
+        // Over budget (round 5): the calls grouped BY VERB — `3 views, 2 edits, bash` — rather
+        // than the first few named and the rest counted. Shorter, and it still says what kind
+        // of work the program did; the names are one click away in the opened block.
+        let grouped = verb_groups(subs);
+        if grouped.chars().count() <= room {
+            return grouped + &when;
+        }
         return summary(subs.len(), ms);
-    }
-    let rest = parts.len() - shown;
-    if rest > 0 {
-        text.push_str(&format!(" +{rest}"));
     }
     text.push_str(&when);
     text
+}
+
+/// PURE: the calls counted by name, first-seen order: `3 views, 2 edits, bash`. A name that
+/// appears once is bare; a repeated one gets its count and an `s`.
+pub fn verb_groups(subs: &[ProgramSub]) -> String {
+    let mut order: Vec<&str> = Vec::new();
+    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for sub in subs {
+        let name = sub.name.as_str();
+        if !counts.contains_key(name) {
+            order.push(name);
+        }
+        *counts.entry(name).or_insert(0) += 1;
+    }
+    order
+        .iter()
+        .map(|name| match counts[name] {
+            1 => (*name).to_string(),
+            n => format!("{n} {name}s"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// PURE: one call as `name object` — the object being the argument a person would name the call
@@ -516,8 +541,9 @@ mod gist_tests {
         );
         // No measured duration: no ` · 0ms`.
         assert_eq!(calls_gist(&subs[..1], 0, 80), "view main.rs");
-        // Over budget: the calls that fit, then `+N` for the rest.
-        assert_eq!(calls_gist(&subs, 0, 32), "view main.rs, view README.md +1");
+        // Over budget: the calls grouped by verb (round 5), never `+N`.
+        assert_eq!(calls_gist(&subs, 0, 32), "2 views, bash");
+        assert_eq!(super::verb_groups(&subs), "2 views, bash");
         // Not even the first fits: the count.
         assert_eq!(calls_gist(&subs, 0, 6), "3 calls");
         // A call with no nameable object is just its name; a long object is clipped.

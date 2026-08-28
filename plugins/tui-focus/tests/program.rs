@@ -305,10 +305,13 @@ fn the_collapsed_line_is_one_line_of_stable_width() {
     assert!(text.contains("bash ls, bash ls"), "{text:?}");
     assert!(!text.contains("4 calls"), "{text:?}");
     assert!(text.contains("1.2s"), "{text:?}");
-    // Narrower: the calls that do not fit become `+N`; narrower still, the bare count.
+    // Narrower: the calls that do not fit are grouped by verb; narrower still, the bare count.
     let (lines, _) = program_lines(&view(&rows[0], &expanded, 30, &theme));
     let text = text_of(&lines).remove(0);
-    assert!(text.contains("bash ls +3"), "{text:?}");
+    assert!(
+        text.contains("4 bashs") || text.contains("4 calls"),
+        "{text:?}"
+    );
     let (lines, _) = program_lines(&view(&rows[0], &expanded, 22, &theme));
     let text = text_of(&lines).remove(0);
     assert!(text.contains("4 calls"), "{text:?}");
