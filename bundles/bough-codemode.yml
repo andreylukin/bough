@@ -1,0 +1,41 @@
+# bundles/bough-codemode.yml — the SECOND consumer of the `tools` seam (phase codemode §0.1).
+#
+# Three rows and nothing else. The `tools` seam, `tools.baseline`, `tools.operator` and every
+# other typed-tool row stay exactly where `bough-base` puts them: this bundle does not remove a
+# row, it adds a Consumer that shows the model ONE tool — `run(program)` — and conceals the rest
+# from the prompt while leaving them executable through the same pipeline.
+#
+# The default profile does NOT include this bundle. `--profile codemode` (or a `--patch` naming
+# these three ids) is the only way to reach it, which is decision A of the plan's §7: the default
+# consumer stays typed until Andrey switches it.
+- id: js
+  plugin: js
+  config:
+    # The caps a program runs under unless `tools.codemode` names its own. Ops is an
+    # interrupt-handler budget, not an instruction count; the wall clock is the real bound.
+    default_caps:
+      ops: 20000000
+      memory_bytes: 67108864
+      stack_bytes: 1048576
+      wall_ms: 120000
+      console_bytes: 65536
+- id: js.quickjs
+  plugin: js-quickjs
+  config:
+    interrupt_check_ops: 10000
+    max_concurrent_programs: 4
+- id: tools.codemode
+  plugin: tools-codemode
+  config:
+    # `null` ⇒ the `js` row's `default_caps`, so the caps are said once.
+    caps: null
+    conceal: mirror
+    aliases:
+      claim: propose_claim
+      agent: spawn_worker
+    namespaces:
+      mcp: "mcp__"
+    max_console_bytes: 65536
+    max_calls_per_program: 64
+    tags_required: true
+    surface_section: true

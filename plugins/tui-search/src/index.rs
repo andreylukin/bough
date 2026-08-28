@@ -82,6 +82,30 @@ fn speaker_and_text(agent: &AgentName, row: &Row) -> Option<(String, String)> {
             }
             Some((name.clone(), text))
         }
+        // A program row is searchable by the SOURCE the model wrote and by what it printed — the
+        // two things a person goes looking for. Its inner calls are folded into the same row, so
+        // their arguments and output join the same haystack rather than being lost with them.
+        Row::Program {
+            source,
+            console,
+            subs,
+            ..
+        } => {
+            let mut text = format!("{source} {console}");
+            for sub in subs {
+                text.push(' ');
+                text.push_str(&sub.name);
+                text.push(' ');
+                text.push_str(&args_text(&sub.args));
+                if let Some(res) = &sub.result {
+                    if !res.content.trim().is_empty() {
+                        text.push(' ');
+                        text.push_str(&res.content);
+                    }
+                }
+            }
+            Some(("program".to_string(), text))
+        }
         Row::About { view, .. } => Some((
             "about".to_string(),
             format!("{} {}", view.state, view.intent),

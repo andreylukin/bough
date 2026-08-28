@@ -14,6 +14,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use bough_kernel::{Context, InvariantSpec, Plugin, PluginError};
+use bough_plugin_agents::AgentsHandle;
+use bough_plugin_ledger::LedgerHandle;
+use bough_plugin_tools::{RenderIntent, ToolName, ToolScope, ToolSpec};
 
 pub use clock::{Clock, SystemClock};
 pub use schedule::{ScheduleFiredBody, ScheduleId, ScheduleIntentBody};
@@ -56,8 +59,9 @@ impl Plugin for OperatorPlugin {
     type Config = OperatorConfig;
 
     fn inject() -> bough_kernel::Inject {
-        bough_kernel::Inject::required(["tools", "ledger", "workspace"])
-            .union(&bough_kernel::Inject::optional(["agents", "mail", "schedule"]))
+        bough_kernel::Inject::required(["tools", "ledger", "workspace"]).union(
+            &bough_kernel::Inject::optional(["agents", "mail", "schedule"]),
+        )
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), bough_kernel::ConfigError> {
@@ -77,15 +81,169 @@ impl Plugin for OperatorPlugin {
 
     /// Registers all seven specs as effects, declares the two `schedule/*` step types, starts the
     /// due-watcher, and kills every live `bg` job on disposal.
-    ///
-    /// WP-4 owns the body.
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-4: register the seven specs, the step types, and the schedule watcher")
+    async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let fail = |e: bough_kernel::KernelError| PluginError::new(entry.clone(), e);
+        let tools = (*ctx.get::<bough_plugin_tools::Tools>().map_err(fail)?).clone();
+        let ledger = (*ctx.get::<bough_plugin_ledger::Ledger>().map_err(fail)?).clone();
+        let root = (*ctx.get::<bough_plugin_tools::Workspace>().map_err(fail)?).clone();
+        let agents = ctx
+            .try_get::<bough_plugin_agents::Agents>()
+            .map_err(fail)?
+            .map(|a| (*a).clone());
+
+        // The two step types are declared BEFORE the `schedule` tool can be called: an append of a
+        // type the ledger does not know is refused, and a tool that could only fail is worse than
+        // an absent one.
+        ledger
+            .declare_step_types(&ctx, schedule::step_types())
+            .await?;
+
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        let seen = Arc::new(files::SeenFiles::default());
+        let jobs = bg::BgJobs::new(cfg.clone(), root.path().to_path_buf());
+
+        // §0.2: unwind leaves no orphan. The kill is an INVERSE of the row, so a disable, a
+        // reload and a boot failure all reach it — a `Drop` impl on the registry would not,
+        // because a live `Arc` in a tool spec outlives the row that made it.
+        {
+            let jobs = jobs.clone();
+            let fiber = ctx.fiber_uid();
+            ctx.effect(move |ectx| async move {
+                ectx.defer_sync(move || {
+                    jobs.kill_all();
+                    invariant::forget(fiber);
+                });
+                Ok(())
+            })
+            .await?;
+        }
+
+        for spec in files::specs(cfg.clone(), root.clone(), seen) {
+            tools.register(&ctx, spec).await?;
+        }
+        for spec in specs(
+            cfg.clone(),
+            clock.clone(),
+            ledger.clone(),
+            agents.clone(),
+            jobs,
+        ) {
+            tools.register(&ctx, spec).await?;
+        }
+
+        // The watcher needs a live registry to wake: with `agents` absent an intent is still
+        // recorded and still fires when the row is remounted with one, which is the whole reason
+        // the intent is a ledger step.
+        if let Some(agents) = agents {
+            let watcher = schedule::Watcher {
+                cfg,
+                clock,
+                ledger,
+                agents,
+                fiber: ctx.fiber_uid(),
+            };
+            ctx.effect_spawn(move |ectx| async move { schedule::watch(ectx, watcher).await });
+        }
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {
         vec![invariant::every_fire_names_a_live_intent()]
     }
+}
+
+fn schema(v: serde_json::Value) -> schemars::Schema {
+    schemars::Schema::try_from(v).expect("an operator tool's input schema is an object")
+}
+
+/// The four specs this module owns; `files::specs` supplies the other three.
+///
+/// The plan's signature took only `(cfg)`: every one of the four needs an injected dependency the
+/// config cannot name (a clock, the ledger, the live registry, the job table), so they are
+/// arguments — see `docs/codemode-merge-notes.md`.
+pub fn specs(
+    cfg: Arc<OperatorConfig>,
+    clock: Arc<dyn Clock>,
+    ledger: LedgerHandle,
+    agents: Option<AgentsHandle>,
+    jobs: Arc<bg::BgJobs>,
+) -> Vec<ToolSpec> {
+    let string = serde_json::json!({ "type": "string" });
+    vec![
+        ToolSpec {
+            name: ToolName::new("bg"),
+            description: "Run a shell command in the background, read its output, or kill it. \
+                          `{op: start, name, cmd}` | `{op: output, id}` | `{op: kill, id}`."
+                .into(),
+            input_schema: schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "op": { "type": "string", "enum": ["start", "output", "kill"] },
+                    "name": string, "cmd": string, "id": string
+                },
+                "required": ["op"]
+            })),
+            render: RenderIntent::Terminal,
+            scope: ToolScope::Global,
+            tool: Arc::new(bg::Bg {
+                cfg: cfg.clone(),
+                jobs,
+            }),
+        },
+        ToolSpec {
+            name: ToolName::new("ledger_read"),
+            description: "Drill into the ledger: `{op: search, q}` | `{op: steps, from, to}` | \
+                          `{op: tail, n}`. Results cite the steps they came from."
+                .into(),
+            input_schema: schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "op": { "type": "string", "enum": ["search", "steps", "tail"] },
+                    "q": string,
+                    "from": { "type": "integer" }, "to": { "type": "integer" },
+                    "n": { "type": "integer" }, "limit": { "type": "integer" }
+                },
+                "required": ["op"]
+            })),
+            render: RenderIntent::Generic,
+            scope: ToolScope::Global,
+            tool: Arc::new(ledger_read::LedgerRead {
+                cfg: cfg.clone(),
+                ledger: ledger.clone(),
+            }),
+        },
+        ToolSpec {
+            name: ToolName::new("inbox"),
+            description: "The mail delivered to this agent that no wake has consumed yet.".into(),
+            input_schema: schema(serde_json::json!({ "type": "object", "properties": {} })),
+            render: RenderIntent::Generic,
+            scope: ToolScope::Global,
+            tool: Arc::new(inbox::Inbox {
+                ledger: ledger.clone(),
+                agents: agents.clone(),
+            }),
+        },
+        ToolSpec {
+            name: ToolName::new("schedule"),
+            description: "Wake yourself later with an intent. `at` is an RFC 3339 instant or a \
+                          `+5m` / `+2h` / `+1d` offset."
+                .into(),
+            input_schema: schema(serde_json::json!({
+                "type": "object",
+                "properties": { "at": string, "intent": string },
+                "required": ["at", "intent"]
+            })),
+            render: RenderIntent::Generic,
+            scope: ToolScope::Global,
+            tool: Arc::new(schedule::Schedule {
+                cfg,
+                clock,
+                ledger,
+                agents,
+            }),
+        },
+    ]
 }
 
 bough_kernel::register_plugin!(OperatorPlugin);

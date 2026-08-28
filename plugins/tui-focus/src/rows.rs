@@ -12,6 +12,8 @@ use bough_plugin_llm::ToolCallId;
 use bough_plugin_tools::{RenderIntent, ToolResultBody};
 use bough_plugin_tui_render::{about_from_step, AboutView};
 
+use crate::program::{self, ProgramError, ProgramSub, RUN_TOOL};
+
 /// The `from` ref Andrey's own mail carries (`Sender::Andrey::as_ref_str`). Spelled here rather
 /// than imported as a constant because `agents` exposes it only through the enum, and the focus
 /// pane reads the LEDGER BODY, not a live `Message`.
@@ -80,6 +82,27 @@ pub enum Row {
         result: Option<ToolResultBody>,
         call_step: StepId,
     },
+    /// ONE program under code mode: the `run` call that carried the JS source, every `program/*`
+    /// step written from inside it, and the `tool/result` that closed it — one row, the same rule
+    /// the `tool/call` + `tool/result` pair obeys. Keyed on the consumer's `RUN_TOOL` name, never
+    /// on a render intent (P-CM-D13). See `program.rs`.
+    Program {
+        call: ToolCallId,
+        /// The JS the model wrote. Empty only when the call's args lost it.
+        source: String,
+        /// Every `program/console` chunk, concatenated in seq order.
+        console: String,
+        subs: Vec<ProgramSub>,
+        /// The `tool/result` of the `run` call.
+        result: Option<ToolResultBody>,
+        /// The one terminal error the program ended with, if it did.
+        error: Option<ProgramError>,
+        ops: u64,
+        ms: u64,
+        call_step: StepId,
+        /// Every step folded into this row, oldest first (the [`Row::Text`] rule).
+        parts: Vec<StepId>,
+    },
     WakeMark {
         step: StepId,
         wake: WakeId,
@@ -142,7 +165,7 @@ impl Row {
             | Row::About { step, .. }
             | Row::Claim { step, .. }
             | Row::Other { step, .. } => step,
-            Row::Tool { call_step, .. } => call_step,
+            Row::Tool { call_step, .. } | Row::Program { call_step, .. } => call_step,
         }
     }
 
@@ -150,7 +173,9 @@ impl Row {
     /// joined `Text`/`Reasoning` group (P5-D14).
     pub fn parts(&self) -> Vec<StepId> {
         match self {
-            Row::Text { parts, .. } | Row::Reasoning { parts, .. } => parts.clone(),
+            Row::Text { parts, .. } | Row::Reasoning { parts, .. } | Row::Program { parts, .. } => {
+                parts.clone()
+            }
             other => vec![other.step().clone()],
         }
     }
@@ -174,6 +199,9 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
     let mut by_call: BTreeMap<ToolCallId, usize> = BTreeMap::new();
     // Where each claim id's card sits, so a decision folds into the card instead of appending.
     let mut by_claim: BTreeMap<String, usize> = BTreeMap::new();
+    // Where each INNER call id's sub sits: `(row index, sub index)`, so a `program/result` reaches
+    // the `ProgramSub` its `program/call` created.
+    let mut by_sub: BTreeMap<ToolCallId, (usize, usize)> = BTreeMap::new();
     // P5-D14, the field bug: the durable steps of ONE model step are a SPLIT of one stream, so
     // consecutive `thought/text` (or `thought/reasoning`) steps sharing `(wake, step_index)` are
     // ONE row. `None` means the last row pushed cannot be joined onto — anything else in between
@@ -274,6 +302,24 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
                     None => out.push(other(step)),
                 }
             }
+            // Code mode's ONE API tool. Its row is the anchor every `program/*` step folds into,
+            // so it is recognised BEFORE the generic tool row (P-CM-D13).
+            "tool/call" if step.body.get("name").and_then(|v| v.as_str()) == Some(RUN_TOOL) => {
+                match program::program_row(step) {
+                    Some((call, row)) => {
+                        by_call.insert(call, out.len());
+                        out.push(row);
+                    }
+                    None => out.push(other(step)),
+                }
+            }
+            "program/call" | "program/result" | "program/console" | "program/error" => {
+                // TOTAL: a sub-step whose program paged out, or whose body does not match its
+                // declared shape, is shown as itself rather than dropped or panicked on.
+                if !program::fold_sub(&mut out, &by_call, &mut by_sub, step) {
+                    out.push(other(step));
+                }
+            }
             "tool/call" => match tool_call_row(step) {
                 Some((call, row)) => {
                     by_call.insert(call, out.len());
@@ -287,11 +333,23 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
                 match parsed {
                     Some(body) => match by_call.get(&body.call).copied() {
                         // The fold: one row for the pair.
-                        Some(at) => {
-                            if let Row::Tool { result, .. } = &mut out[at] {
+                        Some(at) => match &mut out[at] {
+                            Row::Tool { result, .. } => *result = Some(body),
+                            // The `run` call's own result closes its program row.
+                            Row::Program {
+                                result, parts, ms, ..
+                            } => {
+                                *ms = step
+                                    .body
+                                    .get("value")
+                                    .and_then(|v| v.get("ms"))
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(*ms);
                                 *result = Some(body);
+                                parts.push(step.id.clone());
                             }
-                        }
+                            _ => {}
+                        },
                         // A result whose call is not in this window — the call paged out, or crash
                         // repair synthesised the result. It is still a tool row, with no args.
                         None => {

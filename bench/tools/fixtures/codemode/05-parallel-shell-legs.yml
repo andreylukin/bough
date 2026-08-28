@@ -1,0 +1,56 @@
+# Recorded transcript: 05-parallel-shell-legs, CODE-MODE arm.
+#
+# The same task as `../typed/05-parallel-shell-legs.yml`, in ONE `run(program)` round plus the answer. The token
+# counts are deliberately larger per round (the surface section is in the prompt, the program is in
+# the output) and fewer rounds: that trade is the thing the bench measures.
+{
+  "entries": {
+    "llm.anthropic": {
+      "plugin": "llm-replay",
+      "config": {
+        "strict": true,
+        "models": "*",
+        "rounds": [
+          {
+            "chunks": [
+              {
+                "type": "tool_call",
+                "id": "c0",
+                "name": "run",
+                "input": {
+                  "program": "const r = await sh([\n  {cmd: \"printf one > src/one.txt\", tag: \"file:write:one\"},\n  {cmd: \"printf two > src/two.txt\", tag: \"file:write:two\"},\n]);\nconsole.log(r.map(x => x.code).join(\",\"));\nconsole.log(await bash(\"ls src/one.txt src/two.txt\", \"file:confirm:pair\"));"
+                }
+              },
+              {
+                "type": "usage",
+                "input_tokens": 5600,
+                "output_tokens": 320
+              },
+              {
+                "type": "end",
+                "stop": "tool_use"
+              }
+            ]
+          },
+          {
+            "chunks": [
+              {
+                "type": "text",
+                "text": "Both files exist."
+              },
+              {
+                "type": "usage",
+                "input_tokens": 6400,
+                "output_tokens": 60
+              },
+              {
+                "type": "end",
+                "stop": "end_turn"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

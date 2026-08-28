@@ -102,6 +102,15 @@ t the_second_ctrl_c_exits_with_the_terminal_restored \
   '
 
 # --- `/quit` says goodbye, and is gone inside the bounded teardown window. ---------------------
+#
+# Clear the PTY's primary buffer first. The Ctrl+C exit above already printed one farewell, and
+# `the_farewell_is_one_line_and_the_screen_is_not_blank` reads the SCREEN, not this session's
+# output — without this, that bullet counts two farewells from two real exits and fails on a
+# scrollback artifact rather than on a banner.
+shell-use type "clear"
+shell-use press Enter
+shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
+
 EXITFILE="$HOME_DIR/quit.exit"
 tui_start_recording_exit "$EXITFILE" "$REPO_ROOT/scripts/tui/fixtures/slow.patch.yml"
 shell-use wait idle --timeout 20000 >/dev/null 2>&1 || true

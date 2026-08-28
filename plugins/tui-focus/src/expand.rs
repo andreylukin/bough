@@ -35,8 +35,16 @@ impl Expanded {
     }
 
     /// Flip one call. Returns the new state for that call.
+    ///
+    /// Closing a call also closes anything nested UNDER it: code mode mints an inner call as
+    /// `{program}.{n}` (P-CM-D5), so a program's sub-rows are exactly the ids under its dotted
+    /// prefix. Without this, collapsing a program and reopening it would show whichever sub-rows
+    /// had been open before rather than the one line the row promises. An ordinary tool call has
+    /// no such ids, so for every other row this is a no-op.
     pub fn toggle(&mut self, call: &ToolCallId) -> bool {
         if self.0.remove(call) {
+            let prefix = format!("{call}.");
+            self.0.retain(|c| !c.to_string().starts_with(&prefix));
             false
         } else {
             self.0.insert(call.clone());

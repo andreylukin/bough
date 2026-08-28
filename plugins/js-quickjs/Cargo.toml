@@ -15,6 +15,7 @@ serde_json = { workspace = true }
 schemars = { workspace = true }
 inventory = { workspace = true }
 parking_lot = { workspace = true }
+regex = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }

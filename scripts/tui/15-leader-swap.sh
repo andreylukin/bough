@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SWAP (§17 Phase 5), on screen — the `leader` SET moves from one agent's scope to another BY A
-# PATCH FILE while the binary runs. The five leader tools are offered to `sol`; the patch lands
+# PATCH FILE while the binary runs. The leader tools are offered to `sol`; the patch lands
 # without a restart; `sol` is no longer offered them and `terra` is.
 #
 # The `11-swap-rollups.sh` precedent, one seam over: that swap changed which PLUGIN satisfied a
@@ -15,9 +15,9 @@ source "$(dirname "$0")/lib.sh"
 
 USER_PATCH="$HOME_DIR/bough.patch.yml"
 
-# The one leader tool this script names. Not all five: the row registers them together, so a suite
-# that restated the set would go red on a sixth tool rather than on the swap it is about.
-PROBE_TOOL="adopt_unsorted"
+# The one leader tool this script names. Not both: the row registers them together, so a suite
+# that restated the set would go red on a third tool rather than on the swap it is about.
+PROBE_TOOL="curate"
 
 # `turn_on <agent>`: focus that lane and send it one message, through the surface.
 turn_on() {

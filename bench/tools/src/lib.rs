@@ -6,6 +6,6 @@ pub mod bank;
 pub mod report;
 pub mod run;
 
-pub use bank::{Coverage, Pass, Task};
-pub use report::{Money, Report, Row};
+pub use bank::{bench_dir, Coverage, Pass, Task};
+pub use report::{Money, Price, Report, Row, Summary};
 pub use run::{Arm, Runner};

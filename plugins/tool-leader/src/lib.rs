@@ -1,7 +1,10 @@
-//! Invariant (§2): these tools are the leader's ONLY extra powers, and every one of them either
-//! PROPOSES or CURATES. None of them accepts a claim, and none of them applies a graph op
-//! directly: `propose_structure` writes `claim/proposed`, never an op. The leader is an ordinary
+//! Invariant (§2): these tools are the leader's ONLY extra powers, and each of them either
+//! PROPOSES or CURATES. Neither accepts a claim, and neither applies a graph op directly: a
+//! structural `propose_claim` writes `claim/proposed`, never an op. The leader is an ordinary
 //! agent row with a wider vocabulary, not an authority.
+//!
+//! WP-6: the set is TWO tools — `propose_claim` (which absorbed `draft_requirement` and
+//! `propose_structure`) and `curate` (`adopt_unsorted` + `note_timeline`).
 
 pub mod invariant;
 pub mod tools;
@@ -35,8 +38,8 @@ impl Plugin for ToolLeaderPlugin {
     async fn apply(ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
         // The target comes from the BINDING, never from this row's config (P5-D10). Injecting
         // `leader` is also what makes the move atomic: when the `leader` row reloads against a
-        // new `config.agent`, `ctx.leader` is withdrawn, this row unloads with it — taking the
-        // five tools out of the old agent's scope — and reloads against the new binding.
+        // new `config.agent`, `ctx.leader` is withdrawn, this row unloads with it — taking both
+        // tools out of the old agent's scope — and reloads against the new binding.
         let leader = ctx
             .get::<bough_plugin_leader::Leader>()
             .map_err(|e| PluginError::new(ctx.entry_id().clone(), e))?;

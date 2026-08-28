@@ -13,6 +13,10 @@ serde_yaml = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
+rusqlite = { workspace = true }                                  # reads the run's ledger.db to score step/journal predicates
+bough-plugin-model-policy = { workspace = true }                 # the price table the $ column is arithmetic over
+bough-plugin-llm-replay = { workspace = true }                   # the recorded transcripts' declared usage
+bough-plugin-llm = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

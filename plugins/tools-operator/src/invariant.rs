@@ -7,7 +7,7 @@
 use bough_kernel::{Cadence, Context, FiberUid, InvariantSpec, InvariantViolation};
 
 /// What the row observed about scheduled intents this session.
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Obs {
     pub fiber: FiberUid,
     /// Every `schedule/intent` id appended, in order.
@@ -21,6 +21,40 @@ static SEEN: parking_lot::Mutex<Vec<Obs>> = parking_lot::Mutex::new(Vec::new());
 /// Record one observation window.
 pub fn record(obs: Obs) {
     SEEN.lock().push(obs);
+}
+
+/// Record the intents the watcher can see. Idempotent: the fold re-reads the same rows every
+/// tick, so a repeat is not news.
+pub fn note_intents(fiber: FiberUid, intents: Vec<String>) {
+    with(fiber, |obs| {
+        for i in intents {
+            if !obs.intents.contains(&i) {
+                obs.intents.push(i);
+            }
+        }
+    });
+}
+
+/// Record one fire this process actually performed. NOT idempotent, on purpose: the whole point
+/// of the check is that a second append for one id is visible here as a second entry.
+pub fn note_fire(fiber: FiberUid, id: String) {
+    with(fiber, |obs| obs.fired.push(id));
+}
+
+fn with(fiber: FiberUid, f: impl FnOnce(&mut Obs)) {
+    let mut seen = SEEN.lock();
+    if !seen.iter().any(|o| o.fiber == fiber) {
+        seen.push(Obs {
+            fiber,
+            intents: Vec::new(),
+            fired: Vec::new(),
+        });
+    }
+    let obs = seen
+        .iter_mut()
+        .find(|o| o.fiber == fiber)
+        .expect("just ensured");
+    f(obs);
 }
 
 /// Forget everything recorded for `fiber` (registered as an inverse by `apply`).

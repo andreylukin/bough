@@ -5,8 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# The leader-scoped, model-facing tools (§2): `adopt_unsorted`, `draft_requirement`,
-# `propose_claim` (the SHADOWING one), `propose_structure`, `note_timeline`. Registered with
+# The leader-scoped, model-facing tools (§2), collapsed to two by WP-6: `propose_claim` (the
+# SHADOWING one, which absorbed `draft_requirement` and `propose_structure`) and `curate`
+# (`adopt_unsorted` + `note_timeline` in one journalled pass). Registered with
 # `ToolScope::Agent(leader)`. A separate crate from `leader` for one reason: it injects `leader`
 # and so reloads with the binding (P5-D10). Row `tool.leader` in `bough-tui-app`.
 

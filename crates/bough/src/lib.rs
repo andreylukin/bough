@@ -58,6 +58,13 @@ use bough_plugin_leader as _;
 use bough_plugin_mail_router as _;
 use bough_plugin_tool_leader as _;
 use bough_plugin_worker_fork as _;
+// Phase codemode (WP-4): the operator's seven tools. Mounted in `bough-base`, so BOTH
+// consumers see them and the bench compares surfaces rather than tool inventories.
+use bough_plugin_tools_operator as _;
+// Phase codemode (WP-8): linked so the catalog HAS the rows; no bundle mounts them.
+use bough_plugin_js as _;
+use bough_plugin_js_quickjs as _;
+use bough_plugin_tools_codemode as _;
 // Phase ux1's one new row (§17 Phase 3 / phase ux1 §2.13): the status line.
 use bough_plugin_tui_status as _;
 

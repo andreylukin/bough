@@ -1,0 +1,56 @@
+# Recorded transcript: 03-multi-file-all-or-nothing, CODE-MODE arm.
+#
+# The same task as `../typed/03-multi-file-all-or-nothing.yml`, in ONE `run(program)` round plus the answer. The token
+# counts are deliberately larger per round (the surface section is in the prompt, the program is in
+# the output) and fewer rounds: that trade is the thing the bench measures.
+{
+  "entries": {
+    "llm.anthropic": {
+      "plugin": "llm-replay",
+      "config": {
+        "strict": true,
+        "models": "*",
+        "rounds": [
+          {
+            "chunks": [
+              {
+                "type": "tool_call",
+                "id": "c0",
+                "name": "run",
+                "input": {
+                  "program": "console.log(await view(\"src/a.txt\"));\nconsole.log(await view(\"src/b.txt\"));\nconsole.log(await patch(`[src/a.txt#]\nSWAP 1.=1:\n+alpha edited\n[src/b.txt#]\nSWAP 1.=1:\n+beta edited`));"
+                }
+              },
+              {
+                "type": "usage",
+                "input_tokens": 5600,
+                "output_tokens": 320
+              },
+              {
+                "type": "end",
+                "stop": "tool_use"
+              }
+            ]
+          },
+          {
+            "chunks": [
+              {
+                "type": "text",
+                "text": "Both files changed in one patch."
+              },
+              {
+                "type": "usage",
+                "input_tokens": 6400,
+                "output_tokens": 60
+              },
+              {
+                "type": "end",
+                "stop": "end_turn"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

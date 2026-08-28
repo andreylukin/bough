@@ -15,15 +15,18 @@ bough-util = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-schemars = { workspace = true }
+schemars = { workspace = true, features = ["chrono04"] }
 inventory = { workspace = true }
 parking_lot = { workspace = true }
 anyhow = { workspace = true }
-chrono = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+regex = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
+bough-plugin-ledger-memory = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }

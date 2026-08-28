@@ -1,0 +1,56 @@
+# Recorded transcript: 02-hash-anchored-patch, CODE-MODE arm.
+#
+# The same task as `../typed/02-hash-anchored-patch.yml`, in ONE `run(program)` round plus the answer. The token
+# counts are deliberately larger per round (the surface section is in the prompt, the program is in
+# the output) and fewer rounds: that trade is the thing the bench measures.
+{
+  "entries": {
+    "llm.anthropic": {
+      "plugin": "llm-replay",
+      "config": {
+        "strict": true,
+        "models": "*",
+        "rounds": [
+          {
+            "chunks": [
+              {
+                "type": "tool_call",
+                "id": "c0",
+                "name": "run",
+                "input": {
+                  "program": "console.log(await view(\"src/greet.txt\"));\nconsole.log(await patch(`[src/greet.txt#]\nSWAP 2.=2:\n+bench`));"
+                }
+              },
+              {
+                "type": "usage",
+                "input_tokens": 5600,
+                "output_tokens": 320
+              },
+              {
+                "type": "end",
+                "stop": "tool_use"
+              }
+            ]
+          },
+          {
+            "chunks": [
+              {
+                "type": "text",
+                "text": "Line 2 of src/greet.txt is `bench` now."
+              },
+              {
+                "type": "usage",
+                "input_tokens": 6400,
+                "output_tokens": 60
+              },
+              {
+                "type": "end",
+                "stop": "end_turn"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+# Multi-step shell: legs that do not depend on each other, issued together.
+id: 05-parallel-shell-legs
+prompt: >-
+  Independently and at the same time, write the word `one` into src/one.txt and the word `two`
+  into src/two.txt, then confirm both exist.
+covers: [sh]
+pass:
+  - pass: file_equals
+    path: src/one.txt
+    text: "one"
+  - pass: file_equals
+    path: src/two.txt
+    text: "two"

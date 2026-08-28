@@ -1,23 +1,27 @@
-//! The leader's five tools are scoped to ONE agent, and that agent comes from `ctx.leader`.
+//! The leader's two tools are scoped to ONE agent, and that agent comes from `ctx.leader`.
 //! Everything here is a statement about the pair (registry, binding): the target sees them, no
 //! other agent does — not in the schema it is shown and not at the executor it calls — and moving
-//! the binding moves all five, which is the SWAP in miniature.
+//! the binding moves both, which is the SWAP in miniature.
+//!
+//! WP-6 collapsed five tools into two, so the behaviour the three retired names carried is
+//! asserted here through the two that absorbed it.
 
 use std::sync::Arc;
 
 use bough_kernel::{Context, EntryId, KernelCore, Plugin};
 use bough_plugin_agents::{
     AgentCell, AgentDriver, AgentError, AgentFactory, Agents, AgentsHandle, Attach, CancelCause,
-    CreateAgent, InboxReceipt, Message, WakeCause, WakeKind, WakeRequest,
+    CreateAgent, InboxReceipt, MailClass, Message, Sender, WakeCause, WakeKind, WakeRequest,
 };
 use bough_plugin_claims::{Claims, ClaimsConfig, ClaimsHandle};
 use bough_plugin_graph_ops::{
     Graph, GraphError, GraphHandle, GraphOps, OpOutcome, OpPlan, OpRequest, UndoRequest,
 };
 use bough_plugin_leader::{Leader, LeaderConfig, LeaderHandle, LeaderPlugin};
-use bough_plugin_ledger::{AgentName, Ledger, LedgerHandle, TrajId, WakeId};
+use bough_plugin_ledger::query::StepQuery;
+use bough_plugin_ledger::{AgentName, Ledger, LedgerHandle, Ref, StepType, TrajId, WakeId};
 use bough_plugin_ledger_memory::store::MemoryStore;
-use bough_plugin_mail_router::{Mail, MailConfig, MailHandle};
+use bough_plugin_mail_router::{Envelope, Mail, MailConfig, MailHandle};
 use bough_plugin_projection::{Projection, ProjectionHandle, Projector};
 use bough_plugin_projection_assembler::{Assembler, AssemblerConfig};
 use bough_plugin_tool_leader::{ToolLeaderConfig, ToolLeaderPlugin, TOOL_NAMES};
@@ -30,6 +34,7 @@ struct Fixture {
     tool_row: Context,
     ledger: LedgerHandle,
     agents: AgentsHandle,
+    mail: MailHandle,
     claims: ClaimsHandle,
     tools: ToolsHandle,
     _dir: tempfile::TempDir,
@@ -96,7 +101,7 @@ impl Fixture {
                     .await
                     .expect("agents"),
             ),
-            Box::new(root.provide::<Mail>(mail).await.expect("mail")),
+            Box::new(root.provide::<Mail>(mail.clone()).await.expect("mail")),
             Box::new(
                 root.provide::<Claims>(claims.clone())
                     .await
@@ -124,6 +129,7 @@ impl Fixture {
             tool_row,
             ledger,
             agents,
+            mail,
             claims,
             tools,
             _dir: dir,
@@ -168,6 +174,43 @@ impl Fixture {
         std::mem::forget(disposer);
     }
 
+    /// One envelope matching NOBODY, so it lands on the unsorted queue. Call it BEFORE mounting
+    /// the set: the leader row installs a SINK that would take it to the leader's own lane.
+    async fn unsorted(&self, tag: &str) -> bough_plugin_ledger::StepId {
+        let mut refs = std::collections::BTreeSet::new();
+        refs.insert(Ref::new(format!("nobody:{tag}")));
+        self.mail
+            .route(Envelope {
+                from: Sender::System("tool-leader-test"),
+                class: MailClass::Ordinary,
+                subject: format!("unsorted {tag}"),
+                summary: format!("unsorted {tag}"),
+                text: "UNSORTED".to_string(),
+                cites: Vec::new(),
+                refs,
+                at: chrono::Utc::now(),
+            })
+            .await
+            .expect("the envelope routes")
+            .unsorted
+            .expect("a zero-match envelope lands on the queue")
+    }
+
+    /// How many `timeline/entry` steps the ledger holds.
+    async fn timeline_entries(&self) -> usize {
+        self.ledger
+            .0
+            .steps(&StepQuery {
+                kinds: vec![StepType::new(
+                    bough_plugin_leader::vocabulary::TIMELINE_ENTRY,
+                )],
+                ..Default::default()
+            })
+            .await
+            .expect("the query answers")
+            .len()
+    }
+
     fn visible(&self, agent: &str) -> Vec<String> {
         self.tools
             .visible(&AgentName::new(agent))
@@ -197,6 +240,18 @@ fn call(name: &str, agent: &str, args: serde_json::Value) -> ToolCall {
     }
 }
 
+/// A `curate` call that asks only for the timeline half.
+fn timeline_only() -> serde_json::Value {
+    serde_json::json!({
+        "timeline": [{
+            "title": "terra and sol both touched the router",
+            "at": "2026-01-01T00:00:00Z",
+            "agents": ["sol", "terra"],
+            "cites": ["gh:bough/rebuild#1"]
+        }]
+    })
+}
+
 fn lane_claim() -> serde_json::Value {
     serde_json::json!({
         "kind": "lane",
@@ -209,7 +264,7 @@ fn lane_claim() -> serde_json::Value {
 // ---- the cases -------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_five_tools_are_in_the_targets_schema() {
+async fn the_set_is_propose_claim_and_curate() {
     let f = Fixture::open().await;
     f.lane("sol").await;
     let leader_row = f.leader_row.clone();
@@ -224,7 +279,8 @@ async fn the_five_tools_are_in_the_targets_schema() {
         .into_iter()
         .map(|d| d.name)
         .collect();
-    assert_eq!(names, expected, "exactly the five, in the schema itself");
+    assert_eq!(names, expected, "exactly the two, in the schema itself");
+    assert_eq!(TOOL_NAMES, ["propose_claim", "curate"]);
 }
 
 #[tokio::test]
@@ -361,7 +417,7 @@ async fn the_row_reloads_when_the_leader_binding_changes() {
     let tool_row = f.tool_row.clone();
     let leader = f.mount_set(&leader_row, &tool_row, "sol").await;
     assert_eq!(leader.target(), &AgentName::new("sol"));
-    assert_eq!(f.visible("sol").len(), 5);
+    assert_eq!(f.visible("sol").len(), 2);
 
     // Editing `leader.config.agent` reloads the `leader` row; `tool-leader` injects `leader`, so
     // it unloads with the binding and reloads against the new one. Both fibers unwind, both rows
@@ -390,10 +446,221 @@ async fn the_row_reloads_when_the_leader_binding_changes() {
     assert_eq!(moved.target(), &AgentName::new("terra"));
     assert_eq!(
         f.visible("terra").len(),
-        5,
-        "all five moved together: the row read its target from the binding, never from config"
+        2,
+        "both moved together: the row read its target from the binding, never from config"
     );
     assert!(f.visible("sol").is_empty());
+}
+
+#[tokio::test]
+async fn propose_claim_absorbs_draft_requirement_and_propose_structure() {
+    let f = Fixture::open().await;
+    f.lane("sol").await;
+    let leader_row = f.leader_row.clone();
+    let tool_row = f.tool_row.clone();
+    f.mount_set(&leader_row, &tool_row, "sol").await;
+
+    let results = f
+        .tools
+        .execute(
+            &f.root,
+            vec![call(
+                "propose_claim",
+                "sol",
+                serde_json::json!({
+                    "kind": "requirement",
+                    "title": "one turn per wake",
+                    "body": "Andrey said so"
+                }),
+            )],
+        )
+        .await;
+    let failure = results[0]
+        .failure
+        .as_ref()
+        .expect("a requirement drafted from Andrey's words must cite them");
+    assert!(failure.message.contains("cite"), "{}", failure.message);
+
+    // …and with cites it is a requirement claim, on the absorbed `draft_requirement` path.
+    let ok = f
+        .tools
+        .execute(
+            &f.root,
+            vec![call(
+                "propose_claim",
+                "sol",
+                serde_json::json!({
+                    "kind": "requirement",
+                    "title": "one turn per wake",
+                    "body": "Andrey said so",
+                    "cites": ["step:s1"]
+                }),
+            )],
+        )
+        .await;
+    assert!(ok[0].ok, "{:?}", ok[0].failure);
+    let open = f
+        .claims
+        .open(&bough_plugin_claims::ClaimQuery::default())
+        .await
+        .expect("the open list reads");
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].kind.as_str(), "requirement");
+
+    // The other absorbed tool: the structural kinds `propose_structure` used to own.
+    let structural = f
+        .tools
+        .execute(&f.root, vec![call("propose_claim", "sol", lane_claim())])
+        .await;
+    assert!(structural[0].ok, "{:?}", structural[0].failure);
+    let open = f
+        .claims
+        .open(&bough_plugin_claims::ClaimQuery::default())
+        .await
+        .expect("the open list reads");
+    assert_eq!(open.len(), 2);
+    assert!(open.iter().any(|c| c.kind.as_str() == "lane"));
+}
+
+#[tokio::test]
+async fn a_structural_propose_claim_writes_a_claim_and_never_an_op() {
+    let f = Fixture::open().await;
+    f.lane("sol").await;
+    let leader_row = f.leader_row.clone();
+    let tool_row = f.tool_row.clone();
+    f.mount_set(&leader_row, &tool_row, "sol").await;
+
+    let results = f
+        .tools
+        .execute(&f.root, vec![call("propose_claim", "sol", lane_claim())])
+        .await;
+    assert!(results[0].ok, "{:?}", results[0].failure);
+
+    // The graph provider in this fixture REFUSES every op, so a path from this crate to
+    // `ctx.graph` would have surfaced as a failure rather than as a claim.
+    let steps = f
+        .ledger
+        .0
+        .steps(&StepQuery::default())
+        .await
+        .expect("the query answers");
+    assert!(
+        steps.iter().any(|s| s.kind.as_str() == "claim/proposed"),
+        "a structural kind writes `claim/proposed`"
+    );
+    assert!(
+        !steps.iter().any(|s| s.kind.as_str().starts_with("op/")),
+        "…and never an op: {:?}",
+        steps.iter().map(|s| s.kind.as_str()).collect::<Vec<_>>()
+    );
+}
+
+/// `curate` with only placements: exactly what `adopt_unsorted` wrote.
+#[tokio::test]
+async fn curate_with_only_placements_adopts() {
+    let f = Fixture::open().await;
+    f.lane("sol").await;
+    f.lane("terra").await;
+    let leader_row = f.leader_row.clone();
+    let tool_row = f.tool_row.clone();
+    let step = f.unsorted("one").await;
+    f.mount_set(&leader_row, &tool_row, "sol").await;
+
+    let results = f
+        .tools
+        .execute(
+            &f.root,
+            vec![call(
+                "curate",
+                "sol",
+                serde_json::json!({
+                    "placements": [{ "step": step.as_str(), "agent": "terra" }]
+                }),
+            )],
+        )
+        .await;
+    assert!(results[0].ok, "{:?}", results[0].failure);
+    let value = results[0].value.clone().expect("a value");
+    assert_eq!(
+        value["adopted"],
+        serde_json::json!([{ "step": step.as_str(), "agent": "terra" }])
+    );
+    assert!(
+        value["timeline"].as_array().expect("an array").is_empty(),
+        "no timeline half was asked for, so none was written"
+    );
+    assert_eq!(f.timeline_entries().await, 0);
+}
+
+/// `curate` with only a timeline: exactly what `note_timeline` wrote.
+#[tokio::test]
+async fn curate_with_only_a_timeline_notes() {
+    let f = Fixture::open().await;
+    f.lane("sol").await;
+    let leader_row = f.leader_row.clone();
+    let tool_row = f.tool_row.clone();
+    f.mount_set(&leader_row, &tool_row, "sol").await;
+
+    let results = f
+        .tools
+        .execute(&f.root, vec![call("curate", "sol", timeline_only())])
+        .await;
+    assert!(results[0].ok, "{:?}", results[0].failure);
+    assert_eq!(f.timeline_entries().await, 1);
+    let value = results[0].value.clone().expect("a value");
+    assert_eq!(value["timeline"].as_array().expect("an array").len(), 1);
+    assert!(
+        value["adopted"].as_array().expect("an array").is_empty(),
+        "no adopt half was asked for"
+    );
+}
+
+/// Both halves, ONE call, one journalled pass.
+#[tokio::test]
+async fn curate_absorbs_adopt_unsorted_and_note_timeline() {
+    let f = Fixture::open().await;
+    f.lane("sol").await;
+    f.lane("terra").await;
+    let leader_row = f.leader_row.clone();
+    let tool_row = f.tool_row.clone();
+    let step = f.unsorted("two").await;
+    f.mount_set(&leader_row, &tool_row, "sol").await;
+
+    let mut args = timeline_only();
+    args["placements"] = serde_json::json!([{ "step": step.as_str(), "agent": "terra" }]);
+    let results = f
+        .tools
+        .execute(&f.root, vec![call("curate", "sol", args)])
+        .await;
+    assert!(results[0].ok, "{:?}", results[0].failure);
+    let value = results[0].value.clone().expect("a value");
+    assert_eq!(value["adopted"].as_array().expect("an array").len(), 1);
+    assert_eq!(value["timeline"].as_array().expect("an array").len(), 1);
+    assert_eq!(f.timeline_entries().await, 1);
+}
+
+#[tokio::test]
+async fn an_empty_curate_is_refused_rather_than_a_silent_no_op() {
+    let f = Fixture::open().await;
+    f.lane("sol").await;
+    let leader_row = f.leader_row.clone();
+    let tool_row = f.tool_row.clone();
+    f.mount_set(&leader_row, &tool_row, "sol").await;
+
+    let results = f
+        .tools
+        .execute(&f.root, vec![call("curate", "sol", serde_json::json!({}))])
+        .await;
+    let failure = results[0]
+        .failure
+        .as_ref()
+        .expect("a call that asks for nothing is refused");
+    assert!(
+        failure.message.contains("something to do"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(f.timeline_entries().await, 0);
 }
 
 // ---- the stubs -------------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 //! the text, because a rebase re-checks the actual lines rather than trusting the tag.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bough_plugin_ledger::AgentName;
 
@@ -22,7 +22,10 @@ impl SeenFiles {
     }
 
     /// The `(tag, text)` this agent last saw for `path`.
-    pub fn recall(&self, agent: &AgentName, path: &PathBuf) -> Option<(String, String)> {
-        self.0.lock().get(&(agent.clone(), path.clone())).cloned()
+    pub fn recall(&self, agent: &AgentName, path: &Path) -> Option<(String, String)> {
+        self.0
+            .lock()
+            .get(&(agent.clone(), path.to_path_buf()))
+            .cloned()
     }
 }

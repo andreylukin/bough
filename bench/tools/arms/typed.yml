@@ -1,0 +1,23 @@
+# The TYPED arm's bench-only configuration. It selects NO consumer row: `bough exec` runs under
+# `headless`, which already has the typed surface. What this layer does is make the run measurable:
+# `bg` polls and `schedule` ticks fast enough that a background-job task and a scheduled-intent
+# task finish inside one bench round instead of one bench minute.
+#
+# The whole `tools.operator` config is restated because a patch layer REPLACES a row's config
+# wholesale (§0.5: "no deep merge — restate the fields you keep"). `bench/tools/tests/bank.rs`
+# asserts this block is byte-identical to the codemode arm's and names every field
+# `bundles/bough-base.yml` sets, so the two arms cannot drift apart in anything but the consumer.
+#
+# Everything a comparison could be unfair about — the model, the price table, the file verbs, the
+# workspace root — is left to `bough-base`, identical in both arms (plan D-8).
+entries:
+  tools.operator:
+    config:
+      max_view_bytes: 400000
+      max_files_per_patch: 16
+      bg_log_dir: !!expr 'bough_path("bg")'
+      bg_max: 8
+      bg_poll_ms: 50
+      ledger_page: 50
+      schedule_max_horizon_days: 30
+      schedule_tick_ms: 200

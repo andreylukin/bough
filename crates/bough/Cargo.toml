@@ -34,6 +34,12 @@ bough-plugin-agent-loop = { workspace = true }
 bough-plugin-agent-loop-scripted = { workspace = true }
 bough-plugin-tools = { workspace = true }
 bough-plugin-tools-baseline = { workspace = true }
+bough-plugin-tools-operator = { workspace = true }
+# Phase codemode (WP-8): the second Consumer and its runtime seam. In the catalog, in no
+# default bundle — `bundles/bough-codemode.yml` / `--profile codemode` is the only way in.
+bough-plugin-js = { workspace = true }
+bough-plugin-js-quickjs = { workspace = true }
+bough-plugin-tools-codemode = { workspace = true }
 bough-plugin-workers = { workspace = true }
 bough-plugin-worker-spawn = { workspace = true }
 bough-plugin-tool-workers = { workspace = true }
@@ -95,6 +101,12 @@ libc = { workspace = true }
 bough-plugin-ledger = { workspace = true }
 bough-plugin-projection = { workspace = true }
 bough-llm = { workspace = true }
+# Phase codemode (WP-8): the wake/invariant gates drive the real binary and then read the ledger
+# it left, which is a sqlite file the test process opens READ-ONLY.
+rusqlite = { workspace = true }
+bough-plugin-tools = { workspace = true }
+bough-plugin-tools-codemode = { workspace = true }
+bough-plugin-agents = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }
 futures = { workspace = true }

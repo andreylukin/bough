@@ -1,0 +1,12 @@
+# Search, then edit what the search found: the shape most real work has.
+id: 07-search-then-edit
+prompt: >-
+  Find every file under src/ containing the string MARKER_ONE, then change that string to
+  MARKER_TWO in each one, leaving the rest of the file alone.
+covers: [bash, view, patch]
+pass:
+  - pass: file_contains
+    path: src/notes.md
+    needle: "MARKER_TWO"
+  - pass: file_absent
+    path: src/MARKER_ONE

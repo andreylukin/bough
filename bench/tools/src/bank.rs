@@ -1,10 +1,13 @@
 //! Invariant: a task's pass predicate is data. ≥12 tasks over a fixed fixture repo, and their
 //! declared coverage names every entry of the sandbox surface.
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 /// One bench task, loaded from `bench/tools/bank/*.yml`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Task {
     pub id: String,
     /// What the user asks for.
@@ -16,7 +19,7 @@ pub struct Task {
 }
 
 /// A surface entry a task claims to exercise.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Coverage {
     Bash,
@@ -35,9 +38,31 @@ pub enum Coverage {
     Schedule,
 }
 
+impl Coverage {
+    /// Every entry of the §3 surface table. The bank test asserts the union of the tasks'
+    /// `covers` equals this set — a surface entry nobody benches is a surface entry nobody knows
+    /// the cost of.
+    pub const ALL: [Coverage; 14] = [
+        Coverage::Bash,
+        Coverage::Sh,
+        Coverage::Bg,
+        Coverage::View,
+        Coverage::Patch,
+        Coverage::Write,
+        Coverage::Ledger,
+        Coverage::Inbox,
+        Coverage::Claim,
+        Coverage::Act,
+        Coverage::Agent,
+        Coverage::Ask,
+        Coverage::Fork,
+        Coverage::Schedule,
+    ];
+}
+
 /// One data predicate. No model judgement appears here.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "pass", rename_all = "snake_case")]
 pub enum Pass {
     /// A file under the fixture repo equals this text exactly.
     FileEquals { path: String, text: String },
@@ -51,9 +76,45 @@ pub enum Pass {
     JournalRow { kind: String },
 }
 
-/// Load the bank from `dir`.
-///
-/// WP-8 owns the body.
-pub fn load(_dir: &std::path::Path) -> anyhow::Result<Vec<Task>> {
-    todo!("WP-8: read bank/*.yml into Tasks")
+/// Load the bank from `dir`, in file-name order so a run's row order is stable.
+pub fn load(dir: &Path) -> anyhow::Result<Vec<Task>> {
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .map_err(|e| anyhow::anyhow!("reading the bank at {}: {e}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "yml"))
+        .collect();
+    files.sort();
+
+    let mut tasks = Vec::with_capacity(files.len());
+    for path in files {
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
+        let task: Task = serde_yaml::from_str(&text)
+            .map_err(|e| anyhow::anyhow!("{} does not parse as a task: {e}", path.display()))?;
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        anyhow::ensure!(
+            task.id == stem,
+            "{}: task id `{}` must equal its file stem `{stem}` (the transcript fixtures are \
+             looked up by id)",
+            path.display(),
+            task.id
+        );
+        anyhow::ensure!(
+            !task.pass.is_empty(),
+            "{}: a task with no pass predicate is a task nothing can fail",
+            path.display()
+        );
+        tasks.push(task);
+    }
+    Ok(tasks)
+}
+
+/// The repo's `bench/tools` directory, however the bench is invoked from.
+pub fn bench_dir() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }

@@ -1,6 +1,6 @@
 //! The Phase 5 exit gate, SWAP half (§17 Phase 5): the `leader` SET moves from one agent's scope
 //! to another BY A PATCH EDIT while the tree is up. `leader.config.agent` goes `sol` → `terra`;
-//! the five leader tools leave `sol`'s schema and appear in `terra`'s, the persona section moves
+//! the leader tools leave `sol`'s schema and appear in `terra`'s, the persona section moves
 //! with them, the unsorted sink moves with them, nothing in the tree fails, and removing the patch
 //! puts it all back. No recompile, no restart, one test process, through the launcher's own
 //! recompose (`bough::watch::recompose_once`) — the `rollups_swap.rs` precedent.
@@ -49,19 +49,15 @@ const PERSONA_MARK: &str = "acceptance is Andrey's act alone";
 
 /// The leader tools that exist ONLY in the leader's scope.
 ///
-/// `tool-leader::TOOL_NAMES` has five entries and `propose_claim` is not one of these four: the
-/// `claims` row registers a GLOBAL `propose_claim` for every agent, and the leader's scoped twin
-/// SHADOWS it (that shadowing is V6's own bullet, `tool-leader tests/tools.rs`). So "the old agent
-/// lost the tools" is a sentence about the four that were only ever the leader's — asserting that
-/// `propose_claim` disappears would be asserting that every ordinary lane loses its claim tool.
-const LEADER_ONLY: [&str; 4] = [
-    "adopt_unsorted",
-    "draft_requirement",
-    "propose_structure",
-    "note_timeline",
-];
+/// WP-6 collapsed the set to two, `["propose_claim", "curate"]`, and `propose_claim` is not one of
+/// these: the `claims` row registers a GLOBAL `propose_claim` for every agent, and the leader's
+/// scoped twin SHADOWS it (that shadowing is V6's own bullet, `tool-leader tests/tools.rs`). So
+/// "the old agent lost the tools" is a sentence about `curate`, the one name that was only ever
+/// the leader's — asserting that `propose_claim` disappears would be asserting that every ordinary
+/// lane loses its claim tool.
+const LEADER_ONLY: [&str; 1] = ["curate"];
 
-/// The four above must all be names `tool-leader` really registers: a typo here would make every
+/// The names above must all be ones `tool-leader` really registers: a typo here would make every
 /// bullet in this file pass by asserting the absence of a tool that never existed.
 fn leader_only_is_a_subset_of_the_rows_own_list() {
     for name in LEADER_ONLY {
@@ -234,7 +230,7 @@ async fn the_leader_set_activates_in_one_agents_scope() {
     sol.sort();
     let mut want: Vec<String> = LEADER_ONLY.iter().map(|s| s.to_string()).collect();
     want.sort();
-    assert_eq!(sol, want, "the leader's lane sees all five leader tools");
+    assert_eq!(sol, want, "the leader's lane sees the leader-only tools");
     assert!(
         visible_leader_tools(&kernel, "terra").is_empty(),
         "an ordinary lane sees none of them: the set is SCOPED, not global"
@@ -319,7 +315,7 @@ async fn the_old_agent_loses_the_persona_section() {
 }
 
 #[tokio::test]
-async fn the_new_agent_gains_all_three() {
+async fn the_new_agent_gains_the_tools_the_schema_and_the_persona() {
     let _guard = trace::test_lock();
     let (kernel, _dir) = boot_and_move().await;
 

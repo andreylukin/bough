@@ -10,6 +10,7 @@ pub mod branches;
 pub mod claims;
 pub mod expand;
 pub mod invariant;
+pub mod program;
 pub mod rowfocus;
 pub mod rows;
 pub mod scroll;
@@ -39,6 +40,7 @@ use ratatui::widgets::Paragraph;
 pub use branches::{branches_from_edges, Branch, BranchPicker, PickerOutcome};
 pub use claims::{claim_action_of_hit, hit_for_claim, ClaimAction};
 pub use expand::{call_of_hit, hit_for_call, Expanded};
+pub use program::{program_header, program_lines, ProgramError, ProgramSub, ProgramView, RUN_TOOL};
 pub use rowfocus::{focus_marker, RowFocus};
 pub use rows::{
     rows_from_steps, trailing_durable, trailing_text_row, trailing_text_rows, ClaimState, Row,
@@ -348,6 +350,36 @@ impl FocusPane {
                         ));
                     }
                 }
+                // Code mode's ONE row: the header, and when it is open the JS source, the console
+                // output beneath it, and the sub-calls as nested tool rows (`program.rs`).
+                Row::Program {
+                    call,
+                    source,
+                    console,
+                    subs,
+                    result,
+                    error,
+                    ms,
+                    ..
+                } => {
+                    let view = program::ProgramView {
+                        call,
+                        source,
+                        console,
+                        subs,
+                        result: result.as_ref(),
+                        error: error.as_ref(),
+                        ms: *ms,
+                        expanded: &state.expanded,
+                        width,
+                        theme,
+                        max_tool_lines: self.cfg.max_tool_lines,
+                    };
+                    let (block, hs) = program::program_lines(&view);
+                    let base = lines.len() as u16;
+                    headers.extend(hs.into_iter().map(|(c, off)| (c, base + off)));
+                    lines.extend(block);
+                }
                 Row::WakeMark {
                     phase,
                     reason,
@@ -554,6 +586,17 @@ impl Pane for FocusPane {
                 _ => None,
             })
             .collect();
+        // A program row is NOT a block-sized target: its nested calls are targets of their own,
+        // and a block hit over the whole thing would turn every click on a sub-row into "collapse
+        // the program". Its headers get one-line hits below instead.
+        let program_calls: Vec<String> = state
+            .rows
+            .iter()
+            .filter_map(|r| match r {
+                Row::Program { call, .. } => Some(call.to_string()),
+                _ => None,
+            })
+            .collect();
         invariant::record_frame(&state.rows, &live);
         let top = state.scroll.top(lines.len(), area.height);
         // The unread affordance (phase ux1 §2.2, B2): scrolled up with rows arriving below, the
@@ -573,7 +616,29 @@ impl Pane for FocusPane {
         // The block is the ROW's line span, so a text row that follows a tool call is never
         // swallowed into it: `row_lines[i]..row_lines[i + 1]`.
         let total = lines.len() as u16;
-        let _ = &headers;
+        for (call, line) in headers.iter() {
+            let id = call.to_string();
+            let owner = id.split('.').next().unwrap_or(&id);
+            if !program_calls.iter().any(|p| p == owner) {
+                continue;
+            }
+            if *line < top as u16 {
+                continue;
+            }
+            let y = line - top as u16;
+            if y >= area.height {
+                break;
+            }
+            cx.hit(
+                Rect {
+                    x: area.x,
+                    y: area.y + y,
+                    width: area.width,
+                    height: 1,
+                },
+                expand::hit_for_call(call),
+            );
+        }
         for (i, call) in tool_rows.iter() {
             let first = row_lines.get(*i).copied().unwrap_or(0);
             let last = row_lines
@@ -749,7 +814,8 @@ impl Pane for FocusPane {
                             let mut state = self.state.lock();
                             let call =
                                 state.row_focus.index.and_then(|i| match state.rows.get(i) {
-                                    Some(Row::Tool { call, .. }) => Some(call.clone()),
+                                    Some(Row::Tool { call, .. })
+                                    | Some(Row::Program { call, .. }) => Some(call.clone()),
                                     _ => None,
                                 });
                             match call {

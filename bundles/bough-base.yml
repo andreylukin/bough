@@ -68,6 +68,19 @@
     max_output_bytes: 20000
     max_read_bytes: 400000
     deny_globs: []
+- id: tools.operator
+  plugin: tools-operator
+  config:
+    max_view_bytes: 400000
+    max_files_per_patch: 16
+    # Background logs are harness state, not workspace state: they live under the bough home so a
+    # `bg` job never writes into the tree the model is editing.
+    bg_log_dir: !!expr 'bough_path("bg")'
+    bg_max: 8
+    bg_poll_ms: 200
+    ledger_page: 50
+    schedule_max_horizon_days: 30
+    schedule_tick_ms: 5000
 - id: agents
   plugin: agents
 

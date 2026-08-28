@@ -37,19 +37,29 @@ t slash_opens_a_palette \
 
 t slash_opens_a_palette_that_filters_and_moves \
   bash -c '
-    # It FILTERS: typing narrows the list, and something that was listed is gone.
-    shell-use type "he"
-    sleep 0.8
-    see "/help" --timeout 8000 || { echo "the palette filtered /help away"; exit 1; }
-    shell-use text | grep -q "/quit" && { echo "the palette did not filter: /quit survived the query he"; exit 1; }
     # It MOVES: Down changes WHICH ROW is selected, and the selection is visible. The selected
     # row is drawn on `theme.sel_bg`, so the moved selection is a change in the painted cells —
     # this half used to be `press Down; sleep 0.5; exit 0`, which asserted nothing at all.
+    #
+    # Asserted on the UNFILTERED list, and before the filter half. `he` narrows to exactly one
+    # row (`/help`), and a one-row list has nowhere for Down to go, so the old order could never
+    # pass whatever the palette did. Up puts the selection back on the first row afterwards, so
+    # the completion bullet below still completes `/help`.
     before="$(shell-use cells 0 0 200 60 --json)"
     shell-use press Down
     sleep 0.8
     after="$(shell-use cells 0 0 200 60 --json)"
     [ "$before" = "$after" ] && { echo "Down changed nothing: the palette selection does not move"; exit 1; }
+    shell-use press Up
+    sleep 0.5
+    # It FILTERS: typing narrows the list, and something that was listed is gone. `/agents` and
+    # not `/quit`: the palette shows the first ten matches and `/quit` sorts below that cut even
+    # with no query, so the old spelling asserted the disappearance of a row that was never on
+    # screen and passed whatever the filter did.
+    shell-use type "he"
+    sleep 0.8
+    see "/help" --timeout 8000 || { echo "the palette filtered /help away"; exit 1; }
+    shell-use text | grep -q "/agents" && { echo "the palette did not filter: /agents survived the query he"; exit 1; }
     exit 0
   '
 
@@ -79,10 +89,12 @@ t tab_completes_the_name_without_running_it \
     shell-use text | grep -q "shift+enter" && { echo "Tab RAN the command instead of completing it"; exit 1; }
     exit 0
   '
-# Put the composer back the way the rest of the script expects it.
+# Put the composer back the way the rest of the script expects it. `/he` and not `/`: Enter takes
+# the SELECTED row, and with no query that is `/accept`, not `/help` — the bullet below names the
+# help it expects to see.
 shell-use keys "Ctrl+u"
 shell-use press Escape
-shell-use type "/"
+shell-use type "/he"
 sleep 0.4
 
 shell-use press Enter
@@ -131,7 +143,14 @@ t help_is_plain_language_and_not_engine_vocabulary \
 shell-use press Escape
 
 # --- An unknown command suggests, points at /help, and keeps the text. ------------------------
+# The draft is emptied first: `/` only opens the palette at line start, and a leftover draft from
+# the bullets above turns the typed text into an ordinary message.
+shell-use keys "Ctrl+u"
+sleep 0.4
 shell-use type "/hepl"
+# The palette opens on `/` and closes again when nothing matches `hepl`; Enter sent inside that
+# window lands on the palette instead of on the composer, and the miss is never submitted.
+sleep 1.0
 shell-use press Enter
 t an_unknown_command_suggests_and_keeps \
   bash -c '

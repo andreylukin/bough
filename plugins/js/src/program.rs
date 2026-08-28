@@ -40,14 +40,7 @@ pub struct HostRefusal {
 
 /// The rejection taxonomy a program sees on `err.kind`.
 #[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Debug,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
+    Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum RefusalKind {
@@ -90,4 +83,28 @@ pub struct Run {
     pub ms: u64,
     /// The program's completion value, if it produced one. NOT model-visible: console is.
     pub value: Option<serde_json::Value>,
+}
+
+/// A short, stable digest of a program's source, so an invariant violation can name the program
+/// it belongs to without carrying the whole source around.
+pub fn digest(source: &str) -> String {
+    // FNV-1a, 64-bit: not cryptography, just a label.
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in source.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x1000_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn digest_is_stable_and_distinguishes() {
+        assert_eq!(digest("await bash('ls')"), digest("await bash('ls')"));
+        assert_ne!(digest("await bash('ls')"), digest("await bash('pwd')"));
+        assert_eq!(digest("").len(), 16);
+    }
 }

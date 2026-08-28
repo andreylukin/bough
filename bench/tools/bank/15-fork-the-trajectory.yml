@@ -1,0 +1,9 @@
+# A fork: the same prefix, two continuations (§10 WorkerKind::Fork).
+id: 15-fork-the-trajectory
+prompt: >-
+  Fork this trajectory to try renaming src/a.txt two different ways, and tell me you forked.
+covers: [fork]
+pass:
+  - pass: step_appended
+    kind: tool/call
+    count: 1

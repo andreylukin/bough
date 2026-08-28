@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help check build test lint gates release audit-plugins live bench tui-test tui-test-replay ux2
+.PHONY: help check build test lint gates release audit-plugins live bench bench-tools tui-test tui-test-replay ux2
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-16s %s\n", $$1, $$2}'
@@ -36,6 +36,13 @@ live: ## run the #[ignore]d live model tests (needs ~/.bough/env with ANTHROPIC_
 bench: ## run the #[ignore]d measurements (offline)
 	BOUGH_BENCH=1 cargo test --workspace --all-targets -- --ignored --nocapture bench
 
+# Phase codemode V9: the two consumers of the `tools` seam over ONE task bank. NOT in `make gates`
+# — it drives the release binary over ~15 tasks twice and is a measurement Andrey decides on, not a
+# regression test. `BOUGH_LIVE=1 make bench-tools` runs the same bank on live haiku for both arms.
+bench-tools: release ## phase codemode: typed tools vs code mode over the task bank
+	BOUGH_BENCH=1 BOUGH_BIN=$(CURDIR)/target/release/bough \
+	  cargo test -p bough-bench-tools -- --ignored --nocapture
+
 release: ## cargo build --release
 	cargo build --release
 
@@ -69,6 +76,19 @@ tui-test-replay: release ## the OFFLINE half of the shell-use suite (in `make ga
 	   BOUGH_HOME=$(TUI_SCRATCH)/replay \
 	   BOUGH_PATCH=$(TUI_PATCH) \
 	   BOUGH_LIVE= \
+	   bash $$s; \
+	 done
+	@# The code-mode arm of the consumer-parameterised scripts. The loop above runs them with
+	@# BOUGH_CONSUMER unset, which is the TYPED control arm; without this pass the program row is
+	@# only ever asserted absent.
+	@echo "== tui-test: replay half, code-mode arm =="
+	@set -e; for s in scripts/tui/30-program.sh; do \
+	   echo "# $$s (codemode)"; \
+	   BOUGH_BIN=$(CURDIR)/target/release/bough \
+	   BOUGH_HOME=$(TUI_SCRATCH)/replay-codemode \
+	   BOUGH_PATCH=$(TUI_PATCH) \
+	   BOUGH_LIVE= \
+	   BOUGH_CONSUMER=codemode \
 	   bash $$s; \
 	 done
 

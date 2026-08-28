@@ -48,8 +48,16 @@ impl Plugin for QuickJsPlugin {
         Ok(())
     }
 
-    async fn apply(_ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        todo!("WP-1: build a QuickJsEngine and install it through JsHandle::set_engine")
+    async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
+        let entry = ctx.entry_id().clone();
+        let js = ctx
+            .get::<bough_plugin_js::Js>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        // Installing the engine is an effect: unloading this row frees the seam's one slot, and
+        // a SECOND engine row is a boot failure rather than a silent replacement.
+        js.set_engine(&ctx, Arc::new(QuickJsEngine::new(cfg)))
+            .await?;
+        Ok(())
     }
 
     fn invariants() -> Vec<InvariantSpec> {
