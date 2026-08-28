@@ -40,8 +40,14 @@ struct Home(PathBuf);
 
 impl Home {
     fn new(tag: &str) -> Home {
+        // A per-Home counter, not just the clock: several cases run the SAME variant (the same
+        // `tag`) concurrently in one test binary, and two of them entering this function inside
+        // one clock tick would share a directory — whereupon the second `remove_dir_all` deletes
+        // the first's home out from under a running child.
+        static NTH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nth = NTH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let p = std::env::temp_dir().join(format!(
-            "bough-crash-{tag}-{}-{}",
+            "bough-crash-{tag}-{}-{nth}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

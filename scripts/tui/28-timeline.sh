@@ -13,6 +13,7 @@ source "$(dirname "$0")/lib.sh"
   a_filter_typed_in_the_pane_narrows_the_rows \
   an_unknown_filter_word_is_refused_with_the_usage \
   esc_clears_the_editor_and_then_gives_the_keyboard_back \
+  clicking_a_row_focuses_that_agent_and_step \
   the_pane_collapses_below_its_breakpoint \
   the_status_line_survives_every_size
   exit 0
@@ -113,6 +114,28 @@ t esc_clears_the_editor_and_then_gives_the_keyboard_back \
       sleep 0.3
     done
     echo "the keys after two Escapes never reached the composer"
+    exit 1
+  '
+for i in 1 2; do shell-use press Backspace; done
+
+# A click on a row is the "go there" gesture: `on_click` answers a `FocusRequest` naming the row's
+# step AND the Main pane, so the keyboard leaves the timeline for the transcript. That handover is
+# the part a person feels, and it is what this asserts on the real screen.
+shell-use submit "/timeline"
+sleep 1
+shell-use mouse click --on-text "thought/text" >/dev/null
+sleep 0.8
+shell-use type "qq"
+t clicking_a_row_focuses_that_agent_and_step \
+  bash -c '
+    for i in $(seq 1 20); do
+      if shell-use text | tail -1 | grep -q "qq"; then
+        shell-use text | grep -qE "filter \[qq" && { echo "the click left the keyboard in the filter field"; exit 1; }
+        exit 0
+      fi
+      sleep 0.3
+    done
+    echo "the keys after the click never reached the composer"
     exit 1
   '
 for i in 1 2; do shell-use press Backspace; done

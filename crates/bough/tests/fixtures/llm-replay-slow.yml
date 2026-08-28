@@ -1,0 +1,24 @@
+# Same as `llm-replay.yml`, but the first round's first chunk arrives after a delay.
+#
+# `preview_bytes_v1.rs` needs a deterministic window in which the wake HAS assembled and sent its
+# request but the answer has not yet landed — that is the only instant at which the ledger state
+# the projection reads is the state the request was built from. The delay opens that window.
+entries:
+  llm.anthropic:
+    plugin: llm-replay
+    config:
+      strict: true
+      models: "*"
+      rounds:
+        - chunks:
+            - { type: text, text: "hello from the replay", delay_ms: 2500 }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "and again from the replay" }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "and once more from the replay" }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "still replaying" }
+            - { type: end, stop: end_turn }
