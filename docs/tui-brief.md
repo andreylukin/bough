@@ -90,6 +90,13 @@ begun wears the tag; nothing is queued while idle.
 panes last; in the rail `rail::step_focus` moves the focused lane and its head line sits on the
 selection ground while the rail has the keyboard.
 
+**R7 — names and noise.** The middle pane is "conversation" everywhere (its `PaneSpec` title;
+`/help` and the branch picker follow). `/agents` drops the `waiting` column — the rail's `✉ N` is
+the one place for unread mail. A code-mode file handle (`[README.md#B749]`) reads as its path in
+the program line, the `✎ changed` line and the rail (`rows::unhandle`). The outer code-mode `run`
+call is the program's envelope and says nothing on the rail; its inner calls are the clauses.
+Andrey chose no click hint on `▸` rows: the glyph is enough.
+
 **Fixed along the way:** the `search [▏]` ghost after Esc, Esc (the layout's focused pane is the
 KEYBOARD's pane, `run::layout_focus`); the welcome hint says `? for help`, the status line's
 word, and says `tab panes` once.
