@@ -106,6 +106,17 @@ fn speaker_and_text(agent: &AgentName, row: &Row) -> Option<(String, String)> {
             }
             Some(("program".to_string(), text))
         }
+        // A draft card (the TUI brief, D6) is searchable by what it says and who it was for.
+        Row::Draft {
+            kind,
+            audience,
+            subject,
+            body,
+            ..
+        } => Some((
+            format!("draft ({kind})"),
+            format!("{subject} {body} to {audience}"),
+        )),
         Row::About { view, .. } => Some((
             "about".to_string(),
             format!("{} {}", view.state, view.intent),
