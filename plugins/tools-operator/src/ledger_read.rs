@@ -81,6 +81,17 @@ fn outcome(header: String, steps: Vec<(Step, Option<String>)>) -> ToolOutcome {
     }
 }
 
+/// `"1204..1230"` as a pair of bounds; either end may be empty (`"1204.."`), and anything that
+/// is not a number is no bound at all rather than an error — an unparseable range reads the
+/// default page, which is what an over-eager model's typo should cost.
+pub fn parse_range(s: &str) -> (Option<u64>, Option<u64>) {
+    let (a, b) = match s.split_once("..") {
+        Some((a, b)) => (a, b.trim_start_matches('=')),
+        None => (s, ""),
+    };
+    (a.trim().parse().ok(), b.trim().parse().ok())
+}
+
 /// The whole tool as one function of `(ledger, cfg, agent, args)`, so a test can drive a drill
 /// without standing up a pipeline — and so the pipeline path and the test path are the same code.
 pub async fn drill(
@@ -131,8 +142,20 @@ pub async fn drill(
             ))
         }
         "steps" => {
-            let after = args.get("from").and_then(|v| v.as_u64()).map(Seq);
-            let before = args.get("to").and_then(|v| v.as_u64()).map(Seq);
+            // `ledger.steps(range)` hands the whole range as ONE string, because that is how a
+            // tier's notable refs read it back (`"1204..1230"`); `{from, to}` is the same thing
+            // spelled as two numbers, and either reaches this tool.
+            let (r_from, r_to) = args
+                .get("range")
+                .and_then(|v| v.as_str())
+                .map(parse_range)
+                .unwrap_or((None, None));
+            let after = args
+                .get("from")
+                .and_then(|v| v.as_u64())
+                .or(r_from)
+                .map(Seq);
+            let before = args.get("to").and_then(|v| v.as_u64()).or(r_to).map(Seq);
             let limit = page(
                 cfg,
                 args.get("limit")

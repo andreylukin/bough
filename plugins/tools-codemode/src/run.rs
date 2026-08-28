@@ -167,11 +167,7 @@ impl Tool for Run {
             .collect();
         let host = bindings
             .iter()
-            .filter_map(|b| {
-                by_name
-                    .get(&b.tool)
-                    .map(|s| bind::host_fn(b, s, pcx.clone()))
-            })
+            .filter_map(|b| bind::host_fn(b, &by_name, pcx.clone()))
             .collect();
 
         // The console tee, and the task that turns its chunks into steps as they arrive.

@@ -17,12 +17,87 @@ use tokio_util::sync::CancellationToken;
 use crate::vocabulary::{ProgramCallBody, ProgramResultBody};
 
 /// A tool's registered name mapped onto the JS identifier the sandbox injects.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Binding {
     /// The JS name, possibly dotted (`ledger.search`, `bg.output`).
     pub js: String,
-    /// The registered `ToolName` the call resolves to.
+    /// The registered `ToolName` the call resolves to. For a DISPATCH binding this is the first
+    /// kind, so a reader that wants one name still gets one.
     pub tool: String,
+    /// Arguments the alias FIXES: `ledger.search` is `ledger_read` with `op: "search"` already
+    /// filled in, which is what makes one op-discriminated tool three documented functions.
+    pub preset: BTreeMap<String, serde_json::Value>,
+    /// The schema properties the positional JS arguments bind to, in order. Empty means
+    /// [`positional_order`], which is what an un-aliased tool gets.
+    pub positional: Vec<String>,
+    /// Non-empty when the FIRST argument selects the tool: `act(kind, target, payload)` over the
+    /// four action kinds. Every name here is a registered tool visible to the agent.
+    pub dispatch: Vec<String>,
+}
+
+impl Binding {
+    /// A name bound straight onto a tool, with nothing fixed.
+    pub fn plain(js: impl Into<String>, tool: impl Into<String>) -> Binding {
+        Binding {
+            js: js.into(),
+            tool: tool.into(),
+            ..Binding::default()
+        }
+    }
+}
+
+/// Read one alias value.
+///
+/// Three spellings, so a single map can express the whole documented surface:
+/// * `propose_claim` — the tool, as it stands;
+/// * `ledger_read?op=search#q` — the tool with `op` FIXED and the JS argument list named, which is
+///   how `ledger.search(q)` reaches an op-discriminated tool;
+/// * `open_pr|push_to_pr|bot_thread_op|linear_write` — a DISPATCH: the first JS argument names
+///   which of them runs, which is `act(kind, target, payload)`.
+fn parse_alias(js: &str, value: &str) -> Binding {
+    if value.contains('|') {
+        let kinds: Vec<String> = value
+            .split('|')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        return Binding {
+            js: js.to_string(),
+            tool: kinds.first().cloned().unwrap_or_default(),
+            dispatch: kinds,
+            ..Binding::default()
+        };
+    }
+    let (head, positional) = match value.split_once('#') {
+        Some((h, p)) => (
+            h,
+            p.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+        ),
+        None => (value, Vec::new()),
+    };
+    let (tool, query) = match head.split_once('?') {
+        Some((t, q)) => (t, q),
+        None => (head, ""),
+    };
+    let preset = query
+        .split('&')
+        .filter(|p| !p.is_empty())
+        .filter_map(|p| p.split_once('='))
+        .map(|(k, v)| {
+            let value = serde_json::from_str(v).unwrap_or(serde_json::Value::String(v.to_string()));
+            (k.to_string(), value)
+        })
+        .collect();
+    Binding {
+        js: js.to_string(),
+        tool: tool.to_string(),
+        preset,
+        positional,
+        dispatch: Vec::new(),
+    }
 }
 
 /// Why a name could not be injected.
@@ -142,17 +217,29 @@ pub fn bindings(
     let mut out: Vec<Binding> = Vec::new();
     let mut aliased: BTreeSet<String> = BTreeSet::new();
 
-    for (js, tool) in aliases {
-        if !visible.contains(tool) {
+    for (js, value) in aliases {
+        let mut b = parse_alias(js, value);
+        if !b.dispatch.is_empty() {
+            // A dispatch keeps only the kinds this agent can actually see; with none of them
+            // visible the function is not injected at all, which is §7's "no Provider, no tool".
+            b.dispatch.retain(|k| visible.contains(k));
+            let Some(first) = b.dispatch.first().cloned() else {
+                continue;
+            };
+            for k in &b.dispatch {
+                aliased.insert(k.clone());
+            }
+            b.tool = first;
+            out.push(b);
+            continue;
+        }
+        if !visible.contains(&b.tool) {
             // An alias for a tool the agent cannot see is simply not there — the same answer a
             // restriction gives, so an alias is never a probe for what exists elsewhere.
             continue;
         }
-        aliased.insert(tool.clone());
-        out.push(Binding {
-            js: js.clone(),
-            tool: tool.clone(),
-        });
+        aliased.insert(b.tool.clone());
+        out.push(b);
     }
 
     for spec in specs {
@@ -171,7 +258,7 @@ pub fn bindings(
             }
             None => name.clone(),
         };
-        out.push(Binding { js, tool: name });
+        out.push(Binding::plain(js, name));
     }
 
     for b in &out {
@@ -268,14 +355,102 @@ impl ProgramCx {
 
 /// Build the `HostFn` for one binding. Each body mints the deterministic `{run}.{n}` call id,
 /// appends `program/call`, runs the mirror's pipeline, appends `program/result`, and answers.
-pub fn host_fn(b: &Binding, spec: &ToolSpec, cx: Arc<ProgramCx>) -> HostFn {
-    HostFn {
-        arity: arity_of(spec),
+pub fn host_fn(
+    b: &Binding,
+    specs: &std::collections::BTreeMap<String, &ToolSpec>,
+    cx: Arc<ProgramCx>,
+) -> Option<HostFn> {
+    if !b.dispatch.is_empty() {
+        let kinds: Vec<(String, Arc<Injected>)> = b
+            .dispatch
+            .iter()
+            .filter_map(|k| {
+                specs.get(k).map(|s| {
+                    (
+                        k.clone(),
+                        Arc::new(Injected {
+                            spec: (*s).clone(),
+                            preset: b.preset.clone(),
+                            positional: b.positional.clone(),
+                            cx: cx.clone(),
+                        }),
+                    )
+                })
+            })
+            .collect();
+        let first = kinds.first()?;
+        // `kind` plus whatever the selected tool takes.
+        let arity = arity_of(&first.1.spec).saturating_add(1);
+        return Some(HostFn {
+            arity,
+            name: b.js.clone(),
+            body: Arc::new(Dispatch {
+                js: b.js.clone(),
+                kinds,
+            }),
+        });
+    }
+    let spec = *specs.get(&b.tool)?;
+    let arity = if !b.positional.is_empty() {
+        b.positional.len().min(u8::MAX as usize) as u8
+    } else {
+        arity_of(spec).saturating_sub(b.preset.len().min(u8::MAX as usize) as u8)
+    };
+    Some(HostFn {
+        arity,
         name: b.js.clone(),
         body: Arc::new(Injected {
             spec: spec.clone(),
+            preset: b.preset.clone(),
+            positional: b.positional.clone(),
             cx,
         }),
+    })
+}
+
+/// One injected global whose FIRST argument names which tool runs (`act`).
+struct Dispatch {
+    js: String,
+    kinds: Vec<(String, Arc<Injected>)>,
+}
+
+#[async_trait::async_trait]
+impl HostCall for Dispatch {
+    async fn call(&self, args: Vec<serde_json::Value>) -> Result<serde_json::Value, HostRefusal> {
+        let mut args = args;
+        let kind = match args.first().and_then(|v| v.as_str()) {
+            Some(k) => k.to_string(),
+            None => {
+                return Err(HostRefusal {
+                    kind: RefusalKind::Denied,
+                    message: format!(
+                        "`{}` takes the kind first: one of {}",
+                        self.js,
+                        self.kinds
+                            .iter()
+                            .map(|(k, _)| k.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                })
+            }
+        };
+        args.remove(0);
+        let Some((_, inner)) = self.kinds.iter().find(|(k, _)| *k == kind) else {
+            return Err(HostRefusal {
+                kind: RefusalKind::NotFound,
+                message: format!(
+                    "`{}` has no kind `{kind}`; it has {}",
+                    self.js,
+                    self.kinds
+                        .iter()
+                        .map(|(k, _)| k.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            });
+        };
+        inner.call(args).await
     }
 }
 
@@ -433,6 +608,17 @@ pub fn positional_args(
     serde_json::Value::Object(out)
 }
 
+/// Zip positional JS arguments onto the property names an alias named, in order.
+pub fn named_args(order: &[String], args: Vec<serde_json::Value>) -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    for (name, value) in order.iter().zip(args) {
+        if !value.is_null() {
+            out.insert(name.clone(), value);
+        }
+    }
+    serde_json::Value::Object(out)
+}
+
 /// The tags a `bash`/`sh` leg carried, for the `program/call` step.
 fn tags_of(args: &serde_json::Value) -> Vec<String> {
     args.get("tags").map(parse_tags).unwrap_or_default()
@@ -441,6 +627,10 @@ fn tags_of(args: &serde_json::Value) -> Vec<String> {
 /// One injected global.
 struct Injected {
     spec: ToolSpec,
+    /// Arguments the alias fixed (`{op: "search"}`), merged over what the program passed.
+    preset: BTreeMap<String, serde_json::Value>,
+    /// The properties the positional arguments bind to, when the alias named them.
+    positional: Vec<String>,
     cx: Arc<ProgramCx>,
 }
 
@@ -452,7 +642,18 @@ impl HostCall for Injected {
         let mut args = args;
         // Off the front, before binding: the tag argument is code mode's, not the tool's.
         let extra = shell_tags(&self.spec, &mut args);
-        let argv = positional_args(self.spec.input_schema.as_value(), args);
+        let mut argv = if self.positional.is_empty() {
+            positional_args(self.spec.input_schema.as_value(), args)
+        } else {
+            named_args(&self.positional, args)
+        };
+        // The alias's fixed arguments win: a program cannot turn `ledger.search` into a `tail`.
+        if let Some(obj) = argv.as_object_mut() {
+            for (k, v) in &self.preset {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+        let argv = argv;
         let tags = if extra.is_empty() {
             tags_of(&argv)
         } else {
@@ -564,8 +765,17 @@ impl HostCall for Injected {
         }
 
         if result.ok {
-            // A tool that produced a VALUE answers with it; one that produced text answers with
-            // the text, so `await bash(...)` is a string.
+            // `surface/shell.md` is the contract the model is taught: "bash() RETURNS A STRING"
+            // — its combined output, with `[exit status: N]` on the end. `tools-baseline`'s bash
+            // carries `{exit_code}` as its VALUE and the output as its CONTENT, so the generic
+            // "a value wins" rule below handed the program `{exit_code:0}` and dropped the
+            // output the surface promises — the very `s.slice(...)` the doc says is correct
+            // would have thrown. The taught shape wins for the shell.
+            if self.spec.name.as_str() == "bash" {
+                return Ok(serde_json::Value::String(result.content));
+            }
+            // Any other tool that produced a VALUE answers with it; one that produced text
+            // answers with the text.
             Ok(result
                 .value
                 .clone()
@@ -656,7 +866,16 @@ pub fn refusal_of(class: FailureClass) -> RefusalKind {
 
 /// The names the sandbox will inject, for a surface to render (WP-5 reads this).
 pub fn injected_names(bindings: &[Binding]) -> Vec<ToolName> {
-    bindings.iter().map(|b| ToolName::new(&b.tool)).collect()
+    bindings
+        .iter()
+        .flat_map(|b| {
+            if b.dispatch.is_empty() {
+                vec![ToolName::new(&b.tool)]
+            } else {
+                b.dispatch.iter().map(ToolName::new).collect()
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

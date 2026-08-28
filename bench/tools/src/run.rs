@@ -296,7 +296,25 @@ impl Runner {
     }
 
     /// Run one task under one arm and score it against its data predicates.
+    ///
+    /// A run that dies in the kernel's boot race (`docs/codemode-merge-notes.md` §11: a required
+    /// service read racing the row that provides it, so `exec` comes up with no agent factory)
+    /// measured NOTHING — no round was issued, no step was written, so its `$` is unknown rather
+    /// than zero, and one such row voids the whole arm's `$` column. It is not a property of the
+    /// surface under comparison, so it is retried rather than scored. Bounded, and only on that
+    /// exact signature: any other non-zero exit is a real failure and is reported as one.
     pub fn run_one(&self, task: &Task, arm: Arm) -> anyhow::Result<Row> {
+        let mut last = self.attempt(task, arm)?;
+        for _ in 0..BOOT_RACE_RETRIES {
+            if !is_boot_race(&last) {
+                break;
+            }
+            last = self.attempt(task, arm)?;
+        }
+        Ok(last)
+    }
+
+    fn attempt(&self, task: &Task, arm: Arm) -> anyhow::Result<Row> {
         let home = Scratch::new("home");
         let work = Scratch::new("work");
         self.lay_out_work(work.path())?;
@@ -385,6 +403,20 @@ impl Runner {
     }
 }
 
+/// How many times a task killed by the kernel boot race (§11) is re-run before it is reported.
+const BOOT_RACE_RETRIES: usize = 3;
+
+/// The signature of merge-note §11 in a scored row: the process failed to boot, so it wrote no
+/// step at all. Both halves are required — a run that produced steps and then exited non-zero is
+/// a genuine failure of the task, and re-running it would launder a real result.
+fn is_boot_race(row: &Row) -> bool {
+    row.steps == 0
+        && row
+            .note
+            .as_deref()
+            .is_some_and(|n| n.starts_with("exec exited") && n.contains("no agent factory is set"))
+}
+
 /// The recording `gh`: FIRST on the run's PATH, so an `act` task cannot reach the real one.
 ///
 /// It records its argv under the run's `$BOUGH_HOME` and exits 0 with a plausible PR url. Today
@@ -428,4 +460,48 @@ pub fn copy_tree(from: &Path, to: &Path) -> anyhow::Result<()> {
 pub fn total(rows: &[Row]) -> Option<Money> {
     rows.iter()
         .try_fold(Money(0), |a, r| r.cents.map(|c| a + c))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(steps: u32, note: Option<&str>) -> Row {
+        Row {
+            task: "t".into(),
+            arm: Arm::Typed,
+            passed: false,
+            steps,
+            input_tokens: 0,
+            output_tokens: 0,
+            cents: None,
+            note: note.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_run_that_died_before_the_agent_factory_mounted_is_a_boot_race() {
+        assert!(is_boot_race(&row(
+            0,
+            Some("exec exited 1: row `exec`: no agent factory is set; mount an `agent-loop` row")
+        )));
+    }
+
+    #[test]
+    fn a_task_that_produced_steps_is_never_retried_even_with_that_message() {
+        assert!(!is_boot_race(&row(
+            12,
+            Some("exec exited 1: row `exec`: no agent factory is set; mount an `agent-loop` row")
+        )));
+    }
+
+    #[test]
+    fn an_ordinary_failure_is_reported_not_retried() {
+        assert!(!is_boot_race(&row(0, Some("exec exited 1: boom"))));
+        assert!(!is_boot_race(&row(
+            0,
+            Some("src/a.txt is not the expected text")
+        )));
+        assert!(!is_boot_race(&row(0, None)));
+    }
 }

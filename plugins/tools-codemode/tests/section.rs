@@ -25,10 +25,7 @@ use chrono::{TimeZone, Utc};
 // --- fixtures ---------------------------------------------------------------------------------
 
 fn binding(js: &str, tool: &str) -> Binding {
-    Binding {
-        js: js.to_string(),
-        tool: tool.to_string(),
-    }
+    Binding::plain(js, tool)
 }
 
 /// The roster a fully-equipped agent gets: §3's table, in injection order.

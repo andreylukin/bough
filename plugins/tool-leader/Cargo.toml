@@ -34,3 +34,8 @@ bough-plugin-mail-router = { workspace = true }
 bough-plugin-projection = { workspace = true }
 bough-plugin-projection-assembler = { workspace = true }
 tempfile = { workspace = true }
+# V7: the collapse must hold under the SECOND consumer of the `tools` seam too, so these tests
+# run a real program on real QuickJS against the specs this crate registers.
+bough-plugin-tools-codemode = { workspace = true }
+bough-plugin-js = { workspace = true }
+bough-plugin-js-quickjs = { workspace = true }

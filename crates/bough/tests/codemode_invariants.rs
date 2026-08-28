@@ -189,6 +189,20 @@ async fn the_request_reconstructs_byte_for_byte_under_code_mode() {
     let _guard = trace::test_lock();
     let (kernel, _dir, steps) = one_codemode_wake(TWO_CALLS).await;
 
+    // The program TEXT is on the chain too: it is the `run` call's args, the model-visible half
+    // of the pair, and it must be there verbatim or the reconstruction below cannot be honest.
+    let run_call = steps
+        .iter()
+        .find(|s| s.kind.as_str() == "tool/call")
+        .expect("the run call is a step");
+    assert_eq!(
+        run_call.body["args"]["program"]
+            .as_str()
+            .unwrap_or_default(),
+        TWO_CALLS,
+        "the program source is ledgered verbatim on the run call"
+    );
+
     let sent = sent_for(&steps);
     assert!(
         sent.len() >= 2,

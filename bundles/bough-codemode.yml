@@ -33,6 +33,16 @@
     aliases:
       claim: propose_claim
       agent: spawn_worker
+      # `tool?fixed=value#positional,names` — one op-discriminated tool read as the several
+      # functions `surface/` documents. The fixed argument wins over anything the program passes.
+      ledger.search: ledger_read?op=search#q
+      ledger.steps: ledger_read?op=steps#range
+      ledger.tail: ledger_read?op=tail#n
+      bg: bg?op=start#name,cmd
+      bg.output: bg?op=output#id
+      bg.kill: bg?op=kill#id
+      # A DISPATCH: `act(kind, target, payload)`, over whichever kinds have a Provider.
+      act: open_pr|push_to_pr|bot_thread_op|linear_write
     namespaces:
       mcp: "mcp__"
     max_console_bytes: 65536

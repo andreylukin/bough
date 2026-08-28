@@ -11,6 +11,8 @@
 //! `bough_plugin_hello::trace::test_lock()` for its whole body. They all do.
 #![allow(dead_code)]
 
+pub mod codemode;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

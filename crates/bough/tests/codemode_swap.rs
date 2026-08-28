@@ -85,6 +85,27 @@ fn schema_names(kernel: &Kernel, agent: &AgentName) -> BTreeSet<String> {
         .collect()
 }
 
+/// Every row in the tree, at any depth, that is not ACTIVE and not merely disabled. The bullet
+/// says "nothing FAILED", which is a statement about the WHOLE tree and not only the seam rows.
+fn failed_rows(kernel: &Kernel) -> Vec<String> {
+    fn walk(rows: &[bough_kernel::RowSnapshot], out: &mut Vec<String>) {
+        for r in rows {
+            if matches!(r.state, bough_kernel::FiberState::Failed) {
+                out.push(format!("{} = {:?}", r.id.as_str(), r.state));
+            }
+            walk(&r.children, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(&kernel.snapshot().rows, &mut out);
+    out
+}
+
+fn assert_nothing_failed(kernel: &Kernel, when: &str) {
+    let failed = failed_rows(kernel);
+    assert!(failed.is_empty(), "rows FAILED {when}: {failed:?}");
+}
+
 fn assert_active(kernel: &Kernel, ids: &[&str], when: &str) {
     for id in ids {
         assert_eq!(
@@ -161,12 +182,14 @@ async fn the_tools_seam_rows_stay_active_and_nothing_is_failed() {
     let _guard = trace::test_lock();
     let (kernel, dir, _agent, _d) = boot_codemode("seam").await;
     assert_active(&kernel, &SEAM_ROWS, "before the patch");
+    assert_nothing_failed(&kernel, "before the patch");
 
     write_patch(&dir, DISABLE_CODEMODE);
     recompose(&kernel, "", &dir)
         .await
         .expect("the patch composes");
     assert_active(&kernel, &SEAM_ROWS, "with the consumer disabled");
+    assert_nothing_failed(&kernel, "with the consumer disabled");
 
     clear_patch(&dir);
     recompose(&kernel, "", &dir)
@@ -174,6 +197,7 @@ async fn the_tools_seam_rows_stay_active_and_nothing_is_failed() {
         .expect("the revert composes");
     assert_active(&kernel, &SEAM_ROWS, "after the revert");
     assert_active(&kernel, &CODEMODE_ROWS, "after the revert");
+    assert_nothing_failed(&kernel, "after the revert");
     kernel.shutdown().await;
 }
 
@@ -293,4 +317,159 @@ fn the_five_old_spellings_are_gone_from_both_consumers() {
         ["propose_claim", "curate"],
         "the leader's set is two tools"
     );
+}
+
+/// V1's reachability half, said against the REAL QuickJS sandbox rather than the scripted engine
+/// the crate's own tests use: every ToolSpec the typed surface would have shown the model is a
+/// callable function inside a program, one of them really runs through the pipeline, and a tool
+/// another row restricted is BOTH absent from the injected globals and `NotFound` at the pipeline.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_visible_spec_is_a_function_in_the_sandbox_and_a_restricted_one_is_not() {
+    use bough_plugin_ledger::WakeId;
+    use bough_plugin_tools::{FailureClass, Restrict, ToolCall, ToolCallId, ToolName};
+
+    let _guard = trace::test_lock();
+    let (kernel, dir, agent, _d) = boot_codemode("reach").await;
+
+    // The aliases the bundle declares: `claim` IS `propose_claim`, `agent` IS `spawn_worker`.
+    // A tool reached under its alias is reached; a tool reached under NEITHER spelling is not.
+    let bundle: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(support::repo_root().join("bundles/bough-codemode.yml")).unwrap(),
+    )
+    .unwrap();
+    let rows = bundle["rows"]
+        .as_sequence()
+        .or_else(|| bundle.as_sequence())
+        .expect("the bundle is a list of rows");
+    let row = rows
+        .iter()
+        .find(|r| r["id"].as_str() == Some("tools.codemode"))
+        .expect("the bundle carries the `tools.codemode` row");
+    let aliases = row["config"]["aliases"]
+        .as_mapping()
+        .cloned()
+        .expect("the row declares aliases");
+    // An alias value is `tool`, `tool?fixed=v#args` or a `a|b|c` dispatch, so the tool it binds
+    // is read out of the value rather than compared to it whole.
+    let binds = |value: &str, name: &str| -> bool {
+        value
+            .split('|')
+            .any(|part| part.split('#').next().unwrap_or(part).split('?').next() == Some(name))
+    };
+    let js_name = |name: &str| -> String {
+        aliases
+            .iter()
+            .find(|(_, v)| v.as_str().map(|v| binds(v, name)).unwrap_or(false))
+            .and_then(|(k, _)| k.as_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| name.to_string())
+    };
+
+    // The names to prove reachable: exactly the typed schemas the consumer hides.
+    write_patch(&dir, DISABLE_CODEMODE);
+    recompose(&kernel, "", &dir)
+        .await
+        .expect("the patch composes");
+    let typed = schema_names(&kernel, &agent);
+    clear_patch(&dir);
+    recompose(&kernel, "", &dir)
+        .await
+        .expect("the revert composes");
+    assert!(typed.len() >= 4, "the typed surface is empty: {typed:?}");
+
+    let ctx = kernel.root().clone();
+    let tools = tools(&kernel);
+    let run = |program: String, n: u32| {
+        let ctx = ctx.clone();
+        let tools = tools.clone();
+        let agent = agent.clone();
+        async move {
+            let mut out = tools
+                .execute(
+                    &ctx,
+                    vec![ToolCall {
+                        id: ToolCallId::new(format!("call_reach_{n}")),
+                        name: ToolName::new(bough_plugin_tools_codemode::RUN_TOOL),
+                        args: serde_json::json!({ "program": program }),
+                        agent,
+                        wake: WakeId::new(format!("w{n}")),
+                        step_index: n,
+                    }],
+                )
+                .await;
+            out.remove(0)
+        }
+    };
+
+    // 1. every hidden typed tool is a function in the sandbox.
+    let names: Vec<String> = typed.iter().map(|s| js_name(s)).collect();
+    let list = serde_json::to_string(&names).unwrap();
+    let probe = format!(
+        "const missing = {list}.filter(n => typeof n.split('.').reduce((o,k) => o && o[k], \
+         globalThis) !== 'function'); console.log('missing:' + JSON.stringify(missing));"
+    );
+    let r = run(probe, 1).await;
+    assert!(r.ok, "the probe program failed: {:?}", r);
+    assert!(
+        r.content.contains("missing:[]"),
+        "some visible ToolSpec is not an injected function: {}",
+        r.content
+    );
+
+    // 2. one of them really runs, through the real pipeline.
+    let r = run(
+        "console.log('view says ' + JSON.stringify(typeof view));".to_string(),
+        2,
+    )
+    .await;
+    assert!(
+        r.content.contains("view says \"function\""),
+        "{}",
+        r.content
+    );
+
+    // 3. a restriction another row owns removes the global AND refuses the call.
+    tools
+        .restrict(
+            &ctx,
+            &agent,
+            Restrict {
+                allow: None,
+                deny: BTreeSet::from([ToolName::new("view")]),
+            },
+        )
+        .await
+        .expect("the restriction installs");
+    let r = run(
+        "console.log('view is ' + typeof view + ', bash is ' + typeof bash);".to_string(),
+        3,
+    )
+    .await;
+    assert!(
+        r.content.contains("view is undefined") && r.content.contains("bash is function"),
+        "the restricted tool must be the only one gone: {}",
+        r.content
+    );
+
+    let mut direct = tools
+        .execute(
+            &ctx,
+            vec![ToolCall {
+                id: ToolCallId::new("call_reach_direct"),
+                name: ToolName::new("view"),
+                args: serde_json::json!({}),
+                agent: agent.clone(),
+                wake: WakeId::new("w4"),
+                step_index: 4,
+            }],
+        )
+        .await;
+    let direct = direct.remove(0);
+    assert!(!direct.ok, "a restricted tool must not execute");
+    assert_eq!(
+        direct.failure.as_ref().map(|f| f.kind),
+        Some(FailureClass::NotFound),
+        "the absence is enforced at the pipeline, not only in the sandbox: {direct:?}"
+    );
+
+    kernel.shutdown().await;
 }

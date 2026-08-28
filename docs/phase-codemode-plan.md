@@ -712,10 +712,11 @@ Every bullet of the brief → the test that proves it. A name in `backticks` is 
 **V1 — the row mounts by patch in place of the typed consumer, with no change to the tools seam.**
 - `crates/bough/tests/codemode_swap.rs::the_codemode_row_mounts_by_patch_and_the_seam_rows_stay_active`
 - `crates/bough/tests/codemode_swap.rs::the_model_is_shown_exactly_one_tool_under_code_mode`
-- `plugins/tools-codemode/tests/surface.rs::every_visible_spec_is_a_function_in_the_sandbox`
-- `plugins/tools-codemode/tests/surface.rs::a_lane_restricted_tool_is_absent_from_the_sandbox_and_notfound_at_the_pipeline`
+- `plugins/tools-codemode/tests/surface.rs::the_request_shows_run_alone_and_the_program_still_reaches_everything`
+- `plugins/tools-codemode/tests/surface.rs::a_lane_restricted_tool_is_absent_from_the_globals_and_not_found_at_the_mirror`
+- `crates/bough/tests/codemode_swap.rs::every_visible_spec_is_a_function_in_the_sandbox_and_a_restricted_one_is_not` (the same two claims against the REAL QuickJS sandbox and the booted tree)
 - `plugins/tools-codemode/tests/pipeline.rs::the_four_tools_events_fire_for_every_inner_call`
-- `plugins/tools-codemode/tests/pipeline.rs::a_pre_execute_deny_denies_inside_a_program`
+- `plugins/tools-codemode/tests/pipeline.rs::a_pre_execute_deny_rejects_the_promise_and_lands_a_denied_program_result`
 - `crates/bough/tests/codemode_swap.rs::unmounting_the_row_restores_the_typed_schemas_exactly`
 
 **V2 — model-visible ⟺ ledgered under code mode.**
@@ -746,14 +747,29 @@ Every bullet of the brief → the test that proves it. A name in `backticks` is 
 - `plugins/tools-operator/tests/files.rs::write_creates_and_echoes_a_tag_patch_accepts`
 - `plugins/tools-codemode/tests/section.rs::the_patch_grammar_appears_exactly_once_in_the_projection`
 
-**V5 — the rest of the surface works from a program.**
-- `plugins/tools-codemode/tests/surface.rs::ledger_search_steps_and_tail_drill_from_a_tier_to_raw_steps`
-- `plugins/tools-codemode/tests/surface.rs::inbox_returns_the_unconsumed_mail`
-- `plugins/tools-codemode/tests/surface.rs::a_claim_from_a_program_lands_as_claim_proposed`
-- `plugins/tools-codemode/tests/surface.rs::act_open_pr_goes_through_the_actions_journal` (gh shim)
-- `plugins/tools-codemode/tests/surface.rs::agent_ask_and_fork_go_through_the_workers_seam`
-- `plugins/tools-codemode/tests/surface.rs::the_worker_bounds_refuse_the_cap_plus_one_spawn`
-- `plugins/tools-operator/tests/schedule.rs::a_scheduled_intent_fires_on_the_synthetic_clock_and_wakes_its_creator`
+**V5 — the rest of the surface works from a program.** All of these run REAL JavaScript in QuickJS
+against the real tools over their real seams, in `plugins/tools-codemode/tests/v5_surface.rs`
+(the plan filed them under `surface.rs`; they are their own binary because the fixture mounts
+`tools-operator`, `tool-actions`, `tool-workers`, `claims`, `actions`, `workers` and `agents`):
+- `…/v5_surface.rs::ledger_search_steps_and_tail_drill_from_a_tier_to_raw_steps`
+- `…/v5_surface.rs::inbox_returns_the_unconsumed_mail`
+- `…/v5_surface.rs::a_claim_from_a_program_lands_as_claim_proposed`
+- `…/v5_surface.rs::act_open_pr_goes_through_the_actions_journal` (gh shim Provider)
+- `…/v5_surface.rs::agent_ask_and_fork_go_through_the_workers_seam` (`ask` runs inside the
+  worker's own program, so the caller really has a spawner)
+- `…/v5_surface.rs::the_worker_bounds_refuse_the_cap_plus_one_spawn`
+- `…/v5_surface.rs::a_scheduled_intent_from_a_program_fires_on_the_synthetic_clock`
+- `…/v5_surface.rs::the_bundle_binds_the_documented_names` (the alias map under test IS the
+  bundle's)
+- `plugins/tools-operator/tests/schedule.rs::an_intent_at_t_plus_5m_fires_exactly_once_and_wakes_its_creator`
+
+Proving V5 needed an implementation fix, not just a test: an alias was a bare rename, so the
+op-discriminated tools could not be reached under the names the surface documents
+(`ledger.search(q)` bound `q` to `op`, and `act(kind, …)` did not exist at all). An alias value
+now reads as `tool?fixed=value#positional,names` or as an `a|b|c` DISPATCH on the first argument,
+and `bundles/bough-codemode.yml` binds `ledger.search/steps/tail`, `bg`/`bg.output`/`bg.kill` and
+`act` with it. `ledger_read` also learned `{op: steps, range: "1204..1230"}`, which is how a tier's
+notable refs spell a range.
 
 **V6 — turn end without a stop tool.**
 - `crates/bough/tests/codemode_wake.rs::a_program_then_text_wake_ends_by_wake_stopping`

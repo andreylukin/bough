@@ -32,3 +32,17 @@ serde_json = { workspace = true }
 # real `LedgerHandle` even for a section that reads no row.
 insta = { workspace = true }
 bough-plugin-ledger-memory = { workspace = true }
+# WP-V5: the rest of the surface is proven against the REAL tools over their real seams, in the
+# real engine — so the test crate depends on every row a fully-equipped agent mounts.
+bough-plugin-js-quickjs = { workspace = true }
+bough-plugin-tools-operator = { workspace = true }
+bough-plugin-tool-actions = { workspace = true }
+bough-plugin-tool-workers = { workspace = true }
+bough-plugin-actions = { workspace = true }
+bough-plugin-workers = { workspace = true }
+bough-plugin-claims = { workspace = true }
+bough-plugin-graph-ops = { workspace = true }
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }

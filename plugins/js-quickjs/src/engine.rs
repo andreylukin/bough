@@ -818,4 +818,145 @@ mod tests {
             "a QuickJS runtime outlived its program"
         );
     }
+
+    /// V3, the closure proof, stated positively: the program enumerates its OWN global surface
+    /// and every name on it must be a pure-computation builtin, the seam's three bridges, or a
+    /// name the seam bound. Nothing on this list can open a file, a socket, an environment
+    /// variable or a process — which is what makes `bash` (a bound name, hence the pipeline)
+    /// the only way to run a command.
+    #[tokio::test]
+    async fn the_whole_global_surface_is_pure_builtins_plus_the_bound_names() {
+        // Pure computation only. `eval` compiles source in the SAME closed world, so it adds no
+        // capability; `performance`/`queueMicrotask` are clocks and microtasks, not I/O.
+        const PURE: &[&str] = &[
+            "AggregateError",
+            "Array",
+            "ArrayBuffer",
+            "AsyncDisposableStack",
+            "Atomics",
+            "BigInt",
+            "BigInt64Array",
+            "BigUint64Array",
+            "Boolean",
+            "DOMException",
+            "DataView",
+            "Date",
+            "DisposableStack",
+            "Error",
+            "EvalError",
+            "FinalizationRegistry",
+            "Float16Array",
+            "Float32Array",
+            "Float64Array",
+            "Function",
+            "Infinity",
+            "Int16Array",
+            "Int32Array",
+            "Int8Array",
+            "InternalError",
+            "Iterator",
+            "JSON",
+            "Map",
+            "Math",
+            "NaN",
+            "Number",
+            "Object",
+            "Promise",
+            "Proxy",
+            "RangeError",
+            "ReferenceError",
+            "Reflect",
+            "RegExp",
+            "Set",
+            "SharedArrayBuffer",
+            "String",
+            "SuppressedError",
+            "Symbol",
+            "SyntaxError",
+            "TypeError",
+            "URIError",
+            "Uint16Array",
+            "Uint32Array",
+            "Uint8Array",
+            "Uint8ClampedArray",
+            "WeakMap",
+            "WeakRef",
+            "WeakSet",
+            "atob",
+            "btoa",
+            "console",
+            "decodeURI",
+            "decodeURIComponent",
+            "encodeURI",
+            "encodeURIComponent",
+            "escape",
+            "eval",
+            "globalThis",
+            "isFinite",
+            "isNaN",
+            "parseFloat",
+            "parseInt",
+            "performance",
+            "queueMicrotask",
+            "undefined",
+            "unescape",
+        ];
+        // The seam's own bridges. `__host` dispatches through the binding table and refuses an
+        // unbound name (asserted below), so it is not a capability either.
+        const BRIDGES: &[&str] = &["__bind", "__fmt", "__host", "__log"];
+
+        let (p, _s, _c) = program(
+            "console.log(Object.getOwnPropertyNames(globalThis).sort().join('\\n'));",
+            caps(),
+            vec![host("view", Arc::new(Echo))],
+        );
+        let out = engine().run(p).await.expect("runs");
+        let leaked: Vec<&str> = out
+            .console
+            .lines()
+            .filter(|n| !PURE.contains(n) && !BRIDGES.contains(n) && *n != "view")
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "an unaccounted global is reachable from the sandbox: {leaked:?}"
+        );
+        // And the converse: a program whose scope has no shell tool has no shell at all.
+        assert!(!out.console.lines().any(|n| n == "bash"));
+    }
+
+    /// The named escape hatches, one program, no metadata: file, network, env, process, module.
+    #[tokio::test]
+    async fn no_file_network_env_or_process_access_is_possible() {
+        let out = run(
+            "const names = ['fetch','XMLHttpRequest','WebSocket','require','module','exports',\
+             'process','Deno','Bun','Buffer','__filename','__dirname','std','os','scriptArgs',\
+             'print','open','read','readFile','write','writeFile','loadFile','setTimeout',\
+             'setInterval','Worker','importScripts','navigator','localStorage'];\
+             console.log(names.filter(n => globalThis[n] !== undefined).join(',') || 'none');\
+             try { console.log(eval('typeof require')); } catch (e) { console.log('eval-threw'); }",
+        )
+        .await
+        .expect("runs");
+        assert_eq!(
+            out.console, "none\nundefined\n",
+            "a capability leaked into the sandbox"
+        );
+    }
+
+    /// `__host` is a dispatcher over the binding table, not a door: a name the seam did not bind
+    /// is refused with `not_found`, so reaching past the injected set buys nothing.
+    #[tokio::test]
+    async fn the_raw_bridge_refuses_a_name_the_seam_did_not_bind() {
+        let (p, _s, _c) = program(
+            "const raw = await __host('bash', JSON.stringify(['rm -rf /'])); console.log(raw);",
+            caps(),
+            vec![host("view", Arc::new(Echo))],
+        );
+        let out = engine().run(p).await.expect("runs");
+        assert!(
+            out.console.contains("not_found") && out.console.contains("no host function `bash`"),
+            "{}",
+            out.console
+        );
+    }
 }

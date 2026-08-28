@@ -201,6 +201,7 @@ pub fn specs(
                 "properties": {
                     "op": { "type": "string", "enum": ["search", "steps", "tail"] },
                     "q": string,
+                    "range": string,
                     "from": { "type": "integer" }, "to": { "type": "integer" },
                     "n": { "type": "integer" }, "limit": { "type": "integer" }
                 },

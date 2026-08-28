@@ -165,3 +165,100 @@ fn the_merge_notes_name_a_file_and_a_hook_for_every_entry() {
         "the concealment hook of §0.1 must be recorded"
     );
 }
+
+/// The record's claim "the default is unchanged" is a claim about the BINARY, not about a table in
+/// a markdown file, so it is checked against the binary: every shipped profile is composed by the
+/// real launcher and must not carry the code-mode consumer, while `--profile codemode` must — that
+/// asymmetry is the whole of the "patch-swappable, off by default" promise.
+#[test]
+fn no_shipped_profile_boots_the_codemode_consumer() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let dump = |profile: &str| -> String {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_bough"))
+            .args(["--profile", profile, "--dump-config"])
+            .env("BOUGH_HOME", home.path())
+            .output()
+            .expect("run bough --dump-config");
+        assert!(
+            out.status.success(),
+            "--profile {profile} --dump-config must exit 0; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).expect("the dump is UTF-8")
+    };
+
+    for profile in ["tui", "headless", "dev"] {
+        let text = dump(profile);
+        assert!(
+            text.contains("plugin: tools\n") && text.contains("plugin: tools-baseline"),
+            "`--profile {profile}` must still compose the typed tool rows"
+        );
+        assert!(
+            !text.contains("tools-codemode"),
+            "`--profile {profile}` composes `tools-codemode`; the DEFAULT consumer is not \
+             unchanged and BUILD.md's row is a lie"
+        );
+    }
+    let cm = dump("codemode");
+    assert!(
+        cm.contains("plugin: tools-codemode"),
+        "`--profile codemode` must be the way in; if it is not, the row BUILD.md names does not \
+         exist:\n{cm}"
+    );
+    assert!(
+        cm.contains("plugin: tools\n") && cm.contains("plugin: tools-baseline"),
+        "and it must be a SECOND consumer of an unchanged seam, not a replacement of it"
+    );
+}
+
+/// The `$ / bank` figures of one table, keyed by arm, parsed out of a markdown summary table.
+fn bank_costs(table: &str) -> Vec<(String, String, String)> {
+    table
+        .lines()
+        .filter(|l| l.contains("live haiku |"))
+        .map(|l| {
+            let c: Vec<&str> = l.split('|').map(str::trim).collect();
+            (c[1].to_string(), c[2].to_string(), c[6].to_string())
+        })
+        .collect()
+}
+
+/// V10 asks for the decisions "with the evidence". A phase row that quotes a bench run the plan has
+/// since marked SUPERSEDED is exactly the drift this file exists to catch, so BUILD.md's numbers
+/// are checked against the plan's own DECISION table rather than read for plausibility.
+#[test]
+fn the_build_row_quotes_the_plans_current_decision_table() {
+    let plan = doc("docs/phase-codemode-plan.md");
+    let decision = section(&plan, "### Live haiku, both arms — the DECISION table");
+    let superseded = section(&plan, "### Live haiku, both arms — SUPERSEDED");
+    let build = doc("BUILD.md");
+    let row = build
+        .lines()
+        .find(|l| l.starts_with("| codemode |"))
+        .expect("BUILD.md must carry a `codemode` phase row");
+
+    let current = bank_costs(&decision);
+    assert_eq!(current.len(), 2, "the decision table must carry both arms");
+    for (arm, pass, cost) in &current {
+        assert!(
+            row.contains(cost.trim_start_matches('$')),
+            "BUILD.md's codemode row must quote the CURRENT `{arm}` cost {cost}: {row}"
+        );
+        assert!(
+            row.contains(pass.as_str()),
+            "BUILD.md's codemode row must quote the CURRENT `{arm}` pass rate {pass}: {row}"
+        );
+    }
+    // And must not present the retired run's numbers as the evidence.
+    for (arm, _, cost) in bank_costs(&superseded) {
+        let stale = cost.trim_start_matches('$').trim_end_matches('0');
+        assert!(
+            !row.contains(&format!("@ {stale}")) && !row.contains(&format!("@ ${stale}")),
+            "BUILD.md's codemode row still quotes the SUPERSEDED `{arm}` cost {cost}: {row}"
+        );
+    }
+    assert!(
+        row.to_lowercase().contains("superseded"),
+        "and it must say where the retired table went: {row}"
+    );
+}
