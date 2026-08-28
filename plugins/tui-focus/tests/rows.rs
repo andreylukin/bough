@@ -458,6 +458,10 @@ fn trajectory() -> Vec<Step> {
 }
 
 fn paint(rows: &[Row], width: u16) -> Vec<String> {
+    paint_as(rows, width, None)
+}
+
+fn paint_as(rows: &[Row], width: u16, agent_name: Option<&str>) -> Vec<String> {
     use bough_plugin_tui_focus::{FocusConfig, FocusPane, FocusState, LiveText};
     let cfg = Arc::new(FocusConfig {
         max_rows: 100,
@@ -473,6 +477,7 @@ fn paint(rows: &[Row], width: u16) -> Vec<String> {
     );
     let state = FocusState {
         rows: rows.to_vec(),
+        agent_name: agent_name.map(str::to_string),
         ..Default::default()
     };
     let (lines, _, _) = pane.lines(
@@ -529,7 +534,8 @@ fn the_painted_transcript_says_turn_and_shows_no_markdown_markers() {
     let rows = rows_from_steps(&trajectory());
     for w in [80u16, 200] {
         let out = paint(&rows, w).join("\n");
-        assert!(out.contains("── turn "), "@{w}: {out}");
+        // ONE rule per turn (visual audit F2): the end. The start is the speaker label.
+        assert_eq!(out.matches("── turn").count(), 1, "@{w}: {out}");
         assert!(out.contains("── turn ended · completed"), "@{w}: {out}");
         assert!(
             !out.contains("wake"),
@@ -566,4 +572,72 @@ fn machinery_steps_are_not_rows_but_unknown_types_still_are() {
             "{kind}"
         );
     }
+}
+
+/// Visual audit F2: the turn is a label and a rule, not three chrome lines; the agent's words
+/// wear its name the way Andrey's wear his; the about-line is the rail's, not the transcript's.
+#[test]
+fn a_turn_is_a_speaker_label_and_one_rule() {
+    use bough_plugin_tui_focus::rows::opens_speech;
+    let rows = rows_from_steps(&[
+        step(1, "wake/start", serde_json::json!({ "urgency": "now" })),
+        step(
+            2,
+            "mail/delivered",
+            serde_json::json!({ "from": "andrey", "subject": "hi", "summary": "ONE" }),
+        ),
+        step(
+            3,
+            "thought/text",
+            serde_json::json!({ "step_index": 0, "text": "first words" }),
+        ),
+        step(
+            4,
+            "tool/call",
+            serde_json::json!({ "call": "c1", "name": "bash", "args": {} }),
+        ),
+        step(
+            5,
+            "thought/text",
+            serde_json::json!({ "step_index": 2, "text": "after the tool" }),
+        ),
+        step(
+            6,
+            "about/line",
+            serde_json::json!({ "state": "doing x", "intent": "y" }),
+        ),
+        step(7, "wake/end", serde_json::json!({ "reason": "completed" })),
+    ]);
+    // No start mark, no about echo: Andrey, text, tool, text, end.
+    assert!(matches!(rows[0], Row::Andrey { .. }), "{rows:?}");
+    assert!(
+        matches!(rows[rows.len() - 1], Row::WakeMark { .. }),
+        "{rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|r| matches!(r, Row::About { .. })),
+        "{rows:?}"
+    );
+    assert_eq!(rows.len(), 5, "{rows:?}");
+    // The first text after Andrey opens the agent's speech; the text after its own tool does not.
+    assert!(opens_speech(&rows, 1));
+    assert!(!opens_speech(&rows, 3));
+    assert!(
+        !opens_speech(&rows, 0),
+        "Andrey's row is not the agent speaking"
+    );
+
+    let out = paint_as(&rows, 80, Some("sol"));
+    let labels: Vec<&String> = out.iter().filter(|l| l.trim() == "sol:").collect();
+    assert_eq!(labels.len(), 1, "{out:?}");
+    assert!(out.iter().any(|l| l.trim() == "andrey:"), "{out:?}");
+    assert_eq!(
+        out.iter().filter(|l| l.contains("── turn")).count(),
+        1,
+        "{out:?}"
+    );
+    // With no name known, no label is invented.
+    let unnamed = paint(&rows, 80);
+    assert!(!unnamed.iter().any(|l| l.trim() == "sol:"), "{unnamed:?}");
+    assert!(unnamed.iter().any(|l| l.trim() == "andrey:"), "{unnamed:?}");
 }

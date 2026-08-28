@@ -385,13 +385,10 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
                     None => out.push(other(step)),
                 }
             }
-            "wake/start" => out.push(Row::WakeMark {
-                step: step.id.clone(),
-                wake: step.wake.clone(),
-                phase: Phase::Start,
-                reason: body_str(step, "urgency"),
-                cause: None,
-            }),
+            // ONE rule per turn (visual audit F2): the turn's start is said by the speaker label
+            // on its first words, its end by the `── turn ended · …` rule. `── turn` above the
+            // label was a third chrome line saying what the label already says.
+            "wake/start" => {}
             "wake/end" => out.push(Row::WakeMark {
                 step: step.id.clone(),
                 wake: step.wake.clone(),
@@ -401,10 +398,9 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
             }),
             _ => match about_from_step(step) {
                 // `about/line` BY NAME (P3-D11): the pane does not depend on the row that writes it.
-                Some(view) => out.push(Row::About {
-                    step: step.id.clone(),
-                    view,
-                }),
+                // It is the RAIL's line (and `/agents`'), not the transcript's: echoed here it was a
+                // green sentence after every turn that nobody wrote to Andrey (visual audit F2).
+                Some(_) => {}
                 None => out.push(other(step)),
             },
         }
@@ -537,6 +533,21 @@ pub fn trailing_text_row(rows: &[Row]) -> Option<usize> {
 /// most one index.
 pub fn trailing_text_rows(rows: &[Row]) -> Vec<usize> {
     trailing_text_row(rows).into_iter().collect()
+}
+
+/// PURE: whether row `i` opens a span of the agent speaking, and so wears the agent's name as a
+/// label the way Andrey's rows wear `andrey:` (visual audit F2). A text row after the agent's
+/// own text, reasoning or tool call continues the same span; after anything else — Andrey, mail,
+/// a claim card, the end of a turn, the top of the window — it starts one.
+pub fn opens_speech(rows: &[Row], i: usize) -> bool {
+    if !matches!(rows.get(i), Some(Row::Text { .. })) {
+        return false;
+    }
+    i == 0
+        || !matches!(
+            rows[i - 1],
+            Row::Text { .. } | Row::Reasoning { .. } | Row::Tool { .. }
+        )
 }
 
 /// PURE: the words a [`Row::WakeMark`] shows, in the USER-FACING vocabulary (nit 37).

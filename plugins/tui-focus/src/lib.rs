@@ -101,6 +101,9 @@ pub struct FocusState {
     /// Where each row's FIRST line landed in the last frame, by row index. `handle` has no
     /// geometry of its own, and moving the row focus has to be able to bring the row into view.
     pub row_lines: Vec<u16>,
+    /// The focused agent's NAME, for the speaker label on its text (visual audit F2). `None`
+    /// until `retarget` has looked it up; a text row then carries no label rather than a guess.
+    pub agent_name: Option<String>,
     /// The pane's top row on screen in the last frame, so a click's absolute row can be turned
     /// into a line of the transcript (click-any-row, visual audit).
     pub area_y: u16,
@@ -305,6 +308,14 @@ impl FocusPane {
                     ]));
                 }
                 Row::Text { text, .. } => {
+                    // The speaker (visual audit F2): Andrey's rows said `andrey:` and the agent's
+                    // said nothing, so the two halves of the conversation were told apart by
+                    // nothing but position. The name opens each span the agent speaks.
+                    if rows::opens_speech(&state.rows, i) {
+                        if let Some(name) = &state.agent_name {
+                            lines.push(label(name, theme.accent));
+                        }
+                    }
                     // ONE paragraph, wrapped at `width`: the joined row is a single string, so it
                     // flows rather than breaking at every flush boundary (the field bug).
                     let shown = if Some(i) == trailing {
@@ -923,8 +934,10 @@ pub async fn retarget(
                 Some(t) => newest_steps(ledger, t, max_rows).await,
                 None => Vec::new(),
             };
+            let name = agents.get(&id).map(|a| a.name().to_string());
             let mut held = state.lock();
             held.agent = Some(id);
+            held.agent_name = name;
             held.traj = traj;
             // A new agent ends any branch view: the override belonged to the agent left behind.
             held.home_traj = None;
