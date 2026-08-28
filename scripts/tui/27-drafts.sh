@@ -81,7 +81,12 @@ t the_card_says_nothing_was_sent \
 # The card's own button line, in the transcript's columns: `copy open` and nothing else — the
 # composer band has its own `send ⏎` chip (the TUI brief, D7), which is not the card's.
 t the_card_offers_copy_and_open_and_no_send \
-  bash -c 'for i in $(seq 1 10); do shell-use text | cut -c35- | grep -qE "^ *copy (open|close) *$" && exit 0; sleep 0.5; done; echo "no copy/open button line on the card"; exit 1'
+  bash -c 'for i in $(seq 1 10); do shell-use text | python3 -c "
+import re, sys
+rows = sys.stdin.read().split(chr(10))
+ok = any(re.match(r\"^[ \u2503]*copy (open|close) *$\", r[34:]) for r in rows)
+sys.exit(0 if ok else 1)
+" && exit 0; sleep 0.5; done; echo "no copy/open button line on the card"; exit 1'
 
 t the_audience_is_shown_so_andrey_knows_where_it_would_have_gone \
   see "slack:#eng" --timeout 5000

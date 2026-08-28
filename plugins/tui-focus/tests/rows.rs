@@ -834,9 +834,10 @@ fn a_program_row_opens_the_agents_speech() {
     assert!(opens_speech(&rows, 1));
 }
 
-/// D6: the `draft_*` call and its result draw nothing — the card that follows is their rendering.
+/// Round 10: a `draft_*` call row stays visible above its card — a draft attempt that produced
+/// no card (the tool unreachable, a bad argument) must never be invisible.
 #[test]
-fn a_draft_call_is_rendered_only_by_its_card() {
+fn a_draft_call_stays_visible_above_its_card() {
     let rows = rows_from_steps(&[
         step(
             1,
@@ -853,24 +854,19 @@ fn a_draft_call_is_rendered_only_by_its_card() {
             "tool/result",
             serde_json::json!({ "call": "c1", "name": "draft_ticket", "outcome": "ok", "content": "drafted d1", "step_index": 0 }),
         ),
-        step(
-            4,
-            "thought/text",
-            serde_json::json!({ "step_index": 1, "text": "done" }),
-        ),
     ]);
+    assert!(matches!(rows[0], Row::Tool { .. }), "{rows:?}");
     assert!(
-        !rows.iter().any(|r| matches!(r, Row::Tool { .. })),
+        matches!(&rows[1], Row::Draft { subject, .. } if subject == "T"),
         "{rows:?}"
     );
-    assert!(
-        matches!(&rows[0], Row::Draft { subject, .. } if subject == "T"),
-        "{rows:?}"
-    );
-    assert_eq!(rows.len(), 2, "{rows:?}");
-    // The card opens the agent's speech like any agent row, and the text after it continues it.
-    assert!(bough_plugin_tui_focus::rows::opens_speech(&rows, 0));
-    assert!(!bough_plugin_tui_focus::rows::opens_speech(&rows, 1));
+    // A call with no card behind it is still a row.
+    let bare = rows_from_steps(&[step(
+        1,
+        "tool/call",
+        serde_json::json!({ "call": "c1", "name": "draft_ticket", "args": { "audience": "linear" } }),
+    )]);
+    assert_eq!(bare.len(), 1, "{bare:?}");
 }
 
 /// Round 5: while a call is in flight the span ends with `▸ running · <call> · 12s`.
