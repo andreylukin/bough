@@ -88,6 +88,20 @@ says `esc to close` in the same slot. `ShellView.notice_pinned` carries the fact
 renders it, and it is the FIRST field dropped for width — the band's own `(PgDn)` marker already
 hints the key. Absent whenever there is nothing to close.
 
+**D-uxv-16 — under the rail's collapse width, the status line names the lane.** The rail
+collapses under `collapse_cols` (100), so at 80×24 nothing on screen said who had the keyboard.
+`ShellView` now carries `focused_name` and `rail_collapsed` (from last frame's layout, the same
+source as `status_top`); `tui-status` renders `Field::Agent` in the accent, right after the
+product, ONLY while the rail is collapsed — at every width the rail exists at, it already says so.
+It is dropped late (after the model, before the stop key).
+
+**D-uxv-17 — `/help` is sections; the palette is a table; a notice folds.** `/help` lists each
+pane's keys under the pane's own name (not `(trajectory)` six times), every key spelled the
+keymap's way (`up/down`, `pgup/pgdn`, `ctrl+b`), and a command notice's margin lines — its
+headings — render bold. The `/` palette aligns its summaries to one column (the widest visible
+usage, capped at half the width) and paints on `field_bg` like the notice band. A notice line
+longer than the frame folds at spaces (`wrap_notice`) rather than losing its tail.
+
 **D-uxv-8 — markdown rhythm.** Consecutive list items are one block (no blank between); a code
 block is padded to the measure on `code_bg`; h1/h2 are bold + underlined in the body colour (F10).
 A terminal tool's expanded output takes the same ground; its `exit N` verdict line stays on the

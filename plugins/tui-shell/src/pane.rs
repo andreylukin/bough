@@ -296,6 +296,12 @@ pub struct ShellView {
     /// The prose measure cap in columns ([`crate::TuiConfig::measure_cols`]). Read through
     /// [`RenderCx::measure`] rather than directly.
     pub measure_cols: u16,
+    /// The focused agent's NAME (`AgentId` is a fresh handle per life; the name is what a person
+    /// reads). For a surface that must say who is being spoken to when the rail cannot.
+    pub focused_name: Option<String>,
+    /// No `Strip` pane has any columns this frame: the rail collapses under its `collapse_cols`
+    /// (100 by default), so at 80×24 nothing on screen names the lane unless a pane reads this.
+    pub rail_collapsed: bool,
     /// A notice that waits for a key is up (a command's output, `/help`, an error). The status
     /// row says `esc to close` while it is, the way it says `esc to interrupt` while a turn runs.
     pub notice_pinned: bool,

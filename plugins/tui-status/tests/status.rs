@@ -27,6 +27,7 @@ fn view() -> StatusView {
             ("^f".into(), "search".into()),
         ],
         notice_pinned: false,
+        agent: None,
     }
 }
 
@@ -352,4 +353,26 @@ fn a_pinned_notice_puts_esc_to_close_on_the_line_unless_a_turn_runs() {
     let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
     assert!(!text.contains(status::CLOSE_KEY), "{text:?}");
     assert!(text.contains(status::STOP_KEY), "{text:?}");
+}
+
+#[test]
+fn the_lane_is_named_on_the_line_only_while_the_rail_is_collapsed() {
+    // `agent` is set by the row from `ShellView::rail_collapsed`; here the view is the contract.
+    let mut v = view();
+    v.running = false;
+    assert!(!status::fields(&v, 200).contains(&status::Field::Agent));
+    v.agent = Some("sol".into());
+    let at = |w: u16| status::fields(&v, w);
+    let wide = at(200);
+    assert_eq!(wide[..2], [status::Field::Product, status::Field::Agent]);
+    // At 80 columns — under the rail's collapse width — the name outlives the cwd and the
+    // numbers: it is the only thing left that says who is being spoken to.
+    let narrow = at(80);
+    assert!(narrow.contains(&status::Field::Agent), "{narrow:?}");
+    let text = status::status_line(&v, 80, &Theme::of(ThemeName::Dark))
+        .spans
+        .iter()
+        .map(|s| s.content.to_string())
+        .collect::<String>();
+    assert!(text.contains("sol"), "{text}");
 }
