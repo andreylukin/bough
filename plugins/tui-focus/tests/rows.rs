@@ -542,3 +542,28 @@ fn the_painted_transcript_says_turn_and_shows_no_markdown_markers() {
         assert!(out.contains("Code & File Operations:"), "@{w}: {out}");
     }
 }
+
+/// Visual audit F3: the ledger's bookkeeping about itself is not a row; an unknown type still is.
+#[test]
+fn machinery_steps_are_not_rows_but_unknown_types_still_are() {
+    let rows = rows_from_steps(&[
+        step(1, "agent/routing", serde_json::json!({})),
+        step(2, "usage/round", serde_json::json!({ "cost_usd": 0.01 })),
+        step(
+            3,
+            "thought/text",
+            serde_json::json!({ "text": "hello", "step_index": 0 }),
+        ),
+        step(4, "rollup/sealed", serde_json::json!({})),
+        step(5, "phase9/something-new", serde_json::json!({})),
+    ]);
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(matches!(rows[0], Row::Text { .. }));
+    assert!(matches!(&rows[1], Row::Other { kind, .. } if kind.as_str() == "phase9/something-new"));
+    for kind in bough_plugin_tui_focus::rows::MACHINERY {
+        assert!(
+            rows_from_steps(&[step(1, kind, serde_json::json!({}))]).is_empty(),
+            "{kind}"
+        );
+    }
+}

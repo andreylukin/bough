@@ -23,6 +23,23 @@ pub const ANDREY_REF: &str = "andrey";
 /// dropped: `step/start` and `step/end` bracket rows that are already shown in order,
 /// `request/header` is the reconstruction anchor, and `inbox/spliced` is the durable twin of the
 /// `mail/delivered` row right next to it (rendering both would show one message twice).
+/// Bookkeeping the ledger writes about itself — routing, usage, seals, pins, expiries. Not the
+/// conversation, so not a row (visual audit F3): a first launch used to be three `· agent/routing`
+/// lines and every turn ended in `· usage/round`. The list is CLOSED: a type this binary does not
+/// know still renders as `· kind`, because a silent drop is how a new step type would vanish.
+pub const MACHINERY: &[&str] = &[
+    "agent/routing",
+    "agent/dormancy",
+    "usage/round",
+    "recon/request",
+    "rollup/request",
+    "rollup/sealed",
+    "pin/set",
+    "pin/retire",
+    "memory/expired",
+    "power/changed",
+];
+
 pub const ENVELOPE: &[&str] = &[
     "step/start",
     "step/end",
@@ -210,7 +227,7 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
 
     for step in steps {
         let kind = step.kind.as_str();
-        if ENVELOPE.contains(&kind) {
+        if ENVELOPE.contains(&kind) || MACHINERY.contains(&kind) {
             continue;
         }
         // Every arm below except the two joining ones ends the open group; the joining arms set
