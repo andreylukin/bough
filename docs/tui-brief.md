@@ -58,6 +58,46 @@ pick. Bands under 60 columns get no chips. `ShellView.running` carries the runni
 **D8, D9, D10 — kept.** The pinned command band; `cwd · model · ctx left · cost`; search, palette,
 help, welcome.
 
+## Rounds 5 and 6 — after three persona tests (power-user, developer-critic, cognitive-adhd)
+
+**R5 — the `to:` chip is a picker.** `composer::lane_picker`: a short list hanging off the chip's
+right edge on the rows above the band; click a row or Up/Down + Enter focuses that lane, Esc or a
+click elsewhere closes it. (Cycling was five clicks with five lanes, and `▾` promised a list.)
+
+**R5 — the rail caps each about half at two lines.** Six lanes at three each was most of a frame.
+
+**R5 — a program over budget groups its calls by verb.** `program::verb_groups`: `3 views, 2
+edits, bash`; names when they fit, the bare count only when not even the groups do.
+
+**R5 — a live line while a call runs.** `rows::running_line`: `▸ running · bash cargo test · 12s`
+at the bottom of the agent's span, from the call step's time and the view's now.
+
+**R6 — the about-line is the work.** `about-line/compose.rs`: the state half is the tools it ran
+on what (`viewed main.rs; patched README.md; ran \`cargo test\``), typed and program calls alike,
+falling back to the first line it said; the intent half is the FIRST line of its last message.
+The mail it was woken by is not a clause and not cited — `read mail <my own prompt>` on the rail
+read as a bug to all three personas, and the reply's last line read as a stale, backwards intent.
+
+**R6 — `✎ changed a.rs · b.md` at each turn's end.** `rows::changed_files` from every
+patch/edit_file/write_file call (typed rows and program sub-calls); the line lands after the
+turn's last agent row, in the added colour, once nothing is in flight. "What did it do to my
+files" was invisible among the `▸ program …` lines.
+
+**R6 — `andrey: · queued`.** `rows::queued_rows`: a message sent while a turn runs and not yet
+begun wears the tag; nothing is queued while idle.
+
+**R6 — Tab reaches the conversation first; the rail takes Up/Down.** `cycle_focus` puts Strip
+panes last; in the rail `rail::step_focus` moves the focused lane and its head line sits on the
+selection ground while the rail has the keyboard.
+
+**Fixed along the way:** the `search [▏]` ghost after Esc, Esc (the layout's focused pane is the
+KEYBOARD's pane, `run::layout_focus`); the welcome hint says `? for help`, the status line's
+word, and says `tab panes` once.
+
+**Open:** a `send` button on draft cards (no action provider can carry a draft); `draft_*` is
+unreachable under tools-codemode (bough-d5's parity gate); the pane is still called "trajectory"
+in `/help` and "conversation" in the key hints.
+
 ## Verification
 
 Per crate: `make gate-crate CRATES="bough-plugin-tui-focus bough-plugin-tui-strip
