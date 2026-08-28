@@ -128,7 +128,9 @@ a silent drop is how a new step type would vanish.
 **D-uxv-20 — click any row.** The click's absolute row, the pane's `area_y` and the scroll top
 give a transcript line; `RowFocus::row_at_line` gives the row; the marker moves there. The
 keyboard stays where it was (B1). A click that never dragged clears its one-cell selection on
-mouse-up — the highlighted cell it left mid-transcript was chrome for nothing.
+mouse-up — the highlighted cell it left mid-transcript was chrome for nothing. The fill is
+`patch_style`, not `style`: a label, a rule and the welcome carry their colour on the LINE, and
+replacing the line style turned the focused `sol:` pale (found under the light theme).
 
 **D-uxv-21 — the empty transcript says what it is for (F15).** `Nothing here yet — sol is waiting
 for your first message.` and one dim line naming enter, `/`, `?` and tab. Only with no rows, no
