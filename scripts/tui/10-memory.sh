@@ -71,7 +71,7 @@ shell-use submit "/seal"
 shell-use wait idle --timeout 60000
 
 t seal_renders_a_report_in_the_pane \
-  see_any "the seal report" "call(s)," "nothing to seal"
+  see_any "the seal report" "model call" "nothing to seal"
 
 t seal_appended_rollup_sealed_steps \
   bash -c "for i in \$(seq 1 60); do \

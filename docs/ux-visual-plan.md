@@ -76,6 +76,12 @@ of the frame at every launch to say "nothing written yet". Empty, it keeps ONE r
 worth a row from boot (§7: nothing left this machine) — and grows to what it can fill when a draft
 lands.
 
+**D-uxv-14 — governance reports are sentences.** `/seal`: `sol: nothing to seal yet.` or
+`sol: sealed 3 blocks in 3 model calls (1.2k tokens in / 300 out).`, block and skip lines after;
+`/reconsolidate`: `Reconsolidated: distilled a new digest (…), 0 contradictions proposed, 0 pieces
+of evidence expired.` with the model calls and the pass id last. `/agents` says `nothing yet` for
+a lane with no about-line rather than its trajectory id.
+
 **D-uxv-8 — markdown rhythm.** Consecutive list items are one block (no blank between); a code
 block is padded to the measure on `code_bg`; h1/h2 are bold + underlined in the body colour (F10).
 A terminal tool's expanded output takes the same ground; its `exit N` verdict line stays on the

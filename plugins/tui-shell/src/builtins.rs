@@ -314,9 +314,10 @@ impl Command for Roster {
         for a in roster {
             let mut status = format!("{:?}", a.status()).to_lowercase();
             // `doing` is the about-line's STATE half — what the lane last said it did — not the
-            // trajectory id, which is an internal name (visual audit follow-up). The id stays as
-            // the fallback for a lane that has never written one.
-            let mut doing = a.traj().to_string();
+            // trajectory id, which is an internal name (visual audit follow-up).
+            // A lane that has never written an about-line has nothing to say yet; its trajectory
+            // id is an internal name, not an answer.
+            let mut doing = "nothing yet".to_string();
             if let Some(ledger) = &ledger {
                 if dormant_now(ledger, a.traj()).await {
                     status = "dormant".to_string();

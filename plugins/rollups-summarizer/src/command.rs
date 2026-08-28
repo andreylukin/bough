@@ -146,18 +146,26 @@ pub fn render_plan(agent: &AgentName, plan: &SealPlan) -> String {
 
 /// PURE: what `/seal` shows.
 pub fn render_report(agent: &AgentName, report: &SealReport) -> String {
-    let mut out = format!(
-        "{agent}: {} sealed, {} call(s), {} in / {} out ({})\n",
-        report.sealed.len(),
-        report.calls,
-        report.tokens_in,
-        report.tokens_out,
-        match report.stop {
-            Stop::Complete => "complete",
-            Stop::CallBudget => "stopped at the call budget",
-            Stop::NothingToDo => "nothing to do",
+    // A sentence first (ux-visual): `0 sealed, 0 call(s), 0 in / 0 out (nothing to do)` was a
+    // row of counters. The block and skip lines below keep the ledger's names.
+    let mut out = match report.stop {
+        Stop::NothingToDo if report.sealed.is_empty() => {
+            format!("{agent}: nothing to seal yet.\n")
         }
-    );
+        stop => format!(
+            "{agent}: sealed {} block{} in {} model call{} ({} tokens in / {} out){}.\n",
+            report.sealed.len(),
+            if report.sealed.len() == 1 { "" } else { "s" },
+            report.calls,
+            if report.calls == 1 { "" } else { "s" },
+            report.tokens_in,
+            report.tokens_out,
+            match stop {
+                Stop::CallBudget => " — stopped at the call budget",
+                _ => "",
+            }
+        ),
+    };
     for id in &report.sealed {
         out.push_str(&format!("  sealed {id}\n"));
     }
@@ -193,7 +201,7 @@ mod tests {
                 stop: Stop::NothingToDo,
             },
         );
-        assert!(text.contains("nothing to do"), "{text}");
+        assert!(text.contains("nothing to seal yet"), "{text}");
     }
 
     /// Never skip silently (§0.2): every reason has a word, and the render prints it.
