@@ -272,7 +272,9 @@ pub struct ProgramView<'a> {
 /// its colour rule, and the EXACT-WIDTH guarantee are the ones every other tool row already has.
 /// A program row that measured itself differently would jitter against its neighbours.
 pub fn program_header(v: &ProgramView<'_>) -> Line<'static> {
-    let gist = serde_json::json!({ "summary": summary(v.subs.len(), v.ms) });
+    // The line's budget for the gist: the marker, the name and the outcome glyph take the rest.
+    let budget = (v.width as usize).saturating_sub(HEADER_CHROME_COLS);
+    let gist = serde_json::json!({ "summary": calls_gist(v.subs, v.ms, budget) });
     tool_header(&ToolCallView {
         name: "program",
         intent: RenderIntent::Generic,
@@ -284,8 +286,84 @@ pub fn program_header(v: &ProgramView<'_>) -> Line<'static> {
     })
 }
 
-/// PURE: the collapsed line's gist. `1 call`, never `1 calls`; the duration is dropped rather than
-/// printed as `0ms` when nothing measured it.
+/// Columns the header spends before the gist: `▸ program ` and ` ✓`.
+const HEADER_CHROME_COLS: usize = 12;
+
+/// PURE: the collapsed line's gist (the TUI brief, D2): the calls BY NAME with what each acted on
+/// — `view main.rs, view README.md · 1ms` — because collapsed is the default and the one line
+/// has to say what happened. Calls that do not fit in `budget` columns become `+N`; the bare
+/// count ([`summary`]) is the fallback when not even the first call fits.
+pub fn calls_gist(subs: &[ProgramSub], ms: u64, budget: usize) -> String {
+    let when = if ms == 0 {
+        String::new()
+    } else {
+        format!(" \u{b7} {}", fmt_ms(ms))
+    };
+    let parts: Vec<String> = subs.iter().map(sub_gist).collect();
+    if parts.is_empty() {
+        return summary(0, ms);
+    }
+    let room = budget.saturating_sub(when.chars().count());
+    let mut shown = 0usize;
+    let mut text = String::new();
+    for (i, part) in parts.iter().enumerate() {
+        let candidate = if i == 0 {
+            part.clone()
+        } else {
+            format!("{text}, {part}")
+        };
+        let rest = parts.len() - (i + 1);
+        let tail = if rest > 0 {
+            format!(" +{rest}")
+        } else {
+            String::new()
+        };
+        if candidate.chars().count() + tail.chars().count() > room {
+            break;
+        }
+        text = candidate;
+        shown = i + 1;
+    }
+    if shown == 0 {
+        return summary(subs.len(), ms);
+    }
+    let rest = parts.len() - shown;
+    if rest > 0 {
+        text.push_str(&format!(" +{rest}"));
+    }
+    text.push_str(&when);
+    text
+}
+
+/// PURE: one call as `name object` — the object being the argument a person would name the call
+/// by (a path, a command, a pattern), clipped so one long command cannot eat the line.
+fn sub_gist(sub: &ProgramSub) -> String {
+    const KEYS: [&str; 10] = [
+        "path", "file", "cmd", "command", "pattern", "query", "q", "name", "url", "id",
+    ];
+    const MAX: usize = 32;
+    let object = sub.args.as_object().and_then(|o| {
+        KEYS.iter()
+            .find_map(|k| o.get(*k).and_then(|v| v.as_str()))
+            .or_else(|| o.values().find_map(|v| v.as_str()))
+            .map(str::to_string)
+    });
+    match object {
+        Some(o) => {
+            let o = o.lines().next().unwrap_or("").trim();
+            let clipped: String = if o.chars().count() > MAX {
+                o.chars().take(MAX - 1).collect::<String>() + "\u{2026}"
+            } else {
+                o.to_string()
+            };
+            format!("{} {clipped}", sub.name)
+        }
+        None => sub.name.clone(),
+    }
+}
+
+/// PURE: the count form of the gist. `1 call`, never `1 calls`; the duration is dropped rather
+/// than printed as `0ms` when nothing measured it.
 pub fn summary(calls: usize, ms: u64) -> String {
     let noun = if calls == 1 { "call" } else { "calls" };
     if ms == 0 {
@@ -394,5 +472,56 @@ mod tests {
         assert!(e.line().contains("5000ms"), "{}", e.line());
         // A body that is not a `program/error` is not one.
         assert!(error_from_body(&serde_json::json!({ "program": "c1" })).is_none());
+    }
+}
+
+#[cfg(test)]
+mod gist_tests {
+    use super::{calls_gist, ProgramSub};
+    use bough_plugin_ledger::StepId;
+    use bough_plugin_llm::ToolCallId;
+    use bough_plugin_tools::RenderIntent;
+
+    fn sub(i: u32, name: &str, args: serde_json::Value) -> ProgramSub {
+        ProgramSub {
+            index: i,
+            call: ToolCallId::new(format!("p.{i}")),
+            name: name.to_string(),
+            intent: RenderIntent::Generic,
+            args,
+            result: None,
+            call_step: StepId::new(format!("s{i}")),
+        }
+    }
+
+    #[test]
+    fn the_gist_names_each_call_by_what_it_acted_on() {
+        let subs = [
+            sub(0, "view", serde_json::json!({ "path": "main.rs" })),
+            sub(1, "view", serde_json::json!({ "path": "README.md" })),
+            sub(
+                2,
+                "bash",
+                serde_json::json!({ "cmd": "cargo test -p x", "timeout": 5 }),
+            ),
+        ];
+        assert_eq!(
+            calls_gist(&subs, 1200, 80),
+            "view main.rs, view README.md, bash cargo test -p x \u{b7} 1.2s"
+        );
+        // No measured duration: no ` · 0ms`.
+        assert_eq!(calls_gist(&subs[..1], 0, 80), "view main.rs");
+        // Over budget: the calls that fit, then `+N` for the rest.
+        assert_eq!(calls_gist(&subs, 0, 32), "view main.rs, view README.md +1");
+        // Not even the first fits: the count.
+        assert_eq!(calls_gist(&subs, 0, 6), "3 calls");
+        // A call with no nameable object is just its name; a long object is clipped.
+        let odd = [
+            sub(0, "ledger.tail", serde_json::json!({ "n": 5 })),
+            sub(1, "grep", serde_json::json!({ "pattern": "a".repeat(50) })),
+        ];
+        let g = calls_gist(&odd, 0, 80);
+        assert!(g.starts_with("ledger.tail, grep aaaa"), "{g}");
+        assert!(g.ends_with('\u{2026}'), "{g}");
     }
 }

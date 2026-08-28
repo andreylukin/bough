@@ -298,12 +298,20 @@ fn the_collapsed_line_is_one_line_of_stable_width() {
             text_of(&lines)
         );
     }
-    // At a comfortable width the summary is readable: the name, the call count, the duration.
+    // At a comfortable width the gist NAMES the calls (the TUI brief, D2), then the duration.
     let (lines, _) = program_lines(&view(&rows[0], &expanded, 60, &theme));
     let text = text_of(&lines).remove(0);
     assert!(text.contains("program"), "{text:?}");
-    assert!(text.contains("4 calls"), "{text:?}");
+    assert!(text.contains("bash ls, bash ls"), "{text:?}");
+    assert!(!text.contains("4 calls"), "{text:?}");
     assert!(text.contains("1.2s"), "{text:?}");
+    // Narrower: the calls that do not fit become `+N`; narrower still, the bare count.
+    let (lines, _) = program_lines(&view(&rows[0], &expanded, 30, &theme));
+    let text = text_of(&lines).remove(0);
+    assert!(text.contains("bash ls +3"), "{text:?}");
+    let (lines, _) = program_lines(&view(&rows[0], &expanded, 22, &theme));
+    let text = text_of(&lines).remove(0);
+    assert!(text.contains("4 calls"), "{text:?}");
 }
 
 /// Expanded: the source block, the console beneath it, and one nested row per sub-call carrying
