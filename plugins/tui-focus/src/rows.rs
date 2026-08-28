@@ -548,7 +548,7 @@ pub fn opens_speech(rows: &[Row], i: usize) -> bool {
 pub fn is_agent_row(row: &Row) -> bool {
     matches!(
         row,
-        Row::Text { .. } | Row::Reasoning { .. } | Row::Tool { .. }
+        Row::Text { .. } | Row::Reasoning { .. } | Row::Tool { .. } | Row::Program { .. }
     )
 }
 

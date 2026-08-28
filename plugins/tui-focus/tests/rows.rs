@@ -790,3 +790,24 @@ fn the_focus_fill_keeps_the_labels_colour() {
     assert_eq!(label.style.bg, Some(theme.sel_bg), "{label:?}");
     assert_eq!(label.style.fg, Some(theme.accent), "{label:?}");
 }
+
+/// Code mode: a turn that opens with `run(program)` is the agent acting, so it wears the label.
+#[test]
+fn a_program_row_opens_the_agents_speech() {
+    use bough_plugin_tui_focus::rows::{is_agent_row, opens_speech};
+    let rows = rows_from_steps(&[
+        step(
+            1,
+            "mail/delivered",
+            serde_json::json!({ "from": "andrey", "subject": "hi", "summary": "ONE" }),
+        ),
+        step(
+            2,
+            "tool/call",
+            serde_json::json!({ "call": "p1", "name": "run", "args": { "program": "1+1" } }),
+        ),
+    ]);
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(is_agent_row(&rows[1]), "{:?}", rows[1]);
+    assert!(opens_speech(&rows, 1));
+}
