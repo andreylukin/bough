@@ -91,6 +91,11 @@ for y, row in enumerate(rows):
     if \"first item\" in row:
         start = row.index(\"first item\")
         nxt = rows[y + 1] if y + 1 < len(rows) else \"\"
+        # The border rules are chrome: the gutter rule in column 35 is not indentation, and a
+        # row that is only the horizontal rule is not a continuation line.
+        nxt = nxt.replace(chr(0x2503), \" \")
+        if set(nxt.strip()) <= set(\"\u2501\u253b\"):
+            nxt = \"\"
         if nxt.strip() and not nxt.startswith(\" \" * start):
             sys.exit(\"the continuation of a wrapped list item is not indented under it: %r\" % nxt)
         sys.exit(0)

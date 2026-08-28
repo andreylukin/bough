@@ -85,6 +85,8 @@ bad = []
 for y, row in enumerate(sys.stdin.read().split(chr(10))):
     if \"trajectory line\" not in row:
         continue
+    # The scroll badge is chrome at the conversation bottom-right, not a second run (round 8).
+    row = re.split(u\"\\u2191 older|\\u2193 \\d+ new\", row)[0]
     if re.search(r\"\\S {4,}\\S\", row):
         bad.append((y, row))
 if bad:

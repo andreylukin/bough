@@ -205,20 +205,28 @@ pub fn draw(tui: &TuiHandle) {
                 .map(|(_, r)| r.y + r.height)
                 .filter(|&y| y < status_top.min(crect_top(size, composer_h)));
             let rule = Style::default().fg(theme.dim);
+            // Every cell is checked against the BUFFER's area, not `size`: on a resize the two
+            // can differ for a frame, and an index past the buffer is a panic that took the
+            // process down at 80×24 (20-frame).
+            let area = buf.area;
+            let mut put = |x: u16, y: u16, sym: &str| {
+                if x >= area.x && x < area.right() && y >= area.y && y < area.bottom() {
+                    buf[(x, y)].set_symbol(sym).set_style(rule);
+                }
+            };
             if let Some(y) = main_bottom {
-                for x in size.x..size.x + size.width {
-                    buf[(x, y)].set_symbol("\u{2501}").set_style(rule);
+                for x in size.x..size.x.saturating_add(size.width) {
+                    put(x, y, "\u{2501}");
                 }
             }
             if let Some(x) = rail_edge {
-                if x < size.x + size.width {
-                    let bottom = main_bottom.unwrap_or(status_top.min(size.y + size.height));
-                    for y in size.y..bottom.min(size.y + size.height) {
-                        buf[(x, y)].set_symbol("\u{2503}").set_style(rule);
-                    }
-                    if let Some(y) = main_bottom {
-                        buf[(x, y)].set_symbol("\u{253b}").set_style(rule);
-                    }
+                let bottom =
+                    main_bottom.unwrap_or(status_top.min(size.y.saturating_add(size.height)));
+                for y in size.y..bottom {
+                    put(x, y, "\u{2503}");
+                }
+                if let Some(y) = main_bottom {
+                    put(x, y, "\u{253b}");
                 }
             }
         }
