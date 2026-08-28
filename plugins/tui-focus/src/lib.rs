@@ -314,7 +314,6 @@ impl FocusPane {
             );
         }
 
-        let queued = rows::queued_rows(&state.rows, state.running, !live.text.is_empty());
         // Where each turn's agent rows begin, for the `✎ changed …` line at its end (round 6).
         let mut turn_start: usize = 0;
         let changed_line = |rows: &[Row], theme: &Theme| -> Option<Line<'static>> {
@@ -389,21 +388,21 @@ impl FocusPane {
                 }
             }
             match row {
+                Row::Queued { text, .. } => {
+                    // Sent while a turn was running (round 8): the tag says it waits.
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            "andrey:",
+                            Style::default()
+                                .fg(theme.accent)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(" \u{b7} queued", Style::default().fg(theme.dim)),
+                    ]));
+                    lines.extend(bough_plugin_tui_render::markdownish(text, width, theme));
+                }
                 Row::Andrey { text, .. } => {
-                    if queued.contains(&i) {
-                        // Sent while a turn was running (round 6): the tag says it waits.
-                        lines.push(Line::from(vec![
-                            Span::styled(
-                                "andrey:",
-                                Style::default()
-                                    .fg(theme.accent)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::styled(" \u{b7} queued", Style::default().fg(theme.dim)),
-                        ]));
-                    } else {
-                        lines.push(label("andrey", theme.accent));
-                    }
+                    lines.push(label("andrey", theme.accent));
                     lines.extend(bough_plugin_tui_render::markdownish(text, width, theme));
                 }
                 Row::Mail { from, subject, .. } => {

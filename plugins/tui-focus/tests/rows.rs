@@ -977,50 +977,64 @@ fn a_turn_that_changed_files_says_so_at_its_end() {
     assert!(!quiet.iter().any(|l| l.contains("changed")), "{quiet:?}");
 }
 
-/// Round 6: a message sent while a turn runs wears `· queued` until its turn starts.
+/// Round 8: a message sent while a turn runs is a `andrey: · queued` row from its splice until
+/// its own wake claims it.
 #[test]
-fn a_message_sent_while_running_is_tagged_queued() {
-    use bough_plugin_tui_focus::rows::queued_rows;
-    let andrey = |i: u64| {
+fn a_message_sent_while_running_is_queued_until_its_wake_claims_it() {
+    let spliced = |n: u64, op: &str| {
         step(
-            i,
-            "mail/delivered",
-            serde_json::json!({ "from": "andrey", "subject": "m", "summary": format!("m{i}") }),
+            n,
+            "inbox/spliced",
+            serde_json::json!({
+                "message": "m-1", "op": op, "target": "next_wake", "wake": false,
+                "payload": { "id": "m-1", "from": { "kind": "andrey", "name": null }, "class": "wake",
+                             "subject": "second", "text": "second message while it runs" }
+            }),
         )
     };
-    // Idle: nothing is queued, whatever the shape.
-    let rows = rows_from_steps(&[andrey(1), andrey(2)]);
-    assert!(queued_rows(&rows, false, false).is_empty());
-    // Running with no agent row yet: the first message is the running turn, the second waits.
-    assert_eq!(queued_rows(&rows, true, false), vec![1]);
-    // Running with a call in flight: every message after it waits.
     let rows = rows_from_steps(&[
-        andrey(1),
         step(
-            2,
-            "tool/call",
-            serde_json::json!({ "call": "c1", "name": "bash", "args": { "command": "sleep 9" } }),
-        ),
-        andrey(3),
-        andrey(4),
-    ]);
-    assert_eq!(queued_rows(&rows, true, false), vec![2, 3]);
-    // Streaming text counts as in flight too.
-    let rows = rows_from_steps(&[
-        andrey(1),
-        step(
-            2,
+            1,
             "thought/text",
-            serde_json::json!({ "step_index": 0, "text": "on it" }),
+            serde_json::json!({ "step_index": 0, "text": "working" }),
         ),
-        andrey(3),
+        spliced(2, "insert"),
     ]);
-    assert_eq!(queued_rows(&rows, true, true), vec![2]);
-    assert_eq!(
-        queued_rows(&rows, true, false),
-        Vec::<usize>::new(),
-        "text done, the next turn is starting: not queued"
+    assert!(
+        matches!(&rows[1], Row::Queued { message, text, .. } if message == "m-1" && text.starts_with("second")),
+        "{rows:?}"
     );
+    let out = paint_as(&rows, 80, Some("sol"));
+    assert!(
+        out.iter().any(|l| l.trim() == "andrey: · queued"),
+        "{out:?}"
+    );
+    assert!(
+        out.iter()
+            .any(|l| l.contains("second message while it runs")),
+        "{out:?}"
+    );
+    // The wake claims it: the queued row is gone (its mail/delivered draws it as Andrey's).
+    let rows = rows_from_steps(&[
+        step(
+            1,
+            "thought/text",
+            serde_json::json!({ "step_index": 0, "text": "working" }),
+        ),
+        spliced(2, "insert"),
+        spliced(3, "claim"),
+    ]);
+    assert!(
+        !rows.iter().any(|r| matches!(r, Row::Queued { .. })),
+        "{rows:?}"
+    );
+    // A splice from someone other than Andrey is not a queued row of the conversation.
+    let other = step(
+        4,
+        "inbox/spliced",
+        serde_json::json!({ "message": "m-2", "op": "insert", "payload": { "from": { "kind": "agent", "name": "terra" }, "text": "x" } }),
+    );
+    assert!(rows_from_steps(&[other]).is_empty());
 }
 
 /// Round 7: a code-mode file handle reads as its path everywhere a call is named.

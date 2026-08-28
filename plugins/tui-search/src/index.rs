@@ -106,6 +106,8 @@ fn speaker_and_text(agent: &AgentName, row: &Row) -> Option<(String, String)> {
             }
             Some(("program".to_string(), text))
         }
+        // A queued message is Andrey's words, waiting.
+        Row::Queued { text, .. } => Some(("andrey (queued)".to_string(), text.clone())),
         // A draft card (the TUI brief, D6) is searchable by what it says and who it was for.
         Row::Draft {
             kind,

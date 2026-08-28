@@ -44,7 +44,6 @@ pub const ENVELOPE: &[&str] = &[
     "step/start",
     "step/end",
     "request/header",
-    "inbox/spliced",
     "wake/jot",
     "wake/resumed",
     "wake/grace-prompt",
@@ -137,6 +136,14 @@ pub enum Row {
         step: StepId,
         view: AboutView,
     },
+    /// A message from Andrey that is WAITING for its turn (round 8): an `inbox/spliced` insert
+    /// whose wake has not yet claimed it. Gone the moment a later splice claims or removes the
+    /// same message — the `mail/delivered` step then draws it as [`Row::Andrey`].
+    Queued {
+        step: StepId,
+        message: String,
+        text: String,
+    },
     /// A `draft/message` or `draft/ticket` step, read BY NAME (the TUI brief, D6): the agent
     /// wrote something outward-facing and did NOT send it. Rendered as a card with `copy` and
     /// `open`; never a send.
@@ -197,6 +204,7 @@ impl Row {
             | Row::WakeMark { step, .. }
             | Row::About { step, .. }
             | Row::Draft { step, .. }
+            | Row::Queued { step, .. }
             | Row::Claim { step, .. }
             | Row::Other { step, .. } => step,
             Row::Tool { call_step, .. } | Row::Program { call_step, .. } => call_step,
@@ -415,6 +423,36 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
             // on its first words, its end by the `── turn ended · …` rule. `── turn` above the
             // label was a third chrome line saying what the label already says.
             "wake/start" => {}
+            // A message sent while a turn ran (round 8): the splice that queued it is the only
+            // step it has until its own wake claims it.
+            "inbox/spliced" => {
+                let op = body_str(step, "op").unwrap_or_default();
+                let message = body_str(step, "message").unwrap_or_default();
+                match op.as_str() {
+                    "insert" => {
+                        let payload = step.body.get("payload");
+                        let from = payload
+                            .and_then(|p| p.get("from"))
+                            .and_then(|f| f.get("kind"))
+                            .and_then(|k| k.as_str())
+                            .unwrap_or("");
+                        let text = payload
+                            .and_then(|p| p.get("text"))
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if from == ANDREY_REF && !message.is_empty() {
+                            out.push(Row::Queued {
+                                step: step.id.clone(),
+                                message,
+                                text,
+                            });
+                        }
+                    }
+                    _ => out
+                        .retain(|r| !matches!(r, Row::Queued { message: m, .. } if *m == message)),
+                }
+            }
             "draft/message" | "draft/ticket" => match draft_row(step) {
                 Some(row) => out.push(row),
                 None => out.push(other(step)),
@@ -588,33 +626,6 @@ pub fn changed_files(rows: &[Row]) -> Vec<String> {
         }
     }
     out
-}
-
-/// PURE: which rows are QUEUED messages from Andrey (round 6): sent while a turn was running,
-/// not yet begun. Nothing is queued while the agent is idle. While it runs, every Andrey row
-/// after the newest agent row is queued when that row is still in flight (a call with no
-/// result, or text still streaming); otherwise the FIRST trailing Andrey row is the turn that is
-/// running and the rest are queued.
-pub fn queued_rows(rows: &[Row], running: bool, streaming: bool) -> Vec<usize> {
-    if !running {
-        return Vec::new();
-    }
-    let last_agent = rows.iter().rposition(is_agent_row);
-    let in_flight = streaming
-        || last_agent.is_some_and(|i| match &rows[i] {
-            Row::Tool { result, .. } => result.is_none(),
-            Row::Program { result, error, .. } => result.is_none() && error.is_none(),
-            _ => false,
-        });
-    let start = last_agent.map(|i| i + 1).unwrap_or(0);
-    let trailing: Vec<usize> = (start..rows.len())
-        .filter(|&i| matches!(rows[i], Row::Andrey { .. }))
-        .collect();
-    if in_flight {
-        trailing
-    } else {
-        trailing.into_iter().skip(1).collect()
-    }
 }
 
 /// PURE: the live line for an in-flight call at the END of the rows (round 5): the newest agent
