@@ -1382,6 +1382,9 @@ pub async fn retarget(
     }
 }
 
+/// The least time between two context rebuilds while the focused wake is running.
+pub const RUNNING_REBUILD_MS: u64 = 1000;
+
 /// Re-assembles the focused agent's context (round 11) through the SAME `assemble` the wake flow
 /// calls (`tui-preview`'s rule): what the pane labels is what the model reads, by construction.
 /// One refresh at a time, debounced by `refresh_ms`; a request that lands during one re-arms it.
@@ -1420,7 +1423,24 @@ impl Refresher {
         let me = Arc::clone(self);
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(std::time::Duration::from_millis(me.refresh_ms)).await;
+                // While a wake is running the ledger grows a step per flush; assembling the
+                // whole projection per flush is work the frame does not need — the tail rows
+                // are already drawn live — and it competed with the keyboard. At most one
+                // rebuild a second while running; the debounce alone when idle.
+                let wait = {
+                    let s = me.state.lock();
+                    let since = s
+                        .context
+                        .rebuilt_at
+                        .map(|at| (chrono::Utc::now() - at).num_milliseconds().max(0) as u64)
+                        .unwrap_or(u64::MAX);
+                    if s.running {
+                        me.refresh_ms.max(RUNNING_REBUILD_MS.saturating_sub(since))
+                    } else {
+                        me.refresh_ms
+                    }
+                };
+                tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
                 let agent = me.state.lock().agent_name.clone();
                 let Some(agent) = agent else {
                     me.state.lock().context.refreshing = false;
