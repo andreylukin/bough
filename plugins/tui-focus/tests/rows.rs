@@ -746,3 +746,47 @@ fn the_live_tail_opens_with_the_speaker_label() {
         "{out:?}"
     );
 }
+
+/// The row-focus fill keeps the row's own colour: a label under the highlight is still the accent.
+#[test]
+fn the_focus_fill_keeps_the_labels_colour() {
+    use bough_plugin_tui_focus::{FocusConfig, FocusPane, FocusState, LiveText, RowFocus};
+    let rows = rows_from_steps(&[
+        step(
+            1,
+            "mail/delivered",
+            serde_json::json!({ "from": "andrey", "subject": "hi", "summary": "ONE" }),
+        ),
+        step(
+            2,
+            "thought/text",
+            serde_json::json!({ "step_index": 0, "text": "words" }),
+        ),
+    ]);
+    let cfg = Arc::new(FocusConfig {
+        max_rows: 100,
+        max_tool_lines: 50,
+        page_lines: 10,
+        expand_new_tools: false,
+        show_reasoning: true,
+    });
+    let pane = FocusPane::new(
+        cfg,
+        Arc::new(parking_lot::Mutex::new(FocusState::default())),
+        Arc::new(parking_lot::Mutex::new(LiveText::default())),
+    );
+    let theme = bough_plugin_tui_shell::Theme::of(bough_plugin_tui_shell::ThemeName::Light);
+    let state = FocusState {
+        rows: rows.clone(),
+        agent_name: Some("sol".into()),
+        row_focus: RowFocus { index: Some(1) },
+        ..Default::default()
+    };
+    let (lines, _, _) = pane.lines(&state, &LiveText::default(), 80, &theme);
+    let label = lines
+        .iter()
+        .find(|l| l.spans.iter().any(|s| s.content == "sol:"))
+        .expect("the label line");
+    assert_eq!(label.style.bg, Some(theme.sel_bg), "{label:?}");
+    assert_eq!(label.style.fg, Some(theme.accent), "{label:?}");
+}

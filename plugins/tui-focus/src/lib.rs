@@ -476,7 +476,10 @@ impl FocusPane {
                         0,
                         Span::styled(marker.to_string(), Style::default().fg(theme.accent)),
                     );
-                    *line = line.clone().style(Style::default().bg(theme.sel_bg));
+                    // PATCHED, not replaced: a label, a rule and the welcome carry their colour
+                    // on the LINE style, and `Line::style` swapped it for the fill alone — so the
+                    // focused `sol:` went pale under the highlight (visual audit, light theme).
+                    *line = line.clone().patch_style(Style::default().bg(theme.sel_bg));
                 }
             }
             if flash {
