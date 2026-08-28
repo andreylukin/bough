@@ -240,9 +240,20 @@ pub fn draw(tui: &TuiHandle) {
                 // transcript's colour directly above the composer, so where the answer ended
                 // and the output began was a guess. The band is `field_bg`, the composer's.
                 let style = Style::default().fg(fg).bg(theme.field_bg);
+                // A command's output is sections (`/help`: keys, each pane, commands): a line
+                // that starts at the margin is a heading and reads bold, so the eye finds the
+                // section it wants in one pass; the indented rows under it stay plain.
+                let heading = style.add_modifier(ratatui::style::Modifier::BOLD);
+                let is_command = matches!(notice.kind, crate::NoticeKind::Command);
                 let body: Vec<Line> = body_text
                     .into_iter()
-                    .map(|l| Line::styled(l, style))
+                    .map(|l| {
+                        let lead = is_command
+                            && !l.is_empty()
+                            && !l.starts_with(' ')
+                            && !l.starts_with('\u{2026}');
+                        Line::styled(l, if lead { heading } else { style })
+                    })
                     .collect();
                 Clear.render(rect, buf);
                 Paragraph::new(body).style(style).render(rect, buf);

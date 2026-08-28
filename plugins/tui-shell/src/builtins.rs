@@ -125,16 +125,19 @@ impl Command for Help {
         for (keys, what) in keymap_hints() {
             lines.push(format!("  {keys:<22} {what}"));
         }
-        let mut pane_lines = Vec::new();
+        // Each pane's keys under the pane's own name (visual audit): "(trajectory)" after six
+        // rows in a row was a column of noise, and the reader's question is "what does THIS pane
+        // take", which a heading answers and a suffix does not.
         for pane in self.0.entries() {
-            for (keys, what) in pane.pane.key_hints() {
-                pane_lines.push(format!("  {keys:<22} {what} ({})", pane.info.title));
+            let hints = pane.pane.key_hints();
+            if hints.is_empty() {
+                continue;
             }
-        }
-        if !pane_lines.is_empty() {
             lines.push(String::new());
-            lines.push("panes".to_string());
-            lines.append(&mut pane_lines);
+            lines.push(format!("{} pane", pane.info.title));
+            for (keys, what) in hints {
+                lines.push(format!("  {keys:<22} {what}"));
+            }
         }
         lines.push(String::new());
         lines.push("commands  (or press / for the same list, filtered as you type)".to_string());

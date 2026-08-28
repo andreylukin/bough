@@ -38,7 +38,7 @@ pub const PANE_ID: &str = "tui.drafts";
 pub const TITLE: &str = "drafts — not sent";
 
 /// The key hints. There is no send affordance, and the header line says so on every frame.
-pub const KEY_HINTS: &[(&str, &str)] = &[("↑/↓", "select"), ("enter", "expand"), ("y", "copy")];
+pub const KEY_HINTS: &[(&str, &str)] = &[("up/down", "select"), ("enter", "expand"), ("y", "copy")];
 
 /// The row's config.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
