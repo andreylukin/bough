@@ -147,6 +147,11 @@ the keys are somewhere they are not. `term.rs` pushes the keyboard-enhancement f
 (`DISAMBIGUATE_ESCAPE_CODES`) on terminals that support them and pops them on the way out —
 without them Shift+Enter arrived as `ESC [27;2;13~` and fused two lines into one.
 
+**Borders (Andrey, 2026-08-28).** Heavy rules between the panels: `┃` down the gutter between the
+rail and the conversation, `━` across the row under the conversation, `┻` where they meet, in the
+dim colour. `TuiConfig.borders` (default true); `layout_with` takes the rule row from the
+conversation so no band moves. Off with `borders: false` on the `tui` row.
+
 **Fixed along the way:** the `search [▏]` ghost after Esc, Esc (the layout's focused pane is the
 KEYBOARD's pane, `run::layout_focus`); the welcome hint says `? for help`, the status line's
 word, and says `tab panes` once.
