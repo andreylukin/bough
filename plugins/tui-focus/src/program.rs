@@ -275,7 +275,25 @@ pub struct ProgramView<'a> {
 pub fn program_header(v: &ProgramView<'_>) -> Line<'static> {
     // The line's budget for the gist: the marker, the name and the outcome glyph take the rest.
     let budget = (v.width as usize).saturating_sub(HEADER_CHROME_COLS);
-    let gist = serde_json::json!({ "summary": calls_gist(v.subs, v.ms, budget) });
+    // A program with no calls that PRINTED (round 9): `printed "1"`, not `0 calls` — the line
+    // says the one thing the program did.
+    let summary = if v.subs.is_empty() && !v.console.trim().is_empty() {
+        let first = v
+            .console
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .trim();
+        let first: String = if first.chars().count() > 40 {
+            first.chars().take(39).collect::<String>() + "\u{2026}"
+        } else {
+            first.to_string()
+        };
+        format!("printed \"{first}\"")
+    } else {
+        calls_gist(v.subs, v.ms, budget)
+    };
+    let gist = serde_json::json!({ "summary": summary });
     tool_header(&ToolCallView {
         name: "program",
         intent: RenderIntent::Generic,

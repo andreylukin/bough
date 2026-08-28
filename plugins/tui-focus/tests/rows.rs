@@ -1113,6 +1113,31 @@ fn failed_attempts_fold_under_the_call_that_succeeded() {
         "narration folded: {out:?}"
     );
     assert!(out.iter().any(|l| l.contains("done")), "{out:?}");
+    // A failed call of ONE tool followed by a success of ANOTHER is not a retry (02-tool-calls:
+    // a missing notes/demo.txt read, then a write of notes/demo.rs).
+    let mixed = rows_from_steps(&[
+        step(
+            1,
+            "tool/call",
+            serde_json::json!({ "call": "r1", "name": "read_file", "args": { "path": "notes/demo.txt" } }),
+        ),
+        step(
+            2,
+            "tool/result",
+            serde_json::json!({ "call": "r1", "name": "read_file", "outcome": "error", "content": "no such file", "step_index": 0 }),
+        ),
+        step(
+            3,
+            "tool/call",
+            serde_json::json!({ "call": "w1", "name": "write_file", "args": { "path": "notes/demo.rs" } }),
+        ),
+        step(
+            4,
+            "tool/result",
+            serde_json::json!({ "call": "w1", "name": "write_file", "outcome": "ok", "content": "ok", "step_index": 1 }),
+        ),
+    ]);
+    assert!(retry_folds(&mixed).is_empty(), "{:?}", retry_folds(&mixed));
     // A run that never succeeded is not folded.
     let mut lone = vec![];
     lone.extend(call(10, false));

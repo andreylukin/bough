@@ -558,10 +558,20 @@ pub struct RetryFold {
     pub attempts: usize,
 }
 
+/// The tool a call row is: a typed tool's name, or `program` for a code-mode run.
+fn call_name(row: &Row) -> Option<&str> {
+    match row {
+        Row::Tool { name, .. } => Some(name.as_str()),
+        Row::Program { .. } => Some("program"),
+        _ => None,
+    }
+}
+
 /// PURE: the runs of failed calls — with the model's narration between them — that are followed
-/// by a successful call, so the conversation can fold them under `▸ N failed attempts` instead
-/// of leaving `✗` rows and "let me fix the tag" inline forever. A failed run that never
-/// succeeded is NOT folded: that failure is the news.
+/// by a successful call OF THE SAME TOOL, so the conversation can fold them under `▸ N failed
+/// attempts` instead of leaving `✗` rows and "let me fix the tag" inline forever. A failed run
+/// that never succeeded is NOT folded: that failure is the news. A failed `read_file` followed
+/// by a successful `write_file` is two different things, not a retry (02-tool-calls).
 pub fn retry_folds(rows: &[Row]) -> Vec<RetryFold> {
     let mut out = Vec::new();
     let mut i = 0;
@@ -571,10 +581,11 @@ pub fn retry_folds(rows: &[Row]) -> Vec<RetryFold> {
             continue;
         }
         let start = i;
+        let tool = call_name(&rows[i]);
         let mut attempts = 0;
         let mut j = i;
         while j < rows.len() {
-            if is_failed_call(&rows[j]) {
+            if is_failed_call(&rows[j]) && call_name(&rows[j]) == tool {
                 attempts += 1;
                 j += 1;
             } else if matches!(rows[j], Row::Text { .. } | Row::Reasoning { .. }) {
@@ -583,8 +594,8 @@ pub fn retry_folds(rows: &[Row]) -> Vec<RetryFold> {
                 break;
             }
         }
-        // `j` is the first row that is neither a failed call nor narration.
-        if j < rows.len() && is_ok_call(&rows[j]) {
+        // `j` is the first row that is neither a failed call of this tool nor narration.
+        if j < rows.len() && is_ok_call(&rows[j]) && call_name(&rows[j]) == tool {
             out.push(RetryFold {
                 start,
                 end: j,
