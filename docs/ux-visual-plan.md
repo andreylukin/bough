@@ -71,6 +71,11 @@ paints the same one-column focus ring the transcript does, so Tab into it shows.
 read from the live inbox on every mail/inbox/wake step by name; nothing when the inbox is empty.
 "Which lane needs me" was answerable only by `/agents`.
 
+**D-uxv-13 — the drafts pane (track B) follows D-uxv-1.** `SlotSize::Percent(30)` took a third
+of the frame at every launch to say "nothing written yet". Empty, it keeps ONE row — that line is
+worth a row from boot (§7: nothing left this machine) — and grows to what it can fill when a draft
+lands.
+
 **D-uxv-8 — markdown rhythm.** Consecutive list items are one block (no blank between); a code
 block is padded to the measure on `code_bg`; h1/h2 are bold + underlined in the body colour (F10).
 A terminal tool's expanded output takes the same ground; its `exit N` verdict line stays on the
