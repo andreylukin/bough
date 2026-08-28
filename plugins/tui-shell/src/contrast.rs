@@ -123,6 +123,9 @@ pub fn audit(theme: &Theme) -> Vec<(&'static str, f64)> {
         ("added", r(theme.added)),
         ("removed", r(theme.removed)),
         ("hint", r(theme.hint)),
+        ("interactive", r(theme.interactive)),
+        // Code sits on its own ground, so it is measured against that ground.
+        ("code", ratio(theme.code, theme.code_bg, m)),
     ]
 }
 

@@ -474,7 +474,17 @@ impl Pane for SearchPane {
             );
         }
         let widget = Paragraph::new(out);
+        // Rows only while there is something to show (visual audit F1): an empty search took a
+        // third of the frame on every launch. With no query and no hits the pane asks for zero
+        // rows; the shell hands it its full height again the moment Ctrl+F moves the keyboard
+        // here, so it never has to be visible to be opened.
+        let wanted = if state.input.is_empty() && state.rows.is_empty() && state.error.is_none() {
+            0
+        } else {
+            self.cfg.height
+        };
         drop(state);
+        cx.report_aux_rows(wanted);
         // `handle` has no `area`: the height its clamping needs is whatever the last frame had.
         self.state.lock().height = area.height;
         cx.frame.render_widget(widget, area);
@@ -520,6 +530,11 @@ impl Pane for SearchPaneArc {
                         st.push_char(c, cx.at)
                     }
                     KeyCode::Backspace => st.backspace(cx.at),
+                    // Esc on an EMPTY search is not ours: the shell takes the keyboard back to
+                    // the composer, and the pane gives up its rows on the next frame (F1).
+                    KeyCode::Esc if st.input.is_empty() && st.rows.is_empty() => {
+                        return PaneOutcome::Ignored
+                    }
                     KeyCode::Esc => st.clear(cx.at),
                     // Backwards FIRST: a terminal may report `Ctrl+Shift+n` as `n` with both
                     // modifiers or as `N` with control, and both mean "the previous match".

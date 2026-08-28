@@ -195,57 +195,92 @@ impl Command for SupersedeCommand {
 
 /// PURE: what `/drift` shows.
 pub fn render_signals(s: &Signals) -> String {
+    // Sentences first, numbers after (visual audit F14): `/drift` is a human command, and
+    // `n=1 mean=13.0 var=0.0 cv=0.00` answered a question nobody asked. Every number is still
+    // here — one line down — for whoever wants it.
     let mut out = String::new();
-    out.push_str(&format!("agent: {}\n", s.agent));
-    out.push_str(&format!(
-        "window: {}..{} ({} samples)\n",
-        s.window.from.0, s.window.to.0, s.samples
-    ));
-    out.push_str(&format!(
-        "thought length: n={} mean={:.1} var={:.1} cv={:.2} p50={:.0} p95={:.0}\n",
-        s.thought_len.n,
-        s.thought_len.mean,
-        s.thought_len.variance,
-        s.thought_len.cv,
-        s.thought_len.p50,
-        s.thought_len.p95
-    ));
+    let window = format!(
+        "{} sample{} (steps {}..{})",
+        s.samples,
+        if s.samples == 1 { "" } else { "s" },
+        s.window.from.0,
+        s.window.to.0
+    );
+    let too_few = s.samples < 2;
+    if too_few {
+        out.push_str(&format!(
+            "{}: too few samples to say anything yet — {window}.\n",
+            s.agent
+        ));
+    } else {
+        let steadiness = if s.thought_len.cv < 0.5 {
+            "steady"
+        } else if s.thought_len.cv < 1.0 {
+            "uneven"
+        } else {
+            "erratic"
+        };
+        out.push_str(&format!(
+            "{}: thought length is {steadiness} over {window} (typically {:.0} chars, the longest \
+             fifth above {:.0}).\n",
+            s.agent, s.thought_len.p50, s.thought_len.p95
+        ));
+    }
     if s.tool_use.is_empty() {
-        out.push_str("tool use: no calls in the window\n");
+        out.push_str("No tool calls in the window.\n");
     } else {
         let shares: Vec<String> = s
             .tool_use
             .iter()
             .map(|t| format!("{} {:.0}%", t.tool, t.share * 100.0))
             .collect();
-        out.push_str(&format!("tool use: {}\n", shares.join(", ")));
-        out.push_str(&format!("tool entropy: {:.2}\n", s.tool_entropy));
+        let spread = if s.tool_entropy < 0.5 {
+            "one tool does almost everything"
+        } else if s.tool_entropy < 1.5 {
+            "a few tools share the work"
+        } else {
+            "the work is spread across many tools"
+        };
+        out.push_str(&format!("Tool use: {spread} ({}).\n", shares.join(", ")));
     }
     match &s.claim_rejection {
         // §16: uncertainty never becomes assertion. A rate nobody can compute is reported as
         // inactive, with what is missing, rather than as 0%.
         SignalState::Inactive { since } => {
-            out.push_str(&format!("claim rejection: inactive — {since}\n"))
+            out.push_str(&format!("Claim rejection: not measurable yet — {since}.\n"))
         }
-        SignalState::Active { value, n } => {
-            out.push_str(&format!("claim rejection: {:.0}% of {n}\n", value * 100.0))
-        }
+        SignalState::Active { value, n } => out.push_str(&format!(
+            "Claim rejection: {:.0}% of the last {n} decided claims.\n",
+            value * 100.0
+        )),
     }
-    if s.flags.is_empty() {
-        out.push_str("flags: none\n");
-    } else {
+    if !s.flags.is_empty() {
         let flags: Vec<String> = s
             .flags
             .iter()
             .map(|f| {
                 serde_json::to_value(f)
                     .ok()
-                    .and_then(|v| v.as_str().map(str::to_string))
+                    .and_then(|v| v.as_str().map(|w| w.replace('_', " ")))
                     .unwrap_or_else(|| format!("{f:?}"))
             })
             .collect();
-        out.push_str(&format!("flags: {}\n", flags.join(", ")));
+        out.push_str(&format!("Flagged: {}.\n", flags.join(", ")));
     }
+    out.push_str(&format!(
+        "raw: n={} mean={:.1} var={:.1} cv={:.2} p50={:.0} p95={:.0}{}\n",
+        s.thought_len.n,
+        s.thought_len.mean,
+        s.thought_len.variance,
+        s.thought_len.cv,
+        s.thought_len.p50,
+        s.thought_len.p95,
+        if s.tool_use.is_empty() {
+            String::new()
+        } else {
+            format!(" entropy={:.2}", s.tool_entropy)
+        }
+    ));
     out
 }
 
@@ -326,16 +361,19 @@ mod tests {
     #[test]
     fn drift_renders_the_signals_and_says_claim_rejection_is_inactive() {
         let text = render_signals(&signals());
-        assert!(text.contains("agent: scout"), "{text}");
-        assert!(text.contains("window: 1..50 (6 samples)"), "{text}");
+        assert!(text.starts_with("scout: thought length is"), "{text}");
+        assert!(text.contains("6 samples (steps 1..50)"), "{text}");
         assert!(text.contains("cv=0.17"), "{text}");
         assert!(text.contains("bash 100%"), "{text}");
-        assert!(text.contains("claim rejection: inactive"), "{text}");
+        assert!(
+            text.contains("Claim rejection: not measurable yet"),
+            "{text}"
+        );
         assert!(
             text.contains("no claim in the window has been decided"),
             "{text}"
         );
-        assert!(text.contains("flags: tool_use_collapsed"), "{text}");
+        assert!(text.contains("Flagged: tool use collapsed"), "{text}");
     }
 
     #[test]
@@ -344,8 +382,8 @@ mod tests {
         s.flags.clear();
         s.tool_use.clear();
         let text = render_signals(&s);
-        assert!(text.contains("flags: none"), "{text}");
-        assert!(text.contains("tool use: no calls in the window"), "{text}");
+        assert!(!text.contains("Flagged"), "{text}");
+        assert!(text.contains("No tool calls in the window"), "{text}");
     }
 
     #[test]

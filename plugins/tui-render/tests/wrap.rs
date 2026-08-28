@@ -66,9 +66,14 @@ fn markdownish_styles_bold_and_code_without_leaking_the_markers() {
     let rendered: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
     assert_eq!(rendered, "a b and c");
     let styles: Vec<_> = lines[0].spans.iter().map(|s| s.style.fg).collect();
+    // Code is its own role on its own ground (visual audit F5), no longer the accent.
     assert!(
-        styles.contains(&Some(th.accent)),
-        "the code span keeps the accent role"
+        styles.contains(&Some(th.code)),
+        "the code span has the code role"
+    );
+    assert!(
+        !styles.contains(&Some(th.accent)),
+        "a code span is not a speaker or a heading"
     );
 }
 

@@ -2,6 +2,7 @@
 //! non-blocking — no I/O, no clock, no `block_on` — so one slow pane can never stall the frame or
 //! the terminal it is drawing into. Everything that needs to await happens in `handle`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bough_kernel::EntryId;
@@ -225,6 +226,12 @@ pub struct RenderCx<'a> {
 pub struct RowReport {
     pub row_focus: Option<usize>,
     pub following: bool,
+    /// How many rows an `Aux` pane wants NEXT frame (visual audit F1). `None` — the pane never
+    /// said — keeps its registered [`SlotSize`], so a pane that ignores this renders exactly as
+    /// before. A pane that reports `Some(0)` takes no rows until it has something to show or
+    /// the keyboard is moved to it: a focused `Aux` pane always gets its registered size, which
+    /// is how it comes back from zero.
+    pub aux_rows: Option<u16>,
 }
 
 impl Default for RowReport {
@@ -232,6 +239,7 @@ impl Default for RowReport {
         RowReport {
             row_focus: None,
             following: true,
+            aux_rows: None,
         }
     }
 }
@@ -253,6 +261,11 @@ impl RenderCx<'_> {
     /// `area.width`.
     pub fn measure(&self) -> u16 {
         measure(self.area.width, self.view.measure_cols)
+    }
+
+    /// Report how many rows this `Aux` pane wants next frame (see [`RowReport::aux_rows`]).
+    pub fn report_aux_rows(&mut self, rows: u16) {
+        self.report.aux_rows = Some(rows);
     }
 
     /// Report this pane's roving state to the shell, for the next frame's [`ShellView`].
@@ -448,6 +461,21 @@ pub fn layout(
     composer_height: u16,
     gutter: u16,
 ) -> Vec<(PaneId, Rect)> {
+    layout_with(size, panes, composer_height, gutter, None, &HashMap::new())
+}
+
+/// [`layout`] with what the panes REPORTED last frame (visual audit F1): an `Aux` pane whose
+/// report names a row count gets that many rows instead of its registered size — unless it is
+/// the focused pane, which always gets its registered size so a collapsed pane can be opened by
+/// moving the keyboard to it. Panes that never reported are laid out exactly as before.
+pub fn layout_with(
+    size: Rect,
+    panes: &[PaneInfo],
+    composer_height: u16,
+    gutter: u16,
+    focused: Option<&PaneId>,
+    aux_rows: &HashMap<PaneId, u16>,
+) -> Vec<(PaneId, Rect)> {
     let ordered = sorted(panes);
     let of = |slot: Slot| -> Vec<PaneInfo> {
         ordered.iter().filter(|p| p.slot == slot).cloned().collect()
@@ -524,9 +552,15 @@ pub fn layout(
     if !aux.is_empty() {
         let lens: Vec<u16> = aux
             .iter()
-            .map(|p| match p.size {
-                SlotSize::Fill(_) => rest.height / 3,
-                other => fixed_len(other, rest.height),
+            .map(|p| {
+                let registered = match p.size {
+                    SlotSize::Fill(_) => rest.height / 3,
+                    other => fixed_len(other, rest.height),
+                };
+                match aux_rows.get(&p.id) {
+                    Some(&wanted) if focused != Some(&p.id) => wanted.min(registered),
+                    _ => registered,
+                }
             })
             .collect();
         let total: u16 = lens.iter().sum::<u16>().min(rest.height);
@@ -584,6 +618,13 @@ pub fn composer_rect(size: Rect, composer_height: u16) -> Rect {
 /// from a command that never printed the line — which is exactly how `/quit` disappeared from
 /// `/help` without a single test going red.
 pub fn notice_band(text: &str, cap: u16, available: u16) -> Vec<String> {
+    notice_band_from(text, cap, available, 0)
+}
+
+/// [`notice_band`] starting `skip` lines down (visual audit F4): a long `/help` scrolls with
+/// PgUp/PgDn instead of ending in a marker nothing can get past. The markers say which key
+/// reaches the rest.
+pub fn notice_band_from(text: &str, cap: u16, available: u16, skip: usize) -> Vec<String> {
     let all: Vec<&str> = text.lines().collect();
     let room = cap.max(1).min(available) as usize;
     if room == 0 {
@@ -592,11 +633,31 @@ pub fn notice_band(text: &str, cap: u16, available: u16) -> Vec<String> {
     if all.len() <= room {
         return all.into_iter().map(str::to_string).collect();
     }
-    // The marker costs a row, so it replaces the last row that WOULD have fitted.
-    let shown = room - 1;
-    let mut out: Vec<String> = all[..shown].iter().map(|l| (*l).to_string()).collect();
-    out.push(format!("… {} more lines", all.len() - shown));
+    let skip = skip.min(all.len().saturating_sub(1));
+    let mut out: Vec<String> = Vec::with_capacity(room);
+    // Each marker costs a row, so it replaces a row that WOULD have fitted.
+    let head_marker = skip > 0;
+    let body_room = room.saturating_sub(usize::from(head_marker));
+    if head_marker {
+        out.push(format!("… {skip} lines above (PgUp)"));
+    }
+    let rest = &all[skip..];
+    if rest.len() <= body_room {
+        out.extend(rest.iter().map(|l| (*l).to_string()));
+        return out;
+    }
+    let shown = body_room.saturating_sub(1);
+    out.extend(rest[..shown].iter().map(|l| (*l).to_string()));
+    out.push(format!("… {} more lines (PgDn)", rest.len() - shown));
     out
+}
+
+/// PURE: the furthest a notice can be scrolled — the last page still shows a full band.
+pub fn notice_scroll_max(text: &str, cap: u16, available: u16) -> usize {
+    let n = text.lines().count();
+    let room = cap.max(1).min(available) as usize;
+    n.saturating_sub(room.saturating_sub(1))
+        .min(n.saturating_sub(1))
 }
 
 #[cfg(test)]
@@ -620,7 +681,7 @@ mod notice_tests {
             vec![
                 "a".to_string(),
                 "b".to_string(),
-                "… 3 more lines".to_string()
+                "… 3 more lines (PgDn)".to_string()
             ],
             "the cap must never drop lines silently"
         );
@@ -630,6 +691,6 @@ mod notice_tests {
     fn the_rows_above_the_composer_bound_the_cap() {
         let band = notice_band("a\nb\nc\nd\ne", 50, 2);
         assert_eq!(band.len(), 2, "the band never paints over the composer");
-        assert_eq!(band[1], "… 4 more lines");
+        assert_eq!(band[1], "… 4 more lines (PgDn)");
     }
 }

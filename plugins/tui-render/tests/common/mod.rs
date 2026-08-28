@@ -19,6 +19,10 @@ pub fn theme() -> Theme {
         removed: Color::Rgb(220, 100, 100),
         sel_bg: Color::Rgb(40, 60, 90),
         hint: Color::Rgb(100, 100, 100),
+        interactive: Color::Rgb(100, 100, 100),
+        code: Color::Rgb(100, 100, 100),
+        code_bg: Color::Rgb(100, 100, 100),
+        field_bg: Color::Rgb(100, 100, 100),
     }
 }
 

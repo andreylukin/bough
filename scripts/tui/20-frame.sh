@@ -52,7 +52,8 @@ t the_status_line_names_the_six_things \
     # positive half (a real `$0.00xx`) is `24-honesty.sh`, live, where a cost can exist.
     n="$(sql "select count(*) from steps where type = '"'"'usage/round'"'"';")"
     if [ "${n:-0}" -eq 0 ]; then
-      shell-use text | grep -q "—" || { echo "no cost field on the status line"; exit 1; }
+      # ux-visual D-uxv-6: a value the line does not have is ABSENT, not a dash. The honest check
+      # is still the negative one — no number was invented.
       shell-use text | grep -qE "[\$][0-9]" && { echo "the status line invented a cost with no usage/round behind it"; exit 1; }
     else
       shell-use text | grep -qE "[\$][0-9]" || { echo "the ledger holds a usage/round but the line shows no cost"; exit 1; }

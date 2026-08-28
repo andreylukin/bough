@@ -83,13 +83,29 @@ async fn disabling_the_search_row_removes_its_pane_and_reflows() {
     let before = pane_ids(&kernel);
     assert!(before.iter().any(|p| p == "tui.search"), "{before:?}");
     let tui = kernel.root().peek_live::<Tui>().expect("`tui` is bound");
-    let search_before = tui
-        .rect_of(&bough_plugin_tui_shell::pane::PaneId::new("tui.search"))
-        .expect("the search pane has a rectangle before the patch");
+    // An IDLE search pane takes no rows (ux-visual D-uxv-1), so the reflow this gate proves has
+    // to start from an OPEN one: move the keyboard to it, which is what gives it its rows.
+    let search_id = bough_plugin_tui_shell::pane::PaneId::new("tui.search");
+    tui.focus_pane(search_id.clone()).await;
+    let mut search_before = None;
+    for _ in 0..200 {
+        tui.redraw();
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        if let Some(r) = tui.rect_of(&search_id) {
+            search_before = Some(r);
+            if r.height > 0 {
+                break;
+            }
+        }
+    }
+    let search_before = search_before.expect("the search pane has a rectangle before the patch");
     let focus_before = tui
         .rect_of(&bough_plugin_tui_shell::pane::PaneId::new("tui.focus"))
         .expect("the focus pane has a rectangle");
-    assert!(search_before.height > 0);
+    assert!(
+        search_before.height > 0,
+        "the focused search pane has rows before the patch: {search_before:?}"
+    );
 
     write_patch(&dir, DISABLE_SEARCH);
     recompose(&kernel, "", &dir)

@@ -29,6 +29,32 @@ fn violation_names(kernel: &bough_kernel::Kernel) -> Vec<&'static str> {
 
 /// The whole Phase-3 tree, booted and collected: nothing this phase added is violated by a boot,
 /// and every row whose spec must be collected is live to be collected FROM.
+/// Wait until the shell has stopped painting: two consecutive frames are the same buffer. The
+/// recorders the plant tests write into are LAST-FRAME slots, and a paint that lands after the
+/// plant wipes it — including the one extra paint an `Aux` pane costs while it collapses to zero
+/// rows after boot (ux-visual D-uxv-1). `Kernel::quiesce` settles fibers, not frames.
+async fn settle_frames(kernel: &bough_kernel::Kernel) {
+    kernel.quiesce().await;
+    let Some(tui) = kernel.root().peek_live::<bough_plugin_tui_shell::Tui>() else {
+        return;
+    };
+    let mut last = tui.last_frame();
+    let mut stable = 0;
+    for _ in 0..300 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let now = tui.last_frame();
+        if std::sync::Arc::ptr_eq(&last, &now) || *last == *now {
+            stable += 1;
+            if stable >= 5 {
+                return;
+            }
+        } else {
+            stable = 0;
+            last = now;
+        }
+    }
+}
+
 #[tokio::test]
 async fn every_phase_three_invariant_reports_clean_over_a_boot() {
     let _guard = trace::test_lock();
@@ -69,7 +95,7 @@ async fn a_planted_focus_frame_that_renders_a_step_twice_is_reported() {
     let (kernel, _dir) = boot_tui().await;
     // As in the search plant: the recorder is a last-frame slot, so let the boot's own paints
     // finish before planting.
-    kernel.quiesce().await;
+    settle_frames(&kernel).await;
 
     use bough_plugin_ledger::{StepId, WakeId};
     use bough_plugin_tui_focus::{LiveText, Row};
@@ -110,7 +136,7 @@ async fn a_planted_search_hit_on_a_missing_step_is_reported() {
     // The recorder is a LAST-FRAME slot: a boot-time paint that lands after the plant would wipe
     // it and the check would pass vacuously. Let the tree settle first, so the planted frame is
     // the last one.
-    kernel.quiesce().await;
+    settle_frames(&kernel).await;
 
     use bough_plugin_ledger::{AgentName, StepId};
     bough_plugin_tui_search::invariant::record(&[bough_plugin_tui_search::Hit {

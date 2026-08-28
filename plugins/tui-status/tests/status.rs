@@ -115,7 +115,7 @@ fn the_line_is_one_row_at_every_width() {
 }
 
 #[test]
-fn an_empty_session_shows_dashes_and_not_zeroes() {
+fn an_empty_session_shows_nothing_for_what_it_does_not_know_and_never_a_zero() {
     let v = StatusView {
         product: "bough 0.1".into(),
         cwd_max: 40,
@@ -123,14 +123,18 @@ fn an_empty_session_shows_dashes_and_not_zeroes() {
     };
     let line = status::status_line(&v, 80, &Theme::of(ThemeName::Dark));
     let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+    // Visual audit F11: `— · — ctx · —` was three dashes saying nothing. A value the view does
+    // not have is ABSENT; it is never invented as a zero.
+    assert!(!text.contains('—'), "no placeholder dashes: {text:?}");
     assert!(
-        text.contains('—'),
-        "unknown values render as a dash: {text:?}"
+        !text.contains("ctx"),
+        "no context chip without a number: {text:?}"
     );
     assert!(
         !text.contains('$'),
         "a cost nobody paid is not $0.00: {text:?}"
     );
+    assert!(text.starts_with("bough 0.1"), "{text:?}");
 }
 
 #[test]

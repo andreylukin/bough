@@ -101,13 +101,15 @@ t reconsolidate_renders_a_report \
 shell-use submit "/drift"
 shell-use wait idle --timeout 30000
 
+# ux-visual D-uxv-7: `/drift` is sentences first (`Tool use: …` / `No tool calls …`), numbers
+# after (`raw: … entropy=`).
 t drift_renders_the_signals \
-  see_any "the drift signals" "tool entropy" "tool use"
+  see_any "the drift signals" "Tool use" "No tool calls"
 
 # §8: the claim-rejection-rate signal is WIRED and INACTIVE until Phase 5's accept/reject surface
 # exists. A surface that quietly showed a made-up number instead would be the §16 failure.
 t drift_reports_claim_rejection_as_inactive \
-  see_any "the claim-rejection signal" "claim rejection: inactive"
+  see_any "the claim-rejection signal" "Claim rejection: not measurable yet"
 
 # ---------------------------------------------------------------------------
 # /reset

@@ -24,7 +24,7 @@ pub mod term;
 pub mod theme;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use bough_kernel::{
@@ -114,6 +114,9 @@ pub struct TuiInner {
     pub(crate) backend: Backend,
     pub(crate) theme: Theme,
     pub(crate) agents: Option<Arc<AgentsHandle>>,
+    /// The ledger, for the built-ins that must read a durable fact the live registry does not
+    /// carry — `/agents` reads dormancy by step-type NAME (visual audit F13; P3-D11's rule).
+    pub(crate) ledger: Mutex<Option<Arc<bough_plugin_ledger::LedgerHandle>>>,
     pub(crate) commands: Option<Arc<CommandsHandle>>,
     pub(crate) terminal: Mutex<Terminal<backend::TermBackend>>,
     pub(crate) panes: RwLock<Vec<PaneEntry>>,
@@ -132,6 +135,8 @@ pub struct TuiInner {
     pub(crate) selection: Mutex<Option<Selection>>,
     pub(crate) last_frame: RwLock<Arc<Buffer>>,
     pub(crate) notice: Mutex<Option<Notice>>,
+    /// How many lines of a persistent notice PgUp/PgDn have scrolled past (visual audit F4).
+    pub(crate) notice_scroll: AtomicUsize,
     /// The two-press exit window (B7). Behind a mutex because `on_key` is the only writer and a
     /// lock is cheaper than making every reader async.
     pub(crate) exit_arm: Mutex<ExitArm>,
@@ -182,6 +187,7 @@ impl TuiHandle {
             backend: resolved,
             cfg,
             agents,
+            ledger: Mutex::new(None),
             commands,
             terminal: Mutex::new(terminal),
             panes: RwLock::new(Vec::new()),
@@ -196,6 +202,7 @@ impl TuiHandle {
             selection: Mutex::new(None),
             last_frame: RwLock::new(Arc::new(Buffer::empty(area))),
             notice: Mutex::new(None),
+            notice_scroll: AtomicUsize::new(0),
             exit_arm: Mutex::new(ExitArm::new(std::time::Duration::from_millis(arm_ms))),
             burst: Mutex::new(draft::PasteBurst::new(std::time::Duration::from_millis(
                 burst_ms,
@@ -431,6 +438,12 @@ impl TuiHandle {
         self.redraw();
     }
 
+    /// Hand the shell the ledger it injected. Called once from `apply`; a test that drives the
+    /// shell without a ledger leaves it unset and `/agents` reports the live status alone.
+    pub fn set_ledger(&self, ledger: Arc<bough_plugin_ledger::LedgerHandle>) {
+        *self.0.ledger.lock() = Some(ledger);
+    }
+
     pub fn focus_composer(&self) {
         self.0.composer_focused.store(true, Ordering::SeqCst);
         self.redraw();
@@ -458,6 +471,7 @@ impl TuiHandle {
 
     /// Drop the notice (any key does this for an error notice, which has no TTL).
     pub fn clear_notice(&self) {
+        self.0.notice_scroll.store(0, Ordering::Relaxed);
         *self.0.notice.lock() = None;
     }
 
@@ -682,7 +696,21 @@ impl TuiHandle {
             at: chrono::Utc::now(),
             ttl,
         });
+        self.0.notice_scroll.store(0, Ordering::Relaxed);
         self.redraw();
+    }
+
+    /// Scroll a persistent notice by `delta` lines (PgUp/PgDn while `/help` is up). Returns
+    /// false when there is no such notice, so the key falls through to the panes.
+    pub fn scroll_notice(&self, delta: i32, max: usize) -> bool {
+        if !matches!(self.notice_raw().map(|n| n.ttl), Some(None)) {
+            return false;
+        }
+        let cur = self.0.notice_scroll.load(Ordering::Relaxed) as i64;
+        let next = (cur + delta as i64).clamp(0, max as i64) as usize;
+        self.0.notice_scroll.store(next, Ordering::Relaxed);
+        self.redraw();
+        true
     }
 
     /// The notice that is still live at `now`, TTL applied.
@@ -1011,6 +1039,9 @@ impl Plugin for TuiShellPlugin {
             is_tty,
         )
         .map_err(|e| err(e.into()))?;
+        if let Ok(ledger) = ctx.get::<bough_plugin_ledger::Ledger>() {
+            tui.set_ledger(ledger);
+        }
 
         ctx.provide::<Tui>(tui.clone())
             .await

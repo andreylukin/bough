@@ -122,7 +122,10 @@ t quit_exits_cleanly_within_three_seconds \
 
 t the_farewell_is_one_line_and_the_screen_is_not_blank \
   bash -c '
-    txt="$(shell-use text | sed "s/[[:space:]]*$//" | grep -v "^$" | tail -20)"
+    # Only the rows AFTER the `/quit` run was launched count: the Ctrl+C exit above it printed a
+    # farewell of its own, and whether that one is still inside the last twenty rows depends on
+    # how many rows the launch echo wrapped into — the paths differ per scratch home.
+    txt="$(shell-use text | sed "s/[[:space:]]*$//" | grep -v "^$" | awk "/quit.exit/{buf=\"\"; next} {buf=buf \$0 \"\n\"} END{printf \"%s\", buf}" | tail -20)"
     [ -n "$txt" ] || { echo "the screen is blank after /quit"; exit 1; }
     # `grep -qi "bough\|bye"` was VACUOUS: after the alt screen is left, the primary buffer still
     # carries the shell echo of the launch command, which is `$BOUGH_BIN …` — a path ENDING in

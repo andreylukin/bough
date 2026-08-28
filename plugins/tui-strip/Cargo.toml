@@ -16,6 +16,7 @@ bough-plugin-ledger = { workspace = true }
 bough-plugin-agents = { workspace = true }
 bough-plugin-tui-shell = { workspace = true }
 bough-plugin-tui-render = { workspace = true }
+bough-plugin-leader = { workspace = true }                                    # the `leader` key, OPTIONAL: who wears the tag
 ratatui = { workspace = true }
 async-trait = { workspace = true }
 inventory = { workspace = true }

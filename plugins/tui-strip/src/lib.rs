@@ -78,13 +78,28 @@ pub use bough_plugin_tui_render::{about_from_step, AboutView};
 pub struct StripPane {
     cfg: Arc<StripConfig>,
     rows: Arc<Mutex<Vec<RailRow>>>,
+    /// The agent the `leader` set is mounted in, when a `leader` row is mounted at all. Read
+    /// from the OPTIONAL `leader` key at activation: the rail depends on the Definition, never
+    /// on the row, and with no leader nobody wears the tag.
+    leader: Mutex<Option<String>>,
 }
 
 impl StripPane {
+    /// The leader's name, for the tag and for rail order (visual audit: "make it obvious who
+    /// the leader is").
+    pub fn with_leader(self, name: Option<String>) -> StripPane {
+        *self.leader.lock() = name;
+        self
+    }
+
     /// A rail over a shared row list. Public so a test can drive `handle` and `rows()` without a
     /// composed tree.
     pub fn new(cfg: Arc<StripConfig>, rows: Arc<Mutex<Vec<RailRow>>>) -> StripPane {
-        StripPane { cfg, rows }
+        StripPane {
+            cfg,
+            rows,
+            leader: Mutex::new(None),
+        }
     }
 
     /// The rows the rail would draw right now.
@@ -96,8 +111,14 @@ impl StripPane {
 #[async_trait::async_trait]
 impl Pane for StripPane {
     fn render(&self, cx: &mut RenderCx<'_>) {
-        let rows = self.rows.lock().clone();
+        let mut rows = self.rows.lock().clone();
         let area = cx.area;
+        // The leader wears the tag and sits FIRST: the one cross-lane agent is the one to find.
+        let leader = self.leader.lock().clone();
+        for r in rows.iter_mut() {
+            r.leader = leader.as_deref() == Some(r.name.as_str());
+        }
+        rows.sort_by_key(|r| !r.leader);
         // Collapsed (under `collapse_cols`) the slot hands the pane no columns at all, and a rail
         // that draws into zero columns is exactly the overlap M9 reported.
         if area.width == 0 || area.height == 0 {
@@ -201,7 +222,7 @@ impl Plugin for StripPlugin {
     type Config = StripConfig;
 
     fn inject() -> Inject {
-        Inject::required(["tui", "agents", "ledger"])
+        Inject::required(["tui", "agents", "ledger"]).union(&Inject::optional(["leader"]))
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
@@ -266,7 +287,14 @@ impl Plugin for StripPlugin {
             }
         }
 
-        let pane = Arc::new(StripPane::new(cfg.clone(), rows.clone()));
+        // OPTIONAL key: absent at activation means no leader for this life of the row; the
+        // leader row reloading against a new agent rebinds the key and reloads this row with it
+        // (§0.3), which is exactly when the tag should move.
+        let leader = ctx
+            .get::<bough_plugin_leader::Leader>()
+            .ok()
+            .map(|l| l.target().to_string());
+        let pane = Arc::new(StripPane::new(cfg.clone(), rows.clone()).with_leader(leader));
         tui.register_pane(
             &ctx,
             PaneSpec {
@@ -426,6 +454,7 @@ pub fn row_for(agent: &bough_plugin_agents::Agent) -> RailRow {
         // from the next `agent/dormancy` step it sees.
         dormant: false,
         about: None,
+        leader: false,
     }
 }
 

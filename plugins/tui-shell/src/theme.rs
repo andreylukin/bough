@@ -57,6 +57,16 @@ pub struct Theme {
     pub removed: Color,
     pub sel_bg: Color,
     pub hint: Color,
+    /// Things you can CLICK or open: tool-row headers, claim buttons, the branch picker, the
+    /// search label (visual audit F5). One colour for "this responds", distinct from `accent`,
+    /// which names WHO is speaking and what a heading is.
+    pub interactive: Color,
+    /// Inline code and code blocks: a foreground of their own on `code_bg`, so code is a
+    /// texture rather than a colour that competes with names and links.
+    pub code: Color,
+    pub code_bg: Color,
+    /// The composer's band: the one row that is an input, told apart by its ground.
+    pub field_bg: Color,
 }
 
 impl Theme {
@@ -67,8 +77,9 @@ impl Theme {
                 bg: Color::Reset,
                 measure_bg: Color::Rgb(0x1a, 0x1b, 0x26),
                 fg: Color::Rgb(0xd0, 0xd0, 0xd0),
-                // 3.7:1 at #707680; the audit requires 4.5:1 (M22).
-                dim: Color::Rgb(0x8b, 0x92, 0xa1),
+                // 3.7:1 at #707680; the audit requires 4.5:1 (M22). Raised again for the visual
+                // audit (F6): #8b92a1 was 4.3:1 on a #282d35 terminal, the commonest dark ground.
+                dim: Color::Rgb(0x9a, 0xa2, 0xb1),
                 accent: Color::Rgb(0x7a, 0xa2, 0xf7),
                 evidence: Color::Rgb(0x9e, 0xce, 0x6a),
                 thought: Color::Rgb(0xbb, 0x9a, 0xf7),
@@ -79,6 +90,10 @@ impl Theme {
                 sel_bg: Color::Rgb(0x2d, 0x3f, 0x60),
                 // Was #565f89 — 2.8:1, the least legible text in the product. Now body contrast.
                 hint: Color::Rgb(0xa9, 0xb1, 0xd6),
+                interactive: Color::Rgb(0x7d, 0xcf, 0xff),
+                code: Color::Rgb(0xc0, 0xca, 0xf5),
+                code_bg: Color::Rgb(0x2f, 0x34, 0x42),
+                field_bg: Color::Rgb(0x2a, 0x30, 0x3c),
             },
             ThemeName::Light => Theme {
                 bg: Color::Reset,
@@ -95,6 +110,10 @@ impl Theme {
                 sel_bg: Color::Rgb(0xcf, 0xdd, 0xf7),
                 // Was #8a909a — 3.2:1.
                 hint: Color::Rgb(0x5f, 0x65, 0x70),
+                interactive: Color::Rgb(0x0f, 0x6e, 0x8c),
+                code: Color::Rgb(0x2f, 0x35, 0x45),
+                code_bg: Color::Rgb(0xea, 0xee, 0xf4),
+                field_bg: Color::Rgb(0xf0, 0xf3, 0xf7),
             },
         }
     }

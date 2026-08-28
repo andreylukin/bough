@@ -4,6 +4,9 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 use ratatui_textarea::{CursorMove, Input, Key, TextArea};
 
 use crate::draft::{kill_to_line_start, SentHistory};
@@ -39,6 +42,9 @@ pub struct Composer {
     /// Sent-message recall over an empty draft (M20).
     history: SentHistory,
 }
+
+/// The prompt glyph, two cells wide with its trailing space.
+const PROMPT: &str = "\u{203a} ";
 
 impl Composer {
     /// An empty composer.
@@ -217,7 +223,36 @@ impl Composer {
     /// Draw into an explicit rectangle. The shell owns the composer's slot, so it knows the
     /// rectangle before a `RenderCx` for it exists.
     pub fn render_at(&self, cx: &mut RenderCx<'_>, area: Rect) {
-        cx.frame.render_widget(&self.area, area);
+        // The band and the prompt glyph (visual audit F9): the composer is the one row that is
+        // an INPUT, and nothing used to say so — a dim placeholder on the same ground as the
+        // command output directly above it. The band is `field_bg`; the glyph is the accent, so
+        // the eye finds the row the same way it finds the focused pane's ring.
+        let theme = *cx.theme();
+        let band = Style::default().bg(theme.field_bg);
+        cx.frame.render_widget(Paragraph::new("").style(band), area);
+        if area.width < 3 {
+            cx.frame.render_widget(&self.area, area);
+            return;
+        }
+        cx.frame.render_widget(
+            Paragraph::new(Line::styled(
+                PROMPT,
+                Style::default().fg(theme.accent).bg(theme.field_bg),
+            )),
+            Rect { width: 2, ..area },
+        );
+        let mut field = self.area.clone();
+        field.set_style(band);
+        field.set_cursor_line_style(band);
+        field.set_placeholder_style(Style::default().fg(theme.dim).bg(theme.field_bg));
+        cx.frame.render_widget(
+            &field,
+            Rect {
+                x: area.x + 2,
+                width: area.width - 2,
+                ..area
+            },
+        );
     }
 
     /// Replace the buffer.

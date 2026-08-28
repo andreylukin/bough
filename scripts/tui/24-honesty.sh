@@ -158,6 +158,8 @@ t a_rejected_patch_says_so_on_screen_with_the_logs_words \
   '
 
 # A GOOD one: the same surface says it reloaded.
+# No `gutter` here: the ux1 review moved the one gutter knob to `tui.gutter`, so a strip patch
+# carrying it is REJECTED (unknown field) — which is the previous check's case, not this one's.
 write_patch <<'YML'
 entries:
   tui.strip:
@@ -168,7 +170,6 @@ entries:
       collapse_cols: 100
       min_width: 22
       max_width: 40
-      gutter: 1
 YML
 
 t a_good_patch_says_reloaded \

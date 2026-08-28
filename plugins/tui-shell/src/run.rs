@@ -20,7 +20,7 @@ use ratatui::widgets::{Clear, Paragraph, Widget};
 
 use crate::composer::ComposerAction;
 use crate::events::{KeyDispatch, TuiKeyEvent};
-use crate::pane::{self, HitMap, PaneEvent, PaneFrame, PaneId, PaneOutcome, RenderCx};
+use crate::pane::{self, HitMap, PaneEvent, PaneFrame, PaneId, PaneOutcome, RenderCx, Slot};
 use crate::{no_pane, FocusRequest, TuiConfig, TuiHandle};
 
 /// The event loop, spawned as the row's effect. Returns when the effect is halted.
@@ -102,8 +102,32 @@ pub fn draw(tui: &TuiHandle) {
     let mut terminal = tui.0.terminal.lock();
     let size = terminal.get_frame().area();
     let composer_h = tui.0.composer.lock().height(size.height / 2);
-    let rects = pane::layout(size, &infos, composer_h, tui.0.cfg.gutter);
+    // What the `Aux` panes reported LAST frame decides their rows THIS frame (visual audit F1):
+    // the search pane collapses to nothing while it has no query and no hits, and comes back
+    // when the keyboard is moved to it (`layout_with`'s focused rule).
+    let previous = tui.0.reports.read().clone();
+    let aux_rows: std::collections::HashMap<PaneId, u16> = previous
+        .iter()
+        .filter_map(|(id, r)| r.aux_rows.map(|n| (id.clone(), n)))
+        .collect();
+    let focused = tui.focused_pane();
+    let rects = pane::layout_with(
+        size,
+        &infos,
+        composer_h,
+        tui.0.cfg.gutter,
+        Some(&focused),
+        &aux_rows,
+    );
     *tui.0.rects.write() = rects.clone();
+    // The rows the notice band and the palette may borrow end where the Status band begins:
+    // the status line is never painted over (visual audit F4).
+    let status_top: u16 = rects
+        .iter()
+        .filter(|(id, _)| infos.iter().any(|p| p.id == *id && p.slot == Slot::Status))
+        .map(|(_, r)| r.y)
+        .min()
+        .unwrap_or(u16::MAX);
 
     let selection = tui.selection().map(|s| s.rect());
     let sel_bg = tui.0.theme.sel_bg;
@@ -130,6 +154,11 @@ pub fn draw(tui: &TuiHandle) {
         for (id, rect) in &rects {
             if rect.width == 0 || rect.height == 0 {
                 hits.insert(id.clone(), HitMap::new());
+                // A pane given no rows cannot report, so last frame's report stands — otherwise
+                // a collapsed `Aux` pane would forget it asked for zero and spring back.
+                if let Some(r) = previous.get(id) {
+                    reports.insert(id.clone(), *r);
+                }
                 continue;
             }
             let Some(entry) = entries.iter().find(|e| e.info.id == *id) else {
@@ -180,16 +209,20 @@ pub fn draw(tui: &TuiHandle) {
             // `pane::notice_band` decides WHAT is painted: the cap, the rows actually available
             // above the composer, and — when the two together drop lines — the marker that says
             // so. See its doc comment for why a silent truncation is not an option here.
-            let body_text = pane::notice_band(
+            let floor = status_top.min(crect.y);
+            let body_text = pane::notice_band_from(
                 &text,
                 tui.0.cfg.notice_max_lines,
-                crect.y.saturating_sub(size.y),
+                floor.saturating_sub(size.y),
+                tui.0
+                    .notice_scroll
+                    .load(std::sync::atomic::Ordering::Relaxed),
             );
             let h = body_text.len() as u16;
             if h > 0 {
                 let rect = Rect {
                     x: size.x,
-                    y: crect.y - h,
+                    y: floor - h,
                     width: size.width,
                     height: h,
                 };
@@ -215,13 +248,14 @@ pub fn draw(tui: &TuiHandle) {
         // and reflowing the layout under a filtering list would move the transcript on every
         // keystroke. It is sized to its content — it never reserves rows it has no content for.
         if let Some((items, selected)) = palette_items {
-            let max_rows = crect.y.saturating_sub(size.y).min(10);
+            let floor = status_top.min(crect.y);
+            let max_rows = floor.saturating_sub(size.y).min(10);
             let lines = crate::palette::lines(&items, selected, size.width, max_rows, &theme);
             let h = lines.len() as u16;
-            if h > 0 && crect.y >= h {
+            if h > 0 && floor >= h {
                 let rect = Rect {
                     x: size.x,
-                    y: crect.y - h,
+                    y: floor - h,
                     width: size.width,
                     height: h,
                 };
@@ -319,6 +353,26 @@ pub async fn on_key(tui: &TuiHandle, key: KeyEvent) {
         return;
     }
 
+    // PgUp/PgDn while a persistent notice is up SCROLL it (visual audit F4): `/help` is longer
+    // than a screen, and a key that dismissed it was the only way past line forty.
+    if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+        let page = i32::from(tui.0.cfg.page_lines);
+        let delta = if key.code == KeyCode::PageUp {
+            -page
+        } else {
+            page
+        };
+        let max = tui
+            .notice_raw()
+            .map(|n| {
+                let size = tui.0.terminal.lock().get_frame().area();
+                pane::notice_scroll_max(&n.text, tui.0.cfg.notice_max_lines, size.height)
+            })
+            .unwrap_or(0);
+        if tui.scroll_notice(delta, max) {
+            return;
+        }
+    }
     // An ERROR notice has no TTL and waits for a key. This is that key.
     if matches!(tui.notice_raw().map(|n| n.ttl), Some(None)) {
         tui.clear_notice();

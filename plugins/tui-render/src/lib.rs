@@ -83,8 +83,10 @@ pub fn tool_header(v: &ToolCallView<'_>) -> Line<'static> {
     let width = v.width as usize;
     let (glyph, bad) = outcome_glyph(v.result);
     let marker = if v.expanded { "▾" } else { "▸" };
+    // The header is a thing you CLICK (visual audit F5): the interactive role, not the accent
+    // that names speakers and headings.
     let name_style = Style::default()
-        .fg(v.theme.accent)
+        .fg(v.theme.interactive)
         .add_modifier(Modifier::BOLD);
     let dim = Style::default().fg(v.theme.dim);
     // Never colour alone (audit delight 3) and never colour NOTHING either: a good outcome is

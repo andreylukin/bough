@@ -136,20 +136,12 @@ pub fn field_text(v: &StatusView, f: Field) -> Option<String> {
             .cwd
             .as_ref()
             .map(|p| elide_path(p, v.home.as_deref(), v.cwd_max)),
-        Field::Model => Some(
-            v.model
-                .as_deref()
-                .map(short_model)
-                .unwrap_or_else(|| UNKNOWN.to_string()),
-        ),
-        Field::Context => Some(match v.context_left {
-            Some(pct) => format!("{pct}% ctx"),
-            None => format!("{UNKNOWN} ctx"),
-        }),
-        Field::Cost => Some(match v.cost_usd {
-            Some(c) => money(c),
-            None => UNKNOWN.to_string(),
-        }),
+        // A field with no value yet is ABSENT (visual audit F11): `— · — ctx · —` before the
+        // first turn was three dashes telling the reader nothing. A field that has a value and
+        // then loses it keeps its slot in `RENDER_ORDER`, so nothing jumps; only the empties go.
+        Field::Model => v.model.as_deref().map(short_model),
+        Field::Context => v.context_left.map(|pct| format!("{pct}% ctx left")),
+        Field::Cost => v.cost_usd.map(money),
         Field::Elapsed => {
             if !v.running {
                 return None;
@@ -389,7 +381,7 @@ mod tests {
             cost_usd: None,
             ..Default::default()
         };
-        assert_eq!(field_text(&v, Field::Cost).as_deref(), Some(UNKNOWN));
+        assert_eq!(field_text(&v, Field::Cost), None);
         let v = StatusView {
             cost_usd: Some(0.0),
             ..Default::default()

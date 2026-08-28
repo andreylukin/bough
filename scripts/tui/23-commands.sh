@@ -35,16 +35,17 @@ shell-use type "/"
 t slash_opens_a_palette \
   see "/help" --timeout 10000
 
+# The query is `re`, which the NAME filter matches three ways (/reconsolidate, /reset, /resume):
+# a one-item list — `he` matches only /help — has nowhere for Down to go, and the old spelling
+# passed only because the palette overlay used to repaint the status row underneath it.
 t slash_opens_a_palette_that_filters_and_moves \
   bash -c '
-    # It FILTERS: typing narrows the list, and something that was listed is gone.
-    shell-use type "he"
+    shell-use type "re"
     sleep 0.8
-    see "/help" --timeout 8000 || { echo "the palette filtered /help away"; exit 1; }
-    shell-use text | grep -q "/quit" && { echo "the palette did not filter: /quit survived the query he"; exit 1; }
-    # It MOVES: Down changes WHICH ROW is selected, and the selection is visible. The selected
-    # row is drawn on `theme.sel_bg`, so the moved selection is a change in the painted cells —
-    # this half used to be `press Down; sleep 0.5; exit 0`, which asserted nothing at all.
+    # It FILTERS: typing narrows the list, and something that was listed is gone.
+    see "/reset" --timeout 8000 || { echo "the palette filtered /reset away"; exit 1; }
+    shell-use text | grep -q "/quit" && { echo "the palette did not filter: /quit survived the query re"; exit 1; }
+    # It MOVES: Down changes WHICH ROW is selected, and the selection is visible (`theme.sel_bg`).
     before="$(shell-use cells 0 0 200 60 --json)"
     shell-use press Down
     sleep 0.8
@@ -52,6 +53,13 @@ t slash_opens_a_palette_that_filters_and_moves \
     [ "$before" = "$after" ] && { echo "Down changed nothing: the palette selection does not move"; exit 1; }
     exit 0
   '
+# Back to a one-item palette for the completion check below.
+shell-use keys "Ctrl+u"
+shell-use press Escape
+shell-use type "/"
+sleep 0.4
+shell-use type "he"
+sleep 0.8
 
 # Tab must reach the PALETTE, not the pane ring. `action_for` used to map Tab to
 # `Action::CycleFocus` unconditionally and `on_key` returned on that arm before the palette was
@@ -136,7 +144,9 @@ shell-use press Enter
 t an_unknown_command_suggests_and_keeps \
   bash -c '
     see "/hepl" --timeout 10000 || { echo "the typed command was destroyed"; exit 1; }
-    shell-use text | grep -qi "did you mean" || { echo "no did-you-mean"; exit 1; }
+    # WAIT for it: the draft is on screen before Enter, so `see "/hepl"` proves nothing about
+    # timing, and the notice lands a frame later.
+    see "did you mean" --timeout 8000 || { echo "no did-you-mean"; exit 1; }
     see "/help" --timeout 8000 || { echo "the miss does not point at /help"; exit 1; }
   '
 shell-use keys "Ctrl+u"
@@ -159,6 +169,11 @@ t every_listed_command_renders_something \
       case "$cmd" in
         /quit|/help|"") continue ;;
       esac
+      # Start from a screen with NO notice up: the previous check left a persistent one (a
+      # `usage:` line is an error notice, which waits for a key), and a command whose own
+      # notice is the same text would then look like a no-op. Esc dismisses it.
+      shell-use press Escape >/dev/null
+      sleep 0.5
       before="$(shell-use text | sed "s/[[:space:]]*$//")"
       shell-use submit "$cmd" >/dev/null
       shell-use wait idle --timeout 15000 >/dev/null 2>&1 || true
@@ -178,6 +193,11 @@ t the_four_no_ops_answer_or_say_why \
   bash -c '
     for cmd in /focus /drift /oldfeed /prime; do
       grep -qx "$cmd" "'"$HOME_DIR"'/commands.txt" || continue   # removed from the list is also a fix
+      # Start from a screen with NO notice up: the previous check left a persistent one (a
+      # `usage:` line is an error notice, which waits for a key), and a command whose own
+      # notice is the same text would then look like a no-op. Esc dismisses it.
+      shell-use press Escape >/dev/null
+      sleep 0.5
       before="$(shell-use text | sed "s/[[:space:]]*$//")"
       shell-use submit "$cmd" >/dev/null
       shell-use wait idle --timeout 15000 >/dev/null 2>&1 || true
