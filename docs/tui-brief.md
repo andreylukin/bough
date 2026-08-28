@@ -83,8 +83,11 @@ patch/edit_file/write_file call (typed rows and program sub-calls); the line lan
 turn's last agent row, in the added colour, once nothing is in flight. "What did it do to my
 files" was invisible among the `▸ program …` lines.
 
-**R6 — `andrey: · queued`.** `rows::queued_rows`: a message sent while a turn runs and not yet
-begun wears the tag; nothing is queued while idle.
+**R6/R8 — `andrey: · queued`.** `Row::Queued` is drawn from the `inbox/spliced` insert that
+queued a message from Andrey and dropped when a later splice claims or removes it (its
+`mail/delivered` then draws it as his). Live, a message sent while a turn runs is spliced into
+the RUNNING turn (`next_step`) and delivered at its next model step, so it appears as a plain
+`andrey:` row mid-turn — the tag shows only for a message that genuinely waits for a next wake.
 
 **R6 — Tab reaches the conversation first; the rail takes Up/Down.** `cycle_focus` puts Strip
 panes last; in the rail `rail::step_focus` moves the focused lane and its head line sits on the
