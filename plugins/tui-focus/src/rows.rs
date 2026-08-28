@@ -535,19 +535,21 @@ pub fn trailing_text_rows(rows: &[Row]) -> Vec<usize> {
     trailing_text_row(rows).into_iter().collect()
 }
 
-/// PURE: whether row `i` opens a span of the agent speaking, and so wears the agent's name as a
-/// label the way Andrey's rows wear `andrey:` (visual audit F2). A text row after the agent's
-/// own text, reasoning or tool call continues the same span; after anything else — Andrey, mail,
-/// a claim card, the end of a turn, the top of the window — it starts one.
+/// PURE: whether row `i` opens a span of the agent acting, and so wears the agent's name as a
+/// label the way Andrey's rows wear `andrey:` (visual audit F2). An agent row after another agent
+/// row continues the same span; after anything else — Andrey, mail, a claim card, the end of a
+/// turn, the top of the window — it starts one.
 pub fn opens_speech(rows: &[Row], i: usize) -> bool {
-    if !matches!(rows.get(i), Some(Row::Text { .. })) {
-        return false;
-    }
-    i == 0
-        || !matches!(
-            rows[i - 1],
-            Row::Text { .. } | Row::Reasoning { .. } | Row::Tool { .. }
-        )
+    rows.get(i).is_some_and(is_agent_row) && (i == 0 || !is_agent_row(&rows[i - 1]))
+}
+
+/// PURE: a row that is the agent acting — its words, its reasoning, its tool calls. A turn that
+/// opens with a tool call wears the label on the tool header: the speaker is who ACTS.
+pub fn is_agent_row(row: &Row) -> bool {
+    matches!(
+        row,
+        Row::Text { .. } | Row::Reasoning { .. } | Row::Tool { .. }
+    )
 }
 
 /// PURE: the words a [`Row::WakeMark`] shows, in the USER-FACING vocabulary (nit 37).

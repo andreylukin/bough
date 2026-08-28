@@ -294,6 +294,16 @@ impl FocusPane {
             let flash = state.anchor.as_ref() == Some(row.step());
             let row_start = lines.len();
             row_lines.push(row_start as u16);
+            // The speaker (visual audit F2): Andrey's rows said `andrey:` and the agent's said
+            // nothing, so the two halves of the conversation were told apart by nothing but
+            // position. The name opens each span the agent acts in — words or a tool call. A
+            // reasoning row hidden by config still opens the span: the label lands above the
+            // first VISIBLE line of the span, not on nothing.
+            if rows::opens_speech(&state.rows, i) {
+                if let Some(name) = &state.agent_name {
+                    lines.push(label(name, theme.accent));
+                }
+            }
             match row {
                 Row::Andrey { text, .. } => {
                     lines.push(label("andrey", theme.accent));
@@ -308,14 +318,6 @@ impl FocusPane {
                     ]));
                 }
                 Row::Text { text, .. } => {
-                    // The speaker (visual audit F2): Andrey's rows said `andrey:` and the agent's
-                    // said nothing, so the two halves of the conversation were told apart by
-                    // nothing but position. The name opens each span the agent speaks.
-                    if rows::opens_speech(&state.rows, i) {
-                        if let Some(name) = &state.agent_name {
-                            lines.push(label(name, theme.accent));
-                        }
-                    }
                     // ONE paragraph, wrapped at `width`: the joined row is a single string, so it
                     // flows rather than breaking at every flush boundary (the field bug).
                     let shown = if Some(i) == trailing {

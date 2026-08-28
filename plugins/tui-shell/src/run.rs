@@ -714,6 +714,12 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
                 if !s.is_empty() {
                     let text = crate::text_from_buffer(&tui.last_frame(), s.rect());
                     tui.copy(&text).await;
+                } else {
+                    // A click that never dragged is not a selection (visual audit): the one
+                    // highlighted cell it left behind was chrome for nothing, sitting wherever
+                    // the pointer last landed.
+                    *tui.0.selection.lock() = None;
+                    tui.redraw();
                 }
             }
         }

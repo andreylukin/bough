@@ -626,6 +626,36 @@ fn a_turn_is_a_speaker_label_and_one_rule() {
         !opens_speech(&rows, 0),
         "Andrey's row is not the agent speaking"
     );
+    // A turn that opens with a tool call wears the label on the tool header (the replay
+    // fixture's shape): the speaker is who acts.
+    let tool_first = rows_from_steps(&[
+        step(
+            1,
+            "mail/delivered",
+            serde_json::json!({ "from": "andrey", "subject": "hi", "summary": "ONE" }),
+        ),
+        step(
+            2,
+            "tool/call",
+            serde_json::json!({ "call": "c1", "name": "bash", "args": {} }),
+        ),
+        step(
+            3,
+            "thought/text",
+            serde_json::json!({ "step_index": 1, "text": "done" }),
+        ),
+    ]);
+    assert!(opens_speech(&tool_first, 1) && !opens_speech(&tool_first, 2));
+    assert!(
+        !opens_speech(&rows, 2),
+        "a tool after the agent's words continues the span"
+    );
+    let painted = paint_as(&tool_first, 80, Some("sol"));
+    let at = painted
+        .iter()
+        .position(|l| l.trim() == "sol:")
+        .expect("label");
+    assert!(painted[at + 1].contains("bash"), "{painted:?}");
 
     let out = paint_as(&rows, 80, Some("sol"));
     let labels: Vec<&String> = out.iter().filter(|l| l.trim() == "sol:").collect();
