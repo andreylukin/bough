@@ -153,7 +153,10 @@ fi
 # ---- C first (its verdict is a COLUMN of B): the in-process leak assertion. -------------------
 leak_col="-"
 if has_phase C; then
-  if cargo test --quiet -p bough --test audit_leaks >"$work/leaks" 2>&1; then
+  # MERGE: `--test audit_leaks` no longer names a target. Every crate's integration tests are ONE
+  # target, `tests/main.rs` (AGENTS.md, from the `speed` branch), so the FILE is a module and the
+  # way to run it is a filter on the one target.
+  if cargo test --quiet -p bough --test tests "audit_leaks::" >"$work/leaks" 2>&1; then
     leak_col="no"
     record C "audit_leaks" "-" 0 0 "no" ok "binding and listener counts return to baseline"
   else
@@ -204,7 +207,8 @@ seam_case() {
   fi
   local suite
   for suite in "$@"; do
-    if cargo test --quiet -p bough --test "$suite" >"$work/suite" 2>&1; then
+    # ONE test target per crate (see the `audit_leaks` call above): the suite is a MODULE now.
+    if cargo test --quiet -p bough --test tests "$suite::" >"$work/suite" 2>&1; then
       record D "seam:$seam" "$provider" 0 0 "-" ok "boots; --test $suite green"
     else
       record D "seam:$seam" "$provider" 0 0 "-" FAIL \
@@ -239,8 +243,12 @@ if has_phase D; then
     "one Provider: tui-probe registers a PANE into tui, it does not provide the key"
   record D "seam:workers" "worker-spawn" 0 0 "-" SKIP \
     "one Provider: worker-fork is a second WorkerKind on the same Provider seam, not a swap"
-  record D "seam:actions" "actions-shim" 0 0 "-" SKIP \
-    "one Provider today; the second arrives in Phase 6 (§7)"
+  # MERGE: `actions` HAS its second Provider. Track B's `actions.github` and `actions.linear` are
+  # in `bundles/bough-base.yml`, and `actions-shim` is the catalog-only third this track added, so
+  # the seam is swept for real rather than named as an exception.
+  seam_case actions actions-github headless - worker_pr actions_boundary_rows
+  printf 'entries:\n  actions.github:\n    disabled: true\ninsert:\n  - after: tool.actions\n    entry:\n      id: actions.shim\n      plugin: actions-shim\n      config:\n        gh: /usr/bin/true\n        kinds: [open_pr]\n        delay_before_ms: 0\n        delay_after_ms: 0\n' > "$work/actions-shim.yml"
+  seam_case actions actions-shim headless "$work/actions-shim.yml" crash_reconcile
 fi
 
 # ---- the table. -------------------------------------------------------------------------------

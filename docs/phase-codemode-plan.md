@@ -936,10 +936,20 @@ removing it from `tools-baseline` is a one-row change and the right follow-up.
 
 ## 8. Bench results
 
-`make bench-tools`, the 15-task bank, both consumers, re-run 2026-08-27 on this branch AFTER the
-merge-note §9 fix (two code-mode rows moved from NO to yes: `04-multi-step-shell` and
-`07-search-then-edit`).
-Produced by `bench/tools/tests/replay.rs::bench_tools_runs_the_bank_through_both_consumers_offline`.
+`make bench-tools`, the 15-task bank, both consumers, **re-run 2026-08-28 on `rebuild` after the
+track-B, code-mode and track-C merges**. Produced by
+`bench/tools/tests/replay.rs::bench_tools_runs_the_bank_through_both_consumers_offline`.
+
+Both arms are 15/15 offline now. Three things the merge changed, and each one moved a row that had
+been red BY CONSTRUCTION rather than by any surface's fault:
+
+- `agent-loop` declares `workers`, so `08-spawn-a-worker` can actually spawn one — it could not,
+  under either consumer, on any branch (`docs/codemode-merge-notes.md` §7, track C's H-C5).
+- `11-act-open-pr`'s prompt now NAMES the repository and the head branch. `open_pr` takes a
+  `target` of `owner/repo`; the prompt named neither, so no model could supply them and the task
+  was 0/2 on both arms every run. Track B's `actions.github` is what makes it answerable at all.
+- the code-mode `08` fixture passed a second argument that `spawn_worker`'s schema binds to
+  `tools`, so the call was refused. It had never been exercised, because the seam was dead.
 
 **Read the replay numbers as a SHAPE, not as a price.** The offline arm answers from recorded
 transcripts, so the token counts are the ones the fixtures DECLARE — they are what a plausible
@@ -950,8 +960,8 @@ The live table below is the one with real tokens in it.
 
 | arm | pass | steps/task | in tok | out tok | $ / bank | $ / task |
 |---|---|---|---|---|---|---|
-| typed, replay | 12/15 | 22.7 | 222300 | 4960 | $0.2471 | $0.0165 |
-| codemode, replay | 10/15 | 21.1 | 170800 | 5700 | $0.1993 | $0.0133 |
+| typed, replay | 15/15 | 24.6 | 232500 | 5080 | $0.2579 | $0.0172 |
+| codemode, replay | 15/15 | 24.3 | 183600 | 5820 | $0.2127 | $0.0142 |
 
 | task | arm | pass | steps | in | out | $ | note |
 |---|---|---|---|---|---|---|---|
@@ -960,31 +970,31 @@ The live table below is the one with real tokens in it.
 | 03-multi-file-all-or-nothing | typed | yes | 29 | 22200 | 480 | $0.0246 |  |
 | 04-multi-step-shell | typed | yes | 29 | 22200 | 480 | $0.0246 |  |
 | 05-parallel-shell-legs | typed | yes | 29 | 22200 | 480 | $0.0246 |  |
-| 06-background-job | typed | NO | 29 | 22200 | 480 | $0.0246 | src/bg.txt: No such file or directory (os error 2) |
+| 06-background-job | typed | yes | 29 | 22200 | 480 | $0.0246 |  |
 | 07-search-then-edit | typed | yes | 29 | 22200 | 480 | $0.0246 |  |
-| 08-spawn-a-worker | typed | NO | 17 | 6000 | 200 | $0.0070 | 0 `worker/started` steps, wanted at least 1 |
+| 08-spawn-a-worker | typed | yes | 29 | 11100 | 260 | $0.0124 |  |
 | 09-ask-a-question | typed | yes | 17 | 9300 | 200 | $0.0103 |  |
 | 10-propose-a-claim | typed | yes | 18 | 9300 | 200 | $0.0103 |  |
-| 11-act-open-pr | typed | NO | 17 | 9300 | 200 | $0.0103 | 0 `action/intent` steps, wanted at least 1 |
+| 11-act-open-pr | typed | yes | 19 | 9300 | 200 | $0.0103 |  |
 | 12-ledger-drill | typed | yes | 29 | 22200 | 480 | $0.0246 |  |
 | 13-read-the-inbox | typed | yes | 23 | 15300 | 340 | $0.0170 |  |
 | 14-schedule-an-intent | typed | yes | 18 | 9300 | 200 | $0.0103 |  |
-| 15-fork-the-trajectory | typed | yes | 17 | 6000 | 200 | $0.0070 |  |
+| 15-fork-the-trajectory | typed | yes | 31 | 11100 | 260 | $0.0124 |  |
 | 01-write-creates-a-file | codemode | yes | 20 | 12000 | 380 | $0.0139 |  |
 | 02-hash-anchored-patch | codemode | yes | 23 | 12000 | 380 | $0.0139 |  |
 | 03-multi-file-all-or-nothing | codemode | yes | 26 | 12000 | 380 | $0.0139 |  |
 | 04-multi-step-shell | codemode | yes | 24 | 12000 | 380 | $0.0139 |  |
-| 05-parallel-shell-legs | codemode | NO | 18 | 12000 | 380 | $0.0139 | src/one.txt: No such file or directory (os error 2) |
-| 06-background-job | codemode | NO | 20 | 12000 | 380 | $0.0139 | src/bg.txt: No such file or directory (os error 2) |
+| 05-parallel-shell-legs | codemode | yes | 25 | 12000 | 380 | $0.0139 |  |
+| 06-background-job | codemode | yes | 24 | 12000 | 380 | $0.0139 |  |
 | 07-search-then-edit | codemode | yes | 26 | 12000 | 380 | $0.0139 |  |
-| 08-spawn-a-worker | codemode | NO | 20 | 7400 | 380 | $0.0093 | 0 `worker/started` steps, wanted at least 1 |
+| 08-spawn-a-worker | codemode | yes | 32 | 13800 | 440 | $0.0160 |  |
 | 09-ask-a-question | codemode | yes | 20 | 12000 | 380 | $0.0139 |  |
 | 10-propose-a-claim | codemode | yes | 21 | 12000 | 380 | $0.0139 |  |
-| 11-act-open-pr | codemode | NO | 18 | 12000 | 380 | $0.0139 | 0 `action/intent` steps, wanted at least 1 |
-| 12-ledger-drill | codemode | NO | 18 | 12000 | 380 | $0.0139 | src/drill.txt: No such file or directory (os error 2) |
+| 11-act-open-pr | codemode | yes | 22 | 12000 | 380 | $0.0139 |  |
+| 12-ledger-drill | codemode | yes | 25 | 12000 | 380 | $0.0139 |  |
 | 13-read-the-inbox | codemode | yes | 22 | 12000 | 380 | $0.0139 |  |
 | 14-schedule-an-intent | codemode | yes | 21 | 12000 | 380 | $0.0139 |  |
-| 15-fork-the-trajectory | codemode | yes | 20 | 7400 | 380 | $0.0093 |  |
+| 15-fork-the-trajectory | codemode | yes | 34 | 13800 | 440 | $0.0160 |  |
 
 ### Live haiku, both arms — SUPERSEDED (run BEFORE the merge-note §9 fix)
 
@@ -1062,49 +1072,60 @@ worth keeping whatever the fix does to the numbers. Rerun once merge-note §9 la
 
 ### Live haiku, both arms — the DECISION table
 
-`BOUGH_LIVE=1 make bench-tools`, run 2026-08-27 after the merge-note §9 fix (the tag argument is
-taken at the code-mode boundary, so `bash` is callable from the sandbox), 298s wall, both arms on
-`claude-haiku-4-5-20251001` for sol and terra. Produced by
+`BOUGH_LIVE=1 make bench-tools`, **re-run 2026-08-28 on `rebuild` after the three merges**, 270s
+wall, both arms on `claude-haiku-4-5-20251001` for sol and terra. Produced by
 `bench/tools/tests/live.rs::bench_tools_live_haiku_bank`. **These are the real tokens, and this is
 the table §7.A is decided on.**
 
+Code mode passes **13/15 against typed's 14/15** — one task apart — at **$0.4069 per bank against
+$0.4969**, on 18% fewer input tokens and slightly fewer rounds per task. Read with the previous
+run (typed 11/15 @ $0.8103, code mode 11/15 @ $0.6104, `11-act-open-pr` red by construction on
+both), the shape has now held across three measurements: **the two surfaces tie on capability
+within a task or two, and code mode costs roughly 18–25% less.**
+
+The two rows code mode still misses are `10-propose-a-claim` (the model narrated the claim instead
+of calling `claim(...)`) and `13-read-the-inbox`, which the TYPED arm misses too — a bank predicate
+about a file the task never asks the model to write, recorded as the harness's rather than a
+surface's (`docs/codemode-merge-notes.md` §7). Neither is a shell or a seam failure; every shell
+task is green on both arms now, which was the whole point of the §9 fix.
+
 | arm | pass | steps/task | in tok | out tok | $ / bank | $ / task |
 |---|---|---|---|---|---|---|
-| typed, live haiku | 11/15 | 49.6 | 760628 | 9931 | $0.8103 | $0.0540 |
-| codemode, live haiku | 11/15 | 50.8 | 565613 | 8954 | $0.6104 | $0.0407 |
+| typed, live haiku | 14/15 | 41.9 | 459065 | 7576 | $0.4969 | $0.0331 |
+| codemode, live haiku | 13/15 | 39.4 | 378038 | 5775 | $0.4069 | $0.0271 |
 
 | task | arm | pass | steps | in | out | $ | note |
 |---|---|---|---|---|---|---|---|
-| 01-write-creates-a-file | typed | yes | 20 | 6821 | 120 | $0.0074 |  |
-| 02-hash-anchored-patch | typed | yes | 85 | 66187 | 1036 | $0.0714 |  |
-| 03-multi-file-all-or-nothing | typed | yes | 124 | 109803 | 1949 | $0.1195 |  |
-| 04-multi-step-shell | typed | yes | 36 | 16822 | 337 | $0.0185 |  |
-| 05-parallel-shell-legs | typed | NO | 31 | 13508 | 453 | $0.0158 | src/one.txt is not the expected text |
-| 06-background-job | typed | yes | 37 | 17171 | 407 | $0.0192 |  |
-| 07-search-then-edit | typed | yes | 37 | 16707 | 476 | $0.0191 |  |
-| 08-spawn-a-worker | typed | NO | 28 | 11264 | 238 | $0.0125 | 0 `worker/started` steps, wanted at least 1 |
-| 09-ask-a-question | typed | yes | 23 | 6735 | 212 | $0.0078 |  |
-| 10-propose-a-claim | typed | yes | 46 | 24479 | 646 | $0.0277 |  |
-| 11-act-open-pr | typed | NO | 144 | 407396 | 2543 | $0.4201 | 0 `action/intent` steps, wanted at least 1 |
-| 12-ledger-drill | typed | yes | 37 | 22066 | 459 | $0.0244 |  |
-| 13-read-the-inbox | typed | NO | 28 | 11418 | 208 | $0.0125 | src/inbox.txt does not contain `0` |
-| 14-schedule-an-intent | typed | yes | 21 | 6858 | 169 | $0.0077 |  |
-| 15-fork-the-trajectory | typed | yes | 47 | 23393 | 678 | $0.0268 |  |
-| 01-write-creates-a-file | codemode | yes | 21 | 12438 | 96 | $0.0129 |  |
-| 02-hash-anchored-patch | codemode | yes | 34 | 20788 | 237 | $0.0220 |  |
-| 03-multi-file-all-or-nothing | codemode | yes | 36 | 21220 | 271 | $0.0226 |  |
-| 04-multi-step-shell | codemode | NO | 116 | 106846 | 1571 | $0.1147 | src/counts.txt is not the expected text |
-| 05-parallel-shell-legs | codemode | yes | 29 | 13739 | 256 | $0.0150 |  |
-| 06-background-job | codemode | yes | 133 | 128069 | 2681 | $0.1415 |  |
-| 07-search-then-edit | codemode | yes | 76 | 52331 | 696 | $0.0558 |  |
-| 08-spawn-a-worker | codemode | NO | 65 | 50773 | 554 | $0.0535 | 0 `worker/started` steps, wanted at least 1 |
-| 09-ask-a-question | codemode | yes | 23 | 12631 | 202 | $0.0136 |  |
-| 10-propose-a-claim | codemode | yes | 48 | 29869 | 521 | $0.0325 |  |
-| 11-act-open-pr | codemode | NO | 36 | 20345 | 355 | $0.0221 | 0 `action/intent` steps, wanted at least 1 |
-| 12-ledger-drill | codemode | yes | 54 | 41633 | 684 | $0.0451 |  |
-| 13-read-the-inbox | codemode | NO | 36 | 21300 | 254 | $0.0226 | src/inbox.txt does not contain `0` |
-| 14-schedule-an-intent | codemode | yes | 22 | 12859 | 189 | $0.0138 |  |
-| 15-fork-the-trajectory | codemode | yes | 33 | 20772 | 387 | $0.0227 |  |
+| 01-write-creates-a-file | typed | yes | 20 | 10146 | 123 | $0.0108 |  |
+| 02-hash-anchored-patch | typed | yes | 100 | 105962 | 1240 | $0.1122 |  |
+| 03-multi-file-all-or-nothing | typed | yes | 108 | 109306 | 1611 | $0.1174 |  |
+| 04-multi-step-shell | typed | yes | 28 | 16735 | 251 | $0.0180 |  |
+| 05-parallel-shell-legs | typed | yes | 28 | 16860 | 307 | $0.0184 |  |
+| 06-background-job | typed | yes | 28 | 16902 | 291 | $0.0184 |  |
+| 07-search-then-edit | typed | yes | 36 | 23390 | 405 | $0.0254 |  |
+| 08-spawn-a-worker | typed | yes | 47 | 22247 | 349 | $0.0240 |  |
+| 09-ask-a-question | typed | yes | 20 | 10028 | 180 | $0.0109 |  |
+| 10-propose-a-claim | typed | yes | 29 | 16553 | 280 | $0.0180 |  |
+| 11-act-open-pr | typed | yes | 22 | 10507 | 156 | $0.0113 |  |
+| 12-ledger-drill | typed | yes | 36 | 28315 | 369 | $0.0302 |  |
+| 13-read-the-inbox | typed | NO | 28 | 16504 | 177 | $0.0174 | src/inbox.txt does not contain `0` |
+| 14-schedule-an-intent | typed | yes | 21 | 10258 | 141 | $0.0110 |  |
+| 15-fork-the-trajectory | typed | yes | 78 | 45352 | 1696 | $0.0538 |  |
+| 01-write-creates-a-file | codemode | yes | 21 | 13770 | 106 | $0.0143 |  |
+| 02-hash-anchored-patch | codemode | yes | 34 | 22952 | 251 | $0.0242 |  |
+| 03-multi-file-all-or-nothing | codemode | yes | 37 | 23442 | 277 | $0.0248 |  |
+| 04-multi-step-shell | codemode | yes | 45 | 25818 | 606 | $0.0288 |  |
+| 05-parallel-shell-legs | codemode | yes | 29 | 15258 | 243 | $0.0165 |  |
+| 06-background-job | codemode | yes | 73 | 52599 | 1123 | $0.0582 |  |
+| 07-search-then-edit | codemode | yes | 47 | 33075 | 431 | $0.0352 |  |
+| 08-spawn-a-worker | codemode | yes | 45 | 24625 | 291 | $0.0261 |  |
+| 09-ask-a-question | codemode | yes | 32 | 23670 | 447 | $0.0259 |  |
+| 10-propose-a-claim | codemode | NO | 33 | 22564 | 413 | $0.0246 | 0 `claim/proposed` steps, wanted at least 1 |
+| 11-act-open-pr | codemode | yes | 23 | 14344 | 151 | $0.0151 |  |
+| 12-ledger-drill | codemode | yes | 29 | 16474 | 258 | $0.0178 |  |
+| 13-read-the-inbox | codemode | NO | 35 | 23516 | 239 | $0.0247 | src/inbox.txt does not contain `0` |
+| 14-schedule-an-intent | codemode | yes | 22 | 14165 | 176 | $0.0150 |  |
+| 15-fork-the-trajectory | codemode | yes | 86 | 51766 | 763 | $0.0556 |  |
 
 **With a working shell, the two arms TIE on pass rate and code mode is 25% cheaper: 11/15 at
 $0.6104 against 11/15 at $0.8103, on 26% fewer input tokens and 10% fewer output tokens, at the

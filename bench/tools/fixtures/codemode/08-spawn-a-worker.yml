@@ -1,5 +1,10 @@
 # Recorded transcript: 08-spawn-a-worker, CODE-MODE arm.
 #
+# MERGE: the program passed a SECOND argument, `{name: "notes summary"}`, which `spawn_worker`'s
+# schema binds to its `tools` property (`SpawnArgs = {task, tools?}`) — so the call was refused and
+# the round spawned nothing. It had never been exercised: before `agent-loop` declared `workers`,
+# every `spawn_worker` in the tree came back "workers seam unavailable" whatever it carried.
+#
 # The same task as `../typed/08-spawn-a-worker.yml`, in ONE `run(program)` round plus the answer. The token
 # counts are deliberately larger per round (the surface section is in the prompt, the program is in
 # the output) and fewer rounds: that trade is the thing the bench measures.
@@ -18,7 +23,7 @@
                 "id": "c0",
                 "name": "run",
                 "input": {
-                  "program": "const out = await agent(\"Read src/notes.md in the bench fixture repo and summarise it in one sentence.\", {name: \"notes summary\"});\nconsole.log(out);"
+                  "program": "const out = await agent(\"Read src/notes.md in the bench fixture repo and summarise it in one sentence.\");\nconsole.log(out);"
                 }
               },
               {

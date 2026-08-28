@@ -406,8 +406,28 @@ impl Plugin for ResidentsPlugin {
             let entry = ectx.ctx().entry_id().clone();
             let kernel = ectx.ctx().kernel();
             let run = async {
+                // MERGE: the roster is raised with ONE RETRY. `wait_for_factory` waits for the
+                // slot and `with_factory` retries a `NoFactory` from the call itself, but any
+                // other error killed the whole boot task — and the symptom is a booted TUI with
+                // an EMPTY rail and no lane at all, which is what `12-many-agents.sh` saw once in
+                // a live run (and never in isolation). A second attempt costs nothing on the
+                // happy path and is the difference between a transient boot-order loss and no
+                // agents. A tree-wide `quiesce()` here was tried instead and REJECTED: it is
+                // correct and it added ~100 s to `make test`, because every booted-tree case that
+                // deliberately leaves a row disabled never settles and pays the full ceiling.
                 wait_for_factory(&agents).await?;
-                let up = raise_roster(&agents, &ledger, &cfg, &roster).await?;
+                let up = match raise_roster(&agents, &ledger, &cfg, &roster).await {
+                    Ok(up) => up,
+                    Err(first) => {
+                        tracing::warn!(
+                            target: "residents",
+                            "raising the roster failed ({first}); retrying once"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                        wait_for_factory(&agents).await?;
+                        raise_roster(&agents, &ledger, &cfg, &roster).await?
+                    }
+                };
                 if cfg.catch_up {
                     // The activation handshake `catch_up`'s OPEN ITEM asks for. A catch-up is a
                     // wake, and §1's "a dormant agent costs nothing" is enforced by a LISTENER on
