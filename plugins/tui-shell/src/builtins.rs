@@ -36,10 +36,7 @@ pub fn summaries() -> Vec<(&'static str, &'static str)> {
         ("help", "list the commands and keys this window understands"),
         ("quit", "close bough"),
         ("focus", "show one agent's conversation"),
-        (
-            "agents",
-            "list the agents, what each is doing, and how many messages are waiting",
-        ),
+        ("agents", "list the agents and what each is doing"),
     ]
 }
 
@@ -238,7 +235,7 @@ struct Roster(TuiHandle);
 
 /// The header row `/agents` prints, and the widths every row is laid out on (M24: a table of
 /// bare words is not a table).
-pub const ROSTER_HEADER: &str = "agent        status    doing                          waiting";
+pub const ROSTER_HEADER: &str = "agent        status    doing";
 
 /// The step type dormancy is folded from, by NAME (P3-D11): `dormancy` owns the fact, this
 /// row only reads it.
@@ -345,12 +342,13 @@ impl Command for Roster {
                     doing = state;
                 }
             }
+            // No unread count here (round 7): the rail's `✉ N` badge is the one place for it,
+            // and a bare `waiting 0` column read as jargon.
             lines.push(format!(
-                "{:<12} {:<9} {:<30} {}",
+                "{:<12} {:<9} {}",
                 a.name(),
                 status,
-                clip(&doing, 30),
-                a.inbox().len()
+                clip(&doing, 40)
             ));
         }
         Ok(CommandOutput {
@@ -380,7 +378,7 @@ mod tests {
     /// The header names every column the rows print.
     #[test]
     fn the_roster_header_names_its_columns() {
-        for column in ["agent", "status", "doing", "waiting"] {
+        for column in ["agent", "status", "doing"] {
             assert!(ROSTER_HEADER.contains(column), "{ROSTER_HEADER}");
         }
     }

@@ -1022,3 +1022,17 @@ fn a_message_sent_while_running_is_tagged_queued() {
         "text done, the next turn is starting: not queued"
     );
 }
+
+/// Round 7: a code-mode file handle reads as its path everywhere a call is named.
+#[test]
+fn a_file_handle_reads_as_its_path() {
+    use bough_plugin_tui_focus::rows::{changed_files, unhandle};
+    assert_eq!(unhandle("[README.md#B749]"), "README.md");
+    assert_eq!(unhandle("src/main.rs"), "src/main.rs");
+    let rows = rows_from_steps(&[step(
+        1,
+        "tool/call",
+        serde_json::json!({ "call": "c1", "name": "patch", "args": { "path": "[README.md#B749]" } }),
+    )]);
+    assert_eq!(changed_files(&rows), vec!["README.md".to_string()]);
+}

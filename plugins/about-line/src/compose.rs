@@ -66,7 +66,11 @@ fn state_half(steps: &[&Step]) -> String {
                 }
                 None
             }
-            "tool/call" | "program/call" => body_str(s, "name").map(|n| tool_clause(&n, s)),
+            // The code-mode `run` call is the program's envelope: its inner `program/call`
+            // steps are the clauses, so the envelope itself says nothing.
+            "tool/call" | "program/call" => body_str(s, "name")
+                .filter(|n| n != "run")
+                .map(|n| tool_clause(&n, s)),
             "tool/result" => body_str(s, "outcome")
                 .filter(|o| o != "ok")
                 .map(|o| format!("a tool returned {o}")),
@@ -87,6 +91,18 @@ fn state_half(steps: &[&Step]) -> String {
     clauses.join("; ")
 }
 
+/// A code-mode file handle — `[README.md#B749]` — read as its path.
+fn unhandle(v: &str) -> String {
+    match v.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        Some(inner) => inner
+            .rsplit_once('#')
+            .map(|(p, _)| p)
+            .unwrap_or(inner)
+            .to_string(),
+        None => v.to_string(),
+    }
+}
+
 /// PURE: one call as a past-tense clause — `viewed main.rs`, `patched README.md`, `ran \`ls\``,
 /// `searched "TODO"` — from the tool's name and the argument a person names it by.
 fn tool_clause(name: &str, s: &Step) -> String {
@@ -97,7 +113,7 @@ fn tool_clause(name: &str, s: &Step) -> String {
             .find_map(|k| o.get(*k).and_then(|v| v.as_str()))
             .map(|v| clip(v.lines().next().unwrap_or(""), 40))
     };
-    let path = arg(&["path", "file"]);
+    let path = arg(&["path", "file"]).map(|p| unhandle(&p));
     let cmd = arg(&["command", "cmd"]);
     let pattern = arg(&["pattern", "query", "q"]);
     match name {
@@ -319,6 +335,16 @@ mod clause_tests {
                 serde_json::json!({ "name": "grep", "args": { "pattern": "TODO" } }),
             ),
             step(
+                "c5",
+                "tool/call",
+                serde_json::json!({ "name": "run", "args": { "program": "1+1" } }),
+            ),
+            step(
+                "c6",
+                "program/call",
+                serde_json::json!({ "name": "patch", "args": { "path": "[lib.rs#C0DE]" } }),
+            ),
+            step(
                 "t2",
                 "thought/text",
                 serde_json::json!({ "text": "Done. Added the line.\nAnything else?" }),
@@ -327,7 +353,7 @@ mod clause_tests {
         let c = compose(&steps, &WakeId::new("w1"), &StepId::new("end"), &cfg());
         assert_eq!(
             c.line.state,
-            "viewed main.rs; patched README.md; ran `cargo test -p x`; searched \"TODO\""
+            "viewed main.rs; patched README.md; ran `cargo test -p x`; searched \"TODO\"; patched lib.rs"
         );
         assert!(!c.line.state.contains("read mail"), "{}", c.line.state);
         assert_eq!(

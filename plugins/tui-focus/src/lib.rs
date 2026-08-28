@@ -1275,7 +1275,9 @@ impl Plugin for FocusPlugin {
                 slot: Slot::Main,
                 order: 0,
                 size: SlotSize::Fill(1),
-                title: "trajectory".into(),
+                // "conversation" (round 7): one name on screen — the key hints already said
+                // "search the conversation"; `/help` and the branch picker said "trajectory".
+                title: "conversation".into(),
                 focusable: true,
                 pane: pane.clone(),
             },

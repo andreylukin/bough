@@ -596,11 +596,24 @@ fn first_string(args: &serde_json::Value) -> String {
         .find_map(|k| o.get(*k).and_then(|v| v.as_str()))
         .or_else(|| o.values().find_map(|v| v.as_str()))
         .unwrap_or("");
-    let v = v.lines().next().unwrap_or("").trim();
+    let v = unhandle(v.lines().next().unwrap_or("").trim());
     if v.chars().count() > 40 {
         v.chars().take(39).collect::<String>() + "\u{2026}"
     } else {
         v.to_string()
+    }
+}
+
+/// PURE: a code-mode file HANDLE — `[README.md#B749]`, the path plus a content hash — read as
+/// the path a person would name. Anything else passes through.
+pub fn unhandle(v: &str) -> String {
+    match v.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        Some(inner) => inner
+            .rsplit_once('#')
+            .map(|(p, _)| p)
+            .unwrap_or(inner)
+            .to_string(),
+        None => v.to_string(),
     }
 }
 

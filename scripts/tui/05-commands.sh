@@ -12,12 +12,13 @@ before_wakes="$(steps_of 'wake/start')"
 before_steps="$(steps_of 'step/start')"
 before_reqs="$(steps_of 'request/header')"
 
-# `waiting` is written ONLY by the `/agents` roster header (builtins.rs::ROSTER_HEADER). The agent
+# `doing` is written ONLY by the `/agents` roster header (builtins.rs::ROSTER_HEADER). The agent
 # name `sol` would have matched the rail, which is on screen before any command runs, so that
-# bullet was vacuous whether or not the dispatch produced anything.
+# bullet was vacuous whether or not the dispatch produced anything. (`waiting` left the header
+# in round 7: the rail's ✉ badge is the one place for unread mail.)
 shell-use submit "/agents"
 t a_slash_command_renders_its_output_in_the_pane \
-  see "waiting" --timeout 10000
+  see "doing" --timeout 10000
 
 t the_slash_command_started_no_wake \
   bash -c "[ \"\$(steps_of 'wake/start')\" = \"$before_wakes\" ] \

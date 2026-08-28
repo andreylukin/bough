@@ -376,7 +376,8 @@ fn sub_gist(sub: &ProgramSub) -> String {
     });
     match object {
         Some(o) => {
-            let o = o.lines().next().unwrap_or("").trim();
+            let o = crate::rows::unhandle(o.lines().next().unwrap_or("").trim());
+            let o = o.as_str();
             let clipped: String = if o.chars().count() > MAX {
                 o.chars().take(MAX - 1).collect::<String>() + "\u{2026}"
             } else {
