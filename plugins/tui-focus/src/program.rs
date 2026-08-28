@@ -440,10 +440,15 @@ pub fn program_lines(v: &ProgramView<'_>) -> (Vec<Line<'static>>, Vec<(ToolCallI
     // The opened block sits on the code ground (the TUI brief, D3): source, console and the
     // inner calls are one object from the header's next line to the last, the same texture a
     // fenced code block has, so prose after it is visibly back on the transcript's ground.
+    let ground = Style::default().bg(v.theme.code_bg);
     for line in lines.iter_mut().skip(1) {
-        *line = line
-            .clone()
-            .patch_style(Style::default().bg(v.theme.code_bg));
+        // Padded to the width: a line style paints only under its text, and a block whose
+        // ground stops at the end of each line is stripes, not a block.
+        let short = (v.width as usize).saturating_sub(line.width());
+        if short > 0 {
+            line.spans.push(Span::styled(" ".repeat(short), ground));
+        }
+        *line = line.clone().patch_style(ground);
     }
     (lines, headers)
 }
