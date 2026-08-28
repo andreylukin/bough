@@ -46,6 +46,10 @@ pub struct RailRow {
     /// The agent the `leader` set is mounted in (visual audit: "make it obvious who the leader
     /// is"). Folded from the `leader` key when the row is mounted; with no leader row nobody is.
     pub leader: bool,
+    /// Open claims this lane is waiting on Andrey to decide (round 10), from the ledger by name.
+    pub owed_claims: usize,
+    /// Its last message was a question to Andrey and nothing from him followed (round 10).
+    pub question: bool,
     /// When the CURRENT status began (the TUI brief, D4: "how long" was the runner-up rail
     /// fact). `None` until the first status change this life; the row then shows no clock
     /// rather than a guessed one.
@@ -154,6 +158,47 @@ pub fn step_focus(rows: &[RailRow], focused: Option<&AgentId>, down: bool) -> Op
         agent: Some(order[next].agent.clone()),
         ..Default::default()
     })
+}
+
+/// PURE: the open claims among `steps` (ledger order): every `claim/proposed` whose id no later
+/// `claim/accepted` / `claim/rejected` names. By NAME (P3-D11): the rail reads the ledger body.
+pub fn open_claims(steps: &[bough_plugin_ledger::Step]) -> usize {
+    let mut open: Vec<String> = Vec::new();
+    for s in steps {
+        let id = s
+            .body
+            .get("claim")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        match s.kind.as_str() {
+            "claim/proposed" if !id.is_empty() => open.push(id),
+            "claim/accepted" | "claim/rejected" => open.retain(|c| *c != id),
+            _ => {}
+        }
+    }
+    open.len()
+}
+
+/// PURE: whether the lane's last word to Andrey was a question he has not answered: the newest
+/// `thought/text` ends with `?` and no `mail/delivered` from Andrey is newer than it.
+pub fn pending_question(steps: &[bough_plugin_ledger::Step]) -> bool {
+    let last_text = steps
+        .iter()
+        .rposition(|s| s.kind.as_str() == "thought/text");
+    let Some(i) = last_text else {
+        return false;
+    };
+    let asks = steps[i]
+        .body
+        .get("text")
+        .and_then(|v| v.as_str())
+        .is_some_and(|t| t.trim_end().ends_with('?'));
+    let answered = steps[i + 1..].iter().any(|s| {
+        s.kind.as_str() == "mail/delivered"
+            && s.body.get("from").and_then(|v| v.as_str()) == Some("andrey")
+    });
+    asks && !answered
 }
 
 /// The clickable region id for one rail row.
@@ -277,8 +322,22 @@ pub fn row_lines(
     } else {
         String::new()
     };
+    // What this lane is waiting on from Andrey (round 10): `◇2` open claims, `?` a question —
+    // right after the name, in the warn colour, so the rail answers "do I owe anything" on
+    // its own.
+    let mut owed = String::new();
+    if row.owed_claims > 0 {
+        owed.push_str(&format!(" \u{25c7}{}", row.owed_claims));
+    }
+    if row.question {
+        owed.push_str(" ?");
+    }
     let name_room = width.saturating_sub(
-        3 + leader_tag.chars().count() as u16 + mail.chars().count() as u16 + word_w + 1,
+        3 + leader_tag.chars().count() as u16
+            + owed.chars().count() as u16
+            + mail.chars().count() as u16
+            + word_w
+            + 1,
     ) as usize;
     let name = elide(&row.name, name_room);
     let mut head = vec![
@@ -303,7 +362,13 @@ pub fn row_lines(
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    let used = 3 + name.chars().count() + leader_tag.chars().count();
+    if !owed.is_empty() {
+        head.push(Span::styled(
+            owed.clone(),
+            Style::default().fg(theme.warn).add_modifier(Modifier::BOLD),
+        ));
+    }
+    let used = 3 + name.chars().count() + leader_tag.chars().count() + owed.chars().count();
     let pad = (width as usize).saturating_sub(used + mail.chars().count() + word_w as usize);
     head.push(Span::raw(" ".repeat(pad)));
     if !mail.is_empty() {

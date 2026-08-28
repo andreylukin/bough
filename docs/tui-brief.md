@@ -127,6 +127,16 @@ coordinates lands on the rail.
 every chat-only turn was noise. A talk-only turn has no `→` intent line on the rail: it would
 repeat the reply the `replied: …` state already carries.
 
+**R10 — from the busy-executive pass.** With the rail collapsed the status chip carries the
+state (`sol · running`), not just the name. A failed call says why on its own line
+(`▸ draft_ticket … ✗ tags isn't a valid parameter`), clipped to half the width. A "what do I
+owe" chip: `◇ 1 claim · ? question` on the status line (`rows::owed` from the transcript's rows,
+reported each frame; dropped last but for the stop key and the product) and `◇N` / `?` after the
+lane's name on the rail (`rail::open_claims`, `rail::pending_question` from the ledger by name,
+re-read when a wake ends). The question rule is a heuristic, no model call: the last message
+ends with `?`, the turn is over, nothing from Andrey followed. A lane with no work yet is dim;
+the leader never is. Not done: clicking the chip to jump to the claim/question.
+
 **Fixed along the way:** the `search [▏]` ghost after Esc, Esc (the layout's focused pane is the
 KEYBOARD's pane, `run::layout_focus`); the welcome hint says `? for help`, the status line's
 word, and says `tab panes` once.

@@ -404,11 +404,25 @@ impl Plugin for StripPlugin {
         .await?;
 
         let (r, t) = (rows.clone(), tui.clone());
+        let l_wake = ledger.clone();
         ctx.on::<AgentWake, _, _>(move |ev| {
-            let (r, t) = (r.clone(), t.clone());
+            let (r, t, l) = (r.clone(), t.clone(), l_wake.clone());
             async move {
-                if let Some(row) = r.lock().iter_mut().find(|x| x.agent == ev.agent) {
-                    row.wake_pending = ev.phase == Phase::Start;
+                let traj = {
+                    let mut rows = r.lock();
+                    match rows.iter_mut().find(|x| x.agent == ev.agent) {
+                        Some(row) => {
+                            row.wake_pending = ev.phase == Phase::Start;
+                            row.traj.clone()
+                        }
+                        None => None,
+                    }
+                };
+                // A wake ending is when the owed facts change (round 10).
+                if ev.phase == Phase::End {
+                    if let Some(traj) = traj {
+                        backfill(&l, &r, &traj).await;
+                    }
                 }
                 t.redraw();
             }
@@ -468,6 +482,37 @@ async fn backfill(ledger: &LedgerHandle, rows: &Arc<Mutex<Vec<RailRow>>>, traj: 
             set_about(&mut rows.lock(), traj, view);
         }
     }
+    // What the lane is waiting on from Andrey (round 10): open claims by name, and a trailing
+    // question. Read from the newest steps of the kinds that decide it.
+    if let Ok(mut steps) = ledger
+        .0
+        .steps(&StepQuery {
+            trajs: vec![traj.clone()],
+            kinds: vec![
+                StepType::new("claim/proposed"),
+                StepType::new("claim/accepted"),
+                StepType::new("claim/rejected"),
+                StepType::new("thought/text"),
+                StepType::new("mail/delivered"),
+            ],
+            order: Order::SeqDesc,
+            limit: Some(400),
+            ..Default::default()
+        })
+        .await
+    {
+        steps.reverse();
+        let claims = rail::open_claims(&steps);
+        let question = rail::pending_question(&steps);
+        if let Some(row) = rows
+            .lock()
+            .iter_mut()
+            .find(|r| r.traj.as_ref() == Some(traj))
+        {
+            row.owed_claims = claims;
+            row.question = question;
+        }
+    }
     // The same backfill for dormancy: a rail that mounts after a lane went to sleep must draw it
     // asleep, not idle (§1 — a dormant agent's rail row is how Andrey sees that no wake is coming).
     if let Ok(steps) = ledger
@@ -501,6 +546,8 @@ pub fn row_for(agent: &bough_plugin_agents::Agent) -> RailRow {
         dormant: false,
         about: None,
         leader: false,
+        owed_claims: 0,
+        question: false,
         since: None,
         clock: String::new(),
         waiting: agent.inbox().len(),
