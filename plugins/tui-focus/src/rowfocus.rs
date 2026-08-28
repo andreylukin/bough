@@ -43,10 +43,38 @@ impl RowFocus {
     pub fn is_on(&self, index: usize) -> bool {
         self.index == Some(index)
     }
+
+    /// The row whose lines contain `line` (an index into the frame's line list), from where each
+    /// row's FIRST line landed. `None` below the last row's lines — a click on the empty tail of
+    /// the transcript focuses nothing rather than the last row.
+    pub fn row_at_line(row_lines: &[u16], line: usize, total_lines: usize) -> Option<usize> {
+        if line >= total_lines {
+            return None;
+        }
+        row_lines.iter().rposition(|&first| first as usize <= line)
+    }
 }
 
 /// PURE: the indicator a focused row carries. Never colour alone (audit delight 3): a marker
 /// glyph in the gutter column AND a `sel_bg` fill.
 pub fn focus_marker() -> char {
     '▌'
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RowFocus;
+
+    #[test]
+    fn a_line_maps_to_the_row_whose_span_holds_it() {
+        // Rows starting at lines 0, 3 and 4; six lines in all.
+        let starts = [0, 3, 4];
+        assert_eq!(RowFocus::row_at_line(&starts, 0, 6), Some(0));
+        assert_eq!(RowFocus::row_at_line(&starts, 2, 6), Some(0));
+        assert_eq!(RowFocus::row_at_line(&starts, 3, 6), Some(1));
+        assert_eq!(RowFocus::row_at_line(&starts, 5, 6), Some(2));
+        // Past the last line: the empty tail, not the last row.
+        assert_eq!(RowFocus::row_at_line(&starts, 6, 6), None);
+        assert_eq!(RowFocus::row_at_line(&[], 0, 0), None);
+    }
 }
