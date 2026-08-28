@@ -801,6 +801,7 @@ fn the_focus_fill_keeps_the_labels_colour() {
         rows: rows.clone(),
         agent_name: Some("sol".into()),
         row_focus: RowFocus { index: Some(1) },
+        keyboard_here: true,
         ..Default::default()
     };
     let (lines, _, _) = pane.lines(&state, &LiveText::default(), 80, &theme);

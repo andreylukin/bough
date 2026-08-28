@@ -168,6 +168,7 @@ fn the_focused_row_paints_a_marker_in_the_gutter() {
     let steps = vec![text(1, "one"), text(2, "two"), text(3, "three")];
     let state = FocusState {
         row_focus: RowFocus { index: Some(1) },
+        keyboard_here: true,
         ..Default::default()
     };
     let mut state = state;

@@ -688,6 +688,33 @@ pub async fn dismiss_overlay(tui: &TuiHandle) {
         tui.redraw();
         return;
     }
+    // A search pane with something on screen closes on Esc from ANYWHERE (round 10,
+    // keyboard-only): after Enter on a hit the keyboard has left it, and an Esc that went to
+    // the composer left the hits up with no way out but Ctrl+F.
+    if let Some(search) = tui
+        .panes()
+        .into_iter()
+        .find(|p| p.id.as_str() == tui.0.cfg.search_pane)
+        .map(|p| p.id)
+    {
+        let visible = tui
+            .0
+            .reports
+            .read()
+            .get(&search)
+            .and_then(|r| r.aux_rows)
+            .is_some_and(|n| n > 0);
+        if visible && (tui.composer_focused() || tui.focused_pane() != search) {
+            let _ = route(
+                tui,
+                search.clone(),
+                PaneEvent::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            )
+            .await;
+            tui.give_keyboard_to_composer().await;
+            return;
+        }
+    }
     // A focused pane may own an overlay of its own (the branch picker, the search query): give it
     // the key before concluding that there is nothing to dismiss.
     let target = tui.focused_pane();

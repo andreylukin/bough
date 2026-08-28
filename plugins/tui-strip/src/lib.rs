@@ -170,13 +170,30 @@ impl Pane for StripPane {
                 rail::hit_for_agent(&agent),
             );
         }
-        // HARD clip: every line, every frame. `Paragraph` would wrap or overflow a long about-line
-        // onto the transcript's baseline; a clip that cannot overflow is what makes the audit's
-        // `idlePlease` impossible rather than unlikely (M9).
-        let lines: Vec<_> = lines
-            .into_iter()
-            .map(|l| rail::clip(l, area.width))
-            .collect();
+        // The focus ring (round 10, keyboard-only): with the keyboard in the rail, every line
+        // wears the same `▎` in column 0 the conversation wears — the rail had no visible sign
+        // of holding the keys, so a keyboard user could not find it at all.
+        let lines: Vec<_> = if cx.view.is_focused && area.width > 2 {
+            lines
+                .into_iter()
+                .map(|l| {
+                    let mut l = rail::clip(l, area.width - 1);
+                    l.spans.insert(
+                        0,
+                        ratatui::text::Span::styled(
+                            "\u{258e}",
+                            ratatui::style::Style::default().fg(theme.accent),
+                        ),
+                    );
+                    l
+                })
+                .collect()
+        } else {
+            lines
+                .into_iter()
+                .map(|l| rail::clip(l, area.width))
+                .collect()
+        };
         cx.frame.render_widget(Paragraph::new(lines), area);
     }
 

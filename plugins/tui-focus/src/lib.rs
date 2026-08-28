@@ -107,6 +107,9 @@ pub struct FocusState {
     pub now: Option<chrono::DateTime<chrono::Utc>>,
     /// Whether the focused agent's turn is running, stamped by `render` (round 6, queued tags).
     pub running: bool,
+    /// Whether this pane has the keyboard, stamped by `render` (round 10: the row marker is
+    /// drawn only then).
+    pub keyboard_here: bool,
     /// The focused agent's NAME, for the speaker label on its text (visual audit F2). `None`
     /// until `retarget` has looked it up; a text row then carries no label rather than a guess.
     pub agent_name: Option<String>,
@@ -275,6 +278,7 @@ impl FocusPane {
                 Vec::new(),
             );
         }
+        let cx_is_focused = state.keyboard_here;
         let durable = trailing_durable(&state.rows);
         // Since P5-D14 the flushes of one step index are already ONE row, so the only choice left
         // here is P3-D12's: the trailing row draws either its durable text or the live tail.
@@ -572,7 +576,9 @@ impl FocusPane {
             }
             // The roving row focus, drawn NEVER BY COLOUR ALONE (audit delight 3): a marker glyph
             // in the gutter column of every line of the row, and a `sel_bg` fill behind it.
-            if state.row_focus.is_on(i) {
+            // …and only while this pane HAS the keyboard (round 10): a marker that stayed after
+            // Esc returned the keys to the composer said the next keystroke would land here.
+            if state.row_focus.is_on(i) && cx_is_focused {
                 for (n, line) in lines.iter_mut().enumerate().skip(row_start) {
                     let marker = if n == row_start { focus_marker() } else { ' ' };
                     line.spans.insert(
@@ -750,6 +756,7 @@ impl Pane for FocusPane {
         state.height = cx.area.height;
         state.now = Some(cx.view.now);
         state.running = cx.view.running;
+        state.keyboard_here = cx.view.is_focused;
         let live = self.live.lock().clone();
         let theme = *cx.theme();
         // The FOCUS RING (B1/M16): one column, ALWAYS reserved, painted only when this pane holds
@@ -1177,6 +1184,9 @@ pub async fn retarget(
         if let Some(row) = held.row_of(&step) {
             held.scroll = Scroll::anchored_on(row);
         }
+        // The row marker lands on the hit too (round 10, keyboard-only): a jump the marker did
+        // not follow left Up/Down/Enter working from wherever they were before the search.
+        held.row_focus = RowFocus::on_step(&held.rows, &step);
         held.anchor = Some(step);
     }
 }

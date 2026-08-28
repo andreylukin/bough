@@ -49,6 +49,19 @@ impl TerminalGuard {
         ENTERED.fetch_or(RAW, Ordering::SeqCst);
 
         execute!(out, terminal::EnterAlternateScreen).map_err(|e| fail("alt screen", e))?;
+        // The keyboard-enhancement flags (round 10): without them a terminal reports Shift+Enter
+        // as plain Enter or as a raw `ESC [27;2;13~` that lands in the composer as text — the
+        // keyboard-only persona's two lines fused into one. Terminals that speak the kitty
+        // protocol then report `Enter` with SHIFT; the flags are popped on the way out. Best
+        // effort: a terminal that does not support them is left as it was.
+        if matches!(terminal::supports_keyboard_enhancement(), Ok(true)) {
+            let _ = execute!(
+                out,
+                event::PushKeyboardEnhancementFlags(
+                    event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                )
+            );
+        }
         ENTERED.fetch_or(ALT, Ordering::SeqCst);
 
         if cfg.mouse {
@@ -99,6 +112,7 @@ pub fn restore_now() {
         let _ = execute!(out, event::DisableBracketedPaste);
     }
     if done & MOUSE != 0 {
+        let _ = execute!(out, event::PopKeyboardEnhancementFlags);
         let _ = execute!(out, event::DisableMouseCapture);
     }
     if done & ALT != 0 {
