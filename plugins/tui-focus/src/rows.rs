@@ -476,6 +476,65 @@ fn claim_row(step: &Step) -> Option<(String, Row)> {
     ))
 }
 
+/// Tools that change files, by name (typed rows and program sub-calls alike).
+pub fn changes_files(name: &str) -> bool {
+    matches!(name, "patch" | "edit_file" | "write_file")
+}
+
+/// PURE: the files a run of agent rows changed, in first-touched order, from every `patch` /
+/// `edit_file` / `write_file` call — typed rows and the calls inside programs (round 6): "what
+/// did it do to my files" was invisible among the `▸ program …` lines.
+pub fn changed_files(rows: &[Row]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |name: &str, args: &serde_json::Value| {
+        if changes_files(name) {
+            let path = first_string(args);
+            if !path.is_empty() && !out.contains(&path) {
+                out.push(path);
+            }
+        }
+    };
+    for row in rows {
+        match row {
+            Row::Tool { name, args, .. } => push(name, args),
+            Row::Program { subs, .. } => {
+                for sub in subs {
+                    push(&sub.name, &sub.args);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// PURE: which rows are QUEUED messages from Andrey (round 6): sent while a turn was running,
+/// not yet begun. Nothing is queued while the agent is idle. While it runs, every Andrey row
+/// after the newest agent row is queued when that row is still in flight (a call with no
+/// result, or text still streaming); otherwise the FIRST trailing Andrey row is the turn that is
+/// running and the rest are queued.
+pub fn queued_rows(rows: &[Row], running: bool, streaming: bool) -> Vec<usize> {
+    if !running {
+        return Vec::new();
+    }
+    let last_agent = rows.iter().rposition(is_agent_row);
+    let in_flight = streaming
+        || last_agent.is_some_and(|i| match &rows[i] {
+            Row::Tool { result, .. } => result.is_none(),
+            Row::Program { result, error, .. } => result.is_none() && error.is_none(),
+            _ => false,
+        });
+    let start = last_agent.map(|i| i + 1).unwrap_or(0);
+    let trailing: Vec<usize> = (start..rows.len())
+        .filter(|&i| matches!(rows[i], Row::Andrey { .. }))
+        .collect();
+    if in_flight {
+        trailing
+    } else {
+        trailing.into_iter().skip(1).collect()
+    }
+}
+
 /// PURE: the live line for an in-flight call at the END of the rows (round 5): the newest agent
 /// row, when it is a tool or program with no result yet — `▸ running · bash cargo test · 12s`.
 /// `None` when nothing is in flight, so a finished transcript shows no such line.

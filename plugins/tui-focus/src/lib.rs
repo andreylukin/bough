@@ -105,6 +105,8 @@ pub struct FocusState {
     /// The view's `now` as of the last frame, stamped by `render` so the pure line builder can
     /// say how long the in-flight call has run (round 5).
     pub now: Option<chrono::DateTime<chrono::Utc>>,
+    /// Whether the focused agent's turn is running, stamped by `render` (round 6, queued tags).
+    pub running: bool,
     /// The focused agent's NAME, for the speaker label on its text (visual audit F2). `None`
     /// until `retarget` has looked it up; a text row then carries no label rather than a guess.
     pub agent_name: Option<String>,
@@ -312,8 +314,28 @@ impl FocusPane {
             );
         }
 
+        let queued = rows::queued_rows(&state.rows, state.running, !live.text.is_empty());
+        // Where each turn's agent rows begin, for the `✎ changed …` line at its end (round 6).
+        let mut turn_start: usize = 0;
+        let changed_line = |rows: &[Row], theme: &Theme| -> Option<Line<'static>> {
+            let files = rows::changed_files(rows);
+            if files.is_empty() {
+                return None;
+            }
+            Some(Line::styled(
+                format!("\u{270e} changed {}", files.join(" \u{b7} ")),
+                Style::default().fg(theme.added),
+            ))
+        };
         let mut row_lines: Vec<u16> = Vec::with_capacity(state.rows.len());
         for (i, row) in state.rows.iter().enumerate() {
+            // A new message from Andrey closes the previous turn: say what that turn changed.
+            if matches!(row, Row::Andrey { .. }) && i > turn_start {
+                if let Some(l) = changed_line(&state.rows[turn_start..i], theme) {
+                    lines.push(l);
+                }
+                turn_start = i;
+            }
             let flash = state.anchor.as_ref() == Some(row.step());
             let row_start = lines.len();
             row_lines.push(row_start as u16);
@@ -329,7 +351,20 @@ impl FocusPane {
             }
             match row {
                 Row::Andrey { text, .. } => {
-                    lines.push(label("andrey", theme.accent));
+                    if queued.contains(&i) {
+                        // Sent while a turn was running (round 6): the tag says it waits.
+                        lines.push(Line::from(vec![
+                            Span::styled(
+                                "andrey:",
+                                Style::default()
+                                    .fg(theme.accent)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(" \u{b7} queued", Style::default().fg(theme.dim)),
+                        ]));
+                    } else {
+                        lines.push(label("andrey", theme.accent));
+                    }
                     lines.extend(bough_plugin_tui_render::markdownish(text, width, theme));
                 }
                 Row::Mail { from, subject, .. } => {
@@ -519,6 +554,17 @@ impl FocusPane {
                 }
             }
         }
+        // The last turn's `✎ changed …` line, once nothing is in flight (round 6).
+        let last_in_flight = state
+            .now
+            .and_then(|now| rows::running_line(&state.rows, now))
+            .is_some()
+            || !live.text.is_empty();
+        if !last_in_flight && turn_start < state.rows.len() {
+            if let Some(l) = changed_line(&state.rows[turn_start..], theme) {
+                lines.push(l);
+            }
+        }
         // The LIVE LINE (round 5): while a call is in flight, the bottom of the agent's span says
         // what is running and for how long — `▸ running · bash cargo test · 12s` — so a reader
         // who looks away and back knows what the wait is for without reading the status line.
@@ -644,6 +690,7 @@ impl Pane for FocusPane {
         // scroll clamped against a height of 0.
         state.height = cx.area.height;
         state.now = Some(cx.view.now);
+        state.running = cx.view.running;
         let live = self.live.lock().clone();
         let theme = *cx.theme();
         // The FOCUS RING (B1/M16): one column, ALWAYS reserved, painted only when this pane holds

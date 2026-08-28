@@ -918,3 +918,107 @@ fn an_in_flight_call_gets_a_live_line_with_its_clock() {
     assert_eq!(running_line(&done, at), None);
     assert_eq!(running_line(&[], at), None);
 }
+
+/// Round 6: the files a turn changed are said once, at the turn's end, in the added colour.
+#[test]
+fn a_turn_that_changed_files_says_so_at_its_end() {
+    use bough_plugin_tui_focus::rows::changed_files;
+    let rows = rows_from_steps(&[
+        step(
+            1,
+            "mail/delivered",
+            serde_json::json!({ "from": "andrey", "subject": "hi", "summary": "fix it" }),
+        ),
+        step(
+            2,
+            "tool/call",
+            serde_json::json!({ "call": "c1", "name": "view", "args": { "path": "a.rs" } }),
+        ),
+        step(
+            3,
+            "tool/result",
+            serde_json::json!({ "call": "c1", "name": "view", "outcome": "ok", "content": "x", "step_index": 0 }),
+        ),
+        step(
+            4,
+            "tool/call",
+            serde_json::json!({ "call": "c2", "name": "patch", "args": { "path": "a.rs" } }),
+        ),
+        step(
+            5,
+            "tool/result",
+            serde_json::json!({ "call": "c2", "name": "patch", "outcome": "ok", "content": "ok", "step_index": 1 }),
+        ),
+        step(
+            6,
+            "tool/call",
+            serde_json::json!({ "call": "c3", "name": "write_file", "args": { "path": "b.md" } }),
+        ),
+        step(
+            7,
+            "tool/result",
+            serde_json::json!({ "call": "c3", "name": "write_file", "outcome": "ok", "content": "ok", "step_index": 2 }),
+        ),
+        step(
+            8,
+            "thought/text",
+            serde_json::json!({ "step_index": 3, "text": "done" }),
+        ),
+    ]);
+    assert_eq!(
+        changed_files(&rows),
+        vec!["a.rs".to_string(), "b.md".to_string()]
+    );
+    let out = paint_as(&rows, 80, Some("sol"));
+    let last = out.last().unwrap();
+    assert_eq!(last.trim(), "✎ changed a.rs · b.md", "{out:?}");
+    // A turn that only read changes nothing and says nothing.
+    let quiet = paint_as(&rows[..2], 80, Some("sol"));
+    assert!(!quiet.iter().any(|l| l.contains("changed")), "{quiet:?}");
+}
+
+/// Round 6: a message sent while a turn runs wears `· queued` until its turn starts.
+#[test]
+fn a_message_sent_while_running_is_tagged_queued() {
+    use bough_plugin_tui_focus::rows::queued_rows;
+    let andrey = |i: u64| {
+        step(
+            i,
+            "mail/delivered",
+            serde_json::json!({ "from": "andrey", "subject": "m", "summary": format!("m{i}") }),
+        )
+    };
+    // Idle: nothing is queued, whatever the shape.
+    let rows = rows_from_steps(&[andrey(1), andrey(2)]);
+    assert!(queued_rows(&rows, false, false).is_empty());
+    // Running with no agent row yet: the first message is the running turn, the second waits.
+    assert_eq!(queued_rows(&rows, true, false), vec![1]);
+    // Running with a call in flight: every message after it waits.
+    let rows = rows_from_steps(&[
+        andrey(1),
+        step(
+            2,
+            "tool/call",
+            serde_json::json!({ "call": "c1", "name": "bash", "args": { "command": "sleep 9" } }),
+        ),
+        andrey(3),
+        andrey(4),
+    ]);
+    assert_eq!(queued_rows(&rows, true, false), vec![2, 3]);
+    // Streaming text counts as in flight too.
+    let rows = rows_from_steps(&[
+        andrey(1),
+        step(
+            2,
+            "thought/text",
+            serde_json::json!({ "step_index": 0, "text": "on it" }),
+        ),
+        andrey(3),
+    ]);
+    assert_eq!(queued_rows(&rows, true, true), vec![2]);
+    assert_eq!(
+        queued_rows(&rows, true, false),
+        Vec::<usize>::new(),
+        "text done, the next turn is starting: not queued"
+    );
+}
