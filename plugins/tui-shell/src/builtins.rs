@@ -136,8 +136,22 @@ impl Command for Help {
                 if listed.is_empty() {
                     lines.push("  (none registered)".to_string());
                 }
+                // One summary column (visual audit): the widest usage sets it, capped so one
+                // long usage cannot push every summary to the right edge; a usage past the cap
+                // keeps its summary on the next line AT the column, so the column still reads.
+                let col = listed
+                    .iter()
+                    .map(|i| i.usage.chars().count())
+                    .max()
+                    .unwrap_or(0)
+                    .clamp(22, 34);
                 for info in listed {
-                    lines.push(format!("  {:<22} {}", info.usage, info.summary));
+                    if info.usage.chars().count() > col {
+                        lines.push(format!("  {}", info.usage));
+                        lines.push(format!("  {:col$} {}", "", info.summary));
+                    } else {
+                        lines.push(format!("  {:<col$} {}", info.usage, info.summary));
+                    }
                 }
             }
             // A reason, never a silent gap (M27): every section of `/help` says something.
