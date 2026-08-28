@@ -129,7 +129,7 @@ repeat the reply the `replied: …` state already carries.
 
 **R10 — from the busy-executive pass.** With the rail collapsed the status chip carries the
 state (`sol · running`), not just the name. A failed call says why on its own line
-(`▸ draft_ticket … ✗ tags isn't a valid parameter`), clipped to half the width. A "what do I
+(`▸ draft_ticket … ✗ audience must name a team`), clipped to half the width. A "what do I
 owe" chip: `◇ 1 claim · ? question` on the status line (`rows::owed` from the transcript's rows,
 reported each frame; dropped last but for the stop key and the product) and `◇N` / `?` after the
 lane's name on the rail (`rail::open_claims`, `rail::pending_question` from the ledger by name,

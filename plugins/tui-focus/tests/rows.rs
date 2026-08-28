@@ -1077,7 +1077,7 @@ fn failed_attempts_fold_under_the_call_that_succeeded() {
     steps.push(step(
         12,
         "thought/text",
-        serde_json::json!({ "step_index": 1, "text": "let me fix the tag" }),
+        serde_json::json!({ "step_index": 1, "text": "let me fix the path" }),
     ));
     steps.extend(call(20, false));
     steps.extend(call(30, true));
@@ -1106,7 +1106,7 @@ fn failed_attempts_fold_under_the_call_that_succeeded() {
         "the success follows the fold: {out:?}"
     );
     assert!(
-        !out.iter().any(|l| l.contains("let me fix the tag")),
+        !out.iter().any(|l| l.contains("let me fix the path")),
         "narration folded: {out:?}"
     );
     assert!(out.iter().any(|l| l.contains("done")), "{out:?}");

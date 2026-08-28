@@ -565,7 +565,7 @@ fn call_name(row: &Row) -> Option<&str> {
 
 /// PURE: the runs of failed calls — with the model's narration between them — that are followed
 /// by a successful call OF THE SAME TOOL, so the conversation can fold them under `▸ N failed
-/// attempts` instead of leaving `✗` rows and "let me fix the tag" inline forever. A failed run
+/// attempts` instead of leaving `✗` rows and "let me fix that" inline forever. A failed run
 /// that never succeeded is NOT folded: that failure is the news. A failed `read_file` followed
 /// by a successful `write_file` is two different things, not a retry (02-tool-calls).
 pub fn retry_folds(rows: &[Row]) -> Vec<RetryFold> {

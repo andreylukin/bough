@@ -333,7 +333,7 @@ mod failed_header_tests {
             call: bough_plugin_tools::ToolCallId::new("c1"),
             name: bough_plugin_tools::ToolName::new("draft_ticket"),
             outcome: ToolOutcomeKind::Error,
-            content: "tags isn't a valid parameter for draft_ticket\nmore".to_string(),
+            content: "audience must name a team\nmore".to_string(),
             value: None,
             attached: vec![],
             concludes_wake: false,
@@ -351,7 +351,7 @@ mod failed_header_tests {
         });
         let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
         assert!(
-            text.contains("\u{2717} tags isn't a valid parameter"),
+            text.contains("\u{2717} audience must name a team"),
             "{text}"
         );
         assert!(text.chars().count() <= 100, "{text}");
