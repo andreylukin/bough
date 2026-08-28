@@ -243,7 +243,14 @@ async fn about_state_now(
         .await
         .ok()?;
     let state = steps.first()?.body.get("state")?.as_str()?.trim();
-    (!state.is_empty()).then(|| state.split_whitespace().collect::<Vec<_>>().join(" "))
+    // A table cell, not markdown: the writer's backticks and stars are noise here (the rail
+    // cleans its copy the same way).
+    let state: String = state
+        .chars()
+        .filter(|c| !matches!(c, '`' | '*' | '_'))
+        .collect();
+    let state = state.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!state.is_empty()).then_some(state)
 }
 
 /// The first `max` characters, marked with `…` when cut — a table cell, not a paragraph.
