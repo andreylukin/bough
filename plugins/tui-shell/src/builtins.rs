@@ -125,20 +125,6 @@ impl Command for Help {
         for (keys, what) in keymap_hints() {
             lines.push(format!("  {keys:<22} {what}"));
         }
-        // Each pane's keys under the pane's own name (visual audit): "(trajectory)" after six
-        // rows in a row was a column of noise, and the reader's question is "what does THIS pane
-        // take", which a heading answers and a suffix does not.
-        for pane in self.0.entries() {
-            let hints = pane.pane.key_hints();
-            if hints.is_empty() {
-                continue;
-            }
-            lines.push(String::new());
-            lines.push(format!("{} pane", pane.info.title));
-            for (keys, what) in hints {
-                lines.push(format!("  {keys:<22} {what}"));
-            }
-        }
         lines.push(String::new());
         lines.push("commands  (or press / for the same list, filtered as you type)".to_string());
         // The shell's OWN registry handle, not a fresh `ctx.get`: `/help` lists what THIS surface
@@ -156,6 +142,22 @@ impl Command for Help {
             }
             // A reason, never a silent gap (M27): every section of `/help` says something.
             None => lines.push("  (this surface has no command registry)".to_string()),
+        }
+        // Each pane's keys under the pane's own name (visual audit): "(trajectory)" after six
+        // rows in a row was a column of noise, and the reader's question is "what does THIS pane
+        // take", which a heading answers and a suffix does not. LAST, after the commands: the
+        // band is capped, and a pane's keys are the least urgent third — the pane teaches them
+        // itself once the keyboard is in it.
+        for pane in self.0.entries() {
+            let hints = pane.pane.key_hints();
+            if hints.is_empty() {
+                continue;
+            }
+            lines.push(String::new());
+            lines.push(format!("{} pane", pane.info.title));
+            for (keys, what) in hints {
+                lines.push(format!("  {keys:<22} {what}"));
+            }
         }
         Ok(CommandOutput {
             text: lines.join("\n"),
