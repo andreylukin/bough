@@ -43,7 +43,6 @@ tui_start
 # Wide, so the status row keeps its hints: the drop chain sheds them first on a narrow row and this
 # script reads `? help` as the proof that the row is on screen.
 shell-use resize 160 40
-shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
 sleep 0.6
 shell-use keys "Ctrl+f"
 sleep 1

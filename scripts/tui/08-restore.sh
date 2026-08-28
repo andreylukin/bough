@@ -36,18 +36,17 @@ YML
 # `Show` half of the restore is covered by `tui-shell`'s `term::restores` observer instead
 # (`plugins/tui-shell/tests/restore.rs`).
 assert_restored() {
-  shell-use wait idle --timeout 20000 >/dev/null
-  see "export BOUGH_HOME" --timeout 5000 >/dev/null \
+  see "export BOUGH_HOME" --timeout 20000 >/dev/null \
     || { echo "the normal screen is not back: the alt screen was never left"; return 1; }
   shell-use type "echo RESTORED-ECHO"
   see "RESTORED-ECHO" --timeout 5000 >/dev/null || { echo "typed characters do not echo: raw mode is still on"; return 1; }
   shell-use press Enter
-  shell-use wait idle --timeout 5000 >/dev/null
+  sleep 0.5
 }
 
 tui_open
 tui_start "$NEVER"
-shell-use wait idle --timeout 30000
+wait_for "never activated" 30000
 
 t a_row_that_never_activates_leaves_the_alt_screen_before_reporting \
   bash -c 'see "never activated" --timeout 20000 && see "tui.never" --timeout 5000'
@@ -75,7 +74,7 @@ arm_the_probe() {
     shell-use keys "Ctrl+f" >/dev/null 2>&1 || true
     for j in $(seq 1 "$i"); do shell-use keys Tab >/dev/null; done
     shell-use press p >/dev/null
-    shell-use wait idle --timeout 10000 >/dev/null 2>&1 || true
+    sleep 0.5
     if see "panic" --timeout 1000 >/dev/null 2>&1 || [ -s "$EXIT_FILE" ]; then return 0; fi
     shell-use keys "Ctrl+u" >/dev/null 2>&1 || true
   done

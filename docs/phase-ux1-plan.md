@@ -1501,3 +1501,66 @@ prints one SKIP line per named bullet (#36, #38) · the verification map's wrong
 ### Tests marked `#[ignore]` by this close
 
 None.
+
+---
+
+## 5. The suite-speed pass (2026-08-27)
+
+`make tui-test-replay` — 26 scripts, and the whole of `make gates` bar sixty seconds — took **2336 s**
+(≈39 min). `make test` is ~60 s, so the shell-use suite was forty times the rest of the gate.
+
+**Where it went.** `shell-use wait idle` blocks until the PTY stops repainting. `tui.status` repaints
+a spinner frame every `spinner_ms` (80) and an elapsed second on top of it for as long as a turn
+runs, so a screen with a turn on it is never idle: every one of the ~99 `wait idle` calls that could
+land mid-turn could only ever run its whole timeout out. Thirty of them did, at tens of seconds each.
+
+**The two halves of the fix.**
+
+1. **`tui-status` gains `static_status: bool`** (`plugins/tui-status/src/lib.rs`, defaulted `false`,
+   validated like every other field). True draws the running turn as the word `running`, unchanged
+   frame to frame — `StatusPane::tick` returns immediately and `Field::Elapsed` is a constant — so
+   the terminal goes quiet the moment the answer has landed. The HUMAN default is untouched:
+   `bundles/bough-tui-app.yml` still animates, because M32's finding was a running turn that showed
+   nothing moving. The suite sets it through a generated patch layer that `scripts/tui/lib.sh`
+   writes next to its old-feed one (`$BOUGH_HOME/<script>/status.static.yml`), and
+   `24-honesty.sh` — whose `a_running_turn_shows_a_spinner_and_an_elapsed_clock` is ABOUT the
+   animation — opts out with `TUI_STATIC_STATUS=0` before it sources `lib.sh`. A boolean, not an
+   empty `spinner`: a one-frame spinner still repaints the clock, and `validate` still refuses an
+   empty frame list.
+2. **`wait idle` is gone from every offline path.** `lib.sh` grew `wait_for <text>`, `wait_any <ms>
+   <needle>…` and `wait_steps <kind> <n>`; each of the 99 sites now waits for the thing the NEXT
+   named assertion needs — the text, one of the two shapes a report can take, or the ledger row —
+   and every assertion is unchanged. `wait idle` survives only in the LIVE half of `21-stream.sh`
+   and `24-honesty.sh`, where a real model answer has no fixed needle. Three sites needed the
+   ledger rather than the screen, because the replay transcript says the same sentence every round:
+   a screen wait there is satisfied by the PREVIOUS turn's answer (`15-leader-swap.sh::turn_on`,
+   `11-swap-rollups.sh::seal_until`, `13-claims.sh`'s five decisions).
+
+**Result: 2336 s → 663 s** (11 min 03 s), all 30 scripts green, 0 `not ok`, every named bullet kept.
+The per-script times are in `BUILD.md`'s gates row. The remaining outlier is `16-focus.sh` at 231 s: its cost is
+polled `see … --not`, `row_with` and `see_anywhere` walks, not `wait idle`, and it was left alone.
+
+**Three harness defects the speed-up exposed** (each had been hidden by a wait long enough to paper
+over it, and each is now fixed):
+
+* `sql()` reported a FAILED `sqlite3` as an empty answer. A live recompose tears the ledger row down
+  and rebuilds it, and a read in that window errors rather than waits — `24-honesty.sh` read "no
+  `request/header` in the ledger" over a ledger holding three. It retries now.
+* `tui_quit` returned when the shell prompt was back, but the terminal is restored BEFORE the tree
+  is torn down and the ledger's closing checkpoint runs after it. It now waits for the process.
+* `tui_start` returned on the composer's placeholder, which is drawn on the first frame while the
+  rest of the tree is still activating; a command submitted into that window came back as
+  `usage: /seal`. It settles for 1.5 s.
+
+**And the one red bullet on this tree, `15-leader-swap.sh::the_patch_lands_without_a_restart`, was
+the harness, not the crate.** `turn_on` spent its whole 40 s `wait idle` per attempt, so `took_over`'s
+six attempts could not finish inside the replay transcript. With the wait moved onto the new
+`request/header`, the bullet passes on the FIRST attempt with the debounce window cut from 10 s to
+3 s, re-run repeatedly. Nothing is stale: `Tools::schemas()` is computed from the live registry on
+every call, and `tool-leader` injects `leader`, so editing `leader.config.agent` withdraws the key,
+unloads the five scoped tools with it and re-registers them at `ToolScope::Agent(terra)` before the
+new lane's next wake. No crate change was needed and none was made.
+
+**One stale assertion, also fixed:** `24-honesty.sh` listed `open_pr` as a phantom tool. Track B's
+`actions-github` row registers it (with `push_to_pr` and `draft_ticket`), so the identity band naming
+it is honest; the phantoms are now `deploy_to_production`, `send_email` and `merge_pr`.

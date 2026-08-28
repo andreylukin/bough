@@ -10,7 +10,7 @@ tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/scroll.patch.yml"
 
 shell-use submit "fill the trajectory"
-shell-use wait idle --timeout 30000
+wait_for "trajectory line"
 
 # The top visible line OF THE TRAJECTORY. Column 35 onward, because a whole screen row also spans
 # the rail — whose about-line legitimately changes when a new turn starts, which made
@@ -54,7 +54,7 @@ t page_up_and_arrow_keys_scroll_the_trajectory \
 # byte-identical before and after.
 held="$(top_line)"
 shell-use submit "one more turn"
-shell-use wait idle --timeout 30000
+wait_for "second turn line"
 t the_viewport_does_not_move_while_new_steps_stream \
   bash -c "[ \"\$(top_line)\" = \"$held\" ]"
 
@@ -62,7 +62,7 @@ t the_viewport_does_not_move_while_new_steps_stream \
 # wheel and PageUp/PageDown are routed past it (`run.rs::on_key`). So this bullet takes keyboard
 # focus the way a user does: it clicks the trajectory first.
 shell-use mouse click 60 10
-shell-use wait idle --timeout 5000 >/dev/null 2>&1 || true
+sleep 0.5
 shell-use press End
 t end_re_arms_follow_and_jumps_to_the_bottom \
   bash -c "top_changed_from \"$held\""

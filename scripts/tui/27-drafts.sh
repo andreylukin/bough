@@ -53,8 +53,7 @@ submit_until_echoed() {
   local text="$1" i
   for i in 1 2 3; do
     shell-use submit "$text" >/dev/null
-    shell-use wait idle --timeout 30000 >/dev/null
-    if shell-use wait text "$text" --timeout 5000 >/dev/null 2>&1; then return 0; fi
+    if shell-use wait text "$text" --timeout 20000 >/dev/null 2>&1; then return 0; fi
     echo "# the composer swallowed the message (attempt $i); retrying" >&2
   done
   return 1

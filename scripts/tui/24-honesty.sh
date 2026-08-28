@@ -11,6 +11,10 @@
 #
 # The cwd bullet is a DISK assertion. B5's whole nature is that the screen said the file was
 # written; only the filesystem can refute that.
+# The one script that must keep the ANIMATED status line: `a_running_turn_shows_a_spinner_and_an
+# _elapsed_clock` is the assertion M32 exists for, and it is asserted here against the shipped
+# default. Set BEFORE the source, which is where `lib.sh` reads it.
+TUI_STATIC_STATUS=0
 source "$(dirname "$0")/lib.sh"
 
 tui_open
@@ -21,7 +25,7 @@ tui_open
 if [ -z "$BOUGH_LIVE" ]; then
   tui_start "$REPO_ROOT/scripts/tui/fixtures/cwd.patch.yml"
   shell-use submit "write the file in the current directory"
-  shell-use wait idle --timeout 40000
+  wait_for "landing.txt" 40000
 
   t_disk a_file_in_the_current_directory_lands_in_the_launch_cwd \
     "$HOME_DIR/work/landing.txt" "the pinned root is the launch cwd"
@@ -72,7 +76,7 @@ t a_running_turn_shows_a_spinner_and_an_elapsed_clock \
     exit 1
   '
 shell-use press Escape
-shell-use wait idle --timeout 30000 >/dev/null 2>&1 || true
+sleep 1
 
 # --- M24: a REAL cost, not `—` forever. -------------------------------------------------------
 #
@@ -196,7 +200,7 @@ if [ -n "$BOUGH_LIVE" ]; then
   t the_capability_answer_names_no_tool_that_is_not_registered \
     bash -c '
       txt="$(shell-use text)"
-      for phantom in "open_pr" "deploy_to_production"; do
+      for phantom in "merge_pr" "deploy_to_production"; do
         printf "%s" "$txt" | grep -q "$phantom" && {
           echo "the answer advertises $phantom, which no Provider registers"; exit 1; }
       done
@@ -211,7 +215,12 @@ else
       [ -n "$body" ] || { echo "no request/header in the ledger to read the identity band from"; exit 1; }
       # `spawn_worker` IS mounted in this profile (`tool.spawn_worker` in `bough-base.yml`), so
       # naming it is honest. The phantoms are the ones no row registers anywhere.
-      for phantom in "open_pr" "deploy" "send_email"; do
+      #
+      # MERGE (track B -> Phase 5): open_pr came OFF this list. It was a phantom when M25 was
+      # written; the actions-github row of track B registers it, along with push_to_pr and
+      # draft_ticket, so the band naming it is now the honest half of the claim and the bullet was
+      # failing on a tool that exists. The claim is unchanged: a name NO row registers.
+      for phantom in "deploy_to_production" "send_email" "merge_pr"; do
         printf "%s" "$body" | grep -q "$phantom" && {
           echo "the identity band names $phantom with no Provider mounted"; exit 1; }
       done
@@ -313,7 +322,7 @@ t a_quit_then_relaunch_restores_every_turn \
     see "start something long" --timeout 20000 \
       || { echo "the last turn did not come back after a relaunch"; exit 1; }
     shell-use press Home
-    shell-use wait idle --timeout 5000 >/dev/null 2>&1 || true
+    sleep 0.5
     for i in $(seq 1 20); do
       shell-use text | grep -q "write the file in the current directory" && exit 0
       shell-use press Home

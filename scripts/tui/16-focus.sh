@@ -35,12 +35,12 @@ tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/tool-calls.patch.yml"
 
 shell-use submit "run the scripted tools"
-shell-use wait idle --timeout 30000
+wait_for "bash" 30000
 t the_tool_rows_are_on_screen see "bash" --timeout 20000
 
 # --- B1: click the transcript, then type. The turn must start. ---------------------------------
 shell-use mouse click --on-text "bash"
-shell-use wait idle --timeout 5000 >/dev/null 2>&1 || true
+sleep 0.5
 shell-use type "a message typed after a click"
 t the_click_did_not_steal_the_keyboard \
   see "a message typed after a click" --timeout 10000

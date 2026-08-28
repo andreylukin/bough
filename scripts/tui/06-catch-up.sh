@@ -9,7 +9,9 @@ source "$(dirname "$0")/lib.sh"
 # First boot: create the lane and leave it idle, so the second boot has a real chain to resume.
 tui_open
 tui_start
-shell-use wait idle --timeout 20000
+# The lane has to EXIST before this boot is torn down: the rail row is the proof, and it is drawn
+# a beat after the composer is.
+wait_for "sol" 20000
 tui_quit
 tui_close
 
@@ -35,7 +37,8 @@ seed_mail
 
 tui_open
 tui_start
-shell-use wait idle --timeout 30000
+# The catch-up wake is what this boot is FOR: wait for the answer it produces, not for a clock.
+wait_for "and the rest of it"
 tui_quit
 
 after="$(steps_of 'wake/start')"
@@ -70,7 +73,7 @@ tui_close
 quiet_before="$(steps_of 'wake/start')"
 tui_open
 tui_start
-shell-use wait idle --timeout 30000
+wait_for "sol" 20000
 tui_quit
 t an_empty_inbox_produces_no_wake_at_all \
   bash -c "[ \"\$(steps_of 'wake/start')\" = \"$quiet_before\" ]"
@@ -98,7 +101,7 @@ YML
 # Boot once with both lanes and nothing queued: this is what creates `terra`.
 tui_open
 tui_start "$TWO"
-shell-use wait idle --timeout 30000
+wait_for "terra" 20000
 tui_quit
 tui_close
 
@@ -112,7 +115,7 @@ seed_mail two   # queues one message on lane/sol ONLY
 
 tui_open
 tui_start "$TWO"
-shell-use wait idle --timeout 30000
+wait_for "and the rest of it"
 tui_quit
 
 sol_after="$(wakes_on lane/sol)"

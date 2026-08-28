@@ -25,7 +25,7 @@ tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/scroll.patch.yml"
 
 shell-use submit "fill the trajectory"
-shell-use wait idle --timeout 30000
+wait_for "trajectory line"
 
 # --- The status line says the six things §2.5 lists. -------------------------------------------
 #
@@ -33,7 +33,6 @@ shell-use wait idle --timeout 30000
 # and what happens then is the drop chain, which the crate's own tests pin at 200/120/80/40. This
 # bullet is about the line SAYING the six things when there is room to.
 shell-use resize 160 40
-shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
 sleep 0.6
 #
 # `%` and `$` are asserted as the SHAPES they are: the exact number moves with every turn, and a
@@ -71,7 +70,6 @@ t the_status_line_is_exactly_one_row \
 
 # --- 80x24: the rail collapses, and nothing shares a baseline with the transcript. -------------
 shell-use resize 80 24
-shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
 sleep 0.6
 
 t at_80x24_the_rail_is_gone_and_no_row_carries_two_runs \
@@ -97,7 +95,6 @@ if bad:
 
 # --- 200x50: the prose measure is capped. ------------------------------------------------------
 shell-use resize 200 50
-shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
 sleep 0.6
 # A paragraph long enough that the cap is the only thing that can wrap it. The old bullet
 # asserted `worst > 140` over a fixture whose rows are about twenty characters: the check could
@@ -105,7 +102,7 @@ sleep 0.6
 # goes through the same wrap as the answer, so a long one is a paragraph this script controls.
 LOREM="$(python3 -c "print(chr(32).join([chr(108)+chr(111)+chr(114)+chr(101)+chr(109)]*60))")"
 shell-use submit "$LOREM"
-shell-use wait idle --timeout 30000
+wait_for "and the rest of it"
 
 # MERGE: SCROLL the paragraph back into view before measuring it. The merged tree gives the column
 # a `drafts` pane (`tui.drafts`, 30% of the height), so the transcript viewport is shorter than it
@@ -142,7 +139,6 @@ if len(rows) < 4:
 
 # --- Overlays dismiss with Esc, one at a time, and Esc on nothing is harmless. -----------------
 shell-use resize 120 40
-shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
 sleep 0.5
 
 t esc_dismisses_help_then_search_then_nothing \

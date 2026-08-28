@@ -29,7 +29,7 @@ export -f see_any
 # One boot to create the lane, then the seeded day, then the boot under test.
 tui_open
 tui_start "$MEMORY_PATCH"
-shell-use wait idle --timeout 30000
+wait_for "sol" 20000
 tui_quit
 tui_close
 
@@ -51,7 +51,6 @@ seed_day one
 
 tui_open
 tui_start "$MEMORY_PATCH"
-shell-use wait idle --timeout 30000
 
 tiers_now() { sql "select count(*) from rollups where kind = 'tier';"; }
 # The `bash -c` bullets below are a FRESH shell (lib.sh exports its own helpers for the same
@@ -61,12 +60,19 @@ export -f tiers_now
 # `seal_until <n>`: run `/seal` until the tier count exceeds <n>, or give up loudly. A pass is
 # capped at `max_calls_per_pass`, and the launcher's patch watch is debounced, so "seal once and
 # look" is a race in both directions.
+#
+# The wait after each `/seal` is on the TIER COUNT and never on the screen: every report this
+# script can produce is already on screen from the pass before it, so a text wait here returns
+# instantly and the loop spends its twelve attempts inside the debounce window.
 seal_until() {
-  local want="$1" i
+  local want="$1" i j
   for i in $(seq 1 12); do
     if [ "$(tiers_now)" -gt "$want" ]; then return 0; fi
     shell-use submit "/seal" >/dev/null
-    shell-use wait idle --timeout 60000 >/dev/null
+    for j in $(seq 1 20); do
+      [ "$(tiers_now)" -gt "$want" ] && return 0
+      sleep 0.5
+    done
   done
   echo "the tier count is still $(tiers_now), wanted more than $want"
   return 1
@@ -88,7 +94,7 @@ took_over() {
   local i
   for i in $(seq 1 10); do
     shell-use submit "/seal" >/dev/null
-    shell-use wait idle --timeout 60000 >/dev/null
+    sleep 3
     if see_any "the stub's refusal" "seals nothing, ever"; then
       return 0
     fi
@@ -106,7 +112,7 @@ t the_stub_row_took_over_without_a_restart \
 tiers_under_stub="$(tiers_now)"
 
 shell-use submit "/seal"
-shell-use wait idle --timeout 60000
+wait_any 60000 "call(s)," "nothing to seal" "seals nothing, ever"
 
 t seal_reports_nothing_to_do_under_the_stub \
   bash -c "see_any \"the stub's refusal\" 'seals nothing, ever' \

@@ -28,7 +28,7 @@ if [ -n "$BOUGH_LIVE" ]; then
   # invariant over an answer that never wrapped asserts nothing. This also re-wraps history at a
   # width the answer never streamed at, which is the same property from the other side.
   shell-use resize 70 40
-  shell-use wait idle --timeout 15000
+  sleep 1
 
   t a_live_haiku_answer_has_no_mid_word_break \
     bash -c '
@@ -48,9 +48,9 @@ fi
 
 tui_start "$REPO_ROOT/scripts/tui/fixtures/markdown.patch.yml"
 shell-use submit "explain the renderer"
-shell-use wait idle --timeout 40000
+wait_for "$SPLIT_WORD" 40000
 
-# MERGE: `see_anywhere`, not `see`. The turn is already over (`wait idle` above), so nothing is
+# MERGE: `see_anywhere`, not `see`. The turn is already over (the wait above), so nothing is
 # being waited for — and the merged tree's shorter transcript viewport can leave the split word
 # above the fold at the end of a long markdown answer.
 t the_answer_landed bash -c 'see_anywhere "'"$SPLIT_WORD"'"'

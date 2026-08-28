@@ -36,9 +36,9 @@ source "$(dirname "$0")/lib.sh"
 tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/scroll.patch.yml"
 shell-use submit "fill the trajectory"
-shell-use wait idle --timeout 30000
-# `wait idle` returns when the PTY goes quiet, which on a loaded machine can happen BEFORE the
-# replayed turn has painted anything. Every row count below is a delta against this screen, so the
+wait_for "trajectory line"
+# The wait above returns as soon as the first matching row is drawn, which on a loaded machine can
+# be BEFORE the replayed turn has finished painting. Every row count below is a delta against this screen, so the
 # baseline has to be taken after the fixture's content is actually on it — a baseline of 0 turns
 # "grew by exactly one row" into an assertion about nothing.
 t the_scroll_fixture_filled_the_transcript \
@@ -52,7 +52,6 @@ export -f traj_rows
 # Wide, so the hints have room: the drop chain sheds them first on a narrow row, and this script
 # reads the hints as the proof that the status ROW is on screen.
 shell-use resize 160 40
-shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
 sleep 0.6
 
 pid_of() { pgrep -f "$BOUGH_BIN" | head -1; }

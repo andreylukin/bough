@@ -76,7 +76,7 @@ t writing_a_ward_file_does_not_restart_the_process \
   bash -c "[ \"\$(pgrep -f '$BOUGH_BIN' | head -1)\" = \"$pid_before\" ]"
 
 t the_surface_still_answers_with_a_ward_loaded \
-  bash -c 'shell-use submit "still there?" >/dev/null; shell-use wait idle --timeout 30000 >/dev/null; see "the first fragment" --timeout 20000'
+  bash -c 'shell-use submit "still there?" >/dev/null; see "the first fragment" --timeout 20000'
 
 cat > "$USER_PATCH" <<'YML'
 entries:

@@ -21,6 +21,7 @@ fn view() -> StatusView {
         running: true,
         elapsed: Some(Duration::from_secs(12)),
         spinner_frame: '⠋',
+        static_status: false,
         hints: vec![
             ("?".into(), "help".into()),
             ("esc".into(), "interrupt".into()),
@@ -244,6 +245,8 @@ fn cfg() -> StatusConfig {
         cwd_max: 40,
         spinner: "⠋⠙⠹".into(),
         spinner_ms: 120,
+        // The human default. The suite's own patch is the only place this is `true`.
+        static_status: false,
         hints: vec!["?=help".into(), "esc=interrupt".into(), "^f=search".into()],
     }
 }

@@ -45,7 +45,7 @@ t the_miss_says_what_to_do_instead \
 shell-use press Enter
 t a_second_enter_sends_the_missed_line_as_a_message \
   bash -c '
-    shell-use wait idle --timeout 30000 >/dev/null 2>&1 || true
+    sleep 1
     for i in $(seq 1 40); do
       n="$(sql "select count(*) from steps where type = '"'"'mail/delivered'"'"' and body like '"'"'%where my files are%'"'"';")"
       [ "${n:-0}" -ge 1 ] && exit 0
@@ -72,8 +72,7 @@ before_sends="$(sql "select count(*) from steps where type = 'mail/delivered';")
 shell-use press Enter
 t a_raw_three_line_paste_is_one_draft_and_one_send \
   bash -c '
-    shell-use wait idle --timeout 30000 >/dev/null 2>&1 || true
-    sleep 1
+    sleep 2
     after="$(sql "select count(*) from steps where type = '"'"'mail/delivered'"'"';")"
     delta=$(( ${after:-0} - '"${before_sends:-0}"' ))
     # EXACTLY one. `-le 1` also passed on a build where Enter after a paste sent NOTHING, which

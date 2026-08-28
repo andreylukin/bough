@@ -79,7 +79,7 @@ t the_tui_is_up_with_the_server_row_mounted \
   see "sol" --timeout 20000
 
 shell-use submit "/mcp list"
-shell-use wait idle --timeout 20000
+wait_for "echofix__echo" 20000
 
 t an_mcp_tool_is_listed_after_discovery \
   see "echofix__echo" --timeout 20000
@@ -88,7 +88,7 @@ t the_listed_tool_carries_the_servers_own_description \
   see "return the text you were given" --timeout 5000
 
 shell-use submit "/mcp list echofix"
-shell-use wait idle --timeout 20000
+wait_for "echofix__echo" 20000
 
 t listing_one_server_shows_that_servers_tools \
   see "echofix__echo" --timeout 20000
@@ -109,14 +109,14 @@ YML
 sleep 3
 
 shell-use submit "/mcp list"
-shell-use wait idle --timeout 20000
+wait_for "no MCP tools" 20000
 t disabling_the_provider_row_takes_its_tools_with_it \
   see "no MCP tools" --timeout 20000
 
 rm -f "$USER_PATCH"
 sleep 3
 shell-use submit "/mcp list"
-shell-use wait idle --timeout 20000
+wait_for "echofix__echo" 20000
 t removing_the_patch_rediscovers_the_server \
   see "echofix__echo" --timeout 20000
 
@@ -125,7 +125,7 @@ t removing_the_patch_rediscovers_the_server \
 # registry, the seam and the python server all took part — the pane cannot draw a result the
 # fixture process did not produce.
 shell-use submit "use the echo tool"
-shell-use wait idle --timeout 30000
+wait_for "mcp__echofix__echo" 30000
 
 t an_mcp_tool_call_renders_in_the_focus_pane \
   see "mcp__echofix__echo" --timeout 20000

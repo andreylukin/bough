@@ -183,7 +183,8 @@ shell-use keys "Ctrl+u"
 # Iterated over `/help`'s OWN list rather than a list in this script: a command added later is
 # covered by this bullet without anyone remembering to add it.
 shell-use submit "/help"
-shell-use wait idle --timeout 15000 >/dev/null 2>&1 || true
+wait_for "/help" 15000
+sleep 0.5
 shell-use text | grep -oE '^\s*/[a-z-]+' | tr -d ' ' | sort -u > "$HOME_DIR/commands.txt"
 
 t help_listed_some_commands \
@@ -203,8 +204,7 @@ t every_listed_command_renders_something \
       sleep 0.5
       before="$(shell-use text | sed "s/[[:space:]]*$//")"
       shell-use submit "$cmd" >/dev/null
-      shell-use wait idle --timeout 15000 >/dev/null 2>&1 || true
-      sleep 1
+      sleep 2
       after="$(shell-use text | sed "s/[[:space:]]*$//")"
       [ "$before" = "$after" ] && fails="$fails $cmd(screen-unchanged)"
       # The screen diff ALONE cannot fail: a dispatched command always raises a notice built from
@@ -227,8 +227,7 @@ t the_four_no_ops_answer_or_say_why \
       sleep 0.5
       before="$(shell-use text | sed "s/[[:space:]]*$//")"
       shell-use submit "$cmd" >/dev/null
-      shell-use wait idle --timeout 15000 >/dev/null 2>&1 || true
-      sleep 1
+      sleep 2
       after="$(shell-use text | sed "s/[[:space:]]*$//")"
       [ "$before" = "$after" ] && { echo "$cmd is still a no-op: it is listed and renders nothing"; exit 1; }
       # …and the same real check: the notice band names the command either way, so the falsifiable
@@ -242,8 +241,8 @@ t oldfeed_names_the_database_it_cannot_find \
   bash -c '
     grep -qx "/oldfeed" "'"$HOME_DIR"'/commands.txt" || exit 0
     shell-use submit "/oldfeed" >/dev/null
-    shell-use wait idle --timeout 15000 >/dev/null 2>&1 || true
-    sleep 1
+    wait_for "jungler" 15000
+    sleep 0.5
     shell-use text | grep -q "jungler" || { echo "/oldfeed with no jungler.db does not name the missing file"; exit 1; }
   '
 

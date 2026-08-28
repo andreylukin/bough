@@ -35,7 +35,7 @@ export -f see_any
 # One boot to CREATE the lane, so the seed has a real chain to extend.
 tui_open
 tui_start "$MEMORY_PATCH"
-shell-use wait idle --timeout 30000
+wait_for "sol" 20000
 tui_quit
 tui_close
 
@@ -53,7 +53,6 @@ t the_seed_landed \
 
 tui_open
 tui_start "$MEMORY_PATCH"
-shell-use wait idle --timeout 30000
 
 tiers_now() { sql "select count(*) from rollups where kind = 'tier';"; }
 # The `bash -c` bullets below are a FRESH shell (lib.sh exports its own helpers for the same
@@ -68,7 +67,7 @@ before_wakes="$(steps_of 'wake/start')"
 before_starts="$(steps_of 'step/start')"
 
 shell-use submit "/seal"
-shell-use wait idle --timeout 60000
+wait_any 60000 "call(s)," "nothing to seal"
 
 t seal_renders_a_report_in_the_pane \
   see_any "the seal report" "call(s)," "nothing to seal"
@@ -90,7 +89,7 @@ tiers_after_seal="$(tiers_now)"
 # /reconsolidate
 # ---------------------------------------------------------------------------
 shell-use submit "/reconsolidate"
-shell-use wait idle --timeout 60000
+wait_any 60000 "contradictions proposed" "nothing was written"
 
 t reconsolidate_renders_a_report \
   see_any "the reconsolidation report" "contradictions proposed" "nothing was written"
@@ -99,7 +98,7 @@ t reconsolidate_renders_a_report \
 # /drift
 # ---------------------------------------------------------------------------
 shell-use submit "/drift"
-shell-use wait idle --timeout 30000
+wait_any 30000 "Tool use" "No tool calls"
 
 # ux-visual D-uxv-7: `/drift` is sentences first (`Tool use: …` / `No tool calls …`), numbers
 # after (`raw: … entropy=`).
@@ -117,7 +116,7 @@ t drift_reports_claim_rejection_as_inactive \
 before_about="$(steps_of 'about/line')"
 
 shell-use submit "/reset sol"
-shell-use wait idle --timeout 60000
+wait_steps 'about/line' $(( ${before_about:-0} + 1 )) 120
 
 # The about-line's STATE half is rebuilt from raw evidence, and the strip renders it — so the
 # ledger half (a NEW `about/line` step) and the screen half (a report in the pane) are both

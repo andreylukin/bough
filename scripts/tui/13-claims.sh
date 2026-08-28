@@ -12,7 +12,7 @@ LANES="$REPO_ROOT/scripts/tui/fixtures/many-agents.patch.yml"
 # One boot to create the lanes, so the seeded claims land on a chain that exists.
 tui_open
 tui_start "$LANES"
-shell-use wait idle --timeout 30000 >/dev/null
+wait_for "sol" 20000
 tui_quit
 tui_close
 
@@ -23,11 +23,11 @@ sqlite3 "$LEDGER" < "$REPO_ROOT/scripts/tui/fixtures/seed-lanes.sql"
 
 tui_open
 tui_start "$LANES"
-shell-use wait idle --timeout 30000 >/dev/null
+wait_for "sol" 30000
 
 # The pane opens on the FIRST rail, which is not necessarily the lane these steps were seeded on.
 shell-use submit "/focus sol" >/dev/null
-shell-use wait idle --timeout 10000 >/dev/null
+wait_for "sol" 10000
 
 # The card. Three hit regions — `claim:<id>:accept|edit|reject` — so all three words are on screen.
 t a_claim_card_renders_with_three_actions \
@@ -43,7 +43,7 @@ accepted_before="$(steps_of 'claim/accepted')"
 pins_before="$(steps_of 'pin/set')"
 
 shell-use submit "/accept SEED-CLAIM-REQ"
-shell-use wait idle --timeout 20000 >/dev/null
+wait_steps 'claim/accepted' $(( ${accepted_before:-0} + 1 ))
 
 t accept_appends_claim_accepted \
   bash -c "[ \"\$(steps_of 'claim/accepted')\" -gt \"$accepted_before\" ]"
@@ -56,7 +56,8 @@ t an_accepted_requirement_appears_as_a_pin \
 # accept: a lane claim BIRTHS a lane
 # ---------------------------------------------------------------------------
 shell-use submit "/accept SEED-CLAIM-LANE"
-shell-use wait idle --timeout 30000 >/dev/null
+wait_steps 'claim/accepted' $(( ${accepted_before:-0} + 2 ))
+wait_for "vega" 20000
 
 # THE RAIL, not the notice band: `/accept` prints `lane born: vega` into the band itself, so
 # `see "vega"` was satisfied by the command's own echo whether or not a rail row ever appeared.
@@ -75,7 +76,7 @@ t the_new_lane_has_an_agents_row \
 # — the argument list used to be capped at two words, so the keyboard half of the
 # accept/edit/reject gate could only ever edit a claim to a single token.
 shell-use submit "/edit SEED-CLAIM-EDIT citations are how the ledger is read"
-shell-use wait idle --timeout 20000 >/dev/null
+wait_steps 'pin/set' $(( ${pins_before:-0} + 1 ))
 
 t edit_pins_the_edited_text \
   bash -c "[ \"\$(sql \"select count(*) from steps where type = 'pin/set' and body like '%citations are how the ledger is read%';\")\" -ge 1 ]"
@@ -83,7 +84,7 @@ t edit_pins_the_edited_text \
 rejected_before="$(steps_of 'claim/rejected')"
 agents_before="$(sql 'select count(*) from agents;')"
 shell-use submit "/reject SEED-CLAIM-REJ that is what the wards are for"
-shell-use wait idle --timeout 20000 >/dev/null
+wait_steps 'claim/rejected' $(( ${rejected_before:-0} + 1 ))
 
 t reject_records_the_reason_and_births_nothing \
   bash -c "[ \"\$(steps_of 'claim/rejected')\" -gt \"$rejected_before\" ] \
@@ -122,16 +123,16 @@ SQL
 
 tui_open
 tui_start "$LANES"
-shell-use wait idle --timeout 30000 >/dev/null
+wait_for "sol" 30000
 shell-use submit "/focus sol" >/dev/null
-shell-use wait idle --timeout 10000 >/dev/null
+wait_for "sol" 10000
 # Loudly: a card that is not on screen makes the click bullet below a click on nothing.
 t the_clickable_card_is_on_screen \
   see "SEEDED-CLICKABLE" --timeout 20000
 
 clicked_before="$(steps_of 'claim/accepted')"
 shell-use mouse click --on-text "[accept]" >/dev/null
-shell-use wait idle --timeout 20000 >/dev/null
+wait_steps 'claim/accepted' $(( ${clicked_before:-0} + 1 ))
 
 t a_click_on_accept_decides_the_card \
   bash -c "for i in \$(seq 1 40); do \

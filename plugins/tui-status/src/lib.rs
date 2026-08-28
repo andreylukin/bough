@@ -50,6 +50,18 @@ pub struct StatusConfig {
     /// is a different (coarser) cadence: this field is what decides the spin, so the two knobs do
     /// not have to agree. A `spinner_ms` finer than `tick_ms` simply spins once per tick.
     pub spinner_ms: u64,
+    /// Draw the running turn as a STATIC word rather than as a spinner and a ticking clock.
+    ///
+    /// The human default is `false`: M32's whole finding was that a running turn showed nothing
+    /// moving. This exists for a driver that reads the screen rather than watches it — the
+    /// shell-use suite waits for the PTY to go quiet, and a status line repainting every
+    /// `spinner_ms` never goes quiet, so `wait idle` could only ever time out mid-turn.
+    ///
+    /// It is a BOOLEAN and not "a spinner of one frame": a one-frame spinner still repaints the
+    /// elapsed clock every second, and `validate` rejects an empty spinner precisely so the
+    /// mechanism cannot be smuggled in through the frame list.
+    #[serde(default)]
+    pub static_status: bool,
     /// Key hints, in order, as `"key=meaning"` pairs. The hint list is config, not a constant,
     /// because it is the one chrome a user might want shortened.
     pub hints: Vec<String>,
@@ -119,6 +131,7 @@ impl StatusPane {
             cwd_max: cfg.cwd_max,
             hints,
             spinner_frame: cfg.spinner.chars().next().unwrap_or(' '),
+            static_status: cfg.static_status,
             ..Default::default()
         };
         StatusPane {
@@ -170,6 +183,11 @@ impl StatusPane {
     /// One spinner step and one elapsed step, from a clock the CALLER owns (a pane never reads
     /// one: `render` is synchronous and `handle` is where time arrives).
     pub fn tick(&self, now: DateTime<Utc>) {
+        // A static line has nothing to advance: neither the frame nor the clock, which is the
+        // whole point — the view stops changing and the terminal stops being repainted.
+        if self.cfg.static_status {
+            return;
+        }
         // ONE frame per `spinner_ms`, not one per shell tick. The two cadences are independent
         // knobs and a patch that sets `spinner_ms` has to move the spinner.
         let due = {

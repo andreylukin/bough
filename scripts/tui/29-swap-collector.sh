@@ -84,7 +84,7 @@ t the_patch_disables_the_collector_row \
   row_disabled collect.github
 
 t the_surface_still_answers_after_the_swap \
-  bash -c 'shell-use submit "still there?" >/dev/null; shell-use wait idle --timeout 30000 >/dev/null; see "the first fragment" --timeout 20000'
+  bash -c 'shell-use submit "still there?" >/dev/null; see "the first fragment" --timeout 20000'
 
 t the_process_never_restarted \
   bash -c "[ \"\$(pgrep -f '$BOUGH_BIN' | head -1)\" = \"$pid_before\" ]"

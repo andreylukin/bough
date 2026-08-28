@@ -41,6 +41,8 @@ pub struct StatusView {
     pub running: bool,
     pub elapsed: Option<Duration>,
     pub spinner_frame: char,
+    /// `StatusConfig::static_status`: the running turn is a word, not an animation.
+    pub static_status: bool,
     pub hints: Vec<(String, String)>,
 }
 
@@ -145,6 +147,10 @@ pub fn field_text(v: &StatusView, f: Field) -> Option<String> {
         Field::Elapsed => {
             if !v.running {
                 return None;
+            }
+            // Static: the same string on every frame, so the line stops repainting.
+            if v.static_status {
+                return Some("running".to_string());
             }
             let frame = if v.spinner_frame == '\0' {
                 ' '
@@ -374,6 +380,27 @@ fn keep_tail(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn static_status_draws_a_word_that_never_changes_between_frames() {
+        let mut v = StatusView {
+            running: true,
+            static_status: true,
+            spinner_frame: '\u{280b}',
+            elapsed: Some(Duration::from_secs(1)),
+            ..Default::default()
+        };
+        let first = field_text(&v, Field::Elapsed);
+        assert_eq!(first.as_deref(), Some("running"));
+        // A later second, a later spinner frame: the SAME text, which is what "the screen goes
+        // quiet" means to a driver that waits for the PTY to stop.
+        v.elapsed = Some(Duration::from_secs(97));
+        v.spinner_frame = '\u{2819}';
+        assert_eq!(field_text(&v, Field::Elapsed), first);
+        // And it is still absent when nothing runs.
+        v.running = false;
+        assert_eq!(field_text(&v, Field::Elapsed), None);
+    }
 
     #[test]
     fn an_unknown_cost_is_a_dash_and_never_a_zero() {

@@ -12,7 +12,7 @@ tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/tool-calls.patch.yml"
 
 shell-use submit "run the scripted tools"
-shell-use wait idle --timeout 30000
+wait_for "bash"
 
 t a_tool_call_renders_collapsed_on_one_line \
   see "bash" --timeout 20000

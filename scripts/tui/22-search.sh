@@ -29,9 +29,9 @@ tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/scroll.patch.yml"
 
 shell-use submit "fill the trajectory"
-shell-use wait idle --timeout 30000
+wait_for "trajectory line"
 shell-use submit "one more turn"
-shell-use wait idle --timeout 30000
+wait_for "second turn line 20"
 
 shell-use keys "Ctrl+f"
 t the_search_pane_took_the_keyboard \

@@ -29,7 +29,7 @@ tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/scroll.patch.yml"
 
 shell-use submit "fill the trajectory"
-shell-use wait idle --timeout 30000
+wait_for "trajectory line"
 t the_trajectory_is_long_enough_to_scroll see "trajectory line" --timeout 20000
 
 top_line() { shell-use text | sed -n '3p' | cut -c35-; }
@@ -73,7 +73,7 @@ t scroll_keys_work_from_the_composer \
 shell-use press End
 sleep 0.5
 shell-use press Tab
-shell-use wait idle --timeout 5000 >/dev/null 2>&1 || true
+sleep 0.5
 from_pane="$(top_line)"
 shell-use press PageUp
 t scroll_keys_work_from_the_focus_pane \
@@ -82,7 +82,7 @@ t scroll_keys_work_from_the_focus_pane \
 shell-use press End
 sleep 0.5
 shell-use keys "Ctrl+f"
-shell-use wait idle --timeout 5000 >/dev/null 2>&1 || true
+sleep 0.5
 from_search="$(top_line)"
 shell-use press PageUp
 t scroll_keys_work_from_the_search_pane \
@@ -102,7 +102,7 @@ shell-use press End
 sleep 0.5
 tail_before="$(top_line)"
 shell-use submit "one more turn"
-shell-use wait idle --timeout 30000
+wait_for "second turn line 20"
 t the_tail_follows_a_live_answer \
   bash -c "top_changed_from \"$tail_before\" && see 'second turn line 20' --timeout 20000"
 
@@ -117,7 +117,7 @@ sleep 2
 t an_anchored_viewport_does_not_move_while_streaming \
   bash -c "top_stayed \"$anchored\""
 
-shell-use wait idle --timeout 30000
+wait_for "new" 30000
 t scrolled_up_shows_the_new_badge \
   see "new" --timeout 20000
 

@@ -13,7 +13,7 @@ USER_PATCH="$HOME_DIR/bough.patch.yml"
 tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/scroll.patch.yml"
 shell-use submit "fill the trajectory"
-shell-use wait idle --timeout 30000
+wait_for "trajectory line"
 shell-use keys "Ctrl+f"
 
 t the_search_pane_is_on_screen_before_the_patch \

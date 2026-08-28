@@ -41,7 +41,7 @@ else
   t a_live_haiku_answer_streams_into_the_focus_pane \
     see "BOUGHLIVEOK" --timeout 60000
   t the_whole_answer_is_on_screen_when_the_wake_ends \
-    shell-use wait idle --timeout 60000
+    shell-use wait text "BOUGHLIVEOK" --timeout 60000
 fi
 
 t the_status_glyph_returned_to_idle \

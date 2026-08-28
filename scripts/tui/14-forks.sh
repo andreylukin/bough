@@ -15,7 +15,7 @@ LANES="$REPO_ROOT/scripts/tui/fixtures/many-agents.patch.yml"
 # edge, no `agents` row) beside the lane children a split would make.
 tui_open
 tui_start "$LANES"
-shell-use wait idle --timeout 30000 >/dev/null
+wait_for "sol" 20000
 tui_quit
 tui_close
 
@@ -42,11 +42,11 @@ SQL
 
 tui_open
 tui_start "$LANES"
-shell-use wait idle --timeout 30000 >/dev/null
+wait_for "sol" 30000
 
 # The pane opens on the FIRST rail, which is not necessarily the lane these steps were seeded on.
 shell-use submit "/focus sol" >/dev/null
-shell-use wait idle --timeout 10000 >/dev/null
+wait_for "sol" 10000
 
 # `^b` is the FOCUS PANE's key, so the pane must hold the keyboard first. `Tab` cycles pane focus
 # (`tui-shell::run::cycle_focus`) and the pane has no title line to click on, so the picker is
@@ -56,10 +56,10 @@ open_picker() {
   local i
   for i in 1 2 3 4; do
     shell-use keys "Ctrl+b" >/dev/null
-    shell-use wait idle --timeout 5000 >/dev/null 2>&1 || true
+    sleep 0.5
     if shell-use text | grep -qF "traj/fork-of-sol"; then return 0; fi
     shell-use press Tab >/dev/null
-    shell-use wait idle --timeout 5000 >/dev/null 2>&1 || true
+    sleep 0.5
   done
   echo "the branch picker never opened"
   return 1
@@ -84,10 +84,10 @@ select_fork() {
   for i in $(seq 1 10); do
     if shell-use text | grep -qE "^ *(>|›|\*)? *traj/fork-of-sol"; then break; fi
     shell-use press Down >/dev/null
-    shell-use wait idle --timeout 3000 >/dev/null 2>&1 || true
+    sleep 0.3
   done
   shell-use press Enter >/dev/null
-  shell-use wait idle --timeout 15000 >/dev/null 2>&1 || true
+  wait_for "SEEDED-FORK-CONTENT" 15000
 }
 export -f select_fork
 select_fork
@@ -98,9 +98,9 @@ t selecting_a_branch_shows_its_trajectory \
 # remembers the chain, and the shell's own `Esc` (focus the composer) is what a pane sees
 # otherwise. So the bullet is driven the way the pane implements it — reopen, then Esc.
 shell-use keys "Ctrl+b" >/dev/null
-shell-use wait idle --timeout 10000 >/dev/null
+sleep 0.5
 shell-use press Escape >/dev/null
-shell-use wait idle --timeout 10000 >/dev/null
+sleep 0.5
 t esc_returns_to_the_agents_own_chain \
   expect_absent "SEEDED-FORK-CONTENT" --timeout 10000
 

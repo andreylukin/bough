@@ -91,7 +91,7 @@ t an_idle_ctrl_c_asks_before_exiting \
 t the_second_ctrl_c_exits_with_the_terminal_restored \
   bash -c '
     shell-use keys "Ctrl+c"
-    shell-use wait idle --timeout 15000 >/dev/null 2>&1 || true
+    wait_for "export BOUGH_HOME" 15000
     # "Raw mode is off" means the shell echoes typed characters again — the same assertion
     # `08-restore.sh` makes, and the only one that distinguishes a restored terminal from a
     # process that merely died.
@@ -104,7 +104,7 @@ t the_second_ctrl_c_exits_with_the_terminal_restored \
 # --- `/quit` says goodbye, and is gone inside the bounded teardown window. ---------------------
 EXITFILE="$HOME_DIR/quit.exit"
 tui_start_recording_exit "$EXITFILE" "$REPO_ROOT/scripts/tui/fixtures/slow.patch.yml"
-shell-use wait idle --timeout 20000 >/dev/null 2>&1 || true
+sleep 1
 
 started="$(date +%s)"
 shell-use submit "/quit"

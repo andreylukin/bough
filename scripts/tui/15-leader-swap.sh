@@ -21,10 +21,23 @@ PROBE_TOOL="adopt_unsorted"
 
 # `turn_on <agent>`: focus that lane and send it one message, through the surface.
 turn_on() {
+  local before
+  before="$(headers_on "$1")"
   shell-use submit "/focus $1" >/dev/null
-  shell-use wait idle --timeout 10000 >/dev/null
+  # The notice `/focus` itself raises. The lane NAME is on the rail whether or not the focus moved,
+  # so waiting for it waited for nothing and the message below could be sent to the old lane.
+  wait_for "focused $1" 10000
   shell-use submit "say the whole sentence please" >/dev/null
-  shell-use wait idle --timeout 40000 >/dev/null
+  # Waited on the LEDGER, not on the screen. `wait idle` here ran out its whole 40 s on every call
+  # — the status line repainted a clock for as long as the wake ran — and the obvious screen
+  # replacement is worse than useless: every replayed round says the same sentence, so the answer
+  # this turn is about is already on screen from the last one. The new `request/header` is not.
+  local i
+  for i in $(seq 1 80); do
+    [ "$(headers_on "$1")" -gt "${before:-0}" ] && return 0
+    sleep 0.5
+  done
+  return 0
 }
 export -f turn_on
 
@@ -61,7 +74,7 @@ export -f offers
 
 tui_open
 tui_start
-shell-use wait idle --timeout 30000 >/dev/null
+wait_for "terra" 30000
 
 t the_leader_tools_are_offered_to_the_first_lane \
   bash -c 'offers sol yes'
@@ -82,8 +95,15 @@ took_over() {
   # once it did not finish inside the old twenty-second budget — a red bullet about the machine
   # rather than about the swap. `fixtures/llm-replay.patch.yml` grew to sixteen rounds to pay for
   # it. The claim is unchanged: if `terra` is never offered the tool, this still fails.
+  #
+  # phase ux1 (the suite-speed pass): THREE seconds per attempt, not ten. With `turn_on` waiting on
+  # the ledger rather than on a clock, this bullet was re-run against a 3 s window and passed on
+  # the FIRST attempt every time — the live recompose really does re-offer the set to the new
+  # lane's next wake, and the ten seconds were paying for the 40 s `wait idle` upstream. Six
+  # attempts still stand, so a slow machine is still tolerated and a set that never moves still
+  # fails.
   for i in 1 2 3 4 5 6; do
-    sleep 10
+    sleep 3
     if offers terra yes >/dev/null 2>&1; then return 0; fi
   done
   echo "the set never moved: terra is still not offered $PROBE_TOOL"

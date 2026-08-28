@@ -98,6 +98,37 @@ entries:
       tier1: true
 YML
 
+# The suite's status line does not ANIMATE.
+#
+# `tui.status` repaints a spinner frame every `spinner_ms` (80) and an elapsed second on top of it
+# for as long as a turn runs. A repainting screen is never idle, so `shell-use wait idle` — 99 of
+# them across these scripts — could only ever run out its whole timeout whenever it was called
+# mid-turn. That is where the suite's 39 minutes went: tens of seconds of nothing, tens of times.
+#
+# `static_status: true` is the row's own validated field for exactly this: the running turn is the
+# WORD `running`, unchanged frame to frame, so the PTY goes quiet the moment the answer has landed.
+# The human default is `false` and stays `false` (the bundle is untouched) — M32's finding was a
+# running turn that showed nothing moving, and this suite is not a human.
+#
+# The WHOLE config, because a patch layer replaces an entry's `config` map rather than merging it,
+# and it must stay in step with `bundles/bough-tui-app.yml`'s `tui.status` row.
+#
+# `24-honesty.sh` sets `TUI_STATIC_STATUS=0` before sourcing this file: its
+# `a_running_turn_shows_a_spinner_and_an_elapsed_clock` bullet is ABOUT the animation, and a suite
+# that switched it off everywhere would have deleted the assertion rather than sped it up.
+TUI_STATIC_STATUS="${TUI_STATIC_STATUS:-1}"
+STATUS_PATCH="$HOME_DIR/status.static.yml"
+cat > "$STATUS_PATCH" <<YML
+entries:
+  tui.status:
+    config:
+      cwd_max: 40
+      spinner: "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+      spinner_ms: 80
+      static_status: true
+      hints: ["? = help", "^f = search", "tab = panes"]
+YML
+
 # The arguments this half of the suite boots with. The live half omits the replay patch so the
 # real `llm.anthropic` row answers. An argument beginning with `-` is passed to the binary
 # VERBATIM (that is how `--root` reaches it); anything else is a patch file.
@@ -107,6 +138,9 @@ bough_patch_args() {
     args="--patch $BOUGH_PATCH"
   fi
   args="$args --patch $OLD_FEED_PATCH"
+  if [ "$TUI_STATIC_STATUS" = 1 ]; then
+    args="$args --patch $STATUS_PATCH"
+  fi
   local extra
   for extra in "$@"; do
     case "$extra" in
@@ -144,14 +178,41 @@ tui_open() {
   mkdir -p "$HOME_DIR/work"
   shell-use open --cols 120 --rows 40 --cwd "$HOME_DIR/work" >/dev/null
   shell-use submit "export BOUGH_HOME=$HOME_DIR" >/dev/null
-  shell-use wait idle --timeout 5000 >/dev/null
+  wait_for "export BOUGH_HOME" 5000
 }
+
+# `wait_for <text> [ms]`: block until the text the NEXT assertion needs is on screen.
+#
+# This is what replaced `wait idle` everywhere a turn could still be running. `wait idle` asks the
+# PTY to stop repainting, which is a question about the CLOCK — an animated status line, a
+# streaming answer, a spinner — and never about the fact a bullet is waiting for; mid-turn it could
+# only ever run its whole timeout out. `wait text` asks the question the assertion actually has.
+#
+# Failure is swallowed on purpose: this is a WAIT, not an assertion. The named bullet after it
+# still polls and still decides, so a missed needle here reports as that bullet failing with its
+# own message rather than as an unnamed harness abort.
+wait_for() {
+  shell-use wait text "$1" --timeout "${2:-30000}" >/dev/null 2>&1 || true
+}
+
+# The composer's placeholder: what is on screen once the TUI owns the terminal, in every profile
+# that has a composer. `tui_start` waits for THIS rather than for the screen to go quiet — boot
+# ends when the shell has drawn, and "the bytes stopped" is a different and much slower claim.
+BOOT_MARK="Type a message"
 
 # Start the binary in the open session. Extra arguments become additional `--patch` layers.
 tui_start() {
   shell-use submit "$BOUGH_BIN $(bough_patch_args "$@")" >/dev/null
   # The strip pane is the first thing on screen in every profile that has one.
-  shell-use wait idle --timeout 20000 >/dev/null
+  wait_for "$BOOT_MARK" 20000
+  # …and then for the ROSTER. The composer's placeholder is drawn on the FIRST frame, while the
+  # rest of the tree is still activating: a command submitted into that window comes back mangled
+  # (`10-memory.sh` sent `/seal` and the palette answered `usage: /seal`) or is answered by a tree
+  # that is not up yet (`05-commands.sh` asked `/agents` and was told "no agents are running").
+  # The first rail row is the tree saying it has finished. Best-effort, like every `wait_for`: a
+  # boot that deliberately never activates (`08-restore.sh`) has no rail and must still return.
+  wait_for "sol" 15000
+  sleep 0.5
 }
 
 # Ask the running TUI to quit, then wait for the shell prompt back.
@@ -169,7 +230,17 @@ tui_quit() {
     shell-use press Backspace >/dev/null 2>&1 || true
   done
   shell-use submit "/quit" >/dev/null 2>&1 || true
-  shell-use wait idle --timeout 10000 >/dev/null 2>&1 || true
+  # The binary is GONE: the shell prompt is back and the alt screen is not. A text wait, because
+  # the thing being waited for is an event and not a quiet clock.
+  wait_for "export BOUGH_HOME" 10000
+  # …and the PROCESS is gone. The terminal is restored BEFORE the tree is torn down, so a prompt
+  # back on screen is not a shutdown finished: the ledger's closing checkpoint runs after it, and
+  # `24-honesty.sh` reads the WAL from outside the moment this returns.
+  local i
+  for i in $(seq 1 60); do
+    pgrep -f "$BOUGH_BIN" >/dev/null 2>&1 || break
+    sleep 0.25
+  done
 }
 
 tui_close() {
@@ -193,10 +264,25 @@ LEDGER="$HOME_DIR/ledger.db"
 # read the ledger" and "the ledger holds nothing" are opposite facts and used to render the same,
 # and the merge of track B made the window wide enough to hit (`01-boot-and-turn.sh`'s
 # `the_turn_landed_as_ledger_steps`). Waiting is the honest answer for a reader racing a writer.
+#
+# And the SAME distinction one level up: a `sqlite3` that FAILS is retried rather than reported as
+# an empty answer. `.timeout` covers a busy lock; it does not cover the window a live recompose
+# opens, where the ledger row is being torn down and rebuilt and the reader gets an error rather
+# than a wait. `24-honesty.sh` reads the identity band immediately after a patch reload, and read
+# "no request/header in the ledger" over a ledger that held three.
 SQL_BUSY_MS=5000
 sql() {
   [ -f "$LEDGER" ] || { echo ""; return 0; }
-  sqlite3 -cmd ".timeout $SQL_BUSY_MS" "$LEDGER" "$1"
+  local out i
+  for i in 1 2 3 4 5 6 7 8; do
+    if out="$(sqlite3 -cmd ".timeout $SQL_BUSY_MS" "$LEDGER" "$1" 2>/dev/null)"; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo ""
+  return 0
 }
 
 # How many steps of a kind the ledger holds.
@@ -204,6 +290,37 @@ steps_of() {
   local n
   n="$(sql "select count(*) from steps where type = '$1';")"
   echo "${n:-0}"
+}
+
+# `wait_any <ms> <needle>...`: block until ANY of the needles is on screen.
+#
+# For the reports that legitimately have two shapes: `/seal` says either `N call(s),` or `nothing
+# to seal`, and a wait on the bare word `seal` matches the command`s own echo the instant it is
+# typed — which is a wait for nothing at all.
+wait_any() {
+  local ms="$1"; shift
+  local i n
+  for i in $(seq 1 $(( ms / 500 ))); do
+    for n in "$@"; do
+      shell-use text | grep -qF -- "$n" && return 0
+    done
+    sleep 0.5
+  done
+  return 0
+}
+
+# `wait_steps <kind> <n> [tries]`: block until the ledger holds at least `n` steps of `kind`.
+#
+# The ledger half of `wait_for`, and the mid-turn replacement for `wait idle` wherever the bullet
+# that follows reads the ledger rather than the screen. Like `wait_for` it never fails: it is a
+# wait, and the NAMED bullet after it is what decides and what reports.
+wait_steps() {
+  local kind="$1" want="$2" i
+  for i in $(seq 1 "${3:-60}"); do
+    [ "$(steps_of "$kind")" -ge "$want" ] && return 0
+    sleep 0.5
+  done
+  return 0
 }
 
 # `expect_steps <kind> <min>`: at least `min` steps of `kind` landed.
@@ -278,7 +395,7 @@ tui_start_recording_exit() {
   local file="$1"; shift
   rm -f "$file"
   shell-use submit "$BOUGH_BIN $(bough_patch_args "$@"); echo \$? > $file" >/dev/null
-  shell-use wait idle --timeout 20000 >/dev/null
+  wait_for "$BOOT_MARK" 20000
 }
 
 # `await_exit_code <file> <code>`: the recorded status arrives and is <code>. Teardown is awaited
@@ -550,7 +667,7 @@ resize_walk() {
   for spec in $TUI_SIZES; do
     cols="${spec%x*}"; rows="${spec#*x}"
     shell-use resize "$cols" "$rows" >/dev/null
-    shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
+    # A resize redraws once; there is no turn to wait out.
     sleep 0.4
     if ! out="$("$fn" "$cols" "$rows" 2>&1)"; then
       echo "at ${cols}x${rows}: $out"
@@ -559,7 +676,7 @@ resize_walk() {
     fi
   done
   shell-use resize 120 40 >/dev/null 2>&1 || true
-  shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
+  sleep 0.4
   return $rc
 }
 
@@ -626,5 +743,5 @@ clear_patch() {
 # helpers above would silently not exist there, and a comparison against their empty output would
 # be reported as a failed bullet rather than as the harness bug it is. The variables the ledger
 # helpers close over have to travel too.
-export LEDGER HOME_DIR BOUGH_BIN PATCH_FILE TUI_SIZES SQL_BUSY_MS
-export -f see see_anywhere expect_absent row_with no_row_is_exactly wheel select_drag expect_selected _expect_selected_once expect_diff_gutter _expect_diff_gutter_py sql steps_of expect_steps expect_steps_exactly await_exit_code cells_have _cells_have_once disk_has no_blank_run screen_rows write_patch clear_patch resize_walk
+export LEDGER HOME_DIR BOUGH_BIN PATCH_FILE TUI_SIZES SQL_BUSY_MS STATUS_PATCH TUI_STATIC_STATUS BOOT_MARK
+export -f wait_for wait_any wait_steps see see_anywhere expect_absent row_with no_row_is_exactly wheel select_drag expect_selected _expect_selected_once expect_diff_gutter _expect_diff_gutter_py sql steps_of expect_steps expect_steps_exactly await_exit_code cells_have _cells_have_once disk_has no_blank_run screen_rows write_patch clear_patch resize_walk

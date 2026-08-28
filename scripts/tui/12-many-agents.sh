@@ -17,7 +17,7 @@ export -f wakes_on delivered_on
 # composer's own placeholder is the anchor, so this stays true if the layout moves.
 focus_composer() {
   shell-use mouse click --on-text "message, or" >/dev/null 2>&1 || true
-  shell-use wait idle --timeout 5000 >/dev/null 2>&1 || true
+  sleep 0.4
 }
 export -f focus_composer
 
@@ -43,7 +43,7 @@ export -f one_line_with
 # only be read off the CONTENT it is showing.
 tui_open
 tui_start "$LANES"
-shell-use wait idle --timeout 30000 >/dev/null
+wait_for "sol" 20000
 tui_quit
 tui_close
 
@@ -59,7 +59,7 @@ SQL
 
 tui_open
 tui_start "$LANES"
-shell-use wait idle --timeout 30000 >/dev/null
+wait_for "luna" 30000
 
 t three_rails_render_with_their_glyphs \
   bash -c 'see "sol" --timeout 20000 && see "terra" --timeout 20000 && see "luna" --timeout 20000'
@@ -83,7 +83,7 @@ if [ -z "$BOUGH_LIVE" ]; then
   t the_first_fragment_is_never_a_row_of_its_own \
     bash -c 'no_row_is_exactly "the first fragment"'
 
-  shell-use wait idle --timeout 30000 >/dev/null
+  sleep 2
   t and_still_one_paragraph_after_the_step_lands \
     one_line_with "the first fragment and the rest of it"
 
@@ -105,14 +105,14 @@ fi
 # The rail row is addressed BY ITS NAME rather than by a computed cell, so the bullet keeps
 # meaning if the rail's layout changes.
 shell-use mouse click --on-text "terra" >/dev/null
-shell-use wait idle --timeout 10000 >/dev/null
+wait_for "SEEDED-TERRA-ONLY" 10000
 t a_click_on_the_second_rail_focuses_it \
   see "terra" --timeout 10000
 t the_focus_pane_follows_the_click \
   see "SEEDED-TERRA-ONLY" --timeout 20000
 
 shell-use mouse click --on-text "sol" >/dev/null
-shell-use wait idle --timeout 10000 >/dev/null
+sleep 1
 t a_click_back_returns_to_the_first \
   expect_absent "SEEDED-TERRA-ONLY" --timeout 10000
 
@@ -126,7 +126,7 @@ focus_composer
 # rest of the line as one: the arg list used to be capped at two words, so every reason this suite
 # could give was a single hyphenated token.
 shell-use submit "/sleep luna nothing to do this week"
-shell-use wait idle --timeout 10000 >/dev/null
+wait_for "dormant" 10000
 
 # `◌` is the glyph and `dormant` is the word (§11: the strip carries both, so a terminal without
 # the glyph still says which state a rail is in). The assertion is on LUNA'S RAIL ROW — the name
@@ -174,7 +174,7 @@ export luna_wakes_before
 
 tui_open
 tui_start "$LANES"
-shell-use wait idle --timeout 30000 >/dev/null
+wait_for "luna" 30000
 
 # The planted pair renders as ONE flowing paragraph…
 if [ -z "$BOUGH_LIVE" ]; then

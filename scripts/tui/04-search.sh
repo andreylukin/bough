@@ -9,7 +9,6 @@ tui_open
 tui_start
 
 shell-use submit "say the whole sentence please"
-shell-use wait idle --timeout 30000
 # WAIT FOR THE CORPUS, not merely for the screen to stop moving. `wait idle` returned before the
 # replayed turn had landed in roughly one run in three, and a search over an empty ledger then
 # failed the query bullet for a reason that has nothing to do with the search pane.
