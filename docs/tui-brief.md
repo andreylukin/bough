@@ -97,6 +97,15 @@ the program line, the `✎ changed` line and the rail (`rows::unhandle`). The ou
 call is the program's envelope and says nothing on the rail; its inner calls are the clauses.
 Andrey chose no click hint on `▸` rows: the glyph is enough.
 
+**R7b/R8 — from the second persona round.** The intent's first line skips leading punctuation
+and list/fence markers (`. Added the comment` read as a leaked fragment); a code-mode handle at
+the head of ANY argument reads as its path (`tui-render::unhandle_head`), so an opened program's
+inner `▸ patch …` rows match its header. A talk-only turn's rail state is `replied: <first line>`
+— labelled, so `6` never reads as work. Scrolled up with nothing new, the conversation shows
+`↑ older · End for newest` (`Viewport::badge`), becoming `↓ N new · End` when rows arrive.
+Failed attempts before the call that finally succeeded fold under `▸ N failed attempts · open`
+(`rows::retry_folds`), narration included; a failure that never succeeded stays inline.
+
 **Fixed along the way:** the `search [▏]` ghost after Esc, Esc (the layout's focused pane is the
 KEYBOARD's pane, `run::layout_focus`); the welcome hint says `? for help`, the status line's
 word, and says `tab panes` once.
