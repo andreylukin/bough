@@ -111,6 +111,28 @@ transcript's, because it is the harness speaking, not the command.
 the about-line's state half (by name, newest `about/line`), clipped to the cell; the id remains
 the fallback for a lane that has never written one.
 
+## Pass B (branch `ux-pass-b`, on top of pass A; tui-focus + one tui-shell line)
+
+**D-uxv-18 — a turn is a speaker label and one rule (F2).** The agent's rows open with its name
+(`sol:`, accent, bold) the way Andrey's open with `andrey:`; `rows::opens_speech` says which row
+opens a span — the first agent row (text, reasoning OR a tool call: the speaker is who acts) after
+anything that is not one. The `── turn` start mark is gone (the label says it), and so is the
+green about-line echo (the rail's line, and `/agents`'s; never written to Andrey). The one rule
+left is `── turn ended · …`. The search index built from rows loses the echoes with them (F12).
+
+**D-uxv-19 — the ledger's bookkeeping is not a row (F3).** `rows::MACHINERY` — `agent/routing`,
+`agent/dormancy`, `usage/round`, `recon/request`, `rollup/*`, `pin/*`, `memory/expired`,
+`power/changed` — produces no row. CLOSED list: an unknown type still renders as `· kind`, because
+a silent drop is how a new step type would vanish.
+
+**D-uxv-20 — click any row.** The click's absolute row, the pane's `area_y` and the scroll top
+give a transcript line; `RowFocus::row_at_line` gives the row; the marker moves there. The
+keyboard stays where it was (B1). A click that never dragged clears its one-cell selection on
+mouse-up — the highlighted cell it left mid-transcript was chrome for nothing.
+
+**D-uxv-21 — the empty transcript says what it is for (F15).** `Nothing here yet — sol is waiting
+for your first message.` and one dim line naming enter, `/`, `?` and tab. Only with no rows, no
+live tail and no older page.
 **D-uxv-22 — a slow slash command does not freeze the frame.** `dispatch_line` awaited the
 command inside the event loop, so `/reconsolidate` or `/seal` (model calls) left the composer
 looking unsent and the palette looking open for seconds, and every key typed meanwhile landed on
