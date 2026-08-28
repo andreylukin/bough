@@ -530,6 +530,51 @@ pub async fn interrupt(tui: &TuiHandle) {
     }
 }
 
+/// A composer chip, pressed (the TUI brief, D7). Each one is the SAME path its key takes.
+pub async fn on_chip(tui: &TuiHandle, kind: crate::composer::ChipKind) {
+    match kind {
+        crate::composer::ChipKind::Send => {
+            let text = tui.0.composer.lock().text();
+            if text.trim().is_empty() {
+                tui.notify_kind("nothing to send yet", crate::NoticeKind::Info);
+                return;
+            }
+            if crate::composer::is_command(&text, tui.0.composer.lock().prefix()) {
+                dispatch_line(tui, &text).await;
+                return;
+            }
+            tui.0.composer.lock().clear();
+            tui.0.burst.lock().reset();
+            send(tui, &text).await;
+        }
+        crate::composer::ChipKind::Stop => interrupt(tui).await,
+        crate::composer::ChipKind::Lane => {
+            // The next lane, by name, wrapping — the rail's click is the direct pick; this is
+            // the one-handed way to address a worker without `/focus`.
+            let Some(agents) = tui.0.agents.clone() else {
+                tui.notify_kind("no agents to address", crate::NoticeKind::Info);
+                return;
+            };
+            let mut lanes: Vec<bough_plugin_agents::Agent> = agents.list();
+            lanes.sort_by(|a, b| a.name().as_str().cmp(b.name().as_str()));
+            if lanes.is_empty() {
+                tui.notify_kind("no agents to address", crate::NoticeKind::Info);
+                return;
+            }
+            let current = tui.focused_agent();
+            let at = current
+                .as_ref()
+                .and_then(|id| lanes.iter().position(|a| a.id() == id));
+            let next = match at {
+                Some(i) => &lanes[(i + 1) % lanes.len()],
+                None => &lanes[0],
+            };
+            tui.focus(to_agent(next.id().clone())).await;
+            tui.redraw();
+        }
+    }
+}
+
 /// Esc with something up: dismiss the topmost overlay. With nothing up this is a deliberate
 /// NO-OP — the draft is never destroyed (B3, V3).
 pub async fn dismiss_overlay(tui: &TuiHandle) {
@@ -673,9 +718,21 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
     match me.kind {
         MouseEventKind::Down(button) => {
             let Some(pane) = tui.pane_at(col, row) else {
-                // A click on the composer's band gives it focus, and puts the caret where the
+                // A click on the composer's band: a CHIP if one is under the pointer (D7) —
+                // the same geometry `render_at` drew — else focus, with the caret where the
                 // pointer landed (minor 33).
                 let area = composer_rect(tui);
+                let lane = tui.agent().map(|a| a.name().to_string());
+                let chips = crate::composer::chips(area.width, lane.as_deref(), tui.running());
+                let on_last_row = row == area.y + area.height.saturating_sub(1);
+                let hit = col
+                    .checked_sub(area.x)
+                    .filter(|_| on_last_row)
+                    .and_then(|c| crate::composer::chip_at(&chips, c).cloned());
+                if let Some(chip) = hit {
+                    on_chip(tui, chip.kind).await;
+                    return;
+                }
                 tui.0.composer.lock().caret_at(col, row, area);
                 tui.focus_composer();
                 return;

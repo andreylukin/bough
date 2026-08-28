@@ -299,6 +299,8 @@ pub struct ShellView {
     /// The focused agent's NAME (`AgentId` is a fresh handle per life; the name is what a person
     /// reads). For a surface that must say who is being spoken to when the rail cannot.
     pub focused_name: Option<String>,
+    /// Whether the focused agent's turn is running (the composer's `stop` chip, D7).
+    pub running: bool,
     /// No `Strip` pane has any columns this frame: the rail collapses under its `collapse_cols`
     /// (100 by default), so at 80×24 nothing on screen names the lane unless a pane reads this.
     pub rail_collapsed: bool,

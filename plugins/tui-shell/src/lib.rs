@@ -685,6 +685,7 @@ impl TuiHandle {
                 .unwrap_or(true),
             measure_cols: self.0.cfg.measure_cols,
             focused_name: self.agent().map(|a| a.name().to_string()),
+            running: self.running(),
             rail_collapsed: {
                 // Last frame's layout, the same source `status_top` reads: a Strip pane handed
                 // zero columns is a collapsed rail; no Strip pane at all is no rail.

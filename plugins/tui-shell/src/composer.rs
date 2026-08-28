@@ -46,6 +46,63 @@ pub struct Composer {
 /// The prompt glyph, two cells wide with its trailing space.
 const PROMPT: &str = "\u{203a} ";
 
+/// One clickable chip at the right of the composer band (the TUI brief, D7).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChipKind {
+    /// `to: sol ▾` — which lane the message goes to; a click moves to the next lane.
+    Lane,
+    /// `send ⏎` — the same thing Enter does.
+    Send,
+    /// `stop ⎋` — the same thing Esc does while a turn runs.
+    Stop,
+}
+
+/// A chip's text and its columns within the band (`x0..x1`, band-relative).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Chip {
+    pub kind: ChipKind,
+    pub text: String,
+    pub x0: u16,
+    pub x1: u16,
+}
+
+/// Bands narrower than this get no chips: the field is what a narrow band is for.
+pub const CHIPS_MIN_WIDTH: u16 = 60;
+
+/// PURE: the chips a band of `width` columns shows, right-aligned, one space apart (D7). `lane`
+/// is the focused lane's name (no lane, no `to:` chip); `running` swaps `send ⏎` for `stop ⎋`.
+/// The same function decides where a click lands, so the drawing and the hit test cannot drift.
+pub fn chips(width: u16, lane: Option<&str>, running: bool) -> Vec<Chip> {
+    if width < CHIPS_MIN_WIDTH {
+        return Vec::new();
+    }
+    let mut texts: Vec<(ChipKind, String)> = Vec::new();
+    if let Some(lane) = lane {
+        texts.push((ChipKind::Lane, format!(" to: {lane} \u{25be} ")));
+    }
+    if running {
+        texts.push((ChipKind::Stop, " stop \u{238b} ".to_string()));
+    } else {
+        texts.push((ChipKind::Send, " send \u{23ce} ".to_string()));
+    }
+    // Lay out from the right edge, leaving one column of band after the last chip.
+    let mut x1 = width.saturating_sub(1);
+    let mut out = Vec::new();
+    for (kind, text) in texts.into_iter().rev() {
+        let w = text.chars().count() as u16;
+        let x0 = x1.saturating_sub(w);
+        out.push(Chip { kind, text, x0, x1 });
+        x1 = x0.saturating_sub(1);
+    }
+    out.reverse();
+    out
+}
+
+/// PURE: the chip under band-relative column `col`, if any.
+pub fn chip_at(chips: &[Chip], col: u16) -> Option<&Chip> {
+    chips.iter().find(|c| col >= c.x0 && col < c.x1)
+}
+
 impl Composer {
     /// An empty composer.
     pub fn new(cfg: &TuiConfig) -> Composer {
@@ -241,6 +298,14 @@ impl Composer {
             )),
             Rect { width: 2, ..area },
         );
+        // The chips (D7): drawn on the band's LAST row, right-aligned, on the selection ground so
+        // they read as things to press. The field keeps every column to their left.
+        let chips = chips(area.width, cx.view.focused_name.as_deref(), cx.view.running);
+        let field_w = chips
+            .first()
+            .map(|c| c.x0.saturating_sub(1))
+            .unwrap_or(area.width)
+            .saturating_sub(2);
         let mut field = self.area.clone();
         field.set_style(band);
         field.set_cursor_line_style(band);
@@ -249,10 +314,23 @@ impl Composer {
             &field,
             Rect {
                 x: area.x + 2,
-                width: area.width - 2,
+                width: field_w,
                 ..area
             },
         );
+        let last_row = area.y + area.height.saturating_sub(1);
+        for chip in &chips {
+            let style = Style::default().fg(theme.fg).bg(theme.sel_bg);
+            cx.frame.render_widget(
+                Paragraph::new(Line::styled(chip.text.clone(), style)),
+                Rect {
+                    x: area.x + chip.x0,
+                    y: last_row,
+                    width: chip.x1 - chip.x0,
+                    height: 1,
+                },
+            );
+        }
     }
 
     /// Replace the buffer.
@@ -574,5 +652,37 @@ mod tests {
             c.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT), false);
         }
         assert_eq!(c.height(20), cfg().composer_max_lines);
+    }
+}
+
+#[cfg(test)]
+mod chip_tests {
+    use super::{chip_at, chips, ChipKind, CHIPS_MIN_WIDTH};
+
+    #[test]
+    fn chips_sit_at_the_right_edge_in_order_and_swap_send_for_stop_while_running() {
+        let idle = chips(80, Some("sol"), false);
+        assert_eq!(
+            idle.iter().map(|c| c.kind.clone()).collect::<Vec<_>>(),
+            vec![ChipKind::Lane, ChipKind::Send]
+        );
+        assert_eq!(idle[1].x1, 79, "one column of band after the last chip");
+        assert_eq!(idle[0].x1 + 1, idle[1].x0, "one column between chips");
+        assert!(idle[0].text.contains("to: sol"));
+        // The hit test is the same geometry.
+        assert_eq!(
+            chip_at(&idle, idle[0].x0).map(|c| &c.kind),
+            Some(&ChipKind::Lane)
+        );
+        assert_eq!(
+            chip_at(&idle, idle[1].x1 - 1).map(|c| &c.kind),
+            Some(&ChipKind::Send)
+        );
+        assert!(chip_at(&idle, idle[0].x0 - 1).is_none());
+        let running = chips(80, Some("sol"), true);
+        assert_eq!(running[1].kind, ChipKind::Stop);
+        // No lane: no `to:` chip. Narrow: no chips at all.
+        assert_eq!(chips(80, None, false).len(), 1);
+        assert!(chips(CHIPS_MIN_WIDTH - 1, Some("sol"), false).is_empty());
     }
 }
