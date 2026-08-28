@@ -293,8 +293,13 @@ impl StepTypeMap {
 }
 
 impl StepTypeToken {
-    /// Spend the token without ever unregistering. Only the builtins do this.
-    fn forget(self) {
+    /// Spend the token without ever unregistering.
+    ///
+    /// This is what a step-type declaration DOES (`LedgerHandle::declare_step_types`), and it is
+    /// the one documented exception to §0.2's "registrations are effects, unload leaves no
+    /// trace": a step type describes BYTES THAT ARE ALREADY ON DISK, so it outlives the row that
+    /// wrote them. The builtins have always done this; every plugin's vocabulary does now.
+    pub fn forget(self) {
         std::mem::drop(self.inner);
     }
 }

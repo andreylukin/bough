@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 bad=0
-for main in plugins/*/tests/main.rs crates/*/tests/main.rs; do
+for main in plugins/*/tests/main.rs crates/*/tests/main.rs bench/*/tests/main.rs; do
   [ -f "$main" ] || continue
   dir=$(dirname "$main")
   for f in "$dir"/*.rs; do
@@ -19,7 +19,7 @@ for main in plugins/*/tests/main.rs crates/*/tests/main.rs; do
     grep -Eq "^mod $h;" "$main" || { echo "$d/mod.rs is not declared in $main"; bad=1; }
   done
 done
-for t in plugins/*/tests crates/*/tests; do
+for t in plugins/*/tests crates/*/tests bench/*/tests; do
   [ -d "$t" ] || continue
   ls "$t"/*.rs >/dev/null 2>&1 || continue
   [ -f "$t/main.rs" ] || { echo "$t has test files but no main.rs (add one; see AGENTS.md)"; bad=1; }

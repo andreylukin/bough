@@ -406,12 +406,30 @@ pub fn specs(cfg: Arc<BaselineConfig>) -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: ToolName::new("bash"),
-            description:
-                "Run a shell command in the task tree and return its output and exit status.".into(),
+            description: "Run a shell command in the task tree and return its output and exit \
+                          status. `tags` is 3-5 short lowercase words naming the tool, the intent \
+                          and the subject (`[\"cargo\", \"test\", \"focus\"]`): they index the \
+                          command in the cross-session history, which is the only way a later \
+                          session finds it."
+                .into(),
+            // MERGE: `tags` is a DECLARED property, and it is in `required` before `cwd` because
+            // the code-mode surface binds arguments positionally in `required`-then-sorted order
+            // (`tools-codemode::bind::positional_order`) — that is what makes the injected
+            // signature the documented `bash(cmd, tags)` rather than `bash(cmd, cwd)`.
+            // `docs/codemode-merge-notes.md` §9 is the whole story.
             input_schema: schema(serde_json::json!({
                 "type": "object",
-                "properties": { "command": path_prop, "cwd": path_prop },
-                "required": ["command"]
+                "properties": {
+                    "command": path_prop,
+                    "tags": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "minItems": 3,
+                        "maxItems": 5
+                    },
+                    "cwd": path_prop
+                },
+                "required": ["command", "tags"]
             })),
             render: RenderIntent::Terminal,
             scope: ToolScope::Global,

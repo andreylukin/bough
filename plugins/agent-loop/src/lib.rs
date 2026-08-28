@@ -57,8 +57,25 @@ impl Plugin for AgentLoopPlugin {
     const NAME: &'static str = PLUGIN_NAME;
     type Config = LoopConfig;
 
+    /// MERGE (`docs/codemode-merge-notes.md` §7, track C's H-C5): `workers` is declared here and
+    /// nothing in `apply` reads it.
+    ///
+    /// A TOOL executes under the context of whoever executed it, and that is this loop. So a tool
+    /// that resolves a seam from `ToolCx.ctx` — `tool-workers` is the one in the tree — has its
+    /// read attributed to `agent.loop`, and the declared-key rule refuses it:
+    ///
+    /// ```text
+    /// workers seam unavailable: plugin `agent-loop` (row `agent.loop`) read service `workers`
+    /// without declaring it in inject
+    /// ```
+    ///
+    /// No agent could spawn a worker through the tool surface, under EITHER consumer. OPTIONAL,
+    /// not required: a tree with no `workers` row still runs, and `tool-spawn_worker` is simply
+    /// not registered there. `tests/workers_seam.rs` pins both halves — that the key is declared,
+    /// and that no other tool in the tree reaches a seam this loop does not name.
     fn inject() -> bough_kernel::Inject {
         bough_kernel::Inject::required(["agents", "ledger", "projection", "llm", "tools"])
+            .union(&bough_kernel::Inject::optional(["workers"]))
     }
 
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {

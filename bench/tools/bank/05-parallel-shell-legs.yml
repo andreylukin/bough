@@ -1,0 +1,14 @@
+# Multi-step shell: commands that do not depend on each other, issued together. Under code mode
+# that is `Promise.all` over `bash` legs — there is no `sh` tool in this tree.
+id: 05-parallel-shell-legs
+prompt: >-
+  Independently and at the same time, write the word `one` into src/one.txt and the word `two`
+  into src/two.txt, then confirm both exist.
+covers: [bash]
+pass:
+  - pass: file_equals
+    path: src/one.txt
+    text: "one"
+  - pass: file_equals
+    path: src/two.txt
+    text: "two"

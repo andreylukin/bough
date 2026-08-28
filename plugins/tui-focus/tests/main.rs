@@ -6,6 +6,7 @@
 mod branches;
 mod claims;
 mod expand;
+mod program;
 mod render;
 mod rowfocus;
 mod rows;

@@ -103,10 +103,28 @@ async fn run(
     ledger: Arc<LedgerHandle>,
     cfg: Arc<ExecConfig>,
 ) -> Result<(), anyhow::Error> {
-    // A row's `apply` runs while the tree is still converging, and the loop Provider may not have
-    // taken the factory slot yet. Row order carries no load semantics (§0.2), so waiting for the
-    // seam to be ready is the row's job — and waiting FOREVER would turn a missing loop row into
-    // a hang instead of the boot failure it is.
+    // A row's `apply` runs while the tree is still converging, and this task is an effect that
+    // starts the moment `apply` returns. Row order carries no load semantics (§0.2), so the FIRST
+    // thing the task does is wait for the tree to settle — which is what `apply`'s comment has
+    // always claimed and what the code did not do.
+    //
+    // MERGE (`docs/codemode-merge-notes.md` §11; track C recorded the same shape for
+    // `exec_headless` and `scripts/tui/05-commands.sh`): without it the wake could start before a
+    // row that registers a TOOL had activated, and the model's call came back
+    //
+    //     tool/result run outcome=error "no tool named `run` is available to agent `sol`"
+    //
+    // with a clean exit 0 and no boot error, because the launcher's own quiesce had not finished
+    // either. Reproduced 2 times in 40 under a loaded machine; 0 in 40 after. A timeout here is
+    // NOT fatal: the launcher's own quiesce is the gate that reports a tree that never settles,
+    // and this task should not turn that into a second, less legible failure.
+    if let Some(kernel) = ctx.kernel() {
+        if !kernel.quiesce().await {
+            eprintln!("bough exec: the tree had not settled when the task started; running it anyway");
+        }
+    }
+    // …and then for the loop Provider's factory slot specifically. Waiting FOREVER would turn a
+    // missing loop row into a hang instead of the boot failure it is.
     let deadline = std::time::Instant::now() + FACTORY_WAIT;
     wait_for_factory(&agents, deadline).await?;
 

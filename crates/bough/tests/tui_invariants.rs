@@ -87,6 +87,28 @@ async fn every_phase_three_invariant_reports_clean_over_a_boot() {
     kernel.shutdown().await;
 }
 
+/// Plant, run the invariants, and read the violations back — retrying the plant a few times.
+///
+/// Both recorders below are LAST-FRAME slots, and `quiesce()` does not promise that the pane has
+/// finished its final paint: a boot paint landing after the plant overwrites it and the runner
+/// then has nothing to report, which reads as "the spec is not registered". Re-planting is not a
+/// weaker assertion — a spec that is genuinely missing reports nothing on every attempt.
+async fn reported_after_planting(
+    kernel: &bough_kernel::Kernel,
+    invariant: &str,
+    plant: impl Fn(),
+) -> bool {
+    for _ in 0..20 {
+        plant();
+        kernel.run_invariants().await;
+        if violation_names(kernel).contains(&invariant) {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    false
+}
+
 /// `tui-focus`: NO STEP IS RENDERED TWICE. Planted at the recorder — a frame whose live tail has
 /// diverged from the durable text it is chosen against.
 #[tokio::test]
@@ -106,32 +128,26 @@ async fn a_planted_focus_frame_that_renders_a_step_twice_is_reported() {
         index: 0,
         text: "the durable text".to_string(),
     };
-    let live = || LiveText {
-        agent: None,
-        // Not prefix-related to the durable text: P3-D12's length rule would render bytes the
-        // other half has already shown.
-        text: "something else entirely".to_string(),
-    };
-
-    // MERGE (track B -> Phase 5/ux1): `quiesce()` is not enough on its own. The focus pane
-    // repaints on the shell's TICK, not only on a transition, so a paint landing between the
-    // plant and the run overwrites the last-frame slot and the runner then has nothing to
-    // report — which reads as "the invariant is not wired" when the truth is "the plant is
-    // gone". The bigger merged tree made that window wide enough to hit about one run in three.
-    // Retrying the plant changes no claim: the assertion below is still that a planted
-    // violation IS reported, and it still fails if the runner never reports one.
-    const NAME: &str = "the_live_tail_and_the_durable_rows_never_overlap";
-    let mut reported = false;
-    for _ in 0..40 {
-        bough_plugin_tui_focus::invariant::record_frame(&[row(1)], &live());
-        kernel.run_invariants().await;
-        if violation_names(&kernel).contains(&NAME) {
-            reported = true;
-            break;
-        }
-        bough_plugin_tui_focus::invariant::forget();
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
+    let reported = reported_after_planting(
+        &kernel,
+        "the_live_tail_and_the_durable_rows_never_overlap",
+        || {
+            // MERGE (ux1/track B): forget the previous attempt's frame first — the recorder is a
+            // LAST-FRAME slot and a tick paint landing between plant and run wipes it, so a retry
+            // must start from a clean slot or it re-reads the pane's own frame.
+            bough_plugin_tui_focus::invariant::forget();
+            bough_plugin_tui_focus::invariant::record_frame(
+                &[row(1)],
+                &LiveText {
+                    agent: None,
+                    // Not prefix-related to the durable text: P3-D12's length rule would render
+                    // bytes the other half has already shown.
+                    text: "something else entirely".to_string(),
+                },
+            );
+        },
+    )
+    .await;
     assert!(
         reported,
         "the runner must report the planted frame: {:#?}",
@@ -154,7 +170,9 @@ async fn a_planted_search_hit_on_a_missing_step_is_reported() {
     settle_frames(&kernel).await;
 
     use bough_plugin_ledger::{AgentName, StepId};
-    let plant = || {
+    let reported = reported_after_planting(&kernel, "every_rendered_hit_names_a_live_step", || {
+        // See the focus plant above: clear the last-frame slot before each attempt.
+        bough_plugin_tui_search::invariant::forget();
         bough_plugin_tui_search::invariant::record(&[bough_plugin_tui_search::Hit {
             agent: AgentName::new("nowhere"),
             step: StepId::new("planted-missing-step"),
@@ -162,22 +180,8 @@ async fn a_planted_search_hit_on_a_missing_step_is_reported() {
             snippet: "a hit on a step the ledger does not hold".to_string(),
             at: 0..1,
         }]);
-    };
-
-    // Retried for the same reason the focus plant above is: the recorder is a LAST-FRAME slot and
-    // a paint that lands after the plant wipes it.
-    const NAME: &str = "every_rendered_hit_names_a_live_step";
-    let mut reported = false;
-    for _ in 0..40 {
-        plant();
-        kernel.run_invariants().await;
-        if violation_names(&kernel).contains(&NAME) {
-            reported = true;
-            break;
-        }
-        bough_plugin_tui_search::invariant::forget();
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
+    })
+    .await;
     assert!(
         reported,
         "the runner must report the planted hit: {:#?}",

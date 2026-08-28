@@ -6,8 +6,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# The leader-scoped, model-facing tools (§2): `adopt_unsorted`, `draft_requirement`,
-# `propose_claim` (the SHADOWING one), `propose_structure`, `note_timeline`. Registered with
+# The leader-scoped, model-facing tools (§2), collapsed to two by WP-6: `propose_claim` (the
+# SHADOWING one, which absorbed `draft_requirement` and `propose_structure`) and `curate`
+# (`adopt_unsorted` + `note_timeline` in one journalled pass). Registered with
 # `ToolScope::Agent(leader)`. A separate crate from `leader` for one reason: it injects `leader`
 # and so reloads with the binding (P5-D10). Row `tool.leader` in `bough-tui-app`.
 
@@ -34,6 +35,11 @@ bough-plugin-mail-router = { workspace = true }
 bough-plugin-projection = { workspace = true }
 bough-plugin-projection-assembler = { workspace = true }
 tempfile = { workspace = true }
+# V7: the collapse must hold under the SECOND consumer of the `tools` seam too, so these tests
+# run a real program on real QuickJS against the specs this crate registers.
+bough-plugin-tools-codemode = { workspace = true }
+bough-plugin-js = { workspace = true }
+bough-plugin-js-quickjs = { workspace = true }
 
 [[test]]
 name = "tests"

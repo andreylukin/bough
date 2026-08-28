@@ -32,6 +32,14 @@ CRATES="bough-plugin-a bough-plugin-b"` on the crates you touched.
 
 - **Plugins, not loop changes** (§0.2). New behavior attaches to a service key or a typed event.
 - **Registrations are effects**; every contribution returns a disposer; unload leaves no trace.
+  **One exception, and only one: a plugin's step-type VOCABULARY**
+  (`LedgerHandle::declare_step_types`) is registered for the LIFE OF THE BINARY. A step type
+  describes bytes that are already on disk, so it outlives the row that wrote them — a chain a
+  disabled row once wrote must still be readable, and the next wake must not die on it. The
+  declaration is still all-or-nothing and a byte-identical redeclaration is a reference, so two
+  rows may own the same type and a remount is not a duplicate. This holds for EVERY plugin that
+  writes steps (drafts, claims, wards, collectors, rollups, the code-mode consumer);
+  `plugins/ledger-memory/tests/vocabulary_lifetime.rs` is the gate.
 - **No hardcoded tunables in plugins**: a deployment-varying value is a validated `Config` field
   set from the bundle patch. Protocol constants and security invariants stay in code.
 - **Misconfiguration fails loud.** An enabled row that never activates is a boot failure.

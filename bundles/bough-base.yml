@@ -68,6 +68,25 @@
     max_output_bytes: 20000
     max_read_bytes: 400000
     deny_globs: []
+- id: tools.operator
+  plugin: tools-operator
+  config:
+    max_view_bytes: 400000
+    max_files_per_patch: 16
+    # Background logs are harness state, not workspace state: they live under the bough home so a
+    # `bg` job never writes into the tree the model is editing.
+    bg_log_dir: !!expr 'bough_path("bg")'
+    bg_max: 8
+    bg_poll_ms: 200
+    ledger_page: 50
+    schedule_max_horizon_days: 30
+    schedule_tick_ms: 5000
+    # The CONCURRENT shell. `bash` (tools-baseline) is the serial one and keeps its own timeout;
+    # a deployment that shortens one has no reason to shorten the other.
+    sh_max_legs: 8
+    sh_timeout_ms: 120000
+    sh_tags_min: 3
+    sh_tags_max: 5
 - id: agents
   plugin: agents
 
@@ -356,3 +375,83 @@
 - id: schedule.reconsolidate
   plugin: schedule-reconsolidate
   config: { cadence: { cron: "0 0 4 * * *" }, catch_up: true, command: "reconsolidate", agent: sol }
+
+# ---- Phase codemode: the SECOND consumer of the `tools` seam ----
+#
+# DISABLED, and that is the shipped setting. The DEFAULT tools consumer is the TYPED one and is
+# UNCHANGED (BUILD.md's `codemode` row, `crates/bough/tests/docs.rs`); the GO to switch it is
+# Andrey's, on the bench numbers in `docs/phase-codemode-plan.md` §8.
+#
+# The rows live HERE, in the base bundle, rather than in `bundles/bough-codemode.yml`, for one
+# reason: a patch layer CONFIGURES rows and never CREATES them (`config/patch.rs`), so rows that
+# exist only in a bundle no profile lists cannot be reached by `--patch` at all — the merge note
+# `docs/codemode-merge-notes.md` §8 is exactly that experiment. Declared here and disabled, the
+# switch is one field from anywhere:
+#
+#     bough --profile codemode                       # the shipped profile
+#     bough --patch <(echo 'entries: {js: {disabled: false}, js.quickjs: {disabled: false},
+#                                     tools.codemode: {disabled: false}}')
+#
+# `bundles/bough-codemode.yml` is now that patch, and nothing else: three `disabled: false`
+# lines over the rows below, so every row is declared ONCE in the tree.
+- id: js
+  disabled: true
+  plugin: js
+  config:
+    # The caps a program runs under unless `tools.codemode` names its own. Ops is an
+    # interrupt-handler budget, not an instruction count; the wall clock is the real bound.
+    default_caps:
+      ops: 20000000
+      memory_bytes: 67108864
+      stack_bytes: 1048576
+      wall_ms: 120000
+      console_bytes: 65536
+- id: js.quickjs
+  disabled: true
+  plugin: js-quickjs
+  config:
+    interrupt_check_ops: 10000
+    max_concurrent_programs: 4
+- id: tools.codemode
+  disabled: true
+  plugin: tools-codemode
+  config:
+    # `null` ⇒ the `js` row's `default_caps`, so the caps are said once.
+    caps: null
+    conceal: mirror
+    aliases:
+      claim: propose_claim
+      agent: spawn_worker
+      # `tool?fixed=value#positional,names` — one op-discriminated tool read as the several
+      # functions `surface/` documents. The fixed argument wins over anything the program passes.
+      ledger.search: ledger_read?op=search#q
+      ledger.steps: ledger_read?op=steps#range
+      ledger.tail: ledger_read?op=tail#n
+      bg: bg?op=start#name,cmd
+      bg.output: bg?op=output#id
+      bg.kill: bg?op=kill#id
+      # A DISPATCH: `act(kind, target, payload)`, over whichever kinds have a Provider.
+      act: open_pr|push_to_pr|bot_thread_op|linear_write
+    namespaces:
+      mcp: "mcp__"
+    # DROPPED under code mode (phase brief item 4): `bash` + `rg` and `view` cover `read_file`,
+    # `glob` and `grep`, and `edit_file(old, new)` is a regression against the hash-anchored patch
+    # grammar. Visibility only — the tools stay registered and a typed-tools agent still has them.
+    hide: [read_file, write_file, edit_file, glob, grep]
+    # The Consumer knows nothing about a concrete shell Provider; these name it. `sh` is the
+    # concurrent one (`tools-operator`); it answers with `[{code, out}, …]`, so it is a shell for
+    # the TAG rule and NOT a content-result — the surface promises a program the objects.
+    shell_tools: [bash, sh]
+    shell_content_result: [bash]
+    tags_min: 3
+    tags_max: 5
+    # Code mode's spelling of `tools.max_parallel` (bough-base sets 8), enforced inside a program
+    # because each host call issues its own single-call `execute_under`.
+    max_parallel_calls: 8
+    # Equal to `tools.default_deadline_ms` (bough-base sets 120000), so the same tool answers the
+    # same whether a typed call or a program made it. The seam does not expose its value to read.
+    inner_deadline_ms: 120000
+    max_console_bytes: 65536
+    max_calls_per_program: 64
+    tags_required: true
+    surface_section: true

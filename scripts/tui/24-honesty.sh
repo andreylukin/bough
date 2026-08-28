@@ -200,7 +200,10 @@ if [ -n "$BOUGH_LIVE" ]; then
   t the_capability_answer_names_no_tool_that_is_not_registered \
     bash -c '
       txt="$(shell-use text)"
-      for phantom in "merge_pr" "deploy_to_production"; do
+      # The same list the replay half asserts, so the two halves make ONE claim. `open_pr` and
+      # `push_to_pr` are NOT here: `actions-github` + `tool-actions` register them in this
+      # profile, so naming them is honest.
+      for phantom in "merge_pr" "deploy_to_production" "send_email"; do
         printf "%s" "$txt" | grep -q "$phantom" && {
           echo "the answer advertises $phantom, which no Provider registers"; exit 1; }
       done

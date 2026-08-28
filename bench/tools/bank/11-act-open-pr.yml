@@ -1,0 +1,12 @@
+# An outward act. `gh` is a recording shim on PATH: nothing leaves the machine.
+id: 11-act-open-pr
+prompt: >-
+  Open a pull request titled `bench: the fixture edit` against branch main with the body
+  `opened by the bench`.
+covers: [act]
+pass:
+  - pass: step_appended
+    kind: action/intent
+    count: 1
+  - pass: journal_row
+    kind: open_pr

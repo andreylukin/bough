@@ -5,3 +5,4 @@
 
 mod conformance;
 mod events;
+mod vocabulary_lifetime;

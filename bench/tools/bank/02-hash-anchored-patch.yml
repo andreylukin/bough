@@ -1,0 +1,17 @@
+# A file edit: a hash-anchored patch in viewed coordinates. The grammar restored from main.
+id: 02-hash-anchored-patch
+prompt: >-
+  In src/greet.txt, replace the word `world` on line 2 with `bench`, leaving every other line
+  exactly as it is. View the file first so your patch is anchored to its tag.
+covers: [view, patch]
+pass:
+  - pass: file_equals
+    path: src/greet.txt
+    text: |
+      hello
+      bench
+      third line
+      fourth line
+  - pass: step_appended
+    kind: tool/call
+    count: 1

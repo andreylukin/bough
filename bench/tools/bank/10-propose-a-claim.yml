@@ -1,0 +1,10 @@
+# A claim through the claims seam: the same journal under either surface.
+id: 10-propose-a-claim
+prompt: >-
+  Propose a claim of kind `other` titled `the bench fixture repo has four files`, citing what you
+  looked at.
+covers: [claim]
+pass:
+  - pass: step_appended
+    kind: claim/proposed
+    count: 1

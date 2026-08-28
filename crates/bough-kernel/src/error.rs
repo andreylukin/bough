@@ -17,13 +17,28 @@ pub enum KernelError {
         entry: EntryId,
         key: &'static str,
     },
-    /// Declared optional, and no active fiber provides it.
-    #[error("plugin `{plugin}` (row `{entry}`) read optional service `{key}`, which no active fiber provides")]
+    /// Declared, and no active fiber provides it.
+    ///
+    /// MERGE: the wording said "optional". It is raised for a REQUIRED read too — a required key
+    /// that resolves to nothing inside `apply` is a race, not a misconfiguration — and the word
+    /// sent three readers looking for an `Inject::optional` that was not there
+    /// (`docs/codemode-merge-notes.md` §11).
+    #[error(
+        "plugin `{plugin}` (row `{entry}`) read service `{key}`, which no active fiber provides"
+    )]
     ServiceUnavailable {
         plugin: &'static str,
         entry: EntryId,
         key: &'static str,
     },
+    /// A REQUIRED key was resolvable when the fiber decided to load and was gone again when the
+    /// committed view was captured, a moment later — a provider reloading, most often during boot.
+    ///
+    /// It is NOT a failure: the row is put back to PENDING and loads when the key returns. Before
+    /// this existed the row Failed, the launcher exited 1 with "enabled row(s) never activated",
+    /// and the whole suite was intermittently red under load (`docs/codemode-merge-notes.md` §11).
+    #[error("row `{entry}`: required service(s) {keys:?} were not bound when the view was captured; the row stays pending")]
+    NotReady { entry: EntryId, keys: Vec<String> },
     #[error("row `{0}` is not in the tree")]
     NoSuchRow(EntryId),
     /// The context outlived what it points at: the fiber unloaded, or the process is tearing the

@@ -845,6 +845,29 @@ impl FiberBody for PluginBody {
             .collect();
         self.core.clear_unwound(ctx.fiber_uid());
         let view = CommittedView::capture(&self.core, &names, &self.realms, ctx.scope_key());
+        // The fiber checked `unmet` against the LIVE store a moment ago; this capture is a second
+        // look, and a provider reloading in between can take a required key away. Loading anyway
+        // makes `apply`'s first `ctx.get` of that key a FAILURE, which is how a boot race became
+        // "1 enabled row(s) never activated" and an intermittently red suite
+        // (`docs/codemode-merge-notes.md` §11). A required key that is not in the view means the
+        // row is NOT READY: `fiber::drive` puts it back to PENDING and loads it when the key
+        // returns, which is what the declared dependency was always supposed to buy.
+        let missing: Vec<String> = self
+            .inject
+            .required
+            .iter()
+            .filter(|k| view.provider_of(k).is_none())
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            return Err(PluginError::new(
+                self.entry.clone(),
+                crate::KernelError::NotReady {
+                    entry: self.entry.clone(),
+                    keys: missing,
+                },
+            ));
+        }
         let ctx = ctx.with_view(Arc::new(view));
         {
             *self.ctx.lock() = Some(ctx.clone());

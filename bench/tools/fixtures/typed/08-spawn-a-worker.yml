@@ -1,0 +1,73 @@
+# Recorded transcript: 08-spawn-a-worker, TYPED arm.
+#
+# A patch layer that replaces `llm.anthropic` with `llm-replay`, so the bench measures the SURFACE
+# and not the model's mood. The rounds are consumed in order: one per tool call the typed surface
+# needs, then the answer. The `usage` chunk is what the $ column is arithmetic over.
+{
+  "entries": {
+    "llm.anthropic": {
+      "plugin": "llm-replay",
+      "config": {
+        "strict": true,
+        "models": "*",
+        "rounds": [
+          {
+            "chunks": [
+              {
+                "type": "tool_call",
+                "id": "c0",
+                "name": "spawn_worker",
+                "input": {
+                  "task": "Read src/notes.md in the bench fixture repo and summarise it in one sentence."
+                }
+              },
+              {
+                "type": "usage",
+                "input_tokens": 4200,
+                "output_tokens": 140
+              },
+              {
+                "type": "end",
+                "stop": "tool_use"
+              }
+            ]
+          },
+          {
+            "chunks": [
+              {
+                "type": "text",
+                "text": "src/notes.md says the marker is MARKER_ONE and nowhere else."
+              },
+              {
+                "type": "usage",
+                "input_tokens": 1800,
+                "output_tokens": 60
+              },
+              {
+                "type": "end",
+                "stop": "end_turn"
+              }
+            ]
+          },
+          {
+            "chunks": [
+              {
+                "type": "text",
+                "text": "Spawned a worker to summarise src/notes.md."
+              },
+              {
+                "type": "usage",
+                "input_tokens": 5100,
+                "output_tokens": 60
+              },
+              {
+                "type": "end",
+                "stop": "end_turn"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

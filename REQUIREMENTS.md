@@ -810,3 +810,15 @@ for Spatiotemporal Composability" (Shi, Zhang, Cui; DeepSeek-AI / PKU; draft 202
 algorithms the kernel reproduces, §6.1 for the system-boundary argument behind "acquisition inside,
 emission outside" (which is exactly why the actions journal, not the kernel, owns outward acts).
 Rust ports: github.com/dshbox/cordis-rs, crates.io/crates/cordis-core.
+
+Headlong: github.com/laude-institute/headlong (`design/trajectory_spec`, `design/tiered_memory`,
+`design/monolith_thinker`, `design/monolith_backoff`, `design/THINKERS_spec`). The product lineage
+for §1, §3, §5 and §8 — where this document is ambiguous about a trajectory, a memory tier, a wake
+or a thinker, Headlong's semantics are the reference. Its stance, which is the one this system takes:
+**the model is an operator, not a dispatcher.** It acts on the world through a small stable surface
+and reads the consequences back, rather than choosing among many narrow typed calls.
+
+Code mode: CodeAct, "Executable Code Actions Elicit Better LLM Agents" (arXiv 2402.01030), and
+arXiv 2602.15945 — the evidence behind one `run(program)` tool over a sandbox in place of one typed
+tool per verb. bough's own predecessor shipped this shape (two API tools, `run_steps(program)` +
+`stop`, ~20 pre-injected host functions).

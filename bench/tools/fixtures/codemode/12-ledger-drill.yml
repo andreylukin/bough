@@ -1,0 +1,56 @@
+# Recorded transcript: 12-ledger-drill, CODE-MODE arm.
+#
+# The same task as `../typed/12-ledger-drill.yml`, in ONE `run(program)` round plus the answer. The token
+# counts are deliberately larger per round (the surface section is in the prompt, the program is in
+# the output) and fewer rounds: that trade is the thing the bench measures.
+{
+  "entries": {
+    "llm.anthropic": {
+      "plugin": "llm-replay",
+      "config": {
+        "strict": true,
+        "models": "*",
+        "rounds": [
+          {
+            "chunks": [
+              {
+                "type": "tool_call",
+                "id": "c0",
+                "name": "run",
+                "input": {
+                  "program": "console.log(await ledger.search(\"bench\"));\nconst rows = await ledger.tail(5);\nconsole.log(rows);\nawait write(\"src/drill.txt\", \"5\\n\");"
+                }
+              },
+              {
+                "type": "usage",
+                "input_tokens": 5600,
+                "output_tokens": 320
+              },
+              {
+                "type": "end",
+                "stop": "tool_use"
+              }
+            ]
+          },
+          {
+            "chunks": [
+              {
+                "type": "text",
+                "text": "Read 5 raw steps; the number is in src/drill.txt."
+              },
+              {
+                "type": "usage",
+                "input_tokens": 6400,
+                "output_tokens": 60
+              },
+              {
+                "type": "end",
+                "stop": "end_turn"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

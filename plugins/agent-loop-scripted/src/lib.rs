@@ -402,8 +402,11 @@ impl Plugin for ScriptedLoopPlugin {
     const NAME: &'static str = PLUGIN_NAME;
     type Config = ScriptedConfig;
 
+    /// `workers` for the same reason `agent-loop` declares it: this Provider executes tools too,
+    /// so a `spawn_worker` in a scripted transcript resolves the seam through THIS row's context.
     fn inject() -> bough_kernel::Inject {
         bough_kernel::Inject::required(["agents", "ledger", "projection", "tools"])
+            .union(&bough_kernel::Inject::optional(["workers"]))
     }
 
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {

@@ -1,0 +1,37 @@
+[package]
+name = "bough-plugin-tools-operator"
+autotests = false
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-plugin-tools = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-agents = { workspace = true }
+thiserror = { workspace = true }
+bough-util = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true, features = ["chrono04"] }
+inventory = { workspace = true }
+parking_lot = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+regex = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+bough-plugin-ledger-memory = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

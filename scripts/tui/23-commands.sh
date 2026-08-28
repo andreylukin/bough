@@ -43,7 +43,10 @@ t slash_opens_a_palette_that_filters_and_moves \
     shell-use type "he"
     sleep 0.8
     see "/help" --timeout 8000 || { echo "the palette filtered /help away"; exit 1; }
-    shell-use text | grep -q "/quit" && { echo "the palette did not filter: /quit survived the query he"; exit 1; }
+    # MERGE (codemode): the witness is `/agents`, not `/quit`. The palette lists the first ten
+    # matches and `/quit` sorts below that cut even with no query, so asserting ITS
+    # disappearance passed whatever the filter did. `/agents` is the first row by name.
+    shell-use text | grep -q "/agents" && { echo "the palette did not filter: /agents survived the query he"; exit 1; }
     # It MOVES: Down changes WHICH ROW is selected, and the selection is visible. The selected
     # row is drawn on `theme.sel_bg`, so the moved selection is a change in the painted cells —
     # this half used to be `press Down; sleep 0.5; exit 0`, which asserted nothing at all.
@@ -97,7 +100,9 @@ t tab_completes_the_name_without_running_it \
     shell-use text | grep -q "shift+enter" && { echo "Tab RAN the command instead of completing it"; exit 1; }
     exit 0
   '
-# Put the composer back the way the rest of the script expects it.
+# Put the composer back the way the rest of the script expects it. `/he` and not `/`: Enter takes
+# the SELECTED row, and with no query that is `/accept`, not `/help` — the bullet below names the
+# help it expects to see.
 shell-use keys "Ctrl+u"
 shell-use press Escape
 # MERGE: the query is `/he`, not a bare `/`. With an EMPTY query the palette lists every command
@@ -164,7 +169,10 @@ shell-use keys "Ctrl+u"
 shell-use press Escape
 sleep 0.4
 shell-use type "/hepl"
-sleep 0.5
+# MERGE (codemode): the palette opens on `/` and closes again when nothing matches `hepl`;
+# an Enter sent inside that window lands on the palette instead of on the composer and the
+# miss is never submitted. One second is past the close.
+sleep 1.0
 shell-use press Enter
 t an_unknown_command_suggests_and_keeps \
   bash -c '

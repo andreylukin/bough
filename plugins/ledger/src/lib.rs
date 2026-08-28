@@ -146,9 +146,29 @@ impl std::fmt::Debug for LedgerHandle {
 }
 
 impl LedgerHandle {
-    /// §5's `ctx.projection.section()` shape, for step types (P1-D2): registration is an EFFECT,
-    /// so the disposer unregisters and unloading the declaring plugin leaves the map as if it had
-    /// never mounted.
+    /// Declare a plugin's step-type vocabulary — **for the life of the BINARY**, not the life of
+    /// the row.
+    ///
+    /// This is the ONE documented exception to §0.2's "registrations are effects; unload leaves
+    /// no trace" (AGENTS.md states the rule). Everything else a row contributes is a fact about
+    /// the RUNNING tree, and taking the row away should take it with it. A step type is not: it
+    /// is a statement about BYTES THAT ARE ALREADY ON DISK, and those outlive the row that wrote
+    /// them. `StepTypeMap::register` takes a reference on a byte-identical redeclaration, so a
+    /// remount is not a duplicate and two rows declaring the same type still compose.
+    ///
+    /// It was an unwinding effect, and that cost two bugs before it was worth the sentence:
+    ///
+    /// * `plugins/graph-ops` (D-WP8-5) — an unfiltered chain read failed the moment ANY step type
+    ///   on the chain was unregistered, so disabling one row broke a resolver in another; worked
+    ///   around by filtering the read to the wake vocabulary.
+    /// * phase codemode (`docs/codemode-merge-notes.md` §10, `scripts/tui/32-codemode-swap.sh`) —
+    ///   disable the consumer, run a program, disable it again, and the NEXT WAKE DIED:
+    ///   `step ... has type `program/console`, unknown to this binary and not ignorable`. The
+    ///   chain was unreadable because the row that wrote it was gone.
+    ///
+    /// The call is still an EFFECT and still ALL-OR-NOTHING: a definition that clashes with a
+    /// standing one leaves the map exactly as it was, because the tokens taken so far are spent
+    /// as inverses before the error is returned. What no longer happens is unwinding on UNLOAD.
     pub async fn declare_step_types(
         &self,
         ctx: &Context,
@@ -156,15 +176,25 @@ impl LedgerHandle {
     ) -> Result<EffectHandle, PluginError> {
         let store = self.0.clone();
         let entry = ctx.entry_id().clone();
-        ctx.effect(move |ectx| async move {
+        ctx.effect(move |_ectx| async move {
+            let mut taken = Vec::new();
             for def in defs {
                 match store.register_step_type(def) {
-                    Ok(token) => ectx.defer_sync(token.into_inverse()),
-                    // A partial declaration is not a state anyone can reason about: the effect
-                    // fails, and `Context::effect` unwinds the inverses already deferred, so the
-                    // map is exactly as it was before the call.
-                    Err(e) => return Err(PluginError::new(entry.clone(), e)),
+                    Ok(token) => taken.push(token),
+                    // A partial declaration is not a state anyone can reason about: undo the ones
+                    // already taken by hand — this is the one place the inverse is still run —
+                    // and fail, leaving the map exactly as it was before the call.
+                    Err(e) => {
+                        for t in taken {
+                            t.into_inverse()();
+                        }
+                        return Err(PluginError::new(entry.clone(), e));
+                    }
                 }
+            }
+            // Spent, never unregistered: the vocabulary is the binary's from here.
+            for t in taken {
+                t.forget();
             }
             Ok(())
         })

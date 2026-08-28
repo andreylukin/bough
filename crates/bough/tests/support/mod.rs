@@ -11,6 +11,8 @@
 //! `bough_plugin_hello::trace::test_lock()` for its whole body. They all do.
 #![allow(dead_code)]
 
+pub mod codemode;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -309,6 +311,12 @@ pub async fn boot_real(profile: &str, patches: &[PathBuf]) -> (Arc<Kernel>, Temp
     bough_plugin_ledger::invariant::clear();
     bough_plugin_agents::invariant::clear();
     bough_plugin_commands::invariant::clear();
+    // Phase codemode's three recorders are the same shape of process global, and
+    // `js-quickjs`'s is a bare counter with no fiber key at all — `forget(fiber)` cannot scope
+    // it, so only a clear at boot keeps one test's programs out of the next test's stream.
+    bough_plugin_tools_codemode::invariant::clear();
+    bough_plugin_js::invariant::clear();
+    bough_plugin_js_quickjs::invariant::clear();
 
     let mut dir = TempDir::new(&format!("phase2-{profile}"));
     // SAFETY: the caller holds the fixture's process-wide test lock.

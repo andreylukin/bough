@@ -4,7 +4,7 @@
 Idempotent: a crate that already has tests/main.rs is left alone. Run it after merging a branch
 that added crates with tests/ (or after adding one yourself), then `scripts/check-test-mods.sh`.
 
-    scripts/fold-tests.py            # every crate under plugins/ and crates/
+    scripts/fold-tests.py            # every crate under plugins/, crates/ and bench/
     scripts/fold-tests.py plugins/x  # one crate
 
 What it does per crate: writes tests/main.rs declaring `mod <helper>;` for each tests/<helper>/mod.rs
@@ -21,10 +21,32 @@ import sys
 HELPERS = ("common", "support")
 
 
+HELPER_MOD = re.compile(r"^(pub )?mod (" + "|".join(HELPERS) + r");[ \t]*$", re.M)
+
+
+def rewrite_helpers(files) -> int:
+    """`mod support;` -> `use crate::support;` — a file under main.rs is not a crate root."""
+    n = 0
+    for p in files:
+        src = p.read_text()
+        new = HELPER_MOD.sub(r"use crate::\2;", src)
+        if new != src:
+            p.write_text(new)
+            n += 1
+    return n
+
+
 def fold(crate: pathlib.Path) -> bool:
     tests = crate / "tests"
     files = sorted(tests.glob("*.rs")) if tests.is_dir() else []
-    if not files or (tests / "main.rs").exists():
+    if not files:
+        return False
+    if (tests / "main.rs").exists():
+        # Already folded. A MERGE brings test files written against the old one-target-per-file
+        # layout, so their helper declarations still need rewriting even though main.rs is there.
+        n = rewrite_helpers([p for p in files if p.name != "main.rs"])
+        if n:
+            print(f"{crate}: rewrote the helper mod line in {n} already-folded file(s)")
         return False
     helpers = sorted(d.name for d in tests.iterdir() if d.is_dir() and (d / "mod.rs").exists())
     stems = [p.stem for p in files]
@@ -32,16 +54,7 @@ def fold(crate: pathlib.Path) -> bool:
     if clash:
         sys.exit(f"{crate}: a test file and a helper dir share a name: {sorted(clash)}")
 
-    for p in files:
-        src = p.read_text()
-        new = re.sub(
-            r"^(pub )?mod (" + "|".join(HELPERS) + r");[ \t]*$",
-            r"use crate::\2;",
-            src,
-            flags=re.M,
-        )
-        if new != src:
-            p.write_text(new)
+    rewrite_helpers(files)
 
     lines = [
         "//! The crate's integration tests, as ONE target (`autotests = false` in Cargo.toml).",
@@ -54,7 +67,7 @@ def fold(crate: pathlib.Path) -> bool:
         # A helper that does not silence its own dead code needs it silenced here: not every test
         # module uses every helper. One that already does must NOT get it twice (clippy's
         # `duplicated_attributes` is an error under -D warnings).
-        if "allow(dead_code)" not in (tests / h / "mod.rs").read_text():
+        if not re.search(r"allow\([^)]*\bdead_code\b", (tests / h / "mod.rs").read_text()):
             lines.append("#[allow(dead_code)]")
         lines.append(f"mod {h};")
     if helpers:
@@ -78,7 +91,9 @@ def main() -> None:
     if len(sys.argv) > 1:
         crates = [pathlib.Path(a).resolve() for a in sys.argv[1:]]
     else:
-        crates = sorted(list(root.glob("plugins/*")) + list(root.glob("crates/*")))
+        crates = sorted(
+            list(root.glob("plugins/*")) + list(root.glob("crates/*")) + list(root.glob("bench/*"))
+        )
     n = sum(1 for c in crates if c.is_dir() and fold(c))
     print(f"folded {n} crate(s)")
 

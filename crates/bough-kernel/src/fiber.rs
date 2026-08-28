@@ -475,6 +475,16 @@ fn transition(rt: &FiberRuntime, fiber: &Fiber, to: FiberState, error: Option<Ar
     });
 }
 
+/// The keys of a [`crate::KernelError::NotReady`], if that is what this error is.
+///
+/// A row that could not capture a required key is PENDING, not FAILED — see the call site.
+fn not_ready(e: &PluginError) -> Option<Vec<String>> {
+    match e.source.downcast_ref::<crate::KernelError>() {
+        Some(crate::KernelError::NotReady { keys, .. }) => Some(keys.clone()),
+        _ => None,
+    }
+}
+
 /// The driver loop. It reads `target` ONCE at the top and then runs the whole transition; a target
 /// written while a transition is in flight is honoured on the next pass. That is the inertia.
 async fn drive(rt: Arc<FiberRuntime>, fiber: Arc<Fiber>) {
@@ -544,6 +554,22 @@ async fn drive(rt: Arc<FiberRuntime>, fiber: Arc<Fiber>) {
                 // item 2 — would block forever.
                 match contain(&fiber, "apply", body.load(view)).await {
                     Ok(()) => transition(&rt, &fiber, FiberState::Active, None),
+                    // NOT READY is not a failure: a required key was resolvable when this pass
+                    // decided to load and was gone again when the view was captured — a provider
+                    // reloading, most often during boot. The row goes back to PENDING with those
+                    // keys as its unmet set and loads when they return. Making this a FAILURE is
+                    // what turned a boot race into "1 enabled row(s) never activated"
+                    // (`docs/codemode-merge-notes.md` §11).
+                    Err(e) if not_ready(&e).is_some() => {
+                        let keys = not_ready(&e).unwrap_or_default();
+                        {
+                            let mut s = fiber.state.lock();
+                            s.unmet = keys;
+                            s.view = None;
+                        }
+                        teardown(&rt, &fiber).await;
+                        transition(&rt, &fiber, FiberState::Pending, None);
+                    }
                     Err(e) => {
                         // A failed apply unwinds as if unloaded, then rests in FAILED.
                         let err = Arc::new(e);

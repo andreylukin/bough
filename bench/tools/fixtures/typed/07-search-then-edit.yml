@@ -1,0 +1,98 @@
+# Recorded transcript: 07-search-then-edit, TYPED arm.
+#
+# A patch layer that replaces `llm.anthropic` with `llm-replay`, so the bench measures the SURFACE
+# and not the model's mood. The rounds are consumed in order: one per tool call the typed surface
+# needs, then the answer. The `usage` chunk is what the $ column is arithmetic over.
+{
+  "entries": {
+    "llm.anthropic": {
+      "plugin": "llm-replay",
+      "config": {
+        "strict": true,
+        "models": "*",
+        "rounds": [
+          {
+            "chunks": [
+              {
+                "type": "tool_call",
+                "id": "c0",
+                "name": "bash",
+                "input": {
+                  "command": "rg -l MARKER_ONE src"
+                }
+              },
+              {
+                "type": "usage",
+                "input_tokens": 4200,
+                "output_tokens": 140
+              },
+              {
+                "type": "end",
+                "stop": "tool_use"
+              }
+            ]
+          },
+          {
+            "chunks": [
+              {
+                "type": "tool_call",
+                "id": "c1",
+                "name": "view",
+                "input": {
+                  "path": "src/notes.md"
+                }
+              },
+              {
+                "type": "usage",
+                "input_tokens": 5100,
+                "output_tokens": 140
+              },
+              {
+                "type": "end",
+                "stop": "tool_use"
+              }
+            ]
+          },
+          {
+            "chunks": [
+              {
+                "type": "tool_call",
+                "id": "c2",
+                "name": "patch",
+                "input": {
+                  "patch": "[src/notes.md#]\nSWAP 3.=3:\n+the marker is MARKER_TWO here"
+                }
+              },
+              {
+                "type": "usage",
+                "input_tokens": 6000,
+                "output_tokens": 140
+              },
+              {
+                "type": "end",
+                "stop": "tool_use"
+              }
+            ]
+          },
+          {
+            "chunks": [
+              {
+                "type": "text",
+                "text": "src/notes.md was the only hit; it says MARKER_TWO now."
+              },
+              {
+                "type": "usage",
+                "input_tokens": 6900,
+                "output_tokens": 60
+              },
+              {
+                "type": "end",
+                "stop": "end_turn"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
