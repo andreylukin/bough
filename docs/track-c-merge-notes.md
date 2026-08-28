@@ -273,6 +273,17 @@ fixture's subject — the reconciliation, against the shim it reconciles — is 
 ("run it again after the track-B merge"). Regenerated; `xtask::the_committed_catalog_matches_the_tree`
 is green.
 
+**A PRODUCT ODDITY the delta fix uncovered, recorded rather than changed.** The four
+`mail/delivered` steps `phase6_swap` saw are not one item delivered twice: they are two DIFFERENT
+envelope shapes for the same two PRs — one pair carrying `repo:o/r` in its refs with the item's own
+`at` (the ROUTER's, matched on the lane's linked ref), one pair carrying only `gh:o/r#N` with
+`at: now` (the collector's `deliver_to` list). A lane that is BOTH linked to the repository AND
+named in `deliver_to` therefore gets each item twice. `dedupe_on` is not being defeated; two paths
+are running. The shipped bundle sets `deliver_to: []` and track B's merge notes call it "the
+FALLBACK for a tree with no `mail` seam", so this only bites a hand-configured tree — and the test
+layer is exactly one. Changing which path wins is a `collect-core` decision and belongs to whoever
+owns §6, not to a merge.
+
 **The scripts are renumbered.** `27`/`28`/`29`/`30` were taken by track B's `27-drafts`,
 `28-mcp-tool`, `29-swap-collector`, `30-swap-wards` and by code mode's `31-program` /
 `32-codemode-swap`, so this track's four are `33-preview`, `34-timeline`, `35-drift`,

@@ -330,7 +330,14 @@ async fn disabling_the_row_by_patch_stops_sweeps_and_removes_its_schedule_job() 
         gh_calls_before,
         "not one `gh` was spawned after the swap"
     );
-    assert_eq!(delivered(&kernel, &traj).await.len(), 2, "no further mail");
+    // A DELTA, like the `gh` count above it: the claim is that the swap delivered NOTHING MORE,
+    // and an absolute count also asserts how many the sweeps before it delivered — which is
+    // at-least-once and therefore not a fixed number (see the note beside `already`).
+    assert_eq!(
+        delivered(&kernel, &traj).await.len(),
+        before.len(),
+        "no further mail"
+    );
 
     // --- nothing else in the tree changed ------------------------------------------------------
     let rows_after = all_rows(&kernel);

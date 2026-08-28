@@ -85,6 +85,31 @@ fn schema_names(kernel: &Kernel, agent: &AgentName) -> BTreeSet<String> {
         .collect()
 }
 
+/// [`schema_names`], waited on until it settles to `want`.
+///
+/// MERGE: the concealment for a NEWLY CREATED agent is installed by a listener on `agent/created`,
+/// which is an `emit` event — parallel and not awaited by `agents.create()`. So a snapshot taken
+/// the instant `create` returns can still show the typed set, and under a loaded machine it did
+/// (once in eight full suites, showing all 24 names). Retrying is not a weaker assertion: a
+/// concealment that is genuinely absent shows the same set on every attempt and this still fails.
+/// The guarantee that matters — the first REQUEST of a fresh agent is already concealed — is
+/// `crates/bough/tests/codemode_conceal_race.rs`, and it is unaffected.
+async fn schema_names_settled(
+    kernel: &Kernel,
+    agent: &AgentName,
+    want: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut names = schema_names(kernel, agent);
+    for _ in 0..100 {
+        if &names == want {
+            return names;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        names = schema_names(kernel, agent);
+    }
+    names
+}
+
 /// Every row in the tree, at any depth, that is not ACTIVE and not merely disabled. The bullet
 /// says "nothing FAILED", which is a statement about the WHOLE tree and not only the seam rows.
 fn failed_rows(kernel: &Kernel) -> Vec<String> {
@@ -145,10 +170,10 @@ async fn the_codemode_row_mounts_by_patch_and_the_seam_rows_stay_active() {
 async fn the_model_is_shown_exactly_one_tool_under_code_mode() {
     let _guard = trace::test_lock();
     let (kernel, _dir, agent, _d) = boot_codemode("one-tool").await;
-    let names = schema_names(&kernel, &agent);
+    let want = BTreeSet::from([bough_plugin_tools_codemode::RUN_TOOL.to_string()]);
+    let names = schema_names_settled(&kernel, &agent, &want).await;
     assert_eq!(
-        names,
-        BTreeSet::from([bough_plugin_tools_codemode::RUN_TOOL.to_string()]),
+        names, want,
         "code mode shows the model ONE tool; it showed {names:?}"
     );
     kernel.shutdown().await;
@@ -159,8 +184,11 @@ async fn the_model_is_shown_exactly_one_tool_under_code_mode() {
 async fn a_patch_switches_the_consumer_and_the_next_wake_uses_the_other_surface() {
     let _guard = trace::test_lock();
     let (kernel, dir, agent, _d) = boot_codemode("swap").await;
-    let before = schema_names(&kernel, &agent);
-    assert_eq!(before.len(), 1, "code mode before the patch: {before:?}");
+    // Settled, for the reason `schema_names_settled` gives: the fresh agent's concealment is
+    // installed by a parallel listener, so the first snapshot can race it.
+    let one = BTreeSet::from([bough_plugin_tools_codemode::RUN_TOOL.to_string()]);
+    let before = schema_names_settled(&kernel, &agent, &one).await;
+    assert_eq!(before, one, "code mode before the patch: {before:?}");
 
     write_patch(&dir, DISABLE_CODEMODE);
     recompose(&kernel, "", &dir)
@@ -205,7 +233,8 @@ async fn the_tools_seam_rows_stay_active_and_nothing_is_failed() {
 async fn switching_back_restores_the_typed_schemas() {
     let _guard = trace::test_lock();
     let (kernel, dir, agent, _d) = boot_codemode("restore").await;
-    let code_mode = schema_names(&kernel, &agent);
+    let one = BTreeSet::from([bough_plugin_tools_codemode::RUN_TOOL.to_string()]);
+    let code_mode = schema_names_settled(&kernel, &agent, &one).await;
 
     write_patch(&dir, DISABLE_CODEMODE);
     recompose(&kernel, "", &dir)
@@ -218,7 +247,7 @@ async fn switching_back_restores_the_typed_schemas() {
         .await
         .expect("the revert composes");
     assert_eq!(
-        schema_names(&kernel, &agent),
+        schema_names_settled(&kernel, &agent, &code_mode).await,
         code_mode,
         "re-enabling the consumer must restore the code-mode schema exactly"
     );
