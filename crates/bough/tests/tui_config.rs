@@ -24,6 +24,8 @@ fn focus() -> FocusConfig {
         page_lines: 20,
         expand_new_tools: false,
         show_reasoning: true,
+        context: true,
+        context_refresh_ms: 150,
     }
 }
 

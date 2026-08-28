@@ -164,6 +164,42 @@ word, and says `tab panes` once.
 unreachable under tools-codemode (bough-d5's parity gate); the pane is still called "trajectory"
 in `/help` and "conversation" in the key hints.
 
+## Round 11 — the context view (Andrey, 2026-08-28)
+
+**What he said.** "Right now our view is used to the existing harness setup where the conversation
+is based on sessions. We should instead set up the *current context* view that we can message to,
+and every message it refreshes the view since that's how it works." And, on the first draft
+(which showed the request as a document): "when in headlong and in new bough we shove context in,
+it's sections based on previous history. I want to see those sections, labeled. Tools aren't
+needed, and main prompt, but summaries, pins, etc should show up."
+
+**Decided** (grill + a design canvas of four directions, B chosen —
+https://claude.ai/code/artifact/a75cca08-2632-4b55-bb40-e17d85e152ee):
+
+- D11-1 The conversation pane shows the projection's SECTIONS, labeled, as the assembler will
+  send them next — rebuilt on every ledger step. It replaces the session log; the ledger stays
+  reachable through timeline and search.
+- D11-2 A STANDING block at the top that never scrolls: the digest, then the pins. Capped at a
+  third of the pane; past the cap the pins fold to `⚑ title · step` lines; a click opens the block.
+- D11-3 Below it scrolls, in projection order: each tier summary under a rule that names its seq
+  range (`tier 1 summary · [410..980]`), the recent steps (the tail band) drawn as today's
+  conversation rows (`andrey:` / `sol:` / `▸ run …`), unconsumed mail last.
+- D11-4 Identity, About, Boundary, Persona, Skills and the tool list fold to ONE dim line with
+  their cost (`▸ identity · about · boundary · 2 skills · 4.1k`); openable; never the model's bytes
+  in the pane.
+- D11-5 A rebuild flashes the rule of every section whose text changed, briefly. No other motion.
+- D11-6 The pane follows the rail's focused agent: a worker's context is its own bands.
+- D11-7 The composer stays its own box (the "composer as the last message" card was declined).
+- D11-8 Token cost per section at the right of its rule; a footer line says
+  `rebuilt · 14.2k of 200k · 62%`.
+- D11-9 The click-on-the-speaker-label → `$EDITOR` path from earlier in the day is superseded: the
+  view IS the context. `request.recorder` (every request verbatim under `$BOUGH_HOME/requests`)
+  and `TuiHandle::run_external` stay; "open this context in `$EDITOR`" becomes a command.
+
+**Directions considered:** A the bands in projection order (pins scroll away); C a chip index
+row over A (one more row of chrome); D the ledger's seq axis as the gutter with pins at the step
+they were made (13 columns; pins not where the model reads them).
+
 ## Verification
 
 Per crate: `make gate-crate CRATES="bough-plugin-tui-focus bough-plugin-tui-strip

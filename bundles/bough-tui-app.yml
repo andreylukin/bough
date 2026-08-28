@@ -80,6 +80,11 @@
     page_lines: 20
     expand_new_tools: false
     show_reasoning: true
+    # The context view (Andrey, 2026-08-28): the pane shows the model's next context, section by
+    # section — digest and pins standing at the top, tier summaries, the recent steps, mail —
+    # rebuilt this many ms after a ledger step. `false` is the plain transcript.
+    context: true
+    context_refresh_ms: 150
 
 - id: tui.search
   plugin: tui-search

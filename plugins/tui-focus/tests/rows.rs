@@ -474,6 +474,8 @@ fn paint_live(rows: &[Row], width: u16, agent_name: Option<&str>, live: &str) ->
         page_lines: 10,
         expand_new_tools: false,
         show_reasoning: true,
+        context: true,
+        context_refresh_ms: 150,
     });
     let pane = FocusPane::new(
         cfg,
@@ -790,6 +792,8 @@ fn the_focus_fill_keeps_the_labels_colour() {
         page_lines: 10,
         expand_new_tools: false,
         show_reasoning: true,
+        context: true,
+        context_refresh_ms: 150,
     });
     let pane = FocusPane::new(
         cfg,

@@ -8,6 +8,7 @@
 
 pub mod branches;
 pub mod claims;
+pub mod context;
 pub mod draft;
 pub mod expand;
 pub mod invariant;
@@ -23,9 +24,10 @@ use bough_kernel::{ConfigError, Context, Inject, InvariantSpec, Plugin, PluginEr
 use bough_plugin_agents::events::{AgentStep, AgentWake, Phase};
 use bough_plugin_agents::{initiator, AgentId, Agents, AgentsHandle};
 use bough_plugin_ledger::{
-    Ledger, LedgerHandle, LedgerStep, Order, Seq, Step, StepId, StepQuery, TrajId,
+    AgentName, Ledger, LedgerHandle, LedgerStep, Order, Seq, Step, StepId, StepQuery, TrajId,
 };
 use bough_plugin_llm::LlmStreamEvent;
+use bough_plugin_projection::{AssembleRequest, Projection, ProjectionHandle};
 use bough_plugin_tui_render::ToolCallView;
 use bough_plugin_tui_shell::pane::{
     Pane, PaneCx, PaneEvent, PaneOutcome, PaneSpec, RenderCx, Slot, SlotSize,
@@ -63,6 +65,21 @@ pub struct FocusConfig {
     pub page_lines: u16,
     pub expand_new_tools: bool,
     pub show_reasoning: bool,
+    /// The context view (round 11): the pane shows the model's NEXT context, section by section.
+    /// `false` is the plain transcript.
+    #[serde(default = "default_true")]
+    pub context: bool,
+    /// Debounce on `ledger/step` before re-assembling. Assembly is deterministic but not free.
+    #[serde(default = "default_refresh_ms")]
+    pub context_refresh_ms: u64,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_refresh_ms() -> u64 {
+    150
 }
 
 /// Everything the pane holds between frames. `render` reads it and nothing else.
@@ -113,9 +130,16 @@ pub struct FocusState {
     /// The focused agent's NAME, for the speaker label on its text (visual audit F2). `None`
     /// until `retarget` has looked it up; a text row then carries no label rather than a guess.
     pub agent_name: Option<String>,
+    /// The model's next context, as last assembled (round 11). Empty until the first refresh.
+    pub context: context::ContextView,
 }
 
 impl FocusState {
+    /// Each held step's seq, for the context plan.
+    pub fn seq_of(&self) -> std::collections::HashMap<StepId, Seq> {
+        self.steps.iter().map(|s| (s.id.clone(), s.seq)).collect()
+    }
+
     /// Replace the whole step window, recomputing the rows.
     pub fn set_steps(&mut self, steps: Vec<Step>) {
         self.rows = rows_from_steps(&steps);
@@ -204,6 +228,8 @@ pub struct FocusPane {
     /// resolving a service through the SHELL's committed view let any pane reach a key it never
     /// declared), so what `handle` may reach is exactly what `apply` was given.
     deps: Option<Deps>,
+    /// Re-assembles the context (round 11). `None` in a test that drives the pane directly.
+    refresher: Option<Arc<Refresher>>,
 }
 
 /// What the pane's `handle` does I/O through.
@@ -225,7 +251,14 @@ impl FocusPane {
             state,
             live,
             deps: None,
+            refresher: None,
         }
+    }
+
+    /// The context refresher, attached by `apply`.
+    pub(crate) fn with_refresher(mut self, r: Arc<Refresher>) -> FocusPane {
+        self.refresher = Some(r);
+        self
     }
 
     /// The injected handles, attached by `apply`. A pane built without them scrolls and expands
@@ -331,15 +364,59 @@ impl FocusPane {
             ))
         };
         let folds = rows::retry_folds(&state.rows);
-        let mut row_lines: Vec<u16> = Vec::with_capacity(state.rows.len());
+        let mut row_lines: Vec<u16> = vec![0; state.rows.len()];
         let mut skip_until: Option<usize> = None;
+        // The context view (round 11): which rows are IN the next context, which a tier
+        // summarises, which are gone, which are mail — and the labeled rules between them.
+        let now = state.now.unwrap_or_else(chrono::Utc::now);
+        let plan = if self.cfg.context && state.context.is_on() {
+            let seq_of = state.seq_of();
+            Some(context::plan(
+                &state.context,
+                &state.rows,
+                &seq_of,
+                now,
+                width,
+                theme,
+            ))
+        } else {
+            None
+        };
+        let emit = |pieces: &[context::Piece],
+                    lines: &mut Vec<Line<'static>>,
+                    hits: &mut Vec<claims::ClaimHit>| {
+            for piece in pieces {
+                if let Some((id, w)) = &piece.hit {
+                    hits.push(claims::ClaimHit {
+                        id: id.clone(),
+                        line: lines.len() as u16,
+                        x: 0,
+                        width: *w,
+                    });
+                }
+                lines.push(piece.line.clone());
+            }
+        };
         for (i, row) in state.rows.iter().enumerate() {
+            if let Some(p) = &plan {
+                if p.mail[i] {
+                    row_lines[i] = lines.len().saturating_sub(1) as u16;
+                    continue;
+                }
+                if let Some(pieces) = p.before.get(&i) {
+                    emit(pieces, &mut lines, &mut claim_hits);
+                }
+                if !p.show[i] {
+                    row_lines[i] = lines.len().saturating_sub(1) as u16;
+                    continue;
+                }
+            }
             // Failed attempts folded under the call that succeeded (round 8): one line, a
             // click opens them. A folded row's line is the fold line, so the row focus and the
             // click map still have somewhere to point.
             if let Some(until) = skip_until {
                 if i < until {
-                    row_lines.push(lines.len().saturating_sub(1) as u16);
+                    row_lines[i] = lines.len().saturating_sub(1) as u16;
                     continue;
                 }
                 skip_until = None;
@@ -347,7 +424,7 @@ impl FocusPane {
             // An empty program draws nothing (round 9); its line is the previous line so the
             // row focus and the click map still have somewhere to point.
             if rows::is_empty_program(row) {
-                row_lines.push(lines.len().saturating_sub(1) as u16);
+                row_lines[i] = lines.len().saturating_sub(1) as u16;
                 continue;
             }
             if let Some(fold) = folds.iter().find(|f| f.start == i) {
@@ -372,7 +449,7 @@ impl FocusPane {
                 });
                 lines.push(Line::styled(text, Style::default().fg(theme.warn)));
                 if !opened {
-                    row_lines.push((lines.len() - 1) as u16);
+                    row_lines[i] = (lines.len() - 1) as u16;
                     skip_until = Some(fold.end);
                     continue;
                 }
@@ -386,7 +463,7 @@ impl FocusPane {
             }
             let flash = state.anchor.as_ref() == Some(row.step());
             let row_start = lines.len();
-            row_lines.push(row_start as u16);
+            row_lines[i] = row_start as u16;
             // The speaker (visual audit F2): Andrey's rows said `andrey:` and the agent's said
             // nothing, so the two halves of the conversation were told apart by nothing but
             // position. The name opens each span the agent acts in — words or a tool call. A
@@ -416,12 +493,7 @@ impl FocusPane {
                     lines.extend(bough_plugin_tui_render::markdownish(text, width, theme));
                 }
                 Row::Mail { from, subject, .. } => {
-                    lines.push(Line::from(vec![
-                        Span::styled("✉ ", Style::default().fg(theme.evidence)),
-                        Span::styled(from.clone(), Style::default().fg(theme.evidence)),
-                        Span::raw("  "),
-                        Span::styled(subject.clone(), Style::default().fg(theme.fg)),
-                    ]));
+                    lines.push(mail_line(from, subject, theme));
                 }
                 Row::Text { text, .. } => {
                     // ONE paragraph, wrapped at `width`: the joined row is a single string, so it
@@ -604,6 +676,22 @@ impl FocusPane {
                 }
             }
         }
+        // The mail band, last, where the model reads it (D11-3): every mail row under one rule.
+        if let Some(p) = &plan {
+            for (i, row) in state.rows.iter().enumerate() {
+                if !p.mail[i] {
+                    continue;
+                }
+                if let Some(pieces) = p.before.get(&i) {
+                    emit(pieces, &mut lines, &mut claim_hits);
+                }
+                row_lines[i] = lines.len() as u16;
+                if let Row::Mail { from, subject, .. } = row {
+                    lines.push(mail_line(from, subject, theme));
+                }
+            }
+            emit(&p.trailing, &mut lines, &mut claim_hits);
+        }
         // The last turn's `✎ changed …` line, once nothing is in flight (round 6).
         let last_in_flight = state
             .now
@@ -638,6 +726,9 @@ impl FocusPane {
             lines.extend(bough_plugin_tui_render::markdownish(
                 &live.text, width, theme,
             ));
+        }
+        if plan.is_some() {
+            lines.push(context::footer(&state.context, now, theme));
         }
         (lines, headers, claim_hits, row_lines)
     }
@@ -739,6 +830,15 @@ fn draft_key(draft: &str) -> bough_plugin_llm::ToolCallId {
     bough_plugin_llm::ToolCallId::new(format!("draft:{draft}"))
 }
 
+fn mail_line(from: &str, subject: &str, theme: &Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("\u{2709} ", Style::default().fg(theme.evidence)),
+        Span::styled(from.to_string(), Style::default().fg(theme.evidence)),
+        Span::raw("  "),
+        Span::styled(subject.to_string(), Style::default().fg(theme.fg)),
+    ])
+}
+
 fn label(who: &str, color: ratatui::style::Color) -> Line<'static> {
     Line::styled(
         format!("{who}:"),
@@ -774,6 +874,35 @@ impl Pane for FocusPane {
         // THE PROSE MEASURE (M13): text a human reads wraps at `min(width, measure_cols)`, so a
         // 200-column terminal gets a 90-column paragraph and the rest is margin.
         let measure = bough_plugin_tui_shell::measure(area.width, cx.view.measure_cols);
+        // The STANDING block (round 11, D11-2): the folded head, the digest and the pins never
+        // scroll. It takes up to a third of the pane (pins fold to titles past that) and, opened,
+        // what it needs — but never the rows the transcript cannot do without.
+        let (standing, standing_hits) = if self.cfg.context && state.context.is_on() {
+            context::standing_lines(
+                &state.context,
+                (area.height as usize / 3).max(3),
+                measure,
+                &theme,
+                0,
+                cx.view.now,
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let standing_h = (standing.len() as u16).min(area.height.saturating_sub(4));
+        let standing_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: standing_h,
+        };
+        let area = Rect {
+            x: area.x,
+            y: area.y + standing_h,
+            width: area.width,
+            height: area.height - standing_h,
+        };
+        state.height = area.height;
         let (lines, headers, claim_hits, row_lines) =
             self.lines_with_rows(&state, &live, measure, &theme);
         state.lines = lines.len();
@@ -826,6 +955,35 @@ impl Pane for FocusPane {
         // The block is the ROW's line span, so a text row that follows a tool call is never
         // swallowed into it: `row_lines[i]..row_lines[i + 1]`.
         let total = lines.len() as u16;
+        // Row starts in LINE order: with the context view a row can be drawn out of index order
+        // (mail goes last), so "the next row's first line" is the next START, not `i + 1`.
+        let mut starts: Vec<u16> = row_lines.clone();
+        starts.sort_unstable();
+        if standing_h > 0 {
+            cx.frame.render_widget(
+                Paragraph::new(
+                    standing
+                        .into_iter()
+                        .take(standing_h as usize)
+                        .collect::<Vec<_>>(),
+                ),
+                standing_area,
+            );
+            for hit in standing_hits {
+                if hit.line >= standing_h {
+                    continue;
+                }
+                cx.hit(
+                    Rect {
+                        x: standing_area.x + hit.x.min(standing_area.width),
+                        y: standing_area.y + hit.line,
+                        width: hit.width.min(standing_area.width.saturating_sub(hit.x)),
+                        height: 1,
+                    },
+                    hit.id,
+                );
+            }
+        }
         for (call, line) in headers.iter() {
             let id = call.to_string();
             let owner = id.split('.').next().unwrap_or(&id);
@@ -851,9 +1009,10 @@ impl Pane for FocusPane {
         }
         for (i, call) in tool_rows.iter() {
             let first = row_lines.get(*i).copied().unwrap_or(0);
-            let last = row_lines
-                .get(i + 1)
+            let last = starts
+                .iter()
                 .copied()
+                .find(|&s| s > first)
                 .unwrap_or(total)
                 .max(first + 1);
             if last <= top as u16 {
@@ -939,6 +1098,17 @@ impl Pane for FocusPane {
                 // a card's button, selects text by dragging. It leaves no row marker — the marker
                 // is the KEYBOARD's row, and a click never moves the keyboard (B1), so a marker
                 // placed by a click said the keys were somewhere they were not.
+                // The context view's own buttons (round 11): the folded head, the standing
+                // block, a tier's rows, the steps not in the context.
+                if let Some(h) = hit.as_ref() {
+                    if h.as_str().starts_with(context::HIT_PREFIX) {
+                        let toggled = self.state.lock().context.toggle(h);
+                        if toggled {
+                            cx.tui.redraw();
+                            return PaneOutcome::Handled;
+                        }
+                    }
+                }
                 // A retry fold's line (round 8): open or close the failed attempts.
                 if let Some(rest) = hit
                     .as_ref()
@@ -1131,6 +1301,9 @@ impl Pane for FocusPane {
                     )
                     .await;
                 }
+                if let Some(r) = &self.refresher {
+                    r.arm();
+                }
                 cx.tui.redraw();
                 PaneOutcome::Handled
             }
@@ -1177,6 +1350,9 @@ pub async fn retarget(
             held.scroll = Scroll::Follow;
             held.unseen = 0;
             held.anchor = None;
+            // A worker's context is its own bands (D11-6): nothing of the last agent's shows
+            // under the new name while the first refresh is in flight.
+            held.context = context::ContextView::default();
         }
     }
     if let Some(step) = req.step.clone() {
@@ -1188,6 +1364,89 @@ pub async fn retarget(
         // not follow left Up/Down/Enter working from wherever they were before the search.
         held.row_focus = RowFocus::on_step(&held.rows, &step);
         held.anchor = Some(step);
+    }
+}
+
+/// Re-assembles the focused agent's context (round 11) through the SAME `assemble` the wake flow
+/// calls (`tui-preview`'s rule): what the pane labels is what the model reads, by construction.
+/// One refresh at a time, debounced by `refresh_ms`; a request that lands during one re-arms it.
+pub struct Refresher {
+    state: Arc<Mutex<FocusState>>,
+    tui: TuiHandle,
+    projection: ProjectionHandle,
+    refresh_ms: u64,
+}
+
+impl Refresher {
+    pub fn new(
+        state: Arc<Mutex<FocusState>>,
+        tui: TuiHandle,
+        projection: ProjectionHandle,
+        refresh_ms: u64,
+    ) -> Refresher {
+        Refresher {
+            state,
+            tui,
+            projection,
+            refresh_ms,
+        }
+    }
+
+    /// Ask for a rebuild. Returns at once; the frame follows.
+    pub fn arm(self: &Arc<Self>) {
+        {
+            let mut s = self.state.lock();
+            if s.context.refreshing {
+                s.context.dirty = true;
+                return;
+            }
+            s.context.refreshing = true;
+        }
+        let me = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(me.refresh_ms)).await;
+                let agent = me.state.lock().agent_name.clone();
+                let Some(agent) = agent else {
+                    me.state.lock().context.refreshing = false;
+                    return;
+                };
+                let now = chrono::Utc::now();
+                let result = me
+                    .projection
+                    .0
+                    .assemble(&AssembleRequest {
+                        agent: AgentName::new(&agent),
+                        wake: None,
+                        at: now,
+                        budget: None,
+                        as_of: None,
+                    })
+                    .await;
+                let mut s = me.state.lock();
+                match result {
+                    Ok(a) => {
+                        if s.agent_name.as_deref() == Some(agent.as_str()) {
+                            s.context.apply(&a, now);
+                        } else {
+                            s.context.dirty = true;
+                        }
+                    }
+                    // Before the trajectory exists (a cold boot's first frames) there is no
+                    // context to show; the plain transcript stands until the next step re-arms.
+                    Err(e) => {
+                        tracing::debug!(target: "tui.focus", error = %e, "assembling the context failed")
+                    }
+                }
+                if s.context.dirty {
+                    s.context.dirty = false;
+                    continue;
+                }
+                s.context.refreshing = false;
+                break;
+            }
+            me.tui.redraw();
+        });
     }
 }
 
@@ -1296,7 +1555,7 @@ impl Plugin for FocusPlugin {
     type Config = FocusConfig;
 
     fn inject() -> Inject {
-        Inject::required(["tui", "agents", "ledger", "llm"])
+        Inject::required(["tui", "agents", "ledger", "llm", "projection"])
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
@@ -1329,6 +1588,10 @@ impl Plugin for FocusPlugin {
             .get::<Ledger>()
             .map_err(|e| PluginError::new(entry.clone(), e))?;
         let ledger = LedgerHandle(ledger.0.clone());
+        let projection = ctx
+            .get::<Projection>()
+            .map_err(|e| PluginError::new(entry.clone(), e))?;
+        let projection = ProjectionHandle(projection.0.clone());
 
         // The recorded frame is per-process and this row owns it: unloading forgets what it drew,
         // so a reload is never checked against its predecessor's screen.
@@ -1356,9 +1619,19 @@ impl Plugin for FocusPlugin {
             .await;
         }
 
+        let refresher = Arc::new(Refresher::new(
+            state.clone(),
+            tui.clone(),
+            projection,
+            cfg.context_refresh_ms,
+        ));
+        if cfg.context {
+            refresher.arm();
+        }
         let pane = Arc::new(
             FocusPane::new(cfg.clone(), state.clone(), live.clone())
-                .with_deps(agents.clone(), ledger.clone()),
+                .with_deps(agents.clone(), ledger.clone())
+                .with_refresher(refresher.clone()),
         );
         tui.register_pane(
             &ctx,
@@ -1377,9 +1650,9 @@ impl Plugin for FocusPlugin {
         .await?;
 
         // The durable half: every step of the focused trajectory becomes a row.
-        let (s, t, c) = (state.clone(), tui.clone(), cfg.clone());
+        let (s, t, c, r) = (state.clone(), tui.clone(), cfg.clone(), refresher.clone());
         ctx.on::<LedgerStep, _, _>(move |step| {
-            let (s, t, c) = (s.clone(), t.clone(), c.clone());
+            let (s, t, c, r) = (s.clone(), t.clone(), c.clone(), r.clone());
             async move {
                 let mine = s.lock().traj.as_ref() == Some(&step.traj);
                 if !mine {
@@ -1387,6 +1660,9 @@ impl Plugin for FocusPlugin {
                 }
                 s.lock()
                     .push_step(step.as_ref().clone(), c.max_rows, c.expand_new_tools);
+                if c.context {
+                    r.arm();
+                }
                 t.redraw();
             }
         })
@@ -1429,12 +1705,16 @@ impl Plugin for FocusPlugin {
         })
         .await?;
 
-        let (l, t) = (live.clone(), tui.clone());
+        let (l, t, r, c) = (live.clone(), tui.clone(), refresher.clone(), cfg.clone());
         ctx.on::<AgentWake, _, _>(move |ev| {
-            let (l, t) = (l.clone(), t.clone());
+            let (l, t, r, c) = (l.clone(), t.clone(), r.clone(), c.clone());
             async move {
                 if ev.phase == Phase::End {
                     l.lock().clear();
+                    // A wake's end is when a digest or a tier can have sealed (round 11).
+                    if c.context {
+                        r.arm();
+                    }
                     t.redraw();
                 }
             }

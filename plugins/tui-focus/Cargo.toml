@@ -18,6 +18,8 @@ bough-plugin-llm = { workspace = true }
 bough-plugin-tools = { workspace = true }
 bough-plugin-tui-shell = { workspace = true }
 bough-plugin-tui-render = { workspace = true }
+# The context view (round 11): the pane assembles through the SAME seam the wake flow calls.
+bough-plugin-projection = { workspace = true }
 ratatui = { workspace = true }
 # The keymap: `PaneEvent::Key` carries a crossterm `KeyEvent` (§2.1).
 crossterm = { workspace = true }

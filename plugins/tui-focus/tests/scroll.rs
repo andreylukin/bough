@@ -89,6 +89,8 @@ fn a_page_up_scrolls_when_few_rows_rendered_many_lines() {
         page_lines: 10,
         expand_new_tools: false,
         show_reasoning: true,
+        context: true,
+        context_refresh_ms: 150,
     });
     let pane = FocusPane::new(
         cfg,
