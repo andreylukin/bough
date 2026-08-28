@@ -846,7 +846,7 @@ fn a_draft_call_is_rendered_only_by_its_card() {
         step(
             3,
             "tool/result",
-            serde_json::json!({ "call": "c1", "name": "draft_ticket", "content": "drafted d1", "ok": true }),
+            serde_json::json!({ "call": "c1", "name": "draft_ticket", "outcome": "ok", "content": "drafted d1", "step_index": 0 }),
         ),
         step(
             4,
