@@ -462,6 +462,10 @@ fn paint(rows: &[Row], width: u16) -> Vec<String> {
 }
 
 fn paint_as(rows: &[Row], width: u16, agent_name: Option<&str>) -> Vec<String> {
+    paint_live(rows, width, agent_name, "")
+}
+
+fn paint_live(rows: &[Row], width: u16, agent_name: Option<&str>, live: &str) -> Vec<String> {
     use bough_plugin_tui_focus::{FocusConfig, FocusPane, FocusState, LiveText};
     let cfg = Arc::new(FocusConfig {
         max_rows: 100,
@@ -480,9 +484,13 @@ fn paint_as(rows: &[Row], width: u16, agent_name: Option<&str>) -> Vec<String> {
         agent_name: agent_name.map(str::to_string),
         ..Default::default()
     };
+    let live = LiveText {
+        agent: None,
+        text: live.to_string(),
+    };
     let (lines, _, _) = pane.lines(
         &state,
-        &LiveText::default(),
+        &live,
         width,
         &bough_plugin_tui_shell::Theme::of(bough_plugin_tui_shell::ThemeName::Dark),
     );
@@ -695,4 +703,44 @@ fn the_empty_transcript_says_what_it_is_for() {
     assert!(!paint_as(&rows, 80, Some("sol"))
         .join("\n")
         .contains("Nothing here yet"));
+}
+
+/// F2 on the live tail: the first streamed words wear the name before any durable row exists.
+#[test]
+fn the_live_tail_opens_with_the_speaker_label() {
+    let andrey = rows_from_steps(&[step(
+        1,
+        "mail/delivered",
+        serde_json::json!({ "from": "andrey", "subject": "hi", "summary": "ONE" }),
+    )]);
+    let out = paint_live(&andrey, 80, Some("sol"), "first streamed words");
+    let at = out
+        .iter()
+        .position(|l| l.trim() == "sol:")
+        .expect("label on the live tail");
+    assert!(out[at + 1].contains("first streamed words"), "{out:?}");
+    // No welcome block while text streams, and no label without a name.
+    assert!(!out.join("\n").contains("Nothing here yet"), "{out:?}");
+    assert!(!paint_live(&andrey, 80, None, "words")
+        .iter()
+        .any(|l| l.trim() == "sol:"));
+    // After the agent's own durable row the live tail continues the span: one label, not two.
+    let agent = rows_from_steps(&[
+        step(
+            1,
+            "thought/text",
+            serde_json::json!({ "step_index": 0, "text": "durable" }),
+        ),
+        step(
+            2,
+            "tool/call",
+            serde_json::json!({ "call": "c1", "name": "bash", "args": {} }),
+        ),
+    ]);
+    let out = paint_live(&agent, 80, Some("sol"), "more");
+    assert_eq!(
+        out.iter().filter(|l| l.trim() == "sol:").count(),
+        1,
+        "{out:?}"
+    );
 }

@@ -495,6 +495,14 @@ impl FocusPane {
         // The live tail of a turn whose first `thought/text` has not landed yet: without this the
         // first token of every answer would be invisible until the first flush.
         if trailing.is_none() && !live.text.is_empty() {
+            // The label opens here too (F2): the first streamed words are the agent speaking,
+            // and waiting for the first durable flush to say so would make the name pop in
+            // mid-sentence.
+            if !state.rows.last().is_some_and(rows::is_agent_row) {
+                if let Some(name) = &state.agent_name {
+                    lines.push(label(name, theme.accent));
+                }
+            }
             lines.extend(bough_plugin_tui_render::markdownish(
                 &live.text, width, theme,
             ));
