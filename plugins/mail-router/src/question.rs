@@ -30,6 +30,8 @@ pub fn envelope_for(q: &Question) -> Envelope {
         },
         cites: q.cites.clone(),
         refs,
+        // A question is asked once and is not a re-offered world item: nothing to dedupe on.
+        dedupe_on: None,
         at: q.at,
     }
 }

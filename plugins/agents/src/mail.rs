@@ -52,6 +52,11 @@ pub enum Sender {
     Worker(WorkerId),
     /// A collector row (Phase 6); named here so the vocabulary is complete.
     Collector(String),
+    /// A ward file (§9), by its name. MERGE (note 7): runtime code used to post as
+    /// `System("ward:<name>")`, which leaked an interned `&'static str` per distinct ward file.
+    Ward(String),
+    /// A hook executable (§9), by its point name. Same reason as [`Sender::Ward`].
+    Hook(String),
     /// The harness itself: crash repair, a schedule firing, a bound being hit.
     System(&'static str),
 }
@@ -88,6 +93,8 @@ impl Sender {
             Sender::Agent(a) => ("agent", Some(a.to_string())),
             Sender::Worker(w) => ("worker", Some(w.to_string())),
             Sender::Collector(c) => ("collector", Some(c.clone())),
+            Sender::Ward(w) => ("ward", Some(w.clone())),
+            Sender::Hook(h) => ("hook", Some(h.clone())),
             Sender::System(s) => ("system", Some((*s).to_string())),
         };
         SenderWire {
@@ -101,6 +108,8 @@ impl Sender {
             "agent" => Sender::Agent(AgentName::new(&name)),
             "worker" => Sender::Worker(WorkerId::new(&name)),
             "collector" => Sender::Collector(name),
+            "ward" => Sender::Ward(name),
+            "hook" => Sender::Hook(name),
             "system" => Sender::System(intern(&name)),
             _ => Sender::Andrey,
         }
@@ -112,6 +121,8 @@ impl Sender {
             Sender::Agent(a) => format!("agent:{a}"),
             Sender::Worker(w) => format!("worker:{w}"),
             Sender::Collector(c) => format!("collector:{c}"),
+            Sender::Ward(w) => format!("ward:{w}"),
+            Sender::Hook(h) => format!("hook:{h}"),
             Sender::System(s) => format!("system:{s}"),
         }
     }

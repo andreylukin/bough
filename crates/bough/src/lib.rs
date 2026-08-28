@@ -61,6 +61,33 @@ use bough_plugin_worker_fork as _;
 // Phase ux1's one new row (§17 Phase 3 / phase ux1 §2.13): the status line.
 use bough_plugin_tui_status as _;
 
+// Phase 6's rows (§17 Phase 6, track B). Same relationship: linked, never named. `power-test`,
+// `schedule-manual` and `ward-test`'s host fixtures are FIXTURES — in the catalog, named by no
+// bundle, mounted only by a test's or a script's own `--patch`.
+use bough_plugin_actions_github as _;
+use bough_plugin_actions_linear as _;
+use bough_plugin_actions_reconcile as _;
+use bough_plugin_boundary_instructions as _;
+use bough_plugin_catch_up_on_wake as _;
+use bough_plugin_collector_github as _;
+use bough_plugin_collector_linear as _;
+use bough_plugin_drafts as _;
+use bough_plugin_hooks_exec as _;
+use bough_plugin_mcp as _;
+use bough_plugin_mcp_rmcp as _;
+use bough_plugin_mcp_subprocess as _;
+use bough_plugin_power as _;
+use bough_plugin_power_test as _;
+use bough_plugin_schedule as _;
+use bough_plugin_schedule_cron as _;
+use bough_plugin_schedule_manual as _;
+use bough_plugin_skills as _;
+use bough_plugin_sleep_listener as _;
+use bough_plugin_system_schedules as _;
+use bough_plugin_tool_mcp as _;
+use bough_plugin_tui_drafts as _;
+use bough_plugin_wards_rhai as _;
+
 pub mod boot;
 pub mod cli;
 pub mod compose;

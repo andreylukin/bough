@@ -1,0 +1,22 @@
+{
+  "data": {
+    "comments": {
+      "pageInfo": { "hasNextPage": false, "endCursor": "cursor-comments-1" },
+      "nodes": [
+        {
+          "id": "comment-1",
+          "body": "any progress here?\nthe deadline moved",
+          "url": "https://linear.invalid/issue/TEAM-123#comment-1",
+          "createdAt": "2026-08-01T01:00:00Z",
+          "updatedAt": "2026-08-01T01:00:00Z",
+          "user": { "name": "A Teammate" },
+          "issue": {
+            "identifier": "TEAM-123",
+            "title": "the rebuild lands",
+            "url": "https://linear.invalid/issue/TEAM-123"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -43,10 +43,79 @@ pub struct Cli {
 }
 
 /// The launcher's subcommands.
+///
+/// Each one SELECTS the headless profile and writes ONE row's config. None of them names a plugin
+/// type and none of them branches the boot path (§0.1 item 2).
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum Command {
     /// Run ONE task through the ordinary loop, print the answer, exit.
     Exec(ExecArgs),
+    /// `bough mcp call <server> <tool> <json>` — one MCP tool call, printed, exit.
+    Mcp(McpArgs),
+    /// `bough wards test <file> [--since]` — dry-fire a ward against past ledger events.
+    Wards(WardsArgs),
+}
+
+impl Command {
+    /// The profile this subcommand forces. Every one of them is headless: a subcommand prints and
+    /// exits, and a TUI would have nowhere to print to.
+    pub fn profile(&self) -> &'static str {
+        crate::exec::EXEC_PROFILE
+    }
+}
+
+/// `bough mcp …`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct McpArgs {
+    #[command(subcommand)]
+    pub command: McpCommand,
+}
+
+/// `bough mcp call`. Every field writes the `mcp.call` row's config and nothing else.
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum McpCommand {
+    /// Call one tool on one server and print the result.
+    Call {
+        /// The server row's name, as `mcp.rmcp`'s config spells it.
+        server: String,
+        /// The tool, as the server advertises it (no `mcp__` prefix).
+        tool: String,
+        /// The arguments, as a JSON object. Defaults to `{}`.
+        #[arg(default_value = "{}")]
+        args: String,
+        /// `text` (the tool's text content) or `json` (the whole result).
+        #[arg(long, value_enum)]
+        print: Option<PrintFormat>,
+        /// Stay up after the call instead of asking the process to exit.
+        #[arg(long)]
+        keep_running: bool,
+    },
+}
+
+/// `bough wards …`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct WardsArgs {
+    #[command(subcommand)]
+    pub command: WardsCommand,
+}
+
+/// `bough wards test`. Every field writes the `wards.test` row's config and nothing else.
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum WardsCommand {
+    /// Dry-fire a ward file against past ledger events and print the actions it WOULD take.
+    Test {
+        /// The ward file. Relative paths resolve against the process's working directory.
+        file: String,
+        /// How far back to replay: a ledger seq, or a duration like `24h`. Default: the whole
+        /// tail the ledger will give.
+        #[arg(long)]
+        since: Option<String>,
+        #[arg(long, value_enum)]
+        print: Option<PrintFormat>,
+        /// Stay up after the dry run instead of asking the process to exit.
+        #[arg(long)]
+        keep_running: bool,
+    },
 }
 
 /// `bough exec` — every field here writes the `exec` row's config and nothing else.
@@ -75,6 +144,38 @@ pub struct ExecArgs {
 pub enum PrintFormat {
     Text,
     Json,
+}
+
+impl Cli {
+    /// The profile this invocation actually composes under: a subcommand's, or `--profile`'s.
+    ///
+    /// It is read here rather than mutated into `self.profile` so `--dump-config` and boot agree
+    /// without either of them having to remember to normalize first.
+    pub fn effective_profile(&self) -> &str {
+        match &self.command {
+            Some(c) => c.profile(),
+            None => &self.profile,
+        }
+    }
+
+    /// What a subcommand implies beyond its own row: no patch watch, because the process exits
+    /// when the row is done and a watch would only outlive it.
+    ///
+    /// A `--profile` the subcommand overrides is REPORTED, not swallowed: a flag that looks
+    /// obeyed and is not is exactly the misconfiguration §0.2 refuses to hide. The clap default
+    /// (`tui`) is indistinguishable from an explicit `--profile tui`, and a default is not a
+    /// choice, so only a profile the user could only have typed is worth a word.
+    pub fn normalize(&mut self) {
+        let Some(cmd) = &self.command else { return };
+        let forced = cmd.profile();
+        if self.profile != forced && self.profile != DEFAULT_PROFILE {
+            eprintln!(
+                "bough: this subcommand runs under the `{forced}` profile; ignoring --profile {}",
+                self.profile
+            );
+        }
+        self.no_watch = true;
+    }
 }
 
 impl PrintFormat {

@@ -50,6 +50,18 @@ pub trait AgentDriver: Send + Sync + 'static {
     /// wake with the oldest queued item as trigger. `agent-loop-scripted`: one scripted wake if
     /// the transcript has one left.
     async fn wake_now(&self, kind: WakeKind, cause: WakeCause) -> WakeRequest;
+
+    /// MERGE (note 12): the wake `wake_now` opened, AWAITED TO COMPLETION.
+    ///
+    /// "Still running" is the window between `WakeRequest::Started(id)` and that wake ending, and
+    /// nothing on this seam used to expose it — a caller that needed it (`catch-up-on-wake`) had
+    /// to use `Agent::when_idle`, which is the right answer for an agent doing nothing else and a
+    /// slightly early one for an agent that was already mid-wake.
+    ///
+    /// The default RETURNS AT ONCE, which is the honest answer for a driver that keeps no
+    /// per-wake state: it never opened that wake, so it is not running it. A driver that opens
+    /// wakes on tasks (`agent-loop`) overrides this and waits.
+    async fn when_wake_done(&self, _wake: &WakeId) {}
 }
 
 /// The driver's private view of an agent: the only way to publish status or claim inbox items.

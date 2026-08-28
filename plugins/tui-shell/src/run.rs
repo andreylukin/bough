@@ -67,6 +67,8 @@ pub async fn run(ctx: Context, tui: TuiHandle, cfg: Arc<TuiConfig>, e: EffectCtx
                 // P3-D22: the roster is raised after the shell mounts, so the boot focus is
                 // resolved here rather than at startup. A no-op once an agent is focused.
                 tui.adopt_default_agent().await;
+                // MERGE (note 16): and a submit that arrived before the roster goes NOW.
+                flush_pending_send(&tui).await;
                 for entry in tui.entries() {
                     let cx = tui.pane_cx();
                     let _ = entry.pane.handle(PaneEvent::Tick, cx).await;
@@ -667,17 +669,31 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
 // ---------------------------------------------------------------------------
 
 /// Plain text: a followup to the focused agent, as an ANDREY message (§5's answer-wake rule).
+///
+/// MERGE (note 16): the pre-ready case QUEUES rather than bouncing. `residents` raises the roster
+/// asynchronously after the shell mounts, so on a cold boot there is a real window — about one
+/// submit in three, measured against the release binary — in which Enter has nobody to send to.
+/// Handing the text back with "no focused agent" is honest but useless: the person did nothing
+/// wrong and has to type Enter again. The message now waits in `pending_send` and the tick sends
+/// it the moment an agent exists ([`flush_pending_send`]).
 pub async fn send(tui: &TuiHandle, text: &str) {
     // P3-D22: the tick adopts the boot focus, but a message typed in the first tick window would
-    // otherwise be bounced back to the composer purely because the timer had not fired yet. Ask
-    // for the adoption here rather than racing it; with a roster that is genuinely empty this
-    // still falls through to the notice.
+    // otherwise wait a whole tick for the timer. Ask for the adoption here rather than racing it.
     if tui.agent().is_none() {
         tui.adopt_default_agent().await;
     }
     let Some(agent) = tui.agent() else {
-        tui.notify("no focused agent");
-        tui.set_composer_text(text);
+        if tui.queue_send(text) {
+            tui.notify_kind(
+                "waiting for an agent — your message is queued",
+                crate::NoticeKind::Info,
+            );
+        } else {
+            // Something is already queued. The second message is given straight back rather than
+            // replacing the first: nothing the user typed is destroyed (B3).
+            tui.notify_kind("still waiting for an agent", crate::NoticeKind::Error);
+            tui.set_composer_text(text);
+        }
         return;
     };
     let now = chrono::Utc::now();
@@ -695,6 +711,35 @@ pub async fn send(tui: &TuiHandle, text: &str) {
     match agent.followup(msg).await {
         Ok(_) => tui.redraw(),
         Err(e) => tui.notify(format!("send failed: {e}")),
+    }
+}
+
+/// Send whatever was queued by a pre-ready submit, once there is somebody to send it to
+/// (merge note 16).
+///
+/// Called from the tick, which is also where the boot focus is adopted — so the queued message
+/// goes in the same pass that first finds an agent. Past [`crate::PENDING_SEND_TICKS`] the text is
+/// handed back to the composer with an error: a tree with no agents at all must SAY so rather than
+/// hold a message forever.
+pub async fn flush_pending_send(tui: &TuiHandle) {
+    if tui.pending_send().is_none() {
+        return;
+    }
+    if tui.agent().is_some() {
+        if let Some(p) = tui.take_pending_send() {
+            tui.clear_notice();
+            send(tui, &p.text).await;
+        }
+        return;
+    }
+    if tui.bump_pending_send() >= crate::PENDING_SEND_TICKS {
+        if let Some(p) = tui.take_pending_send() {
+            tui.notify_kind(
+                "no agent came up; your message is back in the composer",
+                crate::NoticeKind::Error,
+            );
+            tui.set_composer_text(&p.text);
+        }
     }
 }
 

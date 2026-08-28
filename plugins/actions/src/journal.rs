@@ -22,6 +22,35 @@ pub struct ActionRequest {
     pub at: DateTime<Utc>,
 }
 
+/// An [`ActionRequest`] whose kind has NOT been resolved yet: what runtime code and a tool call
+/// carry, where the kind is a string somebody typed. [`crate::ActionsHandle::execute_by_name`]
+/// resolves the name and refuses it if it is not one of §7's four (merge note 3).
+#[derive(Clone, Debug)]
+pub struct ActionRequestParts {
+    pub target: ActionTarget,
+    pub payload: serde_json::Value,
+    pub agent: AgentName,
+    pub wake: WakeId,
+    /// The TRIGGERING step (§7's idem_key formula). NOT the action's own step.
+    pub step: StepId,
+    pub at: DateTime<Utc>,
+}
+
+impl ActionRequestParts {
+    /// The full request, once the executor has resolved the name.
+    pub fn with_kind(self, kind: ActionKind) -> ActionRequest {
+        ActionRequest {
+            kind,
+            target: self.target,
+            payload: self.payload,
+            agent: self.agent,
+            wake: self.wake,
+            step: self.step,
+            at: self.at,
+        }
+    }
+}
+
 /// `idem_key = sha256(kind ‖ canonical target ‖ triggering step id)`, hex (§7).
 ///
 /// The separator is a NUL byte, which none of the three fields can contain, so no two distinct

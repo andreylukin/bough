@@ -94,6 +94,9 @@
     catch_up: true
 
 - id: old-feed
+  # §17 Phase 6: the collectors replace it. The row stays for one week as the documented revert
+  # path, then goes.
+  disabled: true
   plugin: old-feed-adapter
   config:
     jungler_db: !!expr 'home_path(".jungler/jungler.db")'
@@ -128,3 +131,8 @@
 - id: tool.leader
   plugin: tool-leader
   config: {}
+# §11/§7: the drafts pane. Everything outward-facing that is not one of the four action kinds is a
+# DRAFT, and this is where Andrey reads them.
+- id: tui.drafts
+  plugin: tui-drafts
+  config: { height_pct: 30, limit: 50, show_body_lines: 6 }

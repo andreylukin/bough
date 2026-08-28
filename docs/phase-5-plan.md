@@ -1780,3 +1780,32 @@ and that gap is what three of the four vacuous bullets were made of.
   mapping it is used to verify. The production mapping is separately pinned by `rollups`'
   conformance case `a_reconciliation_digest_is_its_own_kind_and_namespace`, run against both
   Providers, so this is a coupling smell rather than a hole. Left.
+
+---
+
+## 8. Found by the track-B merge (2026-08-28)
+
+Three Phase 5 defects that only the merge could see, all fixed on the merge commit. The full
+accounting is `docs/track-b-merge-notes.md` § "What the merge itself had to fix".
+
+- **`worker-fork` could not fork in the shipped bundle at all.** `ForkSetup::setup` pinned the
+  child's prefix through `prefix::pin(agent.ctx(), …)`, which resolved `Projection` off the CHILD
+  AGENT's context — a context owned by the `agents` row, which does not declare `projection` in
+  its `inject`. Every `WorkerKind::Fork` in `bundles/bough-base.yml` therefore died in setup with
+  *plugin `agents` (row `agents`) read service `projection` without declaring it*. Nothing caught
+  it because `plugins/worker-fork`'s own fixtures mount their own `agents`, and no test started a
+  fork against the real bundle — until track B's tripwire
+  (`boundary_injection.rs::no_fork_path_exists_to_assert_on_yet`) forced one to be written. The
+  handle is now passed into `prefix::pin` from the fork ROW, which already holds it; the effect
+  still belongs to the child, so P5-D12 is unchanged.
+- **`residents`' async roster is not something a test may read once.** The registry entry and the
+  `agents` ledger row do not land in the same instant, and a boot-time reload of the `agents` row
+  REPLACES the registry — so a handle captured from `peek_live` before that reload stays empty
+  for ever. `phase6_swap.rs::resident` now polls, re-peeking both handles each pass. This is the
+  same window merge note 16 measured from the composer's end and §7.3's open item names from
+  `residents`' own end.
+- **Mail routed by refs means a test lane has to be LINKED.** Two `phase6_swap` gates read `sol`'s
+  trajectory after a collector sweep with nothing linking `sol` to the repository; with `mail` in
+  the tree the items go to the unsorted queue and reached `sol` only when the leader's adoption
+  pass happened to run first. `deliver_to` in a layer is no longer a destination when a router is
+  mounted, and a test that means "this lane gets this repository's mail" has to say so.

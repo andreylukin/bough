@@ -215,6 +215,7 @@ pub fn envelope(subject: &str, refs: &[&str]) -> bough_plugin_mail_router::Envel
             url: None,
         }],
         refs: refs.iter().map(|r| Ref::new(*r)).collect(),
+        dedupe_on: None,
         at: now(),
     }
 }

@@ -77,6 +77,9 @@ impl ForkProvider {
 /// and leaves nothing behind (§0.2) — the pin included.
 struct ForkSetup {
     ledger: LedgerHandle,
+    /// The fork ROW's projection handle, carried in rather than resolved off the child's context:
+    /// see `prefix::pin`.
+    projection: ProjectionHandle,
     tools: ToolsHandle,
     restrict: Option<Restrict>,
     spec: parking_lot::Mutex<Option<bough_plugin_tools::ToolSpec>>,
@@ -104,9 +107,15 @@ impl AgentSetup for ForkSetup {
                 name: agent.name().clone(),
                 detail: "the fork prefix was already consumed: setup runs once".to_string(),
             })?;
-        prefix::pin(agent.ctx(), agent.name(), prefix, self.source.clone())
-            .await
-            .map_err(|e| failed(format!("pin_prefix: {e}")))?;
+        prefix::pin(
+            agent.ctx(),
+            &self.projection,
+            agent.name(),
+            prefix,
+            self.source.clone(),
+        )
+        .await
+        .map_err(|e| failed(format!("pin_prefix: {e}")))?;
         // (b) The anchor that keeps §0.2 true through the pin.
         self.ledger
             .0
@@ -248,6 +257,7 @@ impl WorkerProvider for ForkProvider {
         let slot = ReportSlot::new();
         let setup = ForkSetup {
             ledger: ledger.as_ref().clone(),
+            projection: projection.as_ref().clone(),
             tools: tools.as_ref().clone(),
             restrict: req.tools.clone(),
             spec: parking_lot::Mutex::new(Some(ReportTool::spec(

@@ -271,6 +271,7 @@ async fn mail_matching_no_routing_ref_lands_in_the_leaders_unsorted_queue() {
                 url: None,
             }],
             refs: set(&["repo:bough"]),
+            dedupe_on: None,
             at: base(),
         })
         .await

@@ -176,6 +176,7 @@ async fn mail_fans_out_across_lanes_in_a_booted_tree() {
             text: "FAN-OUT-PROBE".to_string(),
             cites: Vec::new(),
             refs: refs("repo:bough"),
+            dedupe_on: None,
             at: at(20),
         })
         .await
@@ -257,6 +258,7 @@ async fn a_dormant_lane_runs_no_wake_over_a_whole_boot() {
             text: "DORMANT-QUEUE-PROBE".to_string(),
             cites: Vec::new(),
             refs: refs("repo:asleep"),
+            dedupe_on: None,
             at: at(20 + i),
         })
         .await

@@ -73,6 +73,32 @@ bough-plugin-lane-scope = { workspace = true }
 bough-plugin-worker-fork = { workspace = true }
 bough-plugin-leader = { workspace = true }
 bough-plugin-tool-leader = { workspace = true }
+# Phase 6 (§17 Phase 6, track B): context, the write boundary, the runtime-code hosts.
+# `power-test` and `schedule-manual` are FIXTURES — in the catalog, in no bundle.
+bough-plugin-schedule = { workspace = true }
+bough-plugin-schedule-cron = { workspace = true }
+bough-plugin-schedule-manual = { workspace = true }
+bough-plugin-system-schedules = { workspace = true }
+bough-plugin-collector-github = { workspace = true }
+bough-plugin-collector-linear = { workspace = true }
+bough-plugin-actions-github = { workspace = true }
+bough-plugin-actions-linear = { workspace = true }
+bough-plugin-actions-reconcile = { workspace = true }
+bough-plugin-boundary-instructions = { workspace = true }
+bough-plugin-drafts = { workspace = true }
+bough-plugin-tui-drafts = { workspace = true }
+bough-plugin-mcp = { workspace = true }
+bough-plugin-mcp-rmcp = { workspace = true }
+bough-plugin-tool-mcp = { workspace = true }
+bough-plugin-wards-rhai = { workspace = true }
+bough-plugin-runtime-actions = { workspace = true }
+bough-plugin-hooks-exec = { workspace = true }
+bough-plugin-mcp-subprocess = { workspace = true }
+bough-plugin-skills = { workspace = true }
+bough-plugin-power = { workspace = true }
+bough-plugin-sleep-listener = { workspace = true }
+bough-plugin-power-test = { workspace = true }
+bough-plugin-catch-up-on-wake = { workspace = true }
 serde_yaml = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
@@ -94,6 +120,8 @@ libc = { workspace = true }
 # projection vocabularies directly, and the live calibration talks to Anthropic through bough-llm.
 bough-plugin-ledger = { workspace = true }
 bough-plugin-projection = { workspace = true }
+# V5: the recording `gh` shim's fixture names are computed by the crate that spawns `gh`.
+bough-plugin-gh-cli = { workspace = true }
 bough-llm = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }

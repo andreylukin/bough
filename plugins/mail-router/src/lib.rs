@@ -140,6 +140,7 @@ impl MailHandle {
     ) -> Result<RouteReport, MailError> {
         let mut delivered: Vec<(AgentName, InboxReceipt)> = Vec::new();
         let mut undeliverable: Vec<AgentName> = Vec::new();
+        let mut deduped: Vec<AgentName> = Vec::new();
         let mut stranded: Option<StepId> = None;
         for name in &to {
             let Some(agent) = self.0.agents.by_name(name) else {
@@ -156,6 +157,17 @@ impl MailHandle {
                 }
                 return Err(MailError::NotLive(name.clone()));
             };
+            // The AT-LEAST-ONCE guard, per (trajectory, ref), BEFORE the delivery — the same
+            // ordering the collectors' own guard held before the router took the fan-out over.
+            if let Some(r) = &env.dedupe_on {
+                let traj = self.0.ledger.0.agent(name).await?.map(|row| row.traj);
+                if let Some(traj) = traj {
+                    if already_delivered(&self.0.ledger, &traj, r).await? {
+                        deduped.push(name.clone());
+                        continue;
+                    }
+                }
+            }
             match agent.deliver(self.delivery(env, env.class)).await {
                 Ok(receipt) => delivered.push((name.clone(), receipt)),
                 Err(e) => {
@@ -173,6 +185,7 @@ impl MailHandle {
             undeliverable,
             unsorted: stranded,
             adopted: false,
+            deduped,
         })
     }
 
@@ -232,6 +245,7 @@ impl MailHandle {
             undeliverable: Vec::new(),
             unsorted: Some(step),
             adopted,
+            deduped: Vec::new(),
         })
     }
 
@@ -719,3 +733,35 @@ impl Plugin for MailRouterPlugin {
 }
 
 bough_kernel::register_plugin!(MailRouterPlugin);
+
+/// Has this trajectory already been delivered mail CITING `r`?
+///
+/// The at-least-once guard of [`Envelope::dedupe_on`], and the one implementation of it: a
+/// producer that re-offers a world item (a collector whose watermark write was lost) must not
+/// deliver it twice, and the router is the only place that knows who the recipients are.
+///
+/// Per (trajectory, ref), never global: two lanes configured for one repository each get their
+/// own copy, and deduping globally would silently starve the second.
+///
+/// The step query is an ANY-match over the DERIVED refs, which is the indexed way to find the
+/// candidates — but a `gh:o/r#12` that a check-run mail carries in `refs` for routing is not a
+/// delivery OF the pull request. The delivered fact is what the step CITES, so the candidates are
+/// narrowed to the steps that cite `r`.
+pub async fn already_delivered(
+    ledger: &bough_plugin_ledger::LedgerHandle,
+    traj: &TrajId,
+    r: &Ref,
+) -> Result<bool, MailError> {
+    let hits = ledger
+        .0
+        .steps(&StepQuery {
+            trajs: vec![traj.clone()],
+            kinds: vec![StepType::new("mail/delivered")],
+            refs: vec![r.clone()],
+            order: Order::SeqAsc,
+            limit: Some(1),
+            ..Default::default()
+        })
+        .await?;
+    Ok(hits.iter().any(|s| s.cites.iter().any(|c| &c.r#ref == r)))
+}

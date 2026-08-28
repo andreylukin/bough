@@ -38,6 +38,18 @@ impl ActionKind {
         }
     }
 
+    /// The kind a WIRE SPELLING names, or `None`. The set is closed, so this is the ONE place a
+    /// string becomes a kind (merge note 3).
+    pub fn parse(name: &str) -> Option<ActionKind> {
+        ActionKind::all()
+            .iter()
+            .copied()
+            .find(|k| k.as_str() == name)
+    }
+
+    /// The four names, comma-separated, for a refusal that has to say what the vocabulary IS.
+    pub const KNOWN: &'static str = "open_pr, push_to_pr, bot_thread_op, linear_write";
+
     /// Every kind, for `--dump-config` and for the tool row's registrations.
     pub fn all() -> &'static [ActionKind] {
         &[

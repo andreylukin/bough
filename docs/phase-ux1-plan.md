@@ -1452,7 +1452,7 @@ carries `cause`, so a user's Esc renders `— turn interrupted` (#12).
 
 **Also product code, outside R1-R13.** Tab reaches the open palette — `action_for` reads
 `KeyContext::palette_open` and `on_key` consults the palette before `CycleFocus`, so
-`PaletteAction::Complete` is live (#1, #18) · the status line's running/elapsed state is re-derived
+`PaletteAction::Complete` is live (#1, #18) — `keymap.rs::the_chords_mean_one_thing_each_from_every_context` was the one stale assertion this close had to repair: it asserted `CycleFocus` for Tab from EVERY context, which the fix deliberately breaks, and it now encodes the real contract (Tab reaches the palette while it is open, cycles panes otherwise) · the status line's running/elapsed state is re-derived
 from `TuiHandle::running()` and the `AgentWake` listener filters on `ev.agent` against the focused
 agent (#2, #23) · `spinner_ms` is read: `StatusPane::tick` advances one frame per `spinner_ms`, not
 one per shell tick (#3, #35) · `tui-status` registers `invariant::forget` as a `defer_sync`, like

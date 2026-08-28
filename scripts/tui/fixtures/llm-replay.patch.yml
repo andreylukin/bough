@@ -10,6 +10,12 @@
 # Several rounds, because a conversation is several requests: a transcript with one round makes the
 # second wake fail on an unmatched request, which is `llm-replay` behaving correctly and the fixture
 # being wrong.
+#
+# MERGE (track B -> Phase 5): SIXTEEN, not six. `15-leader-swap.sh` reads what a lane was offered by
+# driving a turn and reading the `request/header` it leaves, so every poll it makes costs a round —
+# and six rounds is what capped that poll at two attempts, which the merged tree (54 rows, so a
+# slower live recompose) outran on a loaded machine. Spare rounds cost nothing: an unused one is
+# never requested.
 entries:
   llm.anthropic:
     plugin: llm-replay
@@ -17,6 +23,46 @@ entries:
       strict: true
       models: "*"
       rounds:
+        - chunks:
+            - { type: text, text: "the first fragment" }
+            - { type: text, text: " and the rest of it", delay_ms: 1500 }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "the first fragment" }
+            - { type: text, text: " and the rest of it", delay_ms: 1500 }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "the first fragment" }
+            - { type: text, text: " and the rest of it", delay_ms: 1500 }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "the first fragment" }
+            - { type: text, text: " and the rest of it", delay_ms: 1500 }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "the first fragment" }
+            - { type: text, text: " and the rest of it", delay_ms: 1500 }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "the first fragment" }
+            - { type: text, text: " and the rest of it", delay_ms: 1500 }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "the first fragment" }
+            - { type: text, text: " and the rest of it", delay_ms: 1500 }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "the first fragment" }
+            - { type: text, text: " and the rest of it", delay_ms: 1500 }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "the first fragment" }
+            - { type: text, text: " and the rest of it", delay_ms: 1500 }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "the first fragment" }
+            - { type: text, text: " and the rest of it", delay_ms: 1500 }
+            - { type: end, stop: end_turn }
         - chunks:
             - { type: text, text: "the first fragment" }
             - { type: text, text: " and the rest of it", delay_ms: 1500 }

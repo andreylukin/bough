@@ -120,19 +120,38 @@ t quit_exits_cleanly_within_three_seconds \
     exit 0
   '
 
+# What THIS run printed: everything below the last line of the launch command's own echo, which is
+# the line carrying the exit-file redirect.
+#
+# MERGE: it used to be `tail -20` of the whole primary buffer. This script starts the binary TWICE,
+# so the earlier session's farewell is still in scrollback, and whether it fell inside those twenty
+# lines depended on how many lines the launch command wrapped to — which the merged tree changed by
+# adding a `--patch`. "ONE line, not a banner" is a claim about THIS exit, and the window has to say
+# so. With no marker on screen at all the old window is used, so the bullet can still fail.
+farewell_once() {
+  local all last txt n
+  all="$(shell-use text | sed "s/[[:space:]]*$//" | grep -v "^$")"
+  last="$(printf "%s\n" "$all" | grep -n "quit.exit" | tail -1 | cut -d: -f1)"
+  if [ -n "$last" ]; then
+    txt="$(printf "%s\n" "$all" | sed -n "$((last + 1)),\$p")"
+  else
+    txt="$(printf "%s\n" "$all" | tail -20)"
+  fi
+  [ -n "$txt" ] || { echo "the screen is blank after /quit"; return 1; }
+  # `grep -qi "bough\|bye"` was VACUOUS: after the alt screen is left, the primary buffer still
+  # carries the shell echo of the launch command, which is `$BOUGH_BIN …` — a path ENDING in
+  # `bough`. It passed whether or not `run::farewell()` ever printed. The farewell is one exact
+  # string, spelled once in the product; this asserts that string.
+  printf "%s\n" "$txt" | grep -qF "bough: bye." || {
+    echo "no farewell line on screen after /quit:"; printf "%s\n" "$txt"; return 1; }
+  # ONE line, not a banner.
+  n="$(printf "%s\n" "$txt" | grep -cF "bough: bye.")"
+  [ "$n" -eq 1 ] || { echo "the farewell appears $n times"; printf "%s\n" "$txt"; return 1; }
+  return 0
+}
+export -f farewell_once
+
 t the_farewell_is_one_line_and_the_screen_is_not_blank \
-  bash -c '
-    txt="$(shell-use text | sed "s/[[:space:]]*$//" | grep -v "^$" | tail -20)"
-    [ -n "$txt" ] || { echo "the screen is blank after /quit"; exit 1; }
-    # `grep -qi "bough\|bye"` was VACUOUS: after the alt screen is left, the primary buffer still
-    # carries the shell echo of the launch command, which is `$BOUGH_BIN …` — a path ENDING in
-    # `bough`. It passed whether or not `run::farewell()` ever printed. The farewell is one exact
-    # string, spelled once in the product; this asserts that string.
-    printf "%s\n" "$txt" | grep -qF "bough: bye." || {
-      echo "no farewell line on screen after /quit:"; printf "%s\n" "$txt"; exit 1; }
-    # ONE line, not a banner.
-    n="$(printf "%s\n" "$txt" | grep -cF "bough: bye.")"
-    [ "$n" -eq 1 ] || { echo "the farewell appears $n times"; exit 1; }
-  '
+  bash -c 'farewell_once'
 
 tui_close

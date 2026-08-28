@@ -111,3 +111,40 @@ bough-plugin-leader = { path = "plugins/leader" }                              #
 bough-plugin-tool-leader = { path = "plugins/tool-leader" }                    # §2 the leader-scoped tools
 bough-plugin-lane-scope = { path = "plugins/lane-scope" }                      # §5 per-lane persona + tools.restrict
 bough-plugin-worker-fork = { path = "plugins/worker-fork" }                    # §10 WorkerKind::Fork
+
+# ---- Phase 6 (track B): context, the write boundary, the runtime-code hosts ----
+# REQUIREMENTS §13 is the dependency policy: pinned to a minor, with the row/seam that uses it.
+rhai         = { version = "1.26", features = ["sync", "no_closure"] }   # wards-rhai: the PURE ward host
+tokio-cron-scheduler = "0.15"                                            # schedule-cron: the schedule Provider
+cron         = "0.15"                                                    # schedule: Cadence::next_after (pure)
+# rmcp 3.x wants reqwest 0.13 and bough-llm holds 0.12; the dual-version arrangement STANDS and is
+# bridged through OAuthHttpClient (Phase 0, §13). Wired by WP-5.
+rmcp         = { version = "3.1", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+http         = "1.3"                                                     # mcp-rmcp: the HeaderName/HeaderValue rmcp's HTTP transport config takes
+
+bough-plugin-schedule = { path = "plugins/schedule" }                         # §9 schedule Service Definition
+bough-plugin-schedule-cron = { path = "plugins/schedule-cron" }               # §9 tokio-cron-scheduler Provider
+bough-plugin-schedule-manual = { path = "plugins/schedule-manual" }           # §9 test Provider (swap subject)
+bough-plugin-system-schedules = { path = "plugins/system-schedules" }         # §5/§8 the two system passes
+bough-plugin-collect-core = { path = "plugins/collect-core" }                 # §6 collector library (no row)
+bough-plugin-gh-cli = { path = "plugins/gh-cli" }                             # §13 the ONE place that spawns `gh`
+bough-plugin-collector-github = { path = "plugins/collector-github" }         # §6 GitHub sweeps
+bough-plugin-collector-linear = { path = "plugins/collector-linear" }         # §6 Linear sweeps
+bough-plugin-actions-github = { path = "plugins/actions-github" }             # §7 open_pr/push_to_pr/bot_thread_op
+bough-plugin-actions-linear = { path = "plugins/actions-linear" }             # §7 linear_write
+bough-plugin-actions-reconcile = { path = "plugins/actions-reconcile" }       # §7 intent-without-done reconciliation
+bough-plugin-boundary-instructions = { path = "plugins/boundary-instructions" } # §7/§10 the ONE boundary block
+bough-plugin-drafts = { path = "plugins/drafts" }                             # §7 drafts Definition + the two tools
+bough-plugin-tui-drafts = { path = "plugins/tui-drafts" }                     # §11 the drafts pane
+bough-plugin-mcp = { path = "plugins/mcp" }                                   # §6 mcp Service Definition
+bough-plugin-mcp-rmcp = { path = "plugins/mcp-rmcp" }                         # §6 rmcp Provider
+bough-plugin-tool-mcp = { path = "plugins/tool-mcp" }                         # §9 discovered tools + /mcp
+bough-plugin-runtime-actions = { path = "plugins/runtime-actions" }           # §9 runtime-code action vocabulary
+bough-plugin-wards-rhai = { path = "plugins/wards-rhai" }                     # §9 the ward host
+bough-plugin-hooks-exec = { path = "plugins/hooks-exec" }                     # §9 the hook-executable host
+bough-plugin-mcp-subprocess = { path = "plugins/mcp-subprocess" }             # §9 resident subprocess plugins
+bough-plugin-skills = { path = "plugins/skills" }                             # §9 the skills host
+bough-plugin-power = { path = "plugins/power" }                               # §13 power Service Definition
+bough-plugin-sleep-listener = { path = "plugins/sleep-listener" }             # §13 macOS IOKit Provider
+bough-plugin-power-test = { path = "plugins/power-test" }                     # §13 synthetic sleep/wake Provider
+bough-plugin-catch-up-on-wake = { path = "plugins/catch-up-on-wake" }         # §13 one catch-up wake per agent

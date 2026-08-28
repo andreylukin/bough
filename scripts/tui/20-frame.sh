@@ -106,6 +106,18 @@ LOREM="$(python3 -c "print(chr(32).join([chr(108)+chr(111)+chr(114)+chr(101)+chr
 shell-use submit "$LOREM"
 shell-use wait idle --timeout 30000
 
+# MERGE: SCROLL the paragraph back into view before measuring it. The merged tree gives the column
+# a `drafts` pane (`tui.drafts`, 30% of the height), so the transcript viewport is shorter than it
+# was when this bullet was written, and the answer that follows the paragraph pushes most of it
+# above the fold — two rows survive, which is not enough to measure a wrap and is exactly what the
+# bullet's own vacuity guard refuses. Scrolling changes no claim: they are the same rows, rendered
+# by the same measure.
+for _ in $(seq 1 12); do
+  [ "$(shell-use text | grep -c "lorem")" -ge 4 ] && break
+  shell-use press PageUp >/dev/null
+  sleep 0.3
+done
+
 t at_200x50_the_measure_is_capped_at_ninety \
   bash -c '
     # `measure_cols` is 90 and the rail is clamped at `max_width` 40 plus a gutter: no rendered

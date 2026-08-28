@@ -21,6 +21,14 @@ pub struct Envelope {
     pub cites: Vec<Cite>,
     /// The routing key. A wake CLASS is a ref in the `class:` namespace (P5-D3).
     pub refs: BTreeSet<Ref>,
+    /// MERGE (track B → Phase 5): the AT-LEAST-ONCE guard, for a producer that may re-offer the
+    /// same world item — a collector sweep whose watermark write was lost. When set, a recipient
+    /// whose trajectory already carries a `mail/delivered` step CITING this ref is skipped, and
+    /// says so in [`RouteReport::deduped`] rather than being delivered to twice.
+    ///
+    /// The guard lives HERE and not in the producer because the router is what chooses
+    /// recipients: a collector that hands over an envelope does not know who will get it.
+    pub dedupe_on: Option<Ref>,
     pub at: DateTime<Utc>,
 }
 
@@ -39,6 +47,10 @@ pub struct RouteReport {
     pub unsorted: Option<StepId>,
     /// `true` iff an unsorted sink was mounted and took it as ordinary mail.
     pub adopted: bool,
+    /// Matched lanes that already carried [`Envelope::dedupe_on`] and were therefore NOT
+    /// delivered to again. Reported, because "delivered nothing" and "delivered nothing because
+    /// it was already there" are different facts.
+    pub deduped: Vec<AgentName>,
 }
 
 /// What one [`crate::MailHandle::link_ref`] / `unlink_ref` did.

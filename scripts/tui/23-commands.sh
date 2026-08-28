@@ -45,11 +45,27 @@ t slash_opens_a_palette_that_filters_and_moves \
     # It MOVES: Down changes WHICH ROW is selected, and the selection is visible. The selected
     # row is drawn on `theme.sel_bg`, so the moved selection is a change in the painted cells —
     # this half used to be `press Down; sleep 0.5; exit 0`, which asserted nothing at all.
+    #
+    # MERGE: the move is measured under a query that leaves MORE THAN ONE row. `he` matches
+    # exactly one command in this tree (`/help`), and Down on a one-row palette is correctly a
+    # no-op — so the old bullet was passing on whatever else happened to repaint between the two
+    # captures, not on a moved selection. `re` matches three (`/reconsolidate`, `/reset`,
+    # `/resume`), and the query goes back to `he` afterwards because the Tab bullet below
+    # completes `/help`.
+    shell-use keys "Ctrl+u"
+    shell-use type "/re"
+    sleep 0.8
+    rows="$(shell-use text | grep -c "/res")"
+    [ "${rows:-0}" -ge 2 ] || { echo "the query re left ${rows:-0} rows matching /res: nothing here can move"; exit 1; }
     before="$(shell-use cells 0 0 200 60 --json)"
     shell-use press Down
     sleep 0.8
     after="$(shell-use cells 0 0 200 60 --json)"
     [ "$before" = "$after" ] && { echo "Down changed nothing: the palette selection does not move"; exit 1; }
+    shell-use keys "Ctrl+u"
+    shell-use type "/he"
+    sleep 0.8
+    see "/help" --timeout 8000 || { echo "the palette lost /help on the way back"; exit 1; }
     exit 0
   '
 
@@ -82,12 +98,17 @@ t tab_completes_the_name_without_running_it \
 # Put the composer back the way the rest of the script expects it.
 shell-use keys "Ctrl+u"
 shell-use press Escape
-shell-use type "/"
-sleep 0.4
+# MERGE: the query is `/he`, not a bare `/`. With an EMPTY query the palette lists every command
+# and the selection is the first by name (`/agents`), so `see "help"` was matching the `/help` ROW
+# of the listing rather than anything Enter did — vacuous then, and in the merged tree (whose
+# column is shorter by a `drafts` pane, so the listing is clipped sooner) that row is not even on
+# screen. Selecting `/help` and asserting the help BODY is the claim this bullet's name makes.
+shell-use type "/he"
+sleep 0.6
 
 shell-use press Enter
 t enter_accepts_the_palette_selection \
-  see "help" --timeout 15000
+  see "shift+enter" --timeout 15000
 
 # --- `/help` lists the keys that actually work. -----------------------------------------------
 #
@@ -131,11 +152,25 @@ t help_is_plain_language_and_not_engine_vocabulary \
 shell-use press Escape
 
 # --- An unknown command suggests, points at /help, and keeps the text. ------------------------
+#
+# MERGE: the composer is EMPTIED and the overlays are closed FIRST. `?` opened the help over an
+# already-open palette, and one Escape closes one overlay (`20-frame.sh` pins exactly that), so
+# the Enter below was landing on whatever was still up rather than on the composer line. The
+# notice is then polled rather than read once: it is transient (`notice_ms` is 6 s) and the
+# assertion has to look while it is there.
+shell-use keys "Ctrl+u"
+shell-use press Escape
+sleep 0.4
 shell-use type "/hepl"
+sleep 0.5
 shell-use press Enter
 t an_unknown_command_suggests_and_keeps \
   bash -c '
     see "/hepl" --timeout 10000 || { echo "the typed command was destroyed"; exit 1; }
+    for i in $(seq 1 20); do
+      shell-use text | grep -qi "did you mean" && break
+      sleep 0.3
+    done
     shell-use text | grep -qi "did you mean" || { echo "no did-you-mean"; exit 1; }
     see "/help" --timeout 8000 || { echo "the miss does not point at /help"; exit 1; }
   '

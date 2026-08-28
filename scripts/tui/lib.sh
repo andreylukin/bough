@@ -186,9 +186,17 @@ LEDGER="$HOME_DIR/ledger.db"
 
 # `sql <query>` against this script's ledger. Absent database ⇒ empty output, never an error: a
 # script asserts on the COUNT, and "no ledger yet" is a count of zero.
+#
+# `.timeout` is NOT decoration. A bare `sqlite3` gives up the instant the binary holds a write
+# lock — the ledger's closing checkpoint is exactly that — prints `database is locked (5)` on
+# stderr and leaves stdout EMPTY, which `steps_of` then reports as a count of zero. "I could not
+# read the ledger" and "the ledger holds nothing" are opposite facts and used to render the same,
+# and the merge of track B made the window wide enough to hit (`01-boot-and-turn.sh`'s
+# `the_turn_landed_as_ledger_steps`). Waiting is the honest answer for a reader racing a writer.
+SQL_BUSY_MS=5000
 sql() {
   [ -f "$LEDGER" ] || { echo ""; return 0; }
-  sqlite3 "$LEDGER" "$1"
+  sqlite3 -cmd ".timeout $SQL_BUSY_MS" "$LEDGER" "$1"
 }
 
 # How many steps of a kind the ledger holds.
@@ -223,6 +231,30 @@ expect_steps_exactly() {
 # ---------------------------------------------------------------------------
 # screen assertions
 # ---------------------------------------------------------------------------
+
+# `see_anywhere <text>`: the text is on screen, or comes into view when the transcript is scrolled
+# up. The view is put back with End either way.
+#
+# MERGE (track B -> Phase 5/ux1): the merged tree gives the TUI column a `drafts` pane
+# (`tui.drafts`, 30% of the height), so the transcript viewport is SHORTER than it was when several
+# of these bullets were written, and a long answer can leave the phrase a bullet names above the
+# fold. Scrolling asserts the same thing about the same rows — what is being pinned is that the
+# renderer PRODUCED them, never that a particular viewport happens to hold them all.
+see_anywhere() {
+  local text="$1" i
+  for i in $(seq 1 12); do
+    if shell-use text | grep -qF -- "$text"; then
+      shell-use press End >/dev/null
+      sleep 0.2
+      return 0
+    fi
+    shell-use press PageUp >/dev/null
+    sleep 0.3
+  done
+  shell-use press End >/dev/null
+  echo "'$text' is not on screen, and scrolling up never brought it into view"
+  return 1
+}
 
 # `see <text> [flags…]`: the text is on screen.
 #
@@ -594,5 +626,5 @@ clear_patch() {
 # helpers above would silently not exist there, and a comparison against their empty output would
 # be reported as a failed bullet rather than as the harness bug it is. The variables the ledger
 # helpers close over have to travel too.
-export LEDGER HOME_DIR BOUGH_BIN PATCH_FILE TUI_SIZES
-export -f see expect_absent row_with no_row_is_exactly wheel select_drag expect_selected _expect_selected_once expect_diff_gutter _expect_diff_gutter_py sql steps_of expect_steps expect_steps_exactly await_exit_code cells_have _cells_have_once disk_has no_blank_run screen_rows write_patch clear_patch resize_walk
+export LEDGER HOME_DIR BOUGH_BIN PATCH_FILE TUI_SIZES SQL_BUSY_MS
+export -f see see_anywhere expect_absent row_with no_row_is_exactly wheel select_drag expect_selected _expect_selected_once expect_diff_gutter _expect_diff_gutter_py sql steps_of expect_steps expect_steps_exactly await_exit_code cells_have _cells_have_once disk_has no_blank_run screen_rows write_patch clear_patch resize_walk

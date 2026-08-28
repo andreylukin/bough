@@ -24,7 +24,8 @@ use bough_plugin_ledger::{
 
 pub use error::ActionError;
 pub use journal::{
-    idem_key, marker_for, ActionArtifact, ActionRequest, ExecuteRequest, PendingAction,
+    idem_key, marker_for, ActionArtifact, ActionRequest, ActionRequestParts, ExecuteRequest,
+    PendingAction,
 };
 pub use kind::{ActionKind, ActionTarget};
 
@@ -58,6 +59,25 @@ pub trait ActionProvider: Send + Sync + 'static {
     /// The Provider embeds `req.marker` in the artifact itself (PR body, commit trailer, comment
     /// suffix) so reconciliation is a lookup against the world (§7).
     async fn execute(&self, req: &ExecuteRequest) -> Result<ActionArtifact, ActionError>;
+
+    /// The other half of §7's reconciliation: is this action's marker IN THE WORLD? A READ,
+    /// always — a Provider that acts here is a Provider that re-executed a pending intent.
+    ///
+    /// Merge note 2: this used to be a SECOND trait (`actions-reconcile::ArtifactLookup`) with a
+    /// registry of its own, because track B could not edit this crate. One Provider, one
+    /// registry, one place a kind lives.
+    ///
+    /// The default answers `Ok(None)`: a Provider that cannot look its artifact up says so by
+    /// finding nothing, and the intent is then SURFACED rather than concluded — the safe
+    /// direction, because concluding a row is what stops a person from ever seeing it.
+    async fn find_marker(
+        &self,
+        _kind: ActionKind,
+        _canonical_target: &str,
+        _marker: &str,
+    ) -> Result<Option<ActionArtifact>, ActionError> {
+        Ok(None)
+    }
 }
 
 /// The value of the `actions/execute` waterfall.
@@ -241,6 +261,40 @@ impl ActionsHandle {
         outcome
     }
 
+    /// [`ActionsHandle::execute`] for a kind that is still a STRING (merge note 3, V10).
+    ///
+    /// A name outside §7's four is refused HERE, by the executor, as
+    /// [`ActionError::NoSuchKind`] — so "there is no `slack_send`" is the actions seam answering
+    /// about its own vocabulary rather than a caller's parser refusing one step earlier. Nothing
+    /// is journalled for a name that does not exist: an intent row is a promise that something
+    /// was attempted on the world.
+    pub async fn execute_by_name(
+        &self,
+        ctx: &Context,
+        kind: &str,
+        req: ActionRequestParts,
+    ) -> Result<ActionArtifact, ActionError> {
+        let resolved = ActionKind::parse(kind).ok_or_else(|| ActionError::NoSuchKind {
+            name: kind.to_string(),
+            known: ActionKind::KNOWN,
+        })?;
+        self.execute(ctx, req.with_kind(resolved)).await
+    }
+
+    /// Is this action's marker in the world? Routed to the Provider that owns the kind
+    /// (merge note 2). A READ: nothing here writes to the world or to the journal.
+    pub async fn find_marker(
+        &self,
+        kind: ActionKind,
+        canonical_target: &str,
+        marker: &str,
+    ) -> Result<Option<ActionArtifact>, ActionError> {
+        let provider = self
+            .provider_for(kind)
+            .ok_or(ActionError::NoProvider(kind.as_str()))?;
+        provider.find_marker(kind, canonical_target, marker).await
+    }
+
     /// Boot reconciliation: LISTS intent-without-done rows. Never re-executes (§7, §17 Phase 8).
     pub async fn pending(&self) -> Result<Vec<PendingAction>, ActionError> {
         let rows = self
@@ -280,10 +334,20 @@ impl ActionsHandle {
     }
 
     async fn row_with_idem_key(&self, idem: &IdemKey) -> Result<Option<ActionRow>, ActionError> {
-        // `ActionQuery` has no idem-key filter (it is WP-1's type and Phase 1 froze it), so the
-        // uniqueness check is a scan of the journal. Correct, and the journal is small.
-        let rows = self.0.ledger.0.actions(&ActionQuery::default()).await?;
-        Ok(rows.into_iter().find(|r| &r.idem_key == idem))
+        // Merge note 5: `ActionQuery` now carries the idem key, so this is a one-row lookup and
+        // not a scan of the journal — which matters because reconciliation asks it once per
+        // pending row.
+        let rows = self
+            .0
+            .ledger
+            .0
+            .actions(&ActionQuery {
+                idem_key: Some(idem.clone()),
+                limit: Some(1),
+                ..Default::default()
+            })
+            .await?;
+        Ok(rows.into_iter().next())
     }
 
     async fn traj_of(&self, agent: &AgentName) -> Result<TrajId, ActionError> {

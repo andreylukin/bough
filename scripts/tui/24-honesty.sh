@@ -171,9 +171,13 @@ entries:
       gutter: 1
 YML
 
+# MERGE: 45 seconds, not 15. The watch is DEBOUNCED and then the whole tree recomposes; the merged
+# tree is 54 rows where this bullet was written against 40, and on a loaded machine the notice had
+# not been painted when the old window closed. The claim is unchanged — a good patch SAYS it
+# reloaded — and a tree that never says so still fails.
 t a_good_patch_says_reloaded \
   bash -c '
-    for i in $(seq 1 30); do
+    for i in $(seq 1 90); do
       shell-use text | grep -qi "reload" && exit 0
       sleep 0.5
     done

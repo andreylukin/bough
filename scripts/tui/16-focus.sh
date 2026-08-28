@@ -151,8 +151,14 @@ export -f click_until
 
 t the_first_click_expands_the_row_it_landed_on \
   bash -c 'click_until "bash" "exit 0"'
+# MERGE (track B -> ux1): the second half SCROLLS to the first body instead of demanding it still
+# be on screen. The merged tree gives the column a `drafts` pane (`tui.drafts`, 30%), so the
+# transcript viewport is shorter than it was when this bullet was written and two expanded tool
+# bodies no longer both fit at the suite's size. The claim is unchanged and was never about
+# pixels: the row the pointer landed on TOGGLED, and the row that was already open did NOT
+# collapse — which is exactly the hit-test origin bug the audit found.
 t click_toggles_the_row_it_landed_on \
-  bash -c 'click_until "write_file" "+fn main() {" && see "exit 0" --timeout 3000'
+  bash -c 'click_until "write_file" "+fn main() {" && see_anywhere "exit 0"'
 
 # --- The whole point, restated as one bullet: no path through this script loses typed text. ----
 #

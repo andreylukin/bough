@@ -856,6 +856,12 @@ pub async fn actions(store: &SqliteStore, q: &ActionQuery) -> Result<Vec<ActionR
                 args.push(status_str(status).to_string());
                 clauses.push(format!("status = ?{}", args.len()));
             }
+            // Merge note 5: the idem key is UNIQUE in this table, so the uniqueness check is a
+            // one-row lookup rather than a scan of the whole journal.
+            if let Some(idem) = &q.idem_key {
+                args.push(idem.as_str().to_string());
+                clauses.push(format!("idem_key = ?{}", args.len()));
+            }
             if !clauses.is_empty() {
                 sql.push_str(" WHERE ");
                 sql.push_str(&clauses.join(" AND "));

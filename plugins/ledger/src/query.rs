@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::id::{ActionId, RollupId, Seq, StepId, StepType, TrajId, WakeId};
+use crate::id::{ActionId, IdemKey, RollupId, Seq, StepId, StepType, TrajId, WakeId};
 use crate::rows::{ActionStatus, AgentRow, RollupKind};
 use crate::step::{Class, Step};
 
@@ -74,6 +74,10 @@ pub struct ActionQuery {
     pub ids: Vec<ActionId>,
     pub wake: Option<WakeId>,
     pub status: Option<ActionStatus>,
+    /// The idempotency key, exactly. Merge note 5: `ActionsHandle::execute` asks "is this act
+    /// already journalled?" once per call and reconciliation asks it once per pending row, and
+    /// without this filter both were a full scan of the journal.
+    pub idem_key: Option<IdemKey>,
     pub limit: Option<usize>,
 }
 

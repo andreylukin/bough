@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use bough_kernel::{Context, ScopeKey};
-use bough_plugin_ledger::{AgentName, LedgerHandle, TrajId};
+use bough_plugin_ledger::{AgentName, LedgerHandle, TrajId, WakeId};
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -275,6 +275,18 @@ impl Agent {
             // there is nothing that could run.
             None => WakeRequest::Nothing,
             Some(driver) => driver.wake_now(kind, cause).await,
+        }
+    }
+
+    /// MERGE (note 12): the wake [`Agent::request_wake`] opened, AWAITED TO COMPLETION.
+    ///
+    /// `when_idle()` answers "this agent is doing nothing", which is a different question: an
+    /// agent that was already mid-wake when a machine woke is not idle, and a caller waiting for
+    /// ITS OWN wake to end would be told "still busy" by somebody else's. With no driver there is
+    /// nothing running and the wait is over.
+    pub async fn when_wake_done(&self, wake: &WakeId) {
+        if let Some(driver) = self.driver() {
+            driver.when_wake_done(wake).await;
         }
     }
 

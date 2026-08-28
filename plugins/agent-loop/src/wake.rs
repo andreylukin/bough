@@ -1020,6 +1020,8 @@ pub fn sender_ref(from: &Sender) -> String {
         Sender::Agent(name) => format!("agent:{name}"),
         Sender::Worker(id) => format!("worker:{id}"),
         Sender::Collector(c) => format!("collector:{c}"),
+        Sender::Ward(w) => format!("ward:{w}"),
+        Sender::Hook(h) => format!("hook:{h}"),
         Sender::System(s) => format!("system:{s}"),
     }
 }

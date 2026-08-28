@@ -227,6 +227,7 @@ pub fn envelope(subject: &str, refs: &[&str]) -> Envelope {
             url: None,
         }],
         refs: set(refs),
+        dedupe_on: None,
         at: now(),
     }
 }

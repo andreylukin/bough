@@ -12,7 +12,10 @@ use bough::{boot, cli};
 use clap::Parser;
 
 fn main() -> std::process::ExitCode {
-    let cli = cli::Cli::parse();
+    let mut cli = cli::Cli::parse();
+    // A subcommand implies `--no-watch`: the process exits when its row is done (§0.1 item 2).
+    cli.normalize();
+    let cli = cli;
     let _log = init_tracing(&cli);
 
     let runtime = match tokio::runtime::Runtime::new() {

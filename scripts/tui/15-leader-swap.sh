@@ -73,10 +73,16 @@ cp "$REPO_ROOT/scripts/tui/fixtures/leader-elsewhere.patch.yml" "$USER_PATCH"
 # assuming it happened: this polls until `terra` is offered the tools and FAILS if it never is.
 took_over() {
   local i
-  # The debounce first, THEN the turn. Polling by driving a turn per attempt would burn the
-  # replay transcript's rounds on waiting, and `llm-replay` is strict: an unmatched request is a
-  # failure, not a shrug. Two attempts, ten seconds apart, is the whole budget this bullet gets.
-  for i in 1 2; do
+  # The debounce first, THEN the turn. Polling by driving a turn per attempt burns a round of the
+  # replay transcript on every attempt, and `llm-replay` is strict: an unmatched request is a
+  # failure, not a shrug.
+  #
+  # MERGE (track B -> Phase 5): SIX attempts, not two. The merged tree is 54 rows where Phase 5's
+  # was 40, so a live recompose has more to do, and on a machine running four of these suites at
+  # once it did not finish inside the old twenty-second budget — a red bullet about the machine
+  # rather than about the swap. `fixtures/llm-replay.patch.yml` grew to sixteen rounds to pay for
+  # it. The claim is unchanged: if `terra` is never offered the tool, this still fails.
+  for i in 1 2 3 4 5 6; do
     sleep 10
     if offers terra yes >/dev/null 2>&1; then return 0; fi
   done

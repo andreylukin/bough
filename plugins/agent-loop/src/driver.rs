@@ -25,6 +25,10 @@ use crate::preempt::{Preemption, Running};
 use crate::wake::{LoopDeps, WakeSpec};
 use crate::LoopConfig;
 
+/// How often [`AgentDriver::when_wake_done`] looks at whether its wake is still open. A PROTOCOL
+/// BOUND on how late a waiter learns, not a deployment knob (§0.2).
+const WAKE_DONE_POLL: Duration = Duration::from_millis(10);
+
 /// Per-FIBER live driver state the invariants read: how many drain wakes are scheduled, and which
 /// wakes are open right now.
 ///
@@ -562,6 +566,18 @@ impl AgentDriver for LoopDriver {
         match me.spawn_wake(kind, cause, trigger).await {
             Some(wake) => WakeRequest::Started(wake),
             None => WakeRequest::Nothing,
+        }
+    }
+
+    /// MERGE (note 12): wait for ONE wake this driver opened to finish.
+    ///
+    /// The truth is `DriverState::interrupts`, which gains an entry when the wake is minted and
+    /// loses it when the wake's task ends — so a wake id this driver never opened, or has already
+    /// finished, returns at once. Polled, for the same reason `stop()` polls: the alternative is
+    /// a per-wake `Notify` that has to be cleaned up on every exit path.
+    async fn when_wake_done(&self, wake: &WakeId) {
+        while self.state.lock().interrupts.contains_key(wake) {
+            tokio::time::sleep(WAKE_DONE_POLL).await;
         }
     }
 

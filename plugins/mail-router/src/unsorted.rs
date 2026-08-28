@@ -140,6 +140,7 @@ mod tests {
             text: "the full body".into(),
             cites: Vec::new(),
             refs: refs.iter().map(Ref::new).collect(),
+            dedupe_on: None,
             at: now(),
         }
     }

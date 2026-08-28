@@ -29,12 +29,21 @@ t ctrl_f_focuses_the_search_pane \
 hits_file="$HOME_DIR/hits.txt"
 await_hits() {
   local i n
-  for i in $(seq 1 40); do
+  for i in $(seq 1 60); do
     shell-use text > "$hits_file.raw"
     n="$(grep -n "search \[" "$hits_file.raw" | head -1 | cut -d: -f1)"
     if [ -n "$n" ]; then
       sed -n "$((n + 1)),\$p" "$hits_file.raw" | grep -E "^ *(›)? *[a-z][a-z_]*  +[^ ]" > "$hits_file" || true
       [ -s "$hits_file" ] && return 0
+    fi
+    # MERGE: RE-QUERY, do not merely re-read. The pane runs its query on a KEYSTROKE, so a poll
+    # that only reads the screen can never see anything the FIRST query missed — and on a loaded
+    # machine the index can still be catching up with the replayed turn when that first query
+    # runs, which then reads `no matches` for ever. `fragment` ends in `t`, so deleting and
+    # retyping one character asks the same question again.
+    if [ $((i % 8)) -eq 0 ]; then
+      shell-use keys "BackSpace" >/dev/null
+      shell-use type "t" >/dev/null
     fi
     sleep 0.25
   done

@@ -7,7 +7,7 @@
 
 use bough_kernel::{Context, EffectHandle, PluginError};
 use bough_plugin_ledger::{AgentName, Append, Class, Seq, StepType, TrajId, WakeId};
-use bough_plugin_projection::{Assembled, PrefixSource, Projection};
+use bough_plugin_projection::{Assembled, PrefixSource, ProjectionHandle};
 use chrono::{DateTime, Utc};
 
 use crate::vocabulary::{ForkPrefix, FORK_PREFIX};
@@ -18,16 +18,21 @@ use crate::vocabulary::{ForkPrefix, FORK_PREFIX};
 /// a trajectory and a wake, which the caller has and an `AgentName` does not, and splitting the
 /// two lets the pinning half be exercised without a ledger. The provider's setup calls both, in
 /// this order — pin, then record.
+///
+/// MERGE (track B -> Phase 5): `projection` is PASSED, not read off `ctx`. `ctx` here is the CHILD
+/// AGENT's context — the pin has to unwind with the child (P5-D12) — and that context belongs to
+/// the `agents` row, which does not declare `projection` in its `inject`. Resolving the key
+/// through it made every fork in the SHIPPED tree die in setup with "plugin `agents` (row
+/// `agents`) read service `projection` without declaring it", which no test saw until V3's fork
+/// arm booted the real bundle. The handle the fork row already holds (it assembled the prefix with
+/// it) is the honest source, and the effect still belongs to the child.
 pub async fn pin(
     ctx: &Context,
+    projection: &ProjectionHandle,
     child: &AgentName,
     prefix: Assembled,
     source: PrefixSource,
 ) -> Result<EffectHandle, PluginError> {
-    let entry = ctx.entry_id().clone();
-    let projection = ctx
-        .get::<Projection>()
-        .map_err(|e| PluginError::new(entry, e))?;
     projection
         .pin_prefix(ctx, child.clone(), prefix, source)
         .await
@@ -66,7 +71,7 @@ mod tests {
     use bough_kernel::KernelCore;
     use bough_plugin_ledger::LedgerHandle;
     use bough_plugin_ledger_memory::store::MemoryStore;
-    use bough_plugin_projection::{AssembleRequest, ProjectionHandle};
+    use bough_plugin_projection::{AssembleRequest, Projection};
     use bough_plugin_projection_assembler::{Assembler, AssemblerConfig};
     use chrono::TimeZone;
 
@@ -84,6 +89,11 @@ mod tests {
             max_tiers: 3,
             file_view_dir: std::path::PathBuf::from("/unused-by-these-tests"),
         }
+    }
+
+    /// The handle a caller of [`pin`] holds: the fork row resolves it from its OWN context.
+    fn handle_of(ctx: &Context) -> ProjectionHandle {
+        (*ctx.get::<Projection>().expect("a projection is mounted")).clone()
     }
 
     /// A root context with a real projection over an empty in-memory ledger.
@@ -153,7 +163,7 @@ mod tests {
     async fn a_pin_is_returned_verbatim_whatever_the_budget() {
         let ctx = mounted().await;
         let child = AgentName::new("sol/worker-fork-1");
-        let _h = pin(&ctx, &child, parents_prefix(), source())
+        let _h = pin(&ctx, &handle_of(&ctx), &child, parents_prefix(), source())
             .await
             .expect("pinning is an effect");
         for budget in [Some(1usize), Some(1_000_000), None] {
@@ -171,6 +181,7 @@ mod tests {
         let ctx = mounted().await;
         let _h = pin(
             &ctx,
+            &handle_of(&ctx),
             &AgentName::new("sol/worker-fork-1"),
             parents_prefix(),
             source(),
@@ -186,7 +197,7 @@ mod tests {
     async fn disposing_the_token_restores_normal_assembly() {
         let ctx = mounted().await;
         let child = AgentName::new("sol/worker-fork-1");
-        let h = pin(&ctx, &child, parents_prefix(), source())
+        let h = pin(&ctx, &handle_of(&ctx), &child, parents_prefix(), source())
             .await
             .expect("pinning is an effect");
         assert_eq!(assemble(&ctx, child.as_str(), None).await, parents_prefix());

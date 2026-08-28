@@ -147,8 +147,30 @@ pub struct TuiInner {
     /// The last line the shell handed to `ctx.commands`. Observability: the status line shows it,
     /// and it is how "a slash line never became a send" is asserted.
     pub(crate) last_command: Mutex<Option<String>>,
+    /// MERGE (note 16). A message submitted BEFORE the roster is up. The composer is painted the
+    /// moment the shell mounts, and `residents` raises the agents asynchronously afterwards, so
+    /// there is a window — measured at roughly one submit in three on a cold boot — in which
+    /// Enter has nobody to send to through no fault of the person typing. The message WAITS here
+    /// and the tick sends it as soon as an agent exists; past `PENDING_SEND_TICKS` it is handed
+    /// back to the composer with an error, because nothing the user typed is ever destroyed (B3).
+    pub(crate) pending_send: Mutex<Option<PendingSend>>,
     pub(crate) redraw: Notify,
 }
+
+/// A submit waiting for the roster (merge note 16).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingSend {
+    pub text: String,
+    /// How many ticks it has waited. Bounded by [`PENDING_SEND_TICKS`].
+    pub ticks: u32,
+}
+
+/// How many ticks a queued submit waits for an agent before it is handed back to the composer.
+///
+/// A PROTOCOL CONSTANT, not a tunable (§0.2): it bounds a wait the shell owns, and the number that
+/// matters is "long enough for a boot, short enough that a tree with no agents at all says so".
+/// At the default `tick_ms` of 1000 that is ten seconds; a real roster is up in well under one.
+pub const PENDING_SEND_TICKS: u32 = 10;
 
 impl TuiHandle {
     /// Build the shell's state. `agents` and `commands` are what the row injected; a test that
@@ -204,6 +226,7 @@ impl TuiHandle {
             running_since: RwLock::new(None),
             anchored: RwLock::new(None),
             last_command: Mutex::new(None),
+            pending_send: Mutex::new(None),
             redraw: Notify::new(),
         })))
     }
@@ -529,6 +552,44 @@ impl TuiHandle {
     pub fn set_composer_text(&self, text: &str) {
         self.0.composer.lock().set_text(text);
         self.redraw();
+    }
+
+    /// QUEUE a submit that arrived before the roster was up (merge note 16). Returns `false` when
+    /// something is already queued — the caller then hands the text back to the composer rather
+    /// than losing whichever of the two it overwrote.
+    pub fn queue_send(&self, text: &str) -> bool {
+        let mut slot = self.0.pending_send.lock();
+        if slot.is_some() {
+            return false;
+        }
+        *slot = Some(PendingSend {
+            text: text.to_string(),
+            ticks: 0,
+        });
+        true
+    }
+
+    /// The submit waiting for an agent, if any. The status of the queue, for a test and for the
+    /// tick that drains it.
+    pub fn pending_send(&self) -> Option<PendingSend> {
+        self.0.pending_send.lock().clone()
+    }
+
+    /// Take the queued submit out. `None` leaves the slot alone.
+    pub(crate) fn take_pending_send(&self) -> Option<PendingSend> {
+        self.0.pending_send.lock().take()
+    }
+
+    /// One more tick of waiting. Returns the count AFTER the bump.
+    pub(crate) fn bump_pending_send(&self) -> u32 {
+        let mut slot = self.0.pending_send.lock();
+        match slot.as_mut() {
+            Some(p) => {
+                p.ticks += 1;
+                p.ticks
+            }
+            None => 0,
+        }
     }
 
     /// The rectangle a pane was given by the last layout.

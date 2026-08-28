@@ -50,7 +50,10 @@ tui_start "$REPO_ROOT/scripts/tui/fixtures/markdown.patch.yml"
 shell-use submit "explain the renderer"
 shell-use wait idle --timeout 40000
 
-t the_answer_landed see "$SPLIT_WORD" --timeout 20000
+# MERGE: `see_anywhere`, not `see`. The turn is already over (`wait idle` above), so nothing is
+# being waited for — and the merged tree's shorter transcript viewport can leave the split word
+# above the fold at the end of a long markdown answer.
+t the_answer_landed bash -c 'see_anywhere "'"$SPLIT_WORD"'"'
 
 t a_multi_chunk_replay_has_no_mid_word_break \
   bash -c '

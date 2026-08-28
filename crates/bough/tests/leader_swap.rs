@@ -183,6 +183,7 @@ async fn unsorted_lands_on(kernel: &Kernel, tag: &str) -> Option<String> {
             text: "UNSORTED-SINK-PROBE".to_string(),
             cites: Vec::new(),
             refs: nobodys_refs,
+            dedupe_on: None,
             at: at(200),
         })
         .await

@@ -381,6 +381,14 @@ impl LedgerStore for MemoryStore {
             .filter(|a| q.ids.is_empty() || q.ids.contains(&a.id))
             .filter(|a| q.wake.as_ref().map(|w| w == &a.wake).unwrap_or(true))
             .filter(|a| q.status.map(|s| s == a.status).unwrap_or(true))
+            // Merge note 5: the same one-key filter the sqlite store answers, so a caller cannot
+            // get a different answer from the two Providers.
+            .filter(|a| {
+                q.idem_key
+                    .as_ref()
+                    .map(|k| k == &a.idem_key)
+                    .unwrap_or(true)
+            })
             .cloned()
             .collect();
         out.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.id.cmp(&b.id)));

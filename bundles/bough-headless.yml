@@ -11,3 +11,13 @@
     traj: lane/sol
     print: text
     exit_when_idle: true
+
+# §17 Phase 6: the two rows the Phase-6 subcommands overlay. Both are INERT as written — an empty
+# `server`/`file` mounts, activates and does nothing — so `--profile headless` stays usable on its
+# own and `bough mcp call` / `bough wards test` have a row to write (§0.1 item 2).
+- id: mcp.call
+  plugin: mcp-call
+  config: { server: "", tool: "", args: "", print: text, exit_when_done: true }
+- id: wards.test
+  plugin: ward-test
+  config: { file: "", since: "", print: text, exit_when_done: true }
