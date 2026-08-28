@@ -75,7 +75,7 @@ entries:
             - type: tool_call
               id: call-bash-1
               name: bash
-              input: { command: "echo scripted-program-output" }
+              input: { command: "echo scripted-program-output", tags: ["bash", "scripted", "program"] }
             - type: tool_call
               id: call-read-1
               name: read_file

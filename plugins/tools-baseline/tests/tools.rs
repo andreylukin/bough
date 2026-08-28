@@ -17,6 +17,8 @@ use tokio_util::sync::CancellationToken;
 
 fn cfg(root: &TempDir) -> Arc<BaselineConfig> {
     Arc::new(BaselineConfig {
+        bash_tags_min: 3,
+        bash_tags_max: 5,
         // The root a row actually holds is the PINNED one (phase ux1 §2.10): absolute and
         // canonical. `TempDir::path` is neither on macOS, where `/var` is a symlink.
         root: bough_plugin_tools_baseline::fs::pin_root(std::path::Path::new("."), root.path())
@@ -166,17 +168,45 @@ async fn bash_reports_exit_codes() {
         &ctx,
         &tools,
         "bash",
-        serde_json::json!({ "command": "echo hi" }),
+        serde_json::json!({ "command": "echo hi", "tags": ["bash", "test", "shell"] }),
     )
     .await;
     assert!(ok.content.starts_with("hi\n"), "{:?}", ok.content);
     assert!(ok.content.contains("[exit status: 0]"));
 
+    // `tags` is REQUIRED in the model-visible schema and it is ENFORCED here, against the
+    // validated `bash_tags_min`/`bash_tags_max` the schema was built from: a required property
+    // nothing reads is a cost the model pays for nothing.
+    let untagged = run(
+        &ctx,
+        &tools,
+        "bash",
+        serde_json::json!({ "command": "echo hi" }),
+    )
+    .await;
+    assert!(
+        untagged.content.contains("needs 3-5 tags"),
+        "{:?}",
+        untagged.content
+    );
+    let padded = run(
+        &ctx,
+        &tools,
+        "bash",
+        serde_json::json!({ "command": "echo hi", "tags": ["bash", " ", ""] }),
+    )
+    .await;
+    assert!(
+        padded.content.contains("needs 3-5 tags"),
+        "blank strings are not tags: {:?}",
+        padded.content
+    );
+
     let bad = run(
         &ctx,
         &tools,
         "bash",
-        serde_json::json!({ "command": "exit 3" }),
+        serde_json::json!({ "command": "exit 3", "tags": ["bash", "test", "shell"] }),
     )
     .await;
     assert!(bad.content.contains("[exit status: 3]"));
@@ -199,7 +229,7 @@ async fn bash_times_out_at_its_configured_bound() {
         &ctx,
         &tools,
         "bash",
-        serde_json::json!({ "command": "sleep 5" }),
+        serde_json::json!({ "command": "sleep 5", "tags": ["bash", "test", "shell"] }),
     )
     .await;
     assert!(!out.ok);
@@ -278,7 +308,7 @@ async fn oversized_output_spills_and_leaves_a_locator_inline() {
         &ctx,
         &tools,
         "bash",
-        serde_json::json!({ "command": "for i in $(seq 1 400); do echo 0123456789; done" }),
+        serde_json::json!({ "command": "for i in $(seq 1 400); do echo 0123456789; done", "tags": ["bash", "test", "shell"] }),
     )
     .await;
 
@@ -318,7 +348,10 @@ async fn a_tool_honours_its_cancellation_signal() {
     cancel.cancel();
     let out: Result<ToolOutcome, _> = bough_plugin_tools::Tool::call(
         &bash,
-        Arc::new(call("bash", serde_json::json!({ "command": "sleep 5" }))),
+        Arc::new(call(
+            "bash",
+            serde_json::json!({ "command": "sleep 5", "tags": ["bash", "test", "shell"] }),
+        )),
         ToolCx {
             ctx: ctx(),
             cancel,

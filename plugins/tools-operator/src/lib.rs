@@ -201,12 +201,14 @@ pub fn specs(
     vec![
         ToolSpec {
             name: ToolName::new("sh"),
-            description: "Run several shell commands CONCURRENTLY in the task tree and return \
-                          `[{code, out}, …]` in leg order. A non-zero exit is data, never a \
-                          failure. Every leg needs 3-5 short lowercase `tags` naming the tool, \
-                          the intent and the subject: they index the command in the \
-                          cross-session history."
-                .into(),
+            description: format!(
+                "Run several shell commands CONCURRENTLY in the task tree and return \
+                 `[{{code, out}}, …]` in leg order. A non-zero exit is data, never a failure. \
+                 Every leg needs {}-{} short lowercase `tags` naming the tool, the intent and \
+                 the subject: they are recorded with the leg, and a leg that carries the wrong \
+                 number of them is refused.",
+                cfg.sh_tags_min, cfg.sh_tags_max
+            ),
             input_schema: schema(serde_json::json!({
                 "type": "object",
                 "properties": { "legs": {
@@ -215,11 +217,14 @@ pub fn specs(
                         "type": "object",
                         "properties": {
                             "cmd": string,
+                            // Built from the validated config, never a literal: the schema the
+                            // model reads and the bound `sh::legs` enforces are the same two
+                            // numbers (§0.2, no hardcoded tunables).
                             "tags": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "minItems": 3,
-                                "maxItems": 5
+                                "minItems": cfg.sh_tags_min,
+                                "maxItems": cfg.sh_tags_max
                             }
                         },
                         "required": ["cmd", "tags"]

@@ -104,6 +104,12 @@ pub fn force_profile(cli: &mut crate::cli::Cli) {
     cli.profile = EXEC_PROFILE.to_string();
     // The task ends when the agent goes idle; a patch watch would only outlive it.
     cli.no_watch = true;
+    // A headless run has no terminal to hand back, and a teardown cut short by the interactive
+    // budget leaves `ledger.db-wal` next to the chain it was still writing. Only the untouched
+    // default is raised: a `--shutdown-ms` the user typed is theirs.
+    if cli.shutdown_ms == crate::cli::DEFAULT_SHUTDOWN_MS {
+        cli.shutdown_ms = crate::cli::HEADLESS_SHUTDOWN_MS;
+    }
 }
 
 #[cfg(test)]
@@ -185,6 +191,41 @@ mod tests {
         assert_eq!(p.remove.len(), 0);
         assert_eq!(p.entries.len(), 1);
         assert!(p.entries.contains_key(&EntryId::new(EXEC_ROW)));
+    }
+
+    /// The headless budget replaces the interactive one, and only when it was the default.
+    #[test]
+    fn exec_loosens_only_the_default_teardown_budget() {
+        let mut cli = crate::cli::Cli {
+            profile: "tui".into(),
+            patches: Vec::new(),
+            dump_config: false,
+            dump_format: crate::cli::DumpFormat::Yaml,
+            check: false,
+            no_watch: false,
+            shutdown_ms: crate::cli::DEFAULT_SHUTDOWN_MS,
+            root: None,
+            command: Some(Command::Exec(args("hi"))),
+        };
+        force_profile(&mut cli);
+        assert_eq!(cli.shutdown_ms, crate::cli::HEADLESS_SHUTDOWN_MS);
+
+        let mut typed = crate::cli::Cli {
+            profile: "tui".into(),
+            patches: Vec::new(),
+            dump_config: false,
+            dump_format: crate::cli::DumpFormat::Yaml,
+            check: false,
+            no_watch: false,
+            shutdown_ms: 750,
+            root: None,
+            command: Some(Command::Exec(args("hi"))),
+        };
+        force_profile(&mut typed);
+        assert_eq!(
+            typed.shutdown_ms, 750,
+            "a typed --shutdown-ms is the user's"
+        );
     }
 
     #[test]

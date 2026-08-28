@@ -196,6 +196,24 @@ pub async fn raise_roster(
             up.push(agent.name().clone());
         }
     }
+
+    // MERGE (proof pass): a PARTIAL roster is a boot failure, not a smaller rail. A live run of
+    // `scripts/tui/12-many-agents.sh` came up with `luna` and `terra` on the rail and no `sol` —
+    // a configured bootstrap name that never became an agent, which §0.2 refuses to swallow. Each
+    // name is checked against the live factory, so a lane lost to boot order raises here (and the
+    // caller's one retry re-runs the whole raise) instead of showing a rail that is quietly short
+    // one resident.
+    let missing: Vec<String> = cfg
+        .bootstrap
+        .iter()
+        .filter(|n| agents.by_name(&AgentName::new(*n)).is_none())
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "the roster came up short: configured bootstrap lane(s) {missing:?} are not agents"
+        ));
+    }
     Ok(up)
 }
 

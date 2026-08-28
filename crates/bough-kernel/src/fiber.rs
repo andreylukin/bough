@@ -220,6 +220,15 @@ impl Fiber {
         self.wake.notify_one();
     }
 
+    /// See [`FiberRuntime::converging_fingerprint`]: uid, state, busy, applied generation,
+    /// target generation, wanted.
+    fn progress_mark(&self) -> (FiberUid, u8, bool, u64, u64, bool) {
+        let busy = self.busy.load(Ordering::SeqCst);
+        let t = *self.target.lock();
+        let s = self.state.lock();
+        (self.uid, s.state as u8, busy, s.applied_gen, t.gen, t.want)
+    }
+
     fn settled_now(&self) -> bool {
         if self.busy.load(Ordering::SeqCst) {
             return false;
@@ -414,6 +423,14 @@ impl FiberRuntime {
     /// True when no fiber is mid-transition and every fiber has reached its target.
     pub fn settled_now(&self) -> bool {
         self.all().iter().all(|f| f.settled_now())
+    }
+
+    /// A cheap fingerprint of where the tree currently IS in its convergence: one tuple per
+    /// fiber, covering everything a transition can move. Two consecutive reads that differ mean
+    /// the tree made progress; two that agree mean it did not. [`quiesce_runtime`] uses it so its
+    /// ceiling measures stalling rather than wall-clock slowness.
+    pub fn converging_fingerprint(&self) -> Vec<(FiberUid, u8, bool, u64, u64, bool)> {
+        self.all().iter().map(|f| f.progress_mark()).collect()
     }
 
     /// Wake every fiber so it re-checks its dependency targets.
@@ -706,6 +723,15 @@ const DISPOSE_CEILING: Duration = Duration::from_secs(5);
 /// out of order. Expiry is logged at ERROR; it is never silent.
 const DEPENDENT_WAIT_CEILING: Duration = Duration::from_secs(5);
 
+/// How long [`quiesce_runtime`] tolerates a tree that is UNSETTLED AND NOT MOVING. It is a
+/// liveness backstop, never a performance assertion: see the fingerprint loop below.
+const QUIESCE_NO_PROGRESS_CEILING: Duration = Duration::from_secs(10);
+
+/// The ABSOLUTE ceiling on the same wait. A row that keeps moving without ever settling — a
+/// driver that retries forever — resets the no-progress budget on every pass, so without this
+/// the wait would never return. Progress that never converges is still a failure to quiesce.
+const QUIESCE_ABSOLUTE_CEILING: Duration = Duration::from_secs(90);
+
 /// Await quiescence over the whole registry, INCLUDING fibers a transition created.
 ///
 /// Returns whether the tree ACTUALLY quiesced. `false` means the ceiling expired with fibers still
@@ -713,8 +739,15 @@ const DEPENDENT_WAIT_CEILING: Duration = Duration::from_secs(5);
 /// than as quiescence, which is why this is a `bool` and not `()`.
 #[must_use]
 pub async fn quiesce_runtime(rt: &Arc<FiberRuntime>) -> bool {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
     let mut stable = 0;
+    // The ceiling is a budget of NO PROGRESS, not of wall time. A tree that is converging one
+    // fiber at a time on a loaded machine (a full nextest run, a busy laptop) can take much
+    // longer than any fixed wall clock and still be perfectly healthy; a tree that is genuinely
+    // wedged makes no move at all. So the deadline is reset every time the convergence
+    // fingerprint below changes, and only a genuinely quiet-but-unsettled tree expires it.
+    let mut fingerprint = rt.converging_fingerprint();
+    let started = std::time::Instant::now();
+    let mut deadline = started + QUIESCE_NO_PROGRESS_CEILING;
     loop {
         if rt.settled_now() {
             stable += 1;
@@ -726,7 +759,14 @@ pub async fn quiesce_runtime(rt: &Arc<FiberRuntime>) -> bool {
         } else {
             stable = 0;
         }
-        if std::time::Instant::now() > deadline {
+        let now_print = rt.converging_fingerprint();
+        if now_print != fingerprint {
+            fingerprint = now_print;
+            deadline = std::time::Instant::now() + QUIESCE_NO_PROGRESS_CEILING;
+        }
+        if std::time::Instant::now() > deadline
+            || std::time::Instant::now() > started + QUIESCE_ABSOLUTE_CEILING
+        {
             let stuck: Vec<String> = rt
                 .all()
                 .iter()

@@ -74,7 +74,10 @@ events: ## REQUIREMENTS §15 item 7: the event catalog, and the gate that it mat
 	cargo run --quiet -p xtask -- events --check
 
 audit-plugins: ## REQUIREMENTS §17 Phase 8: profiles boot, every bundle row comes out, nothing leaks, every two-provider seam runs under each provider
+	# BOTH bundles. `bough-base` alone is 55 of the tree's 66 bundle rows: the `bough-tui-app`
+	# half was audited by hand and never by the gate, which is how a bundle row can go unswept.
 	./scripts/audit-plugins.sh
+	./scripts/audit-plugins.sh --bundle bough-tui-app --phases B --no-build
 
 # REQUIREMENTS §17 Phase 3 (and Phase 6: 27-drafts, 28-mcp-tool, 29-swap-collector,
 # 30-swap-wards). Both halves glob `scripts/tui/[0-9]*.sh`, so a new script is wired in by

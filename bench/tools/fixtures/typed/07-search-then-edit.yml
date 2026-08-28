@@ -18,7 +18,8 @@
                 "id": "c0",
                 "name": "bash",
                 "input": {
-                  "command": "rg -l MARKER_ONE src"
+                  "command": "rg -l MARKER_ONE src",
+                  "tags": ["bash", "bench", "shell"]
                 }
               },
               {

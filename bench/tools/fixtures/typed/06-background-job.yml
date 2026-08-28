@@ -41,7 +41,8 @@
                 "id": "c1",
                 "name": "bash",
                 "input": {
-                  "command": "sleep 2"
+                  "command": "sleep 2",
+                  "tags": ["bash", "bench", "shell"]
                 }
               },
               {

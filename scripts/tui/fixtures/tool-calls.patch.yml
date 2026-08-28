@@ -23,7 +23,7 @@ entries:
             - type: tool_call
               id: call-bash-1
               name: bash
-              input: { command: "echo scripted-tool-output" }
+              input: { command: "echo scripted-tool-output", tags: ["bash", "scripted", "demo"] }
             - type: tool_call
               id: call-read-1
               name: read_file

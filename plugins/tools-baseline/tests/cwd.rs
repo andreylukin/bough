@@ -22,6 +22,8 @@ static CHDIR: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn cfg(root: PathBuf) -> Arc<BaselineConfig> {
     Arc::new(BaselineConfig {
+        bash_tags_min: 3,
+        bash_tags_max: 5,
         root,
         bash_timeout_ms: 2_000,
         max_output_bytes: 10_000,

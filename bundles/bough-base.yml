@@ -65,6 +65,8 @@
     # the same value, without inventing a function for one row.
     root: "."
     bash_timeout_ms: 120000
+    bash_tags_min: 3
+    bash_tags_max: 5
     max_output_bytes: 20000
     max_read_bytes: 400000
     deny_globs: []

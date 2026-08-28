@@ -10,6 +10,8 @@ use std::sync::Arc;
 
 fn baseline_specs() -> Vec<bough_plugin_tools::ToolSpec> {
     bough_plugin_tools_baseline::specs(Arc::new(BaselineConfig {
+        bash_tags_min: 3,
+        bash_tags_max: 5,
         root: std::path::PathBuf::from("/tmp"),
         bash_timeout_ms: 1000,
         max_output_bytes: 1024,

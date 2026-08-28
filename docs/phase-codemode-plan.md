@@ -1078,10 +1078,23 @@ wall, both arms on `claude-haiku-4-5-20251001` for sol and terra. Produced by
 the table §7.A is decided on.**
 
 Code mode passes **13/15 against typed's 14/15** — one task apart — at **$0.4069 per bank against
-$0.4969**, on 18% fewer input tokens and slightly fewer rounds per task. Read with the previous
-run (typed 11/15 @ $0.8103, code mode 11/15 @ $0.6104, `11-act-open-pr` red by construction on
-both), the shape has now held across three measurements: **the two surfaces tie on capability
-within a task or two, and code mode costs roughly 18–25% less.**
+$0.4969**, on 18% fewer input tokens and slightly fewer rounds per task.
+
+> **DOES NOT REPLICATE — read before quoting the cost figure (proof pass, 2026-08-28).** An
+> independent `BOUGH_LIVE=1 make bench-tools` on the same commit, same bank, same model, put the
+> sign the other way: typed 13/15 at **$0.5336** against codemode 13/15 at **$0.7254** — code mode
+> 36% MORE expensive. One task carried it: `15-fork-the-trajectory` cost the codemode arm $0.3162,
+> 44% of that arm's whole bank. Each arm is **n=1 over 15 tasks on a live model**, so a single
+> task's round count dominates the total and the bank cannot resolve a 20% difference; the two
+> runs also fail on different tasks (typed `03`/`13` and codemode `04`/`13` on the second run).
+> The earlier sentence claiming "the shape has held across three measurements" is WITHDRAWN: three
+> n=1 runs of a bank with this variance are three draws, not three confirmations.
+>
+> **What §7.A's GO may rest on:** the capability result (the two surfaces tie within a task or
+> two), which both runs agree on. It may NOT rest on a cost ordering until the bank is run
+> repeatedly enough to carry one — the same n=6-confirm discipline the prompt bench uses.
+> Recorded, not fixed: re-running the bank to n≥5 per arm is hours of live model time and is
+> DEFERRED to the GO itself.
 
 The two rows code mode still misses are `10-propose-a-claim` (the model narrated the claim instead
 of calling `claim(...)`) and `13-read-the-inbox`, which the TYPED arm misses too — a bank predicate

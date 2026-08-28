@@ -31,6 +31,20 @@ pub struct BaselineConfig {
     pub max_read_bytes: usize,
     #[serde(default)]
     pub deny_globs: Vec<String>,
+    /// How many `tags` a `bash` call must carry. The model-visible schema is BUILT from these two
+    /// fields and the call is REJECTED against them, so a deployment that moves either one moves
+    /// the promise and the rule together (§0.2: no hardcoded tunables).
+    #[serde(default = "default_bash_tags_min")]
+    pub bash_tags_min: usize,
+    #[serde(default = "default_bash_tags_max")]
+    pub bash_tags_max: usize,
+}
+
+fn default_bash_tags_min() -> usize {
+    3
+}
+fn default_bash_tags_max() -> usize {
+    5
 }
 
 /// `bash` — Terminal render, never concurrency-safe.
@@ -98,6 +112,28 @@ fn file_cite(p: &std::path::Path) -> Cite {
     }
 }
 
+/// The non-empty, trimmed `tags` of a call. Blank strings are not tags: a call that pads to the
+/// minimum with `""` has not named anything.
+///
+/// BOTH spellings, for the same reason `tools-codemode::bind::parse_tags` accepts both: the typed
+/// schema declares an array, and the code-mode surface teaches the colon-separated string
+/// (`bash('echo hi', 'shell:probe:demo')`), which binds positionally into this same property.
+fn tags_of(call: &ToolCall) -> Vec<String> {
+    fn split(v: &serde_json::Value) -> Vec<String> {
+        match v {
+            serde_json::Value::String(s) => s
+                .split(':')
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+                .collect(),
+            serde_json::Value::Array(a) => a.iter().flat_map(split).collect(),
+            _ => Vec::new(),
+        }
+    }
+    call.args.get("tags").map(split).unwrap_or_default()
+}
+
 fn schema(v: serde_json::Value) -> schemars::Schema {
     schemars::Schema::try_from(v).expect("a baseline tool's input schema is an object")
 }
@@ -113,6 +149,20 @@ impl Tool for Bash {
     }
     async fn call(&self, call: Arc<ToolCall>, cx: ToolCx) -> Result<ToolOutcome, ToolFailure> {
         let command = arg_str(&call, "command")?;
+        // `tags` is REQUIRED in the schema, so it is enforced here: a required property nothing
+        // reads is a cost the model pays for nothing (and a promise the tree does not keep).
+        let tags = tags_of(&call);
+        let n = tags.len();
+        if !(self.0.bash_tags_min..=self.0.bash_tags_max).contains(&n) {
+            return Err(err(
+                FailureClass::Denied,
+                format!(
+                    "`bash` needs {}-{} tags naming the tool, the intent and the subject; it \
+                     carried {n}",
+                    self.0.bash_tags_min, self.0.bash_tags_max
+                ),
+            ));
+        }
         let cwd = match arg_str_opt(&call, "cwd") {
             Some(c) => fs::contain(&self.0.root, &c).map_err(|m| err(FailureClass::Denied, m))?,
             // The pinned root is already absolute and canonical (phase ux1 §2.10): resolving it
@@ -406,12 +456,13 @@ pub fn specs(cfg: Arc<BaselineConfig>) -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: ToolName::new("bash"),
-            description: "Run a shell command in the task tree and return its output and exit \
-                          status. `tags` is 3-5 short lowercase words naming the tool, the intent \
-                          and the subject (`[\"cargo\", \"test\", \"focus\"]`): they index the \
-                          command in the cross-session history, which is the only way a later \
-                          session finds it."
-                .into(),
+            description: format!(
+                "Run a shell command in the task tree and return its output and exit status. \
+                 `tags` is {}-{} short lowercase words naming the tool, the intent and the \
+                 subject (`[\"cargo\", \"test\", \"focus\"]`): they are recorded with the \
+                 call, and a call that carries the wrong number of them is refused.",
+                cfg.bash_tags_min, cfg.bash_tags_max
+            ),
             // MERGE: `tags` is a DECLARED property, and it is in `required` before `cwd` because
             // the code-mode surface binds arguments positionally in `required`-then-sorted order
             // (`tools-codemode::bind::positional_order`) — that is what makes the injected
@@ -424,8 +475,8 @@ pub fn specs(cfg: Arc<BaselineConfig>) -> Vec<ToolSpec> {
                     "tags": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "minItems": 3,
-                        "maxItems": 5
+                        "minItems": cfg.bash_tags_min,
+                        "maxItems": cfg.bash_tags_max
                     },
                     "cwd": path_prop
                 },
@@ -526,6 +577,14 @@ impl Plugin for BaselineToolsPlugin {
                 detail: "max_output_bytes and max_read_bytes must be at least 1".to_string(),
             });
         }
+        if cfg.bash_tags_min == 0 || cfg.bash_tags_min > cfg.bash_tags_max {
+            return Err(bough_kernel::ConfigError::Rejected {
+                detail: format!(
+                    "bash_tags_min ({}) must be at least 1 and no greater than bash_tags_max ({})",
+                    cfg.bash_tags_min, cfg.bash_tags_max
+                ),
+            });
+        }
         if cfg.bash_timeout_ms == 0 {
             return Err(bough_kernel::ConfigError::Rejected {
                 detail: "bash_timeout_ms must be at least 1".to_string(),
@@ -587,6 +646,8 @@ mod config_tests {
             max_output_bytes: 100,
             max_read_bytes: 100,
             deny_globs: vec![],
+            bash_tags_min: 3,
+            bash_tags_max: 5,
         }
     }
 

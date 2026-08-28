@@ -50,7 +50,7 @@ entries:
             - type: tool_call
               id: call-typed-1
               name: bash
-              input: { command: "echo typed-surface-one" }
+              input: { command: "echo typed-surface-one", tags: ["bash", "typed", "surface"] }
             - { type: end, stop: tool_use }
         - chunks:
             - { type: text, text: "the typed tools ran" }
@@ -71,7 +71,7 @@ entries:
             - type: tool_call
               id: call-typed-2
               name: bash
-              input: { command: "echo typed-surface-two" }
+              input: { command: "echo typed-surface-two", tags: ["bash", "typed", "surface"] }
             - { type: end, stop: tool_use }
         - chunks:
             - { type: text, text: "the typed tools ran again" }

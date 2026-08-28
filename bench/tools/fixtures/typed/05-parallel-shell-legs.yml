@@ -18,7 +18,8 @@
                 "id": "c0",
                 "name": "bash",
                 "input": {
-                  "command": "printf one > src/one.txt"
+                  "command": "printf one > src/one.txt",
+                  "tags": ["bash", "bench", "shell"]
                 }
               },
               {
@@ -39,7 +40,8 @@
                 "id": "c1",
                 "name": "bash",
                 "input": {
-                  "command": "printf two > src/two.txt"
+                  "command": "printf two > src/two.txt",
+                  "tags": ["bash", "bench", "shell"]
                 }
               },
               {
@@ -60,7 +62,8 @@
                 "id": "c2",
                 "name": "bash",
                 "input": {
-                  "command": "ls src/one.txt src/two.txt"
+                  "command": "ls src/one.txt src/two.txt",
+                  "tags": ["bash", "bench", "shell"]
                 }
               },
               {

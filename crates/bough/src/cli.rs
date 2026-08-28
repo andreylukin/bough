@@ -7,6 +7,15 @@ use std::path::PathBuf;
 /// default apart from a profile the user typed.
 pub const DEFAULT_PROFILE: &str = "tui";
 
+/// The interactive teardown budget: how long the TUI may keep a user waiting after `/quit`
+/// before the launcher restores the terminal and leaves anyway.
+pub const DEFAULT_SHUTDOWN_MS: u64 = 2000;
+
+/// The headless teardown budget (`bough exec`). Nobody is watching a terminal that has to come
+/// back, and an aborted teardown leaves the ledger's write-ahead log on disk, so correctness
+/// beats latency here: the deadline stays a hang backstop, but a much looser one.
+pub const HEADLESS_SHUTDOWN_MS: u64 = 20_000;
+
 /// `bough`.
 #[derive(Debug, clap::Parser)]
 #[command(name = "bough", version)]
@@ -34,7 +43,7 @@ pub struct Cli {
     pub root: Option<PathBuf>,
     /// How long teardown may take before the launcher restores the terminal and leaves anyway
     /// (phase ux1 §2.4, B8). Never a constant at the call site.
-    #[arg(long, default_value_t = 2000)]
+    #[arg(long, default_value_t = DEFAULT_SHUTDOWN_MS)]
     pub shutdown_ms: u64,
     /// `bough exec "<task>"`. A subcommand is COMPOSITION, not behaviour: it selects the headless
     /// profile and overlays one synthetic patch layer on the `exec` row (§0.1 item 2).

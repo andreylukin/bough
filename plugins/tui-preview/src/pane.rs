@@ -324,7 +324,11 @@ impl Pane for PreviewPane {
         let painted = lines(&state, &self.cfg, area.width);
         if let Some(snap) = &state.snapshot {
             // The invariant's recorder: what this frame ACTUALLY put on screen.
-            crate::invariant::record(snap.as_of, &snap.digest);
+            crate::invariant::record(
+                snap.as_of,
+                &snap.digest,
+                matches!(snap.at, crate::snapshot::PreviewAt::Head),
+            );
         }
         let theme = *cx.theme();
         let top = state.top(painted.len(), area.height);
