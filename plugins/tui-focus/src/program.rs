@@ -28,7 +28,8 @@ use crate::rows::Row;
 
 /// The ONE API tool code mode exposes (`bough-plugin-tools-codemode::RUN_TOOL`). Spelled here
 /// rather than imported: the fold reads the LEDGER, and a surface must not depend on the consumer
-/// that happens to be mounted. Pinned to the consumer's constant by the codemode row's own test.
+/// that happens to be mounted. Pinned to the consumer's constant by the codemode row's own test
+/// (`plugins/tools-codemode/tests/pins.rs`, `run_tool_name_is_pinned_to_the_focus_pane_fold`).
 pub const RUN_TOOL: &str = "run";
 
 /// The syntect token the source block is highlighted under.

@@ -45,6 +45,29 @@ replay — is why the intent is a ledger step and not a timer in memory. When th
 lands, the watcher half is deleted and the tool registers a cron entry instead; the two step types
 and the invariant stay.
 
+**Exact hook wanted** (`crates/bough-kernel`, alongside `Context::effect_spawn`):
+
+```rust
+impl Context {
+    /// Register a due-time callback owned by this entry: fires once at `at`, is cancelled by the
+    /// row's disposal, and is re-registered from the ledger on boot by whoever owns the seam.
+    pub async fn schedule(
+        &self,
+        at: chrono::DateTime<chrono::Utc>,
+        f: impl Fn(EffectCtx) -> BoxFuture<'static, Result<(), PluginError>> + Send + Sync + 'static,
+    ) -> Result<ScheduleHandle, PluginError>;
+}
+```
+
+Until it exists there is no `schedule` key to inject and no `schedule-cron` Provider in the tree, so
+`tools-operator` polls: `schedule::watch` is an `effect_spawn` loop that sleeps in 100 ms slices (the
+slice is not the tick — `EffectHandle::dispose` awaits the body, so a full-tick sleep would make a
+SIGINT look like a hang) and folds `intent`/`fired` off the ledger once per `schedule_tick_ms`. This
+is the third kind of background job §9 says should not exist; it is deliberate and temporary, and it
+runs in every profile that mounts the row (`bundles/bough-base.yml`) because the `schedule` TOOL is
+mounted there too — gating the watcher to code mode would let an intent be recorded in the default
+profile and never fire. Deleting the loop is a one-file change once the hook above lands.
+
 ## 4. `program/*` step-kind literals cross a crate boundary by name
 
 **Files** `plugins/tui-focus/src/program.rs`, `plugins/tools-codemode/src/lib.rs`
@@ -277,3 +300,23 @@ the script; the ux1 track has been told, since the same line is on `rebuild`.
 loop over `scripts/tui/[0-9]*.sh` leaves `BOUGH_CONSUMER` unset, which is the TYPED control arm, so
 `30-program.sh`'s program-row bullets were only ever asserted ABSENT in the gates. The `Makefile`
 now runs a second, explicit pass over `30-program.sh` with `BOUGH_CONSUMER=codemode`.
+
+## §12 — two `tools` accessors the mirror needs (review, phase codemode)
+
+**File** `plugins/tools/src/lib.rs`
+**Wanted** `ToolsHandle::default_deadline_ms()` and `ToolsHandle::max_parallel()`
+
+Both are read-only getters on `ToolsHandle`; neither changes the seam's behaviour.
+
+* `pub fn default_deadline_ms(&self) -> u64` — `plugins/tools/src/lib.rs`, beside `approval()`.
+  The mirror a program executes against is built with `ToolsHandle::with_limits(1, deadline)`, and
+  the Consumer has no way to read the seam's own `tools.default_deadline_ms`. Until it lands,
+  `tools-codemode`'s `inner_deadline_ms` config field carries the value and `bundles/bough-codemode.yml`
+  keeps it equal to `bough-base`'s `tools.default_deadline_ms` by hand — a duplication a getter deletes.
+* `pub fn max_parallel(&self) -> usize` — same place. `tools.max_parallel` cannot apply under code
+  mode (each host call issues its own single-call `execute_under`), so the Consumer enforces its own
+  `max_parallel_calls` with a semaphore. With the getter the two knobs become one.
+
+Approval no longer needs a hook: the mirror now calls the existing public `mount_approval` with
+whatever `tools.approval()` answers, so an `ask` inside a program reaches the same approver a typed
+call would.

@@ -1,5 +1,9 @@
 # Recorded transcript: 05-parallel-shell-legs, CODE-MODE arm.
 #
+# `Promise.all` over `bash` legs, NOT `sh([...])`: no row in this tree registers a tool named `sh`,
+# so the recorded program used to be one a real run could not have executed (an uncaught
+# ReferenceError, ending the round). Concurrency in code mode is the language's, not a verb's.
+#
 # The same task as `../typed/05-parallel-shell-legs.yml`, in ONE `run(program)` round plus the answer. The token
 # counts are deliberately larger per round (the surface section is in the prompt, the program is in
 # the output) and fewer rounds: that trade is the thing the bench measures.
@@ -18,7 +22,7 @@
                 "id": "c0",
                 "name": "run",
                 "input": {
-                  "program": "const r = await sh([\n  {cmd: \"printf one > src/one.txt\", tag: \"file:write:one\"},\n  {cmd: \"printf two > src/two.txt\", tag: \"file:write:two\"},\n]);\nconsole.log(r.map(x => x.code).join(\",\"));\nconsole.log(await bash(\"ls src/one.txt src/two.txt\", \"file:confirm:pair\"));"
+                  "program": "const [a, b] = await Promise.all([\n  bash(\"printf one > src/one.txt\", \"file:write:one\"),\n  bash(\"printf two > src/two.txt\", \"file:write:two\"),\n]);\nconsole.log(a + b);\nconsole.log(await bash(\"ls src/one.txt src/two.txt\", \"file:confirm:pair\"));"
                 }
               },
               {

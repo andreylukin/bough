@@ -174,11 +174,13 @@ fn a_wake_never_hangs_waiting_for_a_stop() {
 /// `plugins/tools-codemode/tests/pipeline.rs::run_never_reports_concludes_wake_unless_an_inner_result_did`
 /// (the program propagates it, both ways) and
 /// `plugins/agent-loop/tests/flow.rs::a_concludes_wake_tool_result_ends_the_wake_at_its_step`
-/// (the loop honours it). What is decidable HERE, on the real binary, is the negative half that
+/// (the loop honours it). What is decidable HERE, on the real binary, is the NEGATIVE half — and
+/// the test is named for what it asserts: the plan's §5 used to list it as the proof of the
+/// positive claim, which no end-to-end case in this phase drives. What is decidable here is that
 /// the two compose correctly: a program whose inner results do not conclude does NOT end the wake
 /// at the program's step — the loop goes round again and the model gets to answer.
 #[test]
-fn a_concluding_inner_result_ends_the_wake_at_its_step() {
+fn a_non_concluding_program_does_not_end_the_wake_at_its_step() {
     let sb = Sandbox::new("conclude");
     let (code, out) = sb.exec(
         "run and then answer",

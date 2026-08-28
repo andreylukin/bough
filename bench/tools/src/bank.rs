@@ -23,7 +23,6 @@ pub struct Task {
 #[serde(rename_all = "snake_case")]
 pub enum Coverage {
     Bash,
-    Sh,
     Bg,
     View,
     Patch,
@@ -42,9 +41,12 @@ impl Coverage {
     /// Every entry of the §3 surface table. The bank test asserts the union of the tasks'
     /// `covers` equals this set — a surface entry nobody benches is a surface entry nobody knows
     /// the cost of.
-    pub const ALL: [Coverage; 14] = [
+    /// `sh` is deliberately ABSENT: no row in the tree registers a tool by that name, so a task
+    /// claiming it could only ever fail, and the surface no longer documents it either (the
+    /// prose is gated on the verb actually being injected). It comes back here the day a
+    /// concurrent-shell Provider does.
+    pub const ALL: [Coverage; 13] = [
         Coverage::Bash,
-        Coverage::Sh,
         Coverage::Bg,
         Coverage::View,
         Coverage::Patch,

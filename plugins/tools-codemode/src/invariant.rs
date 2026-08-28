@@ -20,9 +20,15 @@ pub struct Obs {
     pub calls: Vec<u32>,
     /// The `index` of every `program/result` appended, in append order.
     pub results: Vec<u32>,
-    /// The concatenation of the `program/console` chunks.
+    /// The concatenation of the `program/console` chunks, READ BACK OUT OF THE LEDGER. It must
+    /// come from the durable rows and never from the buffer that produced `result_content`, or
+    /// the clause below is true by construction and checks nothing.
     pub console: String,
-    /// The `run` call's `tool/result` content.
+    /// The terminal message appended to the console on the two failing paths (a cap breach, a
+    /// thrown/timed-out program). `None` on the clean path. It is itself ledgered, as
+    /// `program/error`.
+    pub error: Option<String>,
+    /// The `run` call's `tool/result` content — the bytes the MODEL received.
     pub result_content: String,
 }
 
@@ -69,10 +75,15 @@ pub fn evaluate(programs: &[Obs]) -> Result<(), String> {
                 ));
             }
         }
-        if o.console != o.result_content {
+        let expected = match &o.error {
+            Some(message) => format!("{}{message}", o.console),
+            None => o.console.clone(),
+        };
+        if expected != o.result_content {
             return Err(format!(
-                "program `{}`: the console chunks ({} bytes) do not reconstruct the tool/result \
-                 content ({} bytes); the model saw something the ledger does not hold",
+                "program `{}`: the ledgered console ({} bytes) plus the terminal message do not \
+                 reconstruct the tool/result content ({} bytes); the model saw something the \
+                 ledger does not hold",
                 o.program,
                 o.console.len(),
                 o.result_content.len()
@@ -114,6 +125,7 @@ mod tests {
             calls,
             results,
             console: console.into(),
+            error: None,
             result_content: content.into(),
         }
     }
@@ -139,6 +151,58 @@ mod tests {
         let d = evaluate(&[obs(vec![0], vec![0, 2], "", "")])
             .expect_err("an orphan result must be reported");
         assert!(d.contains("answers no program/call"), "{d}");
+    }
+
+    /// The failing paths hand the model the console PLUS a terminal message; the message is the
+    /// only legal difference, and anything else is still a violation. On the code before this,
+    /// `run` recorded `console` on both sides of the comparison, so nothing here could fail.
+    #[test]
+    fn a_terminal_message_is_the_only_legal_difference() {
+        let mut o = obs(vec![], vec![], "printed\n", "printed\nboom");
+        o.error = Some("boom".into());
+        assert_eq!(evaluate(std::slice::from_ref(&o)), Ok(()));
+
+        let mut wrong = o.clone();
+        wrong.result_content = "printed\nboom and a line the ledger never saw".into();
+        let d = evaluate(&[wrong]).expect_err("extra model-visible bytes must be reported");
+        assert!(
+            d.contains("do not \n                 reconstruct") || d.contains("reconstruct"),
+            "{d}"
+        );
+
+        // A console the ledger is MISSING is the append-failed case, and it must fail too.
+        let mut lost = o.clone();
+        lost.console = String::new();
+        evaluate(&[lost]).expect_err("a console chunk that never committed must be reported");
+    }
+
+    /// The clause the crate is named for, with a divergence PLANTED in it.
+    ///
+    /// `run` used to build the observation with `console: console.clone(), result_content:
+    /// console.clone()` — one String on both sides — so this comparison could not fail whatever
+    /// the ledger held. The three cases below are the three ways the two halves can part: bytes
+    /// the model saw that no `program/console` row holds, a chunk that never committed, and a
+    /// terminal message claimed where none was appended.
+    #[test]
+    fn the_invariant_catches_a_planted_console_divergence() {
+        let clean = obs(vec![], vec![], "printed\n", "printed\n");
+        assert_eq!(evaluate(std::slice::from_ref(&clean)), Ok(()));
+
+        // 1. The model was shown a line the ledger does not hold.
+        let mut planted = clean.clone();
+        planted.result_content = "printed\nand a line the ledger never saw".into();
+        let d = evaluate(&[planted]).expect_err("model-visible bytes with no step must be caught");
+        assert!(d.contains("reconstruct"), "{d}");
+
+        // 2. A `program/console` append that did not commit.
+        let mut lost = clean.clone();
+        lost.console = String::new();
+        evaluate(&[lost]).expect_err("a console chunk that never committed must be caught");
+
+        // 3. A terminal message on a program that ended clean.
+        let mut phantom = clean.clone();
+        phantom.error = Some("boom".into());
+        evaluate(&[phantom]).expect_err("an unappended terminal message must be caught");
     }
 
     #[test]

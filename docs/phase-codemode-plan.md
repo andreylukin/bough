@@ -720,32 +720,50 @@ Every bullet of the brief → the test that proves it. A name in `backticks` is 
 - `crates/bough/tests/codemode_swap.rs::unmounting_the_row_restores_the_typed_schemas_exactly`
 
 **V2 — model-visible ⟺ ledgered under code mode.**
-- `plugins/tools-codemode/tests/ledgered.rs::the_program_text_the_sub_steps_and_the_console_are_all_steps_under_the_program`
-- `plugins/tools-codemode/tests/ledgered.rs::console_chunks_reassemble_into_the_tool_result_content`
-- `plugins/tools-codemode/tests/ledgered.rs::the_invariant_catches_a_planted_console_divergence`
-- `crates/bough/tests/codemode_invariants.rs::the_agent_loop_invariant_passes_under_code_mode`
-- `crates/bough/tests/codemode_invariants.rs::the_request_reconstructs_byte_for_byte_under_code_mode`
-- `crates/bough/tests/codemode_invariants.rs::inner_sub_steps_never_enter_the_reconstruction`
+- `plugins/tools-codemode/tests/ledgered.rs::the_console_chunks_reconstruct_the_tool_result_and_every_call_is_answered`
+  (the program text, the sub-steps and the console are all steps under the program, and the
+  reconstruction is exact)
+- `plugins/tools-codemode/tests/ledgered.rs::a_truncated_program_still_reconstructs_from_its_chunks`
+- `plugins/tools-codemode/tests/ledgered.rs::a_program_that_throws_still_ledgers_what_it_did`
+- `plugins/tools-codemode/src/invariant.rs::the_invariant_catches_a_planted_console_divergence`
+  (the pure predicate). The clause it guards was tautological until the 2026-08-28 review:
+  `Run::call` built `Obs { console, result_content }` from ONE clone, so the two could never
+  differ whatever the consumer did. `run.rs` now re-reads the calls, the results and the console
+  from the LEDGER and records the string the model actually received, so the two observations are
+  independent.
 
 **V3 — the sandbox is closed; caps terminate; `bash` is the only command path.**
-- `plugins/js-quickjs/tests/closed.rs::no_fs_net_env_process_or_module_global_is_reachable`
-- `plugins/js-quickjs/tests/closed.rs::a_dynamic_import_rejects`
-- `plugins/js-quickjs/tests/caps.rs::an_infinite_loop_is_terminated_by_the_ops_cap`
-- `plugins/js-quickjs/tests/caps.rs::a_runaway_allocation_is_terminated_by_the_memory_cap`
-- `plugins/js-quickjs/tests/caps.rs::a_program_past_wall_ms_is_terminated_by_the_time_cap`
+(the plan filed these under `plugins/js-quickjs/tests/{closed,caps}.rs`; they are inline in
+`plugins/js-quickjs/src/engine.rs`, next to the module they cover, per AGENTS.md, plus the
+booted-tree cases in `crates/bough/tests/codemode_closed.rs`)
+- `plugins/js-quickjs/src/engine.rs::the_ambient_world_is_empty`
+- `plugins/js-quickjs/src/engine.rs::the_whole_global_surface_is_pure_builtins_plus_the_bound_names`
+- `plugins/js-quickjs/src/engine.rs::no_file_network_env_or_process_access_is_possible`
+- `plugins/js-quickjs/src/engine.rs::importing_a_module_rejects`
+- `plugins/js-quickjs/src/engine.rs::an_infinite_loop_hits_the_ops_cap`
+- `plugins/js-quickjs/src/engine.rs::a_huge_allocation_hits_the_memory_cap`
+- `plugins/js-quickjs/src/engine.rs::a_busy_loop_past_wall_ms_hits_the_time_cap`
+- `plugins/js-quickjs/src/engine.rs::deep_recursion_hits_the_stack_cap`
+- `crates/bough/tests/codemode_closed.rs::no_file_network_env_or_process_access_exists_except_through_injected_functions`
+- `crates/bough/tests/codemode_closed.rs::a_program_past_the_ops_cap_is_terminated_and_lands_a_typed_program_error_step`
+- `crates/bough/tests/codemode_closed.rs::a_program_past_the_time_cap_is_terminated_and_lands_a_typed_program_error_step`
 - `plugins/tools-codemode/tests/ledgered.rs::a_cap_breach_lands_a_program_error_step_and_a_failed_tool_result`
-- `plugins/tools-codemode/tests/surface.rs::every_command_is_a_ledgered_call_with_its_tags`
-- `plugins/tools-codemode/tests/surface.rs::an_untagged_bash_or_a_bare_string_sh_leg_is_refused`
+- `crates/bough/tests/codemode_closed.rs::every_command_is_a_ledgered_program_call_with_its_tags`
+- `plugins/tools-codemode/tests/pipeline.rs::an_untagged_bash_call_is_still_refused_and_lands_no_step`
+- `plugins/tools-codemode/tests/pipeline.rs::a_tagged_bash_call_reaches_a_tool_that_declares_no_tags`
 
 **V4 — main's patch grammar works verbatim.**
-- `plugins/tools-operator/tests/patch_grammar.rs::view_returns_hash_tagged_numbered_lines`
-- `…::each_operation_applies_in_viewed_coordinates` (SWAP/DEL/INS.PRE/INS.POST/INS.HEAD/INS.TAIL)
-- `…::earlier_operations_do_not_shift_later_numbers`
-- `…::a_multi_file_patch_is_all_or_nothing`
-- `…::a_stale_tag_is_refused_and_an_untouched_range_rebases`
-- `…::a_file_this_session_never_viewed_is_refused`
-- `plugins/tools-operator/tests/files.rs::write_creates_and_echoes_a_tag_patch_accepts`
-- `plugins/tools-codemode/tests/section.rs::the_patch_grammar_appears_exactly_once_in_the_projection`
+- `plugins/tools-operator/tests/patch_grammar.rs::view_renders_the_anchor_and_numbered_lines`
+- `…::swap_replaces_the_named_range`, `…::del_removes_the_named_range`,
+  `…::ins_pre_and_ins_post_land_on_the_right_side_of_a_line`,
+  `…::ins_head_and_ins_tail_bracket_the_file` (the six operations, in viewed coordinates)
+- `…::earlier_operations_do_not_shift_later_line_numbers`
+- `plugins/tools-operator/tests/files.rs::a_multi_file_patch_is_all_or_nothing`
+- `plugins/tools-operator/tests/files.rs::a_stale_tag_is_refused_and_nothing_is_written`
+- `plugins/tools-operator/tests/files.rs::an_untouched_range_rebases_onto_a_file_that_moved_since_the_view`
+- `plugins/tools-operator/tests/files.rs::a_file_this_agent_never_viewed_is_refused`
+- `plugins/tools-operator/tests/files.rs::write_creates_a_file_and_its_tag_is_accepted_without_a_re_view`
+- `plugins/tools-codemode/tests/section.rs::the_patch_grammar_appears_exactly_once_in_a_whole_assembled_projection`
 
 **V5 — the rest of the surface works from a program.** All of these run REAL JavaScript in QuickJS
 against the real tools over their real seams, in `plugins/tools-codemode/tests/v5_surface.rs`
@@ -776,7 +794,12 @@ notable refs spell a range.
 - `crates/bough/tests/codemode_wake.rs::a_program_that_calls_nothing_still_ends_its_step`
 - `crates/bough/tests/codemode_wake.rs::no_stop_tool_is_registered_by_either_consumer`
 - `crates/bough/tests/codemode_wake.rs::a_wake_never_hangs_waiting_for_a_stop`
-- `crates/bough/tests/codemode_wake.rs::a_concluding_inner_result_ends_the_wake_at_its_step`
+- `plugins/tools-codemode/tests/pipeline.rs::run_never_reports_concludes_wake_unless_an_inner_result_did`
+  and `plugins/agent-loop/tests/flow.rs::a_concludes_wake_tool_result_ends_the_wake_at_its_step` —
+  the two halves of "a concluding inner result ends the wake at its step". On the real binary only
+  the NEGATIVE half is decidable, and that is what
+  `crates/bough/tests/codemode_wake.rs::a_non_concluding_program_does_not_end_the_wake_at_its_step`
+  asserts; **no end-to-end case in this phase drives the positive one.**
 
 **V7 — `tool-leader` collapsed to two.**
 - `plugins/tool-leader/tests/tools.rs::the_set_is_propose_claim_and_curate`
@@ -787,8 +810,12 @@ notable refs spell a range.
 - `crates/bough/tests/codemode_swap.rs::the_five_old_spellings_are_gone_from_both_consumers`
 
 **V8 — the TUI renders a program step.**
-- `plugins/tui-focus/tests/program.rs::a_program_folds_into_one_collapsible_row_with_its_sub_calls`
-- `plugins/tui-focus/tests/program.rs::an_unknown_program_sub_step_renders_as_other_and_never_panics`
+- `plugins/tui-focus/tests/program.rs::a_program_with_four_sub_calls_folds_into_one_row`
+- `plugins/tui-focus/tests/program.rs::a_program_with_no_sub_calls_folds_into_one_row`
+- `plugins/tui-focus/tests/program.rs::expanded_shows_the_source_then_the_console_then_the_nested_rows`
+- `plugins/tui-focus/tests/program.rs::collapsing_a_program_collapses_its_sub_rows`
+- `plugins/tui-focus/tests/program.rs::a_program_error_renders_the_typed_error_line`
+- `plugins/tui-focus/tests/program.rs::unknown_and_orphaned_sub_steps_render_as_other`
 - `scripts/tui/30-program.sh` — bullets `program_row_is_collapsed_by_default`,
   `enter_expands_the_js_block`, `console_output_is_under_the_source`,
   `nested_rows_carry_check_marks`, `collapse_restores_one_row`; run under both
@@ -805,6 +832,8 @@ notable refs spell a range.
 - `crates/bough/tests/docs.rs::requirements_18_cites_headlongs_design_docs`
 - `crates/bough/tests/docs.rs::the_plan_records_the_decisions_for_andrey_with_evidence`
 - `crates/bough/tests/docs.rs::the_build_row_says_the_default_consumer_is_unchanged`
+- `crates/bough/tests/docs.rs::the_integration_report_is_not_the_stale_draft` (§9 is read by V10
+  too — the drift the map exists to catch was in the file the map lives in)
 
 **SWAP (the phase exit gate) — switch the consumer row while the tree runs.**
 - `crates/bough/tests/codemode_swap.rs::a_patch_switches_the_consumer_and_the_next_wake_uses_the_other_surface`
@@ -1119,41 +1148,100 @@ run can claim. **It is not yet an answer to §7.A**: with the shell surface dead
 tasks are not comparing consumers at all. Rerun `make bench-tools` once merge-note §9 is fixed; the
 numbers below are the baseline that rerun is measured against.
 
-## 9. What actually landed (integration report, 2026-08-27)
+## 9. What actually landed (integration report, rewritten 2026-08-28)
 
-The build run was interrupted for most of its length by a **full data volume** on the shared machine:
-six of the eight work packages (WP-1, WP-2, WP-4, WP-5, WP-6, WP-8) could not write a file or run
-`cargo` at all and delivered nothing. This section is the honest state of the branch, so the next run
-does not have to rediscover it.
+This section is REWRITTEN. Its 2026-08-27 text was written mid-run, while a full data volume on the
+shared machine was blocking six of the eight work packages, and it said the phase had delivered
+almost nothing: `plugins/js`, `plugins/js-quickjs`, `plugins/tools-codemode` and `bench/tools` were
+"scaffold only — signatures, doc comments and `todo!()`", "no bundle or profile row references
+them", WP-6 and WP-8 were "not started", "§8's table is therefore still empty", and the code-mode
+arm of `scripts/tui/30-program.sh` "has never run". All of that is false at HEAD,
+and the section sat two pages below a §8 carrying two full bench tables. It is recorded here
+because it is exactly the drift V10's `crates/bough/tests/docs.rs` exists to catch — and that test
+read §7, §8, §18 and `BUILD.md` and never §9. `docs.rs::the_integration_report_is_not_the_stale_draft`
+now reads this section too, and `docs.rs::every_test_the_verification_map_names_exists` walks §5's
+55 names against the tree (19 of them named no test when the review found it).
 
-**Landed and verified by named passing tests**
+**The state of the branch**
 
-- **WP-3 — file verbs + main's patch grammar** (`plugins/tools-operator/src/files/**`). A verbatim
+- **WP-1 `plugins/js`** — the seam: the `js` service key, `Program`/`HostFn`/`Caps`/`Run`/`JsError`,
+  the single-engine factory slot (a second engine is an error, the disposer frees the slot), and
+  the `a_cancelled_program_never_reports_a_run` invariant (renamed after the review: the
+  "exactly one terminal outcome" clauses were unfalsifiable — one `Result` cannot be both or
+  neither — and were replaced by the two an engine can really get wrong). Bodies, not signatures.
+- **WP-2 `plugins/tools-codemode`** — the Consumer: `run(program)` as an ordinary `ToolSpec`, the
+  mirror snapshot + `Restrict{allow:{run}}` concealment, the binding derivation (aliases with fixed
+  arguments and positional names, `a|b|c` dispatch, `mcp__` namespacing), the `program/call`,
+  `program/result`, `program/console` and `program/error` steps, the console tee, and the
+  `every_program_call_is_ledgered_and_console_reconstructs_the_result` invariant.
+- **WP-3 file verbs + main's patch grammar** (`plugins/tools-operator/src/files/**`) — a verbatim
   port of `main:crates/bough-core/src/hostfn/patch.rs`'s pure half: `normalize`, `tag_of` (FNV-1a
-  over UTF-16 code units, 4 hex), `parse_patch` (all six ops, the lenient range spellings, the Codex
-  envelope, every corrective refusal message), `check_ops`, `materialize`, plus `rebase.rs`
+  over UTF-16 code units, 4 hex), `parse_patch` (all six ops, the lenient range spellings, the
+  Codex envelope, every corrective refusal message), `check_ops`, `materialize`, `rebase.rs`
   (`line_map` prefix/suffix trim + LCS, `LCS_CAP = 400`) and an `apply` that decides every file
-  before it writes any. `view` / `patch` / `write` register as `ToolSpec`s.
-  53 tests in `plugins/tools-operator/tests/{patch_grammar.rs,files.rs}`, green inside the real crate
-  as of this commit.
-- **WP-7 — the TUI program row** (`plugins/tui-focus/src/program.rs`, `rows.rs`, `expand.rs`,
-  `scripts/tui/30-program.sh`). A `program` step folds into one collapsible row carrying its source,
-  its console output and its `tool/call` sub-rows; `check_frame`'s "no step rendered twice" holds
-  over the fold. `plugins/tui-focus/tests/program.rs` green. **The `codemode` arm of
-  `scripts/tui/30-program.sh` has never run** — `js`, `js.quickjs` and `tools.codemode` have no
-  bodies — only its `typed` arm is verified.
+  before it writes any. 53 tests in `plugins/tools-operator/tests/{patch_grammar.rs,files.rs}`.
+- **WP-4 `plugins/js-quickjs`** — the embedded engine over `rquickjs` (pinned `0.12`,
+  `features = ["futures"]`): ops/memory/stack/wall caps, the interrupt handler, the closed-world
+  globals, `preflight`'s syntax diagnostics, and the host-call bridge.
+- **WP-5 the surface** — `plugins/tools-codemode/src/surface/`: one projection section assembled
+  from seven prose files plus a roster GENERATED from the live registry, with main's patch grammar
+  restored verbatim. The prose is GATED per binding (`<!-- needs: … -->`), so a verb the registry
+  does not offer is neither listed nor taught. The roster is what
+  `CodemodeConfig::surface_bindings` returns, which is also what the sandbox injects: the bundle's
+  aliases and namespaces applied, and its `hide: [read_file, write_file, edit_file, glob, grep]`
+  removed — the brief's "drop as separate functions", since `bash` + `rg` and `view`/`patch`/
+  `write` cover them and `edit_file(old, new)` is the regression the patch grammar exists to
+  avoid. `plugins/tools-codemode/tests/section.rs` pins it, byte-stable, against a roster derived
+  from the tool names this tree actually registers, through the config the bundle actually ships.
+- **WP-6 the leader's five → two** — `plugins/tool-leader::TOOL_NAMES` is `["propose_claim",
+  "curate"]`.
+- **WP-7 the TUI program row** — `plugins/tui-focus/src/program.rs`, `rows.rs`, `expand.rs`: a
+  `program` step folds into one collapsible row carrying its source, its console output and its
+  `tool/call` sub-rows; `check_frame`'s "no step rendered twice" holds over the fold.
+  `plugins/tui-focus/tests/program.rs` is green, and the code-mode arm of
+  `scripts/tui/30-program.sh` runs inside `make gates` (`Makefile`, the
+  `BOUGH_CONSUMER=codemode` pass) — it is no longer typed-arm-only.
+- **WP-8 the bench** — `bench/tools` with the task bank, the two arms and `make bench-tools`; §8
+  above carries its two tables.
 
-**Scaffold only — signatures, doc comments and `todo!()`**
+`grep -rn 'todo!\|unimplemented!' plugins/ bench/` returns nothing. `bundles/bough-codemode.yml`
+(the three rows `js`, `js.quickjs`, `tools.codemode`) and `profiles/codemode.yml` exist, and
+`crates/bough/tests/docs.rs::no_shipped_profile_boots_the_codemode_consumer` is what keeps the
+DEFAULT profile off them: the consumer is reachable only by `--profile codemode` or an explicit
+patch, which is decision A of §7.
 
-`plugins/js`, `plugins/js-quickjs`, `plugins/tools-codemode`, `bench/tools`, and the operator's
-`bg` / `inbox` / `ledger_read` / `schedule` bodies. They compile, lint clean and are workspace
-members, but **no bundle or profile row references them**, so nothing can reach a `todo!()` at
-runtime. The `rquickjs` pin (`0.12`, `features = ["futures"]`) is already in the workspace.
+**Fixed after the review (2026-08-28), in the surface**
 
-**Not started**: WP-6 (the leader's five→two collapse, `plugins/tool-leader` untouched), WP-8 (the
-bench harness, `bundles/bough-codemode.yml`, `profiles/codemode.yml`, the three `crates/bough/tests/
-codemode_*.rs` swap tests, `make bench-tools`). §8's table is therefore still empty and **no claim is
-made about code mode versus typed tools**.
+The seven prose files were concatenated unconditionally while only the bullet roster was
+registry-driven, so the section taught `await sh(…)` at length and `await act(…)` in full while
+neither is ever injected in this tree (no row registers `sh`; no action kind has a Provider). A
+model that followed the doc called a name that is not there, the ReferenceError was uncaught, and
+the whole program and round were lost — the runaway §8's live table charges $0.11–$0.35 a task
+for. The prose is now gated per binding (`<!-- needs: a,b -->` / `<!-- needs-any: … -->` markers
+read by `surface::gate`), so a verb that is not injected is neither listed nor taught, and a lane
+with `deny: [bash]` is no longer handed 100 lines about `bash`.
+`tests/section.rs::every_function_the_prose_teaches_is_injected` walks the assembled body and
+demands every `await name(` be a real global; `::the_roster_names_only_tools_this_tree_registers`
+stops the fixture inventing one (it used to carry `sh` and `open_pr` by hand); and the fixture's
+config is now DESERIALISED from `bundles/bough-codemode.yml` and derived through
+`CodemodeConfig::surface_bindings`, the same call the sandbox makes. The recorded section size
+moves **4257 → 3846 tokens** with the dead prose gone, and much lower for a restricted lane — so
+code mode's per-request overhead in §8's tables is that much lower than they were measured at.
+
+**What is still open** — the red bench rows of §8 (the shell surface under `tags_required`, the
+missing `workers` declaration in `agent-loop`'s `inject()`, and the absent actions Provider), all
+three written up in `docs/codemode-merge-notes.md`. §7.A's GO is still Andrey's.
+
+**Also fixed after the review (2026-08-28), in the engine**
+
+A program killed by the wall clock or a cancel used to leave its in-flight host call RUNNING: the
+body is spawned on the caller's runtime and `run_one`'s `select!` only drops the future. The call
+then finished and appended its `program/result` after the round's closing `tool/result` — the very
+ordering D-1 calls a fact of the ledger — and left the consumer's `Obs` with a call and no result,
+reported as a product violation when it was a race. `call_host` now holds the `JoinHandle` in an
+abort-on-drop guard.
+`plugins/js-quickjs/src/engine.rs::a_timed_out_program_leaves_no_host_call_running_behind_it`
+fails on the old code and passes on the new.
 
 **Deviations from the plan that the next run should carry**
 
@@ -1165,12 +1253,28 @@ made about code mode versus typed tools**.
 - `preflight::scan(&str) -> Option<Finding>` / `diagnose(&Finding)` **cannot** express main's
   shadowed-binding message, which depends on the engine's own error text and the injected host-fn
   names. The port needs `syntax_message(why: &str, src: &str, bound: &[String]) -> JsError`, with the
-  scanner kept as an internal helper.
+  scanner kept as an internal helper. **Done, with a second half the note missed** (2026-08-28):
+  `preflight::syntax_error_message` had the signature but nothing ever passed it a roster —
+  `JsEngine::check` parsed with an EMPTY bound list and the consumer preflights every program and
+  returns on the error, so the branch was dead. The seam now carries
+  `JsHandle::check_bound(src, caps, bound)` / `JsEngine::check_bound` (defaulting to `check`, so no
+  other engine changes), QuickJS parses with the roster, and `preflight` recovers the identifier
+  from the source for QuickJS's nameless "invalid redefinition of lexical identifier".
+  `plugins/js-quickjs/src/engine.rs::check_bound_names_the_bound_identifier_a_program_redeclared`
+  pins it. **Closed at the 2026-08-28 close**: `Run::call` preflights through
+  `js.check_bound(&source, caps, &bound)` with the names it is about to inject, and
+  `plugins/tools-codemode/tests/ledgered.rs::the_preflight_is_given_the_names_the_sandbox_will_inject`
+  pins the wiring (it reads the roster the engine was handed, and shadowing one is refused by name).
 - `Row::Program` carries `error: Option<ProgramError>` and `parts: Vec<StepId>` beyond the brief's
   field list; the second is what makes `check_frame` non-vacuous for a multi-step fold.
 - `ms` is read from the closing `tool/result`'s `value.ms` and `ops` only from `program/error`;
   `tools-codemode` must put both `ms` and `ops` in a successful `run` result's `value`, or a
-  successful program's collapsed line shows no duration.
+  successful program's collapsed line shows no duration. **Closed at the 2026-08-28 close**:
+  `Run::call`'s success arm returns `value: Some({ms, ops})`, pinned by
+  `plugins/tools-codemode/tests/ledgered.rs::a_successful_program_reports_its_ms_and_ops_in_the_result_value`
+  — the product now writes the body `plugins/tui-focus/tests/program.rs` renders.
+  `scripts/tui/30-program.sh` still asserts only `2 calls`, so the TUI half of the duration is
+  proved by the unit fixture and not end to end.
 - WP-8's runner should drive `target/release/bough` as a **subprocess** rather than linking the
   launcher, so the bench's compilation is not coupled to WP-1…WP-7. `bench/tools/arms/{typed,
   codemode}.yml` are named by `run.rs` and do not exist yet.
@@ -1197,3 +1301,102 @@ after the close agent overran"):
 not painted its first frame yet), and passed four consecutive runs alone afterwards. It is a boot
 race in the script's settle, not a scroll bug; whoever owns `03` should give it the same
 `shell-use wait idle` the later scripts use before the first wheel event.
+
+## 10. Deviations and open items (close, 2026-08-28)
+
+Everything below is HONEST about what a test proves. A bullet that names no test is a claim about
+the tree, not about behaviour.
+
+### Fixed at the close
+
+- **`cargo fmt`** on `plugins/js-quickjs/src/engine.rs` (two call sites the parallel fixers left
+  unformatted; `make lint` was red on them).
+- **A test-isolation bug the review's own fix introduced.**
+  `plugins/tools-codemode/tests/support/mod.rs` recorded the preflight roster in a single
+  last-one-wins cell, and the test binary runs its cases concurrently, so
+  `the_preflight_is_given_the_names_the_sandbox_will_inject` read another case's roster (`["slow"]`).
+  It is a LOG of `(src, bound)` now, read back by `support::preflighted_with(src)`. Green:
+  `cargo test -p bough-plugin-tools-codemode --test ledgered` (8 passed).
+- **`plugins/js-quickjs/src/engine.rs::every_runtime_is_dropped` was racy against the process-global
+  live count.** It captured `before` while other cases had runtimes alive and then demanded the
+  count come back to that transient number. It now waits for a settled baseline and waits for the
+  count to RETURN to it (`wait_for_live`), which is the falsifiable half — a runtime that outlives
+  its program never lets the count come back. Green: `cargo test -p bough-plugin-js-quickjs`
+  (37 passed).
+- **A duplicate race test removed.** Two parallel fixers each wrote the concealment race case;
+  `crates/bough/tests/codemode_race.rs` was deleted and
+  `crates/bough/tests/codemode_conceal_race.rs::the_first_request_of_a_freshly_created_agent_is_already_concealed`
+  kept, because that one was verified RED on the old `agent/created` wiring while the other's own
+  header admits it "does not reliably go red on the old wiring".
+- **`run.rs`'s no-op `drop(tee.clone())`** and the comment that described an effect it did not have
+  are gone; the comment now says what actually closes the channel. Behaviour-neutral, covered by
+  the existing `ledgered.rs` drain cases.
+
+### Low-severity findings recorded, NOT acted on
+
+Each is a real observation from the review; none is fixed, and none is covered by a test.
+
+1. **`plugins/tools-codemode/src/lib.rs` leaks the four `program/*` step-type declarations on
+   purpose** (the token is dropped so the declaration outlives an unload), which is a stated
+   exception to §0.2's "unloading a plugin unwinds its effects LIFO". The reason is sound — a
+   trajectory that once ran a program cannot be rebuilt by a binary that has forgotten the type,
+   which made the consumer swap one-way — but it is recorded only in a code comment and
+   `docs/codemode-merge-notes.md` §10. **Wants Andrey's explicit blessing at merge**, not a silent
+   precedent.
+2. **`Cargo.toml`'s `rquickjs` contradicts REQUIREMENTS §13's Avoid list** ("mlua/piccolo/wasm
+   runtimes and rune … embedded-VM isolation solves a problem this single-user harness does not
+   have"). §18 was amended for the code-mode references and §0.4's "Not taken from dsh: … the Code
+   Mode SDK" was left standing; §13 was not touched. Per AGENTS.md, REQUIREMENTS wins over code:
+   **the Avoid clause should be amended as part of the GO**, not left contradicting the tree. The
+   pin itself (`"0.12"`) is the minor pin §13 asks for.
+3. **Two boundary slips in `run.rs`.** `Run::caps` defaults with `unwrap_or_else(|| self.js.
+   default_caps())` inside the call path rather than in a named `resolve`; and the `program/console`
+   drain (`run.rs`) plus `append_error` swallow ledger append failures with `let _ =`, so a chunk
+   the model receives can fail to reach the ledger with no signal — the one direction
+   "model-visible ⟺ ledgered" forbids. The inner-call path gets this right (a refused append is a
+   `HostRefusal`); the console path does not.
+4. **Three silent skips decide the model's whole surface.** An alias naming an absent tool is
+   dropped without a warning (`bind.rs`), and `conceal::visible_specs` `continue`s past a name whose
+   `resolve` fails or whose schema will not parse. A typo in a bundle therefore removes a function
+   from both the sandbox and the documented roster, silently.
+5. **`Concealment` is never pruned.** `live` (an `EffectHandle`) and `cached` (a cloned
+   `Vec<ToolSpec>`) are keyed by `AgentName`; the row does not listen for `AgentDisposed`, which the
+   agents seam does emit. Every `agent()`/`fork()` worker leaves both behind for the life of the row.
+6. **The bench arms differ by more than the consumer row.** `bench/tools/arms/{typed,codemode}.yml`
+   are byte-identical, but the code-mode arm runs under `tags_required: true`, so its `bash` refuses
+   an untagged call and the typed arm's does not. It is defensible as part of the surface, but §8's
+   numbers are read as like-for-like and `bench/tools/src/run.rs` claims the arms "differ by ONE row
+   … and by nothing else". **Read §8 with this in mind.**
+7. **`js-quickjs`'s live-runtime invariant is a process-global `AtomicI64`** with no fiber or kernel
+   scoping, checked at `Cadence::OnQuiesce`. Two kernels in one binary, or a program still on its
+   detached `bough-js` thread while another part of the tree quiesces, are counted against each
+   other. The close fixed the TEST that reads it (above); the registered invariant itself is still
+   unscoped.
+
+### Still open from the build (unchanged by the close)
+
+- `ConcealMode::Seam` is rejected at load behind the `seam-conceal` feature because the seam call it
+  needs does not exist; `docs/codemode-merge-notes.md` names the hook.
+- The mirror's JS caps (`inner_deadline_ms`, `max_parallel_calls`) are validated config set by hand
+  in `bundles/bough-codemode.yml` to match the seam's values. There is no
+  `ToolsHandle::default_deadline_ms()` / `max_parallel()` to read them from, and the deadline
+  plumbing and the parallelism semaphore have **no direct runtime test** — only
+  `tests::the_tunables_are_bounded_at_load` covers the config. Merge notes §12.
+- `tools-operator`'s `schedule` still runs a 100 ms polling watcher instead of registering against a
+  kernel timer: there is no `ctx.schedule` and no `schedule-cron` Provider in the tree, and
+  `crates/bough-kernel` is off-limits to this track. Merge notes §3 carries the wanted signature;
+  deleting the loop is a one-file change once the hook lands.
+- Two bugs the bench found in rows this track may not edit: `agent-loop` reads `workers` without
+  declaring it (so `spawn_worker` is dead under BOTH consumers), and there is no `actions` Provider
+  until Phase 6 (so the `act` bank task is red by construction).
+- **Known flake**: `crates/bough/tests/codemode_wake.rs::a_program_then_text_wake_ends_by_wake_stopping`
+  failed once and passed on rerun; recorded in merge notes §11.
+- **A second boot-race flake, pre-existing and not code-mode's**:
+  `crates/bough/tests/exec_headless.rs::exec_exits_with_the_ledger_intact` failed one `make gates`
+  run with `bough exec: no agent factory is set; mount an `agent-loop` row` while three tracks were
+  building on the same machine, and passed alone immediately after (5 passed). It is the same boot
+  race `bench/tools/src/run.rs` already classifies and retries
+  (`a_run_that_died_before_the_agent_factory_mounted_is_a_boot_race`); `exec_headless.rs` has no
+  such retry and should get the same settle.
+- `scripts/tui/03-scroll-and-copy.sh`'s `the_wheel_scrolls_the_trajectory` is a pre-existing boot
+  race inherited from phase ux1, not a code-mode change.

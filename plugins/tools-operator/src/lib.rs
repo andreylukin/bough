@@ -58,10 +58,12 @@ impl Plugin for OperatorPlugin {
     const NAME: &'static str = PLUGIN_NAME;
     type Config = OperatorConfig;
 
+    /// Only what `apply` actually reads. A declared key is a RELOAD TRIGGER: naming `mail` or
+    /// `schedule` here would remount this row the moment a provider for either appeared, for no
+    /// gain, since nothing in `apply` looks either up.
     fn inject() -> bough_kernel::Inject {
-        bough_kernel::Inject::required(["tools", "ledger", "workspace"]).union(
-            &bough_kernel::Inject::optional(["agents", "mail", "schedule"]),
-        )
+        bough_kernel::Inject::required(["tools", "ledger", "workspace"])
+            .union(&bough_kernel::Inject::optional(["agents"]))
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), bough_kernel::ConfigError> {

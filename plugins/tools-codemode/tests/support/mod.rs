@@ -24,6 +24,22 @@ use bough_plugin_tools::{
 use bough_plugin_tools_codemode::conceal::Concealment;
 use bough_plugin_tools_codemode::{CodemodeConfig, ConcealMode};
 
+/// Every preflight this binary has run, as `(src, bound)`. `Run::call` must hand the engine the
+/// names it is about to inject; before it did, the engine's shadowed-binding diagnostic was
+/// unreachable. It is a LOG and not a single slot because the test binary runs its cases
+/// concurrently: a "last one wins" cell records whichever program happened to finish last.
+pub static PREFLIGHTS: parking_lot::Mutex<Vec<(String, Vec<String>)>> =
+    parking_lot::Mutex::new(Vec::new());
+
+/// The roster the preflight of `src` was given. Panics if that program was never preflighted.
+pub fn preflighted_with(src: &str) -> Vec<String> {
+    let log = PREFLIGHTS.lock();
+    log.iter()
+        .find(|(s, _)| s == src)
+        .map(|(_, b)| b.clone())
+        .unwrap_or_else(|| panic!("`{src}` was never preflighted; log: {log:?}"))
+}
+
 pub struct ScriptEngine;
 
 #[async_trait::async_trait]
@@ -32,7 +48,7 @@ impl JsEngine for ScriptEngine {
         "script"
     }
 
-    async fn check(&self, src: &str) -> Result<(), JsError> {
+    async fn check(&self, src: &str, _caps: bough_plugin_js::Caps) -> Result<(), JsError> {
         if src.contains("!!syntax") {
             return Err(JsError::Syntax {
                 message: "unterminated string".to_string(),
@@ -43,7 +59,33 @@ impl JsEngine for ScriptEngine {
         Ok(())
     }
 
+    /// Records the roster the consumer preflighted with, and names a shadowed binding — which is
+    /// what the real engine's `preflight::syntax_error_message` does with `bound`.
+    async fn check_bound(
+        &self,
+        src: &str,
+        caps: bough_plugin_js::Caps,
+        bound: &[String],
+    ) -> Result<(), JsError> {
+        PREFLIGHTS.lock().push((src.to_string(), bound.to_vec()));
+        if let Some(rest) = src.split("!!shadow ").nth(1) {
+            let name = rest.lines().next().unwrap_or_default().trim().to_string();
+            if bound.contains(&name) {
+                return Err(JsError::Syntax {
+                    message: format!("`{name}` is already bound in every program's scope"),
+                    line: Some(1),
+                    col: None,
+                });
+            }
+        }
+        self.check(src, caps).await
+    }
+
     async fn run(&self, p: Program) -> Result<JsRun, JsError> {
+        // `took <ms> <ops>` makes the engine report a cost, so a test can tell a real measurement
+        // from a zero.
+        let mut ms = 0u64;
+        let mut ops = 1u64;
         let by_name: BTreeMap<String, usize> = p
             .host
             .iter()
@@ -78,14 +120,38 @@ impl JsEngine for ScriptEngine {
                         Err(e) => p.console.write(&format!("err {:?} {}", e.kind, e.message)),
                     }
                 }
+                // A host call the engine DETACHES: handed to the runtime and never awaited,
+                // which is what `js-quickjs`'s `select!` leaves behind when the wall clock or a
+                // cancel wins while a call is in flight.
+                "detach" => {
+                    let (name, args) = rest.split_once(' ').unwrap_or((rest, "[]"));
+                    if let Some(i) = by_name.get(name) {
+                        let body = p.host[*i].body.clone();
+                        let args: Vec<serde_json::Value> =
+                            serde_json::from_str(args).expect("test scripts carry legal JSON");
+                        tokio::spawn(async move {
+                            let _ = body.call(args).await;
+                        });
+                        // Let the detached call reach the tool before the program returns, so it
+                        // is genuinely IN FLIGHT when the round closes.
+                        for _ in 0..20 {
+                            tokio::task::yield_now().await;
+                        }
+                    }
+                }
+                "took" => {
+                    let (a, b) = rest.split_once(' ').unwrap_or((rest, "1"));
+                    ms = a.parse().unwrap_or(0);
+                    ops = b.parse().unwrap_or(1);
+                }
                 _ => {}
             }
         }
         Ok(JsRun {
             console: String::new(),
             console_bytes_dropped: 0,
-            ops: 1,
-            ms: 0,
+            ops,
+            ms,
             value: None,
         })
     }
@@ -139,6 +205,13 @@ pub fn config() -> CodemodeConfig {
         conceal: ConcealMode::Mirror,
         aliases: BTreeMap::new(),
         namespaces: BTreeMap::new(),
+        hide: Default::default(),
+        shell_tools: ["bash".to_string()].into_iter().collect(),
+        shell_content_result: ["bash".to_string()].into_iter().collect(),
+        tags_min: 3,
+        tags_max: 5,
+        inner_deadline_ms: None,
+        max_parallel_calls: 8,
         max_console_bytes: 4096,
         max_calls_per_program: 16,
         tags_required: false,

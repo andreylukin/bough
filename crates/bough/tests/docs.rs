@@ -262,3 +262,113 @@ fn the_build_row_quotes_the_plans_current_decision_table() {
         "and it must say where the retired table went: {row}"
     );
 }
+
+/// §9 of the plan is the LAST thing a reader reaches, and V10's other cases never read it: the
+/// draft written mid-run said WP-1/2/4/5/6/8 "delivered nothing", that four crates were
+/// "Scaffold only — signatures, doc comments and `todo!()`", that "no bundle or profile row
+/// references them", that WP-6 and WP-8 were "Not started" and that §8's table was empty. Every
+/// one of those was false at HEAD. This case is the tripwire for that exact drift: it checks the
+/// section against the tree it describes rather than against a wording.
+#[test]
+fn the_integration_report_is_not_the_stale_draft() {
+    let plan = doc("docs/phase-codemode-plan.md");
+    let s = section(&plan, "## 9. What actually landed");
+
+    // The claims the draft made, each paired with the fact at HEAD that refutes it. A claim may
+    // still be QUOTED (§9 opens by naming what it is retracting), but never made: the quote is
+    // fenced off by the retraction sentence, which must be present whenever a phrase is.
+    for (phrase, why) in [
+        ("delivered nothing", "six work packages are green"),
+        ("Scaffold only", "there is no todo!() under plugins/"),
+        (
+            "no bundle or profile row references them",
+            "bundles/bough-codemode.yml exists",
+        ),
+        ("Not started", "WP-6 and WP-8 landed"),
+        ("still empty", "§8 carries two tables"),
+        (
+            "has never run",
+            "make gates runs the codemode arm of 30-program.sh",
+        ),
+    ] {
+        if s.contains(phrase) {
+            assert!(
+                s.contains("All of that is false at HEAD"),
+                "§9 says `{phrase}` without retracting it, but {why}"
+            );
+        }
+    }
+
+    // …and the facts themselves, read from the tree, so the section cannot go stale silently.
+    let root = repo_root();
+    assert!(
+        root.join("bundles/bough-codemode.yml").exists()
+            && root.join("profiles/codemode.yml").exists(),
+        "the bundle and profile §9 reports do exist"
+    );
+    assert!(
+        root.join("bench/tools").exists(),
+        "the bench §9 reports does exist"
+    );
+    for wp in [
+        "WP-1", "WP-2", "WP-3", "WP-4", "WP-5", "WP-6", "WP-7", "WP-8",
+    ] {
+        assert!(s.contains(wp), "§9 must account for {wp}");
+    }
+}
+
+/// The verification map is the phase's index: a name in it that no test carries is a claim with
+/// no proof behind it, and 19 of the 55 names were exactly that. This case walks the map and the
+/// tree together, so a rename has to move both.
+#[test]
+fn every_test_the_verification_map_names_exists() {
+    let plan = doc("docs/phase-codemode-plan.md");
+    let map = section(&plan, "## 5. Verification map");
+
+    let mut named: Vec<String> = Vec::new();
+    for (i, _) in map.match_indices("::") {
+        let rest = &map[i + 2..];
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
+            .collect();
+        // `::` also appears in Rust paths inside prose; a test name is snake_case and long.
+        if name.len() > 8 && !named.contains(&name) {
+            named.push(name);
+        }
+    }
+    assert!(named.len() > 40, "the map names {} tests", named.len());
+
+    let mut sources = String::new();
+    let mut stack = vec![repo_root()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                let skip = matches!(
+                    path.file_name().and_then(|n| n.to_str()),
+                    Some("target") | Some(".git")
+                );
+                if !skip {
+                    stack.push(path);
+                }
+            } else if path.extension().and_then(|x| x.to_str()) == Some("rs") {
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    sources.push_str(&text);
+                }
+            }
+        }
+    }
+
+    let missing: Vec<&String> = named
+        .iter()
+        .filter(|n| !sources.contains(&format!("fn {n}")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "the verification map names tests that do not exist: {missing:?}"
+    );
+}

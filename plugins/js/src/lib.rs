@@ -111,9 +111,23 @@ impl JsHandle {
     /// Compile-only. The parse comes from the engine that will RUN the program, so host and
     /// engine can never disagree about what is legal (main's `check` message).
     ///
-    pub async fn check(&self, src: &str) -> Result<(), JsError> {
+    pub async fn check(&self, src: &str, caps: Caps) -> Result<(), JsError> {
+        self.check_bound(src, caps, &[]).await
+    }
+
+    /// Compile-only, told which globals the program will be given.
+    ///
+    /// This is the spelling a CONSUMER should use: it knows the roster it is about to inject, and
+    /// only a parse that knows it can say "`bash` is already bound in every program's scope"
+    /// instead of a bare `SyntaxError`.
+    pub async fn check_bound(
+        &self,
+        src: &str,
+        caps: Caps,
+        bound: &[String],
+    ) -> Result<(), JsError> {
         let engine = self.engine().ok_or(JsError::NoEngine)?;
-        engine.check(src).await
+        engine.check_bound(src, caps, bound).await
     }
 
     /// Run one program to its single terminal outcome.
@@ -123,6 +137,7 @@ impl JsHandle {
         let cancelled = p.cancel.clone();
         let digest = program::digest(&p.source);
         let fiber = self.0.owner.lock().unwrap_or(FiberUid(0));
+        let caps = p.caps;
         let out = engine.run(p).await;
         invariant::record(invariant::Obs {
             fiber,
@@ -130,6 +145,14 @@ impl JsHandle {
             ran: out.is_ok(),
             errored: out.is_err(),
             cancelled: cancelled.is_cancelled(),
+            // Recorded from the `Run` the engine built, not from the shape of the `Result`: this
+            // is the one thing in the observation the engine can actually get wrong.
+            cost: out.as_ref().ok().map(|r| invariant::Cost {
+                ops: r.ops,
+                ms: r.ms,
+                ops_cap: caps.ops,
+                wall_ms: caps.wall_ms,
+            }),
         });
         out
     }
@@ -185,7 +208,7 @@ impl Plugin for JsPlugin {
     }
 
     fn invariants() -> Vec<InvariantSpec> {
-        vec![invariant::exactly_one_terminal_outcome()]
+        vec![invariant::a_cancelled_program_never_reports_a_run()]
     }
 }
 
@@ -203,7 +226,7 @@ mod tests {
         fn name(&self) -> &'static str {
             self.0
         }
-        async fn check(&self, _src: &str) -> Result<(), JsError> {
+        async fn check(&self, _src: &str, _caps: Caps) -> Result<(), JsError> {
             Ok(())
         }
         async fn run(&self, _p: Program) -> Result<Run, JsError> {
@@ -272,7 +295,91 @@ mod tests {
     #[tokio::test]
     async fn no_engine_is_a_named_error_not_a_panic() {
         let h = JsHandle::with_caps(caps());
-        assert_eq!(h.check("1+1").await, Err(JsError::NoEngine));
+        assert_eq!(h.check("1+1", caps()).await, Err(JsError::NoEngine));
+    }
+
+    struct Sink;
+    impl ConsoleSink for Sink {
+        fn write(&self, _line: &str) {}
+    }
+
+    fn program(src: &str, cancel: tokio_util::sync::CancellationToken) -> Program {
+        Program {
+            source: src.to_string(),
+            caps: caps(),
+            host: vec![],
+            console: Arc::new(Sink),
+            cancel,
+        }
+    }
+
+    /// A `Run` reported with a cost past its caps is caught THROUGH THE SEAM.
+    ///
+    /// The pure `evaluate` cases hand-build an `Obs`; this one proves the wiring — that
+    /// `JsHandle::run` records what the engine actually reported, not a restatement of the
+    /// `Result`'s shape. An engine whose interrupt handler is wrong returns output for a program
+    /// that overran, and the consumer would ledger that console as the round's clean answer.
+    #[tokio::test]
+    async fn an_engine_that_returns_a_run_past_its_caps_is_caught_by_the_invariant() {
+        struct Overrun;
+        #[async_trait::async_trait]
+        impl JsEngine for Overrun {
+            fn name(&self) -> &'static str {
+                "overrun"
+            }
+            async fn check(&self, _src: &str, _caps: Caps) -> Result<(), JsError> {
+                Ok(())
+            }
+            async fn run(&self, p: Program) -> Result<Run, JsError> {
+                Ok(Run {
+                    console: String::new(),
+                    console_bytes_dropped: 0,
+                    // Past BOTH caps, and still an `Ok`.
+                    ops: p.caps.ops + 1,
+                    ms: p.caps.wall_ms + 1,
+                    value: None,
+                })
+            }
+        }
+
+        let ctx = ctx();
+        let h = JsHandle::with_caps(caps());
+        h.set_engine(&ctx, Arc::new(Overrun)).await.unwrap();
+        let src = "overrun-case";
+        h.run(program(src, Default::default()))
+            .await
+            .expect("the engine reported success");
+
+        let mine: Vec<invariant::Obs> = invariant::seen()
+            .into_iter()
+            .filter(|o| o.program == program::digest(src))
+            .collect();
+        assert_eq!(
+            mine.len(),
+            1,
+            "the seam records one observation per program"
+        );
+        let detail = invariant::evaluate(&mine).expect_err("the breach must be reported");
+        assert!(detail.contains("cap breach is a JsError"), "{detail}");
+    }
+
+    /// …and a cancelled program that still reports a `Run` is caught the same way.
+    #[tokio::test]
+    async fn a_cancelled_program_that_reports_a_run_is_caught_by_the_invariant() {
+        let ctx = ctx();
+        let h = JsHandle::with_caps(caps());
+        h.set_engine(&ctx, Arc::new(Fake("quickjs"))).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        cancel.cancel();
+        let src = "cancelled-case";
+        h.run(program(src, cancel)).await.expect("the fake returns");
+
+        let mine: Vec<invariant::Obs> = invariant::seen()
+            .into_iter()
+            .filter(|o| o.program == program::digest(src))
+            .collect();
+        let detail = invariant::evaluate(&mine).expect_err("cancel + Run must be reported");
+        assert!(detail.contains("cancelled"), "{detail}");
     }
 
     #[test]

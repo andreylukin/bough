@@ -1,3 +1,4 @@
+<!-- needs: view,patch -->
 ## The patch grammar
 
     console.log(await view("src/server/files.ts"));   // read the numbered lines

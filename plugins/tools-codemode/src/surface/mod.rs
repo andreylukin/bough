@@ -117,7 +117,7 @@ are no other tools and no per-call schemas — this section is the whole surface
 
 The program is `await`-ed at the top level, so write it straight through. Sequential calls in one
 program are FREE: they are the same round. Independent calls run concurrently with `Promise.all`
-(or `sh()` for shell legs) — but a call that is not concurrency-safe takes the program's barrier,
+— but a call that is not concurrency-safe takes the program's barrier,
 so ordering is preserved where it matters without you thinking about it.
 
 A call that fails REJECTS its promise with an `Error` carrying a `kind`
@@ -136,10 +136,61 @@ pub fn assemble(bindings: &[Binding]) -> String {
     out.push_str(PREAMBLE);
     out.push_str("\n\n## The functions\n\n");
     out.push_str(&function_table(bindings));
+    let have: std::collections::BTreeSet<&str> = bindings.iter().map(|b| b.js.as_str()).collect();
     for section in [SHELL, FILES, PATCH_GRAMMAR, LEDGER, WORK, PRINTING, ENDING] {
+        let gated = gate(section, &have);
+        if gated.trim().is_empty() {
+            // Every verb this file teaches is absent from the roster: the file is not rendered
+            // at all, rather than leaving a heading over nothing.
+            continue;
+        }
         out.push('\n');
-        out.push_str(section.trim_end());
+        out.push_str(gated.trim_end());
         out.push('\n');
+    }
+    out
+}
+
+/// Keep only the blocks of one prose file whose verbs are actually injected.
+///
+/// This is the half of the anti-drift property the generated table cannot carry. A prose file is
+/// a sequence of blocks, each opened by a marker line:
+///
+/// * `<!-- needs: a,b -->` — the block is rendered only if EVERY name is bound;
+/// * `<!-- needs-any: a,b -->` — only if AT LEAST ONE is;
+/// * `<!-- always -->` — unconditional again.
+///
+/// Text before the first marker is unconditional. A file with no markers renders whole, which is
+/// what `printing.md` and `ending.md` want: they teach no tool.
+pub fn gate(md: &str, have: &std::collections::BTreeSet<&str>) -> String {
+    let mut out = String::with_capacity(md.len());
+    let mut keep = true;
+    for line in md.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("<!--").and_then(|r| r.strip_suffix("-->")) {
+            let rest = rest.trim();
+            if rest == "always" {
+                keep = true;
+                continue;
+            }
+            if let Some(names) = rest.strip_prefix("needs-any:") {
+                keep = names.split(',').map(str::trim).any(|n| have.contains(n));
+                continue;
+            }
+            if let Some(names) = rest.strip_prefix("needs:") {
+                keep = names.split(',').map(str::trim).all(|n| have.contains(n));
+                continue;
+            }
+        }
+        if keep {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    // A dropped block leaves the blank lines that surrounded it; collapse them so the rendered
+    // section reads the same whether or not anything was gated out.
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
     }
     out
 }

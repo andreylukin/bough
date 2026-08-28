@@ -376,6 +376,36 @@ async fn every_visible_spec_is_a_function_in_the_sandbox_and_a_restricted_one_is
         .expect("the revert composes");
     assert!(typed.len() >= 4, "the typed surface is empty: {typed:?}");
 
+    // …minus the ones the row DROPS (phase brief item 4): `bash`/`view`/`patch` cover them, and
+    // `edit_file(old, new)` is a regression against the hash-anchored patch grammar. A hidden
+    // tool must be absent from the sandbox AND from the surface section, while staying registered
+    // and callable by a typed-tools agent — which the disabled-consumer read above just proved.
+    let hidden: BTreeSet<String> = row["config"]["hide"]
+        .as_sequence()
+        .map(|v| {
+            v.iter()
+                .filter_map(|n| n.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(!hidden.is_empty(), "the row must declare what it drops");
+    let typed: BTreeSet<String> = typed.difference(&hidden).cloned().collect();
+
+    // …minus the ones the row DROPS. `hide` is the phase brief's "drop as separate functions"
+    // (`bash`/`view` cover `read_file`, `glob`, `grep`; `edit_file(old, new)` is a regression
+    // against the patch grammar): a hidden tool is neither injected nor documented, and it is
+    // read from the same bundle row so the two lists cannot drift.
+    let hidden: Vec<String> = row["config"]["hide"]
+        .as_sequence()
+        .map(|h| {
+            h.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(!hidden.is_empty(), "the row must declare what it drops");
+    let typed: Vec<String> = typed.into_iter().filter(|n| !hidden.contains(n)).collect();
+
     let ctx = kernel.root().clone();
     let tools = tools(&kernel);
     let run = |program: String, n: u32| {
@@ -412,6 +442,35 @@ async fn every_visible_spec_is_a_function_in_the_sandbox_and_a_restricted_one_is
     assert!(
         r.content.contains("missing:[]"),
         "some visible ToolSpec is not an injected function: {}",
+        r.content
+    );
+
+    // 1b. …and a DROPPED one is not a global at all, in the sandbox or in the prompt.
+    let list = serde_json::to_string(&hidden).unwrap();
+    let probe = format!(
+        "const present = {list}.filter(n => typeof globalThis[n] !== 'undefined'); \
+         console.log('present:' + JSON.stringify(present));"
+    );
+    let r = run(probe, 3).await;
+    assert!(r.ok, "the probe program failed: {:?}", r);
+    assert!(
+        r.content.contains("present:[]"),
+        "a dropped tool is still injected: {}",
+        r.content
+    );
+
+    // 1b. …and a DROPPED one is not a global at all: the surface section does not document it,
+    //     so injecting it would be the drift running the other way.
+    let list = serde_json::to_string(&hidden.iter().collect::<Vec<_>>()).unwrap();
+    let probe = format!(
+        "const present = {list}.filter(n => typeof globalThis[n] === 'function'); \
+         console.log('present:' + JSON.stringify(present));"
+    );
+    let r = run(probe, 3).await;
+    assert!(r.ok, "the probe program failed: {:?}", r);
+    assert!(
+        r.content.contains("present:[]"),
+        "a dropped tool was injected anyway: {}",
         r.content
     );
 

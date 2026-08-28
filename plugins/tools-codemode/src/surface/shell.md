@@ -1,5 +1,7 @@
+<!-- needs-any: bash,sh,bg -->
 ## Shell
 
+<!-- needs: bash -->
 await bash(cmd, tags) — one shell command in the workspace (the user's real
 checkout), returning combined output. It carries your interrupt.
 
@@ -8,6 +10,7 @@ It is the ONLY way to run a shell command. The sandbox has no `fetch`, no
 through here cannot be run at all — and an unrecorded command is one this project
 can never recall. Tagging is the price of the memory; there is no untagged door.
 
+<!-- needs: bash,sh -->
 bash() RETURNS A STRING. sh() returns OBJECTS — [{code, out}, …]. Mixing the two
 is the one mistake that kills a round outright:
 
@@ -18,6 +21,7 @@ is the one mistake that kills a round outright:
     const [r] = await sh([{cmd: "git status", tag: "git:status:worktree"}]);
     r.out.slice(0, 2000)   // ✓ — only sh legs have .out and .code
 
+<!-- needs: bash -->
 tags is REQUIRED: 3–5 lowercase tags, colon-separated, naming the tool, the
 intent, AND the subject — bash("git push origin main", "git:push:main"),
 bash("psql -f migrations/004.sql", "psql:migrate:demand"), bash("cargo test -p
@@ -56,6 +60,7 @@ early, read the exit code: bash() reports a failure as `[exit code N]` in its ou
 rather than throwing, and sh() gives you `{code}` per leg — so decide in the program
 whether the next command still makes sense.
 
+<!-- needs: sh -->
 await sh([{cmd, tag}, …]) — the same shell, running the commands CONCURRENTLY,
 returning [{code, out}, …] in order. It never throws on a non-zero exit: the code is
 data. Use it whenever independent commands would otherwise be awaited one after
@@ -63,6 +68,7 @@ another (a build and a lint, three greps, status in two repos). EVERY LEG MUST B
 OBJECT with a `cmd` and a `tag`: a bare-string leg is REFUSED, because a command
 recorded with no tags is one no future session will ever find.
 
+<!-- needs: bg -->
 await bg(name, cmd) — an explicit background shell that outlives your turn (dev
 servers, watchers, long builds). Returns {id, name} immediately.
 
@@ -79,6 +85,7 @@ await bg.kill(id) — SIGTERM the job. Kill background shells you no longer need
 Never write sleep/poll loops (`until …; do sleep`) and never re-run a command to
 "wait": start it with bg() and read bg.output(id) in a later round.
 
+<!-- needs: bash,write -->
 ## Running a script
 
 A script longer than a line goes in a FILE, not a heredoc:
@@ -94,6 +101,7 @@ your code rather than in the delivery, and the natural next move — rewrite the
 snippet — cannot fix it. Write the file; then the source reaches the interpreter
 exactly as you wrote it, and it is a real file you can view, patch and re-run.
 
+<!-- needs: bash -->
 ## When a command prints too much
 
 Filter at the source. `cargo test 2>&1 | rg -B2 -A5 FAIL` beats reading a whole run

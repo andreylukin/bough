@@ -153,6 +153,43 @@ fn src_find(s: &[char], from: usize) -> Option<usize> {
     None
 }
 
+/// The one message a shadowed binding gets. "host function" would be a lie for `console`, which
+/// is bound the same way and is not a bridged call; "already bound" is true of all of them.
+fn shadow_message(why: &str, name: &str) -> String {
+    let mut chars = name.chars();
+    let renamed = match chars.next() {
+        Some(first) => format!("my{}{}", first.to_uppercase(), chars.as_str()),
+        None => "my".to_string(),
+    };
+    format!(
+        "program does not parse: {why} — `{name}` is already bound in every program's scope, so \
+         declaring it shadows the binding. Rename your variable (`{renamed}`) and call `{name}` \
+         as it is."
+    )
+}
+
+/// Every identifier the source DECLARES with a binding form, in source order.
+///
+/// A lexical-redeclaration error that names nothing is only explicable by reading the program,
+/// and this is the reading: a `let`/`const`/`var`/`class`/`function` name. Crude on purpose — it
+/// is used only to pick, among the names the program declared, one the sandbox had already
+/// bound.
+fn declared_names(code: &str) -> Vec<String> {
+    static DECL: OnceLock<regex::Regex> = OnceLock::new();
+    let decl = DECL.get_or_init(|| {
+        regex::Regex::new(r"\b(?:let|const|var|class|function)\s+([A-Za-z_$][A-Za-z0-9_$]*)")
+            .expect("static regex")
+    });
+    let mut out = Vec::new();
+    for c in decl.captures_iter(code) {
+        let name = c[1].to_string();
+        if !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
 /// Shape the model-facing message for an engine parse failure. `why` is the engine's own
 /// SyntaxError message; `code` is the program source; `bound` is the set of names injected into
 /// this program's scope. Three shapes, verbatim from main: shadowed bound name, newline-closed
@@ -169,6 +206,17 @@ pub fn syntax_error_message(why: &str, code: &str, bound: &[String]) -> String {
         )
         .expect("static regex")
     });
+    // QuickJS's fourth phrasing — "invalid redefinition of lexical identifier" — names no
+    // identifier at all, so the name has to come from the source: the declaration the program
+    // wrote over a bound name. Without this, the whole branch is dead under the embedded engine.
+    let redeclared = if why.contains("redefinition of lexical identifier") {
+        declared_names(code).into_iter().find(|n| bound.contains(n))
+    } else {
+        None
+    };
+    if let Some(name) = &redeclared {
+        return shadow_message(why, name);
+    }
     if let Some(caps) = shadow.captures(why) {
         let shadowed = caps
             .get(1)
@@ -179,18 +227,7 @@ pub fn syntax_error_message(why: &str, code: &str, bound: &[String]) -> String {
         // business (and the engine's own message).
         if let Some(name) = shadowed {
             if bound.iter().any(|b| b == name) {
-                let mut chars = name.chars();
-                let renamed = match chars.next() {
-                    Some(first) => format!("my{}{}", first.to_uppercase(), chars.as_str()),
-                    None => "my".to_string(),
-                };
-                // "host function" would be a lie for `console`, which is bound the same way and
-                // is not a bridged call. "already bound" is true of all of them.
-                return format!(
-                    "program does not parse: {why} — `{name}` is already bound in every \
-                     program's scope, so declaring it shadows the binding. Rename your \
-                     variable (`{renamed}`) and call `{name}` as it is."
-                );
+                return shadow_message(why, name);
             }
         }
     }

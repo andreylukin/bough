@@ -40,10 +40,7 @@ fn the_bank_covers_the_shapes_the_brief_names() {
     assert!(with(Coverage::Write) >= 1, "a create");
     assert!(with(Coverage::Patch) >= 2, "a patch and a multi-file patch");
     // Two multi-step shell tasks.
-    assert!(
-        with(Coverage::Bash) + with(Coverage::Sh) >= 2,
-        "two multi-step shell tasks"
-    );
+    assert!(with(Coverage::Bash) >= 2, "two multi-step shell tasks");
     // A search-then-edit is a task claiming BOTH a command and the file verbs.
     assert!(
         tasks

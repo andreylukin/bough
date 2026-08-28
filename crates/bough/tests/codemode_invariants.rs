@@ -276,3 +276,49 @@ async fn inner_sub_steps_never_enter_the_reconstruction() {
     );
     kernel.shutdown().await;
 }
+
+/// A boot must leave code mode's three recorders EMPTY.
+///
+/// They are process globals like `ledger`/`agents`/`commands`, and `js-quickjs`'s is a bare
+/// counter with no `FiberUid` at all, so nothing else can scope one test's programs away from the
+/// next test's invariant run. Poison all three, boot, and they must be gone: on the code before
+/// this test, `boot_real` cleared only the first three and the poisoned rows survived.
+#[tokio::test]
+async fn boot_real_clears_the_code_mode_recorders() {
+    let _guard = trace::test_lock();
+
+    bough_plugin_tools_codemode::invariant::record(bough_plugin_tools_codemode::invariant::Obs {
+        fiber: bough_kernel::FiberUid(9_999),
+        program: "poison".into(),
+        calls: vec![0],
+        results: Vec::new(),
+        console: "seen".into(),
+        error: None,
+        result_content: "not seen".into(),
+    });
+    bough_plugin_js::invariant::record(bough_plugin_js::invariant::Obs {
+        fiber: bough_kernel::FiberUid(9_999),
+        program: "poison".into(),
+        ran: true,
+        errored: true,
+        cancelled: false,
+        cost: None,
+    });
+    bough_plugin_js_quickjs::invariant::opened();
+
+    let (_kernel, _dir) = support::boot_real("codemode", &[]).await;
+
+    assert!(
+        bough_plugin_tools_codemode::invariant::seen().is_empty(),
+        "a boot must start code mode's stream empty"
+    );
+    assert!(
+        bough_plugin_js::invariant::seen().is_empty(),
+        "a boot must start the js seam's stream empty"
+    );
+    assert_eq!(
+        bough_plugin_js_quickjs::invariant::live(),
+        0,
+        "a boot must start the live-runtime count at zero"
+    );
+}

@@ -1,5 +1,6 @@
 ---
 source: plugins/tools-codemode/tests/section.rs
+assertion_line: 182
 expression: rendered.body
 ---
 You act by writing ONE JavaScript program per round and calling `run` with it. The program runs in
@@ -9,7 +10,7 @@ are no other tools and no per-call schemas — this section is the whole surface
 
 The program is `await`-ed at the top level, so write it straight through. Sequential calls in one
 program are FREE: they are the same round. Independent calls run concurrently with `Promise.all`
-(or `sh()` for shell legs) — but a call that is not concurrency-safe takes the program's barrier,
+— but a call that is not concurrency-safe takes the program's barrier,
 so ordering is preserved where it matters without you thinking about it.
 
 A call that fails REJECTS its promise with an `Error` carrying a `kind`
@@ -21,25 +22,23 @@ comes back to you is a step too.
 
 ## The functions
 
+- `await agent(prompt, opts)` — spawn a worker on separable work
+- `await ask(q)` — ask the human and wait for their answer
 - `await bash(cmd, tags)` — one shell command in the workspace; returns its combined output
-- `await sh([{cmd, tag}, …])` — several shell commands concurrently; returns [{code, out}, …]
 - `await bg(name, cmd)` — a background shell that outlives the turn
-- `await bg.output(id)` — what a background job has printed since you last asked
 - `await bg.kill(id)` — SIGTERM a background job
-- `await view(path)` — the file as `[path#TAG]` plus numbered lines
-- `await patch(input)` — hash-anchored line edits; echoes each file's new tag
-- `await write(path, content)` — create or rewrite a file; echoes the new tag
+- `await bg.output(id)` — what a background job has printed since you last asked
+- `await claim({kind, title, body, cites})` — write a claim into the shared record
+- `await fork(opts)` — continue this trajectory in a second agent
+- `await inbox()` — the mail this wake has not consumed yet
 - `await ledger.search(q)` — steps matching `q` across your connected trajectories
 - `await ledger.steps(range)` — a specific range of steps, by seq or id
 - `await ledger.tail(n)` — the last `n` steps of your own chain
-- `await inbox()` — the mail this wake has not consumed yet
-- `await claim({kind, title, body, cites})` — write a claim into the shared record
-- `await act(kind, target, payload)` — an outward act: open_pr | push_to_pr | bot_thread_op | linear_write
-- `await agent(prompt, opts)` — spawn a worker on separable work
-- `await fork(opts)` — continue this trajectory in a second agent
-- `await ask(q)` — ask the human and wait for their answer
-- `await schedule(at, intent)` — send yourself an intent at a later time
 - `await mcp.linear.search(args)`
+- `await patch(input)` — hash-anchored line edits; echoes each file's new tag
+- `await schedule(at, intent)` — send yourself an intent at a later time
+- `await view(path)` — the file as `[path#TAG]` plus numbered lines
+- `await write(path, content)` — create or rewrite a file; echoes the new tag
 
 plus `console.log(...)`, which is the ONLY thing that comes back to you.
 
@@ -52,16 +51,6 @@ It is the ONLY way to run a shell command. The sandbox has no `fetch`, no
 `process`, no `require` and no module loader, so a command that does not pass
 through here cannot be run at all — and an unrecorded command is one this project
 can never recall. Tagging is the price of the memory; there is no untagged door.
-
-bash() RETURNS A STRING. sh() returns OBJECTS — [{code, out}, …]. Mixing the two
-is the one mistake that kills a round outright:
-
-    const s = await bash("git status", "git:status:worktree");
-    s.out.slice(0, 2000)   // ✗ "undefined is not an object" — s IS the output
-    s.slice(0, 2000)       // ✓
-
-    const [r] = await sh([{cmd: "git status", tag: "git:status:worktree"}]);
-    r.out.slice(0, 2000)   // ✓ — only sh legs have .out and .code
 
 tags is REQUIRED: 3–5 lowercase tags, colon-separated, naming the tool, the
 intent, AND the subject — bash("git push origin main", "git:push:main"),
@@ -100,13 +89,6 @@ guard whose whole point is the &&. When you split a chain that relied on && to s
 early, read the exit code: bash() reports a failure as `[exit code N]` in its output
 rather than throwing, and sh() gives you `{code}` per leg — so decide in the program
 whether the next command still makes sense.
-
-await sh([{cmd, tag}, …]) — the same shell, running the commands CONCURRENTLY,
-returning [{code, out}, …] in order. It never throws on a non-zero exit: the code is
-data. Use it whenever independent commands would otherwise be awaited one after
-another (a build and a lint, three greps, status in two repos). EVERY LEG MUST BE AN
-OBJECT with a `cmd` and a `tag`: a bare-string leg is REFUSED, because a command
-recorded with no tags is one no future session will ever find.
 
 await bg(name, cmd) — an explicit background shell that outlives your turn (dev
 servers, watchers, long builds). Returns {id, name} immediately.
@@ -246,12 +228,6 @@ await claim({kind, title, body, cites}) — write a claim into the shared record
 you now believe and what it rests on. `cites` names ledger rows; a claim with no
 cites is an opinion and is recorded as one. Claims are how work you did becomes work
 another agent can build on without re-reading your whole trajectory.
-
-await act(kind, target, payload) — the outward acts, one function and four kinds:
-`open_pr`, `push_to_pr`, `bot_thread_op`, `linear_write`. Every act goes through the
-journal with an idempotency key, so a retried program does not open the PR twice.
-An act is the only thing here the outside world can see; everything else is
-reversible.
 
 await agent(prompt, opts) — spawn a worker on a separable piece of work. ALWAYS pass
 a name: it labels the branch everywhere the user sees it, and a fan-out of unnamed

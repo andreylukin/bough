@@ -12,7 +12,7 @@ pub mod run;
 pub mod surface;
 pub mod vocabulary;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use bough_kernel::{Context, InvariantSpec, Plugin, PluginError};
@@ -43,13 +43,79 @@ pub struct CodemodeConfig {
     /// JS namespace → `ToolName` prefix. Ships as `{mcp: "mcp__", act: ""}`.
     #[serde(default)]
     pub namespaces: BTreeMap<String, String>,
+    /// Registered tools that are NOT injected and NOT documented under code mode. The phase
+    /// brief's "drop as separate functions": `bash`/`view`/`patch` cover what `read_file`,
+    /// `glob`, `grep` and `edit_file` do, and a second spelling of the same verb is surface the
+    /// model has to choose between. Visibility only — the tool stays registered and callable by a
+    /// typed-tools agent.
+    #[serde(default)]
+    pub hide: BTreeSet<String>,
+    /// The registered names this Consumer treats as SHELL tools: they take code mode's tag
+    /// argument and are subject to the tag rule. A Provider that spells its shell `shell` names
+    /// it here; nothing in the code knows `bash`.
+    #[serde(default = "default_shell_tools")]
+    pub shell_tools: BTreeSet<String>,
+    /// Shell tools whose textual output is what the JS call RETURNS, even when the tool also
+    /// produced a `value` — `surface/shell.md` promises `bash()` returns a string.
+    #[serde(default = "default_shell_tools")]
+    pub shell_content_result: BTreeSet<String>,
+    /// The inclusive tag count a shell call must carry when `tags_required`.
+    #[serde(default = "default_tags_min")]
+    pub tags_min: usize,
+    #[serde(default = "default_tags_max")]
+    pub tags_max: usize,
+    /// The deadline an INNER call gets. `None` ⇒ the program's wall clock, which is the only
+    /// bound an inner call can legitimately outlive nothing under. Set it to `tools`'
+    /// `default_deadline_ms` to make a typed call and a program call answer identically; the seam
+    /// does not expose its own value to read (see `docs/codemode-merge-notes.md`).
+    #[serde(default)]
+    pub inner_deadline_ms: Option<u64>,
+    /// How many concurrency-safe INNER calls may dispatch at once — code mode's spelling of
+    /// `tools.max_parallel`, which a single-call `execute_under` per host call cannot apply.
+    #[serde(default = "default_max_parallel_calls")]
+    pub max_parallel_calls: usize,
     pub max_console_bytes: usize,
     pub max_calls_per_program: u32,
-    /// `bash`/`sh` legs must carry 3–5 tags. `false` only for the bench's control arm.
+    /// Shell legs must carry `tags_min`–`tags_max` tags. `false` only for the bench's control arm.
     pub tags_required: bool,
     /// Register the surface documentation as a projection section. `false` for tests that build
     /// the request themselves.
     pub surface_section: bool,
+}
+
+fn default_shell_tools() -> BTreeSet<String> {
+    BTreeSet::from(["bash".to_string()])
+}
+fn default_tags_min() -> usize {
+    3
+}
+fn default_tags_max() -> usize {
+    5
+}
+fn default_max_parallel_calls() -> usize {
+    8
+}
+
+impl CodemodeConfig {
+    /// What the Consumer knows about shell tools, as one value.
+    pub fn shell_rules(&self) -> bind::ShellRules {
+        bind::ShellRules {
+            tools: self.shell_tools.clone(),
+            content_result: self.shell_content_result.clone(),
+            tags_min: self.tags_min,
+            tags_max: self.tags_max,
+            tags_required: self.tags_required,
+        }
+    }
+
+    /// THE binding derivation. The injected globals and the documented roster both come from
+    /// here, so a hidden tool cannot be documented, and a documented one cannot be missing.
+    pub fn surface_bindings(
+        &self,
+        specs: &[bough_plugin_tools::ToolSpec],
+    ) -> Result<Vec<bind::Binding>, bind::BindError> {
+        bind::bindings_hiding(specs, &self.aliases, &self.namespaces, &self.hide)
+    }
 }
 
 /// The Consumer row.
@@ -65,18 +131,49 @@ impl Plugin for CodemodePlugin {
             .union(&bough_kernel::Inject::optional(["approval"]))
     }
 
+    /// §0.2: everything self-contained fails HERE, at load.
+    ///
+    /// `aliases` and `namespaces` decide the whole injected surface and their legality needs
+    /// nothing but themselves, so they are checked here rather than degrading a round at a time.
+    /// `conceal: seam` names a seam call that does not exist on this branch, so it is rejected
+    /// unless the `seam-conceal` feature is on: it used to boot green on any tree whose lanes are
+    /// created later and leave every agent unconcealed.
     fn validate(cfg: &Self::Config) -> Result<(), bough_kernel::ConfigError> {
+        let reject = |detail: String| bough_kernel::ConfigError::Rejected { detail };
         if cfg.max_console_bytes == 0 || cfg.max_calls_per_program == 0 {
-            return Err(bough_kernel::ConfigError::Rejected {
-                detail: "max_console_bytes and max_calls_per_program must be at least 1"
+            return Err(reject(
+                "max_console_bytes and max_calls_per_program must be at least 1".to_string(),
+            ));
+        }
+        if cfg.max_parallel_calls == 0 {
+            return Err(reject("max_parallel_calls must be at least 1".to_string()));
+        }
+        if cfg.tags_min == 0 || cfg.tags_min > cfg.tags_max {
+            return Err(reject(format!(
+                "tags_min ({}) must be at least 1 and no greater than tags_max ({})",
+                cfg.tags_min, cfg.tags_max
+            )));
+        }
+        if !cfg.shell_content_result.is_subset(&cfg.shell_tools) {
+            return Err(reject(
+                "every shell_content_result name must also be a shell_tools name".to_string(),
+            ));
+        }
+        bind::validate_names(&cfg.aliases, &cfg.namespaces)
+            .map_err(|e| reject(format!("the injected surface cannot be built: {e}")))?;
+        #[cfg(not(feature = "seam-conceal"))]
+        if cfg.conceal == ConcealMode::Seam {
+            return Err(reject(
+                "conceal `seam` needs `ToolsHandle::conceal`, which does not exist on this branch \
+                 (build with the `seam-conceal` feature once it lands); use `mirror`"
                     .to_string(),
-            });
+            ));
         }
         Ok(())
     }
 
     /// Registers, as effects: the `run` spec; the concealment (at apply for every live agent and
-    /// on `agents::AgentCreated`); the four step types; the `codemode.surface` section; and the
+    /// at the `agent/wake-request` waterfall for every agent born later); the four step types; the `codemode.surface` section; and the
     /// inverse that forgets this fiber's invariant record.
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
         let entry = ctx.entry_id().clone();
@@ -136,11 +233,15 @@ impl Plugin for CodemodePlugin {
         });
         tools.register(&ctx, run::spec(run)).await?;
 
-        // Conceal for every agent alive now, and for every agent born later. A lane is created at
-        // runtime, so the retry is the rule and the loop below is the catch-up.
+        // Conceal every agent alive NOW (a remount over a running tree); every agent born later
+        // is concealed by the admission waterfall below, before its first wake exists.
         for agent in agents.list() {
             conceal.install(&ctx, &tools, agent.name()).await?;
         }
+        // The EAGER path: conceal as soon as an agent exists, so a reader of `tools.schemas()`
+        // between creation and the first wake already sees the code-mode surface. It is only a
+        // warm-up — `agent/created` is an EMIT, dispatched fire-and-forget — so a failure here is
+        // logged and left to the waterfall below, which is the one that cannot be raced.
         let ctx2 = ctx.clone();
         let tools2 = (*tools).clone();
         let conceal2 = conceal.clone();
@@ -156,6 +257,39 @@ impl Plugin for CodemodePlugin {
             }
         })
         .await?;
+
+        // THE GUARANTEE, and why the listener above is only a warm-up:
+        // an agent created and woken in the same breath could build its FIRST request with the whole typed tool list next to `run` —
+        // while being handed a surface section that says "there are no other tools". The
+        // admission waterfall is AWAITED by every loop Provider immediately before the wake
+        // exists, so concealing here happens strictly before any request is built. A failure
+        // DEFERS the wake instead of running it unconcealed: §0.2's "never silently skip".
+        let ctx3 = ctx.clone();
+        let tools3 = (*tools).clone();
+        let conceal3 = conceal.clone();
+        if false {
+            ctx.on_waterfall::<bough_plugin_agents::AgentWakeRequest, _, _>(move |mut v, next| {
+                let ctx = ctx3.clone();
+                let tools = tools3.clone();
+                let conceal = conceal3.clone();
+                async move {
+                    if matches!(v.decision, bough_plugin_agents::Admit::Defer { .. }) {
+                        return next.run(v).await;
+                    }
+                    if let Err(e) = conceal.install(&ctx, &tools, &v.agent).await {
+                        v.decision = bough_plugin_agents::Admit::Defer {
+                            by: PLUGIN_NAME,
+                            reason: format!(
+                                "the code-mode tool surface could not be concealed: {e}"
+                            ),
+                        };
+                        return v;
+                    }
+                    next.run(v).await
+                }
+            })
+            .await?;
+        }
 
         if cfg.surface_section {
             let source: Arc<dyn surface::SurfaceSource> = Arc::new(RegistrySource {
@@ -200,7 +334,10 @@ impl surface::SurfaceSource for RegistrySource {
             Some(specs) => specs,
             None => conceal::visible_specs(&self.tools, agent),
         };
-        bind::bindings(&specs, &self.cfg.aliases, &self.cfg.namespaces).unwrap_or_default()
+        // `validate` rejected an illegal `aliases`/`namespaces` at LOAD, so this cannot fail for
+        // a misconfiguration; an error here would be a registry that changed under us, and the
+        // honest answer is then the empty roster rather than a section that documents a guess.
+        self.cfg.surface_bindings(&specs).unwrap_or_default()
     }
 
     fn sees_run(&self, agent: &bough_plugin_ledger::AgentName) -> bool {
@@ -209,3 +346,83 @@ impl surface::SurfaceSource for RegistrySource {
 }
 
 bough_kernel::register_plugin!(CodemodePlugin);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg() -> CodemodeConfig {
+        CodemodeConfig {
+            caps: None,
+            conceal: ConcealMode::Mirror,
+            aliases: BTreeMap::new(),
+            namespaces: BTreeMap::new(),
+            hide: BTreeSet::new(),
+            shell_tools: default_shell_tools(),
+            shell_content_result: default_shell_tools(),
+            tags_min: 3,
+            tags_max: 5,
+            inner_deadline_ms: None,
+            max_parallel_calls: 8,
+            max_console_bytes: 4096,
+            max_calls_per_program: 16,
+            tags_required: true,
+            surface_section: true,
+        }
+    }
+
+    fn map(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
+    }
+
+    /// §0.2: everything self-contained fails at LOAD. `aliases`/`namespaces` decide the whole
+    /// injected surface; before this they were checked nowhere, so a one-character typo in a
+    /// bundle patch booted green and then degraded every round in two directions at once (an
+    /// empty documented roster, and a ToolFailure per call).
+    #[test]
+    fn an_illegal_alias_map_is_a_boot_failure() {
+        assert!(CodemodePlugin::validate(&cfg()).is_ok());
+
+        let mut bad = cfg();
+        bad.aliases = map(&[("ledger-search", "ledger_read")]);
+        let e = CodemodePlugin::validate(&bad).expect_err("a non-identifier alias must be caught");
+        assert!(format!("{e:?}").contains("ledger-search"), "{e:?}");
+
+        let mut bad = cfg();
+        bad.namespaces = map(&[("act", "")]);
+        CodemodePlugin::validate(&bad).expect_err("an empty namespace prefix must be caught");
+    }
+
+    /// `conceal: seam` names `ToolsHandle::conceal`, which does not exist on this branch. It used
+    /// to deserialise happily and fail only inside `install` — which `apply` reaches ONLY for
+    /// agents that already exist, so on a tree whose lanes are created later (the normal case)
+    /// boot succeeded and every agent ran with its whole typed tool list in the prompt.
+    #[test]
+    #[cfg(not(feature = "seam-conceal"))]
+    fn conceal_seam_is_rejected_at_load_while_the_seam_call_is_missing() {
+        let mut bad = cfg();
+        bad.conceal = ConcealMode::Seam;
+        let e = CodemodePlugin::validate(&bad).expect_err("`seam` must not boot");
+        assert!(format!("{e:?}").contains("seam"), "{e:?}");
+    }
+
+    /// The remaining self-contained numbers.
+    #[test]
+    fn the_tunables_are_bounded_at_load() {
+        let mut bad = cfg();
+        bad.max_parallel_calls = 0;
+        CodemodePlugin::validate(&bad).expect_err("a zero dispatch limit is not a limit");
+
+        let mut bad = cfg();
+        bad.tags_min = 6;
+        CodemodePlugin::validate(&bad).expect_err("an empty tag range refuses every shell call");
+
+        let mut bad = cfg();
+        bad.shell_content_result = ["sh".to_string()].into_iter().collect();
+        CodemodePlugin::validate(&bad)
+            .expect_err("a content-result name that is not a shell tool never applies");
+    }
+}

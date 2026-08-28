@@ -193,6 +193,83 @@ fn is_member(s: &str) -> bool {
     }
 }
 
+/// What the Consumer knows about SHELL tools, as config rather than as literals.
+///
+/// The Consumer must not name a concrete Provider's tools (§0.2): `tools-codemode` does not depend
+/// on `tools-baseline`, and a tree that registers its shell as `shell` instead of `bash` must keep
+/// the tag requirement, the tag stripping and the documented string return. Every one of those
+/// used to be a `name == "bash"` literal in this file. They are these fields now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShellRules {
+    /// Tools that take code mode's TAG argument and are subject to the tag rule.
+    pub tools: BTreeSet<String>,
+    /// Tools whose textual `content` is what the JS call returns, even when the tool also
+    /// produced a `value` (the surface promises `bash()` returns a string).
+    pub content_result: BTreeSet<String>,
+    /// The inclusive tag count a shell call must carry when `tags_required`.
+    pub tags_min: usize,
+    pub tags_max: usize,
+    pub tags_required: bool,
+}
+
+impl Default for ShellRules {
+    fn default() -> ShellRules {
+        ShellRules {
+            tools: BTreeSet::new(),
+            content_result: BTreeSet::new(),
+            tags_min: 3,
+            tags_max: 5,
+            tags_required: false,
+        }
+    }
+}
+
+impl ShellRules {
+    fn is_shell(&self, name: &str) -> bool {
+        self.tools.contains(name)
+    }
+}
+
+/// Reject an `aliases`/`namespaces` map that cannot produce a legal surface, at LOAD.
+///
+/// Their legality is entirely self-contained — an alias key is a JS identifier path or it is not —
+/// so §0.2 puts the check in `validate`, not in the first `run` call of the first round. Before
+/// this, a one-character typo in a bundle patch booted green and then split in two directions: the
+/// surface section swallowed the error and told the model "No functions are injected for you this
+/// round", while every host call failed.
+pub fn validate_names(
+    aliases: &BTreeMap<String, String>,
+    namespaces: &BTreeMap<String, String>,
+) -> Result<(), BindError> {
+    for (js, value) in aliases {
+        if !is_identifier_path(js) {
+            return Err(BindError::NotAnIdentifier(js.clone()));
+        }
+        if value.trim().is_empty() {
+            return Err(BindError::NotAnIdentifier(format!("{js}: <empty>")));
+        }
+    }
+    for (ns, prefix) in namespaces {
+        if !is_identifier_path(ns) {
+            return Err(BindError::NotAnIdentifier(ns.clone()));
+        }
+        // An EMPTY prefix matches every name and claims nothing (see `bindings`): a namespace row
+        // that can never bind anything is an enabled row that never activates.
+        if prefix.is_empty() {
+            return Err(BindError::NotAnIdentifier(format!("{ns}: <empty prefix>")));
+        }
+        // A namespace object and a function cannot both own the same global.
+        if let Some(other) = aliases.keys().find(|js| js.as_str() == ns) {
+            return Err(BindError::Collision {
+                js: ns.clone(),
+                a: format!("namespace {prefix}"),
+                b: format!("alias {other}"),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Turn the visible specs plus the row's aliases and namespaces into the binding list.
 /// A dotted name builds a namespace object; a name that is both a function and a namespace root
 /// becomes a callable object.
@@ -213,6 +290,29 @@ pub fn bindings(
     aliases: &BTreeMap<String, String>,
     namespaces: &BTreeMap<String, String>,
 ) -> Result<Vec<Binding>, BindError> {
+    bindings_hiding(specs, aliases, namespaces, &BTreeSet::new())
+}
+
+/// [`bindings`], minus the tools the row's `hide` list drops.
+///
+/// `hide` is the phase brief's "drop as separate functions": under code mode `bash` + `view` cover
+/// what `read_file`/`glob`/`grep` do with typed tools, and `edit_file(old, new)` is a regression
+/// against the hash-anchored patch grammar. Dropping happens HERE, in the one derivation both the
+/// injected globals and the documented roster come from, so a hidden tool cannot be documented and
+/// missing (or injected and undocumented). It is VISIBILITY only: the tool stays registered, stays
+/// callable by a typed-tools agent, and nothing about the seam changes.
+pub fn bindings_hiding(
+    specs: &[ToolSpec],
+    aliases: &BTreeMap<String, String>,
+    namespaces: &BTreeMap<String, String>,
+    hide: &BTreeSet<String>,
+) -> Result<Vec<Binding>, BindError> {
+    let specs: Vec<ToolSpec> = specs
+        .iter()
+        .filter(|s| !hide.contains(s.name.as_str()))
+        .cloned()
+        .collect();
+    let specs = &specs[..];
     let visible: BTreeSet<String> = specs.iter().map(|s| s.name.to_string()).collect();
     let mut out: Vec<Binding> = Vec::new();
     let mut aliased: BTreeSet<String> = BTreeSet::new();
@@ -293,8 +393,18 @@ pub struct ProgramCx {
     pub mirror: ToolsHandle,
     pub cancel: CancellationToken,
     pub max_calls: u32,
-    pub tags_required: bool,
+    /// What the Consumer knows about shell tools — config, not literals.
+    pub rules: ShellRules,
+    /// The tools seam's own `max_parallel`, enforced INSIDE one program: without it a
+    /// `Promise.all` over concurrency-safe calls dispatched all of them at once (up to
+    /// `max_calls_per_program`), so the same knob governed a typed batch and nothing at all under
+    /// code mode.
+    parallel: Arc<tokio::sync::Semaphore>,
     next: AtomicU32,
+    /// Set when the round has closed. Nothing may be appended under this program afterwards:
+    /// a sub-step after the closing `tool/result` breaks D-1's "sub-steps sit between the call
+    /// and its result", which the ledger's order is supposed to make a fact.
+    closed: std::sync::atomic::AtomicBool,
     /// The seam's barrier rule, reproduced inside one program: a concurrency-safe call takes a
     /// READ, everything else takes a WRITE.
     gate: tokio::sync::RwLock<()>,
@@ -313,6 +423,10 @@ pub struct ProgramState {
     pub concludes_wake: bool,
     /// Set when `max_calls_per_program` was breached; a terminal error for the program.
     pub cap_breach: Option<String>,
+    /// Calls that have been appended but not yet answered, by index. A program that ends while
+    /// one is in flight — a wall-clock timeout, an interrupt — leaves these behind; the round
+    /// closes them itself rather than letting the detached task answer after it.
+    pub pending: BTreeMap<u32, (ToolName, ToolCallId)>,
 }
 
 impl ProgramCx {
@@ -328,7 +442,8 @@ impl ProgramCx {
         mirror: ToolsHandle,
         cancel: CancellationToken,
         max_calls: u32,
-        tags_required: bool,
+        rules: ShellRules,
+        max_parallel: usize,
     ) -> Arc<ProgramCx> {
         Arc::new(ProgramCx {
             ctx,
@@ -341,8 +456,10 @@ impl ProgramCx {
             mirror,
             cancel,
             max_calls,
-            tags_required,
+            rules,
+            parallel: Arc::new(tokio::sync::Semaphore::new(max_parallel.max(1))),
             next: AtomicU32::new(0),
+            closed: std::sync::atomic::AtomicBool::new(false),
             gate: tokio::sync::RwLock::new(()),
             state: parking_lot::Mutex::new(ProgramState::default()),
         })
@@ -350,6 +467,52 @@ impl ProgramCx {
 
     pub fn state(&self) -> ProgramState {
         self.state.lock().clone()
+    }
+
+    /// Has the round closed?
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+
+    /// Close the round and answer every call still in flight.
+    ///
+    /// A timed-out or cancelled program does not take its host calls with it: each was handed to
+    /// the engine's runtime and keeps running, holding this `ProgramCx`. Without this, two things
+    /// went wrong at once — the detached task appended its `program/result` AFTER the `run`
+    /// call's own `tool/result` (so a sub-step sat outside its call), and the observation read a
+    /// moment earlier carried a call with no result, which this crate's invariant reports as
+    /// "the call at index N has 0 program/result step(s)" — a product violation for what is a
+    /// race. Called by `Run::call` before it reads the state.
+    pub async fn close_and_settle(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        let pending: Vec<(u32, (ToolName, ToolCallId))> = {
+            let mut state = self.state.lock();
+            std::mem::take(&mut state.pending).into_iter().collect()
+        };
+        for (index, (name, call)) in pending {
+            let body = ProgramResultBody {
+                program: self.program.clone(),
+                index,
+                call,
+                name,
+                outcome: ToolOutcomeKind::Error,
+                content: "the program's round ended before this call answered".to_string(),
+                value: None,
+                attached: vec![],
+                concludes_wake: false,
+                step_index: self.step_index,
+                ms: 0,
+            };
+            let Ok(body) = serde_json::to_value(&body) else {
+                continue;
+            };
+            if append_now(self, "program/result", Class::Thought, body, vec![])
+                .await
+                .is_ok()
+            {
+                self.state.lock().results.push(index);
+            }
+        }
     }
 }
 
@@ -380,7 +543,7 @@ pub fn host_fn(
             .collect();
         let first = kinds.first()?;
         // `kind` plus whatever the selected tool takes.
-        let arity = arity_of(&first.1.spec).saturating_add(1);
+        let arity = arity_of(&first.1.spec, &cx.rules).saturating_add(1);
         return Some(HostFn {
             arity,
             name: b.js.clone(),
@@ -394,7 +557,7 @@ pub fn host_fn(
     let arity = if !b.positional.is_empty() {
         b.positional.len().min(u8::MAX as usize) as u8
     } else {
-        arity_of(spec).saturating_sub(b.preset.len().min(u8::MAX as usize) as u8)
+        arity_of(spec, &cx.rules).saturating_sub(b.preset.len().min(u8::MAX as usize) as u8)
     };
     Some(HostFn {
         arity,
@@ -460,20 +623,15 @@ impl HostCall for Dispatch {
 /// A shell tool whose schema carries no `tags` property still takes the tag argument — it is a
 /// CODE-MODE parameter, not one of the tool's (see [`shell_tags`]) — so its arity is one more
 /// than its schema declares.
-fn arity_of(spec: &ToolSpec) -> u8 {
+fn arity_of(spec: &ToolSpec, rules: &ShellRules) -> u8 {
     let declared = properties(spec.input_schema.as_value())
         .map(|p| p.len().min(u8::MAX as usize) as u8)
         .unwrap_or(1);
-    if takes_a_tag_argument(spec) {
+    if takes_a_tag_argument(spec, rules) {
         declared.saturating_add(1)
     } else {
         declared
     }
-}
-
-/// `bash`/`sh`, as the surface spells them.
-fn is_shell(name: &str) -> bool {
-    name == "bash" || name == "sh"
 }
 
 /// Does this tool take its tags as an EXTRA JS argument rather than a schema property?
@@ -485,8 +643,8 @@ fn is_shell(name: &str) -> bool {
 /// shell call in the sandbox was refused with `tags_required` on
 /// (`docs/codemode-merge-notes.md` §9). A shell tool that DOES declare `tags` keeps binding it
 /// positionally, so a future Provider can own the field.
-fn takes_a_tag_argument(spec: &ToolSpec) -> bool {
-    is_shell(spec.name.as_str())
+fn takes_a_tag_argument(spec: &ToolSpec, rules: &ShellRules) -> bool {
+    rules.is_shell(spec.name.as_str())
         && !properties(spec.input_schema.as_value())
             .map(|p| p.contains_key("tags"))
             .unwrap_or(false)
@@ -513,12 +671,17 @@ pub fn parse_tags(v: &serde_json::Value) -> Vec<String> {
 ///
 /// Only when the tool does not declare `tags` itself, and only from the LAST argument: a program
 /// that passed no tags leaves `args` untouched and is refused by the tag rule, which is the point.
-fn shell_tags(spec: &ToolSpec, args: &mut Vec<serde_json::Value>) -> Vec<String> {
-    if !takes_a_tag_argument(spec) {
+fn shell_tags(
+    spec: &ToolSpec,
+    rules: &ShellRules,
+    args: &mut Vec<serde_json::Value>,
+) -> Vec<String> {
+    if !takes_a_tag_argument(spec, rules) {
         return Vec::new();
     }
-    // `sh([{cmd, tag}, …])` carries its tags per leg, inside its one argument.
-    if spec.name.as_str() == "sh" {
+    // A LEG LIST (`[{cmd, tag}, …]`) carries its tags per leg, inside its one argument. The shape
+    // decides, not the tool's name: a Provider may spell a concurrent shell however it likes.
+    if is_leg_list(args.first()) {
         return args
             .first()
             .and_then(|a| a.as_array())
@@ -542,6 +705,18 @@ fn shell_tags(spec: &ToolSpec, args: &mut Vec<serde_json::Value>) -> Vec<String>
         return parse_tags(&tag);
     }
     Vec::new()
+}
+
+/// Is this one argument a list of shell LEGS — objects each carrying a command?
+fn is_leg_list(v: Option<&serde_json::Value>) -> bool {
+    v.and_then(|v| v.as_array())
+        .map(|legs| {
+            !legs.is_empty()
+                && legs
+                    .iter()
+                    .all(|l| l.get("cmd").is_some() || l.get("command").is_some())
+        })
+        .unwrap_or(false)
 }
 
 fn properties(schema: &serde_json::Value) -> Option<&serde_json::Map<String, serde_json::Value>> {
@@ -641,7 +816,7 @@ impl HostCall for Injected {
         let name = self.spec.name.to_string();
         let mut args = args;
         // Off the front, before binding: the tag argument is code mode's, not the tool's.
-        let extra = shell_tags(&self.spec, &mut args);
+        let extra = shell_tags(&self.spec, &cx.rules, &mut args);
         let mut argv = if self.positional.is_empty() {
             positional_args(self.spec.input_schema.as_value(), args)
         } else {
@@ -660,12 +835,19 @@ impl HostCall for Injected {
             extra
         };
 
-        // The tag rule is a REFUSAL, not a step: a leg that never ran is not a call.
-        if cx.tags_required && (name == "bash" || name == "sh") && !(3..=5).contains(&tags.len()) {
+        // The tag rule is a REFUSAL, not a step: a leg that never ran is not a call. Which tools
+        // it applies to, and how many tags it wants, are config (`ShellRules`) — never literals.
+        let rules = &cx.rules;
+        if rules.tags_required
+            && rules.is_shell(&name)
+            && !(rules.tags_min..=rules.tags_max).contains(&tags.len())
+        {
             return Err(HostRefusal {
                 kind: RefusalKind::Denied,
                 message: format!(
-                    "`{name}` needs 3–5 tags naming what this command is about; it carried {}",
+                    "`{name}` needs {}–{} tags naming what this command is about; it carried {}",
+                    rules.tags_min,
+                    rules.tags_max,
                     tags.len()
                 ),
             });
@@ -696,7 +878,13 @@ impl HostCall for Injected {
             step_index: cx.step_index,
         };
         append(cx, "program/call", Class::Thought, to_body(&body)?, vec![]).await?;
-        cx.state.lock().calls.push(index);
+        {
+            let mut state = cx.state.lock();
+            state.calls.push(index);
+            state
+                .pending
+                .insert(index, (self.spec.name.clone(), call_id.clone()));
+        }
 
         let call = ToolCall {
             id: call_id.clone(),
@@ -716,6 +904,12 @@ impl HostCall for Injected {
             } else {
                 Guard::Write(cx.gate.write().await)
             };
+            // …and the seam's parallelism limit on top of it: the read guard admits every safe
+            // call at once, the permit is what bounds them.
+            let _permit = cx.parallel.acquire().await.map_err(|_| HostRefusal {
+                kind: RefusalKind::Error,
+                message: "the program's dispatch limiter closed".to_string(),
+            })?;
             cx.mirror
                 .execute_under(&cx.ctx, vec![call], cx.cancel.clone())
                 .await
@@ -755,6 +949,7 @@ impl HostCall for Injected {
         append(cx, "program/result", class, to_body(&body)?, cites.clone()).await?;
         {
             let mut state = cx.state.lock();
+            state.pending.remove(&index);
             state.results.push(index);
             state.concludes_wake |= result.concludes_wake;
             for c in cites {
@@ -771,7 +966,7 @@ impl HostCall for Injected {
             // "a value wins" rule below handed the program `{exit_code:0}` and dropped the
             // output the surface promises — the very `s.slice(...)` the doc says is correct
             // would have thrown. The taught shape wins for the shell.
-            if self.spec.name.as_str() == "bash" {
+            if rules.content_result.contains(&name) {
                 return Ok(serde_json::Value::String(result.content));
             }
             // Any other tool that produced a VALUE answers with it; one that produced text
@@ -811,6 +1006,26 @@ fn to_body<T: serde::Serialize>(body: &T) -> Result<serde_json::Value, HostRefus
 /// Append one of this crate's sub-steps. A ledger that refuses the step is a REFUSAL the program
 /// sees: an inner call whose record did not commit must not look like it ran.
 async fn append(
+    cx: &ProgramCx,
+    kind: &str,
+    class: Class,
+    body: serde_json::Value,
+    cites: Vec<Cite>,
+) -> Result<(), HostRefusal> {
+    if cx.is_closed() {
+        // The round is over: this call was detached by a timeout or an interrupt and is landing
+        // late. Its step would sit AFTER the `run` call's `tool/result`. The call was already
+        // answered by `close_and_settle`.
+        return Err(HostRefusal {
+            kind: RefusalKind::Cancelled,
+            message: "the program's round closed before this call finished".to_string(),
+        });
+    }
+    append_now(cx, kind, class, body, cites).await
+}
+
+/// The append itself, with no round check — what `close_and_settle` writes its own steps with.
+async fn append_now(
     cx: &ProgramCx,
     kind: &str,
     class: Class,
@@ -892,6 +1107,17 @@ mod tests {
             _cx: ToolCx,
         ) -> Result<ToolOutcome, ToolFailure> {
             Ok(ToolOutcome::default())
+        }
+    }
+
+    /// The shell rules the shipped bundle sets, plus `sh` for the leg-list cases.
+    fn rules() -> ShellRules {
+        ShellRules {
+            tools: BTreeSet::from(["bash".to_string(), "sh".to_string()]),
+            content_result: BTreeSet::from(["bash".to_string()]),
+            tags_min: 3,
+            tags_max: 5,
+            tags_required: true,
         }
     }
 
@@ -1026,7 +1252,7 @@ mod tests {
             serde_json::json!("echo hi"),
             serde_json::json!("echo:probe:demo"),
         ];
-        let tags = shell_tags(&baseline, &mut args);
+        let tags = shell_tags(&baseline, &rules(), &mut args);
         assert_eq!(tags, vec!["echo", "probe", "demo"]);
         assert_eq!(
             positional_args(baseline.input_schema.as_value(), args),
@@ -1034,7 +1260,7 @@ mod tests {
             "the tags must not reach the tool as `cwd`"
         );
         assert_eq!(
-            arity_of(&baseline),
+            arity_of(&baseline, &rules()),
             3,
             "two properties plus the tag argument"
         );
@@ -1052,12 +1278,12 @@ mod tests {
             serde_json::json!(["repo", "layout", "probe"]),
         ];
         assert_eq!(
-            shell_tags(&baseline, &mut arr),
+            shell_tags(&baseline, &rules(), &mut arr),
             vec!["repo", "layout", "probe"]
         );
         let mut bare = vec![serde_json::json!("ls")];
         assert!(
-            shell_tags(&baseline, &mut bare).is_empty(),
+            shell_tags(&baseline, &rules(), &mut bare).is_empty(),
             "an untagged call keeps its arguments and is refused by the tag rule"
         );
         assert_eq!(bare.len(), 1);
@@ -1075,7 +1301,7 @@ mod tests {
             {"cmd": "git status", "tag": "git:status:worktree"},
         ])];
         assert_eq!(
-            shell_tags(&sh, &mut args),
+            shell_tags(&sh, &rules(), &mut args),
             vec!["cargo", "fmt", "check", "git", "status", "worktree"]
         );
         assert_eq!(args.len(), 1, "sh's legs are its one argument and stay put");
@@ -1092,10 +1318,10 @@ mod tests {
                 "required":["cmd","tags"]}),
         );
         let mut args = vec![serde_json::json!("ls"), serde_json::json!(["a", "b", "c"])];
-        assert!(shell_tags(&owned, &mut args).is_empty());
+        assert!(shell_tags(&owned, &rules(), &mut args).is_empty());
         let argv = positional_args(owned.input_schema.as_value(), args);
         assert_eq!(tags_of(&argv), vec!["a", "b", "c"]);
-        assert_eq!(arity_of(&owned), 2);
+        assert_eq!(arity_of(&owned, &rules()), 2);
     }
 
     #[test]
@@ -1112,11 +1338,108 @@ mod tests {
             "bash",
             serde_json::json!({"type":"object","properties":{"cmd":{},"tags":{}},"required":["cmd","tags"]}),
         );
-        assert_eq!(arity_of(&s), 2);
+        assert_eq!(arity_of(&s, &rules()), 2);
         assert_eq!(
-            arity_of(&spec("inbox")),
+            arity_of(&spec("inbox"), &rules()),
             1,
             "a schema-less tool takes one bag"
+        );
+    }
+
+    /// §0.2: the Consumer must not know one concrete Provider's tool NAMES. Swap the shell
+    /// Provider for one that registers `shell` and the tag argument, the tag stripping and the
+    /// arity must all follow it. On the code before this, `is_shell` matched the literals
+    /// `"bash"`/`"sh"` and every one of them silently stopped applying.
+    #[test]
+    fn a_shell_provider_under_another_name_keeps_the_tag_treatment() {
+        let named = ShellRules {
+            tools: BTreeSet::from(["shell".to_string()]),
+            content_result: BTreeSet::from(["shell".to_string()]),
+            ..rules()
+        };
+        let shell = spec_with(
+            "shell",
+            serde_json::json!({"type":"object",
+                "properties":{"command":{"type":"string"},"cwd":{"type":"string"}},
+                "required":["command"]}),
+        );
+        let mut args = vec![
+            serde_json::json!("echo hi"),
+            serde_json::json!("echo:probe:demo"),
+        ];
+        assert_eq!(
+            shell_tags(&shell, &named, &mut args),
+            vec!["echo", "probe", "demo"]
+        );
+        assert_eq!(arity_of(&shell, &named), 3);
+        // …and `bash` is then just another tool: no tag argument, no extra arity.
+        let baseline = spec_with(
+            "bash",
+            serde_json::json!({"type":"object",
+                "properties":{"command":{"type":"string"},"cwd":{"type":"string"}},
+                "required":["command"]}),
+        );
+        let mut args = vec![serde_json::json!("ls"), serde_json::json!("a:b:c")];
+        assert!(shell_tags(&baseline, &named, &mut args).is_empty());
+        assert_eq!(arity_of(&baseline, &named), 2);
+    }
+
+    /// A leg list is recognised by its SHAPE, so a concurrent shell may be spelled anything.
+    #[test]
+    fn a_leg_list_carries_its_tags_whatever_the_tool_is_called() {
+        let legs = ShellRules {
+            tools: BTreeSet::from(["run_all".to_string()]),
+            ..rules()
+        };
+        let tool = spec_with(
+            "run_all",
+            serde_json::json!({"type":"object","properties":{"legs":{"type":"array"}},
+                "required":["legs"]}),
+        );
+        let mut args =
+            vec![serde_json::json!([{"cmd": "git status", "tag": "git:status:worktree"}])];
+        assert_eq!(
+            shell_tags(&tool, &legs, &mut args),
+            vec!["git", "status", "worktree"]
+        );
+        assert_eq!(args.len(), 1);
+    }
+
+    /// §0.2: an illegal `aliases`/`namespaces` map is self-contained and must fail at LOAD.
+    #[test]
+    fn an_illegal_alias_or_namespace_is_rejected_before_boot() {
+        let ok = map(&[("ledger.search", "ledger_read?op=search#q")]);
+        assert_eq!(validate_names(&ok, &map(&[("mcp", "mcp__")])), Ok(()));
+
+        // A typo that is not an identifier: this used to boot green and then render
+        // "No functions are injected for you this round" every round.
+        let err = validate_names(&map(&[("ledger-search", "ledger_read")]), &BTreeMap::new())
+            .expect_err("a non-identifier alias must be rejected");
+        assert_eq!(err, BindError::NotAnIdentifier("ledger-search".into()));
+
+        // An empty prefix claims nothing: an enabled row that never activates.
+        validate_names(&BTreeMap::new(), &map(&[("act", "")]))
+            .expect_err("an empty namespace prefix must be rejected");
+
+        // A namespace object and a function cannot both own one global.
+        validate_names(&map(&[("mcp", "some_tool")]), &map(&[("mcp", "mcp__")]))
+            .expect_err("a namespace that collides with an alias must be rejected");
+    }
+
+    /// The phase brief's "drop as separate functions", in the ONE derivation both the injected
+    /// globals and the documented roster come from.
+    #[test]
+    fn a_hidden_tool_is_neither_injected_nor_documented() {
+        let specs = vec![spec("bash"), spec("read_file"), spec("view")];
+        let hide = BTreeSet::from(["read_file".to_string()]);
+        let out = bindings_hiding(&specs, &BTreeMap::new(), &BTreeMap::new(), &hide).unwrap();
+        let names: Vec<&str> = out.iter().map(|b| b.js.as_str()).collect();
+        assert_eq!(names, vec!["bash", "view"]);
+        assert!(
+            !injected_names(&out)
+                .iter()
+                .any(|n| n.as_str() == "read_file"),
+            "a hidden tool must not be injected either"
         );
     }
 }

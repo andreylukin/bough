@@ -297,6 +297,13 @@ fn config() -> CodemodeConfig {
             .map(|(a, b)| (a.to_string(), b.to_string()))
             .collect::<BTreeMap<String, String>>(),
         namespaces: BTreeMap::new(),
+        hide: Default::default(),
+        shell_tools: ["bash".to_string()].into_iter().collect(),
+        shell_content_result: ["bash".to_string()].into_iter().collect(),
+        tags_min: 3,
+        tags_max: 5,
+        inner_deadline_ms: None,
+        max_parallel_calls: 8,
         max_console_bytes: 65_536,
         max_calls_per_program: 32,
         tags_required: false,

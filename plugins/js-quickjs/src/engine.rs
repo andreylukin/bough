@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bough_plugin_js::{JsEngine, JsError, Program, RefusalKind, Run};
+use bough_plugin_js::{Caps, JsEngine, JsError, Program, RefusalKind, Run};
 use rquickjs::function::{Async, Func};
 use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, CaughtError, Function, Value};
 
@@ -47,14 +47,20 @@ impl JsEngine for QuickJsEngine {
     /// Parse only, through the SAME engine that will run the program, so host and engine can
     /// never disagree about what is legal. The source is wrapped in an async function
     /// EXPRESSION that is never called: the whole body is parsed, nothing is executed.
-    async fn check(&self, src: &str) -> Result<(), JsError> {
+    async fn check(&self, src: &str, caps: Caps) -> Result<(), JsError> {
+        self.check_bound(src, caps, &[]).await
+    }
+
+    /// The same parse, with the roster the sandbox will inject — so a program that shadows a
+    /// host function is told which one, at preflight, where the caller actually reads it.
+    async fn check_bound(&self, src: &str, caps: Caps, bound: &[String]) -> Result<(), JsError> {
         let src = src.to_string();
-        let cfg = self.cfg.clone();
-        on_a_js_thread(move || {
+        let bound = bound.to_vec();
+        on_a_js_thread(native_stack_bytes(caps), move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .build()
                 .expect("a current-thread runtime");
-            rt.block_on(async move { parse_only(&src, &[], &cfg).await })
+            rt.block_on(async move { parse_only(&src, &bound, caps).await })
         })
         .await
     }
@@ -72,7 +78,8 @@ impl JsEngine for QuickJsEngine {
         // Host functions run on the CALLER's runtime, not on the JS thread's: they reach back
         // into the tools pipeline, which owns timers and spawned work of its own.
         let host_rt = tokio::runtime::Handle::current();
-        on_a_js_thread(move || {
+        let stack = native_stack_bytes(p.caps);
+        on_a_js_thread(stack, move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_time()
                 .build()
@@ -85,7 +92,7 @@ impl JsEngine for QuickJsEngine {
 }
 
 /// Run `f` on a thread of its own. The QuickJS runtime is not `Send`, so it never leaves it.
-async fn on_a_js_thread<T, F>(f: F) -> Result<T, JsError>
+async fn on_a_js_thread<T, F>(stack_bytes: usize, f: F) -> Result<T, JsError>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, JsError> + Send + 'static,
@@ -93,7 +100,7 @@ where
     let (tx, rx) = tokio::sync::oneshot::channel();
     std::thread::Builder::new()
         .name("bough-js".into())
-        .stack_size(4 << 20)
+        .stack_size(stack_bytes)
         .spawn(move || {
             let _ = tx.send(f());
         })
@@ -105,6 +112,16 @@ where
         message: "the JS thread died without an outcome".into(),
         stack: None,
     }))
+}
+
+/// The OS thread's stack, DERIVED from the configured JS stack cap rather than fixed: QuickJS's
+/// `set_max_stack_size` counts only the JS frames, while the same native stack also carries the
+/// host bridge, so the thread gets double the cap and never less than 1 MiB. Keeping this a
+/// relation (not a tunable) is what makes `Caps::stack_bytes` safe to raise from a bundle patch:
+/// QuickJS always hits its own limit — and raises the typed `JsError::StackExceeded` — before the
+/// native stack runs out.
+fn native_stack_bytes(caps: Caps) -> usize {
+    caps.stack_bytes.saturating_mul(2).max(1 << 20)
 }
 
 /// A runtime with the caps set and nothing else. The `Guard` keeps the live-runtime count of the
@@ -125,14 +142,16 @@ impl Drop for Guard {
 }
 
 /// Compile-only, on a runtime that is thrown away.
-async fn parse_only(src: &str, bound: &[String], cfg: &QuickJsConfig) -> Result<(), JsError> {
+async fn parse_only(src: &str, bound: &[String], caps: Caps) -> Result<(), JsError> {
     let _guard = Guard::open();
     let rt = AsyncRuntime::new().map_err(thrown)?;
-    rt.set_memory_limit(64 << 20).await;
-    rt.set_max_stack_size(1 << 20).await;
+    // The preflight runs under the SAME validated envelope as the run it precedes (§0.2): no
+    // literal memory, stack or op budget lives here.
+    rt.set_memory_limit(caps.memory_bytes).await;
+    rt.set_max_stack_size(caps.stack_bytes).await;
     // Even a parse gets a budget: a pathological source must not wedge the thread.
     let ticks = AtomicU64::new(0);
-    let budget = cfg.interrupt_check_ops.saturating_mul(10_000);
+    let budget = caps.ops;
     rt.set_interrupt_handler(Some(Box::new(move || {
         ticks.fetch_add(1, Ordering::Relaxed) > budget
     })))
@@ -355,7 +374,15 @@ async fn call_host(
         return refusal_json(RefusalKind::NotFound, &format!("no host function `{name}`"));
     };
     let args: Vec<serde_json::Value> = serde_json::from_str(&args_json).unwrap_or_default();
-    let joined = rt.spawn(async move { body.call(args).await }).await;
+    // The host body runs on the CALLER's runtime, but it must not OUTLIVE the program that
+    // issued it. The wall-clock and cancel branches of `run_one`'s `select!` drop this future;
+    // a bare `JoinHandle` would leave the spawned task running, and it would go on appending its
+    // sub-steps after the round's closing `tool/result` had already been written — the ordering
+    // the ledger's "sub-steps sit between the call and its result" says is a fact. Aborting on
+    // drop makes the detached write impossible; an inner call cancelled this way is answered the
+    // way any cancelled call is.
+    let mut task = AbortOnDrop(rt.spawn(async move { body.call(args).await }));
+    let joined = (&mut task.0).await;
     match joined {
         Err(e) => refusal_json(
             RefusalKind::Error,
@@ -363,6 +390,15 @@ async fn call_host(
         ),
         Ok(Err(r)) => refusal_json(r.kind, &r.message),
         Ok(Ok(v)) => serde_json::json!({ "ok": v }).to_string(),
+    }
+}
+
+/// A spawned host call that is CANCELLED when the future awaiting it goes away.
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 
@@ -729,6 +765,50 @@ mod tests {
         assert_eq!(e.run(p).await, Err(JsError::Cancelled));
     }
 
+    /// A program the wall clock kills must not leave a host call still running behind it.
+    ///
+    /// The host body is spawned on the caller's runtime, so dropping the program future used to
+    /// DETACH it: the call went on to finish after `run` had answered, and the consumer appended
+    /// its `program/result` after the round's closing `tool/result` — the one ordering the ledger
+    /// treats as a fact. The spawned task is aborted with the future now, so the second half of
+    /// the host call never happens.
+    #[tokio::test]
+    async fn a_timed_out_program_leaves_no_host_call_running_behind_it() {
+        static FINISHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        struct Slow;
+        #[async_trait::async_trait]
+        impl HostCall for Slow {
+            async fn call(
+                &self,
+                _a: Vec<serde_json::Value>,
+            ) -> Result<serde_json::Value, HostRefusal> {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                // Stands for everything a real host call does AFTER the tool answers: appending
+                // its `program/result` sub-step.
+                FINISHED.store(true, Ordering::SeqCst);
+                Ok(serde_json::Value::Null)
+            }
+        }
+        let mut c = caps();
+        c.wall_ms = 100;
+        let (p, _s, _cancel) = program(
+            "await bash('sleep 30');",
+            c,
+            vec![host("bash", Arc::new(Slow))],
+        );
+        assert_eq!(
+            engine().run(p).await,
+            Err(JsError::TimeExceeded { ms: 100 })
+        );
+        // Well past the point the host body would have finished had it survived.
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        assert!(
+            !FINISHED.load(Ordering::SeqCst),
+            "the host call outlived the program it belonged to and would have written a \
+             sub-step after the round closed"
+        );
+    }
+
     #[tokio::test]
     async fn the_ambient_world_is_empty() {
         let out = run(
@@ -775,15 +855,75 @@ mod tests {
     #[tokio::test]
     async fn check_delegates_the_parse_to_the_engine_that_runs_it() {
         let e = engine();
-        assert_eq!(e.check("const x = 1; await bash('ls');").await, Ok(()));
-        match e.check("const p = \"one\ntwo\";").await {
+        assert_eq!(
+            e.check("const x = 1; await bash('ls');", caps()).await,
+            Ok(())
+        );
+        match e.check("const p = \"one\ntwo\";", caps()).await {
             Err(JsError::Syntax { message, .. }) => {
                 assert!(message.contains("does not parse"), "{message}")
             }
             other => panic!("expected Syntax, got {other:?}"),
         }
         // A check never RUNS the program: a program that would throw still checks clean.
-        assert_eq!(e.check("throw new Error('boom')").await, Ok(()));
+        assert_eq!(e.check("throw new Error('boom')", caps()).await, Ok(()));
+    }
+
+    /// The shadowed-binding diagnostic has to survive the PREFLIGHT, not just the run.
+    ///
+    /// `preflight::syntax_error_message`'s shadow branch is gated on the bound-name list, and
+    /// `check` passed an EMPTY one — while a consumer preflights every program and returns on the
+    /// error, so it never reaches the run path where the names are known. The branch was
+    /// unreachable in production. `check_bound` is that path with the roster attached.
+    ///
+    /// (In this engine the host functions are properties of `globalThis`, so a bare
+    /// `let bash = 1` inside the program's IIFE is legal JS and raises nothing. What QuickJS does
+    /// raise is "invalid redefinition of lexical identifier", which names no identifier — so
+    /// `preflight` now reads the declaration out of the source. Without both halves the whole
+    /// branch is dead under the embedded engine.)
+    #[tokio::test]
+    async fn check_bound_names_the_bound_identifier_a_program_redeclared() {
+        let e = engine();
+        let src = "let bash = 1;\nlet bash = 2;";
+
+        // Without the roster the parse still fails, but it cannot explain what was taken.
+        let plain = match e.check(src, caps()).await {
+            Err(JsError::Syntax { message, .. }) => message,
+            other => panic!("expected Syntax, got {other:?}"),
+        };
+        assert!(
+            !plain.contains("already bound"),
+            "an empty roster cannot explain a shadow: {plain}"
+        );
+
+        // With it, the model is told which host function it took and what to rename.
+        match e
+            .check_bound(src, caps(), &["bash".to_string(), "view".to_string()])
+            .await
+        {
+            Err(JsError::Syntax { message, .. }) => {
+                assert!(
+                    message.contains("`bash` is already bound") && message.contains("myBash"),
+                    "the preflight must name the shadowed binding: {message}"
+                );
+            }
+            other => panic!("expected Syntax, got {other:?}"),
+        }
+
+        // A name the sandbox does NOT inject is the program's own business.
+        match e
+            .check_bound(
+                "let mine = 1;\nlet mine = 2;",
+                caps(),
+                &["bash".to_string()],
+            )
+            .await
+        {
+            Err(JsError::Syntax { message, .. }) => {
+                assert!(!message.contains("already bound"), "{message}")
+            }
+            other => panic!("expected Syntax, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -801,19 +941,81 @@ mod tests {
         assert_eq!(sink.0.lock().len(), 50, "the SINK sees every line");
     }
 
+    /// §0.2: the preflight's envelope is the CONFIGURED one, not a literal inside the engine.
+    /// On the old code `parse_only` hardcoded 64 MiB / 1 MiB / `interrupt_check_ops * 10_000`,
+    /// so a tiny configured envelope had no effect at all and this parse succeeded.
+    #[tokio::test]
+    async fn the_preflight_runs_under_the_configured_caps() {
+        let mut c = caps();
+        c.memory_bytes = 8 << 10;
+        let src = format!("const big = [{}];", "1,".repeat(20_000));
+        let out = engine().check(&src, c).await;
+        assert!(
+            out.is_err(),
+            "a 8 KiB memory cap did not reach the preflight"
+        );
+        // The same source parses fine under the ordinary envelope.
+        assert_eq!(engine().check(&src, caps()).await, Ok(()));
+    }
+
+    /// A `stack_bytes` raised above the old literal 4 MiB OS thread stack used to overflow the
+    /// NATIVE stack (a crash, not an error). The thread's stack is derived from the cap now, so
+    /// QuickJS still wins the race and the seam's typed error is what comes out.
+    #[tokio::test]
+    async fn a_stack_cap_above_the_old_thread_stack_still_raises_a_typed_error() {
+        let mut c = caps();
+        c.stack_bytes = 8 << 20;
+        assert!(
+            native_stack_bytes(c) > c.stack_bytes,
+            "the OS stack must exceed the JS cap"
+        );
+        let (p, _s, _c) = program("function f(n) { return f(n + 1); } f(0);", c, vec![]);
+        match engine().run(p).await {
+            Err(JsError::StackExceeded) => {}
+            other => panic!("expected StackExceeded, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_native_stack_is_derived_from_the_cap_with_a_floor() {
+        let mut c = caps();
+        c.stack_bytes = 1 << 10;
+        assert_eq!(native_stack_bytes(c), 1 << 20);
+        c.stack_bytes = 8 << 20;
+        assert_eq!(native_stack_bytes(c), 16 << 20);
+    }
+
     /// The live-runtime count is process-global, so the one test that reads it runs alone.
     static COUNTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// Polls `invariant::live()` until it reads `want`, up to five seconds.
+    ///
+    /// The count is an unkeyed process global (see the crate's low-severity note): this test
+    /// holds `COUNTING`, but nothing stops another case's runtime from being alive on its own
+    /// `bough-js` thread while we read. Waiting for the count to COME BACK to a settled
+    /// baseline is the falsifiable half — a runtime that outlives its program never lets it.
+    async fn wait_for_live(want: i64) -> i64 {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let n = invariant::live();
+            if n == want || std::time::Instant::now() >= deadline {
+                return n;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
 
     #[tokio::test]
     async fn every_runtime_is_dropped() {
         let _alone = COUNTING.lock().await;
-        let before = invariant::live();
+        // A baseline the rest of the binary has quiesced to, not whatever it read mid-run.
+        let before = wait_for_live(0).await;
         let _ = run("console.log(1);").await;
         let _ = run("while (true) {}").await;
         let _ = run("throw new Error('x');").await;
-        let _ = engine().check("const x = 1;").await;
+        let _ = engine().check("const x = 1;", caps()).await;
         assert_eq!(
-            invariant::live(),
+            wait_for_live(before).await,
             before,
             "a QuickJS runtime outlived its program"
         );

@@ -348,3 +348,22 @@ async fn only_due_and_unfired_intents_are_selected() {
     assert_eq!(picked.len(), 1);
     assert_eq!(picked[0].body.id, ScheduleId::new("a"));
 }
+
+/// A declared inject key is a reload trigger, so declaring one `apply` never reads remounts the
+/// row (killing every live `bg` job with it) the first time some other bundle supplies a provider
+/// for it. `apply` reads `tools`, `ledger`, `workspace` and optionally `agents` — and nothing else.
+#[test]
+fn the_row_declares_only_the_inject_keys_apply_reads() {
+    use bough_kernel::Plugin;
+    use bough_plugin_tools_operator::OperatorPlugin;
+    let inject = OperatorPlugin::inject();
+    assert_eq!(
+        inject.required.iter().cloned().collect::<Vec<_>>(),
+        vec!["ledger".to_string(), "tools".into(), "workspace".into()],
+    );
+    assert_eq!(
+        inject.optional.iter().cloned().collect::<Vec<_>>(),
+        vec!["agents".to_string()],
+        "`mail` and `schedule` are read nowhere in `apply`",
+    );
+}

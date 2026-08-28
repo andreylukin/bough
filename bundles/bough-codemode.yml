@@ -45,6 +45,21 @@
       act: open_pr|push_to_pr|bot_thread_op|linear_write
     namespaces:
       mcp: "mcp__"
+    # DROPPED under code mode (phase brief item 4): `bash` + `rg` and `view` cover `read_file`,
+    # `glob` and `grep`, and `edit_file(old, new)` is a regression against the hash-anchored patch
+    # grammar. Visibility only — the tools stay registered and a typed-tools agent still has them.
+    hide: [read_file, write_file, edit_file, glob, grep]
+    # The Consumer knows nothing about a concrete shell Provider; these name it.
+    shell_tools: [bash]
+    shell_content_result: [bash]
+    tags_min: 3
+    tags_max: 5
+    # Code mode's spelling of `tools.max_parallel` (bough-base sets 8), enforced inside a program
+    # because each host call issues its own single-call `execute_under`.
+    max_parallel_calls: 8
+    # Equal to `tools.default_deadline_ms` (bough-base sets 120000), so the same tool answers the
+    # same whether a typed call or a program made it. The seam does not expose its value to read.
+    inner_deadline_ms: 120000
     max_console_bytes: 65536
     max_calls_per_program: 64
     tags_required: true
