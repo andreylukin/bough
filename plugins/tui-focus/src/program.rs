@@ -359,6 +359,14 @@ pub fn program_lines(v: &ProgramView<'_>) -> (Vec<Line<'static>>, Vec<(ToolCallI
             lines.extend(bough_plugin_tui_render::tool_body(&view, v.max_tool_lines));
         }
     }
+    // The opened block sits on the code ground (the TUI brief, D3): source, console and the
+    // inner calls are one object from the header's next line to the last, the same texture a
+    // fenced code block has, so prose after it is visibly back on the transcript's ground.
+    for line in lines.iter_mut().skip(1) {
+        *line = line
+            .clone()
+            .patch_style(Style::default().bg(v.theme.code_bg));
+    }
     (lines, headers)
 }
 
