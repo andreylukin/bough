@@ -67,6 +67,14 @@ use bough_plugin_js_quickjs as _;
 use bough_plugin_tools_codemode as _;
 // Phase ux1's one new row (§17 Phase 3 / phase ux1 §2.13): the status line.
 use bough_plugin_tui_status as _;
+// Phase c's rows (§11 "Digging", §8, §7, §17 Phase 8): the three digging panes, plus two
+// FIXTURES — `fault-inject` and `actions-shim` are linked into the catalog and named by no bundle,
+// exactly as `tui-probe` is; a test's or a script's own `--patch` mounts them.
+use bough_plugin_actions_shim as _;
+use bough_plugin_fault_inject as _;
+use bough_plugin_tui_drift as _;
+use bough_plugin_tui_preview as _;
+use bough_plugin_tui_timeline as _;
 
 // Phase 6's rows (§17 Phase 6, track B). Same relationship: linked, never named. `power-test`,
 // `schedule-manual` and `ward-test`'s host fixtures are FIXTURES — in the catalog, named by no
@@ -100,4 +108,5 @@ pub mod cli;
 pub mod compose;
 pub mod exec;
 pub mod profile;
+pub mod vocabulary;
 pub mod watch;

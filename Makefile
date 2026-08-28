@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help check build test doc-test lint gate-crate gates release audit-plugins live bench bench-tools tui-test tui-test-replay ux2
+.PHONY: help check build test doc-test lint gate-crate gates release audit-plugins events live bench bench-tools tui-test tui-test-replay ux2
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-16s %s\n", $$1, $$2}'
@@ -70,7 +70,10 @@ bench-tools: release ## phase codemode: typed tools vs code mode over the task b
 release: ## cargo build --release
 	cargo build --release
 
-audit-plugins: release ## REQUIREMENTS §17 Phase 8: boot with each bough-base row disabled, assert the tree settles
+events: ## REQUIREMENTS §15 item 7: the event catalog, and the gate that it matches the tree
+	cargo run --quiet -p xtask -- events --check
+
+audit-plugins: ## REQUIREMENTS §17 Phase 8: profiles boot, every bundle row comes out, nothing leaks, every two-provider seam runs under each provider
 	./scripts/audit-plugins.sh
 
 # REQUIREMENTS §17 Phase 3 (and Phase 6: 27-drafts, 28-mcp-tool, 29-swap-collector,

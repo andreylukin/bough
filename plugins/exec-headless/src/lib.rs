@@ -120,7 +120,9 @@ async fn run(
     // and this task should not turn that into a second, less legible failure.
     if let Some(kernel) = ctx.kernel() {
         if !kernel.quiesce().await {
-            eprintln!("bough exec: the tree had not settled when the task started; running it anyway");
+            eprintln!(
+                "bough exec: the tree had not settled when the task started; running it anyway"
+            );
         }
     }
     // …and then for the loop Provider's factory slot specifically. Waiting FOREVER would turn a

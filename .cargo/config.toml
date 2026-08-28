@@ -1,0 +1,8 @@
+# Invariant this file holds: `cargo xtask …` means ONE thing in this workspace — run the
+# `xtask` crate's binary with everything after the alias handed to it.
+#
+# The event catalog gate (§15 item 7) is spelled `cargo xtask events` in the Makefile, in
+# `docs/event-catalog.md`'s header and in `crates/xtask/tests/catalog.rs`. The alias is what
+# makes those three the same command instead of three spellings of `cargo run -p xtask --`.
+[alias]
+xtask = "run --quiet --package xtask --"

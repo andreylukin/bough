@@ -15,3 +15,9 @@ boots = { max-threads = 4 }
 [[profile.default.overrides]]
 filter = 'package(bough) & kind(test)'
 test-group = 'boots'
+# These boot the whole tree, and several SPAWN the binary and poll it. `crash_reconcile.rs` gives
+# itself a 240 s budget on purpose (its own comment: "a deadline that fires under load is a flake,
+# not a gate"), which the 180 s default kill cut short — nextest terminated the case before its own
+# deadline could report what it was waiting for. The two budgets agree now: the harness gives the
+# case room to reach its own deadline and say so.
+slow-timeout = { period = "60s", terminate-after = 6 }

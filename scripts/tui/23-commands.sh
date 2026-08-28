@@ -115,7 +115,12 @@ sleep 0.6
 
 shell-use press Enter
 t enter_accepts_the_palette_selection \
-  see "shift+enter" --timeout 15000
+  bash -c '
+    # The help BODY, not the palette row: `see "help"` matched the `/help` row that was already
+    # on screen before Enter, so it passed whether or not Enter accepted anything.
+    see "shift+enter" --timeout 15000 || { echo "Enter did not run the selected command"; exit 1; }
+    exit 0
+  '
 
 # --- `/help` lists the keys that actually work. -----------------------------------------------
 #
@@ -162,18 +167,17 @@ shell-use press Escape
 #
 # MERGE: the composer is EMPTIED and the overlays are closed FIRST. `?` opened the help over an
 # already-open palette, and one Escape closes one overlay (`20-frame.sh` pins exactly that), so
-# the Enter below was landing on whatever was still up rather than on the composer line. The
+# the send below was landing on whatever was still up rather than on the composer line. The
 # notice is then polled rather than read once: it is transient (`notice_ms` is 6 s) and the
 # assertion has to look while it is there.
 shell-use keys "Ctrl+u"
 shell-use press Escape
 sleep 0.4
-shell-use type "/hepl"
-# MERGE (codemode): the palette opens on `/` and closes again when nothing matches `hepl`;
-# an Enter sent inside that window lands on the palette instead of on the composer and the
-# miss is never submitted. One second is past the close.
-sleep 1.0
-shell-use press Enter
+# MERGE (track C): `submit` rather than `type` + a separate `press Enter`. With the palette open
+# on a query that matches NOTHING, a standalone Enter is swallowed and the line is never sent —
+# a PRODUCT finding for the ux track, recorded in `docs/track-c-merge-notes.md`. `submit` sends
+# it the way `05-commands.sh` does, so this bullet reads a screen where the miss really ran.
+shell-use submit "/hepl"
 t an_unknown_command_suggests_and_keeps \
   bash -c '
     see "/hepl" --timeout 10000 || { echo "the typed command was destroyed"; exit 1; }

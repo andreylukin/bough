@@ -1,0 +1,36 @@
+[package]
+name = "bough-plugin-actions-shim"
+autotests = false
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# A CATALOG-ONLY `actions` Provider (decision D-C8): the `gh`-shaped Provider the crash-and-restart
+# hardening test acts through. Named by no bundle; mounted by a test's own `--patch`. Tests never
+# call the real `gh` (AGENTS.md): a recording shim goes first on PATH.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+bough-plugin-actions = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+bough-plugin-ledger-memory = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

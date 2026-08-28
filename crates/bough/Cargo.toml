@@ -119,13 +119,26 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
 
+# Phase c (§11 digging, §8 drift dashboard, §7, §17 Phase 8): the three digging panes, plus the
+# two FIXTURE rows — `fault-inject` and `actions-shim` are in the catalog and in no bundle, exactly
+# as `tui-probe` is. Linked for the one reason every row above is: so `inventory::submit!` lands in
+# the binary's catalog.
+bough-plugin-tui-preview = { workspace = true }
+bough-plugin-tui-timeline = { workspace = true }
+bough-plugin-tui-drift = { workspace = true }
+bough-plugin-fault-inject = { workspace = true }
+bough-plugin-actions-shim = { workspace = true }
+# `vocabulary::all()` is the launcher's own union of every plugin's step types, for a reader that
+# has no kernel (`docs/track-c-merge-notes.md`), so the ledger's Definition is a real dependency.
+bough-plugin-ledger = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3"
 libc = { workspace = true }
-# Phase 1 integration gates: the swap/bench/invariant/calibration tests speak the ledger and
-# projection vocabularies directly, and the live calibration talks to Anthropic through bough-llm.
-bough-plugin-ledger = { workspace = true }
+# Phase 1 integration gates: the swap/bench/invariant/calibration tests speak the projection
+# vocabulary directly, and the live calibration talks to Anthropic through bough-llm. (The ledger
+# is an ordinary dependency now — see `vocabulary::all()`.)
 bough-plugin-projection = { workspace = true }
 # V5: the recording `gh` shim's fixture names are computed by the crate that spawns `gh`.
 bough-plugin-gh-cli = { workspace = true }
@@ -139,6 +152,8 @@ bough-plugin-agents = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }
 futures = { workspace = true }
+# WP-5's hardening tests register a worker Provider of their own (an `#[async_trait]` impl).
+async-trait = { workspace = true }
 
 [[test]]
 name = "tests"

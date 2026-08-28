@@ -389,3 +389,58 @@ fn every_test_the_verification_map_names_exists() {
         "the verification map names tests that do not exist: {missing:?}"
     );
 }
+
+/// Track C's §5 map names shell-use bullets, and a bullet name that no script carries is a claim
+/// with nothing behind it — the codemode map's `every_test_the_verification_map_names_exists` for
+/// the other half of the tree.
+///
+/// MERGE: the map was written against the plan's DRAFTED spellings and the scripts were written
+/// against the surface they found, so most of the names it cited did not exist
+/// (`docs/track-c-merge-notes.md`, "Bullet NAMES differ from the plan's list"). The map is
+/// re-pointed at the scripts' own names; this keeps it there.
+#[test]
+fn every_shell_bullet_the_phase_c_map_names_exists() {
+    let plan = doc("docs/phase-c-plan.md");
+    let map = section(&plan, "## 5. Verification map");
+
+    let mut named: Vec<(String, String)> = Vec::new();
+    for (i, _) in map.match_indices("scripts/tui/") {
+        let rest = &map[i + "scripts/tui/".len()..];
+        let Some((script, after)) = rest.split_once(".sh::") else {
+            continue;
+        };
+        if script.contains(' ') {
+            continue;
+        }
+        // `{a, b, c}` or a single name.
+        let list = after
+            .trim_start_matches('{')
+            .split(['}', '`'])
+            .next()
+            .unwrap_or_default();
+        for name in list.split(',') {
+            let name = name.trim();
+            if name.len() > 8 && name.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                named.push((format!("{script}.sh"), name.to_string()));
+            }
+        }
+    }
+    assert!(
+        named.len() > 15,
+        "the map names {} shell bullets, which cannot be right",
+        named.len()
+    );
+
+    let mut missing = Vec::new();
+    for (script, bullet) in &named {
+        let path = repo_root().join("scripts/tui").join(script);
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        if !text.contains(bullet) {
+            missing.push(format!("{script}::{bullet}"));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "the phase-c verification map names shell bullets no script carries: {missing:?}"
+    );
+}
