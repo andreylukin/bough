@@ -41,6 +41,9 @@
     history_cap: 200
     notice_ms: 6000
     flash_ms: 900
+    # The kitty keyboard protocol (Shift+Enter as a newline on terminals that speak it). `false`
+    # keeps legacy key reporting.
+    keyboard_enhancement: true
 
 - id: tui.strip
   plugin: tui-strip

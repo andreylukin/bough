@@ -54,7 +54,8 @@ impl TerminalGuard {
         // keyboard-only persona's two lines fused into one. Terminals that speak the kitty
         // protocol then report `Enter` with SHIFT; the flags are popped on the way out. Best
         // effort: a terminal that does not support them is left as it was.
-        if matches!(terminal::supports_keyboard_enhancement(), Ok(true)) {
+        if cfg.keyboard_enhancement && matches!(terminal::supports_keyboard_enhancement(), Ok(true))
+        {
             let _ = execute!(
                 out,
                 event::PushKeyboardEnhancementFlags(
