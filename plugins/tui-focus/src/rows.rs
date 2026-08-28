@@ -389,13 +389,26 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
             // on its first words, its end by the `── turn ended · …` rule. `── turn` above the
             // label was a third chrome line saying what the label already says.
             "wake/start" => {}
-            "wake/end" => out.push(Row::WakeMark {
-                step: step.id.clone(),
-                wake: step.wake.clone(),
-                phase: Phase::End,
-                reason: body_str(step, "reason"),
-                cause: body_str(step, "cause"),
-            }),
+            // The rule only when the ending is NEWS (the TUI brief, D5): a completed turn is
+            // already told by the next speaker label, so `── turn ended · completed` after every
+            // turn was a second line saying the same thing. An interrupt, an abort, a crash
+            // repair — those the reader must not miss, and they keep the rule.
+            "wake/end" => {
+                let reason = body_str(step, "reason");
+                let quiet = matches!(
+                    reason.as_deref().map(str::trim),
+                    None | Some("") | Some("completed")
+                );
+                if !quiet {
+                    out.push(Row::WakeMark {
+                        step: step.id.clone(),
+                        wake: step.wake.clone(),
+                        phase: Phase::End,
+                        reason,
+                        cause: body_str(step, "cause"),
+                    });
+                }
+            }
             _ => match about_from_step(step) {
                 // `about/line` BY NAME (P3-D11): the pane does not depend on the row that writes it.
                 // It is the RAIL's line (and `/agents`'), not the transcript's: echoed here it was a

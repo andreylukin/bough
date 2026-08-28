@@ -542,9 +542,10 @@ fn the_painted_transcript_says_turn_and_shows_no_markdown_markers() {
     let rows = rows_from_steps(&trajectory());
     for w in [80u16, 200] {
         let out = paint(&rows, w).join("\n");
-        // ONE rule per turn (visual audit F2): the end. The start is the speaker label.
-        assert_eq!(out.matches("── turn").count(), 1, "@{w}: {out}");
-        assert!(out.contains("── turn ended · completed"), "@{w}: {out}");
+        // No rule on a completed turn (the TUI brief, D5): the speaker labels say it. The
+        // fixture's turn completes, so nothing is ruled at all.
+        assert_eq!(out.matches("── turn").count(), 0, "@{w}: {out}");
+        assert!(!out.contains("turn ended"), "@{w}: {out}");
         assert!(
             !out.contains("wake"),
             "@{w}: internal vocabulary on screen:\n{out}"
@@ -616,17 +617,17 @@ fn a_turn_is_a_speaker_label_and_one_rule() {
         ),
         step(7, "wake/end", serde_json::json!({ "reason": "completed" })),
     ]);
-    // No start mark, no about echo: Andrey, text, tool, text, end.
+    // No start mark, no about echo, no rule on a completed end: Andrey, text, tool, text.
     assert!(matches!(rows[0], Row::Andrey { .. }), "{rows:?}");
     assert!(
-        matches!(rows[rows.len() - 1], Row::WakeMark { .. }),
+        !rows.iter().any(|r| matches!(r, Row::WakeMark { .. })),
         "{rows:?}"
     );
     assert!(
         !rows.iter().any(|r| matches!(r, Row::About { .. })),
         "{rows:?}"
     );
-    assert_eq!(rows.len(), 5, "{rows:?}");
+    assert_eq!(rows.len(), 4, "{rows:?}");
     // The first text after Andrey opens the agent's speech; the text after its own tool does not.
     assert!(opens_speech(&rows, 1));
     assert!(!opens_speech(&rows, 3));
@@ -671,9 +672,25 @@ fn a_turn_is_a_speaker_label_and_one_rule() {
     assert!(out.iter().any(|l| l.trim() == "andrey:"), "{out:?}");
     assert_eq!(
         out.iter().filter(|l| l.contains("── turn")).count(),
-        1,
+        0,
         "{out:?}"
     );
+    // An ending that is news keeps its rule.
+    let cut = rows_from_steps(&[
+        step(
+            1,
+            "thought/text",
+            serde_json::json!({ "step_index": 0, "text": "half a" }),
+        ),
+        step(
+            2,
+            "wake/end",
+            serde_json::json!({ "reason": "aborted", "cause": "user" }),
+        ),
+    ]);
+    assert!(matches!(cut[1], Row::WakeMark { .. }), "{cut:?}");
+    let painted = paint_as(&cut, 80, Some("sol")).join("\n");
+    assert!(painted.contains("── turn interrupted"), "{painted}");
     // With no name known, no label is invented.
     let unnamed = paint(&rows, 80);
     assert!(!unnamed.iter().any(|l| l.trim() == "sol:"), "{unnamed:?}");
