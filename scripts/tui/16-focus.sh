@@ -90,22 +90,33 @@ t tab_paints_a_focus_ring \
 # Which stop of the ring the transcript is at is the layout's business, not this bullet's, so the
 # walk keeps Tabbing until the arrows land somewhere that paints a focused row.
 reach_a_focused_row() {
-  local i
-  # First find the stop where the arrows paint a focused row at all…
+  local i was now
+  # First find the stop where the arrows MOVE a focused row. Not "where a marker is on screen":
+  # the rail wears the same glyph on the focused lane (D-uxv-5), and a click leaves the marker on
+  # the row it landed on without moving the keyboard (D-uxv-20) — so a marker proves nothing
+  # about where Up goes. A marker row that CHANGES after Up does.
+  marker_rows() { shell-use text | cut -c35- | grep "▌" || true; }
   for i in $(seq 1 6); do
+    was="$(marker_rows)"
     shell-use press Up >/dev/null
     sleep 0.3
-    if shell-use text | grep -q "▌"; then break; fi
+    now="$(marker_rows)"
+    if [ -n "$now" ] && [ "$now" != "$was" ]; then break; fi
     shell-use press Tab >/dev/null
     sleep 0.3
   done
-  # …then walk the focus UP to the row this bullet names. A keyboard user arriving from the
-  # composer lands on the NEWEST row (`RowFocus::moved` from `None`), so the older tool rows are
-  # up from there. Where `read_file` sits is the fixture's business, so the walk is bounded
-  # rather than counted.
+  # …then walk the focus to the row this bullet names. A keyboard user arriving from the
+  # composer lands on the NEWEST row (`RowFocus::moved` from `None`) — unless a click already put
+  # the marker somewhere (D-uxv-20), as this script's own click on `bash` did — so the walk goes
+  # up first and then back down, bounded, rather than assuming where it started.
   for i in $(seq 1 20); do
     if row_with "▌" "read_file" >/dev/null 2>&1; then return 0; fi
     shell-use press Up >/dev/null
+    sleep 0.25
+  done
+  for i in $(seq 1 40); do
+    if row_with "▌" "read_file" >/dev/null 2>&1; then return 0; fi
+    shell-use press Down >/dev/null
     sleep 0.25
   done
   row_with "▌" "read_file"
