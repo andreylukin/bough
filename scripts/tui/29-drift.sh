@@ -13,6 +13,7 @@ source "$(dirname "$0")/lib.sh"
   the_header_counts_every_agent \
   the_first_r_arms_the_reset_on_a_row_with_a_verdict \
   the_second_r_dispatches_the_reset_command \
+  esc_disarms_without_resetting \
   the_status_line_survives_every_size
   exit 0
 }
@@ -88,6 +89,35 @@ t the_second_r_dispatches_the_reset_command \
     done
     echo "the second r dispatched nothing"
     exit 1
+  '
+
+# The other half of D-C5: an arm that is not confirmed RESETS NOTHING. `r` arms, `Esc` disarms,
+# and no second reset is dispatched — the count of dispatched resets on screen does not move.
+#
+# The dispatch handed the keyboard back to the composer (`/reset` is an ordinary command), so the
+# board is re-opened first — otherwise the `r` below is typed into the composer and the bullet
+# asserts nothing about arming at all.
+shell-use keys "Ctrl+u"
+shell-use submit "/driftboard"
+sleep 1
+resets_dispatched() { shell-use text | grep -cE "^reset: (sol|terra)"; }
+export -f resets_dispatched
+before_resets="$(resets_dispatched)"
+shell-use press r
+sleep 0.8
+shell-use text | grep -qE "press r again to reset" || { echo "the board did not arm: the keyboard is not on the pane"; exit 1; }
+sleep 0.8
+shell-use press Escape
+t esc_disarms_without_resetting \
+  bash -c '
+    for i in $(seq 1 30); do
+      shell-use text | grep -qE "press r again to reset" || break
+      sleep 0.3
+    done
+    shell-use text | grep -qE "press r again to reset" && { echo "Esc left the reset armed"; exit 1; }
+    now="$(resets_dispatched)"
+    [ "${now:-0}" -eq '"${before_resets:-0}"' ] || { echo "a reset was dispatched by the disarm: ${now} vs '"${before_resets:-0}"'"; exit 1; }
+    exit 0
   '
 
 # The reset`s own output is on screen; Esc dismisses it (the ux1 rule) before the resize walk.

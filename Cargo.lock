@@ -251,6 +251,7 @@ name = "bough"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bough-kernel",
  "bough-llm",
  "bough-plugin-about-line",

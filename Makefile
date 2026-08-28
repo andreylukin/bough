@@ -42,7 +42,7 @@ release: ## cargo build --release
 events: ## REQUIREMENTS §15 item 7: the event catalog, and the gate that it matches the tree
 	cargo run --quiet -p xtask -- events --check
 
-audit-plugins: release ## REQUIREMENTS §17 Phase 8: boot with each bough-base row disabled, assert the tree settles
+audit-plugins: ## REQUIREMENTS §17 Phase 8: profiles boot, every bundle row comes out, nothing leaks, every two-provider seam runs under each provider
 	./scripts/audit-plugins.sh
 
 # REQUIREMENTS §17 Phase 3: the shell-use suite. It drives the RELEASE binary in a real PTY, with

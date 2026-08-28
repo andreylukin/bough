@@ -108,3 +108,5 @@ bough-llm = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }
 futures = { workspace = true }
+# WP-5's hardening tests register a worker Provider of their own (an `#[async_trait]` impl).
+async-trait = { workspace = true }

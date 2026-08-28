@@ -32,8 +32,8 @@ with its declared dispatch mode, checked against every dispatch site. Do not edi
 | `hello/greeted` | parallel | `GreetedEvent` | hello | 2 | 0 |
 | `kernel/fiber-state` | emit | `FiberStateChanged` | bough-kernel | 1 | 0 |
 | `kernel/invariant-violated` | emit | `InvariantViolated` | bough-kernel | 1 | 0 |
-| `kernel/listener-failed` | emit | `ListenerFailed` | bough-kernel | 0 | 1 |
-| `kernel/rows-unresolved` | emit | `RowsUnresolved` | bough-kernel | 1 | 0 |
+| `kernel/listener-failed` | emit | `ListenerFailed` | bough-kernel | 0 | 2 |
+| `kernel/rows-unresolved` | emit | `RowsUnresolved` | bough-kernel | 1 | 1 |
 | `ledger/step` | emit | `LedgerStep` | ledger | 4 | 20 |
 | `llm/stream` | waterfall | `LlmStreamEvent` | llm | 1 | 0 |
 | `mail/route` | waterfall | `MailRoute` | mail-router | 1 | 0 |

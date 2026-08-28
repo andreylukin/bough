@@ -13,6 +13,7 @@ source "$(dirname "$0")/lib.sh"
   a_filter_typed_in_the_pane_narrows_the_rows \
   an_unknown_filter_word_is_refused_with_the_usage \
   esc_clears_the_editor_and_then_gives_the_keyboard_back \
+  the_pane_collapses_below_its_breakpoint \
   the_status_line_survives_every_size
   exit 0
 }
@@ -115,6 +116,27 @@ t esc_clears_the_editor_and_then_gives_the_keyboard_back \
     exit 1
   '
 for i in 1 2; do shell-use press Backspace; done
+
+# `collapse_rows: 24` is a `SlotSize::Responsive` breakpoint, not a toggle (D-C2): under it the
+# pane costs the Aux band NOTHING, and over it it comes back with no patch and no restart.
+t the_pane_collapses_below_its_breakpoint \
+  bash -c '
+    shell-use resize 120 20 >/dev/null
+    shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
+    for i in $(seq 1 20); do
+      shell-use text | grep -qF -- "filter [" || break
+      sleep 0.4
+    done
+    shell-use text | grep -qF -- "filter [" && { echo "the timeline is still laid out at 20 rows"; exit 1; }
+    shell-use resize 120 40 >/dev/null
+    shell-use wait idle --timeout 8000 >/dev/null 2>&1 || true
+    for i in $(seq 1 20); do
+      shell-use text | grep -qF -- "filter [" && exit 0
+      sleep 0.4
+    done
+    echo "the timeline did not come back at 40 rows"
+    exit 1
+  '
 
 status_is_there() { shell-use text | grep -q "bough " || { echo "no status line"; exit 1; }; }
 export -f status_is_there
