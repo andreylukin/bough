@@ -185,8 +185,9 @@ async fn a_completed_wake_refreshes_the_line_and_the_state_half_cites_the_steps_
 
     let line: AboutLine = serde_json::from_value((*step.body).clone()).expect("a readable line");
     assert_eq!(line.of_wake, WakeId::new("w1"));
-    assert_eq!(line.state, "read the plan; ran `bash`");
-    assert_eq!(line.intent, "next: write the tests");
+    // Round 6: the state half is the WORK (`ran \`bash\``), the intent the first line said.
+    assert_eq!(line.state, "ran `bash`");
+    assert_eq!(line.intent, "read the plan");
     assert_eq!(lines(&l).await.len(), 1);
 }
 
