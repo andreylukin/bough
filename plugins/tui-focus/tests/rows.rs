@@ -56,6 +56,7 @@ fn a_call_and_its_result_fold_into_one_row() {
         args,
         result,
         call_step,
+        ..
     } = &rows[0]
     else {
         panic!("expected a Tool row, got {:?}", rows[0]);
@@ -866,4 +867,51 @@ fn a_draft_call_is_rendered_only_by_its_card() {
     // The card opens the agent's speech like any agent row, and the text after it continues it.
     assert!(bough_plugin_tui_focus::rows::opens_speech(&rows, 0));
     assert!(!bough_plugin_tui_focus::rows::opens_speech(&rows, 1));
+}
+
+/// Round 5: while a call is in flight the span ends with `▸ running · <call> · 12s`.
+#[test]
+fn an_in_flight_call_gets_a_live_line_with_its_clock() {
+    use bough_plugin_tui_focus::rows::running_line;
+    let rows = rows_from_steps(&[
+        step(
+            1,
+            "thought/text",
+            serde_json::json!({ "step_index": 0, "text": "on it" }),
+        ),
+        step(
+            2,
+            "tool/call",
+            serde_json::json!({ "call": "c1", "name": "bash", "args": { "command": "cargo test -p x" } }),
+        ),
+    ]);
+    let at = match &rows[1] {
+        Row::Tool { at, .. } => *at,
+        other => panic!("{other:?}"),
+    };
+    let line = running_line(&rows, at + chrono::Duration::seconds(12)).expect("in flight");
+    assert_eq!(line, "▸ running · bash cargo test -p x · 12s");
+    assert_eq!(
+        running_line(&rows, at + chrono::Duration::seconds(75)).unwrap(),
+        "▸ running · bash cargo test -p x · 1m15"
+    );
+    let done = rows_from_steps(&[
+        step(
+            1,
+            "thought/text",
+            serde_json::json!({ "step_index": 0, "text": "on it" }),
+        ),
+        step(
+            2,
+            "tool/call",
+            serde_json::json!({ "call": "c1", "name": "bash", "args": { "command": "ls" } }),
+        ),
+        step(
+            3,
+            "tool/result",
+            serde_json::json!({ "call": "c1", "name": "bash", "outcome": "ok", "content": "a", "step_index": 0 }),
+        ),
+    ]);
+    assert_eq!(running_line(&done, at), None);
+    assert_eq!(running_line(&[], at), None);
 }

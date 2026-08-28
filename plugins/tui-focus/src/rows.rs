@@ -98,6 +98,8 @@ pub enum Row {
         args: serde_json::Value,
         result: Option<ToolResultBody>,
         call_step: StepId,
+        /// When the call was made, for the live `running · … · 12s` line (round 5).
+        at: chrono::DateTime<chrono::Utc>,
     },
     /// ONE program under code mode: the `run` call that carried the JS source, every `program/*`
     /// step written from inside it, and the `tool/result` that closed it — one row, the same rule
@@ -117,6 +119,8 @@ pub enum Row {
         ops: u64,
         ms: u64,
         call_step: StepId,
+        /// When the `run` call was made (round 5, the live line).
+        at: chrono::DateTime<chrono::Utc>,
         /// Every step folded into this row, oldest first (the [`Row::Text`] rule).
         parts: Vec<StepId>,
     },
@@ -400,6 +404,7 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
                                 args: serde_json::Value::Null,
                                 result: Some(body),
                                 call_step: step.id.clone(),
+                                at: step.at,
                             });
                         }
                     },
@@ -469,6 +474,75 @@ fn claim_row(step: &Step) -> Option<(String, Row)> {
             state: ClaimState::Open,
         },
     ))
+}
+
+/// PURE: the live line for an in-flight call at the END of the rows (round 5): the newest agent
+/// row, when it is a tool or program with no result yet — `▸ running · bash cargo test · 12s`.
+/// `None` when nothing is in flight, so a finished transcript shows no such line.
+pub fn running_line(rows: &[Row], now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+    let last = rows.iter().rev().find(|r| is_agent_row(r))?;
+    let (what, at) = match last {
+        Row::Tool {
+            name,
+            args,
+            result: None,
+            at,
+            ..
+        } => (
+            format!("{name} {}", first_string(args))
+                .trim_end()
+                .to_string(),
+            *at,
+        ),
+        Row::Program {
+            subs,
+            result: None,
+            error: None,
+            at,
+            ..
+        } => {
+            let current = subs
+                .iter()
+                .rev()
+                .find(|s| s.result.is_none())
+                .map(|s| {
+                    format!("{} {}", s.name, first_string(&s.args))
+                        .trim_end()
+                        .to_string()
+                })
+                .unwrap_or_else(|| "program".to_string());
+            (current, *at)
+        }
+        _ => return None,
+    };
+    let secs = (now - at).num_seconds().max(0);
+    let clock = if secs < 60 {
+        format!("{secs}s")
+    } else {
+        format!("{}m{:02}", secs / 60, secs % 60)
+    };
+    Some(format!("\u{25b8} running \u{b7} {what} \u{b7} {clock}"))
+}
+
+/// The argument a person would name a call by: `command`/`path`/`pattern`/… else the first string.
+fn first_string(args: &serde_json::Value) -> String {
+    const KEYS: [&str; 8] = [
+        "command", "cmd", "path", "file", "pattern", "query", "url", "name",
+    ];
+    let Some(o) = args.as_object() else {
+        return String::new();
+    };
+    let v = KEYS
+        .iter()
+        .find_map(|k| o.get(*k).and_then(|v| v.as_str()))
+        .or_else(|| o.values().find_map(|v| v.as_str()))
+        .unwrap_or("");
+    let v = v.lines().next().unwrap_or("").trim();
+    if v.chars().count() > 40 {
+        v.chars().take(39).collect::<String>() + "\u{2026}"
+    } else {
+        v.to_string()
+    }
 }
 
 /// A tool whose rendering is the CARD its step produces, so its call row is not drawn (D6).
@@ -545,6 +619,7 @@ fn tool_call_row(step: &Step) -> Option<(ToolCallId, Row)> {
             args,
             result: None,
             call_step: step.id.clone(),
+            at: step.at,
         },
     ))
 }

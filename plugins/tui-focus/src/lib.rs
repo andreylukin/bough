@@ -102,6 +102,9 @@ pub struct FocusState {
     /// Where each row's FIRST line landed in the last frame, by row index. `handle` has no
     /// geometry of its own, and moving the row focus has to be able to bring the row into view.
     pub row_lines: Vec<u16>,
+    /// The view's `now` as of the last frame, stamped by `render` so the pure line builder can
+    /// say how long the in-flight call has run (round 5).
+    pub now: Option<chrono::DateTime<chrono::Utc>>,
     /// The focused agent's NAME, for the speaker label on its text (visual audit F2). `None`
     /// until `retarget` has looked it up; a text row then carries no label rather than a guess.
     pub agent_name: Option<String>,
@@ -516,6 +519,15 @@ impl FocusPane {
                 }
             }
         }
+        // The LIVE LINE (round 5): while a call is in flight, the bottom of the agent's span says
+        // what is running and for how long — `▸ running · bash cargo test · 12s` — so a reader
+        // who looks away and back knows what the wait is for without reading the status line.
+        if let Some(live_line) = state
+            .now
+            .and_then(|now| rows::running_line(&state.rows, now))
+        {
+            lines.push(Line::styled(live_line, Style::default().fg(theme.accent)));
+        }
         // The live tail of a turn whose first `thought/text` has not landed yet: without this the
         // first token of every answer would be invisible until the first flush.
         if trailing.is_none() && !live.text.is_empty() {
@@ -631,6 +643,7 @@ impl Pane for FocusPane {
         // last frame actually had. Nothing was writing it, which left every keyboard and wheel
         // scroll clamped against a height of 0.
         state.height = cx.area.height;
+        state.now = Some(cx.view.now);
         let live = self.live.lock().clone();
         let theme = *cx.theme();
         // The FOCUS RING (B1/M16): one column, ALWAYS reserved, painted only when this pane holds

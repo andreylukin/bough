@@ -114,6 +114,7 @@ pub fn program_row(step: &Step) -> Option<(ToolCallId, Row)> {
             ms: 0,
             call_step: step.id.clone(),
             parts: vec![step.id.clone()],
+            at: step.at,
         },
     ))
 }
