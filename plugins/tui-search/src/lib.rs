@@ -530,8 +530,8 @@ impl Pane for SearchPane {
     fn key_hints(&self) -> Vec<(&'static str, &'static str)> {
         vec![
             ("type", "search"),
-            ("↑/↓", "select a hit"),
-            ("^n/^N", "next / previous match"),
+            ("up/down", "select a hit"),
+            ("ctrl+n / ctrl+shift+n", "next / previous match"),
             ("enter/click", "focus that step"),
             ("esc", "clear"),
         ]

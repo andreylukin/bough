@@ -38,7 +38,7 @@ pub const PANE_ID: &str = "tui.drafts";
 pub const TITLE: &str = "drafts — not sent";
 
 /// The key hints. There is no send affordance, and the header line says so on every frame.
-pub const KEY_HINTS: &[(&str, &str)] = &[("↑/↓", "select"), ("enter", "expand"), ("y", "copy")];
+pub const KEY_HINTS: &[(&str, &str)] = &[("up/down", "select"), ("enter", "expand"), ("y", "copy")];
 
 /// The row's config.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -181,7 +181,14 @@ impl Pane for DraftsPane {
         let painted = lines(&state, self.cfg.show_body_lines);
         let sel = selected_line(&state);
         let area = cx.area;
+        // Rows for what there is to show (ux-visual D-uxv-1, the search pane's rule): "nothing
+        // written yet" took thirty percent of the frame at every launch. Empty, the pane keeps
+        // ONE row — the line that says drafts exist and nothing left this machine is worth a
+        // row from boot (§7) — and a draft landing gives it what it can fill, up to its
+        // registered size.
+        let wanted = (painted.len() as u16).max(1);
         drop(state);
+        cx.report_aux_rows(wanted);
         paint(&painted, area, cx.frame.buffer_mut(), sel);
     }
 

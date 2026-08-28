@@ -44,12 +44,19 @@ pub struct StatusView {
     /// `StatusConfig::static_status`: the running turn is a word, not an animation.
     pub static_status: bool,
     pub hints: Vec<(String, String)>,
+    /// A notice that waits for a key is up (from the shell's view, each frame).
+    pub notice_pinned: bool,
+    /// The focused agent's name, set ONLY while the rail is collapsed (visual audit, 80×24): the
+    /// rail names the lane at every width it exists at; under `collapse_cols` nothing did.
+    pub agent: Option<String>,
 }
 
 /// A field of the line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {
     Product,
+    /// The focused agent's name — present only while the rail is collapsed (`StatusView::agent`).
+    Agent,
     Cwd,
     Model,
     Context,
@@ -62,21 +69,26 @@ pub enum Field {
     /// "esc"` over a string that was always there: it could not fail on a build that never varied
     /// the hint with `running`. A field that only exists while running can.
     StopKey,
+    /// `esc to close` while a pinned notice (a command\'s output, `/help`) is up and no turn runs.
+    CloseKey,
     Hints,
 }
 
 /// What [`Field::StopKey`] says. One string, so the test and the product cannot drift.
 pub const STOP_KEY: &str = "esc to interrupt";
+pub const CLOSE_KEY: &str = "esc to close";
 
 /// The order fields are RENDERED in, left to right.
-pub const RENDER_ORDER: [Field; 8] = [
+pub const RENDER_ORDER: [Field; 10] = [
     Field::Product,
+    Field::Agent,
     Field::Cwd,
     Field::Model,
     Field::Context,
     Field::Cost,
     Field::Elapsed,
     Field::StopKey,
+    Field::CloseKey,
     Field::Hints,
 ];
 
@@ -87,12 +99,15 @@ pub const RENDER_ORDER: [Field; 8] = [
 /// knows where they are; money and context are numbers you glance at, not act on; the model
 /// matters more; and the LAST two things to go are the spinner — the only thing on screen saying
 /// the harness is alive (M32) — and the product's own name.
-pub const DROP_ORDER: [Field; 8] = [
+pub const DROP_ORDER: [Field; 10] = [
     Field::Hints,
     Field::Cwd,
     Field::Cost,
     Field::Context,
     Field::Model,
+    Field::CloseKey,
+    // Only ever present when the rail is gone, so it is the one place the lane is named.
+    Field::Agent,
     Field::StopKey,
     Field::Elapsed,
     Field::Product,
@@ -102,14 +117,17 @@ pub const DROP_ORDER: [Field; 8] = [
 /// to go rather than the first: `esc interrupt` is the stop key, and the audit's blocker was not
 /// that Esc did nothing but that nobody was ever told it was there (phase ux1 §2.4). An idle
 /// screen can afford to teach; a running one has to.
-pub fn drop_order(v: &StatusView) -> [Field; 8] {
+pub fn drop_order(v: &StatusView) -> [Field; 10] {
     if v.running {
         [
+            // Never rendered while running (Esc means interrupt then), so it goes first.
+            Field::CloseKey,
             Field::Cwd,
             Field::Cost,
             Field::Context,
             Field::Model,
             Field::Hints,
+            Field::Agent,
             Field::Elapsed,
             // The stop key outlives everything but the product name while a turn runs: it is the
             // one thing a person needs at that moment.
@@ -163,6 +181,9 @@ pub fn field_text(v: &StatusView, f: Field) -> Option<String> {
             })
         }
         Field::StopKey => v.running.then(|| STOP_KEY.to_string()),
+        // Esc means interrupt while a turn runs (the keymap's rule), so the close hint yields.
+        Field::CloseKey => (v.notice_pinned && !v.running).then(|| CLOSE_KEY.to_string()),
+        Field::Agent => v.agent.clone(),
         Field::Hints => {
             if v.hints.is_empty() {
                 return None;
@@ -303,6 +324,9 @@ fn role(f: Field, v: &StatusView, theme: &Theme) -> ratatui::style::Color {
         Field::Elapsed => theme.accent,
         // The stop key is chrome you must be able to READ under pressure, not a dim hint.
         Field::StopKey => theme.fg,
+        Field::CloseKey => theme.fg,
+        // The accent means one thing on this screen: who is speaking (D-uxv-3).
+        Field::Agent => theme.accent,
         Field::Hints => theme.hint,
     }
 }

@@ -27,6 +27,8 @@ fn view() -> StatusView {
             ("esc".into(), "interrupt".into()),
             ("^f".into(), "search".into()),
         ],
+        notice_pinned: false,
+        agent: None,
     }
 }
 
@@ -43,12 +45,19 @@ fn width_of(v: &StatusView, w: u16) -> usize {
 fn the_line_drops_fields_in_the_documented_order_and_never_exceeds_its_width() {
     let v = view();
     let at = |w: u16| status::fields(&v, w);
+    // "Everything" is every field the view HAS: a close key with no pinned notice (or, as here,
+    // with a turn running) is absent by design, not dropped for width.
+    let everything: Vec<status::Field> = status::RENDER_ORDER
+        .iter()
+        .copied()
+        .filter(|f| status::field_text(&v, *f).is_some())
+        .collect();
 
     // Wide: everything.
-    assert_eq!(at(200), status::RENDER_ORDER.to_vec());
+    assert_eq!(at(200), everything);
     // 140 and not 120: `Field::StopKey` (M14) is a real field now rather than a word inside the
     // static hints, so "everything fits" needs its columns too.
-    assert_eq!(at(140), status::RENDER_ORDER.to_vec());
+    assert_eq!(at(140), everything);
 
     // 80, IDLE: the hints are the first thing to go — they are learnable.
     let idle = StatusView {
@@ -330,4 +339,43 @@ fn the_stop_key_exists_only_while_a_turn_is_running() {
         "an idle line names no stop key: {:?}",
         text(&idle)
     );
+}
+
+/// ux-visual: a pinned notice (a command's output, `/help`) says how it closes — and yields to the
+/// stop key while a turn runs, because Esc means interrupt then.
+#[test]
+fn a_pinned_notice_puts_esc_to_close_on_the_line_unless_a_turn_runs() {
+    let mut v = view();
+    v.notice_pinned = true;
+    v.running = false;
+    let line = status::status_line(&v, 120, &Theme::of(ThemeName::Dark));
+    let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+    assert!(text.contains(status::CLOSE_KEY), "{text:?}");
+    v.running = true;
+    let line = status::status_line(&v, 120, &Theme::of(ThemeName::Dark));
+    let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+    assert!(!text.contains(status::CLOSE_KEY), "{text:?}");
+    assert!(text.contains(status::STOP_KEY), "{text:?}");
+}
+
+#[test]
+fn the_lane_is_named_on_the_line_only_while_the_rail_is_collapsed() {
+    // `agent` is set by the row from `ShellView::rail_collapsed`; here the view is the contract.
+    let mut v = view();
+    v.running = false;
+    assert!(!status::fields(&v, 200).contains(&status::Field::Agent));
+    v.agent = Some("sol".into());
+    let at = |w: u16| status::fields(&v, w);
+    let wide = at(200);
+    assert_eq!(wide[..2], [status::Field::Product, status::Field::Agent]);
+    // At 80 columns — under the rail's collapse width — the name outlives the cwd and the
+    // numbers: it is the only thing left that says who is being spoken to.
+    let narrow = at(80);
+    assert!(narrow.contains(&status::Field::Agent), "{narrow:?}");
+    let text = status::status_line(&v, 80, &Theme::of(ThemeName::Dark))
+        .spans
+        .iter()
+        .map(|s| s.content.to_string())
+        .collect::<String>();
+    assert!(text.contains("sol"), "{text}");
 }

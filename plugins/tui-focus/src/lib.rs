@@ -814,11 +814,11 @@ impl Pane for FocusPane {
 
     fn key_hints(&self) -> Vec<(&'static str, &'static str)> {
         vec![
-            ("↑/↓", "scroll"),
-            ("PgUp/PgDn", "page"),
-            ("End", "follow"),
+            ("up/down", "scroll"),
+            ("pgup/pgdn", "page"),
+            ("end", "follow the latest"),
             ("click", "expand a tool call"),
-            ("^b", "branches"),
+            ("ctrl+b", "branches"),
         ]
     }
 }

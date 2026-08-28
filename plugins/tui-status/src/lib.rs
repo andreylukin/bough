@@ -225,7 +225,16 @@ impl Pane for StatusPane {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let view = self.view.lock().clone();
+        let mut view = self.view.lock().clone();
+        // From the shell's view, every frame: a pinned notice is the shell's fact, not a step.
+        view.notice_pinned = cx.view.notice_pinned;
+        // The lane's name ONLY while the rail is collapsed: at every width the rail exists at, it
+        // already says who has the keyboard, and a second copy would be noise.
+        view.agent = if cx.view.rail_collapsed {
+            cx.view.focused_name.clone()
+        } else {
+            None
+        };
         let line = status::status_line(&view, area.width, cx.theme());
         invariant::record_frame(&view, &line, area.width);
         cx.frame.render_widget(Paragraph::new(line), area);

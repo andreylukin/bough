@@ -125,17 +125,6 @@ impl Command for Help {
         for (keys, what) in keymap_hints() {
             lines.push(format!("  {keys:<22} {what}"));
         }
-        let mut pane_lines = Vec::new();
-        for pane in self.0.entries() {
-            for (keys, what) in pane.pane.key_hints() {
-                pane_lines.push(format!("  {keys:<22} {what} ({})", pane.info.title));
-            }
-        }
-        if !pane_lines.is_empty() {
-            lines.push(String::new());
-            lines.push("panes".to_string());
-            lines.append(&mut pane_lines);
-        }
         lines.push(String::new());
         lines.push("commands  (or press / for the same list, filtered as you type)".to_string());
         // The shell's OWN registry handle, not a fresh `ctx.get`: `/help` lists what THIS surface
@@ -147,12 +136,42 @@ impl Command for Help {
                 if listed.is_empty() {
                     lines.push("  (none registered)".to_string());
                 }
+                // One summary column (visual audit): the widest usage sets it, capped so one
+                // long usage cannot push every summary to the right edge; a usage past the cap
+                // keeps its summary on the next line AT the column, so the column still reads.
+                let col = listed
+                    .iter()
+                    .map(|i| i.usage.chars().count())
+                    .max()
+                    .unwrap_or(0)
+                    .clamp(22, 34);
                 for info in listed {
-                    lines.push(format!("  {:<22} {}", info.usage, info.summary));
+                    if info.usage.chars().count() > col {
+                        lines.push(format!("  {}", info.usage));
+                        lines.push(format!("  {:col$} {}", "", info.summary));
+                    } else {
+                        lines.push(format!("  {:<col$} {}", info.usage, info.summary));
+                    }
                 }
             }
             // A reason, never a silent gap (M27): every section of `/help` says something.
             None => lines.push("  (this surface has no command registry)".to_string()),
+        }
+        // Each pane's keys under the pane's own name (visual audit): "(trajectory)" after six
+        // rows in a row was a column of noise, and the reader's question is "what does THIS pane
+        // take", which a heading answers and a suffix does not. LAST, after the commands: the
+        // band is capped, and a pane's keys are the least urgent third — the pane teaches them
+        // itself once the keyboard is in it.
+        for pane in self.0.entries() {
+            let hints = pane.pane.key_hints();
+            if hints.is_empty() {
+                continue;
+            }
+            lines.push(String::new());
+            lines.push(format!("{} pane", pane.info.title));
+            for (keys, what) in hints {
+                lines.push(format!("  {keys:<22} {what}"));
+            }
         }
         Ok(CommandOutput {
             text: lines.join("\n"),
@@ -314,9 +333,10 @@ impl Command for Roster {
         for a in roster {
             let mut status = format!("{:?}", a.status()).to_lowercase();
             // `doing` is the about-line's STATE half — what the lane last said it did — not the
-            // trajectory id, which is an internal name (visual audit follow-up). The id stays as
-            // the fallback for a lane that has never written one.
-            let mut doing = a.traj().to_string();
+            // trajectory id, which is an internal name (visual audit follow-up).
+            // A lane that has never written an about-line has nothing to say yet; its trajectory
+            // id is an internal name, not an answer.
+            let mut doing = "nothing yet".to_string();
             if let Some(ledger) = &ledger {
                 if dormant_now(ledger, a.traj()).await {
                     status = "dormant".to_string();

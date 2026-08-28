@@ -219,6 +219,7 @@ pub fn draw(tui: &TuiHandle) {
                 tui.0
                     .notice_scroll
                     .load(std::sync::atomic::Ordering::Relaxed),
+                size.width,
             );
             let h = body_text.len() as u16;
             if h > 0 {
@@ -240,9 +241,20 @@ pub fn draw(tui: &TuiHandle) {
                 // transcript's colour directly above the composer, so where the answer ended
                 // and the output began was a guess. The band is `field_bg`, the composer's.
                 let style = Style::default().fg(fg).bg(theme.field_bg);
+                // A command's output is sections (`/help`: keys, each pane, commands): a line
+                // that starts at the margin is a heading and reads bold, so the eye finds the
+                // section it wants in one pass; the indented rows under it stay plain.
+                let heading = style.add_modifier(ratatui::style::Modifier::BOLD);
+                let is_command = matches!(notice.kind, crate::NoticeKind::Command);
                 let body: Vec<Line> = body_text
                     .into_iter()
-                    .map(|l| Line::styled(l, style))
+                    .map(|l| {
+                        let lead = is_command
+                            && !l.is_empty()
+                            && !l.starts_with(' ')
+                            && !l.starts_with('\u{2026}');
+                        Line::styled(l, if lead { heading } else { style })
+                    })
                     .collect();
                 Clear.render(rect, buf);
                 Paragraph::new(body).style(style).render(rect, buf);
@@ -371,7 +383,12 @@ pub async fn on_key(tui: &TuiHandle, key: KeyEvent) {
             .notice_raw()
             .map(|n| {
                 let size = tui.0.terminal.lock().get_frame().area();
-                pane::notice_scroll_max(&n.text, tui.0.cfg.notice_max_lines, size.height)
+                pane::notice_scroll_max(
+                    &n.text,
+                    tui.0.cfg.notice_max_lines,
+                    size.height,
+                    size.width,
+                )
             })
             .unwrap_or(0);
         if tui.scroll_notice(delta, max) {
@@ -807,10 +824,6 @@ pub async fn flush_pending_send(tui: &TuiHandle) {
 /// that a second Enter sends the line as a message.
 pub async fn dispatch_line(tui: &TuiHandle, line: &str) {
     *tui.0.last_command.lock() = Some(line.to_string());
-    let miss = |tui: &TuiHandle, text: String| {
-        tui.0.composer.lock().arm_send_as_message();
-        tui.notify_kind(text, crate::NoticeKind::Error);
-    };
     let Some(commands) = tui.0.commands.clone() else {
         miss(tui, format!("no commands registry for `{line}`"));
         return;
@@ -826,13 +839,49 @@ pub async fn dispatch_line(tui: &TuiHandle, line: &str) {
         at: chrono::Utc::now(),
     };
     let raw = line.to_string();
-    match commands.dispatch(inv, cx).await {
+    // The event loop awaits this call, so a command that takes seconds (`/reconsolidate`,
+    // `/seal`: model calls) used to FREEZE the frame — the composer looked unsent, the palette
+    // looked open, and every key typed meanwhile landed on a screen that had not moved (visual
+    // audit, 23-commands). A quick command still settles inline, so the frame after Enter shows
+    // its answer; a slow one hands the loop back, says it is running, and settles from a task.
+    let mut run = Box::pin(async move { commands.dispatch(inv, cx).await });
+    match tokio::time::timeout(Duration::from_millis(INLINE_COMMAND_MS), &mut run).await {
+        Ok(outcome) => settle(tui, &raw, outcome),
+        Err(_) => {
+            tui.notify_kind(
+                format!("{raw}\nrunning\u{2026}"),
+                crate::NoticeKind::Command,
+            );
+            let tui = tui.clone();
+            tokio::spawn(async move {
+                let outcome = run.await;
+                settle(&tui, &raw, outcome);
+            });
+        }
+    }
+}
+
+/// How long a slash command may hold the event loop before it becomes a background task.
+pub const INLINE_COMMAND_MS: u64 = 120;
+
+fn miss(tui: &TuiHandle, text: String) {
+    tui.0.composer.lock().arm_send_as_message();
+    tui.notify_kind(text, crate::NoticeKind::Error);
+}
+
+/// What a command's answer does to the shell, whichever side of the budget it arrived on.
+fn settle(
+    tui: &TuiHandle,
+    raw: &str,
+    outcome: Result<bough_plugin_commands::CommandOutput, bough_plugin_commands::CommandError>,
+) {
+    match outcome {
         Ok(out) => {
             // Resolved: NOW the line may go.
             tui.0.composer.lock().clear();
             tui.set_palette(false, "");
             tui.notify_kind(
-                bough_plugin_commands::palette::echoed(&raw, &out.text),
+                bough_plugin_commands::palette::echoed(raw, &out.text),
                 crate::NoticeKind::Command,
             );
         }

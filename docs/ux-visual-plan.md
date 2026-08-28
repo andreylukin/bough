@@ -71,6 +71,37 @@ paints the same one-column focus ring the transcript does, so Tab into it shows.
 read from the live inbox on every mail/inbox/wake step by name; nothing when the inbox is empty.
 "Which lane needs me" was answerable only by `/agents`.
 
+**D-uxv-13 — the drafts pane (track B) follows D-uxv-1.** `SlotSize::Percent(30)` took a third
+of the frame at every launch to say "nothing written yet". Empty, it keeps ONE row — that line is
+worth a row from boot (§7: nothing left this machine) — and grows to what it can fill when a draft
+lands.
+
+**D-uxv-14 — governance reports are sentences.** `/seal`: `sol: nothing to seal yet.` or
+`sol: sealed 3 blocks in 3 model calls (1.2k tokens in / 300 out).`, block and skip lines after;
+`/reconsolidate`: `Reconsolidated: distilled a new digest (…), 0 contradictions proposed, 0 pieces
+of evidence expired.` with the model calls and the pass id last. `/agents` says `nothing yet` for
+a lane with no about-line rather than its trajectory id.
+
+**D-uxv-15 — the status line says how to leave a pinned notice.** While a turn runs it says
+`esc to interrupt`; while `/help` or a command's output is pinned (no ttl) and nothing runs, it
+says `esc to close` in the same slot. `ShellView.notice_pinned` carries the fact, `Field::CloseKey`
+renders it, and it is the FIRST field dropped for width — the band's own `(PgDn)` marker already
+hints the key. Absent whenever there is nothing to close.
+
+**D-uxv-16 — under the rail's collapse width, the status line names the lane.** The rail
+collapses under `collapse_cols` (100), so at 80×24 nothing on screen said who had the keyboard.
+`ShellView` now carries `focused_name` and `rail_collapsed` (from last frame's layout, the same
+source as `status_top`); `tui-status` renders `Field::Agent` in the accent, right after the
+product, ONLY while the rail is collapsed — at every width the rail exists at, it already says so.
+It is dropped late (after the model, before the stop key).
+
+**D-uxv-17 — `/help` is sections; the palette is a table; a notice folds.** `/help` lists each
+pane's keys under the pane's own name (not `(trajectory)` six times), every key spelled the
+keymap's way (`up/down`, `pgup/pgdn`, `ctrl+b`), and a command notice's margin lines — its
+headings — render bold. The `/` palette aligns its summaries to one column (the widest visible
+usage, capped at half the width) and paints on `field_bg` like the notice band. A notice line
+longer than the frame folds at spaces (`wrap_notice`) rather than losing its tail.
+
 **D-uxv-8 — markdown rhythm.** Consecutive list items are one block (no blank between); a code
 block is padded to the measure on `code_bg`; h1/h2 are bold + underlined in the body colour (F10).
 A terminal tool's expanded output takes the same ground; its `exit N` verdict line stays on the
@@ -79,6 +110,15 @@ transcript's, because it is the harness speaking, not the command.
 **D-uxv-12 — `/agents` says what a lane is doing, not its trajectory id.** The `doing` column is
 the about-line's state half (by name, newest `about/line`), clipped to the cell; the id remains
 the fallback for a lane that has never written one.
+
+**D-uxv-22 — a slow slash command does not freeze the frame.** `dispatch_line` awaited the
+command inside the event loop, so `/reconsolidate` or `/seal` (model calls) left the composer
+looking unsent and the palette looking open for seconds, and every key typed meanwhile landed on
+a screen that had not moved — 23-commands read `/reject` as "screen-unchanged" and the stray
+keys sent `reject` as a MESSAGE. A command now gets `INLINE_COMMAND_MS` (120 ms) inline — a
+quick one still answers in the frame after Enter — and past that the band says `running…` and
+the answer settles from a task, through the same `settle` as the inline path. Pre-existing on
+`rebuild`; found by the pass-B suite run.
 
 ## Verification
 

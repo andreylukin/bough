@@ -93,20 +93,23 @@ pub fn render_plan(plan: &PassPlan) -> String {
 
 /// PURE: what a completed pass renders.
 pub fn render_report(report: &PassReport) -> String {
+    // A sentence, then the ledger's names (ux-visual: a human command on a human surface). The
+    // pass id is what `/supersede` and the ledger cite, so it stays — last, where it does not
+    // read as the headline.
+    let distilled = match &report.distilled {
+        Some(d) => format!("distilled a new digest ({d})"),
+        None => "distilled nothing new".to_string(),
+    };
     format!(
-        "pass {}\n  distilled: {}\n  contradictions proposed: {}\n  evidence expired: {}\n  \
-         model calls: {} ({} in / {} out)\n",
-        report.pass,
-        report
-            .distilled
-            .as_ref()
-            .map(|d| d.to_string())
-            .unwrap_or_else(|| "none".to_string()),
+        "Reconsolidated: {distilled}, {} contradictions proposed, {} pieces of evidence expired.\n\
+         {} model call{} ({} tokens in / {} out) · pass {}\n",
         report.contradictions.len(),
         report.expired.len(),
         report.calls,
+        if report.calls == 1 { "" } else { "s" },
         report.tokens_in,
         report.tokens_out,
+        report.pass,
     )
 }
 

@@ -684,6 +684,17 @@ impl TuiHandle {
                 .and_then(|t| self.0.reports.read().get(&t).map(|r| r.following))
                 .unwrap_or(true),
             measure_cols: self.0.cfg.measure_cols,
+            focused_name: self.agent().map(|a| a.name().to_string()),
+            rail_collapsed: {
+                // Last frame's layout, the same source `status_top` reads: a Strip pane handed
+                // zero columns is a collapsed rail; no Strip pane at all is no rail.
+                let rects = self.0.rects.read();
+                !self.panes().iter().any(|p| {
+                    p.slot == pane::Slot::Strip
+                        && rects.iter().any(|(id, r)| *id == p.id && r.width > 0)
+                })
+            },
+            notice_pinned: self.notice_raw().is_some_and(|n| n.ttl.is_none()),
         }
     }
 
