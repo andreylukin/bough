@@ -707,7 +707,10 @@ fn the_empty_transcript_says_what_it_is_for() {
         text.contains("sol is waiting for your first message"),
         "{text}"
     );
-    assert!(text.contains("/ commands"), "{text}");
+    assert!(
+        text.contains("/ for commands") && text.contains("? for help"),
+        "{text}"
+    );
     // One line at the measure: the hint is the status line's vocabulary, not a paragraph.
     assert_eq!(out.len(), 2, "{out:?}");
     let unnamed = paint(&[], 80).join("\n");

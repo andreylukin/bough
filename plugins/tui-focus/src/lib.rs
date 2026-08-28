@@ -304,7 +304,7 @@ impl FocusPane {
             lines.push(Line::styled(opener, Style::default().fg(theme.fg)));
             lines.extend(
                 bough_plugin_tui_render::wrap(
-                    "Type below and press enter \u{b7} / commands \u{b7} ? keys \u{b7} tab panes",
+                    "Type below and press enter \u{b7} / for commands \u{b7} ? for help",
                     width,
                 )
                 .into_iter()
