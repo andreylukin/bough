@@ -500,6 +500,28 @@ waits for THAT wake instead of `when_idle()`, which is §2.14's window exactly: 
 already mid-wake when the machine woke no longer closes somebody else's window.
 `plugins/catch-up-on-wake/tests/wake.rs` (6, all green through the change).
 
+## 15. Integration pass — ALL FOUR CARRIED, verified on the merged tree
+
+The note is not a want but a record of four fixes track B made once its eight work packages were in
+one tree. All four survive the merge, checked here against the merged code rather than the note:
+
+- `actions-github`, `actions-linear` and `actions-reconcile` each declare `ledger` in `inject`
+  (`plugins/actions-github/src/lib.rs:672`, `plugins/actions-linear/src/lib.rs:373`,
+  `plugins/actions-reconcile/src/lib.rs:150`), all three `Inject::required` beside `actions`, so the
+  kernel's undeclared-read check stays quiet over a scripted session.
+- The teardown fix is intact: `RELOAD_POLL` (100ms) plus an `is_halted` check between polls in
+  `plugins/skills/src/lib.rs:38,242` and `plugins/wards-rhai/src/lib.rs`. The standing rule it
+  states — a long-lived `effect_spawn` body owes a halt checkpoint — is repeated under §18 below and
+  holds for everything `speed` and `ux-visual` added since.
+- The retired old-feed row is still `disabled` in the shipped tree, and the two surfaces that test
+  the ADAPTER still re-enable exactly that row by patch: `crates/bough/tests/fixtures/old-feed-on.yml`,
+  `crates/bough/tests/old_feed_surface.rs`, `scripts/tui/07-old-feed.sh`. `tui_swap.rs:63` asserts
+  the shipped row is `Inactive`.
+- `tui_swap.rs`'s reflow assertion is the bounded-wait, some-pane-grew form (`tui_swap.rs:148-178`),
+  with Phase 5's explicit `redraw()` folded into its poll loop, as the merge preamble says.
+
+Nothing here was re-opened by `speed` or `ux-visual`.
+
 ## 16. The first message after a cold boot — IMPLEMENTED, and the diagnosis was half wrong
 
 **The drop is real and it is reproducible.** It is NOT in `agent-loop`, and it was never silent.
@@ -679,11 +701,14 @@ mention those files, so nothing rebuilds — only debugger symbol detail is lost
 build profiles should decide whether `[profile.dev]` wants `debug = "line-tables-only"` or a
 periodic sweep; a merge is not the place to change how everyone's debug builds work.
 
-## The `speed` branch was NOT merged here
+## The `speed` branch — merged AFTER this, and the fold is done
 
-Checked before starting, as the task asked: this tree has no `cargo-nextest` usage, no
-`tests/main.rs` in any crate, no `autotests = false`, no `scripts/check-test-mods.sh` and no
-`make gate-crate`. So no `tests/*.rs` file that `rebuild-b` or `ux1` added needed a `mod <stem>;`
-line, and nothing was done for it. `speed` is merged after this push by its own session; the
-files it will fold are the seven `crates/bough/tests/*.rs` and the twenty-odd `plugins/*/tests/*.rs`
-this merge adds, and each of them will want its `mod` line then.
+When the track-B merge was written, `speed` had not landed: this tree had no nextest, no
+`tests/main.rs`, no `autotests = false`, no `scripts/check-test-mods.sh` and no `make gate-crate`,
+so none of the `tests/*.rs` files track B added needed a `mod` line. `speed` (e92a4bc2) and
+`ux-visual` (be89c128) have since merged into `rebuild`, and the fold this section predicted was
+done in 057ebe05 + 32654e5a: every one of track B's `crates/bough/tests/*.rs` and `plugins/*/tests/*.rs`
+files now has its `mod` line in its crate's `tests/main.rs`. Verified post-merge:
+`scripts/fold-tests.py` folds 0 crates (nothing is loose) and `scripts/check-test-mods.sh` passes,
+as does `make lint` and `cargo check --workspace --all-targets`. Both profiles compose with
+`warnings: []` (`bough --profile tui|headless --dump-config`).
