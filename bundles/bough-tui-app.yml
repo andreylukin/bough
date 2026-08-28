@@ -47,7 +47,8 @@
   config:
     width: 34
     show_about: true
-    about_lines: 2
+    # The TUI brief (D4): each about half wraps to up to three lines under the name.
+    about_lines: 3
     # phase ux1 §2.5 (M13): the rail was 34 columns at 80 and at 200. Below `collapse_cols` it
     # takes ZERO columns and the conversation gets the terminal; above it, it is clamped.
     collapse_cols: 100

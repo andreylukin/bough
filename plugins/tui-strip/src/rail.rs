@@ -141,22 +141,48 @@ pub fn on_click(hit: Option<&HitId>) -> PaneOutcome {
 
 /// How many terminal rows one rail row occupies under this config. The pane's hit map needs this
 /// before it draws, so it is a function rather than a side effect of drawing.
-pub fn row_height(row: &RailRow, show_about: bool, about_lines: u16) -> u16 {
-    1 + about_extent(row, show_about, about_lines)
+pub fn row_height(row: &RailRow, show_about: bool, about_lines: u16, width: u16) -> u16 {
+    1 + about_extent(row, show_about, about_lines, width)
 }
 
-fn about_extent(row: &RailRow, show_about: bool, about_lines: u16) -> u16 {
+/// The two halves of an about-line as the lines they take at `width` (the TUI brief, D4): each
+/// half WRAPS to at most `about_lines` lines instead of being cut at the rail's edge, because
+/// "what is this lane doing" was the one rail fact Andrey asked for, and a clipped fragment
+/// (`. Added doc comment "/// Prin…`) does not answer it. Past the cap the last line is elided,
+/// so a cut is still visible as a cut.
+fn about_halves(row: &RailRow, about_lines: u16, width: u16) -> (Vec<String>, Vec<String>) {
+    let Some(v) = row.about.as_ref() else {
+        return (Vec::new(), Vec::new());
+    };
+    let body_room = width.saturating_sub(2);
+    let label_room = body_room.saturating_sub(INTENT_MARK.chars().count() as u16);
+    let cap = about_lines as usize;
+    let fold = |text: &str, room: u16| -> Vec<String> {
+        let text = text.trim();
+        if text.is_empty() || room == 0 {
+            return Vec::new();
+        }
+        let mut lines = bough_plugin_tui_render::wrap(text, room);
+        if lines.len() > cap {
+            lines.truncate(cap);
+            if let Some(last) = lines.last_mut() {
+                *last = elide(&format!("{last} \u{2026}"), room as usize);
+                if !last.ends_with('\u{2026}') {
+                    last.push('\u{2026}');
+                }
+            }
+        }
+        lines
+    };
+    (fold(&v.state, body_room), fold(&v.intent, label_room))
+}
+
+fn about_extent(row: &RailRow, show_about: bool, about_lines: u16, width: u16) -> u16 {
     if !show_about || about_lines == 0 {
         return 0;
     }
-    match &row.about {
-        None => 0,
-        Some(v) => {
-            // The state half is one line; the intent half is one more, under its label.
-            let wanted = 1 + u16::from(!v.intent.trim().is_empty());
-            wanted.min(about_lines)
-        }
-    }
+    let (state, intent) = about_halves(row, about_lines, width);
+    (state.len() + intent.len()) as u16
 }
 
 /// PURE: one rail row ⇒ the lines it draws, at `width`.
@@ -226,41 +252,39 @@ pub fn row_lines(
     ));
     let mut out = vec![Line::from(head)];
 
-    let extent = about_extent(row, show_about, about_lines);
-    if extent == 0 {
+    if !show_about || about_lines == 0 {
         return out;
     }
-    // NOT an `expect`: this is the RENDER path, and a panic inside `Pane::render` unwinds the
-    // draw loop and takes the process down (V8, which `tui-probe` exists to demonstrate).
-    let Some(v) = row.about.as_ref() else {
-        return out;
-    };
-    let body_room = width.saturating_sub(2) as usize;
+    let (state, intent) = about_halves(row, about_lines, width);
     // The STATE half: evidence, and only ever reached here through `about_from_step`, which
-    // reads a cited step (`crate::invariant`).
-    out.push(Line::from(vec![
-        Span::raw("  "),
-        Span::styled(
-            elide(v.state.trim(), body_room),
-            Style::default().fg(theme.evidence),
-        ),
-    ]));
-    if extent > 1 {
-        // The INTENT half, ALWAYS marked as such. §2: self-declared, never truth. The mark is
-        // the arrow plus the `thought` colour and italics — the words "intent (self-declared)"
-        // used to spend 23 of the rail's 34 columns and left "the scr…" of the intent itself
-        // (visual audit F8); the full label stays in `/help` and on the transcript's hover.
-        let label_room = body_room.saturating_sub(INTENT_MARK.chars().count());
+    // reads a cited step (`crate::invariant`). Wrapped, never cut, up to the cap (D4).
+    for l in state {
+        out.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(l, Style::default().fg(theme.evidence)),
+        ]));
+    }
+    // The INTENT half, ALWAYS marked as such. §2: self-declared, never truth. The mark is the
+    // arrow plus the `thought` colour and italics — the words "intent (self-declared)" used to
+    // spend 23 of the rail's 34 columns (visual audit F8); the full label stays in `/help`. The
+    // mark sits on the first line only; continuation lines indent under it, so the whole half
+    // reads as one qualified claim.
+    for (i, l) in intent.into_iter().enumerate() {
+        let mark = if i == 0 {
+            INTENT_MARK.to_string()
+        } else {
+            " ".repeat(INTENT_MARK.chars().count())
+        };
         out.push(Line::from(vec![
             Span::raw("  "),
             Span::styled(
-                INTENT_MARK.to_string(),
+                mark,
                 Style::default()
                     .fg(theme.dim)
                     .add_modifier(Modifier::ITALIC),
             ),
             Span::styled(
-                elide(v.intent.trim(), label_room),
+                l,
                 Style::default()
                     .fg(theme.thought)
                     .add_modifier(Modifier::ITALIC),

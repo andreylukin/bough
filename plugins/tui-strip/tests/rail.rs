@@ -409,3 +409,50 @@ fn a_lane_with_mail_waiting_shows_the_count_and_a_quiet_lane_shows_nothing() {
         "the head line still fills the rail: {loud:?}"
     );
 }
+
+/// The TUI brief, D4: the about halves WRAP under the name instead of being cut at the rail's
+/// edge; past the cap the last line says it cut.
+#[test]
+fn the_about_halves_wrap_to_the_cap_and_only_then_elide() {
+    let view = AboutView {
+        state: "read mail then added a doc comment above main in main.rs saying what it prints".into(),
+        intent: "finish the swap gate before the next wake, then answer terra's claim about the flaky test".into(),
+        cites: vec![Cite {
+            r#ref: Ref::new("step:s41"),
+            url: None,
+        }],
+    };
+    let r = row("sol", Some(view));
+    let text = text_of(&rail::row_lines(&r, false, true, 3, 34, &theme()));
+    // Head + up to three lines per half; every word of the state half is on screen.
+    assert!(text.len() >= 5 && text.len() <= 7, "{text:?}");
+    let state: String = text[1..4]
+        .iter()
+        .filter(|l| !l.contains(rail::INTENT_MARK.trim_end()))
+        .map(|l| l.trim().to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(state.contains("what it prints"), "{text:?}");
+    assert!(
+        !text[1].contains('\u{2026}'),
+        "no cut on a wrapped half: {text:?}"
+    );
+    for l in &text {
+        assert!(l.chars().count() <= 34, "over the rail's width: {l:?}");
+    }
+    // The mark once, on the intent's first line; continuation lines indent under it.
+    let marks = text
+        .iter()
+        .filter(|l| l.contains(rail::INTENT_MARK.trim_end()))
+        .count();
+    assert_eq!(marks, 1, "{text:?}");
+    // With a cap of 1 the old behaviour returns: one line per half, cut and marked.
+    let one = text_of(&rail::row_lines(&r, false, true, 1, 34, &theme()));
+    assert_eq!(one.len(), 3, "{one:?}");
+    assert!(
+        one[1].ends_with('\u{2026}') && one[2].ends_with('\u{2026}'),
+        "{one:?}"
+    );
+    assert_eq!(rail::row_height(&r, true, 1, 34), 3);
+    assert_eq!(rail::row_height(&r, true, 3, 34) as usize, text.len());
+}
