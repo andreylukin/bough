@@ -684,6 +684,7 @@ impl TuiHandle {
                 .and_then(|t| self.0.reports.read().get(&t).map(|r| r.following))
                 .unwrap_or(true),
             measure_cols: self.0.cfg.measure_cols,
+            notice_pinned: self.notice_raw().is_some_and(|n| n.ttl.is_none()),
         }
     }
 

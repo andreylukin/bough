@@ -42,6 +42,8 @@ pub struct StatusView {
     pub elapsed: Option<Duration>,
     pub spinner_frame: char,
     pub hints: Vec<(String, String)>,
+    /// A notice that waits for a key is up (from the shell's view, each frame).
+    pub notice_pinned: bool,
 }
 
 /// A field of the line.
@@ -60,14 +62,17 @@ pub enum Field {
     /// "esc"` over a string that was always there: it could not fail on a build that never varied
     /// the hint with `running`. A field that only exists while running can.
     StopKey,
+    /// `esc to close` while a pinned notice (a command\'s output, `/help`) is up and no turn runs.
+    CloseKey,
     Hints,
 }
 
 /// What [`Field::StopKey`] says. One string, so the test and the product cannot drift.
 pub const STOP_KEY: &str = "esc to interrupt";
+pub const CLOSE_KEY: &str = "esc to close";
 
 /// The order fields are RENDERED in, left to right.
-pub const RENDER_ORDER: [Field; 8] = [
+pub const RENDER_ORDER: [Field; 9] = [
     Field::Product,
     Field::Cwd,
     Field::Model,
@@ -75,6 +80,7 @@ pub const RENDER_ORDER: [Field; 8] = [
     Field::Cost,
     Field::Elapsed,
     Field::StopKey,
+    Field::CloseKey,
     Field::Hints,
 ];
 
@@ -85,12 +91,13 @@ pub const RENDER_ORDER: [Field; 8] = [
 /// knows where they are; money and context are numbers you glance at, not act on; the model
 /// matters more; and the LAST two things to go are the spinner — the only thing on screen saying
 /// the harness is alive (M32) — and the product's own name.
-pub const DROP_ORDER: [Field; 8] = [
+pub const DROP_ORDER: [Field; 9] = [
     Field::Hints,
     Field::Cwd,
     Field::Cost,
     Field::Context,
     Field::Model,
+    Field::CloseKey,
     Field::StopKey,
     Field::Elapsed,
     Field::Product,
@@ -100,9 +107,11 @@ pub const DROP_ORDER: [Field; 8] = [
 /// to go rather than the first: `esc interrupt` is the stop key, and the audit's blocker was not
 /// that Esc did nothing but that nobody was ever told it was there (phase ux1 §2.4). An idle
 /// screen can afford to teach; a running one has to.
-pub fn drop_order(v: &StatusView) -> [Field; 8] {
+pub fn drop_order(v: &StatusView) -> [Field; 9] {
     if v.running {
         [
+            // Never rendered while running (Esc means interrupt then), so it goes first.
+            Field::CloseKey,
             Field::Cwd,
             Field::Cost,
             Field::Context,
@@ -157,6 +166,8 @@ pub fn field_text(v: &StatusView, f: Field) -> Option<String> {
             })
         }
         Field::StopKey => v.running.then(|| STOP_KEY.to_string()),
+        // Esc means interrupt while a turn runs (the keymap's rule), so the close hint yields.
+        Field::CloseKey => (v.notice_pinned && !v.running).then(|| CLOSE_KEY.to_string()),
         Field::Hints => {
             if v.hints.is_empty() {
                 return None;
@@ -297,6 +308,7 @@ fn role(f: Field, v: &StatusView, theme: &Theme) -> ratatui::style::Color {
         Field::Elapsed => theme.accent,
         // The stop key is chrome you must be able to READ under pressure, not a dim hint.
         Field::StopKey => theme.fg,
+        Field::CloseKey => theme.fg,
         Field::Hints => theme.hint,
     }
 }

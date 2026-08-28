@@ -82,6 +82,12 @@ lands.
 of evidence expired.` with the model calls and the pass id last. `/agents` says `nothing yet` for
 a lane with no about-line rather than its trajectory id.
 
+**D-uxv-15 — the status line says how to leave a pinned notice.** While a turn runs it says
+`esc to interrupt`; while `/help` or a command's output is pinned (no ttl) and nothing runs, it
+says `esc to close` in the same slot. `ShellView.notice_pinned` carries the fact, `Field::CloseKey`
+renders it, and it is the FIRST field dropped for width — the band's own `(PgDn)` marker already
+hints the key. Absent whenever there is nothing to close.
+
 **D-uxv-8 — markdown rhythm.** Consecutive list items are one block (no blank between); a code
 block is padded to the measure on `code_bg`; h1/h2 are bold + underlined in the body colour (F10).
 A terminal tool's expanded output takes the same ground; its `exit N` verdict line stays on the

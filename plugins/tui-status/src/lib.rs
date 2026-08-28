@@ -207,7 +207,9 @@ impl Pane for StatusPane {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let view = self.view.lock().clone();
+        let mut view = self.view.lock().clone();
+        // From the shell's view, every frame: a pinned notice is the shell's fact, not a step.
+        view.notice_pinned = cx.view.notice_pinned;
         let line = status::status_line(&view, area.width, cx.theme());
         invariant::record_frame(&view, &line, area.width);
         cx.frame.render_widget(Paragraph::new(line), area);

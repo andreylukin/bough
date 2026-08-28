@@ -296,6 +296,9 @@ pub struct ShellView {
     /// The prose measure cap in columns ([`crate::TuiConfig::measure_cols`]). Read through
     /// [`RenderCx::measure`] rather than directly.
     pub measure_cols: u16,
+    /// A notice that waits for a key is up (a command's output, `/help`, an error). The status
+    /// row says `esc to close` while it is, the way it says `esc to interrupt` while a turn runs.
+    pub notice_pinned: bool,
 }
 
 /// PURE: the prose measure. `min(width, cap)`; `cap` is [`crate::TuiConfig::measure_cols`].
