@@ -340,6 +340,12 @@ impl FocusPane {
                 }
                 skip_until = None;
             }
+            // An empty program draws nothing (round 9); its line is the previous line so the
+            // row focus and the click map still have somewhere to point.
+            if rows::is_empty_program(row) {
+                row_lines.push(lines.len().saturating_sub(1) as u16);
+                continue;
+            }
             if let Some(fold) = folds.iter().find(|f| f.start == i) {
                 let key = retry_key(&state.rows[fold.end]);
                 let opened = state.expanded.is_expanded(&key);

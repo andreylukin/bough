@@ -596,6 +596,17 @@ pub fn retry_folds(rows: &[Row]) -> Vec<RetryFold> {
     out
 }
 
+/// PURE: a program that did nothing a reader can act on (round 9) — no inner call, nothing
+/// printed, finished without error. Code mode makes the model run one for a plain reply, and
+/// `▸ program 0 calls ✓` on every chat-only turn was noise.
+pub fn is_empty_program(row: &Row) -> bool {
+    matches!(
+        row,
+        Row::Program { subs, console, result: Some(_), error: None, .. }
+            if subs.is_empty() && console.trim().is_empty()
+    )
+}
+
 /// Tools that change files, by name (typed rows and program sub-calls alike).
 pub fn changes_files(name: &str) -> bool {
     matches!(name, "patch" | "edit_file" | "write_file")
@@ -838,7 +849,16 @@ pub fn trailing_text_rows(rows: &[Row]) -> Vec<usize> {
 /// row continues the same span; after anything else — Andrey, mail, a claim card, the end of a
 /// turn, the top of the window — it starts one.
 pub fn opens_speech(rows: &[Row], i: usize) -> bool {
-    rows.get(i).is_some_and(is_agent_row) && (i == 0 || !is_agent_row(&rows[i - 1]))
+    let Some(row) = rows.get(i) else {
+        return false;
+    };
+    if !is_agent_row(row) || is_empty_program(row) {
+        return false;
+    }
+    // The previous VISIBLE row: an empty program (drawn as nothing) does not open or continue
+    // a span.
+    let prev = rows[..i].iter().rev().find(|r| !is_empty_program(r));
+    prev.is_none_or(|p| !is_agent_row(p))
 }
 
 /// PURE: a row that is the agent acting — its words, its reasoning, its tool calls. A turn that

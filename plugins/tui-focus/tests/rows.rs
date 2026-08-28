@@ -1127,3 +1127,40 @@ fn failed_attempts_fold_under_the_call_that_succeeded() {
         .iter()
         .any(|l| l.contains("▸ patch a.rs ✗")));
 }
+
+/// Round 9: a program with no calls and nothing printed draws nothing; the label opens on the
+/// text that follows it.
+#[test]
+fn an_empty_program_draws_nothing() {
+    let rows = rows_from_steps(&[
+        step(
+            1,
+            "mail/delivered",
+            serde_json::json!({ "from": "andrey", "subject": "say 1", "summary": "say 1" }),
+        ),
+        step(
+            2,
+            "tool/call",
+            serde_json::json!({ "call": "p1", "name": "run", "args": { "program": "" } }),
+        ),
+        step(
+            3,
+            "tool/result",
+            serde_json::json!({ "call": "p1", "name": "run", "outcome": "ok", "content": "", "step_index": 0 }),
+        ),
+        step(
+            4,
+            "thought/text",
+            serde_json::json!({ "step_index": 1, "text": "Done." }),
+        ),
+    ]);
+    assert!(
+        rows.iter()
+            .any(bough_plugin_tui_focus::rows::is_empty_program),
+        "{rows:?}"
+    );
+    let out = paint_as(&rows, 80, Some("sol"));
+    assert!(!out.iter().any(|l| l.contains("program")), "{out:?}");
+    let label = out.iter().position(|l| l.trim() == "sol:").expect("label");
+    assert_eq!(out[label + 1].trim(), "Done.", "{out:?}");
+}

@@ -192,7 +192,13 @@ fn messages(steps: &[&Step]) -> Vec<String> {
 pub fn compose(steps: &[Step], wake: &WakeId, end_step: &StepId, cfg: &AboutConfig) -> Composed {
     let picked = summarisable(steps);
     let state = state_half(&picked);
-    let intent = intent_half(&picked);
+    // A talk-only turn has no intent line (round 9): it would repeat the reply the state
+    // already carries (`replied: Done.` / `→ Done.`).
+    let intent = if state.starts_with("replied: ") || state.is_empty() {
+        String::new()
+    } else {
+        intent_half(&picked)
+    };
 
     let mut cites: Vec<StepId> = picked.iter().map(|s| s.id.clone()).collect();
     if cites.is_empty() {
@@ -294,15 +300,21 @@ mod tests {
     #[test]
     fn both_halves_are_clipped_to_their_configured_length() {
         let long = "x".repeat(1000);
-        let steps = vec![step(
-            "s1",
-            "thought/text",
-            serde_json::json!({ "text": long }),
-        )];
+        let steps = vec![
+            step(
+                "s0",
+                "tool/call",
+                serde_json::json!({ "name": "bash", "args": { "command": long.clone() } }),
+            ),
+            step("s1", "thought/text", serde_json::json!({ "text": long })),
+        ];
         let c = compose(&steps, &WakeId::new("w1"), &StepId::new("end"), &cfg());
-        assert_eq!(c.line.state.chars().count(), 400);
+        // The state half clips each clause's object at 40 and the whole at 400; the intent
+        // half is the first line of the reply, clipped at 200 and marked.
+        assert!(c.line.state.chars().count() <= 400, "{}", c.line.state);
+        assert!(c.line.state.ends_with("…`"), "{}", c.line.state);
         assert_eq!(c.line.intent.chars().count(), 200);
-        assert!(c.line.state.ends_with('…'));
+        assert!(c.line.intent.ends_with('…'));
     }
 }
 
@@ -405,7 +417,7 @@ mod clause_tests {
         )];
         let c = compose(&talk, &WakeId::new("w1"), &StepId::new("end"), &cfg());
         assert_eq!(c.line.state, "replied: Just a thought.");
-        assert_eq!(c.line.intent, "Just a thought.");
+        assert_eq!(c.line.intent, "", "a talk-only turn has no intent line");
         // Two flushes of one model step are one message: never `replied: I`.
         let split = vec![
             step(
@@ -421,13 +433,20 @@ mod clause_tests {
         ];
         let c = compose(&split, &WakeId::new("w1"), &StepId::new("end"), &cfg());
         assert_eq!(c.line.state, "replied: I've received your mail.");
-        assert_eq!(c.line.intent, "I've received your mail.");
+        assert_eq!(c.line.intent, "");
         // Leading punctuation or a marker-only line is not the first line said.
-        let odd = vec![step(
-            "t1",
-            "thought/text",
-            serde_json::json!({ "text": "```\n. Added the comment.\nMore." }),
-        )];
+        let odd = vec![
+            step(
+                "c0",
+                "tool/call",
+                serde_json::json!({ "name": "bash", "args": { "command": "ls" } }),
+            ),
+            step(
+                "t1",
+                "thought/text",
+                serde_json::json!({ "text": "```\n. Added the comment.\nMore." }),
+            ),
+        ];
         let c = compose(&odd, &WakeId::new("w1"), &StepId::new("end"), &cfg());
         assert_eq!(c.line.intent, "Added the comment.");
     }
