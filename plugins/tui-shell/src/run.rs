@@ -219,6 +219,7 @@ pub fn draw(tui: &TuiHandle) {
                 tui.0
                     .notice_scroll
                     .load(std::sync::atomic::Ordering::Relaxed),
+                size.width,
             );
             let h = body_text.len() as u16;
             if h > 0 {
@@ -382,7 +383,12 @@ pub async fn on_key(tui: &TuiHandle, key: KeyEvent) {
             .notice_raw()
             .map(|n| {
                 let size = tui.0.terminal.lock().get_frame().area();
-                pane::notice_scroll_max(&n.text, tui.0.cfg.notice_max_lines, size.height)
+                pane::notice_scroll_max(
+                    &n.text,
+                    tui.0.cfg.notice_max_lines,
+                    size.height,
+                    size.width,
+                )
             })
             .unwrap_or(0);
         if tui.scroll_notice(delta, max) {

@@ -626,14 +626,66 @@ pub fn composer_rect(size: Rect, composer_height: u16) -> Rect {
 /// from a command that never printed the line — which is exactly how `/quit` disappeared from
 /// `/help` without a single test going red.
 pub fn notice_band(text: &str, cap: u16, available: u16) -> Vec<String> {
-    notice_band_from(text, cap, available, 0)
+    notice_band_from(text, cap, available, 0, u16::MAX)
+}
+
+/// PURE: a notice's lines folded to `width` columns (visual audit, 80×24): a one-line error such
+/// as ``unknown command `x` · Enter again sends it as a message · try /help`` was clipped
+/// mid-word at the right edge, and the part that was cut was the part that said what to do.
+/// Folds at spaces; a continuation keeps its line's leading indent so a table stays a table; a
+/// single run longer than the width is split hard rather than lost.
+pub fn wrap_notice(text: &str, width: u16) -> Vec<String> {
+    let width = width.max(1) as usize;
+    let mut out = Vec::new();
+    for line in text.lines() {
+        if line.chars().count() <= width {
+            out.push(line.to_string());
+            continue;
+        }
+        let indent: String = line.chars().take_while(|c| *c == ' ').collect();
+        let room = width.saturating_sub(indent.chars().count()).max(1);
+        let mut current = String::new();
+        for word in line.trim_start().split(' ') {
+            let mut word = word.to_string();
+            loop {
+                let wl = word.chars().count();
+                let cl = current.chars().count();
+                if cl == 0 && wl > room {
+                    let head: String = word.chars().take(room).collect();
+                    out.push(format!("{indent}{head}"));
+                    word = word.chars().skip(room).collect();
+                    continue;
+                }
+                let need = if cl == 0 { wl } else { cl + 1 + wl };
+                if need <= room {
+                    if cl > 0 {
+                        current.push(' ');
+                    }
+                    current.push_str(&word);
+                } else {
+                    out.push(format!("{indent}{current}"));
+                    current = word.clone();
+                }
+                break;
+            }
+        }
+        out.push(format!("{indent}{current}"));
+    }
+    out
 }
 
 /// [`notice_band`] starting `skip` lines down (visual audit F4): a long `/help` scrolls with
 /// PgUp/PgDn instead of ending in a marker nothing can get past. The markers say which key
 /// reaches the rest.
-pub fn notice_band_from(text: &str, cap: u16, available: u16, skip: usize) -> Vec<String> {
-    let all: Vec<&str> = text.lines().collect();
+pub fn notice_band_from(
+    text: &str,
+    cap: u16,
+    available: u16,
+    skip: usize,
+    width: u16,
+) -> Vec<String> {
+    let wrapped = wrap_notice(text, width);
+    let all: Vec<&str> = wrapped.iter().map(String::as_str).collect();
     let room = cap.max(1).min(available) as usize;
     if room == 0 {
         return Vec::new();
@@ -661,8 +713,8 @@ pub fn notice_band_from(text: &str, cap: u16, available: u16, skip: usize) -> Ve
 }
 
 /// PURE: the furthest a notice can be scrolled — the last page still shows a full band.
-pub fn notice_scroll_max(text: &str, cap: u16, available: u16) -> usize {
-    let n = text.lines().count();
+pub fn notice_scroll_max(text: &str, cap: u16, available: u16, width: u16) -> usize {
+    let n = wrap_notice(text, width).len();
     let room = cap.max(1).min(available) as usize;
     n.saturating_sub(room.saturating_sub(1))
         .min(n.saturating_sub(1))
@@ -670,7 +722,29 @@ pub fn notice_scroll_max(text: &str, cap: u16, available: u16) -> usize {
 
 #[cfg(test)]
 mod notice_tests {
-    use super::notice_band;
+    use super::{notice_band, wrap_notice};
+
+    #[test]
+    fn a_long_line_folds_at_spaces_and_keeps_its_indent() {
+        assert_eq!(
+            wrap_notice("unknown command `x` · try /help", 20),
+            vec!["unknown command `x`".to_string(), "· try /help".to_string()]
+        );
+        assert_eq!(
+            wrap_notice("  key   what it does in words", 16),
+            vec!["  key   what it".to_string(), "  does in words".to_string()]
+        );
+        // A run with no spaces is split, never dropped.
+        assert_eq!(
+            wrap_notice("abcdefghij", 4),
+            vec!["abcd".to_string(), "efgh".to_string(), "ij".to_string()]
+        );
+        // Short lines and blank lines pass through untouched.
+        assert_eq!(
+            wrap_notice("a\n\nb", 4),
+            vec!["a".to_string(), String::new(), "b".to_string()]
+        );
+    }
 
     #[test]
     fn a_notice_that_fits_is_painted_whole() {
