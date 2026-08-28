@@ -505,3 +505,25 @@ fn the_state_word_carries_a_clock_once_the_status_is_known() {
     ));
     assert!(quiet[0].trim_end().ends_with("idle"), "{quiet:?}");
 }
+
+/// Round 10: a lane with no work yet is dim; the leader never is.
+#[test]
+fn a_lane_with_no_work_yet_is_dim_and_the_leader_is_not() {
+    let theme = theme();
+    let quiet = rail::row_lines(&row("terra", None), false, true, 2, 34, &theme);
+    let name = quiet[0]
+        .spans
+        .iter()
+        .find(|s| s.content.contains("terra"))
+        .expect("name");
+    assert_eq!(name.style.fg, Some(theme.dim), "{quiet:?}");
+    let mut lead = row("sol", None);
+    lead.leader = true;
+    let loud = rail::row_lines(&lead, false, true, 2, 34, &theme);
+    let name = loud[0]
+        .spans
+        .iter()
+        .find(|s| s.content.contains("sol"))
+        .expect("name");
+    assert_eq!(name.style.fg, Some(theme.fg), "{loud:?}");
+}

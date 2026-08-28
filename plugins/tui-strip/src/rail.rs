@@ -245,7 +245,16 @@ pub fn row_lines(
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     let (g, role) = glyph(row.status, row.wake_pending, row.disposed, row.dormant);
-    let mut head_style = Style::default().fg(role_color(theme, role));
+    // A lane with no work yet (round 10) is dim — name and state — until its first turn; the
+    // leader never dims. Two full-weight rows for a lane that did nothing all session took the
+    // rail's space from the lane that did.
+    let quiet =
+        row.about.is_none() && !row.leader && !row.disposed && row.status != Status::Running;
+    let mut head_style = Style::default().fg(if quiet {
+        theme.dim
+    } else {
+        role_color(theme, role)
+    });
     if focused {
         head_style = head_style.add_modifier(Modifier::BOLD);
     }
@@ -277,11 +286,13 @@ pub fn row_lines(
         Span::styled(format!("{g} "), head_style),
         Span::styled(
             name.clone(),
-            Style::default().fg(theme.fg).add_modifier(if focused {
-                Modifier::BOLD
-            } else {
-                Modifier::empty()
-            }),
+            Style::default()
+                .fg(if quiet { theme.dim } else { theme.fg })
+                .add_modifier(if focused {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
         ),
     ];
     if row.leader {
@@ -300,7 +311,11 @@ pub fn row_lines(
     }
     head.push(Span::styled(
         word,
-        Style::default().fg(role_color(theme, role)),
+        Style::default().fg(if quiet {
+            theme.dim
+        } else {
+            role_color(theme, role)
+        }),
     ));
     let mut out = vec![Line::from(head)];
 
