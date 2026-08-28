@@ -119,6 +119,11 @@ cannot happen. Two persona findings were driver artefacts, kept here so nobody c
 `mouse click --on-text "terra"` hits the rail's row, not the picker's; a wheel with no
 coordinates lands on the rail.
 
+**R9.** A program with no inner call, nothing printed and no error draws nothing
+(`rows::is_empty_program`): code mode runs one for a plain reply, and `▸ program 0 calls ✓` on
+every chat-only turn was noise. A talk-only turn has no `→` intent line on the rail: it would
+repeat the reply the `replied: …` state already carries.
+
 **Fixed along the way:** the `search [▏]` ghost after Esc, Esc (the layout's focused pane is the
 KEYBOARD's pane, `run::layout_focus`); the welcome hint says `? for help`, the status line's
 word, and says `tab panes` once.
