@@ -737,8 +737,14 @@ impl Pane for FocusPane {
         // The unread affordance (phase ux1 §2.2, B2): scrolled up with rows arriving below, the
         // pane SAYS how many and what to press. Nothing is drawn while following, so a reader at
         // the tail never sees chrome for a state they are not in.
-        let badge = (!state.scroll.is_following() && state.unseen > 0)
-            .then(|| format!("\u{2193} {} new · End", state.unseen));
+        let badge = if state.scroll.is_following() {
+            None
+        } else if state.unseen > 0 {
+            Some(format!("\u{2193} {} new · End", state.unseen))
+        } else {
+            // Scrolled up with nothing new (round 8): the badge still says where the newest is.
+            Some("\u{2191} older · End for newest".to_string())
+        };
         let is_following = state.scroll.is_following();
         let row_focus_ix = state.row_focus.index;
         drop(state);

@@ -111,8 +111,19 @@ impl Viewport {
     }
 
     /// PURE: the affordance text, or `None` while following. `"↓ 3 new"`.
+    /// The badge for a view that is not pinned to the tail (round 8): `↓ N new` when rows have
+    /// arrived below, else `↑ older` — a reader who scrolled up on purpose or by accident could
+    /// not tell from the screen that there was anything newer, nor how to get back. `None` while
+    /// following: no chrome for a state the reader is not in.
     pub fn badge(&self) -> Option<String> {
-        (!self.is_following() && self.unseen > 0).then(|| format!("\u{2193} {} new", self.unseen))
+        if self.is_following() {
+            return None;
+        }
+        Some(if self.unseen > 0 {
+            format!("\u{2193} {} new", self.unseen)
+        } else {
+            "\u{2191} older".to_string()
+        })
     }
 
     pub fn top(&self, rows: usize, height: u16) -> usize {
