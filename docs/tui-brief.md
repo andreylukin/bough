@@ -109,6 +109,16 @@ inner `▸ patch …` rows match its header. A talk-only turn's rail state is `r
 Failed attempts before the call that finally succeeded fold under `▸ N failed attempts · open`
 (`rows::retry_folds`), narration included; a failure that never succeeded stays inline.
 
+**R8b — from the second power-user pass.** Esc closes the `to:` picker before the keymap's
+dismiss runs; a click on the chip while the list is open closes it (a toggle, not a reopen);
+Tab skips a pane with no rows on screen (the collapsed search pane was a dead stop, and it read
+as "the rail's keys do nothing"); the wheel over the rail scrolls the conversation. The about-
+line reads the wake's `thought/text` flushes as MESSAGES (consecutive flushes of one model step
+joined raw, as the conversation joins them), so `replied: I` for a reply that began `I` / `'ve …`
+cannot happen. Two persona findings were driver artefacts, kept here so nobody chases them:
+`mouse click --on-text "terra"` hits the rail's row, not the picker's; a wheel with no
+coordinates lands on the rail.
+
 **Fixed along the way:** the `search [▏]` ghost after Esc, Esc (the layout's focused pane is the
 KEYBOARD's pane, `run::layout_focus`); the welcome hint says `? for help`, the status line's
 word, and says `tab panes` once.
