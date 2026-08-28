@@ -11,7 +11,7 @@
 //! The submit now WAITS and the tick sends it. These two tests are the whole contract: it lands
 //! when an agent appears, and it comes back with an error when none ever does.
 
-mod common;
+use crate::common;
 
 use bough_plugin_agents::{AgentKind, CreateAgent, Target};
 use bough_plugin_ledger::{AgentName, TrajId};

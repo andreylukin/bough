@@ -7,7 +7,7 @@
 //! production one (`gh api repos/…/pulls` → `/body` contains the marker), and "never re-executed"
 //! is asserted on the recorded argv log.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

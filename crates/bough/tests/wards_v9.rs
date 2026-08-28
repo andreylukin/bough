@@ -8,7 +8,7 @@
 //! `bough wards test` composes, dry-fires and prints; the live half boots the SHIPPED bundles
 //! in-process because the assertion is what the seams did.
 
-mod support;
+use crate::support;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

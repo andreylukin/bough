@@ -2,7 +2,7 @@
 //! are none; after both mount there are four; there is never a fifth, and the two acts §7 forbids
 //! cannot be spelled at all.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

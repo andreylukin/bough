@@ -7,7 +7,7 @@
 //! (`notify` reacts to `receipt.wake`, `wake_now(Drain)` claims `Ordinary` off `next-wake`) and
 //! the assertions read what the REAL sweep + REAL `Agent::deliver` did to a REAL inbox.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

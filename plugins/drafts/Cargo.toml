@@ -1,5 +1,6 @@
 [package]
 name = "bough-plugin-drafts"
+autotests = false
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -34,3 +35,7 @@ bough-plugin-llm = { workspace = true }
 bough-plugin-projection = { workspace = true }
 bough-plugin-projection-assembler = { workspace = true }
 bough-plugin-boundary-instructions = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

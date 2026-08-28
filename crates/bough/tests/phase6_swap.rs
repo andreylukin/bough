@@ -15,7 +15,7 @@
 //! The `gh` the collector runs is `scripts/fixtures/gh/gh`, the recording shim: an unplanned `gh`
 //! call is a red test, never a network request.
 
-mod support;
+use crate::support;
 
 use std::path::{Path, PathBuf};
 

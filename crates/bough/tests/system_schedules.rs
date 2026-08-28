@@ -6,7 +6,7 @@
 //! path, reads the live job table off `ctx.schedule`, and fires the reconsolidation job through the
 //! real scheduler.
 
-mod support;
+use crate::support;
 
 use bough_plugin_hello::trace;
 use bough_plugin_schedule::{JobName, JobOutcome, Schedule};

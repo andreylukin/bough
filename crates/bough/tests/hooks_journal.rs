@@ -8,7 +8,7 @@
 //! file asserts the same behaviour end-to-end through `bough::compose` + the kernel + the real
 //! sqlite ledger, so "journaled through the plugin API" is read back off the journal.
 
-mod support;
+use crate::support;
 
 use std::path::PathBuf;
 

@@ -13,7 +13,7 @@
 //! MOUNTED TOGETHER, which no plugin crate's own test target can reach. It lives here for the
 //! same reason `crates/bough/tests/worker_spawn.rs` does.
 
-mod support;
+use crate::support;
 
 use std::path::PathBuf;
 

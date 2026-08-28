@@ -1,5 +1,6 @@
 [package]
 name = "bough-plugin-schedule-manual"
+autotests = false
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -27,3 +28,7 @@ bough-plugin-schedule = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

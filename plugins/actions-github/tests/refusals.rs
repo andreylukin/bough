@@ -2,7 +2,7 @@
 //! thread op only on a BOT thread, and uncertainty counted as human. Every case is a LOOKUP
 //! against the world made before anything is written — asserted by reading the fake's log.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

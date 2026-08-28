@@ -3,14 +3,5 @@
 //! gate when a file is missing. One target means one link instead of one per file; test
 //! isolation comes from nextest running every test in its own process (`make test`).
 
-mod common;
-
-mod contrast;
-mod draft;
-mod focus;
-mod input;
-mod keymap;
-mod layout;
-mod restore;
-mod select;
-mod pending_send;
+mod kinds;
+mod writes;

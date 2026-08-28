@@ -3,7 +3,7 @@
 //! carrying its `gh:` ref; a `deliver_to` naming no live agent is reported every sweep; and one
 //! source's unparseable payload leaves the others sweeping.
 
-mod common;
+use crate::common;
 
 use bough_plugin_ledger::Class;
 use common::{at, Fx};

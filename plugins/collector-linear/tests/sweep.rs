@@ -2,7 +2,7 @@
 //! sweep delivers nothing, and the API KEY appears in nothing but the `Authorization` header —
 //! not in the report, not in an error, not in the `Debug` rendering of the config.
 
-mod common;
+use crate::common;
 
 use bough_plugin_ledger::Class;
 use common::{at, Fx, Mode, Stub, KEY};

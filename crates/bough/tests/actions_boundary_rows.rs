@@ -7,7 +7,7 @@
 //! idempotency journal row, is the silent-misconfiguration shape §0.2 refuses. The refusal
 //! belongs at the executor, as `NoProvider`.
 
-mod support;
+use crate::support;
 
 use bough_kernel::FiberState;
 use bough_plugin_actions::{ActionKind, Actions};

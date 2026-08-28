@@ -8,7 +8,7 @@
 //! router's decision, made per item on the refs. `deliver_to` survives as the fallback for a tree
 //! with no `mail` seam, and `sweep.rs` is the suite that still exercises it.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeSet;
 

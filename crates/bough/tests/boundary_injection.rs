@@ -17,7 +17,7 @@
 //! (path 1) and not the spawner's prepended text (path 2), but a pinned prefix assembled from the
 //! parent's chain — which is exactly why V3's "one source" claim has to be asserted on it too.
 
-mod support;
+use crate::support;
 
 use bough_plugin_agents::{AgentKind, Agents, CreateAgent};
 use bough_plugin_boundary_instructions::BOUNDARY_BLOCK;

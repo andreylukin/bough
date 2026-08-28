@@ -1,5 +1,6 @@
 [package]
 name = "bough-plugin-mcp-subprocess"
+autotests = false
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -37,3 +38,7 @@ bough-plugin-ledger-memory = { workspace = true }
 bough-plugin-tool-mcp = { workspace = true }
 bough-plugin-tools = { workspace = true }
 bough-plugin-schedule-manual = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

@@ -6,7 +6,7 @@
 //! `ctx.schedule`'s live job table, then writes a user patch that disables exactly one collector
 //! row and recomposes. Nothing is mocked; the job leaving is the effect's inverse running.
 
-mod support;
+use crate::support;
 
 use bough_plugin_hello::trace;
 use bough_plugin_schedule::Schedule;

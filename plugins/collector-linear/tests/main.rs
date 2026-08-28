@@ -5,12 +5,4 @@
 
 mod common;
 
-mod contrast;
-mod draft;
-mod focus;
-mod input;
-mod keymap;
-mod layout;
-mod restore;
-mod select;
-mod pending_send;
+mod sweep;

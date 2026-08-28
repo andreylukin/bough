@@ -1,5 +1,6 @@
 [package]
 name = "bough-plugin-catch-up-on-wake"
+autotests = false
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -28,3 +29,7 @@ bough-plugin-ledger = { workspace = true }
 [dev-dependencies]
 bough-plugin-power-test = { workspace = true }
 bough-plugin-ledger-memory = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"
