@@ -26,6 +26,8 @@ t ctrl_f_focuses_the_search_pane \
 # not; these bullets poll for a row UNDER the `search [` field matching the shape `index::lines`
 # paints: a selection marker, the SPEAKER, two spaces, then the snippet. The step id is not on
 # screen any more — the index is over rendered conversation text, not over ledger JSON.
+# A hit row may start with the pane's focus ring (`▎`, ux-visual D-uxv-10): the search pane paints
+# the same one-column ring the transcript does while it holds the keyboard, which it does here.
 hits_file="$HOME_DIR/hits.txt"
 await_hits() {
   local i n
@@ -33,7 +35,7 @@ await_hits() {
     shell-use text > "$hits_file.raw"
     n="$(grep -n "search \[" "$hits_file.raw" | head -1 | cut -d: -f1)"
     if [ -n "$n" ]; then
-      sed -n "$((n + 1)),\$p" "$hits_file.raw" | grep -E "^ *(›)? *[a-z][a-z_]*  +[^ ]" > "$hits_file" || true
+      sed -n "$((n + 1)),\$p" "$hits_file.raw" | grep -E "^ *(▎)? *(›)? *[a-z][a-z_]*  +[^ ]" > "$hits_file" || true
       [ -s "$hits_file" ] && return 0
     fi
     # MERGE: RE-QUERY, do not merely re-read. The pane runs its query on a KEYSTROKE, so a poll
@@ -57,7 +59,7 @@ t a_query_lists_hits_with_agent_and_step_id \
 # Every hit names its speaker — for the model's own answer that is the agent, and the only agent
 # in this profile with a trajectory is `sol`.
 t a_hit_names_the_agent_that_owns_it \
-  bash -c 'grep -qE "^ *(›)? *sol  +" "'"$hits_file"'" || { cat "'"$hits_file"'"; exit 1; }'
+  bash -c 'grep -qE "^ *(▎)? *(›)? *sol  +" "'"$hits_file"'" || { cat "'"$hits_file"'"; exit 1; }'
 
 # Click the hit that names the answer STEP (`thought/text`), and assert the trajectory row for that
 # step is the flashed one: `tui-focus` paints an anchored row in `theme.accent` (#7aa2f7 in the
@@ -102,9 +104,13 @@ shell-use type '"unbalanced'
 # that a query matching nothing clears the previous hits instead of leaving them there to lie.
 t a_query_that_matches_nothing_clears_the_list \
   bash -c '
+    # "Cleared" = no hit-shaped row below the field. The row under it is no longer blank by
+    # construction: a pane with nothing to show keeps only its field row (ux-visual D-uxv-1), so
+    # the next row is the status line.
     for i in $(seq 1 25); do
-      n="$(shell-use text | grep -n "search \[" | head -1 | cut -d: -f1)"
-      if [ -n "$n" ] && [ -z "$(shell-use text | sed -n "$((n + 1))p" | tr -d " ")" ]; then
+      txt="$(shell-use text)"
+      n="$(printf "%s\n" "$txt" | grep -n "search \[" | head -1 | cut -d: -f1)"
+      if [ -n "$n" ] && ! printf "%s\n" "$txt" | sed -n "$((n + 1)),\$p" | grep -qE "^ *(▎)? *(›)? *[a-z][a-z_]*  +[^ ]"; then
         exit 0
       fi
       sleep 0.2

@@ -443,7 +443,17 @@ impl Pane for SearchPane {
         // The invariant's recorder: what this frame ACTUALLY put on screen.
         invariant::record(&state.rows);
         let theme = *cx.theme();
-        let area = cx.area;
+        // The FOCUS RING, as the transcript draws it (phase ux1 B1/M16): one column, always
+        // reserved so the field never shifts when Tab moves the keyboard, painted only while
+        // this pane holds it. Tab into the search used to give no visible sign at all.
+        let full = cx.area;
+        let ring_w = 1u16.min(full.width);
+        let area = ratatui::layout::Rect {
+            x: full.x + ring_w,
+            y: full.y,
+            width: full.width - ring_w,
+            height: full.height,
+        };
         let painted = index::lines(
             &state.rows,
             state.selected,
@@ -474,7 +484,37 @@ impl Pane for SearchPane {
             );
         }
         let widget = Paragraph::new(out);
+        if ring_w > 0 && cx.view.is_focused {
+            let ring = ratatui::text::Line::from(ratatui::text::Span::styled(
+                "\u{258e}",
+                ratatui::style::Style::default().fg(theme.accent),
+            ));
+            for dy in 0..full.height {
+                cx.frame.render_widget(
+                    Paragraph::new(ring.clone()),
+                    ratatui::layout::Rect {
+                        x: full.x,
+                        y: full.y + dy,
+                        width: ring_w,
+                        height: 1,
+                    },
+                );
+            }
+        }
+        // Rows only while there is something to show (visual audit F1): an empty search took a
+        // third of the frame on every launch. With no query and no hits the pane asks for zero
+        // rows; the shell hands it its full height again the moment Ctrl+F moves the keyboard
+        // here, so it never has to be visible to be opened.
+        // …and while it is open it asks for the rows it can FILL — the field, an error line, the
+        // hits — capped at its configured height, so "no matches" is one row, not twelve.
+        let wanted = if state.input.is_empty() && state.rows.is_empty() && state.error.is_none() {
+            0
+        } else {
+            let lines = 1 + state.rows.len() + usize::from(state.error.is_some());
+            (lines as u16).clamp(1, self.cfg.height)
+        };
         drop(state);
+        cx.report_aux_rows(wanted);
         // `handle` has no `area`: the height its clamping needs is whatever the last frame had.
         self.state.lock().height = area.height;
         cx.frame.render_widget(widget, area);
@@ -520,6 +560,11 @@ impl Pane for SearchPaneArc {
                         st.push_char(c, cx.at)
                     }
                     KeyCode::Backspace => st.backspace(cx.at),
+                    // Esc on an EMPTY search is not ours: the shell takes the keyboard back to
+                    // the composer, and the pane gives up its rows on the next frame (F1).
+                    KeyCode::Esc if st.input.is_empty() && st.rows.is_empty() => {
+                        return PaneOutcome::Ignored
+                    }
                     KeyCode::Esc => st.clear(cx.at),
                     // Backwards FIRST: a terminal may report `Ctrl+Shift+n` as `n` with both
                     // modifiers or as `N` with control, and both mean "the previous match".

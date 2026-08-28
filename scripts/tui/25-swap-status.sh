@@ -119,8 +119,10 @@ t the_layout_reflowed_back \
 # --- 3. The Phase 3 gate, unchanged: `tui.search`. --------------------------------------------
 shell-use keys "Ctrl+f"
 t the_search_row_is_on_screen_before_its_patch \
-  see "search" --timeout 20000
-shell-use press Escape
+  see "search [" --timeout 20000
+# (no Escape here: the pane stays OPEN through the patch — an idle search pane takes no rows,
+#  ux-visual D-uxv-1, and a pane already gone would prove nothing about the swap. `search [` is
+#  the pane's own label; the bare word is also the status line's `^f search` hint.)
 
 write_patch <<'YML'
 entries:
@@ -129,7 +131,7 @@ entries:
 YML
 
 t disabling_the_search_row_removes_the_pane \
-  bash -c 'see "search" --not --timeout 20000'
+  bash -c 'see "search [" --not --timeout 20000'
 
 t ctrl_f_degrades_to_a_notice_with_the_row_disabled \
   bash -c '
@@ -144,7 +146,7 @@ t ctrl_f_degrades_to_a_notice_with_the_row_disabled \
 
 clear_patch
 t removing_the_patch_returns_the_search_row \
-  bash -c 'shell-use keys "Ctrl+f"; see "search" --timeout 20000'
+  bash -c 'shell-use keys "Ctrl+f"; see "search [" --timeout 20000'
 shell-use press Escape
 
 # --- 4. Both rows disabled at once, then both restored. ---------------------------------------
@@ -176,7 +178,7 @@ t both_rows_restored \
   bash -c '
     see "? help" --timeout 20000 || exit 1
     shell-use keys "Ctrl+f"
-    see "search" --timeout 20000 || exit 1
+    see "search [" --timeout 20000 || exit 1
     shell-use press Escape
   '
 

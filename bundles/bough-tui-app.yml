@@ -68,7 +68,7 @@
     # `esc to interrupt` is NOT here: it is `Field::StopKey`, which exists only while a turn is
     # running (M14). A static hint that reads the same idle and running teaches nothing and pins
     # nothing.
-    hints: ["? = help", "^f = search"]
+    hints: ["? = help", "^f = search", "tab = panes"]
 
 - id: tui.focus
   plugin: tui-focus

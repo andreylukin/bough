@@ -19,6 +19,13 @@ pub use bough_plugin_tui_render::about::INTENT_LABEL;
 /// string, so the convention is spelled once, here, and parsed back by [`focus_for_hit`].
 pub const HIT_PREFIX: &str = "rail:";
 
+/// Column 0 of the focused lane's head line (visual audit): the transcript's row-focus glyph.
+pub const FOCUS_MARKER: char = '\u{258c}';
+/// After the leader's name (visual audit: "make it obvious who the leader is").
+pub const LEADER_TAG: &str = " \u{2726} leader";
+/// Before the intent half, in place of the 23-column label (visual audit F8).
+pub const INTENT_MARK: &str = "\u{2192} ";
+
 /// One agent, as the rail knows it. The listeners maintain this; `render` never queries.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RailRow {
@@ -36,6 +43,12 @@ pub struct RailRow {
     /// `None` when the agent has never written an `about/line` — with the `about-line` row
     /// disabled that is every agent, and the rail still renders (P3-D11).
     pub about: Option<AboutView>,
+    /// The agent the `leader` set is mounted in (visual audit: "make it obvious who the leader
+    /// is"). Folded from the `leader` key when the row is mounted; with no leader row nobody is.
+    pub leader: bool,
+    /// Messages in the lane's inbox that no wake has claimed. Read from the live handle whenever
+    /// a mail step lands (visual audit follow-up): which lane needs attention is the rail's job.
+    pub waiting: usize,
 }
 
 /// PURE, unit-tested: status + pending wake ⇒ glyph and style ROLE.
@@ -55,8 +68,10 @@ pub fn glyph(
     // Dormant next, ahead of the status arms: a dormant agent keeps whatever status it had when
     // it went to sleep (§1 — dormancy is not a status), and drawing `idle` for it would say the
     // one thing that is not true, that a wake would run.
+    // Dormant is the state that decides whether mail is answered, so it is the LAST thing the
+    // rail may render faintly (visual audit F6): the warn role, not dim.
     if dormant {
-        return ('\u{25CC}', "dim");
+        return ('\u{25CC}', "warn");
     }
     match (status, wake_pending) {
         (Status::Running, _) => ('●', "accent"),
@@ -75,6 +90,7 @@ pub fn role_color(theme: &Theme, role: &str) -> ratatui::style::Color {
         "error" => theme.error,
         "evidence" => theme.evidence,
         "hint" => theme.hint,
+        "interactive" => theme.interactive,
         _ => theme.fg,
     }
 }
@@ -162,11 +178,27 @@ pub fn row_lines(
         head_style = head_style.add_modifier(Modifier::BOLD);
     }
     let word = status_word(row);
-    let name_room = width.saturating_sub(2 + word.len() as u16 + 1) as usize;
+    // Column 0 is the FOCUS MARKER (visual audit: the focused lane was bold and nothing else,
+    // which no persona noticed). Same glyph the transcript's row focus uses, so one mark means
+    // "the keyboard's conversation" everywhere.
+    let marker = if focused { FOCUS_MARKER } else { ' ' };
+    let leader_tag = if row.leader { LEADER_TAG } else { "" };
+    // Unread mail, right before the state word: `✉ 3 idle` says "asleep with three waiting"
+    // at a glance. Nothing when the inbox is empty — the rail stays quiet when nothing is owed.
+    let mail = if row.waiting > 0 {
+        format!("\u{2709} {} ", row.waiting)
+    } else {
+        String::new()
+    };
+    let name_room = width.saturating_sub(
+        3 + leader_tag.chars().count() as u16 + mail.chars().count() as u16 + word.len() as u16 + 1,
+    ) as usize;
+    let name = elide(&row.name, name_room);
     let mut head = vec![
+        Span::styled(marker.to_string(), Style::default().fg(theme.accent)),
         Span::styled(format!("{g} "), head_style),
         Span::styled(
-            elide(&row.name, name_room),
+            name.clone(),
             Style::default().fg(theme.fg).add_modifier(if focused {
                 Modifier::BOLD
             } else {
@@ -174,9 +206,20 @@ pub fn row_lines(
             }),
         ),
     ];
-    let used = 2 + elide(&row.name, name_room).chars().count();
-    let pad = (width as usize).saturating_sub(used + word.len());
+    if row.leader {
+        head.push(Span::styled(
+            leader_tag.to_string(),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    let used = 3 + name.chars().count() + leader_tag.chars().count();
+    let pad = (width as usize).saturating_sub(used + mail.chars().count() + word.len());
     head.push(Span::raw(" ".repeat(pad)));
+    if !mail.is_empty() {
+        head.push(Span::styled(mail, Style::default().fg(theme.evidence)));
+    }
     head.push(Span::styled(
         word.to_string(),
         Style::default().fg(role_color(theme, role)),
@@ -203,19 +246,24 @@ pub fn row_lines(
         ),
     ]));
     if extent > 1 {
-        // The INTENT half, ALWAYS under its label. §2: self-declared, never truth.
-        let label_room = body_room.saturating_sub(INTENT_LABEL.len() + 2);
+        // The INTENT half, ALWAYS marked as such. §2: self-declared, never truth. The mark is
+        // the arrow plus the `thought` colour and italics — the words "intent (self-declared)"
+        // used to spend 23 of the rail's 34 columns and left "the scr…" of the intent itself
+        // (visual audit F8); the full label stays in `/help` and on the transcript's hover.
+        let label_room = body_room.saturating_sub(INTENT_MARK.chars().count());
         out.push(Line::from(vec![
             Span::raw("  "),
             Span::styled(
-                format!("{INTENT_LABEL}: "),
+                INTENT_MARK.to_string(),
                 Style::default()
                     .fg(theme.dim)
                     .add_modifier(Modifier::ITALIC),
             ),
             Span::styled(
                 elide(v.intent.trim(), label_room),
-                Style::default().fg(theme.thought),
+                Style::default()
+                    .fg(theme.thought)
+                    .add_modifier(Modifier::ITALIC),
             ),
         ]));
     }

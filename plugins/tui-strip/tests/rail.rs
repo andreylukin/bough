@@ -13,7 +13,7 @@ use bough_plugin_tui_shell::pane::HitId;
 use bough_plugin_tui_shell::pane::PaneOutcome;
 use bough_plugin_tui_shell::Theme;
 use bough_plugin_tui_strip::glyph;
-use bough_plugin_tui_strip::rail::{self, RailRow, INTENT_LABEL};
+use bough_plugin_tui_strip::rail::{self, RailRow};
 
 fn theme() -> Theme {
     // A literal palette rather than `Theme::of`, which is WP-2's: these tests are about the rail's
@@ -32,6 +32,10 @@ fn theme() -> Theme {
         removed: ratatui::style::Color::Red,
         sel_bg: ratatui::style::Color::Blue,
         hint: ratatui::style::Color::Magenta,
+        interactive: ratatui::style::Color::Magenta,
+        code: ratatui::style::Color::Magenta,
+        code_bg: ratatui::style::Color::Magenta,
+        field_bg: ratatui::style::Color::Magenta,
     }
 }
 
@@ -45,6 +49,8 @@ fn row(name: &str, about: Option<AboutView>) -> RailRow {
         disposed: false,
         dormant: false,
         about,
+        leader: false,
+        waiting: 0,
     }
 }
 
@@ -99,12 +105,14 @@ fn the_intent_half_is_always_rendered_under_its_label() {
     assert_eq!(text.len(), 3, "head + state half + intent half: {text:?}");
     assert!(text[1].contains("rebased the loop"), "{text:?}");
     let intent = &text[2];
+    // The label is the MARK now (visual audit F8): the words spent 23 of the rail's columns.
     assert!(
-        intent.contains(INTENT_LABEL),
-        "the intent half must carry its label: {intent:?}"
+        intent.contains(rail::INTENT_MARK.trim_end()),
+        "the intent half must carry its mark: {intent:?}"
     );
     assert!(
-        intent.find(INTENT_LABEL).unwrap() < intent.find("finish the swap gate").unwrap(),
+        intent.find(rail::INTENT_MARK.trim_end()).unwrap()
+            < intent.find("finish the swap gate").unwrap(),
         "the label comes FIRST, so the claim is never read before it is qualified: {intent:?}"
     );
     // The state half never carries the intent text: the two halves are separate lines.
@@ -226,7 +234,7 @@ mod tests {
     fn a_dormant_row_draws_the_dormant_glyph_and_word() {
         let mut r = row("sol", None);
         r.dormant = true;
-        assert_eq!(glyph(r.status, false, false, true), ('\u{25CC}', "dim"));
+        assert_eq!(glyph(r.status, false, false, true), ('\u{25CC}', "warn"));
         assert_eq!(status_word(&r), "dormant");
         let text = text_of(&row_lines(&r, false, false, 0, 40, &theme()));
         assert!(text[0].contains('\u{25CC}'), "{text:?}");
@@ -383,4 +391,21 @@ fn every_rendered_rail_line_fits_the_column_it_was_given() {
             );
         }
     }
+}
+
+/// Visual audit follow-up: which lane needs attention is the rail's job. Unread mail shows as
+/// `✉ N` right before the state word, and NOT at all when nothing is waiting.
+#[test]
+fn a_lane_with_mail_waiting_shows_the_count_and_a_quiet_lane_shows_nothing() {
+    let mut r = row("sol", None);
+    let quiet = text_of(&rail::row_lines(&r, false, false, 0, 40, &theme()));
+    assert!(!quiet[0].contains('\u{2709}'), "{quiet:?}");
+    r.waiting = 3;
+    let loud = text_of(&rail::row_lines(&r, false, false, 0, 40, &theme()));
+    assert!(loud[0].contains("\u{2709} 3 idle"), "{loud:?}");
+    assert_eq!(
+        loud[0].chars().count(),
+        40,
+        "the head line still fills the rail: {loud:?}"
+    );
 }

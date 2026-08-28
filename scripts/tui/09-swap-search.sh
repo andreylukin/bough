@@ -37,8 +37,11 @@ entries:
     disabled: true
 YML
 
+# The pane's own label is `search [`; the bare word also lives in the status line's `^f search`
+# hint, which used to be COVERED by the config-reload notice for six seconds — exactly when this
+# check ran (ux-visual F4 keeps the status line visible, so the old spelling passed by accident).
 t writing_the_patch_removes_the_pane_without_a_restart \
-  see "search" --not --timeout 20000
+  see "search [" --not --timeout 20000
 
 # POLL. The recompose and the redraw are two events: sampling the screen once caught it mid-redraw
 # (a blank frame) often enough to fail the suite on a loaded machine.
@@ -46,8 +49,12 @@ t the_remaining_panes_resized_to_fill_the_freed_rows \
   bash -c "for i in \$(seq 1 60); do [ \"\$(shell-use text | grep -c 'trajectory line')\" -gt \"$rows_before\" ] && exit 0; sleep 0.5; done; shell-use text; exit 1"
 
 rm -f "$USER_PATCH"
+# An idle search pane takes no rows (ux-visual D-uxv-1), so "returned" is provable only by
+# opening it: Ctrl+F reaches a pane that exists and does nothing to one that does not.
+sleep 2
+shell-use keys "Ctrl+f"
 t removing_the_patch_returns_the_pane \
-  see "search" --timeout 20000
+  see "search [" --timeout 20000
 
 t the_process_never_restarted \
   bash -c "[ \"\$(pgrep -f '$BOUGH_BIN' | head -1)\" = \"$pid_before\" ]"

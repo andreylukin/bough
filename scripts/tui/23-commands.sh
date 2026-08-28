@@ -35,9 +35,11 @@ shell-use type "/"
 t slash_opens_a_palette \
   see "/help" --timeout 10000
 
+# The query is `re`, which the NAME filter matches three ways (/reconsolidate, /reset, /resume):
+# a one-item list — `he` matches only /help — has nowhere for Down to go, and the old spelling
+# passed only because the palette overlay used to repaint the status row underneath it.
 t slash_opens_a_palette_that_filters_and_moves \
   bash -c '
-    # It FILTERS: typing narrows the list, and something that was listed is gone.
     shell-use type "he"
     sleep 0.8
     see "/help" --timeout 8000 || { echo "the palette filtered /help away"; exit 1; }
@@ -194,6 +196,11 @@ t every_listed_command_renders_something \
       case "$cmd" in
         /quit|/help|"") continue ;;
       esac
+      # Start from a screen with NO notice up: the previous check left a persistent one (a
+      # `usage:` line is an error notice, which waits for a key), and a command whose own
+      # notice is the same text would then look like a no-op. Esc dismisses it.
+      shell-use press Escape >/dev/null
+      sleep 0.5
       before="$(shell-use text | sed "s/[[:space:]]*$//")"
       shell-use submit "$cmd" >/dev/null
       shell-use wait idle --timeout 15000 >/dev/null 2>&1 || true
@@ -213,6 +220,11 @@ t the_four_no_ops_answer_or_say_why \
   bash -c '
     for cmd in /focus /drift /oldfeed /prime; do
       grep -qx "$cmd" "'"$HOME_DIR"'/commands.txt" || continue   # removed from the list is also a fix
+      # Start from a screen with NO notice up: the previous check left a persistent one (a
+      # `usage:` line is an error notice, which waits for a key), and a command whose own
+      # notice is the same text would then look like a no-op. Esc dismisses it.
+      shell-use press Escape >/dev/null
+      sleep 0.5
       before="$(shell-use text | sed "s/[[:space:]]*$//")"
       shell-use submit "$cmd" >/dev/null
       shell-use wait idle --timeout 15000 >/dev/null 2>&1 || true

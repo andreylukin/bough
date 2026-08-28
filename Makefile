@@ -15,6 +15,13 @@ build: ## cargo build --workspace --all-targets
 # separately. Each crate's tests/*.rs are ONE target (tests/main.rs, `autotests = false`);
 # `scripts/check-test-mods.sh` (in `lint`) fails when a test file is not declared there.
 test: ## nextest --workspace + doctests (offline, hermetic)
+	cargo nextest run --workspace --no-run
+	@# Warm the freshly linked binary ONCE before any test execs it: macOS scans a new executable
+	@# on its first launch (XProtect), and inside a gate every test binary was just relinked, so
+	@# the scan storm can push the first `bough` boot past a test's own 30 s deadline
+	@# (`boot::sigint_tears_down_before_exit`, seen twice in gates, never in isolation). The real
+	@# cure is the Developer Tools exemption for the terminal; this makes the gate honest without it.
+	@./target/debug/bough --version >/dev/null 2>&1 || true
 	cargo nextest run --workspace
 	cargo test --workspace --doc
 

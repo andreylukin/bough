@@ -257,7 +257,9 @@ pub(crate) fn styled_wrap(raw: &str, width: u16, hang: usize, theme: &Theme) -> 
     let body_w = width.saturating_sub(hang).max(1) as u16;
     let plain = Style::default().fg(theme.fg);
     let bold = plain.add_modifier(Modifier::BOLD);
-    let code = Style::default().fg(theme.accent);
+    // Code is a TEXTURE, not a colour (visual audit F5): its own foreground on its own ground,
+    // so `inline_code` no longer reads as a link or a speaker.
+    let code = Style::default().fg(theme.code).bg(theme.code_bg);
     let pad = || Span::raw(" ".repeat(hang));
 
     let mut lines: Vec<Line<'static>> = Vec::new();

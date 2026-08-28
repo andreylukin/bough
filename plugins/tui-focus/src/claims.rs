@@ -139,7 +139,8 @@ pub fn card(
                 x,
                 width: label.len() as u16,
             });
-            spans.push(Span::styled(label, Style::default().fg(theme.accent)));
+            // A button is a thing you CLICK: the interactive role (visual audit F5).
+            spans.push(Span::styled(label, Style::default().fg(theme.interactive)));
             spans.push(Span::raw(" "));
             x += label.len() as u16 + 1;
         }

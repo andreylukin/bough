@@ -270,7 +270,10 @@ pub fn render(blocks: &[Block], width: u16, theme: &Theme) -> Vec<Line<'static>>
     let width = width.max(1);
     let mut out: Vec<Line<'static>> = Vec::new();
     for (i, b) in blocks.iter().enumerate() {
-        if i > 0 {
+        // Two list items in a row are ONE list (visual audit F10): no blank between them.
+        let both_items =
+            i > 0 && matches!(b, Block::Item { .. }) && matches!(blocks[i - 1], Block::Item { .. });
+        if i > 0 && !both_items {
             out.push(Line::from(Span::raw("")));
         }
         out.extend(block(b, width, theme));
@@ -281,9 +284,13 @@ pub fn render(blocks: &[Block], width: u16, theme: &Theme) -> Vec<Line<'static>>
 fn block(b: &Block, width: u16, theme: &Theme) -> Vec<Line<'static>> {
     match b {
         Block::Heading { level, text } => {
-            let style = Style::default()
-                .fg(if *level <= 2 { theme.accent } else { theme.fg })
-                .add_modifier(Modifier::BOLD);
+            // A heading is weight and a rule, not a colour (visual audit F5): the accent names
+            // WHO is speaking, and a heading in the same blue read as a link.
+            let style = Style::default().fg(theme.fg).add_modifier(if *level <= 2 {
+                Modifier::BOLD | Modifier::UNDERLINED
+            } else {
+                Modifier::BOLD
+            });
             // Body contrast, never `dim`: a heading is the most readable line on screen (M22).
             // Inline spans are parsed HERE too: `## A **bold** word` is a heading whose markers
             // must not reach the screen any more than a paragraph's do (M19). The heading style
@@ -325,7 +332,25 @@ fn block(b: &Block, width: u16, theme: &Theme) -> Vec<Line<'static>> {
             }
             lines
         }
-        Block::Code { lang, body } => crate::highlight(body, lang.as_deref(), theme),
+        Block::Code { lang, body } => {
+            // A code block is a BLOCK (visual audit F10): every line padded to the measure on
+            // `code_bg`, so the block has an edge and the prose around it does not run into it.
+            let bg = Style::default().bg(theme.code_bg);
+            crate::highlight(body, lang.as_deref(), theme)
+                .into_iter()
+                .map(|l| {
+                    let used: usize = l.spans.iter().map(|s| cols(&s.content)).sum();
+                    let mut spans: Vec<Span<'static>> = vec![Span::styled(" ", bg)];
+                    spans.extend(l.spans.into_iter().map(|s| {
+                        let style = s.style.bg(theme.code_bg);
+                        Span::styled(s.content, style)
+                    }));
+                    let pad = (width as usize).saturating_sub(used + 1);
+                    spans.push(Span::styled(" ".repeat(pad), bg));
+                    Line::from(spans)
+                })
+                .collect()
+        }
         Block::Table { head, rows } => table_lines(head, rows, width, theme),
         Block::Quote(text) => {
             let bar = Span::styled("│ ".to_string(), Style::default().fg(theme.dim));

@@ -221,6 +221,73 @@ struct Roster(TuiHandle);
 /// bare words is not a table).
 pub const ROSTER_HEADER: &str = "agent        status    doing                          waiting";
 
+/// The step type dormancy is folded from, by NAME (P3-D11): `dormancy` owns the fact, this
+/// row only reads it.
+const DORMANCY_STEP: &str = "agent/dormancy";
+
+/// The about-line's state half, by NAME (`about/line`, `body.state`) — the newest one on `traj`.
+async fn about_state_now(
+    ledger: &bough_plugin_ledger::LedgerHandle,
+    traj: &bough_plugin_ledger::TrajId,
+) -> Option<String> {
+    use bough_plugin_ledger::{Order, StepQuery, StepType};
+    let steps = ledger
+        .0
+        .steps(&StepQuery {
+            trajs: vec![traj.clone()],
+            kinds: vec![StepType::new("about/line")],
+            order: Order::SeqDesc,
+            limit: Some(1),
+            ..Default::default()
+        })
+        .await
+        .ok()?;
+    let state = steps.first()?.body.get("state")?.as_str()?.trim();
+    // A table cell, not markdown: the writer's backticks and stars are noise here (the rail
+    // cleans its copy the same way).
+    let state: String = state
+        .chars()
+        .filter(|c| !matches!(c, '`' | '*' | '_'))
+        .collect();
+    let state = state.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!state.is_empty()).then_some(state)
+}
+
+/// The first `max` characters, marked with `…` when cut — a table cell, not a paragraph.
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
+    out.push('\u{2026}');
+    out
+}
+
+/// Whether the newest `agent/dormancy` step on `traj` says the lane is asleep.
+async fn dormant_now(
+    ledger: &bough_plugin_ledger::LedgerHandle,
+    traj: &bough_plugin_ledger::TrajId,
+) -> bool {
+    use bough_plugin_ledger::{Order, StepQuery, StepType};
+    ledger
+        .0
+        .steps(&StepQuery {
+            trajs: vec![traj.clone()],
+            kinds: vec![StepType::new(DORMANCY_STEP)],
+            order: Order::SeqDesc,
+            limit: Some(1),
+            ..Default::default()
+        })
+        .await
+        .ok()
+        .and_then(|steps| {
+            steps
+                .first()
+                .and_then(|s| s.body.get("dormant").and_then(|v| v.as_bool()))
+        })
+        .unwrap_or(false)
+}
+
 #[async_trait::async_trait]
 impl Command for Roster {
     async fn run(&self, _inv: Invocation, _cx: CommandCx) -> Result<CommandOutput, CommandError> {
@@ -238,13 +305,31 @@ impl Command for Roster {
                 cites: Vec::new(),
             });
         }
+        // Dormancy is not a status (§1), so the live registry cannot say it — but the rail does,
+        // and two surfaces disagreeing about the one state that decides whether mail is answered
+        // was visual audit F13. Read it the way the rail does: the newest `agent/dormancy` step
+        // on the lane, by NAME, with no dependency on the `dormancy` row (P3-D11).
+        let ledger = self.0 .0.ledger.lock().clone();
         let mut lines = vec![ROSTER_HEADER.to_string()];
         for a in roster {
+            let mut status = format!("{:?}", a.status()).to_lowercase();
+            // `doing` is the about-line's STATE half — what the lane last said it did — not the
+            // trajectory id, which is an internal name (visual audit follow-up). The id stays as
+            // the fallback for a lane that has never written one.
+            let mut doing = a.traj().to_string();
+            if let Some(ledger) = &ledger {
+                if dormant_now(ledger, a.traj()).await {
+                    status = "dormant".to_string();
+                }
+                if let Some(state) = about_state_now(ledger, a.traj()).await {
+                    doing = state;
+                }
+            }
             lines.push(format!(
                 "{:<12} {:<9} {:<30} {}",
                 a.name(),
-                format!("{:?}", a.status()).to_lowercase(),
-                a.traj(),
+                status,
+                clip(&doing, 30),
                 a.inbox().len()
             ));
         }

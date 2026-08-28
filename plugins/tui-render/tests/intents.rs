@@ -73,7 +73,9 @@ fn terminal_renders_output_monospace_with_the_exit_code() {
         &view("bash", RenderIntent::Terminal, &args, Some(&r), 40, &th),
         50,
     );
-    let rendered: Vec<String> = lines.iter().map(text).collect();
+    // Output lines are padded onto their own ground (ux-visual, terminal output on `code_bg`);
+    // the words are what the test is about.
+    let rendered: Vec<String> = lines.iter().map(|l| text(l).trim().to_string()).collect();
     assert_eq!(rendered, vec!["a.txt", "b.txt", "exit 0"]);
     assert_eq!(colors(lines.last().unwrap()), vec![Some(th.dim)]);
 
@@ -103,7 +105,11 @@ fn terminal_strips_ansi_from_output() {
         &view("bash", RenderIntent::Terminal, &args, Some(&r), 60, &th),
         50,
     );
-    let joined: String = lines.iter().map(text).collect::<Vec<_>>().join("\n");
+    let joined: String = lines
+        .iter()
+        .map(|l| text(l).trim().to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(!joined.contains('\u{1b}'), "{joined:?} still has escapes");
     assert!(joined.starts_with("red plaingreen"), "{joined:?}");
 }
@@ -234,8 +240,14 @@ fn the_collapsed_header_is_exactly_one_line_at_every_width() {
             text(&line)
         );
         assert!(!text(&line).contains('\n'), "width {width}: header wrapped");
+        // The header no longer pads to the row (visual audit F7): the outcome glyph sits right
+        // after the arguments, so the line ENDS with it and never exceeds the width.
         if width >= 8 {
-            assert_eq!(w, width as usize, "width {width}: header must fill the row");
+            assert!(
+                text(&line).trim_end().ends_with('✓'),
+                "width {width}: the outcome ends the header: {:?}",
+                text(&line)
+            );
         }
     }
 }
