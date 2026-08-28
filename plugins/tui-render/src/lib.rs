@@ -72,9 +72,30 @@ fn arg_gist(args: &serde_json::Value) -> String {
 /// A json value as one line of text: strings raw, everything else compact json.
 fn scalar(v: &serde_json::Value) -> String {
     match v {
-        serde_json::Value::String(s) => s.replace('\n', " "),
+        // A code-mode file handle (`[main.rs#AD97]`) at the head of a string reads as its path:
+        // the hash means nothing to a reader, and an opened program's inner `▸ patch …` rows
+        // showed it after the collapsed line had stopped (round 7).
+        serde_json::Value::String(s) => unhandle_head(&s.replace('\n', " ")),
         other => other.to_string(),
     }
+}
+
+/// PURE: `[path#hash]` at the start of `s` becomes `path`; anything else is unchanged.
+pub fn unhandle_head(s: &str) -> String {
+    let Some(rest) = s.strip_prefix('[') else {
+        return s.to_string();
+    };
+    let Some(end) = rest.find(']') else {
+        return s.to_string();
+    };
+    let inner = &rest[..end];
+    let Some((path, hash)) = inner.rsplit_once('#') else {
+        return s.to_string();
+    };
+    if path.is_empty() || hash.is_empty() || hash.contains(' ') {
+        return s.to_string();
+    }
+    format!("{path}{}", &rest[end + 1..])
 }
 
 /// The collapsed header: `▸ bash  ls -la …            ✓`. Always exactly one line, and always
@@ -265,4 +286,21 @@ pub fn terminal_block(
         )));
     }
     out
+}
+
+#[cfg(test)]
+mod unhandle_tests {
+    use super::unhandle_head;
+
+    #[test]
+    fn a_handle_at_the_head_reads_as_its_path() {
+        assert_eq!(
+            unhandle_head("[main.rs#AD97] INS.PRE 1: +x"),
+            "main.rs INS.PRE 1: +x"
+        );
+        assert_eq!(unhandle_head("[README.md#B749]"), "README.md");
+        assert_eq!(unhandle_head("ls -la"), "ls -la");
+        assert_eq!(unhandle_head("[not a handle] x"), "[not a handle] x");
+        assert_eq!(unhandle_head("[a#b c] x"), "[a#b c] x");
+    }
 }

@@ -127,9 +127,15 @@ fn tool_clause(name: &str, s: &Step) -> String {
     .unwrap_or_else(|| format!("ran `{name}`"))
 }
 
+/// The first line that SAYS something: leading punctuation and list/quote/fence markers are
+/// stripped (`. Added the comment` read as a leaked fragment on the rail, round 7), and a line
+/// that was only markers is skipped for the next.
 fn first_line(t: &str) -> String {
     t.lines()
-        .map(str::trim)
+        .map(|l| {
+            l.trim()
+                .trim_start_matches(['.', ':', ';', ',', '-', '*', '>', '`', '#', ' '])
+        })
         .find(|l| !l.is_empty())
         .unwrap_or("")
         .to_string()
@@ -371,5 +377,13 @@ mod clause_tests {
         let c = compose(&talk, &WakeId::new("w1"), &StepId::new("end"), &cfg());
         assert_eq!(c.line.state, "Just a thought.");
         assert_eq!(c.line.intent, "Just a thought.");
+        // Leading punctuation or a marker-only line is not the first line said.
+        let odd = vec![step(
+            "t1",
+            "thought/text",
+            serde_json::json!({ "text": "```\n. Added the comment.\nMore." }),
+        )];
+        let c = compose(&odd, &WakeId::new("w1"), &StepId::new("end"), &cfg());
+        assert_eq!(c.line.intent, "Added the comment.");
     }
 }
