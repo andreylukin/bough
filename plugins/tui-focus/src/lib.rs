@@ -327,8 +327,47 @@ impl FocusPane {
                 Style::default().fg(theme.added),
             ))
         };
+        let folds = rows::retry_folds(&state.rows);
         let mut row_lines: Vec<u16> = Vec::with_capacity(state.rows.len());
+        let mut skip_until: Option<usize> = None;
         for (i, row) in state.rows.iter().enumerate() {
+            // Failed attempts folded under the call that succeeded (round 8): one line, a
+            // click opens them. A folded row's line is the fold line, so the row focus and the
+            // click map still have somewhere to point.
+            if let Some(until) = skip_until {
+                if i < until {
+                    row_lines.push(lines.len().saturating_sub(1) as u16);
+                    continue;
+                }
+                skip_until = None;
+            }
+            if let Some(fold) = folds.iter().find(|f| f.start == i) {
+                let key = retry_key(&state.rows[fold.end]);
+                let opened = state.expanded.is_expanded(&key);
+                let (marker, verb) = if opened {
+                    ("\u{25be}", "close")
+                } else {
+                    ("\u{25b8}", "open")
+                };
+                let noun = if fold.attempts == 1 {
+                    "attempt"
+                } else {
+                    "attempts"
+                };
+                let text = format!("{marker} {} failed {noun} \u{b7} {verb}", fold.attempts);
+                claim_hits.push(claims::ClaimHit {
+                    id: retry_hit(&key),
+                    line: lines.len() as u16,
+                    x: 0,
+                    width: text.chars().count() as u16,
+                });
+                lines.push(Line::styled(text, Style::default().fg(theme.warn)));
+                if !opened {
+                    row_lines.push((lines.len() - 1) as u16);
+                    skip_until = Some(fold.end);
+                    continue;
+                }
+            }
             // A new message from Andrey closes the previous turn: say what that turn changed.
             if matches!(row, Row::Andrey { .. }) && i > turn_start {
                 if let Some(l) = changed_line(&state.rows[turn_start..i], theme) {
@@ -669,6 +708,21 @@ pub fn reveal(scroll: Scroll, line: usize, lines: usize, height: u16) -> Scroll 
     }
 }
 
+/// The disclosure key a retry fold toggles: keyed by the SUCCESSFUL call it sits under.
+fn retry_key(success: &Row) -> bough_plugin_llm::ToolCallId {
+    let id = match success {
+        Row::Tool { call, .. } | Row::Program { call, .. } => call.to_string(),
+        other => other.step().to_string(),
+    };
+    bough_plugin_llm::ToolCallId::new(format!("retries:{id}"))
+}
+
+const RETRY_HIT_PREFIX: &str = "retries:";
+
+fn retry_hit(key: &bough_plugin_llm::ToolCallId) -> bough_plugin_tui_shell::pane::HitId {
+    bough_plugin_tui_shell::pane::HitId::new(format!("{RETRY_HIT_PREFIX}{key}"))
+}
+
 /// The disclosure key a draft card's `open` toggles, in the same set tool calls use.
 fn draft_key(draft: &str) -> bough_plugin_llm::ToolCallId {
     bough_plugin_llm::ToolCallId::new(format!("draft:{draft}"))
@@ -870,6 +924,20 @@ impl Pane for FocusPane {
                 // a card's button, selects text by dragging. It leaves no row marker — the marker
                 // is the KEYBOARD's row, and a click never moves the keyboard (B1), so a marker
                 // placed by a click said the keys were somewhere they were not.
+                // A retry fold's line (round 8): open or close the failed attempts.
+                if let Some(rest) = hit
+                    .as_ref()
+                    .and_then(|h| h.as_str().strip_prefix(RETRY_HIT_PREFIX))
+                {
+                    let key = bough_plugin_llm::ToolCallId::new(rest);
+                    let mut state = self.state.lock();
+                    let mut expanded = std::mem::take(&mut state.expanded);
+                    expanded.toggle(&key);
+                    state.expanded = expanded;
+                    drop(state);
+                    cx.tui.redraw();
+                    return PaneOutcome::Handled;
+                }
                 // A draft card's button (D6): copy puts the draft on the clipboard, open shows
                 // the whole body in place. Neither sends anything.
                 if let Some((id, action)) = hit.as_ref().and_then(draft::action_of_hit) {

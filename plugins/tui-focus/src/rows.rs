@@ -476,6 +476,88 @@ fn claim_row(step: &Step) -> Option<(String, Row)> {
     ))
 }
 
+/// PURE: whether a tool or program row FAILED (a result that is not ok, or a program error).
+/// A row with no result yet is neither.
+pub fn is_failed_call(row: &Row) -> bool {
+    match row {
+        Row::Tool { result, .. } => result
+            .as_ref()
+            .is_some_and(|r| r.outcome != bough_plugin_tools::ToolOutcomeKind::Ok),
+        Row::Program { result, error, .. } => {
+            error.is_some()
+                || result
+                    .as_ref()
+                    .is_some_and(|r| r.outcome != bough_plugin_tools::ToolOutcomeKind::Ok)
+        }
+        _ => false,
+    }
+}
+
+/// PURE: whether a tool or program row SUCCEEDED.
+pub fn is_ok_call(row: &Row) -> bool {
+    match row {
+        Row::Tool { result, .. } => result
+            .as_ref()
+            .is_some_and(|r| r.outcome == bough_plugin_tools::ToolOutcomeKind::Ok),
+        Row::Program { result, error, .. } => {
+            error.is_none()
+                && result
+                    .as_ref()
+                    .is_some_and(|r| r.outcome == bough_plugin_tools::ToolOutcomeKind::Ok)
+        }
+        _ => false,
+    }
+}
+
+/// One run of failed attempts folded under the call that finally succeeded (round 8).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RetryFold {
+    /// The first failed row.
+    pub start: usize,
+    /// One past the last folded row — the successful call's index.
+    pub end: usize,
+    /// How many failed calls the run holds (its narration rows are folded with them).
+    pub attempts: usize,
+}
+
+/// PURE: the runs of failed calls — with the model's narration between them — that are followed
+/// by a successful call, so the conversation can fold them under `▸ N failed attempts` instead
+/// of leaving `✗` rows and "let me fix the tag" inline forever. A failed run that never
+/// succeeded is NOT folded: that failure is the news.
+pub fn retry_folds(rows: &[Row]) -> Vec<RetryFold> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < rows.len() {
+        if !is_failed_call(&rows[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut attempts = 0;
+        let mut j = i;
+        while j < rows.len() {
+            if is_failed_call(&rows[j]) {
+                attempts += 1;
+                j += 1;
+            } else if matches!(rows[j], Row::Text { .. } | Row::Reasoning { .. }) {
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        // `j` is the first row that is neither a failed call nor narration.
+        if j < rows.len() && is_ok_call(&rows[j]) {
+            out.push(RetryFold {
+                start,
+                end: j,
+                attempts,
+            });
+        }
+        i = j.max(start + 1);
+    }
+    out
+}
+
 /// Tools that change files, by name (typed rows and program sub-calls alike).
 pub fn changes_files(name: &str) -> bool {
     matches!(name, "patch" | "edit_file" | "write_file")

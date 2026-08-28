@@ -218,3 +218,14 @@ fn a_transcript_that_fits_on_screen_never_badges() {
     assert!(v.is_following());
     assert_eq!(v.badge(), None);
 }
+
+/// Round 8: scrolled up with nothing new, the badge still says where the newest is.
+#[test]
+fn scrolled_up_with_nothing_new_badges_older() {
+    let mut v = Viewport::default();
+    v.scrolled(-5, 100, 20);
+    assert!(!v.is_following());
+    assert_eq!(v.badge().as_deref(), Some("↑ older"));
+    v.on_rows_appended(2);
+    assert_eq!(v.badge().as_deref(), Some("↓ 2 new"));
+}

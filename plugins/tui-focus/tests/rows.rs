@@ -1036,3 +1036,80 @@ fn a_file_handle_reads_as_its_path() {
     )]);
     assert_eq!(changed_files(&rows), vec!["README.md".to_string()]);
 }
+
+/// Round 8: failed attempts before the call that succeeded fold under one line; a failure that
+/// never succeeded stays inline.
+#[test]
+fn failed_attempts_fold_under_the_call_that_succeeded() {
+    use bough_plugin_tui_focus::rows::{retry_folds, RetryFold};
+    let call = |n: u64, ok: bool| {
+        let outcome = if ok { "ok" } else { "error" };
+        vec![
+            step(
+                n,
+                "tool/call",
+                serde_json::json!({ "call": format!("c{n}"), "name": "patch", "args": { "path": "a.rs" } }),
+            ),
+            step(
+                n + 1,
+                "tool/result",
+                serde_json::json!({ "call": format!("c{n}"), "name": "patch", "outcome": outcome, "content": "x", "step_index": n }),
+            ),
+        ]
+    };
+    let mut steps = vec![step(
+        1,
+        "thought/text",
+        serde_json::json!({ "step_index": 0, "text": "trying" }),
+    )];
+    steps.extend(call(10, false));
+    steps.push(step(
+        12,
+        "thought/text",
+        serde_json::json!({ "step_index": 1, "text": "let me fix the tag" }),
+    ));
+    steps.extend(call(20, false));
+    steps.extend(call(30, true));
+    steps.push(step(
+        40,
+        "thought/text",
+        serde_json::json!({ "step_index": 4, "text": "done" }),
+    ));
+    let rows = rows_from_steps(&steps);
+    // rows: text, fail, text, fail, ok, text
+    assert_eq!(
+        retry_folds(&rows),
+        vec![RetryFold {
+            start: 1,
+            end: 4,
+            attempts: 2
+        }]
+    );
+    let out = paint_as(&rows, 80, Some("sol"));
+    let fold = out
+        .iter()
+        .position(|l| l.contains("2 failed attempts · open"))
+        .expect("fold line");
+    assert!(
+        out[fold + 1].contains("▸ patch a.rs ✓"),
+        "the success follows the fold: {out:?}"
+    );
+    assert!(
+        !out.iter().any(|l| l.contains("let me fix the tag")),
+        "narration folded: {out:?}"
+    );
+    assert!(out.iter().any(|l| l.contains("done")), "{out:?}");
+    // A run that never succeeded is not folded.
+    let mut lone = vec![];
+    lone.extend(call(10, false));
+    lone.push(step(
+        12,
+        "thought/text",
+        serde_json::json!({ "step_index": 1, "text": "gave up" }),
+    ));
+    let rows = rows_from_steps(&lone);
+    assert!(retry_folds(&rows).is_empty());
+    assert!(paint_as(&rows, 80, Some("sol"))
+        .iter()
+        .any(|l| l.contains("▸ patch a.rs ✗")));
+}
