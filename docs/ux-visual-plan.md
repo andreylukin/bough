@@ -111,6 +111,15 @@ transcript's, because it is the harness speaking, not the command.
 the about-line's state half (by name, newest `about/line`), clipped to the cell; the id remains
 the fallback for a lane that has never written one.
 
+**D-uxv-22 — a slow slash command does not freeze the frame.** `dispatch_line` awaited the
+command inside the event loop, so `/reconsolidate` or `/seal` (model calls) left the composer
+looking unsent and the palette looking open for seconds, and every key typed meanwhile landed on
+a screen that had not moved — 23-commands read `/reject` as "screen-unchanged" and the stray
+keys sent `reject` as a MESSAGE. A command now gets `INLINE_COMMAND_MS` (120 ms) inline — a
+quick one still answers in the frame after Enter — and past that the band says `running…` and
+the answer settles from a task, through the same `settle` as the inline path. Pre-existing on
+`rebuild`; found by the pass-B suite run.
+
 ## Verification
 
 Per-crate: `make gate-crate CRATES="bough-plugin-tui-shell bough-plugin-tui-strip

@@ -824,10 +824,6 @@ pub async fn flush_pending_send(tui: &TuiHandle) {
 /// that a second Enter sends the line as a message.
 pub async fn dispatch_line(tui: &TuiHandle, line: &str) {
     *tui.0.last_command.lock() = Some(line.to_string());
-    let miss = |tui: &TuiHandle, text: String| {
-        tui.0.composer.lock().arm_send_as_message();
-        tui.notify_kind(text, crate::NoticeKind::Error);
-    };
     let Some(commands) = tui.0.commands.clone() else {
         miss(tui, format!("no commands registry for `{line}`"));
         return;
@@ -843,13 +839,49 @@ pub async fn dispatch_line(tui: &TuiHandle, line: &str) {
         at: chrono::Utc::now(),
     };
     let raw = line.to_string();
-    match commands.dispatch(inv, cx).await {
+    // The event loop awaits this call, so a command that takes seconds (`/reconsolidate`,
+    // `/seal`: model calls) used to FREEZE the frame — the composer looked unsent, the palette
+    // looked open, and every key typed meanwhile landed on a screen that had not moved (visual
+    // audit, 23-commands). A quick command still settles inline, so the frame after Enter shows
+    // its answer; a slow one hands the loop back, says it is running, and settles from a task.
+    let mut run = Box::pin(async move { commands.dispatch(inv, cx).await });
+    match tokio::time::timeout(Duration::from_millis(INLINE_COMMAND_MS), &mut run).await {
+        Ok(outcome) => settle(tui, &raw, outcome),
+        Err(_) => {
+            tui.notify_kind(
+                format!("{raw}\nrunning\u{2026}"),
+                crate::NoticeKind::Command,
+            );
+            let tui = tui.clone();
+            tokio::spawn(async move {
+                let outcome = run.await;
+                settle(&tui, &raw, outcome);
+            });
+        }
+    }
+}
+
+/// How long a slash command may hold the event loop before it becomes a background task.
+pub const INLINE_COMMAND_MS: u64 = 120;
+
+fn miss(tui: &TuiHandle, text: String) {
+    tui.0.composer.lock().arm_send_as_message();
+    tui.notify_kind(text, crate::NoticeKind::Error);
+}
+
+/// What a command's answer does to the shell, whichever side of the budget it arrived on.
+fn settle(
+    tui: &TuiHandle,
+    raw: &str,
+    outcome: Result<bough_plugin_commands::CommandOutput, bough_plugin_commands::CommandError>,
+) {
+    match outcome {
         Ok(out) => {
             // Resolved: NOW the line may go.
             tui.0.composer.lock().clear();
             tui.set_palette(false, "");
             tui.notify_kind(
-                bough_plugin_commands::palette::echoed(&raw, &out.text),
+                bough_plugin_commands::palette::echoed(raw, &out.text),
                 crate::NoticeKind::Command,
             );
         }
