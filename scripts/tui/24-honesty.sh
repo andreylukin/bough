@@ -91,7 +91,7 @@ if [ -n "$BOUGH_LIVE" ]; then
   t a_finished_turn_puts_a_real_cost_on_the_status_line \
     bash -c '
       for i in $(seq 1 40); do
-        shell-use text | grep -qE "\\$[0-9]+\.[0-9]+" && exit 0
+        shell-use text | grep -qE "[$][0-9]+[.][0-9]+" && exit 0
         sleep 0.5
       done
       echo "the status line still shows an unknown cost after a finished turn"
@@ -293,9 +293,19 @@ t the_shutdown_left_no_wal_over_a_page \
 # FIRST turn of the session (the cwd fixture's, three restarts ago) is what is asserted.
 tui_start "$REPO_ROOT/scripts/tui/fixtures/slow.patch.yml"
 
+# The two halves type DIFFERENT prompts (a replay row cannot be asked a question, and a live model
+# cannot be handed one), so the restored transcript is asserted against whatever THIS half sent.
+if [ -n "$BOUGH_LIVE" ]; then
+  FIRST_TURN="four-paragraph"     # the PTY question, the live half's first submission
+  LAST_TURN="What can you do"     # the capability question, its last
+else
+  FIRST_TURN="write the file in the current directory"
+  LAST_TURN="start something long"
+fi
+
 t the_about_line_is_one_sentence_after_the_relaunch \
   bash -c '
-    see "start something long" --timeout 20000 >/dev/null 2>&1 || true
+    see "'"$LAST_TURN"'" --timeout 20000 >/dev/null 2>&1 || true
     about() {
       shell-use text | cut -c1-34 | python3 -c "
 import sys
@@ -319,12 +329,12 @@ for r in sys.stdin.read().split(chr(10)):
 
 t a_quit_then_relaunch_restores_every_turn \
   bash -c '
-    see "start something long" --timeout 20000 \
+    see "'"$LAST_TURN"'" --timeout 20000 \
       || { echo "the last turn did not come back after a relaunch"; exit 1; }
     shell-use press Home
     sleep 0.5
     for i in $(seq 1 20); do
-      shell-use text | grep -q "write the file in the current directory" && exit 0
+      shell-use text | grep -q "'"$FIRST_TURN"'" && exit 0
       shell-use press Home
       sleep 0.3
     done

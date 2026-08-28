@@ -31,6 +31,11 @@ pub struct SqliteStore {
     pub(crate) retired: Arc<AtomicBool>,
 }
 
+/// How long a disposal-time checkpoint waits out another connection that is still holding the
+/// ledger open. Long enough for a pane's last read to finish, short enough that a shutdown that
+/// cannot checkpoint says so instead of hanging.
+const CHECKPOINT_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 impl SqliteStore {
     /// Open (or create) the db, check the format version, install the schema and the builtins.
     pub fn open(cfg: &SqliteConfig, ctx: Context) -> Result<Arc<SqliteStore>, LedgerError> {
@@ -74,8 +79,30 @@ impl SqliteStore {
             let c = conn.lock();
             // `query_row` and not `execute`: the pragma RETURNS a row (busy, log, checkpointed),
             // and rusqlite refuses `execute` on a statement that yields one.
-            c.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
-                .map_err(store_err)
+            //
+            // And the FIRST column is the one that matters: a checkpoint blocked by another live
+            // connection reports `busy = 1` and does NOT error, so reading the row away — which is
+            // what `|_| Ok(())` did — reported success while leaving the whole WAL on disk. That is
+            // M28's symptom with none of its evidence, and it is what
+            // `scripts/tui/24-honesty.sh::the_shutdown_left_no_wal_over_a_page` caught under the
+            // full suite's load (445 KB of WAL beside a 131 KB db, after `bough: bye.`). Retry
+            // within a bounded window, then fail loudly so the disposer's `tracing::error!` fires.
+            let deadline = std::time::Instant::now() + CHECKPOINT_WAIT;
+            loop {
+                let busy: i64 = c
+                    .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))
+                    .map_err(store_err)?;
+                if busy == 0 {
+                    return Ok(());
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(LedgerError::Store(anyhow::anyhow!(
+                        "the WAL checkpoint stayed busy for {CHECKPOINT_WAIT:?}: another \
+                         connection is still holding the ledger open, and the WAL is on disk"
+                    )));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
         })
         .await
         .map_err(|e| LedgerError::Store(anyhow::anyhow!("checkpoint task failed: {e}")))?

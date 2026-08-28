@@ -84,10 +84,15 @@ fn isolate(home: &Home) -> PathBuf {
     }
     std::fs::write(
         home.0.join("bough.patch.yml"),
+        // A patch layer REPLACES a row's config map, and both of these configs are
+        // `deny_unknown_fields` with no serde defaults — so every field the bundle sets has to be
+        // restated here, not just the two the isolation repoints. A partial map fails boot.
         format!(
             "entries:\n  \
-             actions.github:\n    config:\n      gh_bin: {}\n  \
-             actions.linear:\n    config:\n      endpoint: \"http://127.0.0.1:9/graphql\"\n",
+             actions.github:\n    config:\n      gh_bin: {}\n      \
+             known_bots: []\n      timeout_ms: 60000\n  \
+             actions.linear:\n    config:\n      endpoint: \"http://127.0.0.1:9/graphql\"\n      \
+             api_key: \"\"\n      timeout_ms: 30000\n",
             gh.display()
         ),
     )
