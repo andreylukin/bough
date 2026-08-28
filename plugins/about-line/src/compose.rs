@@ -86,7 +86,12 @@ fn state_half(steps: &[&Step]) -> String {
         }
     }
     if clauses.is_empty() {
-        return said.unwrap_or_default();
+        // A turn that only talked (round 8): labelled, so a one-word answer never reads as
+        // work — the rail showed `6` / `→ 6` for "say 6".
+        return said
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("replied: {s}"))
+            .unwrap_or_default();
     }
     clauses.join("; ")
 }
@@ -375,7 +380,7 @@ mod clause_tests {
             serde_json::json!({ "text": "Just a thought.\nMore." }),
         )];
         let c = compose(&talk, &WakeId::new("w1"), &StepId::new("end"), &cfg());
-        assert_eq!(c.line.state, "Just a thought.");
+        assert_eq!(c.line.state, "replied: Just a thought.");
         assert_eq!(c.line.intent, "Just a thought.");
         // Leading punctuation or a marker-only line is not the first line said.
         let odd = vec![step(
