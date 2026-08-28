@@ -770,8 +770,11 @@ async fn palette_key(tui: &TuiHandle, key: KeyEvent) -> bool {
 
 /// Move keyboard focus one step over the focusable panes and the composer.
 async fn cycle_focus(tui: &TuiHandle, step: i32) {
-    let mut stops: Vec<Option<PaneId>> = tui
-        .panes()
+    // The conversation first, the rail last (round 6): Tab's first stop used to be the rail,
+    // where the arrows did nothing visible — a dead stop before the pane a person wants.
+    let mut panes = tui.panes();
+    panes.sort_by_key(|p| p.slot == crate::pane::Slot::Strip);
+    let mut stops: Vec<Option<PaneId>> = panes
         .into_iter()
         .filter(|p| p.focusable)
         .map(|p| Some(p.id))

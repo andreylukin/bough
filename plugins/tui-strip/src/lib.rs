@@ -22,6 +22,7 @@ use bough_plugin_tui_shell::pane::{
     Pane, PaneCx, PaneEvent, PaneOutcome, PaneSpec, RenderCx, Slot, SlotSize,
 };
 use bough_plugin_tui_shell::{PaneId, Tui, TuiHandle};
+use crossterm::event::KeyCode;
 use parking_lot::Mutex;
 use ratatui::layout::Rect;
 use ratatui::widgets::Paragraph;
@@ -169,16 +170,31 @@ impl Pane for StripPane {
     async fn handle(&self, ev: PaneEvent, cx: PaneCx) -> PaneOutcome {
         match ev {
             PaneEvent::Click { hit, .. } => rail::on_click(hit.as_ref()),
-            PaneEvent::Tick => {
-                let _ = cx;
-                PaneOutcome::Ignored
+            // With the keyboard in the rail (round 6), Up/Down move the focused lane — the
+            // keyboard's way to what a click on a row does.
+            PaneEvent::Key(key) if matches!(key.code, KeyCode::Up | KeyCode::Down) => {
+                let rows = self.rows.lock().clone();
+                let Some(req) = rail::step_focus(
+                    &rows,
+                    cx.tui.focused_agent().as_ref(),
+                    key.code == KeyCode::Down,
+                ) else {
+                    return PaneOutcome::Ignored;
+                };
+                cx.tui.focus(req).await;
+                cx.tui.redraw();
+                PaneOutcome::Handled
             }
+            PaneEvent::Tick => PaneOutcome::Ignored,
             _ => PaneOutcome::Ignored,
         }
     }
 
     fn key_hints(&self) -> Vec<(&'static str, &'static str)> {
-        vec![("click", "focus that agent")]
+        vec![
+            ("click", "focus that agent"),
+            ("up/down", "focus the next agent"),
+        ]
     }
 }
 

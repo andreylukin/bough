@@ -2295,6 +2295,7 @@ dependencies = [
  "bough-plugin-tui-shell",
  "bough-util",
  "chrono",
+ "crossterm",
  "inventory",
  "parking_lot",
  "ratatui",

@@ -136,6 +136,26 @@ pub fn clock_text(
     }
 }
 
+/// PURE: the lane Up/Down from the rail moves to — the previous/next row in rail order (the
+/// leader first, as drawn), wrapping. `None` with no rows.
+pub fn step_focus(rows: &[RailRow], focused: Option<&AgentId>, down: bool) -> Option<FocusRequest> {
+    if rows.is_empty() {
+        return None;
+    }
+    let mut order: Vec<&RailRow> = rows.iter().collect();
+    order.sort_by_key(|r| !r.leader);
+    let at = focused.and_then(|f| order.iter().position(|r| &r.agent == f));
+    let next = match (at, down) {
+        (None, _) => 0,
+        (Some(i), true) => (i + 1) % order.len(),
+        (Some(i), false) => (i + order.len() - 1) % order.len(),
+    };
+    Some(FocusRequest {
+        agent: Some(order[next].agent.clone()),
+        ..Default::default()
+    })
+}
+
 /// The clickable region id for one rail row.
 pub fn hit_for_agent(agent: &AgentId) -> HitId {
     HitId::new(format!("{HIT_PREFIX}{agent}"))
