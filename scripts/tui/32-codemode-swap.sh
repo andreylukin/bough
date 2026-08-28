@@ -118,8 +118,10 @@ clear_patch
 shell-use submit "the second turn"
 shell-use wait idle --timeout 30000
 
+# The collapsed program line NAMES its calls (the TUI brief, D2): the fixture's program makes one
+# `view('demo.txt')`, so the row reads `▸ program view demo.txt · …`, not `1 call`.
 t program_row_after_the_patch \
-  row_with "program" "1 call"
+  row_with "program" "view demo.txt"
 
 # The status line is where a Failed row would show. The seam rows have to be untouched by the
 # swap — `codemode_swap.rs::the_tools_seam_rows_stay_active_and_nothing_is_failed` says the same
