@@ -289,6 +289,28 @@ impl FocusPane {
             ));
         }
 
+        // The empty transcript says what it is for (visual audit F15): a first launch used to be
+        // a blank pane — nothing said the machine was ready, whose conversation this was, or that
+        // the composer below was where to start. Only when there is genuinely nothing: no rows,
+        // no live tail, and no older page the window has scrolled past.
+        if state.rows.is_empty() && live.text.is_empty() && !state.more_above {
+            let opener = match &state.agent_name {
+                Some(name) => {
+                    format!("Nothing here yet \u{2014} {name} is waiting for your first message.")
+                }
+                None => "Nothing here yet.".to_string(),
+            };
+            lines.push(Line::styled(opener, Style::default().fg(theme.fg)));
+            lines.extend(
+                bough_plugin_tui_render::wrap(
+                    "Type below and press enter \u{b7} / lists the commands \u{b7} ? lists the keys \u{b7} tab moves between panes",
+                    width,
+                )
+                .into_iter()
+                .map(|l| Line::styled(l, Style::default().fg(theme.dim))),
+            );
+        }
+
         let mut row_lines: Vec<u16> = Vec::with_capacity(state.rows.len());
         for (i, row) in state.rows.iter().enumerate() {
             let flash = state.anchor.as_ref() == Some(row.step());

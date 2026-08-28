@@ -671,3 +671,28 @@ fn a_turn_is_a_speaker_label_and_one_rule() {
     assert!(!unnamed.iter().any(|l| l.trim() == "sol:"), "{unnamed:?}");
     assert!(unnamed.iter().any(|l| l.trim() == "andrey:"), "{unnamed:?}");
 }
+
+/// Visual audit F15: the empty transcript says what it is for; a transcript with rows does not.
+#[test]
+fn the_empty_transcript_says_what_it_is_for() {
+    let out = paint_as(&[], 80, Some("sol"));
+    let text = out.join("\n");
+    assert!(
+        text.contains("sol is waiting for your first message"),
+        "{text}"
+    );
+    assert!(text.contains("/ lists the commands"), "{text}");
+    let unnamed = paint(&[], 80).join("\n");
+    assert!(unnamed.starts_with("Nothing here yet."), "{unnamed}");
+    // Narrow: the hint wraps rather than clipping.
+    assert!(paint_as(&[], 40, Some("sol")).len() > 2);
+    // With a row, no welcome.
+    let rows = rows_from_steps(&[step(
+        1,
+        "mail/delivered",
+        serde_json::json!({ "from": "andrey", "subject": "hi", "summary": "ONE" }),
+    )]);
+    assert!(!paint_as(&rows, 80, Some("sol"))
+        .join("\n")
+        .contains("Nothing here yet"));
+}
