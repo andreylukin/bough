@@ -397,6 +397,10 @@ impl FocusPane {
                 lines.push(piece.line.clone());
             }
         };
+        if plan.is_some() {
+            // The fixed material, when the head line is open (D11-4).
+            lines.extend(context::head_lines(&state.context, width, theme));
+        }
         for (i, row) in state.rows.iter().enumerate() {
             if let Some(p) = &plan {
                 if p.mail[i] {
@@ -1102,7 +1106,18 @@ impl Pane for FocusPane {
                 // block, a tier's rows, the steps not in the context.
                 if let Some(h) = hit.as_ref() {
                     if h.as_str().starts_with(context::HIT_PREFIX) {
-                        let toggled = self.state.lock().context.toggle(h);
+                        let mut state = self.state.lock();
+                        let toggled = state.context.toggle(h);
+                        // Opening the head shows it from its FIRST line: the pane follows the
+                        // tail, and a wall of fixed text opened at its end reads as noise.
+                        if toggled && h.as_str() == "context:head" {
+                            state.scroll = if state.context.head_open {
+                                Scroll::anchored_on(0)
+                            } else {
+                                Scroll::Follow
+                            };
+                        }
+                        drop(state);
                         if toggled {
                             cx.tui.redraw();
                             return PaneOutcome::Handled;
