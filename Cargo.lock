@@ -342,6 +342,7 @@ dependencies = [
  "bough-plugin-projection-assembler",
  "bough-plugin-projection-probe",
  "bough-plugin-reconsolidation",
+ "bough-plugin-request-recorder",
  "bough-plugin-residents",
  "bough-plugin-rollups",
  "bough-plugin-rollups-none",
@@ -1591,6 +1592,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "bough-plugin-request-recorder"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bough-kernel",
+ "bough-llm",
+ "bough-plugin-llm",
+ "bough-util",
+ "chrono",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tracing",
+]
+
+[[package]]
 name = "bough-plugin-residents"
 version = "0.1.0"
 dependencies = [
@@ -2118,6 +2136,7 @@ dependencies = [
  "bough-plugin-ledger",
  "bough-plugin-ledger-memory",
  "bough-plugin-llm",
+ "bough-plugin-projection",
  "bough-plugin-tools",
  "bough-plugin-tui-render",
  "bough-plugin-tui-shell",

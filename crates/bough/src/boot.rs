@@ -51,6 +51,25 @@ pub async fn boot(mut cli: Cli) -> Result<ExitCode, BootError> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    // INTERIM (2026-08-28, until the daemon): one interactive bough per home. Taken BEFORE the
+    // tree mounts, so the refusal prints on the normal screen and nothing is torn down. Headless
+    // profiles (`bough exec`, the subcommands) share a home freely; `--check` mounts and leaves.
+    let _home_lock = if !cli.check && profile.bundles.iter().any(|b| b == "bough-tui-app") {
+        match crate::lock::acquire(&bough_util::bough_home()) {
+            Ok(lock) => Some(lock),
+            Err(crate::lock::LockError::Held { path, pid }) => {
+                eprintln!("{}", crate::lock::held_message(&path, pid));
+                return Ok(ExitCode::from(2));
+            }
+            Err(crate::lock::LockError::Io(e)) => {
+                eprintln!("bough: could not take the home lock: {e}; going on without it");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let kernel = Kernel::new(
         catalog,
         KernelOptions {

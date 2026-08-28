@@ -52,6 +52,14 @@
     max_delay_ms: 8000
     jitter: true
     retry_on: [transport, rate_limit, overloaded]
+# Every request that reaches a model, on disk verbatim (Andrey, 2026-08-28): one file per
+# projection under $BOUGH_HOME/requests, a `## Round` per request. The conversation's click on a
+# speaker label opens the turn's file in $EDITOR. Listens on `llm/stream`; touches nothing.
+- id: request.recorder
+  plugin: request-recorder
+  config:
+    dir: requests
+    max_block_chars: 0
 - id: tools
   plugin: tools
   config:

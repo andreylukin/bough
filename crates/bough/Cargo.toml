@@ -30,6 +30,7 @@ bough-plugin-llm = { workspace = true }
 bough-plugin-llm-anthropic = { workspace = true }
 bough-plugin-llm-replay = { workspace = true }
 bough-plugin-llm-retry = { workspace = true }
+bough-plugin-request-recorder = { workspace = true }
 bough-plugin-agents = { workspace = true }
 bough-plugin-agent-loop = { workspace = true }
 bough-plugin-agent-loop-scripted = { workspace = true }
@@ -131,6 +132,8 @@ bough-plugin-actions-shim = { workspace = true }
 # `vocabulary::all()` is the launcher's own union of every plugin's step types, for a reader that
 # has no kernel (`docs/track-c-merge-notes.md`), so the ledger's Definition is a real dependency.
 bough-plugin-ledger = { workspace = true }
+# The interim home lock (`lock.rs`): `flock` until the daemon.
+libc = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

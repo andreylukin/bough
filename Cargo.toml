@@ -78,6 +78,7 @@ bough-plugin-llm = { path = "plugins/llm" }                                   # 
 bough-plugin-llm-anthropic = { path = "plugins/llm-anthropic" }               # §12 production llm Provider
 bough-plugin-llm-replay = { path = "plugins/llm-replay" }                     # §12 recorded-transcript Provider
 bough-plugin-llm-retry = { path = "plugins/llm-retry" }                       # §12 agent/request-error Consumer
+bough-plugin-request-recorder = { path = "plugins/request-recorder" }         # every request on disk, verbatim (llm/stream listener)
 bough-plugin-agents = { path = "plugins/agents" }                             # §2 agents Service Definition
 bough-plugin-agent-loop = { path = "plugins/agent-loop" }                     # §5 the wake flow Provider
 bough-plugin-agent-loop-scripted = { path = "plugins/agent-loop-scripted" }   # §5 transcript loop Provider (swap gate)

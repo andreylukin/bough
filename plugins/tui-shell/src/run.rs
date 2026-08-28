@@ -40,6 +40,10 @@ pub async fn run(ctx: Context, tui: TuiHandle, cfg: Arc<TuiConfig>, e: EffectCtx
         if e.is_halted() {
             return;
         }
+        if let Some(argv) = tui.take_external() {
+            suspend_for(&tui, &cfg, &mut events, argv).await;
+            draw(&tui);
+        }
         tokio::select! {
             biased;
             ev = async {
@@ -76,6 +80,52 @@ pub async fn run(ctx: Context, tui: TuiHandle, cfg: Arc<TuiConfig>, e: EffectCtx
                 draw(&tui);
             }
         }
+    }
+}
+
+/// Run a program OVER the TUI (round 11): give the tty back — restore, and drop the event reader
+/// so the program owns stdin — run `argv` to completion off the async runtime, then enter again,
+/// read events again and clear the backend's memory of the screen so the next frame is whole.
+/// The terminal bookkeeping is process-wide (`term::ENTERED`), so the guard `enter` hands back is
+/// only a marker and is let go: the shell's own guard, dropped at unload, restores whatever is in
+/// effect then. Under a headless backend there is no terminal to give back; the program just runs.
+async fn suspend_for(
+    tui: &TuiHandle,
+    cfg: &TuiConfig,
+    events: &mut Option<crossterm::event::EventStream>,
+    argv: Vec<String>,
+) {
+    let real = events.is_some();
+    if real {
+        *events = None;
+        crate::term::restore_now();
+    }
+    let shown = argv.join(" ");
+    let status = tokio::task::spawn_blocking(move || {
+        std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .status()
+    })
+    .await;
+    if real {
+        match crate::term::TerminalGuard::enter(cfg) {
+            Ok(guard) => std::mem::forget(guard),
+            Err(err) => tracing::error!(error = %err, "could not re-enter the terminal"),
+        }
+        *events = Some(crossterm::event::EventStream::new());
+        let _ = tui.0.terminal.lock().clear();
+    }
+    match status {
+        Ok(Ok(s)) if s.success() => {}
+        Ok(Ok(s)) => tui.notify_kind(format!("`{shown}` exited: {s}"), crate::NoticeKind::Error),
+        Ok(Err(err)) => tui.notify_kind(
+            format!("could not run `{shown}`: {err}"),
+            crate::NoticeKind::Error,
+        ),
+        Err(err) => tui.notify_kind(
+            format!("could not run `{shown}`: {err}"),
+            crate::NoticeKind::Error,
+        ),
     }
 }
 

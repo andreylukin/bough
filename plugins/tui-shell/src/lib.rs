@@ -164,6 +164,10 @@ pub struct TuiInner {
     /// and the tick sends it as soon as an agent exists; past `PENDING_SEND_TICKS` it is handed
     /// back to the composer with an error, because nothing the user typed is ever destroyed (B3).
     pub(crate) pending_send: Mutex<Option<PendingSend>>,
+    /// A program to run OVER the TUI on the run loop's next pass (round 11: a turn's context in
+    /// `$EDITOR`). The loop restores the terminal, runs it to completion on the same tty, enters
+    /// again and redraws. See [`TuiHandle::run_external`].
+    pub(crate) external: Mutex<Option<Vec<String>>>,
     pub(crate) redraw: Notify,
 }
 
@@ -241,6 +245,7 @@ impl TuiHandle {
             anchored: RwLock::new(None),
             last_command: Mutex::new(None),
             pending_send: Mutex::new(None),
+            external: Mutex::new(None),
             redraw: Notify::new(),
         })))
     }
@@ -653,6 +658,22 @@ impl TuiHandle {
 
     /// Whether quit has been asked for. A pane that reads the ledger on an event checks this
     /// first: no reads once shutdown begins.
+    /// Run `argv` over the TUI: the run loop leaves the alt screen, runs it to completion on the
+    /// same tty, then enters again and redraws (round 11). The request is queued; nothing
+    /// happens until the loop's next pass, which `redraw` wakes. A later request before that
+    /// pass replaces an earlier one.
+    pub fn run_external(&self, argv: Vec<String>) {
+        if argv.is_empty() {
+            return;
+        }
+        *self.0.external.lock() = Some(argv);
+        self.redraw();
+    }
+
+    pub(crate) fn take_external(&self) -> Option<Vec<String>> {
+        self.0.external.lock().take()
+    }
+
     pub fn quitting(&self) -> bool {
         self.0.quitting.load(Ordering::SeqCst)
     }
@@ -887,6 +908,20 @@ impl TuiHandle {
             None => term::restore_now(),
         }
     }
+}
+
+/// The editor as argv: `$VISUAL`, else `$EDITOR`, else `vi` — split on whitespace so
+/// `EDITOR="code --wait"` works.
+pub fn editor_argv() -> Vec<String> {
+    for var in ["VISUAL", "EDITOR"] {
+        if let Ok(v) = std::env::var(var) {
+            let argv: Vec<String> = v.split_whitespace().map(str::to_string).collect();
+            if !argv.is_empty() {
+                return argv;
+            }
+        }
+    }
+    vec!["vi".to_string()]
 }
 
 /// Everything the shell can go wrong as before there is a screen to say it on.
