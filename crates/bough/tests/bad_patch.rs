@@ -6,7 +6,7 @@
 //! Misconfiguration must fail loud — and "loud" means an error a human can act on, not a dead
 //! tree.
 
-mod support;
+use crate::support;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

@@ -2,7 +2,7 @@
 //! so the ledger itself refuses one that cannot say what justified it; and a pin is never a
 //! candidate, whatever the config says (V7).
 
-mod support;
+use crate::support;
 
 use bough_plugin_ledger::Class;
 use bough_plugin_reconsolidation::vocabulary::MemoryExpired;

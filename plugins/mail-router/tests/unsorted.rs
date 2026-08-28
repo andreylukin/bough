@@ -2,7 +2,7 @@
 //! A tree may boot with no leader — headless, or in the moment before the `leader` row activates —
 //! and mail must be neither dropped nor refused then.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

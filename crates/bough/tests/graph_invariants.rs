@@ -3,7 +3,7 @@
 //! `agents` registry, the real `rollups` seam behind the digests — and then ask the kernel what
 //! its invariant runner saw.
 
-mod support;
+use crate::support;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

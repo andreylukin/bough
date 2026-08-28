@@ -2,7 +2,7 @@
 //! ledger byte for byte, and a PLANTED side channel (an `llm/stream` listener that appends to
 //! `messages`) makes the invariant report.
 
-mod support;
+use crate::support;
 
 use bough_plugin_agent_loop::invariant;
 use bough_plugin_llm::{

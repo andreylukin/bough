@@ -5,7 +5,7 @@
 //! and the band — back. No recompile, no restart, one test process, through the launcher's own
 //! recompose (`bough::watch::recompose_once`), the `ledger_swap.rs` precedent.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

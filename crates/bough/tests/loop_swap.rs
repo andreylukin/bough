@@ -4,7 +4,7 @@
 //! Two swaps, because the phase introduced two seams that a second Provider can hold: the wake
 //! flow (`agent-loop` → `agent-loop-scripted`) and the model (`llm-anthropic` → `llm-replay`).
 
-mod support;
+use crate::support;
 
 use bough_kernel::{FiberState, SerialEvent, WaterfallEvent};
 use bough_plugin_agents::{AgentKind, Agents, CreateAgent, MailClass, Message, MessageId, Sender};

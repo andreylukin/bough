@@ -148,3 +148,12 @@ bough-plugin-power = { path = "plugins/power" }                               # 
 bough-plugin-sleep-listener = { path = "plugins/sleep-listener" }             # §13 macOS IOKit Provider
 bough-plugin-power-test = { path = "plugins/power-test" }                     # §13 synthetic sleep/wake Provider
 bough-plugin-catch-up-on-wake = { path = "plugins/catch-up-on-wake" }         # §13 one catch-up wake per agent
+
+# Build speed (2026-08-27). `debug = "line-tables-only"` keeps file:line in backtraces and drops
+# the full DWARF that made every one of the ~50 test binaries link slowly and target/debug run to
+# 100+ GB, and cuts the release link the TUI suite waits on the same way.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.release]
+debug = "line-tables-only"

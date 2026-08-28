@@ -10,7 +10,7 @@
 //! The plants go into each invariant's own recorded stream: these are relations the product code
 //! is written not to break, and there is no config that makes a pane render a step twice.
 
-mod support;
+use crate::support;
 
 use bough_plugin_hello::trace;
 use support::{boot_real, TempDir};

@@ -4,7 +4,7 @@
 //!   `as_of`: it is a replay, not an assembly;
 //! * an agent with no pin assembles normally, and a pin on one agent is invisible to another.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

@@ -1,7 +1,7 @@
 //! P3-D9: the `RenderIntent::Diff` args convention, checked against the REAL argument names of the
 //! two `tools-baseline` tools that declare `Diff`, so the convention and the tools cannot drift.
 
-mod common;
+use crate::common;
 
 use bough_plugin_tools::{RenderIntent, ToolScope};
 use bough_plugin_tools_baseline::BaselineConfig;

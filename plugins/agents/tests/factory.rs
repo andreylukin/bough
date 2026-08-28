@@ -2,7 +2,7 @@
 //! frees it and another loop Provider can take it without a recompile. That is what makes the
 //! phase's swap test possible.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help check build test lint gates release audit-plugins live bench tui-test tui-test-replay ux2
+.PHONY: help check build test doc-test lint gate-crate gates release audit-plugins live bench tui-test tui-test-replay ux2
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-16s %s\n", $$1, $$2}'
@@ -10,18 +10,35 @@ check: ## cargo check --workspace --all-targets
 build: ## cargo build --workspace --all-targets
 	cargo build --workspace --all-targets
 
-test: ## cargo test --workspace (offline, hermetic)
-	cargo test --workspace
+# nextest: one process per test, every binary's tests scheduled across all cores at once
+# (`cargo test` runs test binaries one after another). Doctests are cargo's alone, so they run
+# separately. Each crate's tests/*.rs are ONE target (tests/main.rs, `autotests = false`);
+# `scripts/check-test-mods.sh` (in `lint`) fails when a test file is not declared there.
+test: ## nextest --workspace + doctests (offline, hermetic)
+	cargo nextest run --workspace
+	cargo test --workspace --doc
 
-lint: ## rustfmt check + clippy (warnings as errors)
+doc-test: ## doctests only
+	cargo test --workspace --doc
+
+# Per-work-package verification: only the crates you touched. The full `make gates` runs at
+# Integrate and at close, not after every work package.
+gate-crate: ## CRATES="bough-plugin-x bough-plugin-y" — nextest + clippy for those crates only
+	@test -n "$(CRATES)" || { echo "make gate-crate CRATES=\"bough-plugin-a bough-plugin-b\""; exit 1; }
+	cargo nextest run $(foreach c,$(CRATES),-p $(c))
+	cargo clippy $(foreach c,$(CRATES),-p $(c)) --all-targets -- -D warnings
+
+lint: ## rustfmt check + clippy (warnings as errors) + test-target check
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets -- -D warnings
+	./scripts/check-test-mods.sh
 
 # `tui-test-replay` is IN the gates on purpose: every screen-level bullet of the interface-cutover
 # phase (V1-V8 and SWAP) lives in `scripts/tui/*.sh`, so a gate without them exercises none of the
 # interface it gates. The REPLAY half only — `make test` and `make gates` are offline and hermetic
 # (AGENTS.md); the live half is `make tui-test`.
-gates: build lint test tui-test-replay ## the pre-commit gates
+# No `build` step: `test` builds exactly what it runs and `lint` shares its metadata.
+gates: lint test tui-test-replay ## the pre-commit gates
 
 # REQUIREMENTS §17 / P2-D27: `make test` is OFFLINE and hermetic, always. The live set is
 # `#[ignore]`d and gated on BOUGH_LIVE=1; this is the target that runs it, with the key sourced
@@ -54,6 +71,10 @@ audit-plugins: release ## REQUIREMENTS §17 Phase 8: boot with each bough-base r
 TUI_SCRATCH := $(CURDIR)/target/tui-test
 TUI_PATCH   := $(TUI_SCRATCH)/llm-replay.patch.yml
 
+# The suite boots the RELEASE binary. It was tried on the debug one (to spare the gate a second
+# compile): three runs, three different timing misses (a swallowed catch-up, a boot that lost the
+# factory race, a /seal that never sealed). The scripts' waits are tuned against the optimized
+# binary; an incremental release rebuild is seconds next to a 39-minute suite.
 tui-test-replay: release ## the OFFLINE half of the shell-use suite (in `make gates`)
 	@command -v shell-use >/dev/null || { echo "make tui-test: shell-use is not on PATH"; exit 1; }
 	@command -v sqlite3 >/dev/null || { echo "make tui-test: sqlite3 is not on PATH"; exit 1; }

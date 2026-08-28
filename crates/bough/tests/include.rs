@@ -4,7 +4,7 @@
 //! These drive the real binary, because the bug this pins was precisely that `include:` worked in
 //! the kernel's unit tests and was dead on the production path.
 
-mod support;
+use crate::support;
 
 use support::TempDir;
 

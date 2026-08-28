@@ -1,7 +1,7 @@
 //! §8's relief valve: a suspected-bad tier block is SUPERSEDED — a new block at generation n+1
 //! over the same range, plus an APPENDED expiry note — and is never re-summarized in place.
 
-mod support;
+use crate::support;
 
 use bough_plugin_ledger::{StepQuery, StepType};
 use bough_plugin_rollups::{Attribution, Summarizer, SupersedeRequest, TierBlock};

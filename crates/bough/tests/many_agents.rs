@@ -7,7 +7,7 @@
 //! The `memory_invariants.rs` precedent: the point of these is that the ROWS Andrey ships are the
 //! ones under test, so they boot `profiles/` + `bundles/` off disk through `boot_real`.
 
-mod support;
+use crate::support;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

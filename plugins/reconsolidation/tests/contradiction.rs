@@ -1,7 +1,7 @@
 //! §8: contradiction detection SURFACES claim steps. A pass proposes; it never resolves — the
 //! accept/reject surface is Phase 5's — and a pair the model clears leaves no trace at all.
 
-mod support;
+use crate::support;
 
 use bough_plugin_ledger::vocabulary::ClaimProposed;
 use support::*;

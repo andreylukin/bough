@@ -2,7 +2,7 @@
 //! only when the user says so; a click reads and never redirects typing; the paging keys drive
 //! the transcript from wherever the keyboard is.
 
-mod common;
+use crate::common;
 
 use bough_plugin_tui_shell::{run, NoticeKind, PaneId, Slot, SlotSize};
 use common::{add_pane, shell};

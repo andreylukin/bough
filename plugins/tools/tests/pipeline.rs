@@ -2,7 +2,7 @@
 //! approver, the three post-execute mutations, `block`, and the concurrency-safe / barrier
 //! dispatcher with model-ordered results.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -1,7 +1,7 @@
 //! §9: an agent-scoped tool SHADOWS its same-named global twin — for that agent alone. Most
 //! specific wins, and no other agent's view moves.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 use std::time::Duration;

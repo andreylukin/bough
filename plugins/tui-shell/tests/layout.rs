@@ -2,7 +2,7 @@
 //! the shape the phase's SWAP gate is measured in. A pane row disabled by patch must reflow the
 //! remaining panes with no restart, and that is `removing_a_pane_reflows_the_remaining_ones`.
 
-mod common;
+use crate::common;
 
 use bough_plugin_tui_shell::pane::layout;
 use bough_plugin_tui_shell::{PaneId, Slot, SlotSize};

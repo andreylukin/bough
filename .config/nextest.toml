@@ -1,0 +1,17 @@
+# `make test` runs nextest: every test in its own process (which is what makes the folded
+# tests/main.rs targets safe — env vars and process globals never leak between tests), all test
+# binaries' tests scheduled across every core at once, and no fail-fast so one red test does not
+# hide the others.
+[profile.default]
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+# `crates/bough`'s integration tests each boot the WHOLE tree (many spawn the binary and wait for
+# it). Eighteen of those at once starve each other past their own 30 s boot deadlines on a loaded
+# machine — a flake with no product cause. Cap them; everything else still runs wide open.
+[test-groups]
+boots = { max-threads = 4 }
+
+[[profile.default.overrides]]
+filter = 'package(bough) & kind(test)'
+test-group = 'boots'

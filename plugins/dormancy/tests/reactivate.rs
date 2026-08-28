@@ -2,7 +2,7 @@
 //! wake-class item per `agents.wake_classes`, the reactivation is durable, and the backlog drains
 //! through §5's standing invariant rather than through a special path.
 
-mod common;
+use crate::common;
 
 use bough_plugin_dormancy::{ReactivateCause, WakeUpRequest};
 use common::*;

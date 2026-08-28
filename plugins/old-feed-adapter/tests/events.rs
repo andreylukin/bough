@@ -2,7 +2,7 @@
 //! the crash. The watermark advances after the delivery it covers; the ref guard is what makes a
 //! rolled-back watermark harmless (§2.6, V7).
 
-mod common;
+use crate::common;
 
 use bough_plugin_ledger::Class;
 use bough_plugin_old_feed_adapter::state::{Watermark, WatermarkStore};

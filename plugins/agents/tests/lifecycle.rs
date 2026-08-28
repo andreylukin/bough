@@ -2,7 +2,7 @@
 //! active arms nothing, `Disposed` never latches a pending wake, a failed `setup` rolls the whole
 //! creation back, and teardown runs in exactly one order. (V8.)
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

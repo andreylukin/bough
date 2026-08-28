@@ -3,7 +3,7 @@
 //!
 //! Offline: `ledger-memory` + `llm-replay`. The one live case is `#[ignore]`d.
 
-mod support;
+use crate::support;
 
 use std::collections::BTreeMap;
 

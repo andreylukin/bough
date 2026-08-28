@@ -8,7 +8,7 @@
 //! This is what §2 means by "the leader is an ordinary agent row with a plugin set mounted in its
 //! scope": if moving it were anything more than a config edit, that sentence would be decoration.
 
-mod support;
+use crate::support;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

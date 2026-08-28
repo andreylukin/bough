@@ -53,7 +53,41 @@ pub fn catch_up_set(roster: &[(AgentName, usize)]) -> Vec<AgentName> {
 const FACTORY_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub async fn wait_for_factory(agents: &AgentsHandle) -> Result<(), String> {
-    let deadline = std::time::Instant::now() + FACTORY_WAIT;
+    wait_for_factory_until(agents, std::time::Instant::now() + FACTORY_WAIT).await
+}
+
+/// `create` / `resume` against a slot that can EMPTY AGAIN after [`wait_for_factory`] returned:
+/// the loop row reloads when one of its injected keys changes provider (§0.3) — a `--patch` that
+/// swaps `llm.anthropic` for `llm-replay`, or adds a row, does that during boot — and its disposer
+/// nulls the factory until the reload re-sets it. So `NoFactory` from the call itself is the same
+/// startup race as an unfilled slot and gets the same deadline; any other error is final. Seen
+/// live as a blank TUI: the whole boot task died on the first `create`, so no roster came up
+/// (`scripts/tui/07-old-feed.sh` under the unoptimized binary).
+async fn with_factory<T, F, Fut>(
+    agents: &AgentsHandle,
+    deadline: std::time::Instant,
+    mut call: F,
+) -> Result<T, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, bough_plugin_agents::AgentError>>,
+{
+    loop {
+        match call().await {
+            Err(bough_plugin_agents::AgentError::NoFactory)
+                if std::time::Instant::now() < deadline =>
+            {
+                wait_for_factory_until(agents, deadline).await?;
+            }
+            other => return other.map_err(|e| e.to_string()),
+        }
+    }
+}
+
+async fn wait_for_factory_until(
+    agents: &AgentsHandle,
+    deadline: std::time::Instant,
+) -> Result<(), String> {
     while agents.factory().is_none() {
         if std::time::Instant::now() >= deadline {
             return Err(format!(
@@ -119,6 +153,7 @@ pub async fn raise_roster(
     roster: &Roster,
 ) -> Result<Vec<AgentName>, String> {
     let now = chrono::Utc::now();
+    let deadline = std::time::Instant::now() + FACTORY_WAIT;
     let mut up: Vec<AgentName> = Vec::new();
 
     for name in &cfg.bootstrap {
@@ -128,18 +163,18 @@ pub async fn raise_roster(
             continue;
         }
         let traj = TrajId::new(format!("{}{}", cfg.traj_prefix, name));
-        let (agent, disposer) = agents
-            .create(CreateAgent {
+        let (agent, disposer) = with_factory(agents, deadline, || {
+            agents.create(CreateAgent {
                 name: name.clone(),
-                traj,
+                traj: traj.clone(),
                 kind: AgentKind::Resident,
                 scope: None,
                 setup: None,
                 seed: Vec::new(),
                 at: now,
             })
-            .await
-            .map_err(|e| e.to_string())?;
+        })
+        .await?;
         roster.push(disposer);
         up.push(agent.name().clone());
     }
@@ -149,14 +184,14 @@ pub async fn raise_roster(
             if agents.by_name(&row.name).is_some() {
                 continue;
             }
-            let (agent, disposer) = agents
-                .resume(ResumeAgent {
+            let (agent, disposer) = with_factory(agents, deadline, || {
+                agents.resume(ResumeAgent {
                     name: row.name.clone(),
                     at: now,
                     setup: None,
                 })
-                .await
-                .map_err(|e| e.to_string())?;
+            })
+            .await?;
             roster.push(disposer);
             up.push(agent.name().clone());
         }
@@ -369,10 +404,25 @@ impl Plugin for ResidentsPlugin {
         let cfg = Arc::clone(&cfg);
         ctx.effect_spawn(move |ectx| async move {
             let entry = ectx.ctx().entry_id().clone();
+            let kernel = ectx.ctx().kernel();
             let run = async {
                 wait_for_factory(&agents).await?;
                 let up = raise_roster(&agents, &ledger, &cfg, &roster).await?;
                 if cfg.catch_up {
+                    // The activation handshake `catch_up`'s OPEN ITEM asks for. A catch-up is a
+                    // wake, and §1's "a dormant agent costs nothing" is enforced by a LISTENER on
+                    // `agent/wake-request` that another row (`dormancy`) registers in its own
+                    // `apply`; with no listener the admission point defaults to OPEN. Row order
+                    // carries no load semantics, so whether that listener exists yet when this
+                    // task reaches here is a race — one the unoptimized binary LOST every time
+                    // (`scripts/tui/12-many-agents.sh`: a dormant lane ran its catch-up wake).
+                    // The kernel's quiesce is the tree-wide "every row that will activate has":
+                    // wait for it, then ask. On the ceiling (`false`) the tree is not settling
+                    // and the launcher is already treating boot as failed; asking anyway is what
+                    // this row did before, so nothing regresses.
+                    if let Some(k) = &kernel {
+                        let _ = k.quiesce().await;
+                    }
                     catch_up(&agents, &up, None, mine).await?;
                 }
                 Ok::<(), String>(())

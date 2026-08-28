@@ -2,7 +2,7 @@
 //! (V5); `tui/key` is the extension point a plugin gets instead of editing the keymap (P3-D18);
 //! and the mouse routes by geometry — a click focuses, a wheel does not.
 
-mod common;
+use crate::common;
 
 use bough_kernel::Next;
 use bough_plugin_tui_shell::events::{KeyDispatch, TuiKeyEvent};

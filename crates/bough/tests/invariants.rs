@@ -6,7 +6,7 @@
 //! `hello/greeted` payload carrying the seq it already used, which is exactly what
 //! `plugins/hello/src/invariant.rs` polices.
 
-mod support;
+use crate::support;
 
 use bough_kernel::FiberState;
 use bough_plugin_hello::trace;
