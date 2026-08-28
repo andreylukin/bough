@@ -81,6 +81,14 @@ pub fn repo_root() -> PathBuf {
         .expect("the repo root exists")
 }
 
+/// The shipped FALLBACK layer: code mode is the DEFAULT consumer since 2026-08-28, so a test
+/// whose subject is the TYPED tool surface names this patch and says so, rather than inheriting a
+/// surface from whatever the base bundle happens to ship (`bundles/bough-typed.yml`,
+/// `docs/configuration.md`).
+pub fn typed_patch() -> PathBuf {
+    repo_root().join("bundles/bough-typed.yml")
+}
+
 /// The subset of a profile document these tests need.
 #[derive(serde::Deserialize)]
 struct ProfileDoc {

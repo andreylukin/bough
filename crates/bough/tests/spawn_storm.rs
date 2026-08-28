@@ -119,7 +119,11 @@ fn bound_of(e: &WorkerError) -> Option<&'static str> {
 #[tokio::test(flavor = "multi_thread")]
 async fn fifty_spawns_in_one_wake_stop_at_the_per_wake_cap() {
     let _guard = trace::test_lock();
-    let (kernel, _dir) = boot_real("headless", &[fixture("llm-replay.yml")]).await;
+    let (kernel, _dir) = boot_real(
+        "headless",
+        &[support::typed_patch(), fixture("llm-replay.yml")],
+    )
+    .await;
     let ctx = row_ctx(&kernel, "tool.spawn_worker");
     let workers = ctx.get::<Workers>().expect("the workers key is bound");
     let cap = workers.bounds().per_wake_spawn_cap;
@@ -176,7 +180,11 @@ async fn fifty_spawns_in_one_wake_stop_at_the_per_wake_cap() {
 #[tokio::test(flavor = "multi_thread")]
 async fn in_flight_never_exceeds_max_in_flight_under_a_three_agent_storm() {
     let _guard = trace::test_lock();
-    let (kernel, _dir) = boot_real("headless", &[fixture("llm-replay.yml")]).await;
+    let (kernel, _dir) = boot_real(
+        "headless",
+        &[support::typed_patch(), fixture("llm-replay.yml")],
+    )
+    .await;
     let ctx = row_ctx(&kernel, "tool.spawn_worker");
     let workers = ctx.get::<Workers>().expect("the workers key is bound");
     let bounds = workers.bounds();
@@ -267,7 +275,11 @@ async fn in_flight_never_exceeds_max_in_flight_under_a_three_agent_storm() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_depth_four_spawn_is_refused() {
     let _guard = trace::test_lock();
-    let (kernel, _dir) = boot_real("headless", &[fixture("llm-replay.yml")]).await;
+    let (kernel, _dir) = boot_real(
+        "headless",
+        &[support::typed_patch(), fixture("llm-replay.yml")],
+    )
+    .await;
     let ctx = row_ctx(&kernel, "tool.spawn_worker");
     let workers = ctx.get::<Workers>().expect("the workers key is bound");
     let started = Arc::new(AtomicUsize::new(0));
@@ -342,7 +354,7 @@ async fn every_refusal_reaches_the_model_as_a_tool_result_failure() {
     let patch = std::env::temp_dir().join(format!("bough-storm-{}.yml", std::process::id()));
     std::fs::write(&patch, FIVE_SPAWNS).expect("the patch layer is writable");
 
-    let (kernel, _dir) = boot_real("headless", std::slice::from_ref(&patch)).await;
+    let (kernel, _dir) = boot_real("headless", &[support::typed_patch(), patch.clone()]).await;
     let ctx = row_ctx(&kernel, "tool.spawn_worker");
     let workers = ctx.get::<Workers>().expect("the workers key is bound");
     let cap = workers.bounds().per_wake_spawn_cap;

@@ -339,6 +339,7 @@ mod tests {
             vec![
                 "bundle:bough-base".to_string(),
                 "bundle:bough-tui-app".to_string(),
+                "bundle:bough-codemode".to_string(),
                 "profile:tui".to_string(),
                 "user".to_string(),
                 format!("patch:0:{}", extra.display()),
@@ -352,7 +353,12 @@ mod tests {
         let (_p, _s, layers) = plan_layers(&cli("tui", vec![])).unwrap();
         assert_eq!(
             ids(&layers),
-            vec!["bundle:bough-base", "bundle:bough-tui-app", "profile:tui"],
+            vec![
+                "bundle:bough-base",
+                "bundle:bough-tui-app",
+                "bundle:bough-codemode",
+                "profile:tui"
+            ],
             "an absent user patch is skipped silently, not an error"
         );
     }

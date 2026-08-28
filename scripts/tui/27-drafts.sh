@@ -3,6 +3,10 @@
 # A scripted `draft_message` call lands in the drafts pane, the pane says on its own header that
 # nothing was sent, and the pane offers NO key that reaches an audience: `y` copies to the
 # terminal's clipboard and that is the whole of its outward vocabulary.
+# The subject here is the TYPED tool surface: the transcript calls tools by name, and code mode —
+# the default consumer since 2026-08-28 — conceals them. `TYPED_TOOLS=1` boots the shipped fallback
+# layer (`bundles/bough-typed.yml`).
+TYPED_TOOLS=1
 source "$(dirname "$0")/lib.sh"
 
 [ -n "$BOUGH_LIVE" ] && { skip a_drafted_message_appears_in_the_drafts_pane "the draft is replayed, not live"; exit 0; }

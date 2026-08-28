@@ -9,6 +9,12 @@
 # "Offered" is read from the LEDGER, not from a pane: `request/header.tools` is the durable record
 # of the tool names an agent's request actually carried (§5), and there is no `/tools` pane to
 # grep. The screen is what DRIVES each turn; the header is what proves what it was offered.
+# "Offered" is read from `request/header.tools`, i.e. from the TYPED tool surface: code mode — the
+# default consumer since 2026-08-28 — offers ONE tool (`run`) and injects the rest as sandbox
+# functions, so this gate boots the shipped fallback layer (`bundles/bough-typed.yml`). WHOSE SCOPE
+# the leader set lives in is what the script is about, and that is the same under either consumer
+# (`crates/bough/tests/leader_swap.rs` pins the same thing in process).
+TYPED_TOOLS=1
 source "$(dirname "$0")/lib.sh"
 
 [ -n "$BOUGH_LIVE" ] && { skip the_leader_tools_are_offered_to_the_first_lane "the swap gate is composition, not a model"; exit 0; }

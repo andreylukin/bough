@@ -152,7 +152,7 @@ async fn a_delegated_worker_opens_a_pr_and_the_journal_shows_intent_before_done(
     let shim = Shim::new();
     shim.export();
     let (_patch_dir, patch_path) = patch(&shim);
-    let (kernel, _dir) = boot_real("headless", &[patch_path]).await;
+    let (kernel, _dir) = boot_real("headless", &[support::typed_patch(), patch_path]).await;
 
     let ctx = row_ctx(&kernel, "tool.spawn_worker");
     let exec_ctx = row_ctx(&kernel, "exec");

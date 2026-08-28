@@ -15,6 +15,10 @@
 # _elapsed_clock` is the assertion M32 exists for, and it is asserted here against the shipped
 # default. Set BEFORE the source, which is where `lib.sh` reads it.
 TUI_STATIC_STATUS=0
+# The subject here is the TYPED tool surface: the transcript calls tools by name, and code mode —
+# the default consumer since 2026-08-28 — conceals them. `TYPED_TOOLS=1` boots the shipped fallback
+# layer (`bundles/bough-typed.yml`).
+TYPED_TOOLS=1
 source "$(dirname "$0")/lib.sh"
 
 tui_open

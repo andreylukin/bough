@@ -4,6 +4,10 @@
 # than in a unit test: the `+` gutter must carry the dark theme's `added` role (#9ece6a, see
 # `tui-shell/src/theme.rs`), while the body next to it carries syntect's own colours for `.rs` —
 # which is `tui-render/src/diff.rs`'s documented split of gutter role vs. syntax highlight.
+# The subject here is the TYPED tool surface: the transcript calls tools by name, and code mode —
+# the default consumer since 2026-08-28 — conceals them. `TYPED_TOOLS=1` boots the shipped fallback
+# layer (`bundles/bough-typed.yml`).
+TYPED_TOOLS=1
 source "$(dirname "$0")/lib.sh"
 
 [ -n "$BOUGH_LIVE" ] && { skip a_tool_call_renders_collapsed_on_one_line "tool intents are replayed, not live"; exit 0; }

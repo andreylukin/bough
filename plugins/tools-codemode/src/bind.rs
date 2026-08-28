@@ -772,6 +772,24 @@ pub fn positional_args(
             {
                 return serde_json::Value::Object(obj.clone());
             }
+            // An INCOMPLETE object is still the argument map whenever the slot it would otherwise
+            // be zipped into does not take an object. Zipping it there produced the worst error a
+            // program can get — one naming a property the model never wrote (`draft_message`'s
+            // `audience`, "invalid type: map, expected a string") — while the tool's own
+            // deserializer, given the map, names the field that is actually missing or misspelled.
+            // Under code mode this is the model's only channel for the schema, so the honest error
+            // is the difference between a self-correction and a stuck turn (found live, 2026-08-28,
+            // when code mode became the default consumer).
+            let first_takes_an_object = order
+                .first()
+                .and_then(|f| properties(schema).and_then(|p| p.get(f)))
+                .and_then(|p| p.get("type"))
+                .and_then(|t| t.as_str())
+                .map(|t| t == "object")
+                .unwrap_or(false);
+            if !first_takes_an_object {
+                return serde_json::Value::Object(obj.clone());
+            }
         }
     }
     let mut out = serde_json::Map::new();
@@ -1156,6 +1174,50 @@ pub fn injected_names(bindings: &[Binding]) -> Vec<ToolName> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Found live on the day code mode became the default consumer: a program calling
+    /// `draft_message({channel, subject, body})` — one field misspelled — had the WHOLE object
+    /// zipped onto the first positional slot, so the error the model read was "invalid type: map,
+    /// expected a string" against a property it had never written. An incomplete object is the
+    /// argument map unless the first slot itself takes an object; the tool's deserializer then
+    /// names the field that is missing.
+    #[test]
+    fn an_incomplete_object_is_still_the_argument_map() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["audience", "subject", "body"],
+            "properties": {
+                "audience": {"type": "string"},
+                "subject": {"type": "string"},
+                "body": {"type": "string"}
+            }
+        });
+        let arg = serde_json::json!({"channel": "#eng", "subject": "hi", "body": "hello"});
+        assert_eq!(
+            positional_args(&schema, vec![arg.clone()]),
+            arg,
+            "the object must reach the tool, which is what names `audience` as missing"
+        );
+    }
+
+    /// The other half: a tool whose FIRST positional property really is an object still takes one
+    /// object as that first argument.
+    #[test]
+    fn an_object_first_argument_is_still_positional() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["payload", "kind"],
+            "properties": {
+                "payload": {"type": "object"},
+                "kind": {"type": "string"}
+            }
+        });
+        let arg = serde_json::json!({"a": 1});
+        assert_eq!(
+            positional_args(&schema, vec![arg.clone()]),
+            serde_json::json!({"payload": {"a": 1}})
+        );
+    }
     use super::*;
     use bough_plugin_tools::{RenderIntent, Tool, ToolCx, ToolFailure, ToolOutcome, ToolScope};
 

@@ -5,6 +5,10 @@
 #
 # The server is a twenty-line Python program written here rather than a real one off the network:
 # the suite is hermetic (AGENTS.md), and what is under test is bough's side of the protocol.
+# The subject here is the TYPED tool surface: the transcript calls tools by name, and code mode —
+# the default consumer since 2026-08-28 — conceals them. `TYPED_TOOLS=1` boots the shipped fallback
+# layer (`bundles/bough-typed.yml`).
+TYPED_TOOLS=1
 source "$(dirname "$0")/lib.sh"
 
 [ -n "$BOUGH_LIVE" ] && { skip an_mcp_tool_is_listed_after_discovery "the MCP server is a local fixture either way"; exit 0; }

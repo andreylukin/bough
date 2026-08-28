@@ -141,16 +141,21 @@ fn the_two_arm_patches_are_byte_identical_below_their_comments() {
     );
 }
 
-/// A `--patch` layer configures rows, it never creates them, so the consumer arrives by BUNDLE.
-/// The runner copies the shipped `profiles/codemode.yml`; this is what pins that document to the
-/// three rows the phase built, so a bench arm can never silently become the typed one.
+/// Which arm is the SHIPPED tree and which one needs a document, since code mode became the
+/// default consumer (2026-08-28): the TYPED arm is now the one that names `profiles/typed.yml`,
+/// and the codemode arm is `--profile headless` verbatim. This is what keeps a bench arm from
+/// silently becoming the other surface.
 #[test]
 fn the_codemode_arm_comes_from_the_shipped_profile_and_bundle() {
     use bough_bench_tools::run::Arm;
-    assert_eq!(Arm::Typed.profile_source(), None);
-    let rel = Arm::Codemode
+    assert_eq!(
+        Arm::Codemode.profile_source(),
+        None,
+        "code mode is the DEFAULT: its arm is the shipped `headless` tree, unmodified"
+    );
+    let rel = Arm::Typed
         .profile_source()
-        .expect("the codemode arm names a profile document");
+        .expect("the typed arm names a profile document");
     let root = bank::bench_dir().join("../..");
 
     let profile: serde_yaml::Value =
@@ -161,14 +166,28 @@ fn the_codemode_arm_comes_from_the_shipped_profile_and_bundle() {
         .and_then(|b| serde_yaml::from_value(b.clone()).ok())
         .expect("the profile lists bundles");
     assert!(
-        bundles.contains(&"bough-codemode".to_string()),
-        "{rel} must mount `bough-codemode`: {bundles:?}"
+        bundles.contains(&"bough-typed".to_string()),
+        "{rel} must mount `bough-typed`, the fallback layer: {bundles:?}"
     );
 
-    // MERGE: the three rows are DECLARED in `bough-base.yml`, disabled, and `bough-codemode.yml`
-    // is the layer that enables them — so `--patch` can reach the consumer too (a patch layer
-    // configures rows and never creates them). Both halves are pinned: the rows exist and ship
-    // disabled, and the switch names exactly those three.
+    // And the shipped `headless` profile is the code-mode one.
+    let shipped: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(root.join("profiles/headless.yml")).expect("the profile"),
+    )
+    .expect("the profile parses");
+    let shipped_bundles: Vec<String> = shipped
+        .get("bundles")
+        .and_then(|b| serde_yaml::from_value(b.clone()).ok())
+        .expect("the profile lists bundles");
+    assert!(
+        shipped_bundles.contains(&"bough-codemode".to_string()),
+        "`profiles/headless.yml` must mount `bough-codemode`: {shipped_bundles:?}"
+    );
+
+    // The three rows are DECLARED in `bough-base.yml` — enabled, since the GO — so a `--patch` can
+    // reach the consumer in either direction (a patch layer configures rows and never creates
+    // them). Both halves are pinned: the rows exist and ship ENABLED, and the fallback layer names
+    // the consumer.
     let base = bundle_rows("bundles/bough-base.yml");
     for id in ["js", "js.quickjs", "tools.codemode"] {
         let row = base
@@ -176,10 +195,34 @@ fn the_codemode_arm_comes_from_the_shipped_profile_and_bundle() {
             .unwrap_or_else(|| panic!("`{id}` must be declared in bundles/bough-base.yml"));
         assert_eq!(
             row.get("disabled").and_then(|d| d.as_bool()),
-            Some(true),
-            "`{id}` must ship DISABLED: the default consumer is the typed one"
+            None,
+            "`{id}` must ship ENABLED: code mode is the default consumer"
         );
     }
+
+    let fallback: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(root.join("bundles/bough-typed.yml")).expect("the typed bundle"),
+    )
+    .expect("the typed bundle parses");
+    let f_entries = fallback["entries"]
+        .as_mapping()
+        .expect("the typed bundle is a patch document with `entries`");
+    let f_ids: Vec<String> = f_entries
+        .keys()
+        .map(|k| k.as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(
+        f_ids,
+        vec!["tools.codemode"],
+        "the fallback is ONE field on the consumer row and nothing else"
+    );
+    assert_eq!(
+        f_entries[&serde_yaml::Value::from("tools.codemode")]
+            .get("disabled")
+            .and_then(|d| d.as_bool()),
+        Some(true),
+        "the fallback disables the consumer"
+    );
 
     let switch: serde_yaml::Value = serde_yaml::from_str(
         &std::fs::read_to_string(bank::bench_dir().join("../../bundles/bough-codemode.yml"))

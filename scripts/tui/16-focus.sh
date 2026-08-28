@@ -8,6 +8,10 @@
 #
 # The tool-call transcript, because three of the seven bullets are about a ROW: only a fixture
 # with real tool rows can have one focused, toggled or clicked.
+# The subject here is the TYPED tool surface: the transcript calls tools by name, and code mode —
+# the default consumer since 2026-08-28 — conceals them. `TYPED_TOOLS=1` boots the shipped fallback
+# layer (`bundles/bough-typed.yml`).
+TYPED_TOOLS=1
 source "$(dirname "$0")/lib.sh"
 
 # The live half does not run this script. Every bullet it carries is named here, so the

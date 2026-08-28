@@ -91,42 +91,43 @@ fi
 # the rows
 # ---------------------------------------------------------------------------
 #
-# A `--patch` layer can only modify a row some layer already created, so the codemode rows are
-# ADDED to this script's own copy of the tui bundle (`add_row`, lib.sh).
-ROOT_ARG=""
-if [ "$CONSUMER" = "codemode" ]; then
-  ROOT_ARG="$(add_row codemode <<'YML'
-- id: js
-  plugin: js
-  config:
-    default_caps:
-      ops: 20000000
-      memory_bytes: 67108864
-      stack_bytes: 1048576
-      wall_ms: 30000
-      console_bytes: 65536
-- id: js.quickjs
-  plugin: js-quickjs
-  config:
-    interrupt_check_ops: 10000
-    max_concurrent_programs: 4
-- id: tools.codemode
-  plugin: tools-codemode
-  config:
-    max_console_bytes: 65536
-    max_calls_per_program: 64
-    tags_required: false
-    surface_section: true
+# Code mode is the DEFAULT consumer since 2026-08-28: `js`, `js.quickjs` and `tools.codemode` are
+# in `bundles/bough-base.yml`, ENABLED. So neither arm needs a row ADDED any more — both are one
+# `--patch` layer over the shipped tree, which is what a patch layer is for.
+#
+#   codemode  a layer that restates this script's caps and `tags_required: false`
+#   typed     `bundles/bough-typed.yml`, the shipped fallback
+TYPED_PATCH="$REPO_ROOT/bundles/bough-typed.yml"
+CM_PATCH="$HOME_DIR/codemode.patch.yml"
+cat > "$CM_PATCH" <<'YML'
+entries:
+  js:
+    config:
+      default_caps:
+        ops: 20000000
+        memory_bytes: 67108864
+        stack_bytes: 1048576
+        wall_ms: 30000
+        console_bytes: 65536
+  js.quickjs:
+    config:
+      interrupt_check_ops: 10000
+      max_concurrent_programs: 4
+  tools.codemode:
+    disabled: false
+    config:
+      max_console_bytes: 65536
+      max_calls_per_program: 64
+      tags_required: false
+      surface_section: true
 YML
-)"
-  # `add_row` echoes `--root <dir>`, two words. `bough_patch_args` classifies each argument on its
-  # own and would turn the DIRECTORY into a `--patch` layer, so it is passed as one `--root=<dir>`.
-  ROOT_ARG="--root=${ROOT_ARG#--root }"
-fi
 
 tui_open
-# shellcheck disable=SC2086
-tui_start $ROOT_ARG "$REPLAY"
+if [ "$CONSUMER" = "codemode" ]; then
+  tui_start "$CM_PATCH" "$REPLAY"
+else
+  tui_start "$TYPED_PATCH" "$REPLAY"
+fi
 
 shell-use submit "run the scripted program"
 shell-use wait idle --timeout 30000

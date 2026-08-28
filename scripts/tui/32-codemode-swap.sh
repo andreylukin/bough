@@ -7,9 +7,9 @@
 # arrives as plain tool rows or as one program row depending on nothing but whether
 # `tools.codemode` is enabled.
 #
-# The rows are ADDED to this script's own copy of the tui bundle (`add_row`), because a `--patch`
-# layer can only modify a row some layer already created — see `docs/codemode-merge-notes.md` §8.
-# The patch file then does what a patch file is for: it DISABLES that row while the binary runs.
+# The three code-mode rows ship ENABLED in `bundles/bough-base.yml` (code mode is the DEFAULT
+# consumer, 2026-08-28), so the patch file here does the whole job: it DISABLES the consumer while
+# the binary runs, and clearing it puts the shipped surface back.
 #
 # Replay only. The point is which surface draws a given ledger, and a live model would write its
 # own program.
@@ -79,32 +79,10 @@ entries:
 YML
 
 # ---------------------------------------------------------------------------
-# the rows, in this script's own bundle copy
-ROOT_ARG="$(add_row codemode-swap <<'YML'
-- id: js
-  plugin: js
-  config:
-    default_caps:
-      ops: 20000000
-      memory_bytes: 67108864
-      stack_bytes: 1048576
-      wall_ms: 30000
-      console_bytes: 65536
-- id: js.quickjs
-  plugin: js-quickjs
-  config:
-    interrupt_check_ops: 10000
-    max_concurrent_programs: 4
-- id: tools.codemode
-  plugin: tools-codemode
-  config:
-    max_console_bytes: 65536
-    max_calls_per_program: 64
-    tags_required: false
-    surface_section: true
-YML
-)"
-ROOT_ARG="--root=${ROOT_ARG#--root }"
+# the rows: NOTHING to add. Code mode is the DEFAULT consumer since 2026-08-28, so `js`,
+# `js.quickjs` and `tools.codemode` are in `bundles/bough-base.yml` ENABLED and the patch file
+# below does what a patch file is for — it turns the consumer off and on while the binary runs.
+# (Until that date the rows were added to this script's own bundle copy first.)
 
 # Start with the consumer OFF, so the first turn is the control arm.
 write_patch <<'YML'
@@ -121,8 +99,7 @@ mkdir -p "$HOME_DIR/work"
 printf 'one\ntwo\n' > "$HOME_DIR/work/demo.txt"
 
 tui_open
-# shellcheck disable=SC2086
-tui_start $ROOT_ARG "$REPLAY"
+tui_start "$REPLAY"
 
 pid_before="$(pgrep -f "$BOUGH_BIN" | head -1)"
 

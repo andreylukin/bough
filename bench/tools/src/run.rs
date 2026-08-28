@@ -47,7 +47,8 @@ impl Arm {
     }
 
     /// The SHIPPED profile document this arm's row list comes from, or `None` for the arm that is
-    /// the shipped `headless` tree already.
+    /// the shipped `headless` tree already — which, since 2026-08-28, is the CODE-MODE arm: code
+    /// mode is the default consumer and the typed arm is the one that names a document.
     ///
     /// A `--patch` layer configures rows; it never creates them (`config::patch`, §0.5 — a patch
     /// naming an uncreated row is a warning, not a row). So the three codemode rows can only come
@@ -58,8 +59,8 @@ impl Arm {
     /// The bench measures the bundle list that SHIPS: only the file name changes.
     pub fn profile_source(&self) -> Option<&'static str> {
         match self {
-            Arm::Typed => None,
-            Arm::Codemode => Some("profiles/codemode.yml"),
+            Arm::Typed => Some("profiles/typed.yml"),
+            Arm::Codemode => None,
         }
     }
 

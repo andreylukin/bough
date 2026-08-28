@@ -138,6 +138,14 @@ bough_patch_args() {
     args="--patch $BOUGH_PATCH"
   fi
   args="$args --patch $OLD_FEED_PATCH"
+  # Code mode is the DEFAULT consumer since 2026-08-28, and it CONCEALS the typed tools from the
+  # agent — a replayed `bash` call under it is refused with "no tool named `bash` is available". A
+  # script whose subject IS the typed tool surface says so with `TYPED_TOOLS=1` before sourcing
+  # this file, and gets the shipped fallback layer (`bundles/bough-typed.yml`,
+  # `docs/configuration.md`).
+  if [ "${TYPED_TOOLS:-}" = 1 ]; then
+    args="$args --patch $REPO_ROOT/bundles/bough-typed.yml"
+  fi
   if [ "$TUI_STATIC_STATUS" = 1 ]; then
     args="$args --patch $STATUS_PATCH"
   fi

@@ -110,6 +110,8 @@ fn spawn_exec(home: &Home, task: &str, patch: &PathBuf) -> Child {
         .arg("--root")
         .arg(repo_root())
         .arg("--patch")
+        .arg(repo_root().join("bundles/bough-typed.yml"))
+        .arg("--patch")
         .arg(patch)
         .arg("exec")
         .arg(task)

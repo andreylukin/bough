@@ -831,7 +831,9 @@ notable refs spell a range.
 **V10 — the record.**
 - `crates/bough/tests/docs.rs::requirements_18_cites_headlongs_design_docs`
 - `crates/bough/tests/docs.rs::the_plan_records_the_decisions_for_andrey_with_evidence`
-- `crates/bough/tests/docs.rs::the_build_row_says_the_default_consumer_is_unchanged`
+- `crates/bough/tests/docs.rs::the_build_row_says_the_default_consumer_is_code_mode` (the GO of
+  §7.A was TAKEN on 2026-08-28; the test that held the default at typed is replaced by the one that
+  holds it at code mode)
 - `crates/bough/tests/docs.rs::the_integration_report_is_not_the_stale_draft` (§9 is read by V10
   too — the drift the map exists to catch was in the file the map lives in)
 
@@ -898,9 +900,16 @@ Labelled as such, each with the reason it went that way.
 
 ## 7. Decisions for Andrey (recorded, no action taken)
 
-**A. The default consumer.** Unchanged: `tools-typed` (today's rows). `tools-codemode` mounts only
+**A. The default consumer.** **DECIDED 2026-08-28: CODE MODE.** Andrey took the GO on the capability
+tie of §8 (13/15 vs 14/15 live, 15/15 both arms offline) and NOT on the cost ordering, which does not
+replicate. `bundles/bough-base.yml` ships the three rows enabled, `profiles/tui.yml` and
+`profiles/headless.yml` compose `bough-codemode` last, and `bundles/bough-typed.yml` is the fallback
+layer (`docs/configuration.md`, BUILD.md's `Default consumer: code mode` row). What follows is the
+question as it stood, kept because §5's verification map and the tests cite it.
+
+*As recorded before the GO:* unchanged: `tools-typed` (today's rows). `tools-codemode` mounts only
 via `profiles/codemode.yml` or a `--patch`. `BUILD.md`'s phase row says so, and
-`crates/bough/tests/docs.rs::the_build_row_says_the_default_consumer_is_unchanged` holds it there.
+`crates/bough/tests/docs.rs::the_build_row_says_the_default_consumer_is_unchanged` held it there.
 The evidence for a switch is §8's table; the GO is yours.
 
 **B. Swap-gate policy — stop requiring a second provider per seam.** Seven crates exist only to
@@ -1240,9 +1249,11 @@ now reads this section too, and `docs.rs::every_test_the_verification_map_names_
 
 `grep -rn 'todo!\|unimplemented!' plugins/ bench/` returns nothing. `bundles/bough-codemode.yml`
 (the three rows `js`, `js.quickjs`, `tools.codemode`) and `profiles/codemode.yml` exist, and
-`crates/bough/tests/docs.rs::no_shipped_profile_boots_the_codemode_consumer` is what keeps the
-DEFAULT profile off them: the consumer is reachable only by `--profile codemode` or an explicit
-patch, which is decision A of §7.
+`crates/bough/tests/docs.rs::every_shipped_profile_boots_the_codemode_consumer` is what holds the
+DEFAULT on them: Andrey took §7.A's GO on 2026-08-28, so `tui`, `headless`, `dev` and `codemode` all
+boot the consumer and `bundles/bough-typed.yml` is the one-layer fallback back to the typed set.
+(Until that date this read the other way round, and the test asserted the row was present and
+`disabled: true` in every shipped profile.)
 
 **Fixed after the review (2026-08-28), in the surface**
 

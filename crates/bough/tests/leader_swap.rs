@@ -197,7 +197,7 @@ async fn unsorted_lands_on(kernel: &Kernel, tag: &str) -> Option<String> {
 
 /// Boot the shipped `tui` tree with the leader where the bundle puts it.
 async fn boot() -> (Arc<Kernel>, TempDir) {
-    boot_real("tui", &[fixture("llm-replay.yml")]).await
+    boot_real("tui", &[support::typed_patch(), fixture("llm-replay.yml")]).await
 }
 
 /// Boot, then move the set to `terra` through the launcher's own recompose.

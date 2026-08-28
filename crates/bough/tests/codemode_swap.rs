@@ -261,7 +261,9 @@ async fn switching_back_restores_the_typed_schemas() {
 #[tokio::test(flavor = "multi_thread")]
 async fn unmounting_the_row_restores_the_typed_schemas_exactly() {
     let _guard = trace::test_lock();
-    let (headless, _d1) = boot_real("headless", &[]).await;
+    // `--profile headless` is CODE MODE since 2026-08-28, so the typed comparison tree is the
+    // shipped fallback layer over it (`bundles/bough-typed.yml`).
+    let (headless, _d1) = boot_real("headless", &[support::typed_patch()]).await;
     let (h_agent, h_disposer) = the_agent(&headless).await;
     let typed_headless = schema_names(&headless, &h_agent);
     h_disposer.dispose().await;

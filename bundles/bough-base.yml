@@ -378,26 +378,31 @@
   plugin: schedule-reconsolidate
   config: { cadence: { cron: "0 0 4 * * *" }, catch_up: true, command: "reconsolidate", agent: sol }
 
-# ---- Phase codemode: the SECOND consumer of the `tools` seam ----
+# ---- Phase codemode: the DEFAULT consumer of the `tools` seam (Andrey, 2026-08-28) ----
 #
-# DISABLED, and that is the shipped setting. The DEFAULT tools consumer is the TYPED one and is
-# UNCHANGED (BUILD.md's `codemode` row, `crates/bough/tests/docs.rs`); the GO to switch it is
-# Andrey's, on the bench numbers in `docs/phase-codemode-plan.md` §8.
+# ENABLED, and that is the shipped setting. `bough` (bare), `bough exec` and every profile that
+# composes this bundle show the model ONE tool — `run(program)` — and conceal the typed set from
+# the prompt. Nothing is REMOVED: `tools`, `tools.baseline`, `tools.operator` and every other typed
+# row stay mounted and executable, and every call a program makes goes through the same pipeline.
+# There is no separate "typed consumer" ROW to disable — the typed surface IS those Provider rows,
+# and it comes back the moment the row below stops concealing it.
+#
+# THE FALLBACK, one field, over any profile (docs/configuration.md):
+#
+#     bough --patch <(echo 'entries: {tools.codemode: {disabled: true}}')
+#
+# or, permanently, `disabled: true` on `tools.codemode` below. `js`/`js.quickjs` may stay up; they
+# cost nothing with no program to run.
 #
 # The rows live HERE, in the base bundle, rather than in `bundles/bough-codemode.yml`, for one
 # reason: a patch layer CONFIGURES rows and never CREATES them (`config/patch.rs`), so rows that
 # exist only in a bundle no profile lists cannot be reached by `--patch` at all — the merge note
-# `docs/codemode-merge-notes.md` §8 is exactly that experiment. Declared here and disabled, the
-# switch is one field from anywhere:
+# `docs/codemode-merge-notes.md` §8 is exactly that experiment.
 #
-#     bough --profile codemode                       # the shipped profile
-#     bough --patch <(echo 'entries: {js: {disabled: false}, js.quickjs: {disabled: false},
-#                                     tools.codemode: {disabled: false}}')
-#
-# `bundles/bough-codemode.yml` is now that patch, and nothing else: three `disabled: false`
-# lines over the rows below, so every row is declared ONCE in the tree.
+# `bundles/bough-codemode.yml` remains the one layer that ASSERTS the switch (three
+# `disabled: false` lines); `profiles/tui.yml` and `profiles/headless.yml` compose it last so the
+# tool surface is legible at the profile level and not only in this file.
 - id: js
-  disabled: true
   plugin: js
   config:
     # The caps a program runs under unless `tools.codemode` names its own. Ops is an
@@ -409,13 +414,11 @@
       wall_ms: 120000
       console_bytes: 65536
 - id: js.quickjs
-  disabled: true
   plugin: js-quickjs
   config:
     interrupt_check_ops: 10000
     max_concurrent_programs: 4
 - id: tools.codemode
-  disabled: true
   plugin: tools-codemode
   config:
     # `null` ⇒ the `js` row's `default_caps`, so the caps are said once.

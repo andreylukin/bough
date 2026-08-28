@@ -206,8 +206,12 @@ async fn consumers_keep_working(driver: &str) {
 /// The two loop Providers this gate is parameterised over.
 fn patches(driver: &str) -> Vec<std::path::PathBuf> {
     match driver {
-        "agent-loop" => vec![fixture("llm-replay.yml")],
-        "agent-loop-scripted" => vec![fixture("loop-scripted.yml"), fixture("llm-replay.yml")],
+        "agent-loop" => vec![support::typed_patch(), fixture("llm-replay.yml")],
+        "agent-loop-scripted" => vec![
+            support::typed_patch(),
+            fixture("loop-scripted.yml"),
+            fixture("llm-replay.yml"),
+        ],
         other => panic!("no such driver `{other}`"),
     }
 }
@@ -257,7 +261,11 @@ async fn the_ledger_and_agents_invariants_run_against_both_loop_providers() {
 #[tokio::test]
 async fn the_retired_loop_leaves_no_factory_no_listeners_and_no_bindings() {
     let _guard = trace::test_lock();
-    let (kernel, dir) = boot_real("headless", &[fixture("llm-replay.yml")]).await;
+    let (kernel, dir) = boot_real(
+        "headless",
+        &[support::typed_patch(), fixture("llm-replay.yml")],
+    )
+    .await;
 
     let agents = row_ctx(&kernel, "exec").get::<Agents>().unwrap();
     assert_eq!(
@@ -333,7 +341,11 @@ async fn the_retired_loop_leaves_no_factory_no_listeners_and_no_bindings() {
 #[tokio::test]
 async fn a_patch_replaces_llm_anthropic_with_llm_replay() {
     let _guard = trace::test_lock();
-    let (kernel, _dir) = boot_real("headless", &[fixture("llm-replay.yml")]).await;
+    let (kernel, _dir) = boot_real(
+        "headless",
+        &[support::typed_patch(), fixture("llm-replay.yml")],
+    )
+    .await;
 
     let r = row(&kernel, "llm.anthropic");
     assert_eq!(r.plugin.as_deref(), Some("llm-replay"));

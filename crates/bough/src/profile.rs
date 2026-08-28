@@ -254,10 +254,13 @@ pub(crate) mod tests {
         let _h = Home::empty();
         let (p, s) = resolve_profile("tui", None).expect("tui resolves from the embedded copies");
         assert_eq!(p.name, "tui");
-        assert_eq!(p.bundles, vec!["bough-base", "bough-tui-app"]);
+        assert_eq!(
+            p.bundles,
+            vec!["bough-base", "bough-tui-app", "bough-codemode"]
+        );
         assert!(!p.invariants);
         assert!(matches!(s.profile, SourceOrigin::Embedded(_)));
-        assert_eq!(s.bundles.len(), 2);
+        assert_eq!(s.bundles.len(), 3);
         assert!(s
             .bundles
             .iter()

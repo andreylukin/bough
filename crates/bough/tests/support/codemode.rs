@@ -61,13 +61,15 @@ impl Sandbox {
         let repo = super::repo_root();
         copy_tree(&repo.join("bundles"), &self.root().join("bundles"));
         copy_tree(&repo.join("profiles"), &self.root().join("profiles"));
-        if !codemode {
+        if codemode {
+            // The SHIPPED `headless` profile is code mode since 2026-08-28; nothing to do.
             return;
         }
-        let text = std::fs::read_to_string(repo.join("profiles/codemode.yml")).unwrap();
+        // The typed arm is the one that now needs a document: `bough-typed` last, which is the
+        // fallback `docs/configuration.md` names.
         std::fs::write(
             self.root().join("profiles/headless.yml"),
-            text.replace("name: codemode", "name: headless"),
+            "name: headless\nbundles: [bough-base, bough-headless, bough-typed]\ninvariants: false\n",
         )
         .unwrap();
     }

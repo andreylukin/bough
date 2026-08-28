@@ -1,0 +1,16 @@
+# bundles/bough-typed.yml — the FALLBACK layer (Andrey, 2026-08-28).
+#
+# Code mode is the DEFAULT tool consumer: `bundles/bough-base.yml` ships `js`, `js.quickjs` and
+# `tools.codemode` ENABLED, and `profiles/tui.yml` / `profiles/headless.yml` compose
+# `bough-codemode` last. This file is the one line back: it disables the consumer, and the typed
+# tool set — which was never unmounted — is what the model is shown again.
+#
+# It is a patch document, so it works as a bundle in a profile's list AND as a `--patch` layer over
+# any profile:
+#
+#     bough --patch bundles/bough-typed.yml
+#
+# `js`/`js.quickjs` stay up on purpose: with no program to run they cost nothing, and leaving them
+# means switching back and forth is ONE field.
+entries:
+  tools.codemode: { disabled: true }

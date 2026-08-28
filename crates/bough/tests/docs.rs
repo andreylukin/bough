@@ -102,39 +102,35 @@ fn the_plan_records_the_decisions_for_andrey_with_evidence() {
     );
 }
 
-/// The one product fact this phase must not have changed: the default consumer. `BUILD.md` is the
-/// phase ledger, and this is the line that says the phase measured a swap rather than made one.
+/// The product fact this row records: the DEFAULT consumer, taken by Andrey on 2026-08-28. The
+/// phase MEASURED a swap; this row is where the swap was MADE, and BUILD.md is the ledger that has
+/// to say so.
 #[test]
-fn the_build_row_says_the_default_consumer_is_unchanged() {
+fn the_build_row_says_the_default_consumer_is_code_mode() {
     let build = doc("BUILD.md");
     let row = build
         .lines()
-        .find(|l| l.starts_with("| codemode |"))
-        .expect("BUILD.md must carry a `codemode` phase row");
+        .find(|l| l.starts_with("| Default consumer: code mode"))
+        .expect("BUILD.md must carry the `Default consumer: code mode` row");
     let lower = row.to_lowercase();
     assert!(
-        lower.contains("default"),
-        "the codemode row must say what the DEFAULT consumer is: {row}"
+        lower.contains("default") && lower.contains("code mode"),
+        "the row must say what the DEFAULT consumer is: {row}"
     );
     assert!(
-        lower.contains("typed") && lower.contains("unchanged"),
-        "the codemode row must say the default consumer is the TYPED one and is UNCHANGED: {row}"
-    );
-    assert!(
-        row.contains("profiles/codemode.yml") || row.contains("--profile codemode"),
-        "and it must name the only way in: {row}"
+        row.contains("bundles/bough-typed.yml"),
+        "and it must name the FALLBACK layer, which is the whole of the reversal: {row}"
     );
 
-    // The profile that is NOT the default must genuinely not be in anyone else's bundle list.
-    for profile in ["tui", "headless", "dev"] {
+    // The profiles must actually compose it: a ledger row is a claim about the tree.
+    for profile in ["tui", "headless"] {
         let p = repo_root().join("profiles").join(format!("{profile}.yml"));
-        if let Ok(text) = std::fs::read_to_string(&p) {
-            assert!(
-                !text.contains("bough-codemode"),
-                "`profiles/{profile}.yml` mounts `bough-codemode`; the default consumer is not \
-                 unchanged and BUILD.md is wrong"
-            );
-        }
+        let text = std::fs::read_to_string(&p).expect("the profile document is readable");
+        assert!(
+            text.contains("bough-codemode"),
+            "`profiles/{profile}.yml` does not compose `bough-codemode`; the default consumer is \
+             not code mode and BUILD.md is wrong"
+        );
     }
 }
 
@@ -182,50 +178,59 @@ fn disabled_row(dump: &str, plugin: &str) -> bool {
 }
 
 #[test]
-fn no_shipped_profile_boots_the_codemode_consumer() {
+fn every_shipped_profile_boots_the_codemode_consumer() {
     let home = tempfile::tempdir().expect("tempdir");
-    let dump = |profile: &str| -> String {
+    let dump = |args: &[&str]| -> String {
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_bough"))
-            .args(["--profile", profile, "--dump-config"])
+            .args(args)
+            .arg("--dump-config")
             .env("BOUGH_HOME", home.path())
             .output()
             .expect("run bough --dump-config");
         assert!(
             out.status.success(),
-            "--profile {profile} --dump-config must exit 0; stderr: {}",
+            "{args:?} --dump-config must exit 0; stderr: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        String::from_utf8(out.stdout).expect("the dump is UTF-8")
+        let text = String::from_utf8(out.stdout).expect("the dump is UTF-8");
+        assert!(
+            text.contains("warnings: []"),
+            "{args:?} must compose with NO warnings:\n{text}"
+        );
+        text
     };
 
-    // MERGE: the three code-mode rows are DECLARED in `bough-base.yml` so a `--patch` can reach
-    // them (a patch layer configures rows, it never creates them). They ship DISABLED, which is
-    // what "the default consumer is unchanged" means on the composed tree: the row is in the
-    // document and never activates.
-    for profile in ["tui", "headless", "dev"] {
-        let text = dump(profile);
+    // Code mode is the DEFAULT (Andrey, 2026-08-28): every shipped profile boots the consumer,
+    // and every typed row stays mounted underneath it — it is a second consumer of an unchanged
+    // seam, not a replacement of it.
+    for profile in ["tui", "headless", "dev", "codemode"] {
+        let text = dump(&["--profile", profile]);
         assert!(
             text.contains("plugin: tools\n") && text.contains("plugin: tools-baseline"),
             "`--profile {profile}` must still compose the typed tool rows"
         );
         for row in ["tools-codemode", "js-quickjs"] {
             assert!(
-                disabled_row(&text, row),
-                "`--profile {profile}` boots `{row}`; the DEFAULT consumer is not unchanged and \
+                !disabled_row(&text, row),
+                "`--profile {profile}` does not boot `{row}`; code mode is not the default and \
                  BUILD.md's row is a lie"
             );
         }
     }
-    let cm = dump("codemode");
-    assert!(
-        cm.contains("plugin: tools-codemode"),
-        "`--profile codemode` must be the way in; if it is not, the row BUILD.md names does not \
-         exist:\n{cm}"
-    );
-    assert!(
-        cm.contains("plugin: tools\n") && cm.contains("plugin: tools-baseline"),
-        "and it must be a SECOND consumer of an unchanged seam, not a replacement of it"
-    );
+
+    // And the fallback is one layer, over any profile.
+    let typed = repo_root().join("bundles/bough-typed.yml");
+    for profile in ["tui", "headless"] {
+        let text = dump(&["--profile", profile, "--patch", typed.to_str().unwrap()]);
+        assert!(
+            disabled_row(&text, "tools-codemode"),
+            "`--patch bundles/bough-typed.yml` must turn the consumer OFF over `{profile}`"
+        );
+        assert!(
+            text.contains("plugin: tools-baseline"),
+            "and it must leave the typed rows exactly where they were"
+        );
+    }
 }
 
 /// The `$ / bank` figures of one table, keyed by arm, parsed out of a markdown summary table.
