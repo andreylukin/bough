@@ -128,6 +128,8 @@ pub struct TuiInner {
     pub(crate) focused_agent: RwLock<Option<AgentId>>,
     pub(crate) focused_pane: RwLock<PaneId>,
     pub(crate) composer_focused: AtomicBool,
+    /// The `to:` lane picker (round 5): `Some(selected)` while open.
+    pub(crate) lane_picker: Mutex<Option<usize>>,
     /// Set once anything CHOSE a pane (a click, Tab, a `FocusRequest`). Until then keyboard focus
     /// is only a default, and every new registration re-derives it — see `default_focus`.
     pub(crate) focus_chosen: AtomicBool,
@@ -218,6 +220,7 @@ impl TuiHandle {
             reports: RwLock::new(HashMap::new()),
             focused_agent: RwLock::new(None),
             focused_pane: RwLock::new(no_pane()),
+            lane_picker: Mutex::new(None),
             composer_focused: AtomicBool::new(true),
             focus_chosen: AtomicBool::new(false),
             composer: Mutex::new(composer),
@@ -635,6 +638,23 @@ impl TuiHandle {
     /// The hit a pane recorded for a cell in the last frame.
     pub fn hit_at(&self, pane: &PaneId, col: u16, row: u16) -> Option<HitId> {
         self.0.hits.read().get(pane).and_then(|m| m.at(col, row))
+    }
+
+    /// The lanes the `to:` picker lists, by name: every live agent, sorted.
+    pub fn lanes(&self) -> Vec<Agent> {
+        let mut lanes: Vec<Agent> = self.0.agents.as_ref().map(|a| a.list()).unwrap_or_default();
+        lanes.sort_by(|a, b| a.name().as_str().cmp(b.name().as_str()));
+        lanes
+    }
+
+    /// The `to:` picker's state: `Some(selected)` while open.
+    pub fn lane_picker(&self) -> Option<usize> {
+        *self.0.lane_picker.lock()
+    }
+
+    pub fn set_lane_picker(&self, state: Option<usize>) {
+        *self.0.lane_picker.lock() = state;
+        self.redraw();
     }
 
     /// The commands registry this shell dispatches through, when the row injected one.

@@ -283,6 +283,25 @@ pub fn draw(tui: &TuiHandle) {
             }
         }
 
+        // The `to:` lane picker (round 5): a short list hanging off the chip's right edge, on the
+        // rows above the band. Same geometry as the click test (`lane_picker_box`).
+        if let Some((rect, rows, selected_row)) = lane_picker_box(tui, size, crect) {
+            let body: Vec<Line> = rows
+                .into_iter()
+                .enumerate()
+                .map(|(i, t)| {
+                    let style = if Some(i) == selected_row {
+                        Style::default().fg(theme.fg).bg(theme.sel_bg)
+                    } else {
+                        Style::default().fg(theme.fg).bg(theme.field_bg)
+                    };
+                    Line::styled(t, style)
+                })
+                .collect();
+            Clear.render(rect, buf);
+            Paragraph::new(body).render(rect, buf);
+        }
+
         // The selection highlight sits ON TOP of everything: it is what the terminal would draw.
         if let Some(sel) = selection {
             let area = sel.intersection(buf.area);
@@ -451,6 +470,9 @@ pub async fn on_key(tui: &TuiHandle, key: KeyEvent) {
     }
 
     // The palette owns Up/Down/Tab/Enter while it is open, and nothing else.
+    if lane_picker_key(tui, key).await {
+        return;
+    }
     if tui.palette_open() && palette_key(tui, key).await {
         return;
     }
@@ -530,6 +552,81 @@ pub async fn interrupt(tui: &TuiHandle) {
     }
 }
 
+/// PURE-ish: the open lane picker's box in screen coordinates, its row texts, and which row is
+/// selected. `None` when the picker is closed or has nothing to list.
+pub fn lane_picker_box(
+    tui: &TuiHandle,
+    size: Rect,
+    crect: Rect,
+) -> Option<(Rect, Vec<String>, Option<usize>)> {
+    let selected = tui.lane_picker()?;
+    let names: Vec<String> = tui.lanes().iter().map(|a| a.name().to_string()).collect();
+    if names.is_empty() {
+        return None;
+    }
+    let lane = tui.agent().map(|a| a.name().to_string());
+    let chips = crate::composer::chips(crect.width, lane.as_deref(), tui.running());
+    let chip_x1 = chips
+        .iter()
+        .find(|c| c.kind == crate::composer::ChipKind::Lane)
+        .map(|c| c.x1)
+        .unwrap_or(crect.width);
+    let avail = crect.y.saturating_sub(size.y);
+    let (x0, rows) = crate::composer::lane_picker(crect.width, chip_x1, avail, &names, selected);
+    if rows.is_empty() {
+        return None;
+    }
+    let h = rows.len() as u16;
+    let w = rows[0].chars().count() as u16;
+    let rect = Rect {
+        x: crect.x + x0,
+        y: crect.y - h,
+        width: w,
+        height: h,
+    };
+    // Which visible row is the selected lane (the list may be cut from the top).
+    let first = selected
+        .saturating_sub((h as usize).saturating_sub(1))
+        .min(names.len() - h as usize);
+    Some((rect, rows, Some(selected - first)))
+}
+
+/// The lane picker's keys while it is open (round 5): Up/Down move, Enter focuses, Esc closes;
+/// any other key closes it and is then handled as usual. Returns true when the key was eaten.
+pub async fn lane_picker_key(tui: &TuiHandle, key: KeyEvent) -> bool {
+    let Some(selected) = tui.lane_picker() else {
+        return false;
+    };
+    let lanes = tui.lanes();
+    match key.code {
+        KeyCode::Up | KeyCode::Down if !lanes.is_empty() => {
+            let last = lanes.len() - 1;
+            let next = if key.code == KeyCode::Up {
+                selected.saturating_sub(1)
+            } else {
+                (selected + 1).min(last)
+            };
+            tui.set_lane_picker(Some(next));
+            true
+        }
+        KeyCode::Enter => {
+            tui.set_lane_picker(None);
+            if let Some(lane) = lanes.get(selected) {
+                tui.focus(to_agent(lane.id().clone())).await;
+            }
+            true
+        }
+        KeyCode::Esc => {
+            tui.set_lane_picker(None);
+            true
+        }
+        _ => {
+            tui.set_lane_picker(None);
+            false
+        }
+    }
+}
+
 /// A composer chip, pressed (the TUI brief, D7). Each one is the SAME path its key takes.
 pub async fn on_chip(tui: &TuiHandle, kind: crate::composer::ChipKind) {
     match kind {
@@ -549,28 +646,23 @@ pub async fn on_chip(tui: &TuiHandle, kind: crate::composer::ChipKind) {
         }
         crate::composer::ChipKind::Stop => interrupt(tui).await,
         crate::composer::ChipKind::Lane => {
-            // The next lane, by name, wrapping — the rail's click is the direct pick; this is
-            // the one-handed way to address a worker without `/focus`.
-            let Some(agents) = tui.0.agents.clone() else {
-                tui.notify_kind("no agents to address", crate::NoticeKind::Info);
-                return;
-            };
-            let mut lanes: Vec<bough_plugin_agents::Agent> = agents.list();
-            lanes.sort_by(|a, b| a.name().as_str().cmp(b.name().as_str()));
+            // The picker (round 5): a list of lanes to pick from, opened on the current one.
+            // Predictable with five lanes where cycling was five clicks.
+            let lanes = tui.lanes();
             if lanes.is_empty() {
                 tui.notify_kind("no agents to address", crate::NoticeKind::Info);
+                return;
+            }
+            if tui.lane_picker().is_some() {
+                tui.set_lane_picker(None);
                 return;
             }
             let current = tui.focused_agent();
             let at = current
                 .as_ref()
-                .and_then(|id| lanes.iter().position(|a| a.id() == id));
-            let next = match at {
-                Some(i) => &lanes[(i + 1) % lanes.len()],
-                None => &lanes[0],
-            };
-            tui.focus(to_agent(next.id().clone())).await;
-            tui.redraw();
+                .and_then(|id| lanes.iter().position(|a| a.id() == id))
+                .unwrap_or(0);
+            tui.set_lane_picker(Some(at));
         }
     }
 }
@@ -717,6 +809,33 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
     let (col, row) = (me.column, me.row);
     match me.kind {
         MouseEventKind::Down(button) => {
+            // The lane picker, when open, takes the click: a row picks that lane; anywhere
+            // else closes it and the click goes on to whatever it landed on.
+            if tui.lane_picker().is_some() {
+                let size = tui.size();
+                let crect = composer_rect(tui);
+                if let Some((rect, _, _)) = lane_picker_box(tui, size, crect) {
+                    if col >= rect.x
+                        && col < rect.x + rect.width
+                        && row >= rect.y
+                        && row < rect.y + rect.height
+                    {
+                        let names = tui.lanes();
+                        let h = rect.height as usize;
+                        let selected = tui.lane_picker().unwrap_or(0);
+                        let first = selected
+                            .saturating_sub(h.saturating_sub(1))
+                            .min(names.len().saturating_sub(h));
+                        let picked = first + (row - rect.y) as usize;
+                        tui.set_lane_picker(None);
+                        if let Some(lane) = names.get(picked) {
+                            tui.focus(to_agent(lane.id().clone())).await;
+                        }
+                        return;
+                    }
+                }
+                tui.set_lane_picker(None);
+            }
             let Some(pane) = tui.pane_at(col, row) else {
                 // A click on the composer's band: a CHIP if one is under the pointer (D7) —
                 // the same geometry `render_at` drew — else focus, with the caret where the

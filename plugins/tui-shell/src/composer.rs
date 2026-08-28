@@ -98,7 +98,45 @@ pub fn chips(width: u16, lane: Option<&str>, running: bool) -> Vec<Chip> {
     out
 }
 
-/// PURE: the chip under band-relative column `col`, if any.
+/// PURE: the lane picker's box and rows (round 5): a list of lane names, one per row, right-
+/// aligned so its right edge is the `to:` chip's right edge (`chip_x1`, band-relative), sitting
+/// on the rows directly above the band. `avail` is how many rows are free above the band; a
+/// longer list is cut from the top with the selected lane kept in view. Returns the box as
+/// `(x0, rows)` band-relative and the row texts, selected row marked.
+pub fn lane_picker(
+    width: u16,
+    chip_x1: u16,
+    avail: u16,
+    lanes: &[String],
+    selected: usize,
+) -> (u16, Vec<String>) {
+    if lanes.is_empty() || avail == 0 {
+        return (chip_x1, Vec::new());
+    }
+    let rows = (avail as usize).min(lanes.len());
+    let first = selected
+        .saturating_sub(rows.saturating_sub(1))
+        .min(lanes.len() - rows);
+    let inner = lanes.iter().map(|l| l.chars().count()).max().unwrap_or(0) + 4;
+    let box_w = (inner as u16).min(width);
+    let x0 = chip_x1.saturating_sub(box_w);
+    let texts = lanes[first..first + rows]
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let mark = if first + i == selected {
+                '\u{25b8}'
+            } else {
+                ' '
+            };
+            let mut t = format!(" {mark} {name}");
+            let pad = (box_w as usize).saturating_sub(t.chars().count());
+            t.push_str(&" ".repeat(pad));
+            t
+        })
+        .collect();
+    (x0, texts)
+}
 pub fn chip_at(chips: &[Chip], col: u16) -> Option<&Chip> {
     chips.iter().find(|c| col >= c.x0 && col < c.x1)
 }
@@ -684,5 +722,33 @@ mod chip_tests {
         // No lane: no `to:` chip. Narrow: no chips at all.
         assert_eq!(chips(80, None, false).len(), 1);
         assert!(chips(CHIPS_MIN_WIDTH - 1, Some("sol"), false).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod lane_picker_tests {
+    use super::lane_picker;
+
+    #[test]
+    fn the_picker_hangs_off_the_chips_right_edge_and_keeps_the_selection_in_view() {
+        let lanes: Vec<String> = ["sol", "terra", "luna"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let (x0, rows) = lane_picker(80, 70, 10, &lanes, 1);
+        assert_eq!(rows.len(), 3);
+        assert!(rows[1].contains("\u{25b8} terra"), "{rows:?}");
+        assert!(rows[0].starts_with("   sol"), "{rows:?}");
+        let w = rows[0].chars().count() as u16;
+        assert_eq!(x0 + w, 70, "right edge on the chip's right edge");
+        assert!(
+            rows.iter().all(|r| r.chars().count() as u16 == w),
+            "one box width"
+        );
+        // Only two rows free: the selected lane stays in view.
+        let (_, cut) = lane_picker(80, 70, 2, &lanes, 2);
+        assert_eq!(cut.len(), 2);
+        assert!(cut[1].contains("\u{25b8} luna"), "{cut:?}");
+        assert!(lane_picker(80, 70, 0, &lanes, 0).1.is_empty());
     }
 }
