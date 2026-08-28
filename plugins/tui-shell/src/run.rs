@@ -123,6 +123,7 @@ pub fn draw(tui: &TuiHandle) {
         &infos,
         composer_h,
         tui.0.cfg.gutter,
+        tui.0.cfg.borders,
         focused,
         &aux_rows,
     );
@@ -186,6 +187,40 @@ pub fn draw(tui: &TuiHandle) {
             }
             hits.insert(id.clone(), map);
             reports.insert(id.clone(), report);
+        }
+
+        // The borders (Andrey, 2026-08-28): a heavy `┃` down the gutter between the rail and the
+        // conversation, a heavy `━` across the row under the conversation, joined with `┻`.
+        // Painted after the panes and before the bands, in the dim colour: a frame, not content.
+        if tui.0.cfg.borders {
+            let rail_edge = rects
+                .iter()
+                .find(|(id, r)| {
+                    r.width > 0 && infos.iter().any(|p| p.id == *id && p.slot == Slot::Strip)
+                })
+                .map(|(_, r)| r.x + r.width);
+            let main_bottom = rects
+                .iter()
+                .find(|(id, _)| infos.iter().any(|p| p.id == *id && p.slot == Slot::Main))
+                .map(|(_, r)| r.y + r.height)
+                .filter(|&y| y < status_top.min(crect_top(size, composer_h)));
+            let rule = Style::default().fg(theme.dim);
+            if let Some(y) = main_bottom {
+                for x in size.x..size.x + size.width {
+                    buf[(x, y)].set_symbol("\u{2501}").set_style(rule);
+                }
+            }
+            if let Some(x) = rail_edge {
+                if x < size.x + size.width {
+                    let bottom = main_bottom.unwrap_or(status_top.min(size.y + size.height));
+                    for y in size.y..bottom.min(size.y + size.height) {
+                        buf[(x, y)].set_symbol("\u{2503}").set_style(rule);
+                    }
+                    if let Some(y) = main_bottom {
+                        buf[(x, y)].set_symbol("\u{253b}").set_style(rule);
+                    }
+                }
+            }
         }
 
         // The composer is the shell's own, and it is drawn last so no pane can paint over it.
@@ -1166,6 +1201,11 @@ pub fn subject_of(text: &str) -> String {
     } else {
         line.chars().take(MAX - 1).collect::<String>() + "\u{2026}"
     }
+}
+
+/// The composer's top row, for the border's floor.
+fn crect_top(size: Rect, composer_h: u16) -> u16 {
+    pane::composer_rect(size, composer_h).y
 }
 
 /// The rectangle the composer occupies. Re-exported here because the loop is what decides it.

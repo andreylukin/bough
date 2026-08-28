@@ -12,7 +12,7 @@ use ratatui::layout::Rect;
 #[tokio::test]
 async fn a_drag_rect_extracts_the_rendered_cells_with_trailing_space_trimmed() {
     let (ctx, tui) = shell();
-    // The recorder paints `focus 80x23` at the top-left of its slot and nothing else, so the rest
+    // The recorder paints `focus 80x22` at the top-left of its slot and nothing else, so the rest
     // of every row is spaces — which is exactly what the trim rule is about.
     add_pane(&ctx, &tui, "focus", Slot::Main, 0, SlotSize::Fill(1)).await;
     run::draw(&tui);
@@ -24,7 +24,7 @@ async fn a_drag_rect_extracts_the_rendered_cells_with_trailing_space_trimmed() {
     let text = text_from_buffer(&tui.last_frame(), selection.rect());
 
     assert_eq!(
-        text, "focus 80x23\n",
+        text, "focus 80x22\n",
         "the first row is the painted text with its padding trimmed, the second is empty"
     );
 }

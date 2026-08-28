@@ -935,6 +935,11 @@ pub struct TuiConfig {
     /// Blank columns between the rail and the transcript, owned by neither (M9).
     #[serde(default = "default_gutter")]
     pub gutter: u16,
+    /// Heavy rules between the panels (Andrey, 2026-08-28): `┃` down the gutter between the rail
+    /// and the conversation, `━` across the row above the bottom bands. The rule row is taken
+    /// from the conversation.
+    #[serde(default = "default_borders")]
+    pub borders: bool,
     /// How long a `Ctrl+C` stays armed before it re-arms (B7).
     #[serde(default = "default_exit_arm_ms")]
     pub exit_arm_ms: u64,
@@ -969,6 +974,9 @@ fn default_measure_cols() -> u16 {
 }
 fn default_gutter() -> u16 {
     1
+}
+fn default_borders() -> bool {
+    true
 }
 fn default_exit_arm_ms() -> u64 {
     3000
@@ -1012,6 +1020,7 @@ pub fn test_config() -> TuiConfig {
         transcript_pane: default_transcript_pane(),
         measure_cols: default_measure_cols(),
         gutter: default_gutter(),
+        borders: default_borders(),
         exit_arm_ms: default_exit_arm_ms(),
         paste_burst_ms: default_paste_burst_ms(),
         history_cap: default_history_cap(),

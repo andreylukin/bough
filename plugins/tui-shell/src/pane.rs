@@ -485,7 +485,15 @@ pub fn layout(
     composer_height: u16,
     gutter: u16,
 ) -> Vec<(PaneId, Rect)> {
-    layout_with(size, panes, composer_height, gutter, None, &HashMap::new())
+    layout_with(
+        size,
+        panes,
+        composer_height,
+        gutter,
+        false,
+        None,
+        &HashMap::new(),
+    )
 }
 
 /// [`layout`] with what the panes REPORTED last frame (visual audit F1): an `Aux` pane whose
@@ -497,6 +505,7 @@ pub fn layout_with(
     panes: &[PaneInfo],
     composer_height: u16,
     gutter: u16,
+    border: bool,
     focused: Option<&PaneId>,
     aux_rows: &HashMap<PaneId, u16>,
 ) -> Vec<(PaneId, Rect)> {
@@ -606,6 +615,11 @@ pub fn layout_with(
     }
 
     // Main: everything still standing, shared by weight.
+    // The border row (Andrey, 2026-08-28): one row between the conversation and the bottom bands
+    // for the `━` rule, taken from the conversation so no band moves.
+    if border && rest.height > 1 {
+        rest.height -= 1;
+    }
     let main = of(Slot::Main);
     if !main.is_empty() {
         let heights = split(
