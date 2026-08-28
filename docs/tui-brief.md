@@ -107,7 +107,10 @@ inner `▸ patch …` rows match its header. A talk-only turn's rail state is `r
 — labelled, so `6` never reads as work. Scrolled up with nothing new, the conversation shows
 `↑ older · End for newest` (`Viewport::badge`), becoming `↓ N new · End` when rows arrive.
 Failed attempts before the call that finally succeeded fold under `▸ N failed attempts · open`
-(`rows::retry_folds`), narration included; a failure that never succeeded stays inline.
+(`rows::retry_folds`), narration included; a failure that never succeeded stays inline, and the
+success must be the SAME tool — a failed `read_file` before a successful `write_file` is two
+things, not a retry (02-tool-calls caught the first draft folding them). A call-less program
+that printed says `printed "…"`, not `0 calls`.
 
 **R8b — from the second power-user pass.** Esc closes the `to:` picker before the keymap's
 dismiss runs; a click on the chip while the list is open closes it (a toggle, not a reopen);
