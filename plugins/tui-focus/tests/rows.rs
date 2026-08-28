@@ -828,3 +828,42 @@ fn a_program_row_opens_the_agents_speech() {
     assert!(is_agent_row(&rows[1]), "{:?}", rows[1]);
     assert!(opens_speech(&rows, 1));
 }
+
+/// D6: the `draft_*` call and its result draw nothing — the card that follows is their rendering.
+#[test]
+fn a_draft_call_is_rendered_only_by_its_card() {
+    let rows = rows_from_steps(&[
+        step(
+            1,
+            "tool/call",
+            serde_json::json!({ "call": "c1", "name": "draft_ticket", "args": { "audience": "linear" } }),
+        ),
+        step(
+            2,
+            "draft/ticket",
+            serde_json::json!({ "draft": "d1", "audience": "linear", "title": "T", "body": "B" }),
+        ),
+        step(
+            3,
+            "tool/result",
+            serde_json::json!({ "call": "c1", "name": "draft_ticket", "content": "drafted d1", "ok": true }),
+        ),
+        step(
+            4,
+            "thought/text",
+            serde_json::json!({ "step_index": 1, "text": "done" }),
+        ),
+    ]);
+    assert!(
+        !rows.iter().any(|r| matches!(r, Row::Tool { .. })),
+        "{rows:?}"
+    );
+    assert!(
+        matches!(&rows[0], Row::Draft { subject, .. } if subject == "T"),
+        "{rows:?}"
+    );
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    // The card opens the agent's speech like any agent row, and the text after it continues it.
+    assert!(bough_plugin_tui_focus::rows::opens_speech(&rows, 0));
+    assert!(!bough_plugin_tui_focus::rows::opens_speech(&rows, 1));
+}

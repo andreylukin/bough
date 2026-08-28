@@ -91,7 +91,30 @@ pub fn card(
 ) -> (Vec<Line<'static>>, Vec<ClaimHit>) {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let accent = theme.warn;
-    // `✎ draft · ticket  to: linear  <subject>  not sent`
+    // `✎ draft · ticket  to: linear  <subject>  not sent` — the subject is clipped so that
+    // `not sent` is always on screen: it is the card's one sentence that must not scroll away.
+    let fixed = "\u{270e} draft \u{b7} ".chars().count()
+        + kind.chars().count()
+        + 2
+        + "to: ".len()
+        + audience.chars().count()
+        + 2
+        + 2
+        + "not sent".len();
+    let room = (width as usize).saturating_sub(fixed);
+    let subject: String = if subject.chars().count() > room {
+        if room == 0 {
+            String::new()
+        } else {
+            subject
+                .chars()
+                .take(room.saturating_sub(1))
+                .collect::<String>()
+                + "\u{2026}"
+        }
+    } else {
+        subject.to_string()
+    };
     lines.push(Line::from(vec![
         Span::styled("\u{270e} draft \u{b7} ", Style::default().fg(accent)),
         Span::styled(
@@ -215,6 +238,15 @@ mod tests {
         assert!(t.iter().any(|l| l.contains("line 8")), "{t:?}");
         assert!(!t.iter().any(|l| l.contains("more lines")), "{t:?}");
         assert!(t.last().unwrap().contains("close"), "{t:?}");
+        // A long subject is clipped so `not sent` stays on the line.
+        let long = "a subject that goes on far longer than any card header could hold at all";
+        let (narrow, _) = card("d-7", "ticket", "linear", long, "b", false, 0, 60, &theme);
+        let head = &text(&narrow)[0];
+        assert!(head.chars().count() <= 60, "{head:?}");
+        assert!(
+            head.ends_with("not sent") && head.contains('\u{2026}'),
+            "{head:?}"
+        );
         assert_eq!(
             copy_text("linear", "Flaky test", "body"),
             "to: linear\nsubject: Flaky test\n\nbody"

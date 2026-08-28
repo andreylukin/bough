@@ -3,7 +3,7 @@
 //! dropped; and an UNKNOWN step type renders as `Other` and never panics — the step-type map is
 //! merge-extensible (§3), so a renderer will meet types it does not own.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bough_plugin_agents::Phase;
 use bough_plugin_ledger::vocabulary::MailClass;
@@ -237,6 +237,10 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
     // ONE row. `None` means the last row pushed cannot be joined onto — anything else in between
     // (a tool call, a wake mark, a new step index, a new wake) breaks the group.
     let mut open_group: Option<(usize, GroupKey)> = None;
+    // Calls whose rendering IS the row that follows them (a `draft_*` call and its draft card,
+    // D6): the call and its result draw nothing, or the card would sit under a header saying
+    // the same thing.
+    let mut hidden_calls: BTreeSet<ToolCallId> = BTreeSet::new();
 
     for step in steps {
         let kind = step.kind.as_str();
@@ -351,6 +355,9 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
                 }
             }
             "tool/call" => match tool_call_row(step) {
+                Some((call, Row::Tool { name, .. })) if is_card_call(&name) => {
+                    hidden_calls.insert(call);
+                }
                 Some((call, row)) => {
                     by_call.insert(call, out.len());
                     out.push(row);
@@ -361,6 +368,7 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
                 let parsed: Option<ToolResultBody> =
                     serde_json::from_value(step.body.as_ref().clone()).ok();
                 match parsed {
+                    Some(body) if hidden_calls.contains(&body.call) => {}
                     Some(body) => match by_call.get(&body.call).copied() {
                         // The fold: one row for the pair.
                         Some(at) => match &mut out[at] {
@@ -461,6 +469,11 @@ fn claim_row(step: &Step) -> Option<(String, Row)> {
             state: ClaimState::Open,
         },
     ))
+}
+
+/// A tool whose rendering is the CARD its step produces, so its call row is not drawn (D6).
+pub fn is_card_call(name: &str) -> bool {
+    matches!(name, "draft_message" | "draft_ticket")
 }
 
 /// A draft step as a card row; `None` when the body is not a draft's shape.
