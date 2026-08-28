@@ -137,6 +137,16 @@ re-read when a wake ends). The question rule is a heuristic, no model call: the 
 ends with `?`, the turn is over, nothing from Andrey followed. A lane with no work yet is dim;
 the leader never is. Not done: clicking the chip to jump to the claim/question.
 
+**R10b — from the keyboard-only pass.** With the keyboard in the rail, every rail line wears
+the `▎` ring the conversation wears (the rail had no visible sign of holding the keys). Esc
+closes a search that has anything on screen from anywhere — after Enter on a hit the keyboard
+had left it, and Esc in the composer left the hits up with no way out but Ctrl+F. Enter on a hit
+moves the row marker to the hit (`retarget` sets `RowFocus::on_step`). The row marker is drawn
+only while the conversation has the keyboard (`FocusState::keyboard_here`), so nothing claims
+the keys are somewhere they are not. `term.rs` pushes the keyboard-enhancement flags
+(`DISAMBIGUATE_ESCAPE_CODES`) on terminals that support them and pops them on the way out —
+without them Shift+Enter arrived as `ESC [27;2;13~` and fused two lines into one.
+
 **Fixed along the way:** the `search [▏]` ghost after Esc, Esc (the layout's focused pane is the
 KEYBOARD's pane, `run::layout_focus`); the welcome hint says `? for help`, the status line's
 word, and says `tab panes` once.
