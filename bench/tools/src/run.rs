@@ -73,6 +73,14 @@ impl Arm {
     }
 }
 
+/// The model a live round runs on, when `BOUGH_BENCH_MODEL` names one.
+pub fn bench_model() -> Option<String> {
+    match std::env::var("BOUGH_BENCH_MODEL") {
+        Ok(m) if !m.trim().is_empty() => Some(m.trim().to_string()),
+        _ => None,
+    }
+}
+
 /// A throwaway directory, removed on drop.
 pub struct Scratch(PathBuf);
 
@@ -251,11 +259,14 @@ impl Runner {
         })
     }
 
-    fn mode(&self) -> &'static str {
+    fn mode(&self) -> String {
         if self.live {
-            "live haiku"
+            format!(
+                "live {}",
+                bench_model().unwrap_or_else(|| "haiku".to_string())
+            )
         } else {
-            "replay"
+            "replay".to_string()
         }
     }
 
@@ -321,6 +332,19 @@ impl Runner {
         self.lay_out_work(work.path())?;
 
         let root = self.lay_out_root(home.path(), arm)?;
+        // BOUGH_BENCH_MODEL points BOTH lanes at another model for a live round (e.g.
+        // `openai:gpt-5.6-luna`); it rides the run home's own user patch (launcher D11), so the
+        // arm files stay byte-identical and the checked-in bank measures what ships. A model with
+        // no row in the shipped price table renders `—` in the `$` column, never $0.00.
+        if let Some(model) = bench_model() {
+            std::fs::write(
+                home.path().join("bough.patch.yml"),
+                format!(
+                    "entries:\n  model.policy:\n    config:\n      sol: \"{model}\"\n      \
+                     terra: \"{model}\"\n      prices: {{}}\n"
+                ),
+            )?;
+        }
         let shim = gh_shim(home.path())?;
         let path = match std::env::var("PATH") {
             Ok(p) => format!("{}:{p}", shim.display()),
@@ -399,7 +423,7 @@ impl Runner {
         }
         Ok(Report {
             rows,
-            mode: self.mode().to_string(),
+            mode: self.mode(),
         })
     }
 }
