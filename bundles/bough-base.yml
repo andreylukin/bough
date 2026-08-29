@@ -312,6 +312,23 @@
     state_db: !!expr 'bough_path("collect-linear.db")'
     batch: 50
     timeout_ms: 30000
+- id: collect.slack
+  plugin: collector-slack
+  config:
+    cadence: { every_ms: 300000 }
+    # The `mcp.rmcp` server row this collector sweeps through. The shipped `servers:` list is
+    # empty, so until a patch mounts a `slack` server row (see `bundles/bough-mcp-claude.yml`)
+    # every sweep reports the missing server loudly and delivers nothing.
+    mcp_server: slack
+    # EMPTY BY DEFAULT, the `collect.github` `repos: []` shape: the query IS the scope (and what
+    # makes the items directed at the viewer), and a shipped default may not read anybody's
+    # workspace by omission. Name queries in the patch layer to turn this collector on.
+    queries: {}
+    # EMPTY: the router routes on the `slack:<channel>` refs this row cites. See `collect.github`.
+    deliver_to: []
+    wake_classes: [mention]
+    state_db: !!expr 'bough_path("collect-slack.db")'
+    batch: 20
 
 # §6: the mcp seam.
 - id: mcp

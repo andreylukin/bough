@@ -1,0 +1,68 @@
+# bundles/bough-mcp-claude.yml — Claude Code's MCP grants, adopted BY REFERENCE (2026-08-29).
+#
+# The `${keychain:…}` header values are REFERENCES, never secrets: `mcp-rmcp` resolves them at
+# connect time out of the login keychain item Claude Code already maintains ("Claude
+# Code-credentials"), the token goes into that one request header and nowhere else, and
+# `--dump-config` renders the reference text. An expired grant is reported with its owner named
+# (run `claude` once and it refreshes in place); bough never refreshes a credential it did not
+# obtain.
+#
+# It is a patch document, so it works as a bundle in a profile's list AND as a `--patch` layer
+# over any profile:
+#
+#     bough --patch bundles/bough-mcp-claude.yml
+#
+# THE GRANT KEYS ARE MACHINE-SPECIFIC: `mcpOAuth.<server>|<hash>` is how Claude Code stores a
+# per-server OAuth grant, and the hash is this machine's. List yours with
+#
+#     security find-generic-password -s "Claude Code-credentials" -w | jq '.mcpOAuth | keys'
+#
+# and restate the two Authorization values. A patch REPLACES a row's whole config (§0.5), so the
+# collector rows below restate every field of their `bough-base` rows plus the scope that turns
+# them on.
+entries:
+  mcp.rmcp:
+    config:
+      servers:
+        - name: linear-server
+          transport:
+            kind: http
+            url: "https://mcp.linear.app/mcp"
+            headers:
+              Authorization: "Bearer ${keychain:Claude Code-credentials#mcpOAuth.linear-server|638130d5ab3558f4.accessToken}"
+        - name: slack
+          transport:
+            kind: http
+            url: "https://mcp.slack.com/mcp"
+            headers:
+              Authorization: "Bearer ${keychain:Claude Code-credentials#mcpOAuth.plugin:slack:slack|38801a7d845718b3.accessToken}"
+      connect_timeout_ms: 15000
+      call_timeout_ms: 120000
+  collect.linear:
+    config:
+      cadence: { every_ms: 600000 }
+      endpoint: "https://api.linear.app/graphql"
+      api_key: ""
+      # The credential lives on the `linear-server` row above; this row holds none.
+      mcp_server: linear-server
+      # The MCP `team` argument takes a team NAME or ID (`FOMS`), where the GraphQL transport
+      # takes the key (`NME`). See collector-linear's mcp_source.rs.
+      teams: [FOMS]
+      projects: []
+      deliver_to: []
+      wake_classes: [assigned, mention]
+      state_db: !!expr 'bough_path("collect-linear.db")'
+      batch: 50
+      timeout_ms: 30000
+  collect.slack:
+    config:
+      cadence: { every_ms: 300000 }
+      mcp_server: slack
+      # The query IS the scope: `to:me` is what makes every item a mention of the viewer, the
+      # same contract as naming a repo on `collect.github`.
+      queries:
+        mentions: "to:me"
+      deliver_to: []
+      wake_classes: [mention]
+      state_db: !!expr 'bough_path("collect-slack.db")'
+      batch: 20

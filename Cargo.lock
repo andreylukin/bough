@@ -309,6 +309,7 @@ dependencies = [
  "bough-plugin-claims",
  "bough-plugin-collector-github",
  "bough-plugin-collector-linear",
+ "bough-plugin-collector-slack",
  "bough-plugin-commands",
  "bough-plugin-dormancy",
  "bough-plugin-drafts",

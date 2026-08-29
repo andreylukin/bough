@@ -90,3 +90,33 @@ NOT REPLICATE box). `BUILD.md`'s `Default consumer: code mode` row is the ledger
 
 - `bough --profile typed` is the same fallback reachable by name (`profiles/typed.yml`: headless +
   `bough-typed`). It is what the bench composes for its control arm (`bench/tools/src/run.rs`).
+
+## Collectors over Claude Code's MCP grants (Linear, Slack)
+
+The Linear and Slack collectors can sweep through MCP servers instead of holding credentials.
+`bundles/bough-mcp-claude.yml` is the shipped patch layer:
+
+    bough --patch bundles/bough-mcp-claude.yml
+
+It mounts two `mcp.rmcp` server rows (`linear-server` at mcp.linear.app, `slack` at
+mcp.slack.com) whose `Authorization` headers are `${keychain:...}` REFERENCES into the login
+keychain item Claude Code maintains ("Claude Code-credentials"), points `collect.linear` at the
+`linear-server` row (`mcp_server: linear-server`, no `LINEAR_API_KEY` anywhere), and gives
+`collect.slack` its scope (`queries: { mentions: "to:me" }`).
+
+Three properties, all held by `plugins/mcp-rmcp/src/keychain.rs`:
+
+- **Reference, never secret.** The config (and therefore `--dump-config`) holds the reference
+  text; the token is read at connect time via `security` run as argv and exists only in the one
+  request header, which is marked sensitive.
+- **Expired is reported, not refreshed.** The grant belongs to Claude Code; the fix is running
+  `claude` once, and the error says so.
+- **Machine-specific grant keys.** `mcpOAuth.<server>|<hash>` is per machine; list yours with
+  `security find-generic-password -s "Claude Code-credentials" -w | jq '.mcpOAuth | keys'` and
+  restate the two header values in the patch.
+
+`collect.slack` ships in `bough-base` with `queries: {}` (loud, collects nothing) exactly like
+`collect.github`'s `repos: []`; the query is the scope AND the truth of the mention class, so it
+is a deployment's own statement. `collect.linear` keeps its GraphQL transport when `mcp_server`
+is empty; note the scope value differs per transport (MCP takes the team NAME, e.g. `FOMS`;
+GraphQL takes the key, e.g. `NME`).

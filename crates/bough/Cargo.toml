@@ -89,6 +89,7 @@ bough-plugin-schedule-manual = { workspace = true }
 bough-plugin-system-schedules = { workspace = true }
 bough-plugin-collector-github = { workspace = true }
 bough-plugin-collector-linear = { workspace = true }
+bough-plugin-collector-slack = { workspace = true }
 bough-plugin-actions-github = { workspace = true }
 bough-plugin-actions-linear = { workspace = true }
 bough-plugin-actions-reconcile = { workspace = true }

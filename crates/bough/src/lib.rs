@@ -87,6 +87,7 @@ use bough_plugin_boundary_instructions as _;
 use bough_plugin_catch_up_on_wake as _;
 use bough_plugin_collector_github as _;
 use bough_plugin_collector_linear as _;
+use bough_plugin_collector_slack as _;
 use bough_plugin_drafts as _;
 use bough_plugin_hooks_exec as _;
 use bough_plugin_mcp as _;
