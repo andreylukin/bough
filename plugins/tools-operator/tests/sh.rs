@@ -101,15 +101,18 @@ async fn the_results_come_back_in_leg_order_and_a_non_zero_exit_is_data() {
     assert_eq!(out[2].out, "three\n", "leg order, not completion order");
 }
 
-/// The point of the tool: three sleeps that would take 1.5 s one after another take about 0.5 s.
-/// The bound is deliberately loose — this asserts CONCURRENCY, not a schedule.
+/// The point of the tool: three sleeps that would take 3 s one after another take about 1 s.
+/// The bound is deliberately loose — this asserts CONCURRENCY, not a schedule. 1 s legs and a
+/// 2.2 s budget rather than 0.5 s and 1.2 s: under a full-suite nextest run this machine's
+/// process-spawn latency alone ate the old 700 ms margin (green standalone every time), and the
+/// wider gap keeps the sequential case (3 s+) unambiguously OVER the budget.
 #[tokio::test]
 async fn the_legs_really_do_run_at_the_same_time() {
     let dir = tempfile::tempdir().unwrap();
     let legs: Vec<Leg> = (0..3)
         .map(|i| {
             leg(
-                "sleep 0.5",
+                "sleep 1",
                 serde_json::json!(["sleep", "probe", format!("leg{i}")]),
             )
         })
@@ -122,8 +125,8 @@ async fn the_legs_really_do_run_at_the_same_time() {
     let elapsed = t0.elapsed();
     assert!(out.iter().all(|r| r.code == 0));
     assert!(
-        elapsed < std::time::Duration::from_millis(1200),
-        "three 0.5 s legs took {elapsed:?}: they ran one after another"
+        elapsed < std::time::Duration::from_millis(2200),
+        "three 1 s legs took {elapsed:?}: they ran one after another"
     );
 }
 

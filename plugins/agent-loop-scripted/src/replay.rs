@@ -316,7 +316,7 @@ pub async fn run_wake(env: &ReplayEnv, input: &WakeInput) -> Result<WakeOutcome,
 
         // §5 step 6 — the projection, and the messages rebuilt FROM THE LEDGER.
         let as_of = env.ledger.0.head_seq(&input.traj).await?;
-        let (sections, projection_text) = assemble(env, input).await;
+        let (sections, projection_stable, projection_volatile) = assemble(env, input).await;
         let messages = rebuild(&steps_of_wake(env, input).await?);
 
         // §5 step 8 — `agent/request`, a waterfall over the CALL CONFIG ONLY. The facts are
@@ -346,11 +346,14 @@ pub async fn run_wake(env: &ReplayEnv, input: &WakeInput) -> Result<WakeOutcome,
             })
             .await;
 
+        // The §12 tier split, exactly as the live loop sends it: the stable tier rides
+        // `system`, the tail/mail tier rides `system_volatile`, and the header's digest is
+        // `tiers_digest` over both AS SENT (the V4 invariant recomputes it from these bytes).
         let request = LlmRequest {
-            projection_digest: None,
+            projection_digest: Some(tiers_digest(&projection_stable, &projection_volatile)),
             model: decided.call.model.clone(),
-            system: Some(projection_text.clone()),
-            system_volatile: None,
+            system: Some(projection_stable.clone()),
+            system_volatile: (!projection_volatile.is_empty()).then(|| projection_volatile.clone()),
             messages,
             tools: Vec::new(),
             call: decided.call.clone(),
@@ -369,7 +372,7 @@ pub async fn run_wake(env: &ReplayEnv, input: &WakeInput) -> Result<WakeOutcome,
             "composition": env.composition,
             "as_of": as_of,
             "budget": 0,
-            "projection_digest": digest(&projection_text),
+            "projection_digest": tiers_digest(&projection_stable, &projection_volatile),
         });
         // "ONLY when it differs from the last one in this wake" (§5) is a statement about what
         // the MODEL was shown: `as_of` is a ledger position that moves with every append, so
@@ -652,9 +655,9 @@ fn rebuild(steps: &[Step]) -> Vec<bough_plugin_llm::LlmMessage> {
     out
 }
 
-async fn assemble(env: &ReplayEnv, input: &WakeInput) -> (Vec<String>, String) {
+async fn assemble(env: &ReplayEnv, input: &WakeInput) -> (Vec<String>, String, String) {
     let Some(p) = &env.projection else {
-        return (Vec::new(), String::new());
+        return (Vec::new(), String::new(), String::new());
     };
     match p
         .0
@@ -667,13 +670,17 @@ async fn assemble(env: &ReplayEnv, input: &WakeInput) -> (Vec<String>, String) {
         })
         .await
     {
-        Ok(a) => (
-            a.sections.iter().map(|s| s.id.to_string()).collect(),
-            a.to_text(),
-        ),
+        Ok(a) => {
+            let (stable, volatile) = a.tier_split();
+            (
+                a.sections.iter().map(|s| s.id.to_string()).collect(),
+                stable,
+                volatile,
+            )
+        }
         // An answer wake must always be buildable (§5): a projection that cannot assemble
         // degrades to an empty context rather than losing the wake.
-        Err(_) => (Vec::new(), String::new()),
+        Err(_) => (Vec::new(), String::new(), String::new()),
     }
 }
 
@@ -682,6 +689,13 @@ fn digest(text: &str) -> String {
     let mut h = sha2::Sha256::new();
     h.update(text.as_bytes());
     format!("{:x}", h.finalize())
+}
+
+/// `agent-loop`'s `request::tiers_digest` spelling, duplicated the way this crate already
+/// duplicates `digest` (the two loop Providers share no code by design; the swap test is what
+/// pins them to each other).
+fn tiers_digest(stable: &str, volatile: &str) -> String {
+    digest(&format!("{stable}\u{1e}{volatile}"))
 }
 
 /// The durable SHAPE of a trajectory: kind, class, body and cite count per step, in seq order.

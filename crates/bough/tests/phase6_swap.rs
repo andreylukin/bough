@@ -233,11 +233,12 @@ async fn disabling_the_row_by_patch_stops_sweeps_and_removes_its_schedule_job() 
     let scratch = scratch("collector");
     let shim_dir = scratch.join("gh");
     std::fs::create_dir_all(&shim_dir).unwrap();
-    std::fs::write(
-        shim_dir.join(format!("{}.json", fixture_name(PR_ARGV))),
-        prs_json(&[1, 2]),
-    )
-    .unwrap();
+    // EMPTY at boot: the collector rows activate after the router now (bough-base requires
+    // `mail` on them) and their registration catch-up sweep beats this test's `link_repo` — in a
+    // real boot the links are already in the ledger, but here a fixture visible that early routes
+    // both PRs to unsorted and burns the watermark. The PRs appear once the lane is linked.
+    let fixture_file = shim_dir.join(format!("{}.json", fixture_name(PR_ARGV)));
+    std::fs::write(&fixture_file, prs_json(&[])).unwrap();
     let log = scratch.join("argv.log");
     // SAFETY: this test holds the process-wide test lock.
     unsafe {
@@ -256,6 +257,7 @@ async fn disabling_the_row_by_patch_stops_sweeps_and_removes_its_schedule_job() 
     // LINKED to the repository — being named in the row's `deliver_to` is the fallback for a tree
     // with no `mail` seam, and this tree has one.
     link_repo(&kernel, "sol").await;
+    std::fs::write(&fixture_file, prs_json(&[1, 2])).unwrap();
 
     // --- the row sweeps, for real, through the schedule seam -----------------------------------
     assert!(
@@ -279,11 +281,21 @@ async fn disabling_the_row_by_patch_stops_sweeps_and_removes_its_schedule_job() 
         "{:?}",
         run.outcome
     );
-    let before = delivered(&kernel, &traj).await;
+    // Across sol's chain AND the unsorted queue: the collector rows activate after the router
+    // now (bough-base requires `mail` on them), so the registration catch-up sweep can run
+    // before `sol` linked the repo, and its deliveries route to UNSORTED with the watermark
+    // advanced past them. Where an item landed is the router's call; this test owns the sweep
+    // and the disable, so it asserts on what was delivered ANYWHERE.
+    let unsorted_traj = TrajId::new("unsorted");
+    let before = [
+        delivered(&kernel, &traj).await,
+        delivered(&kernel, &unsorted_traj).await,
+    ]
+    .concat();
     assert_eq!(
         gh_refs(&before),
         vec!["gh:o/r#1".to_string(), "gh:o/r#2".to_string()],
-        "two PRs, one agent: {before:?}"
+        "two PRs, delivered once each: {before:?}"
     );
     assert!(
         before.len() >= already,
@@ -334,7 +346,12 @@ async fn disabling_the_row_by_patch_stops_sweeps_and_removes_its_schedule_job() 
     // and an absolute count also asserts how many the sweeps before it delivered — which is
     // at-least-once and therefore not a fixed number (see the note beside `already`).
     assert_eq!(
-        delivered(&kernel, &traj).await.len(),
+        [
+            delivered(&kernel, &traj).await,
+            delivered(&kernel, &unsorted_traj).await,
+        ]
+        .concat()
+        .len(),
         before.len(),
         "no further mail"
     );
@@ -370,7 +387,9 @@ async fn re_enabling_resumes_from_the_watermark_with_no_duplicates() {
     let shim_dir = scratch.join("gh");
     std::fs::create_dir_all(&shim_dir).unwrap();
     let fixture_file = shim_dir.join(format!("{}.json", fixture_name(PR_ARGV)));
-    std::fs::write(&fixture_file, prs_json(&[1, 2])).unwrap();
+    // EMPTY at boot, for the reason the sibling test writes down: the registration catch-up
+    // sweep must not see the PRs before the lane is linked.
+    std::fs::write(&fixture_file, prs_json(&[])).unwrap();
     // SAFETY: this test holds the process-wide test lock.
     unsafe {
         std::env::set_var("GH_SHIM_DIR", &shim_dir);
@@ -386,11 +405,9 @@ async fn re_enabling_resumes_from_the_watermark_with_no_duplicates() {
     let (_sol, traj) = resident(&kernel, "sol").await;
     // MERGE (track B → Phase 5): `sol` is LINKED to the repository, for the same reason the
     // collector swap above links it. This tree has a `mail` seam, so the ROUTER chooses
-    // recipients from the item's refs and the layer's `deliver_to: [sol]` is never read. Without
-    // the link the two PRs went to the unsorted queue and only reached `sol` if the leader's
-    // adoption pass happened to run first — which is how this assertion used to pass, and how it
-    // intermittently did not.
+    // recipients from the item's refs and the layer's `deliver_to: [sol]` is never read.
     link_repo(&kernel, "sol").await;
+    std::fs::write(&fixture_file, prs_json(&[1, 2])).unwrap();
 
     schedule(&kernel)
         .0
@@ -405,7 +422,18 @@ async fn re_enabling_resumes_from_the_watermark_with_no_duplicates() {
     // working, not a defect, and asserting `== 2` made it read as one (seen once in five full
     // suites). What this test is about — an already-delivered PR is not delivered AGAIN after
     // the row comes back — is exactly the delta below.
-    let before = delivered(&kernel, &traj).await;
+    // Measured across sol's chain AND the unsorted queue: the collector rows now activate AFTER
+    // the router (bough-base requires `mail` on them), so the boot catch-up sweep can run before
+    // `sol` links the repo — those deliveries route to UNSORTED (the leader's adoption queue, the
+    // designed home for mail nobody has claimed) and the watermark advances past them. Where an
+    // item landed is the router's business; what THIS test owns is the watermark: everything is
+    // delivered once, and re-enabling re-delivers nothing.
+    let unsorted_traj = TrajId::new("unsorted");
+    let before = [
+        delivered(&kernel, &traj).await,
+        delivered(&kernel, &unsorted_traj).await,
+    ]
+    .concat();
     let before_refs = gh_refs(&before);
     assert_eq!(
         before_refs,
@@ -440,7 +468,11 @@ async fn re_enabling_resumes_from_the_watermark_with_no_duplicates() {
         run.outcome
     );
 
-    let after = delivered(&kernel, &traj).await;
+    let after = [
+        delivered(&kernel, &traj).await,
+        delivered(&kernel, &unsorted_traj).await,
+    ]
+    .concat();
     let refs = gh_refs(&after);
     assert_eq!(
         after.len() - before_len,

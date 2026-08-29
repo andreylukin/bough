@@ -69,7 +69,14 @@ async fn the_preview_bytes_equal_the_system_prefix_the_loop_sent() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     };
+    // The loop sends the projection as the §12 cache tiers (stable `system`, volatile
+    // `system_volatile`); the pane renders the WHOLE projection. The tiers cannot be rejoined
+    // byte-for-byte with a fixed separator (a section body's own trailing newlines sit at the
+    // seam), so the comparison below re-assembles at the same anchor and holds BOTH claims
+    // against that one assembly: its `tier_split` is what the loop sent, and its `to_text` is
+    // what the pane rendered.
     let sent_system = sent.request.system.clone().unwrap_or_default();
+    let sent_volatile = sent.request.system_volatile.clone().unwrap_or_default();
 
     let steps = ledger
         .0
@@ -101,8 +108,26 @@ async fn the_preview_bytes_equal_the_system_prefix_the_loop_sent() {
     .await
     .expect("the preview is takeable");
 
-    if snap.text != sent_system {
-        let a: Vec<&str> = sent_system.lines().collect();
+    let assembled = projection
+        .0
+        .assemble(&bough_plugin_projection::AssembleRequest {
+            agent: name.clone(),
+            wake: None,
+            at: header.at,
+            budget: None,
+            as_of: Some(as_of),
+        })
+        .await
+        .expect("the anchor still assembles");
+    let (stable, volatile) = assembled.tier_split();
+    assert_eq!(
+        (stable.as_str(), volatile.as_str()),
+        (sent_system.as_str(), sent_volatile.as_str()),
+        "the tiers the loop sent are the assembly at the header's anchor"
+    );
+    let expected = assembled.to_text();
+    if snap.text != expected {
+        let a: Vec<&str> = expected.lines().collect();
         let b: Vec<&str> = snap.text.lines().collect();
         let first = a
             .iter()
