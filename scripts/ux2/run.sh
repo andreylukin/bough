@@ -176,7 +176,7 @@ for y in range(len(rows) - 1):
       see "explain how git rebase works" --timeout 10000 \
         || { echo "the click killed the composer: nothing echoed"; exit 1; }
     '
-    shell-use keys "Ctrl+u" >/dev/null
+    shell-use press "Ctrl+u" >/dev/null
     # `grep "notes.txt\|hello from the re-audit"` could not fail: both strings are already on
     # screen from the walk's own prompt, the rail, the model's answer and the click just made.
     # What a keyboard path to a row IS: the ring appears (Tab), a row focus MARKER appears (Down),
@@ -203,7 +203,7 @@ for y in range(len(rows) - 1):
       see "explain how git rebase works" --timeout 10000 \
         || { echo "a printable key did not snap the keyboard back to the composer"; exit 1; }
     '
-    shell-use keys "Ctrl+u" >/dev/null
+    shell-use press "Ctrl+u" >/dev/null
     # See the mouse branch: the old grep was over strings the walk itself put on screen.
     verdict B6-rowkeys blocker keyboard-row bash -c '
       [ "$(shell-use text | grep -c "▎")" -eq 0 ] || { echo "a ring is painted before Tab"; exit 1; }
@@ -271,7 +271,7 @@ for y in range(len(rows) - 1):
   '
   shell-use press Enter >/dev/null
   settle 90000
-  shell-use keys "Ctrl+u" >/dev/null
+  shell-use press "Ctrl+u" >/dev/null
 
   # --- B4 — a multi-line paste is ONE draft. --------------------------------------------------
   #
@@ -290,9 +290,9 @@ for y in range(len(rows) - 1):
   # Ctrl+U kills the LINE it is on (M20's fix), so a three-line draft takes three of them. Clearing
   # it here is not part of any finding — it is so that the checks below run against a composer in
   # the state a person would leave it in, not a wedged one.
-  shell-use keys "Ctrl+u" >/dev/null
-  shell-use keys "Ctrl+u" >/dev/null
-  shell-use keys "Ctrl+u" >/dev/null
+  shell-use press "Ctrl+u" >/dev/null
+  shell-use press "Ctrl+u" >/dev/null
+  shell-use press "Ctrl+u" >/dev/null
   sleep 0.5
   verdict draft-cleared minor draft-cleared bash -c '
     see "Type a message" --timeout 8000 \
@@ -300,7 +300,7 @@ for y in range(len(rows) - 1):
   '
 
   # --- M11 — search over rendered text. -------------------------------------------------------
-  shell-use keys "Ctrl+f" >/dev/null
+  shell-use press "Ctrl+f" >/dev/null
   sleep 1
   shell-use type "pseudo-terminal" >/dev/null
   sleep 2
@@ -338,7 +338,7 @@ for y in range(len(rows) - 1):
     shell-use text | grep -qF "esc to interrupt" && { echo "the stop key is still named with nothing running"; exit 1; }
     exit 0
   '
-  shell-use keys "Ctrl+c" >/dev/null
+  shell-use press "Ctrl+c" >/dev/null
   sleep 1
   verdict B7-exitarm blocker exit-arm bash -c '
     shell-use text | grep -qi "again to exit" || { echo "an idle Ctrl+C exits without asking"; exit 1; }

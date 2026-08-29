@@ -14,7 +14,7 @@ tui_open
 tui_start "$REPO_ROOT/scripts/tui/fixtures/scroll.patch.yml"
 shell-use submit "fill the trajectory"
 wait_for "trajectory line"
-shell-use keys "Ctrl+f"
+shell-use press "Ctrl+f"
 
 t the_search_pane_is_on_screen_before_the_patch \
   see "search" --timeout 20000
@@ -52,7 +52,7 @@ rm -f "$USER_PATCH"
 # An idle search pane takes no rows (ux-visual D-uxv-1), so "returned" is provable only by
 # opening it: Ctrl+F reaches a pane that exists and does nothing to one that does not.
 sleep 2
-shell-use keys "Ctrl+f"
+shell-use press "Ctrl+f"
 t removing_the_patch_returns_the_pane \
   see "search [" --timeout 20000
 

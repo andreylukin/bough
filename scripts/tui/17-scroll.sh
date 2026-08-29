@@ -81,7 +81,7 @@ t scroll_keys_work_from_the_focus_pane \
 
 shell-use press End
 sleep 0.5
-shell-use keys "Ctrl+f"
+shell-use press "Ctrl+f"
 sleep 0.5
 from_search="$(top_line)"
 shell-use press PageUp

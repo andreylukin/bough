@@ -87,7 +87,7 @@ t esc_leaves_the_draft \
   see "a draft Esc must not eat" --timeout 8000
 
 # --- Ctrl+U clears the LINE, not one character (M20). -----------------------------------------
-shell-use keys "Ctrl+u"
+shell-use press "Ctrl+u"
 t ctrl_u_clears_the_line \
   see "a draft Esc must not eat" --not --timeout 8000
 
@@ -128,7 +128,7 @@ t down_returns_the_live_draft \
 # --- Shift+Enter and Alt+Enter insert a newline instead of sending. ---------------------------
 sends_before="$(sql "select count(*) from steps where type = 'mail/delivered';")"
 shell-use type "line one"
-shell-use keys "Shift+Enter"
+shell-use press "Shift+Enter"
 shell-use type "line two"
 t shift_enter_inserts_a_newline \
   bash -c '
@@ -138,7 +138,7 @@ t shift_enter_inserts_a_newline \
     [ "${after:-0}" -eq '"${sends_before:-0}"' ] || { echo "Shift+Enter sent the draft"; exit 1; }
   '
 
-shell-use keys "Alt+Enter"
+shell-use press "Alt+Enter"
 shell-use type "line three"
 t alt_enter_inserts_a_newline \
   bash -c '
@@ -148,5 +148,5 @@ t alt_enter_inserts_a_newline \
     [ "${after:-0}" -eq '"${sends_before:-0}"' ] || { echo "Alt+Enter sent the draft"; exit 1; }
   '
 
-shell-use keys "Ctrl+u"
+shell-use press "Ctrl+u"
 tui_quit

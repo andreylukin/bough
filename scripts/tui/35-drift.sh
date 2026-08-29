@@ -97,7 +97,7 @@ t the_second_r_dispatches_the_reset_command \
 # The dispatch handed the keyboard back to the composer (`/reset` is an ordinary command), so the
 # board is re-opened first — otherwise the `r` below is typed into the composer and the bullet
 # asserts nothing about arming at all.
-shell-use keys "Ctrl+u"
+shell-use press "Ctrl+u"
 shell-use submit "/driftboard"
 sleep 1
 resets_dispatched() { shell-use text | grep -cE "^reset: (sol|terra)"; }

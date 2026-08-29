@@ -146,7 +146,7 @@ t a_printable_key_snaps_focus_back_to_the_composer \
 # The audit's repro is the hit-test origin bug: with one row already expanded, every later click
 # toggled a row several lines above the one under the pointer. So this bullet expands one row by
 # click, leaves it expanded, and then clicks a DIFFERENT row and requires BOTH bodies on screen.
-shell-use keys "Ctrl+u"
+shell-use press "Ctrl+u"
 
 # `click_until <text-to-click> <text-that-proves-it>`: a click aimed at a coordinate the driver
 # read one frame ago can land on a row that has since moved — the transcript reflows under an

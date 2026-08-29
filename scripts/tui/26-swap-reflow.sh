@@ -44,7 +44,7 @@ tui_start
 # script reads `? help` as the proof that the row is on screen.
 shell-use resize 160 40
 sleep 0.6
-shell-use keys "Ctrl+f"
+shell-use press "Ctrl+f"
 sleep 1
 
 pid_before="$(pgrep -f "$BOUGH_BIN" | head -1)"
@@ -87,7 +87,7 @@ t the_composer_still_takes_keys \
   bash -c '
     shell-use type "still typing"
     see "still typing" --timeout 8000 || { echo "the composer stopped taking keys"; exit 1; }
-    shell-use keys "Ctrl+u"
+    shell-use press "Ctrl+u"
   '
 
 # --- 2. the patch removed ----------------------------------------------------------------------
@@ -134,7 +134,7 @@ clear_patch
 t removing_the_patch_returns_the_search_row \
   bash -c '
     for i in $(seq 1 60); do
-      shell-use keys "Ctrl+f" >/dev/null 2>&1
+      shell-use press "Ctrl+f" >/dev/null 2>&1
       [ "$(count_of "search \[")" = 1 ] && exit 0
       sleep 0.5
     done
@@ -157,7 +157,7 @@ t both_rows_disabled_at_once_leaves_a_working_shell \
       if [ "$(count_of "search \[")" = 0 ] && [ "$(count_of "? help")" = 0 ]; then
         shell-use type "both gone"
         see "both gone" --timeout 8000 || exit 1
-        shell-use keys "Ctrl+u"
+        shell-use press "Ctrl+u"
         exit 0
       fi
       sleep 0.5
@@ -170,7 +170,7 @@ clear_patch
 t both_rows_restored \
   bash -c '
     for i in $(seq 1 60); do
-      shell-use keys "Ctrl+f" >/dev/null 2>&1
+      shell-use press "Ctrl+f" >/dev/null 2>&1
       [ "$(count_of "search \[")" = 1 ] && [ "$(count_of "? help")" = 1 ] && exit 0
       sleep 0.5
     done

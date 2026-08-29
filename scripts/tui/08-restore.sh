@@ -71,12 +71,12 @@ arm_the_probe() {
   # reaches the composer is typed into the draft and moves the keyboard back — which is why the
   # next iteration re-anchors with `Ctrl+F` rather than assuming where it ended up.
   for i in $(seq 1 6); do
-    shell-use keys "Ctrl+f" >/dev/null 2>&1 || true
-    for j in $(seq 1 "$i"); do shell-use keys Tab >/dev/null; done
+    shell-use press "Ctrl+f" >/dev/null 2>&1 || true
+    for j in $(seq 1 "$i"); do shell-use press Tab >/dev/null; done
     shell-use press p >/dev/null
     sleep 0.5
     if see "panic" --timeout 1000 >/dev/null 2>&1 || [ -s "$EXIT_FILE" ]; then return 0; fi
-    shell-use keys "Ctrl+u" >/dev/null 2>&1 || true
+    shell-use press "Ctrl+u" >/dev/null 2>&1 || true
   done
   return 0
 }

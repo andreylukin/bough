@@ -57,7 +57,7 @@ t slash_opens_a_palette_that_filters_and_moves \
     # captures, not on a moved selection. `re` matches three (`/reconsolidate`, `/reset`,
     # `/resume`), and the query goes back to `he` afterwards because the Tab bullet below
     # completes `/help`.
-    shell-use keys "Ctrl+u"
+    shell-use press "Ctrl+u"
     shell-use type "/re"
     sleep 0.8
     rows="$(shell-use text | grep -c "/res")"
@@ -67,7 +67,7 @@ t slash_opens_a_palette_that_filters_and_moves \
     sleep 0.8
     after="$(shell-use cells 0 0 200 60 --json)"
     [ "$before" = "$after" ] && { echo "Down changed nothing: the palette selection does not move"; exit 1; }
-    shell-use keys "Ctrl+u"
+    shell-use press "Ctrl+u"
     shell-use type "/he"
     sleep 0.8
     see "/help" --timeout 8000 || { echo "the palette lost /help on the way back"; exit 1; }
@@ -103,7 +103,7 @@ t tab_completes_the_name_without_running_it \
 # Put the composer back the way the rest of the script expects it. `/he` and not `/`: Enter takes
 # the SELECTED row, and with no query that is `/accept`, not `/help` — the bullet below names the
 # help it expects to see.
-shell-use keys "Ctrl+u"
+shell-use press "Ctrl+u"
 shell-use press Escape
 # MERGE: the query is `/he`, not a bare `/`. With an EMPTY query the palette lists every command
 # and the selection is the first by name (`/agents`), so `see "help"` was matching the `/help` ROW
@@ -128,7 +128,7 @@ t enter_accepts_the_palette_selection \
 # on this screen, spelled the way the user would press it.
 # `?` on an empty draft opens the same help the palette does. Asserted BEFORE the list check, so
 # the list below is over the help this key produced.
-shell-use keys "Ctrl+u"
+shell-use press "Ctrl+u"
 shell-use press Escape
 shell-use type "?"
 t question_mark_opens_the_help \
@@ -170,7 +170,7 @@ shell-use press Escape
 # the send below was landing on whatever was still up rather than on the composer line. The
 # notice is then polled rather than read once: it is transient (`notice_ms` is 6 s) and the
 # assertion has to look while it is there.
-shell-use keys "Ctrl+u"
+shell-use press "Ctrl+u"
 shell-use press Escape
 sleep 0.4
 # MERGE (track C): `submit` rather than `type` + a separate `press Enter`. With the palette open
@@ -188,7 +188,7 @@ t an_unknown_command_suggests_and_keeps \
     shell-use text | grep -qi "did you mean" || { echo "no did-you-mean"; exit 1; }
     see "/help" --timeout 8000 || { echo "the miss does not point at /help"; exit 1; }
   '
-shell-use keys "Ctrl+u"
+shell-use press "Ctrl+u"
 
 # --- Every command `/help` itself lists renders something. ------------------------------------
 #

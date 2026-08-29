@@ -149,7 +149,7 @@ t esc_dismisses_help_then_search_then_nothing \
     see "help" --timeout 10000 || exit 1
     shell-use press Escape
     sleep 0.6
-    shell-use keys "Ctrl+f"
+    shell-use press "Ctrl+f"
     # The FIELD, not the word: `^f search` is a key hint on the status line at every moment, so a
     # bullet that looked for "search" anywhere would pass with the pane shut and fail with it open.
     see "search [" --timeout 10000 || exit 1
@@ -165,7 +165,7 @@ t esc_dismisses_help_then_search_then_nothing \
     shell-use press Escape
     see "a draft after the overlays" --timeout 8000
   '
-shell-use keys "Ctrl+u"
+shell-use press "Ctrl+u"
 
 # --- The three-size walk: history re-wraps and nothing is injected. ---------------------------
 rewrapped_cleanly() {

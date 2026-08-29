@@ -32,7 +32,7 @@ t an_unknown_command_reports_an_error_inline \
 # The miss KEPT the text in the composer on purpose (phase ux1 (c): a slash line that is not a
 # known command is never destroyed) — so the next command has to clear the line first, exactly as
 # a user would. `Ctrl+U` doing that is itself the bullet below.
-shell-use keys "Ctrl+u"
+shell-use press "Ctrl+u"
 t ctrl_u_clears_the_kept_miss_out_of_the_composer \
   expect_absent "nosuchcommand" --timeout 5000
 

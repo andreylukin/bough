@@ -33,7 +33,7 @@ wait_for "trajectory line"
 shell-use submit "one more turn"
 wait_for "second turn line 20"
 
-shell-use keys "Ctrl+f"
+shell-use press "Ctrl+f"
 t the_search_pane_took_the_keyboard \
   see "search" --timeout 20000
 
@@ -85,7 +85,7 @@ counter() { shell-use text | grep -oE "[0-9]+ of [0-9]+" | head -1; }
 export -f counter
 
 first_counter="$(counter)"
-shell-use keys "Ctrl+n"
+shell-use press "Ctrl+n"
 sleep 0.8
 # `Ctrl+n` / `Ctrl+Shift+n`, not bare `n`/`N`: the field is a TEXT input and a query containing
 # the letter n must stay typable (root cause (c), text is never destroyed). Up/Down do the same.
@@ -128,7 +128,7 @@ shell-use press Escape
 sleep 0.4
 shell-use press Escape
 sleep 0.4
-shell-use keys "Ctrl+f"
+shell-use press "Ctrl+f"
 shell-use type "trajectory line 52"
 sleep 1.5
 # Away from the anchor first: both queries match lines of the SAME step (one long answer), so a
@@ -165,7 +165,7 @@ t click_moves_the_transcript_to_the_hit \
   '
 
 # --- Esc clears query, hits AND rows (minor 30). ----------------------------------------------
-shell-use keys "Ctrl+f"
+shell-use press "Ctrl+f"
 shell-use type "trajectory"
 sleep 1.5
 # Esc is the shell's "give the composer the keyboard back" binding; the pane clears on losing
@@ -175,7 +175,7 @@ sleep 0.8
 t esc_clears_the_query_and_the_hits \
   bash -c '
     shell-use text | grep -qE "[0-9]+ of [0-9]+" && { echo "the counter survived Esc"; exit 1; }
-    shell-use keys "Ctrl+f"
+    shell-use press "Ctrl+f"
     sleep 1
     shell-use text | grep -qE "[0-9]+ of [0-9]+" && { echo "the old hits came back with the pane"; exit 1; }
     exit 0

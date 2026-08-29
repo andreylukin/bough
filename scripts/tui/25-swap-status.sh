@@ -96,7 +96,7 @@ t nothing_else_moved \
     # and the rest of the layout is where it was.
     shell-use type "still typing"
     see "still typing" --timeout 8000 || { echo "the composer stopped taking keys"; exit 1; }
-    shell-use keys "Ctrl+u"
+    shell-use press "Ctrl+u"
   '
 
 # --- 2. Remove the patch: the row comes back and the layout reflows back. ---------------------
@@ -116,7 +116,7 @@ t the_layout_reflowed_back \
   '
 
 # --- 3. The Phase 3 gate, unchanged: `tui.search`. --------------------------------------------
-shell-use keys "Ctrl+f"
+shell-use press "Ctrl+f"
 t the_search_row_is_on_screen_before_its_patch \
   see "search [" --timeout 20000
 # (no Escape here: the pane stays OPEN through the patch — an idle search pane takes no rows,
@@ -134,7 +134,7 @@ t disabling_the_search_row_removes_the_pane \
 
 t ctrl_f_degrades_to_a_notice_with_the_row_disabled \
   bash -c '
-    shell-use keys "Ctrl+f"
+    shell-use press "Ctrl+f"
     for i in $(seq 1 20); do
       shell-use text | grep -qi "no search\|search.*not\|unavailable" && exit 0
       sleep 0.5
@@ -145,7 +145,7 @@ t ctrl_f_degrades_to_a_notice_with_the_row_disabled \
 
 clear_patch
 t removing_the_patch_returns_the_search_row \
-  bash -c 'shell-use keys "Ctrl+f"; see "search [" --timeout 20000'
+  bash -c 'shell-use press "Ctrl+f"; see "search [" --timeout 20000'
 shell-use press Escape
 
 # --- 4. Both rows disabled at once, then both restored. ---------------------------------------
@@ -165,7 +165,7 @@ t both_rows_disabled_at_once_leaves_a_working_shell \
       printf "%s" "$txt" | grep -q "trajectory line" || { sleep 0.5; continue; }
       shell-use type "both gone"
       see "both gone" --timeout 8000 || exit 1
-      shell-use keys "Ctrl+u"
+      shell-use press "Ctrl+u"
       exit 0
     done
     echo "the shell did not settle with both rows disabled"
@@ -176,7 +176,7 @@ clear_patch
 t both_rows_restored \
   bash -c '
     see "? help" --timeout 20000 || exit 1
-    shell-use keys "Ctrl+f"
+    shell-use press "Ctrl+f"
     see "search [" --timeout 20000 || exit 1
     shell-use press Escape
   '

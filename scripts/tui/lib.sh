@@ -234,7 +234,7 @@ tui_quit() {
   # reported all-ok and the process was killed by the EXIT trap instead of exiting cleanly.
   local i
   for i in $(seq 1 12); do
-    shell-use keys "Ctrl+u" >/dev/null 2>&1 || true
+    shell-use press "Ctrl+u" >/dev/null 2>&1 || true
     shell-use press Backspace >/dev/null 2>&1 || true
   done
   shell-use submit "/quit" >/dev/null 2>&1 || true

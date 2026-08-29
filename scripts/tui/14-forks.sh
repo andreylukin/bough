@@ -55,7 +55,7 @@ wait_for "sol" 10000
 open_picker() {
   local i
   for i in 1 2 3 4; do
-    shell-use keys "Ctrl+b" >/dev/null
+    shell-use press "Ctrl+b" >/dev/null
     sleep 0.5
     if shell-use text | grep -qF "traj/fork-of-sol"; then return 0; fi
     shell-use press Tab >/dev/null
@@ -97,7 +97,7 @@ t selecting_a_branch_shows_its_trajectory \
 # `Esc` returns the pane to the agent's own chain THROUGH THE PICKER: `branches::on_key` is what
 # remembers the chain, and the shell's own `Esc` (focus the composer) is what a pane sees
 # otherwise. So the bullet is driven the way the pane implements it — reopen, then Esc.
-shell-use keys "Ctrl+b" >/dev/null
+shell-use press "Ctrl+b" >/dev/null
 sleep 0.5
 shell-use press Escape >/dev/null
 sleep 0.5

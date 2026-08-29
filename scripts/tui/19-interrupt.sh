@@ -81,16 +81,16 @@ t the_interrupted_turn_really_stopped \
 
 t the_composer_still_takes_a_message_after_an_interrupt \
   bash -c 'shell-use type "still here" && see "still here" --timeout 8000'
-shell-use keys "Ctrl+u"
+shell-use press "Ctrl+u"
 
 # --- Idle Ctrl+C asks first, and the second one exits. ----------------------------------------
-shell-use keys "Ctrl+c"
+shell-use press "Ctrl+c"
 t an_idle_ctrl_c_asks_before_exiting \
   see "again to exit" --timeout 10000
 
 t the_second_ctrl_c_exits_with_the_terminal_restored \
   bash -c '
-    shell-use keys "Ctrl+c"
+    shell-use press "Ctrl+c"
     wait_for "export BOUGH_HOME" 15000
     # "Raw mode is off" means the shell echoes typed characters again — the same assertion
     # `08-restore.sh` makes, and the only one that distinguishes a restored terminal from a

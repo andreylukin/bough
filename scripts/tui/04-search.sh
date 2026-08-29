@@ -14,7 +14,7 @@ shell-use submit "say the whole sentence please"
 # failed the query bullet for a reason that has nothing to do with the search pane.
 shell-use expect text --no-strict "and the rest of it" --timeout 30000 >/dev/null
 
-shell-use keys "Ctrl+f"
+shell-use press "Ctrl+f"
 # The field wears CHROME (phase ux1 §2.7): a `search` label and a boxed input with a caret. The
 # empty box is what Ctrl+F puts on screen; "search" alone is there whether or not it did anything.
 t ctrl_f_focuses_the_search_pane \
@@ -43,7 +43,7 @@ await_hits() {
     # runs, which then reads `no matches` for ever. `fragment` ends in `t`, so deleting and
     # retyping one character asks the same question again.
     if [ $((i % 8)) -eq 0 ]; then
-      shell-use keys "BackSpace" >/dev/null
+      shell-use press "BackSpace" >/dev/null
       shell-use type "t" >/dev/null
     fi
     sleep 0.25
@@ -87,7 +87,7 @@ print(\",\".join(c[\"fg\"] for c in json.load(sys.stdin)[\"data\"][\"cells\"]))
     exit 1
   '
 
-shell-use keys "Ctrl+f"
+shell-use press "Ctrl+f"
 # Clear the previous query first: without it the query is `fragment"unbalanced` — still a bad
 # query, but a bad one for the wrong reason. Backspaces and not Escape, because Escape is the
 # shell's "give the composer the keyboard back" binding (`run.rs::keymap`) and never reaches the
