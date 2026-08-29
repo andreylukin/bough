@@ -38,7 +38,7 @@ with its declared dispatch mode, checked against every dispatch site. Do not edi
 | `llm/stream` | waterfall | `LlmStreamEvent` | llm | 1 | 0 |
 | `mail/route` | waterfall | `MailRoute` | mail-router | 1 | 0 |
 | `mail/routed` | emit | `MailRouted` | mail-router | 1 | 0 |
-| `mcp/servers-changed` | emit | `McpServersChanged` | mcp | 2 | 2 |
+| `mcp/servers-changed` | emit | `McpServersChanged` | mcp | 2 | 4 |
 | `power/changed` | parallel | `PowerChanged` | power | 1 | 0 |
 | `projection/assemble` | waterfall | `ProjectionAssemble` | projection | 1 | 0 |
 | `schedule/fired` | emit | `ScheduleFired` | schedule | 2 | 2 |
