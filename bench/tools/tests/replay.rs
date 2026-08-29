@@ -29,6 +29,7 @@ fn transcript_of(path: &Path) -> Transcript {
 
 fn request(n: usize) -> LlmRequest {
     LlmRequest {
+        projection_digest: None,
         model: "claude-haiku-4-5-20251001".into(),
         system: Some("the bench".into()),
         system_volatile: None,

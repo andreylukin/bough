@@ -356,6 +356,7 @@ async fn judge(
     let user = prompt(&older, &newer, &pair.shared);
     let model = decided.call.model.clone();
     let request = Arc::new(LlmRequest {
+        projection_digest: None,
         model: model.clone(),
         system: Some(system.to_string()),
         system_volatile: None,

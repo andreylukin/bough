@@ -142,6 +142,7 @@ pub async fn call(
     let model = call_cfg.model.clone();
 
     let request = Arc::new(LlmRequest {
+        projection_digest: None,
         model: model.clone(),
         system: Some(req.system.clone()),
         system_volatile: None,

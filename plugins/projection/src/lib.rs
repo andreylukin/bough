@@ -237,14 +237,42 @@ impl Assembled {
     /// `> DEGRADED: pins, mail` line when `flags` is non-empty, and nothing else. No timestamps
     /// and no process ids — the text is a function of (ledger contents, request, config) alone.
     pub fn to_text(&self) -> String {
+        self.render(&self.sections, true)
+    }
+
+    /// The projection as the TWO prompt-cache tiers `bough-llm` was built for (§12): the STABLE
+    /// text (every section whose slot precedes [`crate::section::Slot::Tail`] — identity, pins,
+    /// digest, tiers) and the VOLATILE text (the tail band and mail, which move every wake).
+    ///
+    /// The split is BY SLOT, not by measurement: the tail and mail bands change on every wake by
+    /// construction, so keeping them out of the stable tier is what lets the provider's cache
+    /// re-read the identity/pins/digest/tiers prefix across wakes instead of rewriting it. The
+    /// `DEGRADED` flags line stays on the STABLE half deliberately: degradation is the exception,
+    /// and hiding it from the tier the model anchors on would soften §5's "never silently".
+    ///
+    /// `to_text()` remains the golden surface (the digest, the reconstruction, the context view);
+    /// this is the REQUEST-BUILDING view of the same sections, in the same order.
+    pub fn tier_split(&self) -> (String, String) {
+        let boundary = self
+            .sections
+            .iter()
+            .position(|s| s.position.slot >= crate::section::Slot::Tail)
+            .unwrap_or(self.sections.len());
+        (
+            self.render(&self.sections[..boundary], true),
+            self.render(&self.sections[boundary..], false),
+        )
+    }
+
+    fn render(&self, sections: &[RenderedSection], with_flags: bool) -> String {
         let mut out = String::new();
-        if !self.flags.is_empty() {
+        if with_flags && !self.flags.is_empty() {
             let words: Vec<&str> = self.flags.iter().map(Flag::word).collect();
             out.push_str("> DEGRADED: ");
             out.push_str(&words.join(", "));
             out.push_str("\n\n");
         }
-        for s in &self.sections {
+        for s in sections {
             out.push_str("## ");
             out.push_str(&s.title);
             out.push_str("\n\n");
@@ -326,5 +354,56 @@ mod tests {
             text.starts_with("> DEGRADED: pins, mail\n\n"),
             "flags render in their fixed order, whatever order they were raised in: {text}"
         );
+    }
+
+    fn sec_at(slot: Slot, title: &str, body: &str) -> RenderedSection {
+        RenderedSection {
+            position: Position {
+                slot,
+                place: Place::Band,
+            },
+            ..sec(title, body)
+        }
+    }
+
+    /// §12's cache contract: the tiers split AT the tail band, in section order, and a change
+    /// confined to the tail/mail bands leaves the stable text byte-identical.
+    #[test]
+    fn the_tiers_split_at_the_tail_band_and_a_tail_change_leaves_the_stable_text_alone() {
+        let mut a = assembled(&[]);
+        a.sections = vec![
+            sec_at(Slot::Identity, "Identity", "sol / lane/sol"),
+            sec_at(Slot::Tiers, "Tier 1", "a summary"),
+            sec_at(Slot::Tail, "Recent steps", "andrey: hello"),
+            sec_at(Slot::Mail, "Mail", "- one item"),
+        ];
+        let (stable, volatile) = a.tier_split();
+        assert_eq!(
+            stable,
+            "## Identity\n\nsol / lane/sol\n\n## Tier 1\n\na summary\n"
+        );
+        assert_eq!(
+            volatile,
+            "## Recent steps\n\nandrey: hello\n\n## Mail\n\n- one item\n"
+        );
+
+        let mut b = a.clone();
+        b.sections[2].body = "andrey: hello\nsol: hi".into();
+        let (stable_b, volatile_b) = b.tier_split();
+        assert_eq!(
+            stable, stable_b,
+            "a tail-only change never moves the stable tier"
+        );
+        assert_ne!(volatile, volatile_b);
+    }
+
+    /// A projection with no tail/mail is all stable; the flags line rides the STABLE half.
+    #[test]
+    fn an_all_stable_projection_has_an_empty_volatile_half_and_flags_stay_stable() {
+        let a = assembled(&[Flag::PinsDegraded]);
+        let (stable, volatile) = a.tier_split();
+        assert_eq!(stable, a.to_text());
+        assert_eq!(volatile, "");
+        assert!(stable.starts_with("> DEGRADED: pins\n\n"), "{stable}");
     }
 }

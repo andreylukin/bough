@@ -38,6 +38,7 @@ fn cfg(strict: bool) -> Arc<ReplayConfig> {
 
 fn req(text: &str) -> Arc<LlmRequest> {
     Arc::new(LlmRequest {
+        projection_digest: None,
         model: "claude-haiku-4-5-20251001".into(),
         system: None,
         system_volatile: None,

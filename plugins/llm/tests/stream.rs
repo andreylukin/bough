@@ -19,6 +19,7 @@ fn ctx() -> Context {
 
 fn req(model: &str) -> Arc<LlmRequest> {
     Arc::new(LlmRequest {
+        projection_digest: None,
         model: model.to_string(),
         system: None,
         system_volatile: None,

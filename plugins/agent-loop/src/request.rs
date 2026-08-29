@@ -28,16 +28,22 @@ pub struct RequestInputs {
 /// Build the request. Pure over its inputs — no clock, no ledger — so the invariant's
 /// reconstruction runs the same function on the same inputs.
 pub fn build(inputs: &RequestInputs, messages: Vec<LlmMessage>) -> LlmRequest {
-    let system = inputs.projection.to_text();
+    // §12's cache contract: the projection's slow tier (identity, pins, digest, tier summaries)
+    // is the STABLE system prefix, and the tail band + mail — which move every wake — ride the
+    // VOLATILE tier with their own cache breakpoint, so a new wake re-reads the stable prefix
+    // from the provider's cache instead of rewriting all of it. Everything model-visible is
+    // still ledgered: both tiers are the same sections `to_text()` renders, in the same order.
+    let (stable, volatile) = inputs.projection.tier_split();
+    // The header's digest (over both tiers AS SENT), for the request recorder's file key.
+    let projection_digest = Some(tiers_digest(&stable, &volatile));
     LlmRequest {
         model: inputs.call.model.clone(),
-        // The projection is the STABLE prefix: bough-llm's cache contract, and §5's "context =
-        // projection". Nothing volatile is sent, because everything model-visible is ledgered.
-        system: (!system.is_empty()).then_some(system),
-        system_volatile: None,
+        system: (!stable.is_empty()).then_some(stable),
+        system_volatile: (!volatile.is_empty()).then_some(volatile),
         messages,
         tools: inputs.tools.clone(),
         call: inputs.call.clone(),
+        projection_digest,
     }
 }
 
@@ -49,7 +55,10 @@ pub fn header_of(inputs: &RequestInputs) -> RequestHeader {
         budget: inputs.budget,
         // phase ux1 §2.10 (M24): the numerator of "% context left".
         projection_tokens: inputs.projection.tokens,
-        projection_digest: digest(&inputs.projection.to_text()),
+        projection_digest: {
+            let (stable, volatile) = inputs.projection.tier_split();
+            tiers_digest(&stable, &volatile)
+        },
         sections: inputs
             .projection
             .sections
@@ -113,6 +122,15 @@ pub fn tools_digest(tools: &[LlmToolDef]) -> String {
 /// The body actually appended.
 pub fn header_body(header: &RequestHeader, _inputs: &RequestInputs) -> serde_json::Value {
     serde_json::to_value(header).expect("a header serialises")
+}
+
+/// The `projection_digest`: sha256 over BOTH tiers exactly as sent, stable then volatile, joined
+/// by a record separator no rendering emits. Defined HERE, once, because three parties must
+/// agree on it: `header_of` writes it, `build` carries it to the request recorder's file key,
+/// and the V4 invariant recomputes it from the SENT request's own bytes — which is what makes
+/// the volatile tier anchored too, not only the stable prefix.
+pub fn tiers_digest(stable: &str, volatile: &str) -> String {
+    digest(&format!("{stable}\u{1e}{volatile}"))
 }
 
 /// sha256, hex. The one spelling in this crate.
@@ -193,8 +211,58 @@ mod tests {
     fn the_projection_is_the_systems_stable_prefix() {
         let req = build(&inputs("haiku", "hello"), vec![]);
         assert!(req.system.as_deref().unwrap().contains("hello"));
+        // An identity-only projection has no volatile tier; the whole-projection digest rides
+        // along for the recorder.
         assert_eq!(req.system_volatile, None);
         assert_eq!(req.model, "haiku");
+        assert_eq!(
+            req.projection_digest.as_deref(),
+            Some(
+                {
+                    let (stable, volatile) = inputs("haiku", "hello").projection.tier_split();
+                    tiers_digest(&stable, &volatile)
+                }
+                .as_str()
+            )
+        );
+    }
+
+    /// §12's cache contract, end to end at the request: the tail band rides the VOLATILE tier,
+    /// so two requests whose projections differ only there share a byte-identical `system`.
+    #[test]
+    fn the_tail_band_rides_the_volatile_tier_and_never_moves_the_stable_system() {
+        let tailed = |body: &str, tail: &str| {
+            let mut i = inputs("haiku", body);
+            i.projection
+                .sections
+                .push(bough_plugin_projection::RenderedSection {
+                    id: SectionId::new("recent"),
+                    position: bough_plugin_projection::Position::band(
+                        bough_plugin_projection::Slot::Tail,
+                    ),
+                    title: "Recent steps".into(),
+                    body: tail.into(),
+                    cites: SectionCites::default(),
+                    tokens: 1,
+                    degraded: None,
+                });
+            i
+        };
+        let a = build(&tailed("hello", "andrey: hi"), vec![]);
+        let b = build(&tailed("hello", "andrey: hi\nsol: answered"), vec![]);
+        assert_eq!(
+            a.system, b.system,
+            "the stable tier never moves with the tail"
+        );
+        assert_ne!(a.system_volatile, b.system_volatile);
+        assert!(a
+            .system_volatile
+            .as_deref()
+            .unwrap()
+            .contains("Recent steps"));
+        // The digest still covers the WHOLE projection, so the header (and the recorder's file)
+        // notices the volatile change even though `system` did not.
+        assert_ne!(a.projection_digest, b.projection_digest);
     }
 
     #[test]
@@ -217,7 +285,10 @@ mod tests {
         let body = header_body(&header_of(&i), &i);
         assert_eq!(body["as_of"], 7);
         assert_eq!(body["budget"], 100);
-        assert_eq!(body["projection_digest"], digest(&i.projection.to_text()));
+        assert_eq!(body["projection_digest"], {
+            let (stable, volatile) = i.projection.tier_split();
+            tiers_digest(&stable, &volatile)
+        });
         assert_eq!(body["composition"], "comp");
     }
 }

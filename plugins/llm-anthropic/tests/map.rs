@@ -31,6 +31,7 @@ fn cfg() -> Arc<AnthropicConfig> {
 
 fn req(text: &str, tools: Vec<LlmToolDef>) -> Arc<LlmRequest> {
     Arc::new(LlmRequest {
+        projection_digest: None,
         model: HAIKU.into(),
         system: Some("You are terse.".into()),
         system_volatile: None,

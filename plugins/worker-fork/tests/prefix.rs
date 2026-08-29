@@ -45,8 +45,9 @@ struct Forked {
     f: Fixture,
     child_traj: bough_plugin_ledger::TrajId,
     at_seq: Seq,
-    /// The system prefix the CHILD's request carried.
+    /// The system tiers the CHILD's request carried (stable, volatile).
     child_system: String,
+    child_volatile: String,
 }
 
 async fn forked() -> Forked {
@@ -80,14 +81,14 @@ async fn forked() -> Forked {
         .expect("the child's chain records where its prefix came from");
     let at_seq = Seq(anchor.body["as_of"].as_u64().expect("a seq"));
 
-    let child_system = f
+    let child_request = f
         .adapter
         .requests()
         .into_iter()
         .nth(before)
-        .expect("the child sent a request")
-        .system
-        .expect("with a system prefix");
+        .expect("the child sent a request");
+    let child_system = child_request.system.clone().expect("with a system prefix");
+    let child_volatile = child_request.system_volatile.clone().unwrap_or_default();
 
     let _ = disposer;
     Forked {
@@ -95,6 +96,7 @@ async fn forked() -> Forked {
         child_traj,
         at_seq,
         child_system,
+        child_volatile,
     }
 }
 
@@ -112,10 +114,14 @@ async fn the_childs_system_prefix_equals_the_parents_at_the_fork_seq() {
             })
             .await
             .expect("the parent still assembles at the fork seq");
+    let (stable, volatile) = parents.tier_split();
     assert_eq!(
-        it.child_system,
-        parents.to_text(),
+        it.child_system, stable,
         "the child assembled a projection of its own instead of replaying the parent's"
+    );
+    assert_eq!(
+        it.child_volatile, volatile,
+        "the child's volatile tier is the parent's too"
     );
     assert!(
         !it.child_system.contains("worker-fork-"),
@@ -141,10 +147,17 @@ async fn the_request_header_digest_matches_the_parents() {
     let steps = it.f.steps_of(&it.child_traj).await;
     let recorded = bough_plugin_worker_fork::invariant::newest_header_digest(&steps)
         .expect("the child appended a request/header");
+    let (stable, volatile) = parents.tier_split();
     assert_eq!(
         recorded,
-        bough_plugin_worker_fork::invariant::digest(&parents.to_text()),
+        bough_plugin_worker_fork::invariant::tiers_digest(&stable, &volatile),
         "the anchor §0.2 reconstructs from does not describe the parent's prefix"
+    );
+    // The two spellings of the tiers digest (agent-loop's and this crate's by-name duplicate)
+    // are pinned to each other here, so they cannot drift apart silently.
+    assert_eq!(
+        bough_plugin_worker_fork::invariant::tiers_digest("a", "b"),
+        bough_plugin_agent_loop::request::tiers_digest("a", "b"),
     );
 }
 
@@ -184,6 +197,8 @@ async fn re_assembling_the_parent_at_that_seq_reproduces_the_pin() {
                 })
                 .await
                 .expect("the parent still assembles at the fork seq");
-        assert_eq!(again.to_text(), it.child_system);
+        let (stable, volatile) = again.tier_split();
+        assert_eq!(stable, it.child_system);
+        assert_eq!(volatile, it.child_volatile);
     }
 }

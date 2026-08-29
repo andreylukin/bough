@@ -1,9 +1,10 @@
 //! Invariant: EVERY request that reaches a model is on disk, verbatim, before the model sees it —
-//! `$BOUGH_HOME/<dir>/<digest>.md`, one file per projection (the system text's sha256, the same
-//! digest the agent loop writes as `request/header.projection_digest`), one `## Round` section
-//! per request sent under it: the system text and the tool list once, then the messages of each
-//! round exactly as sent. The conversation's click on a speaker label opens the turn's file in
-//! `$EDITOR` (Andrey, 2026-08-28: "the entire context that was sent as a turn").
+//! `$BOUGH_HOME/<dir>/<digest>.md`, one file per projection (the digest the agent loop writes as
+//! `request/header.projection_digest`, carried on the request; the system text's own sha256 when
+//! no projection built the request), one `## Round` section per request sent under it: the stable
+//! system text and the tool list once, then each round's volatile tier and messages exactly as
+//! sent. The conversation's click on a speaker label opens the turn's file in `$EDITOR` (Andrey,
+//! 2026-08-28: "the entire context that was sent as a turn").
 //!
 //! Listens on the `llm/stream` waterfall and never touches the call: it writes, then `next`.
 //! Zero edits to the agent loop or to `bough-llm`; disabling the row stops the recording and
@@ -126,9 +127,16 @@ pub fn digest(system: &str) -> String {
 }
 
 /// PURE: the file a request lands in: `<base>/<digest>.md`.
+///
+/// The request CARRIES the header's `projection_digest` (over the whole projection, both tiers),
+/// so the conversation's lookup by the `request/header` step finds this file; a request built
+/// with no projection (governance, the summarizer) falls back to the digest of its own system.
 pub fn file_for(base: &Path, request: &LlmRequest) -> PathBuf {
-    let system = request.system.as_deref().unwrap_or("");
-    path_for_digest(base, &digest(system))
+    let key = match &request.projection_digest {
+        Some(d) if !d.is_empty() => d.clone(),
+        _ => digest(request.system.as_deref().unwrap_or("")),
+    };
+    path_for_digest(base, &key)
 }
 
 /// PURE: the file for a `projection_digest` a `request/header` step carries — the conversation's
@@ -155,11 +163,6 @@ fn head(request: &LlmRequest) -> String {
             s.push('\n');
         }
         s.push('\n');
-    }
-    if let Some(v) = request.system_volatile.as_deref() {
-        s.push_str("## System (volatile)\n\n");
-        s.push_str(v);
-        s.push_str("\n\n");
     }
     s.push_str("## Tools\n\n");
     if request.tools.is_empty() {
@@ -200,6 +203,16 @@ fn round_section(
             .unwrap_or_else(|| "default".to_string()),
         request.call.tool_choice_none
     ));
+    // PER ROUND, not in the head: the volatile tier (the tail band and mail) is exactly the part
+    // of the projection that moves between requests under one stable prefix.
+    if let Some(v) = request.system_volatile.as_deref() {
+        s.push_str("### System (volatile)\n\n");
+        s.push_str(v);
+        if !v.ends_with('\n') {
+            s.push('\n');
+        }
+        s.push('\n');
+    }
     for (i, m) in request.messages.iter().enumerate() {
         let role = match m.role {
             LlmRole::User => "user",
@@ -247,6 +260,7 @@ mod tests {
 
     fn request(system: &str, n: usize) -> LlmRequest {
         LlmRequest {
+            projection_digest: None,
             model: "claude-haiku-4-5".into(),
             system: Some(system.to_string()),
             system_volatile: None,
@@ -309,6 +323,34 @@ mod tests {
         // A different projection is a different file.
         let r3 = request("You are terra.", 1);
         assert_ne!(file_for(&dir, &r3), p1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_carried_projection_digest_keys_the_file_and_the_volatile_tier_lands_per_round() {
+        let dir = std::env::temp_dir().join(format!("bough-recorder-v-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let when = chrono::Utc.with_ymd_and_hms(2026, 8, 29, 9, 0, 0).unwrap();
+        // Two requests under ONE stable prefix whose volatile tails differ: the header's digest
+        // (carried on the request) is the key, so both rounds land in the header's file even
+        // though digest(system) alone would disagree with it.
+        let mut r1 = request("You are sol.", 1);
+        r1.projection_digest = Some("feedc0de".into());
+        r1.system_volatile = Some("## Recent steps\n\nandrey: hi".into());
+        let mut r2 = request("You are sol.", 3);
+        r2.projection_digest = Some("feedc0de".into());
+        r2.system_volatile = Some("## Recent steps\n\nandrey: hi\nsol: answered".into());
+        let p1 = tokio_free_write(&dir, &r1, when, 0).expect("written");
+        assert_eq!(p1, dir.join("feedc0de.md"));
+        let p2 = tokio_free_write(&dir, &r2, when, 0).expect("written");
+        assert_eq!(p1, p2);
+        let text = std::fs::read_to_string(&p1).unwrap();
+        assert_eq!(
+            text.matches("### System (volatile)").count(),
+            2,
+            "the volatile tier is per ROUND: it is the part that moves\n{text}"
+        );
+        assert!(text.contains("sol: answered"), "{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

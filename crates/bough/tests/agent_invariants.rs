@@ -112,6 +112,7 @@ async fn a_planted_side_channel_is_reported() {
         wake: WakeId::new("wake-that-left-no-steps"),
         step_index: 0,
         request: LlmRequest {
+            projection_digest: None,
             model: "claude-haiku-4-5-20251001".into(),
             system: Some("a system prefix nobody ledgered".into()),
             system_volatile: None,

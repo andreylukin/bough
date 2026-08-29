@@ -3,4 +3,5 @@
 //! gate when a file is missing. One target means one link instead of one per file; test
 //! isolation comes from nextest running every test in its own process (`make test`).
 
+mod cache;
 mod map;

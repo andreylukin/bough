@@ -219,6 +219,7 @@ mod tests {
 
     fn req(text: &str) -> LlmRequest {
         LlmRequest {
+            projection_digest: None,
             model: "m".into(),
             system: None,
             system_volatile: None,

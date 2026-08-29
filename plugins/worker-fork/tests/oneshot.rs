@@ -68,7 +68,13 @@ async fn the_child_sees_the_parents_message_history() {
         .into_iter()
         .nth(before)
         .expect("the child sent a request");
-    let system = child.system.expect("with a system prefix");
+    // The parent's history lands in the projection's TAIL band, which since the §12 tier split
+    // rides `system_volatile`; both tiers together are what the child was shown.
+    let system = format!(
+        "{}\n{}",
+        child.system.expect("with a system prefix"),
+        child.system_volatile.unwrap_or_default()
+    );
     assert!(
         system.contains(PARENTS_ANSWER),
         "the parent's own wake is not in what the child was shown:\n{system}"

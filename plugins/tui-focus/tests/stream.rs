@@ -19,6 +19,7 @@ fn call_with(chunks: Vec<Chunk>) -> StreamCall {
     slot.put(futures::stream::iter(chunks).boxed());
     StreamCall {
         request: Arc::new(LlmRequest {
+            projection_digest: None,
             model: "haiku".into(),
             system: None,
             system_volatile: None,

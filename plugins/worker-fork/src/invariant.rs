@@ -23,6 +23,13 @@ pub fn digest(text: &str) -> String {
     format!("{:x}", h.finalize())
 }
 
+/// The `projection_digest` spelling `agent-loop`'s `request::tiers_digest` uses (§12's cache
+/// tiers: stable then volatile, joined by a record separator). Duplicated for the same reason as
+/// [`digest`]; `tests/prefix.rs` pins the two spellings to each other.
+pub fn tiers_digest(stable: &str, volatile: &str) -> String {
+    digest(&format!("{stable}\u{1e}{volatile}"))
+}
+
 /// The clause above.
 pub fn pinned_prefix_reconstructs() -> InvariantSpec {
     InvariantSpec {
@@ -132,7 +139,10 @@ async fn check(ctx: Context) -> Result<(), InvariantViolation> {
         let Some(sent) = newest_header_digest(&child) else {
             continue;
         };
-        let expected = digest(&parent.to_text());
+        let expected = {
+            let (stable, volatile) = parent.tier_split();
+            tiers_digest(&stable, &volatile)
+        };
         if sent != expected {
             return Err(fail(format!(
                 "`{}` sent a system prefix that is not `{}`@{}: the pin diverged from the \

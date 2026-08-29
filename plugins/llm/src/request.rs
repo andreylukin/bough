@@ -17,12 +17,22 @@ use crate::stream::LlmFailure;
 #[derive(Clone, Debug, PartialEq)]
 pub struct LlmRequest {
     pub model: String,
-    /// The STABLE prefix (bough-llm's cache contract). The loop puts the projection here.
+    /// The STABLE prefix (bough-llm's cache contract). The loop puts the projection's stable
+    /// tier here: identity, pins, digest, tier summaries.
     pub system: Option<String>,
+    /// The VOLATILE suffix, sent after `system` with its own cache breakpoint. The loop puts the
+    /// projection's tail band and mail here: the sections that move every wake, kept out of
+    /// `system` so the provider's cache can re-read the stable tier across wakes.
     pub system_volatile: Option<String>,
     pub messages: Vec<LlmMessage>,
     pub tools: Vec<LlmToolDef>,
     pub call: CallConfig,
+    /// `request/header.projection_digest`, riding along so a listener (the request recorder) can
+    /// key its record by the SAME digest the header carries without recombining the tiers.
+    /// Seam-internal: never on the wire, and deliberately NOT in [`LlmRequest::canonical`] — it
+    /// is derived from the fields that already are. Empty when no projection built this request
+    /// (the governance and summarizer callers).
+    pub projection_digest: Option<String>,
 }
 
 impl LlmRequest {
@@ -161,6 +171,7 @@ mod tests {
 
     fn req() -> LlmRequest {
         LlmRequest {
+            projection_digest: None,
             model: "claude-haiku-4-5-20251001".into(),
             system: Some("stable".into()),
             system_volatile: None,

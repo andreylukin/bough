@@ -347,6 +347,7 @@ pub async fn run_wake(env: &ReplayEnv, input: &WakeInput) -> Result<WakeOutcome,
             .await;
 
         let request = LlmRequest {
+            projection_digest: None,
             model: decided.call.model.clone(),
             system: Some(projection_text.clone()),
             system_volatile: None,

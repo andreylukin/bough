@@ -86,10 +86,15 @@ pub fn evaluate_reconstruction(sent: &[SentRequest], steps: &[Step]) -> Result<(
                 s.wake, s.step_index
             ));
         };
-        let actual = crate::request::digest(s.request.system.as_deref().unwrap_or(""));
+        // Over BOTH tiers as sent (`tiers_digest`), so a volatile tail that reached the model
+        // without a header describing it is reported the same as a stable prefix would be.
+        let actual = crate::request::tiers_digest(
+            s.request.system.as_deref().unwrap_or(""),
+            s.request.system_volatile.as_deref().unwrap_or(""),
+        );
         if actual != expected {
             return Err(format!(
-                "wake {} step {}: the system prefix does not match the request/header's projection_digest",
+                "wake {} step {}: the system tiers do not match the request/header's projection_digest",
                 s.wake, s.step_index
             ));
         }
@@ -343,7 +348,7 @@ mod tests {
                 "request/header",
                 serde_json::json!({ "prompt_ver": "p", "sections": [], "tools": [],
                                     "call": {}, "composition": "c",
-                                    "projection_digest": crate::request::digest("") }),
+                                    "projection_digest": crate::request::tiers_digest("", "") }),
             ),
         ];
         (w, steps)
@@ -356,6 +361,7 @@ mod tests {
             wake: w.clone(),
             step_index: 0,
             request: LlmRequest {
+                projection_digest: None,
                 model: "haiku".into(),
                 system: None,
                 system_volatile: None,
