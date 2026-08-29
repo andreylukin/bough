@@ -151,7 +151,11 @@ async fn a_cancelled_call_stops_its_legs_and_says_so() {
 async fn a_leg_that_outruns_the_timeout_is_reported_as_a_leg_and_the_others_still_answer() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = (*cfg()).clone();
-    c.sh_timeout_ms = 150;
+    // 2s, not 150ms: under a full-suite nextest run this machine's process-spawn latency alone
+    // can exceed 150ms, and then the FAST leg times out too and the test reads as a regression
+    // (observed three full runs in a row, 2026-08-29; always green standalone). The budget only
+    // needs to sit between "echo" and "sleep 30".
+    c.sh_timeout_ms = 2_000;
     let sh = Sh {
         cfg: Arc::new(c),
         root: dir.path().to_path_buf(),
@@ -164,6 +168,6 @@ async fn a_leg_that_outruns_the_timeout_is_reported_as_a_leg_and_the_others_stil
         .run_legs(&legs, &CancellationToken::new())
         .await
         .expect("one slow leg does not fail the call");
-    assert!(out[0].out.contains("exceeded 150ms"), "{:?}", out[0]);
+    assert!(out[0].out.contains("exceeded 2000ms"), "{:?}", out[0]);
     assert_eq!(out[1].out, "fast\n");
 }
