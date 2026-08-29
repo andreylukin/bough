@@ -275,6 +275,10 @@
 # §6: collectors, each ONE row on ctx.schedule.
 - id: collect.github
   plugin: collector-github
+  # This bundle ships `mail` (mail-router), so the row REQUIRES it (entry inject may ADD
+  # keys, D1): activation waits for the router, and the boot catch-up sweep cannot race it
+  # into a fiber-lifetime `deliver_to` fallback. A router-less tree omits this line.
+  inject: { required: [mail] }
   config:
     cadence: { every_ms: 300000 }
     gh_bin: gh
@@ -298,6 +302,10 @@
     timeout_ms: 30000
 - id: collect.linear
   plugin: collector-linear
+  # This bundle ships `mail` (mail-router), so the row REQUIRES it (entry inject may ADD
+  # keys, D1): activation waits for the router, and the boot catch-up sweep cannot race it
+  # into a fiber-lifetime `deliver_to` fallback. A router-less tree omits this line.
+  inject: { required: [mail] }
   config:
     cadence: { every_ms: 600000 }
     endpoint: "https://api.linear.app/graphql"
@@ -314,6 +322,10 @@
     timeout_ms: 30000
 - id: collect.slack
   plugin: collector-slack
+  # This bundle ships `mail` (mail-router), so the row REQUIRES it (entry inject may ADD
+  # keys, D1): activation waits for the router, and the boot catch-up sweep cannot race it
+  # into a fiber-lifetime `deliver_to` fallback. A router-less tree omits this line.
+  inject: { required: [mail] }
   config:
     cadence: { every_ms: 300000 }
     # The `mcp.rmcp` server row this collector sweeps through. The shipped `servers:` list is

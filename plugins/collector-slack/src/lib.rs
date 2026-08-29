@@ -25,7 +25,7 @@ use bough_plugin_collect_core::{
 };
 use bough_plugin_ledger::{AgentName, Ledger, LedgerHandle, TrajId};
 use bough_plugin_mail_router::{Mail, MailHandle};
-use bough_plugin_mcp::{Mcp, McpHandle, McpToolRef, ServerName};
+use bough_plugin_mcp::{Mcp, McpHandle, McpServersChanged, McpToolRef, ServerChange, ServerName};
 use bough_plugin_schedule::{
     Cadence, Job, JobFire, JobName, JobOutcome, JobSpec, Schedule, ScheduleHandle,
 };
@@ -412,10 +412,28 @@ impl Plugin for SlackCollectorPlugin {
                     name: JobName::new(PLUGIN_NAME),
                     cadence,
                     catch_up: true,
-                    job: Arc::new(SweepJob { collector }),
+                    job: Arc::new(SweepJob {
+                        collector: collector.clone(),
+                    }),
                 },
             )
             .await?;
+
+        // The boot catch-up sweep can run before the named server row has CONNECTED (the child
+        // fibers race), and that first failure is loud but the next chance was a whole cadence
+        // away. The seam's Added event is the signal to sweep again now.
+        let server = collector.server.clone();
+        let fire = schedule.clone();
+        ctx.on::<McpServersChanged, _, _>(move |change| {
+            let server = server.clone();
+            let fire = fire.clone();
+            async move {
+                if change == ServerChange::Added(server) {
+                    let _ = fire.0.fire_now(&JobName::new(PLUGIN_NAME)).await;
+                }
+            }
+        })
+        .await?;
         Ok(())
     }
 
