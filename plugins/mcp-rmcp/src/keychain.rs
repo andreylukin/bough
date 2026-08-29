@@ -240,10 +240,49 @@ pub struct KeychainRef {
     pub path: Vec<String>,
 }
 
-/// Is this config value shaped like a reference at all? Cheaper than parsing, for the validator's
-/// "looks like one but does not parse" rejection.
-pub fn looks_like_keychain_ref(value: &str) -> bool {
-    value.trim().starts_with("${keychain:")
+/// The marker a reference starts with, wherever it sits in the value: an `Authorization` header
+/// is ordinarily `Bearer ${keychain:…}`, so a reference is a SUBSTRING, not the whole value.
+const REF_START: &str = "${keychain:";
+
+/// Every `${keychain:…}` reference inside a config value, in order, with what surrounds it kept.
+/// `Err` names the malformation, so the validator can reject a typo at compose time instead of
+/// letting it ride to the server as a literal header.
+pub fn split_refs(value: &str) -> Result<Vec<ValuePart>, String> {
+    let mut parts = Vec::new();
+    let mut rest = value;
+    while let Some(i) = rest.find(REF_START) {
+        if i > 0 {
+            parts.push(ValuePart::Literal(rest[..i].to_string()));
+        }
+        let tail = &rest[i..];
+        let Some(end) = tail.find('}') else {
+            return Err("an unterminated `${keychain:` reference".to_string());
+        };
+        let text = &tail[..=end];
+        let Some(keychain_ref) = parse_keychain_ref(text) else {
+            return Err(format!(
+                "`{text}` does not parse; the shape is `${{keychain:<service>#<a.b.c>}}`"
+            ));
+        };
+        parts.push(ValuePart::Ref(keychain_ref));
+        rest = &tail[end + 1..];
+    }
+    if !rest.is_empty() {
+        parts.push(ValuePart::Literal(rest.to_string()));
+    }
+    Ok(parts)
+}
+
+/// One piece of a config value: literal text, or a reference to resolve.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValuePart {
+    Literal(String),
+    Ref(KeychainRef),
+}
+
+/// Does this config value carry any reference at all?
+pub fn has_keychain_ref(value: &str) -> bool {
+    value.contains(REF_START)
 }
 
 /// `${keychain:NAME}` / `${keychain:NAME#a.b}`. The service may contain spaces. Neither capture
@@ -273,16 +312,27 @@ pub fn parse_keychain_ref(value: &str) -> Option<KeychainRef> {
     Some(KeychainRef { service, path })
 }
 
-/// Resolve one config value: a keychain reference becomes its secret, anything else passes
-/// through verbatim. The one entry point `server.rs` uses, for headers and stdio env alike.
+/// Resolve one config value: every `${keychain:…}` inside it becomes its secret, everything else
+/// passes through verbatim (`Bearer ${keychain:…}` resolves to `Bearer <token>`). The one entry
+/// point `server.rs` uses, for headers and stdio env alike.
 pub async fn resolve_value(
     value: &str,
     reader: Option<&KeychainReader>,
 ) -> Result<String, McpError> {
-    match parse_keychain_ref(value) {
-        Some(keychain_ref) => read_keychain_ref(&keychain_ref, reader).await,
-        None => Ok(value.to_string()),
+    if !has_keychain_ref(value) {
+        return Ok(value.to_string());
     }
+    let parts = split_refs(value).map_err(McpError::Transport)?;
+    let mut out = String::new();
+    for part in parts {
+        match part {
+            ValuePart::Literal(text) => out.push_str(&text),
+            ValuePart::Ref(keychain_ref) => {
+                out.push_str(&read_keychain_ref(&keychain_ref, reader).await?)
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Resolve one reference to its secret.
@@ -573,8 +623,10 @@ mod tests {
         assert_eq!(parse_keychain_ref("${keychain:}"), None);
         assert_eq!(parse_keychain_ref("${keychain:a#b#c}"), None);
         assert_eq!(parse_keychain_ref("Bearer plain-token"), None);
-        assert!(looks_like_keychain_ref(" ${keychain:x}"));
-        assert!(!looks_like_keychain_ref("Bearer x"));
+        assert!(has_keychain_ref("Bearer ${keychain:x}"));
+        assert!(!has_keychain_ref("Bearer x"));
+        assert!(split_refs("Bearer ${keychain:x").is_err(), "unterminated");
+        assert!(split_refs("Bearer ${keychain:}").is_err(), "no service");
     }
 
     #[tokio::test]
@@ -591,6 +643,19 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(v, "sk-ant-oat01-TOKEN");
+    }
+
+    #[tokio::test]
+    async fn a_reference_embedded_in_a_header_value_is_spliced_in_place() {
+        // The ordinary shape of an Authorization header: literal scheme, referenced token.
+        let reader = ok_reader(&fresh_blob());
+        let v = resolve_value(
+            "Bearer ${keychain:Claude Code-credentials#claudeAiOauth.accessToken}",
+            Some(&reader),
+        )
+        .await
+        .unwrap();
+        assert_eq!(v, "Bearer sk-ant-oat01-TOKEN");
     }
 
     #[tokio::test]

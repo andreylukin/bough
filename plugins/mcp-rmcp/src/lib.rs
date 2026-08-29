@@ -84,14 +84,10 @@ pub fn validate_row_name(name: &str) -> Result<(), ConfigError> {
 /// typo'd reference is a compose-time rejection and not a mystery 401 at connect time.
 pub fn validate_transport(name: &str, t: &Transport) -> Result<(), ConfigError> {
     let check_ref = |place: &str, value: &str| -> Result<(), ConfigError> {
-        if keychain::looks_like_keychain_ref(value) && keychain::parse_keychain_ref(value).is_none()
-        {
-            return Err(ConfigError::Rejected {
-                detail: format!(
-                    "server `{name}` {place} looks like a keychain reference but does not parse; \
-                     the shape is `${{keychain:<service>#<a.b.c>}}`"
-                ),
-            });
+        if keychain::has_keychain_ref(value) {
+            keychain::split_refs(value).map_err(|why| ConfigError::Rejected {
+                detail: format!("server `{name}` {place} carries a keychain reference: {why}"),
+            })?;
         }
         Ok(())
     };
