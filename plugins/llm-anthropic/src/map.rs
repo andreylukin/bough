@@ -1,97 +1,31 @@
 //! Invariant: the mapping from `bough-llm`'s round surface to the seam's chunk vocabulary is
 //! TOTAL and ordered — text deltas as they stream, then reasoning, tool calls and usage as the
 //! round returns (P2-D6) — and every exit from it is exactly one terminal chunk.
+//!
+//! The mapping itself lives on the Definition (`bough_plugin_llm::adapt`) so this row and
+//! `llm-openai` cannot drift on it; what stays here is this adapter's NAME on a failure, and the
+//! tests that pinned the behavior when this crate owned the code.
 
-use bough_plugin_llm::{
-    AdapterName, Chunk, FailureKind, LlmFailure, LlmRequest, StopReason, ToolCallId, ToolName,
-};
+use bough_plugin_llm::{AdapterName, Chunk, LlmFailure, LlmRequest, StopReason};
 
-/// Map a finished `bough-llm` round onto the trailing chunks (reasoning, tool calls, usage, and
-/// the terminal `End`). Text deltas have already streamed through `on_text`.
-///
-/// Pure, so the mapping is testable without a client.
+/// [`bough_plugin_llm::adapt::round_to_chunks`], re-exported under this crate's old path.
 pub fn round_to_chunks(result: &bough_llm::types::LlmResult) -> Vec<Chunk> {
-    use bough_llm::types::LlmBlock;
-    let mut out = Vec::new();
-    for b in &result.content {
-        match b {
-            // Already streamed through `on_text`; re-emitting it would double the thought steps.
-            LlmBlock::Text { .. } => {}
-            LlmBlock::Reasoning { text, meta } => out.push(Chunk::ReasoningDelta {
-                text: text.clone(),
-                meta: meta.clone(),
-            }),
-            LlmBlock::ToolUse { id, name, input } => out.push(Chunk::ToolCall {
-                id: ToolCallId::new(id),
-                name: ToolName::new(name),
-                input: input.clone(),
-            }),
-        }
-    }
-    if let Some(u) = &result.usage {
-        out.push(Chunk::Usage(u.clone()));
-    }
-    out.push(Chunk::End {
-        stop: stop_reason(&result.stop_reason),
-    });
-    out
+    bough_plugin_llm::adapt::round_to_chunks(result)
 }
 
-/// The provider's stop word. Unknown words are `end_turn`: a round that stopped for a reason this
-/// binary has never heard of still STOPPED, and inventing a failure would be a worse lie.
+/// [`bough_plugin_llm::adapt::stop_reason`], re-exported under this crate's old path.
 pub fn stop_reason(s: &str) -> StopReason {
-    match s {
-        "tool_use" => StopReason::ToolUse,
-        "max_tokens" => StopReason::MaxTokens,
-        "stop_sequence" => StopReason::StopSequence,
-        _ => StopReason::EndTurn,
-    }
+    bough_plugin_llm::adapt::stop_reason(s)
 }
 
-/// Map a `bough-llm` error onto a terminal [`LlmFailure`], including the retryable verdict
-/// `llm-retry` reads.
-///
-/// The verdict is `bough_llm::retry::is_retryable`'s, not a second table: two tables would let a
-/// deployment retry what the provider layer already decided is hopeless.
+/// [`bough_plugin_llm::adapt::error_to_failure`], attributed to THIS adapter.
 pub fn error_to_failure(e: &bough_llm::error::LlmError) -> LlmFailure {
-    let kind = match e.status() {
-        401 | 403 => FailureKind::Auth,
-        // `sse::aborted` — the caller's own cancellation.
-        499 => FailureKind::Cancelled,
-        429 => FailureKind::RateLimit,
-        529 => FailureKind::Overloaded,
-        502..=504 => FailureKind::Transport,
-        400 if e.message.contains("context") || e.message.contains("too long") => {
-            FailureKind::ContextOverflow
-        }
-        400 => FailureKind::BadRequest,
-        408 => FailureKind::Transport,
-        _ => FailureKind::Other,
-    };
-    LlmFailure {
-        kind,
-        message: e.message.clone(),
-        retryable: bough_llm::retry::is_retryable(e),
-        status: Some(e.status()),
-        adapter: AdapterName::new(crate::PLUGIN_NAME),
-    }
+    bough_plugin_llm::adapt::error_to_failure(&AdapterName::new(crate::PLUGIN_NAME), e)
 }
 
-/// Map a seam request onto `bough-llm`'s params.
-///
-/// `call.model` wins over `req.model`: `agent/request` listeners write the CALL CONFIG, and the
-/// model policy (§12) is exactly such a listener, so the config is what actually goes on the wire.
+/// [`bough_plugin_llm::adapt::request_to_params`], re-exported under this crate's old path.
 pub fn request_to_params(req: &LlmRequest) -> bough_llm::types::LlmParams {
-    bough_llm::types::LlmParams {
-        model: req.call.model.clone(),
-        system: req.system.clone(),
-        system_volatile: req.system_volatile.clone(),
-        max_tokens: req.call.max_tokens,
-        messages: req.messages.clone(),
-        tools: req.tools.clone(),
-        tool_choice_none: req.call.tool_choice_none,
-        effort: req.call.effort,
-    }
+    bough_plugin_llm::adapt::request_to_params(req)
 }
 
 #[cfg(test)]
@@ -99,6 +33,7 @@ mod tests {
     use super::*;
     use bough_llm::error::LlmError;
     use bough_llm::types::{LlmBlock, LlmResult, Usage};
+    use bough_plugin_llm::FailureKind;
 
     #[test]
     fn a_round_maps_reasoning_then_tool_calls_then_usage_then_end() {

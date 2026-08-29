@@ -28,6 +28,7 @@ bough-plugin-projection-probe = { workspace = true }
 # Phase 2 (§17 Phase 2): the seventeen rows between a message and a model call and back.
 bough-plugin-llm = { workspace = true }
 bough-plugin-llm-anthropic = { workspace = true }
+bough-plugin-llm-openai = { workspace = true }
 bough-plugin-llm-replay = { workspace = true }
 bough-plugin-llm-retry = { workspace = true }
 bough-plugin-request-recorder = { workspace = true }

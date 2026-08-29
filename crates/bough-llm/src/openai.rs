@@ -661,7 +661,7 @@ mod tests {
         );
         assert_eq!(
             err.to_string(),
-            "openai: OPENAI_API_KEY is not set — put it in ~/.bough/env, then `bough restart`"
+            "openai: OPENAI_API_KEY is not set — put it in ~/.bough/env and start bough again"
         );
         assert!(!is_retryable(&err));
         assert!(

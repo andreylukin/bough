@@ -25,6 +25,7 @@ mod crash_reconcile;
 mod docs;
 mod dormancy_loops;
 mod dump_config;
+mod envfile;
 mod exec_headless;
 mod failure_injection;
 mod graph_invariants;

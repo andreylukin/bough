@@ -5,6 +5,7 @@
 //!
 //! P2-D1: it owns live state (the adapter map), so it IS a catalog row and provides its own key.
 
+pub mod adapt;
 pub mod adapter;
 pub mod error;
 pub mod ids;

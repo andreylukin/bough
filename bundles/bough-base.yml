@@ -44,6 +44,17 @@
     models: "*"
     api_key_env: ANTHROPIC_API_KEY
     request_timeout_ms: 120000
+# §12: OpenAI proper, the Responses API. `openai:*` is MORE SPECIFIC than the anthropic row's
+# `"*"`, so an `openai:gpt-…` model id (a lane's `model_override`, or a model-policy patch)
+# resolves here and everything else keeps resolving to `llm.anthropic`. The key is read at CALL
+# time from OPENAI_API_KEY (the launcher loads `$BOUGH_HOME/env` at boot); an absent key is a
+# `Failed { Auth }` chunk on first use, never a boot failure.
+- id: llm.openai
+  plugin: llm-openai
+  config:
+    models: "openai:*"
+    api_key_env: OPENAI_API_KEY
+    request_timeout_ms: 120000
 - id: llm.retry
   plugin: llm-retry
   config:

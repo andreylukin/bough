@@ -16,7 +16,14 @@ fn main() -> std::process::ExitCode {
     // A subcommand implies `--no-watch`: the process exits when its row is done (§0.1 item 2).
     cli.normalize();
     let cli = cli;
+    // `$BOUGH_HOME/env` loads BEFORE tracing and before anything composes, so a key written
+    // there reaches the compose-time `!!expr env(...)` snapshot, the call-time provider reads,
+    // and even RUST_LOG. The process environment wins over the file (envfile.rs).
+    let loaded = bough::envfile::load(&bough_util::bough_path("env"));
     let _log = init_tracing(&cli);
+    if !loaded.is_empty() {
+        tracing::info!(target: "bough", names = %loaded.join(", "), "loaded from $BOUGH_HOME/env");
+    }
 
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(r) => r,

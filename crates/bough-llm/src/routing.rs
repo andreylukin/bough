@@ -145,7 +145,7 @@ pub fn require_key(
     // shell it did not inherit is the other common way to be confused here.
     Err(LlmError::with(
         format!(
-            "{provider}: {} is not set — put it in ~/.bough/env, then `bough restart`",
+            "{provider}: {} is not set — put it in ~/.bough/env and start bough again",
             names.join(" / ")
         ),
         401,
@@ -319,7 +319,7 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "anthropic: ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN is not set \
-             — put it in ~/.bough/env, then `bough restart`"
+             — put it in ~/.bough/env and start bough again"
         );
         // Blank values are not keys; the first non-empty (trimmed) wins.
         let env: Env = Arc::new(|k| match k {

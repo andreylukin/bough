@@ -76,6 +76,7 @@ bough-plugin-projection-assembler = { path = "plugins/projection-assembler" } # 
 bough-plugin-projection-probe = { path = "plugins/projection-probe" }         # §17 Phase 1 fixture
 bough-plugin-llm = { path = "plugins/llm" }                                   # §12 llm Service Definition
 bough-plugin-llm-anthropic = { path = "plugins/llm-anthropic" }               # §12 production llm Provider
+bough-plugin-llm-openai = { path = "plugins/llm-openai" }                     # §12 OpenAI llm Provider
 bough-plugin-llm-replay = { path = "plugins/llm-replay" }                     # §12 recorded-transcript Provider
 bough-plugin-llm-retry = { path = "plugins/llm-retry" }                       # §12 agent/request-error Consumer
 bough-plugin-request-recorder = { path = "plugins/request-recorder" }         # every request on disk, verbatim (llm/stream listener)
