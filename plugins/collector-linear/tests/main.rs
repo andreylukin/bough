@@ -5,4 +5,5 @@
 
 mod common;
 
+mod mcp_sweep;
 mod sweep;

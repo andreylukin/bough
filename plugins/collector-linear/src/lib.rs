@@ -8,6 +8,7 @@
 
 pub mod graphql;
 pub mod invariant;
+pub mod mcp_source;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -21,6 +22,7 @@ use bough_plugin_collect_core::{
 };
 use bough_plugin_ledger::{AgentName, Ledger, LedgerHandle, TrajId};
 use bough_plugin_mail_router::{Mail, MailHandle};
+use bough_plugin_mcp::{Mcp, McpHandle, McpToolRef, ServerName};
 use bough_plugin_schedule::{
     Cadence, Job, JobFire, JobName, JobOutcome, JobSpec, Schedule, ScheduleHandle,
 };
@@ -85,7 +87,14 @@ pub struct LinearCollectorConfig {
     /// The GraphQL endpoint. A config field, not a constant, because the test stub is a local URL.
     pub endpoint: String,
     /// `!!expr 'env("LINEAR_API_KEY")'`. NEVER logged, never in an error, never in `--dump-config`.
+    /// Unused (and may stay empty) when `mcp_server` is set.
     pub api_key: String,
+    /// The name of an `mcp.rmcp` server row to sweep THROUGH instead of the GraphQL endpoint
+    /// (e.g. `linear-server`, carrying Claude Code's OAuth grant as a `${keychain:…}` header).
+    /// Empty = the GraphQL transport above. When set, `api_key` is not needed: the credential
+    /// belongs to the server row and never enters this process's config at all.
+    #[serde(default)]
+    pub mcp_server: String,
     /// `"TEAM"`.
     pub teams: Vec<String>,
     pub projects: Vec<String>,
@@ -103,6 +112,7 @@ impl std::fmt::Debug for LinearCollectorConfig {
             .field("cadence", &self.cadence)
             .field("endpoint", &self.endpoint)
             .field("api_key", &REDACTED)
+            .field("mcp_server", &self.mcp_server)
             .field("teams", &self.teams)
             .field("projects", &self.projects)
             .field("deliver_to", &self.deliver_to)
@@ -122,6 +132,9 @@ pub struct LinearCollector {
     agents: AgentsHandle,
     /// The router, when one is in the tree. `None` ⇒ the `deliver_to` fallback.
     mail: Option<MailHandle>,
+    /// The mcp seam and the server row to sweep through, when `mcp_server` is set.
+    /// `None` ⇒ the GraphQL transport.
+    mcp: Option<(McpHandle, ServerName)>,
     state: WatermarkStore,
     last: parking_lot::Mutex<SweepReport>,
 }
@@ -159,6 +172,7 @@ impl LinearCollector {
             ledger,
             agents,
             mail: None,
+            mcp: None,
             state,
             last: parking_lot::Mutex::new(empty_report(None)),
         })
@@ -167,6 +181,12 @@ impl LinearCollector {
     /// The same, routing through `mail-router` instead of the `deliver_to` fallback.
     pub fn with_mail(mut self, mail: MailHandle) -> LinearCollector {
         self.mail = Some(mail);
+        self
+    }
+
+    /// The same, sweeping through the named `mcp.rmcp` server row instead of GraphQL.
+    pub fn with_mcp(mut self, mcp: McpHandle, server: ServerName) -> LinearCollector {
+        self.mcp = Some((mcp, server));
         self
     }
 
@@ -182,7 +202,7 @@ impl LinearCollector {
     /// One sweep with its clock injected.
     pub async fn sweep_at(&self, now: DateTime<Utc>) -> Result<SweepReport, CollectError> {
         let mut report = empty_report(Some(now));
-        if self.cfg.api_key.trim().is_empty() {
+        if self.mcp.is_none() && self.cfg.api_key.trim().is_empty() {
             // LOUD, every sweep, and never a boot failure: a machine without a Linear key must
             // still boot (§0.2).
             tracing::warn!(
@@ -299,7 +319,10 @@ impl LinearCollector {
         now: DateTime<Utc>,
     ) -> Result<(usize, usize, i64), CollectError> {
         let mark = self.state.get(source)?;
-        let (mut items, cursor) = self.fetch(source, mark.cursor.as_deref()).await?;
+        let (mut items, cursor) = match &self.mcp {
+            Some(_) => (self.fetch_mcp(source, &mark).await?, None),
+            None => self.fetch(source, mark.cursor.as_deref()).await?,
+        };
         items.retain(|c| c.order > mark.last_row);
         items.sort_by_key(|c| c.order);
         items.truncate(self.cfg.batch);
@@ -398,11 +421,7 @@ impl LinearCollector {
             "issues" => (WakeClass::Assigned, graphql::issue_of),
             _ => (WakeClass::Mention, graphql::comment_of),
         };
-        let class = if self.cfg.wake_classes.contains(&kind) {
-            bough_plugin_agents::MailClass::Wake
-        } else {
-            bough_plugin_agents::MailClass::Ordinary
-        };
+        let class = self.class_for(kind);
         let items = nodes
             .iter()
             .filter_map(parse)
@@ -412,6 +431,111 @@ impl LinearCollector {
             })
             .collect();
         Ok((items, cursor))
+    }
+
+    /// The class a source's items carry, from the row's configured `wake_classes`.
+    fn class_for(&self, kind: WakeClass) -> bough_plugin_agents::MailClass {
+        if self.cfg.wake_classes.contains(&kind) {
+            bough_plugin_agents::MailClass::Wake
+        } else {
+            bough_plugin_agents::MailClass::Ordinary
+        }
+    }
+
+    /// One MCP call against the row's server, with `is_error` treated as the failure it is.
+    async fn mcp_call(
+        &self,
+        tool: &str,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, CollectError> {
+        let (mcp, server) = self
+            .mcp
+            .as_ref()
+            .expect("fetch_mcp is only reached with mcp");
+        let result = mcp
+            .call(
+                &McpToolRef {
+                    server: server.clone(),
+                    tool: tool.to_string(),
+                },
+                args,
+            )
+            .await
+            .map_err(|e| CollectError::Transport(self.redact(e.to_string())))?;
+        if result.is_error {
+            return Err(CollectError::Transport(
+                self.redact(format!("`{tool}` answered an error: {}", result.content)),
+            ));
+        }
+        mcp_source::payload(&result).map_err(CollectError::Transport)
+    }
+
+    /// The MCP transport's fetch: no cursor (the watermark is the `updatedAt` bound), the same
+    /// [`Collected`] shape out. The `comments` source reads comments off the scope's updated
+    /// assigned issues, because `list_comments` is per-issue (see `mcp_source`).
+    async fn fetch_mcp(
+        &self,
+        source: &str,
+        mark: &Watermark,
+    ) -> Result<Vec<Collected>, CollectError> {
+        let mut nodes = Vec::new();
+        let mut seen_keys = Vec::new();
+        for scope in mcp_source::scopes(&self.cfg.teams, &self.cfg.projects) {
+            let value = self
+                .mcp_call(
+                    mcp_source::ISSUES_TOOL,
+                    mcp_source::issues_args(&scope, mark.last_at, self.cfg.batch),
+                )
+                .await?;
+            for node in mcp_source::nodes_of(&value, "issues").map_err(CollectError::Transport)? {
+                // A team and a project can overlap; one issue is one item.
+                let key = node.get("id").and_then(|v| v.as_str()).map(str::to_string);
+                if let Some(key) = key {
+                    if seen_keys.contains(&key) {
+                        continue;
+                    }
+                    seen_keys.push(key);
+                }
+                nodes.push(node);
+            }
+        }
+        if source == "issues" {
+            let class = self.class_for(WakeClass::Assigned);
+            return Ok(nodes
+                .iter()
+                .filter_map(mcp_source::mcp_issue_of)
+                .map(|mut c| {
+                    c.class = class;
+                    c
+                })
+                .collect());
+        }
+        // `comments`: one bounded call per updated issue.
+        nodes.truncate(self.cfg.batch);
+        let class = self.class_for(WakeClass::Mention);
+        let mut items = Vec::new();
+        for node in &nodes {
+            let Some(meta) = mcp_source::issue_meta(node) else {
+                continue;
+            };
+            let value = self
+                .mcp_call(
+                    mcp_source::COMMENTS_TOOL,
+                    mcp_source::comments_args(&meta.key, self.cfg.batch),
+                )
+                .await?;
+            items.extend(
+                mcp_source::nodes_of(&value, "comments")
+                    .map_err(CollectError::Transport)?
+                    .iter()
+                    .filter_map(|n| mcp_source::mcp_comment_of(n, &meta))
+                    .map(|mut c| {
+                        c.class = class;
+                        c
+                    }),
+            );
+        }
+        Ok(items)
     }
 
     /// What the last sweep did.
@@ -465,8 +589,9 @@ impl Plugin for LinearCollectorPlugin {
 
     fn inject() -> Inject {
         // `mail` is OPTIONAL and DECLARED: with a router in the tree it delivers, and without
-        // one the row falls back to its own `deliver_to` list (§0.3).
-        Inject::required(["schedule", "agents", "ledger"]).union(&Inject::optional(["mail"]))
+        // one the row falls back to its own `deliver_to` list (§0.3). `mcp` is optional the same
+        // way, but a row that NAMES an `mcp_server` and finds no seam fails activation loudly.
+        Inject::required(["schedule", "agents", "ledger"]).union(&Inject::optional(["mail", "mcp"]))
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
@@ -508,6 +633,15 @@ impl Plugin for LinearCollectorPlugin {
         // MERGE (track B -> Phase 5): reported by the SWEEP, not here. See `collector-github`.
         if let Ok(mail) = ctx.get::<Mail>() {
             collector = collector.with_mail((*mail).clone());
+        }
+        if !collector.cfg.mcp_server.trim().is_empty() {
+            // A row that names an MCP server in a tree with no mcp seam is MISCONFIGURED, and
+            // misconfiguration fails loud (§0.2): this is an activation failure, not a warning.
+            let mcp = ctx
+                .get::<Mcp>()
+                .map_err(|e| PluginError::new(entry.clone(), e))?;
+            let server = ServerName::new(collector.cfg.mcp_server.trim());
+            collector = collector.with_mcp((*mcp).clone(), server);
         }
         let collector = Arc::new(collector);
         // The key `open` took a reference on comes back out with the row. Without this, disabling

@@ -15,6 +15,7 @@ use bough_plugin_collect_core::WakeClass;
 use bough_plugin_collector_linear::{LinearCollector, LinearCollectorConfig};
 use bough_plugin_ledger::{AgentName, LedgerHandle, Order, Step, StepQuery, StepType, TrajId};
 use bough_plugin_ledger_memory::store::MemoryStore;
+use bough_plugin_mcp::{McpCallResult, McpClient, McpError, McpHandle, McpToolInfo, ServerName};
 use bough_plugin_schedule::Cadence;
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
@@ -22,6 +23,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub const ISSUES: &str = include_str!("../../../../scripts/fixtures/linear/issues.json");
 pub const COMMENTS: &str = include_str!("../../../../scripts/fixtures/linear/comments.json");
+/// The `linear-server` MCP payloads, recorded 2026-08-29 against the live server (values
+/// neutralized). The MCP issue shape is FLAT where GraphQL's is nested.
+pub const MCP_ISSUES: &str = include_str!("../../../../scripts/fixtures/linear/mcp-issues.json");
+pub const MCP_COMMENTS: &str =
+    include_str!("../../../../scripts/fixtures/linear/mcp-comments.json");
 
 pub fn at() -> DateTime<Utc> {
     DateTime::from_timestamp(1_700_000_000, 0).expect("a fixed instant")
@@ -205,6 +211,7 @@ impl Fx {
             cadence: Cadence::Every { every_ms: 600_000 },
             endpoint: endpoint.to_string(),
             api_key: KEY.to_string(),
+            mcp_server: String::new(),
             teams: vec!["TEAM".to_string()],
             projects: Vec::new(),
             deliver_to: vec!["sol".to_string()],
@@ -215,9 +222,35 @@ impl Fx {
         }
     }
 
+    /// The MCP-transport config: NO KEY anywhere, the credential belongs to the server row.
+    pub fn mcp_cfg(&self) -> LinearCollectorConfig {
+        LinearCollectorConfig {
+            api_key: String::new(),
+            mcp_server: "linear-server".to_string(),
+            endpoint: "https://unused.invalid/graphql".to_string(),
+            ..self.cfg("https://unused.invalid/graphql")
+        }
+    }
+
     pub fn collector(&self, cfg: LinearCollectorConfig) -> LinearCollector {
         LinearCollector::open(Arc::new(cfg), self.ledger.clone(), self.agents.clone())
             .expect("the row activates")
+    }
+
+    /// The same collector wired to an mcp seam holding one stub `linear-server`.
+    pub async fn mcp_collector(
+        &self,
+        cfg: LinearCollectorConfig,
+    ) -> (LinearCollector, Arc<McpStub>) {
+        let mcp = McpHandle::new();
+        let stub = Arc::new(McpStub::default());
+        std::mem::forget(
+            mcp.server(&self.ctx, stub.clone())
+                .await
+                .expect("the stub registers"),
+        );
+        let server = ServerName::new("linear-server");
+        (self.collector(cfg).with_mcp(mcp, server), stub)
     }
 
     pub async fn delivered(&self, agent: &str) -> Vec<Step> {
@@ -231,6 +264,47 @@ impl Fx {
             })
             .await
             .expect("a read")
+    }
+}
+
+/// A stub `linear-server`: answers the two tools with the recorded payloads and RECORDS every
+/// call, so a test can prove the viewer pin and the watermark actually rode the arguments.
+#[derive(Default)]
+pub struct McpStub {
+    pub calls: Mutex<Vec<(String, serde_json::Value)>>,
+}
+
+#[async_trait::async_trait]
+impl McpClient for McpStub {
+    fn server(&self) -> &ServerName {
+        static NAME: std::sync::OnceLock<ServerName> = std::sync::OnceLock::new();
+        NAME.get_or_init(|| ServerName::new("linear-server"))
+    }
+    async fn list_tools(&self) -> Result<Vec<McpToolInfo>, McpError> {
+        Ok(["list_issues", "list_comments"]
+            .iter()
+            .map(|t| McpToolInfo {
+                server: self.server().clone(),
+                tool: (*t).to_string(),
+                description: String::new(),
+                input_schema: serde_json::json!({ "type": "object" }),
+            })
+            .collect())
+    }
+    async fn call(&self, tool: &str, args: serde_json::Value) -> Result<McpCallResult, McpError> {
+        self.calls.lock().push((tool.to_string(), args.clone()));
+        let content = match tool {
+            "list_issues" => MCP_ISSUES.to_string(),
+            "list_comments" if args["issueId"] == "TEAM-123" => MCP_COMMENTS.to_string(),
+            "list_comments" => r#"{"comments":[],"hasNextPage":false}"#.to_string(),
+            other => return Err(McpError::Server(format!("no stub for `{other}`"))),
+        };
+        Ok(McpCallResult {
+            content,
+            value: None,
+            cites: Vec::new(),
+            is_error: false,
+        })
     }
 }
 
