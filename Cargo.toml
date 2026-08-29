@@ -138,6 +138,7 @@ bough-plugin-collect-core = { path = "plugins/collect-core" }                 # 
 bough-plugin-gh-cli = { path = "plugins/gh-cli" }                             # §13 the ONE place that spawns `gh`
 bough-plugin-collector-github = { path = "plugins/collector-github" }         # §6 GitHub sweeps
 bough-plugin-collector-linear = { path = "plugins/collector-linear" }         # §6 Linear sweeps
+bough-plugin-collector-slack = { path = "plugins/collector-slack" }           # §6 Slack sweeps over mcp
 bough-plugin-actions-github = { path = "plugins/actions-github" }             # §7 open_pr/push_to_pr/bot_thread_op
 bough-plugin-actions-linear = { path = "plugins/actions-linear" }             # §7 linear_write
 bough-plugin-actions-reconcile = { path = "plugins/actions-reconcile" }       # §7 intent-without-done reconciliation

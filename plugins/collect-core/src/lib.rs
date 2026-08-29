@@ -129,6 +129,17 @@ pub mod refs {
     pub fn check(repo: &str, number: u64, name: &str) -> Ref {
         Ref::new(format!("gh:{repo}#{number}:check:{name}"))
     }
+    /// `slack:C0123` — the SCOPE ref every Slack item carries beside its own, for the same
+    /// reason as [`repo`]: a lane is linked to a channel, never to a message that does not
+    /// exist yet.
+    pub fn channel(channel_id: &str) -> Ref {
+        Ref::new(format!("slack:{channel_id}"))
+    }
+    /// `slack:C0123:1724900000.123456` — one message, by the channel and the ts Slack itself
+    /// uses as the message's identity.
+    pub fn slack_message(channel_id: &str, ts: &str) -> Ref {
+        Ref::new(format!("slack:{channel_id}:{ts}"))
+    }
     /// `linear:TEAM-123`.
     pub fn issue(key: &str) -> Ref {
         Ref::new(format!("linear:{key}"))
