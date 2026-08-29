@@ -30,7 +30,15 @@ pub fn parse(text: &str) -> Vec<(String, String)> {
             tracing::warn!(target: "bough", line, "$BOUGH_HOME/env: not a variable name; skipped");
             continue;
         }
-        out.push((key.to_string(), unquote(value.trim()).to_string()));
+        // The same value the shell's `set -a; . file` produces: a QUOTED value keeps everything
+        // inside the quotes; an UNQUOTED one ends at the first whitespace, which is also what
+        // makes a trailing `  # comment` a comment and not part of a key.
+        let value = value.trim();
+        let value = match unquote(value) {
+            unquoted if unquoted.len() != value.len() => unquoted,
+            _ => value.split_whitespace().next().unwrap_or(""),
+        };
+        out.push((key.to_string(), value.to_string()));
     }
     out
 }
@@ -107,12 +115,22 @@ mod tests {
     }
 
     #[test]
-    fn a_value_keeps_everything_after_the_first_equals() {
+    fn a_value_reads_the_way_the_shell_would_read_it() {
         assert_eq!(
             parse("URL=https://x/y?a=1&b=2"),
             vec![("URL".into(), "https://x/y?a=1&b=2".into())]
         );
-        // Only a MATCHING pair of quotes strips.
-        assert_eq!(parse(r#"K="half"#), vec![("K".into(), r#""half"#.into())]);
+        // An unquoted value ends at the first whitespace — which is exactly how a trailing
+        // inline comment behaves under `set -a; . file` (found live: a commented key line
+        // parsed as key+comment and answered 401).
+        assert_eq!(
+            parse("OPENAI_API_KEY=sk-proj-abc          # used for bough"),
+            vec![("OPENAI_API_KEY".into(), "sk-proj-abc".into())]
+        );
+        // A QUOTED value keeps its spaces and its `#`.
+        assert_eq!(
+            parse(r##"MSG="hello # world""##),
+            vec![("MSG".into(), "hello # world".into())]
+        );
     }
 }
