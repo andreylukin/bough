@@ -12,7 +12,7 @@ use rmcp::service::{RoleClient, RunningService};
 use rmcp::transport::{StreamableHttpClientTransport, TokioChildProcess};
 use rmcp::ServiceExt;
 
-use crate::Transport;
+use crate::{keychain, Transport};
 
 /// The child row's config: one server row, plus the parent's timeouts.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -46,7 +46,9 @@ impl RmcpClient {
                 let mut c = tokio::process::Command::new(command);
                 c.args(args);
                 for (k, v) in env {
-                    c.env(k, v);
+                    // A `${keychain:…}` value resolves HERE, at connect time, and the secret goes
+                    // into the child's environment and nowhere else (keychain.rs's invariant).
+                    c.env(k, keychain::resolve_value(v, None).await?);
                 }
                 if let Some(dir) = cwd {
                     c.current_dir(dir);
@@ -67,9 +69,17 @@ impl RmcpClient {
                     let key: http::HeaderName = k
                         .parse()
                         .map_err(|_| McpError::Transport(format!("bad header name `{k}`")))?;
-                    let value: http::HeaderValue = v
+                    // A `${keychain:…}` value resolves HERE, at connect time. The config keeps the
+                    // reference (that is what `--dump-config` renders); the secret exists only in
+                    // this header, and the header is marked sensitive so nothing downstream logs
+                    // it (keychain.rs's invariant).
+                    let resolved = keychain::resolve_value(v, None).await?;
+                    let mut value: http::HeaderValue = resolved
                         .parse()
                         .map_err(|_| McpError::Transport(format!("bad header value for `{k}`")))?;
+                    if resolved != *v {
+                        value.set_sensitive(true);
+                    }
                     config.custom_headers.insert(key, value);
                 }
                 let transport = StreamableHttpClientTransport::from_config(config);

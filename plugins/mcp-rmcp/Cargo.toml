@@ -17,6 +17,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
 chrono = { workspace = true }
+futures = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 parking_lot = { workspace = true }

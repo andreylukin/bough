@@ -7,6 +7,7 @@
 //! Phase 0 STANDS, bridged through `OAuthHttpClient`, and both are pinned to a minor (§13).
 
 pub mod invariant;
+pub mod keychain;
 pub mod server;
 
 use std::collections::BTreeMap;
@@ -79,20 +80,40 @@ pub fn validate_row_name(name: &str) -> Result<(), ConfigError> {
 }
 
 /// A transport must be reachable in principle: a non-empty command, or a parseable http(s) url.
+/// A header or stdio-env value SHAPED like a `${keychain:…}` reference must parse as one, so a
+/// typo'd reference is a compose-time rejection and not a mystery 401 at connect time.
 pub fn validate_transport(name: &str, t: &Transport) -> Result<(), ConfigError> {
+    let check_ref = |place: &str, value: &str| -> Result<(), ConfigError> {
+        if keychain::looks_like_keychain_ref(value) && keychain::parse_keychain_ref(value).is_none()
+        {
+            return Err(ConfigError::Rejected {
+                detail: format!(
+                    "server `{name}` {place} looks like a keychain reference but does not parse; \
+                     the shape is `${{keychain:<service>#<a.b.c>}}`"
+                ),
+            });
+        }
+        Ok(())
+    };
     match t {
-        Transport::Stdio { command, .. } => {
+        Transport::Stdio { command, env, .. } => {
             if command.trim().is_empty() {
                 return Err(ConfigError::Rejected {
                     detail: format!("server `{name}` has an empty stdio `command`"),
                 });
             }
+            for (k, v) in env {
+                check_ref(&format!("env `{k}`"), v)?;
+            }
         }
-        Transport::Http { url, .. } => {
+        Transport::Http { url, headers } => {
             if !(url.starts_with("http://") || url.starts_with("https://")) {
                 return Err(ConfigError::Rejected {
                     detail: format!("server `{name}` has a url that is not http(s): `{url}`"),
                 });
+            }
+            for (k, v) in headers {
+                check_ref(&format!("header `{k}`"), v)?;
             }
         }
     }
@@ -251,6 +272,38 @@ mod tests {
             ..stdio_row("x")
         };
         assert!(validate_row_name(&dotted.name).is_err());
+    }
+
+    #[test]
+    fn a_header_shaped_like_a_keychain_reference_must_parse_as_one() {
+        let mut row = stdio_row("fixture");
+        row.transport = Transport::Http {
+            url: "https://mcp.example.com/mcp".into(),
+            headers: BTreeMap::from([("Authorization".to_string(), "${keychain:}".to_string())]),
+        };
+        assert!(validate_transport("fixture", &row.transport)
+            .unwrap_err()
+            .to_string()
+            .contains("keychain reference"));
+
+        // A well-formed reference and a plain bearer value both pass.
+        row.transport = Transport::Http {
+            url: "https://mcp.example.com/mcp".into(),
+            headers: BTreeMap::from([(
+                "Authorization".to_string(),
+                "${keychain:Claude Code-credentials#mcpOAuth.x.accessToken}".to_string(),
+            )]),
+        };
+        assert!(validate_transport("fixture", &row.transport).is_ok());
+
+        let mut env_row = stdio_row("fixture");
+        if let Transport::Stdio { env, .. } = &mut env_row.transport {
+            env.insert("API_TOKEN".into(), "${keychain:a#b#c}".into());
+        }
+        assert!(validate_transport("fixture", &env_row.transport)
+            .unwrap_err()
+            .to_string()
+            .contains("keychain reference"));
     }
 
     #[test]
