@@ -141,7 +141,9 @@ code) is the composition, and every row in it is individually replaceable.
 
 A running `bough` is a plugin tree composed from ordered layers over an empty root:
 each bundle's patch in the profile's order → the profile's `bough.patch.yml` → the home-level
-`~/.bough/bough.patch.yml` → `--patch` overlays. A patch targets a row by id and REPLACES its whole
+`~/.bough/bough.patch.yml` → the panel's `~/.bough/bough.ui.patch.yml` (the `ui` layer:
+disabled-only toggles written by the TUI's panel; an explicit `--patch` still outranks it) →
+`--patch` overlays. A patch targets a row by id and REPLACES its whole
 `config` (restate kept fields; no deep merge) or `insert`s rows. `bough --profile tui --dump-config`
 renders exactly what boots, annotated with which layer last wrote each row. The known cost of
 layered composition is opacity during incident response (the effective runtime is profile order
@@ -562,7 +564,7 @@ does; the seam's start/result vocabulary leaves room, the Providers do not imple
 
 - **The surface is plugins.** `tui-shell` owns the terminal, the event loop, layout slots, and
   the composer; panes register into slots as effects (`strip`, `focus`, `trajectory`, `search`,
-  `preview`, `timeline`, `drift`); each renders from ledger events and drives `ctx.agents`. A
+  `preview`, `timeline`, `drift`, `panel`); each renders from ledger events and drives `ctx.agents`. A
   pane row disabled by patch simply disappears from the layout. Human commands (`/compact`,
   `/goal`-style slash commands, `bough mcp call`) register on `ctx.commands` and dispatch without a
   model turn.
@@ -573,6 +575,19 @@ does; the seam's start/result vocabulary leaves room, the Providers do not imple
 - **Digging**: per-agent trajectory pane with FTS across all agents; projection preview (exactly what
   the agent would see if it woke now, byte-exact: it calls the same `ctx.projection` the loop
   does); cross-agent chronological timeline with filters.
+- **The panel** (`tui-panel`, pane `tui.panel`): one toggleable Aux pane, tabbed pages over the
+  running composition — config (every row with per-field layer provenance, warnings, the
+  fingerprint; a raw mode prints the one renderer's output verbatim, so the panel is a second
+  consumer of `Composition`, never a second formatter of the dump), connectors (MCP servers and
+  collector jobs, status joined from the kernel snapshot, the `mcp` seam, and the scheduler;
+  credential references render as reference text, resolved secrets never appear, and there is no
+  authorize affordance because token refresh is deliberately not bough's to do), model (policy
+  resolution per agent via `model-policy`'s pure `choose`, adapter claims, what actually ran from
+  `request/header`/`usage/round`). Opened by `^t` or `/config` `/connectors` `/model`; closed it
+  costs zero rows. Toggles write the `ui` patch layer (§0.5) — disabled-only entries, absent ids
+  pruned, entry removed on return to default — and the patch watch applies it; the panel never
+  mutates the live tree directly. A toggle that parks dependents is reported from
+  `kernel/rows-unresolved`, not pre-guessed.
 - **Testing discipline**: exercised continuously during development with shell-use (drive, click,
   scroll, assert on screen text/colors, snapshot).
 - Stack: ratatui + crossterm, tui-textarea for the composer.
