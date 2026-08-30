@@ -78,3 +78,20 @@ round 1 spent a call on `ls`-style orientation the instruction already implied.
   `BOUGH_HOME` inline anyway so the transcript's location does not depend on shell state.
 - The task instruction reaches bough as one `exec` message; `run-tests.sh` runs AFTER the agent
   exits, so bough must leave the world converged rather than report intentions.
+
+## The first iteration arc (configure-git-webserver, hard, Luna, n=3 per round)
+
+| round | prompt change | resolved |
+| --- | --- | --- |
+| baseline | none | **0/3** — wrote a setup script and a README, declared "run this as root on the target server", not registering that it IS root on the target server; treated missing git as a blocker instead of `apt-get install`-ing |
+| iter 1 | `skills/operate-the-machine.md`: the machine you are on IS the target; missing tools are installable; deliver live state, not documents; run the task's own acceptance commands | **1/3** — it now acted and even curl-verified, but all three served port 8080 from the `bg` tool, whose jobs die with the bough process; the checker found HTTP 000 |
+| iter 2 | appended the lifetime rule: `bg` jobs die with you; anything that must outlive you is a real daemon (`nginx` via service, or `setsid nohup … &`); prove survival (parent is init), not just the response | **3/3** — installs nginx, configures the root, proves the listener |
+
+Two generalizations worth keeping:
+
+- The baseline failure is bough's DEFAULT persona showing through: a lane that drafts and defers.
+  For operate-the-machine work the skill corrects it; if tbench-style work becomes a real use
+  case, the same text belongs nearer the identity for that agent kind.
+- The iter-1 failure is a HARNESS truth the model could not know: `bg` is process-scoped. The
+  skill now says so, but the `bg` tool's own description should say it too (and a `detach:`
+  option would make the honest path easy). Filed as the next tool-description iteration.

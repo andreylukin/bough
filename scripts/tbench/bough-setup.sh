@@ -17,4 +17,8 @@ PATCH
 # BOUGH_HOME must survive into the agent command's shell; the env file the harness
 # sources runs before this script, so append to the profile the tmux shell reads.
 echo 'export BOUGH_HOME=/agent-logs/bough-home' >> "$HOME/.bashrc"
+if [ -d /installed-agent/skills ]; then
+  mkdir -p "$BOUGH_HOME/skills"
+  cp /installed-agent/skills/*.md "$BOUGH_HOME/skills/" 2>/dev/null || true
+fi
 bough --version

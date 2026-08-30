@@ -87,4 +87,15 @@ class BoughAgent(AbstractInstalledAgent):
             container_dir="/installed-agent",
             container_filename="bough-bin",
         )
+        # THE PROMPT KNOB: every skill file beside this adapter rides into the run home's
+        # skills/ dir (the setup script installs them), where bough's skills row injects a
+        # skill's body into the projection when the instruction mentions one of its triggers.
+        # Iterating on the prompt = editing scripts/tbench/skills/*.md, no rebuild.
+        skills_dir = Path(__file__).parent / "skills"
+        for skill in sorted(skills_dir.glob("*.md")):
+            session.copy_to_container(
+                skill,
+                container_dir="/installed-agent/skills",
+                container_filename=skill.name,
+            )
         return super().perform_task(instruction, session, logging_dir)
