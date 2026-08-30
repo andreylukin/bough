@@ -34,11 +34,12 @@ t ctrl_t_opens_the_panel_on_the_config_tab \
   '
 
 # The joined rows: a shipped row id with its state word beside it, from the SAME snapshot the
-# boot report reads. `tui.focus` is in every tui profile and always activates.
+# boot report reads. `llm.anthropic` sits in the tree's first screenful at the shipped panel
+# height (`tui.focus` is real too, but below the viewport, which is what the cursor is for).
 t the_config_tab_lists_the_composed_rows \
   bash -c '
     for i in $(seq 1 30); do
-      shell-use text | grep -q "tui.focus" && shell-use text | grep -q "active" && exit 0
+      shell-use text | grep -q "llm.anthropic" && shell-use text | grep -q "active" && exit 0
       sleep 0.3
     done
     echo "the config tab never showed the composed rows"
