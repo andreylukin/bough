@@ -113,3 +113,26 @@ run-the-acceptance-criteria-as-tests discipline; `broken-networking` died with a
 `parse_error` worth understanding before trusting it as a bed; `gpt2-codegolf` is
 capability-shaped, not prompt-shaped; `sqlite-db-truncate` and `fix-code-vulnerability` pass
 already.
+
+## Third bed: cancel-async-tasks (hard, Luna, n=3 per round)
+
+| round | prompt change | resolved |
+| --- | --- | --- |
+| baseline | two prior skills | **1/3** — the failures never simulated the interrupt at all; the pass never did either (semantic luck) |
+| iter 1 | `skills/prove-the-criteria.md`: every stated behavior is a test you write and run; "sometimes I cancel…" sentences are requirements; signals need a real subprocess + `send_signal` | **0/3** — WORSE. The rule produced self-tests, but WEAK ones: one trial's probe used a synchronous cleanup (`cleaned.append`) where the checker's cleanup itself awaits inside the `finally`, so the probe green-lit a broken runner. A discipline rule without probe strength manufactures false confidence |
+| iter 2 | appended probe-strength rules: give behaviors their most demanding realistic shape (async, slow cleanup); COMBINE stated edges (interrupt while more work is queued than running); sabotage your artifact once and confirm the test goes red | **3/3** |
+
+Cross-bed regression, all three skills active, one attempt each: configure-git-webserver,
+analyze-access-logs, polyglot-c-py, cancel-async-tasks — **4/4**.
+
+The doctrine after three beds, one theme per bed:
+1. **operate-the-machine** — the machine is the target; converge live state; missing tools are
+   installable; daemons must outlive you (never `bg`), prove survival.
+2. **finish-state** — the described end state is a contract; verification debris goes, asked-for
+   state stays; `ls` the targets last.
+3. **prove-the-criteria** — every stated behavior is an executable test, at its most demanding
+   plausible shape, with combined edges, validated by sabotage.
+
+The iter-1 dip is the finding worth keeping: telling an agent to self-test WITHOUT telling it
+what a strong test is produces weak probes and confident wrong ships — measurably worse than no
+rule. Test-strength language must travel with test-discipline language.
