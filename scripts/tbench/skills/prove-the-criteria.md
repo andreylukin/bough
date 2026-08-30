@@ -36,3 +36,9 @@ strong as the strongest plausible reading of the words:
 - after your implementation passes, break it on purpose (comment out the part you believe
   matters) and confirm the test goes red — a probe that stays green against a sabotaged artifact
   is a broken probe, and this check costs one minute.
+
+Artifact LOCATIONS are acceptance criteria too, and the words are the spec: run each script or
+command from a DIFFERENT working directory than its home (`cd $(mktemp -d)` first), then assert
+every named artifact exists at the exact absolute path a literal reading of the task implies —
+a bare filename means the task's primary directory itself, never a subdirectory you invented.
+Your test fails if the artifact is anywhere else, however tidy.

@@ -136,3 +136,36 @@ The doctrine after three beds, one theme per bed:
 The iter-1 dip is the finding worth keeping: telling an agent to self-test WITHOUT telling it
 what a strong test is produces weak probes and confident wrong ships — measurably worse than no
 rule. Test-strength language must travel with test-discipline language.
+
+## Fourth bed: intrusion-detection (medium, Luna) — and the prompt ceiling
+
+The failure, byte-identical across every baseline run: the task names the incident report by
+bare filename, the checker lists `/app` non-recursively, and the agent files it under an
+invented `/app/reports/` for tidiness. An unrequested improvement indistinguishable from a
+missing deliverable.
+
+| round | prompt change | resolved |
+| --- | --- | --- |
+| baseline | three skills | 0/3 (0/4 with the scout) |
+| iter 1 | finish-state gains "where the task is silent, be literal; artifacts named without a path land beside the deliverables" | 0/3 — injected in every request, lost to the tidiness prior |
+| iter 2 | sharpened to a prohibition: NEVER create a directory the task did not name; per-artifact literal-path check | 3/3 |
+| iter 3 | location became a TESTABLE criterion in prove-the-criteria (run scripts from a foreign cwd, assert the literal absolute path) | 3/5 |
+
+Aggregate after iter 2's text: 6/8 versus 0/7 before. The two residual failures are the same
+`reports/` move — on this model the prior survives ~40% of runs against three layers of
+instruction. That is the honest ceiling of prompt-only iteration for this behavior on Luna;
+the escalations past it are a stronger model, or a harness affordance (artifact-path
+validation at the boundary), or in real work simply review.
+
+Mechanism note worth keeping: the skill did NOT flap mid-wake — finish-state appears in all
+eight requests of a failing run, so the skills seam's per-request trigger scan held through a
+long wake. The residual is model compliance, not injection.
+
+Also from scout-2:
+- `broken-networking` is STRUCTURALLY out of scope for an installed agent: the task blackholes
+  DNS (the agent cannot reach its own model until the thing it must fix is fixed) and pins
+  `platform: linux/amd64` (the arm64 binary cannot run). Tasks of this class need the external
+  terminus-style driver, not an installed bough.
+- `bank-trans-filter` (easy) is a flaky 2/3: the "same name OR same account" rule is a
+  transitive closure the agent sometimes single-pass filters. Parked as a possible fifth bed;
+  its theme (relational rules are fixpoints) is real but the flakiness makes iteration noisy.
