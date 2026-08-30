@@ -261,8 +261,14 @@ mod tests {
 
     #[test]
     fn resolved_secrets_are_redacted_and_raw_expressions_stay() {
-        let cat = TestCatalog::default().with("actions-linear", &["api_key", "api_key_env", "max_tokens", "endpoint"]);
-        let mut c = Composer::new(&cat, ExprEnv::empty("tui").with_var("LINEAR_API_KEY", "lin_live_sekrit"));
+        let cat = TestCatalog::default().with(
+            "actions-linear",
+            &["api_key", "api_key_env", "max_tokens", "endpoint"],
+        );
+        let mut c = Composer::new(
+            &cat,
+            ExprEnv::empty("tui").with_var("LINEAR_API_KEY", "lin_live_sekrit"),
+        );
         c.layer(
             LayerId::new("bundle:bough-base"),
             Patch::parse(concat!(
@@ -295,7 +301,8 @@ mod tests {
         let mut c = Composer::new(&cat, ExprEnv::empty("tui"));
         c.layer(
             LayerId::new("bundle:b"),
-            Patch::parse("- id: a\n  plugin: actions-linear\n  config:\n    api_key: \"\"\n").unwrap(),
+            Patch::parse("- id: a\n  plugin: actions-linear\n  config:\n    api_key: \"\"\n")
+                .unwrap(),
         );
         let comp = c.compose().unwrap();
         let yaml = render(&comp, DumpFormat::Yaml);
@@ -305,10 +312,31 @@ mod tests {
 
     #[test]
     fn secret_field_predicate_matches_the_shipped_bundles() {
-        for masked in ["api_key", "token", "secret", "password", "gh_key", "access_token", "client_secret", "db_password", "API_KEY"] {
+        for masked in [
+            "api_key",
+            "token",
+            "secret",
+            "password",
+            "gh_key",
+            "access_token",
+            "client_secret",
+            "db_password",
+            "API_KEY",
+        ] {
             assert!(secret_field(masked), "{masked} should mask");
         }
-        for visible in ["api_key_env", "budget_tokens", "max_tokens", "default_max_tokens", "map_max_tokens", "reduce_max_tokens", "distill_max_tokens", "endpoint", "tokens", "path"] {
+        for visible in [
+            "api_key_env",
+            "budget_tokens",
+            "max_tokens",
+            "default_max_tokens",
+            "map_max_tokens",
+            "reduce_max_tokens",
+            "distill_max_tokens",
+            "endpoint",
+            "tokens",
+            "path",
+        ] {
             assert!(!secret_field(visible), "{visible} should stay visible");
         }
     }

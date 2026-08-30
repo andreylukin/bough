@@ -127,6 +127,7 @@ tracing-appender = { workspace = true }
 # as `tui-probe` is. Linked for the one reason every row above is: so `inventory::submit!` lands in
 # the binary's catalog.
 bough-plugin-tui-preview = { workspace = true }
+bough-plugin-tui-panel = { workspace = true }
 bough-plugin-tui-timeline = { workspace = true }
 bough-plugin-tui-drift = { workspace = true }
 bough-plugin-fault-inject = { workspace = true }

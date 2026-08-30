@@ -75,6 +75,7 @@ use bough_plugin_tui_status as _;
 use bough_plugin_actions_shim as _;
 use bough_plugin_fault_inject as _;
 use bough_plugin_tui_drift as _;
+use bough_plugin_tui_panel as _;
 use bough_plugin_tui_preview as _;
 use bough_plugin_tui_timeline as _;
 

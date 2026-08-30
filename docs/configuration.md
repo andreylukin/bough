@@ -11,7 +11,22 @@ bundles → profile patch → user patch ($BOUGH_HOME/bough.patch.yml)
 ```
 
 Later layers win, per field. `bough --profile <name> --dump-config` prints the composed document,
-the layer list and the warnings; it is the fastest way to answer "what is actually on?".
+the layer list and the warnings; it is the fastest way to answer "what is actually on?" from a
+shell. Resolved secret-shaped values render `«redacted»`; the raw expression stays visible.
+
+## The panel (`^t`, `/config`, `/connectors`, `/model`)
+
+The same answer on screen (§11 "The panel"): one tabbed Aux pane over the running composition.
+The **config** tab lists every row with its fiber state and which layer last wrote each field —
+when an edit "did nothing", the `disabled by <layer>` column names what outranked it. `x` flips
+a row through `$BOUGH_HOME/bough.ui.patch.yml` (the `ui` layer above): the panel only ever
+writes `disabled:` entries, withdraws an entry when you flip back, and deletes the file when the
+diff is empty — so resetting every toggle is deleting the file. `R` shows the dump renderer's
+output verbatim. The **connectors** tab joins the `mcp.*` rows with the seam (configured,
+registered and READY are three separate marks) and the `collect.*` rows with their schedule jobs
+(`s` sweeps one now). The **model** tab re-runs `model-policy`'s own `choose` per agent, lists
+adapter claims and whether each `api_key_env` variable is set, and reads the last
+`request/header` for what actually ran.
 
 ## Tool surface: code mode (default) and typed tools
 

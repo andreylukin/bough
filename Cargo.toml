@@ -162,6 +162,7 @@ bough-plugin-catch-up-on-wake = { path = "plugins/catch-up-on-wake" }         # 
 
 # ---- Phase c (track C): the digging panes, the audit's fault sites, the actions shim ----
 bough-plugin-tui-preview = { path = "plugins/tui-preview" }                    # §11 the byte-exact projection preview pane
+bough-plugin-tui-panel = { path = "plugins/tui-panel" }                        # §11 the tabbed panel over the running composition
 bough-plugin-tui-timeline = { path = "plugins/tui-timeline" }                  # §11 the cross-agent timeline pane
 bough-plugin-tui-drift = { path = "plugins/tui-drift" }                        # §8 the drift dashboard pane
 bough-plugin-fault-inject = { path = "plugins/fault-inject" }                  # §17 Phase 8 failure injection (catalog only)

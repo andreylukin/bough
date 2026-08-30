@@ -151,6 +151,19 @@ impl McpHandle {
         out
     }
 
+    /// Whether the named server's client reports itself ready to take a call. `None` for a name
+    /// the seam does not hold. Registered and ready are DIFFERENT facts: a resident process that
+    /// crashed keeps its registration (and its tools) while it restarts, and a surface that
+    /// conflated the two would render a dead server as live.
+    pub fn is_ready(&self, server: &ServerName) -> Option<bool> {
+        self.0
+            .servers
+            .lock()
+            .iter()
+            .find(|(_, c)| c.server() == server)
+            .map(|(_, c)| c.is_ready())
+    }
+
     fn client(&self, server: &ServerName) -> Result<Arc<dyn McpClient>, McpError> {
         self.0
             .servers

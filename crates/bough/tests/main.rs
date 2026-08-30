@@ -40,6 +40,7 @@ mod many_agents;
 mod mcp_call;
 mod memory_invariants;
 mod old_feed_surface;
+mod panel_swap;
 mod phase6_swap;
 mod preview_bytes;
 mod preview_bytes_v1;

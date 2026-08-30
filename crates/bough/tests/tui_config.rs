@@ -9,6 +9,7 @@ use bough_kernel::Plugin;
 use bough_plugin_commands::{CommandsConfig, CommandsPlugin};
 use bough_plugin_residents::{ResidentsConfig, ResidentsPlugin};
 use bough_plugin_tui_focus::{FocusConfig, FocusPlugin};
+use bough_plugin_tui_panel::{PanelConfig, PanelPlugin};
 use bough_plugin_tui_search::{SearchConfig, SearchPlugin};
 use bough_plugin_tui_shell::{ThemeName, TuiShellPlugin};
 use bough_plugin_tui_strip::{StripConfig, StripPlugin};
@@ -66,6 +67,16 @@ fn commands() -> CommandsConfig {
     }
 }
 
+fn panel() -> PanelConfig {
+    PanelConfig {
+        height: 18,
+        collapse_rows: 14,
+        min_rows: 6,
+        max_rows: 28,
+        refresh_ms: 1000,
+    }
+}
+
 #[test]
 fn the_shipped_phase_three_configs_all_validate() {
     assert!(TuiShellPlugin::validate(&shell()).is_ok());
@@ -74,6 +85,7 @@ fn the_shipped_phase_three_configs_all_validate() {
     assert!(SearchPlugin::validate(&search()).is_ok());
     assert!(ResidentsPlugin::validate(&residents()).is_ok());
     assert!(CommandsPlugin::validate(&commands()).is_ok());
+    assert!(PanelPlugin::validate(&panel()).is_ok());
     // The theme is an enum, so the shipped one is valid by construction; naming it here keeps the
     // fixture honest about which config it is validating.
     assert_eq!(shell().theme, ThemeName::Dark);
@@ -124,6 +136,15 @@ fn a_nonsense_value_is_refused_at_load_by_every_phase_three_row() {
         StripPlugin::validate(&c).is_err(),
         "about_lines: 0 with show_about"
     );
+
+    // A zero-cell panel can show no line; inverted row bounds would clamp silently in layout.
+    let mut c = panel();
+    c.height = 0;
+    assert!(PanelPlugin::validate(&c).is_err(), "panel height: 0");
+    let mut c = panel();
+    c.min_rows = 9;
+    c.max_rows = 3;
+    assert!(PanelPlugin::validate(&c).is_err(), "panel min > max");
 
     // `prefix: ' '` made every line beginning with a space a command.
     let mut c = commands();

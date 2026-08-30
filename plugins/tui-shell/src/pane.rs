@@ -46,9 +46,10 @@ pub enum Slot {
     Strip,
     /// The rest of the width: the focused agent.
     Main,
-    /// Under `Main`: search, and Phase 8's preview/timeline/drift.
+    /// Under `Main`: search, the panel, and Phase 8's preview/timeline/drift.
     Aux,
-    /// One line above the composer: toasts, key hints, the composition fingerprint.
+    /// One line above the composer: toasts and key hints. (The composition fingerprint is the
+    /// panel's config tab, not this line's — the claim used to live here and nothing rendered it.)
     Status,
 }
 

@@ -90,6 +90,19 @@
   plugin: tui-search
   config: { height: 12, limit: 50, debounce_ms: 150, snippet_radius: 40, window: 400 }
 
+# §11 "The panel": the tabbed surface over the running composition (config · connectors ·
+# model). Mounted by default because CLOSED IT COSTS ZERO ROWS (it reports zero Aux rows until
+# `^t` or `/config` opens it) — the constraint that kept the digging panes out of this bundle
+# does not bind it. Toggles write `$BOUGH_HOME/bough.ui.patch.yml` (§0.5, the `ui` layer).
+- id: tui.panel
+  plugin: tui-panel
+  config:
+    height: 18
+    collapse_rows: 14
+    min_rows: 6
+    max_rows: 28
+    refresh_ms: 1000
+
 - id: residents
   plugin: residents
   config:
