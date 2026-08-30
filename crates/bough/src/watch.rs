@@ -13,7 +13,7 @@ use bough_kernel::{Catalog, Kernel};
 use crate::cli::{BootError, Cli};
 use crate::compose::compose_for;
 
-/// Debounce window for the patch file: an editor's write-truncate-rename dance is one change.
+/// Debounce window for the patch files: an editor's write-truncate-rename dance is one change.
 const DEBOUNCE: Duration = Duration::from_millis(250);
 
 /// A running watch. Dropping it, or calling [`WatchHandle::stop`], stops watching.
@@ -51,11 +51,11 @@ impl WatchHandle {
     }
 }
 
-/// Watch `bough_util::user_patch_path()` with notify + a debouncer; on change, recompose through
-/// [`compose_for`] and hand the result to `kernel.update`.
+/// Watch `bough_util::user_patch_path()` and `bough_util::ui_patch_path()` with notify + a
+/// debouncer; on change, recompose through [`compose_for`] and hand the result to `kernel.update`.
 pub fn watch_user_patch(kernel: Arc<Kernel>, cli: Arc<Cli>) -> WatchHandle {
     let path = bough_util::user_patch_path();
-    // Watch the DIRECTORY: the file may not exist yet, and editors replace it by rename.
+    // Watch the DIRECTORY: the files may not exist yet, and editors replace them by rename.
     let dir = path
         .parent()
         .map(Path::to_path_buf)
@@ -63,11 +63,21 @@ pub fn watch_user_patch(kernel: Arc<Kernel>, cli: Arc<Cli>) -> WatchHandle {
     let _ = bough_util::ensure_dir(&dir);
     // Canonicalise: on macOS `$BOUGH_HOME` under `/var` is a symlink and the OS reports events
     // under `/private/var`, so an uncanonicalised comparison never matches and the watch is silent.
+    // Both names are built against the canonicalised dir; canonicalising the two paths separately
+    // would fail for a file that does not exist yet.
     let dir = dir.canonicalize().unwrap_or(dir);
-    let watched = dir.join(
+    let watched: Vec<std::path::PathBuf> = [
         path.file_name()
-            .unwrap_or_else(|| std::ffi::OsStr::new("bough.patch.yml")),
-    );
+            .unwrap_or_else(|| std::ffi::OsStr::new("bough.patch.yml"))
+            .to_os_string(),
+        bough_util::ui_patch_path()
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("bough.ui.patch.yml"))
+            .to_os_string(),
+    ]
+    .iter()
+    .map(|name| dir.join(name))
+    .collect();
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
     let debouncer = notify_debouncer_full::new_debouncer(
@@ -75,7 +85,10 @@ pub fn watch_user_patch(kernel: Arc<Kernel>, cli: Arc<Cli>) -> WatchHandle {
         None,
         move |res: notify_debouncer_full::DebounceEventResult| match res {
             Ok(events) => {
-                if events.iter().any(|e| e.paths.contains(&watched)) {
+                if events
+                    .iter()
+                    .any(|e| e.paths.iter().any(|p| watched.contains(p)))
+                {
                     let _ = tx.send(());
                 }
             }

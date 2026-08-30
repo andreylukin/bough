@@ -10,8 +10,14 @@
 //!   → bundles/<b>.yml for each b in profile.bundles, in the profile's order  "bundle:<b>"
 //!   → the profile's own `patch:` block                                       "profile:<name>"
 //!   → ~/.bough/bough.patch.yml (absent ⇒ skipped silently)                   "user"
+//!   → ~/.bough/bough.ui.patch.yml (absent ⇒ skipped silently)                "ui"
 //!   → each --patch FILE, in argument order                                   "patch:<n>:<file>"
 //! ```
+//!
+//! The `ui` layer is the panel's disabled-only toggle file (§0.5). It sits BEFORE the `--patch`
+//! overlays on purpose: an explicit per-invocation flag outranks a persisted preference, and the
+//! `scripts/tui/` fixtures that mount unbundled rows by `--patch` must keep working on a machine
+//! whose panel once toggled something.
 
 use std::path::PathBuf;
 
@@ -83,6 +89,22 @@ pub fn plan_layers(cli: &Cli) -> Result<(Profile, Sources, Vec<Layer>), BootErro
             base: parent_dir(&user),
             source: LayerSource::Text {
                 origin: user.display().to_string(),
+                yaml,
+            },
+        });
+    }
+
+    let ui = bough_util::ui_patch_path();
+    if ui.is_file() {
+        let yaml = std::fs::read_to_string(&ui).map_err(|e| BootError::BadFile {
+            path: ui.clone(),
+            detail: e.to_string(),
+        })?;
+        layers.push(Layer {
+            id: LayerId::new("ui"),
+            base: parent_dir(&ui),
+            source: LayerSource::Text {
+                origin: ui.display().to_string(),
                 yaml,
             },
         });
@@ -308,6 +330,10 @@ mod tests {
         std::fs::write(home.path().join("bough.patch.yml"), yaml).unwrap();
     }
 
+    fn write_ui_patch(home: &Home, yaml: &str) {
+        std::fs::write(home.path().join("bough.ui.patch.yml"), yaml).unwrap();
+    }
+
     fn cli(profile: &str, patches: Vec<PathBuf>) -> Cli {
         Cli {
             profile: profile.to_string(),
@@ -330,6 +356,7 @@ mod tests {
     fn layer_order_matches_requirements() {
         let home = Home::empty();
         write_user_patch(&home, "entries: {}\n");
+        write_ui_patch(&home, "entries: {}\n");
         let extra = home.path().join("extra.yml");
         std::fs::write(&extra, "entries: {}\n").unwrap();
 
@@ -342,8 +369,10 @@ mod tests {
                 "bundle:bough-codemode".to_string(),
                 "profile:tui".to_string(),
                 "user".to_string(),
+                "ui".to_string(),
                 format!("patch:0:{}", extra.display()),
-            ]
+            ],
+            "the ui layer sits between user and the --patch overlays"
         );
     }
 
@@ -360,6 +389,24 @@ mod tests {
                 "profile:tui"
             ],
             "an absent user patch is skipped silently, not an error"
+        );
+    }
+
+    #[test]
+    fn ui_patch_absent_is_not_an_error() {
+        let home = Home::empty(); // no bough.ui.patch.yml written
+        write_user_patch(&home, "entries: {}\n");
+        let (_p, _s, layers) = plan_layers(&cli("tui", vec![])).unwrap();
+        assert_eq!(
+            ids(&layers),
+            vec![
+                "bundle:bough-base",
+                "bundle:bough-tui-app",
+                "bundle:bough-codemode",
+                "profile:tui",
+                "user"
+            ],
+            "an absent ui patch is skipped silently, not an error"
         );
     }
 

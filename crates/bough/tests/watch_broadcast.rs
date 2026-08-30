@@ -116,6 +116,31 @@ async fn a_patch_that_stops_composing_broadcasts_and_leaves_the_tree_running() {
         "the rejected candidate must not have disturbed a running row"
     );
 
+    // Phase 2: the SAME watch must fire for the ui patch layer. Let any straggling debounce
+    // window from the first write drain, then write a bad ui patch and expect one more broadcast.
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let seen = failures.load(Ordering::SeqCst);
+    std::fs::write(
+        home_path.join("bough.ui.patch.yml"),
+        "entries:\n  hello.greeter:\n    plugin: greeting-whisper\n",
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while failures.load(Ordering::SeqCst) <= seen {
+        assert!(
+            Instant::now() < deadline,
+            "the watch must also fire for bough.ui.patch.yml (the ui layer)"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    kernel.quiesce().await;
+    let now = kernel.snapshot();
+    assert_eq!(
+        now.fingerprint, good.fingerprint,
+        "a rejected ui-layer candidate must leave the last good tree running"
+    );
+
     watch.stop().await;
     kernel.shutdown().await;
 }

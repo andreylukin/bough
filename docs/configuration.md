@@ -5,7 +5,9 @@ is REQUIREMENTS §0.5: `bundles/` are patch documents, `profiles/` are ordered b
 `--patch` layer configures rows that some bundle already created — it never creates one.
 
 ```
-bundles → profile patch → user patch ($BOUGH_HOME/bough.patch.yml) → --patch layers
+bundles → profile patch → user patch ($BOUGH_HOME/bough.patch.yml)
+        → ui patch ($BOUGH_HOME/bough.ui.patch.yml, the panel's disabled-only toggles)
+        → --patch layers
 ```
 
 Later layers win, per field. `bough --profile <name> --dump-config` prints the composed document,

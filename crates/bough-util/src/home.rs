@@ -25,9 +25,16 @@ pub fn bough_path(rel: impl AsRef<Path>) -> PathBuf {
     normalise(&bough_home().join(rel))
 }
 
-/// The user patch layer the launcher stacks last and watches: `bough_path("bough.patch.yml")`.
+/// The user patch layer the launcher stacks and watches: `bough_path("bough.patch.yml")`.
 pub fn user_patch_path() -> PathBuf {
     bough_path("bough.patch.yml")
+}
+
+/// The `ui` patch layer — disabled-only toggles written by the TUI's panel, stacked after the
+/// user patch (an explicit `--patch` still outranks it) and watched alongside it:
+/// `bough_path("bough.ui.patch.yml")`.
+pub fn ui_patch_path() -> PathBuf {
+    bough_path("bough.ui.patch.yml")
 }
 
 /// Create `p` and its parents if absent. Succeeds when it already exists.
@@ -128,6 +135,16 @@ mod tests {
         assert_eq!(
             user_patch_path(),
             PathBuf::from("/tmp/bough-util-test-patch/bough.patch.yml")
+        );
+    }
+
+    #[test]
+    fn ui_patch_path_is_under_bough_home() {
+        let _g = EnvGuard::take();
+        std::env::set_var("BOUGH_HOME", "/tmp/bough-util-test-patch");
+        assert_eq!(
+            ui_patch_path(),
+            PathBuf::from("/tmp/bough-util-test-patch/bough.ui.patch.yml")
         );
     }
 
