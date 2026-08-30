@@ -242,7 +242,11 @@ pub fn specs(
         ToolSpec {
             name: ToolName::new("bg"),
             description: "Run a shell command in the background, read its output, or kill it. \
-                          `{op: start, name, cmd}` | `{op: output, id}` | `{op: kill, id}`."
+                          `{op: start, name, cmd}` | `{op: output, id}` | `{op: kill, id}`. \
+                          Jobs are children of THIS session and end when it ends: right for dev \
+                          servers and watchers you use while working, wrong for anything that \
+                          must outlive you — start that as a real daemon (a service, or \
+                          `setsid nohup … &` via bash) and verify it survives."
                 .into(),
             input_schema: schema(serde_json::json!({
                 "type": "object",

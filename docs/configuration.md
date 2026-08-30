@@ -120,3 +120,24 @@ Three properties, all held by `plugins/mcp-rmcp/src/keychain.rs`:
 is a deployment's own statement. `collect.linear` keeps its GraphQL transport when `mcp_server`
 is empty; note the scope value differs per transport (MCP takes the team NAME, e.g. `FOMS`;
 GraphQL takes the key, e.g. `NME`).
+
+## Shipped default skills (`assets/skills/`)
+
+Three trigger-gated skills earned by the terminal-bench tuning arcs (`docs/tbench.md`), written
+general and benchmark-free. They are FILES, not rows: copy them into a home to enable them, and
+edit them live (the `skills` row watches the directory).
+
+    cp assets/skills/*.md "$BOUGH_HOME/skills/"
+
+- `operate-the-machine` — configure/server/install tasks: the machine you are on is the target;
+  converge live state; daemons must outlive you.
+- `finish-state` — the described end state is a contract; verification debris goes, asked-for
+  state stays.
+- `prove-the-criteria` — every stated behavior is an executable test at its most demanding
+  plausible shape; sabotage the artifact once to prove the test can fail. (The probe-strength
+  half is load-bearing: discipline text without it measurably made agents confidently wrong.)
+
+None of this belongs in the always-on identity: trigger gating keeps the standing prompt small
+and byte-stable (the §12 cache tiers), and the lane persona's draft-and-defer character stays
+untouched. The `bg` lifetime lesson from the same arcs lives in the `bg` TOOL DESCRIPTION
+(`tools-operator`), because a harness contract belongs where the model decides to use the tool.
