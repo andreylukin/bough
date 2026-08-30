@@ -95,3 +95,21 @@ Two generalizations worth keeping:
 - The iter-1 failure is a HARNESS truth the model could not know: `bg` is process-scoped. The
   skill now says so, but the `bg` tool's own description should say it too (and a `detach:`
   option would make the honest path easy). Filed as the next tool-description iteration.
+
+## Second bed: polyglot-c-py (medium, Luna, n=3 per round)
+
+| round | prompt change | resolved |
+| --- | --- | --- |
+| baseline | operate-the-machine only | **0/4** (scout + n=3), all four IDENTICAL: the polyglot itself was correct, but the agent verified with the instruction's own `gcc … -o /app/polyglot/cmain` example and left the binary; the checker asserts the directory holds ONLY `main.py.c` before it tests anything |
+| iter 1 | `skills/finish-state.md`: the described end state is a contract ("a single file in DIR" constrains the directory); verify hard but in scratch space or clean up after; the line is "state the task asks for stays, state your verification created goes"; `ls -la` the target locations last | **3/3** |
+
+Cross-bed regression (both skills active, one attempt each): configure-git-webserver,
+analyze-access-logs, polyglot-c-py — 3/3. The finishing doctrine's two halves do not fight:
+daemons the task asked for stay up, verification debris goes.
+
+Scout notes for the next bed (`~/tbench-runs/scout-1`): `cancel-async-tasks` (hard) fails on
+asyncio cancellation semantics ("Cleaned up." 0 of 2) — a reasoning failure, try a
+run-the-acceptance-criteria-as-tests discipline; `broken-networking` died with a harness
+`parse_error` worth understanding before trusting it as a bed; `gpt2-codegolf` is
+capability-shaped, not prompt-shaped; `sqlite-db-truncate` and `fix-code-vulnerability` pass
+already.
