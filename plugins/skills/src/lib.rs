@@ -13,6 +13,7 @@
 //! `Kernel::runtime().dispose(uid)`, which is the public API a plugin has for the child it mounted
 //! (see `docs/track-b-merge-notes.md`).
 
+pub mod command;
 pub mod invariant;
 pub mod parse;
 pub mod registry;
@@ -475,6 +476,7 @@ impl Plugin for SkillPlugin {
 
     fn inject() -> bough_kernel::Inject {
         bough_kernel::Inject::required(["projection", "ledger"])
+            .union(&bough_kernel::Inject::optional(["commands"]))
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
@@ -519,6 +521,23 @@ impl Plugin for SkillPlugin {
             Ok(())
         })
         .await?;
+
+        // The `/` palette (drivability): each skill is a `/name` command where a `commands` row
+        // is composed. A name an existing command already owns is left alone with a warning —
+        // `/help` must keep meaning help even if a skill spells itself that.
+        if let Ok(commands) = ctx.get::<bough_plugin_commands::Commands>() {
+            let taken = commands
+                .list(None)
+                .iter()
+                .any(|c| c.name.as_str() == skill.name);
+            if taken {
+                tracing::warn!(skill = %skill.name, "skill name shadows an existing command; no /{} for it", skill.name);
+            } else {
+                commands
+                    .register(&ctx, command::spec(Arc::clone(&skill)))
+                    .await?;
+            }
+        }
 
         let projection = ctx
             .get::<Projection>()

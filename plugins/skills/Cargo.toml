@@ -26,6 +26,8 @@ bough-plugin-projection = { workspace = true }
 bough-plugin-ledger = { workspace = true }
 bough-plugin-tools = { workspace = true }
 bough-plugin-commands = { workspace = true }
+bough-plugin-agents = { workspace = true }
+uuid = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-full = { workspace = true }
 sha2 = { workspace = true }

@@ -35,36 +35,49 @@ pub struct Item {
     pub summary: String,
 }
 
-/// PURE: prefix matches first, then substring, each group alphabetical. Stable, so the selection
-/// does not jump under the user as they type.
+/// PURE: prefix matches first, then substring, then fzf-style SUBSEQUENCE (the query's
+/// characters in order, anywhere in the name — `mnr` finds `monarch`), each group alphabetical.
+/// Stable, so the selection does not jump under the user as they type.
 ///
 /// The order depends on the NAME alone, never on registration order or on how long the query is,
 /// so a growing query only ever REMOVES rows: the row under the cursor cannot be swapped out from
-/// under a typist mid-word.
+/// under a typist mid-word. (A row may DEMOTE a tier as the query grows — `dr` is a prefix of
+/// `drift` but `drf` only a subsequence — which keeps it on screen rather than dropping it.)
 pub fn filter(all: &[CommandInfo], query: &str) -> Vec<Item> {
     let q = query.trim().trim_start_matches('/').to_lowercase();
     let mut prefix: Vec<&CommandInfo> = Vec::new();
     let mut substring: Vec<&CommandInfo> = Vec::new();
+    let mut fuzzy: Vec<&CommandInfo> = Vec::new();
     for info in all {
         let name = info.name.as_str().to_lowercase();
         if q.is_empty() || name.starts_with(&q) {
             prefix.push(info);
         } else if name.contains(&q) {
             substring.push(info);
+        } else if subsequence(&name, &q) {
+            fuzzy.push(info);
         }
     }
     let by_name = |a: &&CommandInfo, b: &&CommandInfo| a.name.as_str().cmp(b.name.as_str());
     prefix.sort_by(by_name);
     substring.sort_by(by_name);
+    fuzzy.sort_by(by_name);
     prefix
         .into_iter()
         .chain(substring)
+        .chain(fuzzy)
         .map(|info| Item {
             name: info.name.clone(),
             usage: info.usage.clone(),
             summary: info.summary.clone(),
         })
         .collect()
+}
+
+/// PURE: does `hay` contain `needle`'s characters in order? Both already lowercase.
+fn subsequence(hay: &str, needle: &str) -> bool {
+    let mut chars = hay.chars();
+    needle.chars().all(|n| chars.any(|h| h == n))
 }
 
 /// What a key did to the palette.
@@ -245,10 +258,38 @@ mod tests {
             .map(|i| i.name.to_string())
             .collect();
         assert_eq!(wide, ["dormant", "drift"]);
+        // `dr`: a prefix of drift; dormant DEMOTES to the subsequence tier (d…r…) rather than
+        // dropping — a growing query only ever removes rows whose letters stop matching.
         let narrow: Vec<String> = filter(&all, "dr")
             .iter()
             .map(|i| i.name.to_string())
             .collect();
-        assert_eq!(narrow, ["drift"]);
+        assert_eq!(narrow, ["drift", "dormant"]);
+        let narrower: Vec<String> = filter(&all, "dri")
+            .iter()
+            .map(|i| i.name.to_string())
+            .collect();
+        assert_eq!(narrower, ["drift"], "dormant has no i after the r");
+    }
+
+    /// Drivability: fzf-style matching — a subsequence finds a name its letters skip through,
+    /// ranked after prefix and substring matches, and a growing query never drops a still-valid
+    /// subsequence match.
+    #[test]
+    fn filter_falls_back_to_subsequence_after_prefix_and_substring() {
+        let all = vec![info("monarch"), info("dormant"), info("drift"), info("wiki")];
+        let hits: Vec<String> = filter(&all, "mnr")
+            .iter()
+            .map(|i| i.name.to_string())
+            .collect();
+        assert_eq!(hits, ["monarch"], "letters in order, gaps allowed");
+        let hits: Vec<String> = filter(&all, "drt")
+            .iter()
+            .map(|i| i.name.to_string())
+            .collect();
+        assert_eq!(hits, ["dormant", "drift"], "subsequence keeps both d-words");
+        assert!(filter(&all, "zzz").is_empty());
+        // Out-of-order letters are NOT a match: this is fzf, not a bag of chars.
+        assert!(filter(&all, "rnm").iter().all(|i| i.name.as_str() != "monarch"));
     }
 }
