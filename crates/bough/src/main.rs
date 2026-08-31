@@ -32,6 +32,11 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
+    // `bough restart` is transport too: it signals the lock's owner, waits for the release, and
+    // spawns a fresh resident — nothing composes in this process.
+    if matches!(cli.command, Some(cli::Command::Restart)) {
+        return runtime.block_on(bough::attach::restart());
+    }
     // The resident/attach transport (§0.1 item 2, §11 "The resident"): the bare default
     // invocation on a tty attaches to the home's resident — spawning one first when none is
     // live — and composes nothing in this process. Every explicit choice falls through to boot.

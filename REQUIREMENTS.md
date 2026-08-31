@@ -34,7 +34,10 @@ requirements; each names the seams and plugins that carry it.
    first when none is live; every explicit choice (`--local`, `--resident`, a subcommand,
    `--check`, `--dump-config`, a non-default profile, `--patch`, `--root`) composes in-process as
    before. The client owns its own terminal (raw mode, alt screen, restore — a dead resident can
-   never wedge the tty); the server half is the `tui.attach` row (§11 "The resident").
+   never wedge the tty); the server half is the `tui.attach` row (§11 "The resident"). `bough
+   restart` is transport too: SIGINT the home lock's owner (the same clean teardown as a terminal
+   Ctrl+C), wait for the flock to release, spawn a fresh resident — and never SIGKILL, because a
+   hung teardown is reported, not shot.
 3. **`bough-util`**: branded ids, home paths, timeouts. A library; no `ctx` key.
 
 Everything else is a plugin row in a bundle. The base bundle (`bough-base`, a YAML patch list, not

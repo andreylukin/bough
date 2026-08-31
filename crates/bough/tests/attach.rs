@@ -65,10 +65,12 @@ async fn resident() -> Resident {
     let home = tempfile::tempdir().expect("a temp home");
     std::fs::create_dir_all(home.path().join("bundles")).unwrap();
     std::fs::create_dir_all(home.path().join("profiles")).unwrap();
-    std::fs::write(home.path().join("bundles/attachtest.yml"), BUNDLE).unwrap();
+    // Named `bough-tui-app` so boot takes the HOME LOCK, exactly as the shipped profile
+    // does — the restart verb finds its target through that lock.
+    std::fs::write(home.path().join("bundles/bough-tui-app.yml"), BUNDLE).unwrap();
     std::fs::write(
         home.path().join("profiles/tui.yml"),
-        "name: tui\ninvariants: false\nbundles: [attachtest]\n",
+        "name: tui\ninvariants: false\nbundles: [bough-tui-app]\n",
     )
     .unwrap();
     let child = std::process::Command::new(env!("CARGO_BIN_EXE_bough"))
@@ -248,4 +250,60 @@ async fn the_socket_is_removed_when_the_resident_exits() {
         !r.socket().exists(),
         "a clean exit takes the socket file with it"
     );
+}
+
+/// `bough restart` end to end: the running resident is asked to leave through the same teardown
+/// a terminal Ctrl+C takes, the flock's release is what "it left" means, and a fresh resident
+/// owns the socket afterwards. The fresh one boots the SHIPPED tree (restart forwards no --root),
+/// which the scratch home isolates.
+#[tokio::test(flavor = "multi_thread")]
+async fn restart_replaces_the_resident_and_a_client_attaches_to_the_new_one() {
+    let mut r = resident().await;
+    let old_pid = std::fs::read_to_string(r.home.path().join("lock"))
+        .expect("the lock file")
+        .trim()
+        .parse::<i32>()
+        .expect("the owner pid");
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_bough"))
+        .arg("restart")
+        .env("BOUGH_HOME", r.home.path())
+        .env("HOME", r.home.path())
+        .output()
+        .expect("run bough restart");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "restart exits 0: {stderr}");
+    assert!(
+        stderr.contains(&format!("asked pid {old_pid} to leave")),
+        "the old owner is named: {stderr}"
+    );
+
+    // The old process is gone. It is this test's own CHILD, so it lingers as a zombie —
+    // `kill(pid, 0)` still answers a zombie — until `wait` reaps it; the flock's release
+    // already proved the death, the reap is bookkeeping.
+    let status = r.child.wait().expect("reap the old resident");
+    assert!(
+        status.success(),
+        "the old resident tore down cleanly: {status}"
+    );
+    assert_ne!(
+        unsafe { libc::kill(old_pid, 0) },
+        0,
+        "pid {old_pid} must be gone"
+    );
+    let new_pid = std::fs::read_to_string(r.home.path().join("lock"))
+        .expect("the new lock file")
+        .trim()
+        .parse::<i32>()
+        .expect("the new owner pid");
+    assert_ne!(new_pid, old_pid, "a fresh process holds the home");
+    let mut c = attach(&r).await;
+    screen_until(&mut c, "Type").await;
+
+    // Clean up the shipped-tree resident this test spawned; `Resident::drop` only knows the old.
+    unsafe { libc::kill(new_pid, libc::SIGINT) };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while unsafe { libc::kill(new_pid, 0) } == 0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
 }

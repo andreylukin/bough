@@ -69,6 +69,10 @@ pub struct Cli {
 pub enum Command {
     /// Run ONE task through the ordinary loop, print the answer, exit.
     Exec(ExecArgs),
+    /// Stop the home's composing process (clean teardown) and start a fresh resident. A launcher
+    /// transport verb like the attach flow itself (§0.1 item 2): it composes nothing in this
+    /// process, so `main` intercepts it before boot.
+    Restart,
     /// `bough mcp call <server> <tool> <json>` — one MCP tool call, printed, exit.
     Mcp(McpArgs),
     /// `bough wards test <file> [--since]` — dry-fire a ward against past ledger events.

@@ -171,6 +171,9 @@ pub fn compose_plan(cli: &Cli, catalog: &Catalog) -> Result<(Profile, Compositio
                 let base = row_config(&first, WARD_TEST_ROW);
                 layers.push(wards_test_layer(args, &base));
             }
+            // `restart` is intercepted in `main` before anything composes; this arm exists so
+            // the match stays exhaustive and writes no layer if a future path ever composes it.
+            crate::cli::Command::Restart => {}
         }
     }
 

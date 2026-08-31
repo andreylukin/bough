@@ -75,6 +75,82 @@ pub async fn attach_or_spawn() -> ExitCode {
     }
 }
 
+/// `bough restart`: ask the home's composing process to leave (SIGINT, the same clean-teardown
+/// path as a terminal Ctrl+C), wait for the home lock's flock to release — held for the life of
+/// the process, so its release IS teardown finished — then spawn a fresh resident and wait for
+/// its socket. With nothing running it degrades to "start one". Never SIGKILL: a teardown that
+/// hangs is reported, not shot, because the half-written ledger is worth more than the restart.
+pub async fn restart() -> ExitCode {
+    let home = bough_util::bough_home();
+    match crate::lock::acquire(&home) {
+        Ok(free) => {
+            drop(free);
+            eprintln!("bough: nothing is running in this home; starting a resident");
+        }
+        Err(crate::lock::LockError::Held { pid: Some(pid), .. }) => {
+            // SAFETY: kill(2) with a valid signal; it neither reads nor writes memory.
+            if unsafe { libc::kill(pid as libc::pid_t, libc::SIGINT) } != 0 {
+                let e = std::io::Error::last_os_error();
+                eprintln!("bough: could not signal pid {pid}: {e}");
+                return ExitCode::FAILURE;
+            }
+            eprintln!("bough: asked pid {pid} to leave\u{2026}");
+            let deadline =
+                std::time::Instant::now() + std::time::Duration::from_millis(CLIENT_WAIT_MS);
+            loop {
+                match crate::lock::acquire(&home) {
+                    Ok(free) => {
+                        drop(free);
+                        break;
+                    }
+                    Err(_) if std::time::Instant::now() < deadline => {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                    Err(_) => {
+                        eprintln!(
+                            "bough: pid {pid} did not release the home within {CLIENT_WAIT_MS}ms; \
+                             not starting a second one on top of it"
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+        }
+        Err(crate::lock::LockError::Held { pid: None, path }) => {
+            eprintln!(
+                "bough: something holds {} but wrote no pid; not guessing what to signal",
+                path.display()
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(crate::lock::LockError::Io(e)) => {
+            eprintln!("bough: could not probe the home lock: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    match spawn_and_wait(&socket_path()).await {
+        Ok(mut stream) => {
+            // Say hello and leave: the connect proved the socket, and a client that never speaks
+            // would sit in the fresh resident's log as a handshake timeout.
+            let hello = ClientHello {
+                version: proto::VERSION,
+                cols: 80,
+                rows: 24,
+            };
+            if let Ok(payload) = proto::encode("hello", &hello) {
+                let _ = proto::write_frame(&mut stream, proto::C_HELLO, &payload).await;
+                let _ = proto::read_frame(&mut stream).await;
+            }
+            println!("bough: restarted; run `bough` to attach");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("bough: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// Spawn `bough --resident` detached from this terminal and wait for its socket.
 async fn spawn_and_wait(path: &Path) -> anyhow::Result<UnixStream> {
     eprintln!("bough: no resident is running; starting one\u{2026}");
