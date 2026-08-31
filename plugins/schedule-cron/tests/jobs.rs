@@ -20,6 +20,7 @@ fn cfg(dir: &std::path::Path, timeout_ms: u64) -> Arc<CronConfig> {
     Arc::new(CronConfig {
         state_db: dir.join("schedule.db"),
         job_timeout_ms: timeout_ms,
+        pending_retry_ms: 0,
     })
 }
 
@@ -366,4 +367,71 @@ async fn a_cadence_finer_than_the_librarys_tick_is_refused_by_name() {
         "the refusal names the tick it is measured against: {text}"
     );
     assert!(sched.jobs().is_empty(), "nothing was registered");
+}
+
+/// A job that is `Pending` until its referent "appears" (two runs), then `Ran` — the shape of a
+/// command racing the registry at boot.
+struct EventuallyThere {
+    fires: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl Job for EventuallyThere {
+    async fn run(&self, _fire: JobFire) -> JobOutcome {
+        let n = self.fires.fetch_add(1, Ordering::SeqCst);
+        if n < 2 {
+            JobOutcome::Pending {
+                reason: "no command named `seal` in this tree yet".into(),
+            }
+        } else {
+            JobOutcome::Ran {
+                detail: "sealed".into(),
+            }
+        }
+    }
+}
+
+/// Drivability (2026-08-31): a `Pending` run retries on `pending_retry_ms` instead of waiting a
+/// whole cadence, one retry in flight at a time, until the run stops being pending.
+#[tokio::test]
+async fn a_pending_run_retries_on_the_backoff_until_it_lands() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let ctx = ctx();
+    let cfg = Arc::new(CronConfig {
+        state_db: dir.path().join("schedule.db"),
+        job_timeout_ms: 1000,
+        pending_retry_ms: 50,
+    });
+    let sched = CronScheduler::start(cfg, ctx.clone()).await.expect("a scheduler");
+    let job = Arc::new(EventuallyThere {
+        fires: AtomicUsize::new(0),
+    });
+    let _reg = sched
+        .register(&ctx, spec("pass", every(3_600_000), false, job.clone()))
+        .await
+        .expect("registered");
+    // The first fire is pending…
+    let run = sched.fire_now(&JobName::new("pass")).await.expect("fired");
+    assert!(matches!(run.outcome, JobOutcome::Pending { .. }), "{run:?}");
+    // …and the retries land it without any cadence coming round.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let last = sched
+            .jobs()
+            .into_iter()
+            .find(|j| j.name.as_str() == "pass")
+            .and_then(|j| j.last);
+        if let Some(last) = &last {
+            if matches!(last.outcome, JobOutcome::Ran { .. }) {
+                assert_eq!(last.reason, FireReason::Retry, "{last:?}");
+                break;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the retries never landed: {last:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert_eq!(job.fires.load(Ordering::SeqCst), 3, "pending, pending, ran");
 }

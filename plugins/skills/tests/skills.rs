@@ -51,6 +51,7 @@ fn assembler_cfg() -> AssemblerConfig {
         headroom: 0.6,
         tail_steps: 20,
         tail_floor_steps: 4,
+        dialogue_steps: 0,
         mail_newest_n: 3,
         max_tiers: 3,
         file_view_dir: std::env::temp_dir(),

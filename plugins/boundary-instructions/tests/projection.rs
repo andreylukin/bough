@@ -41,6 +41,7 @@ async fn fixture() -> (Arc<Assembler>, LedgerHandle) {
         headroom: 1.0,
         tail_steps: 20,
         tail_floor_steps: 5,
+        dialogue_steps: 0,
         mail_newest_n: 3,
         max_tiers: 3,
         file_view_dir: std::path::PathBuf::from("/nonexistent-unless-a-test-writes"),

@@ -28,6 +28,7 @@ parking_lot = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
+bough-plugin-agents = { workspace = true }
 # The one sanctioned exception to "consumers never depend on a provider" (P1-D1): the goldens link
 # BOTH ledger providers on purpose and compare them byte for byte.
 bough-plugin-ledger-sqlite = { workspace = true }

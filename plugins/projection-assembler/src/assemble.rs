@@ -92,6 +92,14 @@ pub async fn assemble(a: &Assembler, req: &AssembleRequest) -> Result<Assembled,
     }
     sections.extend(bands::tiers(&sreq, cfg, &expired).await?);
     let (tail_section, tail_steps) = bands::tail(&sreq, cfg, &expired).await?;
+    // The dialogue band rides the tail's start: the conversation steps OLDER than the verbatim
+    // window, so a tool-heavy wake cannot evict the thread (drivability, 2026-08-31). `order()`
+    // sorts it ahead of the tail by its `Place::Before`.
+    if let Some(s) =
+        bands::dialogue(&sreq, cfg, &expired, tail_steps.first().map(|s| s.seq)).await?
+    {
+        sections.push(s);
+    }
     if let Some(s) = tail_section {
         sections.push(s);
     }

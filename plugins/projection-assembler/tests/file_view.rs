@@ -29,6 +29,7 @@ fn cfg(dir: std::path::PathBuf) -> AssemblerConfig {
         headroom: 1.0,
         tail_steps: 12,
         tail_floor_steps: 3,
+        dialogue_steps: 0,
         mail_newest_n: 2,
         max_tiers: 3,
         file_view_dir: dir,

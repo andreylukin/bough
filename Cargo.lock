@@ -1616,6 +1616,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bough-kernel",
+ "bough-plugin-agents",
  "bough-plugin-ledger",
  "bough-plugin-ledger-memory",
  "bough-plugin-ledger-sqlite",

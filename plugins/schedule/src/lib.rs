@@ -123,6 +123,11 @@ pub enum FireReason {
     CatchUp,
     /// [`Scheduler::fire_now`].
     Manual,
+    /// A short-backoff retry of a run that came back `Pending` — a missing referent at boot
+    /// (a command not registered yet, an agent not up yet) must not wait a whole cadence to be
+    /// tried again (drivability, 2026-08-31: the nightly pass raced the command registry at
+    /// catch-up and then waited for a 04:00 cron the laptop never sees).
+    Retry,
 }
 
 /// What a run did.

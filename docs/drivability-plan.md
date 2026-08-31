@@ -97,6 +97,19 @@ Diagnoses done (input render path, injection audit, push path). Landed and teste
   the driver loss — seen on the 5cdc6fd1-era binary; if a post-fix resident wedges the same way
   (`sample <pid>` shows no kevent), it is still live and worth a real hunt.
 
+### Follow-along fixes (2026-08-31 evening, after the GLM conversation diagnosis)
+- **Dialogue band** (`projection-assembler`): the newest `dialogue_steps` (12) conversation
+  steps older than the tail stay verbatim, so a tool-heavy wake (6–9 steps per codemode call)
+  cannot evict the thread. `0` = off; goldens unchanged. TUI treats its steps as in-context.
+- **Sealing scheduled at all**: `/seal` had NO schedule row — five days, zero rollups. New
+  `schedule.seal` row (same `schedule-reconsolidate` plugin, job names now `system:<command>`),
+  every 30 min with catch-up.
+- **Pending retries** (`schedule-cron`): a `Pending` run (command racing the registry at boot —
+  why `system:reconsolidate` never ran) retries on `pending_retry_ms` (60s) instead of waiting a
+  whole cadence.
+- OPEN: `cache_read_tokens: 0` on the OpenRouter/GLM path — caching not engaging; teardown-order
+  grumble `provider=projection dependent=boundary` at shutdown (seen in `--check` 20:41).
+
 ## Workstream order
 1. **Diagnose in parallel** (read-only audits): input→timeline render path; injection row
    state; push/exec path + resident spawn env.

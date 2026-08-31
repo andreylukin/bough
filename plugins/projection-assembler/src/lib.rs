@@ -40,6 +40,12 @@ pub struct AssemblerConfig {
     pub tail_steps: usize,
     /// The floor §5 names: rung 2 never shrinks the tail below this.
     pub tail_floor_steps: usize,
+    /// How many CONVERSATION steps (`mail/delivered`, `thought/text`) older than the tail stay
+    /// verbatim besides — so the thread survives a tool-heavy wake: codemode burns 6–9 ledger
+    /// steps per call, and a tool-spam wake can evict the whole dialogue from a step-counted
+    /// tail before the model answers (seen live 2026-08-31). `0` = off.
+    #[serde(default)]
+    pub dialogue_steps: usize,
     /// The "newest N" a collapsed mail header keeps.
     pub mail_newest_n: usize,
     /// Tiers above this are never rendered.
@@ -275,6 +281,7 @@ pub(crate) mod test_support {
             headroom: 1.0,
             tail_steps: 20,
             tail_floor_steps: 5,
+            dialogue_steps: 0,
             mail_newest_n: 3,
             max_tiers: 3,
             file_view_dir: std::path::PathBuf::from("/nonexistent-unless-a-test-writes"),

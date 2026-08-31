@@ -26,6 +26,10 @@
     headroom: 0.6
     tail_steps: 60
     tail_floor_steps: 10
+    # The thread, kept: the newest conversation steps older than the tail stay verbatim, so a
+    # tool-heavy wake (codemode: 6-9 steps per call) cannot evict everything either party said
+    # (drivability, 2026-08-31).
+    dialogue_steps: 12
     mail_newest_n: 5
     max_tiers: 3
     file_view_dir: !!expr 'bough_path("views")'
@@ -264,7 +268,13 @@
   plugin: schedule
 - id: schedule.cron
   plugin: schedule-cron
-  config: { state_db: !!expr 'bough_path("schedule.db")', job_timeout_ms: 300000 }
+  config:
+    state_db: !!expr 'bough_path("schedule.db")'
+    job_timeout_ms: 300000
+    # A `Pending` run (a command racing the registry at boot) retries on this backoff instead of
+    # waiting a whole cadence (drivability, 2026-08-31: reconsolidate lost its catch-up fire to
+    # the race and the 04:00 cron never sees the laptop awake).
+    pending_retry_ms: 60000
 
 # §7: the boundary block, one source, every agent's projection.
 - id: boundary
@@ -462,13 +472,19 @@
   plugin: catch-up-on-wake
   config: { min_sleep_ms: 60000, kinds: [resident] }
 
-# §8/§5: the two system passes as schedule rows.
+# §8/§5: the system passes as schedule rows.
 - id: schedule.catch-up
   plugin: schedule-catch-up
   config: { cadence: { every_ms: 1800000 }, catch_up: true, kinds: [resident] }
 - id: schedule.reconsolidate
   plugin: schedule-reconsolidate
   config: { cadence: { cron: "0 0 4 * * *" }, catch_up: true, command: "reconsolidate", agent: sol }
+# Drivability (2026-08-31): NOTHING scheduled sealing — `/seal` existed only as a manual command,
+# so five days of use produced zero rollups and the projection had no tiers to fall back on when
+# the tail overflowed. Same plugin, second row: the pass is just a command on a cadence.
+- id: schedule.seal
+  plugin: schedule-reconsolidate
+  config: { cadence: { every_ms: 1800000 }, catch_up: true, command: "seal", agent: sol }
 
 # ---- Phase codemode: the DEFAULT consumer of the `tools` seam (Andrey, 2026-08-28) ----
 #

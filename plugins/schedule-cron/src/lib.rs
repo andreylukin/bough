@@ -34,6 +34,15 @@ pub struct CronConfig {
     pub state_db: PathBuf,
     /// How long a single job run may take before it is abandoned and recorded `Failed`.
     pub job_timeout_ms: u64,
+    /// How soon a run that came back `Pending` is tried again — a missing referent at boot (a
+    /// command racing the registry) must not wait a whole cadence (drivability, 2026-08-31).
+    /// `0` = never retry; a pending run then waits for its next cadence, the old behavior.
+    #[serde(default = "default_pending_retry_ms")]
+    pub pending_retry_ms: u64,
+}
+
+fn default_pending_retry_ms() -> u64 {
+    60_000
 }
 
 /// The scheduler's tick, in ms. NOT a config field: `tokio-cron-scheduler` 0.15 sleeps a
@@ -56,6 +65,8 @@ pub struct CronScheduler {
     sched: JobScheduler,
     /// A self-reference for the tick callbacks. Weak, so the callbacks never keep the row alive.
     me: Mutex<Weak<CronScheduler>>,
+    /// Jobs with a pending-retry armed, so a `Pending` streak keeps ONE retry in flight.
+    retrying: Mutex<std::collections::BTreeSet<JobName>>,
 }
 
 impl CronScheduler {
@@ -83,6 +94,7 @@ impl CronScheduler {
             uuids: Mutex::new(BTreeMap::new()),
             sched,
             me: Mutex::new(Weak::new()),
+            retrying: Mutex::new(std::collections::BTreeSet::new()),
         });
         *me.me.lock() = Arc::downgrade(&me);
         Ok(me)
@@ -129,14 +141,40 @@ impl CronScheduler {
                 }
             }
         };
-        self.record(
+        let run = self.record(
             &name,
             JobRun {
                 at,
                 reason,
                 outcome,
             },
-        )
+        );
+        // A `Pending` run names a referent that does not exist YET; try again on a short
+        // backoff instead of waiting a whole cadence. The retry's own run re-arms the next one,
+        // so a streak keeps exactly one timer alive; a disposed job's retry fires into
+        // `Unknown` and stops.
+        if matches!(run.outcome, JobOutcome::Pending { .. }) {
+            self.arm_pending_retry(&name);
+        }
+        run
+    }
+
+    /// Arm ONE retry for `name`, `pending_retry_ms` from now. A no-op when retries are off or
+    /// one is already armed.
+    fn arm_pending_retry(&self, name: &JobName) {
+        let ms = self.cfg.pending_retry_ms;
+        if ms == 0 || !self.retrying.lock().insert(name.clone()) {
+            return;
+        }
+        let weak = self.me.lock().clone();
+        let name = name.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+            if let Some(me) = weak.upgrade() {
+                me.retrying.lock().remove(&name);
+                let _ = me.fire(&name, Utc::now(), FireReason::Retry).await;
+            }
+        });
     }
 
     /// The one place a completed run is written down: the row's own store, the listing row, and

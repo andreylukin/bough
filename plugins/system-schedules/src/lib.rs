@@ -259,7 +259,10 @@ impl Plugin for ReconsolidatePlugin {
             .register(
                 &ctx,
                 JobSpec {
-                    name: JobName::new(RECONSOLIDATE_JOB),
+                    // Named for the COMMAND, so two rows of this plugin (the nightly
+                    // reconsolidate, the sealing pass) register distinct jobs; the historical
+                    // `system:reconsolidate` spelling is unchanged for that command.
+                    name: JobName::new(format!("system:{}", cfg.command)),
                     cadence: cfg.cadence.clone(),
                     catch_up: cfg.catch_up,
                     job: Arc::new(ReconsolidateJob {

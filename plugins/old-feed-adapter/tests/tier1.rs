@@ -126,6 +126,7 @@ async fn the_projection_shows_them_in_the_tiers_band() {
             headroom: 0.6,
             tail_steps: 20,
             tail_floor_steps: 4,
+            dialogue_steps: 0,
             mail_newest_n: 5,
             max_tiers: 3,
             file_view_dir: fx.dir.path().join("views"),

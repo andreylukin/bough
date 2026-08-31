@@ -86,7 +86,9 @@ async fn check(ctx: Context) -> Result<(), InvariantViolation> {
         return Ok(());
     };
     for job in schedule.0.jobs() {
-        if job.name.as_str() != crate::RECONSOLIDATE_JOB {
+        // Every command pass this plugin registers (`system:<command>`), except catch-up which
+        // has its own shape.
+        if !job.name.as_str().starts_with("system:") || job.name.as_str() == crate::CATCH_UP_JOB {
             continue;
         }
         if let Some(last) = &job.last {

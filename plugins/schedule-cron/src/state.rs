@@ -35,6 +35,7 @@ pub fn reason_str(r: FireReason) -> &'static str {
         FireReason::Cadence => "cadence",
         FireReason::CatchUp => "catch-up",
         FireReason::Manual => "manual",
+        FireReason::Retry => "retry",
     }
 }
 
@@ -44,6 +45,7 @@ pub fn reason_of(s: &str) -> FireReason {
     match s {
         "catch-up" => FireReason::CatchUp,
         "manual" => FireReason::Manual,
+        "retry" => FireReason::Retry,
         _ => FireReason::Cadence,
     }
 }

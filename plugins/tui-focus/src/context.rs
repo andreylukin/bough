@@ -222,7 +222,9 @@ pub fn classify(id: &str, slot: Slot, title: &str, body: &str) -> Kind {
         "identity" => return Kind::Head,
         "digest" => return Kind::Digest,
         "pins" => return Kind::Pins,
-        "tail" => return Kind::Tail,
+        // The dialogue band is the tail's older half: its steps are in the model's context
+        // verbatim, and the transcript treats them exactly like tail steps.
+        "tail" | "dialogue" => return Kind::Tail,
         "mail" => return Kind::Mail,
         _ => {}
     }

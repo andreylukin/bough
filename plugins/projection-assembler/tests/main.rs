@@ -5,6 +5,7 @@
 
 mod support;
 
+mod dialogue;
 mod expiry;
 mod file_view;
 mod golden;

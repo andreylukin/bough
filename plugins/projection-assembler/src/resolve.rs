@@ -106,6 +106,7 @@ mod tests {
             headroom: 0.6,
             tail_steps: 10,
             tail_floor_steps: 2,
+            dialogue_steps: 0,
             mail_newest_n: 3,
             max_tiers: 3,
             file_view_dir: PathBuf::from("/views"),

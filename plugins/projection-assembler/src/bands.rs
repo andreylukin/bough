@@ -7,11 +7,11 @@
 use std::collections::BTreeSet;
 
 use bough_plugin_ledger::{
-    AgentRow, Class, Pin, Ref, Rollup, RollupKind, RollupQuery, Step, StepType,
+    AgentRow, Class, Pin, Ref, Rollup, RollupKind, RollupQuery, Seq, Step, StepType,
 };
 use bough_plugin_projection::{
-    tokens, Position, ProjectionError, RenderedSection, SectionCites, SectionId, SectionRequest,
-    Slot,
+    tokens, Place, Position, ProjectionError, RenderedSection, SectionCites, SectionId,
+    SectionRequest, Slot,
 };
 
 use crate::AssemblerConfig;
@@ -374,6 +374,75 @@ pub async fn tail(
         .filter(|s| !expired.steps.contains(&s.id))
         .collect();
     Ok((tail_section(&steps), steps))
+}
+
+// ---- dialogue ---------------------------------------------------------------------------------
+
+/// **Dialogue** — the newest `dialogue_steps` conversation steps (`mail/delivered`,
+/// `thought/text`) OLDER than the verbatim tail, rendered verbatim right before it. The tail is
+/// step-counted and codemode burns 6–9 steps per tool call, so one research wake can evict every
+/// word either party ever said; this band is what keeps the thread (drivability, 2026-08-31 —
+/// the "couldn't follow along" conversation answered with nothing but its own tool spam in
+/// context).
+pub async fn dialogue(
+    req: &SectionRequest,
+    cfg: &AssemblerConfig,
+    expired: &bough_plugin_rollups::Expired,
+    tail_start: Option<Seq>,
+) -> Result<Option<RenderedSection>, ProjectionError> {
+    if cfg.dialogue_steps == 0 {
+        return Ok(None);
+    }
+    // An empty tail means the chain itself is empty (or everything expired): nothing older.
+    let Some(tail_start) = tail_start else {
+        return Ok(None);
+    };
+    let mut steps = req
+        .ledger
+        .0
+        .steps(&bough_plugin_ledger::StepQuery {
+            trajs: vec![req.connected.own.clone()],
+            kinds: vec![StepType::new("mail/delivered"), StepType::new("thought/text")],
+            // The tail window is already `as_of`-bounded, so bounding by its start keeps
+            // §2.7 item 3 honest without a second `as_of` filter.
+            before: Some(tail_start),
+            order: bough_plugin_ledger::Order::SeqDesc,
+            limit: Some(cfg.dialogue_steps),
+            ..Default::default()
+        })
+        .await?;
+    steps.reverse();
+    let steps: Vec<Step> = steps
+        .into_iter()
+        .filter(|s| !expired.steps.contains(&s.id))
+        .collect();
+    Ok(dialogue_section(&steps))
+}
+
+/// Pure: the dialogue band over an already-selected window. `None` for an empty window. Flat
+/// step lines — no wake headers: these are the words, plucked from many wakes.
+pub fn dialogue_section(steps: &[Step]) -> Option<RenderedSection> {
+    if steps.is_empty() {
+        return None;
+    }
+    let mut body = String::new();
+    let mut cites = SectionCites::default();
+    for s in steps {
+        body.push_str(&step_line(s));
+        cites.steps.push(s.id.clone());
+    }
+    let mut out = section(
+        "dialogue",
+        Slot::Tail,
+        "Conversation so far (older than the recent steps)",
+        body,
+        cites,
+    );
+    out.position = Position {
+        slot: Slot::Tail,
+        place: Place::Before,
+    };
+    Some(out)
 }
 
 /// Pure: the tail band over an already-selected window. `None` for an empty window.

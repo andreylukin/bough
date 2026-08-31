@@ -62,6 +62,7 @@ pub fn assembler_config() -> AssemblerConfig {
         headroom: 1.0,
         tail_steps: 40,
         tail_floor_steps: 8,
+        dialogue_steps: 0,
         mail_newest_n: 5,
         max_tiers: 3,
         file_view_dir: std::path::PathBuf::from("/unused-by-these-tests"),

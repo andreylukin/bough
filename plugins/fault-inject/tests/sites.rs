@@ -110,6 +110,7 @@ async fn a_projection_section_fault_returns_err_from_the_section_and_not_from_as
             headroom: 1.0,
             tail_steps: 12,
             tail_floor_steps: 3,
+            dialogue_steps: 0,
             mail_newest_n: 2,
             max_tiers: 3,
             file_view_dir: PathBuf::from("/unused-by-this-test"),
