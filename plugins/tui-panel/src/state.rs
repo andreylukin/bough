@@ -52,6 +52,10 @@ pub struct PanelState {
     pub tab: Option<Tab>,
     pub cursor: usize,
     pub scroll: usize,
+    /// Set when the CURSOR moved (arrows, a tab switch), consumed by the next render: the reveal
+    /// clamp runs then and only then. Without this the render snapped `scroll` back to the
+    /// cursor's line on EVERY frame, so a wheel scroll bounced straight back (found live, ^t).
+    pub reveal: bool,
     /// The viewport height of the LAST frame; `handle` has no `area`.
     pub height: u16,
     /// Config tab: show `render()`'s output verbatim instead of the joined rows.
@@ -186,10 +190,12 @@ pub fn on_key(key: crossterm::event::KeyEvent, st: &mut PanelState) -> Action {
         }
         KeyCode::Up => {
             st.cursor = st.cursor.saturating_sub(1);
+            st.reveal = true;
             Action::Redraw
         }
         KeyCode::Down => {
             st.cursor = (st.cursor + 1).min(st.items().len().saturating_sub(1));
+            st.reveal = true;
             Action::Redraw
         }
         KeyCode::Enter | KeyCode::Char(' ') => {
@@ -404,6 +410,29 @@ mod tests {
             on_key(KeyEvent::from(KeyCode::Char('R')), &mut st),
             Action::Ignored
         );
+    }
+
+    #[test]
+    fn a_wheel_scroll_does_not_arm_the_reveal_and_arrows_do() {
+        let mut st = PanelState {
+            open: true,
+            height: 5,
+            ..Default::default()
+        };
+        st.scroll_by(3, 40);
+        assert_eq!(st.scroll, 3);
+        assert!(
+            !st.reveal,
+            "a wheel scroll must not arm the reveal clamp, or the next render snaps it back"
+        );
+        let _ = on_key(
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Down,
+                crossterm::event::KeyModifiers::NONE,
+            ),
+            &mut st,
+        );
+        assert!(st.reveal, "moving the cursor is what asks for a reveal");
     }
 
     #[test]

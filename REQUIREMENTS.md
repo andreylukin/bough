@@ -630,7 +630,10 @@ does; the seam's start/result vocabulary leaves room, the Providers do not imple
 
 - `llm` (Definition): message and stream vocabulary, the adapter registration seam, the
   `agent/request` and `llm/stream` waterfalls. Providers: `llm-anthropic` (bough-llm's existing
-  client, wrapped), `llm-replay` (test profile: answers from a recorded transcript), others as
+  client, wrapped), `llm-openai` (the Responses API, `openai:*`), `llm-openrouter` (the
+  chat-completions aggregator: `openrouter:vendor/model` is the policy spelling, the prefix is
+  stripped to OpenRouter's own id at the wire, and a slashless id is refused rather than
+  misrouted), `llm-replay` (test profile: answers from a recorded transcript), others as
   rows when wanted. `llm-retry` (backon) is a waterfall listener on `agent/request-error`, not
   adapter code. Model failures surface as terminal stream chunks, never as thrown errors, so
   consumers do not guess whether an exception came from the provider, a wrapper, or their own

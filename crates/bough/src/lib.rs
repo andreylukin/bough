@@ -23,6 +23,7 @@ use bough_plugin_exec_headless as _;
 use bough_plugin_llm as _;
 use bough_plugin_llm_anthropic as _;
 use bough_plugin_llm_openai as _;
+use bough_plugin_llm_openrouter as _;
 use bough_plugin_llm_replay as _;
 use bough_plugin_llm_retry as _;
 use bough_plugin_model_policy as _;

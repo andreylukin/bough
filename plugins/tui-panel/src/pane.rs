@@ -410,14 +410,17 @@ impl Pane for PanelPane {
         st.height = area.height.saturating_sub(0);
         let theme = *cx.theme();
         let view = crate::view::lines(&st, area.width, &theme, cx.view.is_focused);
-        // Reveal: the selected item's first line stays inside the viewport, however the last
-        // refresh moved it.
-        if let Some(&line) = view.item_lines.get(st.cursor) {
-            let h = area.height.max(1) as usize;
-            if line < st.scroll {
-                st.scroll = line;
-            } else if line >= st.scroll + h {
-                st.scroll = line + 1 - h;
+        // Reveal: when the CURSOR just moved, its item's first line is brought into the
+        // viewport. Only then — clamping on every frame made the wheel useless, because the
+        // very next paint snapped `scroll` back to wherever the cursor was (found live, ^t).
+        if std::mem::take(&mut st.reveal) {
+            if let Some(&line) = view.item_lines.get(st.cursor) {
+                let h = area.height.max(1) as usize;
+                if line < st.scroll {
+                    st.scroll = line;
+                } else if line >= st.scroll + h {
+                    st.scroll = line + 1 - h;
+                }
             }
         }
         let top = st

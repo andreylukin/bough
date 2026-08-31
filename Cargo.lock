@@ -332,6 +332,7 @@ dependencies = [
  "bough-plugin-llm",
  "bough-plugin-llm-anthropic",
  "bough-plugin-llm-openai",
+ "bough-plugin-llm-openrouter",
  "bough-plugin-llm-replay",
  "bough-plugin-llm-retry",
  "bough-plugin-mail-router",
@@ -1282,6 +1283,27 @@ dependencies = [
 
 [[package]]
 name = "bough-plugin-llm-openai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bough-kernel",
+ "bough-llm",
+ "bough-plugin-llm",
+ "bough-util",
+ "futures",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "bough-plugin-llm-openrouter"
 version = "0.1.0"
 dependencies = [
  "anyhow",
