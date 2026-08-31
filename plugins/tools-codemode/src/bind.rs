@@ -182,6 +182,24 @@ fn is_identifier_path(s: &str) -> bool {
     parts.all(is_member)
 }
 
+/// One namespace member derived from a registered name: every character JS cannot carry in an
+/// identifier becomes `_`, and a leading non-starter gains one. Only the namespace derivation
+/// calls this; a human-written alias or namespace key is validated strictly instead.
+fn js_member_of(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 1);
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+            out.push(c);
+        } else {
+            out.push('_');
+        }
+    }
+    match out.chars().next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' || c == '$' => out,
+        _ => format!("_{out}"),
+    }
+}
+
 /// A member name may be a reserved word (`ledger.new` is legal), but must still be an identifier.
 fn is_member(s: &str) -> bool {
     let mut c = s.chars();
@@ -353,7 +371,19 @@ pub fn bindings_hiding(
             .max_by_key(|(_, prefix)| prefix.len());
         let js = match ns {
             Some((ns, prefix)) => {
-                let rest = name[prefix.len()..].replace("__", ".");
+                // Members derived from a REGISTERED name are sanitized, not refused: an MCP
+                // server is free to call itself `incident-io`, no patch here controls that, and
+                // one foreign hyphen must not take the whole injected surface down (it did: the
+                // binding list errored and code mode initialized with nothing). The model reads
+                // the sanitized spelling off the same derivation the roster prints, dispatch
+                // still carries the REAL tool name, and a collision the mangling creates is the
+                // loud `Collision` below. Aliases and namespaces stay strict — they are config a
+                // person wrote and a typo there should fail the load, not be guessed around.
+                let rest = name[prefix.len()..]
+                    .split("__")
+                    .map(js_member_of)
+                    .collect::<Vec<_>>()
+                    .join(".");
                 format!("{ns}.{rest}")
             }
             None => name.clone(),
@@ -1301,6 +1331,28 @@ mod tests {
             out.iter().find(|b| b.js == "claim").unwrap().tool,
             "propose_claim"
         );
+    }
+
+    #[test]
+    fn a_hyphenated_mcp_tool_binds_with_underscores_instead_of_failing_the_surface() {
+        let specs = vec![spec("bash"), spec("mcp__incident-io__action_create")];
+        let out = bindings(&specs, &BTreeMap::new(), &map(&[("mcp", "mcp__")]))
+            .expect("one foreign hyphen must not take the whole surface down");
+        let js: Vec<&str> = out.iter().map(|b| b.js.as_str()).collect();
+        assert_eq!(js, vec!["bash", "mcp.incident_io.action_create"]);
+        assert_eq!(
+            out.iter().last().unwrap().tool,
+            "mcp__incident-io__action_create",
+            "dispatch still carries the REAL tool name"
+        );
+    }
+
+    #[test]
+    fn two_mcp_names_that_sanitize_to_one_path_collide_loudly() {
+        let specs = vec![spec("mcp__a-b__t"), spec("mcp__a_b__t")];
+        let err = bindings(&specs, &BTreeMap::new(), &map(&[("mcp", "mcp__")]))
+            .expect_err("the mangling must never silently merge two tools");
+        assert!(matches!(err, BindError::Collision { js, .. } if js == "mcp.a_b.t"));
     }
 
     #[test]
