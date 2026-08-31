@@ -1,0 +1,24 @@
+plugins/tools-codemode/src/bind.rs
+  6338bcab2a64960e 185-202,374-386,1336-1355
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "cc9f0e4d506d571b3e960b8f77a231929044eeb2",
+  "prompts": {
+    "6338bcab2a64960e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a82984e4-af8c-40e3-a020-e0d326528061",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Andrey Lukin",
+      "messages": [],
+      "total_additions": 53,
+      "total_deletions": 1,
+      "accepted_lines": 53,
+      "overriden_lines": 0,
+      "messages_url": "https://uni-git-ai-cas.sre.aws.ai-internal.com//cas/06e3e0ddef383372eb530c1775381ef59c96dfb2e9e60f3376f761a6ffc0d190"
+    }
+  }
+}
