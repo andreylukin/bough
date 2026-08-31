@@ -837,6 +837,7 @@ async fn mount_ward(
         inject: Default::default(),
         group: Vec::new(),
         include: None,
+        critical: true,
     };
     let handle = ctx
         .mount(child)

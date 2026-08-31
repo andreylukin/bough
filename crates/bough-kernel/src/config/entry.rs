@@ -42,6 +42,16 @@ pub struct Entry {
     /// by id (Decision D19).
     #[serde(default)]
     pub include: Option<PathBuf>,
+    /// Whether this row failing to activate FAILS THE BOOT (§0.2's default). `critical: false`
+    /// marks a row the tree runs WITHOUT — reported loudly, never fatal — for rows that read the
+    /// world's files rather than bough's own config (drivability §5: a foreign tree must not be
+    /// able to take the harness down). A row's runtime-mounted children inherit its criticality.
+    #[serde(default = "critical_default")]
+    pub critical: bool,
+}
+
+fn critical_default() -> bool {
+    true
 }
 
 /// A row's declared service dependencies.

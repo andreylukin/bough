@@ -139,6 +139,7 @@ pub fn child_entry(
         inject: Default::default(),
         group: Vec::new(),
         include: None,
+        critical: true,
     })
 }
 

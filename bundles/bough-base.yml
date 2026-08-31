@@ -277,6 +277,7 @@
 # outermost first, then `<root>/.claude/<file>` (drivability §5, 2026-08-31).
 - id: prompt.files
   plugin: prompt-files
+  critical: false
   config:
     root: "."
     files: [AGENTS.md, CLAUDE.md]
@@ -420,6 +421,7 @@
 # `only`/`except` are command substrings — the way to turn individual hooks on or off.
 - id: hooks.parity
   plugin: hooks-parity
+  critical: false
   config:
     timeout_ms: 60000
     max_output_bytes: 65536
@@ -430,6 +432,9 @@
     limits: { max_actions: 16, max_spawns: 2, max_text_bytes: 8192 }
 - id: skills
   plugin: skills
+  # These three rows read the WORLD's files (`~/.claude`, `~/.codex`, project trees), not bough's
+  # own config: they degrade loudly instead of failing the boot (drivability §5, 2026-08-31).
+  critical: false
   config:
     # `bough_path`, NOT `home_path` — see the `wards` row.
     dir: !!expr 'bough_path("skills")'

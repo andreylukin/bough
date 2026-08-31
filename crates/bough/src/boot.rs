@@ -97,6 +97,13 @@ pub async fn boot(mut cli: Cli) -> Result<ExitCode, BootError> {
         eprint!("{}", describe_unresolved(&snapshot));
         return Ok(ExitCode::FAILURE);
     }
+    // Degraded, not dead: say what the tree runs without, on stderr (readable before a TUI row
+    // takes the alt screen) and into the log (readable after).
+    let degraded = describe_degraded(&snapshot);
+    if !degraded.is_empty() {
+        eprint!("{degraded}");
+        tracing::warn!("{}", degraded.trim_end());
+    }
 
     if cli.check {
         kernel.shutdown().await;
@@ -150,21 +157,24 @@ pub fn report_warnings(warnings: &[bough_kernel::ComposeWarning]) {
     }
 }
 
-/// After quiesce, every row with `disabled == false` must be ACTIVE.
+/// After quiesce, every CRITICAL row with `disabled == false` must be ACTIVE.
 ///
 /// On failure the caller prints each unresolved row with its unmet keys, awaits
-/// `kernel.shutdown()`, and exits 1.
+/// `kernel.shutdown()`, and exits 1. A non-critical row that never activated DEGRADES the tree
+/// instead (drivability §5: one plugin must not be able to take the harness down) — the caller
+/// reports it with [`describe_degraded`] and boots on.
 pub fn assert_all_activated(s: &TreeSnapshot) -> Result<(), BootError> {
-    let unresolved = s.unresolved();
-    if unresolved.is_empty() {
+    let fatal = s.unresolved().iter().filter(|r| r.critical).count();
+    if fatal == 0 {
         Ok(())
     } else {
-        Err(BootError::Unresolved(unresolved.len()))
+        Err(BootError::Unresolved(fatal))
     }
 }
 
 /// Render the unresolved rows for the boot-failure message: one line per row, naming the row, its
-/// plugin and each unmet key.
+/// plugin and each unmet key. Non-critical rows are listed too — the boot is failing anyway, and
+/// hiding them would understate the damage — marked as such.
 pub fn describe_unresolved(s: &TreeSnapshot) -> String {
     let rows = s.unresolved();
     let mut out = String::new();
@@ -182,13 +192,38 @@ pub fn describe_unresolved(s: &TreeSnapshot) -> String {
         } else {
             r.unmet.join(", ")
         };
+        let mark = if r.critical { "" } else { " · non-critical" };
         out.push_str(&format!(
-            "  {} (plugin `{}`) is {:?}; unmet: {}\n",
+            "  {} (plugin `{}`) is {:?}; unmet: {}{mark}\n",
             r.id, plugin, r.state, unmet
         ));
         if let Some(e) = &r.error {
             out.push_str(&format!("      error: {e}\n"));
         }
+    }
+    out
+}
+
+/// Render the DEGRADED note for a boot that goes on: the non-critical rows the tree is running
+/// without. Empty when there are none. Said on stderr AND into the log — a row silently absent is
+/// the worst kind of absent.
+pub fn describe_degraded(s: &TreeSnapshot) -> String {
+    let rows = s.unresolved();
+    let degraded: Vec<_> = rows.iter().filter(|r| !r.critical).collect();
+    if degraded.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        "bough: running WITHOUT {} non-critical row(s):\n",
+        degraded.len()
+    );
+    for r in &degraded {
+        let plugin = r.plugin.as_deref().unwrap_or("<no plugin>");
+        out.push_str(&format!("  {} (plugin `{}`) is {:?}", r.id, plugin, r.state));
+        if let Some(e) = &r.error {
+            out.push_str(&format!(" — {e}"));
+        }
+        out.push('\n');
     }
     out
 }
@@ -207,6 +242,7 @@ mod tests {
             uid: None,
             state,
             disabled,
+            critical: true,
             unmet: unmet.iter().map(|s| s.to_string()).collect(),
             error: None,
             provides: Vec::new(),
@@ -251,6 +287,38 @@ mod tests {
             !msg.contains("greeting.provider"),
             "an ACTIVE row must not be reported: {msg}"
         );
+    }
+
+    /// Drivability §5: a non-critical row failing DEGRADES the boot instead of killing it — the
+    /// tree runs, the row is reported — while a critical failure still fails, listing both.
+    #[test]
+    fn a_non_critical_failure_degrades_instead_of_failing_the_boot() {
+        let failed = |id: &str, critical: bool| {
+            let mut r = row(id, FiberState::Failed, false, &[]);
+            r.critical = critical;
+            r.error = Some("skill `x`: no YAML frontmatter".to_string());
+            r
+        };
+        let degraded = snapshot(vec![
+            row("ledger", FiberState::Active, false, &[]),
+            failed("skills.broken", false),
+        ]);
+        assert!(
+            assert_all_activated(&degraded).is_ok(),
+            "a non-critical failure boots on"
+        );
+        let note = describe_degraded(&degraded);
+        assert!(note.contains("running WITHOUT 1 non-critical row(s)"), "{note}");
+        assert!(note.contains("skills.broken"), "{note}");
+        assert!(note.contains("no YAML frontmatter"), "{note}");
+        assert_eq!(describe_degraded(&snapshot(vec![])), "");
+
+        let fatal = snapshot(vec![failed("ledger", true), failed("skills.broken", false)]);
+        let err = assert_all_activated(&fatal).unwrap_err();
+        assert!(matches!(err, BootError::Unresolved(1)), "only the critical one counts: {err}");
+        let msg = describe_unresolved(&fatal);
+        assert!(msg.contains("ledger"), "{msg}");
+        assert!(msg.contains("skills.broken") && msg.contains("non-critical"), "{msg}");
     }
 
     #[test]

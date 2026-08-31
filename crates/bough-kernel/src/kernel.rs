@@ -556,6 +556,7 @@ impl Kernel {
     fn row_snapshot(&self, e: &Entry) -> RowSnapshot {
         let fiber = self.fiber_of(&e.id);
         RowSnapshot {
+            critical: e.critical,
             id: e.id.clone(),
             plugin: e.plugin.clone(),
             uid: fiber.as_ref().map(|f| f.uid()),
@@ -579,7 +580,9 @@ impl Kernel {
                 // under the fiber that mounted them.
                 if let Some(f) = fiber.as_ref().and_then(|f| self.rt.get(f.uid())) {
                     for child in f.children() {
-                        if let Some(row) = self.fiber_snapshot(child) {
+                        // A nested mount INHERITS the mounting row's criticality: a non-critical
+                        // host's whole runtime subtree is non-critical.
+                        if let Some(row) = self.fiber_snapshot(child, e.critical) {
                             if !kids.iter().any(|k| k.id == row.id) {
                                 kids.push(row);
                             }
@@ -591,10 +594,12 @@ impl Kernel {
         }
     }
 
-    /// A row that exists only as a fiber: a nested mount, and its own nested mounts.
-    fn fiber_snapshot(&self, uid: FiberUid) -> Option<RowSnapshot> {
+    /// A row that exists only as a fiber: a nested mount, and its own nested mounts. `critical`
+    /// is INHERITED from the row that mounted it, all the way down.
+    fn fiber_snapshot(&self, uid: FiberUid, critical: bool) -> Option<RowSnapshot> {
         let f = self.rt.get(uid)?;
         Some(RowSnapshot {
+            critical,
             id: f.id().clone(),
             plugin: f.plugin().map(str::to_string),
             uid: Some(uid),
@@ -607,7 +612,7 @@ impl Kernel {
             children: f
                 .children()
                 .into_iter()
-                .filter_map(|c| self.fiber_snapshot(c))
+                .filter_map(|c| self.fiber_snapshot(c, critical))
                 .collect(),
         })
     }
@@ -1051,6 +1056,9 @@ pub struct RowSnapshot {
     pub uid: Option<FiberUid>,
     pub state: FiberState,
     pub disabled: bool,
+    /// From the entry, inherited by nested mounts. A non-critical row failing degrades the tree
+    /// instead of failing the boot (the launcher's call to make).
+    pub critical: bool,
     pub unmet: Vec<String>,
     /// The rendered `apply` failure, when the row is `Failed`. A boot failure that named the row
     /// and not the reason sent every reader to the debugger (§0.2: misconfiguration fails LOUD,
@@ -1071,6 +1079,7 @@ pub struct UnresolvedRow {
     pub unmet: Vec<String>,
     /// The `apply` failure, when there was one.
     pub error: Option<String>,
+    pub critical: bool,
 }
 
 impl TreeSnapshot {
@@ -1093,6 +1102,7 @@ pub fn unresolved_rows(rows: &[RowSnapshot]) -> Vec<UnresolvedRow> {
                     state: r.state,
                     unmet: r.unmet.clone(),
                     error: r.error.clone(),
+                    critical: r.critical,
                 });
             }
             walk(&r.children, out);
@@ -1124,6 +1134,7 @@ pub(crate) mod tests {
             inject: Inject::none(),
             group: Vec::new(),
             include: None,
+            critical: true,
         })
     }
 

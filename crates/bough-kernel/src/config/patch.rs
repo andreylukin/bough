@@ -105,6 +105,10 @@ impl Patch {
                     row.inject = inj.clone();
                     record(id, "inject");
                 }
+                if let Some(c) = ep.critical {
+                    row.critical = c;
+                    record(id, "critical");
+                }
             }
         }
         for id in &self.remove {
@@ -140,6 +144,7 @@ pub struct EntryPatch {
     pub disabled: Option<Expr<bool>>,
     pub isolate: Option<BTreeMap<String, RealmLabel>>,
     pub inject: Option<Inject>,
+    pub critical: Option<bool>,
 }
 
 /// A new row and where it goes.

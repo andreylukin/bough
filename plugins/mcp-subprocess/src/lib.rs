@@ -124,6 +124,7 @@ pub fn child_entry(parent: &str, row: &ProcessRow, limits: &RuntimeLimits) -> bo
         inject: Default::default(),
         group: Vec::new(),
         include: None,
+        critical: true,
     }
 }
 

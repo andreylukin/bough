@@ -202,6 +202,7 @@ fn evaluate_rows(
             inject: r.inject.clone(),
             group: evaluate_rows(&r.group, env)?,
             include: None,
+            critical: r.critical,
         });
     }
     Ok(out)

@@ -117,6 +117,10 @@ pub fn child_entry(parent: &str, path: &Path, digest: &str, host: &SkillsConfig)
         inject: Default::default(),
         group: Vec::new(),
         include: None,
+        // A child from the host's OWN pool is the host's configuration; a child from a foreign
+        // root must never be able to fail the boot. (Snapshots also inherit the host row's
+        // criticality, so a non-critical host wins either way.)
+        critical: path.starts_with(&host.dir),
     }
 }
 
@@ -212,22 +216,64 @@ pub fn scan_root(root: &Path) -> Result<Vec<(PathBuf, String)>, std::io::Error> 
     }
 }
 
-/// The whole discovered set: the pool directory's flat files AND its `SKILL.md` walk (so
-/// `$BOUGH_HOME/skills` carries both layouts), then every root's `SKILL.md` walk. A path found
-/// twice is listed once.
+/// The whole discovered set, in PRECEDENCE order: the pool directory's flat files, its
+/// `SKILL.md` walk (so `$BOUGH_HOME/skills` carries both layouts), then every root's walk. A
+/// path found twice is listed once — and so is a NAME: two roots spelling one skill would mount
+/// two children under one id and fail the boot, so the first spelling wins (the pool, then the
+/// roots in config order; within a walk, path order — which is how a plugin's installed `cache`
+/// copy shadows its `marketplaces` checkout).
 pub fn scan_all(cfg: &SkillsConfig) -> Result<Vec<(PathBuf, String)>, std::io::Error> {
     let mut out = scan_dir(&cfg.dir, &cfg.glob)?;
     out.extend(scan_root(&cfg.dir)?);
     for root in &cfg.roots {
         out.extend(scan_root(root)?);
     }
-    out.sort();
-    out.dedup_by(|a, b| a.0 == b.0);
-    out.retain(|(p, _)| {
-        let name = skill_name_of(p);
-        (cfg.only.is_empty() || cfg.only.contains(&name)) && !cfg.except.contains(&name)
-    });
-    Ok(out)
+    let mut paths: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut kept: Vec<(PathBuf, String)> = Vec::new();
+    for (p, d) in out {
+        if !paths.insert(p.clone()) {
+            continue;
+        }
+        // A foreign file that is not a parseable skill is dropped HERE, before it can claim its
+        // name — so a malformed installed copy falls through to a valid checkout of the same
+        // skill instead of shadowing it. The file was already read for its digest; parsing the
+        // frontmatter besides is noise-level work.
+        if !p.starts_with(&cfg.dir) {
+            if let Err(e) = read_skill(&p, cfg.max_bytes) {
+                tracing::warn!(file = %p.display(), error = %e, "foreign skill skipped");
+                continue;
+            }
+        }
+        let name = skill_name_of(&p);
+        if !names.insert(name.clone()) {
+            continue;
+        }
+        if !(cfg.only.is_empty() || cfg.only.contains(&name)) || cfg.except.contains(&name) {
+            continue;
+        }
+        kept.push((p, d));
+    }
+    Ok(kept)
+}
+
+/// Read and parse one skill file against the host's cap. Pure IO + [`parse_skill`]; the caller
+/// decides whether an error is loud (own pool) or a warning (foreign root).
+pub fn read_skill(path: &Path, max_bytes: usize) -> Result<Skill, SkillError> {
+    let io = |detail: String| SkillError::Io {
+        path: path.display().to_string(),
+        detail,
+    };
+    let bytes = std::fs::read(path).map_err(|e| io(e.to_string()))?;
+    if bytes.len() > max_bytes {
+        return Err(SkillError::TooBig {
+            path: path.display().to_string(),
+            bytes: bytes.len(),
+            max: max_bytes,
+        });
+    }
+    let text = String::from_utf8(bytes).map_err(|e| io(e.to_string()))?;
+    parse_skill(path, &text)
 }
 
 /// The host row.
@@ -443,32 +489,25 @@ impl Plugin for SkillPlugin {
         SkillsHostPlugin::validate(&cfg.host)
     }
 
-    /// Parse the file — refusing LOUDLY, so the child entry FAILS naming the file — then register
-    /// ONE section.
+    /// Parse the file, then register ONE section. A file in the host's OWN pool refuses LOUDLY —
+    /// the child entry FAILS naming the file, because your pool is your configuration (§0.2). A
+    /// file discovered under a foreign root (`~/.claude/plugins` holds plain-markdown files with
+    /// no frontmatter) is WARNED about and mounts inert instead: the world's trees must not be
+    /// able to fail the boot (drivability §5, seen live 2026-08-31).
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
         let entry = ctx.entry_id().clone();
+        let strict = cfg.path.starts_with(&cfg.host.dir);
         let fail = |e: SkillError| PluginError::new(entry.clone(), anyhow::Error::new(e));
 
-        let bytes = std::fs::read(&cfg.path).map_err(|e| {
-            fail(SkillError::Io {
-                path: cfg.path.display().to_string(),
-                detail: e.to_string(),
-            })
-        })?;
-        if bytes.len() > cfg.host.max_bytes {
-            return Err(fail(SkillError::TooBig {
-                path: cfg.path.display().to_string(),
-                bytes: bytes.len(),
-                max: cfg.host.max_bytes,
-            }));
-        }
-        let text = String::from_utf8(bytes).map_err(|e| {
-            fail(SkillError::Io {
-                path: cfg.path.display().to_string(),
-                detail: e.to_string(),
-            })
-        })?;
-        let skill = Arc::new(parse_skill(&cfg.path, &text).map_err(fail)?);
+        let parsed = read_skill(&cfg.path, cfg.host.max_bytes);
+        let skill = match parsed {
+            Ok(s) => Arc::new(s),
+            Err(e) if strict => return Err(fail(e)),
+            Err(e) => {
+                tracing::warn!(file = %cfg.path.display(), error = %e, "foreign skill skipped");
+                return Ok(());
+            }
+        };
 
         // The pool registration is an effect, so an unloaded skill leaves no trace on the cap.
         let pool = registry::pool(&cfg.host.dir);
@@ -686,6 +725,37 @@ mod tests {
                 ..base.clone()
             }),
             vec!["alpha"]
+        );
+    }
+
+    /// The 2026-08-31 boot failure: `~/.claude/plugins` holds plain-markdown `SKILL.md` files
+    /// with no frontmatter. A malformed FOREIGN file is dropped at scan — it neither fails the
+    /// boot nor claims its name away from a valid copy elsewhere; and one valid copy per name
+    /// survives across roots.
+    #[test]
+    fn a_malformed_foreign_skill_is_dropped_and_never_shadows_a_valid_copy() {
+        let t = tempfile::tempdir().unwrap();
+        let pool = t.path().join("pool");
+        std::fs::create_dir_all(&pool).unwrap();
+        let root = t.path().join("root");
+        for (dir, body) in [
+            ("a-cache/ab", "# plain markdown, no frontmatter\n"),
+            ("b-market/ab", "---\nname: ab\ndescription: d\n---\nbody\n"),
+            ("broken", "no frontmatter here either\n"),
+        ] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+            std::fs::write(root.join(dir).join("SKILL.md"), body).unwrap();
+        }
+        let c = SkillsConfig {
+            dir: pool,
+            roots: vec![root.clone()],
+            ..cfg()
+        };
+        let kept = scan_all(&c).expect("scans");
+        assert_eq!(
+            kept.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>(),
+            vec![root.join("b-market/ab/SKILL.md")],
+            "the valid copy of `ab` survives; `broken` is absent; nothing fails"
         );
     }
 

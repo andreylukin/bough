@@ -74,7 +74,12 @@ code) is the composition, and every row in it is individually replaceable.
   constants and security invariants stay fixed in code.
 - **Misconfiguration fails loud** at load when self-contained, else at the earliest resolvable
   point; never silently skip a missing referent. A patch naming an absent row id is a warning; an
-  enabled row that never activates is a boot failure.
+  enabled row that never activates is a boot failure — unless the row is marked
+  `critical: false`, in which case the boot DEGRADES loudly and runs without it (stderr + log,
+  never silent). Non-critical is for rows that read the WORLD's files (`~/.claude`, `~/.codex`,
+  project trees) rather than bough's own config: a foreign tree must not be able to take the
+  harness down (drivability §5, 2026-08-31). A row's runtime-mounted children inherit its
+  criticality.
 - **Every plugin crate owns an `invariant` module** that checks an authoritative event stream or
   data relation it owns over time (not service presence, not plugin metadata), or states
   `No runtime invariant:` with a reason. The kernel runs them in dev and test profiles. The
