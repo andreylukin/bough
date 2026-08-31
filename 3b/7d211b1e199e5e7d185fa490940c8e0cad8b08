@@ -1,0 +1,24 @@
+specs/rebuild-requirements.md
+  167b3f33fd8b13e9 1-11,13-27,29,31-375,378-380,382-407
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "3b7d211b1e199e5e7d185fa490940c8e0cad8b08",
+  "prompts": {
+    "167b3f33fd8b13e9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c1913c68-bbd2-4a2c-99b7-7f7d42a959da",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Andrey Lukin",
+      "messages": [],
+      "total_additions": 637,
+      "total_deletions": 230,
+      "accepted_lines": 401,
+      "overriden_lines": 6,
+      "messages_url": "https://uni-git-ai-cas.sre.aws.ai-internal.com//cas/e3b0b30bc436d6957da0f9c4e48931d9de5c954a759e174175ede7946fa501a1"
+    }
+  }
+}
