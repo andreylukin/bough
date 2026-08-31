@@ -157,8 +157,9 @@ pub async fn run_client(stream: UnixStream) -> anyhow::Result<u8> {
     // From here the terminal is ENTERED and every way out must restore it. The guard's
     // bookkeeping is process-global, so the panic hook and the explicit restore agree.
     let unhook = bough_plugin_tui_shell::install_panic_hook();
-    let guard = bough_plugin_tui_shell::TerminalGuard::enter_flags(ack.mouse)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let guard =
+        bough_plugin_tui_shell::TerminalGuard::enter_flags(ack.mouse, ack.keyboard_enhancement)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // This terminal's events, straight onto the wire. The task ends when the socket closes under
     // it or stdin does; either way the main loop below is what decides the exit.

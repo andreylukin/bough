@@ -543,6 +543,70 @@ pub fn standing_lines(
     (lines, hits)
 }
 
+/// PURE: the fixed material, OPENED (D11-4): each head section under its own rule, its text dim.
+/// Drawn at the top of the scrolling half — a system prefix is hundreds of lines, and the
+/// standing block must not grow by that.
+pub fn head_lines(view: &ContextView, width: u16, theme: &Theme) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    if !view.head_open {
+        return lines;
+    }
+    for s in view.head() {
+        lines.push(band(
+            &s.title.to_lowercase(),
+            &tokens_text(s.tokens),
+            false,
+            width,
+            theme.accent,
+            theme.wash_head,
+            theme,
+        ));
+        for para in reflow(&s.body) {
+            if para.is_empty() {
+                lines.push(Line::raw(""));
+                continue;
+            }
+            for l in bough_plugin_tui_render::wrap(&para, width.max(8)) {
+                lines.push(Line::styled(l, Style::default().fg(theme.dim)));
+            }
+        }
+    }
+    lines
+}
+
+/// PURE: a prompt's paragraphs, each on one line, so the pane wraps them at ITS width rather
+/// than at the width the author's editor had. A line that starts with whitespace, a list
+/// marker, a heading, a fence or a table bar keeps its own line; a blank line is an empty entry.
+pub fn reflow(body: &str) -> Vec<String> {
+    let own_line = |l: &str| {
+        l.starts_with(' ')
+            || l.starts_with('\t')
+            || l.starts_with("- ")
+            || l.starts_with("* ")
+            || l.starts_with('#')
+            || l.starts_with("```")
+            || l.starts_with('|')
+            || l.starts_with('>')
+            || l.split_once(". ")
+                .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    };
+    let mut out: Vec<String> = Vec::new();
+    let mut open = false;
+    for l in body.lines() {
+        if l.trim().is_empty() {
+            out.push(String::new());
+            open = false;
+        } else if own_line(l) || !open {
+            out.push(l.trim_end().to_string());
+            open = !own_line(l);
+        } else if let Some(last) = out.last_mut() {
+            last.push(' ');
+            last.push_str(l.trim());
+        }
+    }
+    out
+}
+
 /// A line the plan asks the pane to emit before a row, with its hit if it has one.
 #[derive(Clone, Debug)]
 pub struct Piece {
@@ -1094,6 +1158,25 @@ mod tests {
             "{t:?}"
         );
         assert!(!t.iter().any(|l| l.contains("folded")), "{t:?}");
+        // The head, closed, draws nothing below the line; opened, every fixed section's text.
+        assert!(head_lines(&view, 80, &theme).is_empty());
+        view.head_open = true;
+        let t = text(&head_lines(&view, 80, &theme));
+        assert!(t[0].contains("identity") && t[0].contains("3.0k"), "{t:?}");
+        assert!(t.iter().any(|l| l == "name: sol"), "{t:?}");
+        assert!(t.iter().any(|l| l.contains("skill: a")), "{t:?}");
+        assert_eq!(
+            reflow("one two\nthree.\n\n- a\n- b\n  more\n## h\nafter\nthe heading\n"),
+            [
+                "one two three.",
+                "",
+                "- a",
+                "- b",
+                "  more",
+                "## h",
+                "after the heading"
+            ]
+        );
     }
 
     #[test]

@@ -593,6 +593,12 @@ impl TuiHandle {
         self.0.cfg.mouse
     }
 
+    /// Whether this composition pushes the kitty keyboard-enhancement flags — the attach client
+    /// mirrors this on its own terminal, same as [`TuiHandle::mouse`].
+    pub fn keyboard_enhancement(&self) -> bool {
+        self.0.cfg.keyboard_enhancement
+    }
+
     /// The current drag, if one is in progress or has just finished.
     pub fn selection(&self) -> Option<Selection> {
         *self.0.selection.lock()
@@ -1035,6 +1041,15 @@ pub struct TuiConfig {
     /// How long the copy flash and its selection stay painted (M21).
     #[serde(default = "default_flash_ms")]
     pub flash_ms: u64,
+    /// Push the kitty keyboard-enhancement flags (round 10: Shift+Enter as a newline) on a
+    /// terminal that supports them. `false` leaves the terminal in legacy key reporting — the
+    /// switch for a terminal that misreports keys under the protocol.
+    #[serde(default = "default_true")]
+    pub keyboard_enhancement: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_search_pane() -> String {
@@ -1106,6 +1121,7 @@ pub fn test_config() -> TuiConfig {
         history_cap: default_history_cap(),
         notice_ms: default_notice_ms(),
         flash_ms: default_flash_ms(),
+        keyboard_enhancement: true,
     }
 }
 
