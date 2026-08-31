@@ -464,11 +464,13 @@ impl FocusPane {
                     "attempts"
                 };
                 let text = format!("{marker} {} failed {noun} \u{b7} {verb}", fold.attempts);
+                // Full width (drivability, 2026-08-31): every fold line is a whole-line target;
+                // aiming at the text span made clicks a guess.
                 hits_out.push(hit::Hit {
                     id: retry_hit(&key),
                     line: lines.len() as u16,
                     x: 0,
-                    width: text.chars().count() as u16,
+                    width,
                 });
                 lines.push(Line::styled(text, Style::default().fg(theme.warn)));
                 if !opened {
@@ -996,6 +998,9 @@ impl Pane for FocusPane {
             .enumerate()
             .filter_map(|(i, r)| match r {
                 Row::Tool { call, .. } => Some((i, call.clone())),
+                // Thinking folds the tool-call way (drivability, 2026-08-31): the whole block —
+                // header, and the shaded body when open — is the toggle target.
+                Row::Reasoning { step, .. } => Some((i, reasoning_key(step))),
                 _ => None,
             })
             .collect();
@@ -1007,6 +1012,15 @@ impl Pane for FocusPane {
             .iter()
             .filter_map(|r| match r {
                 Row::Program { call, .. } => Some(call.to_string()),
+                _ => None,
+            })
+            .collect();
+        let program_rows: Vec<(usize, bough_plugin_llm::ToolCallId)> = state
+            .rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| match r {
+                Row::Program { call, .. } => Some((i, call.clone())),
                 _ => None,
             })
             .collect();
@@ -1115,6 +1129,73 @@ impl Pane for FocusPane {
                 },
                 expand::hit_for_call(call),
             );
+        }
+        // A program's SHADED BODY is a collapse target too (drivability, 2026-08-31), the M26
+        // rule tool blocks follow — registered UNDER its sub-rows' blocks: later regions win, so
+        // the registration order here IS the priority, and a nested call still owns its own
+        // lines (opening or closing a sub never collapses the program).
+        for (i, call) in program_rows.iter() {
+            let first = row_lines.get(*i).copied().unwrap_or(0);
+            let last = starts
+                .iter()
+                .copied()
+                .find(|&s| s > first)
+                .unwrap_or(total)
+                .max(first + 1);
+            if last <= top as u16 {
+                continue;
+            }
+            let y = first.saturating_sub(top as u16);
+            if y >= area.height {
+                break;
+            }
+            let height = (last - top as u16 - y).min(area.height - y);
+            cx.hit(
+                Rect {
+                    x: area.x,
+                    y: area.y + y,
+                    width: area.width,
+                    height,
+                },
+                expand::hit_for_call(call),
+            );
+            let prefix = format!("{call}.");
+            let mut subs: Vec<(u16, &bough_plugin_llm::ToolCallId)> = headers
+                .iter()
+                .filter(|(c, _)| c.to_string().starts_with(&prefix))
+                .map(|(c, l)| (*l, c))
+                .collect();
+            subs.sort_by_key(|(l, _)| *l);
+            for (j, (line, sub)) in subs.iter().enumerate() {
+                let sub_last = subs
+                    .get(j + 1)
+                    .map(|(l, _)| *l)
+                    .unwrap_or(last)
+                    .min(last)
+                    .max(line + 1);
+                if sub_last <= top as u16 || *line >= last {
+                    continue;
+                }
+                let sy = line.saturating_sub(top as u16);
+                if sy >= area.height {
+                    continue;
+                }
+                let sh = (sub_last - top as u16)
+                    .saturating_sub(sy)
+                    .min(area.height - sy);
+                if sh == 0 {
+                    continue;
+                }
+                cx.hit(
+                    Rect {
+                        x: area.x,
+                        y: area.y + sy,
+                        width: area.width,
+                        height: sh,
+                    },
+                    expand::hit_for_call(sub),
+                );
+            }
         }
         for hit in hits_out {
             if hit.line < top as u16 {
