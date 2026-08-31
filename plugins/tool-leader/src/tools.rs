@@ -18,7 +18,9 @@ use bough_kernel::{Context, PluginError};
 use bough_plugin_agents::{AgentsHandle, ResumeAgent};
 use bough_plugin_graph_ops::{BudRequest, ChildSpec, GraphHandle, MergeRequest, OpRequest};
 use bough_plugin_leader::{AdoptRequest, LeaderHandle, TimelineEntry};
-use bough_plugin_ledger::{AgentName, Cite, LedgerHandle, Ref, Seq, StepId, TrajId};
+use bough_plugin_ledger::{
+    AgentName, Cite, LedgerHandle, Order, Ref, Seq, StepId, StepQuery, StepType, TrajId,
+};
 use bough_plugin_rollups::Attribution;
 use bough_plugin_tools::{
     FailureClass, RenderIntent, Tool, ToolCall, ToolCx, ToolFailure, ToolName, ToolOutcome,
@@ -238,13 +240,33 @@ impl Tool for CreateLane {
             .traj()
             .await
             .map_err(|e| failed(e.to_string()))?;
-        let at_seq = self
+        // The bud point must lie OUTSIDE the open wake — and this call is happening INSIDE one
+        // (the tool runs in the leader's own wake; found live: `head_seq` was refused with
+        // "seq N lies inside the open wake"). The seam's own PURE resolver walks down to the
+        // last legal seq, over the same wake-vocabulary chain the seam itself reads; a chain
+        // that is nothing but the open first wake resolves to the origin.
+        let chain = self
+            .ledger
+            .0
+            .steps(&StepQuery {
+                trajs: vec![traj.clone()],
+                kinds: bough_plugin_graph_ops::seq::WAKE_KINDS
+                    .iter()
+                    .map(StepType::new)
+                    .collect(),
+                order: Order::SeqDesc,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| failed(e.to_string()))?;
+        let head = self
             .ledger
             .0
             .head_seq(&traj)
             .await
             .map_err(|e| failed(e.to_string()))?
             .unwrap_or(Seq(0));
+        let at_seq = bough_plugin_graph_ops::resolve_point(head, &chain).unwrap_or(Seq(0));
         let by = Attribution::Agent {
             name: target.clone(),
         };
@@ -623,7 +645,10 @@ mod tests {
         assert!(req.routing_refs.contains(&Ref::new("repo:bough")));
         assert!(lane_request(&serde_json::json!({ "name": " ", "reason": "r" })).is_err());
         assert!(lane_request(&serde_json::json!({ "name": "two words", "reason": "r" })).is_err());
-        assert!(lane_request(&serde_json::json!({ "name": "x" })).is_err(), "reason is required");
+        assert!(
+            lane_request(&serde_json::json!({ "name": "x" })).is_err(),
+            "reason is required"
+        );
     }
 
     #[test]
