@@ -41,6 +41,8 @@ pub struct ServerHello {
     pub version: u32,
     /// Whether the composition captures the mouse; the client enables capture to match.
     pub mouse: bool,
+    /// Whether the composition pushes the kitty keyboard-enhancement flags; ditto.
+    pub keyboard_enhancement: bool,
 }
 
 /// The server's last word: the client restores its terminal, prints `reason`, exits `code`.
@@ -184,6 +186,7 @@ mod tests {
         let s = ServerHello {
             version: VERSION,
             mouse: true,
+            keyboard_enhancement: true,
         };
         let back: ServerHello = decode("hello", &encode("hello", &s).unwrap()).unwrap();
         assert_eq!(back, s);

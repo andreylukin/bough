@@ -204,6 +204,7 @@ pub async fn session(
     let ack = ServerHello {
         version: proto::VERSION,
         mouse: tui.mouse(),
+        keyboard_enhancement: tui.keyboard_enhancement(),
     };
     let Ok(payload) = proto::encode("hello", &ack) else {
         return;

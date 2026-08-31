@@ -9,6 +9,9 @@ members = [
   "plugins/*",
   "bench/*",
 ]
+# Bench ADAPTERS, not crates: the Harbor/Pier installed agents live under bench/ and would be
+# swept into the `bench/*` glob (a member without a Cargo.toml breaks every cargo command).
+exclude = ["bench/harbor", "bench/pier"]
 
 [workspace.package]
 edition = "2021"

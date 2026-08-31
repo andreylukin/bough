@@ -25,3 +25,6 @@ ahe/
 # prebuilt linux bough for the Harbor/terminal-bench adapter (bench/harbor)
 bench/harbor/dist/
 /target-linux
+
+# Linux binaries for the bench containers (bench/pier/build-linux-binary.sh)
+bench/pier/dist/

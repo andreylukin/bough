@@ -36,13 +36,13 @@ impl TerminalGuard {
     /// raw mode → alt screen → mouse capture → bracketed paste → hide cursor, in that order.
     /// Every step it completes is remembered, so `leave` undoes exactly what `enter` did.
     pub fn enter(cfg: &TuiConfig) -> Result<TerminalGuard, TuiError> {
-        Self::enter_flags(cfg.mouse)
+        Self::enter_flags(cfg.mouse, cfg.keyboard_enhancement)
     }
 
-    /// The same entry with the one flag it actually reads. The launcher's ATTACH CLIENT enters
+    /// The same entry with the two flags it actually reads. The launcher's ATTACH CLIENT enters
     /// through here: it has no `TuiConfig` of its own — the composition lives in the resident —
-    /// and the mouse flag arrives over the wire in the server's hello.
-    pub fn enter_flags(mouse: bool) -> Result<TerminalGuard, TuiError> {
+    /// and both flags arrive over the wire in the server's hello.
+    pub fn enter_flags(mouse: bool, keyboard_enhancement: bool) -> Result<TerminalGuard, TuiError> {
         use crossterm::{cursor, event, execute, terminal};
         let mut out = std::io::stdout();
         let fail = |step: &'static str, source: std::io::Error| {
@@ -61,7 +61,7 @@ impl TerminalGuard {
         // keyboard-only persona's two lines fused into one. Terminals that speak the kitty
         // protocol then report `Enter` with SHIFT; the flags are popped on the way out. Best
         // effort: a terminal that does not support them is left as it was.
-        if matches!(terminal::supports_keyboard_enhancement(), Ok(true)) {
+        if keyboard_enhancement && matches!(terminal::supports_keyboard_enhancement(), Ok(true)) {
             let _ = execute!(
                 out,
                 event::PushKeyboardEnhancementFlags(
