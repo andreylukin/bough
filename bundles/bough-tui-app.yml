@@ -8,10 +8,6 @@
 # `tui-probe`/`tui-never`, `llm-replay` and `agent-loop-scripted` are in the binary's catalog and
 # in NO bundle (the `projection-probe` precedent): the tests' and `scripts/tui/`'s own `--patch`
 # mounts them.
-- id: commands
-  plugin: commands
-  config: { prefix: "/", suggestions: true }
-
 - id: tui
   plugin: tui-shell
   config:

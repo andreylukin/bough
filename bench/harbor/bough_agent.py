@@ -65,6 +65,19 @@ _BLOCK_BENCHMARK_HOSTS = (
 # What the container's model costs per million tokens, for the ledger's `usage/round.cost_usd`
 # (`model-policy.prices`). Unknown models get no entry and report cost as unknown, never 0.
 _PRICES: dict[str, dict[str, float]] = {
+    # OpenRouter /api/v1/models, 2026-08-31. Z.ai caching is implicit, writes bill as input.
+    "openrouter:z-ai/glm-5.3-flash": {
+        "input_per_mtok": 0.075,
+        "output_per_mtok": 0.25,
+        "cache_read_per_mtok": 0.015,
+        "cache_write_per_mtok": 0.075,
+    },
+    "openrouter:z-ai/glm-5.3": {
+        "input_per_mtok": 1.4,
+        "output_per_mtok": 4.4,
+        "cache_read_per_mtok": 0.26,
+        "cache_write_per_mtok": 1.4,
+    },
     "claude-haiku-4-5-20251001": {
         "input_per_mtok": 1.0,
         "output_per_mtok": 5.0,
@@ -98,10 +111,16 @@ class Bough(BaseInstalledAgent):
         budget: int | None = None,
         cap: int | None = None,
         patch: str | None = None,
+        skills: str | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self._binary = Path(binary).expanduser() if binary else None
+        # An evolved skill set (WikiSkill loop, 2026-08-31): a directory of
+        # `<name>/SKILL.md` dirs uploaded into the trial home's `skills/`, where the
+        # skills row mounts them (catalog + `skill` tool). The trial sees SKILLS ONLY —
+        # never the tuner's wiki (the paper's ablation).
+        self._skills = Path(skills).expanduser() if skills else None
         self._timeout = int(timeout)
         self._attempts = max(int(attempts), 1)
         self._budget = int(budget) if budget else None
@@ -116,6 +135,8 @@ class Bough(BaseInstalledAgent):
             )
         if self._patch and not self._patch.is_file():
             raise ValueError(f"--ak patch: no such file: {self._patch}")
+        if self._skills and not self._skills.is_dir():
+            raise ValueError(f"--ak skills: no such directory: {self._skills}")
 
     @staticmethod
     @override
@@ -159,6 +180,21 @@ class Bough(BaseInstalledAgent):
                 "does its arch match the image? (uname -m)"
             )
         await self._write_patch(environment)
+        await self._upload_skills(environment)
+
+    async def _upload_skills(self, environment: BaseEnvironment) -> None:
+        if not self._skills:
+            return
+        count = 0
+        for skill_md in sorted(self._skills.glob("*/SKILL.md")):
+            name = skill_md.parent.name
+            remote = f"{HOME_PATH}/skills/{name}/SKILL.md"
+            await self.exec_as_root(
+                environment, command=f"mkdir -p {shlex.quote(f'{HOME_PATH}/skills/{name}')}"
+            )
+            await environment.upload_file(skill_md, remote)
+            count += 1
+        self.logger.info(f"bough: uploaded {count} evolved skill(s)")
 
     async def _write_patch(self, environment: BaseEnvironment) -> None:
         """The model, as a patch over `model.policy`, plus the caller's arm patch if any.
@@ -205,6 +241,7 @@ class Bough(BaseInstalledAgent):
         deadline = time.monotonic() + budget
         results: list[Any] = []
         envelopes: list[dict[str, Any]] = []
+        last_status: str | None = None
 
         for attempt in range(1, attempts + 1):
             left = deadline - time.monotonic()
@@ -213,7 +250,12 @@ class Bough(BaseInstalledAgent):
                     f"bough: stopping after {attempt - 1} attempt(s), {left:.0f}s of budget left"
                 )
                 break
-            prompt = instruction if attempt == 1 else self._continuation(instruction)
+            if attempt == 1:
+                prompt = instruction
+            elif last_status == "announced":
+                prompt = self._nudge()
+            else:
+                prompt = self._continuation(instruction)
             this_turn = min(turn, max(int(left) - TURN_MARGIN, 60))
             patches = " ".join(f"--patch {shlex.quote(p)}" for p in self._patch_paths)
             # `timeout -s INT` is the graceful ending: bough's SIGINT handler tears the tree
@@ -252,9 +294,19 @@ class Bough(BaseInstalledAgent):
                         f"{(result.stderr or '').strip()[-600:]}"
                     )
             # A turn that ended `completed` has said what it has to say; re-running it would let
-            # the model second-guess correct work with no test to tell the two apart.
-            if status == "completed":
+            # the model second-guess correct work with no test to tell the two apart. UNLESS it
+            # never touched a tool: a flash-class model's opening "I'll start by reading the
+            # report" with zero calls is an announcement, not an answer (GLM-5.3-flash, first
+            # Modal trial, 2026-08-31) — nudge it into acting instead of scoring the narration.
+            acted = bool(envelope) and any(
+                s.get("kind") in ("tool/call", "program/call")
+                for s in envelope.get("steps", [])
+            )
+            if status == "completed" and acted:
                 break
+            if status == "completed":
+                status = "announced"
+            last_status = status
             self.logger.info(
                 f"bough: attempt {attempt} ended {status!r}; "
                 f"{'retrying' if attempt < attempts else 'out of attempts'}"
@@ -289,6 +341,15 @@ class Bough(BaseInstalledAgent):
             self.logger.info(f"bough: could not read Harbor's agent cap: {exc}")
         return None
 
+    def _nudge(self) -> str:
+        return (
+            "You ended your turn after only describing what you were going to do — no command "
+            "was executed and nothing changed on disk. Do the work now: use your tools to read "
+            "the files, make the changes, and run the tests. Do not end your turn again until "
+            "you have actually run the verification and it passes, or you have made your best "
+            "complete attempt."
+        )
+
     def _continuation(self, instruction: str) -> str:
         return (
             "Your previous attempt at this task was stopped by the clock mid-turn; its steps "
@@ -306,9 +367,13 @@ class Bough(BaseInstalledAgent):
         return env
 
     def _bough_model(self) -> str | None:
-        """Harbor's `provider/model` → bough's id: a bare `claude-…` is Anthropic."""
+        """Harbor's `provider/model` → bough's id: a bare `claude-…` is Anthropic; the routed
+        providers keep their prefix in bough's COLON spelling (`openrouter:vendor/model`)."""
         if not self.model_name:
             return None
+        for provider in ("openrouter", "openai"):
+            if self.model_name.startswith(f"{provider}/"):
+                return f"{provider}:" + self.model_name.removeprefix(f"{provider}/")
         return self.model_name.removeprefix("anthropic/")
 
     # ---- results ---------------------------------------------------------

@@ -28,3 +28,7 @@ bench/harbor/dist/
 
 # Linux binaries for the bench containers (bench/pier/build-linux-binary.sh)
 bench/pier/dist/
+
+# WikiSkill tuner: its own git repo + lane home
+bench/tune/workspace/
+bench/tune/home/

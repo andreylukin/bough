@@ -134,6 +134,14 @@
 - id: agents
   plugin: agents
 
+# The commands seam, in BASE not the tui bundle (drivability, 2026-08-31): scheduled command
+# passes (`seal`, `reconsolidate`) dispatch through `ctx.commands`, and a headless home without
+# the seam left them `Pending` forever — a long-lived exec-driven lane never sealed its tiers.
+# The service is surface-free; the TUI's builtins still register onto it from their own row.
+- id: commands
+  plugin: commands
+  config: { prefix: "/", suggestions: true }
+
 - id: agent.loop
   plugin: agent-loop
   config:
