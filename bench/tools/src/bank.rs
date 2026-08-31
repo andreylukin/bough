@@ -29,7 +29,6 @@ pub enum Coverage {
     Write,
     Ledger,
     Inbox,
-    Claim,
     Act,
     Agent,
     Ask,
@@ -45,7 +44,7 @@ impl Coverage {
     /// claiming it could only ever fail, and the surface no longer documents it either (the
     /// prose is gated on the verb actually being injected). It comes back here the day a
     /// concurrent-shell Provider does.
-    pub const ALL: [Coverage; 13] = [
+    pub const ALL: [Coverage; 12] = [
         Coverage::Bash,
         Coverage::Bg,
         Coverage::View,
@@ -53,7 +52,6 @@ impl Coverage {
         Coverage::Write,
         Coverage::Ledger,
         Coverage::Inbox,
-        Coverage::Claim,
         Coverage::Act,
         Coverage::Agent,
         Coverage::Ask,

@@ -771,7 +771,6 @@ against the real tools over their real seams, in `plugins/tools-codemode/tests/v
 `tools-operator`, `tool-actions`, `tool-workers`, `claims`, `actions`, `workers` and `agents`):
 - `…/v5_surface.rs::ledger_search_steps_and_tail_drill_from_a_tier_to_raw_steps`
 - `…/v5_surface.rs::inbox_returns_the_unconsumed_mail`
-- `…/v5_surface.rs::a_claim_from_a_program_lands_as_claim_proposed`
 - `…/v5_surface.rs::act_open_pr_goes_through_the_actions_journal` (gh shim Provider)
 - `…/v5_surface.rs::agent_ask_and_fork_go_through_the_workers_seam` (`ask` runs inside the
   worker's own program, so the caller really has a spawner)
@@ -801,13 +800,14 @@ notable refs spell a range.
   `crates/bough/tests/codemode_wake.rs::a_non_concluding_program_does_not_end_the_wake_at_its_step`
   asserts; **no end-to-end case in this phase drives the positive one.**
 
-**V7 — `tool-leader` collapsed to two.**
-- `plugins/tool-leader/tests/tools.rs::the_set_is_propose_claim_and_curate`
-- `plugins/tool-leader/tests/tools.rs::propose_claim_absorbs_draft_requirement_and_propose_structure`
+**V7 — `tool-leader` collapsed.** (Names updated by the claims demolition, 2026-08-30:
+`propose_claim` left the tree with the claims seam, and the set is now `create_lane` /
+`merge_lanes` / `curate` — see `docs/leader-lanes.md`.)
+- `plugins/tool-leader/tests/tools.rs::the_set_is_create_lane_merge_lanes_and_curate`
 - `plugins/tool-leader/tests/tools.rs::curate_absorbs_adopt_unsorted_and_note_timeline`
 - `crates/bough/tests/leader_swap.rs` (all cases, `LEADER_ONLY` updated) — the Phase 5 swap test
 - `scripts/tui/15-leader-swap.sh` (`PROBE_TOOL=curate`)
-- `crates/bough/tests/codemode_swap.rs::the_five_old_spellings_are_gone_from_both_consumers`
+- `crates/bough/tests/codemode_swap.rs::the_old_spellings_are_gone_from_both_consumers`
 
 **V8 — the TUI renders a program step.**
 - `plugins/tui-focus/tests/program.rs::a_program_with_four_sub_calls_folds_into_one_row`

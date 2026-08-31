@@ -49,7 +49,6 @@ bough-plugin-tool-actions = { workspace = true }
 bough-plugin-tool-workers = { workspace = true }
 bough-plugin-actions = { workspace = true }
 bough-plugin-workers = { workspace = true }
-bough-plugin-claims = { workspace = true }
 bough-plugin-graph-ops = { workspace = true }
 # The program row is folded on a string the surface spells independently; `tests/pins.rs` is the
 # joint that keeps the two spellings equal.

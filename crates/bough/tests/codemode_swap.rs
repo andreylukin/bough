@@ -326,17 +326,17 @@ async fn the_program_vocabulary_survives_disabling_the_row() {
     kernel.shutdown().await;
 }
 
-/// WP-6's collapse, said from the launcher: the four spellings `tool-leader` used to register are
-/// gone from the catalog's own list under either consumer. `propose_claim` is NOT one of them — it
-/// survives the collapse (the global tool of `claims`, shadowed in the leader's scope), so
-/// asserting its absence would assert that every lane lost its claim tool.
+/// WP-6's collapse and the claims demolition, said from the launcher: the retired spellings are
+/// gone from the catalog's own list under either consumer — `propose_claim` among them, since the
+/// claims seam left the tree.
 #[test]
-fn the_five_old_spellings_are_gone_from_both_consumers() {
+fn the_old_spellings_are_gone_from_both_consumers() {
     for gone in [
         "adopt_unsorted",
         "draft_requirement",
         "propose_structure",
         "note_timeline",
+        "propose_claim",
     ] {
         assert!(
             !bough_plugin_tool_leader::TOOL_NAMES.contains(&gone),
@@ -345,8 +345,8 @@ fn the_five_old_spellings_are_gone_from_both_consumers() {
     }
     assert_eq!(
         bough_plugin_tool_leader::TOOL_NAMES,
-        ["propose_claim", "curate"],
-        "the leader's set is two tools"
+        ["create_lane", "merge_lanes", "curate"],
+        "the leader's set is three tools"
     );
 }
 
@@ -362,7 +362,7 @@ async fn every_visible_spec_is_a_function_in_the_sandbox_and_a_restricted_one_is
     let _guard = trace::test_lock();
     let (kernel, dir, agent, _d) = boot_codemode("reach").await;
 
-    // The aliases the bundle declares: `claim` IS `propose_claim`, `agent` IS `spawn_worker`.
+    // The aliases the bundle declares: `agent` IS `spawn_worker`.
     // A tool reached under its alias is reached; a tool reached under NEITHER spelling is not.
     let bundle: serde_yaml::Value = serde_yaml::from_str(
         &std::fs::read_to_string(support::repo_root().join("bundles/bough-base.yml")).unwrap(),

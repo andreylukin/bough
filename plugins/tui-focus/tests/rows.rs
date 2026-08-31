@@ -190,7 +190,6 @@ fn an_unknown_step_type_renders_as_other_and_never_panics() {
 /// WP-7 / §2.8 + P5-D14: the paragraph join (the field bug), and the claim card fold.
 mod tests {
     use super::*;
-    use bough_plugin_tui_focus::rows::ClaimState;
 
     /// A `thought/text` step as the loop's flush writes it: `step_index` is the MODEL step it
     /// belongs to, and the flush boundary inside it is a timer.
@@ -316,99 +315,6 @@ mod tests {
         assert_eq!(mixed.len(), 2, "reasoning and text never join: {mixed:?}");
     }
 
-    /// §16 at the surface: a claim is a PROPOSAL, and it renders as a card Andrey can decide.
-    #[test]
-    fn a_claim_proposed_step_renders_as_a_card() {
-        let rows = rows_from_steps(&[step(
-            1,
-            "claim/proposed",
-            serde_json::json!({
-                "claim": "c1",
-                "kind": "requirement",
-                "title": "the leader drafts requirements",
-                "body": "Andrey's words become a claim.",
-            }),
-        )]);
-        let Row::Claim {
-            claim,
-            kind,
-            title,
-            body,
-            state,
-            ..
-        } = &rows[0]
-        else {
-            panic!("expected a claim card, got {rows:?}");
-        };
-        assert_eq!(claim, "c1");
-        assert_eq!(kind, "requirement");
-        assert_eq!(title, "the leader drafts requirements");
-        assert_eq!(body, "Andrey's words become a claim.");
-        assert_eq!(*state, ClaimState::Open, "undecided until Andrey decides");
-    }
-
-    /// The decision folds INTO the card (P3-D11: by step-type name, no dependency on `claims`),
-    /// so an accepted claim is one row that says so rather than two rows to reconcile by eye.
-    #[test]
-    fn an_accepted_claim_card_shows_its_state() {
-        let rows = rows_from_steps(&[
-            step(
-                1,
-                "claim/proposed",
-                serde_json::json!({ "claim": "c1", "kind": "lane", "title": "t", "body": "b" }),
-            ),
-            step(
-                2,
-                "claim/accepted",
-                serde_json::json!({ "claim": "c1", "proposal": "s1", "edited": true }),
-            ),
-        ]);
-        assert_eq!(rows.len(), 1, "the decision folds in: {rows:?}");
-        let Row::Claim { state, .. } = &rows[0] else {
-            panic!("{rows:?}");
-        };
-        assert_eq!(*state, ClaimState::Accepted { edited: true });
-        assert_eq!(state.word(), "accepted (edited)");
-        assert!(!state.is_open(), "a decided card offers no buttons");
-    }
-
-    /// A rejection without its reason would leave the agent's proposal looking arbitrary, so the
-    /// reason travels with the state.
-    #[test]
-    fn a_rejected_claim_card_shows_its_reason() {
-        let rows = rows_from_steps(&[
-            step(
-                1,
-                "claim/proposed",
-                serde_json::json!({ "claim": "c1", "kind": "lane", "title": "t", "body": "b" }),
-            ),
-            step(
-                2,
-                "claim/rejected",
-                serde_json::json!({
-                    "claim": "c1", "proposal": "s1", "reason": "that lane already exists"
-                }),
-            ),
-        ]);
-        assert_eq!(rows.len(), 1);
-        let Row::Claim { state, .. } = &rows[0] else {
-            panic!("{rows:?}");
-        };
-        assert_eq!(
-            *state,
-            ClaimState::Rejected {
-                reason: "that lane already exists".to_string()
-            }
-        );
-
-        // A decision whose proposal paged out is still shown — the decision is the news.
-        let orphan = rows_from_steps(&[step(
-            3,
-            "claim/rejected",
-            serde_json::json!({ "claim": "c9", "proposal": "s0", "reason": "no" }),
-        )]);
-        assert!(matches!(orphan[0], Row::Other { .. }), "{orphan:?}");
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1191,42 +1097,20 @@ fn an_empty_program_draws_nothing() {
     assert_eq!(out[label + 1].trim(), "Done.", "{out:?}");
 }
 
-/// Round 10: what the lane is waiting on — open claims, and a trailing question once the turn
-/// is over and nothing from Andrey followed it.
+/// Round 10: what the lane is waiting on — a trailing question once the turn is over and
+/// nothing from Andrey followed it.
 #[test]
-fn owed_counts_open_claims_and_a_trailing_question() {
+fn owed_flags_a_trailing_question() {
     use bough_plugin_tui_focus::rows::{owed, Owed};
-    let rows = rows_from_steps(&[
-        step(
-            1,
-            "claim/proposed",
-            serde_json::json!({ "claim": "k1", "kind": "decision", "title": "T", "body": "B" }),
-        ),
-        step(
-            2,
-            "claim/proposed",
-            serde_json::json!({ "claim": "k2", "kind": "decision", "title": "T2", "body": "B" }),
-        ),
-        step(3, "claim/accepted", serde_json::json!({ "claim": "k2" })),
-        step(
-            4,
-            "thought/text",
-            serde_json::json!({ "step_index": 0, "text": "Which team should the ticket go to?" }),
-        ),
-    ]);
-    assert_eq!(
-        owed(&rows, false),
-        Owed {
-            claims: 1,
-            question: true
-        }
-    );
+    let rows = rows_from_steps(&[step(
+        4,
+        "thought/text",
+        serde_json::json!({ "step_index": 0, "text": "Which team should the ticket go to?" }),
+    )]);
+    assert_eq!(owed(&rows, false), Owed { question: true });
     assert_eq!(
         owed(&rows, true),
-        Owed {
-            claims: 1,
-            question: false
-        },
+        Owed { question: false },
         "still running: not yet a question to answer"
     );
     let answered = rows_from_steps(&[

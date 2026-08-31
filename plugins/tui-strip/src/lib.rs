@@ -508,9 +508,6 @@ async fn backfill(ledger: &LedgerHandle, rows: &Arc<Mutex<Vec<RailRow>>>, traj: 
         .steps(&StepQuery {
             trajs: vec![traj.clone()],
             kinds: vec![
-                StepType::new("claim/proposed"),
-                StepType::new("claim/accepted"),
-                StepType::new("claim/rejected"),
                 StepType::new("thought/text"),
                 StepType::new("mail/delivered"),
             ],
@@ -521,14 +518,12 @@ async fn backfill(ledger: &LedgerHandle, rows: &Arc<Mutex<Vec<RailRow>>>, traj: 
         .await
     {
         steps.reverse();
-        let claims = rail::open_claims(&steps);
         let question = rail::pending_question(&steps);
         if let Some(row) = rows
             .lock()
             .iter_mut()
             .find(|r| r.traj.as_ref() == Some(traj))
         {
-            row.owed_claims = claims;
             row.question = question;
         }
     }
@@ -565,7 +560,6 @@ pub fn row_for(agent: &bough_plugin_agents::Agent) -> RailRow {
         dormant: false,
         about: None,
         leader: false,
-        owed_claims: 0,
         question: false,
         since: None,
         clock: String::new(),

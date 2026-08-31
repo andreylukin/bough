@@ -101,8 +101,8 @@ t tab_completes_the_name_without_running_it \
     exit 0
   '
 # Put the composer back the way the rest of the script expects it. `/he` and not `/`: Enter takes
-# the SELECTED row, and with no query that is `/accept`, not `/help` — the bullet below names the
-# help it expects to see.
+# the SELECTED row, and with no query that is the first command by name, not `/help` — the bullet
+# below names the help it expects to see.
 shell-use press "Ctrl+u"
 shell-use press Escape
 # MERGE: the query is `/he`, not a bare `/`. With an EMPTY query the palette lists every command

@@ -1,7 +1,7 @@
 //! V5 — the rest of the surface works FROM A PROGRAM.
 //!
 //! Everything here runs real JavaScript in the embedded QuickJS engine, against the real tools
-//! (`tools-operator`, `tool-actions`, `tool-workers`, `claims`) over their real seams, with the
+//! (`tools-operator`, `tool-actions`, `tool-workers`) over their real seams, with the
 //! alias map the `bough-codemode` bundle ships. Nothing is stubbed except the two places where a
 //! stub IS the seam's extension point — the action Provider (a `gh` shim: no PR is opened) and
 //! the worker Provider — plus a synthetic clock, so "fires at +5m" is assertable without waiting.
@@ -20,10 +20,6 @@ use bough_plugin_agents::{
     Agent, AgentCell, AgentDriver, AgentError, AgentFactory, Agents, AgentsHandle, Attach,
     CancelCause, CreateAgent, InboxReceipt, Message, MessageId, Target, WakeCause, WakeKind,
     WakeRequest,
-};
-use bough_plugin_claims::{ClaimsConfig, ClaimsHandle};
-use bough_plugin_graph_ops::{
-    GraphError, GraphHandle, GraphOps, OpOutcome, OpPlan, OpRequest, UndoRequest,
 };
 use bough_plugin_js::{Caps, JsHandle};
 use bough_plugin_js_quickjs::{QuickJsConfig, QuickJsEngine};
@@ -51,7 +47,6 @@ use parking_lot::Mutex;
 // ---------------------------------------------------------------------------------------------
 
 const ALIASES: &[(&str, &str)] = &[
-    ("claim", "propose_claim"),
     ("agent", "spawn_worker"),
     ("ledger.search", "ledger_read?op=search#q"),
     ("ledger.steps", "ledger_read?op=steps#range"),
@@ -129,24 +124,6 @@ impl AgentDriver for Driver {
     async fn stop(&self) {}
     async fn wake_now(&self, _k: WakeKind, _c: WakeCause) -> WakeRequest {
         WakeRequest::Nothing
-    }
-}
-
-struct RefusingGraph;
-
-#[async_trait::async_trait]
-impl GraphOps for RefusingGraph {
-    fn provider(&self) -> &'static str {
-        "refusing-graph"
-    }
-    async fn plan(&self, _r: &OpRequest) -> Result<OpPlan, GraphError> {
-        Err(GraphError::Other(anyhow::anyhow!("no graph provider")))
-    }
-    async fn apply(&self, _r: &OpRequest) -> Result<OpOutcome, GraphError> {
-        Err(GraphError::Other(anyhow::anyhow!("no graph provider")))
-    }
-    async fn undo(&self, _r: &UndoRequest) -> Result<OpOutcome, GraphError> {
-        Err(GraphError::Other(anyhow::anyhow!("no graph provider")))
     }
 }
 
@@ -429,15 +406,6 @@ async fn fixture(bounds: Bounds) -> Fx {
         .await
         .expect("the sink mounts");
 
-    let graph = GraphHandle(Arc::new(RefusingGraph) as Arc<dyn GraphOps>);
-    let claims = ClaimsHandle::new(
-        ctx.clone(),
-        ledger.clone(),
-        agents.clone(),
-        graph,
-        Arc::new(ClaimsConfig { open_limit: 50 }),
-    );
-
     let tools = ToolsHandle::with_limits(8, 20_000);
     for spec in bough_plugin_tools_operator::specs(
         opcfg(),
@@ -486,10 +454,6 @@ async fn fixture(bounds: Bounds) -> Fx {
         ),
         Box::new(ctx.provide::<Tools>(tools.clone()).await.expect("tools")),
     ];
-    bough_plugin_claims::tool::register(&ctx, &claims)
-        .await
-        .expect("the global propose_claim registers");
-
     let js = JsHandle::with_caps(Caps {
         ops: 20_000_000,
         memory_bytes: 64 << 20,
@@ -721,32 +685,6 @@ async fn inbox_returns_the_unconsumed_mail() {
     assert!(out.content.contains("count=2"), "{}", out.content);
     assert!(out.content.contains("first=ci is red"), "{}", out.content);
     assert_eq!(fx.called().await, vec!["inbox"]);
-}
-
-/// A claim written from a program lands as a real `claim/proposed` row, by this agent, with the
-/// title the program gave — the object argument passes through whole.
-#[tokio::test]
-async fn a_claim_from_a_program_lands_as_claim_proposed() {
-    let fx = fixture(bounds()).await;
-    let out = fx
-        .program(
-            r#"
-            const c = await claim({
-                kind: "requirement",
-                title: "the runner must retry a 429",
-                body: "three retries with backoff",
-            });
-            console.log("claim=" + c.claim);
-            "#,
-        )
-        .await;
-    assert!(out.content.contains("claim="), "{}", out.content);
-
-    let rows = fx.steps("claim/proposed").await;
-    assert_eq!(rows.len(), 1, "one claim, one row");
-    assert_eq!(rows[0].body["title"], "the runner must retry a 429");
-    assert_eq!(rows[0].body["by"], "lane");
-    assert_eq!(fx.called().await, vec!["propose_claim"]);
 }
 
 /// `act(kind, target, payload)` is ONE function over four kinds: the first argument picks the

@@ -1,8 +1,8 @@
-//! Invariant (§2): the leader is an ORDINARY AGENT ROW with a plugin set mounted in its scope.
-//! Nothing here gives it authority: it adopts unsorted mail, drafts requirements as claims, and
-//! proposes structure — every one of which Andrey then accepts or rejects. What makes it "the
-//! leader" is a `config.agent` field and four scoped registrations, which is why moving the set to
-//! another agent is a patch and not a rewrite.
+//! Invariant (§2, amended by the claims demolition): the leader is an ORDINARY AGENT ROW with a
+//! plugin set mounted in its scope. It adopts unsorted mail and curates the timeline here; its
+//! structural hand — `create_lane`, `merge_lanes`, applied directly — lives in `tool-leader`.
+//! What makes it "the leader" is a `config.agent` field and its scoped registrations, which is
+//! why moving the set to another agent is a patch and not a rewrite.
 //!
 //! Every registration is an EFFECT owned by THIS ROW's fiber and scoped to the target by SPEC
 //! (P5-D11). Editing `leader.config.agent` is a material config diff, so the row reloads: the
@@ -11,17 +11,16 @@
 //! binding. No compile, no restart.
 
 pub mod adopt;
-pub mod draft;
 pub mod error;
 pub mod invariant;
 pub mod persona;
+pub mod roster;
 pub mod timeline;
 pub mod vocabulary;
 
 use std::sync::Arc;
 
 use bough_kernel::{Context, Inject, InvariantSpec, Plugin, PluginError, ServiceKey};
-use bough_plugin_claims::{Claims, ClaimsHandle, OpenClaim};
 use bough_plugin_graph_ops::{Graph, GraphHandle};
 use bough_plugin_ledger::{
     AgentName, Append, Class, Ledger, LedgerHandle, Order, StepId, StepQuery, StepType, TrajId,
@@ -30,7 +29,6 @@ use bough_plugin_mail_router::{Mail, MailHandle, UnsortedSink};
 use bough_plugin_projection::Projection;
 
 pub use adopt::{AdoptReport, AdoptRequest};
-pub use draft::DraftRequest;
 pub use error::LeaderError;
 pub use timeline::{TimelineEntry, TimelineQuery, TimelineRow};
 pub use vocabulary::{TimelineEntryBody, OWNER};
@@ -55,7 +53,6 @@ pub struct LeaderInner {
     target: AgentName,
     ledger: LedgerHandle,
     mail: MailHandle,
-    claims: ClaimsHandle,
     #[allow(dead_code)]
     graph: GraphHandle,
     cfg: Arc<LeaderConfig>,
@@ -97,7 +94,6 @@ impl LeaderHandle {
         target: AgentName,
         ledger: LedgerHandle,
         mail: MailHandle,
-        claims: ClaimsHandle,
         graph: GraphHandle,
         cfg: Arc<LeaderConfig>,
     ) -> LeaderHandle {
@@ -105,7 +101,6 @@ impl LeaderHandle {
             target,
             ledger,
             mail,
-            claims,
             graph,
             cfg,
         }))
@@ -159,15 +154,6 @@ impl LeaderHandle {
                 .await?;
         }
         Ok(AdoptReport { adopted, held })
-    }
-
-    /// Requirement drafting from Andrey's words (§2): a claim, never a pin. Acceptance is his.
-    pub async fn draft_requirement(&self, req: DraftRequest) -> Result<OpenClaim, LeaderError> {
-        Ok(self
-            .0
-            .claims
-            .propose(draft::as_proposal(self.0.target.clone(), &req))
-            .await?)
     }
 
     /// Cross-agent timeline DATA (§17: the surface is Phase 8).
@@ -233,7 +219,7 @@ impl Plugin for LeaderPlugin {
     type Config = LeaderConfig;
 
     fn inject() -> Inject {
-        Inject::required(["agents", "ledger", "mail", "graph", "claims", "projection"])
+        Inject::required(["agents", "ledger", "mail", "graph", "projection"])
             .union(&Inject::optional(["reconsolidation"]))
     }
 
@@ -258,7 +244,6 @@ impl Plugin for LeaderPlugin {
         let err = |e: bough_kernel::KernelError| PluginError::new(entry.clone(), e);
         let ledger = ctx.get::<Ledger>().map_err(err)?;
         let mail = ctx.get::<Mail>().map_err(err)?;
-        let claims = ctx.get::<Claims>().map_err(err)?;
         let graph = ctx.get::<Graph>().map_err(err)?;
         let projection = ctx.get::<Projection>().map_err(err)?;
 
@@ -271,6 +256,8 @@ impl Plugin for LeaderPlugin {
 
         // Scoped to the target BY SPEC, owned by THIS fiber. That pair is the whole of SWAP.
         persona::register(&ctx, &projection, &target, &cfg.persona).await?;
+        // The claims demolition's counterweight: the roster the leader sees every wake.
+        roster::register(&ctx, &projection, &target).await?;
         mail.unsorted_sink(&ctx, Arc::new(LeaderSink(target.clone())))
             .await?;
 
@@ -333,7 +320,6 @@ impl Plugin for LeaderPlugin {
             target,
             (*ledger).clone(),
             (*mail).clone(),
-            (*claims).clone(),
             (*graph).clone(),
             cfg,
         ))

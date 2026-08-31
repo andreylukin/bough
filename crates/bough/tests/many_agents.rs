@@ -295,11 +295,10 @@ async fn every_phase_five_invariant_runs_at_quiesce() {
     // The rows §17 Phase 5 adds, and the plugin each is bound to. `lane-scope` and `tool-leader`
     // are deliberately absent: both carry a written `No runtime invariant:` reason (AGENTS.md
     // allows exactly that), so requiring a spec of them would be requiring a lie.
-    const WITH_INVARIANTS: [(&str, &str); 6] = [
+    const WITH_INVARIANTS: [(&str, &str); 5] = [
         ("mail", "mail-router"),
         ("dormancy", "dormancy"),
         ("graph", "graph-ops"),
-        ("claims", "claims"),
         ("worker.fork", "worker-fork"),
         ("leader", "leader"),
     ];

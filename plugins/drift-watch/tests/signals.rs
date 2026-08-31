@@ -4,7 +4,7 @@
 
 use crate::common;
 
-use bough_plugin_drift_watch::{DriftFlag, SignalState};
+use bough_plugin_drift_watch::DriftFlag;
 use bough_plugin_ledger::{HashScope, Seq};
 
 #[tokio::test]
@@ -39,10 +39,6 @@ async fn signals_are_read_only_and_append_nothing() {
     assert!(
         signals.tool_entropy > 0.0,
         "two tools have spread: {signals:?}"
-    );
-    assert!(
-        matches!(signals.claim_rejection, SignalState::Inactive { .. }),
-        "the seeded window decides no claim, so the rate is not a number: {signals:?}"
     );
     assert!(
         !signals.flags.contains(&DriftFlag::TooFewSamples),

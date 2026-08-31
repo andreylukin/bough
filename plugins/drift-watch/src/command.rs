@@ -243,17 +243,6 @@ pub fn render_signals(s: &Signals) -> String {
         };
         out.push_str(&format!("Tool use: {spread} ({}).\n", shares.join(", ")));
     }
-    match &s.claim_rejection {
-        // §16: uncertainty never becomes assertion. A rate nobody can compute is reported as
-        // inactive, with what is missing, rather than as 0%.
-        SignalState::Inactive { since } => {
-            out.push_str(&format!("Claim rejection: not measurable yet — {since}.\n"))
-        }
-        SignalState::Active { value, n } => out.push_str(&format!(
-            "Claim rejection: {:.0}% of the last {n} decided claims.\n",
-            value * 100.0
-        )),
-    }
     if !s.flags.is_empty() {
         let flags: Vec<String> = s
             .flags
@@ -343,9 +332,6 @@ mod tests {
                 share: 1.0,
             }],
             tool_entropy: 0.0,
-            claim_rejection: SignalState::Inactive {
-                since: crate::signals::CLAIM_REJECTION_SINCE.to_string(),
-            },
             flags: vec![DriftFlag::ToolUseCollapsed],
         }
     }
@@ -359,20 +345,12 @@ mod tests {
     }
 
     #[test]
-    fn drift_renders_the_signals_and_says_claim_rejection_is_inactive() {
+    fn drift_renders_the_signals() {
         let text = render_signals(&signals());
         assert!(text.starts_with("scout: thought length is"), "{text}");
         assert!(text.contains("6 samples (steps 1..50)"), "{text}");
         assert!(text.contains("cv=0.17"), "{text}");
         assert!(text.contains("bash 100%"), "{text}");
-        assert!(
-            text.contains("Claim rejection: not measurable yet"),
-            "{text}"
-        );
-        assert!(
-            text.contains("no claim in the window has been decided"),
-            "{text}"
-        );
         assert!(text.contains("Flagged: tool use collapsed"), "{text}");
     }
 

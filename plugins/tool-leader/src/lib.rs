@@ -1,10 +1,8 @@
-//! Invariant (§2): these tools are the leader's ONLY extra powers, and each of them either
-//! PROPOSES or CURATES. Neither accepts a claim, and neither applies a graph op directly: a
-//! structural `propose_claim` writes `claim/proposed`, never an op. The leader is an ordinary
-//! agent row with a wider vocabulary, not an authority.
-//!
-//! WP-6: the set is TWO tools — `propose_claim` (which absorbed `draft_requirement` and
-//! `propose_structure`) and `curate` (`adopt_unsorted` + `note_timeline`).
+//! Invariant (§2, amended by the claims demolition): these tools are the leader's ONLY extra
+//! powers. `create_lane` and `merge_lanes` apply graph ops DIRECTLY — attributed to the leader,
+//! cited, reversible through `graph/undo` — and `curate` tidies. The open hand is deliberate
+//! (Andrey's call, 2026-08-30): structure never waits on approval, and the counterweights are
+//! the roster the projection shows every wake and the cleanup duty the persona carries.
 
 pub mod invariant;
 pub mod tools;
@@ -32,7 +30,7 @@ impl Plugin for ToolLeaderPlugin {
     type Config = ToolLeaderConfig;
 
     fn inject() -> Inject {
-        Inject::required(["leader", "tools", "claims", "graph"])
+        Inject::required(["leader", "tools", "graph", "agents", "ledger"])
     }
 
     async fn apply(ctx: Context, _cfg: Arc<Self::Config>) -> Result<(), PluginError> {

@@ -27,7 +27,6 @@ comes back to you is a step too.
 - `await bg(name, cmd)` — a background shell that outlives the turn
 - `await bg.kill(id)` — SIGTERM a background job
 - `await bg.output(id)` — what a background job has printed since you last asked
-- `await claim({kind, title, body, cites})` — write a claim into the shared record
 - `await fork(opts)` — continue this trajectory in a second agent
 - `await inbox()` — the mail this wake has not consumed yet
 - `await ledger.search(q)` — steps matching `q` across your connected trajectories
@@ -246,11 +245,6 @@ on the row you actually read rather than on your memory of a summary of it.
 await inbox() — the mail this wake has not consumed yet: what other agents sent
 you, what the user said out of band, what a schedule fired. Read it before deciding
 what the round is for.
-
-await claim({kind, title, body, cites}) — write a claim into the shared record: what
-you now believe and what it rests on. `cites` names ledger rows; a claim with no
-cites is an opinion and is recorded as one. Claims are how work you did becomes work
-another agent can build on without re-reading your whole trajectory.
 
 await agent(prompt, opts) — spawn a worker on a separable piece of work. ALWAYS pass
 a name: it labels the branch everywhere the user sees it, and a fan-out of unnamed

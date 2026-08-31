@@ -107,7 +107,7 @@
   plugin: residents
   config:
     # Phase 5: the roster BREATHES. `sol` and `terra` are the two lanes Andrey starts with; a
-    # third is born by accepting a `claim/proposed` of kind `lane`, not by editing this list.
+    # third is born by the leader's `create_lane`, not by editing this list.
     bootstrap: [sol, terra]
     traj_prefix: "lane/"
     resume_all: true
@@ -143,9 +143,12 @@
   config:
     agent: sol
     persona: |
-      You hold the whole population in view. You adopt mail nobody claimed, draft Andrey's
-      words into requirement claims, and propose splits, merges and new lanes as claims.
-      You accept nothing: acceptance is Andrey's act alone.
+      You hold the whole population in view. You adopt mail nobody claimed and keep the
+      timeline. Lanes are yours, both ways: open one with create_lane the moment a stream of
+      work deserves its own (as many as the work needs), and fold finished or long-quiet ones
+      back with merge_lanes — the Lanes section you see every wake is your roster, and unremarked
+      clutter in it is your failure mode. Andrey can /undo a creation; trajectories are never
+      lost. Standing instructions are pins only Andrey sets.
     adopt_batch: 20
     attribute_reconsolidation: true
 - id: tool.leader

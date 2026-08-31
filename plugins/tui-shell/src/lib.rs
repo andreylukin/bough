@@ -649,11 +649,11 @@ impl TuiHandle {
         self.0.hits.read().get(pane).and_then(|m| m.at(col, row))
     }
 
-    /// The focused lane's (open claims, pending question) from the transcript pane's last report.
-    pub fn owed(&self) -> (usize, bool) {
+    /// The focused lane's pending question from the transcript pane's last report.
+    pub fn owed(&self) -> bool {
         self.transcript_pane()
             .and_then(|t| self.0.reports.read().get(&t).and_then(|r| r.owed))
-            .unwrap_or((0, false))
+            .unwrap_or(false)
     }
 
     /// Whether quit has been asked for. A pane that reads the ledger on an event checks this
@@ -744,8 +744,7 @@ impl TuiHandle {
             measure_cols: self.0.cfg.measure_cols,
             focused_name: self.agent().map(|a| a.name().to_string()),
             running: self.running(),
-            owed_claims: self.owed().0,
-            owed_question: self.owed().1,
+            owed_question: self.owed(),
             rail_collapsed: {
                 // Last frame's layout, the same source `status_top` reads: a Strip pane handed
                 // zero columns is a collapsed rail; no Strip pane at all is no rail.

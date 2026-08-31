@@ -6,18 +6,20 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# The leader-scoped, model-facing tools (§2), collapsed to two by WP-6: `propose_claim` (the
-# SHADOWING one, which absorbed `draft_requirement` and `propose_structure`) and `curate`
-# (`adopt_unsorted` + `note_timeline` in one journalled pass). Registered with
-# `ToolScope::Agent(leader)`. A separate crate from `leader` for one reason: it injects `leader`
-# and so reloads with the binding (P5-D10). Row `tool.leader` in `bough-tui-app`.
+# The leader-scoped, model-facing tools (§2, amended by the claims demolition): `create_lane` and
+# `merge_lanes` apply graph ops directly, and `curate` is `adopt_unsorted` + `note_timeline` in
+# one journalled pass. Registered with `ToolScope::Agent(leader)`. A separate crate from `leader`
+# for one reason: it injects `leader` and so reloads with the binding (P5-D10). Row `tool.leader`
+# in `bough-tui-app`.
 
 [dependencies]
 bough-kernel = { workspace = true }
 bough-plugin-ledger = { workspace = true }
 bough-plugin-leader = { workspace = true }
-bough-plugin-claims = { workspace = true }
 bough-plugin-graph-ops = { workspace = true }
+bough-plugin-agents = { workspace = true }
+bough-plugin-rollups = { workspace = true }
+tracing = { workspace = true }
 bough-plugin-tools = { workspace = true }
 async-trait = { workspace = true }
 inventory = { workspace = true }
@@ -29,8 +31,8 @@ anyhow = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+parking_lot = { workspace = true }
 bough-plugin-ledger-memory = { workspace = true }
-bough-plugin-agents = { workspace = true }
 bough-plugin-mail-router = { workspace = true }
 bough-plugin-projection = { workspace = true }
 bough-plugin-projection-assembler = { workspace = true }

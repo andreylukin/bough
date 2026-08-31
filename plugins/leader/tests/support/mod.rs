@@ -1,6 +1,6 @@
 //! The fixture the two leader test files share: an in-memory ledger, a live agents seam with an
-//! idle driver, the real mail router, the real claims seam over a graph seam that refuses every
-//! op, a real assembler, and the `leader` row applied over all of it.
+//! idle driver, the real mail router, a graph seam that refuses every op, a real assembler, and
+//! the `leader` row applied over all of it.
 //!
 //! DEVIATION from the WP-5 file list, named on purpose: the plan lists two test files and no
 //! support module. Two copies of this harness would be two places for it to drift, and
@@ -15,7 +15,6 @@ use bough_plugin_agents::{
     Agent, AgentCell, AgentDriver, AgentError, AgentFactory, Agents, AgentsHandle, Attach,
     CancelCause, CreateAgent, InboxReceipt, Message, WakeCause, WakeKind, WakeRequest,
 };
-use bough_plugin_claims::{Claims, ClaimsConfig, ClaimsHandle};
 use bough_plugin_graph_ops::{
     Graph, GraphError, GraphHandle, GraphOps, OpOutcome, OpPlan, OpRequest, UndoRequest,
 };
@@ -36,7 +35,6 @@ pub struct Fixture {
     pub ledger: LedgerHandle,
     pub agents: AgentsHandle,
     pub mail: MailHandle,
-    pub claims: ClaimsHandle,
     pub projection: ProjectionHandle,
     _dir: tempfile::TempDir,
     _slots: Vec<Box<dyn std::any::Any>>,
@@ -72,13 +70,6 @@ impl Fixture {
         );
 
         let graph = GraphHandle(Arc::new(RefusingGraph) as Arc<dyn GraphOps>);
-        let claims = ClaimsHandle::new(
-            root.clone(),
-            ledger.clone(),
-            agents.clone(),
-            graph.clone(),
-            Arc::new(ClaimsConfig { open_limit: 50 }),
-        );
 
         let assembler = Assembler::new(
             Arc::new(AssemblerConfig {
@@ -107,11 +98,6 @@ impl Fixture {
                     .expect("agents"),
             ),
             Box::new(root.provide::<Mail>(mail.clone()).await.expect("mail")),
-            Box::new(
-                root.provide::<Claims>(claims.clone())
-                    .await
-                    .expect("claims"),
-            ),
             Box::new(root.provide::<Graph>(graph).await.expect("graph")),
             Box::new(
                 root.provide::<Projection>(projection.clone())
@@ -127,7 +113,6 @@ impl Fixture {
             ledger,
             agents,
             mail,
-            claims,
             projection,
             _dir: dir,
             _slots: slots,

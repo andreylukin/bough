@@ -306,7 +306,6 @@ dependencies = [
  "bough-plugin-agents",
  "bough-plugin-boundary-instructions",
  "bough-plugin-catch-up-on-wake",
- "bough-plugin-claims",
  "bough-plugin-collector-github",
  "bough-plugin-collector-linear",
  "bough-plugin-collector-slack",
@@ -338,6 +337,7 @@ dependencies = [
  "bough-plugin-mcp-subprocess",
  "bough-plugin-model-policy",
  "bough-plugin-old-feed-adapter",
+ "bough-plugin-pins",
  "bough-plugin-power",
  "bough-plugin-power-test",
  "bough-plugin-projection",
@@ -367,6 +367,7 @@ dependencies = [
  "bough-plugin-tui-drafts",
  "bough-plugin-tui-drift",
  "bough-plugin-tui-focus",
+ "bough-plugin-tui-panel",
  "bough-plugin-tui-preview",
  "bough-plugin-tui-probe",
  "bough-plugin-tui-search",
@@ -721,33 +722,6 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "bough-plugin-claims"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bough-kernel",
- "bough-plugin-agents",
- "bough-plugin-commands",
- "bough-plugin-graph-ops",
- "bough-plugin-ledger",
- "bough-plugin-ledger-memory",
- "bough-plugin-rollups",
- "bough-plugin-tools",
- "bough-util",
- "chrono",
- "inventory",
- "parking_lot",
- "schemars",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -1173,7 +1147,6 @@ dependencies = [
  "async-trait",
  "bough-kernel",
  "bough-plugin-agents",
- "bough-plugin-claims",
  "bough-plugin-graph-ops",
  "bough-plugin-ledger",
  "bough-plugin-ledger-memory",
@@ -1506,6 +1479,21 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "bough-plugin-pins"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-commands",
+ "bough-plugin-ledger",
+ "chrono",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1950,7 +1938,6 @@ dependencies = [
  "async-trait",
  "bough-kernel",
  "bough-plugin-agents",
- "bough-plugin-claims",
  "bough-plugin-graph-ops",
  "bough-plugin-js",
  "bough-plugin-js-quickjs",
@@ -1960,15 +1947,18 @@ dependencies = [
  "bough-plugin-mail-router",
  "bough-plugin-projection",
  "bough-plugin-projection-assembler",
+ "bough-plugin-rollups",
  "bough-plugin-tools",
  "bough-plugin-tools-codemode",
  "chrono",
  "inventory",
+ "parking_lot",
  "schemars",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2074,7 +2064,6 @@ dependencies = [
  "bough-kernel",
  "bough-plugin-actions",
  "bough-plugin-agents",
- "bough-plugin-claims",
  "bough-plugin-graph-ops",
  "bough-plugin-js",
  "bough-plugin-js-quickjs",
@@ -2205,6 +2194,37 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "bough-plugin-tui-panel"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-commands",
+ "bough-plugin-ledger",
+ "bough-plugin-llm",
+ "bough-plugin-mcp",
+ "bough-plugin-model-policy",
+ "bough-plugin-schedule",
+ "bough-plugin-tui-render",
+ "bough-plugin-tui-shell",
+ "bough-util",
+ "chrono",
+ "crossterm",
+ "inventory",
+ "parking_lot",
+ "ratatui",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
  "tracing",
 ]
 

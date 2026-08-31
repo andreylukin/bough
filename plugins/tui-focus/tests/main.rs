@@ -4,7 +4,6 @@
 //! isolation comes from nextest running every test in its own process (`make test`).
 
 mod branches;
-mod claims;
 mod expand;
 mod program;
 mod render;

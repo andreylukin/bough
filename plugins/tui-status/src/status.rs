@@ -49,8 +49,7 @@ pub struct StatusView {
     /// The focused agent's name, set ONLY while the rail is collapsed (visual audit, 80×24): the
     /// rail names the lane at every width it exists at; under `collapse_cols` nothing did.
     pub agent: Option<String>,
-    /// What the focused lane is waiting on from Andrey (round 10): open claims, a question.
-    pub owed_claims: usize,
+    /// What the focused lane is waiting on from Andrey (round 10): a question.
     pub owed_question: bool,
 }
 
@@ -196,21 +195,9 @@ pub fn field_text(v: &StatusView, f: Field) -> Option<String> {
         // With the rail collapsed the chip carries the STATE too (round 10, busy-executive): at
         // 80 columns the rail is gone, and "who" without "idle / running" answers nothing at a
         // glance.
-        Field::Owed => {
-            let mut parts = Vec::new();
-            if v.owed_claims > 0 {
-                let noun = if v.owed_claims == 1 {
-                    "claim"
-                } else {
-                    "claims"
-                };
-                parts.push(format!("\u{25c7} {} {noun}", v.owed_claims));
-            }
-            if v.owed_question {
-                parts.push("? question".to_string());
-            }
-            (!parts.is_empty()).then(|| parts.join(" \u{b7} "))
-        }
+        Field::Owed => v
+            .owed_question
+            .then(|| "? question".to_string()),
         Field::Agent => v.agent.as_ref().map(|name| {
             let state = if v.running { "running" } else { "idle" };
             format!("{name} \u{b7} {state}")

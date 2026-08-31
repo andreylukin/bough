@@ -58,16 +58,6 @@ fn speaker_and_text(agent: &AgentName, row: &Row) -> Option<(String, String)> {
         Row::Reasoning { text, .. } => {
             Some((format!("{} (thinking)", agent.as_str()), text.clone()))
         }
-        Row::Claim {
-            kind,
-            title,
-            body,
-            state,
-            ..
-        } => Some((
-            format!("claim ({kind})"),
-            format!("{title} {body} {}", state.word()),
-        )),
         Row::Tool {
             name, args, result, ..
         } => {

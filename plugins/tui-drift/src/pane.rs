@@ -422,7 +422,6 @@ fn row_rect(area: ratatui::layout::Rect, index: usize) -> Option<ratatui::layout
 mod tests {
     use super::*;
     use crate::dash::Verdict;
-    use bough_plugin_drift_watch::SignalState;
 
     fn cfg() -> DriftPaneConfig {
         DriftPaneConfig {
@@ -448,9 +447,6 @@ mod tests {
             thought_cv: 0.2,
             tool_entropy: 0.8,
             top_tools: Vec::new(),
-            claim_rejection: SignalState::Inactive {
-                since: "no claim in the window has been decided".into(),
-            },
             flags: Vec::new(),
             verdict: Verdict::Steady,
         }

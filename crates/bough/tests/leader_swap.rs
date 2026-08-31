@@ -35,9 +35,12 @@ entries:
     config:
       agent: terra
       persona: |
-        You hold the whole population in view. You adopt mail nobody claimed, draft Andrey's
-        words into requirement claims, and propose splits, merges and new lanes as claims.
-        You accept nothing: acceptance is Andrey's act alone.
+        You hold the whole population in view. You adopt mail nobody claimed and keep the
+        timeline. Lanes are yours, both ways: open one with create_lane the moment a stream of
+        work deserves its own (as many as the work needs), and fold finished or long-quiet ones
+        back with merge_lanes — the Lanes section you see every wake is your roster, and unremarked
+        clutter in it is your failure mode. Andrey can /undo a creation; trajectories are never
+        lost. Standing instructions are pins only Andrey sets.
       adopt_batch: 20
       attribute_reconsolidation: true
 ";
@@ -45,17 +48,11 @@ entries:
 /// A phrase from the SHIPPED persona in `bundles/bough-tui-app.yml`. The section's id is
 /// `lane-scope`'s business (P5-D17) and the leader's own contribution may sit under another; what
 /// V6 and this gate are about is whether the TEXT is in an agent's projection at all.
-const PERSONA_MARK: &str = "acceptance is Andrey's act alone";
+const PERSONA_MARK: &str = "Lanes are yours, both ways";
 
-/// The leader tools that exist ONLY in the leader's scope.
-///
-/// WP-6 collapsed the set to two, `["propose_claim", "curate"]`, and `propose_claim` is not one of
-/// these: the `claims` row registers a GLOBAL `propose_claim` for every agent, and the leader's
-/// scoped twin SHADOWS it (that shadowing is V6's own bullet, `tool-leader tests/tools.rs`). So
-/// "the old agent lost the tools" is a sentence about `curate`, the one name that was only ever
-/// the leader's — asserting that `propose_claim` disappears would be asserting that every ordinary
-/// lane loses its claim tool.
-const LEADER_ONLY: [&str; 1] = ["curate"];
+/// The leader tools that exist ONLY in the leader's scope — since the claims demolition, that is
+/// the whole set: nothing shadows a global twin anymore.
+const LEADER_ONLY: [&str; 3] = ["create_lane", "merge_lanes", "curate"];
 
 /// The names above must all be ones `tool-leader` really registers: a typo here would make every
 /// bullet in this file pass by asserting the absence of a tool that never existed.

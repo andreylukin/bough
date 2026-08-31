@@ -1,10 +1,12 @@
-//! The leader's two tools are scoped to ONE agent, and that agent comes from `ctx.leader`.
+//! The leader's tools are scoped to ONE agent, and that agent comes from `ctx.leader`.
 //! Everything here is a statement about the pair (registry, binding): the target sees them, no
 //! other agent does — not in the schema it is shown and not at the executor it calls — and moving
-//! the binding moves both, which is the SWAP in miniature.
+//! the binding moves all of them, which is the SWAP in miniature.
 //!
-//! WP-6 collapsed five tools into two, so the behaviour the three retired names carried is
-//! asserted here through the two that absorbed it.
+//! THE CLAIMS DEMOLITION: `propose_claim` is gone with the claims seam; `create_lane` and
+//! `merge_lanes` apply through `ctx.graph` DIRECTLY, so the graph double here RECORDS what it is
+//! asked and writes the row a real bud would write — what these tests pin is what the tools ask
+//! of the seam, attributed to whom, and what they do with the answer.
 
 use std::sync::Arc;
 
@@ -13,15 +15,16 @@ use bough_plugin_agents::{
     AgentCell, AgentDriver, AgentError, AgentFactory, Agents, AgentsHandle, Attach, CancelCause,
     CreateAgent, InboxReceipt, MailClass, Message, Sender, WakeCause, WakeKind, WakeRequest,
 };
-use bough_plugin_claims::{Claims, ClaimsConfig, ClaimsHandle};
 use bough_plugin_graph_ops::{
-    Graph, GraphError, GraphHandle, GraphOps, OpOutcome, OpPlan, OpRequest, UndoRequest,
+    Graph, GraphError, GraphHandle, GraphOps, OpKind, OpOutcome, OpPlan, OpRequest, UndoRequest,
 };
 use bough_plugin_leader::{Leader, LeaderConfig, LeaderHandle, LeaderPlugin};
 use bough_plugin_ledger::query::StepQuery;
-use bough_plugin_ledger::{AgentName, Ledger, LedgerHandle, Ref, StepType, TrajId, WakeId};
+use bough_plugin_ledger::{AgentName, AgentRow, Ledger, LedgerHandle, Ref, StepType, TrajId, WakeId};
 use bough_plugin_ledger_memory::store::MemoryStore;
 use bough_plugin_mail_router::{Envelope, Mail, MailConfig, MailHandle};
+use bough_plugin_rollups::Attribution;
+use parking_lot::Mutex;
 use bough_plugin_projection::{Projection, ProjectionHandle, Projector};
 use bough_plugin_projection_assembler::{Assembler, AssemblerConfig};
 use bough_plugin_tool_leader::{ToolLeaderConfig, ToolLeaderPlugin, TOOL_NAMES};
@@ -35,7 +38,7 @@ struct Fixture {
     ledger: LedgerHandle,
     agents: AgentsHandle,
     mail: MailHandle,
-    claims: ClaimsHandle,
+    graph: Arc<RecordingGraph>,
     tools: ToolsHandle,
     _dir: tempfile::TempDir,
     _slots: Vec<Box<dyn std::any::Any>>,
@@ -66,14 +69,12 @@ impl Fixture {
                 tolerate_absent_lane: true,
             }),
         );
-        let graph = GraphHandle(Arc::new(RefusingGraph) as Arc<dyn GraphOps>);
-        let claims = ClaimsHandle::new(
-            root.clone(),
-            ledger.clone(),
-            agents.clone(),
-            graph.clone(),
-            Arc::new(ClaimsConfig { open_limit: 50 }),
-        );
+        let recording = Arc::new(RecordingGraph {
+            ledger: ledger.clone(),
+            seen: Mutex::new(Vec::new()),
+            undone: Mutex::new(Vec::new()),
+        });
+        let graph = GraphHandle(recording.clone() as Arc<dyn GraphOps>);
         let assembler = Assembler::new(
             Arc::new(AssemblerConfig {
                 budget_tokens: 100_000,
@@ -102,11 +103,6 @@ impl Fixture {
                     .expect("agents"),
             ),
             Box::new(root.provide::<Mail>(mail.clone()).await.expect("mail")),
-            Box::new(
-                root.provide::<Claims>(claims.clone())
-                    .await
-                    .expect("claims"),
-            ),
             Box::new(root.provide::<Graph>(graph).await.expect("graph")),
             Box::new(
                 root.provide::<Projection>(projection)
@@ -130,7 +126,7 @@ impl Fixture {
             ledger,
             agents,
             mail,
-            claims,
+            graph: recording,
             tools,
             _dir: dir,
             _slots: slots,
@@ -255,19 +251,18 @@ fn timeline_only() -> serde_json::Value {
     })
 }
 
-fn lane_claim() -> serde_json::Value {
+fn lane_args() -> serde_json::Value {
     serde_json::json!({
-        "kind": "lane",
-        "title": "infra deserves a lane",
-        "body": "three weeks of infra mail landed on terra",
-        "detail": { "name": "infra", "routing_refs": ["repo:bough"] }
+        "name": "infra",
+        "reason": "three weeks of infra mail landed on terra",
+        "routing_refs": ["repo:bough"]
     })
 }
 
 // ---- the cases -------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_set_is_propose_claim_and_curate() {
+async fn the_set_is_create_lane_merge_lanes_and_curate() {
     let f = Fixture::open().await;
     f.lane("sol").await;
     let leader_row = f.leader_row.clone();
@@ -282,8 +277,8 @@ async fn the_set_is_propose_claim_and_curate() {
         .into_iter()
         .map(|d| d.name)
         .collect();
-    assert_eq!(names, expected, "exactly the two, in the schema itself");
-    assert_eq!(TOOL_NAMES, ["propose_claim", "curate"]);
+    assert_eq!(names, expected, "exactly the three, in the schema itself");
+    assert_eq!(TOOL_NAMES, ["create_lane", "merge_lanes", "curate"]);
 }
 
 #[tokio::test]
@@ -295,8 +290,6 @@ async fn they_are_absent_from_every_other_agents_schema() {
     let tool_row = f.tool_row.clone();
     f.mount_set(&leader_row, &tool_row, "sol").await;
 
-    // The global `propose_claim` is the only claim tool an ordinary lane is shown, and it is
-    // registered by `claims`, not here — so with it unmounted terra sees nothing at all.
     assert!(
         f.visible("terra").is_empty(),
         "a lane agent is shown none of the leader's tools; got {:?}",
@@ -332,7 +325,7 @@ async fn the_executor_refuses_them_for_another_agent() {
 }
 
 #[tokio::test]
-async fn the_scoped_propose_claim_accepts_a_structural_kind() {
+async fn create_lane_bears_a_live_lane_attributed_to_the_leader() {
     let f = Fixture::open().await;
     f.lane("sol").await;
     let leader_row = f.leader_row.clone();
@@ -341,74 +334,99 @@ async fn the_scoped_propose_claim_accepts_a_structural_kind() {
 
     let results = f
         .tools
-        .execute(&f.root, vec![call("propose_claim", "sol", lane_claim())])
+        .execute(&f.root, vec![call("create_lane", "sol", lane_args())])
         .await;
+    assert!(results[0].ok, "{:?}", results[0].failure);
+
+    // The seam was asked for a BUD, by the leader, cited.
+    let seen = f.graph.seen.lock().clone();
+    let bud = match seen.as_slice() {
+        [OpRequest::Bud(b)] => b.clone(),
+        other => panic!("one bud, got {other:?}"),
+    };
+    assert_eq!(bud.parent, AgentName::new("sol"));
     assert!(
-        results[0].ok,
-        "the leader may propose structure: {:?}",
-        results[0].failure
+        matches!(&bud.by, Attribution::Agent { name } if *name == AgentName::new("sol")),
+        "the op is the leader's act, attributed as such: {:?}",
+        bud.by
+    );
+    assert!(
+        !bud.cites.is_empty(),
+        "a direct op still cites — at least the call itself"
     );
 
-    // It is a CLAIM and nothing else: an open one, of the structural kind, and no agents row was
-    // born by proposing it.
-    let open = f
-        .claims
-        .open(&bough_plugin_claims::ClaimQuery::default())
+    // …and the lane is REAL: a row with the asked-for routing.
+    let row = f
+        .ledger
+        .0
+        .agent(&AgentName::new("infra"))
         .await
-        .expect("the open list reads");
-    assert_eq!(open.len(), 1);
-    assert!(open[0].kind.is_structural());
-    assert_eq!(open[0].kind.as_str(), "lane");
-    assert!(
-        f.ledger
-            .0
-            .agent(&AgentName::new("infra"))
-            .await
-            .expect("the read runs")
-            .is_none(),
-        "proposing a lane does not bear one: acceptance is Andrey's act"
-    );
+        .expect("the read runs")
+        .expect("the lane was born");
+    assert!(row.routing_refs.contains(&Ref::new("repo:bough")));
+
+    // A second creation of the same name is refused, not re-budded.
+    let again = f
+        .tools
+        .execute(&f.root, vec![call("create_lane", "sol", lane_args())])
+        .await;
+    let failure = again[0].failure.as_ref().expect("a duplicate is refused");
+    assert!(failure.message.contains("already exists"), "{}", failure.message);
 }
 
 #[tokio::test]
-async fn the_global_one_refuses_it_for_a_lane_agent() {
+async fn merge_lanes_asks_the_seam_and_refuses_self_absorption() {
     let f = Fixture::open().await;
     f.lane("sol").await;
     f.lane("terra").await;
     let leader_row = f.leader_row.clone();
     let tool_row = f.tool_row.clone();
     f.mount_set(&leader_row, &tool_row, "sol").await;
-    // The GLOBAL `propose_claim`, registered by `claims` exactly as its row does it.
-    bough_plugin_claims::tool::register(&f.root, &f.claims)
-        .await
-        .expect("the global tool registers");
 
-    // terra now sees one tool, and it is the global twin.
-    assert_eq!(f.visible("terra"), vec!["propose_claim".to_string()]);
-    let refused = f
+    let results = f
         .tools
-        .execute(&f.root, vec![call("propose_claim", "terra", lane_claim())])
+        .execute(
+            &f.root,
+            vec![call(
+                "merge_lanes",
+                "sol",
+                serde_json::json!({
+                    "survivor": "sol", "absorbed": "terra", "reason": "terra went quiet"
+                }),
+            )],
+        )
         .await;
-    let failure = refused[0]
-        .failure
-        .as_ref()
-        .expect("a lane agent may not propose structure");
-    assert_eq!(failure.kind, FailureClass::Denied);
+    assert!(results[0].ok, "{:?}", results[0].failure);
+    let seen = f.graph.seen.lock().clone();
+    let merge = match seen.as_slice() {
+        [OpRequest::Merge(m)] => m.clone(),
+        other => panic!("one merge, got {other:?}"),
+    };
+    assert_eq!(merge.survivor, AgentName::new("sol"));
+    assert_eq!(merge.absorbed, AgentName::new("terra"));
     assert!(
-        failure
-            .message
-            .contains("only the leader proposes structure"),
-        "{}",
-        failure.message
+        matches!(&merge.by, Attribution::Agent { name } if *name == AgentName::new("sol")),
+        "{:?}",
+        merge.by
     );
 
-    // The same call, from the leader, succeeds: the scoped tool SHADOWS the global one for sol
-    // alone, and the difference between them is behaviour rather than presentation.
-    let allowed = f
+    // The leader folding its own lane away would take the leader set down with it.
+    let refused = f
         .tools
-        .execute(&f.root, vec![call("propose_claim", "sol", lane_claim())])
+        .execute(
+            &f.root,
+            vec![call(
+                "merge_lanes",
+                "sol",
+                serde_json::json!({
+                    "survivor": "terra", "absorbed": "sol", "reason": "no"
+                }),
+            )],
+        )
         .await;
-    assert!(allowed[0].ok, "{:?}", allowed[0].failure);
+    let failure = refused[0].failure.as_ref().expect("self-absorption is refused");
+    assert!(failure.message.contains("your own lane"), "{}", failure.message);
+    assert_eq!(f.graph.seen.lock().len(), 1, "the refusal never reached the seam");
 }
 
 #[tokio::test]
@@ -420,7 +438,7 @@ async fn the_row_reloads_when_the_leader_binding_changes() {
     let tool_row = f.tool_row.clone();
     let leader = f.mount_set(&leader_row, &tool_row, "sol").await;
     assert_eq!(leader.target(), &AgentName::new("sol"));
-    assert_eq!(f.visible("sol").len(), 2);
+    assert_eq!(f.visible("sol").len(), 3);
 
     // Editing `leader.config.agent` reloads the `leader` row; `tool-leader` injects `leader`, so
     // it unloads with the binding and reloads against the new one. Both fibers unwind, both rows
@@ -449,113 +467,10 @@ async fn the_row_reloads_when_the_leader_binding_changes() {
     assert_eq!(moved.target(), &AgentName::new("terra"));
     assert_eq!(
         f.visible("terra").len(),
-        2,
-        "both moved together: the row read its target from the binding, never from config"
+        3,
+        "all moved together: the row read its target from the binding, never from config"
     );
     assert!(f.visible("sol").is_empty());
-}
-
-#[tokio::test]
-async fn propose_claim_absorbs_draft_requirement_and_propose_structure() {
-    let f = Fixture::open().await;
-    f.lane("sol").await;
-    let leader_row = f.leader_row.clone();
-    let tool_row = f.tool_row.clone();
-    f.mount_set(&leader_row, &tool_row, "sol").await;
-
-    let results = f
-        .tools
-        .execute(
-            &f.root,
-            vec![call(
-                "propose_claim",
-                "sol",
-                serde_json::json!({
-                    "kind": "requirement",
-                    "title": "one turn per wake",
-                    "body": "Andrey said so"
-                }),
-            )],
-        )
-        .await;
-    let failure = results[0]
-        .failure
-        .as_ref()
-        .expect("a requirement drafted from Andrey's words must cite them");
-    assert!(failure.message.contains("cite"), "{}", failure.message);
-
-    // …and with cites it is a requirement claim, on the absorbed `draft_requirement` path.
-    let ok = f
-        .tools
-        .execute(
-            &f.root,
-            vec![call(
-                "propose_claim",
-                "sol",
-                serde_json::json!({
-                    "kind": "requirement",
-                    "title": "one turn per wake",
-                    "body": "Andrey said so",
-                    "cites": ["step:s1"]
-                }),
-            )],
-        )
-        .await;
-    assert!(ok[0].ok, "{:?}", ok[0].failure);
-    let open = f
-        .claims
-        .open(&bough_plugin_claims::ClaimQuery::default())
-        .await
-        .expect("the open list reads");
-    assert_eq!(open.len(), 1);
-    assert_eq!(open[0].kind.as_str(), "requirement");
-
-    // The other absorbed tool: the structural kinds `propose_structure` used to own.
-    let structural = f
-        .tools
-        .execute(&f.root, vec![call("propose_claim", "sol", lane_claim())])
-        .await;
-    assert!(structural[0].ok, "{:?}", structural[0].failure);
-    let open = f
-        .claims
-        .open(&bough_plugin_claims::ClaimQuery::default())
-        .await
-        .expect("the open list reads");
-    assert_eq!(open.len(), 2);
-    assert!(open.iter().any(|c| c.kind.as_str() == "lane"));
-}
-
-#[tokio::test]
-async fn a_structural_propose_claim_writes_a_claim_and_never_an_op() {
-    let f = Fixture::open().await;
-    f.lane("sol").await;
-    let leader_row = f.leader_row.clone();
-    let tool_row = f.tool_row.clone();
-    f.mount_set(&leader_row, &tool_row, "sol").await;
-
-    let results = f
-        .tools
-        .execute(&f.root, vec![call("propose_claim", "sol", lane_claim())])
-        .await;
-    assert!(results[0].ok, "{:?}", results[0].failure);
-
-    // The graph provider in this fixture REFUSES every op, so a path from this crate to
-    // `ctx.graph` would have surfaced as a failure rather than as a claim.
-    let steps = f
-        .ledger
-        .0
-        .steps(&StepQuery::default())
-        .await
-        .expect("the query answers");
-    assert!(
-        steps.iter().any(|s| s.kind.as_str() == "claim/proposed"),
-        "a structural kind writes `claim/proposed`"
-    );
-    assert!(
-        !steps.iter().any(|s| s.kind.as_str().starts_with("op/")),
-        "…and never an op: {:?}",
-        steps.iter().map(|s| s.kind.as_str()).collect::<Vec<_>>()
-    );
 }
 
 /// `curate` with only placements: exactly what `adopt_unsorted` wrote.
@@ -668,21 +583,83 @@ async fn an_empty_curate_is_refused_rather_than_a_silent_no_op() {
 
 // ---- the stubs -------------------------------------------------------------------------------
 
-struct RefusingGraph;
+/// A graph seam that RECORDS the request and writes the row a real bud would write (the old
+/// `claims/tests/lane.rs` double, moved here with the behaviour it pinned).
+struct RecordingGraph {
+    ledger: LedgerHandle,
+    seen: Mutex<Vec<OpRequest>>,
+    undone: Mutex<Vec<bough_plugin_ledger::StepId>>,
+}
 
 #[async_trait::async_trait]
-impl GraphOps for RefusingGraph {
+impl GraphOps for RecordingGraph {
     fn provider(&self) -> &'static str {
-        "refusing-graph"
+        "recording-graph"
     }
     async fn plan(&self, _req: &OpRequest) -> Result<OpPlan, GraphError> {
-        Err(GraphError::Other(anyhow::anyhow!("no graph provider")))
+        unreachable!("the leader's tools apply, they do not plan")
     }
-    async fn apply(&self, _req: &OpRequest) -> Result<OpOutcome, GraphError> {
-        Err(GraphError::Other(anyhow::anyhow!("no graph provider")))
+    async fn apply(&self, req: &OpRequest) -> Result<OpOutcome, GraphError> {
+        self.seen.lock().push(req.clone());
+        match req {
+            OpRequest::Bud(bud) => {
+                let child = &bud.child;
+                let name = child.agent.clone().expect("a lane bud names its agent");
+                self.ledger
+                    .0
+                    .put_agent(AgentRow {
+                        name: name.clone(),
+                        traj: child.traj.clone(),
+                        routing_refs: child.routing_refs.clone(),
+                        wake_classes: child.wake_classes.clone(),
+                        model_override: None,
+                        tick_floor: None,
+                        digest_rollup: None,
+                    })
+                    .await?;
+                Ok(OpOutcome {
+                    kind: OpKind::Bud,
+                    step: bough_plugin_ledger::StepId::new("graph-bud-step"),
+                    trajs: vec![child.traj.clone()],
+                    edges: 1,
+                    digests: Vec::new(),
+                    rows_written: vec![name],
+                    rows_deleted: Vec::new(),
+                    undo_shape: None,
+                })
+            }
+            OpRequest::Merge(m) => Ok(OpOutcome {
+                kind: OpKind::Merge,
+                step: bough_plugin_ledger::StepId::new("graph-merge-step"),
+                trajs: Vec::new(),
+                edges: 1,
+                digests: Vec::new(),
+                rows_written: vec![m.survivor.clone()],
+                rows_deleted: vec![m.absorbed.clone()],
+                undo_shape: None,
+            }),
+            other => panic!("the leader's tools ask for buds and merges only, got {other:?}"),
+        }
     }
-    async fn undo(&self, _req: &UndoRequest) -> Result<OpOutcome, GraphError> {
-        Err(GraphError::Other(anyhow::anyhow!("no graph provider")))
+    async fn undo(&self, req: &UndoRequest) -> Result<OpOutcome, GraphError> {
+        self.undone.lock().push(req.of.clone());
+        let mut deleted = Vec::new();
+        for row in self.ledger.0.agents().await? {
+            if row.name.as_str() == "infra" {
+                self.ledger.0.delete_agent(&row.name).await?;
+                deleted.push(row.name);
+            }
+        }
+        Ok(OpOutcome {
+            kind: OpKind::Undo,
+            step: bough_plugin_ledger::StepId::new("graph-undo-step"),
+            trajs: Vec::new(),
+            edges: 0,
+            digests: Vec::new(),
+            rows_written: Vec::new(),
+            rows_deleted: deleted,
+            undo_shape: Some(bough_plugin_graph_ops::UndoShape::Pointers),
+        })
     }
 }
 
@@ -736,20 +713,21 @@ mod codemode {
 
     const LEADER: &str = "sol";
 
-    /// The five spellings WP-6 retired. `propose_structure` and `draft_requirement` folded into
-    /// `propose_claim`; `adopt_unsorted` and `note_timeline` into `curate`.
-    const RETIRED: [&str; 4] = [
+    /// The spellings WP-6 and the claims demolition retired. `propose_structure` and
+    /// `draft_requirement` folded into `propose_claim`, which then fell with the claims seam;
+    /// `adopt_unsorted` and `note_timeline` folded into `curate`.
+    const RETIRED: [&str; 5] = [
         "adopt_unsorted",
         "draft_requirement",
         "propose_structure",
         "note_timeline",
+        "propose_claim",
     ];
 
     /// The fixture with the leader set mounted on `sol`, `sol` alive, and the code-mode consumer
     /// installed over it: `run` registered and the typed schemas concealed for `sol`.
     ///
-    /// Aliases are EMPTY on purpose. The shipped row maps `claim -> propose_claim`, which is a
-    /// naming decision of the codemode row; V7 is about which TOOLS survived the collapse, so the
+    /// Aliases are EMPTY on purpose: V7 is about which TOOLS survived the collapse, so the
     /// injected names here are the registered names.
     async fn open() -> (Fixture, Arc<bough_plugin_tools_codemode::run::Run>) {
         let f = Fixture::open().await;
@@ -874,32 +852,31 @@ mod codemode {
         );
     }
 
-    /// And `propose_claim` — the other survivor — really proposes from inside a program.
+    /// And `create_lane` — the structural survivor — really bears a lane from inside a program.
     #[tokio::test]
-    async fn a_program_proposes_a_structural_claim_through_the_surviving_function() {
+    async fn a_program_creates_a_lane_through_the_surviving_function() {
         let (f, run) = open().await;
         program(
             &run,
             &f.root,
             &format!(
-                "await propose_claim({});",
-                serde_json::to_string(&lane_claim()).unwrap()
+                "await create_lane({});",
+                serde_json::to_string(&lane_args()).unwrap()
             ),
         )
         .await;
-        let open_claims = f
-            .claims
-            .open(&bough_plugin_claims::ClaimQuery::default())
-            .await
-            .expect("the claims query answers");
-        assert_eq!(
-            open_claims.len(),
-            1,
-            "the structural claim must exist after the program ran"
+        assert!(
+            f.ledger
+                .0
+                .agent(&AgentName::new("infra"))
+                .await
+                .expect("the read runs")
+                .is_some(),
+            "the lane must exist after the program ran"
         );
     }
 
-    /// The five old spellings are GONE from the code-mode surface: not injected, and a program
+    /// The old spellings are GONE from the code-mode surface: not injected, and a program
     /// that reaches for one gets a `ReferenceError` rather than a working tool under an old name.
     #[tokio::test]
     async fn the_retired_spellings_are_not_defined_in_the_sandbox() {
@@ -938,8 +915,9 @@ mod codemode {
     }
 
     /// The BINDING list the consumer builds for the leader — what actually becomes globals —
-    /// carries the two and none of the five. This is the code-mode twin of
-    /// `the_set_is_propose_claim_and_curate`, read off the real registry rather than a constant.
+    /// carries the three and none of the retired. This is the code-mode twin of
+    /// `the_set_is_create_lane_merge_lanes_and_curate`, read off the real registry rather than a
+    /// constant.
     #[tokio::test]
     async fn the_injected_leader_functions_are_exactly_the_two() {
         let (_f, run) = open().await;

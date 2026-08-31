@@ -115,7 +115,7 @@ bough-plugin-drift-watch = { path = "plugins/drift-watch" }                    #
 bough-plugin-mail-router = { path = "plugins/mail-router" }                    # §3, §5 mail fan-out + unsorted queue
 bough-plugin-dormancy = { path = "plugins/dormancy" }                          # §1 dormancy + the wake-admission listener
 bough-plugin-graph-ops = { path = "plugins/graph-ops" }                        # §4 split / merge / bud / fork / undo
-bough-plugin-claims = { path = "plugins/claims" }                              # §3, §16 the claims seam
+bough-plugin-pins = { path = "plugins/pins" }                                 # §3 /pin and /unpin, the pin stream's writers
 bough-plugin-leader = { path = "plugins/leader" }                              # §2 the leader plugin set
 bough-plugin-tool-leader = { path = "plugins/tool-leader" }                    # §2 the leader-scoped tools
 bough-plugin-lane-scope = { path = "plugins/lane-scope" }                      # §5 per-lane persona + tools.restrict

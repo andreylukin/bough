@@ -51,7 +51,6 @@ fn row(name: &str, about: Option<AboutView>) -> RailRow {
         about,
         leader: false,
         waiting: 0,
-        owed_claims: 0,
         question: false,
         since: None,
         clock: String::new(),
@@ -530,15 +529,14 @@ fn a_lane_with_no_work_yet_is_dim_and_the_leader_is_not() {
     assert_eq!(name.style.fg, Some(theme.fg), "{loud:?}");
 }
 
-/// Round 10: the rail marks what a lane is waiting on from Andrey — `◇N` open claims, `?` a
-/// pending question — read from the ledger by name.
+/// Round 10: the rail marks what a lane is waiting on from Andrey — `?` a pending question —
+/// read from the ledger by name.
 #[test]
-fn the_rail_marks_open_claims_and_a_pending_question() {
+fn the_rail_marks_a_pending_question() {
     let mut r = row("sol", None);
-    r.owed_claims = 2;
     r.question = true;
     let text = text_of(&rail::row_lines(&r, false, false, 0, 34, &theme()));
-    assert!(text[0].contains("sol ◇2 ?"), "{text:?}");
+    assert!(text[0].contains("sol ?"), "{text:?}");
     assert!(text[0].chars().count() <= 34, "{text:?}");
     // The pure readers.
     let mk = |n: u64, kind: &str, body: serde_json::Value| Step {
@@ -554,17 +552,11 @@ fn the_rail_marks_open_claims_and_a_pending_question() {
         refs: Arc::new(BTreeSet::new()),
         ignorable: false,
     };
-    let steps = vec![
-        mk(1, "claim/proposed", serde_json::json!({ "claim": "a" })),
-        mk(2, "claim/proposed", serde_json::json!({ "claim": "b" })),
-        mk(3, "claim/rejected", serde_json::json!({ "claim": "a" })),
-        mk(
-            4,
-            "thought/text",
-            serde_json::json!({ "text": "Which team?" }),
-        ),
-    ];
-    assert_eq!(rail::open_claims(&steps), 1);
+    let steps = vec![mk(
+        4,
+        "thought/text",
+        serde_json::json!({ "text": "Which team?" }),
+    )];
     assert!(rail::pending_question(&steps));
     let mut answered = steps.clone();
     answered.push(mk(

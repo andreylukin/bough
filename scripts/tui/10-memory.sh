@@ -105,11 +105,6 @@ wait_any 30000 "Tool use" "No tool calls"
 t drift_renders_the_signals \
   see_any "the drift signals" "Tool use" "No tool calls"
 
-# §8: the claim-rejection-rate signal is WIRED and INACTIVE until Phase 5's accept/reject surface
-# exists. A surface that quietly showed a made-up number instead would be the §16 failure.
-t drift_reports_claim_rejection_as_inactive \
-  see_any "the claim-rejection signal" "Claim rejection: not measurable yet"
-
 # ---------------------------------------------------------------------------
 # /reset
 # ---------------------------------------------------------------------------

@@ -230,7 +230,6 @@ impl Pane for StatusPane {
         view.notice_pinned = cx.view.notice_pinned;
         // The lane's name ONLY while the rail is collapsed: at every width the rail exists at, it
         // already says who has the keyboard, and a second copy would be noise.
-        view.owed_claims = cx.view.owed_claims;
         view.owed_question = cx.view.owed_question;
         view.agent = if cx.view.rail_collapsed {
             cx.view.focused_name.clone()

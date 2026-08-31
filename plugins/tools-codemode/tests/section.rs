@@ -58,8 +58,6 @@ const REGISTERED: &[&str] = &[
     "spawn_worker",
     "ask",
     "fork",
-    // plugins/claims
-    "propose_claim",
     // a Track-B MCP tool, under the `mcp__` prefix the bundle namespaces
     "mcp__linear__search",
 ];
@@ -418,7 +416,9 @@ fn the_assembled_section_token_estimate_is_recorded() {
     // of `surface/shell.md` — which had never been assembled, because the gate skipped every
     // paragraph naming a tool no row registers — is in the section for the first time, along with
     // its function-table row. Recorded in `docs/phase-codemode-plan.md` §8.
-    const RECORDED: usize = 4_218;
+    // CLAIMS DEMOLITION (2026-08-30): 4_218 -> 4_119. The `claim` function and its paragraph left
+    // the surface with the claims seam; every code-mode request is ~99 tokens cheaper.
+    const RECORDED: usize = 4_119;
     const SLACK: usize = 40;
     assert!(
         tokens.abs_diff(RECORDED) <= SLACK,

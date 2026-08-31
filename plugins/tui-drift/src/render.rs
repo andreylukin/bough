@@ -3,7 +3,7 @@
 
 use bough_plugin_drift_watch::DriftFlag;
 
-use crate::dash::{claim_cell, DashRow};
+use crate::dash::DashRow;
 
 /// The glyph an inactive or uncomputable signal renders as.
 pub const UNKNOWN: &str = "\u{2205}";
@@ -19,7 +19,6 @@ pub fn flag_name(flag: DriftFlag) -> &'static str {
     match flag {
         DriftFlag::ThoughtLengthUnstable => "thought-length",
         DriftFlag::ToolUseCollapsed => "tool-use",
-        DriftFlag::ClaimsMostlyRejected => "claims-rejected",
         DriftFlag::TooFewSamples => "too-few-samples",
     }
 }
@@ -36,7 +35,7 @@ pub fn flag_column(flags: &[DriftFlag]) -> String {
 
 /// PURE: the rendered line, clipped to `cols`.
 ///
-/// `verdict │ agent │ samples │ thought cv │ tool entropy │ top-tool bar │ claims │ flags`.
+/// `verdict │ agent │ samples │ thought cv │ tool entropy │ top-tool bar │ flags`.
 /// Clipping is by CHARACTER, and the whole line is one `String`, so a narrow terminal loses the
 /// right-hand columns rather than wrapping the row into two.
 pub fn line(r: &DashRow, cols: u16, bar_cols: u16) -> String {
@@ -45,7 +44,7 @@ pub fn line(r: &DashRow, cols: u16, bar_cols: u16) -> String {
     let top_name = top.map(|t| t.tool.as_str()).unwrap_or(UNKNOWN);
     let flags = flag_column(&r.flags);
     let mut line = format!(
-        "{g} {agent:<10} n={n:<5} cv={cv:>5.2} H={h:>4.2} {bar} {top} claims={claims}",
+        "{g} {agent:<10} n={n:<5} cv={cv:>5.2} H={h:>4.2} {bar} {top}",
         g = r.verdict.glyph(),
         agent = r.agent.to_string(),
         n = r.samples,
@@ -53,7 +52,6 @@ pub fn line(r: &DashRow, cols: u16, bar_cols: u16) -> String {
         h = r.tool_entropy,
         bar = bar_cell,
         top = top_name,
-        claims = claim_cell(&r.claim_rejection),
     );
     if !flags.is_empty() {
         line.push_str("  ");
@@ -96,7 +94,7 @@ pub fn bar(share: f64, cols: u16) -> String {
 mod tests {
     use super::*;
     use crate::dash::Verdict;
-    use bough_plugin_drift_watch::{SignalState, ToolShare};
+    use bough_plugin_drift_watch::ToolShare;
     use bough_plugin_ledger::AgentName;
 
     fn row(flags: Vec<DriftFlag>) -> DashRow {
@@ -110,9 +108,6 @@ mod tests {
                 calls: 21,
                 share: 0.5,
             }],
-            claim_rejection: SignalState::Inactive {
-                since: "no claim in the window has been decided".into(),
-            },
             verdict: if flags.is_empty() {
                 Verdict::Steady
             } else {
@@ -161,7 +156,6 @@ mod tests {
         let all = [
             DriftFlag::ThoughtLengthUnstable,
             DriftFlag::ToolUseCollapsed,
-            DriftFlag::ClaimsMostlyRejected,
             DriftFlag::TooFewSamples,
         ];
         let col = flag_column(&all);
@@ -180,10 +174,4 @@ mod tests {
         assert!(line(&row(all.to_vec()), u16::MAX, 8).contains("tool-use"));
     }
 
-    #[test]
-    fn an_inactive_claim_never_renders_as_a_zero() {
-        let l = line(&row(vec![]), u16::MAX, 8);
-        assert!(l.contains(&format!("claims={UNKNOWN}")), "{l}");
-        assert!(!l.contains("claims=0.00"), "{l}");
-    }
 }

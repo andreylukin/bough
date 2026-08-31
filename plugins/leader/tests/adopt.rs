@@ -1,6 +1,6 @@
-//! §2's three leader powers, each of which PROPOSES or CURATES and none of which decides:
-//! adoption routes an unsorted item to a lane (or holds it), drafting a requirement produces a
-//! claim and never a pin, and a timeline entry is cited evidence.
+//! §2's curating leader powers: adoption routes an unsorted item to a lane (or holds it), and a
+//! timeline entry is cited evidence. The structural powers live in `tool-leader` since the
+//! claims demolition.
 
 use crate::support;
 
@@ -135,58 +135,6 @@ async fn adopt_holds_what_it_cannot_place() {
     // Holding means STAYING: the queue still has it, and nothing was appended for it.
     assert!(queue(&f).await.contains(&puzzle));
     assert_eq!(steps_of(&f, "mail/adopted").await.len(), 1);
-}
-
-#[tokio::test]
-async fn draft_requirement_produces_a_claim_and_never_a_pin() {
-    let f = Fixture::open().await;
-    f.lane("sol", &[]).await;
-    let leader = f.mount_leader("sol").await;
-
-    let words = bough_plugin_ledger::Cite {
-        r#ref: bough_plugin_ledger::Ref::new("step:andrey-said-so"),
-        url: None,
-    };
-    let claim = leader
-        .draft_requirement(bough_plugin_leader::DraftRequest {
-            traj: TrajId::new("t-sol"),
-            wake: None,
-            title: "the strip shows every lane".to_string(),
-            body: "including the dormant ones".to_string(),
-            from: vec![words],
-            supersedes: vec![],
-            at: support::now(),
-        })
-        .await
-        .expect("the draft is proposed");
-
-    assert!(matches!(
-        claim.kind,
-        bough_plugin_claims::ClaimKind::Requirement { .. }
-    ));
-    assert_eq!(claim.by, AgentName::new("sol"));
-
-    // The claim is OPEN: nobody has decided it, and no pin exists anywhere.
-    let open = f
-        .claims
-        .open(&bough_plugin_claims::ClaimQuery::default())
-        .await
-        .expect("the open list reads");
-    assert!(open.iter().any(|c| c.claim == claim.claim));
-    let pins = f
-        .ledger
-        .0
-        .steps(&StepQuery {
-            kinds: vec![StepType::new("pin/set")],
-            order: Order::SeqAsc,
-            ..Default::default()
-        })
-        .await
-        .expect("the query runs");
-    assert!(
-        pins.is_empty(),
-        "acceptance is Andrey's act (§16): drafting pins nothing"
-    );
 }
 
 #[tokio::test]

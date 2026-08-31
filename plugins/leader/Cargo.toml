@@ -8,7 +8,7 @@ repository.workspace = true
 
 # The `leader` Service Definition and Provider: it binds the leader plugin set to ONE agent named
 # by config, registers the persona section in that agent's scope, and owns unsorted adoption,
-# requirement drafting, reconsolidation attribution and cross-agent timeline DATA. §2, §8.
+# the lanes roster section, reconsolidation attribution and cross-agent timeline DATA. §2, §8.
 # Row `leader` in `bough-tui-app`, inside the `leader.set` group.
 
 [dependencies]
@@ -18,7 +18,6 @@ bough-plugin-ledger = { workspace = true }
 bough-plugin-agents = { workspace = true }
 bough-plugin-mail-router = { workspace = true }
 bough-plugin-graph-ops = { workspace = true }
-bough-plugin-claims = { workspace = true }
 bough-plugin-projection = { workspace = true }
 bough-plugin-rollups = { workspace = true }
 bough-plugin-reconsolidation = { workspace = true }

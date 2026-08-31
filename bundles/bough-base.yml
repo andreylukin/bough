@@ -200,13 +200,11 @@
     min_samples: 20
     thought_len_cv_flag: 1.2
     tool_entropy_flag: 0.35
-    claim_rejection_flag: 0.5
-    claim_rejection_min_decided: 4
     # How many raw steps a `/reset` cites, and how long the rebuilt state half may be. The second
     # is the same quantity the `about-line` row carries as `max_state_chars`: patch both together.
     max_evidence_cites: 24
     max_state_chars: 400
-# Phase 5 (§17 Phase 5): routing, dormancy, claims and graph ops are NOT terminal features, so
+# Phase 5 (§17 Phase 5): routing, dormancy, pins and graph ops are NOT terminal features, so
 # they live here and not in `bough-tui-app` — a headless tree routes mail, sleeps a lane and
 # splits a trajectory exactly as the TUI one does. The `leader` set is the exception and lives in
 # `bough-tui-app`: it is a per-agent scope mount, and which agent holds it is Andrey's choice.
@@ -231,10 +229,11 @@
     # (max_children is a protocol constant in code: §4 says two heads)
     digest_on_fork: false
     # (question_on_ambiguity withdrawn: §4 always asks)
-- id: claims
-  plugin: claims
-  config:
-    open_limit: 50
+# The claims demolition (2026-08-30): structure is the leader's own hand now (`create_lane` /
+# `merge_lanes` in `tool-leader`), and pins are set by Andrey directly.
+- id: pins
+  plugin: pins
+  config: {}
 - id: lane.scope
   plugin: lane-scope
   config:
@@ -473,7 +472,6 @@
     caps: null
     conceal: mirror
     aliases:
-      claim: propose_claim
       agent: spawn_worker
       # `tool?fixed=value#positional,names` — one op-discriminated tool read as the several
       # functions `surface/` documents. The fixed argument wins over anything the program passes.

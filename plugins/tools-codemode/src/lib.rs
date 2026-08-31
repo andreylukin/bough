@@ -37,7 +37,7 @@ pub struct CodemodeConfig {
     pub caps: Option<Caps>,
     #[serde(default)]
     pub conceal: ConcealMode,
-    /// JS name → registered `ToolName`. Ships as `{claim: propose_claim, agent: spawn_worker}`.
+    /// JS name → registered `ToolName`. Ships as `{agent: spawn_worker}`.
     #[serde(default)]
     pub aliases: BTreeMap<String, String>,
     /// JS namespace → `ToolName` prefix. Ships as `{mcp: "mcp__", act: ""}`.

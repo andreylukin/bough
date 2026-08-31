@@ -233,9 +233,9 @@ pub struct RowReport {
     /// the keyboard is moved to it: a focused `Aux` pane always gets its registered size, which
     /// is how it comes back from zero.
     pub aux_rows: Option<u16>,
-    /// What the transcript's lane is waiting on from Andrey (round 10): open claims, and whether
-    /// its last message was a question. `None` from a pane that never reports it.
-    pub owed: Option<(usize, bool)>,
+    /// What the transcript's lane is waiting on from Andrey (round 10): whether its last message
+    /// was a question. `None` from a pane that never reports it.
+    pub owed: Option<bool>,
 }
 
 impl Default for RowReport {
@@ -274,8 +274,8 @@ impl RenderCx<'_> {
     }
 
     /// Report what the lane is waiting on from Andrey (round 10).
-    pub fn report_owed(&mut self, claims: usize, question: bool) {
-        self.report.owed = Some((claims, question));
+    pub fn report_owed(&mut self, question: bool) {
+        self.report.owed = Some(question);
     }
 
     /// Report this pane's roving state to the shell, for the next frame's [`ShellView`].
@@ -311,9 +311,8 @@ pub struct ShellView {
     pub focused_name: Option<String>,
     /// Whether the focused agent's turn is running (the composer's `stop` chip, D7).
     pub running: bool,
-    /// The focused lane's open claims and pending question, from the transcript's last report
-    /// (round 10): the status line's "what do I owe" chip.
-    pub owed_claims: usize,
+    /// The focused lane's pending question, from the transcript's last report (round 10): the
+    /// status line's "what do I owe" chip.
     pub owed_question: bool,
     /// No `Strip` pane has any columns this frame: the rail collapses under its `collapse_cols`
     /// (100 by default), so at 80×24 nothing on screen names the lane unless a pane reads this.

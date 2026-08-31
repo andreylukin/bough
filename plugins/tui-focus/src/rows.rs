@@ -79,17 +79,6 @@ pub enum Row {
         index: u32,
         text: String,
     },
-    /// A `claim/proposed` step, with its decision (if any) folded in from later `claim/accepted`
-    /// or `claim/rejected` steps of the same trajectory — BY NAME (P3-D11), so this crate gains
-    /// no dependency on `claims`.
-    Claim {
-        step: StepId,
-        claim: String,
-        kind: String,
-        title: String,
-        body: String,
-        state: ClaimState,
-    },
     Tool {
         call: ToolCallId,
         name: String,
@@ -162,36 +151,6 @@ pub enum Row {
     },
 }
 
-/// Where a claim card stands. Folded from the `claim/accepted` / `claim/rejected` steps that
-/// name the same claim id, never asked of the `claims` seam: the pane reads the LEDGER BODY.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ClaimState {
-    /// Proposed and undecided: the card draws its three hit regions.
-    Open,
-    Accepted {
-        edited: bool,
-    },
-    Rejected {
-        reason: String,
-    },
-}
-
-impl ClaimState {
-    /// The word the card shows.
-    pub fn word(&self) -> &'static str {
-        match self {
-            ClaimState::Open => "open",
-            ClaimState::Accepted { edited: false } => "accepted",
-            ClaimState::Accepted { edited: true } => "accepted (edited)",
-            ClaimState::Rejected { .. } => "rejected",
-        }
-    }
-
-    pub fn is_open(&self) -> bool {
-        matches!(self, ClaimState::Open)
-    }
-}
-
 impl Row {
     /// The step this row was built from. A `Tool` row names its CALL step: the result folded into
     /// it is the same row, which is what "no step is rendered twice" means for a tool call.
@@ -205,7 +164,7 @@ impl Row {
             | Row::About { step, .. }
             | Row::Draft { step, .. }
             | Row::Queued { step, .. }
-            | Row::Claim { step, .. }
+
             | Row::Other { step, .. } => step,
             Row::Tool { call_step, .. } | Row::Program { call_step, .. } => call_step,
         }
@@ -239,8 +198,6 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
     let mut out: Vec<Row> = Vec::with_capacity(steps.len());
     // Where each call id's row sits, so a result folds into the call instead of appending.
     let mut by_call: BTreeMap<ToolCallId, usize> = BTreeMap::new();
-    // Where each claim id's card sits, so a decision folds into the card instead of appending.
-    let mut by_claim: BTreeMap<String, usize> = BTreeMap::new();
     // Where each INNER call id's sub sits: `(row index, sub index)`, so a `program/result` reaches
     // the `ProgramSub` its `program/call` created.
     let mut by_sub: BTreeMap<ToolCallId, (usize, usize)> = BTreeMap::new();
@@ -309,39 +266,6 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
                         open_group = Some((out.len(), key));
                         out.push(row);
                     }
-                }
-            }
-            // The claim card, read BY NAME (P3-D11).
-            "claim/proposed" => match claim_row(step) {
-                Some((claim, row)) => {
-                    by_claim.insert(claim, out.len());
-                    out.push(row);
-                }
-                None => out.push(other(step)),
-            },
-            "claim/accepted" | "claim/rejected" => {
-                let id = body_str(step, "claim").unwrap_or_default();
-                match by_claim.get(&id).copied() {
-                    Some(at) => {
-                        if let Row::Claim { state, .. } = &mut out[at] {
-                            *state = if kind == "claim/accepted" {
-                                ClaimState::Accepted {
-                                    edited: step
-                                        .body
-                                        .get("edited")
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(false),
-                                }
-                            } else {
-                                ClaimState::Rejected {
-                                    reason: body_str(step, "reason").unwrap_or_default(),
-                                }
-                            };
-                        }
-                    }
-                    // A decision whose proposal is not in this window (it paged out). Shown as
-                    // itself rather than dropped: the decision is the news.
-                    None => out.push(other(step)),
                 }
             }
             // Code mode's ONE API tool. Its row is the anchor every `program/*` step folds into,
@@ -495,21 +419,6 @@ struct GroupKey {
     index: u32,
 }
 
-fn claim_row(step: &Step) -> Option<(String, Row)> {
-    let claim = body_str(step, "claim")?;
-    Some((
-        claim.clone(),
-        Row::Claim {
-            step: step.id.clone(),
-            claim,
-            kind: body_str(step, "kind").unwrap_or_default(),
-            title: body_str(step, "title").unwrap_or_default(),
-            body: body_str(step, "body").unwrap_or_default(),
-            state: ClaimState::Open,
-        },
-    ))
-}
-
 /// PURE: whether a tool or program row FAILED (a result that is not ok, or a program error).
 /// A row with no result yet is neither.
 pub fn is_failed_call(row: &Row) -> bool {
@@ -614,23 +523,17 @@ pub fn is_empty_program(row: &Row) -> bool {
     )
 }
 
-/// What the focused lane is WAITING ON FROM ANDREY (round 10): open claims, and whether its
-/// last message was a question to him.
+/// What the focused lane is WAITING ON FROM ANDREY (round 10): whether its last message was a
+/// question to him.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Owed {
-    pub claims: usize,
     pub question: bool,
 }
 
-/// PURE: the lane's open claims, and — with the turn over — whether its last message ends in a
-/// question that nothing from Andrey has answered yet. Heuristic by design (no model call):
-/// the last agent row is text ending with `?`, the turn is not running, and no Andrey row
-/// follows it.
+/// PURE: with the turn over, whether the lane's last message ends in a question that nothing
+/// from Andrey has answered yet. Heuristic by design (no model call): the last agent row is text
+/// ending with `?`, the turn is not running, and no Andrey row follows it.
 pub fn owed(rows: &[Row], running: bool) -> Owed {
-    let claims = rows
-        .iter()
-        .filter(|r| matches!(r, Row::Claim { state, .. } if state.is_open()))
-        .count();
     let question = !running
         && rows
             .iter()
@@ -639,7 +542,7 @@ pub fn owed(rows: &[Row], running: bool) -> Owed {
                 Row::Text { text, .. } => text.trim_end().ends_with('?'),
                 _ => false,
             });
-    Owed { claims, question }
+    Owed { question }
 }
 
 /// Tools that change files, by name (typed rows and program sub-calls alike).
@@ -876,7 +779,7 @@ pub fn trailing_text_rows(rows: &[Row]) -> Vec<usize> {
 
 /// PURE: whether row `i` opens a span of the agent acting, and so wears the agent's name as a
 /// label the way Andrey's rows wear `andrey:` (visual audit F2). An agent row after another agent
-/// row continues the same span; after anything else — Andrey, mail, a claim card, the end of a
+/// row continues the same span; after anything else — Andrey, mail, the end of a
 /// turn, the top of the window — it starts one.
 pub fn opens_speech(rows: &[Row], i: usize) -> bool {
     let Some(row) = rows.get(i) else {

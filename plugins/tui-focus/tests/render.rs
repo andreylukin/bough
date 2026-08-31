@@ -134,8 +134,6 @@ fn the_live_tail_supersedes_the_whole_trailing_group() {
 /// WP-7 / §2.8 + P5-D14: the field bug at the RENDER end, and the claim card's hit regions.
 mod tests {
     use super::*;
-    use bough_plugin_tui_focus::rows::ClaimState;
-    use bough_plugin_tui_focus::{claims, ClaimAction};
 
     fn joined(text: &str) -> Row {
         Row::Text {
@@ -203,54 +201,4 @@ mod tests {
         );
     }
 
-    /// §16: an OPEN claim is a decision waiting for Andrey, and the card offers exactly the three
-    /// things he can do with it. A decided card offers none — there is nothing left to decide.
-    #[test]
-    fn an_open_claim_card_draws_three_hit_regions() {
-        let theme = bough_plugin_tui_shell::Theme::of(bough_plugin_tui_shell::ThemeName::Dark);
-        let (lines, hits) = claims::card(
-            "c1",
-            "requirement",
-            "the leader drafts requirements",
-            "Andrey's words become a claim.",
-            &ClaimState::Open,
-            0,
-            60,
-            &theme,
-        );
-        assert_eq!(hits.len(), 3, "accept, edit, reject");
-        let ids: Vec<String> = hits.iter().map(|h| h.id.as_str().to_string()).collect();
-        assert_eq!(
-            ids,
-            vec!["claim:c1:accept", "claim:c1:edit", "claim:c1:reject"]
-        );
-        // Three regions on one line, side by side and non-overlapping.
-        assert!(hits.iter().all(|h| h.line == hits[0].line));
-        for w in hits.windows(2) {
-            assert!(w[0].x + w[0].width <= w[1].x, "regions overlap: {hits:?}");
-        }
-        // Each parses back to its own action.
-        for h in &hits {
-            let (claim, _) = claims::claim_action_of_hit(&h.id).expect("mine to parse");
-            assert_eq!(claim, "c1");
-        }
-        assert_eq!(
-            claims::claim_action_of_hit(&hits[1].id).unwrap().1,
-            ClaimAction::Edit
-        );
-        assert!(!lines.is_empty());
-
-        // Decided: no buttons.
-        let (_, none) = claims::card(
-            "c1",
-            "requirement",
-            "t",
-            "b",
-            &ClaimState::Accepted { edited: false },
-            0,
-            60,
-            &theme,
-        );
-        assert!(none.is_empty(), "an accepted claim has nothing to decide");
-    }
 }

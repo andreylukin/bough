@@ -14,8 +14,6 @@ pub enum LeaderError {
     Ledger(#[from] bough_plugin_ledger::LedgerError),
     #[error("the mail seam refused: {0}")]
     Mail(#[from] bough_plugin_mail_router::MailError),
-    #[error("the claims seam refused: {0}")]
-    Claims(#[from] bough_plugin_claims::ClaimsError),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }

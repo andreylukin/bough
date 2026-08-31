@@ -15,15 +15,6 @@ pub const THOUGHT_TEXT: &str = "thought/text";
 /// The step kind the tool-use signal reads.
 pub const TOOL_CALL: &str = "tool/call";
 
-/// Why the claim-rejection signal is not a number over a window with no decision (§8). Spelled
-/// once, so the command's rendering and the unit test read the SAME words.
-pub const CLAIM_REJECTION_SINCE: &str = "no claim in the window has been decided";
-
-/// The step kind an acceptance is. An EDIT is `claim/accepted { edited: true }` — the same kind,
-/// because an edit is an acceptance of a claim Andrey rewrote, not a third decision.
-pub const CLAIM_ACCEPTED: &str = "claim/accepted";
-/// The step kind a rejection is.
-pub const CLAIM_REJECTED: &str = "claim/rejected";
 
 /// o200k_base, the encoder §5 already measures the projection in.
 fn bpe() -> &'static CoreBPE {
@@ -164,46 +155,7 @@ pub fn flags(signals: &Signals, cfg: &DriftConfig) -> Vec<DriftFlag> {
     if !signals.tool_use.is_empty() && signals.tool_entropy < cfg.tool_entropy_flag {
         out.push(DriftFlag::ToolUseCollapsed);
     }
-    // §8's claim-rejection signal. `Inactive` means "no decided claim in the window", which is
-    // not a low rate and not a high one — it flags nothing, exactly as `TooFewSamples` does for
-    // the other two.
-    if let SignalState::Active { value, n } = &signals.claim_rejection {
-        if *n >= cfg.claim_rejection_min_decided && *value > cfg.claim_rejection_flag {
-            out.push(DriftFlag::ClaimsMostlyRejected);
-        }
-    }
     out
-}
-
-/// The claim-rejection signal (§8): rejected over DECIDED, in the window.
-///
-/// A rate over zero decisions is not a number, so an undecided window stays
-/// [`SignalState::Inactive`]. Reporting `0.0` there would read as "nothing this agent claimed was
-/// rejected", which is an assertion nobody has evidence for; the state says what is missing
-/// instead. Proposals are deliberately NOT the denominator: an open claim has not been judged, and
-/// dividing by it would report a falling rejection rate every time an agent proposed more.
-pub fn claim_rejection(steps: &[Step]) -> SignalState {
-    let mut rejected = 0usize;
-    let mut decided = 0usize;
-    for s in steps {
-        match s.kind.as_str() {
-            CLAIM_REJECTED => {
-                rejected += 1;
-                decided += 1;
-            }
-            CLAIM_ACCEPTED => decided += 1,
-            _ => {}
-        }
-    }
-    if decided == 0 {
-        return SignalState::Inactive {
-            since: CLAIM_REJECTION_SINCE.to_string(),
-        };
-    }
-    SignalState::Active {
-        value: rejected as f64 / decided as f64,
-        n: decided,
-    }
 }
 
 /// Every signal for one window. PURE: the ledger read happens in the caller.
@@ -221,7 +173,6 @@ pub fn compute(agent: &AgentName, window: SeqRange, steps: &[Step], cfg: &DriftC
         thought_len,
         tool_use,
         tool_entropy,
-        claim_rejection: claim_rejection(steps),
         flags: Vec::new(),
     };
     signals.flags = flags(&signals, cfg);
@@ -241,8 +192,6 @@ mod tests {
             min_samples: 4,
             thought_len_cv_flag: 1.2,
             tool_entropy_flag: 0.35,
-            claim_rejection_flag: 0.5,
-            claim_rejection_min_decided: 4,
             max_evidence_cites: 24,
             max_state_chars: 400,
         }
@@ -369,37 +318,6 @@ mod tests {
             "{enough:?}"
         );
 
-        // §8's claim-rejection signal is a FLAG, not merely a number on the `/drift` card. It
-        // was computed and rendered from the start and read by nothing, so no rejection rate at
-        // any level could ever raise anything.
-        let mut rejected: Vec<Step> = drifting.clone();
-        for (i, kind) in [
-            CLAIM_REJECTED,
-            CLAIM_REJECTED,
-            CLAIM_REJECTED,
-            CLAIM_ACCEPTED,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            rejected.push(step(100 + i as u64, kind, serde_json::json!({})));
-        }
-        let flagged = compute(&AgentName::new("a"), win(), &rejected, &cfg());
-        assert!(
-            flagged.flags.contains(&DriftFlag::ClaimsMostlyRejected),
-            "3 of 4 decided claims rejected: {flagged:?}"
-        );
-
-        // One rejected claim is a rate of 1.0 and says nothing: under the decided floor it does
-        // not flag.
-        let mut one: Vec<Step> = drifting.clone();
-        one.push(step(200, CLAIM_REJECTED, serde_json::json!({})));
-        let thin_claims = compute(&AgentName::new("a"), win(), &one, &cfg());
-        assert!(
-            !thin_claims.flags.contains(&DriftFlag::ClaimsMostlyRejected),
-            "{thin_claims:?}"
-        );
-
         // A steady agent above the floor is flagged for nothing at all.
         let steady = compute(
             &AgentName::new("a"),
@@ -481,77 +399,4 @@ mod tests {
         assert!(shares(&[thought(1, "x")]).is_empty());
     }
 
-    fn accepted(seq: u64, edited: bool) -> Step {
-        step(
-            seq,
-            CLAIM_ACCEPTED,
-            serde_json::json!({ "claim": format!("c{seq}"), "proposal": "p", "edited": edited }),
-        )
-    }
-
-    fn rejected(seq: u64) -> Step {
-        step(
-            seq,
-            CLAIM_REJECTED,
-            serde_json::json!({ "claim": format!("c{seq}"), "proposal": "p", "reason": "no" }),
-        )
-    }
-
-    fn proposed(seq: u64) -> Step {
-        step(
-            seq,
-            "claim/proposed",
-            serde_json::json!({ "claim": format!("c{seq}"), "kind": "other", "title": "t", "body": "b" }),
-        )
-    }
-
-    #[test]
-    fn claim_rejection_is_a_rate_once_claims_are_decided() {
-        // Four decided claims, one of them rejected: 25%, over a denominator of DECISIONS.
-        let steps = vec![
-            proposed(1),
-            accepted(2, false),
-            proposed(3),
-            rejected(4),
-            accepted(5, false),
-            // An edit is an acceptance, not a rejection.
-            accepted(6, true),
-            // And an open proposal is not in the denominator.
-            proposed(7),
-        ];
-        match claim_rejection(&steps) {
-            SignalState::Active { value, n } => {
-                assert_eq!(n, 4, "the denominator is decisions, not proposals");
-                assert!((value - 0.25).abs() < 1e-9, "{value}");
-            }
-            other => panic!("a decided window is a rate: {other:?}"),
-        }
-
-        // And the assembled signals carry that measurement.
-        let signals = compute(&AgentName::new("a"), win(), &steps, &cfg());
-        assert_eq!(
-            signals.claim_rejection,
-            SignalState::Active { value: 0.25, n: 4 }
-        );
-    }
-
-    #[test]
-    fn claim_rejection_stays_inactive_with_no_decided_claim() {
-        // Proposals alone are not a rate: nothing has been judged, and 0% would be an assertion.
-        for window in [
-            vec![],
-            vec![proposed(1), proposed(2)],
-            vec![thought(1, "x")],
-        ] {
-            match claim_rejection(&window) {
-                SignalState::Inactive { since } => assert_eq!(since, CLAIM_REJECTION_SINCE),
-                other => panic!("an undecided window is not a number: {other:?}"),
-            }
-        }
-        let signals = compute(&AgentName::new("a"), win(), &[proposed(1)], &cfg());
-        assert!(matches!(
-            signals.claim_rejection,
-            SignalState::Inactive { .. }
-        ));
-    }
 }

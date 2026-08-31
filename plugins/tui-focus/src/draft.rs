@@ -12,7 +12,7 @@ use bough_plugin_tui_shell::Theme;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::claims::ClaimHit;
+use crate::hit::Hit;
 
 pub const HIT_PREFIX: &str = "draft:";
 
@@ -88,7 +88,7 @@ pub fn card(
     first_line: u16,
     width: u16,
     theme: &Theme,
-) -> (Vec<Line<'static>>, Vec<ClaimHit>) {
+) -> (Vec<Line<'static>>, Vec<Hit>) {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let accent = theme.warn;
     // `✎ draft · ticket  to: linear  <subject>  not sent` — the subject is clipped so that
@@ -154,7 +154,7 @@ pub fn card(
     let mut x: u16 = 2;
     for action in DraftAction::ALL {
         let label = action.label(opened);
-        hits.push(ClaimHit {
+        hits.push(Hit {
             id: hit_for(draft, action),
             line: first_line + lines.len() as u16,
             x,

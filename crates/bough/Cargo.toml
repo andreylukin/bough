@@ -77,7 +77,7 @@ bough-plugin-drift-watch = { workspace = true }
 bough-plugin-mail-router = { workspace = true }
 bough-plugin-dormancy = { workspace = true }
 bough-plugin-graph-ops = { workspace = true }
-bough-plugin-claims = { workspace = true }
+bough-plugin-pins = { workspace = true }
 bough-plugin-lane-scope = { workspace = true }
 bough-plugin-worker-fork = { workspace = true }
 bough-plugin-leader = { workspace = true }

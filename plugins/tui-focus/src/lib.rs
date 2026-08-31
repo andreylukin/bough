@@ -7,7 +7,7 @@
 //! This pane IS §11's `trajectory` pane (P3-D4): it owns the live tail AND the scrollback.
 
 pub mod branches;
-pub mod claims;
+pub mod hit;
 pub mod context;
 pub mod draft;
 pub mod expand;
@@ -41,12 +41,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 pub use branches::{branches_from_edges, Branch, BranchPicker, PickerOutcome};
-pub use claims::{claim_action_of_hit, hit_for_claim, ClaimAction};
 pub use expand::{call_of_hit, hit_for_call, Expanded};
 pub use program::{program_header, program_lines, ProgramError, ProgramSub, ProgramView, RUN_TOOL};
 pub use rowfocus::{focus_marker, RowFocus};
 pub use rows::{
-    rows_from_steps, trailing_durable, trailing_text_row, trailing_text_rows, ClaimState, Row,
+    rows_from_steps, trailing_durable, trailing_text_row, trailing_text_rows, Row,
 };
 pub use scroll::{Scroll, Viewport};
 pub use stream::{apply_tee, tee_for, tee_stream, trailing_text, LiveText};
@@ -279,7 +278,7 @@ impl FocusPane {
     ) -> (
         Vec<Line<'static>>,
         Vec<(bough_plugin_llm::ToolCallId, u16)>,
-        Vec<claims::ClaimHit>,
+        Vec<hit::Hit>,
     ) {
         let (lines, headers, hits, _) = self.lines_with_rows(state, live, width, theme);
         (lines, headers, hits)
@@ -298,7 +297,7 @@ impl FocusPane {
     ) -> (
         Vec<Line<'static>>,
         Vec<(bough_plugin_llm::ToolCallId, u16)>,
-        Vec<claims::ClaimHit>,
+        Vec<hit::Hit>,
         Vec<u16>,
     ) {
         // The picker takes the whole pane while it is open: it is a choice about WHAT the pane
@@ -318,7 +317,7 @@ impl FocusPane {
         let trailing = rows::trailing_text_row(&state.rows);
         let mut lines: Vec<Line<'static>> = Vec::new();
         let mut headers = Vec::new();
-        let mut claim_hits: Vec<claims::ClaimHit> = Vec::new();
+        let mut hits_out: Vec<hit::Hit> = Vec::new();
 
         // The window is not the trajectory: `max_rows` steps back is as far as this pane holds,
         // and saying so is what stops an elided beginning from reading as the whole story.
@@ -384,10 +383,10 @@ impl FocusPane {
         };
         let emit = |pieces: &[context::Piece],
                     lines: &mut Vec<Line<'static>>,
-                    hits: &mut Vec<claims::ClaimHit>| {
+                    hits: &mut Vec<hit::Hit>| {
             for piece in pieces {
                 if let Some((id, w)) = &piece.hit {
-                    hits.push(claims::ClaimHit {
+                    hits.push(hit::Hit {
                         id: id.clone(),
                         line: lines.len() as u16,
                         x: 0,
@@ -404,7 +403,7 @@ impl FocusPane {
                     continue;
                 }
                 if let Some(pieces) = p.before.get(&i) {
-                    emit(pieces, &mut lines, &mut claim_hits);
+                    emit(pieces, &mut lines, &mut hits_out);
                 }
                 if !p.show[i] {
                     row_lines[i] = lines.len().saturating_sub(1) as u16;
@@ -441,7 +440,7 @@ impl FocusPane {
                     "attempts"
                 };
                 let text = format!("{marker} {} failed {noun} \u{b7} {verb}", fold.attempts);
-                claim_hits.push(claims::ClaimHit {
+                hits_out.push(hit::Hit {
                     id: retry_hit(&key),
                     line: lines.len() as u16,
                     x: 0,
@@ -594,27 +593,6 @@ impl FocusPane {
                         Style::default().fg(theme.evidence),
                     ));
                 }
-                Row::Claim {
-                    claim,
-                    kind,
-                    title,
-                    body,
-                    state,
-                    ..
-                } => {
-                    let (card, regions) = claims::card(
-                        claim,
-                        kind,
-                        title,
-                        body,
-                        state,
-                        lines.len() as u16,
-                        width,
-                        theme,
-                    );
-                    lines.extend(card);
-                    claim_hits.extend(regions);
-                }
                 Row::Draft {
                     draft,
                     kind,
@@ -636,7 +614,7 @@ impl FocusPane {
                         theme,
                     );
                     lines.extend(card);
-                    claim_hits.extend(regions);
+                    hits_out.extend(regions);
                 }
                 Row::Other { kind, .. } => {
                     // TOTAL: a type this binary does not know still gets a line, and never a panic.
@@ -683,14 +661,14 @@ impl FocusPane {
                     continue;
                 }
                 if let Some(pieces) = p.before.get(&i) {
-                    emit(pieces, &mut lines, &mut claim_hits);
+                    emit(pieces, &mut lines, &mut hits_out);
                 }
                 row_lines[i] = lines.len() as u16;
                 if let Row::Mail { from, subject, .. } = row {
                     lines.push(mail_line(from, subject, theme));
                 }
             }
-            emit(&p.trailing, &mut lines, &mut claim_hits);
+            emit(&p.trailing, &mut lines, &mut hits_out);
         }
         // The last turn's `✎ changed …` line, once nothing is in flight (round 6).
         let last_in_flight = state
@@ -730,7 +708,7 @@ impl FocusPane {
         if plan.is_some() {
             lines.push(context::footer(&state.context, now, theme));
         }
-        (lines, headers, claim_hits, row_lines)
+        (lines, headers, hits_out, row_lines)
     }
 
     /// Compute the focused agent's branches and open the picker over them. With no injected
@@ -903,7 +881,7 @@ impl Pane for FocusPane {
             height: area.height - standing_h,
         };
         state.height = area.height;
-        let (lines, headers, claim_hits, row_lines) =
+        let (lines, headers, hits_out, row_lines) =
             self.lines_with_rows(&state, &live, measure, &theme);
         state.lines = lines.len();
         state.row_lines = row_lines.clone();
@@ -930,7 +908,7 @@ impl Pane for FocusPane {
         invariant::record_frame(&state.rows, &live);
         // What this lane is waiting on from Andrey (round 10), for the status chip.
         let owed = rows::owed(&state.rows, cx.view.running);
-        cx.report_owed(owed.claims, owed.question);
+        cx.report_owed(owed.question);
         let top = state.scroll.top(lines.len(), area.height);
         // The unread affordance (phase ux1 §2.2, B2): scrolled up with rows arriving below, the
         // pane SAYS how many and what to press. Nothing is drawn while following, so a reader at
@@ -1033,7 +1011,7 @@ impl Pane for FocusPane {
                 expand::hit_for_call(call),
             );
         }
-        for hit in claim_hits {
+        for hit in hits_out {
             if hit.line < top as u16 {
                 continue;
             }
@@ -1154,30 +1132,6 @@ impl Pane for FocusPane {
                     }
                     cx.tui.redraw();
                     return PaneOutcome::Handled;
-                }
-                // A claim card's button. A click is Andrey's hand on the keyboard (§16), and it
-                // dispatches the SAME command line the keyboard path types, so the two surfaces
-                // cannot drift apart.
-                if let Some((claim, action)) = hit.as_ref().and_then(claims::claim_action_of_hit) {
-                    let body = {
-                        let state = self.state.lock();
-                        state
-                            .rows
-                            .iter()
-                            .find_map(|r| match r {
-                                Row::Claim { claim: c, body, .. } if *c == claim => {
-                                    Some(body.clone())
-                                }
-                                _ => None,
-                            })
-                            .unwrap_or_default()
-                    };
-                    let (line, run) = claims::line_for(&claim, action, &body);
-                    return if run {
-                        PaneOutcome::Command(line)
-                    } else {
-                        PaneOutcome::Compose(line)
-                    };
                 }
                 let out = {
                     let mut state = self.state.lock();

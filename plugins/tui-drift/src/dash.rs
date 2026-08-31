@@ -2,7 +2,7 @@
 //! `Steady`, and not `Flagged` — and an inactive signal renders as unknown, never as `0.00`. Every
 //! number on this dashboard is `drift-watch`'s; this module only decides how to say it.
 
-use bough_plugin_drift_watch::{DriftFlag, SignalState, Signals, ToolShare};
+use bough_plugin_drift_watch::{DriftFlag, Signals, ToolShare};
 use bough_plugin_ledger::AgentName;
 use chrono::{DateTime, Utc};
 
@@ -14,7 +14,6 @@ pub struct DashRow {
     pub thought_cv: f64,
     pub tool_entropy: f64,
     pub top_tools: Vec<ToolShare>,
-    pub claim_rejection: SignalState,
     pub flags: Vec<DriftFlag>,
     pub verdict: Verdict,
 }
@@ -60,7 +59,6 @@ pub fn dash_row(s: &Signals) -> DashRow {
         thought_cv: s.thought_len.cv,
         tool_entropy: s.tool_entropy,
         top_tools: s.tool_use.clone(),
-        claim_rejection: s.claim_rejection.clone(),
         flags: s.flags.clone(),
         verdict: verdict(s),
     }
@@ -81,15 +79,6 @@ pub fn verdict(s: &Signals) -> Verdict {
         0 => Verdict::Steady,
         1 => Verdict::Watch,
         _ => Verdict::Flagged,
-    }
-}
-
-/// PURE: the claim-rejection cell. [`SignalState::Inactive`] renders as [`crate::render::UNKNOWN`]
-/// and NEVER as `0.00`, which would read as "nothing this agent claimed was rejected".
-pub fn claim_cell(state: &SignalState) -> String {
-    match state {
-        SignalState::Inactive { .. } => crate::render::UNKNOWN.to_string(),
-        SignalState::Active { value, n } => format!("{value:.2}/{n}"),
     }
 }
 
@@ -161,9 +150,6 @@ mod tests {
                 share: 1.0,
             }],
             tool_entropy: 0.0,
-            claim_rejection: SignalState::Inactive {
-                since: "no claim in the window has been decided".into(),
-            },
             flags,
         }
     }
@@ -200,19 +186,6 @@ mod tests {
                 DriftFlag::ToolUseCollapsed
             ])),
             Verdict::TooFewSamples
-        );
-    }
-
-    #[test]
-    fn an_inactive_claim_signal_renders_as_unknown() {
-        let inactive = SignalState::Inactive {
-            since: "no claim in the window has been decided".into(),
-        };
-        assert_eq!(claim_cell(&inactive), crate::render::UNKNOWN);
-        assert_ne!(claim_cell(&inactive), "0.00");
-        assert_eq!(
-            claim_cell(&SignalState::Active { value: 0.0, n: 7 }),
-            "0.00/7"
         );
     }
 

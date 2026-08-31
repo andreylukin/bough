@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::claims::ClaimHit;
+use crate::hit::Hit;
 use crate::rows::Row;
 
 /// How long a changed section's rule stays lit after a rebuild (D11-5).
@@ -363,9 +363,9 @@ pub fn standing_lines(
     theme: &Theme,
     first_line: u16,
     now: DateTime<Utc>,
-) -> (Vec<Line<'static>>, Vec<ClaimHit>) {
+) -> (Vec<Line<'static>>, Vec<Hit>) {
     let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut hits: Vec<ClaimHit> = Vec::new();
+    let mut hits: Vec<Hit> = Vec::new();
     // The fixed material, one dim line (D11-4).
     let head: Vec<&Section> = view.head();
     let head_tokens: usize = head.iter().map(|s| s.tokens).sum();
@@ -379,7 +379,7 @@ pub fn standing_lines(
         head_words(view),
         tokens_text(head_tokens)
     );
-    hits.push(ClaimHit {
+    hits.push(Hit {
         id: hit("head"),
         line: first_line,
         x: 0,
@@ -492,7 +492,7 @@ pub fn standing_lines(
         }
     }
     if lines.len() > block_start {
-        hits.push(ClaimHit {
+        hits.push(Hit {
             id: hit("standing"),
             line: first_line + block_start as u16,
             x: 0,
