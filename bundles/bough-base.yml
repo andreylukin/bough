@@ -130,7 +130,10 @@
   config:
     drain_debounce_ms: 120000
     grace_deadline_ms: 20000
-    default_max_tokens: 8192
+    # 32k, not 8k (drivability, 2026-08-31): a reasoning model's thinking bills against the
+    # completion, and GLM burned all 8192 on hidden reasoning for one "implement it" turn —
+    # ending the wake `max_tokens` with NOTHING visible.
+    default_max_tokens: 32768
     prompt_ver: "p2.1"
     text_flush_ms: 400
     repair_on_boot: true

@@ -1126,3 +1126,53 @@ fn owed_flags_a_trailing_question() {
     ]);
     assert_eq!(owed(&answered, false), Owed::default());
 }
+
+/// Drivability (2026-08-31): a turn that showed NOTHING says so on its end mark — a reasoning
+/// model can spend the whole output budget thinking, and a bare `max_tokens` after dead air read
+/// as the harness failing silently. A turn that showed something keeps the plain mark, and a
+/// window that opens mid-turn never accuses.
+#[test]
+fn an_empty_turn_end_mark_says_nothing_was_shown() {
+    use bough_plugin_tui_focus::rows_from_steps;
+    let empty_turn = rows_from_steps(&[
+        step(1, "wake/start", serde_json::json!({})),
+        step(2, "wake/end", serde_json::json!({ "reason": "max_tokens" })),
+    ]);
+    match empty_turn.last() {
+        Some(Row::WakeMark { empty, reason, .. }) => {
+            assert!(*empty);
+            assert_eq!(reason.as_deref(), Some("max_tokens"));
+        }
+        other => panic!("expected the end mark, got {other:?}"),
+    }
+    let showed_something = rows_from_steps(&[
+        step(1, "wake/start", serde_json::json!({})),
+        step(2, "thought/text", serde_json::json!({ "text": "hi", "step_index": 0 })),
+        step(3, "wake/end", serde_json::json!({ "reason": "max_tokens" })),
+    ]);
+    match showed_something.last() {
+        Some(Row::WakeMark { empty, .. }) => assert!(!*empty),
+        other => panic!("expected the end mark, got {other:?}"),
+    }
+    // No `wake/start` in the window: the mark cannot know, so it never says empty.
+    let mid_turn = rows_from_steps(&[step(
+        9,
+        "wake/end",
+        serde_json::json!({ "reason": "max_tokens" }),
+    )]);
+    match mid_turn.last() {
+        Some(Row::WakeMark { empty, .. }) => assert!(!*empty),
+        other => panic!("expected the end mark, got {other:?}"),
+    }
+    // The wording, both ways.
+    use bough_plugin_tui_focus::rows::turn_mark_words;
+    use bough_plugin_agents::Phase;
+    assert_eq!(
+        turn_mark_words(&Phase::End, Some("max_tokens"), None, false),
+        "turn ended \u{b7} ran out of output tokens"
+    );
+    assert!(turn_mark_words(&Phase::End, Some("max_tokens"), None, true)
+        .contains("before showing anything"));
+    assert!(turn_mark_words(&Phase::End, Some("error"), None, true)
+        .contains("nothing was produced"));
+}

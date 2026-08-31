@@ -120,6 +120,10 @@ pub enum Row {
         /// `wake/end.cause`. `aborted` is what an explicit cancel produces, and only the CAUSE
         /// says whether that cancel was Andrey's Esc or a parent tearing a worker down.
         cause: Option<String>,
+        /// The turn produced NO agent-visible row (drivability, 2026-08-31: a reasoning model
+        /// spent the whole output budget thinking and the turn read as nothing happening). The
+        /// mark says so instead of leaving dead air unexplained.
+        empty: bool,
     },
     About {
         step: StepId,
@@ -205,6 +209,9 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
     // ONE row. `None` means the last row pushed cannot be joined onto — anything else in between
     // (a tool call, a wake mark, a new step index, a new wake) breaks the group.
     let mut open_group: Option<(usize, GroupKey)> = None;
+    // Where the CURRENT turn's rows begin, so its end mark can say whether the turn showed
+    // anything at all. `None` when the window opened mid-turn.
+    let mut wake_start_idx: Option<usize> = None;
 
     for step in steps {
         let kind = step.kind.as_str();
@@ -341,7 +348,7 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
             // ONE rule per turn (visual audit F2): the turn's start is said by the speaker label
             // on its first words, its end by the `── turn ended · …` rule. `── turn` above the
             // label was a third chrome line saying what the label already says.
-            "wake/start" => {}
+            "wake/start" => wake_start_idx = Some(out.len()),
             // A message sent while a turn ran (round 8): the splice that queued it is the only
             // step it has until its own wake claims it.
             "inbox/spliced" => {
@@ -387,14 +394,22 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
                     None | Some("") | Some("completed")
                 );
                 if !quiet {
+                    // "Empty" only when the window HOLDS the turn's start: a window that opens
+                    // mid-turn cannot say what came before it, and a false alarm would read as
+                    // an accusation.
+                    let empty = wake_start_idx.is_some_and(|from| {
+                        !out[from..].iter().any(is_agent_row)
+                    });
                     out.push(Row::WakeMark {
                         step: step.id.clone(),
                         wake: step.wake.clone(),
                         phase: Phase::End,
                         reason,
                         cause: body_str(step, "cause"),
+                        empty,
                     });
                 }
+                wake_start_idx = None;
             }
             _ => match about_from_step(step) {
                 // `about/line` BY NAME (P3-D11): the pane does not depend on the row that writes it.
@@ -811,7 +826,12 @@ pub fn is_agent_row(row: &Row) -> bool {
 /// The ledger keeps `wake/start` and `wake/end` — REQUIREMENTS §3's step-type map does not move.
 /// What moves is the chrome: nobody outside this codebase calls a turn a wake, and the audit's
 /// personas read `── wake end · completed` as a machine talking to itself.
-pub fn turn_mark_words(phase: &Phase, reason: Option<&str>, cause: Option<&str>) -> String {
+pub fn turn_mark_words(
+    phase: &Phase,
+    reason: Option<&str>,
+    cause: Option<&str>,
+    empty: bool,
+) -> String {
     match phase {
         Phase::Start => "turn".to_string(),
         Phase::End => match reason.map(str::trim).filter(|r| !r.is_empty()) {
@@ -823,6 +843,16 @@ pub fn turn_mark_words(phase: &Phase, reason: Option<&str>, cause: Option<&str>)
                 "turn interrupted".to_string()
             }
             Some("interrupted") => "turn interrupted".to_string(),
+            // Plain language for the budget, and — drivability, 2026-08-31 — an EMPTY turn says
+            // so: a reasoning model can spend the whole budget thinking, and a bare
+            // `max_tokens` after dead air read as the harness failing silently.
+            Some("max_tokens") if empty => {
+                "turn ended \u{b7} ran out of output tokens before showing anything \
+                 \u{2014} ask again or raise max_tokens"
+                    .to_string()
+            }
+            Some("max_tokens") => "turn ended \u{b7} ran out of output tokens".to_string(),
+            Some(r) if empty => format!("turn ended \u{b7} {r} \u{2014} nothing was produced"),
             Some(r) => format!("turn ended \u{b7} {r}"),
             None => "turn ended".to_string(),
         },
@@ -839,34 +869,34 @@ mod tests {
     /// The chrome speaks turn/message; the ledger keeps `wake/*`. Both halves pinned here.
     #[test]
     fn turn_marks_never_say_wake() {
-        assert_eq!(turn_mark_words(&Phase::Start, None, None), "turn");
+        assert_eq!(turn_mark_words(&Phase::Start, None, None, false), "turn");
         assert_eq!(
-            turn_mark_words(&Phase::End, Some("completed"), None),
+            turn_mark_words(&Phase::End, Some("completed"), None, false),
             "turn ended \u{b7} completed"
         );
         assert_eq!(
-            turn_mark_words(&Phase::End, Some("interrupted"), None),
+            turn_mark_words(&Phase::End, Some("interrupted"), None, false),
             "turn interrupted"
         );
-        assert_eq!(turn_mark_words(&Phase::End, Some("  "), None), "turn ended");
+        assert_eq!(turn_mark_words(&Phase::End, Some("  "), None, false), "turn ended");
         // B7, the marker Esc actually produces. §5 reserves `interrupted` for a PREEMPTED wake,
         // so a user's Esc lands as `aborted` + `cause: user` — and that pair has to read as an
         // interrupt, or the audit's marker is invisible on the one path a person can take.
         assert_eq!(
-            turn_mark_words(&Phase::End, Some("aborted"), Some("user")),
+            turn_mark_words(&Phase::End, Some("aborted"), Some("user"), false),
             "turn interrupted"
         );
         // A worker torn down by its spawner is NOT the user interrupting.
         assert_eq!(
-            turn_mark_words(&Phase::End, Some("aborted"), Some("parent")),
+            turn_mark_words(&Phase::End, Some("aborted"), Some("parent"), false),
             "turn ended \u{b7} aborted"
         );
         assert_eq!(
-            turn_mark_words(&Phase::End, Some("aborted"), None),
+            turn_mark_words(&Phase::End, Some("aborted"), None, false),
             "turn ended \u{b7} aborted"
         );
         for phase in [Phase::Start, Phase::End] {
-            assert!(!turn_mark_words(&phase, Some("done"), None).contains("wake"));
+            assert!(!turn_mark_words(&phase, Some("done"), None, false).contains("wake"));
         }
     }
 

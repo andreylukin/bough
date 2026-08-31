@@ -362,6 +362,7 @@ impl LlmClient for OpenAICompatClient {
 
         let mut events = SseEvents::with_stall(res.body, provider, self.stall_ms);
         let mut text = String::new();
+        let mut reasoning = String::new();
         let mut tool_calls: std::collections::BTreeMap<i64, ToolCallAcc> =
             std::collections::BTreeMap::new();
         let mut finish_reason = "stop".to_string();
@@ -430,6 +431,15 @@ impl LlmClient for OpenAICompatClient {
                 ended = true;
             }
             let delta = &choice["delta"];
+            // Reasoning-model thinking: OpenRouter's unified spelling is `reasoning`; the
+            // vendors' native passthrough (DeepSeek, Z.ai) is `reasoning_content`. Dropped
+            // before 2026-08-31 — a turn that hit max_tokens mid-think ended with NOTHING
+            // visible or ledgered.
+            for key in ["reasoning", "reasoning_content"] {
+                if let Some(r) = delta[key].as_str().filter(|c| !c.is_empty()) {
+                    reasoning.push_str(r);
+                }
+            }
             if let Some(content) = delta["content"].as_str().filter(|c| !c.is_empty()) {
                 text.push_str(content);
                 on_text(content);
@@ -462,6 +472,13 @@ impl LlmClient for OpenAICompatClient {
         }
 
         let mut content: Vec<LlmBlock> = Vec::new();
+        // Reasoning precedes the text it produced, the block order Anthropic's shape set.
+        if !reasoning.is_empty() {
+            content.push(LlmBlock::Reasoning {
+                text: reasoning,
+                meta: None,
+            });
+        }
         if !text.is_empty() {
             content.push(LlmBlock::Text { text });
         }
@@ -840,6 +857,67 @@ mod tests {
         assert_eq!(
             transport.requests.lock().unwrap()[0].url,
             "http://127.0.0.1:11434/api/v1/chat/completions"
+        );
+    }
+
+    /// Drivability (2026-08-31): reasoning deltas (`reasoning`, the OpenRouter spelling, and
+    /// `reasoning_content`, the vendors' native one) become a `Reasoning` block AHEAD of the
+    /// text. A reasoning-only round — a model that hit `max_tokens` mid-think — still yields the
+    /// block, so the turn ledgers its thinking instead of nothing at all.
+    #[tokio::test]
+    async fn reasoning_deltas_become_a_block_ahead_of_the_text() {
+        let transport = Arc::new(CannedTransport::sse(vec![vec![
+            chunk(json!({ "reasoning": "let me think" }), None),
+            chunk(json!({ "reasoning_content": " harder" }), None),
+            chunk(json!({ "content": "the answer" }), Some("stop")),
+        ]]));
+        let client = openrouter_client(ProviderOpts {
+            env: Some(keyed_env()),
+            transport: Some(transport),
+        });
+        let result = client
+            .run(
+                params_over("z-ai/glm-5.3-flash", &TOOLS, |_| {}),
+                Arc::new(|_| {}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result.content,
+            vec![
+                LlmBlock::Reasoning {
+                    text: "let me think harder".into(),
+                    meta: None,
+                },
+                LlmBlock::Text {
+                    text: "the answer".into()
+                },
+            ]
+        );
+        // Reasoning-only, cut at the budget: the block still exists.
+        let transport = Arc::new(CannedTransport::sse(vec![vec![chunk(
+            json!({ "reasoning": "thinking forever" }),
+            Some("length"),
+        )]]));
+        let client = openrouter_client(ProviderOpts {
+            env: Some(keyed_env()),
+            transport: Some(transport),
+        });
+        let result = client
+            .run(
+                params_over("z-ai/glm-5.3-flash", &TOOLS, |_| {}),
+                Arc::new(|_| {}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result.content,
+            vec![LlmBlock::Reasoning {
+                text: "thinking forever".into(),
+                meta: None,
+            }]
         );
     }
 

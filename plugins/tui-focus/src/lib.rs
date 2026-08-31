@@ -601,11 +601,13 @@ impl FocusPane {
                     phase,
                     reason,
                     cause,
+                    empty,
                     ..
                 } => {
                     // Turn/message vocabulary at BODY contrast (nit 37, M22): the rhythm the
                     // personas praised, in words they use.
-                    let word = rows::turn_mark_words(phase, reason.as_deref(), cause.as_deref());
+                    let word =
+                        rows::turn_mark_words(phase, reason.as_deref(), cause.as_deref(), *empty);
                     lines.push(Line::styled(
                         format!("── {word} "),
                         Style::default().fg(theme.fg),
