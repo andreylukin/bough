@@ -17,6 +17,7 @@ pub mod invariant;
 pub mod parse;
 pub mod registry;
 pub mod section;
+pub mod tool;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -43,6 +44,18 @@ const RELOAD_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 pub struct SkillsConfig {
     pub dir: PathBuf,
     pub glob: String,
+    /// Extra discovery roots, walked for `SKILL.md` files at any depth (bounded): the Claude Code
+    /// layouts — `~/.claude/skills/<name>/SKILL.md` and the installed-plugin trees under
+    /// `~/.claude/plugins` (drivability §5). A missing root is empty, never an error.
+    #[serde(default)]
+    pub roots: Vec<PathBuf>,
+    /// Skill names to mount, exactly ([`skill_name_of`]); empty = every discovered skill. The
+    /// patch-level way to turn ON just the skills you want (drivability §5).
+    #[serde(default)]
+    pub only: Vec<String>,
+    /// Skill names to skip. Applied after `only`.
+    #[serde(default)]
+    pub except: Vec<String>,
     pub watch: bool,
     pub debounce_ms: u64,
     pub max_bytes: usize,
@@ -85,12 +98,11 @@ pub fn glob_matches(glob: &str, name: &str) -> bool {
     }
 }
 
-/// PURE: the child entry one skill file mounts as. `id` is `<parent>.<file stem>`.
+/// PURE: the child entry one skill file mounts as. `id` is `<parent>.<file stem>` — and a
+/// `SKILL.md` is named for its DIRECTORY (`skills/review/SKILL.md` ⇒ `review`), because every
+/// such file shares the same stem. Two roots naming one skill collide loudly at mount (§0.2).
 pub fn child_entry(parent: &str, path: &Path, digest: &str, host: &SkillsConfig) -> Entry {
-    let stem = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "skill".to_string());
+    let stem = skill_name_of(path);
     Entry {
         id: bough_kernel::EntryId::new(format!("{parent}.{stem}")),
         plugin: Some(SKILL_PLUGIN_NAME.to_string()),
@@ -135,6 +147,89 @@ pub fn scan_dir(dir: &Path, glob: &str) -> Result<Vec<(PathBuf, String)>, std::i
     Ok(out)
 }
 
+/// PURE: the name a skill file goes by — the file stem, except a `SKILL.md`, which is named for
+/// its DIRECTORY. The child entry id, the `only`/`except` toggles and the catalog all use it.
+pub fn skill_name_of(path: &Path) -> String {
+    if path.file_name().is_some_and(|n| n == "SKILL.md") {
+        path.parent()
+            .and_then(|p| p.file_name())
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "skill".to_string())
+    } else {
+        path.file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "skill".to_string())
+    }
+}
+
+/// How deep [`scan_root`] walks. Deep enough for the installed-plugin trees
+/// (`plugins/marketplaces/<m>/<p>/skills/<name>/SKILL.md`); a bound, so a symlink cycle ends.
+const ROOT_WALK_DEPTH: usize = 8;
+
+/// Every `SKILL.md` under `root`, at any depth up to [`ROOT_WALK_DEPTH`], sorted, with its
+/// digest. Symlinks are followed (a skill directory is often a symlink); hidden directories and
+/// `node_modules` are not descended. A missing root is EMPTY, not an error — the same rule as
+/// [`scan_dir`].
+pub fn scan_root(root: &Path) -> Result<Vec<(PathBuf, String)>, std::io::Error> {
+    let mut out = Vec::new();
+    walk(root, ROOT_WALK_DEPTH, &mut out)?;
+    out.sort();
+    return Ok(out);
+
+    fn walk(
+        dir: &Path,
+        depth: usize,
+        out: &mut Vec<(PathBuf, String)>,
+    ) -> Result<(), std::io::Error> {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            // `metadata`, not `file_type`: a symlinked skill directory must count as a directory.
+            let meta = match std::fs::metadata(&path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if meta.is_file() {
+                if entry.file_name() == "SKILL.md" {
+                    let bytes = std::fs::read(&path)?;
+                    out.push((path, digest_of(&bytes)));
+                }
+            } else if meta.is_dir() && depth > 0 {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with('.') || name == "node_modules" {
+                    continue;
+                }
+                walk(&path, depth - 1, out)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The whole discovered set: the pool directory's flat files AND its `SKILL.md` walk (so
+/// `$BOUGH_HOME/skills` carries both layouts), then every root's `SKILL.md` walk. A path found
+/// twice is listed once.
+pub fn scan_all(cfg: &SkillsConfig) -> Result<Vec<(PathBuf, String)>, std::io::Error> {
+    let mut out = scan_dir(&cfg.dir, &cfg.glob)?;
+    out.extend(scan_root(&cfg.dir)?);
+    for root in &cfg.roots {
+        out.extend(scan_root(root)?);
+    }
+    out.sort();
+    out.dedup_by(|a, b| a.0 == b.0);
+    out.retain(|(p, _)| {
+        let name = skill_name_of(p);
+        (cfg.only.is_empty() || cfg.only.contains(&name)) && !cfg.except.contains(&name)
+    });
+    Ok(out)
+}
+
 /// The host row.
 pub struct SkillsHostPlugin;
 
@@ -145,7 +240,7 @@ impl Plugin for SkillsHostPlugin {
 
     fn inject() -> bough_kernel::Inject {
         bough_kernel::Inject::required(["projection", "ledger"])
-            .union(&bough_kernel::Inject::optional(["commands"]))
+            .union(&bough_kernel::Inject::optional(["commands", "tools"]))
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
@@ -184,8 +279,25 @@ impl Plugin for SkillsHostPlugin {
     /// reconciles EXACTLY the changed child.
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
         let entry = ctx.entry_id().clone();
-        let files = scan_dir(&cfg.dir, &cfg.glob)
+        let files = scan_all(&cfg)
             .map_err(|e| PluginError::new(entry.clone(), anyhow::Error::new(e)))?;
+
+        // The catalog and the loader (drivability §5): ONE section listing every skill in the
+        // pool by name + description, and a `skill` tool that loads one body as a ledgered
+        // `tool/result` — the model chooses, instead of waiting for a trigger word. The tool
+        // registers only where a `tools` row is composed.
+        let pool = registry::pool(&cfg.dir);
+        {
+            let projection = ctx
+                .get::<Projection>()
+                .map_err(|e| PluginError::new(entry.clone(), e))?;
+            projection
+                .section(&ctx, section::catalog_spec(Arc::clone(&pool)))
+                .await?;
+        }
+        if let Ok(tools) = ctx.get::<bough_plugin_tools::Tools>() {
+            tools.register(&ctx, tool::spec(Arc::clone(&pool))).await?;
+        }
 
         let mounted: Arc<parking_lot::Mutex<BTreeMap<PathBuf, (String, bough_kernel::FiberUid)>>> =
             Arc::new(parking_lot::Mutex::new(BTreeMap::new()));
@@ -209,6 +321,7 @@ impl Plugin for SkillsHostPlugin {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
             let debounce = std::time::Duration::from_millis(cfg.debounce_ms);
             let dir = cfg.dir.clone();
+            let roots = cfg.roots.clone();
             let watch = ctx
                 .effect(move |e| async move {
                     let _ = std::fs::create_dir_all(&dir);
@@ -222,9 +335,17 @@ impl Plugin for SkillsHostPlugin {
                         },
                     )
                     .map_err(|err| PluginError::new(entry2.clone(), anyhow::Error::new(err)))?;
+                    // Recursive: the `<name>/SKILL.md` layout puts edits a level (or more) down.
                     debouncer
-                        .watch(&dir, notify::RecursiveMode::NonRecursive)
+                        .watch(&dir, notify::RecursiveMode::Recursive)
                         .map_err(|err| PluginError::new(entry2.clone(), anyhow::Error::new(err)))?;
+                    for root in &roots {
+                        // A missing root is empty, not an error — but it cannot be watched; it is
+                        // picked up on the next restart or on a `dir` event's reconcile.
+                        if let Err(err) = debouncer.watch(root, notify::RecursiveMode::Recursive) {
+                            tracing::warn!(root = %root.display(), error = %err, "skills root not watched");
+                        }
+                    }
                     e.defer_sync(move || drop(debouncer));
                     Ok(())
                 })
@@ -269,7 +390,7 @@ pub async fn reconcile(
     cfg: &SkillsConfig,
     mounted: &Arc<parking_lot::Mutex<BTreeMap<PathBuf, (String, bough_kernel::FiberUid)>>>,
 ) -> Result<(), anyhow::Error> {
-    let files = scan_dir(&cfg.dir, &cfg.glob)?;
+    let files = scan_all(cfg)?;
     let now: BTreeMap<PathBuf, String> = files.into_iter().collect();
     let before: BTreeMap<PathBuf, (String, bough_kernel::FiberUid)> = mounted.lock().clone();
 
@@ -400,6 +521,9 @@ mod tests {
         SkillsConfig {
             dir: PathBuf::from("/skills"),
             glob: "*.md".into(),
+            roots: vec![],
+            only: vec![],
+            except: vec![],
             watch: true,
             debounce_ms: 400,
             max_bytes: 65536,
@@ -472,6 +596,97 @@ mod tests {
         assert_eq!(a.id, a2.id);
         assert_ne!(a.config, a2.config);
         assert_ne!(a.id, b.id);
+    }
+
+    /// Drivability §5: a `SKILL.md` child is named for its DIRECTORY, so every Claude Code skill
+    /// does not collide on the stem `SKILL`.
+    #[test]
+    fn a_skill_md_child_is_named_for_its_directory() {
+        let e = child_entry("skills", Path::new("/roots/review/SKILL.md"), "abc", &cfg());
+        assert_eq!(e.id.as_str(), "skills.review");
+    }
+
+    /// Drivability §5: the root walk finds `SKILL.md` at both Claude Code depths — a personal
+    /// `skills/<name>/` and an installed-plugin tree — follows a symlinked skill directory, and
+    /// ignores everything not named `SKILL.md`.
+    #[test]
+    fn scan_root_finds_nested_skill_md_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("alpha")).unwrap();
+        std::fs::write(root.join("alpha/SKILL.md"), "a").unwrap();
+        std::fs::create_dir_all(root.join("marketplaces/m/skills/beta")).unwrap();
+        std::fs::write(root.join("marketplaces/m/skills/beta/SKILL.md"), "b").unwrap();
+        std::fs::write(root.join("notes.md"), "not a skill").unwrap();
+        let elsewhere = dir.path().join("elsewhere/gamma");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("SKILL.md"), "g").unwrap();
+        std::fs::create_dir_all(root.join("linked")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, root.join("linked/gamma")).unwrap();
+        let scan_within = |sub: &Path| {
+            scan_root(sub)
+                .expect("walks")
+                .into_iter()
+                .map(|(p, _)| p)
+                .collect::<Vec<_>>()
+        };
+        let alpha_root = scan_within(&root.join("alpha"));
+        assert_eq!(alpha_root, vec![root.join("alpha/SKILL.md")]);
+        let all = scan_within(root);
+        assert!(all.contains(&root.join("alpha/SKILL.md")), "{all:?}");
+        assert!(
+            all.contains(&root.join("marketplaces/m/skills/beta/SKILL.md")),
+            "{all:?}"
+        );
+        assert!(
+            all.contains(&root.join("linked/gamma/SKILL.md")),
+            "a symlinked skill directory is followed: {all:?}"
+        );
+        assert!(
+            !all.iter().any(|p| p.ends_with("notes.md")),
+            "only SKILL.md files: {all:?}"
+        );
+        assert_eq!(
+            scan_root(&root.join("missing")).expect("empty, not an error"),
+            vec![]
+        );
+    }
+
+    /// Drivability §5: `$BOUGH_HOME/skills` carries BOTH layouts — flat `<name>.md` and
+    /// `<name>/SKILL.md` — and the `only`/`except` toggles pick skills by name across them.
+    #[test]
+    fn scan_all_reads_both_pool_layouts_and_honours_the_toggles() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = dir.path();
+        std::fs::write(pool.join("alpha.md"), "a").unwrap();
+        std::fs::create_dir_all(pool.join("beta")).unwrap();
+        std::fs::write(pool.join("beta/SKILL.md"), "b").unwrap();
+        let base = SkillsConfig {
+            dir: pool.to_path_buf(),
+            ..cfg()
+        };
+        let names = |c: &SkillsConfig| {
+            scan_all(c)
+                .expect("scans")
+                .into_iter()
+                .map(|(p, _)| skill_name_of(&p))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&base), vec!["alpha", "beta"]);
+        assert_eq!(
+            names(&SkillsConfig {
+                only: vec!["beta".into()],
+                ..base.clone()
+            }),
+            vec!["beta"]
+        );
+        assert_eq!(
+            names(&SkillsConfig {
+                except: vec!["beta".into()],
+                ..base.clone()
+            }),
+            vec!["alpha"]
+        );
     }
 
     #[test]

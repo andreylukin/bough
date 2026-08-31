@@ -201,3 +201,72 @@ mod tests {
         );
     }
 }
+
+/// Drivability §1 (docs/drivability-plan.md): Andrey's own message must stay inline. The
+/// projection flags his step as unconsumed mail for the whole turn, and a long answer later ages
+/// it out of the tail window; the plan's flags describe the MODEL's context and may not hide the
+/// user's half of the transcript.
+#[test]
+fn andreys_message_stays_inline_despite_the_context_plan() {
+    use bough_plugin_projection::{
+        Assembled, Position, RenderedSection, SectionCites, SectionId, Slot,
+    };
+
+    let mail_step = bough_plugin_ledger::Step {
+        id: StepId::new("s1"),
+        traj: bough_plugin_ledger::TrajId::new("lane/sol"),
+        seq: bough_plugin_ledger::Seq(1),
+        at: chrono::Utc::now(),
+        wake: WakeId::new("w1"),
+        kind: bough_plugin_ledger::StepType::new("mail/delivered"),
+        class: bough_plugin_ledger::Class::Evidence,
+        body: Arc::new(serde_json::json!({ "from": "andrey", "summary": "hi agent" })),
+        cites: Arc::new(vec![]),
+        refs: Arc::new(std::collections::BTreeSet::new()),
+        ignorable: false,
+    };
+    let mut state = FocusState::default();
+    state.set_steps(vec![mail_step, text_step(2, 0, "the answer")]);
+    let section = |id: &str, slot: Slot, cites: &[&str]| RenderedSection {
+        id: SectionId::new(id),
+        position: Position::band(slot),
+        title: id.to_string(),
+        body: "x".into(),
+        cites: SectionCites {
+            steps: cites.iter().map(|s| StepId::new(*s)).collect(),
+            rollups: vec![],
+        },
+        tokens: 1,
+        degraded: None,
+    };
+    // The tail cites only the answer; Andrey's step sits in the mail band — exactly the mid-turn
+    // shape, where his message stays unconsumed until `wake/end`.
+    state.context.apply(
+        &Assembled {
+            agent: bough_plugin_ledger::AgentName::new("sol"),
+            sections: vec![
+                section("tail", Slot::Tail, &["s2"]),
+                section("mail", Slot::Mail, &["s1"]),
+            ],
+            flags: Default::default(),
+            tokens: 1,
+            budget: 200_000,
+            cites: SectionCites::default(),
+        },
+        chrono::Utc::now(),
+    );
+    let pane = FocusPane::new(
+        cfg(),
+        Arc::new(Mutex::new(FocusState::default())),
+        Arc::new(Mutex::new(LiveText::default())),
+    );
+    let (lines, _, _) = pane.lines(&state, &LiveText::default(), 80, &Theme::of(ThemeName::Dark));
+    let text: Vec<String> = lines
+        .iter()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect();
+    assert!(
+        text.iter().any(|l| l.contains("hi agent")),
+        "Andrey's message renders inline even as unconsumed mail: {text:?}"
+    );
+}

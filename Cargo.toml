@@ -40,6 +40,7 @@ anyhow       = "1"
 uuid         = { version = "1", features = ["v4", "v7"] }
 chrono       = "0.4"
 regex        = "1"
+toml         = "0.8"                                                 # hooks-parity: Codex config.toml [hooks] tables
 sha2         = "0.10"                                                 # composition fingerprint, idem keys
 base64       = "0.22"
 futures      = "0.3"
@@ -109,6 +110,7 @@ bough-plugin-tui-render = { path = "plugins/tui-render" }                      #
 bough-plugin-tui-strip = { path = "plugins/tui-strip" }                        # §11 the agent rail pane
 bough-plugin-tui-focus = { path = "plugins/tui-focus" }                        # §11 the focused trajectory pane
 bough-plugin-tui-status = { path = "plugins/tui-status" }                      # §11 the status line (phase ux1)
+bough-plugin-tui-title = { path = "plugins/tui-title" }                        # §11 the terminal tab title
 bough-plugin-tui-search = { path = "plugins/tui-search" }                      # §11 FTS pane (swap subject)
 bough-plugin-tui-attach = { path = "plugins/tui-attach" }                      # §11 the resident's attach listener
 bough-plugin-prompt-files = { path = "plugins/prompt-files" }                  # §5 workspace prompt files, deduped, as a contributed section
@@ -160,6 +162,7 @@ bough-plugin-tool-mcp = { path = "plugins/tool-mcp" }                         # 
 bough-plugin-runtime-actions = { path = "plugins/runtime-actions" }           # §9 runtime-code action vocabulary
 bough-plugin-wards-rhai = { path = "plugins/wards-rhai" }                     # §9 the ward host
 bough-plugin-hooks-exec = { path = "plugins/hooks-exec" }                     # §9 the hook-executable host
+bough-plugin-hooks-parity = { path = "plugins/hooks-parity" }                 # drivability §5: Claude Code + Codex hook settings on the tools seam
 bough-plugin-mcp-subprocess = { path = "plugins/mcp-subprocess" }             # §9 resident subprocess plugins
 bough-plugin-skills = { path = "plugins/skills" }                             # §9 the skills host
 bough-plugin-power = { path = "plugins/power" }                               # §13 power Service Definition

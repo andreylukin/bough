@@ -207,6 +207,22 @@ async fn spawn_and_wait(path: &Path) -> anyhow::Result<UnixStream> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    // The resident outlives this terminal and its env is a snapshot for its whole life: every
+    // downstream spawn (the agent's shell, `git`, `gh`) inherits it verbatim through non-login
+    // `sh -c`, so nothing can repair a bad PATH or SSH_AUTH_SOCK later. Capture the env through
+    // the user's login shell so those come from the profile, not from whatever thin parent
+    // happened to start the first `bough`. The login shell inherits this process's env, so a
+    // value the terminal set explicitly still wins unless the profile itself overrides it. A
+    // rotated SSH_AUTH_SOCK still needs `bough restart` — the snapshot cannot refresh itself.
+    match login_env().await {
+        Some(pairs) => {
+            cmd.envs(pairs);
+        }
+        None => eprintln!(
+            "bough: could not read the login shell environment; \
+             the resident inherits this process's"
+        ),
+    }
     // Its own process group: closing this terminal must not deliver the resident a SIGHUP.
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
     let mut child = cmd.spawn()?;
@@ -327,9 +343,57 @@ pub async fn run_client(stream: UnixStream) -> anyhow::Result<u8> {
     Ok(code)
 }
 
+/// The user's environment as their login shell sees it, or `None` when it cannot be read. `env
+/// -0` because a value may contain newlines; `command` so a `config.fish` alias cannot shadow it.
+async fn login_env() -> Option<Vec<(String, String)>> {
+    let shell = std::env::var("SHELL").ok()?;
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::process::Command::new(&shell)
+            .args(["-lc", "command env -0"])
+            .stdin(std::process::Stdio::null())
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let pairs = parse_env0(&out.stdout);
+    (!pairs.is_empty()).then_some(pairs)
+}
+
+/// NUL-delimited `KEY=VALUE` entries, entries without a `=` skipped.
+fn parse_env0(bytes: &[u8]) -> Vec<(String, String)> {
+    bytes
+        .split(|b| *b == 0)
+        .filter(|e| !e.is_empty())
+        .filter_map(|e| {
+            let s = String::from_utf8_lossy(e);
+            s.split_once('=')
+                .filter(|(k, _)| !k.is_empty())
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::wants_attach;
+    use super::{parse_env0, wants_attach};
+
+    /// A value carrying a newline survives, which is why the capture is `env -0` and not lines.
+    #[test]
+    fn env0_entries_split_on_nul_and_keep_newlines() {
+        let raw = b"PATH=/opt/homebrew/bin:/usr/bin\0MULTI=a\nb\0=bad\0noequals\0";
+        assert_eq!(
+            parse_env0(raw),
+            vec![
+                ("PATH".to_string(), "/opt/homebrew/bin:/usr/bin".to_string()),
+                ("MULTI".to_string(), "a\nb".to_string()),
+            ]
+        );
+    }
 
     /// Only the bare default invocation attaches; every explicit choice composes in-process.
     #[test]

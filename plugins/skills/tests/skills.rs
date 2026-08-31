@@ -34,6 +34,9 @@ fn host_cfg(dir: &Path) -> SkillsConfig {
     SkillsConfig {
         dir: dir.to_path_buf(),
         glob: "*.md".into(),
+        roots: vec![],
+        only: vec![],
+        except: vec![],
         watch: false,
         debounce_ms: 400,
         max_bytes: 65536,

@@ -176,6 +176,11 @@ pub struct TuiInner {
     /// attach row points this at the connected client. `None` means drop them, which is what a
     /// headless test wants.
     pub(crate) byte_sink: Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>,
+    /// Out-of-band bytes the terminal must keep AGREEING with (a tab title), remembered by key.
+    /// A one-shot (OSC52) written while no client is attached is correctly dropped; state written
+    /// then would stay dropped forever, so [`TuiHandle::set_byte_sink`] replays these into every
+    /// new sink.
+    pub(crate) oob_sticky: Mutex<std::collections::BTreeMap<&'static str, Vec<u8>>>,
 }
 
 /// A submit waiting for the roster (merge note 16).
@@ -256,6 +261,7 @@ impl TuiHandle {
             redraw: Notify::new(),
             frames: tokio::sync::watch::Sender::new(0),
             byte_sink: Mutex::new(None),
+            oob_sticky: Mutex::new(std::collections::BTreeMap::new()),
         })))
     }
 
@@ -528,22 +534,44 @@ impl TuiHandle {
     pub async fn copy(&self, text: &str) -> CopyOutcome {
         let mut out: Vec<u8> = Vec::new();
         let outcome = clip::copy(text, &self.0.cfg, &mut out).await;
-        if !out.is_empty() && self.0.backend == Backend::Crossterm {
-            use std::io::Write;
-            let mut stdout = std::io::stdout();
-            let _ = stdout.write_all(&out);
-            let _ = stdout.flush();
-        } else if !out.is_empty() {
-            // No tty of our own: hand the sequence to the attached client, if one is connected.
-            // Its terminal is where the selection was dragged, so its clipboard is the one meant.
-            if let Some(sink) = self.0.byte_sink.lock().as_ref() {
-                let _ = sink.send(out);
-            }
-        }
+        self.write_oob(out);
         // The flash is ALWAYS a line (WP-7): a silent success is the audit's "did it copy?".
         let (text, kind) = outcome.flash();
         self.notify_kind(text, kind);
         outcome
+    }
+
+    /// Out-of-band bytes to the terminal the user is looking at: our own tty when this process
+    /// has one, the attached client's otherwise (its terminal is where the selection was dragged,
+    /// where the tab lives — so its emulator is the one meant). Escape sequences that address the
+    /// emulator rather than the frame (OSC52 copy, the tab title) ride this; a headless test's
+    /// bytes are dropped, which is what it wants.
+    pub fn write_oob(&self, bytes: Vec<u8>) {
+        if bytes.is_empty() {
+            return;
+        }
+        if self.0.backend == Backend::Crossterm {
+            use std::io::Write;
+            let mut stdout = std::io::stdout();
+            let _ = stdout.write_all(&bytes);
+            let _ = stdout.flush();
+        } else if let Some(sink) = self.0.byte_sink.lock().as_ref() {
+            let _ = sink.send(bytes);
+        }
+    }
+
+    /// Out-of-band bytes the terminal must keep agreeing with (a tab title): written now, and
+    /// remembered under `key` so [`TuiHandle::set_byte_sink`] can replay them to a client that
+    /// attaches later — the resident mounts its rows long before anyone is connected to hear them.
+    pub fn set_oob_sticky(&self, key: &'static str, bytes: Vec<u8>) {
+        self.0.oob_sticky.lock().insert(key, bytes.clone());
+        self.write_oob(bytes);
+    }
+
+    /// Forget a sticky entry. The unloading row writes its own parting bytes first; forgetting
+    /// only stops the replay, so a reload never re-asserts a predecessor's state (§0.2).
+    pub fn clear_oob_sticky(&self, key: &'static str) {
+        self.0.oob_sticky.lock().remove(key);
     }
 
     /// The whole terminal.
@@ -582,9 +610,19 @@ impl TuiHandle {
     }
 
     /// Point the out-of-band byte path (OSC52) at a sink, or take it away. The attach row is the
-    /// one caller; everything else leaves it `None`.
+    /// one caller; everything else leaves it `None`. A new sink is a terminal that saw NONE of
+    /// the sticky state (its tab was titled by its shell, not by us), so every sticky entry is
+    /// replayed into it before anything else rides the path.
     pub fn set_byte_sink(&self, sink: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>) {
+        let replay: Vec<Vec<u8>> = if sink.is_some() {
+            self.0.oob_sticky.lock().values().cloned().collect()
+        } else {
+            Vec::new()
+        };
         *self.0.byte_sink.lock() = sink;
+        for bytes in replay {
+            self.write_oob(bytes);
+        }
     }
 
     /// Whether this composition captures the mouse — what an attach client must mirror on its own

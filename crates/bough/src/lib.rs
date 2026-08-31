@@ -71,6 +71,8 @@ use bough_plugin_js_quickjs as _;
 use bough_plugin_tools_codemode as _;
 // Phase ux1's one new row (§17 Phase 3 / phase ux1 §2.13): the status line.
 use bough_plugin_tui_status as _;
+// §11: the terminal tab title, kept naming the focused lane.
+use bough_plugin_tui_title as _;
 // Phase c's rows (§11 "Digging", §8, §7, §17 Phase 8): the three digging panes, plus two
 // FIXTURES — `fault-inject` and `actions-shim` are linked into the catalog and named by no bundle,
 // exactly as `tui-probe` is; a test's or a script's own `--patch` mounts them.
@@ -94,6 +96,7 @@ use bough_plugin_collector_linear as _;
 use bough_plugin_collector_slack as _;
 use bough_plugin_drafts as _;
 use bough_plugin_hooks_exec as _;
+use bough_plugin_hooks_parity as _;
 use bough_plugin_mcp as _;
 use bough_plugin_mcp_rmcp as _;
 use bough_plugin_mcp_subprocess as _;

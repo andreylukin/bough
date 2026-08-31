@@ -11,7 +11,7 @@
 pub mod dedup;
 pub mod invariant;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bough_kernel::{ConfigError, Context, Inject, InvariantSpec, Plugin, PluginError};
@@ -43,6 +43,15 @@ pub struct PromptFilesConfig {
     pub max_bytes: u64,
     /// The near-duplicate threshold (Sorensen-Dice over normalized text). `1.0` = exact-only.
     pub similarity: f64,
+    /// Also read `~/.claude/<file>` for each configured file, ahead of everything else: the
+    /// user's global instructions (Claude Code's `~/.claude/CLAUDE.md` rule).
+    #[serde(default)]
+    pub home: bool,
+    /// Read `<dir>/<file>` for every ancestor from the filesystem root down to `root`, outermost
+    /// first, then `<root>/.claude/<file>` (Claude Code's walk-up rule). Off, the row reads
+    /// `<root>/<file>` alone — the original behavior.
+    #[serde(default)]
+    pub walk_up: bool,
 }
 
 /// The renderer: read, dedup, render — all at request time.
@@ -64,12 +73,52 @@ impl SectionRender for PromptFilesSection {
     }
 }
 
-/// Read the configured files, dedup, render — the WHOLE of what the section says, as a pure-ish
-/// function of the config so a test exercises the very path a render takes. `None` ⇒ no section.
+/// Read the discovered files, dedup, render — the WHOLE of what the section says. `None` ⇒ no
+/// section. The real render reads against the process's `$HOME`; tests pass their own.
 pub fn body_of(cfg: &PromptFilesConfig) -> Option<String> {
-    let mut found: Vec<(String, String)> = Vec::new();
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    body_with_home(cfg, home.as_deref())
+}
+
+/// Every path a configured file may live at, in PRECEDENCE order (the earliest voice wins the
+/// dedup): the home tree, then each ancestor outermost-first, then `<root>/.claude`. With both
+/// flags off this is exactly `root.join(name)` — the original rule. A path visited twice (a
+/// `root` that IS the home tree) is listed once.
+pub fn discover(cfg: &PromptFilesConfig, home: Option<&Path>) -> Vec<(String, PathBuf)> {
+    let root = cfg.root.canonicalize().unwrap_or_else(|_| cfg.root.clone());
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+    let mut push = |label: String, path: PathBuf| {
+        if seen.insert(path.canonicalize().unwrap_or_else(|_| path.clone())) {
+            out.push((label, path));
+        }
+    };
     for name in &cfg.files {
-        let path = cfg.root.join(name);
+        if cfg.home {
+            if let Some(h) = home {
+                let path = h.join(".claude").join(name);
+                push(format!("~/.claude/{name}"), path);
+            }
+        }
+        if cfg.walk_up {
+            let mut chain: Vec<&Path> = root.ancestors().collect();
+            chain.reverse();
+            for dir in chain {
+                push(dir.join(name).display().to_string(), dir.join(name));
+            }
+            let dot = root.join(".claude").join(name);
+            push(dot.display().to_string(), dot);
+        } else {
+            push(name.clone(), cfg.root.join(name));
+        }
+    }
+    out
+}
+
+/// [`body_of`] against an explicit home, so a test never reads the developer's real `~/.claude`.
+pub fn body_with_home(cfg: &PromptFilesConfig, home: Option<&Path>) -> Option<String> {
+    let mut found: Vec<(String, String)> = Vec::new();
+    for (name, path) in discover(cfg, home) {
         match std::fs::read_to_string(&path) {
             Ok(mut text) => {
                 if text.len() as u64 > cfg.max_bytes {
@@ -174,6 +223,8 @@ mod tests {
             files: vec!["AGENTS.md".to_string()],
             max_bytes: 65536,
             similarity: 0.85,
+            home: false,
+            walk_up: false,
         }
     }
 
@@ -207,6 +258,61 @@ mod tests {
         .is_err());
     }
 
+    /// Drivability §5: the Claude Code discovery order — home tree first, then the ancestors
+    /// outermost-first, then `<root>/.claude` — and the flags off keep the original flat rule.
+    #[test]
+    fn discovery_walks_home_then_ancestors_then_the_dot_claude_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("a").join("b");
+        std::fs::create_dir_all(&root).unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        let c = PromptFilesConfig {
+            root: root.clone(),
+            files: vec!["CLAUDE.md".to_string()],
+            max_bytes: 65536,
+            similarity: 1.0,
+            home: true,
+            walk_up: true,
+        };
+        let paths: Vec<PathBuf> = discover(&c, Some(&home)).into_iter().map(|(_, p)| p).collect();
+        let root = root.canonicalize().unwrap();
+        assert_eq!(paths[0], home.join(".claude").join("CLAUDE.md"));
+        let inner = paths
+            .iter()
+            .position(|p| *p == root.join("CLAUDE.md"))
+            .expect("root itself is walked");
+        let outer = paths
+            .iter()
+            .position(|p| *p == root.parent().unwrap().join("CLAUDE.md"))
+            .expect("the parent is walked");
+        assert!(outer < inner, "outermost first: {paths:?}");
+        assert_eq!(
+            paths.last().unwrap(),
+            &root.join(".claude").join("CLAUDE.md")
+        );
+        // Flags off: the original flat rule, exactly.
+        let flat = PromptFilesConfig {
+            home: false,
+            walk_up: false,
+            ..c.clone()
+        };
+        assert_eq!(
+            discover(&flat, Some(&home))
+                .into_iter()
+                .map(|(_, p)| p)
+                .collect::<Vec<_>>(),
+            vec![flat.root.join("CLAUDE.md")]
+        );
+        // The walked-up bodies land in the section, global voice first.
+        std::fs::write(home.join(".claude/CLAUDE.md"), "Be terse.").unwrap();
+        std::fs::write(root.join("CLAUDE.md"), "Never push to main.").unwrap();
+        let body = body_with_home(&c, Some(&home)).expect("a section");
+        let global = body.find("Be terse.").expect("global instructions present");
+        let project = body.find("Never push to main.").expect("project instructions present");
+        assert!(global < project, "{body}");
+    }
+
     #[test]
     fn the_body_reads_dedups_truncates_and_is_absent_with_no_files() {
         let dir = tempfile::tempdir().unwrap();
@@ -215,6 +321,8 @@ mod tests {
             files: vec!["AGENTS.md".to_string(), "CLAUDE.md".to_string()],
             max_bytes: 65536,
             similarity: 1.0,
+            home: false,
+            walk_up: false,
         };
         assert_eq!(body_of(&c), None, "no files, no section");
         std::fs::write(dir.path().join("AGENTS.md"), "Be brief.\n\nAsk first.").unwrap();

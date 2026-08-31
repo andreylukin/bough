@@ -85,6 +85,15 @@
     # nothing.
     hints: ["? = help", "^f = search", "tab = panes"]
 
+# §11: the terminal tab names the focused lane, so a wall of tabs reads the way the rail does. A
+# row of its own: disabling it by patch writes `idle` and stops the attach-replay, so no tab is
+# ever left holding a stale lane name.
+- id: tui.title
+  plugin: tui-title
+  config:
+    format: "{lane} · bough"
+    idle: bough
+
 - id: tui.focus
   plugin: tui-focus
   config:

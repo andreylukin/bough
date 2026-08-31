@@ -418,14 +418,18 @@ impl FocusPane {
         }
         for (i, row) in state.rows.iter().enumerate() {
             if let Some(p) = &plan {
-                if p.mail[i] {
+                // Andrey's own rows are transcript, not context: his message stays inline while
+                // it is still unconsumed mail, and stays visible after it ages out of the tail
+                // window. The plan's flags describe the MODEL's context, not what he may see.
+                let own = matches!(row, Row::Andrey { .. } | Row::Queued { .. });
+                if p.mail[i] && !own {
                     row_lines[i] = lines.len().saturating_sub(1) as u16;
                     continue;
                 }
                 if let Some(pieces) = p.before.get(&i) {
                     emit(pieces, &mut lines, &mut hits_out);
                 }
-                if !p.show[i] {
+                if !p.show[i] && !own {
                     row_lines[i] = lines.len().saturating_sub(1) as u16;
                     continue;
                 }

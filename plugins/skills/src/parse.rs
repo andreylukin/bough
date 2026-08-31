@@ -1,6 +1,8 @@
-//! Invariant: parsing is PURE and refuses LOUDLY. A skill file with no `name` or an empty
-//! `triggers` list is not a skill that never fires — it is a misconfiguration, and §0.2 makes a
-//! misconfigured row a failure that NAMES THE FILE.
+//! Invariant: parsing is PURE and refuses LOUDLY. A skill file with no `name` is a
+//! misconfiguration, and §0.2 makes a misconfigured row a failure that NAMES THE FILE. `triggers`
+//! is OPTIONAL (drivability §5): a Claude Code `SKILL.md` carries only `name` + `description`,
+//! and a skill without triggers is catalog-only — the model loads it by choice, it never
+//! auto-injects.
 
 use std::path::Path;
 
@@ -27,7 +29,7 @@ struct Frontmatter {
     triggers: Vec<String>,
 }
 
-/// PURE: parse, and refuse loudly on a missing `name` or empty `triggers`.
+/// PURE: parse, and refuse loudly on a missing `name`.
 ///
 /// The frontmatter is the leading `---` fence; everything after the closing fence is the body,
 /// verbatim (leading blank lines trimmed, so a body always starts at its first real line).
@@ -67,9 +69,6 @@ pub fn parse_skill(path: &Path, text: &str) -> Result<Skill, SkillError> {
         .map(|t| t.trim().to_lowercase())
         .filter(|t| !t.is_empty())
         .collect();
-    if triggers.is_empty() {
-        return Err(SkillError::NoTriggers { path: p() });
-    }
     Ok(Skill {
         id: SectionId::new(format!("skill:{name}")),
         name,
@@ -127,8 +126,6 @@ pub enum SkillError {
     BadFrontmatter { path: String, detail: String },
     #[error("skill `{path}`: a skill needs a `name`")]
     NoName { path: String },
-    #[error("skill `{path}`: a skill needs at least one trigger, or it can never inject")]
-    NoTriggers { path: String },
     #[error("skill `{path}`: {bytes} bytes exceeds `max_bytes` ({max})")]
     TooBig {
         path: String,
@@ -172,16 +169,23 @@ mod tests {
         assert!(err.to_string().contains("/skills/review.md"), "{err}");
     }
 
+    /// Drivability §5: a Claude Code `SKILL.md` has no `triggers`; it parses as catalog-only and
+    /// never auto-injects.
     #[test]
-    fn a_file_with_empty_triggers_is_refused_naming_the_file() {
-        let err =
-            parse_skill(&path(), "---\nname: n\ntriggers: []\n---\nbody\n").expect_err("refused");
-        assert!(matches!(err, SkillError::NoTriggers { .. }), "{err}");
-        assert!(err.to_string().contains("/skills/review.md"), "{err}");
-        // A triggers list of blanks is the same thing: it can never inject.
-        let err = parse_skill(&path(), "---\nname: n\ntriggers: [\"  \"]\n---\nb\n")
-            .expect_err("refused");
-        assert!(matches!(err, SkillError::NoTriggers { .. }), "{err}");
+    fn a_file_with_no_triggers_is_catalog_only() {
+        let s = parse_skill(&path(), "---\nname: n\ntriggers: []\n---\nbody\n").expect("parses");
+        assert!(s.triggers.is_empty());
+        assert!(!mentioned(&s, "anything at all"), "never auto-injects");
+        // A triggers list of blanks is the same shape.
+        let s = parse_skill(&path(), "---\nname: n\ntriggers: [\"  \"]\n---\nb\n").expect("parses");
+        assert!(s.triggers.is_empty());
+        // Extra frontmatter fields a real SKILL.md carries are ignored, not refused.
+        let s = parse_skill(
+            &path(),
+            "---\nname: n\ndescription: d\nuser_invocable: true\nversion: 1.0.0\n---\nb\n",
+        )
+        .expect("parses");
+        assert_eq!(s.description, "d");
     }
 
     #[test]

@@ -897,10 +897,12 @@ pub fn tray_pieces(
     width: u16,
     theme: &Theme,
 ) -> Vec<Piece> {
+    // Third-party mail only: Andrey's own flagged rows render inline in the transcript, so a
+    // count here would promise items the open tray never lists.
     let queued: Vec<&Row> = rows
         .iter()
         .zip(mail.iter())
-        .filter(|(_, m)| **m)
+        .filter(|(r, m)| **m && matches!(r, Row::Mail { .. }))
         .map(|(r, _)| r)
         .collect();
     if queued.is_empty() {

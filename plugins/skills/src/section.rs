@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use bough_plugin_ledger::{Order, Step, StepQuery};
 use bough_plugin_projection::{
-    Place, Position, ProjectionError, SectionBody, SectionCites, SectionRender, SectionRequest,
-    Slot,
+    DropPriority, Place, Position, ProjectionError, SectionBody, SectionCites, SectionId,
+    SectionRender, SectionRequest, SectionScope, SectionSpec, Slot,
 };
 
 use crate::parse::{mentioned, Skill};
@@ -20,6 +20,66 @@ pub const POSITION: Position = Position {
     slot: Slot::Tiers,
     place: Place::After,
 };
+
+/// The catalog's section id.
+pub fn catalog_id() -> SectionId {
+    SectionId::new("skills:catalog")
+}
+
+/// The catalog (drivability §5): every skill in the pool by name + description, so the model
+/// CHOOSES what to load with the `skill` tool instead of waiting on a trigger word. Registered
+/// once by the HOST; empty pool ⇒ no section.
+pub fn catalog_spec(pool: Arc<Pool>) -> SectionSpec {
+    SectionSpec {
+        id: catalog_id(),
+        position: POSITION,
+        scope: SectionScope::Global,
+        agent: None,
+        priority: DropPriority::Coarse,
+        render: Arc::new(CatalogSection { pool }),
+    }
+}
+
+/// The catalog's renderer. Like the prompt files, the section cites nothing: skill files are not
+/// ledgered, and the body deliberately does not vary with `as_of`.
+pub struct CatalogSection {
+    pub pool: Arc<Pool>,
+}
+
+/// PURE: the catalog body for a pool snapshot. `None` for an empty pool.
+pub fn catalog_body(skills: &[Arc<Skill>]) -> Option<String> {
+    if skills.is_empty() {
+        return None;
+    }
+    let mut body = String::from(
+        "Loaded on demand: call the `skill` tool with a name to read one BEFORE doing the task \
+         it covers.\n",
+    );
+    for s in skills {
+        body.push_str("- ");
+        body.push_str(&s.name);
+        if !s.description.is_empty() {
+            body.push_str(" \u{2014} ");
+            body.push_str(&s.description);
+        }
+        body.push('\n');
+    }
+    Some(body)
+}
+
+#[async_trait::async_trait]
+impl SectionRender for CatalogSection {
+    async fn render(
+        &self,
+        _req: &SectionRequest,
+    ) -> Result<Option<SectionBody>, ProjectionError> {
+        Ok(catalog_body(&self.pool.snapshot()).map(|body| SectionBody {
+            title: "Skills".to_string(),
+            body,
+            cites: SectionCites::default(),
+        }))
+    }
+}
 
 /// One skill file's section.
 pub struct SkillSection {

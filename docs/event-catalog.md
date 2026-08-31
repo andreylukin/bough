@@ -50,5 +50,5 @@ with its declared dispatch mode, checked against every dispatch site. Do not edi
 | `tools/post-execute` | waterfall | `ToolsPostExecute` | tools | 1 | 0 |
 | `tools/pre-execute` | waterfall | `ToolsPreExecute` | tools | 1 | 0 |
 | `tools/result` | emit | `ToolsResult` | tools | 1 | 1 |
-| `tui/focus` | emit | `TuiFocusEvent` | tui-shell | 1 | 0 |
+| `tui/focus` | emit | `TuiFocusEvent` | tui-shell | 1 | 1 |
 | `tui/key` | waterfall | `TuiKeyEvent` | tui-shell | 1 | 0 |

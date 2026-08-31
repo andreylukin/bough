@@ -64,6 +64,8 @@ bough-plugin-tui-search = { workspace = true }
 bough-plugin-tui-attach = { workspace = true }
 # phase ux1: the status line row (the phase's SWAP subject).
 bough-plugin-tui-status = { workspace = true }
+# §11: the terminal tab title row.
+bough-plugin-tui-title = { workspace = true }
 bough-plugin-tui-probe = { workspace = true }
 bough-plugin-residents = { workspace = true }
 bough-plugin-old-feed-adapter = { workspace = true }
@@ -108,6 +110,7 @@ bough-plugin-tool-mcp = { workspace = true }
 bough-plugin-wards-rhai = { workspace = true }
 bough-plugin-runtime-actions = { workspace = true }
 bough-plugin-hooks-exec = { workspace = true }
+bough-plugin-hooks-parity = { workspace = true }
 bough-plugin-mcp-subprocess = { workspace = true }
 bough-plugin-skills = { workspace = true }
 bough-plugin-power = { workspace = true }

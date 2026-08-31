@@ -270,9 +270,11 @@
 - id: boundary
   plugin: boundary-instructions
 # §5: the workspace's prompt files (AGENTS.md, CLAUDE.md), one contributed section, duplicate
-# content injected once — a paragraph both files state appears in the FIRST file's voice. Read
+# content injected once — a paragraph two files state appears in the FIRST file's voice. Read
 # fresh at every render, so an edit reaches the next wake with no reload; missing files are
-# simply absent. `similarity` is the near-duplicate threshold (1.0 = exact-only).
+# simply absent. `similarity` is the near-duplicate threshold (1.0 = exact-only). `home` and
+# `walk_up` are Claude Code's discovery: `~/.claude/<file>`, then every ancestor of `root`
+# outermost first, then `<root>/.claude/<file>` (drivability §5, 2026-08-31).
 - id: prompt.files
   plugin: prompt-files
   config:
@@ -280,6 +282,8 @@
     files: [AGENTS.md, CLAUDE.md]
     max_bytes: 65536
     similarity: 0.85
+    home: true
+    walk_up: true
 - id: drafts
   plugin: drafts
   config: { retain: 500 }
@@ -410,6 +414,15 @@
     max_output_bytes: 65536
     max_failures: 3
     limits: { max_actions: 16, max_spawns: 2, max_text_bytes: 8192 }
+# Drivability §5: the user's Claude Code + Codex hook settings, discovered per TOOL CALL from the
+# call's own cwd (walk-up) plus the user layer (`~/.claude`, `~/.codex`). PreToolUse denies/asks
+# on `tools/pre-execute`; PostToolUse blocks or attaches context on `tools/post-execute`.
+# `only`/`except` are command substrings — the way to turn individual hooks on or off.
+- id: hooks.parity
+  plugin: hooks-parity
+  config:
+    timeout_ms: 60000
+    max_output_bytes: 65536
 - id: mcp.subprocess
   plugin: mcp-subprocess
   config:
@@ -421,6 +434,12 @@
     # `bough_path`, NOT `home_path` — see the `wards` row.
     dir: !!expr 'bough_path("skills")'
     glob: "*.md"
+    # Claude Code parity (drivability §5): the personal skills and the installed-plugin trees,
+    # walked for `SKILL.md` at any depth. These are deliberately `home_path`: they are the user's
+    # real Claude Code skills, not a bough-owned store.
+    roots:
+      - !!expr 'home_path(".claude/skills")'
+      - !!expr 'home_path(".claude/plugins")'
     watch: true
     debounce_ms: 400
     max_bytes: 65536

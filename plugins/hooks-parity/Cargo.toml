@@ -1,12 +1,15 @@
 [package]
-name = "bough-plugin-skills"
+name = "bough-plugin-hooks-parity"
 autotests = false
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# §9: a global pool of skill files, mention-triggered auto-injection as a projection section, one child entry per file, hot reload.
+# Drivability §5: the user's Claude Code + Codex hook settings, discovered per tool call from the
+# call's OWN working directory (walk-up) plus the user layer, run on the tools seam — PreToolUse
+# is a real deny/ask gate on `tools/pre-execute`, PostToolUse blocks or attaches context on
+# `tools/post-execute`. Foreign settings files that fail to parse are warned about, never fatal.
 
 [dependencies]
 bough-kernel = { workspace = true }
@@ -16,27 +19,19 @@ inventory = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
-chrono = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-bough-plugin-projection = { workspace = true }
-bough-plugin-ledger = { workspace = true }
+regex = { workspace = true }
+toml = { workspace = true }
 bough-plugin-tools = { workspace = true }
-bough-plugin-commands = { workspace = true }
-notify = { workspace = true }
-notify-debouncer-full = { workspace = true }
-sha2 = { workspace = true }
-serde_yaml = { workspace = true }
+bough-plugin-ledger = { workspace = true }
 
 [dev-dependencies]
-tokio-util = { workspace = true }
-bough-plugin-ledger-memory = { workspace = true }
-bough-plugin-projection-assembler = { workspace = true }
-bough-plugin-agents = { workspace = true }
 tempfile = { workspace = true }
+tokio-util = { workspace = true }
 
 [[test]]
 name = "tests"
