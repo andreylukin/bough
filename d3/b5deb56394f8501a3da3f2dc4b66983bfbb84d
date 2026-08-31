@@ -1,0 +1,24 @@
+crates/bough/tests/attach.rs
+  6338bcab2a64960e 299-313
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "d3b5deb56394f8501a3da3f2dc4b66983bfbb84d",
+  "prompts": {
+    "6338bcab2a64960e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a82984e4-af8c-40e3-a020-e0d326528061",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Andrey Lukin",
+      "messages": [],
+      "total_additions": 15,
+      "total_deletions": 7,
+      "accepted_lines": 15,
+      "overriden_lines": 0,
+      "messages_url": "https://uni-git-ai-cas.sre.aws.ai-internal.com//cas/1cfe132d3f4082615d5601aef95e2a4859c441426ae31801770703498990afa5"
+    }
+  }
+}
