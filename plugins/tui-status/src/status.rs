@@ -195,9 +195,7 @@ pub fn field_text(v: &StatusView, f: Field) -> Option<String> {
         // With the rail collapsed the chip carries the STATE too (round 10, busy-executive): at
         // 80 columns the rail is gone, and "who" without "idle / running" answers nothing at a
         // glance.
-        Field::Owed => v
-            .owed_question
-            .then(|| "? question".to_string()),
+        Field::Owed => v.owed_question.then(|| "? question".to_string()),
         Field::Agent => v.agent.as_ref().map(|name| {
             let state = if v.running { "running" } else { "idle" };
             format!("{name} \u{b7} {state}")

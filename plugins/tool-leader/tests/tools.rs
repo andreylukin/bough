@@ -20,15 +20,17 @@ use bough_plugin_graph_ops::{
 };
 use bough_plugin_leader::{Leader, LeaderConfig, LeaderHandle, LeaderPlugin};
 use bough_plugin_ledger::query::StepQuery;
-use bough_plugin_ledger::{AgentName, AgentRow, Ledger, LedgerHandle, Ref, StepType, TrajId, WakeId};
+use bough_plugin_ledger::{
+    AgentName, AgentRow, Ledger, LedgerHandle, Ref, StepType, TrajId, WakeId,
+};
 use bough_plugin_ledger_memory::store::MemoryStore;
 use bough_plugin_mail_router::{Envelope, Mail, MailConfig, MailHandle};
-use bough_plugin_rollups::Attribution;
-use parking_lot::Mutex;
 use bough_plugin_projection::{Projection, ProjectionHandle, Projector};
 use bough_plugin_projection_assembler::{Assembler, AssemblerConfig};
+use bough_plugin_rollups::Attribution;
 use bough_plugin_tool_leader::{ToolLeaderConfig, ToolLeaderPlugin, TOOL_NAMES};
 use bough_plugin_tools::{FailureClass, ToolCall, ToolCallId, ToolName, Tools, ToolsHandle};
+use parking_lot::Mutex;
 
 struct Fixture {
     root: Context,
@@ -371,7 +373,11 @@ async fn create_lane_bears_a_live_lane_attributed_to_the_leader() {
         .execute(&f.root, vec![call("create_lane", "sol", lane_args())])
         .await;
     let failure = again[0].failure.as_ref().expect("a duplicate is refused");
-    assert!(failure.message.contains("already exists"), "{}", failure.message);
+    assert!(
+        failure.message.contains("already exists"),
+        "{}",
+        failure.message
+    );
 }
 
 #[tokio::test]
@@ -424,9 +430,20 @@ async fn merge_lanes_asks_the_seam_and_refuses_self_absorption() {
             )],
         )
         .await;
-    let failure = refused[0].failure.as_ref().expect("self-absorption is refused");
-    assert!(failure.message.contains("your own lane"), "{}", failure.message);
-    assert_eq!(f.graph.seen.lock().len(), 1, "the refusal never reached the seam");
+    let failure = refused[0]
+        .failure
+        .as_ref()
+        .expect("self-absorption is refused");
+    assert!(
+        failure.message.contains("your own lane"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(
+        f.graph.seen.lock().len(),
+        1,
+        "the refusal never reached the seam"
+    );
 }
 
 #[tokio::test]

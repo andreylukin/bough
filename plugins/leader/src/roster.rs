@@ -93,7 +93,11 @@ impl SectionRender for Roster {
         for a in agents {
             rows.push(RosterRow {
                 last: last_at(req, &a).await?,
-                routing: a.routing_refs.iter().map(|r| r.as_str().to_string()).collect(),
+                routing: a
+                    .routing_refs
+                    .iter()
+                    .map(|r| r.as_str().to_string())
+                    .collect(),
                 name: a.name,
             });
         }
@@ -152,14 +156,19 @@ mod tests {
     use super::*;
 
     fn at(s: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(s).expect("rfc3339").with_timezone(&Utc)
+        DateTime::parse_from_rfc3339(s)
+            .expect("rfc3339")
+            .with_timezone(&Utc)
     }
 
     #[test]
     fn ages_bucket_coarsely_and_absence_is_said() {
         let now = at("2026-08-30T12:00:00Z");
         assert_eq!(age(now, None), "no steps yet");
-        assert_eq!(age(now, Some(at("2026-08-30T11:30:00Z"))), "active this hour");
+        assert_eq!(
+            age(now, Some(at("2026-08-30T11:30:00Z"))),
+            "active this hour"
+        );
         assert_eq!(age(now, Some(at("2026-08-30T05:00:00Z"))), "quiet 7h");
         assert_eq!(age(now, Some(at("2026-08-27T12:00:00Z"))), "quiet 3d");
     }
@@ -179,8 +188,17 @@ mod tests {
             },
         ];
         let text = render_lines(&AgentName::new("sol"), &rows, at("2026-08-30T12:00:00Z"));
-        assert!(text.contains("- sol (you) · class:ask · active this hour"), "{text}");
-        assert!(text.contains("- terra · no routing · no steps yet"), "{text}");
-        assert!(text.contains("merge_lanes"), "the cleanup duty is in the band: {text}");
+        assert!(
+            text.contains("- sol (you) · class:ask · active this hour"),
+            "{text}"
+        );
+        assert!(
+            text.contains("- terra · no routing · no steps yet"),
+            "{text}"
+        );
+        assert!(
+            text.contains("merge_lanes"),
+            "the cleanup duty is in the band: {text}"
+        );
     }
 }

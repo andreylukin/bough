@@ -125,7 +125,7 @@ impl Command for PinCommand {
         let traj = traj_of(&self.0, &agent).await?;
         let step = self
             .0
-            .0
+             .0
             .append(Append {
                 traj,
                 wake: pin_wake(&agent),
@@ -172,7 +172,7 @@ impl Command for UnpinCommand {
         // does nothing but exist is exactly what §0.2 refuses to write.
         let step = self
             .0
-            .0
+             .0
             .step(&pin_id)
             .await
             .map_err(|e| CommandError::Failed(e.to_string()))?
@@ -185,7 +185,7 @@ impl Command for UnpinCommand {
         }
         let retired = self
             .0
-            .0
+             .0
             .append(Append {
                 traj: step.traj.clone(),
                 wake: WakeId::new(format!("unpin:{pin_id}")),

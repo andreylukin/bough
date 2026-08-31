@@ -314,7 +314,6 @@ mod tests {
         let mixed = rows_from_steps(&[reasoning(1, 0, "hmm"), text(2, "w1", 0, "answer")]);
         assert_eq!(mixed.len(), 2, "reasoning and text never join: {mixed:?}");
     }
-
 }
 
 // ---------------------------------------------------------------------------

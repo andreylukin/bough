@@ -173,5 +173,4 @@ mod tests {
         // …and the line carries the column.
         assert!(line(&row(all.to_vec()), u16::MAX, 8).contains("tool-use"));
     }
-
 }

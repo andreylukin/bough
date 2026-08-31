@@ -52,12 +52,12 @@ use bough_plugin_rollups_summarizer as _;
 
 // Phase 5's rows (§17 Phase 5): many agents, the leader, graph ops. Linked for the one reason
 // every row above is — so `inventory::submit!` lands in the binary's catalog.
-use bough_plugin_pins as _;
 use bough_plugin_dormancy as _;
 use bough_plugin_graph_ops as _;
 use bough_plugin_lane_scope as _;
 use bough_plugin_leader as _;
 use bough_plugin_mail_router as _;
+use bough_plugin_pins as _;
 use bough_plugin_tool_leader as _;
 use bough_plugin_worker_fork as _;
 // Phase codemode (WP-4): the operator's seven tools. Mounted in `bough-base`, so BOTH

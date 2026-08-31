@@ -164,7 +164,6 @@ impl Row {
             | Row::About { step, .. }
             | Row::Draft { step, .. }
             | Row::Queued { step, .. }
-
             | Row::Other { step, .. } => step,
             Row::Tool { call_step, .. } | Row::Program { call_step, .. } => call_step,
         }

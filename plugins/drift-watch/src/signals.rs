@@ -15,7 +15,6 @@ pub const THOUGHT_TEXT: &str = "thought/text";
 /// The step kind the tool-use signal reads.
 pub const TOOL_CALL: &str = "tool/call";
 
-
 /// o200k_base, the encoder §5 already measures the projection in.
 fn bpe() -> &'static CoreBPE {
     static BPE: OnceLock<CoreBPE> = OnceLock::new();
@@ -398,5 +397,4 @@ mod tests {
 
         assert!(shares(&[thought(1, "x")]).is_empty());
     }
-
 }
