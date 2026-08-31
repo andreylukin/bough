@@ -98,6 +98,7 @@ use bough_plugin_mcp_rmcp as _;
 use bough_plugin_mcp_subprocess as _;
 use bough_plugin_power as _;
 use bough_plugin_power_test as _;
+use bough_plugin_prompt_files as _;
 use bough_plugin_schedule as _;
 use bough_plugin_schedule_cron as _;
 use bough_plugin_schedule_manual as _;

@@ -98,6 +98,7 @@ bough-plugin-actions-github = { workspace = true }
 bough-plugin-actions-linear = { workspace = true }
 bough-plugin-actions-reconcile = { workspace = true }
 bough-plugin-boundary-instructions = { workspace = true }
+bough-plugin-prompt-files = { workspace = true }
 bough-plugin-drafts = { workspace = true }
 bough-plugin-tui-drafts = { workspace = true }
 bough-plugin-mcp = { workspace = true }

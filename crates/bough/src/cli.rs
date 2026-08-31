@@ -73,6 +73,10 @@ pub enum Command {
     /// transport verb like the attach flow itself (§0.1 item 2): it composes nothing in this
     /// process, so `main` intercepts it before boot.
     Restart,
+    /// Move the checkout this binary was built in to the tip of its branch (`git pull
+    /// --ff-only`), rebuild the release binary, and restart the resident onto it. Intercepted in
+    /// `main` like `restart`.
+    Update,
     /// Adopt Claude Code's MCP grants into the `mcp` patch layer, by reference: regenerate
     /// `$BOUGH_HOME/bough.mcp.patch.yml` from the keychain item Claude Code maintains. No token
     /// lands on disk, and a running bough recomposes live. Intercepted in `main` like `restart`.

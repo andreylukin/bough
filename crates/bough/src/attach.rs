@@ -75,6 +75,53 @@ pub async fn attach_or_spawn() -> ExitCode {
     }
 }
 
+/// `bough update`: move the CHECKOUT this binary was built in to the tip of its branch
+/// (`git pull --ff-only`, so local work is never merged over), rebuild the release binary, then
+/// [`restart`] onto it. A packaged install has no source tree; the verb says so and stops.
+pub async fn update() -> ExitCode {
+    let Ok(exe) = std::env::current_exe().and_then(std::fs::canonicalize) else {
+        eprintln!("bough: could not resolve this binary's own path");
+        return ExitCode::FAILURE;
+    };
+    // A checkout runs target/release/bough: the root is three parents up, and it is a checkout
+    // exactly when the workspace manifest and the repo are both there.
+    let root = exe
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent());
+    let Some(root) = root.filter(|r| r.join("Cargo.toml").is_file() && r.join(".git").exists())
+    else {
+        eprintln!(
+            "bough: {} is not inside a checkout (no Cargo.toml + .git three levels up); \
+             `update` is git + cargo and needs the source tree",
+            exe.display()
+        );
+        return ExitCode::FAILURE;
+    };
+    for (what, cmd, args) in [
+        ("pull", "git", vec!["pull", "--ff-only"]),
+        ("build", "cargo", vec!["build", "--release"]),
+    ] {
+        eprintln!("bough: {what} ({})\u{2026}", root.display());
+        let status = std::process::Command::new(cmd)
+            .args(&args)
+            .current_dir(root)
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            Ok(s) => {
+                eprintln!("bough: `{cmd}` failed ({s}); nothing restarted");
+                return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                eprintln!("bough: could not run `{cmd}`: {e}; nothing restarted");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    restart().await
+}
+
 /// `bough restart`: ask the home's composing process to leave (SIGINT, the same clean-teardown
 /// path as a terminal Ctrl+C), wait for the home lock's flock to release — held for the life of
 /// the process, so its release IS teardown finished — then spawn a fresh resident and wait for

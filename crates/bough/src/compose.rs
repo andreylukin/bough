@@ -194,10 +194,12 @@ pub fn compose_plan(cli: &Cli, catalog: &Catalog) -> Result<(Profile, Compositio
                 let base = row_config(&first, WARD_TEST_ROW);
                 layers.push(wards_test_layer(args, &base));
             }
-            // `restart` and `sync-mcp` are intercepted in `main` before anything composes; the
-            // arms exist so the match stays exhaustive and write no layer if a future path ever
-            // composes them.
-            crate::cli::Command::Restart | crate::cli::Command::SyncMcp { .. } => {}
+            // `restart`, `update` and `sync-mcp` are intercepted in `main` before anything
+            // composes; the arms exist so the match stays exhaustive and write no layer if a
+            // future path ever composes them.
+            crate::cli::Command::Restart
+            | crate::cli::Command::Update
+            | crate::cli::Command::SyncMcp { .. } => {}
         }
     }
 

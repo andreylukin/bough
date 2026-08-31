@@ -409,7 +409,10 @@ A Consumer of `ledger` and `agents`; nothing in the ledger Provider knows about 
   assembler (no LLM in the request path), specified, not just named: fixed section order
   (identity, pins, digest, tiers coarse-to-fine filtered by the agent's refs against notable_refs,
   verbatim tail, unconsumed mail); plugins contribute sections through `ctx.projection.section()`
-  (an effect, global or per-agent scope) with a declared position; under budget pressure it
+  (an effect, global or per-agent scope) with a declared position — `prompt-files` rides this
+  seam: the workspace's prompt files (AGENTS.md, CLAUDE.md), read fresh per render, DUPLICATE
+  CONTENT INJECTED ONCE (a paragraph two files state appears in the first file's voice; exact
+  after normalization, near-duplicates by threshold); under budget pressure it
   degrades in fixed reverse order: drop fine tiers first (keep coarse), then shrink the verbatim
   tail to a floor; pins, digest, and mail headers degrade LAST and never silently: pin overflow
   collapses pins to titles+count with an in-context DEGRADED flag (an answer wake must always be

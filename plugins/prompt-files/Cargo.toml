@@ -1,0 +1,29 @@
+[package]
+name = "bough-plugin-prompt-files"
+autotests = false
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# §5: workspace prompt files (AGENTS.md, CLAUDE.md, …) as ONE contributed projection section,
+# duplicate content dropped — two files stating the same paragraph inject it once, in the first
+# file's voice. Near-duplicates are caught by normalized Sorensen-Dice (strsim), exact ones by a
+# normalized hash; the threshold is config.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+strsim = { workspace = true }
+bough-plugin-projection = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

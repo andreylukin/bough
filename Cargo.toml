@@ -34,6 +34,7 @@ schemars     = "1"                                                    # plugin C
 jsonschema   = "0.33"                                                 # compiled validators
 inventory    = "0.3"                                                  # compile-time plugin catalog
 thiserror    = "2"
+strsim       = "0.11"                                                 # prompt-files: near-duplicate blocks (already in the graph via clap)
 anyhow       = "1"
 uuid         = { version = "1", features = ["v4", "v7"] }
 chrono       = "0.4"
@@ -108,6 +109,7 @@ bough-plugin-tui-focus = { path = "plugins/tui-focus" }                        #
 bough-plugin-tui-status = { path = "plugins/tui-status" }                      # §11 the status line (phase ux1)
 bough-plugin-tui-search = { path = "plugins/tui-search" }                      # §11 FTS pane (swap subject)
 bough-plugin-tui-attach = { path = "plugins/tui-attach" }                      # §11 the resident's attach listener
+bough-plugin-prompt-files = { path = "plugins/prompt-files" }                  # §5 workspace prompt files, deduped, as a contributed section
 bough-plugin-residents = { path = "plugins/residents" }                        # §5 catch-up at launch
 bough-plugin-old-feed-adapter = { path = "plugins/old-feed-adapter" }          # §14 throwaway bridge
 bough-plugin-tui-probe = { path = "plugins/tui-probe" }                        # §17 Phase 3 fixture

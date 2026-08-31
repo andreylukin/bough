@@ -37,6 +37,10 @@ fn main() -> std::process::ExitCode {
     if matches!(cli.command, Some(cli::Command::Restart)) {
         return runtime.block_on(bough::attach::restart());
     }
+    // …and so is `bough update`: git + cargo in the checkout, then the restart path above.
+    if matches!(cli.command, Some(cli::Command::Update)) {
+        return runtime.block_on(bough::attach::update());
+    }
     // `bough sync-mcp` regenerates the `mcp` patch layer from Claude Code's keychain grants and
     // composes nothing; the running resident's patch watch picks the file up.
     if let Some(cli::Command::SyncMcp { dry_run }) = &cli.command {

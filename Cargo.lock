@@ -346,6 +346,7 @@ dependencies = [
  "bough-plugin-projection",
  "bough-plugin-projection-assembler",
  "bough-plugin-projection-probe",
+ "bough-plugin-prompt-files",
  "bough-plugin-reconsolidation",
  "bough-plugin-request-recorder",
  "bough-plugin-residents",
@@ -1601,6 +1602,25 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "bough-plugin-prompt-files"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-ledger",
+ "bough-plugin-projection",
+ "bough-util",
+ "inventory",
+ "schemars",
+ "serde",
+ "strsim",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

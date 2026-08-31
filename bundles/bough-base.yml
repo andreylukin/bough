@@ -259,6 +259,17 @@
 # §7: the boundary block, one source, every agent's projection.
 - id: boundary
   plugin: boundary-instructions
+# §5: the workspace's prompt files (AGENTS.md, CLAUDE.md), one contributed section, duplicate
+# content injected once — a paragraph both files state appears in the FIRST file's voice. Read
+# fresh at every render, so an edit reaches the next wake with no reload; missing files are
+# simply absent. `similarity` is the near-duplicate threshold (1.0 = exact-only).
+- id: prompt.files
+  plugin: prompt-files
+  config:
+    root: "."
+    files: [AGENTS.md, CLAUDE.md]
+    max_bytes: 65536
+    similarity: 0.85
 - id: drafts
   plugin: drafts
   config: { retain: 500 }
