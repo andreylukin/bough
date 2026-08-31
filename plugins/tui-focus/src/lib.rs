@@ -528,15 +528,38 @@ impl FocusPane {
                     };
                     lines.extend(bough_plugin_tui_render::markdownish(shown, width, theme));
                 }
-                Row::Reasoning { text, .. } => {
+                Row::Reasoning { step, text, .. } => {
+                    // COLLAPSED by default, the tool-call shape (drivability, 2026-08-31): a
+                    // reasoning model can think for thousands of words, and inline thinking
+                    // drowned the conversation. The header is a click target through the same
+                    // `headers` map a tool header uses; the key is synthetic, like a draft's.
                     if self.cfg.show_reasoning {
-                        for l in bough_plugin_tui_render::wrap(text, width) {
-                            lines.push(Line::styled(
-                                l,
-                                Style::default()
-                                    .fg(theme.thought)
-                                    .add_modifier(Modifier::ITALIC),
-                            ));
+                        let key = reasoning_key(step);
+                        let opened = state.expanded.is_expanded(&key);
+                        let body = bough_plugin_tui_render::wrap(text, width);
+                        let (marker, verb) = if opened {
+                            ("\u{25be}", "close")
+                        } else {
+                            ("\u{25b8}", "open")
+                        };
+                        let n = body.len();
+                        let noun = if n == 1 { "line" } else { "lines" };
+                        headers.push((key, lines.len() as u16));
+                        lines.push(Line::styled(
+                            format!("{marker} thinking \u{b7} {n} {noun} \u{b7} {verb}"),
+                            Style::default()
+                                .fg(theme.thought)
+                                .add_modifier(Modifier::ITALIC),
+                        ));
+                        if opened {
+                            for l in body {
+                                lines.push(Line::styled(
+                                    l,
+                                    Style::default()
+                                        .fg(theme.thought)
+                                        .add_modifier(Modifier::ITALIC),
+                                ));
+                            }
                         }
                     }
                 }
@@ -879,6 +902,11 @@ fn retry_hit(key: &bough_plugin_llm::ToolCallId) -> bough_plugin_tui_shell::pane
 /// The disclosure key a draft card's `open` toggles, in the same set tool calls use.
 fn draft_key(draft: &str) -> bough_plugin_llm::ToolCallId {
     bough_plugin_llm::ToolCallId::new(format!("draft:{draft}"))
+}
+
+/// The synthetic expand key a reasoning row folds under (the [`draft_key`] rule).
+fn reasoning_key(step: &bough_plugin_ledger::StepId) -> bough_plugin_llm::ToolCallId {
+    bough_plugin_llm::ToolCallId::new(format!("reasoning:{step}"))
 }
 
 pub(crate) fn mail_line(from: &str, subject: &str, theme: &Theme) -> Line<'static> {

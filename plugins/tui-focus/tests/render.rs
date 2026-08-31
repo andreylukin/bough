@@ -270,3 +270,52 @@ fn andreys_message_stays_inline_despite_the_context_plan() {
         "Andrey's message renders inline even as unconsumed mail: {text:?}"
     );
 }
+
+/// Drivability (2026-08-31): thinking folds like a tool call — one header line collapsed by
+/// default, the body only when its key is expanded.
+#[test]
+fn reasoning_folds_collapsed_by_default() {
+    let step = bough_plugin_ledger::Step {
+        id: StepId::new("s1"),
+        traj: bough_plugin_ledger::TrajId::new("lane/sol"),
+        seq: bough_plugin_ledger::Seq(1),
+        at: chrono::Utc::now(),
+        wake: WakeId::new("w1"),
+        kind: bough_plugin_ledger::StepType::new("thought/reasoning"),
+        class: bough_plugin_ledger::Class::Thought,
+        body: Arc::new(serde_json::json!({ "text": "deep thoughts here", "step_index": 0 })),
+        cites: Arc::new(vec![]),
+        refs: Arc::new(std::collections::BTreeSet::new()),
+        ignorable: false,
+    };
+    let rows = bough_plugin_tui_focus::rows_from_steps(&[step]);
+    let out = painted(rows.clone(), "");
+    assert_eq!(out.len(), 1, "collapsed: one header line — {out:?}");
+    assert!(out[0].contains("thinking") && out[0].contains("open"), "{out:?}");
+    assert!(!out[0].contains("deep thoughts"), "{out:?}");
+    // Expanded: the body follows the header.
+    let mut state = FocusState {
+        rows,
+        ..Default::default()
+    };
+    state
+        .expanded
+        .toggle(&bough_plugin_llm::ToolCallId::new("reasoning:s1"));
+    let pane = FocusPane::new(
+        cfg(),
+        Arc::new(Mutex::new(FocusState::default())),
+        Arc::new(Mutex::new(LiveText::default())),
+    );
+    let (lines, _, _) = pane.lines(
+        &state,
+        &LiveText::default(),
+        80,
+        &Theme::of(ThemeName::Dark),
+    );
+    let text: Vec<String> = lines
+        .iter()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect();
+    assert!(text[0].contains("close"), "{text:?}");
+    assert!(text.iter().any(|l| l.contains("deep thoughts here")), "{text:?}");
+}
