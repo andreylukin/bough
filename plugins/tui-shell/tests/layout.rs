@@ -241,6 +241,8 @@ fn the_prose_measure_is_capped_so_a_wide_terminal_gets_margin() {
     assert_eq!(measure(200, 90), 90);
     assert_eq!(measure(60, 90), 60);
     assert_eq!(measure(0, 90), 1, "a measure is never zero");
+    assert_eq!(measure(200, 0), 200, "cap 0 = no cap: the full pane");
+    assert_eq!(measure(0, 0), 1, "and still never zero");
 }
 
 /// …and the measure is REACHABLE from a pane, which is the half that was missing: `measure` had no
@@ -274,7 +276,13 @@ fn the_fields_this_phase_added_are_rejected_at_zero_rather_than_clamped() {
     };
 
     check(|c| c.transcript_pane = String::new(), "transcript_pane");
-    check(|c| c.measure_cols = 0, "measure_cols");
+    // `measure_cols: 0` is LEGAL since drivability (2026-08-31): it means no cap, full width.
+    {
+        use bough_kernel::Plugin;
+        let mut cfg = bough_plugin_tui_shell::test_config();
+        cfg.measure_cols = 0;
+        bough_plugin_tui_shell::TuiShellPlugin::validate(&cfg).expect("0 = no measure cap");
+    }
     check(|c| c.exit_arm_ms = 0, "exit_arm_ms");
     check(|c| c.paste_burst_ms = 0, "paste_burst_ms");
     check(|c| c.history_cap = 0, "history_cap");

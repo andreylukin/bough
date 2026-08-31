@@ -34,7 +34,9 @@
     # phase ux1 §2.13. `transcript_pane` is what makes PageUp/PageDown/Home/End work from EVERY
     # focus (B2): the shell routes them here without asking who has the keyboard.
     transcript_pane: tui.focus
-    measure_cols: 90
+    # 0 = NO prose measure: text wraps at the pane's full width (Andrey, 2026-08-31 — "make the
+    # setup stretch out fully"). Set a number (the old 90) to get a readable-measure margin back.
+    measure_cols: 0
     gutter: 1
     exit_arm_ms: 3000
     paste_burst_ms: 20

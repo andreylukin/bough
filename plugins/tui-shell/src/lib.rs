@@ -1227,9 +1227,7 @@ impl Plugin for TuiShellPlugin {
         if cfg.transcript_pane.trim().is_empty() {
             return reject("transcript_pane must name a pane id".to_string());
         }
-        if cfg.measure_cols == 0 {
-            return reject("measure_cols must be > 0".to_string());
-        }
+        // `measure_cols: 0` is legal: NO cap, prose wraps at the pane's full width.
         if cfg.exit_arm_ms == 0 {
             return reject("exit_arm_ms must be > 0".to_string());
         }

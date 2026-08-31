@@ -326,10 +326,15 @@ pub struct ShellView {
     pub notice_pinned: bool,
 }
 
-/// PURE: the prose measure. `min(width, cap)`; `cap` is [`crate::TuiConfig::measure_cols`].
-/// A 200-column terminal gets a 90-column paragraph and the rest is margin (M13).
+/// PURE: the prose measure. `min(width, cap)`; `cap` is [`crate::TuiConfig::measure_cols`], and
+/// `0` means NO CAP — the pane's full width (drivability, 2026-08-31: "make the setup stretch
+/// out fully"). With a cap, a 200-column terminal gets a 90-column paragraph and the rest is
+/// margin (M13).
 pub fn measure(width: u16, cap: u16) -> u16 {
-    width.min(cap.max(1)).max(1)
+    if cap == 0 {
+        return width.max(1);
+    }
+    width.min(cap).max(1)
 }
 
 /// Input, as the shell routed it to one pane.
