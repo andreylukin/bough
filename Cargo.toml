@@ -7,11 +7,12 @@ members = [
   "crates/bough",
   "crates/xtask",
   "plugins/*",
-  "bench/*",
+  # The ONE bench crate, by name — never `bench/*`: bench/ also holds non-crate adapters
+  # (harbor, pier) and whatever scratch a bench run leaves behind (a `tasks/` dir was seen),
+  # and a glob member without a Cargo.toml breaks EVERY cargo command in the repo. `plugins/*`
+  # stays a glob because a plugin directory is a crate by construction (§13).
+  "bench/tools",
 ]
-# Bench ADAPTERS, not crates: the Harbor/Pier installed agents live under bench/ and would be
-# swept into the `bench/*` glob (a member without a Cargo.toml breaks every cargo command).
-exclude = ["bench/harbor", "bench/pier"]
 
 [workspace.package]
 edition = "2021"
