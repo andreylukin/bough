@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help check build test doc-test lint gate-crate gates release audit-plugins events live bench bench-tools tui-test tui-test-replay ux2
+.PHONY: help check build test doc-test lint gate-crate gates release audit-plugins events live bench bench-tools tui-test tui-test-replay tui-test-replay-par ux2
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-16s %s\n", $$1, $$2}'
@@ -127,6 +127,21 @@ tui-test-replay: release ## the OFFLINE half of the shell-use suite (in `make ga
 	   BOUGH_CONSUMER=codemode \
 	   bash $$s; \
 	 done
+
+TUI_JOBS ?= 4
+tui-test-replay-par: release ## the replay half, TUI_JOBS scripts at a time (the iteration lane; the serial target stays the gate)
+	@command -v shell-use >/dev/null || { echo "make tui-test-replay-par: shell-use is not on PATH"; exit 1; }
+	@command -v sqlite3 >/dev/null || { echo "make tui-test-replay-par: sqlite3 is not on PATH"; exit 1; }
+	@rm -rf $(TUI_SCRATCH); mkdir -p $(TUI_SCRATCH) $(TUI_SCRATCH)/warm
+	@cp scripts/tui/fixtures/llm-replay.patch.yml $(TUI_PATCH)
+	@BOUGH_HOME=$(TUI_SCRATCH)/warm $(CURDIR)/target/release/bough --check >/dev/null 2>&1 || true
+	@echo "== tui-test: replay half, parallel -P $(TUI_JOBS) =="
+	@BOUGH_BIN=$(CURDIR)/target/release/bough \
+	 BOUGH_HOME=$(TUI_SCRATCH)/replay \
+	 BOUGH_PATCH=$(TUI_PATCH) \
+	 BOUGH_LIVE= \
+	 TUI_JOBS=$(TUI_JOBS) \
+	 bash scripts/tui/parallel.sh
 
 tui-test: tui-test-replay ## REQUIREMENTS §17 Phase 3: the whole suite, replay half then live half
 	@if [ -f $(HOME)/.bough/env ] || [ -n "$$ANTHROPIC_API_KEY" ]; then \
