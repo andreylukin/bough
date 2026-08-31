@@ -21,3 +21,16 @@ test-group = 'boots'
 # deadline could report what it was waiting for. The two budgets agree now: the harness gives the
 # case room to reach its own deadline and say so.
 slow-timeout = { period = "60s", terminate-after = 6 }
+
+# `tools-operator`'s timing canaries assert CONCURRENCY and TEARDOWN with wall-clock bounds
+# (three parallel 1 s sleeps under 2.2 s, and so on). Under a saturated full-workspace run this
+# machine's process-spawn latency alone stretches three "parallel" sleeps past any bound that
+# still excludes the sequential case (observed: 4.1-6.5 s wall for 3x1 s legs, all three retries
+# red) — a flake with no product cause, green standalone every time. `threads-required` is the
+# `boots` move in its strong form: nextest reserves the whole scheduler while a canary runs, so
+# the wall clock it measures is its own. The retry stays for the residue (another PROCESS can
+# still load the machine); a real regression fails every quiet try.
+[[profile.default.overrides]]
+filter = 'package(bough-plugin-tools-operator) & test(/the_legs_really_do_run_at_the_same_time|disposal_kills_every_live_job|a_leg_that_outruns_the_timeout/)'
+threads-required = "num-cpus"
+retries = 2
