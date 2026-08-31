@@ -149,10 +149,12 @@ code) is the composition, and every row in it is individually replaceable.
 ### 0.5 Profiles, bundles, patch layers
 
 A running `bough` is a plugin tree composed from ordered layers over an empty root:
-each bundle's patch in the profile's order → the profile's `bough.patch.yml` → the home-level
-`~/.bough/bough.patch.yml` → the panel's `~/.bough/bough.ui.patch.yml` (the `ui` layer:
-disabled-only toggles written by the TUI's panel; an explicit `--patch` still outranks it) →
-`--patch` overlays. A patch targets a row by id and REPLACES its whole
+each bundle's patch in the profile's order → the profile's `bough.patch.yml` → the machine's
+`~/.bough/bough.mcp.patch.yml` (the `mcp` layer: Claude Code's MCP grants adopted BY REFERENCE,
+regenerated wholesale by `bough sync-mcp`; below the user patch so a hand-written `mcp.rmcp`
+entry outranks the sync) → the home-level `~/.bough/bough.patch.yml` → the panel's
+`~/.bough/bough.ui.patch.yml` (the `ui` layer: disabled-only toggles written by the TUI's panel;
+an explicit `--patch` still outranks it) → `--patch` overlays. A patch targets a row by id and REPLACES its whole
 `config` (restate kept fields; no deep merge) or `insert`s rows. `bough --profile tui --dump-config`
 renders exactly what boots, annotated with which layer last wrote each row. The known cost of
 layered composition is opacity during incident response (the effective runtime is profile order

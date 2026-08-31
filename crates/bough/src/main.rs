@@ -37,6 +37,11 @@ fn main() -> std::process::ExitCode {
     if matches!(cli.command, Some(cli::Command::Restart)) {
         return runtime.block_on(bough::attach::restart());
     }
+    // `bough sync-mcp` regenerates the `mcp` patch layer from Claude Code's keychain grants and
+    // composes nothing; the running resident's patch watch picks the file up.
+    if let Some(cli::Command::SyncMcp { dry_run }) = &cli.command {
+        return bough::syncmcp::run(*dry_run);
+    }
     // The resident/attach transport (§0.1 item 2, §11 "The resident"): the bare default
     // invocation on a tty attaches to the home's resident — spawning one first when none is
     // live — and composes nothing in this process. Every explicit choice falls through to boot.

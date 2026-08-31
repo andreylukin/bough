@@ -6,5 +6,7 @@ pub mod home;
 pub mod id;
 pub mod time;
 
-pub use home::{bough_home, bough_path, ensure_dir, home_dir, ui_patch_path, user_patch_path};
+pub use home::{
+    bough_home, bough_path, ensure_dir, home_dir, mcp_patch_path, ui_patch_path, user_patch_path,
+};
 pub use time::{with_timeout, Deadline, TimedOut};

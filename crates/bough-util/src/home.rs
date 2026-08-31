@@ -37,6 +37,14 @@ pub fn ui_patch_path() -> PathBuf {
     bough_path("bough.ui.patch.yml")
 }
 
+/// The `mcp` patch layer — MCP servers adopted from Claude Code's grants, REGENERATED WHOLESALE
+/// by `bough sync-mcp` and owned by no human hand. Stacked BEFORE the user patch, so an
+/// `mcp.rmcp` entry a person writes in `bough.patch.yml` outranks the synced one; watched
+/// alongside the other two: `bough_path("bough.mcp.patch.yml")`.
+pub fn mcp_patch_path() -> PathBuf {
+    bough_path("bough.mcp.patch.yml")
+}
+
 /// Create `p` and its parents if absent. Succeeds when it already exists.
 pub fn ensure_dir(p: &Path) -> std::io::Result<()> {
     match std::fs::create_dir_all(p) {

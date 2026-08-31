@@ -51,8 +51,9 @@ impl WatchHandle {
     }
 }
 
-/// Watch `bough_util::user_patch_path()` and `bough_util::ui_patch_path()` with notify + a
-/// debouncer; on change, recompose through [`compose_for`] and hand the result to `kernel.update`.
+/// Watch `bough_util::user_patch_path()`, `bough_util::ui_patch_path()` and
+/// `bough_util::mcp_patch_path()` with notify + a debouncer; on change, recompose through
+/// [`compose_for`] and hand the result to `kernel.update`.
 pub fn watch_user_patch(kernel: Arc<Kernel>, cli: Arc<Cli>) -> WatchHandle {
     let path = bough_util::user_patch_path();
     // Watch the DIRECTORY: the files may not exist yet, and editors replace them by rename.
@@ -73,6 +74,10 @@ pub fn watch_user_patch(kernel: Arc<Kernel>, cli: Arc<Cli>) -> WatchHandle {
         bough_util::ui_patch_path()
             .file_name()
             .unwrap_or_else(|| std::ffi::OsStr::new("bough.ui.patch.yml"))
+            .to_os_string(),
+        bough_util::mcp_patch_path()
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("bough.mcp.patch.yml"))
             .to_os_string(),
     ]
     .iter()

@@ -73,6 +73,14 @@ pub enum Command {
     /// transport verb like the attach flow itself (§0.1 item 2): it composes nothing in this
     /// process, so `main` intercepts it before boot.
     Restart,
+    /// Adopt Claude Code's MCP grants into the `mcp` patch layer, by reference: regenerate
+    /// `$BOUGH_HOME/bough.mcp.patch.yml` from the keychain item Claude Code maintains. No token
+    /// lands on disk, and a running bough recomposes live. Intercepted in `main` like `restart`.
+    SyncMcp {
+        /// Print the file that would be written instead of writing it.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// `bough mcp call <server> <tool> <json>` — one MCP tool call, printed, exit.
     Mcp(McpArgs),
     /// `bough wards test <file> [--since]` — dry-fire a ward against past ledger events.

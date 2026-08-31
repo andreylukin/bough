@@ -9,10 +9,15 @@
 //! empty root
 //!   → bundles/<b>.yml for each b in profile.bundles, in the profile's order  "bundle:<b>"
 //!   → the profile's own `patch:` block                                       "profile:<name>"
+//!   → ~/.bough/bough.mcp.patch.yml (absent ⇒ skipped silently)               "mcp"
 //!   → ~/.bough/bough.patch.yml (absent ⇒ skipped silently)                   "user"
 //!   → ~/.bough/bough.ui.patch.yml (absent ⇒ skipped silently)                "ui"
 //!   → each --patch FILE, in argument order                                   "patch:<n>:<file>"
 //! ```
+//!
+//! The `mcp` layer is `bough sync-mcp`'s machine-written adoption of Claude Code's MCP grants
+//! (`crate::syncmcp`). It sits BELOW the user patch: a machine's sync never outranks a person's
+//! own `mcp.rmcp` entry.
 //!
 //! The `ui` layer is the panel's disabled-only toggle file (§0.5). It sits BEFORE the `--patch`
 //! overlays on purpose: an explicit per-invocation flag outranks a persisted preference, and the
@@ -77,6 +82,24 @@ pub fn plan_layers(cli: &Cli) -> Result<(Profile, Sources, Vec<Layer>), BootErro
         base: include_base(&sources.profile),
         source: LayerSource::ProfilePatch,
     });
+
+    // The `mcp` layer: `bough sync-mcp`'s machine-written adoption of Claude Code's grants.
+    // BEFORE the user patch on purpose — a person's own `mcp.rmcp` entry outranks the sync.
+    let mcp = bough_util::mcp_patch_path();
+    if mcp.is_file() {
+        let yaml = std::fs::read_to_string(&mcp).map_err(|e| BootError::BadFile {
+            path: mcp.clone(),
+            detail: e.to_string(),
+        })?;
+        layers.push(Layer {
+            id: LayerId::new("mcp"),
+            base: parent_dir(&mcp),
+            source: LayerSource::Text {
+                origin: mcp.display().to_string(),
+                yaml,
+            },
+        });
+    }
 
     let user = bough_util::user_patch_path();
     if user.is_file() {
@@ -171,9 +194,10 @@ pub fn compose_plan(cli: &Cli, catalog: &Catalog) -> Result<(Profile, Compositio
                 let base = row_config(&first, WARD_TEST_ROW);
                 layers.push(wards_test_layer(args, &base));
             }
-            // `restart` is intercepted in `main` before anything composes; this arm exists so
-            // the match stays exhaustive and writes no layer if a future path ever composes it.
-            crate::cli::Command::Restart => {}
+            // `restart` and `sync-mcp` are intercepted in `main` before anything composes; the
+            // arms exist so the match stays exhaustive and write no layer if a future path ever
+            // composes them.
+            crate::cli::Command::Restart | crate::cli::Command::SyncMcp { .. } => {}
         }
     }
 
@@ -357,11 +381,16 @@ mod tests {
         layers.iter().map(|l| l.id.to_string()).collect()
     }
 
+    fn write_mcp_patch(home: &Home, yaml: &str) {
+        std::fs::write(home.path().join("bough.mcp.patch.yml"), yaml).unwrap();
+    }
+
     #[test]
     fn layer_order_matches_requirements() {
         let home = Home::empty();
         write_user_patch(&home, "entries: {}\n");
         write_ui_patch(&home, "entries: {}\n");
+        write_mcp_patch(&home, "entries: {}\n");
         let extra = home.path().join("extra.yml");
         std::fs::write(&extra, "entries: {}\n").unwrap();
 
@@ -373,11 +402,12 @@ mod tests {
                 "bundle:bough-tui-app".to_string(),
                 "bundle:bough-codemode".to_string(),
                 "profile:tui".to_string(),
+                "mcp".to_string(),
                 "user".to_string(),
                 "ui".to_string(),
                 format!("patch:0:{}", extra.display()),
             ],
-            "the ui layer sits between user and the --patch overlays"
+            "sync-mcp's layer sits BELOW the user patch; the ui layer between user and --patch"
         );
     }
 

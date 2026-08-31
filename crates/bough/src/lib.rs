@@ -116,5 +116,6 @@ pub mod envfile;
 pub mod exec;
 pub mod lock;
 pub mod profile;
+pub mod syncmcp;
 pub mod vocabulary;
 pub mod watch;
