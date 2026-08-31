@@ -272,6 +272,18 @@ class Bough(BaseInstalledAgent):
                 env=env,
                 timeout_sec=this_turn + 120,
             )
+            # A NEGATIVE exit code is the exec TRANSPORT dying (a Modal stream cut by a local
+            # network blip), not bough failing: the container-side turn may even still be
+            # running. Retry the same attempt once after a beat instead of failing the trial
+            # (2026-08-31: 4/40 baseline trials died this way to client-side DNS flaps).
+            if result.return_code is not None and result.return_code < 0:
+                self.logger.info("bough: exec transport died (rc<0); one retry after 20s")
+                time.sleep(20)
+                result = await environment.exec(
+                    command=f"set -o pipefail; {command}",
+                    env=env,
+                    timeout_sec=this_turn + 120,
+                )
             results.append(result)
             envelope = _envelope(result.stdout or "")
             status = "cut off" if result.return_code == 124 else None
@@ -288,7 +300,11 @@ class Bough(BaseInstalledAgent):
                     f"exit {result.return_code}\n--- stdout\n{result.stdout or ''}\n"
                     f"--- stderr\n{result.stderr or ''}\n"
                 )
-                if result.return_code not in (0, 1, 124, 130):
+                if result.return_code is not None and result.return_code < 0:
+                    # Transport loss twice over: record it, keep the remaining attempts —
+                    # the ledger in the home still carries whatever the turn did.
+                    self.logger.info("bough: exec transport died twice; moving on")
+                elif result.return_code not in (0, 1, 124, 130):
                     raise RuntimeError(
                         f"bough exec failed to run (exit {result.return_code}): "
                         f"{(result.stderr or '').strip()[-600:]}"

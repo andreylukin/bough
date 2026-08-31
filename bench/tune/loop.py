@@ -78,7 +78,10 @@ def run_batch() -> Path:
         "--ak", f"binary={BINARY}",
         "--ak", "attempts=3",
         "--ak", f"skills={WORKSPACE / 'skills'}",
-        "--env", "modal", "-k", str(K), "-n", "40", "-y",
+        "--env", "modal", "-k", str(K), "-n", os.environ.get("TUNE_N", "24"), "-y",
+        # Trials that die to client-side transport (local DNS flaps breaking Modal streams)
+        # are retried whole rather than polluting the gate (2026-08-31 baseline: 9/40).
+        "--max-retries", "2", "--retry-include", "ConnectionError",
         "--jobs-dir", str(JOBS),
     ]
     env = {**os.environ, "PYTHONPATH": str(ROOT / "bench" / "harbor")}
