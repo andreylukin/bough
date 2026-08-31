@@ -139,7 +139,7 @@ if [ "$CONSUMER" != "codemode" ]; then
     see "bash" --timeout 20000
   # …and the row the codemode arm draws is NOT on screen: no `run`, no program summary.
   t no_program_row_and_plain_tool_rows_instead_draws_no_program_row \
-    expect_absent "2 calls"
+    expect_absent "▸ program"
   skip_all "the program row exists only under \`codemode\`" \
     program_row_is_collapsed_by_default \
     enter_expands_the_js_block \
@@ -153,14 +153,17 @@ fi
 # --- the codemode arm -------------------------------------------------------
 
 # Collapsed: ONE line, naming the tool and what it did. The source is NOT on screen yet.
+# The gist names its calls when they fit the pane ("the TUI brief" D2; `calls_gist`) and falls
+# back to "2 calls" only when they do not, so the row is asserted by its MARKER and a call name,
+# never by which side of the width threshold this machine's rail landed on.
 t program_row_is_collapsed_by_default \
-  row_with "program" "2 calls"
+  row_with "▸ program" "second-call"
 t program_row_is_collapsed_by_default_shows_no_source \
   see "await bash" --not --timeout 5000
 
 # The roving row focus + Enter is the keyboard half of the disclosure (`expand.rs`); the mouse
 # half is the same toggle, and `02-tool-calls.sh` already pins clicking.
-shell-use mouse click --on-text "2 calls"
+shell-use mouse click --on-text "▸ program"
 t enter_expands_the_js_block \
   see "await bash" --timeout 5000
 
@@ -178,7 +181,7 @@ t nested_rows_carry_check_marks \
   row_with "bash" "✓" 
 
 # Closing it restores the one line — and closes whatever was open inside it.
-shell-use mouse click --on-text "2 calls"
+shell-use mouse click --on-text "▾ program"
 t collapse_restores_one_row \
   see "await bash" --not --timeout 5000
 t collapse_restores_one_row_keeps_the_header \
