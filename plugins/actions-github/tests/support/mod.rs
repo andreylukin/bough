@@ -8,7 +8,9 @@ use bough_kernel::{Context, KernelCore};
 use bough_plugin_actions::{
     ActionKind, ActionRequest, ActionTarget, ActionsHandle, ExecuteRequest,
 };
-use bough_plugin_actions_github::{GhActionError, GhRunner, GithubActions, GithubActionsConfig};
+use bough_plugin_actions_github::{
+    GhActionError, GhRunner, GitRunner, GithubActions, GithubActionsConfig,
+};
 use bough_plugin_gh_cli::{GhError, GhOutput};
 use bough_plugin_ledger::{AgentName, AgentRow, LedgerHandle, StepId, TrajId, WakeId};
 use bough_plugin_ledger_memory::store::MemoryStore;
@@ -97,13 +99,68 @@ impl GhRunner for FakeGh {
 pub fn cfg() -> Arc<GithubActionsConfig> {
     Arc::new(GithubActionsConfig {
         gh_bin: "gh".into(),
+        git_bin: "git".into(),
+        repo_dir: std::path::PathBuf::from("."),
+        push_remote: "origin".into(),
         known_bots: vec!["dependabot[bot]".into()],
         timeout_ms: 1000,
     })
 }
 
 pub fn provider(gh: &Arc<FakeGh>) -> Arc<GithubActions> {
-    GithubActions::with_runner(cfg(), gh.clone() as Arc<dyn GhRunner>)
+    provider_with_git(gh, &Arc::new(FakeGit::default()))
+}
+
+pub fn provider_with_git(gh: &Arc<FakeGh>, git: &Arc<FakeGit>) -> Arc<GithubActions> {
+    GithubActions::with_runners(
+        cfg(),
+        gh.clone() as Arc<dyn GhRunner>,
+        git.clone() as Arc<dyn GitRunner>,
+    )
+}
+
+/// The recording `git`: `(substring of the argv, Ok(stdout) | Err(stderr))`, first match wins;
+/// an unscripted call is an error naming itself, exactly as [`FakeGh`] answers unscripted reads.
+#[derive(Default)]
+pub struct FakeGit {
+    pub calls: Arc<Mutex<Vec<Call>>>,
+    pub scripts: Vec<(String, Result<String, String>)>,
+}
+
+impl FakeGit {
+    pub fn on(mut self, matches: &str, answer: Result<&str, &str>) -> FakeGit {
+        self.scripts.push((
+            matches.to_string(),
+            answer.map(str::to_string).map_err(str::to_string),
+        ));
+        self
+    }
+    pub fn log(&self) -> Vec<Call> {
+        self.calls.lock().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl GitRunner for FakeGit {
+    async fn git(&self, dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+        let mut argv: Vec<String> = vec![dir.display().to_string()];
+        argv.extend(args.iter().map(|s| s.to_string()));
+        // A push is the write; everything else git does here is a read.
+        let write = args.first().map(|a| *a == "push").unwrap_or(false);
+        self.calls.lock().push(Call {
+            argv: argv.clone(),
+            write,
+        });
+        let joined = args.join(" ");
+        for (m, answer) in &self.scripts {
+            if joined.contains(m.as_str()) {
+                return answer.clone();
+            }
+        }
+        Err(format!(
+            "the fake git was not told how to answer `{joined}`"
+        ))
+    }
 }
 
 /// A mounted memory ledger with one agent row, and the actions seam over it.

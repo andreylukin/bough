@@ -39,3 +39,39 @@ impl GhRunner for GhCli {
         self.0.whoami().await
     }
 }
+
+/// What the Provider needs of `git` — the ONE act `gh` cannot do: uploading local objects. A
+/// ref moved through `gh api` can only name commits GitHub already has, which is why the push
+/// used to reject every local-only commit (the primary case). §13's "no second transport" is
+/// about HTTP clients; the git protocol has no `gh` spelling at all.
+#[async_trait::async_trait]
+pub trait GitRunner: Send + Sync + 'static {
+    /// `git -C <dir> <args…>`. `Ok(stdout)`; `Err` carries git's own stderr, verbatim.
+    async fn git(&self, dir: &std::path::Path, args: &[&str]) -> Result<String, String>;
+}
+
+/// The production runner: the configured `git` binary, bounded by the row's timeout.
+pub struct GitCli {
+    pub bin: String,
+    pub timeout: std::time::Duration,
+}
+
+#[async_trait::async_trait]
+impl GitRunner for GitCli {
+    async fn git(&self, dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+        let mut cmd = tokio::process::Command::new(&self.bin);
+        cmd.arg("-C")
+            .arg(dir)
+            .args(args)
+            .stdin(std::process::Stdio::null());
+        let out = tokio::time::timeout(self.timeout, cmd.output())
+            .await
+            .map_err(|_| format!("git {} timed out after {:?}", args.join(" "), self.timeout))?
+            .map_err(|e| format!("could not run `{}`: {e}", self.bin))?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).to_string())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    }
+}

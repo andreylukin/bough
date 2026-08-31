@@ -26,7 +26,7 @@ use bough_plugin_actions::{
 use bough_plugin_gh_cli::{Actor, Gh};
 
 pub use ids::{CommentNodeId, ReviewCommentId, ReviewThreadNodeId};
-pub use runner::{GhCli, GhRunner};
+pub use runner::{GhCli, GhRunner, GitCli, GitRunner};
 
 /// The catalog name of this row.
 pub const PLUGIN_NAME: &str = "actions-github";
@@ -37,9 +37,29 @@ pub const PLUGIN_NAME: &str = "actions-github";
 pub struct GithubActionsConfig {
     /// `"gh"`. The tests put a recording shim here.
     pub gh_bin: String,
+    /// `"git"` — the push transport: uploading local objects is the one act `gh` cannot do.
+    #[serde(default = "default_git_bin")]
+    pub git_bin: String,
+    /// The repository the pushed commits live in. Relative paths resolve against the process
+    /// cwd, the same rule `tools.baseline.root` follows. A payload's own `workdir` overrides it.
+    #[serde(default = "default_repo_dir")]
+    pub repo_dir: std::path::PathBuf,
+    /// The remote a push goes to.
+    #[serde(default = "default_push_remote")]
+    pub push_remote: String,
     /// The known-bot allowlist [`bough_plugin_gh_cli::classify`] consults.
     pub known_bots: Vec<String>,
     pub timeout_ms: u64,
+}
+
+fn default_git_bin() -> String {
+    "git".to_string()
+}
+fn default_repo_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(".")
+}
+fn default_push_remote() -> String {
+    "origin".to_string()
 }
 
 /// `open_pr`'s payload.
@@ -59,6 +79,9 @@ pub struct OpenPrPayload {
 pub struct PushToPrPayload {
     pub branch: String,
     pub commits: Vec<String>,
+    /// Where the commits live. Absent ⇒ the row's `repo_dir`.
+    #[serde(default)]
+    pub workdir: Option<String>,
 }
 
 /// `bot_thread_op`'s payload. The thread is named by its FIRST comment's REST database id — the
@@ -105,6 +128,7 @@ impl ThreadOp {
 pub struct GithubActions {
     cfg: Arc<GithubActionsConfig>,
     gh: Arc<dyn GhRunner>,
+    git: Arc<dyn GitRunner>,
     /// `gh api user`'s login. Resolved ONCE and cached; the author comparison reads it.
     me: tokio::sync::Mutex<Option<String>>,
 }
@@ -117,14 +141,23 @@ impl GithubActions {
     /// fail to load when nothing has asked it to act yet.
     pub async fn open(cfg: Arc<GithubActionsConfig>) -> Result<Arc<GithubActions>, GhActionError> {
         let gh = Gh::new(cfg.gh_bin.clone(), Duration::from_millis(cfg.timeout_ms));
-        Ok(GithubActions::with_runner(cfg, Arc::new(GhCli(gh))))
+        let git = Arc::new(crate::runner::GitCli {
+            bin: cfg.git_bin.clone(),
+            timeout: Duration::from_millis(cfg.timeout_ms),
+        });
+        Ok(GithubActions::with_runners(cfg, Arc::new(GhCli(gh)), git))
     }
 
-    /// The same Provider over an injected transport. The tests' recording shim mounts here.
-    pub fn with_runner(cfg: Arc<GithubActionsConfig>, gh: Arc<dyn GhRunner>) -> Arc<GithubActions> {
+    /// The same Provider over injected transports. The tests' recording shims mount here.
+    pub fn with_runners(
+        cfg: Arc<GithubActionsConfig>,
+        gh: Arc<dyn GhRunner>,
+        git: Arc<dyn GitRunner>,
+    ) -> Arc<GithubActions> {
         Arc::new(GithubActions {
             cfg,
             gh,
+            git,
             me: tokio::sync::Mutex::new(None),
         })
     }
@@ -337,14 +370,16 @@ impl GithubActions {
         })
     }
 
-    /// The push is the PR head ref moved to the last local commit, through `gh api` (§13: no
-    /// octocrab, and no second transport). The MARKER lives in that commit's trailer, so this
-    /// path VERIFIES the trailer by reading the commit before it moves anything: a push whose
+    /// The push is a real `git push <remote> <sha>:refs/heads/<head_ref>` — the git protocol is
+    /// what UPLOADS local objects, which the old `gh api` ref-PATCH could not: it could only name
+    /// commits GitHub already had, so the primary case (a commit made locally by an agent) was
+    /// rejected with "GitHub cannot resolve <sha>". Never `--force`: a non-fast-forward is git's
+    /// own refusal, surfaced verbatim. The MARKER lives in the commit's trailer, so this path
+    /// VERIFIES the trailer by reading the commit LOCALLY before anything moves: a push whose
     /// artifact would not carry the marker is refused rather than made unreconcilable.
     async fn push_to_pr(&self, req: &ExecuteRequest) -> Result<ActionArtifact, GhActionError> {
         let p: PushToPrPayload = payload(req, "push_to_pr")?;
         let head_ref = self.pr_head_ref(&req.canonical_target).await?;
-        let (repo, _n) = split_pr(&req.canonical_target)?;
         let sha = p
             .commits
             .last()
@@ -353,14 +388,23 @@ impl GithubActions {
                 kind: "push_to_pr",
                 detail: "no commits to push".into(),
             })?;
-        let commit = self
-            .gh
-            .json(&["api", &format!("repos/{repo}/commits/{sha}")])
-            .await?;
-        let message = commit
-            .pointer("/commit/message")
-            .and_then(|x| x.as_str())
-            .unwrap_or("");
+        let dir = p
+            .workdir
+            .as_deref()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| self.cfg.repo_dir.clone());
+        let message = self
+            .git
+            .git(&dir, &["show", "-s", "--format=%B", &sha])
+            .await
+            .map_err(|e| GhActionError::BadPayload {
+                kind: "push_to_pr",
+                detail: format!(
+                    "commit {sha} is not readable in `{}` ({e}); the payload's commits must be \
+                     local shas in the workdir the push runs from",
+                    dir.display()
+                ),
+            })?;
         if !message.contains(&req.marker) {
             return Err(GhActionError::BadPayload {
                 kind: "push_to_pr",
@@ -372,19 +416,15 @@ impl GithubActions {
                 ),
             });
         }
-        self.gh
-            .run(
-                &[
-                    "api",
-                    "--method",
-                    "PATCH",
-                    &format!("repos/{repo}/git/refs/heads/{head_ref}"),
-                    "-f",
-                    &format!("sha={sha}"),
-                ],
-                None,
-            )
-            .await?;
+        let refspec = format!("{sha}:refs/heads/{head_ref}");
+        self.git
+            .git(&dir, &["push", &self.cfg.push_remote, &refspec])
+            .await
+            .map_err(|stderr| GhActionError::Push {
+                dir: dir.display().to_string(),
+                refspec: refspec.clone(),
+                stderr,
+            })?;
         Ok(ActionArtifact {
             locator: sha,
             marker: req.marker.clone(),
@@ -654,6 +694,12 @@ pub enum GhActionError {
     NoSuchThread { comment: String, target: String },
     #[error("payload for `{kind}` is not what §7 sanctions: {detail}")]
     BadPayload { kind: &'static str, detail: String },
+    #[error("push_to_pr failed: git push of {refspec} in `{dir}`: {stderr}")]
+    Push {
+        dir: String,
+        refspec: String,
+        stderr: String,
+    },
     #[error(transparent)]
     Gh(#[from] bough_plugin_gh_cli::GhError),
 }
@@ -681,6 +727,21 @@ impl Plugin for GithubActionsPlugin {
         if cfg.timeout_ms == 0 {
             return Err(ConfigError::Rejected {
                 detail: "timeout_ms: 0 would make every `gh` call fail immediately".into(),
+            });
+        }
+        if cfg.git_bin.trim().is_empty() {
+            return Err(ConfigError::Rejected {
+                detail: "git_bin: name the `git` binary (the push transport)".into(),
+            });
+        }
+        if cfg.push_remote.trim().is_empty() {
+            return Err(ConfigError::Rejected {
+                detail: "push_remote: name the remote a push goes to".into(),
+            });
+        }
+        if cfg.repo_dir.as_os_str().is_empty() {
+            return Err(ConfigError::Rejected {
+                detail: "repo_dir: name the repository the pushed commits live in".into(),
             });
         }
         Ok(())

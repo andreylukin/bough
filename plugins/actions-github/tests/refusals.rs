@@ -78,16 +78,13 @@ async fn push_to_pr_pushes_the_commit_that_carries_the_marker_and_refuses_one_th
     let req = exec(ActionKind::PushToPr, "owner/repo#12", push_payload());
     let marked = bough_plugin_actions_github::marker::commit_trailer("do the thing", &req.marker);
 
-    // Without the trailer the push is refused: its artifact could never be reconciled.
-    let bare = Arc::new(
-        FakeGh::new("andrey")
-            .read("pr view", pr_view("andrey", "OPEN"))
-            .read(
-                "commits/abc123",
-                serde_json::json!({ "commit": { "message": "do the thing" } }),
-            ),
-    );
-    let e = provider(&bare)
+    // Without the trailer the push is refused: its artifact could never be reconciled. The
+    // trailer is read LOCALLY (`git show`) — the whole point of the push is that the commit does
+    // not exist on GitHub yet, so an API read of it could only ever 404 (the live failure this
+    // rewrite fixes).
+    let gh = Arc::new(FakeGh::new("andrey").read("pr view", pr_view("andrey", "OPEN")));
+    let bare_git = Arc::new(FakeGit::default().on("show -s", Ok("do the thing")));
+    let e = provider_with_git(&gh, &bare_git)
         .execute(&req)
         .await
         .expect_err("an unmarked commit is not pushed");
@@ -95,30 +92,76 @@ async fn push_to_pr_pushes_the_commit_that_carries_the_marker_and_refuses_one_th
     // seam says BadPayload — a refusal — and not `Provider`, which reads as a malfunction.
     assert_eq!(classify(&e), "bad_payload");
     assert!(refusal(e).contains("carries no `Bough-Action:"));
-    assert!(bare.log().iter().all(|c| !c.write));
+    assert!(bare_git.log().iter().all(|c| !c.write));
 
-    // With it, one write moves the PR's head ref and the artifact is the marked commit.
-    let ok = Arc::new(
-        FakeGh::new("andrey")
-            .read("pr view", pr_view("andrey", "OPEN"))
-            .read(
-                "commits/abc123",
-                serde_json::json!({ "commit": { "message": marked } }),
-            ),
+    // With it, ONE `git push <remote> <sha>:refs/heads/<head_ref>` uploads the local objects and
+    // moves the head — never `gh api`, which cannot upload, and never `--force`.
+    let gh = Arc::new(FakeGh::new("andrey").read("pr view", pr_view("andrey", "OPEN")));
+    let ok_git = Arc::new(
+        FakeGit::default()
+            .on("show -s", Ok(&marked))
+            .on("push", Ok("")),
     );
-    let artifact = provider(&ok).execute(&req).await.expect("the push happens");
+    let artifact = provider_with_git(&gh, &ok_git)
+        .execute(&req)
+        .await
+        .expect("the push happens");
     assert_eq!(artifact.locator, "abc123");
     assert_eq!(artifact.marker, req.marker);
-    let w = last_write(&ok);
-    assert_eq!(w.argv[0], "api");
+    let writes: Vec<_> = ok_git.log().into_iter().filter(|c| c.write).collect();
+    assert_eq!(writes.len(), 1, "{writes:?}");
     assert!(
-        w.argv
-            .iter()
-            .any(|a| a == "repos/owner/repo/git/refs/heads/feature"),
+        writes[0].argv.contains(&"origin".to_string()),
         "{:?}",
-        w.argv
+        writes[0].argv
     );
-    assert!(w.argv.iter().any(|a| a == "sha=abc123"), "{:?}", w.argv);
+    assert!(
+        writes[0]
+            .argv
+            .contains(&"abc123:refs/heads/feature".to_string()),
+        "{:?}",
+        writes[0].argv
+    );
+    assert!(
+        !writes[0].argv.iter().any(|a| a.contains("force")),
+        "never --force: {:?}",
+        writes[0].argv
+    );
+    assert!(
+        gh.log().iter().all(|c| !c.write),
+        "gh writes nothing on a push: {:?}",
+        gh.log()
+    );
+}
+
+/// The live failure, pinned: a sha `git show` cannot resolve is a REFUSAL naming the workdir,
+/// and a rejected `git push` (auth, non-fast-forward) is a Provider error carrying git's own
+/// words — neither leaves a half-claimed artifact.
+#[tokio::test]
+async fn push_to_pr_names_an_unknown_sha_and_surfaces_gits_own_refusal() {
+    let req = exec(ActionKind::PushToPr, "owner/repo#12", push_payload());
+    let gh = Arc::new(FakeGh::new("andrey").read("pr view", pr_view("andrey", "OPEN")));
+    let lost = Arc::new(FakeGit::default().on("show -s", Err("fatal: bad object abc123")));
+    let e = provider_with_git(&gh, &lost)
+        .execute(&req)
+        .await
+        .expect_err("an unknown sha is refused");
+    assert_eq!(classify(&e), "bad_payload");
+    assert!(refusal(e).contains("not readable in"));
+
+    let gh = Arc::new(FakeGh::new("andrey").read("pr view", pr_view("andrey", "OPEN")));
+    let marked = bough_plugin_actions_github::marker::commit_trailer("do the thing", &req.marker);
+    let rejected = Arc::new(
+        FakeGit::default()
+            .on("show -s", Ok(&marked))
+            .on("push", Err("! [rejected] non-fast-forward")),
+    );
+    let e = provider_with_git(&gh, &rejected)
+        .execute(&req)
+        .await
+        .expect_err("a rejected push is an error");
+    assert_eq!(classify(&e), "provider");
+    assert!(refusal(e).contains("non-fast-forward"));
 }
 
 #[tokio::test]
