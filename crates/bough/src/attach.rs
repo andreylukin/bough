@@ -122,11 +122,16 @@ pub async fn update() -> ExitCode {
     restart().await
 }
 
-/// `bough restart`: ask the home's composing process to leave (SIGINT, the same clean-teardown
-/// path as a terminal Ctrl+C), wait for the home lock's flock to release — held for the life of
-/// the process, so its release IS teardown finished — then spawn a fresh resident and wait for
-/// its socket. With nothing running it degrades to "start one". Never SIGKILL: a teardown that
-/// hangs is reported, not shot, because the half-written ledger is worth more than the restart.
+/// `bough restart`: ask the home's composing process to leave, wait for the home lock's flock to
+/// release — held for the life of the process, so its release IS teardown finished — then spawn
+/// a fresh resident and wait for its socket. With nothing running it degrades to "start one".
+///
+/// The ask ESCALATES on a deadline: SIGINT (the clean teardown, same as a terminal Ctrl+C), then
+/// SIGTERM, then SIGKILL, each bounded and each reported. The old "never SIGKILL" stance turned
+/// any wedged resident into a permanently stuck `bough update` — seen live 2026-08-31: a
+/// resident whose tokio IO driver stopped being polled (no kevent thread; every worker parked on
+/// a condvar) can never HEAR the SIGINT, and the ledger it was protecting is append-only sqlite,
+/// crash-safe by construction. A teardown that CAN run still gets its full grace first.
 pub async fn restart() -> ExitCode {
     let home = bough_util::bough_home();
     match crate::lock::acquire(&home) {
@@ -135,32 +140,45 @@ pub async fn restart() -> ExitCode {
             eprintln!("bough: nothing is running in this home; starting a resident");
         }
         Err(crate::lock::LockError::Held { pid: Some(pid), .. }) => {
-            // SAFETY: kill(2) with a valid signal; it neither reads nor writes memory.
-            if unsafe { libc::kill(pid as libc::pid_t, libc::SIGINT) } != 0 {
-                let e = std::io::Error::last_os_error();
-                eprintln!("bough: could not signal pid {pid}: {e}");
-                return ExitCode::FAILURE;
-            }
-            eprintln!("bough: asked pid {pid} to leave\u{2026}");
-            let deadline =
-                std::time::Instant::now() + std::time::Duration::from_millis(CLIENT_WAIT_MS);
-            loop {
-                match crate::lock::acquire(&home) {
-                    Ok(free) => {
-                        drop(free);
-                        break;
+            let stages: [(libc::c_int, &str, u64); 3] = [
+                (libc::SIGINT, "asked pid {} to leave", CLIENT_WAIT_MS),
+                (libc::SIGTERM, "pid {} ignored SIGINT; sending SIGTERM", 5_000),
+                (libc::SIGKILL, "pid {} survived SIGTERM; killing it", 3_000),
+            ];
+            let mut released = false;
+            'stages: for (sig, note, wait_ms) in stages {
+                // SAFETY: kill(2) with a valid signal; it neither reads nor writes memory.
+                let rc = unsafe { libc::kill(pid as libc::pid_t, sig) };
+                if rc != 0 {
+                    let e = std::io::Error::last_os_error();
+                    // ESRCH between stages means it left between our probe and this signal.
+                    if e.raw_os_error() == Some(libc::ESRCH) {
+                        released = true;
+                        break 'stages;
                     }
-                    Err(_) if std::time::Instant::now() < deadline => {
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    }
-                    Err(_) => {
-                        eprintln!(
-                            "bough: pid {pid} did not release the home within {CLIENT_WAIT_MS}ms; \
-                             not starting a second one on top of it"
-                        );
-                        return ExitCode::FAILURE;
-                    }
+                    eprintln!("bough: could not signal pid {pid}: {e}");
+                    return ExitCode::FAILURE;
                 }
+                eprintln!("bough: {}\u{2026}", note.replace("{}", &pid.to_string()));
+                let deadline =
+                    std::time::Instant::now() + std::time::Duration::from_millis(wait_ms);
+                while std::time::Instant::now() < deadline {
+                    if let Ok(free) = crate::lock::acquire(&home) {
+                        drop(free);
+                        released = true;
+                        break 'stages;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+            if !released {
+                // SIGKILL cannot be ignored: reaching here means the flock outlived the process
+                // somehow (a kernel-stuck zombie). Refuse to double-mount on top of it.
+                eprintln!(
+                    "bough: pid {pid} did not release the home even after SIGKILL; \
+                     not starting a second one on top of it"
+                );
+                return ExitCode::FAILURE;
             }
         }
         Err(crate::lock::LockError::Held { pid: None, path }) => {

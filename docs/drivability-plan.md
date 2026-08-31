@@ -89,6 +89,13 @@ Diagnoses done (input render path, injection audit, push path). Landed and teste
   rewrite by design).
 - Known flaky: ~6 `cargo test -p bough` integration tests fail under the full parallel run and
   pass individually — pre-existing, not from these changes.
+- **Stuck updates, diagnosed 2026-08-31**: `bough update`/`restart` wedged because the running
+  resident's tokio IO driver stopped being polled — `sample` showed NO kevent thread, every
+  worker in `park_condvar`, main parked in `block_on` — so the SIGINT was never heard, and the
+  old "never SIGKILL" policy made that terminal. Fix: restart escalates SIGINT (15s) → SIGTERM
+  (5s) → SIGKILL (3s), bounded and reported (REQUIREMENTS §0.1 revised). OPEN: root cause of
+  the driver loss — seen on the 5cdc6fd1-era binary; if a post-fix resident wedges the same way
+  (`sample <pid>` shows no kevent), it is still live and worth a real hunt.
 
 ## Workstream order
 1. **Diagnose in parallel** (read-only audits): input→timeline render path; injection row

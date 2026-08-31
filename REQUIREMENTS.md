@@ -36,8 +36,11 @@ requirements; each names the seams and plugins that carry it.
    before. The client owns its own terminal (raw mode, alt screen, restore — a dead resident can
    never wedge the tty); the server half is the `tui.attach` row (§11 "The resident"). `bough
    restart` is transport too: SIGINT the home lock's owner (the same clean teardown as a terminal
-   Ctrl+C), wait for the flock to release, spawn a fresh resident — and never SIGKILL, because a
-   hung teardown is reported, not shot.
+   Ctrl+C), wait for the flock to release, spawn a fresh resident — ESCALATING on a deadline to
+   SIGTERM and then SIGKILL, each stage bounded and reported. (Revised 2026-08-31: "never
+   SIGKILL" turned a wedged resident — one whose IO driver stopped being polled, so the SIGINT
+   was never heard — into a permanently stuck `bough update`; the ledger is append-only sqlite
+   and crash-safe, so a clean teardown gets its full grace first but is not a hostage.)
 3. **`bough-util`**: branded ids, home paths, timeouts. A library; no `ctx` key.
 
 Everything else is a plugin row in a bundle. The base bundle (`bough-base`, a YAML patch list, not
