@@ -169,6 +169,13 @@ pub struct TuiInner {
     /// again and redraws. See [`TuiHandle::run_external`].
     pub(crate) external: Mutex<Option<Vec<String>>>,
     pub(crate) redraw: Notify,
+    /// Bumped once per published frame, AFTER `last_frame` is written. An attach session awaits
+    /// this to learn there is a new buffer to blit; the counter's value is only an edge.
+    pub(crate) frames: tokio::sync::watch::Sender<u64>,
+    /// Where out-of-band terminal bytes (OSC52) go when this process has no tty of its own: the
+    /// attach row points this at the connected client. `None` means drop them, which is what a
+    /// headless test wants.
+    pub(crate) byte_sink: Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>,
 }
 
 /// A submit waiting for the roster (merge note 16).
@@ -247,6 +254,8 @@ impl TuiHandle {
             pending_send: Mutex::new(None),
             external: Mutex::new(None),
             redraw: Notify::new(),
+            frames: tokio::sync::watch::Sender::new(0),
+            byte_sink: Mutex::new(None),
         })))
     }
 
@@ -524,6 +533,12 @@ impl TuiHandle {
             let mut stdout = std::io::stdout();
             let _ = stdout.write_all(&out);
             let _ = stdout.flush();
+        } else if !out.is_empty() {
+            // No tty of our own: hand the sequence to the attached client, if one is connected.
+            // Its terminal is where the selection was dragged, so its clipboard is the one meant.
+            if let Some(sink) = self.0.byte_sink.lock().as_ref() {
+                let _ = sink.send(out);
+            }
         }
         // The flash is ALWAYS a line (WP-7): a silent success is the audit's "did it copy?".
         let (text, kind) = outcome.flash();
@@ -557,6 +572,25 @@ impl TuiHandle {
     /// The last rendered buffer. The selection reads from it; tests assert against it.
     pub fn last_frame(&self) -> Arc<Buffer> {
         self.0.last_frame.read().clone()
+    }
+
+    /// A receiver that observes every published frame ([`TuiInner::frames`]). `changed()` resolves
+    /// once per `draw` that ran to completion; the value is a counter and carries no meaning
+    /// beyond the edge.
+    pub fn frames(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.0.frames.subscribe()
+    }
+
+    /// Point the out-of-band byte path (OSC52) at a sink, or take it away. The attach row is the
+    /// one caller; everything else leaves it `None`.
+    pub fn set_byte_sink(&self, sink: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>) {
+        *self.0.byte_sink.lock() = sink;
+    }
+
+    /// Whether this composition captures the mouse — what an attach client must mirror on its own
+    /// terminal, learned over the wire rather than from a config it does not have.
+    pub fn mouse(&self) -> bool {
+        self.0.cfg.mouse
     }
 
     /// The current drag, if one is in progress or has just finished.

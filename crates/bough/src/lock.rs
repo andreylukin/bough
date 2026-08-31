@@ -68,9 +68,9 @@ pub fn held_message(path: &Path, pid: Option<u32>) -> String {
         None => "another process".to_string(),
     };
     format!(
-        "bough: this home is already open in another tab ({who}, {}).\n\
-         Two tabs on one home would not see each other's work; multi-tab arrives with the daemon.\n\
-         Use that tab, quit it, or set BOUGH_HOME to a different home for this one.",
+        "bough: this home is already open in another process ({who}, {}).\n\
+         Two composing processes on one home would not see each other's work.\n\
+         Run `bough` bare to attach to it, quit it, or set BOUGH_HOME to a different home.",
         path.display()
     )
 }
@@ -106,7 +106,7 @@ mod tests {
         let again = acquire(&home).expect("acquire after release");
         drop(again);
         let msg = held_message(&home.join("lock"), Some(42));
-        assert!(msg.contains("pid 42") && msg.contains("multi-tab arrives with the daemon"));
+        assert!(msg.contains("pid 42") && msg.contains("Run `bough` bare to attach"));
         let _ = std::fs::remove_dir_all(&home);
     }
 }

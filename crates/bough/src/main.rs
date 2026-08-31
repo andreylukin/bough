@@ -32,6 +32,22 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
+    // The resident/attach transport (§0.1 item 2, §11 "The resident"): the bare default
+    // invocation on a tty attaches to the home's resident — spawning one first when none is
+    // live — and composes nothing in this process. Every explicit choice falls through to boot.
+    if bough::attach::wants_attach(
+        std::io::IsTerminal::is_terminal(&std::io::stdout()),
+        cli.command.is_some(),
+        cli.check,
+        cli.dump_config,
+        cli.local,
+        cli.resident,
+        cli.profile == cli::DEFAULT_PROFILE,
+        !cli.patches.is_empty(),
+        cli.root.is_some(),
+    ) {
+        return runtime.block_on(bough::attach::attach_or_spawn());
+    }
     match runtime.block_on(boot::boot(cli)) {
         Ok(code) => code,
         Err(e) => {
@@ -56,7 +72,9 @@ fn init_tracing(cli: &cli::Cli) -> Option<tracing_appender::non_blocking::Worker
     };
 
     let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
-    if !owns_a_terminal(cli.command.is_some(), cli.check, cli.dump_config, tty) {
+    // The resident logs to the file too: it is spawned with a null stderr, so "keep stderr" would
+    // mean "log nowhere" on exactly the process whose failures nobody is watching.
+    if !owns_a_terminal(cli.command.is_some(), cli.check, cli.dump_config, tty) && !cli.resident {
         tracing_subscriber::fmt()
             .with_env_filter(filter())
             .with_writer(std::io::stderr)

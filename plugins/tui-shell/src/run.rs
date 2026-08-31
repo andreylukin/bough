@@ -417,6 +417,8 @@ pub fn draw(tui: &TuiHandle) {
     if let Some(buf) = published {
         *tui.0.last_frame.write() = Arc::new(buf);
     }
+    // AFTER `last_frame`: an attach session woken by this edge must find the buffer it announces.
+    tui.0.frames.send_modify(|n| *n = n.wrapping_add(1));
 }
 
 // ---------------------------------------------------------------------------

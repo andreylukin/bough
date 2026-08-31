@@ -42,6 +42,16 @@
     notice_ms: 6000
     flash_ms: 900
 
+# §11 "The resident": the attach listener. A bare `bough` on another terminal connects here and
+# becomes a thin client of THIS process; one client at a time, a later attach detaches the
+# earlier. The socket default is the one path the launcher's client also derives — a patched
+# socket is for tests and swaps, not a second way in.
+- id: tui.attach
+  plugin: tui-attach
+  config:
+    socket: !!expr 'bough_path("tui.sock")'
+    handshake_ms: 10000
+
 - id: tui.strip
   plugin: tui-strip
   config:

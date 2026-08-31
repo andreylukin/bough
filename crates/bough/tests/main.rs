@@ -8,6 +8,7 @@ mod support;
 mod actions_boundary_rows;
 mod agent_invariants;
 mod agent_scripted;
+mod attach;
 mod audit_leaks;
 mod bad_patch;
 mod boot;

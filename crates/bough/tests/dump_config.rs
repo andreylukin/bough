@@ -33,6 +33,8 @@ fn cli_for(home: &Path, dump: bool, check: bool) -> Cli {
         dump_format: DumpFormat::Yaml,
         check,
         no_watch: true,
+        local: false,
+        resident: false,
         shutdown_ms: 2000,
         root: None,
         command: None,

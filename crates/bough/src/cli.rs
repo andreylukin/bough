@@ -38,6 +38,16 @@ pub struct Cli {
     /// Do not watch `~/.bough/bough.patch.yml`.
     #[arg(long)]
     pub no_watch: bool,
+    /// Compose in THIS terminal instead of attaching to the home's resident. The launcher-
+    /// transport escape hatch (§0.1 item 2): the bare default invocation attaches; every explicit
+    /// choice — this flag included — composes in-process.
+    #[arg(long)]
+    pub local: bool,
+    /// Be the home's resident: compose headless and serve attached `bough` clients over
+    /// `$BOUGH_HOME/tui.sock` (the `tui.attach` row). The bare `bough` spawns this itself when no
+    /// resident is live; the flag's own effect on the launcher is only where the log goes.
+    #[arg(long)]
+    pub resident: bool,
     /// Override the embedded `profiles/` + `bundles/` directory.
     #[arg(long)]
     pub root: Option<PathBuf>,

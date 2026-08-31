@@ -133,9 +133,12 @@ YML
 # real `llm.anthropic` row answers. An argument beginning with `-` is passed to the binary
 # VERBATIM (that is how `--root` reaches it); anything else is a patch file.
 bough_patch_args() {
-  local args=""
+  # `--local`: the suite drives THIS process's screen in THIS PTY. Without it a bare `bough` on a
+  # tty is the attach client (§11 "The resident") — and every script here passes patch layers, so
+  # this is belt over braces; `39-attach.sh` is the script whose SUBJECT is the attach path.
+  local args="--local"
   if [ -z "$BOUGH_LIVE" ] && [ -n "$BOUGH_PATCH" ]; then
-    args="--patch $BOUGH_PATCH"
+    args="$args --patch $BOUGH_PATCH"
   fi
   args="$args --patch $OLD_FEED_PATCH"
   # Code mode is the DEFAULT consumer since 2026-08-28, and it CONCEALS the typed tools from the

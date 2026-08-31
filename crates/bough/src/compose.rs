@@ -342,6 +342,8 @@ mod tests {
             dump_format: crate::cli::DumpFormat::Yaml,
             check: true,
             no_watch: true,
+            local: false,
+            resident: false,
             shutdown_ms: 2000,
             root: None,
             command: None,

@@ -38,6 +38,7 @@ use bough_plugin_workers as _;
 use bough_plugin_commands as _;
 use bough_plugin_old_feed_adapter as _;
 use bough_plugin_residents as _;
+use bough_plugin_tui_attach as _;
 use bough_plugin_tui_focus as _;
 use bough_plugin_tui_probe as _;
 use bough_plugin_tui_search as _;
@@ -107,6 +108,7 @@ use bough_plugin_tool_mcp as _;
 use bough_plugin_tui_drafts as _;
 use bough_plugin_wards_rhai as _;
 
+pub mod attach;
 pub mod boot;
 pub mod cli;
 pub mod compose;

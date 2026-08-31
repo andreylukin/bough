@@ -36,6 +36,13 @@ impl TerminalGuard {
     /// raw mode → alt screen → mouse capture → bracketed paste → hide cursor, in that order.
     /// Every step it completes is remembered, so `leave` undoes exactly what `enter` did.
     pub fn enter(cfg: &TuiConfig) -> Result<TerminalGuard, TuiError> {
+        Self::enter_flags(cfg.mouse)
+    }
+
+    /// The same entry with the one flag it actually reads. The launcher's ATTACH CLIENT enters
+    /// through here: it has no `TuiConfig` of its own — the composition lives in the resident —
+    /// and the mouse flag arrives over the wire in the server's hello.
+    pub fn enter_flags(mouse: bool) -> Result<TerminalGuard, TuiError> {
         use crossterm::{cursor, event, execute, terminal};
         let mut out = std::io::stdout();
         let fail = |step: &'static str, source: std::io::Error| {
@@ -64,7 +71,7 @@ impl TerminalGuard {
         }
         ENTERED.fetch_or(ALT, Ordering::SeqCst);
 
-        if cfg.mouse {
+        if mouse {
             execute!(out, event::EnableMouseCapture).map_err(|e| fail("mouse capture", e))?;
             ENTERED.fetch_or(MOUSE, Ordering::SeqCst);
         }

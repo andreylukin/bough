@@ -28,7 +28,13 @@ requirements; each names the seams and plugins that carry it.
    patch file and `--patch` overlays, mounts the tree, asserts every enabled row loaded AND
    activated (fail loud, naming each unresolved service), watches the user patch file for live
    recomposition, and prints the composed tree on `--dump-config`. It owns no behavior of its own
-   beyond composition and teardown-before-exit (the TUI must restore the terminal on a boot failure).
+   beyond composition and teardown-before-exit (the TUI must restore the terminal on a boot failure)
+   — plus one TRANSPORT, not a behaviour: a bare `bough` on a tty ATTACHES to the home's resident
+   process over `$BOUGH_HOME/tui.sock`, spawning `bough --resident` (detached, composing headless)
+   first when none is live; every explicit choice (`--local`, `--resident`, a subcommand,
+   `--check`, `--dump-config`, a non-default profile, `--patch`, `--root`) composes in-process as
+   before. The client owns its own terminal (raw mode, alt screen, restore — a dead resident can
+   never wedge the tty); the server half is the `tui.attach` row (§11 "The resident").
 3. **`bough-util`**: branded ids, home paths, timeouts. A library; no `ctx` key.
 
 Everything else is a plugin row in a bundle. The base bundle (`bough-base`, a YAML patch list, not
@@ -570,6 +576,15 @@ does; the seam's start/result vocabulary leaves room, the Providers do not imple
   model turn.
 - **Strip + focus pane**: agent rail with state glyphs and about-lines; the focused agent's
   chat/trajectory fills the rest.
+- **The resident** (Andrey, 2026-08-31): one composing process per home, every terminal a thin
+  client. The `tui.attach` row listens on `$BOUGH_HOME/tui.sock`; a client's frames are the
+  shell's published buffers re-rendered as ANSI diffs through the row's own diffing terminal, and
+  its keys/mouse/paste/resize feed the shell's ordinary event path — the composition never learns
+  which side of the socket the terminal is on. ONE client at a time: a later attach detaches the
+  earlier with a named reason; `/detach` (the row's command) hands a terminal back while bough
+  keeps running; the resident's exit reaches the client as an EXIT frame with the reason. OSC52
+  copy routes to the attached client's terminal. The launcher's client half and the bare-`bough`
+  attach rule are §0.1 item 2.
 - **Truth on demand** (the conversation brief, 2026-08-31; amends round 11's always-on context
   view). The conversation pane RESTS as a chat: tier bands and the dropped fold keep older rows
   reachable in place (expand-in-place, marked as not sent), the standing block sits at the top of

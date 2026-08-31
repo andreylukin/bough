@@ -58,6 +58,9 @@ bough-plugin-tui-shell = { workspace = true }
 bough-plugin-tui-strip = { workspace = true }
 bough-plugin-tui-focus = { workspace = true }
 bough-plugin-tui-search = { workspace = true }
+# §11 "The resident": the attach listener row, and the client half in `src/attach.rs` speaks its
+# `proto` module — the one crate both halves of the transport live against.
+bough-plugin-tui-attach = { workspace = true }
 # phase ux1: the status line row (the phase's SWAP subject).
 bough-plugin-tui-status = { workspace = true }
 bough-plugin-tui-probe = { workspace = true }
@@ -135,8 +138,13 @@ bough-plugin-actions-shim = { workspace = true }
 # `vocabulary::all()` is the launcher's own union of every plugin's step types, for a reader that
 # has no kernel (`docs/track-c-merge-notes.md`), so the ledger's Definition is a real dependency.
 bough-plugin-ledger = { workspace = true }
-# The interim home lock (`lock.rs`): `flock` until the daemon.
+# The home lock (`lock.rs`): `flock`, one composing process per home.
 libc = { workspace = true }
+# The attach CLIENT (`attach.rs`): the terminal side of the resident/attach transport — crossterm
+# reads this terminal's events, futures drives its EventStream, serde_json is `proto`'s encoding.
+crossterm = { workspace = true }
+futures = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
