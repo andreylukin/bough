@@ -1,0 +1,26 @@
+# The CODEMODE arm's bench-only configuration. It is `arms/typed.yml` VERBATIM — the two arms
+# differ by the CONSUMER and by nothing else, and `bench/tools/tests/bank.rs` asserts the two files
+# are byte-identical so a future tweak to one cannot quietly tune only one arm.
+#
+# The consumer itself is not here and cannot be: a `--patch` layer configures rows, it never
+# CREATES them ("names row `js`, which no layer created"), so the three codemode rows have to come
+# from a bundle. `bough exec` forces the `headless` profile
+# (`crates/bough/src/exec.rs::force_profile`), so `run.rs` writes the shipped `profiles/codemode.yml`
+# document into the run's `$BOUGH_HOME/profiles/headless.yml` under the name `headless` — the
+# home-first profile search (launcher decision D11) is the override path a user has, and it means
+# the bench measures the bundle list that SHIPS rather than a hand-written copy of it.
+entries:
+  tools.operator:
+    config:
+      max_view_bytes: 400000
+      max_files_per_patch: 16
+      bg_log_dir: !!expr 'bough_path("bg")'
+      bg_max: 8
+      bg_poll_ms: 50
+      ledger_page: 50
+      schedule_max_horizon_days: 30
+      schedule_tick_ms: 200
+      sh_max_legs: 8
+      sh_timeout_ms: 120000
+      sh_tags_min: 3
+      sh_tags_max: 5

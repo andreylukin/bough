@@ -1,0 +1,14 @@
+# bundles/bough-codemode.yml — the switch, and nothing else (phase codemode §0.1).
+#
+# The three code-mode rows (`js`, `js.quickjs`, `tools.codemode`) are DECLARED in
+# `bundles/bough-base.yml`, disabled. Every row is declared once in the tree; this bundle is the
+# one layer that turns them on, so `--profile codemode` and a hand-written `--patch` reach the
+# consumer by the same field.
+#
+# It removes nothing: `tools`, `tools.baseline`, `tools.operator` and every other typed row stay
+# exactly where the base puts them. The consumer shows the model ONE tool — `run(program)` — and
+# conceals the rest from the prompt while leaving them executable through the same pipeline.
+entries:
+  js: { disabled: false }
+  js.quickjs: { disabled: false }
+  tools.codemode: { disabled: false }

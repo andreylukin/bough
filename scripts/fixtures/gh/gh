@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# The recording `gh` shim (§13, phase-6-plan WP-2).
+#
+# Invariant: an UNPLANNED `gh` call is a RED TEST, never a network request. This script is what the
+# tests put first on $PATH; the real `gh` is never reached. It appends its argv to $GH_SHIM_LOG and
+# answers from $GH_SHIM_DIR/<canonical-argv>.<ext>:
+#
+#   <name>.json    → printed on stdout, exit 0
+#   <name>.err     → printed on stderr, exit 1  (a `gh` that failed)
+#   <name>.sleep   → seconds to sleep first     (a `gh` that hangs)
+#   nothing        → a loud message on stderr, exit 42
+#
+# The canonical name is `argv joined by spaces`, every character outside [A-Za-z0-9._-] replaced by
+# `_`. `bough_plugin_gh_cli::shim::fixture_name` computes the same string in Rust, and the tests
+# write their fixtures through it, so the two cannot drift.
+set -u
+
+name=$(printf '%s' "$*" | tr -c 'A-Za-z0-9._-' '_')
+
+if [ -n "${GH_SHIM_LOG:-}" ]; then
+  # ONE LINE PER CALL: an argv may contain newlines (a PR body), and a log a test cannot split
+  # back into calls cannot answer "how many `gh` calls were there".
+  printf '%s\n' "${*//$'\n'/\\n}" >> "$GH_SHIM_LOG"
+fi
+
+dir="${GH_SHIM_DIR:-}"
+if [ -z "$dir" ]; then
+  printf 'gh-shim: GH_SHIM_DIR is not set; refusing to be a real gh\n' >&2
+  exit 42
+fi
+
+if [ -f "$dir/$name.sleep" ]; then
+  sleep "$(cat "$dir/$name.sleep")"
+fi
+
+if [ -f "$dir/$name.json" ]; then
+  cat "$dir/$name.json"
+  exit 0
+fi
+
+if [ -f "$dir/$name.err" ]; then
+  cat "$dir/$name.err" >&2
+  exit 1
+fi
+
+# A PREFIX fixture, for an argv whose tail a test cannot know in advance: `open_pr` puts a marker
+# derived from a runtime idem key into `--body`, so the full argv is not knowable when the fixture
+# is written. Progressively shorter prefixes of the argv are tried, longest first. This is still a
+# PLANNED answer — a fixture file has to exist for the prefix — not a wildcard `gh`.
+n=$#
+while [ "$n" -gt 0 ]; do
+  prefix=$(printf '%s' "${*:1:$n}" | tr -c 'A-Za-z0-9._-' '_')
+  if [ -f "$dir/$prefix.prefix.json" ]; then
+    cat "$dir/$prefix.prefix.json"
+    exit 0
+  fi
+  n=$((n - 1))
+done
+
+printf 'gh-shim: no fixture for `gh %s` (looked for %s/%s.json)\n' "$*" "$dir" "$name" >&2
+exit 42

@@ -1,31 +1,174 @@
 [package]
 name = "bough"
-version = "0.1.1"
-edition = "2021"
-license = "Apache-2.0"
-repository = "https://github.com/andreylukin/bough"
+autotests = false
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
+[lib]
+name = "bough"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bough"
+path = "src/main.rs"
+
+# Composition only (§0.1 item 2). The plugin dependencies below exist for ONE reason: linking them
+# so their `inventory::submit!` registrations land in the binary. The launcher never names a
+# plugin type.
 [dependencies]
-bough-core = { workspace = true }
-bough-server = { workspace = true }
-bough-tui = { workspace = true }
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+bough-plugin-hello = { workspace = true }
+bough-plugin-ledger-sqlite = { workspace = true }
+bough-plugin-ledger-memory = { workspace = true }
+bough-plugin-projection-assembler = { workspace = true }
+bough-plugin-projection-probe = { workspace = true }
+# Phase 2 (§17 Phase 2): the seventeen rows between a message and a model call and back.
+bough-plugin-llm = { workspace = true }
+bough-plugin-llm-anthropic = { workspace = true }
+bough-plugin-llm-openai = { workspace = true }
+bough-plugin-llm-replay = { workspace = true }
+bough-plugin-llm-retry = { workspace = true }
+bough-plugin-request-recorder = { workspace = true }
+bough-plugin-agents = { workspace = true }
+bough-plugin-agent-loop = { workspace = true }
+bough-plugin-agent-loop-scripted = { workspace = true }
+bough-plugin-tools = { workspace = true }
+bough-plugin-tools-baseline = { workspace = true }
+bough-plugin-tools-operator = { workspace = true }
+# Phase codemode (WP-8): the second Consumer and its runtime seam. In the catalog, in no
+# default bundle — `bundles/bough-codemode.yml` / `--profile codemode` is the only way in.
+bough-plugin-js = { workspace = true }
+bough-plugin-js-quickjs = { workspace = true }
+bough-plugin-tools-codemode = { workspace = true }
+bough-plugin-workers = { workspace = true }
+bough-plugin-worker-spawn = { workspace = true }
+bough-plugin-tool-workers = { workspace = true }
+bough-plugin-actions = { workspace = true }
+bough-plugin-tool-actions = { workspace = true }
+bough-plugin-model-policy = { workspace = true }
+bough-plugin-about-line = { workspace = true }
+bough-plugin-exec-headless = { workspace = true }
+# Phase 3 (§17 Phase 3): the terminal surface. `tui-probe` is a FIXTURE — in the catalog, in no
+# bundle — exactly as `projection-probe` is.
+bough-plugin-commands = { workspace = true }
+bough-plugin-tui-shell = { workspace = true }
+bough-plugin-tui-strip = { workspace = true }
+bough-plugin-tui-focus = { workspace = true }
+bough-plugin-tui-search = { workspace = true }
+# §11 "The resident": the attach listener row, and the client half in `src/attach.rs` speaks its
+# `proto` module — the one crate both halves of the transport live against.
+bough-plugin-tui-attach = { workspace = true }
+# phase ux1: the status line row (the phase's SWAP subject).
+bough-plugin-tui-status = { workspace = true }
+bough-plugin-tui-probe = { workspace = true }
+bough-plugin-residents = { workspace = true }
+bough-plugin-old-feed-adapter = { workspace = true }
+# Phase 4 (§17 Phase 4): memory governance. `rollups` is the Service Definition (no row of its
+# own); `rollups-none` is a FIXTURE provider — in the catalog, in no bundle — exactly as
+# `ledger-memory` and `tui-probe` are, and the swap patch names it.
+bough-plugin-rollups = { workspace = true }
+bough-plugin-rollups-summarizer = { workspace = true }
+bough-plugin-rollups-none = { workspace = true }
+bough-plugin-reconsolidation = { workspace = true }
+bough-plugin-drift-watch = { workspace = true }
+# Phase 5 (§17 Phase 5): many agents, the leader, graph ops. Linked for the same one reason as
+# every row above — so `inventory::submit!` lands in the binary's catalog. The launcher never
+# names a plugin type.
+bough-plugin-mail-router = { workspace = true }
+bough-plugin-dormancy = { workspace = true }
+bough-plugin-graph-ops = { workspace = true }
+bough-plugin-pins = { workspace = true }
+bough-plugin-lane-scope = { workspace = true }
+bough-plugin-worker-fork = { workspace = true }
+bough-plugin-leader = { workspace = true }
+bough-plugin-tool-leader = { workspace = true }
+# Phase 6 (§17 Phase 6, track B): context, the write boundary, the runtime-code hosts.
+# `power-test` and `schedule-manual` are FIXTURES — in the catalog, in no bundle.
+bough-plugin-schedule = { workspace = true }
+bough-plugin-schedule-cron = { workspace = true }
+bough-plugin-schedule-manual = { workspace = true }
+bough-plugin-system-schedules = { workspace = true }
+bough-plugin-collector-github = { workspace = true }
+bough-plugin-collector-linear = { workspace = true }
+bough-plugin-collector-slack = { workspace = true }
+bough-plugin-actions-github = { workspace = true }
+bough-plugin-actions-linear = { workspace = true }
+bough-plugin-actions-reconcile = { workspace = true }
+bough-plugin-boundary-instructions = { workspace = true }
+bough-plugin-drafts = { workspace = true }
+bough-plugin-tui-drafts = { workspace = true }
+bough-plugin-mcp = { workspace = true }
+bough-plugin-mcp-rmcp = { workspace = true }
+bough-plugin-tool-mcp = { workspace = true }
+bough-plugin-wards-rhai = { workspace = true }
+bough-plugin-runtime-actions = { workspace = true }
+bough-plugin-hooks-exec = { workspace = true }
+bough-plugin-mcp-subprocess = { workspace = true }
+bough-plugin-skills = { workspace = true }
+bough-plugin-power = { workspace = true }
+bough-plugin-sleep-listener = { workspace = true }
+bough-plugin-power-test = { workspace = true }
+bough-plugin-catch-up-on-wake = { workspace = true }
+serde_yaml = { workspace = true }
+clap = { workspace = true }
 tokio = { workspace = true }
-# `bough exec` is a loopback HTTP client with a streamed SSE body.
-reqwest = { workspace = true }
-futures = { workspace = true }
 serde = { workspace = true }
+include_dir = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-full = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+
+# Phase c (§11 digging, §8 drift dashboard, §7, §17 Phase 8): the three digging panes, plus the
+# two FIXTURE rows — `fault-inject` and `actions-shim` are in the catalog and in no bundle, exactly
+# as `tui-probe` is. Linked for the one reason every row above is: so `inventory::submit!` lands in
+# the binary's catalog.
+bough-plugin-tui-preview = { workspace = true }
+bough-plugin-tui-panel = { workspace = true }
+bough-plugin-tui-timeline = { workspace = true }
+bough-plugin-tui-drift = { workspace = true }
+bough-plugin-fault-inject = { workspace = true }
+bough-plugin-actions-shim = { workspace = true }
+# `vocabulary::all()` is the launcher's own union of every plugin's step types, for a reader that
+# has no kernel (`docs/track-c-merge-notes.md`), so the ledger's Definition is a real dependency.
+bough-plugin-ledger = { workspace = true }
+# The home lock (`lock.rs`): `flock`, one composing process per home.
+libc = { workspace = true }
+# The attach CLIENT (`attach.rs`): the terminal side of the resident/attach transport — crossterm
+# reads this terminal's events, futures drives its EventStream, serde_json is `proto`'s encoding.
+crossterm = { workspace = true }
+futures = { workspace = true }
 serde_json = { workspace = true }
-chrono = { workspace = true }
-dirs = { workspace = true }
-# `bough tags sql` opens its own READ-ONLY connection — never the injected
-# handle. The gate is structural (OPEN_READ_ONLY + PRAGMA query_only), which
-# needs the driver directly.
-rusqlite = { workspace = true }
 
 [dev-dependencies]
-# exec's tests drive the REAL route table over an in-memory database: the
-# fake transport hands an axum Request to the server's dispatcher directly,
-# so no socket is bound and nothing reads ~/.bough.
-axum = { workspace = true }
-uuid = { workspace = true }
-tokio-util = { workspace = true }
+tokio = { workspace = true }
+tempfile = "3"
+libc = { workspace = true }
+# Phase 1 integration gates: the swap/bench/invariant/calibration tests speak the projection
+# vocabulary directly, and the live calibration talks to Anthropic through bough-llm. (The ledger
+# is an ordinary dependency now — see `vocabulary::all()`.)
+bough-plugin-projection = { workspace = true }
+# V5: the recording `gh` shim's fixture names are computed by the crate that spawns `gh`.
+bough-plugin-gh-cli = { workspace = true }
+bough-llm = { workspace = true }
+# Phase codemode (WP-8): the wake/invariant gates drive the real binary and then read the ledger
+# it left, which is a sqlite file the test process opens READ-ONLY.
+rusqlite = { workspace = true }
+bough-plugin-tools = { workspace = true }
+bough-plugin-tools-codemode = { workspace = true }
+bough-plugin-agents = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+futures = { workspace = true }
+# WP-5's hardening tests register a worker Provider of their own (an `#[async_trait]` impl).
+async-trait = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

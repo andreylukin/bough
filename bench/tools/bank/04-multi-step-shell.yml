@@ -1,0 +1,12 @@
+# Multi-step shell: three commands whose result is one file. Tags are required on every one.
+id: 04-multi-step-shell
+prompt: >-
+  Count the lines of src/greet.txt, count the lines of src/notes.md, and write the two numbers
+  (greet first, one per line) into src/counts.txt. Use the shell.
+covers: [bash]
+pass:
+  - pass: file_equals
+    path: src/counts.txt
+    text: |
+      4
+      4

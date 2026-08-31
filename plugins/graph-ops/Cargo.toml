@@ -1,0 +1,40 @@
+[package]
+name = "bough-plugin-graph-ops"
+autotests = false
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The `graph` Service Definition and its one Provider — a CONSUMER of ledger, agents, rollups and
+# mail: split, merge, bud, fork, undo; the pure routing planner; the leader question. §4, §3.
+# Row `graph` in `bough-base`.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-agents = { workspace = true }
+bough-plugin-rollups = { workspace = true }
+bough-plugin-mail-router = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true, features = ["chrono04"] }
+chrono = { workspace = true, features = ["serde"] }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+bough-plugin-ledger-memory = { workspace = true }
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

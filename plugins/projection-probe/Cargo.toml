@@ -1,0 +1,27 @@
+[package]
+name = "bough-plugin-projection-probe"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# A TEST INSTRUMENT in the Phase 0 `hello` tradition (P1-D16): it injects `ledger` and
+# `projection`, exercises the real catalog path, and records everything it did on a shared trace.
+# Phase 8's fixture audit removes it.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-projection = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

@@ -1,0 +1,38 @@
+[package]
+name = "bough-plugin-tui-drafts"
+autotests = false
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# §11/§7: the drafts pane. It shows Andrey the Slack messages and tickets his agents wrote and did NOT send, and it OFFERS NO SEND.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+bough-plugin-tui-shell = { workspace = true }
+bough-plugin-tui-render = { workspace = true }
+bough-plugin-drafts = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-agents = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+
+[dev-dependencies]
+bough-plugin-ledger-memory = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

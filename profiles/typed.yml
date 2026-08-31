@@ -1,0 +1,10 @@
+# profiles/typed.yml — the FALLBACK surface: headless with the TYPED tool set.
+#
+# Code mode is the default consumer (Andrey, 2026-08-28), so this is the profile that turns it off:
+# `bough-typed` comes last and disables `tools.codemode`, leaving every typed row exactly where the
+# base bundle puts it. `bough --patch bundles/bough-typed.yml` is the same switch over any profile;
+# this document exists so the fallback is also reachable by NAME (docs/configuration.md), which is
+# what the bench's control arm composes.
+name: typed
+bundles: [bough-base, bough-headless, bough-typed]
+invariants: false

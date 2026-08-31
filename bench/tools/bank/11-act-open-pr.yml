@@ -1,0 +1,16 @@
+# An outward act. `gh` is a recording shim on PATH: nothing leaves the machine.
+id: 11-act-open-pr
+# MERGE: the prompt NAMES the repository and the head branch. `open_pr` takes a `target` of
+# `owner/repo` and a `head`, and the recorded fixtures have always used `andreylukin/bough` and
+# `bench/fixture-edit` — the prompt named neither, so a live model could not supply them and the
+# task was RED BY CONSTRUCTION on both arms (0 `action/intent` steps, typed and code mode alike).
+prompt: >-
+  Open a pull request in the repository `andreylukin/bough`, from the branch `bench/fixture-edit`
+  into `main`, titled `bench: the fixture edit`, with the body `opened by the bench`.
+covers: [act]
+pass:
+  - pass: step_appended
+    kind: action/intent
+    count: 1
+  - pass: journal_row
+    kind: open_pr

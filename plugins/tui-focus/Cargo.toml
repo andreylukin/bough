@@ -1,0 +1,44 @@
+[package]
+name = "bough-plugin-tui-focus"
+autotests = false
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# A Consumer (§11): the focused agent's chat/trajectory in `Slot::Main` — streaming turns,
+# clickable expanding tool calls, and the scrollback. It IS §11's `trajectory` pane (P3-D4).
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-agents = { workspace = true }
+bough-plugin-llm = { workspace = true }
+bough-plugin-tools = { workspace = true }
+bough-plugin-tui-shell = { workspace = true }
+bough-plugin-tui-render = { workspace = true }
+# The context view (round 11): the pane assembles through the SAME seam the wake flow calls.
+bough-plugin-projection = { workspace = true }
+ratatui = { workspace = true }
+# The keymap: `PaneEvent::Key` carries a crossterm `KeyEvent` (§2.1).
+crossterm = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# The tee tests build a real `StreamCall`, which carries a cancellation token.
+tokio-util = { workspace = true }
+bough-plugin-ledger-memory = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

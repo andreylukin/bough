@@ -1,0 +1,4 @@
+bough: 2 enabled row(s) never activated:
+  ledger (plugin `ledger-sqlite`) is Failed; unmet: -
+      error: row `ledger`: unable to open database file: /tmp/x/ledger.db
+  projection (plugin `projection-assembler`) is Pending; unmet: ledger

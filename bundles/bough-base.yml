@@ -1,0 +1,508 @@
+# bundles/bough-base.yml — REQUIREMENTS §0.5. Phase 0: the verification fixture only.
+#
+# Two rows, not the literal one of §17: a consumer row with no provider cannot boot, because an
+# enabled row that never activates is a boot failure (§0.2, Decision D14).
+- id: greeting.provider
+  plugin: greeting-echo
+  config: { suffix: "" }
+- id: hello.greeter
+  plugin: hello
+  config:
+    who: world
+    log_level: info
+
+# Phase 1 (§3, §5): the ledger and the projection seam. `ledger-memory` and `projection-probe` are
+# in the binary's catalog but in NO bundle — the swap patch names the one, the tests' own
+# `$BOUGH_HOME` mounts the other.
+- id: ledger
+  plugin: ledger-sqlite
+  config:
+    path: !!expr 'bough_path("ledger.db")'
+    busy_timeout_ms: 5000
+- id: projection
+  plugin: projection-assembler
+  config:
+    budget_tokens: 160000
+    headroom: 0.6
+    tail_steps: 60
+    tail_floor_steps: 10
+    mail_newest_n: 5
+    max_tiers: 3
+    file_view_dir: !!expr 'bough_path("views")'
+
+# Phase 2 (§17 Phase 2): everything between a message and a model call and back. Row ORDER carries
+# no load semantics (§0.2) — the reading order below is the seam order of §2.12, Definition before
+# Provider before Consumer, so the file reads as the phase's dependency story.
+#
+# `agent-loop-scripted` and `llm-replay` are in the binary's catalog and in NO bundle: the swap
+# patches name them, exactly as `ledger-memory` is handled.
+- id: llm
+  plugin: llm
+- id: llm.anthropic
+  plugin: llm-anthropic
+  config:
+    models: "*"
+    api_key_env: ANTHROPIC_API_KEY
+    request_timeout_ms: 120000
+# §12: OpenAI proper, the Responses API. `openai:*` is MORE SPECIFIC than the anthropic row's
+# `"*"`, so an `openai:gpt-…` model id (a lane's `model_override`, or a model-policy patch)
+# resolves here and everything else keeps resolving to `llm.anthropic`. The key is read at CALL
+# time from OPENAI_API_KEY (the launcher loads `$BOUGH_HOME/env` at boot); an absent key is a
+# `Failed { Auth }` chunk on first use, never a boot failure.
+- id: llm.openai
+  plugin: llm-openai
+  config:
+    models: "openai:*"
+    api_key_env: OPENAI_API_KEY
+    request_timeout_ms: 120000
+- id: llm.retry
+  plugin: llm-retry
+  config:
+    max_attempts: 4
+    min_delay_ms: 250
+    max_delay_ms: 8000
+    jitter: true
+    retry_on: [transport, rate_limit, overloaded]
+# Every request that reaches a model, on disk verbatim (Andrey, 2026-08-28): one file per
+# projection under $BOUGH_HOME/requests, a `## Round` per request. The conversation's click on a
+# speaker label opens the turn's file in $EDITOR. Listens on `llm/stream`; touches nothing.
+- id: request.recorder
+  plugin: request-recorder
+  config:
+    dir: requests
+    max_block_chars: 0
+- id: tools
+  plugin: tools
+  config:
+    default_deadline_ms: 120000
+    max_parallel: 8
+- id: tools.baseline
+  plugin: tools-baseline
+  config:
+    # DEVIATION from plan §2.12's `!!expr 'cwd()'`: the expr language (§0.5) has no `cwd`
+    # function, and a relative root is canonicalised against the process cwd anyway — which is
+    # the same value, without inventing a function for one row.
+    root: "."
+    bash_timeout_ms: 120000
+    bash_tags_min: 3
+    bash_tags_max: 5
+    max_output_bytes: 20000
+    max_read_bytes: 400000
+    deny_globs: []
+- id: tools.operator
+  plugin: tools-operator
+  config:
+    max_view_bytes: 400000
+    max_files_per_patch: 16
+    # Background logs are harness state, not workspace state: they live under the bough home so a
+    # `bg` job never writes into the tree the model is editing.
+    bg_log_dir: !!expr 'bough_path("bg")'
+    bg_max: 8
+    bg_poll_ms: 200
+    ledger_page: 50
+    schedule_max_horizon_days: 30
+    schedule_tick_ms: 5000
+    # The CONCURRENT shell. `bash` (tools-baseline) is the serial one and keeps its own timeout;
+    # a deployment that shortens one has no reason to shorten the other.
+    sh_max_legs: 8
+    sh_timeout_ms: 120000
+    sh_tags_min: 3
+    sh_tags_max: 5
+- id: agents
+  plugin: agents
+
+- id: agent.loop
+  plugin: agent-loop
+  config:
+    drain_debounce_ms: 120000
+    grace_deadline_ms: 20000
+    default_max_tokens: 8192
+    prompt_ver: "p2.1"
+    text_flush_ms: 400
+    repair_on_boot: true
+    status_drain_ms: 500
+# BOTH models are claude-haiku-4-5-20251001 for this build: Andrey's choice for the testing
+# period. Swapping either is a one-line patch, which is the whole point of them being config.
+- id: model.policy
+  plugin: model-policy
+  config:
+    sol: claude-haiku-4-5-20251001
+    terra: claude-haiku-4-5-20251001
+    # phase ux1 §2.13: the price table the status line's running cost sums (M24). USD per million
+    # tokens, from Anthropic's published pricing for Claude Haiku 4.5 (input $1, output $5, cache
+    # read $0.10, 5-minute cache write $1.25). A model with NO row here has an unknown cost and
+    # the status line shows `—` for it, never `$0.00`.
+    prices:
+      claude-haiku-4-5-20251001:
+        input_per_mtok: 1.0
+        output_per_mtok: 5.0
+        cache_read_per_mtok: 0.1
+        cache_write_per_mtok: 1.25
+- id: about.line
+  plugin: about-line
+  config:
+    max_state_chars: 400
+    max_intent_chars: 200
+- id: workers
+  plugin: workers
+  config:
+    max_in_flight: 8
+    max_depth: 3
+    per_wake_spawn_cap: 4
+- id: worker.spawn
+  plugin: worker-spawn
+  config:
+    ask_mode: block
+    max_steps: 40
+- id: tool.spawn_worker
+  plugin: tool-spawn_worker
+- id: tool.ask
+  plugin: tool-ask
+- id: actions
+  plugin: actions
+- id: tool.actions
+  plugin: tool-actions
+# Phase 4 (§8, §17 Phase 4): memory governance, non-optional — §8 puts these three rows in
+# `bough-base`. `rollups-none` is in the catalog and in NO bundle (the `ledger-memory` /
+# `projection-probe` / `tui-probe` precedent); the swap patch names it.
+- id: rollups
+  plugin: rollups-summarizer
+  config:
+    prompt_ver: "r4.1"
+    gap_minutes: 45
+    max_window_steps: 10
+    min_window_steps: 2
+    fanout: 10
+    max_tier: 3
+    seal_lag_steps: 20
+    max_calls_per_pass: 8
+    max_notable_refs: 12
+    max_evidence_refs: 24
+    max_block_chars: 1200
+    map_max_tokens: 1024
+    reduce_max_tokens: 1536
+- id: reconsolidation
+  plugin: reconsolidation
+  config:
+    batch_steps: 400
+    stale_after_days: 90
+    expirable_kinds: ["mail/delivered", "tool/result"]
+    max_contradiction_pairs: 24
+    max_calls_per_pass: 6
+    distill_max_tokens: 2048
+    # The judge prompt's version, stamped on every `recon/request`. Must resolve in the binary's
+    # prompt catalog or the row refuses to boot.
+    judge_prompt_ver: recon-1
+- id: drift.watch
+  plugin: drift-watch
+  config:
+    window_steps: 500
+    min_samples: 20
+    thought_len_cv_flag: 1.2
+    tool_entropy_flag: 0.35
+    # How many raw steps a `/reset` cites, and how long the rebuilt state half may be. The second
+    # is the same quantity the `about-line` row carries as `max_state_chars`: patch both together.
+    max_evidence_cites: 24
+    max_state_chars: 400
+# Phase 5 (§17 Phase 5): routing, dormancy, pins and graph ops are NOT terminal features, so
+# they live here and not in `bough-tui-app` — a headless tree routes mail, sleeps a lane and
+# splits a trajectory exactly as the TUI one does. The `leader` set is the exception and lives in
+# `bough-tui-app`: it is a per-agent scope mount, and which agent holds it is Andrey's choice.
+#
+# `dormancy` is the row that owns the `agent/wake-request` admission point (P5-D1); with it
+# absent the waterfall's default is `Admit::Open` and the tree behaves exactly as Phase 4's did.
+- id: mail
+  plugin: mail-router
+  config:
+    unsorted_traj: "unsorted"
+    unsorted_limit: 200
+    # NOT a dormancy switch: §5 says mail QUEUES for a dormant agent, so delivery happens and the
+    # WAKE is what dormancy suppresses.
+    tolerate_absent_lane: true
+- id: dormancy
+  plugin: dormancy
+  config:
+    reload_at_activation: true
+- id: graph
+  plugin: graph-ops
+  config:
+    # (max_children is a protocol constant in code: §4 says two heads)
+    digest_on_fork: false
+    # (question_on_ambiguity withdrawn: §4 always asks)
+# The claims demolition (2026-08-30): structure is the leader's own hand now (`create_lane` /
+# `merge_lanes` in `tool-leader`), and pins are set by Andrey directly.
+- id: pins
+  plugin: pins
+  config: {}
+- id: lane.scope
+  plugin: lane-scope
+  config:
+    default_persona: null
+    lanes: []
+- id: worker.fork
+  plugin: worker-fork
+  config:
+    max_steps: 24
+- id: tool.fork
+  plugin: tool-fork
+
+# ---- Phase 6 (track B): context, the write boundary, the runtime-code hosts ----
+# The reading order is the seam order: Definition, Provider, Consumer.
+
+# §9: scheduling is a seam. `schedule-manual` is in the catalog and in NO bundle.
+- id: schedule
+  plugin: schedule
+- id: schedule.cron
+  plugin: schedule-cron
+  config: { state_db: !!expr 'bough_path("schedule.db")', job_timeout_ms: 300000 }
+
+# §7: the boundary block, one source, every agent's projection.
+- id: boundary
+  plugin: boundary-instructions
+- id: drafts
+  plugin: drafts
+  config: { retain: 500 }
+- id: tool.drafts
+  plugin: tool-drafts
+
+# §7: the four kinds get their Providers. `actions` (Phase 2) refuses everything until they mount.
+- id: actions.github
+  plugin: actions-github
+  config:
+    gh_bin: gh
+    known_bots: ["dependabot[bot]", "github-actions[bot]", "renovate[bot]", "codecov[bot]"]
+    timeout_ms: 60000
+- id: actions.linear
+  plugin: actions-linear
+  config:
+    endpoint: "https://api.linear.app/graphql"
+    api_key: !!expr 'env_or("LINEAR_API_KEY", "")'
+    timeout_ms: 30000
+- id: actions.reconcile
+  plugin: actions-reconcile
+  config: { at_boot: true, surface_to: sol }
+
+# §6: collectors, each ONE row on ctx.schedule.
+- id: collect.github
+  plugin: collector-github
+  # This bundle ships `mail` (mail-router), so the row REQUIRES it (entry inject may ADD
+  # keys, D1): activation waits for the router, and the boot catch-up sweep cannot race it
+  # into a fiber-lifetime `deliver_to` fallback. A router-less tree omits this line.
+  inject: { required: [mail] }
+  config:
+    cadence: { every_ms: 300000 }
+    gh_bin: gh
+    # EMPTY BY DEFAULT, and the row says so: every sweep reports a `repos` entry in `disabled`
+    # and warns, rather than reporting success over nothing. Name repositories in the patch layer
+    # to turn this collector on.
+    repos: []
+    prs: true
+    review_requests: true
+    mentions: true
+    checks: false
+    # MERGE (track B → Phase 5): EMPTY, and that is the shipped setting. `mail` (mail-router) is
+    # in this bundle, so the ROUTER chooses recipients from the `gh:` refs this row cites — a lane
+    # gets a repository's mail by linking the ref, not by being named here. `deliver_to` is the
+    # FALLBACK for a tree with no `mail` seam; a row with neither warns at activation.
+    deliver_to: []
+    wake_classes: [review_request, mention]
+    known_bots: ["dependabot[bot]", "github-actions[bot]", "renovate[bot]"]
+    state_db: !!expr 'bough_path("collect-github.db")'
+    batch: 50
+    timeout_ms: 30000
+- id: collect.linear
+  plugin: collector-linear
+  # This bundle ships `mail` (mail-router), so the row REQUIRES it (entry inject may ADD
+  # keys, D1): activation waits for the router, and the boot catch-up sweep cannot race it
+  # into a fiber-lifetime `deliver_to` fallback. A router-less tree omits this line.
+  inject: { required: [mail] }
+  config:
+    cadence: { every_ms: 600000 }
+    endpoint: "https://api.linear.app/graphql"
+    api_key: !!expr 'env_or("LINEAR_API_KEY", "")'
+    # EMPTY BY DEFAULT, like `collect.github`'s `repos`: with neither set the row reports itself
+    # off every sweep instead of sweeping the whole Linear workspace into `deliver_to`.
+    teams: []
+    projects: []
+    # EMPTY: the router routes on the `linear:` refs this row cites. See `collect.github`.
+    deliver_to: []
+    wake_classes: [assigned, mention]
+    state_db: !!expr 'bough_path("collect-linear.db")'
+    batch: 50
+    timeout_ms: 30000
+- id: collect.slack
+  plugin: collector-slack
+  # This bundle ships `mail` (mail-router), so the row REQUIRES it (entry inject may ADD
+  # keys, D1): activation waits for the router, and the boot catch-up sweep cannot race it
+  # into a fiber-lifetime `deliver_to` fallback. A router-less tree omits this line.
+  inject: { required: [mail] }
+  config:
+    cadence: { every_ms: 300000 }
+    # The `mcp.rmcp` server row this collector sweeps through. The shipped `servers:` list is
+    # empty, so until a patch mounts a `slack` server row (see `bundles/bough-mcp-claude.yml`)
+    # every sweep reports the missing server loudly and delivers nothing.
+    mcp_server: slack
+    # EMPTY BY DEFAULT, the `collect.github` `repos: []` shape: the query IS the scope (and what
+    # makes the items directed at the viewer), and a shipped default may not read anybody's
+    # workspace by omission. Name queries in the patch layer to turn this collector on.
+    queries: {}
+    # EMPTY: the router routes on the `slack:<channel>` refs this row cites. See `collect.github`.
+    deliver_to: []
+    wake_classes: [mention]
+    state_db: !!expr 'bough_path("collect-slack.db")'
+    batch: 20
+
+# §6: the mcp seam.
+- id: mcp
+  plugin: mcp
+- id: mcp.rmcp
+  plugin: mcp-rmcp
+  config: { servers: [], connect_timeout_ms: 15000, call_timeout_ms: 120000 }
+- id: tool.mcp
+  plugin: tool-mcp
+  config: { prefix: "mcp__", max_result_bytes: 20000 }
+
+# §9: the runtime-code hosts.
+- id: wards
+  plugin: wards-rhai
+  config:
+    # `bough_path`, NOT `home_path`: these dirs must follow `$BOUGH_HOME`, or every subprocess
+    # test that isolates only `$BOUGH_HOME` scans and watches the developer's real `~/.bough`.
+    dir: !!expr 'bough_path("wards")'
+    glob: "*.rhai"
+    watch: true
+    debounce_ms: 400
+    max_ops: 200000
+    max_depth: 32
+    max_string_bytes: 65536
+    max_array_size: 4096
+    eval_timeout_ms: 2000
+    # The bound on the INDIRECT firing loop: a ward whose actions make an agent write a step the
+    # ward triggers on feeds itself through that agent forever. Every individual firing is well
+    # behaved, so only a rate over time can see it.
+    max_firings_per_minute: 60
+    limits: { max_actions: 16, max_spawns: 2, max_text_bytes: 8192 }
+- id: hooks
+  plugin: hooks-exec
+  config:
+    points: []
+    max_output_bytes: 65536
+    max_failures: 3
+    limits: { max_actions: 16, max_spawns: 2, max_text_bytes: 8192 }
+- id: mcp.subprocess
+  plugin: mcp-subprocess
+  config:
+    processes: []
+    limits: { max_actions: 16, max_spawns: 2, max_text_bytes: 8192 }
+- id: skills
+  plugin: skills
+  config:
+    # `bough_path`, NOT `home_path` — see the `wards` row.
+    dir: !!expr 'bough_path("skills")'
+    glob: "*.md"
+    watch: true
+    debounce_ms: 400
+    max_bytes: 65536
+    max_injected: 3
+    scan_steps: 40
+
+# §13: the sleep listener, and the one thing that consumes it. `power-test` is in the catalog and
+# in NO bundle: the SWAP patch names it.
+- id: power
+  plugin: power
+- id: power.sleep
+  plugin: sleep-listener
+  config: { enabled: true, min_sleep_ms: 60000, source: auto }
+- id: catch-up.on-wake
+  plugin: catch-up-on-wake
+  config: { min_sleep_ms: 60000, kinds: [resident] }
+
+# §8/§5: the two system passes as schedule rows.
+- id: schedule.catch-up
+  plugin: schedule-catch-up
+  config: { cadence: { every_ms: 1800000 }, catch_up: true, kinds: [resident] }
+- id: schedule.reconsolidate
+  plugin: schedule-reconsolidate
+  config: { cadence: { cron: "0 0 4 * * *" }, catch_up: true, command: "reconsolidate", agent: sol }
+
+# ---- Phase codemode: the DEFAULT consumer of the `tools` seam (Andrey, 2026-08-28) ----
+#
+# ENABLED, and that is the shipped setting. `bough` (bare), `bough exec` and every profile that
+# composes this bundle show the model ONE tool — `run(program)` — and conceal the typed set from
+# the prompt. Nothing is REMOVED: `tools`, `tools.baseline`, `tools.operator` and every other typed
+# row stay mounted and executable, and every call a program makes goes through the same pipeline.
+# There is no separate "typed consumer" ROW to disable — the typed surface IS those Provider rows,
+# and it comes back the moment the row below stops concealing it.
+#
+# THE FALLBACK, one field, over any profile (docs/configuration.md):
+#
+#     bough --patch <(echo 'entries: {tools.codemode: {disabled: true}}')
+#
+# or, permanently, `disabled: true` on `tools.codemode` below. `js`/`js.quickjs` may stay up; they
+# cost nothing with no program to run.
+#
+# The rows live HERE, in the base bundle, rather than in `bundles/bough-codemode.yml`, for one
+# reason: a patch layer CONFIGURES rows and never CREATES them (`config/patch.rs`), so rows that
+# exist only in a bundle no profile lists cannot be reached by `--patch` at all — the merge note
+# `docs/codemode-merge-notes.md` §8 is exactly that experiment.
+#
+# `bundles/bough-codemode.yml` remains the one layer that ASSERTS the switch (three
+# `disabled: false` lines); `profiles/tui.yml` and `profiles/headless.yml` compose it last so the
+# tool surface is legible at the profile level and not only in this file.
+- id: js
+  plugin: js
+  config:
+    # The caps a program runs under unless `tools.codemode` names its own. Ops is an
+    # interrupt-handler budget, not an instruction count; the wall clock is the real bound.
+    default_caps:
+      ops: 20000000
+      memory_bytes: 67108864
+      stack_bytes: 1048576
+      wall_ms: 120000
+      console_bytes: 65536
+- id: js.quickjs
+  plugin: js-quickjs
+  config:
+    interrupt_check_ops: 10000
+    max_concurrent_programs: 4
+- id: tools.codemode
+  plugin: tools-codemode
+  config:
+    # `null` ⇒ the `js` row's `default_caps`, so the caps are said once.
+    caps: null
+    conceal: mirror
+    aliases:
+      agent: spawn_worker
+      # `tool?fixed=value#positional,names` — one op-discriminated tool read as the several
+      # functions `surface/` documents. The fixed argument wins over anything the program passes.
+      ledger.search: ledger_read?op=search#q
+      ledger.steps: ledger_read?op=steps#range
+      ledger.tail: ledger_read?op=tail#n
+      bg: bg?op=start#name,cmd
+      bg.output: bg?op=output#id
+      bg.kill: bg?op=kill#id
+      # A DISPATCH: `act(kind, target, payload)`, over whichever kinds have a Provider.
+      act: open_pr|push_to_pr|bot_thread_op|linear_write
+    namespaces:
+      mcp: "mcp__"
+    # DROPPED under code mode (phase brief item 4): `bash` + `rg` and `view` cover `read_file`,
+    # `glob` and `grep`, and `edit_file(old, new)` is a regression against the hash-anchored patch
+    # grammar. Visibility only — the tools stay registered and a typed-tools agent still has them.
+    hide: [read_file, write_file, edit_file, glob, grep]
+    # The Consumer knows nothing about a concrete shell Provider; these name it. `sh` is the
+    # concurrent one (`tools-operator`); it answers with `[{code, out}, …]`, so it is a shell for
+    # the TAG rule and NOT a content-result — the surface promises a program the objects.
+    shell_tools: [bash, sh]
+    shell_content_result: [bash]
+    tags_min: 3
+    tags_max: 5
+    # Code mode's spelling of `tools.max_parallel` (bough-base sets 8), enforced inside a program
+    # because each host call issues its own single-call `execute_under`.
+    max_parallel_calls: 8
+    # Equal to `tools.default_deadline_ms` (bough-base sets 120000), so the same tool answers the
+    # same whether a typed call or a program made it. The seam does not expose its value to read.
+    inner_deadline_ms: 120000
+    max_console_bytes: 65536
+    max_calls_per_program: 64
+    tags_required: true
+    surface_section: true

@@ -1,0 +1,17 @@
+# 15-leader-swap.sh's swap: the `leader` set moves from `sol`'s scope to `terra`'s (§17 Phase 5's
+# SWAP). ONE config field. The persona is restated because a patch layer replaces an entry's
+# `config` map wholesale (§0.5) — and it must stay byte-identical to `bundles/bough-tui-app.yml`,
+# or the script would be watching the persona CHANGE rather than MOVE.
+entries:
+  leader:
+    config:
+      agent: terra
+      persona: |
+        You hold the whole population in view. You adopt mail nobody claimed and keep the
+        timeline. Lanes are yours, both ways: open one with create_lane the moment a stream of
+        work deserves its own (as many as the work needs), and fold finished or long-quiet ones
+        back with merge_lanes — the Lanes section you see every wake is your roster, and unremarked
+        clutter in it is your failure mode. Andrey can /undo a creation; trajectories are never
+        lost. Standing instructions are pins only Andrey sets.
+      adopt_batch: 20
+      attribute_reconsolidation: true

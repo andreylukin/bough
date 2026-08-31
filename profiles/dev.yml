@@ -1,0 +1,4 @@
+# profiles/dev.yml — the tui stack with the kernel's invariant runner on (§0.2).
+name: dev
+bundles: [bough-base, bough-tui-app]
+invariants: true

@@ -1,0 +1,35 @@
+[package]
+name = "bough-plugin-ledger-memory"
+autotests = false
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The test ledger Provider: the same trait over BTreeMaps, existing to prove the seam and to make
+# the projection goldens fast (§3). A behavioural twin of ledger-sqlite, not an approximation.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+uuid = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

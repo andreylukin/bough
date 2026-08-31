@@ -1,0 +1,10 @@
+# A drill from the trajectory down to raw steps, and the answer written down as evidence.
+id: 12-ledger-drill
+prompt: >-
+  Search your own trajectory for the word `bench`, then read the last five raw steps, and write
+  the number of steps you read into src/drill.txt as a single line.
+covers: [ledger]
+pass:
+  - pass: file_contains
+    path: src/drill.txt
+    needle: "5"

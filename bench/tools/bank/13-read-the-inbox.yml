@@ -1,0 +1,10 @@
+# Unconsumed mail this wake has not claimed, and what it says.
+id: 13-read-the-inbox
+prompt: >-
+  Read your inbox and write the number of unconsumed messages into src/inbox.txt as a single
+  line, then say what you found.
+covers: [inbox]
+pass:
+  - pass: file_contains
+    path: src/inbox.txt
+    needle: "0"

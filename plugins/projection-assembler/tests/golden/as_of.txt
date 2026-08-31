@@ -1,0 +1,34 @@
+## Identity
+
+name: sol
+trajectory: t-sol
+routing refs: gh:bough/rebuild#1
+wake classes: ordinary
+digest: none
+tools: none
+
+
+## Contributed
+
+4 steps visible
+
+
+## Pins
+
+- the standing pin (step:p1)
+  still standing
+
+
+## Recent steps
+
+### wake w1
+- #1 pin/set [thought] {"supersedes":[],"text":"still standing","title":"the standing pin"}
+- #2 step/start [thought] {"index":3}
+- #3 step/start [thought] {"index":3}
+- #4 mail/delivered [evidence] {"class":"ordinary","from":"andrey","refs":[],"subject":"the old mail","summary":"the old mail"}
+
+
+## Unconsumed mail
+
+### ordinary
+- from andrey: the old mail — the old mail (step:m1)

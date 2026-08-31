@@ -1,0 +1,31 @@
+[package]
+name = "bough-plugin-ledger"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The ledger Service Definition (P1-D1): vocabulary, rules, events, the LedgerStore trait and the
+# provider-conformance suite. It has no `Plugin` impl and appears in no bundle.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+# NOT dev-only: `conformance` is a public module of this crate (the providers' test files expand
+# it), so its `tokio::spawn` / `tokio::time` are a real dependency of the library.
+tokio = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+jsonschema = { workspace = true }       # compiled body-schema validators, one per step type
+chrono = { workspace = true }
+sha2 = { workspace = true }             # envelope fingerprint, row hashes
+uuid = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

@@ -1,0 +1,51 @@
+[package]
+name = "bough-plugin-reconsolidation"
+autotests = false
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# §8's reconsolidation row: batched distillation that only ADDS blocks, contradiction detection
+# surfacing claim steps, and stale-evidence expiry as an APPENDED marker the projector honours.
+# It never edits a sealed row or a raw step.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-rollups = { workspace = true }
+bough-plugin-llm = { workspace = true }
+bough-plugin-agents = { workspace = true }
+bough-plugin-commands = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }            # the `recon/request` input digest
+
+[dev-dependencies]
+bough-plugin-ledger-memory = { workspace = true }
+bough-plugin-llm-replay = { workspace = true }
+# V5's end-to-end half: the marker a real pass writes, read by the real projector. Acyclic —
+# projection-assembler does not depend on this row.
+bough-plugin-projection = { workspace = true }
+bough-plugin-projection-assembler = { workspace = true }
+# V5's distillation half against the row that actually mounts, not the `DigestOnly` double.
+# Acyclic — `rollups-summarizer` does not depend on this row.
+bough-plugin-rollups-summarizer = { workspace = true }
+bough-plugin-rollups-none = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

@@ -1,0 +1,7 @@
+# profiles/codemode.yml — headless, with the code-mode consumer mounted on top (phase codemode).
+#
+# `bough-codemode` comes LAST so its three rows land over a fully composed base: the `tools` seam
+# and every typed row are already active when the consumer conceals them from the prompt.
+name: codemode
+bundles: [bough-base, bough-headless, bough-codemode]
+invariants: false

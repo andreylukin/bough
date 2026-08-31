@@ -1,0 +1,21 @@
+[package]
+name = "bough-plugin-pins"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# `/pin` and `/unpin`: Andrey's hands on the pin stream, and the only writers of `pin/set` /
+# `pin/retire` since the claims demolition removed the accepted-requirement path. §3, §5.
+# Row `pins` in `bough-base`.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-commands = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }

@@ -1,0 +1,27 @@
+[package]
+name = "bough-kernel"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# WP-2 owns this manifest. WP-3 and WP-4 fill modules; they do not edit it.
+# NOTE (§13, Phase 0 §1.1): the kernel must NOT depend on reqwest. A review that finds it here fails.
+[dependencies]
+bough-util = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+parking_lot = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+schemars = { workspace = true }
+inventory = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

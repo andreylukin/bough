@@ -1,0 +1,25 @@
+# The second SWAP patch (§17 Phase 2): the `llm.anthropic` row changes plugin to `llm-replay`.
+# Same seam, same key, no recompile — and the offline suite stops needing a network at all.
+#
+# Several matchless rounds, because a conversation is several requests: a transcript with one
+# round would make the second wake fail on an unmatched request, which is `llm-replay` behaving
+# correctly and the fixture being wrong.
+entries:
+  llm.anthropic:
+    plugin: llm-replay
+    config:
+      strict: true
+      models: "*"
+      rounds:
+        - chunks:
+            - { type: text, text: "hello from the replay" }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "and again from the replay" }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "and once more from the replay" }
+            - { type: end, stop: end_turn }
+        - chunks:
+            - { type: text, text: "still replaying" }
+            - { type: end, stop: end_turn }

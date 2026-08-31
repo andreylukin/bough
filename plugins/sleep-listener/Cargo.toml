@@ -1,0 +1,30 @@
+[package]
+name = "bough-plugin-sleep-listener"
+autotests = false
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# §13: the macOS Provider — IORegisterForSystemPower on its OWN THREAD with a CFRunLoop as primary, NSWorkspace as fallback — and a no-op source on every other platform.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-util = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+bough-plugin-power = { workspace = true }
+libc = { workspace = true }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

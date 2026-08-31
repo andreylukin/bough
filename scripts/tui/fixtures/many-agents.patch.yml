@@ -1,0 +1,13 @@
+# 12-many-agents.sh's tree: THREE lanes, so "the strip shows many agents" is a sentence about a
+# population rather than about one rail with a title.
+#
+# `sol` and `terra` are what the shipped bundle bootstraps; `luna` is the third, and the one the
+# script puts to sleep. A patch layer replaces an entry's `config` map WHOLESALE (§0.5), so the
+# whole map is restated.
+entries:
+  residents:
+    config:
+      bootstrap: [sol, terra, luna]
+      traj_prefix: "lane/"
+      resume_all: true
+      catch_up: true
