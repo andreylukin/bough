@@ -570,6 +570,17 @@ does; the seam's start/result vocabulary leaves room, the Providers do not imple
   model turn.
 - **Strip + focus pane**: agent rail with state glyphs and about-lines; the focused agent's
   chat/trajectory fills the rest.
+- **Truth on demand** (the conversation brief, 2026-08-31; amends round 11's always-on context
+  view). The conversation pane RESTS as a chat: tier bands and the dropped fold keep older rows
+  reachable in place (expand-in-place, marked as not sent), the standing block sits at the top of
+  the scrollback, queued mail waits in a TRAY above the composer while delivered mail reads
+  inline as a third voice, tool calls stay collapsed rows and wake marks stay labeled. Truth
+  surfaces on demand, at three depths of one view: while a message is being typed the pane PEEKS
+  (the fold line says where the verbatim tail begins and what rides above it as rollups); `^p`
+  pins the FULL context view (every band labeled with its token count on its ground colour, the
+  standing block pinned, mail under its own band, the footer). Every depth renders the same
+  `ctx.projection` assembly, so the pane can never disagree with the next wake; the section
+  grounds are theme roles (`wash_*`), never colours at call sites.
 - **Full mouse + keyboard parity**: clickable expanding tool calls, click-to-focus, wheel scroll,
   drag-select with OSC52 copy, highlighting.
 - **Digging**: per-agent trajectory pane with FTS across all agents; projection preview (exactly what

@@ -731,6 +731,7 @@ impl TuiHandle {
             theme: self.0.theme,
             now,
             composer_focused: self.composer_focused(),
+            composer_nonempty: !self.0.composer.lock().text().is_empty(),
             // What the panes REPORTED on the last frame (`RenderCx::report_rows`). A pane's
             // roving row focus and the transcript's follow state live inside the pane — the
             // shell cannot read them — so the honest shape is a report, not a guess. A pane

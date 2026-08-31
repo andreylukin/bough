@@ -182,7 +182,8 @@ fn the_focused_row_paints_a_marker_in_the_gutter() {
         Arc::new(Mutex::new(FocusState::default())),
         Arc::new(Mutex::new(LiveText::default())),
     );
-    let (lines, _, _, row_lines) = pane.lines_with_rows(&state, &LiveText::default(), 60, &theme);
+    let (lines, _, _, row_lines) =
+        pane.lines_with_rows(&state, &LiveText::default(), 60, &theme, None);
 
     let start = row_lines[1] as usize;
     let rendered: String = lines[start]
@@ -223,7 +224,7 @@ fn row_lines_line_up_with_the_rows_they_belong_to() {
         Arc::new(Mutex::new(LiveText::default())),
     );
     let (lines, headers, _, row_lines) =
-        pane.lines_with_rows(&state, &LiveText::default(), 60, &theme);
+        pane.lines_with_rows(&state, &LiveText::default(), 60, &theme, None);
 
     assert_eq!(row_lines.len(), state.rows.len(), "one start per row");
     assert!(

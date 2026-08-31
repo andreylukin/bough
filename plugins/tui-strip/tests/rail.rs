@@ -36,6 +36,10 @@ fn theme() -> Theme {
         code: ratatui::style::Color::Magenta,
         code_bg: ratatui::style::Color::Magenta,
         field_bg: ratatui::style::Color::Magenta,
+        wash_head: ratatui::style::Color::Magenta,
+        wash_tier: ratatui::style::Color::Magenta,
+        wash_tail: ratatui::style::Color::Magenta,
+        wash_mail: ratatui::style::Color::Magenta,
     }
 }
 

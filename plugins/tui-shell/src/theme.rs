@@ -67,6 +67,17 @@ pub struct Theme {
     pub code_bg: Color,
     /// The composer's band: the one row that is an input, told apart by its ground.
     pub field_bg: Color,
+    /// Section grounds (the conversation brief, 2026-08-31): membership in the next context is a
+    /// wash a row STANDS ON, not only a rule above it. Each is its section's hue blended faintly
+    /// into `measure_bg`, so every foreground role keeps its audited contrast on top of it.
+    /// The fixed material: identity, skills, digest, pins.
+    pub wash_head: Color,
+    /// A tier band: rollups standing in for rows no longer verbatim.
+    pub wash_tier: Color,
+    /// The verbatim tail.
+    pub wash_tail: Color,
+    /// Unconsumed mail: the tray, and the mail band.
+    pub wash_mail: Color,
 }
 
 impl Theme {
@@ -94,6 +105,10 @@ impl Theme {
                 code: Color::Rgb(0xc0, 0xca, 0xf5),
                 code_bg: Color::Rgb(0x2f, 0x34, 0x42),
                 field_bg: Color::Rgb(0x2a, 0x30, 0x3c),
+                wash_head: Color::Rgb(0x22, 0x27, 0x38),
+                wash_tier: Color::Rgb(0x2a, 0x27, 0x3b),
+                wash_tail: Color::Rgb(0x20, 0x24, 0x2a),
+                wash_mail: Color::Rgb(0x2d, 0x2a, 0x2c),
             },
             ThemeName::Light => Theme {
                 bg: Color::Reset,
@@ -114,6 +129,10 @@ impl Theme {
                 code: Color::Rgb(0x2f, 0x35, 0x45),
                 code_bg: Color::Rgb(0xea, 0xee, 0xf4),
                 field_bg: Color::Rgb(0xf0, 0xf3, 0xf7),
+                wash_head: Color::Rgb(0xee, 0xf2, 0xf9),
+                wash_tier: Color::Rgb(0xf3, 0xf0, 0xf7),
+                wash_tail: Color::Rgb(0xf4, 0xf8, 0xf4),
+                wash_mail: Color::Rgb(0xf7, 0xf2, 0xeb),
             },
         }
     }

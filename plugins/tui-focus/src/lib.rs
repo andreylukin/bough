@@ -7,10 +7,10 @@
 //! This pane IS §11's `trajectory` pane (P3-D4): it owns the live tail AND the scrollback.
 
 pub mod branches;
-pub mod hit;
 pub mod context;
 pub mod draft;
 pub mod expand;
+pub mod hit;
 pub mod invariant;
 pub mod program;
 pub mod rowfocus;
@@ -32,7 +32,7 @@ use bough_plugin_tui_render::ToolCallView;
 use bough_plugin_tui_shell::pane::{
     Pane, PaneCx, PaneEvent, PaneOutcome, PaneSpec, RenderCx, Slot, SlotSize,
 };
-use bough_plugin_tui_shell::{FocusRequest, PaneId, Theme, Tui, TuiHandle};
+use bough_plugin_tui_shell::{FocusRequest, PaneId, Theme, Tui, TuiHandle, TuiKeyEvent};
 use crossterm::event::{KeyCode, KeyEvent};
 use parking_lot::Mutex;
 use ratatui::layout::Rect;
@@ -44,9 +44,7 @@ pub use branches::{branches_from_edges, Branch, BranchPicker, PickerOutcome};
 pub use expand::{call_of_hit, hit_for_call, Expanded};
 pub use program::{program_header, program_lines, ProgramError, ProgramSub, ProgramView, RUN_TOOL};
 pub use rowfocus::{focus_marker, RowFocus};
-pub use rows::{
-    rows_from_steps, trailing_durable, trailing_text_row, trailing_text_rows, Row,
-};
+pub use rows::{rows_from_steps, trailing_durable, trailing_text_row, trailing_text_rows, Row};
 pub use scroll::{Scroll, Viewport};
 pub use stream::{apply_tee, tee_for, tee_stream, trailing_text, LiveText};
 
@@ -64,8 +62,9 @@ pub struct FocusConfig {
     pub page_lines: u16,
     pub expand_new_tools: bool,
     pub show_reasoning: bool,
-    /// The context view (round 11): the pane shows the model's NEXT context, section by section.
-    /// `false` is the plain transcript.
+    /// The truth machinery (round 11, amended by the conversation brief, 2026-08-31): the pane
+    /// is a CHAT whose truth surfaces on demand, the peek while a message is typed and `^p` for
+    /// the full context view. `false` is the plain transcript: no assembly, no bands, no tray.
     #[serde(default = "default_true")]
     pub context: bool,
     /// Debounce on `ledger/step` before re-assembling. Assembly is deterministic but not free.
@@ -131,6 +130,9 @@ pub struct FocusState {
     pub agent_name: Option<String>,
     /// The model's next context, as last assembled (round 11). Empty until the first refresh.
     pub context: context::ContextView,
+    /// `^p` (the conversation brief, 2026-08-31): the FULL context view pinned on; off, the pane
+    /// is a chat and truth surfaces in the peek while a message is typed.
+    pub context_pinned: bool,
 }
 
 impl FocusState {
@@ -280,7 +282,8 @@ impl FocusPane {
         Vec<(bough_plugin_llm::ToolCallId, u16)>,
         Vec<hit::Hit>,
     ) {
-        let (lines, headers, hits, _) = self.lines_with_rows(state, live, width, theme);
+        let depth = self.depth(state, false, false);
+        let (lines, headers, hits, _) = self.lines_with_rows(state, live, width, theme, depth);
         (lines, headers, hits)
     }
 
@@ -294,6 +297,7 @@ impl FocusPane {
         live: &LiveText,
         width: u16,
         theme: &Theme,
+        depth: Option<context::Depth>,
     ) -> (
         Vec<Line<'static>>,
         Vec<(bough_plugin_llm::ToolCallId, u16)>,
@@ -326,6 +330,27 @@ impl FocusPane {
                 "\u{2026} older steps above (PgUp)",
                 Style::default().fg(theme.dim),
             ));
+        }
+        let now = state.now.unwrap_or_else(chrono::Utc::now);
+
+        // In a chat the STANDING block lives at the TOP OF THE SCROLLBACK (the conversation
+        // brief): the room's fixtures, above the oldest loaded row, seen by scrolling to the
+        // beginning. Only the full view (`^p`) pins it. Skipped while older pages are still
+        // unloaded, where it would sit above history that is not the beginning.
+        if matches!(depth, Some(context::Depth::Chat | context::Depth::Peek))
+            && !state.more_above
+            && state.context.is_on()
+        {
+            let (standing, s_hits) = context::standing_lines(
+                &state.context,
+                (state.height as usize / 3).max(3),
+                width,
+                theme,
+                lines.len() as u16,
+                now,
+            );
+            hits_out.extend(s_hits);
+            lines.extend(standing);
         }
 
         // The empty transcript says what it is for (visual audit F15): a first launch used to be
@@ -365,22 +390,13 @@ impl FocusPane {
         let folds = rows::retry_folds(&state.rows);
         let mut row_lines: Vec<u16> = vec![0; state.rows.len()];
         let mut skip_until: Option<usize> = None;
-        // The context view (round 11): which rows are IN the next context, which a tier
-        // summarises, which are gone, which are mail — and the labeled rules between them.
-        let now = state.now.unwrap_or_else(chrono::Utc::now);
-        let plan = if self.cfg.context && state.context.is_on() {
+        // The truth plan (round 11, the conversation brief): which rows are IN the next context,
+        // which a tier summarises, which are gone, which are mail, and what the depth says
+        // between them.
+        let plan = depth.map(|d| {
             let seq_of = state.seq_of();
-            Some(context::plan(
-                &state.context,
-                &state.rows,
-                &seq_of,
-                now,
-                width,
-                theme,
-            ))
-        } else {
-            None
-        };
+            context::plan(&state.context, &state.rows, &seq_of, now, width, theme, d)
+        });
         let emit = |pieces: &[context::Piece],
                     lines: &mut Vec<Line<'static>>,
                     hits: &mut Vec<hit::Hit>| {
@@ -624,6 +640,17 @@ impl FocusPane {
                     ));
                 }
             }
+            // A row on screen that the model will NOT see (an unfolded tier's, the dropped
+            // fold's) is dimmed span by span (the conversation brief): the band above it says so
+            // in words, the dim says it at a glance. Span-level, for the same reason the flash
+            // is: a span's own `fg` is patched OVER the line style by ratatui.
+            if plan.as_ref().is_some_and(|p| p.summarized[i]) {
+                for line in lines.iter_mut().skip(row_start) {
+                    for span in line.spans.iter_mut() {
+                        span.style = span.style.fg(theme.dim);
+                    }
+                }
+            }
             // The roving row focus, drawn NEVER BY COLOUR ALONE (audit delight 3): a marker glyph
             // in the gutter column of every line of the row, and a `sel_bg` fill behind it.
             // …and only while this pane HAS the keyboard (round 10): a marker that stayed after
@@ -654,18 +681,25 @@ impl FocusPane {
                 }
             }
         }
-        // The mail band, last, where the model reads it (D11-3): every mail row under one rule.
+        // The mail band, last, where the model reads it (D11-3): every mail row under one band.
+        // Only the FULL view draws it inline; the chat and the peek hold the queue in the tray.
         if let Some(p) = &plan {
-            for (i, row) in state.rows.iter().enumerate() {
-                if !p.mail[i] {
-                    continue;
-                }
-                if let Some(pieces) = p.before.get(&i) {
-                    emit(pieces, &mut lines, &mut hits_out);
-                }
-                row_lines[i] = lines.len() as u16;
-                if let Row::Mail { from, subject, .. } = row {
-                    lines.push(mail_line(from, subject, theme));
+            if depth == Some(context::Depth::Full) {
+                for (i, row) in state.rows.iter().enumerate() {
+                    if !p.mail[i] {
+                        continue;
+                    }
+                    if let Some(pieces) = p.before.get(&i) {
+                        emit(pieces, &mut lines, &mut hits_out);
+                    }
+                    row_lines[i] = lines.len() as u16;
+                    if let Row::Mail { from, subject, .. } = row {
+                        lines.push(context::washed(
+                            mail_line(from, subject, theme),
+                            width,
+                            theme.wash_mail,
+                        ));
+                    }
                 }
             }
             emit(&p.trailing, &mut lines, &mut hits_out);
@@ -705,10 +739,39 @@ impl FocusPane {
                 &live.text, width, theme,
             ));
         }
-        if plan.is_some() {
+        // The mail TRAY (chat and peek): the queue waits above the composer, never inline.
+        if matches!(depth, Some(context::Depth::Chat | context::Depth::Peek)) {
+            if let Some(p) = &plan {
+                let pieces =
+                    context::tray_pieces(&state.context, &state.rows, &p.mail, width, theme);
+                emit(&pieces, &mut lines, &mut hits_out);
+            }
+        }
+        if depth == Some(context::Depth::Full) {
             lines.push(context::footer(&state.context, now, theme));
         }
         (lines, headers, hits_out, row_lines)
+    }
+
+    /// The truth depth this frame (the conversation brief, 2026-08-31): `None` is the plain
+    /// transcript (config off, or no assembly yet); `Full` is pinned by `^p`; `Peek` while a
+    /// message is being typed; `Chat` otherwise.
+    pub fn depth(
+        &self,
+        state: &FocusState,
+        composer_focused: bool,
+        composer_nonempty: bool,
+    ) -> Option<context::Depth> {
+        if !self.cfg.context || !state.context.is_on() {
+            return None;
+        }
+        Some(if state.context_pinned {
+            context::Depth::Full
+        } else if composer_focused && composer_nonempty {
+            context::Depth::Peek
+        } else {
+            context::Depth::Chat
+        })
     }
 
     /// Compute the focused agent's branches and open the picker over them. With no injected
@@ -808,10 +871,10 @@ fn draft_key(draft: &str) -> bough_plugin_llm::ToolCallId {
     bough_plugin_llm::ToolCallId::new(format!("draft:{draft}"))
 }
 
-fn mail_line(from: &str, subject: &str, theme: &Theme) -> Line<'static> {
+pub(crate) fn mail_line(from: &str, subject: &str, theme: &Theme) -> Line<'static> {
     Line::from(vec![
-        Span::styled("\u{2709} ", Style::default().fg(theme.evidence)),
-        Span::styled(from.to_string(), Style::default().fg(theme.evidence)),
+        Span::styled("\u{2709} ", Style::default().fg(theme.warn)),
+        Span::styled(from.to_string(), Style::default().fg(theme.warn)),
         Span::raw("  "),
         Span::styled(subject.to_string(), Style::default().fg(theme.fg)),
     ])
@@ -852,10 +915,14 @@ impl Pane for FocusPane {
         // THE PROSE MEASURE (M13): text a human reads wraps at `min(width, measure_cols)`, so a
         // 200-column terminal gets a 90-column paragraph and the rest is margin.
         let measure = bough_plugin_tui_shell::measure(area.width, cx.view.measure_cols);
-        // The STANDING block (round 11, D11-2): the folded head, the digest and the pins never
-        // scroll. It takes up to a third of the pane (pins fold to titles past that) and, opened,
-        // what it needs — but never the rows the transcript cannot do without.
-        let (standing, standing_hits) = if self.cfg.context && state.context.is_on() {
+        // The truth depth this frame (the conversation brief, 2026-08-31): the chat by default,
+        // the peek while a message is typed, the full view while `^p` has it pinned.
+        let depth = self.depth(&state, cx.view.composer_focused, cx.view.composer_nonempty);
+        // The STANDING block, PINNED (round 11, D11-2), in the FULL view only: the folded head,
+        // the digest and the pins never scroll. It takes up to a third of the pane (pins fold to
+        // titles past that) and, opened, what it needs. In the chat and the peek the same block
+        // lives at the top of the scrollback instead (`lines_with_rows`).
+        let (standing, standing_hits) = if depth == Some(context::Depth::Full) {
             context::standing_lines(
                 &state.context,
                 (area.height as usize / 3).max(3),
@@ -882,7 +949,7 @@ impl Pane for FocusPane {
         };
         state.height = area.height;
         let (lines, headers, hits_out, row_lines) =
-            self.lines_with_rows(&state, &live, measure, &theme);
+            self.lines_with_rows(&state, &live, measure, &theme, depth);
         state.lines = lines.len();
         state.row_lines = row_lines.clone();
         let tool_rows: Vec<(usize, bough_plugin_llm::ToolCallId)> = state
@@ -1272,6 +1339,7 @@ impl Pane for FocusPane {
             ("end", "follow the latest"),
             ("click", "expand a tool call"),
             ("ctrl+b", "branches"),
+            ("ctrl+p", "context view"),
         ]
     }
 }
@@ -1641,6 +1709,30 @@ impl Plugin for FocusPlugin {
                     Arc::new(move || tui.redraw()),
                 );
                 filled
+            }
+        })
+        .await?;
+
+        // `^p` without touching the shell's keymap: the `tui/key` waterfall (P3-D18), the same
+        // seam the panel's `^t` rides. Pin and unpin the FULL context view; the chat and the
+        // peek need no key, they are the resting and the typing state.
+        let (s, t) = (state.clone(), tui.clone());
+        ctx.on_waterfall::<TuiKeyEvent, _, _>(move |mut dispatch, next| {
+            let (s, t) = (s.clone(), t.clone());
+            async move {
+                let is_toggle = matches!(dispatch.key.code, KeyCode::Char('p'))
+                    && dispatch
+                        .key
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::CONTROL);
+                if is_toggle && !dispatch.handled {
+                    dispatch.handled = true;
+                    let mut held = s.lock();
+                    held.context_pinned = !held.context_pinned;
+                    drop(held);
+                    t.redraw();
+                }
+                next.run(dispatch).await
             }
         })
         .await?;

@@ -1,8 +1,12 @@
-//! Invariant: the conversation pane shows the model's NEXT CONTEXT, section by section, as the
-//! assembler will send it — not a session log (the TUI brief, round 11; Andrey, 2026-08-28: "we
-//! shove context in, it's sections based on previous history. I want to see those sections,
-//! labeled"). The sections come from the same `assemble` the wake flow calls (`tui-preview`'s
-//! rule): what is labeled here is what the model reads, by construction.
+//! Invariant: everything the pane says about the model's NEXT CONTEXT comes from the same
+//! `assemble` the wake flow calls (`tui-preview`'s rule), so it is true by construction at every
+//! DEPTH of the view. Round 11 made the pane the sectioned context, always (Andrey, 2026-08-28:
+//! "we shove context in, it's sections based on previous history. I want to see those sections,
+//! labeled"); the conversation brief (Andrey, 2026-08-31) amended it to "a chat by default,
+//! truth on demand": the CHAT keeps the sections' structure (tier bands fold the rows they
+//! summarise, unconsumed mail waits in the tray, never inline) without labels or counts; the
+//! PEEK, while a message is typed, surfaces the fold line where the verbatim tail begins; `^p`
+//! pins the FULL view, which is round 11's, band by labeled band.
 //!
 //! What this module owns is PURE: classifying an [`Assembled`] into the view's kinds, parsing the
 //! pins and tier bodies the bands print, the standing block (digest + pins, capped, pins folding
@@ -27,6 +31,21 @@ use crate::rows::Row;
 pub const FLASH_MS: i64 = 1500;
 /// The clickable region ids this view registers.
 pub const HIT_PREFIX: &str = "context:";
+
+/// How much truth the pane shows (the conversation brief, 2026-08-31). The DATA is the same
+/// assembly at every depth; the depth decides how loudly the chrome says it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Depth {
+    /// The resting state: a chat. Tier bands and the dropped fold keep the history reachable,
+    /// mail waits in the tray, and no rule, count or footer interrupts the reading.
+    Chat,
+    /// A message is being written: the fold line surfaces where the verbatim tail begins and the
+    /// bands carry their token counts, so what the message lands on is visible while it is typed.
+    Peek,
+    /// `^p`: the full context view, every band labeled with its count, the standing block
+    /// pinned, mail under its own band, the footer. Round 11's view, on demand instead of always.
+    Full,
+}
 
 /// What the view makes of a section.
 #[derive(Clone, Debug, PartialEq)]
@@ -89,6 +108,8 @@ pub struct ContextView {
     pub standing_open: bool,
     pub open_tiers: BTreeSet<String>,
     pub dropped_open: bool,
+    /// The mail TRAY (chat and peek): opened, the queue itself is listed.
+    pub mail_open: bool,
     /// A refresh is in flight (`lib.rs` arms one at a time; a request during one re-arms).
     pub refreshing: bool,
     pub dirty: bool,
@@ -179,6 +200,7 @@ impl ContextView {
             "head" => self.head_open = !self.head_open,
             "standing" => self.standing_open = !self.standing_open,
             "dropped" => self.dropped_open = !self.dropped_open,
+            "mail" => self.mail_open = !self.mail_open,
             other => {
                 if let Some(id) = other.strip_prefix("tier:") {
                     if !self.open_tiers.remove(id) {
@@ -318,21 +340,40 @@ fn hit(name: &str) -> HitId {
     HitId::new(format!("{HIT_PREFIX}{name}"))
 }
 
-/// A labeled rule: `── title ────── right`. Lit = just changed.
-pub fn rule(title: &str, right: &str, lit: bool, width: u16, theme: &Theme) -> Line<'static> {
-    let color = if lit { theme.warn } else { theme.accent };
-    let head = format!("\u{2500}\u{2500} {title} ");
-    let used = head.chars().count() + right.chars().count() + 1;
-    let fill = (width as usize).saturating_sub(used).min(60);
-    Line::from(vec![
-        Span::styled("\u{2500}\u{2500} ", Style::default().fg(color)),
-        Span::styled(title.to_string(), Style::default().fg(color)),
-        Span::styled(
-            format!(" {}", "\u{2500}".repeat(fill)),
+/// Full-width ground under a line (the conversation brief, direction A): pad to `width`, then
+/// patch the wash UNDER the spans' own colours, so membership in the next context is a ground a
+/// line stands on rather than a rule above it.
+pub fn washed(line: Line<'static>, width: u16, bg: ratatui::style::Color) -> Line<'static> {
+    let used: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+    let mut spans = line.spans;
+    spans.push(Span::raw(" ".repeat((width as usize).saturating_sub(used))));
+    Line::from(spans).patch_style(Style::default().bg(bg))
+}
+
+/// A section's band line: `title ····· right` on its section's ground. Lit = just changed, in
+/// the same warning hue the rules used.
+pub fn band(
+    title: &str,
+    right: &str,
+    lit: bool,
+    width: u16,
+    color: ratatui::style::Color,
+    bg: ratatui::style::Color,
+    theme: &Theme,
+) -> Line<'static> {
+    let fg = if lit { theme.warn } else { color };
+    let mut spans = vec![Span::styled(title.to_string(), Style::default().fg(fg))];
+    if !right.is_empty() {
+        let used = title.chars().count() + right.chars().count() + 1;
+        spans.push(Span::raw(
+            " ".repeat((width as usize).saturating_sub(used).max(1)),
+        ));
+        spans.push(Span::styled(
+            right.to_string(),
             Style::default().fg(theme.dim),
-        ),
-        Span::styled(format!(" {right}"), Style::default().fg(theme.dim)),
-    ])
+        ));
+    }
+    washed(Line::from(spans), width, bg)
 }
 
 fn wrapped(
@@ -388,7 +429,7 @@ pub fn standing_lines(
     lines.push(Line::styled(text, Style::default().fg(theme.dim)));
 
     let block_start = lines.len();
-    let field = Style::default().bg(theme.field_bg);
+    let field = Style::default().bg(theme.wash_head);
     let header = |title: &str, note: &str, tokens: usize, width: u16| -> Line<'static> {
         let right = tokens_text(tokens);
         let left = format!(" {title}");
@@ -526,6 +567,9 @@ impl Piece {
 pub struct Plan {
     /// Row i is drawn in the scrolling half.
     pub show: Vec<bool>,
+    /// Row i is drawn but NOT in the next context (an open tier's rows, the dropped fold's):
+    /// the pane dims it, so an unfolded past never reads as something the model will see.
+    pub summarized: Vec<bool>,
     /// Row i is mail: drawn after everything else, under the mail rule.
     pub mail: Vec<bool>,
     /// Lines to emit before row i (rules, tier bodies, the mail rule).
@@ -546,6 +590,7 @@ pub fn plan(
     now: DateTime<Utc>,
     width: u16,
     theme: &Theme,
+    depth: Depth,
 ) -> Plan {
     let n = rows.len();
     let seqs: Vec<Option<u64>> = rows
@@ -560,6 +605,7 @@ pub fn plan(
         .min();
     let mut plan = Plan {
         show: vec![false; n],
+        summarized: vec![false; n],
         mail: vec![false; n],
         before: HashMap::new(),
         trailing: Vec::new(),
@@ -607,6 +653,7 @@ pub fn plan(
                 plan.show[i] = view.dropped_open;
             }
         }
+        plan.summarized[i] = plan.show[i];
     }
     // Where each rule goes: before the first row at or past its start.
     let mut pieces_at: Vec<(usize, Vec<Piece>)> = Vec::new();
@@ -648,12 +695,18 @@ pub fn plan(
             "{} tier {tier} summary \u{b7} {range}",
             if open { "\u{25be}" } else { "\u{25b8}" }
         );
+        let right = match depth {
+            Depth::Chat => String::new(),
+            _ => tokens_text(s.tokens),
+        };
         let mut v = vec![Piece::hit(
-            rule(
+            band(
                 &title,
-                &tokens_text(s.tokens),
+                &right,
                 view.lit(&s.id, now),
                 width,
+                theme.thought,
+                theme.wash_tier,
                 theme,
             ),
             hit(&format!("tier:{}", s.id)),
@@ -667,45 +720,61 @@ pub fn plan(
                 format!("[{}..{}] {}", e.from, e.to, e.text)
             };
             for l in wrapped(&text, indent, width, theme.fg) {
-                v.push(Piece::plain(l));
+                v.push(Piece::plain(washed(l, width, theme.wash_tier)));
             }
         }
         pieces_at.push((at, v));
     }
     if let Some(from) = tail_from {
-        let at = first_row_at(from);
-        let count = view.tail_steps.len();
-        let t = view.sections.iter().find(|s| s.kind == Kind::Tail);
-        let (tokens, lit) = t
-            .map(|t| (t.tokens, view.lit(&t.id, now)))
-            .unwrap_or((0, false));
-        pieces_at.push((
-            at,
-            vec![Piece::plain(rule(
-                &format!("recent steps \u{b7} [{from}..] \u{b7} {count} verbatim"),
-                &tokens_text(tokens),
-                lit,
-                width,
-                theme,
-            ))],
-        ));
+        if depth != Depth::Chat {
+            let at = first_row_at(from);
+            let count = view.tail_steps.len();
+            let t = view.sections.iter().find(|s| s.kind == Kind::Tail);
+            let (tokens, lit) = t
+                .map(|t| (t.tokens, view.lit(&t.id, now)))
+                .unwrap_or((0, false));
+            let title = match depth {
+                // The FOLD LINE (peek): where what is being typed will land, said while it is
+                // typed. Everything above this line reaches the model only as rollups.
+                Depth::Peek => {
+                    format!("\u{25bc} verbatim from here \u{b7} {count} steps \u{b7} rollups above")
+                }
+                _ => format!("recent steps \u{b7} [{from}..] \u{b7} {count} verbatim"),
+            };
+            pieces_at.push((
+                at,
+                vec![Piece::plain(band(
+                    &title,
+                    &tokens_text(tokens),
+                    lit,
+                    width,
+                    theme.evidence,
+                    theme.wash_tail,
+                    theme,
+                ))],
+            ));
+        }
     }
-    if let Some(first_mail) = (0..n).find(|&i| plan.mail[i]) {
-        let m = view.sections.iter().find(|s| s.kind == Kind::Mail);
-        let (tokens, lit) = m
-            .map(|m| (m.tokens, view.lit(&m.id, now)))
-            .unwrap_or((0, false));
-        let count = plan.mail.iter().filter(|m| **m).count();
-        pieces_at.push((
-            first_mail,
-            vec![Piece::plain(rule(
-                &format!("mail \u{b7} {count} unconsumed"),
-                &tokens_text(tokens),
-                lit,
-                width,
-                theme,
-            ))],
-        ));
+    if depth == Depth::Full {
+        if let Some(first_mail) = (0..n).find(|&i| plan.mail[i]) {
+            let m = view.sections.iter().find(|s| s.kind == Kind::Mail);
+            let (tokens, lit) = m
+                .map(|m| (m.tokens, view.lit(&m.id, now)))
+                .unwrap_or((0, false));
+            let count = plan.mail.iter().filter(|m| **m).count();
+            pieces_at.push((
+                first_mail,
+                vec![Piece::plain(band(
+                    &format!("mail \u{b7} {count} unconsumed"),
+                    &tokens_text(tokens),
+                    lit,
+                    width,
+                    theme.warn,
+                    theme.wash_mail,
+                    theme,
+                ))],
+            ));
+        }
     }
     for (at, v) in pieces_at {
         if at >= n {
@@ -751,6 +820,74 @@ pub fn footer(view: &ContextView, now: DateTime<Utc>, theme: &Theme) -> Line<'st
         text.push_str(&format!(" \u{b7} degraded: {}", degraded.join(", ")));
     }
     Line::styled(text, Style::default().fg(theme.dim))
+}
+
+/// The mail TRAY (chat and peek): queued mail waits above the composer rather than reading as
+/// conversation (nobody said it yet, it arrives at the NEXT wake). One washed line, count and
+/// the newest item; opened by click, the queue itself. The rows are the SAME ones the full view
+/// draws under its mail band, so the tray can never disagree with what the model will read.
+pub fn tray_pieces(
+    view: &ContextView,
+    rows: &[Row],
+    mail: &[bool],
+    width: u16,
+    theme: &Theme,
+) -> Vec<Piece> {
+    let queued: Vec<&Row> = rows
+        .iter()
+        .zip(mail.iter())
+        .filter(|(_, m)| **m)
+        .map(|(r, _)| r)
+        .collect();
+    if queued.is_empty() {
+        return Vec::new();
+    }
+    let tokens = view
+        .sections
+        .iter()
+        .find(|s| s.kind == Kind::Mail)
+        .map(|m| m.tokens)
+        .unwrap_or(0);
+    let marker = if view.mail_open {
+        "\u{25be}"
+    } else {
+        "\u{25b8}"
+    };
+    let newest = match queued.last() {
+        Some(Row::Mail { from, subject, .. }) if !view.mail_open => {
+            format!(" \u{2014} {from} \u{b7} {subject}")
+        }
+        _ => String::new(),
+    };
+    let title = format!(
+        "{marker} \u{2709} next wake \u{b7} {} queued{newest}",
+        queued.len()
+    );
+    let mut pieces = vec![Piece::hit(
+        band(
+            &title,
+            &tokens_text(tokens),
+            false,
+            width,
+            theme.warn,
+            theme.wash_mail,
+            theme,
+        ),
+        hit("mail"),
+        width,
+    )];
+    if view.mail_open {
+        for row in queued {
+            if let Row::Mail { from, subject, .. } = row {
+                pieces.push(Piece::plain(washed(
+                    crate::mail_line(from, subject, theme),
+                    width,
+                    theme.wash_mail,
+                )));
+            }
+        }
+    }
+    pieces
 }
 
 #[cfg(test)]
@@ -1008,7 +1145,7 @@ mod tests {
         let seq_of: HashMap<StepId, Seq> = (1..=6)
             .map(|i| (StepId::new(format!("s{i}")), Seq(i)))
             .collect();
-        let p = plan(&view, &rows, &seq_of, now, 80, &theme);
+        let p = plan(&view, &rows, &seq_of, now, 80, &theme, Depth::Full);
         assert_eq!(
             p.show,
             [false, false, false, true, true, true],
@@ -1050,15 +1187,20 @@ mod tests {
             before1[0].contains("mail \u{b7} 1 unconsumed"),
             "{before1:?}"
         );
-        // An open tier shows its rows.
+        // An open tier shows its rows, marked as NOT in the context.
         view.open_tiers.insert(format!("tier-{:03}", u8::MAX - 1));
-        let p = plan(&view, &rows, &seq_of, now, 80, &theme);
+        let p = plan(&view, &rows, &seq_of, now, 80, &theme, Depth::Full);
         assert_eq!(p.show, [true, false, true, true, true, true]);
+        assert_eq!(
+            p.summarized,
+            [true, false, true, false, false, false],
+            "the unfolded rows are dimmed; the tail and mail never are"
+        );
         // Rows no tier covers and the tail does not hold are counted, not silently gone.
         view.open_tiers.clear();
         view.sections
             .retain(|s| !matches!(s.kind, Kind::Tier { .. }));
-        let p = plan(&view, &rows, &seq_of, now, 80, &theme);
+        let p = plan(&view, &rows, &seq_of, now, 80, &theme, Depth::Full);
         let before0 = text(
             &p.before[&0]
                 .iter()
@@ -1074,5 +1216,120 @@ mod tests {
             f[0].contains("rebuilt just now \u{b7} 14k of 200k \u{b7} 7%"),
             "{f:?}"
         );
+    }
+    #[test]
+    fn the_chat_keeps_bands_quiet_and_the_peek_surfaces_the_fold_line() {
+        let now = Utc::now();
+        let mut view = ContextView::default();
+        view.apply(
+            &assembled(vec![
+                section(
+                    &format!("tier-{:03}", u8::MAX - 1),
+                    Slot::Tiers,
+                    "Tier 1 summary",
+                    "- [1..3] early work\n",
+                    50,
+                    &[],
+                ),
+                section("tail", Slot::Tail, "Recent steps", "x", 20, &["s4", "s5"]),
+                section("mail", Slot::Mail, "Unconsumed mail", "x", 9, &["s2"]),
+            ]),
+            now,
+        );
+        let rows: Vec<Row> = vec![
+            Row::Andrey {
+                step: StepId::new("s1"),
+                text: "old".into(),
+            },
+            Row::Mail {
+                step: StepId::new("s2"),
+                from: "slack:#nm-echo".into(),
+                subject: "CI is red".into(),
+                class: bough_plugin_ledger::vocabulary::MailClass::Ordinary,
+            },
+            Row::Andrey {
+                step: StepId::new("s4"),
+                text: "recent".into(),
+            },
+            Row::Andrey {
+                step: StepId::new("s5"),
+                text: "newest".into(),
+            },
+        ];
+        let seq_of: HashMap<StepId, Seq> = [("s1", 1), ("s2", 2), ("s4", 4), ("s5", 5)]
+            .into_iter()
+            .map(|(s, n)| (StepId::new(s), Seq(n)))
+            .collect();
+        let theme = Theme::of(ThemeName::Dark);
+        let all_text = |p: &Plan| {
+            let mut out: Vec<String> = Vec::new();
+            for v in p.before.values() {
+                out.extend(text(&v.iter().map(|x| x.line.clone()).collect::<Vec<_>>()));
+            }
+            out.extend(text(
+                &p.trailing
+                    .iter()
+                    .map(|x| x.line.clone())
+                    .collect::<Vec<_>>(),
+            ));
+            out
+        };
+        // Chat: the band carries no count, and neither the tail nor the mail band exists.
+        let chat = plan(&view, &rows, &seq_of, now, 80, &theme, Depth::Chat);
+        let t = all_text(&chat);
+        assert!(
+            t.iter().any(|l| l.contains("tier 1 summary")),
+            "the band itself stays: {t:?}"
+        );
+        assert!(
+            !t.iter()
+                .any(|l| l.contains("verbatim") || l.contains("unconsumed")),
+            "no tail rule and no mail band in the chat: {t:?}"
+        );
+        assert!(
+            !t.iter().any(|l| l.contains("50")),
+            "no token count on the chat band: {t:?}"
+        );
+        assert!(chat.mail[1], "the queue is still marked for the tray");
+        // Peek: the fold line, and the counts.
+        let peek = plan(&view, &rows, &seq_of, now, 80, &theme, Depth::Peek);
+        let t = all_text(&peek);
+        assert!(
+            t.iter()
+                .any(|l| l.contains("verbatim from here \u{b7} 2 steps")),
+            "{t:?}"
+        );
+        assert!(
+            !t.iter().any(|l| l.contains("unconsumed")),
+            "mail stays in the tray while typing: {t:?}"
+        );
+        // Full: round 11's view, unchanged in words.
+        let full = plan(&view, &rows, &seq_of, now, 80, &theme, Depth::Full);
+        let t = all_text(&full);
+        assert!(t.iter().any(|l| l.contains("recent steps \u{b7} [4..]")));
+        assert!(t.iter().any(|l| l.contains("mail \u{b7} 1 unconsumed")));
+
+        // The tray: closed, one line with the count and the newest item; open, the queue.
+        let pieces = tray_pieces(&view, &rows, &chat.mail, 80, &theme);
+        let t = text(&pieces.iter().map(|x| x.line.clone()).collect::<Vec<_>>());
+        assert_eq!(t.len(), 1);
+        assert!(
+            t[0].contains("next wake \u{b7} 1 queued") && t[0].contains("CI is red"),
+            "{t:?}"
+        );
+        assert!(
+            pieces[0]
+                .hit
+                .as_ref()
+                .is_some_and(|(id, _)| id.as_str() == "context:mail"),
+            "the tray is a button"
+        );
+        assert!(view.toggle(&HitId::new("context:mail")) && view.mail_open);
+        let pieces = tray_pieces(&view, &rows, &chat.mail, 80, &theme);
+        let t = text(&pieces.iter().map(|x| x.line.clone()).collect::<Vec<_>>());
+        assert_eq!(t.len(), 2, "{t:?}");
+        assert!(t[1].contains("slack:#nm-echo") && t[1].contains("CI is red"));
+        // No queue, no tray.
+        assert!(tray_pieces(&view, &rows, &[false; 4], 80, &theme).is_empty());
     }
 }

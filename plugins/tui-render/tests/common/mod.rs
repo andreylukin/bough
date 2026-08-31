@@ -23,6 +23,10 @@ pub fn theme() -> Theme {
         code: Color::Rgb(100, 100, 100),
         code_bg: Color::Rgb(100, 100, 100),
         field_bg: Color::Rgb(100, 100, 100),
+        wash_head: Color::Rgb(30, 30, 40),
+        wash_tier: Color::Rgb(30, 30, 40),
+        wash_tail: Color::Rgb(30, 30, 40),
+        wash_mail: Color::Rgb(30, 30, 40),
     }
 }
 

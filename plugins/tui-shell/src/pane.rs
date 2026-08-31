@@ -297,6 +297,10 @@ pub struct ShellView {
     pub theme: Theme,
     pub now: DateTime<Utc>,
     pub composer_focused: bool,
+    /// Whether the composer holds any typed text this frame. With `composer_focused` it is the
+    /// PEEK trigger (the conversation brief, 2026-08-31): a message being written is the moment
+    /// the transcript annotates itself with what that message will land on.
+    pub composer_nonempty: bool,
     /// The pane's roving row focus this frame, when it has one (phase ux1 §2.1, B6). A pane that
     /// ignores it renders exactly as before.
     pub row_focus: Option<usize>,
