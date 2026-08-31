@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 use bough_plugin_ledger::{AgentName, SeqRange, Step};
 use tiktoken_rs::CoreBPE;
 
-use crate::{DriftConfig, DriftFlag, SignalState, Signals, Stat, ToolShare};
+use crate::{DriftConfig, DriftFlag, Signals, Stat, ToolShare};
 
 /// The step kind the thought-length signal reads.
 pub const THOUGHT_TEXT: &str = "thought/text";

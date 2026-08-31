@@ -13,7 +13,7 @@ use bough_plugin_commands::{
 use bough_plugin_ledger::{AgentName, RollupId};
 use bough_plugin_rollups::{Attribution, SupersedeReport, SupersedeRequest};
 
-use crate::{DriftHandle, ResetReport, ResetRequest, SignalState, Signals};
+use crate::{DriftHandle, ResetReport, ResetRequest, Signals};
 
 /// Register `/drift`, `/reset` and `/supersede`, if a `commands` registry is bound.
 ///
