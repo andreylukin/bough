@@ -107,6 +107,9 @@ Diagnoses done (input render path, injection audit, push path). Landed and teste
 - **Pending retries** (`schedule-cron`): a `Pending` run (command racing the registry at boot —
   why `system:reconsolidate` never ran) retries on `pending_retry_ms` (60s) instead of waiting a
   whole cadence.
+- OPEN: `request_timeout_ms` is a TOTAL-round cap; the right shape is an inactivity timeout
+  (no bytes for N s = dead) — needs reasoning deltas to count as activity. Raised to 600000 as
+  the stopgap after four 120.000s kills ended a healthy turn (2026-08-31 21:50-58Z).
 - OPEN: `cache_read_tokens: 0` on the OpenRouter/GLM path — caching not engaging; teardown-order
   grumble `provider=projection dependent=boundary` at shutdown (seen in `--check` 20:41).
 

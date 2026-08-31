@@ -47,7 +47,10 @@
   config:
     models: "*"
     api_key_env: ANTHROPIC_API_KEY
-    request_timeout_ms: 120000
+    # 10 min, not 2 (drivability, 2026-08-31): this caps the WHOLE round — connect, thinking,
+    # every streamed token — and a 32k reasoning budget legitimately runs past two minutes. Four
+    # identical 120.000s deaths killed a healthy "continue" turn. A ceiling for true hangs only.
+    request_timeout_ms: 600000
 # §12: OpenAI proper, the Responses API. `openai:*` is MORE SPECIFIC than the anthropic row's
 # `"*"`, so an `openai:gpt-…` model id (a lane's `model_override`, or a model-policy patch)
 # resolves here and everything else keeps resolving to `llm.anthropic`. The key is read at CALL
@@ -58,7 +61,10 @@
   config:
     models: "openai:*"
     api_key_env: OPENAI_API_KEY
-    request_timeout_ms: 120000
+    # 10 min, not 2 (drivability, 2026-08-31): this caps the WHOLE round — connect, thinking,
+    # every streamed token — and a 32k reasoning budget legitimately runs past two minutes. Four
+    # identical 120.000s deaths killed a healthy "continue" turn. A ceiling for true hangs only.
+    request_timeout_ms: 600000
 # §12: OpenRouter, the chat-completions aggregator. `openrouter:vendor/model` is the policy
 # spelling; the row strips the prefix to OpenRouter's own `vendor/model` before the wire. The key
 # is read at CALL time from OPENROUTER_API_KEY; an absent key is a `Failed { Auth }` chunk on
@@ -68,7 +74,10 @@
   config:
     models: "openrouter:*"
     api_key_env: OPENROUTER_API_KEY
-    request_timeout_ms: 120000
+    # 10 min, not 2 (drivability, 2026-08-31): this caps the WHOLE round — connect, thinking,
+    # every streamed token — and a 32k reasoning budget legitimately runs past two minutes. Four
+    # identical 120.000s deaths killed a healthy "continue" turn. A ceiling for true hangs only.
+    request_timeout_ms: 600000
 - id: llm.retry
   plugin: llm-retry
   config:
