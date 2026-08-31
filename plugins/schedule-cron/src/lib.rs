@@ -273,6 +273,15 @@ impl Scheduler for CronScheduler {
         if let Some((at, FireReason::CatchUp)) = next_fire(&spec, last.map(|r| r.at), now) {
             let _ = self.fire(&spec.name, at, FireReason::CatchUp).await;
         }
+        // A STORED `Pending` is a retry some previous process armed and took down with it (a
+        // `--check`, an earlier resident): re-arm it here, or the miss waits for a cadence this
+        // machine may never see awake. Idempotent — a catch-up above that just went `Pending`
+        // already armed one, and the in-flight guard dedupes.
+        if let Ok(Some(run)) = self.state.get(&spec.name) {
+            if matches!(run.outcome, JobOutcome::Pending { .. }) {
+                self.arm_pending_retry(&spec.name);
+            }
+        }
 
         // The tick callback holds a WEAK self-reference and the name only: the body itself is
         // read from the table at fire time, so a disposed job's callback finds nothing and does

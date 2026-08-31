@@ -435,3 +435,64 @@ async fn a_pending_run_retries_on_the_backoff_until_it_lands() {
     }
     assert_eq!(job.fires.load(Ordering::SeqCst), 3, "pending, pending, ran");
 }
+
+/// A stored `Pending` from a PREVIOUS process (whose retry timer died with it) re-arms at
+/// registration — without it, the miss waits for a cadence the machine may never see awake
+/// (drivability, 2026-08-31: a `--check` recorded seal's Pending and took the retry with it).
+#[tokio::test]
+async fn a_stored_pending_run_re_arms_the_retry_at_registration() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let ctx = ctx();
+    // Process one: retries OFF, so the Pending is recorded and nothing is armed.
+    {
+        let cfg = Arc::new(CronConfig {
+            state_db: dir.path().join("schedule.db"),
+            job_timeout_ms: 1000,
+            pending_retry_ms: 0,
+        });
+        let sched = CronScheduler::start(cfg, ctx.clone()).await.expect("a scheduler");
+        let job = Arc::new(EventuallyThere {
+            fires: AtomicUsize::new(0),
+        });
+        let _reg = sched
+            .register(&ctx, spec("pass", every(3_600_000), false, job))
+            .await
+            .expect("registered");
+        let run = sched.fire_now(&JobName::new("pass")).await.expect("fired");
+        assert!(matches!(run.outcome, JobOutcome::Pending { .. }), "{run:?}");
+    }
+    // Process two: same store, retries on. Registration alone must land the run.
+    let cfg = Arc::new(CronConfig {
+        state_db: dir.path().join("schedule.db"),
+        job_timeout_ms: 1000,
+        pending_retry_ms: 50,
+    });
+    let sched = CronScheduler::start(cfg, ctx.clone()).await.expect("a scheduler");
+    let job = Arc::new(EventuallyThere {
+        // Past its pending phase: the referent "exists" in this process.
+        fires: AtomicUsize::new(2),
+    });
+    let _reg = sched
+        .register(&ctx, spec("pass", every(3_600_000), false, job))
+        .await
+        .expect("registered");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let last = sched
+            .jobs()
+            .into_iter()
+            .find(|j| j.name.as_str() == "pass")
+            .and_then(|j| j.last);
+        if let Some(last) = &last {
+            if matches!(last.outcome, JobOutcome::Ran { .. }) {
+                assert_eq!(last.reason, FireReason::Retry, "{last:?}");
+                break;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the stored pending never re-armed: {last:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
