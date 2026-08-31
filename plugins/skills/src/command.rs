@@ -44,7 +44,9 @@ pub fn spec(skill: Arc<Skill>) -> CommandSpec {
     CommandSpec {
         name: CommandName::new(skill.name.clone()),
         summary: summary_of(&skill),
-        usage: format!("/{} [task]", skill.name),
+        // Just the name: `[task]` repeated on every row was palette noise, and the free-text
+        // argument is obvious from use.
+        usage: format!("/{}", skill.name),
         args: schemars::SchemaGenerator::default().into_root_schema_for::<SkillCommandArgs>(),
         scope: CommandScope::Global,
         run: Arc::new(SkillCommand { skill }),
@@ -127,7 +129,7 @@ mod tests {
     fn the_spec_reads_as_a_palette_row() {
         let s = spec(skill("monarch", "Query Monarch Money. Use when budgets come up."));
         assert_eq!(s.name.as_str(), "monarch");
-        assert_eq!(s.usage, "/monarch [task]");
+        assert_eq!(s.usage, "/monarch");
         assert_eq!(s.summary, "Query Monarch Money");
         assert_eq!(spec(skill("x", "")).summary, "load this skill");
     }
