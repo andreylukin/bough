@@ -296,14 +296,22 @@ async fn restart_replaces_the_resident_and_a_client_attaches_to_the_new_one() {
         .trim()
         .parse::<i32>()
         .expect("the new owner pid");
+    // The fresh resident is NOT this test's child — `bough restart` spawned and orphaned it —
+    // so a panic below this line would leak a live process into the machine. The guard is what
+    // cleans it up on EVERY exit, which three leaked residents from this test's own first drafts
+    // proved is not a theoretical concern.
+    struct Reap(i32);
+    impl Drop for Reap {
+        fn drop(&mut self) {
+            unsafe { libc::kill(self.0, libc::SIGINT) };
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while unsafe { libc::kill(self.0, 0) } == 0 && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+    let _reap = Reap(new_pid);
     assert_ne!(new_pid, old_pid, "a fresh process holds the home");
     let mut c = attach(&r).await;
     screen_until(&mut c, "Type").await;
-
-    // Clean up the shipped-tree resident this test spawned; `Resident::drop` only knows the old.
-    unsafe { libc::kill(new_pid, libc::SIGINT) };
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while unsafe { libc::kill(new_pid, 0) } == 0 && std::time::Instant::now() < deadline {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
 }
