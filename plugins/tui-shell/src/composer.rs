@@ -405,6 +405,57 @@ impl Composer {
         self.area.lines().join("\n")
     }
 
+    /// The text before the caret, across lines: what the `/` autocomplete tokenizes.
+    pub fn text_before_cursor(&self) -> String {
+        let (row, col) = {
+            let c = self.area.cursor();
+            (c.0, c.1)
+        };
+        let lines = self.area.lines();
+        let mut out = String::new();
+        for l in &lines[..row] {
+            out.push_str(l);
+            out.push('\n');
+        }
+        out.extend(lines[row].chars().take(col));
+        out
+    }
+
+    /// Replace the `chars_back` characters before the caret with `replacement`, leaving
+    /// everything after the caret in place and the caret at the end of the replacement — the
+    /// surgical half of an inline completion.
+    pub fn replace_before_cursor(&mut self, chars_back: usize, replacement: &str) {
+        let before = self.text_before_cursor();
+        let (row, col) = {
+            let c = self.area.cursor();
+            (c.0, c.1)
+        };
+        let lines = self.area.lines().to_vec();
+        let mut after = String::new();
+        after.extend(lines[row].chars().skip(col));
+        for l in &lines[row + 1..] {
+            after.push('\n');
+            after.push_str(l);
+        }
+        let keep: String = {
+            let n = before.chars().count().saturating_sub(chars_back);
+            before.chars().take(n).collect()
+        };
+        self.armed = false;
+        self.area.select_all();
+        self.area.cut();
+        self.area.clear();
+        self.area.insert_str(format!("{keep}{replacement}"));
+        // The tail goes back in WITHOUT taking the caret with it.
+        let caret = {
+            let c = self.area.cursor();
+            (c.0, c.1)
+        };
+        self.area.insert_str(after);
+        self.area
+            .move_cursor(CursorMove::Jump(caret.0 as u16, caret.1 as u16));
+    }
+
     /// Whether there is anything to send.
     pub fn is_empty(&self) -> bool {
         self.text().is_empty()
@@ -463,6 +514,27 @@ mod tests {
 
     fn cfg() -> TuiConfig {
         crate::test_config()
+    }
+
+    /// Drivability: the inline `/` completion rewrites ONLY the token before the caret — the
+    /// tail stays, and the caret lands after the replacement, not at the end of the draft.
+    #[test]
+    fn replace_before_cursor_is_surgical() {
+        let mut c = Composer::new(&cfg());
+        c.set_text("ask /mon about rent");
+        // Caret after `/mon` (column 8).
+        c.area.move_cursor(CursorMove::Jump(0, 8));
+        assert_eq!(c.text_before_cursor(), "ask /mon");
+        c.replace_before_cursor(4, "/monarch ");
+        assert_eq!(c.text(), "ask /monarch  about rent");
+        assert_eq!(c.area.cursor(), (0, 13), "caret sits after the completion");
+        // Across lines: the token on row 1, a tail row below it.
+        let mut c = Composer::new(&cfg());
+        c.set_text("first\n/wik\nlast");
+        c.area.move_cursor(CursorMove::Jump(1, 4));
+        c.replace_before_cursor(4, "/wiki ");
+        assert_eq!(c.text(), "first\n/wiki \nlast");
+        assert_eq!(c.area.cursor(), (1, 6));
     }
 
     fn key(code: KeyCode) -> KeyEvent {

@@ -605,20 +605,7 @@ pub async fn on_key(tui: &TuiHandle, key: KeyEvent) {
                 tui.redraw()
             }
         }
-        // M17: a `/` at line start opens the filtering palette, and every later keystroke narrows
-        // it. It is driven from the DRAFT rather than from the key, so backspacing back to `/`
-        // reopens it and backspacing past it closes it — the list can never disagree with the
-        // line it is filtering.
-        let draft = tui.0.composer.lock().text();
-        let one_line = !draft.contains('\n');
-        match draft.strip_prefix('/') {
-            Some(rest) if one_line && !rest.starts_with('/') => tui.set_palette(true, rest),
-            _ => {
-                if tui.palette_open() {
-                    tui.set_palette(false, "");
-                }
-            }
-        }
+        sync_palette(tui);
         return;
     }
 
@@ -861,6 +848,66 @@ pub async fn focus_search(tui: &TuiHandle) {
     }
 }
 
+/// M17 + drivability: derive the palette from the DRAFT and the caret, never from the key — so
+/// backspacing back to `/` reopens it and backspacing past it closes it, and the list can never
+/// disagree with the text it is filtering. A `/` at line start is the COMMAND palette (Enter
+/// dispatches); a `/`-token anywhere the caret sits is the INLINE autocomplete (Enter completes
+/// the token in place and never dispatches).
+pub fn sync_palette(tui: &TuiHandle) {
+    let (draft, before) = {
+        let c = tui.0.composer.lock();
+        (c.text(), c.text_before_cursor())
+    };
+    let one_line = !draft.contains('\n');
+    match draft.strip_prefix('/') {
+        Some(rest) if one_line && !rest.starts_with('/') => {
+            tui.set_palette_inline(false);
+            tui.set_palette(true, rest);
+        }
+        _ => match slash_token(&before) {
+            Some((_, query)) => {
+                tui.set_palette_inline(true);
+                tui.set_palette(true, &query);
+            }
+            None => {
+                if tui.palette_open() {
+                    tui.set_palette(false, "");
+                }
+            }
+        },
+    }
+}
+
+/// PURE: the `/`-token the caret sits in — `Some((chars including the slash, query))` when the
+/// text before the caret ends inside a whitespace-delimited token that STARTS with `/` and holds
+/// no second `/`. A second slash is a path (`src/lib.rs`, `/Users/…`), not a mention; a doubled
+/// leading slash is the literal-`/` escape the command line already honours.
+pub fn slash_token(before: &str) -> Option<(usize, String)> {
+    let start = before
+        .char_indices()
+        .rev()
+        .find(|(_, c)| c.is_whitespace())
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(0);
+    let tok = &before[start..];
+    let rest = tok.strip_prefix('/')?;
+    if rest.contains('/') {
+        return None;
+    }
+    Some((tok.chars().count(), rest.to_string()))
+}
+
+/// Complete the `/`-token under the caret to `/name `, leaving the rest of the draft alone.
+fn inline_complete(tui: &TuiHandle, name: &str) {
+    let mut c = tui.0.composer.lock();
+    if let Some((back, _)) = slash_token(&c.text_before_cursor()) {
+        c.replace_before_cursor(back, &format!("/{name} "));
+    }
+    drop(c);
+    sync_palette(tui);
+    tui.redraw();
+}
+
 /// One key into the open palette. `true` when the palette consumed it.
 async fn palette_key(tui: &TuiHandle, key: KeyEvent) -> bool {
     use bough_plugin_commands::palette::{self, PaletteAction};
@@ -882,13 +929,23 @@ async fn palette_key(tui: &TuiHandle, key: KeyEvent) -> bool {
             true
         }
         PaletteAction::Complete(name) => {
-            let prefix = tui.0.composer.lock().prefix();
-            tui.set_composer_text(&format!("{prefix}{name} "));
+            if tui.palette_inline() {
+                inline_complete(tui, name.as_str());
+            } else {
+                let prefix = tui.0.composer.lock().prefix();
+                tui.set_composer_text(&format!("{prefix}{name} "));
+            }
             true
         }
         PaletteAction::Accept(name) => {
-            let prefix = tui.0.composer.lock().prefix();
-            dispatch_line(tui, &format!("{prefix}{name}")).await;
+            if tui.palette_inline() {
+                // Inline NEVER dispatches: Enter completes the mention in place, and the next
+                // Enter sends the message it now sits in.
+                inline_complete(tui, name.as_str());
+            } else {
+                let prefix = tui.0.composer.lock().prefix();
+                dispatch_line(tui, &format!("{prefix}{name}")).await;
+            }
             true
         }
     }
@@ -1285,7 +1342,7 @@ pub fn to_agent(agent: bough_plugin_agents::AgentId) -> FocusRequest {
 
 #[cfg(test)]
 mod layout_focus_tests {
-    use super::layout_focus;
+    use super::{layout_focus, slash_token};
     use crate::pane::PaneId;
 
     #[test]
@@ -1293,5 +1350,19 @@ mod layout_focus_tests {
         let id = PaneId::new("tui.search");
         assert_eq!(layout_focus(&id, false), Some(&id));
         assert_eq!(layout_focus(&id, true), None);
+    }
+
+    /// Drivability: the inline autocomplete tokenizer — a `/`-token at the caret, wherever it
+    /// sits; paths and doubled slashes are not mentions.
+    #[test]
+    fn slash_token_finds_the_mention_under_the_caret() {
+        assert_eq!(slash_token("ask /mon"), Some((4, "mon".to_string())));
+        assert_eq!(slash_token("/"), Some((1, String::new())));
+        assert_eq!(slash_token("line one\nthen /wi"), Some((3, "wi".to_string())));
+        assert_eq!(slash_token("ask about rent"), None, "no slash, no palette");
+        assert_eq!(slash_token("see src/lib.rs"), None, "a path is not a mention");
+        assert_eq!(slash_token("root /Users/andrey"), None, "two slashes = a path");
+        assert_eq!(slash_token("say //literal"), None, "the doubled-slash escape");
+        assert_eq!(slash_token("ask /mon "), None, "a finished token stops filtering");
     }
 }

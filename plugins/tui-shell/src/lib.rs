@@ -150,6 +150,9 @@ pub struct TuiInner {
     pub(crate) burst: Mutex<draft::PasteBurst>,
     /// The `/` palette. State lives in `bough-plugin-commands`; the shell owns WHEN it is open.
     pub(crate) palette: Mutex<bough_plugin_commands::palette::Palette>,
+    /// Whether the open palette is the INLINE autocomplete (a `/`-token mid-draft) rather than
+    /// the line-start command palette: inline completes in place and never dispatches.
+    pub(crate) palette_inline: AtomicBool,
     /// When the focused agent's wake was first SEEN running, for the elapsed clock (M32). Written
     /// by `note_running` on the idle→running edge, which `draw` calls once a frame.
     pub(crate) running_since: RwLock<Option<chrono::DateTime<chrono::Utc>>>,
@@ -253,6 +256,7 @@ impl TuiHandle {
                 burst_ms,
             ))),
             palette: Mutex::new(Default::default()),
+            palette_inline: AtomicBool::new(false),
             running_since: RwLock::new(None),
             anchored: RwLock::new(None),
             last_command: Mutex::new(None),
@@ -939,6 +943,18 @@ impl TuiHandle {
     /// Whether the `/` palette is open (M12: an overlay Esc dismisses).
     pub fn palette_open(&self) -> bool {
         self.0.palette.lock().open
+    }
+
+    /// Whether the open palette is the inline autocomplete (see `palette_inline` on the inner).
+    pub fn palette_inline(&self) -> bool {
+        self.0.palette_inline.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Mark the open palette inline (completes in place) or command (dispatches).
+    pub fn set_palette_inline(&self, inline: bool) {
+        self.0
+            .palette_inline
+            .store(inline, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Open the palette on a query, or close it. The shell owns WHEN; `commands` owns WHAT.
