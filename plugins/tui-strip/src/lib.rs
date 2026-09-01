@@ -384,7 +384,24 @@ impl Plugin for StripPlugin {
                 {
                     let mut held = r.lock();
                     if !held.iter().any(|x| x.agent == *agent.id()) {
-                        held.push(row_for(&agent));
+                        // A creation under a name whose row is the dim disposal receipt is a
+                        // RESUME — a merge moved the row's head and residents bounced the agent
+                        // — not a new lane. Revive the row in place: a receipt that outlives
+                        // the lane's own next breath reads as "this lane was removed".
+                        match held
+                            .iter_mut()
+                            .find(|x| x.disposed && x.name == agent.name().as_str())
+                        {
+                            Some(row) => {
+                                row.agent = agent.id().clone();
+                                row.traj = Some(agent.traj().clone());
+                                row.status = agent.status();
+                                row.wake_pending = agent.has_pending_wake();
+                                row.disposed = false;
+                                row.waiting = agent.inbox().len();
+                            }
+                            None => held.push(row_for(&agent)),
+                        }
                     }
                 }
                 // A cold start creates the agents AFTER the rail activates, so this is where a

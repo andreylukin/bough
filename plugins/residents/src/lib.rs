@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use bough_kernel::{ConfigError, Context, Inject, InvariantSpec, Plugin, PluginError};
 use bough_plugin_agents::{
-    AgentDisposer, AgentKind, Agents, AgentsHandle, CreateAgent, ResumeAgent, WakeCause, WakeKind,
-    WakeRequest,
+    AgentDisposer, AgentKind, Agents, AgentsHandle, CreateAgent, ResumeAgent, Status, WakeCause,
+    WakeKind, WakeRequest,
 };
 use bough_plugin_ledger::{AgentName, Ledger, LedgerHandle, TrajId};
 use parking_lot::Mutex;
@@ -227,17 +227,29 @@ pub async fn raise_roster(
 /// `graph-ops` does not own the disposers — so this row, which does, listens for the fact.
 ///
 /// Total and idempotent: a row that is already live on its own trajectory is left alone.
+///
+/// An agent INSIDE a wake is never bounced (second value): tearing it down here would cancel
+/// its open wake mid-program — a `merge_lanes` whose survivor is the calling leader used to
+/// saw off its own branch this way, dropping every call after the merge (2026-09-01, the ASI
+/// ledger). The caller re-runs this for a deferred name when its status turns `Idle`.
 pub async fn reconcile_rows(
     agents: &AgentsHandle,
     ledger: &LedgerHandle,
     roster: &Roster,
     changed: &bough_plugin_agents::RowsChanged,
-) -> Result<Vec<AgentName>, String> {
+) -> Result<(Vec<AgentName>, Vec<AgentName>), String> {
     let now = chrono::Utc::now();
     let mut touched = Vec::new();
+    let mut deferred = Vec::new();
 
     // A deleted row means the agent is gone: an absorbed lane must stop running.
     for name in &changed.deleted {
+        if let Some(live) = agents.by_name(name) {
+            if live.status() == Status::Running {
+                deferred.push(name.clone());
+                continue;
+            }
+        }
         if roster.dispose_named(name).await {
             touched.push(name.clone());
         }
@@ -250,6 +262,11 @@ pub async fn reconcile_rows(
         match agents.by_name(name) {
             // Already live on the trajectory its row names: nothing to do.
             Some(live) if *live.traj() == row.traj => continue,
+            // Mid-wake: the bounce onto the new head waits for the wake to seal.
+            Some(live) if live.status() == Status::Running => {
+                deferred.push(name.clone());
+                continue;
+            }
             // Live on a DIFFERENT trajectory — a merge moved the row's head. The agent has to be
             // torn down and resumed, because a live agent's trajectory never changes.
             //
@@ -277,7 +294,7 @@ pub async fn reconcile_rows(
         roster.push(disposer);
         touched.push(name.clone());
     }
-    Ok(touched)
+    Ok((touched, deferred))
 }
 
 /// §5's catch-up: ONE wake per agent that has queued mail, and nothing at all for one that does
@@ -404,14 +421,62 @@ impl Plugin for ResidentsPlugin {
 
         // The live half of a structural op. Registered BEFORE the roster is raised, so an op that
         // lands during boot is not missed.
+        let pending: Arc<Mutex<std::collections::BTreeSet<AgentName>>> = Arc::default();
         let agents2 = (*agents).clone();
         let ledger2 = (*ledger).clone();
         let roster2 = Arc::clone(&roster);
+        let pending2 = Arc::clone(&pending);
         ctx.on::<bough_plugin_agents::AgentRowsChanged, _, _>(move |changed| {
             let (agents, ledger, roster) = (agents2.clone(), ledger2.clone(), Arc::clone(&roster2));
+            let pending = Arc::clone(&pending2);
             async move {
-                if let Err(detail) = reconcile_rows(&agents, &ledger, &roster, &changed).await {
-                    tracing::error!(target: "residents", "reconciling rows: {detail}");
+                match reconcile_rows(&agents, &ledger, &roster, &changed).await {
+                    Ok((_, deferred)) => pending.lock().extend(deferred),
+                    Err(detail) => {
+                        tracing::error!(target: "residents", "reconciling rows: {detail}")
+                    }
+                }
+            }
+        })
+        .await?;
+
+        // The deferred half: a name reconcile left alone mid-wake is bounced the moment its
+        // agent turns `Idle`. Deleted-or-written is re-derived from the row itself, so a stale
+        // entry is harmless and a re-defer (a new wake won the race) just waits again.
+        let agents3 = (*agents).clone();
+        let ledger3 = (*ledger).clone();
+        let roster3 = Arc::clone(&roster);
+        let pending3 = Arc::clone(&pending);
+        ctx.on::<bough_plugin_agents::AgentStatusChanged, _, _>(move |change| {
+            let (agents, ledger, roster) = (agents3.clone(), ledger3.clone(), Arc::clone(&roster3));
+            let pending = Arc::clone(&pending3);
+            async move {
+                if change.to != Status::Idle {
+                    return;
+                }
+                let Some(agent) = agents.get(&change.agent) else {
+                    return;
+                };
+                let name = agent.name().clone();
+                if !pending.lock().remove(&name) {
+                    return;
+                }
+                let row = match ledger.0.agent(&name).await {
+                    Ok(row) => row,
+                    Err(e) => {
+                        tracing::error!(target: "residents", "deferred reconcile of `{name}`: {e}");
+                        return;
+                    }
+                };
+                let changed = bough_plugin_agents::RowsChanged {
+                    written: row.iter().map(|_| name.clone()).collect(),
+                    deleted: row.is_none().then(|| name.clone()).into_iter().collect(),
+                };
+                match reconcile_rows(&agents, &ledger, &roster, &changed).await {
+                    Ok((_, deferred)) => pending.lock().extend(deferred),
+                    Err(detail) => {
+                        tracing::error!(target: "residents", "reconciling rows: {detail}")
+                    }
                 }
             }
         })
