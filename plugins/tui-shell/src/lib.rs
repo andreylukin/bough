@@ -138,6 +138,11 @@ pub struct TuiInner {
     pub(crate) focus_chosen: AtomicBool,
     pub(crate) composer: Mutex<Composer>,
     pub(crate) selection: Mutex<Option<Selection>>,
+    /// The rail width the user dragged the divider to, in columns; `None` until they do.
+    /// Session-local: a preference held by the hand, not by config.
+    pub(crate) rail_cols: RwLock<Option<u16>>,
+    /// Whether a divider drag is in flight (mouse down on the gutter, not yet released).
+    pub(crate) rail_drag: AtomicBool,
     pub(crate) last_frame: RwLock<Arc<Buffer>>,
     pub(crate) notice: Mutex<Option<Notice>>,
     /// How many lines of a persistent notice PgUp/PgDn have scrolled past (visual audit F4).
@@ -248,6 +253,8 @@ impl TuiHandle {
             focus_chosen: AtomicBool::new(false),
             composer: Mutex::new(composer),
             selection: Mutex::new(None),
+            rail_cols: RwLock::new(None),
+            rail_drag: AtomicBool::new(false),
             last_frame: RwLock::new(Arc::new(Buffer::empty(area))),
             notice: Mutex::new(None),
             notice_scroll: AtomicUsize::new(0),

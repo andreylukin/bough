@@ -176,6 +176,7 @@ pub fn draw(tui: &TuiHandle) {
         tui.0.cfg.borders,
         focused,
         &aux_rows,
+        *tui.0.rail_cols.read(),
     );
     *tui.0.rects.write() = rects.clone();
     // The rows the notice band and the palette may borrow end where the Status band begins:
@@ -1004,7 +1005,41 @@ pub fn scroll_delta(key: KeyEvent, page: u16) -> Option<i16> {
     }
 }
 
-/// Mouse: click focuses and forwards its hit, wheel scrolls WITHOUT moving focus, drag selects.
+/// The narrowest rail a drag can leave: names still readable, divider still grabbable.
+const RAIL_MIN: u16 = 8;
+
+/// The divider between the rail and the transcript, from the LAST layout: the gutter column(s)
+/// to the right of the widest `Strip` rect, over the rail's rows. The gutter belongs to nobody
+/// (M9), which is exactly what makes it grabbable without stealing a click from either side.
+fn rail_divider(tui: &TuiHandle) -> Option<(std::ops::Range<u16>, std::ops::Range<u16>, u16)> {
+    let strip: Vec<PaneId> = tui
+        .panes()
+        .iter()
+        .filter(|p| p.slot == crate::pane::Slot::Strip)
+        .map(|p| p.id.clone())
+        .collect();
+    if strip.is_empty() {
+        return None;
+    }
+    let rects = tui.0.rects.read();
+    let (mut x0, mut right, mut y0, mut y1) = (u16::MAX, 0u16, u16::MAX, 0u16);
+    for (id, r) in rects.iter() {
+        if strip.contains(id) && r.width > 0 {
+            x0 = x0.min(r.x);
+            right = right.max(r.x + r.width);
+            y0 = y0.min(r.y);
+            y1 = y1.max(r.y + r.height);
+        }
+    }
+    if right == 0 {
+        return None;
+    }
+    let g = tui.0.cfg.gutter.max(1);
+    Some((right..right + g, y0..y1, x0))
+}
+
+/// Mouse: click focuses and forwards its hit, wheel scrolls WITHOUT moving focus, drag selects —
+/// and the rail divider is a HANDLE: a press on the gutter drags the rail wider or narrower.
 pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
     let (col, row) = (me.column, me.row);
     match me.kind {
@@ -1050,6 +1085,12 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
                     return;
                 }
             }
+            if let Some((xs, ys, _)) = rail_divider(tui) {
+                if button == MouseButton::Left && xs.contains(&col) && ys.contains(&row) {
+                    tui.0.rail_drag.store(true, std::sync::atomic::Ordering::SeqCst);
+                    return;
+                }
+            }
             let Some(pane) = tui.pane_at(col, row) else {
                 // A click on the composer's band: a CHIP if one is under the pointer (D7) —
                 // the same geometry `render_at` drew — else focus, with the caret where the
@@ -1091,6 +1132,18 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
             .await;
         }
         MouseEventKind::Drag(MouseButton::Left) => {
+            if tui.0.rail_drag.load(std::sync::atomic::Ordering::SeqCst) {
+                if let Some((_, _, x0)) = rail_divider(tui) {
+                    // The pointer IS the divider: width runs from the rail's left edge to it.
+                    // Clamped to stay a rail — never collapsed to zero by the mouse, because a
+                    // zero-width rail has no divider left to grab back.
+                    let max = (tui.size().width / 2).max(RAIL_MIN);
+                    let cols = col.saturating_sub(x0).clamp(RAIL_MIN, max);
+                    *tui.0.rail_cols.write() = Some(cols);
+                }
+                tui.redraw();
+                return;
+            }
             let mut sel = tui.0.selection.lock();
             if let Some(s) = sel.as_mut() {
                 s.head = (col, row);
@@ -1099,6 +1152,9 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
             tui.redraw();
         }
         MouseEventKind::Up(MouseButton::Left) => {
+            if tui.0.rail_drag.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
             let selection = tui.selection();
             if let Some(s) = selection {
                 if !s.is_empty() {

@@ -296,3 +296,28 @@ fn the_fields_this_phase_added_are_rejected_at_zero_rather_than_clamped() {
     TuiShellPlugin::validate(&ok).expect("gutter: 0 is a real choice");
     TuiShellPlugin::validate(&test_config()).expect("the shipped defaults validate");
 }
+
+#[tokio::test]
+async fn a_dragged_rail_width_wins_over_the_registered_size() {
+    use bough_plugin_tui_shell::pane::layout_with;
+    let (ctx, tui) = shell();
+    add_pane(&ctx, &tui, "rail", Slot::Strip, 0, SlotSize::Cells(20)).await;
+    add_pane(&ctx, &tui, "main", Slot::Main, 0, SlotSize::Fill(1)).await;
+    let size = Rect::new(0, 0, 80, 24);
+    let none = std::collections::HashMap::new();
+
+    // The divider is a handle: the dragged width outranks the registered one, in both
+    // directions, and the transcript takes up exactly what the rail let go of.
+    for cols in [12u16, 34] {
+        let rects = layout_with(size, &tui.panes(), 1, 1, false, None, &none, Some(cols));
+        let of = |id: &str| rects.iter().find(|(p, _)| p.as_str() == id).unwrap().1;
+        assert_eq!(of("rail").width, cols);
+        assert_eq!(of("main").x, cols + 1, "the gutter still belongs to nobody");
+        assert_eq!(of("main").width, 80 - cols - 1);
+    }
+
+    // With no drag, the registered size still decides.
+    let rects = layout_with(size, &tui.panes(), 1, 1, false, None, &none, None);
+    let of = |id: &str| rects.iter().find(|(p, _)| p.as_str() == id).unwrap().1;
+    assert_eq!(of("rail").width, 20);
+}

@@ -502,6 +502,7 @@ pub fn layout(
         false,
         None,
         &HashMap::new(),
+        None,
     )
 }
 
@@ -517,6 +518,9 @@ pub fn layout_with(
     border: bool,
     focused: Option<&PaneId>,
     aux_rows: &HashMap<PaneId, u16>,
+    // A rail width the user DRAGGED (the divider is a handle): wins over every pane's
+    // registered size, because an explicit hand on the divider outranks a breakpoint table.
+    strip_cols: Option<u16>,
 ) -> Vec<(PaneId, Rect)> {
     let ordered = sorted(panes);
     let of = |slot: Slot| -> Vec<PaneInfo> {
@@ -555,14 +559,17 @@ pub fn layout_with(
     // Strip: columns off the left.
     let strip = of(Slot::Strip);
     if !strip.is_empty() {
-        let width = strip
-            .iter()
-            .map(|p| match p.size {
-                SlotSize::Fill(_) => rest.width / 5,
-                other => fixed_len(other, rest.width),
+        let width = strip_cols
+            .unwrap_or_else(|| {
+                strip
+                    .iter()
+                    .map(|p| match p.size {
+                        SlotSize::Fill(_) => rest.width / 5,
+                        other => fixed_len(other, rest.width),
+                    })
+                    .max()
+                    .unwrap_or(0)
             })
-            .max()
-            .unwrap_or(0)
             .min(rest.width);
         // The gutter (M9): the SLOT costs `width + gutter` columns and the pane is handed only
         // `width`, so the blank column between the rail and the transcript belongs to NOBODY and
