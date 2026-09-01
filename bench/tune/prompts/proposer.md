@@ -18,6 +18,12 @@ Rules for skills:
   edits beat rewrites; the harness diffs and gates your changes on validation reward.
 - Every SKILL.md needs YAML frontmatter: `name:` and `description:` (the catalog line).
 
+PLATEAU RULE: if skill-impact.md shows two or more consecutive REJECTED refinements of the same
+skill set, do NOT refine it again — change strategy. The proven levers, in order: (1) target the
+UNCONVERTED tasks with task-family-specific guidance (the champion's whole gain is one task);
+(2) split competing strategies into arms; (3) cut skill length — a longer skill has lost every
+gate so far.
+
 When two defensible strategies compete (e.g. "verify-before-concluding discipline" vs "budget
 pacing"), split them into ARM directories — `skills-a/`, `skills-b/` (same layout as `skills/`)
 beside a shared-core `skills/` — and the harness will RACE them in concurrent batches, keeping
