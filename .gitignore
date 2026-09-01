@@ -32,3 +32,7 @@ bench/pier/dist/
 # WikiSkill tuner: its own git repo + lane home
 bench/tune/workspace/
 bench/tune/home/
+
+# tmux debug logs and the unevaluated-expr sqlite artifact (2026-09-01) never belong here
+tmux-*.log
+bough_path(*
