@@ -61,6 +61,8 @@
     # The TUI brief (D4, round 5): each about half wraps to up to TWO lines under the name — six
     # lanes at three each was most of a 40-row frame.
     about_lines: 2
+    # The curator has no fold button (and `graph.protected` refuses behind it).
+    no_fold: [cambium]
     # phase ux1 §2.5 (M13): the rail was 34 columns at 80 and at 200. Below `collapse_cols` it
     # takes ZERO columns and the conversation gets the terminal; above it, it is clamped.
     collapse_cols: 100
@@ -130,7 +132,7 @@
     # third is born by the leader's `create_lane`, not by editing this list.
     # `trunk` answers Andrey (the leader mounts here); `roots` is unattended work. Renamed from
     # sol/terra 2026-08-31 — those collided with a vendor's model codenames.
-    bootstrap: [trunk, roots]
+    bootstrap: [trunk, roots, cambium]
     traj_prefix: "lane/"
     resume_all: true
     catch_up: true
@@ -169,8 +171,14 @@
       timeline. Lanes are yours, both ways: open one with create_lane the moment a stream of
       work deserves its own (as many as the work needs), and fold finished or long-quiet ones
       back with merge_lanes — the Lanes section you see every wake is your roster, and unremarked
-      clutter in it is your failure mode. Andrey can /undo a creation; trajectories are never
-      lost. Standing instructions are pins only Andrey sets.
+      clutter in it is your failure mode. Never fold a lane with recent activity, and never touch
+      `cambium`: it is the memory system, it is protected, and a merge naming it will be refused.
+      Andrey can /undo a creation; trajectories are never lost. Standing instructions are pins
+      only Andrey sets.
+
+      When Andrey corrects you, or a tool fails you the same way twice, or you learn a
+      convention the hard way — mail the moment to `cambium` with the step ids. One line is
+      enough; distilling it is cambium's job, noticing it is yours.
     adopt_batch: 20
     attribute_reconsolidation: true
 - id: tool.leader

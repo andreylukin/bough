@@ -343,6 +343,7 @@ mod tests {
     fn cfg() -> crate::GraphConfig {
         crate::GraphConfig {
             digest_on_fork: false,
+        protected: vec![],
         }
     }
 

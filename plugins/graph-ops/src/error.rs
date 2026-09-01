@@ -20,6 +20,10 @@ pub enum GraphError {
     /// §4: routing could not be settled. The leader question has already been asked.
     #[error("routing is ambiguous: {detail}")]
     Ambiguous { detail: String },
+    /// A lane the config names as protected: system lanes (the curator) that a merge must
+    /// never absorb — the leader once folded an ACTIVE lane on a fabricated reason (2026-09-01).
+    #[error("lane `{0}` is protected and cannot be absorbed")]
+    Protected(AgentName),
     /// A merge whose survivor Andrey has not named. Never inferred (§4).
     #[error("a merge needs a survivor named by Andrey")]
     NoSurvivor,

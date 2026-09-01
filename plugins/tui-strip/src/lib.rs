@@ -53,6 +53,10 @@ pub struct StripConfig {
     /// …and never wider.
     #[serde(default = "default_max_width")]
     pub max_width: u16,
+    /// Lanes whose rows wear NO fold button — the system lanes `graph.protected` also refuses
+    /// to absorb. Two layers on purpose: no control to press, and a refusal behind it.
+    #[serde(default)]
+    pub no_fold: Vec<String>,
 }
 // NOTE (phase ux1 review): the gutter between the rail and the transcript is `tui.gutter`, read
 // once by the shell's layout (`tui-shell/src/run.rs`). This row used to declare a SECOND `gutter`
@@ -255,7 +259,7 @@ impl Pane for StripPane {
                 let Some(row) = rows.iter().find(|r| &r.agent == agent) else {
                     continue;
                 };
-                if row.leader || row.disposed {
+                if row.leader || row.disposed || self.cfg.no_fold.contains(&row.name) {
                     continue;
                 }
                 if let Some(line) = lines.get_mut(*top as usize) {

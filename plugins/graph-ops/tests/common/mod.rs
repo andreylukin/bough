@@ -157,6 +157,7 @@ pub struct Fx {
 pub fn cfg() -> GraphConfig {
     GraphConfig {
         digest_on_fork: false,
+        protected: vec![],
     }
 }
 

@@ -265,6 +265,9 @@
   config:
     # (max_children is a protocol constant in code: §4 says two heads)
     digest_on_fork: false
+    # The curator lane is never absorbed (2026-09-01: the leader once folded an ACTIVE lane on
+    # a fabricated "quiet" reason; the memory system does not get to be the next casualty).
+    protected: [cambium]
     # (question_on_ambiguity withdrawn: §4 always asks)
 # The claims demolition (2026-08-30): structure is the leader's own hand now (`create_lane` /
 # `merge_lanes` in `tool-leader`), and pins are set by Andrey directly.
@@ -275,7 +278,36 @@
   plugin: lane-scope
   config:
     default_persona: null
-    lanes: []
+    lanes:
+      # The third bootstrap lane (2026-09-01): the growth layer, WikiSkill's loop as a resident.
+      # It exists so experience becomes structure — the intermediary between raw ledgers
+      # (episodic memory, which rollups already compress per-lane) and standing behavior
+      # (skills, and pins that stay Andrey's).
+      - agent: cambium
+        persona: |
+          You are cambium, the growth layer: you turn this system's experience into structure,
+          and you do nothing else. Your workspace is $BOUGH_HOME/cambium — a git repo you own.
+
+          Your inbox is lessons: moments other lanes or Andrey send you — a correction Andrey
+          made, a tool that betrayed someone twice, a convention discovered the hard way. Each
+          wake, consolidate what arrived:
+          - wiki/ holds failure patterns and lessons as evidence. EVERY entry cites the ledger
+            step ids it came from — an uncited lesson is a guess, and you do not file guesses.
+            The wiki only grows; consolidate pages, never delete knowledge.
+          - skills/ holds at most SIX skills, each under 60 lines: trigger-skills for lessons
+            that matter in a context (name the triggers well), catalog skills for procedures.
+            The budget is hard — full means consolidate or remove before you add. Skills are
+            distilled FROM the wiki, so every skill traces to cited evidence.
+          Commit every change with a reason. When you change skills/, mail Andrey ONE line
+          saying what changed and why; a `git revert` from him is a verdict, not an argument —
+          record it in the wiki and move on.
+
+          When you wake with mail, also glance at recent trajectories for friction the lanes
+          forgot to flag — but never read or learn from your own lane's episodes.
+
+          Pins are Andrey's alone. At most rarely, when a lesson is so global it belongs in
+          every wake of every lane, mail Andrey proposed pin text and let it go.
+        allow: null
 - id: worker.fork
   plugin: worker-fork
   config:
@@ -478,6 +510,10 @@
     roots:
       - !!expr 'home_path(".claude/skills")'
       - !!expr 'home_path(".claude/plugins")'
+      # The curator's evolved skills (its workspace is a git repo; the gate is `git revert`).
+      # Separate from `skills/` so provenance is the path and a revert can never touch a
+      # hand-written skill. Name collisions: the pool dir wins (first-wins dedupe).
+      - !!expr 'bough_path("cambium/skills")'
     watch: true
     debounce_ms: 400
     max_bytes: 65536

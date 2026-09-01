@@ -310,6 +310,10 @@ pub struct GraphConfig {
     /// Whether a headless fork gets an inheritance digest. `false` in `bough-base`: a fork has no
     /// row to carry one.
     pub digest_on_fork: bool,
+    /// Lane names no merge may ABSORB (being a survivor is fine). For the system lanes whose
+    /// whole value is continuity — `cambium` in `bough-base`.
+    #[serde(default)]
+    pub protected: Vec<String>,
 }
 
 /// How many children a split takes. §4 says "two heads", the row's own invariant hard-fails on

@@ -212,3 +212,29 @@ async fn a_merge_with_no_survivor_named_is_a_leader_question() {
     assert!(f.digests.calls().is_empty());
     assert!(f.steps_of_kind(GRAPH_MERGE).await.is_empty());
 }
+
+/// A protected lane (the curator) is refused as `absorbed` before anything is written — and
+/// being the SURVIVOR is still fine: protection is about continuity, not isolation.
+#[tokio::test]
+async fn a_protected_lane_is_never_absorbed() {
+    let f = common::fx_with(bough_plugin_graph_ops::GraphConfig {
+        digest_on_fork: false,
+        protected: vec!["cambium".to_string()],
+    });
+    f.lane("cambium", &[]).await;
+    f.lane("terra", &["slack:c1"]).await;
+    let err = f
+        .graph
+        .apply(&merge("terra", "cambium"))
+        .await
+        .expect_err("refused");
+    assert!(
+        err.to_string().contains("protected"),
+        "the refusal names the protection: {err}"
+    );
+    // Survivor is fine: the curator may absorb.
+    f.graph
+        .apply(&merge("cambium", "terra"))
+        .await
+        .expect("a protected lane may absorb");
+}

@@ -38,6 +38,7 @@ fn strip() -> StripConfig {
         collapse_cols: 100,
         min_width: 22,
         max_width: 40,
+        no_fold: vec![],
     }
 }
 
