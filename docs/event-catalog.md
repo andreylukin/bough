@@ -17,7 +17,7 @@ with its declared dispatch mode, checked against every dispatch site. Do not edi
 | `agent/preempt` | emit | `AgentPreempt` | agents | 1 | 0 |
 | `agent/request` | waterfall | `AgentRequest` | llm | 6 | 0 |
 | `agent/request-error` | waterfall | `AgentRequestError` | llm | 2 | 0 |
-| `agent/status` | emit | `AgentStatusChanged` | agents | 1 | 2 |
+| `agent/status` | emit | `AgentStatusChanged` | agents | 1 | 3 |
 | `agent/step` | emit | `AgentStep` | agents | 2 | 1 |
 | `agent/wake` | emit | `AgentWake` | agents | 4 | 4 |
 | `agent/wake-end` | parallel | `AgentWakeEnd` | agents | 2 | 0 |
@@ -33,7 +33,7 @@ with its declared dispatch mode, checked against every dispatch site. Do not edi
 | `kernel/invariant-violated` | emit | `InvariantViolated` | bough-kernel | 1 | 0 |
 | `kernel/listener-failed` | emit | `ListenerFailed` | bough-kernel | 0 | 3 |
 | `kernel/rows-unresolved` | emit | `RowsUnresolved` | bough-kernel | 1 | 2 |
-| `ledger/step` | emit | `LedgerStep` | ledger | 4 | 23 |
+| `ledger/step` | emit | `LedgerStep` | ledger | 4 | 24 |
 | `llm/stream` | waterfall | `LlmStreamEvent` | llm | 1 | 0 |
 | `mail/route` | waterfall | `MailRoute` | mail-router | 1 | 0 |
 | `mail/routed` | emit | `MailRouted` | mail-router | 1 | 0 |
