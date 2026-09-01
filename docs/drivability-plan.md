@@ -89,6 +89,15 @@ Diagnoses done (input render path, injection audit, push path). Landed and teste
   rewrite by design).
 - Known flaky: ~6 `cargo test -p bough` integration tests fail under the full parallel run and
   pass individually — pre-existing, not from these changes.
+- **OPEN (2026-09-01, found on the ASI Mac): SSH-spawned residents silently lose the login
+  keychain.** A resident started from an SSH session cannot read the user's login keychain, so
+  `gh` (keychain-stored token) 401s on every `push_to_pr`, and `${keychain:…}` credential
+  pointers (`bough.mcp.patch.yml`) fail even when the grant is healthy. The failure is invisible
+  at boot and surfaces later as auth errors inside turns. Wanted: detect at resident spawn
+  (e.g. probe the keychain, or check `SSH_CONNECTION` + no Aqua session) and warn loudly in the
+  boot line/status, or refuse `--resident` from SSH unless overridden. Related config note: MCP
+  rows from `sync-mcp` should be born `critical: false` — externally-owned grants expire on
+  their own schedule and must degrade, not kill boot (that crash is what started this hunt).
 - **Stuck updates, diagnosed 2026-08-31**: `bough update`/`restart` wedged because the running
   resident's tokio IO driver stopped being polled — `sample` showed NO kevent thread, every
   worker in `park_condvar`, main parked in `block_on` — so the SIGINT was never heard, and the
