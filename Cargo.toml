@@ -41,7 +41,7 @@ uuid         = { version = "1", features = ["v4", "v7"] }
 chrono       = "0.4"
 regex        = "1"
 toml         = "0.8"                                                 # hooks-parity: Codex config.toml [hooks] tables
-sha2         = "0.10"                                                 # composition fingerprint, idem keys
+sha2         = "0.11"                                                 # composition fingerprint, idem keys
 base64       = "0.22"
 futures      = "0.3"
 async-trait  = "0.1"
