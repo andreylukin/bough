@@ -757,7 +757,7 @@ async fn agent_ask_and_fork_go_through_the_workers_seam() {
     let out = fx
         .program(
             r#"
-            await agent("port the retry test", ["bash", "view"]);
+            await agent("port the retry test", { name: "retry-port", tools: ["bash", "view"] });
             await fork("try the other approach");
             console.log("done");
             "#,
@@ -768,7 +768,10 @@ async fn agent_ask_and_fork_go_through_the_workers_seam() {
     let seen = fx.recorder.seen.lock().clone();
     assert_eq!(seen.len(), 2, "two starts");
     assert_eq!(seen[0].kind, WorkerKind::Spawn);
-    assert_eq!(seen[0].task, "port the retry test");
+    assert_eq!(
+        seen[0].task, "[worker: retry-port]\nport the retry test",
+        "the opts name is woven into the task header"
+    );
     assert_eq!(seen[0].spawner, agent());
     assert_eq!(seen[0].depth, 1);
     let restrict = seen[0].tools.as_ref().expect("agent() narrowed the tools");
@@ -812,7 +815,7 @@ async fn the_worker_bounds_refuse_the_cap_plus_one_spawn() {
             r#"
             for (const t of ["one", "two", "three"]) {
                 try {
-                    await agent(t, []);
+                    await agent(t, { tools: [] });
                     console.log("started=" + t);
                 } catch (e) {
                     console.log("refused=" + String(e.message || e));

@@ -27,6 +27,24 @@ pub struct SpawnArgs {
     /// Tool names the worker may use. Composed as an INTERSECTION with what the spawner has.
     #[serde(default)]
     pub tools: Option<Vec<String>>,
+    /// The documented second positional (`agent(task, opts)`). Before 2026-09-01 the surface
+    /// promised this shape while the schema bound the opts OBJECT into `tools` — every call
+    /// following the docs failed with "invalid type: map, expected a sequence", which is what
+    /// silently emptied the tuner's fan-out.
+    #[serde(default)]
+    pub opts: Option<SpawnOpts>,
+}
+
+/// `agent(task, opts)`'s options object.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct SpawnOpts {
+    /// A label for this worker, woven into the task header so reports and logs carry it. The
+    /// seam mints the agent's real name; this is presentation.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Same meaning as the top-level `tools`; the opts spelling wins when both are given.
+    #[serde(default)]
+    pub tools: Option<Vec<String>>,
 }
 
 /// What `fork` takes from the model. No `tools` field: a fork continues the PARENT's line of work
@@ -128,12 +146,23 @@ impl Tool for SpawnWorkerTool {
 
     async fn call(&self, call: Arc<ToolCall>, cx: ToolCx) -> Result<ToolOutcome, ToolFailure> {
         let args: SpawnArgs = args_of(&call)?;
+        let opts = args.opts.unwrap_or(SpawnOpts {
+            name: None,
+            tools: None,
+        });
+        let task = match &opts.name {
+            Some(name) if !name.trim().is_empty() => {
+                format!("[worker: {}]\n{}", name.trim(), args.task)
+            }
+            _ => args.task,
+        };
+        let tools = opts.tools.or(args.tools);
         let req = start_request(
             WorkerKind::Spawn,
             &call,
             &cx,
-            args.task,
-            args.tools.map(|names| Restrict {
+            task,
+            tools.map(|names| Restrict {
                 allow: Some(
                     names
                         .into_iter()

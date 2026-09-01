@@ -20,12 +20,14 @@ An act is the only thing here the outside world can see; everything else is
 reversible.
 
 <!-- needs: agent -->
-await agent(prompt, opts) — spawn a worker on a separable piece of work. ALWAYS pass
-a name: it labels the branch everywhere the user sees it, and a fan-out of unnamed
-siblings is indistinguishable. Workers start with NO context beyond the prompt, so
-the prompt is the entire briefing: every path, command, constraint and acceptance
-criterion has to be in it. They share your checkout — give each a disjoint set of
-files, and never have two work the same file at once.
+await agent(task, opts) — spawn a worker on a separable piece of work and WAIT for
+its sealed report (the call returns the report). opts is `{name, tools}`, both
+optional: ALWAYS pass a name — it labels the worker's report in a fan-out, and
+unnamed siblings are indistinguishable; `tools` narrows what the worker may call.
+Workers start with NO context beyond the task, so the task is the entire briefing:
+every path, command, constraint and acceptance criterion has to be in it. They
+share your checkout — give each a disjoint set of files, and never have two work
+the same file at once.
 
 <!-- needs: fork -->
 await fork(opts) — continue this trajectory in a second agent that starts from your

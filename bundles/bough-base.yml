@@ -553,7 +553,7 @@
     caps: null
     conceal: mirror
     aliases:
-      agent: spawn_worker
+      agent: spawn_worker#task,opts
       # `tool?fixed=value#positional,names` — one op-discriminated tool read as the several
       # functions `surface/` documents. The fixed argument wins over anything the program passes.
       ledger.search: ledger_read?op=search#q

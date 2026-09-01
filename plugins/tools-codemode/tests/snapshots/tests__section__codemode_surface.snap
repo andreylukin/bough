@@ -1,5 +1,6 @@
 ---
 source: plugins/tools-codemode/tests/section.rs
+assertion_line: 187
 expression: rendered.body
 ---
 You act by writing ONE JavaScript program per round and calling `run` with it. The program runs in
@@ -246,12 +247,14 @@ await inbox() — the mail this wake has not consumed yet: what other agents sen
 you, what the user said out of band, what a schedule fired. Read it before deciding
 what the round is for.
 
-await agent(prompt, opts) — spawn a worker on a separable piece of work. ALWAYS pass
-a name: it labels the branch everywhere the user sees it, and a fan-out of unnamed
-siblings is indistinguishable. Workers start with NO context beyond the prompt, so
-the prompt is the entire briefing: every path, command, constraint and acceptance
-criterion has to be in it. They share your checkout — give each a disjoint set of
-files, and never have two work the same file at once.
+await agent(task, opts) — spawn a worker on a separable piece of work and WAIT for
+its sealed report (the call returns the report). opts is `{name, tools}`, both
+optional: ALWAYS pass a name — it labels the worker's report in a fan-out, and
+unnamed siblings are indistinguishable; `tools` narrows what the worker may call.
+Workers start with NO context beyond the task, so the task is the entire briefing:
+every path, command, constraint and acceptance criterion has to be in it. They
+share your checkout — give each a disjoint set of files, and never have two work
+the same file at once.
 
 await fork(opts) — continue this trajectory in a second agent that starts from your
 context rather than from nothing. Use it to explore an alternative without losing
