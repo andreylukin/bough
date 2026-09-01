@@ -118,7 +118,7 @@ fn filtering_matches_aliases_and_honours_the_toggles() {
             ]}}"#,
     )
     .expect("parses");
-    fn cmds<'a>(v: Vec<&'a bough_plugin_hooks_parity::settings::HookDef>) -> Vec<&'a str> {
+    fn cmds(v: Vec<&bough_plugin_hooks_parity::settings::HookDef>) -> Vec<&str> {
         v.into_iter().map(|d| d.command.as_str()).collect()
     }
     // `bash` only matches "Bash" through its alias; the matcher-less hook always fires.

@@ -510,6 +510,7 @@ pub fn layout(
 /// report names a row count gets that many rows instead of its registered size — unless it is
 /// the focused pane, which always gets its registered size so a collapsed pane can be opened by
 /// moving the keyboard to it. Panes that never reported are laid out exactly as before.
+#[allow(clippy::too_many_arguments)]
 pub fn layout_with(
     size: Rect,
     panes: &[PaneInfo],
