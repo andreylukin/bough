@@ -46,8 +46,18 @@ fn both_formats_parse_to_the_same_hook() {
     assert_eq!(claude.len(), 1);
     let (c, x) = (&claude[0], &codex[0]);
     assert_eq!(
-        (c.event.as_str(), c.matcher.as_deref(), c.command.as_str(), c.timeout_ms),
-        (x.event.as_str(), x.matcher.as_deref(), x.command.as_str(), x.timeout_ms),
+        (
+            c.event.as_str(),
+            c.matcher.as_deref(),
+            c.command.as_str(),
+            c.timeout_ms
+        ),
+        (
+            x.event.as_str(),
+            x.matcher.as_deref(),
+            x.command.as_str(),
+            x.timeout_ms
+        ),
     );
     assert_eq!(c.timeout_ms, Some(30_000));
     // A file with no hooks key is simply empty; a broken one is an error the caller warns on.
@@ -79,8 +89,16 @@ fn sources_walk_the_ancestors_and_dedupe_the_user_layer() {
     assert!(claude_root < claude_x, "outermost first: {out:?}");
     assert!(out.iter().any(|p| p.ends_with(".codex/config.toml")));
     // Toggles: no codex, no .codex paths.
-    let no_codex = source_files(Path::new("/Users/a/repos/x"), Some(&home), true, false, true);
-    assert!(!no_codex.iter().any(|p| p.to_string_lossy().contains(".codex")));
+    let no_codex = source_files(
+        Path::new("/Users/a/repos/x"),
+        Some(&home),
+        true,
+        false,
+        true,
+    );
+    assert!(!no_codex
+        .iter()
+        .any(|p| p.to_string_lossy().contains(".codex")));
 }
 
 /// The matcher regex is tried against the raw bough name AND the parity alias; the `only` /
@@ -105,24 +123,59 @@ fn filtering_matches_aliases_and_honours_the_toggles() {
     }
     // `bash` only matches "Bash" through its alias; the matcher-less hook always fires.
     assert_eq!(
-        cmds(filtered(&defs, "PreToolUse", &["bash", "Bash"], &[], &[], &[])),
+        cmds(filtered(
+            &defs,
+            "PreToolUse",
+            &["bash", "Bash"],
+            &[],
+            &[],
+            &[]
+        )),
         vec!["guard.sh", "always.sh"]
     );
     assert_eq!(
-        cmds(filtered(&defs, "PreToolUse", &["write_file", "Write"], &[], &[], &[])),
+        cmds(filtered(
+            &defs,
+            "PreToolUse",
+            &["write_file", "Write"],
+            &[],
+            &[],
+            &[]
+        )),
         vec!["fmt.sh", "always.sh"]
     );
     assert_eq!(
-        cmds(filtered(&defs, "PostToolUse", &["bash", "Bash"], &[], &[], &[])),
+        cmds(filtered(
+            &defs,
+            "PostToolUse",
+            &["bash", "Bash"],
+            &[],
+            &[],
+            &[]
+        )),
         vec!["after.sh"]
     );
     // only / except by command substring; events gate.
     assert_eq!(
-        cmds(filtered(&defs, "PreToolUse", &["bash", "Bash"], &[], &["guard".into()], &[])),
+        cmds(filtered(
+            &defs,
+            "PreToolUse",
+            &["bash", "Bash"],
+            &[],
+            &["guard".into()],
+            &[]
+        )),
         vec!["guard.sh"]
     );
     assert_eq!(
-        cmds(filtered(&defs, "PreToolUse", &["bash", "Bash"], &[], &[], &["always".into()])),
+        cmds(filtered(
+            &defs,
+            "PreToolUse",
+            &["bash", "Bash"],
+            &[],
+            &[],
+            &["always".into()]
+        )),
         vec!["guard.sh"]
     );
     assert!(cmds(filtered(
@@ -150,10 +203,16 @@ fn the_calls_cwd_comes_from_its_own_arguments() {
         PathBuf::from("/work/sub")
     );
     assert_eq!(
-        call_cwd(&serde_json::json!({"path": "/repos/x/src/main.rs"}), Some(ws)),
+        call_cwd(
+            &serde_json::json!({"path": "/repos/x/src/main.rs"}),
+            Some(ws)
+        ),
         PathBuf::from("/repos/x/src")
     );
-    assert_eq!(call_cwd(&serde_json::json!({}), Some(ws)), PathBuf::from("/work"));
+    assert_eq!(
+        call_cwd(&serde_json::json!({}), Some(ws)),
+        PathBuf::from("/work")
+    );
 }
 
 /// End to end on a real tree: a `.claude/settings.json` deny hook in the call's cwd denies the
@@ -182,7 +241,10 @@ async fn a_project_hook_denies_a_call_run_in_its_directory() {
     };
     let repo_s = repo.to_string_lossy().to_string();
     let mut pre = PreExecute::new(
-        call("bash", serde_json::json!({"command": "rm -rf /", "cwd": repo_s})),
+        call(
+            "bash",
+            serde_json::json!({"command": "rm -rf /", "cwd": repo_s}),
+        ),
         bough_plugin_ledger::AgentName::new("sol"),
     );
     run_pre(&st(cfg()), &mut pre).await;
@@ -193,14 +255,20 @@ async fn a_project_hook_denies_a_call_run_in_its_directory() {
     // A call elsewhere never sees this repo's hook.
     let other_dir = dir.path().to_string_lossy().to_string();
     let mut pre = PreExecute::new(
-        call("bash", serde_json::json!({"command": "ls", "cwd": other_dir})),
+        call(
+            "bash",
+            serde_json::json!({"command": "ls", "cwd": other_dir}),
+        ),
         bough_plugin_ledger::AgentName::new("sol"),
     );
     run_pre(&st(cfg()), &mut pre).await;
     assert_eq!(*pre.decision(), Decision::Allow);
     // The `only` toggle (no match on the command) turns the hook off.
     let mut pre = PreExecute::new(
-        call("bash", serde_json::json!({"command": "ls", "cwd": repo.to_string_lossy()})),
+        call(
+            "bash",
+            serde_json::json!({"command": "ls", "cwd": repo.to_string_lossy()}),
+        ),
         bough_plugin_ledger::AgentName::new("sol"),
     );
     run_pre(

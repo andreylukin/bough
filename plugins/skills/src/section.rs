@@ -69,10 +69,7 @@ pub fn catalog_body(skills: &[Arc<Skill>]) -> Option<String> {
 
 #[async_trait::async_trait]
 impl SectionRender for CatalogSection {
-    async fn render(
-        &self,
-        _req: &SectionRequest,
-    ) -> Result<Option<SectionBody>, ProjectionError> {
+    async fn render(&self, _req: &SectionRequest) -> Result<Option<SectionBody>, ProjectionError> {
         Ok(catalog_body(&self.pool.snapshot()).map(|body| SectionBody {
             title: "Skills".to_string(),
             body,

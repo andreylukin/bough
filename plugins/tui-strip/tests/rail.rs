@@ -624,7 +624,11 @@ mod grouping {
     fn a_disposed_worker_vanishes_when_collapsed_and_an_orphan_survives() {
         let mut done = named("roots/worker-01a058fd-b7ff");
         done.disposed = true;
-        let rows = vec![named("roots"), done, named("gone-lane/worker-01a05d1d-e76a")];
+        let rows = vec![
+            named("roots"),
+            done,
+            named("gone-lane/worker-01a05d1d-e76a"),
+        ];
         let (out, kinds) = display(&rows, &BTreeSet::new(), &BTreeMap::new());
         let names: Vec<&str> = out.iter().map(|r| r.name.as_str()).collect();
         // No badge for a lane whose only worker is a receipt; the orphan stays visible.

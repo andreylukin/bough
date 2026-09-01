@@ -142,7 +142,11 @@ pub async fn restart() -> ExitCode {
         Err(crate::lock::LockError::Held { pid: Some(pid), .. }) => {
             let stages: [(libc::c_int, &str, u64); 3] = [
                 (libc::SIGINT, "asked pid {} to leave", CLIENT_WAIT_MS),
-                (libc::SIGTERM, "pid {} ignored SIGINT; sending SIGTERM", 5_000),
+                (
+                    libc::SIGTERM,
+                    "pid {} ignored SIGINT; sending SIGTERM",
+                    5_000,
+                ),
                 (libc::SIGKILL, "pid {} survived SIGTERM; killing it", 3_000),
             ];
             let mut released = false;

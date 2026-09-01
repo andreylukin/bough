@@ -397,9 +397,8 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
                     // "Empty" only when the window HOLDS the turn's start: a window that opens
                     // mid-turn cannot say what came before it, and a false alarm would read as
                     // an accusation.
-                    let empty = wake_start_idx.is_some_and(|from| {
-                        !out[from..].iter().any(is_agent_row)
-                    });
+                    let empty =
+                        wake_start_idx.is_some_and(|from| !out[from..].iter().any(is_agent_row));
                     out.push(Row::WakeMark {
                         step: step.id.clone(),
                         wake: step.wake.clone(),
@@ -878,7 +877,10 @@ mod tests {
             turn_mark_words(&Phase::End, Some("interrupted"), None, false),
             "turn interrupted"
         );
-        assert_eq!(turn_mark_words(&Phase::End, Some("  "), None, false), "turn ended");
+        assert_eq!(
+            turn_mark_words(&Phase::End, Some("  "), None, false),
+            "turn ended"
+        );
         // B7, the marker Esc actually produces. §5 reserves `interrupted` for a PREEMPTED wake,
         // so a user's Esc lands as `aborted` + `cause: user` — and that pair has to read as an
         // interrupt, or the audit's marker is invisible on the one path a person can take.

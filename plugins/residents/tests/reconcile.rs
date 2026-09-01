@@ -87,7 +87,11 @@ async fn a_mid_wake_agent_is_deferred_not_bounced() {
         .await
         .expect("reconciles");
     assert!(touched.is_empty(), "nothing was bounced: {touched:?}");
-    assert_eq!(deferred, vec![name.clone()], "the running agent is deferred");
+    assert_eq!(
+        deferred,
+        vec![name.clone()],
+        "the running agent is deferred"
+    );
     assert!(
         agents.by_name(&name).is_some(),
         "the open wake was left to finish"

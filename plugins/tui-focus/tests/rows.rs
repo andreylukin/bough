@@ -1147,7 +1147,11 @@ fn an_empty_turn_end_mark_says_nothing_was_shown() {
     }
     let showed_something = rows_from_steps(&[
         step(1, "wake/start", serde_json::json!({})),
-        step(2, "thought/text", serde_json::json!({ "text": "hi", "step_index": 0 })),
+        step(
+            2,
+            "thought/text",
+            serde_json::json!({ "text": "hi", "step_index": 0 }),
+        ),
         step(3, "wake/end", serde_json::json!({ "reason": "max_tokens" })),
     ]);
     match showed_something.last() {
@@ -1165,14 +1169,15 @@ fn an_empty_turn_end_mark_says_nothing_was_shown() {
         other => panic!("expected the end mark, got {other:?}"),
     }
     // The wording, both ways.
-    use bough_plugin_tui_focus::rows::turn_mark_words;
     use bough_plugin_agents::Phase;
+    use bough_plugin_tui_focus::rows::turn_mark_words;
     assert_eq!(
         turn_mark_words(&Phase::End, Some("max_tokens"), None, false),
         "turn ended \u{b7} ran out of output tokens"
     );
     assert!(turn_mark_words(&Phase::End, Some("max_tokens"), None, true)
         .contains("before showing anything"));
-    assert!(turn_mark_words(&Phase::End, Some("error"), None, true)
-        .contains("nothing was produced"));
+    assert!(
+        turn_mark_words(&Phase::End, Some("error"), None, true).contains("nothing was produced")
+    );
 }

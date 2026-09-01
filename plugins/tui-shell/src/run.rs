@@ -1087,7 +1087,9 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
             }
             if let Some((xs, ys, _)) = rail_divider(tui) {
                 if button == MouseButton::Left && xs.contains(&col) && ys.contains(&row) {
-                    tui.0.rail_drag.store(true, std::sync::atomic::Ordering::SeqCst);
+                    tui.0
+                        .rail_drag
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
                     return;
                 }
             }
@@ -1152,7 +1154,11 @@ pub async fn on_mouse(tui: &TuiHandle, me: MouseEvent) {
             tui.redraw();
         }
         MouseEventKind::Up(MouseButton::Left) => {
-            if tui.0.rail_drag.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            if tui
+                .0
+                .rail_drag
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
                 return;
             }
             let selection = tui.selection();
@@ -1414,11 +1420,30 @@ mod layout_focus_tests {
     fn slash_token_finds_the_mention_under_the_caret() {
         assert_eq!(slash_token("ask /mon"), Some((4, "mon".to_string())));
         assert_eq!(slash_token("/"), Some((1, String::new())));
-        assert_eq!(slash_token("line one\nthen /wi"), Some((3, "wi".to_string())));
+        assert_eq!(
+            slash_token("line one\nthen /wi"),
+            Some((3, "wi".to_string()))
+        );
         assert_eq!(slash_token("ask about rent"), None, "no slash, no palette");
-        assert_eq!(slash_token("see src/lib.rs"), None, "a path is not a mention");
-        assert_eq!(slash_token("root /Users/andrey"), None, "two slashes = a path");
-        assert_eq!(slash_token("say //literal"), None, "the doubled-slash escape");
-        assert_eq!(slash_token("ask /mon "), None, "a finished token stops filtering");
+        assert_eq!(
+            slash_token("see src/lib.rs"),
+            None,
+            "a path is not a mention"
+        );
+        assert_eq!(
+            slash_token("root /Users/andrey"),
+            None,
+            "two slashes = a path"
+        );
+        assert_eq!(
+            slash_token("say //literal"),
+            None,
+            "the doubled-slash escape"
+        );
+        assert_eq!(
+            slash_token("ask /mon "),
+            None,
+            "a finished token stops filtering"
+        );
     }
 }

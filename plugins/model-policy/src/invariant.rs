@@ -102,7 +102,12 @@ pub fn seen() -> Vec<Obs> {
 /// requests, and the configured pair.
 ///
 /// `sent` is the honest half: it comes from the ledger, not from this crate's own arithmetic.
-pub fn evaluate(interactive: &str, _terra: &str, stream: &[Obs], sent: &[SentObs]) -> Result<(), String> {
+pub fn evaluate(
+    interactive: &str,
+    _terra: &str,
+    stream: &[Obs],
+    sent: &[SentObs],
+) -> Result<(), String> {
     for obs in stream {
         if !obs.answers_andrey {
             continue;
@@ -213,8 +218,20 @@ mod tests {
 
     #[test]
     fn an_unattended_wake_may_run_on_anything() {
-        assert!(evaluate("interactive", "unattended", &[obs(false, "unattended", false)], &[]).is_ok());
-        assert!(evaluate("interactive", "unattended", &[obs(false, "other", true)], &[]).is_ok());
+        assert!(evaluate(
+            "interactive",
+            "unattended",
+            &[obs(false, "unattended", false)],
+            &[]
+        )
+        .is_ok());
+        assert!(evaluate(
+            "interactive",
+            "unattended",
+            &[obs(false, "other", true)],
+            &[]
+        )
+        .is_ok());
     }
 
     /// The check the old shape could not make: the decision is not the evidence, the ledger is.
@@ -232,18 +249,36 @@ mod tests {
 
     #[test]
     fn a_matching_decision_and_header_are_clean() {
-        assert!(evaluate("interactive", "unattended", &[obs(true, "interactive", false)], &[a_sent("interactive")]).is_ok());
+        assert!(evaluate(
+            "interactive",
+            "unattended",
+            &[obs(true, "interactive", false)],
+            &[a_sent("interactive")]
+        )
+        .is_ok());
     }
 
     #[test]
     fn an_answer_wake_on_terra_is_a_violation() {
-        let err = evaluate("interactive", "unattended", &[obs(true, "unattended", false)], &[]).unwrap_err();
+        let err = evaluate(
+            "interactive",
+            "unattended",
+            &[obs(true, "unattended", false)],
+            &[],
+        )
+        .unwrap_err();
         assert!(err.contains("not on interactive"), "{err}");
     }
 
     #[test]
     fn an_override_reaching_an_answer_wake_is_a_violation() {
-        let err = evaluate("interactive", "unattended", &[obs(true, "interactive", true)], &[]).unwrap_err();
+        let err = evaluate(
+            "interactive",
+            "unattended",
+            &[obs(true, "interactive", true)],
+            &[],
+        )
+        .unwrap_err();
         assert!(err.contains("not overridable"), "{err}");
     }
 }

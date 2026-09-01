@@ -260,7 +260,12 @@ fn andreys_message_stays_inline_despite_the_context_plan() {
         Arc::new(Mutex::new(FocusState::default())),
         Arc::new(Mutex::new(LiveText::default())),
     );
-    let (lines, _, _) = pane.lines(&state, &LiveText::default(), 80, &Theme::of(ThemeName::Dark));
+    let (lines, _, _) = pane.lines(
+        &state,
+        &LiveText::default(),
+        80,
+        &Theme::of(ThemeName::Dark),
+    );
     let text: Vec<String> = lines
         .iter()
         .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
@@ -291,7 +296,10 @@ fn reasoning_folds_collapsed_by_default() {
     let rows = bough_plugin_tui_focus::rows_from_steps(&[step]);
     let out = painted(rows.clone(), "");
     assert_eq!(out.len(), 1, "collapsed: one header line — {out:?}");
-    assert!(out[0].contains("thinking") && out[0].contains("open"), "{out:?}");
+    assert!(
+        out[0].contains("thinking") && out[0].contains("open"),
+        "{out:?}"
+    );
     assert!(!out[0].contains("deep thoughts"), "{out:?}");
     // Expanded: the body follows the header.
     let mut state = FocusState {
@@ -317,5 +325,8 @@ fn reasoning_folds_collapsed_by_default() {
         .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
         .collect();
     assert!(text[0].contains("close"), "{text:?}");
-    assert!(text.iter().any(|l| l.contains("deep thoughts here")), "{text:?}");
+    assert!(
+        text.iter().any(|l| l.contains("deep thoughts here")),
+        "{text:?}"
+    );
 }

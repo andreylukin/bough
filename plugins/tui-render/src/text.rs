@@ -187,10 +187,14 @@ fn inline(text: &str) -> Vec<Piece> {
         let code = rest.find('`');
         let link = rest.find('[');
         // Whichever opener comes first wins; a backtick inside `**bold**` is still code.
-        let earliest = [bold.map(|b| (b, 0u8)), code.map(|c| (c, 1)), link.map(|l| (l, 2))]
-            .into_iter()
-            .flatten()
-            .min();
+        let earliest = [
+            bold.map(|b| (b, 0u8)),
+            code.map(|c| (c, 1)),
+            link.map(|l| (l, 2)),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         let Some((at, kind)) = earliest else { break };
 
         // `[label](url)` — rendered as the label with the address alongside, never the raw

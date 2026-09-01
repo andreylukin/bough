@@ -45,7 +45,8 @@ async fn conversation_then_tool_spam(h: &Harness) {
     // these are NOT `mail/delivered`/`thought/text` and that there are more of them than the
     // tail window.
     for i in 0..20 {
-        h.note(&format!("p{i:02}"), "w2", &format!("noise {i}")).await;
+        h.note(&format!("p{i:02}"), "w2", &format!("noise {i}"))
+            .await;
     }
 }
 
@@ -77,7 +78,11 @@ async fn the_dialogue_band_keeps_the_thread_a_tool_heavy_wake_evicts() {
             .iter()
             .find(|s| s.id.as_str() == "dialogue")
             .expect("the dialogue band");
-        assert!(dlg.body.contains("look at the deepseek harness setup"), "{}", dlg.body);
+        assert!(
+            dlg.body.contains("look at the deepseek harness setup"),
+            "{}",
+            dlg.body
+        );
         assert!(dlg.body.contains("dsh findings so far"), "{}", dlg.body);
         assert!(
             !dlg.body.contains("noise"),
@@ -85,7 +90,11 @@ async fn the_dialogue_band_keeps_the_thread_a_tool_heavy_wake_evicts() {
             dlg.body
         );
         assert_eq!(
-            dlg.cites.steps.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            dlg.cites
+                .steps
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
             vec!["m1", "t1"],
             "model-visible ⟺ ledgered"
         );

@@ -448,7 +448,10 @@ pub fn worker_parent(name: &str) -> Option<&str> {
 /// A worker's display name when its group is expanded: indented, uuid cut to eight chars —
 /// `nas-event-log/worker-01a058fd-…` reads as `  …01a058fd` under its parent.
 pub fn short_worker(name: &str) -> String {
-    let id = name.split_once(WORKER_SEP).map(|(_, id)| id).unwrap_or(name);
+    let id = name
+        .split_once(WORKER_SEP)
+        .map(|(_, id)| id)
+        .unwrap_or(name);
     let id: String = id.chars().take(8).collect();
     format!("  \u{2026}{id}")
 }

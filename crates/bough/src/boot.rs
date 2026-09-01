@@ -219,7 +219,10 @@ pub fn describe_degraded(s: &TreeSnapshot) -> String {
     );
     for r in &degraded {
         let plugin = r.plugin.as_deref().unwrap_or("<no plugin>");
-        out.push_str(&format!("  {} (plugin `{}`) is {:?}", r.id, plugin, r.state));
+        out.push_str(&format!(
+            "  {} (plugin `{}`) is {:?}",
+            r.id, plugin, r.state
+        ));
         if let Some(e) = &r.error {
             out.push_str(&format!(" — {e}"));
         }
@@ -308,17 +311,26 @@ mod tests {
             "a non-critical failure boots on"
         );
         let note = describe_degraded(&degraded);
-        assert!(note.contains("running WITHOUT 1 non-critical row(s)"), "{note}");
+        assert!(
+            note.contains("running WITHOUT 1 non-critical row(s)"),
+            "{note}"
+        );
         assert!(note.contains("skills.broken"), "{note}");
         assert!(note.contains("no YAML frontmatter"), "{note}");
         assert_eq!(describe_degraded(&snapshot(vec![])), "");
 
         let fatal = snapshot(vec![failed("ledger", true), failed("skills.broken", false)]);
         let err = assert_all_activated(&fatal).unwrap_err();
-        assert!(matches!(err, BootError::Unresolved(1)), "only the critical one counts: {err}");
+        assert!(
+            matches!(err, BootError::Unresolved(1)),
+            "only the critical one counts: {err}"
+        );
         let msg = describe_unresolved(&fatal);
         assert!(msg.contains("ledger"), "{msg}");
-        assert!(msg.contains("skills.broken") && msg.contains("non-critical"), "{msg}");
+        assert!(
+            msg.contains("skills.broken") && msg.contains("non-critical"),
+            "{msg}"
+        );
     }
 
     #[test]

@@ -402,7 +402,10 @@ pub async fn dialogue(
         .0
         .steps(&bough_plugin_ledger::StepQuery {
             trajs: vec![req.connected.own.clone()],
-            kinds: vec![StepType::new("mail/delivered"), StepType::new("thought/text")],
+            kinds: vec![
+                StepType::new("mail/delivered"),
+                StepType::new("thought/text"),
+            ],
             // The tail window is already `as_of`-bounded, so bounding by its start keeps
             // §2.7 item 3 honest without a second `as_of` filter.
             before: Some(tail_start),

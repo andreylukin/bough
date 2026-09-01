@@ -326,8 +326,8 @@ impl Plugin for SkillsHostPlugin {
     /// reconciles EXACTLY the changed child.
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
         let entry = ctx.entry_id().clone();
-        let files = scan_all(&cfg)
-            .map_err(|e| PluginError::new(entry.clone(), anyhow::Error::new(e)))?;
+        let files =
+            scan_all(&cfg).map_err(|e| PluginError::new(entry.clone(), anyhow::Error::new(e)))?;
 
         // The catalog and the loader (drivability §5): ONE section listing every skill in the
         // pool by name + description, and a `skill` tool that loads one body as a ledgered

@@ -14,7 +14,12 @@ use crate::{GraphError, GraphInner};
 pub async fn apply(inner: &GraphInner, req: &MergeRequest) -> Result<OpOutcome, GraphError> {
     // A protected lane is never absorbed — checked before anything else, so no question, no
     // digest and no row write happens on the way to the refusal.
-    if inner.cfg.protected.iter().any(|p| p == req.absorbed.as_str()) {
+    if inner
+        .cfg
+        .protected
+        .iter()
+        .any(|p| p == req.absorbed.as_str())
+    {
         return Err(GraphError::Protected(req.absorbed.clone()));
     }
     // §4: ANDREY'S CHOICE. An unnamed survivor is a question, never a coin toss.

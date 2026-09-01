@@ -127,7 +127,10 @@ mod tests {
 
     #[test]
     fn the_spec_reads_as_a_palette_row() {
-        let s = spec(skill("monarch", "Query Monarch Money. Use when budgets come up."));
+        let s = spec(skill(
+            "monarch",
+            "Query Monarch Money. Use when budgets come up.",
+        ));
         assert_eq!(s.name.as_str(), "monarch");
         assert_eq!(s.usage, "/monarch");
         assert_eq!(s.summary, "Query Monarch Money");

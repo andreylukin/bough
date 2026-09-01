@@ -275,7 +275,10 @@ mod tests {
             home: true,
             walk_up: true,
         };
-        let paths: Vec<PathBuf> = discover(&c, Some(&home)).into_iter().map(|(_, p)| p).collect();
+        let paths: Vec<PathBuf> = discover(&c, Some(&home))
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect();
         let root = root.canonicalize().unwrap();
         assert_eq!(paths[0], home.join(".claude").join("CLAUDE.md"));
         let inner = paths
@@ -309,7 +312,9 @@ mod tests {
         std::fs::write(root.join("CLAUDE.md"), "Never push to main.").unwrap();
         let body = body_with_home(&c, Some(&home)).expect("a section");
         let global = body.find("Be terse.").expect("global instructions present");
-        let project = body.find("Never push to main.").expect("project instructions present");
+        let project = body
+            .find("Never push to main.")
+            .expect("project instructions present");
         assert!(global < project, "{body}");
     }
 

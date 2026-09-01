@@ -402,7 +402,9 @@ async fn a_pending_run_retries_on_the_backoff_until_it_lands() {
         job_timeout_ms: 1000,
         pending_retry_ms: 50,
     });
-    let sched = CronScheduler::start(cfg, ctx.clone()).await.expect("a scheduler");
+    let sched = CronScheduler::start(cfg, ctx.clone())
+        .await
+        .expect("a scheduler");
     let job = Arc::new(EventuallyThere {
         fires: AtomicUsize::new(0),
     });
@@ -450,7 +452,9 @@ async fn a_stored_pending_run_re_arms_the_retry_at_registration() {
             job_timeout_ms: 1000,
             pending_retry_ms: 0,
         });
-        let sched = CronScheduler::start(cfg, ctx.clone()).await.expect("a scheduler");
+        let sched = CronScheduler::start(cfg, ctx.clone())
+            .await
+            .expect("a scheduler");
         let job = Arc::new(EventuallyThere {
             fires: AtomicUsize::new(0),
         });
@@ -467,7 +471,9 @@ async fn a_stored_pending_run_re_arms_the_retry_at_registration() {
         job_timeout_ms: 1000,
         pending_retry_ms: 50,
     });
-    let sched = CronScheduler::start(cfg, ctx.clone()).await.expect("a scheduler");
+    let sched = CronScheduler::start(cfg, ctx.clone())
+        .await
+        .expect("a scheduler");
     let job = Arc::new(EventuallyThere {
         // Past its pending phase: the referent "exists" in this process.
         fires: AtomicUsize::new(2),

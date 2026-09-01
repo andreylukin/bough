@@ -48,10 +48,11 @@ impl Tool for SkillTool {
     }
 
     async fn call(&self, call: Arc<ToolCall>, _cx: ToolCx) -> Result<ToolOutcome, ToolFailure> {
-        let args: SkillArgs = serde_json::from_value(call.args.clone()).map_err(|e| ToolFailure {
-            kind: FailureClass::Error,
-            message: format!("bad arguments for `{}`: {e}", call.name),
-        })?;
+        let args: SkillArgs =
+            serde_json::from_value(call.args.clone()).map_err(|e| ToolFailure {
+                kind: FailureClass::Error,
+                message: format!("bad arguments for `{}`: {e}", call.name),
+            })?;
         let want = args.name.trim();
         let skills = self.pool.snapshot();
         let Some(skill) = skills.iter().find(|s| s.name == want) else {

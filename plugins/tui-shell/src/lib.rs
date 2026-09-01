@@ -954,7 +954,9 @@ impl TuiHandle {
 
     /// Whether the open palette is the inline autocomplete (see `palette_inline` on the inner).
     pub fn palette_inline(&self) -> bool {
-        self.0.palette_inline.load(std::sync::atomic::Ordering::Relaxed)
+        self.0
+            .palette_inline
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Mark the open palette inline (completes in place) or command (dispatches).

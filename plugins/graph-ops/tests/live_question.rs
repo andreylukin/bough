@@ -109,7 +109,7 @@ async fn live() -> Live {
         ask: Arc::new(MailAsk(mail.clone())) as Arc<dyn LeaderAsk>,
         cfg: Arc::new(GraphConfig {
             digest_on_fork: false,
-        protected: vec![],
+            protected: vec![],
         }),
     };
     Live {

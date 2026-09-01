@@ -30,10 +30,8 @@ async fn assert_the_three_rows_are_active_with(
     let mut patches = vec![fixture("llm-replay.yml")];
     let _extra_file;
     if !extra_patch.is_empty() {
-        let path = std::env::temp_dir().join(format!(
-            "memory-invariants-{}.yml",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("memory-invariants-{}.yml", std::process::id()));
         std::fs::write(&path, extra_patch).expect("the extra patch writes");
         patches.push(path.clone());
         _extra_file = path;

@@ -312,7 +312,10 @@ async fn a_depth_four_spawn_is_refused() {
     );
     // And the generation below it is admitted, so the refusal is a bound and not a blanket no.
     workers
-        .start(&ctx, request("trunk", agent.id(), "wake:deep-ok", depth - 1))
+        .start(
+            &ctx,
+            request("trunk", agent.id(), "wake:deep-ok", depth - 1),
+        )
         .await
         .expect("the last permitted generation still spawns");
 

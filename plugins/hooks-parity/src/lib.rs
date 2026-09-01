@@ -155,8 +155,14 @@ pub async fn run_pre(st: &HookState, pre: &mut PreExecute) {
     );
     let raw = pre.call.name.as_str().to_string();
     let names = st.names(&raw);
-    for def in settings::filtered(&defs, "PreToolUse", &names, &cfg.events, &cfg.only, &cfg.except)
-    {
+    for def in settings::filtered(
+        &defs,
+        "PreToolUse",
+        &names,
+        &cfg.events,
+        &cfg.only,
+        &cfg.except,
+    ) {
         let body = payload("PreToolUse", &names, &pre.call, &cwd, None);
         let run = run::run_hook(
             &def.command,

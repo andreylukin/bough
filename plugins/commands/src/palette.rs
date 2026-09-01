@@ -277,7 +277,12 @@ mod tests {
     /// subsequence match.
     #[test]
     fn filter_falls_back_to_subsequence_after_prefix_and_substring() {
-        let all = vec![info("monarch"), info("dormant"), info("drift"), info("wiki")];
+        let all = vec![
+            info("monarch"),
+            info("dormant"),
+            info("drift"),
+            info("wiki"),
+        ];
         let hits: Vec<String> = filter(&all, "mnr")
             .iter()
             .map(|i| i.name.to_string())
@@ -290,6 +295,8 @@ mod tests {
         assert_eq!(hits, ["dormant", "drift"], "subsequence keeps both d-words");
         assert!(filter(&all, "zzz").is_empty());
         // Out-of-order letters are NOT a match: this is fzf, not a bag of chars.
-        assert!(filter(&all, "rnm").iter().all(|i| i.name.as_str() != "monarch"));
+        assert!(filter(&all, "rnm")
+            .iter()
+            .all(|i| i.name.as_str() != "monarch"));
     }
 }

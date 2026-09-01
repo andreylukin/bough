@@ -44,7 +44,9 @@ pub fn pre_verdict(run: &HookRun) -> PreVerdict {
                     .to_string()
             };
             match decision {
-                Some("deny") => return PreVerdict::Deny(reason_or(&hso_reason(), "denied by hook")),
+                Some("deny") => {
+                    return PreVerdict::Deny(reason_or(&hso_reason(), "denied by hook"))
+                }
                 Some("ask") => return PreVerdict::Ask(reason_or(&hso_reason(), "hook asks")),
                 Some(_) => return PreVerdict::Nothing,
                 None => {}
@@ -123,17 +125,30 @@ mod tests {
             PreVerdict::Deny("no".into())
         );
         let deny = r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"r"}}"#;
-        assert_eq!(pre_verdict(&run(Some(0), deny, "")), PreVerdict::Deny("r".into()));
-        let ask = r#"{"hookSpecificOutput":{"permissionDecision":"ask","permissionDecisionReason":"sure?"}}"#;
-        assert_eq!(pre_verdict(&run(Some(0), ask, "")), PreVerdict::Ask("sure?".into()));
         assert_eq!(
-            pre_verdict(&run(Some(0), r#"{"decision":"block","reason":"legacy"}"#, "")),
+            pre_verdict(&run(Some(0), deny, "")),
+            PreVerdict::Deny("r".into())
+        );
+        let ask = r#"{"hookSpecificOutput":{"permissionDecision":"ask","permissionDecisionReason":"sure?"}}"#;
+        assert_eq!(
+            pre_verdict(&run(Some(0), ask, "")),
+            PreVerdict::Ask("sure?".into())
+        );
+        assert_eq!(
+            pre_verdict(&run(
+                Some(0),
+                r#"{"decision":"block","reason":"legacy"}"#,
+                ""
+            )),
             PreVerdict::Deny("legacy".into())
         );
         // allow, plain output, a failing hook: all decide nothing.
         let allow = r#"{"hookSpecificOutput":{"permissionDecision":"allow"}}"#;
         assert_eq!(pre_verdict(&run(Some(0), allow, "")), PreVerdict::Nothing);
-        assert_eq!(pre_verdict(&run(Some(0), "just words", "")), PreVerdict::Nothing);
+        assert_eq!(
+            pre_verdict(&run(Some(0), "just words", "")),
+            PreVerdict::Nothing
+        );
         assert_eq!(pre_verdict(&run(Some(1), "", "boom")), PreVerdict::Nothing);
         assert_eq!(
             pre_verdict(&HookRun {
