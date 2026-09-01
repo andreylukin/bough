@@ -91,3 +91,46 @@ fn markdownish_highlights_a_fenced_block() {
         "a fenced rust block is highlighted into runs"
     );
 }
+
+#[test]
+fn markdownish_renders_a_link_as_its_label_with_the_address_alongside() {
+    let th = common::theme();
+    let lines = bough_plugin_tui_render::markdownish("see [the docs](https://x.dev) now", 60, &th);
+    let rendered: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+    // The markers never reach the screen (M19); the address stays, because a terminal
+    // link is not clickable and a label with no address strands the reader.
+    assert_eq!(rendered, "see the docs (https://x.dev) now");
+    let label = lines[0]
+        .spans
+        .iter()
+        .find(|s| s.content.as_ref() == "the docs")
+        .expect("the label is its own span");
+    assert_eq!(label.style.fg, Some(th.interactive), "a link responds");
+    let addr = lines[0]
+        .spans
+        .iter()
+        .find(|s| s.content.contains("https://x.dev"))
+        .expect("the address is its own span");
+    assert_eq!(addr.style.fg, Some(th.dim), "the address is quiet");
+}
+
+#[test]
+fn a_bare_bracket_and_a_wiki_ref_stay_literal() {
+    let th = common::theme();
+    let lines = bough_plugin_tui_render::markdownish("cite [3] and [[note]] here", 60, &th);
+    let rendered: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(rendered, "cite [3] and [[note]] here");
+}
+
+#[test]
+fn an_unterminated_link_styles_what_has_arrived() {
+    let th = common::theme();
+    // The streaming rule: the closing half has simply not arrived yet.
+    let lines = bough_plugin_tui_render::markdownish("read [the gui", 60, &th);
+    let rendered: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(rendered, "read the gui");
+    let lines = bough_plugin_tui_render::markdownish("read [docs](https://a.b/c", 60, &th);
+    let rendered: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+    // The trailing paren is the renderer's own: balanced on every repaint of a live tail.
+    assert_eq!(rendered, "read docs (https://a.b/c)");
+}

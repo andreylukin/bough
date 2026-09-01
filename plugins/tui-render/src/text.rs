@@ -166,6 +166,11 @@ enum Piece {
     Text(String),
     Bold(String),
     Code(String),
+    /// A `[label](url)` link's label (or its url, when the label is empty).
+    Link(String),
+    /// The ` (url)` a labelled link trails: kept on screen because a terminal link is not
+    /// clickable — hiding the url would strand the reader with a name and no address.
+    Url(String),
 }
 
 /// PURE: split one source line into styled pieces.
@@ -180,19 +185,68 @@ fn inline(text: &str) -> Vec<Piece> {
     loop {
         let bold = rest.find("**");
         let code = rest.find('`');
+        let link = rest.find('[');
         // Whichever opener comes first wins; a backtick inside `**bold**` is still code.
-        let (at, is_bold) = match (bold, code) {
-            (None, None) => break,
-            (Some(b), None) => (b, true),
-            (None, Some(c)) => (c, false),
-            (Some(b), Some(c)) => {
-                if b <= c {
-                    (b, true)
-                } else {
-                    (c, false)
+        let earliest = [bold.map(|b| (b, 0u8)), code.map(|c| (c, 1)), link.map(|l| (l, 2))]
+            .into_iter()
+            .flatten()
+            .min();
+        let Some((at, kind)) = earliest else { break };
+
+        // `[label](url)` — rendered as the label with the address alongside, never the raw
+        // markers (M19). `[text]` with no `(` is literal (a footnote, a `[[wiki]]` ref), and an
+        // unterminated label or url is the streaming rule again: style what has arrived.
+        if kind == 2 {
+            plain.push_str(&rest[..at]);
+            // An image `![alt](url)` renders as its link; the bang is a marker too.
+            if plain.ends_with('!') {
+                plain.pop();
+            }
+            let body_from = at + 1;
+            match rest[body_from..].find(']') {
+                None => {
+                    if !plain.is_empty() {
+                        out.push(Piece::Text(std::mem::take(&mut plain)));
+                    }
+                    let label = rest[body_from..].to_string();
+                    if !label.is_empty() {
+                        out.push(Piece::Link(label));
+                    }
+                    rest = "";
+                    break;
+                }
+                Some(j) => {
+                    let label = &rest[body_from..body_from + j];
+                    let after = &rest[body_from + j + 1..];
+                    if let Some(url_rest) = after.strip_prefix('(') {
+                        let (url, remaining) = match url_rest.find(')') {
+                            Some(k) => (&url_rest[..k], &url_rest[k + 1..]),
+                            None => (url_rest, ""),
+                        };
+                        if !plain.is_empty() {
+                            out.push(Piece::Text(std::mem::take(&mut plain)));
+                        }
+                        if label.is_empty() {
+                            out.push(Piece::Link(url.to_string()));
+                        } else {
+                            out.push(Piece::Link(label.to_string()));
+                            if !url.is_empty() && url != label {
+                                out.push(Piece::Url(format!(" ({url})")));
+                            }
+                        }
+                        rest = remaining;
+                    } else {
+                        plain.push('[');
+                        plain.push_str(label);
+                        plain.push(']');
+                        rest = after;
+                    }
+                    continue;
                 }
             }
-        };
+        }
+
+        let is_bold = kind == 0;
         let (open, close) = if is_bold {
             (2usize, "**")
         } else {
@@ -260,6 +314,12 @@ pub(crate) fn styled_wrap(raw: &str, width: u16, hang: usize, theme: &Theme) -> 
     // Code is a TEXTURE, not a colour (visual audit F5): its own foreground on its own ground,
     // so `inline_code` no longer reads as a link or a speaker.
     let code = Style::default().fg(theme.code).bg(theme.code_bg);
+    // A link is a thing you would OPEN: `interactive`, the palette's one "this responds" colour
+    // (visual audit F5), underlined; the address trails in `dim`.
+    let link = Style::default()
+        .fg(theme.interactive)
+        .add_modifier(Modifier::UNDERLINED);
+    let url = Style::default().fg(theme.dim);
     let pad = || Span::raw(" ".repeat(hang));
 
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -270,6 +330,8 @@ pub(crate) fn styled_wrap(raw: &str, width: u16, hang: usize, theme: &Theme) -> 
             Piece::Text(t) => (t, plain),
             Piece::Bold(t) => (t, bold),
             Piece::Code(t) => (t, code),
+            Piece::Link(t) => (t, link),
+            Piece::Url(t) => (t, url),
         };
         for (i, chunk) in wrap_from(&body, body_w, used).into_iter().enumerate() {
             if i > 0 {
