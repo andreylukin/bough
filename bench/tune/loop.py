@@ -222,20 +222,34 @@ def tuner_patch() -> Path:
     return patch
 
 
-def wake(prompt_file: Path, message: str) -> None:
+def wake(prompt_file: Path, message: str, expect: str) -> None:
+    """One tuner-lane turn. `expect` is a workspace path that MUST show edits afterward; a turn
+    that analyzed in prose and wrote nothing gets exactly one nudge retry — the same
+    announces-instead-of-acting backstop the bench adapter carries (iteration 1's Maintainer
+    ran `pwd`/`ls`, narrated a good RCA, and concluded without touching a file)."""
     tuner_patch()
-    prompt = prompt_file.read_text() + "\n\n---\n\n" + message
     env = {**os.environ, "BOUGH_HOME": str(HOME)}
-    sh(["bough", "exec", "--print", "text", prompt], cwd=WORKSPACE, env=env)
+    prompt = prompt_file.read_text() + "\n\n---\n\n" + message
+    for round_ in range(2):
+        sh(["bough", "exec", "--print", "text", prompt], cwd=WORKSPACE, env=env)
+        if git_ws("status", "--porcelain", "--", expect):
+            return
+        print(f"wake: no edits under {expect!r}; nudging", flush=True)
+        prompt = (
+            f"Your previous turn analyzed but wrote NOTHING under {expect}/ — the analysis is "
+            f"in your context above. Write the files now with your file tools, then summarize."
+        )
+    print(f"wake: still no edits under {expect!r} after a nudge; moving on", flush=True)
 
 
 def ingest(job: Path) -> None:
     gate(job)
     report = render_report(job)
-    wake(TUNE / "prompts" / "maintainer.md", report)
+    wake(TUNE / "prompts" / "maintainer.md", report, "wiki")
     wake(
         TUNE / "prompts" / "proposer.md",
         f"The latest batch was job {job.name}. wiki/ and skills/ are in your working directory.",
+        "skills",
     )
 
 
