@@ -938,7 +938,18 @@ impl Pane for FocusPane {
         state.now = Some(cx.view.now);
         state.running = cx.view.running;
         state.keyboard_here = cx.view.is_focused;
-        let live = self.live.lock().clone();
+        // The live tail belongs to ONE agent. Switching lanes mid-stream used to paint the
+        // streaming lane's text at the tail of the lane you switched TO — another agent's words
+        // under this agent's name (2026-09-01). The buffer already knows whose it is; the pane
+        // must ASK, because the tee only checks at capture time and the pane outlives the check.
+        let live = {
+            let held = self.live.lock().clone();
+            if held.agent.is_some() && held.agent != state.agent {
+                stream::LiveText::default()
+            } else {
+                held
+            }
+        };
         let theme = *cx.theme();
         // The FOCUS RING (B1/M16): one column, ALWAYS reserved, painted only when this pane holds
         // the keyboard. Reserving it unconditionally is the point — the transcript must not

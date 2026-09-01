@@ -1181,3 +1181,62 @@ fn an_empty_turn_end_mark_says_nothing_was_shown() {
         turn_mark_words(&Phase::End, Some("error"), None, true).contains("nothing was produced")
     );
 }
+
+/// A model that interleaves its reasoning channel with its text (GLM does) must not have its
+/// SENTENCE broken by the thought between two flushes: `"Anytime"` rendered as `Any` /
+/// `▸ thinking` / `time` on screen (2026-09-01).
+#[test]
+fn a_thought_between_two_text_flushes_does_not_split_the_reply() {
+    let rows = rows_from_steps(&[
+        step(1, "thought/text", serde_json::json!({ "text": "Any", "step_index": 0 })),
+        step(
+            2,
+            "thought/reasoning",
+            serde_json::json!({ "text": "considering", "step_index": 0 }),
+        ),
+        step(3, "thought/text", serde_json::json!({ "text": "time", "step_index": 0 })),
+        step(
+            4,
+            "thought/reasoning",
+            serde_json::json!({ "text": " more", "step_index": 0 }),
+        ),
+    ]);
+    let texts: Vec<String> = rows
+        .iter()
+        .map(|r| match r {
+            Row::Text { text, .. } => format!("text:{text}"),
+            Row::Reasoning { text, .. } => format!("think:{text}"),
+            other => format!("other:{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        vec!["text:Anytime".to_string(), "think:considering more".to_string()],
+        "each channel joins across the other"
+    );
+}
+
+/// …but a real boundary still closes both groups: a tool call between two flushes is two rows.
+#[test]
+fn a_tool_call_between_flushes_still_breaks_the_group() {
+    let rows = rows_from_steps(&[
+        step(1, "thought/text", serde_json::json!({ "text": "before", "step_index": 0 })),
+        step(
+            2,
+            "tool/call",
+            serde_json::json!({
+                "call": "c1", "name": "bash",
+                "args": { "cmd": "ls" }, "render": "terminal", "step_index": 0
+            }),
+        ),
+        step(3, "thought/text", serde_json::json!({ "text": "after", "step_index": 1 })),
+    ]);
+    let texts: Vec<String> = rows
+        .iter()
+        .filter_map(|r| match r {
+            Row::Text { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, vec!["before".to_string(), "after".to_string()]);
+}

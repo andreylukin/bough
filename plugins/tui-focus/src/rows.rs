@@ -208,7 +208,12 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
     // consecutive `thought/text` (or `thought/reasoning`) steps sharing `(wake, step_index)` are
     // ONE row. `None` means the last row pushed cannot be joined onto — anything else in between
     // (a tool call, a wake mark, a new step index, a new wake) breaks the group.
-    let mut open_group: Option<(usize, GroupKey)> = None;
+    // TWO open groups, one per kind (2026-09-01): a model that interleaves its reasoning channel
+    // with its text (GLM does) used to BREAK the text group with every thought — `"Anytime"`
+    // rendered as `Any` / `▸ thinking` / `time`. Text joins text and reasoning joins reasoning
+    // across each other; anything else closes both.
+    let mut open_text: Option<(usize, GroupKey)> = None;
+    let mut open_think: Option<(usize, GroupKey)> = None;
     // Where the CURRENT turn's rows begin, so its end mark can say whether the turn showed
     // anything at all. `None` when the window opened mid-turn.
     let mut wake_start_idx: Option<usize> = None;
@@ -220,7 +225,7 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
         }
         // Every arm below except the two joining ones ends the open group; the joining arms set
         // it. Spelled once here so a new row type cannot silently keep a group open across itself.
-        let was = open_group.take();
+        let both = (open_text.take(), open_think.take());
         match kind {
             "mail/delivered" => out.push(mail_row(step)),
             "thought/text" | "thought/reasoning" => {
@@ -236,11 +241,26 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
                     wake: step.wake.clone(),
                     index: body_u32(step, "step_index"),
                 };
+                // Put back the group this step could join; the other stays closed unless it
+                // belongs to the SAME model step, in which case the interleave is what this
+                // rule exists for.
+                let (text_slot, think_slot) = both;
+                let same_step = |k: &GroupKey| k.wake == key.wake && k.index == key.index;
+                let (was, other_slot) = if key.text {
+                    (text_slot, think_slot.filter(|(_, k)| same_step(k)))
+                } else {
+                    (think_slot, text_slot.filter(|(_, k)| same_step(k)))
+                };
+                if key.text {
+                    open_think = other_slot;
+                } else {
+                    open_text = other_slot;
+                }
                 match was {
                     // The join, and it is RAW CONCATENATION: the flush boundary is a timer, not a
                     // sentence, and inserting a separator is exactly what put `"I'll run that"`
                     // and `" shell command for you."` on two lines.
-                    Some((at, ref k)) if *k == key && at + 1 == out.len() => {
+                    Some((at, ref k)) if *k == key => {
                         match &mut out[at] {
                             Row::Text { parts, text: t, .. }
                             | Row::Reasoning { parts, text: t, .. } => {
@@ -249,7 +269,11 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
                             }
                             _ => {}
                         }
-                        open_group = Some((at, key));
+                        if key.text {
+                            open_text = Some((at, key));
+                        } else {
+                            open_think = Some((at, key));
+                        }
                     }
                     _ => {
                         let row = if key.text {
@@ -269,7 +293,11 @@ pub fn rows_from_steps(steps: &[Step]) -> Vec<Row> {
                                 text,
                             }
                         };
-                        open_group = Some((out.len(), key));
+                        if key.text {
+                            open_text = Some((out.len(), key));
+                        } else {
+                            open_think = Some((out.len(), key));
+                        }
                         out.push(row);
                     }
                 }

@@ -107,7 +107,9 @@ impl AttachState {
         if let Some(old) = r.active.replace(tx) {
             let _ = old.send(Exit {
                 code: 0,
-                reason: "detached: another bough attached to this home".to_string(),
+                reason: "detached: another bough took this home (one terminal at a time). \
+                         Run `bough` here to take it back."
+                    .to_string(),
             });
         }
         Some(r.seq)
