@@ -21,7 +21,7 @@ use bough_plugin_tui_render::about::ABOUT_LINE;
 use bough_plugin_tui_shell::pane::{
     Pane, PaneCx, PaneEvent, PaneOutcome, PaneSpec, RenderCx, Slot, SlotSize,
 };
-use bough_plugin_tui_shell::{PaneId, Tui, TuiHandle};
+use bough_plugin_tui_shell::{HitId, NoticeKind, PaneId, Tui, TuiHandle};
 use crossterm::event::KeyCode;
 use parking_lot::Mutex;
 use ratatui::layout::Rect;
@@ -83,6 +83,11 @@ pub struct StripPane {
     /// from the OPTIONAL `leader` key at activation: the rail depends on the Definition, never
     /// on the row, and with no leader nobody wears the tag.
     leader: Mutex<Option<String>>,
+    /// The graph, when a `graph` row is mounted: what the ✕ folds a lane through. With no
+    /// graph there is no ✕ — the rail never draws a control that cannot act.
+    graph: Mutex<Option<bough_plugin_graph_ops::GraphHandle>>,
+    /// The two-press window for the ✕ (the exit key's pattern): the lane armed, and when.
+    fold_arm: Mutex<Option<(String, std::time::Instant)>>,
 }
 
 impl StripPane {
@@ -93,6 +98,12 @@ impl StripPane {
         self
     }
 
+    /// The graph the ✕ acts through, when one is mounted.
+    pub fn with_graph(self, graph: Option<bough_plugin_graph_ops::GraphHandle>) -> StripPane {
+        *self.graph.lock() = graph;
+        self
+    }
+
     /// A rail over a shared row list. Public so a test can drive `handle` and `rows()` without a
     /// composed tree.
     pub fn new(cfg: Arc<StripConfig>, rows: Arc<Mutex<Vec<RailRow>>>) -> StripPane {
@@ -100,7 +111,57 @@ impl StripPane {
             cfg,
             rows,
             leader: Mutex::new(None),
+            graph: Mutex::new(None),
+            fold_arm: Mutex::new(None),
         }
+    }
+
+    /// A press on a row's ✕. The FIRST press arms and says what a second one will do; the
+    /// second, inside the window, folds the lane into the leader through the same graph op
+    /// `merge_lanes` uses — a reconciliation digest lands in the survivor and the trajectory
+    /// stays readable forever, which is why the rail may offer this at all.
+    async fn fold(&self, name: String, cx: &PaneCx) -> PaneOutcome {
+        let Some(leader) = self.leader.lock().clone() else {
+            cx.tui.notify("no leader lane to fold into");
+            return PaneOutcome::Handled;
+        };
+        let Some(graph) = self.graph.lock().clone() else {
+            return PaneOutcome::Ignored;
+        };
+        let armed = {
+            let mut arm = self.fold_arm.lock();
+            match arm.take() {
+                Some((n, t)) if n == name && t.elapsed() < std::time::Duration::from_secs(4) => {
+                    true
+                }
+                _ => {
+                    *arm = Some((name.clone(), std::time::Instant::now()));
+                    false
+                }
+            }
+        };
+        if !armed {
+            cx.tui.notify(format!(
+                "✕ again to fold `{name}` into `{leader}` — summarized there; the trajectory                  stays readable"
+            ));
+            return PaneOutcome::Handled;
+        }
+        let req = bough_plugin_graph_ops::OpRequest::Merge(bough_plugin_graph_ops::MergeRequest {
+            survivor: bough_plugin_ledger::AgentName::new(&leader),
+            absorbed: bough_plugin_ledger::AgentName::new(&name),
+            reason: "Andrey folded the lane from the rail".to_string(),
+            by: bough_plugin_rollups::Attribution::Andrey,
+            cites: Vec::new(),
+            at: chrono::Utc::now(),
+        });
+        match graph.0.apply(&req).await {
+            Ok(_) => cx.tui.notify(format!("`{name}` folded into `{leader}`")),
+            Err(e) => cx
+                .tui
+                .notify_kind(format!("fold failed: {e}"), NoticeKind::Error),
+        }
+        cx.tui.redraw();
+        PaneOutcome::Handled
     }
 
     /// The rows the rail would draw right now.
@@ -131,12 +192,20 @@ impl Pane for StripPane {
         for r in rows.iter_mut() {
             r.clock = rail::clock_text(r.since, cx.view.now);
         }
+        // With a graph mounted every foldable row wears an x at the rail's edge, so the rail
+        // CONTENT gives those two columns up front — a status word truncated to make room for
+        // a control reads as a glitch, not a control.
+        let fold_reserve = if self.graph.lock().is_some() && area.width >= 12 {
+            2
+        } else {
+            0
+        };
         let (mut lines, spans) = rail::rail(
             &rows,
             focused.as_ref(),
             self.cfg.show_about,
             self.cfg.about_lines,
-            area.width,
+            area.width - fold_reserve,
             &theme,
         );
         // With the KEYBOARD in the rail (round 6), the focused lane's head line sits on the
@@ -155,20 +224,65 @@ impl Pane for StripPane {
         // §16 at the surface: whatever state halves this frame put on screen are recorded, and
         // the invariant checks that every one of them came from a CITED about-line.
         invariant::record_frame(&rows);
-        for (agent, top, height) in spans {
-            if top >= area.height {
+        for (agent, top, height) in &spans {
+            if *top >= area.height {
                 break;
             }
-            let h = height.min(area.height - top);
+            let h = (*height).min(area.height - *top);
             cx.hit(
                 Rect {
                     x: area.x,
-                    y: area.y + top,
+                    y: area.y + *top,
                     width: area.width,
                     height: h,
                 },
-                rail::hit_for_agent(&agent),
+                rail::hit_for_agent(agent),
             );
+        }
+        // The fold button (the rail's one destructive-looking control that is not destructive):
+        // every row that CAN be folded wears a small x at its right edge — the leader cannot
+        // fold into itself, a disposed row is already gone, and with no graph mounted there is
+        // no control at all. Its 1x1 hit is registered AFTER the row hit, because the last
+        // region wins, and the head line is padded so the x sits on the rail's last column
+        // whichever way the focus ring shifts the text.
+        let ring = cx.view.is_focused && area.width > 2;
+        let content_w = if ring { area.width - 1 } else { area.width };
+        if fold_reserve > 0 && content_w >= 10 {
+            for (agent, top, _) in &spans {
+                if *top >= area.height {
+                    break;
+                }
+                let Some(row) = rows.iter().find(|r| &r.agent == agent) else {
+                    continue;
+                };
+                if row.leader || row.disposed {
+                    continue;
+                }
+                if let Some(line) = lines.get_mut(*top as usize) {
+                    // The content was built two columns short, so nothing real is clipped here.
+                    let mut l = rail::clip(line.clone(), content_w - 2);
+                    let used = l.width() as u16;
+                    let pad = (content_w - 1).saturating_sub(used);
+                    if pad > 0 {
+                        l.spans
+                            .push(ratatui::text::Span::raw(" ".repeat(pad as usize)));
+                    }
+                    l.spans.push(ratatui::text::Span::styled(
+                        "\u{2715}",
+                        ratatui::style::Style::default().fg(theme.interactive),
+                    ));
+                    *line = l;
+                    cx.hit(
+                        Rect {
+                            x: area.x + area.width - 1,
+                            y: area.y + top,
+                            width: 1,
+                            height: 1,
+                        },
+                        HitId::new(format!("fold:{}", row.name)),
+                    );
+                }
+            }
         }
         // The focus ring (round 10, keyboard-only): with the keyboard in the rail, every line
         // wears the same `▎` in column 0 the conversation wears — the rail had no visible sign
@@ -199,7 +313,16 @@ impl Pane for StripPane {
 
     async fn handle(&self, ev: PaneEvent, cx: PaneCx) -> PaneOutcome {
         match ev {
-            PaneEvent::Click { hit, .. } => rail::on_click(hit.as_ref()),
+            PaneEvent::Click { hit, .. } => {
+                if let Some(name) = hit
+                    .as_ref()
+                    .and_then(|h| h.as_str().strip_prefix("fold:"))
+                    .map(str::to_string)
+                {
+                    return self.fold(name, &cx).await;
+                }
+                rail::on_click(hit.as_ref())
+            }
             // With the keyboard in the rail (round 6), Up/Down move the focused lane — the
             // keyboard's way to what a click on a row does.
             PaneEvent::Key(key) if matches!(key.code, KeyCode::Up | KeyCode::Down) => {
@@ -281,7 +404,7 @@ impl Plugin for StripPlugin {
     type Config = StripConfig;
 
     fn inject() -> Inject {
-        Inject::required(["tui", "agents", "ledger"]).union(&Inject::optional(["leader"]))
+        Inject::required(["tui", "agents", "ledger"]).union(&Inject::optional(["leader", "graph"]))
     }
 
     fn validate(cfg: &Self::Config) -> Result<(), ConfigError> {
@@ -353,7 +476,16 @@ impl Plugin for StripPlugin {
             .get::<bough_plugin_leader::Leader>()
             .ok()
             .map(|l| l.target().to_string());
-        let pane = Arc::new(StripPane::new(cfg.clone(), rows.clone()).with_leader(leader));
+        // OPTIONAL like `leader`: with no graph row the rail draws no fold control at all.
+        let graph = ctx
+            .get::<bough_plugin_graph_ops::Graph>()
+            .ok()
+            .map(|g| (*g).clone());
+        let pane = Arc::new(
+            StripPane::new(cfg.clone(), rows.clone())
+                .with_leader(leader)
+                .with_graph(graph),
+        );
         tui.register_pane(
             &ctx,
             PaneSpec {
