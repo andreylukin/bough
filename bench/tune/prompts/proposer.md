@@ -18,5 +18,10 @@ Rules for skills:
   edits beat rewrites; the harness diffs and gates your changes on validation reward.
 - Every SKILL.md needs YAML frontmatter: `name:` and `description:` (the catalog line).
 
+When two defensible strategies compete (e.g. "verify-before-concluding discipline" vs "budget
+pacing"), split them into ARM directories — `skills-a/`, `skills-b/` (same layout as `skills/`)
+beside a shared-core `skills/` — and the harness will RACE them in concurrent batches, keeping
+the winner. One clear best idea needs no arms.
+
 Make your edits, update each PURPOSE.md, then finish with a one-paragraph rationale naming the
 patterns you targeted and the change you expect in the next batch.

@@ -68,28 +68,45 @@ def git_ws(*args: str, check: bool = True) -> str:
 # ---- batch -------------------------------------------------------------------------------------
 
 
-def run_batch() -> Path:
-    before = {p.name for p in JOBS.iterdir()} if JOBS.exists() else set()
-    cmd = [
+def batch_cmd(skills_dir: Path) -> list[str]:
+    return [
         "harbor", "run", "-d", DATASET,
         *[f for t in TASKS for f in ("-i", f"terminal-bench/{t}")],
         "--agent-import-path", "bough_agent:Bough",
         "--model", EXEC_MODEL,
         "--ak", f"binary={BINARY}",
         "--ak", "attempts=3",
-        "--ak", f"skills={WORKSPACE / 'skills'}",
-        "--env", "modal", "-k", str(K), "-n", os.environ.get("TUNE_N", "24"), "-y",
+        "--ak", f"skills={skills_dir}",
+        "--env", "modal", "-k", str(K), "-n", os.environ.get("TUNE_N", "48"), "-y",
         # Trials that die to client-side transport (local DNS flaps breaking Modal streams)
         # are retried whole rather than polluting the gate (2026-08-31 baseline: 9/40).
         "--max-retries", "2", "--retry-include", "ConnectionError",
         "--jobs-dir", str(JOBS),
     ]
+
+
+def run_batch() -> Path:
+    return run_batches([WORKSPACE / "skills"])[0]
+
+
+def run_batches(skills_dirs: list[Path]) -> list[Path]:
+    """One Modal batch per skills dir, ALL CONCURRENT — Modal is the free axis, the wall clock
+    is still one batch. Returns the job dirs in the same order as the inputs."""
+    before = {p.name for p in JOBS.iterdir()} if JOBS.exists() else set()
     env = {**os.environ, "PYTHONPATH": str(ROOT / "bench" / "harbor")}
-    sh(cmd, env=env)
+    procs = []
+    for d in skills_dirs:
+        cmd = batch_cmd(d)
+        print("+", " ".join(cmd), flush=True)
+        procs.append(subprocess.Popen(cmd, env=env))
+    fails = [i for i, p in enumerate(procs) if p.wait() != 0]
+    if fails:
+        raise SystemExit(f"batch process(es) {fails} failed")
     new = sorted({p.name for p in JOBS.iterdir()} - before)
-    if not new:
-        raise SystemExit("no new job dir appeared under " + str(JOBS))
-    return JOBS / new[-1]
+    if len(new) < len(skills_dirs):
+        raise SystemExit(f"expected {len(skills_dirs)} new job dirs, found {new}")
+    # Job dirs are timestamped at start; starts happen in launch order.
+    return [JOBS / n for n in new[: len(skills_dirs)]]
 
 
 # ---- reading a job -----------------------------------------------------------------------------
@@ -253,6 +270,32 @@ def ingest(job: Path) -> None:
     )
 
 
+# ---- arms --------------------------------------------------------------------------------------
+
+
+def race() -> None:
+    """Race every `skills-<arm>/` variant beside `skills/` in CONCURRENT batches; install the
+    best-scoring variant into `skills/` (uncommitted) and record every arm in the impact log.
+    The ordinary `iterate` gate then validates the winner like any other proposal."""
+    arms = sorted(p for p in WORKSPACE.glob("skills-*") if p.is_dir())
+    if not arms:
+        raise SystemExit("no skills-*/ arm directories to race")
+    jobs = run_batches(arms)
+    scored = []
+    impact = WORKSPACE / "wiki" / "skill-impact.md"
+    with impact.open("a") as f:
+        f.write(f"\n## race · {dt.datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+        for arm, job in zip(arms, jobs):
+            score = mean_reward(batch_rows(job))
+            scored.append((score, arm, job))
+            f.write(f"- {arm.name}: mean {score:.3f} (job {job.name})\n")
+    score, arm, job = max(scored, key=lambda t: t[0])
+    skills = WORKSPACE / "skills"
+    subprocess.run(["rm", "-rf", str(skills)], check=True)
+    subprocess.run(["cp", "-R", str(arm), str(skills)], check=True)
+    print(f"race: {arm.name} wins at {score:.3f}; installed into skills/ (job {job.name})")
+
+
 # ---- cli ---------------------------------------------------------------------------------------
 
 
@@ -265,9 +308,12 @@ def main() -> None:
     ing.add_argument("job", type=Path)
     rep = sub.add_parser("report")
     rep.add_argument("job", type=Path)
+    sub.add_parser("race")
     args = ap.parse_args()
 
-    if args.cmd == "report":
+    if args.cmd == "race":
+        race()
+    elif args.cmd == "report":
         print(render_report(args.job))
     elif args.cmd == "ingest":
         ingest(args.job)

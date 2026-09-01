@@ -12,6 +12,10 @@ GLM-5.3-flash on Terminal-Bench 4 tasks. Your working directory is the tuner wor
 The message you just received is a batch report: per-trial task, reward, wake-end reason, and
 the path to each trial's artifacts (ledger.db = every step; requests/ = every prompt verbatim).
 
+FAN OUT, then merge: spawn one worker per task (spawn_worker) with that task's trial artifact
+paths and have each report the recurring failure shape and any winning strategy; write the
+pattern pages yourself from their reports. Serial ledger-reading of 40 trials is the slow way.
+
 Do root-cause analysis on the failures and extract what the passing trials did right:
 - Open trial ledgers directly, e.g.
   sqlite3 <path>/ledger.db "SELECT type, substr(body,1,300) FROM steps ORDER BY seq"
