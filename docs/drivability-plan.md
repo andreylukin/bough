@@ -89,6 +89,12 @@ Diagnoses done (input render path, injection audit, push path). Landed and teste
   rewrite by design).
 - Known flaky: ~6 `cargo test -p bough` integration tests fail under the full parallel run and
   pass individually — pre-existing, not from these changes.
+- **OPEN (2026-09-01): an `!!expr` escaped evaluation and became a FILENAME.** Files literally
+  named `bough_path("schedule.db")` (+ -wal/-shm) appeared in the repo cwd and in
+  `crates/bough/` — some `--local`/`--check`/test path handed schedule-cron its config STRING
+  unevaluated and sqlite happily created the file. Find the path that skips expr resolution;
+  until then `.gitignore` guards the artifact. (Found because a `git add -A` swept them — and a
+  `tmux -vv` log with IDENTIFY_ENVIRON — into commits; push protection caught the keys.)
 - **OPEN (2026-09-01, found on the ASI Mac): SSH-spawned residents silently lose the login
   keychain.** A resident started from an SSH session cannot read the user's login keychain, so
   `gh` (keychain-stored token) 401s on every `push_to_pr`, and `${keychain:…}` credential
