@@ -98,7 +98,14 @@ async fn reported_after_planting(
     invariant: &str,
     plant: impl Fn(),
 ) -> bool {
-    for _ in 0..20 {
+    for _ in 0..60 {
+        // Let every queued paint land BEFORE the plant: on a slow runner the tick that fired
+        // during the previous sleep is already in the run queue, and on a current-thread runtime
+        // it would otherwise run between the plant and the runner's read — wiping the slot on
+        // every attempt, not just the unlucky ones (seen on both CI runners, never locally).
+        for _ in 0..4 {
+            tokio::task::yield_now().await;
+        }
         plant();
         kernel.run_invariants().await;
         if violation_names(kernel).contains(&invariant) {
