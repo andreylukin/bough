@@ -358,7 +358,10 @@ impl Pane for CostPane {
                     Style::default().fg(Self::series_color(&theme, i)),
                 ),
                 Span::styled(format!("{:<12}", t.name), Style::default().fg(theme.fg)),
-                Span::styled(format!("{:>9}", money(t.cost)), Style::default().fg(theme.fg)),
+                Span::styled(
+                    format!("{:>9}", money(t.cost)),
+                    Style::default().fg(theme.fg),
+                ),
                 Span::styled(format!("  {cached}"), Style::default().fg(theme.dim)),
             ]));
         }
@@ -527,8 +530,7 @@ impl Plugin for CostPlugin {
                         name: CommandName::new("cost"),
                         summary: "where the money went, and who spent it".to_string(),
                         usage: "/cost".to_string(),
-                        args: schemars::SchemaGenerator::default()
-                            .into_root_schema_for::<NoArgs>(),
+                        args: schemars::SchemaGenerator::default().into_root_schema_for::<NoArgs>(),
                         scope: CommandScope::Global,
                         run: Arc::new(CostCommand { pane, tui }),
                     },
@@ -598,7 +600,10 @@ mod tests {
     fn a_round_outside_the_window_is_not_counted() {
         let now = DateTime::<Utc>::from_timestamp(100 * 60, 0).unwrap();
         let since = DateTime::<Utc>::from_timestamp(60 * 60, 0).unwrap();
-        let rounds = vec![round(10, "trunk", 5.0, 0, 0), round(80, "trunk", 0.10, 0, 0)];
+        let rounds = vec![
+            round(10, "trunk", 5.0, 0, 0),
+            round(80, "trunk", 0.10, 0, 0),
+        ];
         let (totals, _) = fold(&rounds, since, now, 10);
         assert!((totals[0].cost - 0.10).abs() < 1e-9);
     }

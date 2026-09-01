@@ -40,11 +40,11 @@ use bough_plugin_commands as _;
 use bough_plugin_old_feed_adapter as _;
 use bough_plugin_residents as _;
 use bough_plugin_tui_attach as _;
+use bough_plugin_tui_cost as _;
 use bough_plugin_tui_focus as _;
 use bough_plugin_tui_probe as _;
 use bough_plugin_tui_search as _;
 use bough_plugin_tui_shell as _;
-use bough_plugin_tui_cost as _;
 use bough_plugin_tui_strip as _;
 // Phase 4's rows (§17 Phase 4). `rollups-none` is a FIXTURE provider: linked into the catalog,
 // named by no bundle, selected only by a swap patch.
