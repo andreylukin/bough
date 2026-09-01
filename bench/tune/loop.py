@@ -188,6 +188,17 @@ def render_report(job: Path) -> str:
 def gate(job: Path) -> None:
     rows = batch_rows(job)
     score = mean_reward(rows)
+    # A batch that mostly failed to RUN judges nothing: VOID, keep skills, keep the wiki.
+    ran = sum(1 for r in rows if (r["calls"] or 0) > 0)
+    if rows and ran < len(rows) // 2:
+        impact = WORKSPACE / "wiki" / "skill-impact.md"
+        with impact.open("a") as f:
+            f.write(
+                f"\n## {dt.datetime.now().strftime('%Y-%m-%d %H:%M')} · job {job.name}\n"
+                f"- verdict: VOID — only {ran}/{len(rows)} trials ran any tool; infra, not skills\n"
+            )
+        print(f"gate: VOID ({ran}/{len(rows)} trials ran); nothing accepted or reverted")
+        return
     best_path = WORKSPACE / "best.json"
     best = json.loads(best_path.read_text())["score"] if best_path.is_file() else None
     dirty = bool(git_ws("status", "--porcelain", "--", "skills"))
@@ -218,8 +229,11 @@ def gate(job: Path) -> None:
             git_ws("commit", "-qm", f"iteration over {job.name}: mean {score:.3f} ACCEPTED")
         print(f"gate: ACCEPTED at {score:.3f}")
     else:
-        # Skills roll back; the wiki NEVER does (the paper's critical ablation).
-        git_ws("checkout", "--", "skills")
+        # Skills roll back; the wiki NEVER does (the paper's critical ablation). `checkout`
+        # restores tracked edits; `clean` removes untracked new skills — a first proposal is
+        # entirely untracked and `checkout` alone errors on it (2026-09-01).
+        git_ws("checkout", "--", "skills", check=False)
+        git_ws("clean", "-fdq", "--", "skills")
         git_ws("add", "wiki")
         if git_ws("status", "--porcelain", "--", "wiki"):
             git_ws("commit", "-qm", f"iteration over {job.name}: mean {score:.3f} REJECTED (wiki kept)")

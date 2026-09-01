@@ -300,6 +300,14 @@ class Bough(BaseInstalledAgent):
                     f"exit {result.return_code}\n--- stdout\n{result.stdout or ''}\n"
                     f"--- stderr\n{result.stderr or ''}\n"
                 )
+                if attempt == 1 and result.return_code == 1 and not envelope:
+                    # Exit 1 with no envelope on the FIRST attempt is a boot failure (a config
+                    # the binary cannot compose — 2026-09-01: a renamed policy key met a
+                    # pre-rename binary and 39 trials scored silent zeros). Fail LOUD.
+                    raise RuntimeError(
+                        "bough failed to boot in this container: "
+                        f"{(result.stderr or '').strip()[-400:]}"
+                    )
                 if result.return_code is not None and result.return_code < 0:
                     # Transport loss twice over: record it, keep the remaining attempts —
                     # the ledger in the home still carries whatever the turn did.
