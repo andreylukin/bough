@@ -384,6 +384,7 @@ dependencies = [
  "bough-plugin-tui-strip",
  "bough-plugin-tui-timeline",
  "bough-plugin-tui-title",
+ "bough-plugin-voice-instructions",
  "bough-plugin-wards-rhai",
  "bough-plugin-worker-fork",
  "bough-plugin-worker-spawn",
@@ -2556,6 +2557,18 @@ dependencies = [
  "bough-plugin-tui-shell",
  "inventory",
  "parking_lot",
+ "schemars",
+ "serde",
+]
+
+[[package]]
+name = "bough-plugin-voice-instructions"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-projection",
+ "inventory",
  "schemars",
  "serde",
 ]

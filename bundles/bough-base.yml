@@ -334,6 +334,10 @@
 # §7: the boundary block, one source, every agent's projection.
 - id: boundary
   plugin: boundary-instructions
+# §10: HOW an agent answers, beside WHAT it may do. Global, undroppable, no config — the answers
+# were essays and the chat pane is narrow (Andrey, 2026-09-01).
+- id: voice
+  plugin: voice-instructions
 # §5: the workspace's prompt files (AGENTS.md, CLAUDE.md), one contributed section, duplicate
 # content injected once — a paragraph two files state appears in the FIRST file's voice. Read
 # fresh at every render, so an edit reaches the next wake with no reload; missing files are

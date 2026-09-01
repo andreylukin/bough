@@ -41,6 +41,7 @@ use bough_plugin_old_feed_adapter as _;
 use bough_plugin_residents as _;
 use bough_plugin_tui_attach as _;
 use bough_plugin_tui_cost as _;
+use bough_plugin_voice_instructions as _;
 use bough_plugin_tui_focus as _;
 use bough_plugin_tui_probe as _;
 use bough_plugin_tui_search as _;
