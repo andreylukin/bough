@@ -135,6 +135,11 @@ async fn a_planted_focus_frame_that_renders_a_step_twice_is_reported() {
         index: 0,
         text: "the durable text".to_string(),
     };
+    // Hold the recorder for the whole plant-and-read: the pane repaints whenever the tree
+    // stirs, and on a starved runner a paint lands inside every plant-to-read window (three
+    // processes, sixty attempts, zero reports on CI). The latch silences the pane's
+    // `record_frame`; `plant_frame` below is the latch-immune path this test writes through.
+    let _hold = bough_plugin_tui_focus::invariant::hold_for_plant();
     let reported = reported_after_planting(
         &kernel,
         "the_live_tail_and_the_durable_rows_never_overlap",
@@ -143,7 +148,7 @@ async fn a_planted_focus_frame_that_renders_a_step_twice_is_reported() {
             // LAST-FRAME slot and a tick paint landing between plant and run wipes it, so a retry
             // must start from a clean slot or it re-reads the pane's own frame.
             bough_plugin_tui_focus::invariant::forget();
-            bough_plugin_tui_focus::invariant::record_frame(
+            bough_plugin_tui_focus::invariant::plant_frame(
                 &[row(1)],
                 &LiveText {
                     agent: None,

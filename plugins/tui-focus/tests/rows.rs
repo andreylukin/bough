@@ -1188,13 +1188,21 @@ fn an_empty_turn_end_mark_says_nothing_was_shown() {
 #[test]
 fn a_thought_between_two_text_flushes_does_not_split_the_reply() {
     let rows = rows_from_steps(&[
-        step(1, "thought/text", serde_json::json!({ "text": "Any", "step_index": 0 })),
+        step(
+            1,
+            "thought/text",
+            serde_json::json!({ "text": "Any", "step_index": 0 }),
+        ),
         step(
             2,
             "thought/reasoning",
             serde_json::json!({ "text": "considering", "step_index": 0 }),
         ),
-        step(3, "thought/text", serde_json::json!({ "text": "time", "step_index": 0 })),
+        step(
+            3,
+            "thought/text",
+            serde_json::json!({ "text": "time", "step_index": 0 }),
+        ),
         step(
             4,
             "thought/reasoning",
@@ -1211,7 +1219,10 @@ fn a_thought_between_two_text_flushes_does_not_split_the_reply() {
         .collect();
     assert_eq!(
         texts,
-        vec!["text:Anytime".to_string(), "think:considering more".to_string()],
+        vec![
+            "text:Anytime".to_string(),
+            "think:considering more".to_string()
+        ],
         "each channel joins across the other"
     );
 }
@@ -1220,7 +1231,11 @@ fn a_thought_between_two_text_flushes_does_not_split_the_reply() {
 #[test]
 fn a_tool_call_between_flushes_still_breaks_the_group() {
     let rows = rows_from_steps(&[
-        step(1, "thought/text", serde_json::json!({ "text": "before", "step_index": 0 })),
+        step(
+            1,
+            "thought/text",
+            serde_json::json!({ "text": "before", "step_index": 0 }),
+        ),
         step(
             2,
             "tool/call",
@@ -1229,7 +1244,11 @@ fn a_tool_call_between_flushes_still_breaks_the_group() {
                 "args": { "cmd": "ls" }, "render": "terminal", "step_index": 0
             }),
         ),
-        step(3, "thought/text", serde_json::json!({ "text": "after", "step_index": 1 })),
+        step(
+            3,
+            "thought/text",
+            serde_json::json!({ "text": "after", "step_index": 1 }),
+        ),
     ]);
     let texts: Vec<String> = rows
         .iter()

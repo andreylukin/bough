@@ -45,5 +45,5 @@ retries = 2
 [profile.ci]
 
 [[profile.ci.overrides]]
-filter = 'test(/a_planted_/) | test(/mid_catch_up/) | test(/reports_clean_over_a_boot/)'
+filter = 'test(/a_planted_/) | test(/mid_catch_up/) | test(/invariants::/)'
 retries = 2

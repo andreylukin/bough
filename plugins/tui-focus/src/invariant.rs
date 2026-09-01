@@ -15,8 +15,40 @@ use crate::{LiveText, Row};
 
 static LAST_FRAME: Mutex<Option<(Vec<Row>, LiveText)>> = Mutex::new(None);
 
+/// While a test holds the latch, `record_frame` keeps the pane's hands off the slot. A planted
+/// frame and the pane's own paint race by construction — the pane repaints whenever the tree
+/// stirs, and a paint landing between the plant and the runner's read wipes the plant. A fast
+/// machine wins that race every time and a starved CI runner loses it every time (three fresh
+/// processes, sixty attempts each, zero reports), so the plant has to outlive paints, not outrun
+/// them. Held only by tests, via [`hold_for_plant`]; production never touches it.
+static HELD_FOR_PLANT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Test hook: silence `record_frame` until the guard drops, so a frame planted with
+/// [`plant_frame`] survives the pane's next paint long enough to be read.
+pub fn hold_for_plant() -> HoldGuard {
+    HELD_FOR_PLANT.store(true, std::sync::atomic::Ordering::SeqCst);
+    HoldGuard
+}
+
+/// The latch's guard; dropping it hands the slot back to the pane.
+pub struct HoldGuard;
+
+impl Drop for HoldGuard {
+    fn drop(&mut self) {
+        HELD_FOR_PLANT.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Record what this frame drew. Called from `FocusPane::render`.
 pub fn record_frame(rows: &[Row], live: &LiveText) {
+    if HELD_FOR_PLANT.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    *LAST_FRAME.lock() = Some((rows.to_vec(), live.clone()));
+}
+
+/// Write the slot regardless of the latch: the test's own planting path.
+pub fn plant_frame(rows: &[Row], live: &LiveText) {
     *LAST_FRAME.lock() = Some((rows.to_vec(), live.clone()));
 }
 

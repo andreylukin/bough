@@ -1493,7 +1493,10 @@ mod tests {
         // The context views still do their job: the old reply is out of the tail and under no
         // OPEN tier, so it folds there — that is what those depths are for.
         let full = plan(&view, &rows, &seq_of, now, 80, &theme, Depth::Full);
-        assert!(!full.show[1], "the context view still folds what is not in it");
+        assert!(
+            !full.show[1],
+            "the context view still folds what is not in it"
+        );
         assert!(full.show[2], "the tail row stays");
     }
 
