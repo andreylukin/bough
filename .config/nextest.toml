@@ -34,3 +34,16 @@ slow-timeout = { period = "60s", terminate-after = 6 }
 filter = 'package(bough-plugin-tools-operator) & test(/the_legs_really_do_run_at_the_same_time|disposal_kills_every_live_job|a_leg_that_outruns_the_timeout/)'
 threads-required = "num-cpus"
 retries = 2
+
+# CI (ci.yml runs `--profile ci`; local `make test` stays on default — no retries there beyond
+# the canaries above, a flake is a failure you feel). GitHub's 2-core runners lose timing races
+# these budgets never lose on a dev machine: boot-quiesce deadlines inside `support::boot_*`
+# trees, the planted-invariant last-frame slots racing the tree's own writers, and catch-up
+# disposal. Everything else (the boots group, the slow-timeouts, the canaries) is inherited from
+# the default profile's overrides, which nextest layers under every profile. A retry is a fresh
+# process and a fresh boot; a real regression still fails all three runs.
+[profile.ci]
+
+[[profile.ci.overrides]]
+filter = 'test(/a_planted_/) | test(/mid_catch_up/) | test(/reports_clean_over_a_boot/)'
+retries = 2

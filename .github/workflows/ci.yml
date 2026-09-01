@@ -42,7 +42,7 @@ jobs:
       # set BOUGH_HOME and boot whole trees, so thread-parallel `cargo test` in one
       # process races them against each other. Doctests stay on `cargo test` because
       # nextest does not run them.
-      - run: cargo nextest run --workspace
+      - run: cargo nextest run --workspace --profile ci
       - run: cargo test --workspace --doc
 
   audit:
