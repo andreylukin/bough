@@ -63,6 +63,9 @@
     about_lines: 2
     # The curator has no fold button (and `graph.protected` refuses behind it).
     no_fold: [cambium]
+    # One dim word answers "what does this lane do" without section headers (rail brainstorm,
+    # 2026-09-01). The leader tag already covers trunk.
+    roles: { roots: unattended, cambium: memory }
     # phase ux1 §2.5 (M13): the rail was 34 columns at 80 and at 200. Below `collapse_cols` it
     # takes ZERO columns and the conversation gets the terminal; above it, it is clamped.
     collapse_cols: 100

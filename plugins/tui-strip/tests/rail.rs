@@ -54,6 +54,7 @@ fn row(name: &str, about: Option<AboutView>) -> RailRow {
         dormant: false,
         about,
         leader: false,
+        role: None,
         waiting: 0,
         question: false,
         since: None,
@@ -320,6 +321,7 @@ fn cfg() -> bough_plugin_tui_strip::StripConfig {
         min_width: 22,
         max_width: 40,
         no_fold: vec![],
+        roles: Default::default(),
     }
 }
 
@@ -570,4 +572,74 @@ fn the_rail_marks_a_pending_question() {
         serde_json::json!({ "from": "andrey", "subject": "x", "summary": "TEAM" }),
     ));
     assert!(!rail::pending_question(&answered));
+}
+
+mod grouping {
+    use super::*;
+    use bough_plugin_tui_strip::rail::{display, RowKind};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn named(name: &str) -> RailRow {
+        let mut r = row(name, None);
+        r.name = name.to_string();
+        r
+    }
+
+    #[test]
+    fn workers_collapse_to_one_badge_under_their_lane() {
+        let rows = vec![
+            named("roots"),
+            named("roots/worker-01a058fd-b7ff"),
+            named("roots/worker-01a058fd-35b6"),
+            named("cambium"),
+        ];
+        let (out, kinds) = display(&rows, &BTreeSet::new(), &BTreeMap::new());
+        let names: Vec<&str> = out.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["roots", "▸ 2 workers", "cambium"]);
+        assert_eq!(kinds[1], RowKind::Badge("roots".to_string()));
+    }
+
+    #[test]
+    fn the_badge_rolls_up_attention_or_it_hides_stuck_workers() {
+        let mut asking = named("roots/worker-01a058fd-b7ff");
+        asking.question = true;
+        asking.waiting = 2;
+        let rows = vec![named("roots"), asking, named("roots/worker-01a058fd-35b6")];
+        let (out, _) = display(&rows, &BTreeSet::new(), &BTreeMap::new());
+        let badge = &out[1];
+        assert!(badge.question, "a hidden question surfaces on the badge");
+        assert_eq!(badge.waiting, 2, "hidden mail is summed on the badge");
+    }
+
+    #[test]
+    fn expanded_workers_render_indented_and_short() {
+        let rows = vec![named("roots"), named("roots/worker-01a058fd-b7ff-76f1")];
+        let expanded: BTreeSet<String> = ["roots".to_string()].into();
+        let (out, kinds) = display(&rows, &expanded, &BTreeMap::new());
+        assert_eq!(out[1].name, "  …01a058fd");
+        assert_eq!(kinds[1], RowKind::Worker);
+    }
+
+    #[test]
+    fn a_disposed_worker_vanishes_when_collapsed_and_an_orphan_survives() {
+        let mut done = named("roots/worker-01a058fd-b7ff");
+        done.disposed = true;
+        let rows = vec![named("roots"), done, named("gone-lane/worker-01a05d1d-e76a")];
+        let (out, kinds) = display(&rows, &BTreeSet::new(), &BTreeMap::new());
+        let names: Vec<&str> = out.iter().map(|r| r.name.as_str()).collect();
+        // No badge for a lane whose only worker is a receipt; the orphan stays visible.
+        assert_eq!(names, vec!["roots", "gone-lane/worker-01a05d1d-e76a"]);
+        assert_eq!(kinds[1], RowKind::Worker);
+    }
+
+    #[test]
+    fn roles_decorate_lanes_and_never_workers() {
+        let rows = vec![named("roots"), named("roots/worker-01a058fd-b7ff")];
+        let roles: BTreeMap<String, String> =
+            [("roots".to_string(), "unattended".to_string())].into();
+        let expanded: BTreeSet<String> = ["roots".to_string()].into();
+        let (out, _) = display(&rows, &expanded, &roles);
+        assert_eq!(out[0].role.as_deref(), Some("unattended"));
+        assert_eq!(out[1].role, None);
+    }
 }

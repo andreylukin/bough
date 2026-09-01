@@ -57,6 +57,9 @@ pub struct StripConfig {
     /// to absorb. Two layers on purpose: no control to press, and a refusal behind it.
     #[serde(default)]
     pub no_fold: Vec<String>,
+    /// Lane name → dim role word after it (`roots: unattended`, `cambium: memory`).
+    #[serde(default)]
+    pub roles: std::collections::BTreeMap<String, String>,
 }
 // NOTE (phase ux1 review): the gutter between the rail and the transcript is `tui.gutter`, read
 // once by the shell's layout (`tui-shell/src/run.rs`). This row used to declare a SECOND `gutter`
@@ -92,6 +95,9 @@ pub struct StripPane {
     graph: Mutex<Option<bough_plugin_graph_ops::GraphHandle>>,
     /// The two-press window for the ✕ (the exit key's pattern): the lane armed, and when.
     fold_arm: Mutex<Option<(String, std::time::Instant)>>,
+    /// Lanes whose worker group is expanded (collapsed is the default; the brainstorm's one
+    /// hard rule). Session-local, like the dragged rail width.
+    expanded: Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl StripPane {
@@ -117,6 +123,7 @@ impl StripPane {
             leader: Mutex::new(None),
             graph: Mutex::new(None),
             fold_arm: Mutex::new(None),
+            expanded: Mutex::new(std::collections::BTreeSet::new()),
         }
     }
 
@@ -204,8 +211,9 @@ impl Pane for StripPane {
         } else {
             0
         };
+        let (display, kinds) = rail::display(&rows, &self.expanded.lock(), &self.cfg.roles);
         let (mut lines, spans) = rail::rail(
-            &rows,
+            &display,
             focused.as_ref(),
             self.cfg.show_about,
             self.cfg.about_lines,
@@ -243,6 +251,28 @@ impl Pane for StripPane {
                 rail::hit_for_agent(agent),
             );
         }
+        // A collapsed group's row is a TOGGLE: its hit is registered after the row hit (last
+        // wins), so a click expands the group instead of focusing a hidden worker.
+        for (i, kind) in kinds.iter().enumerate() {
+            let rail::RowKind::Badge(parent) = kind else {
+                continue;
+            };
+            let Some((_, top, _)) = spans.get(i) else {
+                continue;
+            };
+            if *top >= area.height {
+                continue;
+            }
+            cx.hit(
+                Rect {
+                    x: area.x,
+                    y: area.y + *top,
+                    width: area.width,
+                    height: 1,
+                },
+                HitId::new(format!("workers:{parent}")),
+            );
+        }
         // The fold button (the rail's one destructive-looking control that is not destructive):
         // every row that CAN be folded wears a small x at its right edge — the leader cannot
         // fold into itself, a disposed row is already gone, and with no graph mounted there is
@@ -252,13 +282,17 @@ impl Pane for StripPane {
         let ring = cx.view.is_focused && area.width > 2;
         let content_w = if ring { area.width - 1 } else { area.width };
         if fold_reserve > 0 && content_w >= 10 {
-            for (agent, top, _) in &spans {
+            for (i, (_, top, _)) in spans.iter().enumerate() {
                 if *top >= area.height {
                     break;
                 }
-                let Some(row) = rows.iter().find(|r| &r.agent == agent) else {
+                let Some(row) = display.get(i) else {
                     continue;
                 };
+                // Only LANES fold: a worker is its spawner's to reap, a badge is a toggle.
+                if kinds.get(i) != Some(&rail::RowKind::Lane) {
+                    continue;
+                }
                 if row.leader || row.disposed || self.cfg.no_fold.contains(&row.name) {
                     continue;
                 }
@@ -318,6 +352,19 @@ impl Pane for StripPane {
     async fn handle(&self, ev: PaneEvent, cx: PaneCx) -> PaneOutcome {
         match ev {
             PaneEvent::Click { hit, .. } => {
+                if let Some(parent) = hit
+                    .as_ref()
+                    .and_then(|h| h.as_str().strip_prefix("workers:"))
+                    .map(str::to_string)
+                {
+                    let mut expanded = self.expanded.lock();
+                    if !expanded.remove(&parent) {
+                        expanded.insert(parent);
+                    }
+                    drop(expanded);
+                    cx.tui.redraw();
+                    return PaneOutcome::Handled;
+                }
                 if let Some(name) = hit
                     .as_ref()
                     .and_then(|h| h.as_str().strip_prefix("fold:"))
@@ -331,14 +378,56 @@ impl Pane for StripPane {
             // keyboard's way to what a click on a row does.
             PaneEvent::Key(key) if matches!(key.code, KeyCode::Up | KeyCode::Down) => {
                 let rows = self.rows.lock().clone();
+                // Focus walks the DISPLAYED rows: a collapsed worker is not a stop (its ring
+                // could not render), and a badge is a toggle, not a place.
+                let (display, kinds) = rail::display(&rows, &self.expanded.lock(), &self.cfg.roles);
+                let focusable: Vec<rail::RailRow> = display
+                    .into_iter()
+                    .zip(kinds.iter())
+                    .filter(|(_, k)| !matches!(k, rail::RowKind::Badge(_)))
+                    .map(|(r, _)| r)
+                    .collect();
                 let Some(req) = rail::step_focus(
-                    &rows,
+                    &focusable,
                     cx.tui.focused_agent().as_ref(),
                     key.code == KeyCode::Down,
                 ) else {
                     return PaneOutcome::Ignored;
                 };
                 cx.tui.focus(req).await;
+                cx.tui.redraw();
+                PaneOutcome::Handled
+            }
+            // → expands the focused lane's worker group, ← collapses it (a focused WORKER's ←
+            // collapses its parent): the fold idiom of every tree view, on the one tree we have.
+            PaneEvent::Key(key) if matches!(key.code, KeyCode::Right | KeyCode::Left) => {
+                let rows = self.rows.lock().clone();
+                let Some(focused) = cx.tui.focused_agent() else {
+                    return PaneOutcome::Ignored;
+                };
+                let Some(row) = rows.iter().find(|r| r.agent == focused) else {
+                    return PaneOutcome::Ignored;
+                };
+                let lane = match rail::worker_parent(&row.name) {
+                    Some(parent) => parent.to_string(),
+                    None => row.name.clone(),
+                };
+                let has_kids = rows
+                    .iter()
+                    .any(|r| rail::worker_parent(&r.name) == Some(lane.as_str()));
+                if !has_kids {
+                    return PaneOutcome::Ignored;
+                }
+                let mut expanded = self.expanded.lock();
+                let changed = if key.code == KeyCode::Right {
+                    expanded.insert(lane)
+                } else {
+                    expanded.remove(&lane)
+                };
+                drop(expanded);
+                if !changed {
+                    return PaneOutcome::Ignored;
+                }
                 cx.tui.redraw();
                 PaneOutcome::Handled
             }
@@ -708,6 +797,7 @@ pub fn row_for(agent: &bough_plugin_agents::Agent) -> RailRow {
         status: agent.status(),
         wake_pending: agent.has_pending_wake(),
         disposed: agent.is_disposed(),
+        role: None,
         // Reloaded from the ledger fold by the `dormancy` row at activation; the rail learns it
         // from the next `agent/dormancy` step it sees.
         dormant: false,

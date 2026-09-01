@@ -46,6 +46,9 @@ pub struct RailRow {
     /// The agent the `leader` set is mounted in (visual audit: "make it obvious who the leader
     /// is"). Folded from the `leader` key when the row is mounted; with no leader row nobody is.
     pub leader: bool,
+    /// A dim role word after the name (`unattended`, `memory`) from `StripConfig::roles`: the
+    /// rail answers "what does this lane do" without headers. The leader tag outranks it.
+    pub role: Option<String>,
     /// Its last message was a question to Andrey and nothing from him followed (round 10).
     pub question: bool,
     /// When the CURRENT status began (the TUI brief, D4: "how long" was the runner-up rail
@@ -306,8 +309,13 @@ pub fn row_lines(
     if row.question {
         owed.push_str(" ?");
     }
+    let role_tag = match (&row.role, row.leader) {
+        (Some(role), false) => format!(" {role}"),
+        _ => String::new(),
+    };
     let name_room = width.saturating_sub(
         3 + leader_tag.chars().count() as u16
+            + role_tag.chars().count() as u16
             + owed.chars().count() as u16
             + mail.chars().count() as u16
             + word_w
@@ -336,13 +344,23 @@ pub fn row_lines(
                 .add_modifier(Modifier::BOLD),
         ));
     }
+    if !role_tag.is_empty() {
+        head.push(Span::styled(
+            role_tag.clone(),
+            Style::default().fg(theme.dim),
+        ));
+    }
     if !owed.is_empty() {
         head.push(Span::styled(
             owed.clone(),
             Style::default().fg(theme.warn).add_modifier(Modifier::BOLD),
         ));
     }
-    let used = 3 + name.chars().count() + leader_tag.chars().count() + owed.chars().count();
+    let used = 3
+        + name.chars().count()
+        + leader_tag.chars().count()
+        + role_tag.chars().count()
+        + owed.chars().count();
     let pad = (width as usize).saturating_sub(used + mail.chars().count() + word_w as usize);
     head.push(Span::raw(" ".repeat(pad)));
     if !mail.is_empty() {
@@ -419,6 +437,118 @@ fn elide(text: &str, room: usize) -> String {
 /// PURE: the whole rail ⇒ its lines plus, for each row, the line span it occupies. The pane turns
 /// the second half into `RenderCx::hit` calls; keeping them together is what makes click-to-focus
 /// testable without a terminal.
+/// The spelling that makes an agent a WORKER of a lane: `<lane>/worker-<uuid>`.
+pub const WORKER_SEP: &str = "/worker-";
+
+/// The lane a worker belongs to, from its name; `None` for a lane.
+pub fn worker_parent(name: &str) -> Option<&str> {
+    name.split_once(WORKER_SEP).map(|(parent, _)| parent)
+}
+
+/// A worker's display name when its group is expanded: indented, uuid cut to eight chars —
+/// `nas-event-log/worker-01a058fd-…` reads as `  …01a058fd` under its parent.
+pub fn short_worker(name: &str) -> String {
+    let id = name.split_once(WORKER_SEP).map(|(_, id)| id).unwrap_or(name);
+    let id: String = id.chars().take(8).collect();
+    format!("  \u{2026}{id}")
+}
+
+/// What one display row IS, aligned with [`display`]'s returned rows.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RowKind {
+    Lane,
+    Worker,
+    /// A collapsed worker group under the named lane. Clicking it expands, never focuses.
+    Badge(String),
+}
+
+/// PURE: the rows the rail DRAWS, from the rows that exist (the persona brainstorm, 2026-09-01:
+/// "collapsed by default, and the badge must roll up attention or it hides stuck workers").
+///
+/// Lanes stay a flat list, leader first. A lane's workers collapse into ONE badge row —
+/// `▸ 2 workers`, Running if any child runs, `?` if any child holds a question, mail summed —
+/// unless the lane's name is in `expanded`, where they render individually, indented and
+/// shortened. Collapsed DISPOSED workers vanish entirely (a worker's receipt is noise); an
+/// orphan worker whose lane is gone stays a plain row at the end. `roles` decorates lanes.
+pub fn display(
+    rows: &[RailRow],
+    expanded: &std::collections::BTreeSet<String>,
+    roles: &std::collections::BTreeMap<String, String>,
+) -> (Vec<RailRow>, Vec<RowKind>) {
+    let mut lanes: Vec<&RailRow> = rows
+        .iter()
+        .filter(|r| worker_parent(&r.name).is_none())
+        .collect();
+    lanes.sort_by_key(|r| !r.leader);
+    let workers: Vec<&RailRow> = rows
+        .iter()
+        .filter(|r| worker_parent(&r.name).is_some())
+        .collect();
+    let mut out: Vec<RailRow> = Vec::new();
+    let mut kinds: Vec<RowKind> = Vec::new();
+
+    for lane in &lanes {
+        let mut row = (*lane).clone();
+        row.role = roles.get(&row.name).cloned();
+        out.push(row);
+        kinds.push(RowKind::Lane);
+
+        let kids: Vec<&RailRow> = workers
+            .iter()
+            .filter(|w| worker_parent(&w.name) == Some(lane.name.as_str()))
+            .copied()
+            .collect();
+        if kids.is_empty() {
+            continue;
+        }
+        if expanded.contains(&lane.name) {
+            for k in kids {
+                let mut row = k.clone();
+                row.name = short_worker(&row.name);
+                out.push(row);
+                kinds.push(RowKind::Worker);
+            }
+        } else {
+            let live: Vec<&RailRow> = kids.iter().filter(|k| !k.disposed).copied().collect();
+            if live.is_empty() {
+                continue;
+            }
+            let mut badge = kids[0].clone();
+            badge.name = format!(
+                "\u{25b8} {} worker{}",
+                live.len(),
+                if live.len() == 1 { "" } else { "s" }
+            );
+            badge.status = if live.iter().any(|k| k.status == Status::Running) {
+                Status::Running
+            } else {
+                Status::Idle
+            };
+            badge.question = live.iter().any(|k| k.question);
+            badge.waiting = live.iter().map(|k| k.waiting).sum();
+            badge.wake_pending = live.iter().any(|k| k.wake_pending);
+            badge.disposed = false;
+            badge.dormant = false;
+            badge.leader = false;
+            badge.about = None;
+            badge.clock = String::new();
+            out.push(badge);
+            kinds.push(RowKind::Badge(lane.name.clone()));
+        }
+    }
+    // A worker whose lane is gone: shown plainly, never silently dropped.
+    for w in &workers {
+        if !lanes
+            .iter()
+            .any(|l| worker_parent(&w.name) == Some(l.name.as_str()))
+        {
+            out.push((*w).clone());
+            kinds.push(RowKind::Worker);
+        }
+    }
+    (out, kinds)
+}
+
 pub fn rail(
     rows: &[RailRow],
     focused: Option<&AgentId>,
