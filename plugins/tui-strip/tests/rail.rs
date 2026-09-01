@@ -55,6 +55,7 @@ fn row(name: &str, about: Option<AboutView>) -> RailRow {
         about,
         leader: false,
         role: None,
+        guide: String::new(),
         waiting: 0,
         question: false,
         since: None,
@@ -612,12 +613,31 @@ mod grouping {
     }
 
     #[test]
-    fn expanded_workers_render_indented_and_short() {
+    fn an_open_group_keeps_its_header_so_it_can_close_again() {
         let rows = vec![named("roots"), named("roots/worker-01a058fd-b7ff-76f1")];
         let expanded: BTreeSet<String> = ["roots".to_string()].into();
         let (out, kinds) = display(&rows, &expanded, &BTreeMap::new());
-        assert_eq!(out[1].name, "  …01a058fd");
-        assert_eq!(kinds[1], RowKind::Worker);
+        // Header stays in both states — a disclosure control that disappears when it
+        // discloses cannot be closed again — and flips ▸ to ▾.
+        assert_eq!(out[1].name, "▾ 1 worker");
+        assert_eq!(kinds[1], RowKind::Badge("roots".to_string()));
+        assert_eq!(out[2].name, "…01a058fd");
+        assert_eq!(out[2].guide, "  └ ", "the tree guide carries the indent");
+        assert_eq!(kinds[2], RowKind::Worker);
+    }
+
+    #[test]
+    fn siblings_wear_tee_guides_and_the_last_a_corner() {
+        let rows = vec![
+            named("roots"),
+            named("roots/worker-01a058fd-b7ff"),
+            named("roots/worker-01a05d1d-e76a"),
+        ];
+        let expanded: BTreeSet<String> = ["roots".to_string()].into();
+        let (out, _) = display(&rows, &expanded, &BTreeMap::new());
+        assert_eq!(out[1].guide, "└ ", "the group hangs off its lane");
+        assert_eq!(out[2].guide, "  ├ ");
+        assert_eq!(out[3].guide, "  └ ");
     }
 
     #[test]

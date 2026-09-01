@@ -798,6 +798,7 @@ pub fn row_for(agent: &bough_plugin_agents::Agent) -> RailRow {
         wake_pending: agent.has_pending_wake(),
         disposed: agent.is_disposed(),
         role: None,
+        guide: String::new(),
         // Reloaded from the ledger fold by the `dormancy` row at activation; the rail learns it
         // from the next `agent/dormancy` step it sees.
         dormant: false,

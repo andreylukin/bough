@@ -49,6 +49,9 @@ pub struct RailRow {
     /// A dim role word after the name (`unattended`, `memory`) from `StripConfig::roles`: the
     /// rail answers "what does this lane do" without headers. The leader tag outranks it.
     pub role: Option<String>,
+    /// Dim tree guides drawn before the status glyph (`└ `, `  ├ `): how a row hangs off the
+    /// row above it. Empty for a lane.
+    pub guide: String,
     /// Its last message was a question to Andrey and nothing from him followed (round 10).
     pub question: bool,
     /// When the CURRENT status began (the TUI brief, D4: "how long" was the runner-up rail
@@ -313,8 +316,10 @@ pub fn row_lines(
         (Some(role), false) => format!(" {role}"),
         _ => String::new(),
     };
+    let guide_w = row.guide.chars().count() as u16;
     let name_room = width.saturating_sub(
-        3 + leader_tag.chars().count() as u16
+        3 + guide_w
+            + leader_tag.chars().count() as u16
             + role_tag.chars().count() as u16
             + owed.chars().count() as u16
             + mail.chars().count() as u16
@@ -324,6 +329,7 @@ pub fn row_lines(
     let name = elide(&row.name, name_room);
     let mut head = vec![
         Span::styled(marker.to_string(), Style::default().fg(theme.accent)),
+        Span::styled(row.guide.clone(), Style::default().fg(theme.dim)),
         Span::styled(format!("{g} "), head_style),
         Span::styled(
             name.clone(),
@@ -357,6 +363,7 @@ pub fn row_lines(
         ));
     }
     let used = 3
+        + guide_w as usize
         + name.chars().count()
         + leader_tag.chars().count()
         + role_tag.chars().count()
@@ -445,15 +452,15 @@ pub fn worker_parent(name: &str) -> Option<&str> {
     name.split_once(WORKER_SEP).map(|(parent, _)| parent)
 }
 
-/// A worker's display name when its group is expanded: indented, uuid cut to eight chars —
-/// `nas-event-log/worker-01a058fd-…` reads as `  …01a058fd` under its parent.
+/// A worker's display name when its group is expanded: uuid cut to eight chars —
+/// `nas-event-log/worker-01a058fd-…` reads as `…01a058fd`; the tree guide carries the indent.
 pub fn short_worker(name: &str) -> String {
     let id = name
         .split_once(WORKER_SEP)
         .map(|(_, id)| id)
         .unwrap_or(name);
     let id: String = id.chars().take(8).collect();
-    format!("  \u{2026}{id}")
+    format!("\u{2026}{id}")
 }
 
 /// What one display row IS, aligned with [`display`]'s returned rows.
@@ -504,39 +511,51 @@ pub fn display(
         if kids.is_empty() {
             continue;
         }
-        if expanded.contains(&lane.name) {
-            for k in kids {
-                let mut row = k.clone();
+        let is_open = expanded.contains(&lane.name);
+        let live: Vec<&RailRow> = kids.iter().filter(|k| !k.disposed).copied().collect();
+        if live.is_empty() && !is_open {
+            continue;
+        }
+        // The group HEADER stays in both states — `\u{25b8}` folded, `\u{25be}` open — a
+        // disclosure control that disappears when it discloses cannot be closed again
+        // (2026-09-01, Andrey: "after I open workers I can't collapse them back").
+        let mut header = kids[0].clone();
+        header.name = format!(
+            "{} {} worker{}",
+            if is_open { "\u{25be}" } else { "\u{25b8}" },
+            live.len(),
+            if live.len() == 1 { "" } else { "s" }
+        );
+        header.guide = "\u{2514} ".to_string();
+        header.status = if live.iter().any(|k| k.status == Status::Running) {
+            Status::Running
+        } else {
+            Status::Idle
+        };
+        header.question = live.iter().any(|k| k.question);
+        header.waiting = live.iter().map(|k| k.waiting).sum();
+        header.wake_pending = live.iter().any(|k| k.wake_pending);
+        header.disposed = false;
+        header.dormant = false;
+        header.leader = false;
+        header.role = None;
+        header.about = None;
+        header.clock = String::new();
+        out.push(header);
+        kinds.push(RowKind::Badge(lane.name.clone()));
+        if is_open {
+            let last = kids.len() - 1;
+            for (i, k) in kids.iter().enumerate() {
+                let mut row = (*k).clone();
                 row.name = short_worker(&row.name);
+                row.guide = if i == last {
+                    "  \u{2514} ".to_string()
+                } else {
+                    "  \u{251c} ".to_string()
+                };
                 out.push(row);
                 kinds.push(RowKind::Worker);
             }
-        } else {
-            let live: Vec<&RailRow> = kids.iter().filter(|k| !k.disposed).copied().collect();
-            if live.is_empty() {
-                continue;
-            }
-            let mut badge = kids[0].clone();
-            badge.name = format!(
-                "\u{25b8} {} worker{}",
-                live.len(),
-                if live.len() == 1 { "" } else { "s" }
-            );
-            badge.status = if live.iter().any(|k| k.status == Status::Running) {
-                Status::Running
-            } else {
-                Status::Idle
-            };
-            badge.question = live.iter().any(|k| k.question);
-            badge.waiting = live.iter().map(|k| k.waiting).sum();
-            badge.wake_pending = live.iter().any(|k| k.wake_pending);
-            badge.disposed = false;
-            badge.dormant = false;
-            badge.leader = false;
-            badge.about = None;
-            badge.clock = String::new();
-            out.push(badge);
-            kinds.push(RowKind::Badge(lane.name.clone()));
         }
     }
     // A worker whose lane is gone: shown plainly, never silently dropped.
