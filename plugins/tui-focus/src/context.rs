@@ -697,10 +697,24 @@ pub fn plan(
             .find(|(_, _, e)| e.iter().any(|x| x.from <= seq && seq <= x.to))
             .map(|(s, _, _)| *s)
     };
+    // CHAT IS A TRANSCRIPT, NOT A CONTEXT VIEW (2026-09-01). Membership in the model's next
+    // context decorates a row — it never deletes one — because the resting state is where a
+    // human READS the conversation. Hiding by plan applies only where inspecting the context is
+    // the point (`Peek` while writing, `Full` under ^p).
+    //
+    // What this cost: Andrey's own rows already had this carve-out ("the plan's flags describe
+    // the MODEL's context, not what he may see") and the agent's did not, so on any lane with
+    // history every reply was hidden and the transcript read as a wall of his own messages with
+    // no answers — and the newest answer vanished the instant the live tail cleared at wake end.
+    let transcript = depth == Depth::Chat;
     let mut dropped = 0usize;
     for i in 0..n {
         if view.mail_steps.contains(rows[i].step()) {
             plan.mail[i] = true;
+            continue;
+        }
+        if transcript {
+            plan.show[i] = true;
             continue;
         }
         let in_tail = match (seqs[i], tail_from) {
@@ -709,6 +723,12 @@ pub fn plan(
             (None, Some(_)) => view.tail_steps.contains(rows[i].step()),
         };
         if in_tail {
+            plan.show[i] = true;
+            continue;
+        }
+        // A view that cannot locate the tail at all knows nothing about membership; failing
+        // CLOSED there hid whole conversations, so it fails open and says nothing.
+        if tail_from.is_none() && view.tail_steps.is_empty() {
             plan.show[i] = true;
             continue;
         }
@@ -1418,5 +1438,82 @@ mod tests {
         assert!(t[1].contains("slack:#nm-echo") && t[1].contains("CI is red"));
         // No queue, no tray.
         assert!(tray_pieces(&view, &rows, &[false; 4], 80, &theme).is_empty());
+    }
+
+    /// The transcript is not a context view: in the resting state (`Chat`) every row is shown,
+    /// whatever the model's next context contains. The bug (2026-09-01): Andrey's own rows had
+    /// this carve-out and the agent's did not, so on a lane with history every reply was hidden
+    /// — the transcript read as a wall of his own messages with no answers, and the newest
+    /// answer vanished the moment the live tail cleared at wake end.
+    #[test]
+    fn chat_shows_every_row_and_the_context_views_still_fold() {
+        let now = chrono::Utc::now();
+        let mut view = ContextView::default();
+        view.apply(
+            &assembled(vec![
+                section(
+                    &format!("tier-{:03}", u8::MAX - 1),
+                    Slot::Tiers,
+                    "Tier 1 summary",
+                    "- [1..3] early work\n",
+                    50,
+                    &[],
+                ),
+                // The tail holds only the NEWEST step: everything older is out of context.
+                section("tail", Slot::Tail, "Recent steps", "x", 20, &["s9"]),
+            ]),
+            now,
+        );
+        let rows: Vec<Row> = vec![
+            Row::Andrey {
+                step: StepId::new("s1"),
+                text: "a question".into(),
+            },
+            Row::Text {
+                step: StepId::new("s2"),
+                parts: vec![StepId::new("s2")],
+                wake: bough_plugin_ledger::WakeId::new("w1"),
+                index: 0,
+                text: "the answer he must be able to read".into(),
+            },
+            Row::Andrey {
+                step: StepId::new("s9"),
+                text: "newest".into(),
+            },
+        ];
+        let seq_of: HashMap<StepId, Seq> = [("s1", 1), ("s2", 2), ("s9", 9)]
+            .into_iter()
+            .map(|(s, n)| (StepId::new(s), Seq(n)))
+            .collect();
+        let theme = Theme::of(ThemeName::Dark);
+
+        let chat = plan(&view, &rows, &seq_of, now, 80, &theme, Depth::Chat);
+        assert_eq!(chat.show, vec![true, true, true], "chat hides nothing");
+
+        // The context views still do their job: the old reply is out of the tail and under no
+        // OPEN tier, so it folds there — that is what those depths are for.
+        let full = plan(&view, &rows, &seq_of, now, 80, &theme, Depth::Full);
+        assert!(!full.show[1], "the context view still folds what is not in it");
+        assert!(full.show[2], "the tail row stays");
+    }
+
+    /// A view that cannot locate the tail at all fails OPEN. Failing closed hid whole
+    /// conversations behind a "not in this context" fold.
+    #[test]
+    fn a_view_with_no_tail_hides_nothing_even_in_the_context_views() {
+        let now = chrono::Utc::now();
+        let mut view = ContextView::default();
+        view.apply(&assembled(vec![]), now);
+        let rows: Vec<Row> = vec![Row::Text {
+            step: StepId::new("s1"),
+            parts: vec![StepId::new("s1")],
+            wake: bough_plugin_ledger::WakeId::new("w1"),
+            index: 0,
+            text: "an answer".into(),
+        }];
+        let seq_of: HashMap<StepId, Seq> = [(StepId::new("s1"), Seq(1))].into_iter().collect();
+        let theme = Theme::of(ThemeName::Dark);
+        let full = plan(&view, &rows, &seq_of, now, 80, &theme, Depth::Full);
+        assert_eq!(full.show, vec![true]);
     }
 }
