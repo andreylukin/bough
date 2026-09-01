@@ -40,7 +40,6 @@ fn strip() -> StripConfig {
         max_width: 40,
         no_fold: vec![],
         roles: Default::default(),
-        roles: Default::default(),
     }
 }
 
