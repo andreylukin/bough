@@ -36,8 +36,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: taiki-e/install-action@nextest
       - run: cargo build --workspace --all-targets
-      - run: cargo test --workspace
+      # nextest, one process per test, exactly like `make test`: the integration suites
+      # set BOUGH_HOME and boot whole trees, so thread-parallel `cargo test` in one
+      # process races them against each other. Doctests stay on `cargo test` because
+      # nextest does not run them.
+      - run: cargo nextest run --workspace
+      - run: cargo test --workspace --doc
 
   audit:
     name: audit

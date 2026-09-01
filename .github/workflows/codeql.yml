@@ -1,0 +1,45 @@
+# Advanced-setup CodeQL, replacing GitHub's default setup (disabled 2026-09-01).
+#
+# Default setup chose its languages from the repo's linguist stats, which come back
+# empty for this repo, so its list was stuck at a stale snapshot that included
+# javascript-typescript — and that analysis fails hard when the only JS in the tree
+# is gitignored or fixture material. Here the languages are pinned to what the repo
+# actually is: Rust, and the workflows themselves.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "26 14 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: rust
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v5
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
