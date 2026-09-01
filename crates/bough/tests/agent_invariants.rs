@@ -195,7 +195,7 @@ async fn wake_latency_from_receipt_to_first_request() {
     let ctx = row_ctx(&kernel, "exec");
     let agents = ctx.get::<Agents>().unwrap();
     let ledger = ctx.get::<bough_plugin_ledger::Ledger>().unwrap();
-    let traj = bough_plugin_ledger::TrajId::new("lane/sol");
+    let traj = bough_plugin_ledger::TrajId::new("lane/trunk");
     // The observable "the loop is about to call the adapter" is the `request/header` step: §5
     // appends it BEFORE the call, so counting them measures the harness and nothing downstream.
     let headers = || {
@@ -217,7 +217,7 @@ async fn wake_latency_from_receipt_to_first_request() {
     };
     let (agent, disposer) = agents
         .create(CreateAgent {
-            name: bough_plugin_ledger::AgentName::new("sol"),
+            name: bough_plugin_ledger::AgentName::new("trunk"),
             traj: traj.clone(),
             kind: AgentKind::Resident,
             scope: None,

@@ -29,7 +29,7 @@ export -f see_any
 # One boot to create the lane, then the seeded day, then the boot under test.
 tui_open
 tui_start "$MEMORY_PATCH"
-wait_for "sol" 20000
+wait_for "trunk" 20000
 tui_quit
 tui_close
 

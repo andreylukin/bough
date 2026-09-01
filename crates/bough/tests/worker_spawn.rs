@@ -31,8 +31,8 @@ async fn the_boundary_block_is_first_in_the_request_the_adapter_receives() {
         .expect("the agents key is bound");
     let workers = ctx.get::<Workers>().expect("the workers key is bound");
 
-    let name = AgentName::new("sol");
-    let traj = TrajId::new("lane/sol");
+    let name = AgentName::new("trunk");
+    let traj = TrajId::new("lane/trunk");
     let (spawner, disposer) = agents
         .create(CreateAgent {
             name: name.clone(),
@@ -124,8 +124,8 @@ async fn the_worker_context_is_task_only() {
         .expect("the agents key is bound");
     let workers = ctx.get::<Workers>().expect("the workers key is bound");
 
-    let name = AgentName::new("sol");
-    let traj = TrajId::new("lane/sol");
+    let name = AgentName::new("trunk");
+    let traj = TrajId::new("lane/trunk");
     // The spawner is seeded with the secret as WAKE-class mail, so it runs a wake over it and the
     // string is genuinely part of its transcript rather than merely sitting in an inbox.
     let seed = bough_plugin_agents::Message {
@@ -256,8 +256,8 @@ async fn a_workers_question_lands_on_the_spawners_lane_as_a_durable_wake_class_s
     let agents = row_ctx(&kernel, "exec")
         .get::<Agents>()
         .expect("the agents key is bound");
-    let name = AgentName::new("sol");
-    let traj = TrajId::new("lane/sol");
+    let name = AgentName::new("trunk");
+    let traj = TrajId::new("lane/trunk");
     let (spawner, disposer) = agents
         .create(CreateAgent {
             name: name.clone(),

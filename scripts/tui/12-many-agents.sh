@@ -43,15 +43,15 @@ export -f one_line_with
 # only be read off the CONTENT it is showing.
 tui_open
 tui_start "$LANES"
-wait_for "sol" 20000
+wait_for "trunk" 20000
 tui_quit
 tui_close
 
 "$BOUGH_BIN" --profile headless --check >/dev/null 2>&1 || true
 sqlite3 "$LEDGER" <<'SQL'
 INSERT INTO steps (id, traj_id, seq, at, wake_id, type, class, body, cites, ignorable)
-SELECT 'seed-terra-marker', 'lane/terra',
-       (SELECT COALESCE(MAX(seq), 0) + 1 FROM steps WHERE traj_id = 'lane/terra'),
+SELECT 'seed-terra-marker', 'lane/roots',
+       (SELECT COALESCE(MAX(seq), 0) + 1 FROM steps WHERE traj_id = 'lane/roots'),
        strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'wake:seed', 'thought/text', 'thought',
        json_object('text', 'SEEDED-TERRA-ONLY: this line exists on no other lane', 'step_index', 0),
        json_array(), 0;
@@ -62,7 +62,7 @@ tui_start "$LANES"
 wait_for "luna" 30000
 
 t three_rails_render_with_their_glyphs \
-  bash -c 'see "sol" --timeout 20000 && see "terra" --timeout 20000 && see "luna" --timeout 20000'
+  bash -c 'see "trunk" --timeout 20000 && see "roots" --timeout 20000 && see "luna" --timeout 20000'
 
 # ---------------------------------------------------------------------------
 # the field bug: ONE paragraph, not two stacked lines
@@ -104,14 +104,14 @@ fi
 #
 # The rail row is addressed BY ITS NAME rather than by a computed cell, so the bullet keeps
 # meaning if the rail's layout changes.
-shell-use mouse click --on-text "terra" >/dev/null
+shell-use mouse click --on-text "roots" >/dev/null
 wait_for "SEEDED-TERRA-ONLY" 10000
 t a_click_on_the_second_rail_focuses_it \
-  see "terra" --timeout 10000
+  see "roots" --timeout 10000
 t the_focus_pane_follows_the_click \
   see "SEEDED-TERRA-ONLY" --timeout 20000
 
-shell-use mouse click --on-text "sol" >/dev/null
+shell-use mouse click --on-text "trunk" >/dev/null
 sleep 1
 t a_click_back_returns_to_the_first \
   expect_absent "SEEDED-TERRA-ONLY" --timeout 10000
@@ -143,7 +143,7 @@ tui_quit
 tui_close
 
 # Mail ARRIVES for the sleeping lane — queued by a previous process, exactly as `seed-mail.sql`
-# queues it, and retargeted from `lane/sol` to `lane/luna`.
+# queues it, and retargeted from `lane/trunk` to `lane/luna`.
 "$BOUGH_BIN" --profile headless --check >/dev/null 2>&1 || true
 sed -e "s/lane\/sol/lane\/luna/g" \
     -e "s/seed-mail-delivered/seed-mail-delivered-luna/g" \

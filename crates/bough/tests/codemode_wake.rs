@@ -120,7 +120,7 @@ async fn no_stop_tool_is_registered_by_either_consumer() {
             .peek_live::<Tools>()
             .expect("`tools` is bound") as std::sync::Arc<ToolsHandle>;
         let all: BTreeSet<String> = tools
-            .visible(&AgentName::new("sol"))
+            .visible(&AgentName::new("trunk"))
             .into_iter()
             .map(|n| n.to_string())
             .collect();

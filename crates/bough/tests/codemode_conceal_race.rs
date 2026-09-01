@@ -61,7 +61,7 @@ async fn the_first_request_of_a_freshly_created_agent_is_already_concealed() {
         .expect("`agents` is bound");
     let (agent, disposer) = agents
         .create(CreateAgent {
-            name: AgentName::new("sol"),
+            name: AgentName::new("trunk"),
             traj: TrajId::new("lane/codemode-race"),
             kind: AgentKind::Resident,
             scope: None,

@@ -422,8 +422,8 @@ pub struct AdapterRow {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModelData {
     /// From the composed `model.policy` row; `None` when no such row is mounted.
-    pub sol: Option<String>,
-    pub terra: Option<String>,
+    pub interactive: Option<String>,
+    pub unattended: Option<String>,
     pub agents: Vec<AgentModelRow>,
     pub adapters: Vec<AdapterRow>,
     /// Every `api_key_env` name the composed tree mentions, and whether the process env has it.
@@ -585,8 +585,8 @@ mod tests {
     #[test]
     fn agent_rows_rerun_the_policy_rather_than_restating_it() {
         let cfg = bough_plugin_model_policy::PolicyConfig {
-            sol: "sol-model".into(),
-            terra: "terra-model".into(),
+            interactive: "sol-model".into(),
+            unattended: "terra-model".into(),
             prices: Default::default(),
         };
         let rows = agent_rows(

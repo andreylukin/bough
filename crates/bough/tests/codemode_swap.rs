@@ -57,7 +57,7 @@ async fn the_agent(kernel: &Kernel) -> (AgentName, bough_plugin_agents::AgentDis
         .root()
         .peek_live::<Agents>()
         .expect("`agents` is bound");
-    let name = AgentName::new("sol");
+    let name = AgentName::new("trunk");
     let (_agent, disposer) = agents
         .create(CreateAgent {
             name: name.clone(),

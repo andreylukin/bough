@@ -16,8 +16,8 @@ use bough_plugin_model_policy::{choose, PolicyConfig};
 
 fn cfg() -> PolicyConfig {
     PolicyConfig {
-        sol: "sol-model".into(),
-        terra: "terra-model".into(),
+        interactive: "sol-model".into(),
+        unattended: "terra-model".into(),
         prices: Default::default(),
     }
 }

@@ -160,11 +160,11 @@ async fn a_delegated_worker_opens_a_pr_and_the_journal_shows_intent_before_done(
     let ledger = exec_ctx.get::<Ledger>().expect("the ledger key is bound");
     let workers = ctx.get::<Workers>().expect("the workers key is bound");
 
-    let name = AgentName::new("sol");
+    let name = AgentName::new("trunk");
     let (spawner, disposer) = agents
         .create(CreateAgent {
             name: name.clone(),
-            traj: TrajId::new("lane/sol"),
+            traj: TrajId::new("lane/trunk"),
             kind: AgentKind::Resident,
             scope: None,
             setup: None,
@@ -231,7 +231,7 @@ async fn a_delegated_worker_opens_a_pr_and_the_journal_shows_intent_before_done(
     );
     assert_ne!(
         intent.traj,
-        TrajId::new("lane/sol"),
+        TrajId::new("lane/trunk"),
         "the act was the delegated worker's, not the spawner's"
     );
 

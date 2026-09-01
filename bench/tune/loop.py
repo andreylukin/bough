@@ -217,7 +217,7 @@ def tuner_patch() -> Path:
     patch = HOME / "bough.patch.yml"
     patch.write_text(
         "entries:\n  model.policy:\n    config:\n"
-        f"      sol: {TUNER_MODEL}\n      terra: {TUNER_MODEL}\n      prices: {{}}\n"
+        f"      interactive: {TUNER_MODEL}\n      unattended: {TUNER_MODEL}\n      prices: {{}}\n"
     )
     return patch
 

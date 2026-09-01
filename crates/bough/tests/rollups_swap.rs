@@ -30,8 +30,8 @@ entries:
     config: {}
 ";
 
-const AGENT: &str = "sol";
-const TRAJ: &str = "lane/sol";
+const AGENT: &str = "trunk";
+const TRAJ: &str = "lane/trunk";
 
 fn at(secs: i64) -> chrono::DateTime<Utc> {
     Utc.timestamp_opt(1_700_000_000 + secs, 0)

@@ -126,9 +126,11 @@
 - id: residents
   plugin: residents
   config:
-    # Phase 5: the roster BREATHES. `sol` and `terra` are the two lanes Andrey starts with; a
+    # Phase 5: the roster BREATHES. `trunk` and `roots` are the two lanes Andrey starts with; a
     # third is born by the leader's `create_lane`, not by editing this list.
-    bootstrap: [sol, terra]
+    # `trunk` answers Andrey (the leader mounts here); `roots` is unattended work. Renamed from
+    # sol/terra 2026-08-31 — those collided with a vendor's model codenames.
+    bootstrap: [trunk, roots]
     traj_prefix: "lane/"
     resume_all: true
     catch_up: true
@@ -144,7 +146,7 @@
     state_db:   !!expr 'bough_path("old-feed.db")'
     poll_ms: 30000
     batch: 200
-    deliver_to: sol
+    deliver_to: trunk
     priming_limit: 40
     tier1: true
 
@@ -161,7 +163,7 @@
 - id: leader
   plugin: leader
   config:
-    agent: sol
+    agent: trunk
     persona: |
       You hold the whole population in view. You adopt mail nobody claimed and keep the
       timeline. Lanes are yours, both ways: open one with create_lane the moment a stream of

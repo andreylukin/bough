@@ -10,7 +10,7 @@ tui_open
 tui_start
 
 t the_tui_boots_into_a_strip_and_a_focus_pane \
-  see "sol" --timeout 20000
+  see "trunk" --timeout 20000
 
 if [ -z "$BOUGH_LIVE" ]; then
   shell-use type "say the whole sentence please"

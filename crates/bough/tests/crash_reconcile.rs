@@ -32,7 +32,7 @@ const DEADLINE: Duration = Duration::from_secs(240);
 
 /// The lane `bough exec` runs on (`bundles/bough-headless.yml`).
 fn traj() -> TrajId {
-    TrajId::new("lane/sol")
+    TrajId::new("lane/trunk")
 }
 
 /// A throwaway `$BOUGH_HOME` that SURVIVES the crash: both processes open the same one.

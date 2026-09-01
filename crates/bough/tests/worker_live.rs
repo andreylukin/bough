@@ -51,11 +51,11 @@ async fn a_real_worker_edits_a_file_and_its_content_proves_it() {
         .expect("the agents key is bound");
     let workers = ctx.get::<Workers>().expect("the workers key is bound");
 
-    let name = AgentName::new("sol");
+    let name = AgentName::new("trunk");
     let (spawner, disposer) = agents
         .create(CreateAgent {
             name: name.clone(),
-            traj: TrajId::new("lane/sol"),
+            traj: TrajId::new("lane/trunk"),
             kind: AgentKind::Resident,
             scope: None,
             setup: None,

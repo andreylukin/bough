@@ -32,8 +32,8 @@ async fn the_preview_bytes_are_the_seams_bytes_for_the_wakes_high_water() {
     let projection = row_ctx(&kernel, "agent.loop")
         .get::<Projection>()
         .expect("the projection key is bound");
-    let traj = TrajId::new("lane/sol");
-    let name = AgentName::new("sol");
+    let traj = TrajId::new("lane/trunk");
+    let name = AgentName::new("trunk");
 
     let (agent, disposer) = agents
         .create(CreateAgent {

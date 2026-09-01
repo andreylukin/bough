@@ -80,7 +80,7 @@ export -f offers
 
 tui_open
 tui_start
-wait_for "terra" 30000
+wait_for "roots" 30000
 
 t the_leader_tools_are_offered_to_the_first_lane \
   bash -c 'offers sol yes'

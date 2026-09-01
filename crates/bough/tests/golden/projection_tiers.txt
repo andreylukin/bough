@@ -1,7 +1,7 @@
 ## Identity
 
-name: sol
-trajectory: t-sol
+name: trunk
+trajectory: t-trunk
 routing refs: gh:bough/rebuild#1
 wake classes: ordinary
 digest: none
@@ -16,13 +16,13 @@ tools: none
 
 ## Tier 2 summary
 
-- [1..12] one run: sol worked the trajectory end to end and kept the gates green.
+- [1..12] one run: trunk worked the trajectory end to end and kept the gates green.
 
 
 ## Tier 1 summary
 
-- [1..6] sol opened the trajectory and worked through the first six steps.
-- [7..12] sol finished the run and left the tree green.
+- [1..6] trunk opened the trajectory and worked through the first six steps.
+- [7..12] trunk finished the run and left the tree green.
 
 
 ## Recent steps

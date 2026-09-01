@@ -7,8 +7,8 @@
   plugin: exec
   config:
     task: ""
-    agent: sol
-    traj: lane/sol
+    agent: trunk
+    traj: lane/trunk
     print: text
     exit_when_idle: true
 

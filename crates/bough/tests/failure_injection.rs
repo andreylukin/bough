@@ -98,10 +98,10 @@ async fn run_wakes(kernel: &bough_kernel::Kernel, n: usize) -> Vec<Step> {
     let ctx = row_ctx(kernel, "exec");
     let agents = ctx.get::<Agents>().expect("the agents key is bound");
     let ledger = ctx.get::<Ledger>().expect("the ledger key is bound");
-    let traj = TrajId::new("lane/sol");
+    let traj = TrajId::new("lane/trunk");
     let (agent, disposer) = agents
         .create(CreateAgent {
-            name: AgentName::new("sol"),
+            name: AgentName::new("trunk"),
             traj: traj.clone(),
             kind: AgentKind::Resident,
             scope: None,
@@ -440,11 +440,11 @@ async fn an_agent_filter_matches_by_name_at_the_wake_stopping_site() {
 
     // `run_wakes` drives `sol`.
     assert!(
-        fired_for("sol").await,
+        fired_for("trunk").await,
         "a filter naming the agent must fire at this site"
     );
     assert!(
-        !fired_for("terra").await,
+        !fired_for("roots").await,
         "a filter naming a DIFFERENT agent must not fire: the filter is not being read"
     );
 }

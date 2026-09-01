@@ -155,13 +155,13 @@
     text_flush_ms: 400
     repair_on_boot: true
     status_drain_ms: 500
-# BOTH models are claude-haiku-4-5-20251001 for this build: Andrey's choice for the testing
+# BOTH slots are claude-haiku-4-5-20251001 for this build: Andrey's choice for the testing
 # period. Swapping either is a one-line patch, which is the whole point of them being config.
 - id: model.policy
   plugin: model-policy
   config:
-    sol: claude-haiku-4-5-20251001
-    terra: claude-haiku-4-5-20251001
+    interactive: claude-haiku-4-5-20251001
+    unattended: claude-haiku-4-5-20251001
     # phase ux1 §2.13: the price table the status line's running cost sums (M24). USD per million
     # tokens, from Anthropic's published pricing for Claude Haiku 4.5 (input $1, output $5, cache
     # read $0.10, 5-minute cache write $1.25). A model with NO row here has an unknown cost and
@@ -336,7 +336,7 @@
     timeout_ms: 30000
 - id: actions.reconcile
   plugin: actions-reconcile
-  config: { at_boot: true, surface_to: sol }
+  config: { at_boot: true, surface_to: trunk }
 
 # §6: collectors, each ONE row on ctx.schedule.
 - id: collect.github
@@ -498,13 +498,13 @@
   config: { cadence: { every_ms: 1800000 }, catch_up: true, kinds: [resident] }
 - id: schedule.reconsolidate
   plugin: schedule-reconsolidate
-  config: { cadence: { cron: "0 0 4 * * *" }, catch_up: true, command: "reconsolidate", agent: sol }
+  config: { cadence: { cron: "0 0 4 * * *" }, catch_up: true, command: "reconsolidate", agent: trunk }
 # Drivability (2026-08-31): NOTHING scheduled sealing — `/seal` existed only as a manual command,
 # so five days of use produced zero rollups and the projection had no tiers to fall back on when
 # the tail overflowed. Same plugin, second row: the pass is just a command on a cadence.
 - id: schedule.seal
   plugin: schedule-reconsolidate
-  config: { cadence: { every_ms: 1800000 }, catch_up: true, command: "seal", agent: sol }
+  config: { cadence: { every_ms: 1800000 }, catch_up: true, command: "seal", agent: trunk }
 
 # ---- Phase codemode: the DEFAULT consumer of the `tools` seam (Andrey, 2026-08-28) ----
 #

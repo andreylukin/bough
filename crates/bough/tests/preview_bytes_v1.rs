@@ -27,8 +27,8 @@ async fn the_preview_bytes_equal_the_system_prefix_the_loop_sent() {
     let projection = row_ctx(&kernel, "agent.loop")
         .get::<Projection>()
         .expect("the projection key is bound");
-    let traj = TrajId::new("lane/sol");
-    let name = AgentName::new("sol");
+    let traj = TrajId::new("lane/trunk");
+    let name = AgentName::new("trunk");
 
     let (agent, disposer) = agents
         .create(CreateAgent {

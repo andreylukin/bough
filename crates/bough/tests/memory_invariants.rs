@@ -20,7 +20,25 @@ const ROWS: [(&str, &str); 3] = [
 async fn assert_the_three_rows_are_active(
     profile: &str,
 ) -> (std::sync::Arc<bough_kernel::Kernel>, support::TempDir) {
-    let (kernel, dir) = boot_real(profile, &[fixture("llm-replay.yml")]).await;
+    assert_the_three_rows_are_active_with(profile, "").await
+}
+
+async fn assert_the_three_rows_are_active_with(
+    profile: &str,
+    extra_patch: &str,
+) -> (std::sync::Arc<bough_kernel::Kernel>, support::TempDir) {
+    let mut patches = vec![fixture("llm-replay.yml")];
+    let _extra_file;
+    if !extra_patch.is_empty() {
+        let path = std::env::temp_dir().join(format!(
+            "memory-invariants-{}.yml",
+            std::process::id()
+        ));
+        std::fs::write(&path, extra_patch).expect("the extra patch writes");
+        patches.push(path.clone());
+        _extra_file = path;
+    }
+    let (kernel, dir) = boot_real(profile, &patches).await;
     for (id, plugin) in ROWS {
         let r = row(&kernel, id);
         assert_eq!(
@@ -50,16 +68,20 @@ async fn the_three_rows_activate_in_the_default_profile() {
     kernel.shutdown().await;
 }
 
-/// `headless` has no `commands` row, so every command registration in this phase is OPTIONAL
-/// (P4-D8): the rows must activate anyway, and the tree must still quiesce with nothing
-/// unresolved (asserted by `boot_real` itself).
+/// Every command registration in this phase is OPTIONAL (P4-D8): with the `commands` row
+/// disabled by patch, the rows must activate anyway, and the tree must still quiesce with
+/// nothing unresolved (asserted by `boot_real` itself). (`headless` composes `commands` since
+/// 2026-08-31 — the seam moved to `bough-base` so scheduled command passes run on headless
+/// homes — so the commands-less world is a PATCH now, not a profile.)
 #[tokio::test]
 async fn the_three_rows_activate_headless_without_commands() {
     let _guard = trace::test_lock();
-    let (kernel, _dir) = assert_the_three_rows_are_active("headless").await;
+    let (kernel, _dir) =
+        assert_the_three_rows_are_active_with("headless", "entries: {commands: {disabled: true}}")
+            .await;
     assert!(
-        support::maybe_row(&kernel, "commands").is_none(),
-        "this test is vacuous if `headless` has a `commands` row"
+        support::maybe_row(&kernel, "commands").is_none_or(|r| r.disabled),
+        "this test is vacuous if the patch left `commands` enabled"
     );
     kernel.shutdown().await;
 }

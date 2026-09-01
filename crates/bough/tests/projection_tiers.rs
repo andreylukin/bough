@@ -63,7 +63,7 @@ fn at() -> DateTime<Utc> {
 }
 
 fn traj() -> TrajId {
-    TrajId::new("t-sol")
+    TrajId::new("t-trunk")
 }
 
 /// The one fixture: an agent, a pin, twelve verbatim steps, mail, and a two-level tier tree.
@@ -72,7 +72,7 @@ async fn seed(ledger: &LedgerHandle) {
     ledger
         .0
         .put_agent(AgentRow {
-            name: AgentName::new("sol"),
+            name: AgentName::new("trunk"),
             traj: traj(),
             routing_refs: BTreeSet::from([Ref::new("gh:bough/rebuild#1")]),
             wake_classes: BTreeSet::from(["ordinary".to_string()]),
@@ -138,7 +138,7 @@ async fn seed(ledger: &LedgerHandle) {
         1,
         1,
         6,
-        "sol opened the trajectory and worked through the first six steps.",
+        "trunk opened the trajectory and worked through the first six steps.",
         Beneath::Raw {
             steps: (1..=6).map(|n| StepId::new(format!("s{n}"))).collect(),
         },
@@ -150,7 +150,7 @@ async fn seed(ledger: &LedgerHandle) {
         1,
         7,
         12,
-        "sol finished the run and left the tree green.",
+        "trunk finished the run and left the tree green.",
         Beneath::Raw {
             steps: (7..=12).map(|n| StepId::new(format!("s{n}"))).collect(),
         },
@@ -162,7 +162,7 @@ async fn seed(ledger: &LedgerHandle) {
         2,
         1,
         12,
-        "one run: sol worked the trajectory end to end and kept the gates green.",
+        "one run: trunk worked the trajectory end to end and kept the gates green.",
         Beneath::Blocks {
             rollups: vec![RollupId::new("r-t1a"), RollupId::new("r-t1b")],
         },
@@ -259,7 +259,7 @@ async fn assembled(tree_yaml: &str) -> String {
         .0
         .assemble(&AssembleRequest {
             as_of: None,
-            agent: AgentName::new("sol"),
+            agent: AgentName::new("trunk"),
             wake: None,
             at: at(),
             budget: None,

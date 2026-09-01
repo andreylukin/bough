@@ -35,7 +35,7 @@ export -f see_any
 # One boot to CREATE the lane, so the seed has a real chain to extend.
 tui_open
 tui_start "$MEMORY_PATCH"
-wait_for "sol" 20000
+wait_for "trunk" 20000
 tui_quit
 tui_close
 

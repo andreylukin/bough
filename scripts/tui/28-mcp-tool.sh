@@ -80,7 +80,7 @@ tui_open
 tui_start "$MCP_PATCH" "$REPO_ROOT/scripts/tui/fixtures/mcp-tool.patch.yml"
 
 t the_tui_is_up_with_the_server_row_mounted \
-  see "sol" --timeout 20000
+  see "trunk" --timeout 20000
 
 shell-use submit "/mcp list"
 wait_for "echofix__echo" 20000

@@ -431,17 +431,17 @@ fn connectors_tab(st: &PanelState, width: u16, theme: &Theme, focused: bool, out
 fn model_tab(st: &PanelState, width: u16, theme: &Theme, focused: bool, out: &mut ViewOut) {
     let d = st.data.as_ref().expect("caller checked");
     let m = &d.model;
-    match (&m.sol, &m.terra) {
-        (Some(sol), Some(terra)) => {
+    match (&m.interactive, &m.unattended) {
+        (Some(interactive), Some(unattended)) => {
             out.lines.push(Line::from(vec![
                 Span::styled(" policy  ", Style::default().fg(theme.dim)),
-                Span::styled("sol ", Style::default().fg(theme.dim)),
-                Span::styled(sol.clone(), Style::default().fg(theme.fg)),
-                Span::styled("  ·  terra ", Style::default().fg(theme.dim)),
-                Span::styled(terra.clone(), Style::default().fg(theme.fg)),
+                Span::styled("interactive ", Style::default().fg(theme.dim)),
+                Span::styled(interactive.clone(), Style::default().fg(theme.fg)),
+                Span::styled("  ·  unattended ", Style::default().fg(theme.dim)),
+                Span::styled(unattended.clone(), Style::default().fg(theme.fg)),
             ]));
             out.lines.push(dim(
-                "         sol answers Andrey and is never overridable; terra is unattended work"
+                "         interactive answers Andrey and is never overridable; unattended may be overridden per lane"
                     .to_string(),
                 theme,
             ));
@@ -649,8 +649,8 @@ mod tests {
         let mut st = base_state();
         st.tab = Some(Tab::Model);
         st.data.as_mut().unwrap().model = ModelData {
-            sol: Some("sol-m".into()),
-            terra: Some("terra-m".into()),
+            interactive: Some("sol-m".into()),
+            unattended: Some("terra-m".into()),
             agents: vec![AgentModelRow {
                 name: "terra".into(),
                 model_override: Some("special".into()),

@@ -252,11 +252,11 @@ async fn disabling_the_row_by_patch_stops_sweeps_and_removes_its_schedule_job() 
         &collector_layer(&scratch, &shim_path()),
     );
     let (kernel, dir) = boot_real("tui", &[fixture("llm-replay.yml"), layer.clone()]).await;
-    let (_sol, traj) = resident(&kernel, "sol").await;
+    let (_sol, traj) = resident(&kernel, "trunk").await;
     // MERGE (track B → Phase 5): the ROUTER delivers what a collector sweeps, so `sol` has to be
     // LINKED to the repository — being named in the row's `deliver_to` is the fallback for a tree
     // with no `mail` seam, and this tree has one.
-    link_repo(&kernel, "sol").await;
+    link_repo(&kernel, "trunk").await;
     std::fs::write(&fixture_file, prs_json(&[1, 2])).unwrap();
 
     // --- the row sweeps, for real, through the schedule seam -----------------------------------
@@ -402,11 +402,11 @@ async fn re_enabling_resumes_from_the_watermark_with_no_duplicates() {
         &collector_layer(&scratch, &shim_path()),
     );
     let (kernel, dir) = boot_real("tui", &[fixture("llm-replay.yml"), layer]).await;
-    let (_sol, traj) = resident(&kernel, "sol").await;
+    let (_sol, traj) = resident(&kernel, "trunk").await;
     // MERGE (track B → Phase 5): `sol` is LINKED to the repository, for the same reason the
     // collector swap above links it. This tree has a `mail` seam, so the ROUTER chooses
     // recipients from the item's refs and the layer's `deliver_to: [sol]` is never read.
-    link_repo(&kernel, "sol").await;
+    link_repo(&kernel, "trunk").await;
     std::fs::write(&fixture_file, prs_json(&[1, 2])).unwrap();
 
     schedule(&kernel)
@@ -640,7 +640,7 @@ async fn replacing_sleep_listener_with_power_test_by_patch_keeps_catch_up_workin
     // An agent with QUEUED MAIL: `request_wake` answers `Nothing` when there is nothing to read,
     // so the catch-up is only observable over mail that is actually waiting.
     let ctx = kernel.root().clone();
-    let (agent, traj) = resident(&kernel, "sol").await;
+    let (agent, traj) = resident(&kernel, "trunk").await;
     // Queued for the NEXT WAKE and explicitly NOT waking: the only thing that can open a wake
     // here is the synthetic power event below, which is the whole point of the test.
     agent

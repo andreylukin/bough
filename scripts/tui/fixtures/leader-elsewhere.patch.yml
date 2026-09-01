@@ -5,7 +5,7 @@
 entries:
   leader:
     config:
-      agent: terra
+      agent: roots
       persona: |
         You hold the whole population in view. You adopt mail nobody claimed and keep the
         timeline. Lanes are yours, both ways: open one with create_lane the moment a stream of

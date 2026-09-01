@@ -42,9 +42,9 @@ t the_resident_boots_headless_and_binds_the_socket \
 # is the RESIDENT's composition: the composer's placeholder, then the rail's first agent.
 shell-use submit "$BOUGH_BIN" >/dev/null
 wait_for "$BOOT_MARK" 20000
-wait_for "sol" 15000
+wait_for "trunk" 15000
 t a_bare_bough_attaches_and_shows_the_running_tree \
-  see "sol" --timeout 5000
+  see "trunk" --timeout 5000
 
 shell-use type "$MARK"
 t typing_lands_in_the_resident_not_the_terminal \

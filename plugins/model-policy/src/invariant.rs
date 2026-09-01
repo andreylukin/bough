@@ -1,9 +1,9 @@
 //! §0.2 runtime invariant for `bough-plugin-model-policy`:
 //!
-//! **An answer wake's request never carries `terra`, and `model_override` never appears on an
+//! **An answer wake's request never carries `unattended`, and `model_override` never appears on an
 //! answer wake.**
 //!
-//! §12 makes sol non-overridable for anything answering Andrey; this is the check that says so
+//! §12 makes interactive non-overridable for anything answering Andrey; this is the check that says so
 //! at runtime rather than in a comment.
 //!
 //! The check is NOT self-confirming. The listener's DECISION is one stream; the model that
@@ -102,21 +102,21 @@ pub fn seen() -> Vec<Obs> {
 /// requests, and the configured pair.
 ///
 /// `sent` is the honest half: it comes from the ledger, not from this crate's own arithmetic.
-pub fn evaluate(sol: &str, _terra: &str, stream: &[Obs], sent: &[SentObs]) -> Result<(), String> {
+pub fn evaluate(interactive: &str, _terra: &str, stream: &[Obs], sent: &[SentObs]) -> Result<(), String> {
     for obs in stream {
         if !obs.answers_andrey {
             continue;
         }
-        if obs.chose != sol {
+        if obs.chose != interactive {
             return Err(format!(
-                "a wake answering Andrey ({:?}) ran on `{}`, not on sol `{}`",
-                obs.wake_kind, obs.chose, sol
+                "a wake answering Andrey ({:?}) ran on `{}`, not on interactive `{}`",
+                obs.wake_kind, obs.chose, interactive
             ));
         }
         if obs.had_override {
             return Err(format!(
                 "a wake answering Andrey ({:?}) carried a model_override into its request; \
-                 sol is not overridable (§12)",
+                 interactive is not overridable (§12)",
                 obs.wake_kind
             ));
         }
@@ -138,10 +138,10 @@ pub fn evaluate(sol: &str, _terra: &str, stream: &[Obs], sent: &[SentObs]) -> Re
                 s.wake, s.step_index, d.chose, s.model
             ));
         }
-        if d.answers_andrey && s.model != sol {
+        if d.answers_andrey && s.model != interactive {
             return Err(format!(
-                "wake {} step {} answered Andrey on `{}`, not on sol `{}`",
-                s.wake, s.step_index, s.model, sol
+                "wake {} step {} answered Andrey on `{}`, not on interactive `{}`",
+                s.wake, s.step_index, s.model, interactive
             ));
         }
     }
@@ -161,8 +161,8 @@ pub fn answer_wakes_get_sol() -> InvariantSpec {
 async fn check(ctx: Context) -> Result<(), InvariantViolation> {
     // The configured pair is the row's own config; `apply` publishes it here so the check reads
     // the same two names the listener chose from.
-    let (sol, terra) = configured();
-    evaluate(&sol, &terra, &seen(), &sent()).map_err(|detail| InvariantViolation {
+    let (interactive, unattended) = configured();
+    evaluate(&interactive, &unattended, &seen(), &sent()).map_err(|detail| InvariantViolation {
         invariant: "an_answer_wake_always_gets_sol_and_never_an_override",
         plugin: crate::PLUGIN_NAME,
         entry: ctx.entry_id().clone(),
@@ -173,8 +173,8 @@ async fn check(ctx: Context) -> Result<(), InvariantViolation> {
 static CONFIGURED: Mutex<Option<(String, String)>> = Mutex::new(None);
 
 /// `apply` publishes the configured pair so the check is a statement about THIS composition.
-pub fn set_configured(sol: &str, terra: &str) {
-    *CONFIGURED.lock() = Some((sol.to_string(), terra.to_string()));
+pub fn set_configured(interactive: &str, unattended: &str) {
+    *CONFIGURED.lock() = Some((interactive.to_string(), unattended.to_string()));
 }
 
 /// The pair `apply` published, or two empty names if the row never applied.
@@ -213,17 +213,17 @@ mod tests {
 
     #[test]
     fn an_unattended_wake_may_run_on_anything() {
-        assert!(evaluate("sol", "terra", &[obs(false, "terra", false)], &[]).is_ok());
-        assert!(evaluate("sol", "terra", &[obs(false, "other", true)], &[]).is_ok());
+        assert!(evaluate("interactive", "unattended", &[obs(false, "unattended", false)], &[]).is_ok());
+        assert!(evaluate("interactive", "unattended", &[obs(false, "other", true)], &[]).is_ok());
     }
 
     /// The check the old shape could not make: the decision is not the evidence, the ledger is.
     #[test]
     fn a_later_listener_rewriting_the_model_is_a_violation() {
         let err = evaluate(
-            "sol",
-            "terra",
-            &[obs(true, "sol", false)],
+            "interactive",
+            "unattended",
+            &[obs(true, "interactive", false)],
             &[a_sent("something-else")],
         )
         .unwrap_err();
@@ -232,18 +232,18 @@ mod tests {
 
     #[test]
     fn a_matching_decision_and_header_are_clean() {
-        assert!(evaluate("sol", "terra", &[obs(true, "sol", false)], &[a_sent("sol")]).is_ok());
+        assert!(evaluate("interactive", "unattended", &[obs(true, "interactive", false)], &[a_sent("interactive")]).is_ok());
     }
 
     #[test]
     fn an_answer_wake_on_terra_is_a_violation() {
-        let err = evaluate("sol", "terra", &[obs(true, "terra", false)], &[]).unwrap_err();
-        assert!(err.contains("not on sol"), "{err}");
+        let err = evaluate("interactive", "unattended", &[obs(true, "unattended", false)], &[]).unwrap_err();
+        assert!(err.contains("not on interactive"), "{err}");
     }
 
     #[test]
     fn an_override_reaching_an_answer_wake_is_a_violation() {
-        let err = evaluate("sol", "terra", &[obs(true, "sol", true)], &[]).unwrap_err();
+        let err = evaluate("interactive", "unattended", &[obs(true, "interactive", true)], &[]).unwrap_err();
         assert!(err.contains("not overridable"), "{err}");
     }
 }

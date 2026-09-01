@@ -11,7 +11,7 @@ tui_open
 tui_start
 # The lane has to EXIST before this boot is torn down: the rail row is the proof, and it is drawn
 # a beat after the composer is.
-wait_for "sol" 20000
+wait_for "trunk" 20000
 tui_quit
 tui_close
 
@@ -73,7 +73,7 @@ tui_close
 quiet_before="$(steps_of 'wake/start')"
 tui_open
 tui_start
-wait_for "sol" 20000
+wait_for "trunk" 20000
 tui_quit
 t an_empty_inbox_produces_no_wake_at_all \
   bash -c "[ \"\$(steps_of 'wake/start')\" = \"$quiet_before\" ]"
@@ -101,25 +101,25 @@ YML
 # Boot once with both lanes and nothing queued: this is what creates `terra`.
 tui_open
 tui_start "$TWO"
-wait_for "terra" 20000
+wait_for "roots" 20000
 tui_quit
 tui_close
 
 wakes_on() { sql "select count(*) from steps where type = 'wake/start' and traj_id = '$1';"; }
-sol_before="$(wakes_on lane/sol)"
-terra_before="$(wakes_on lane/terra)"
+sol_before="$(wakes_on lane/trunk)"
+terra_before="$(wakes_on lane/roots)"
 t both_lanes_exist_after_the_two_agent_boot \
-  bash -c "[ \"\$(sql \"select count(*) from agents where traj_id = 'lane/terra';\")\" = 1 ]"
+  bash -c "[ \"\$(sql \"select count(*) from agents where traj_id = 'lane/roots';\")\" = 1 ]"
 
-seed_mail two   # queues one message on lane/sol ONLY
+seed_mail two   # queues one message on lane/trunk ONLY
 
 tui_open
 tui_start "$TWO"
 wait_for "and the rest of it"
 tui_quit
 
-sol_after="$(wakes_on lane/sol)"
-terra_after="$(wakes_on lane/terra)"
+sol_after="$(wakes_on lane/trunk)"
+terra_after="$(wakes_on lane/roots)"
 t exactly_one_catch_up_wake_on_the_agent_that_had_mail \
   bash -c "[ \$(( ${sol_after:-0} - ${sol_before:-0} )) -eq 1 ]"
 t no_catch_up_wake_on_the_agent_that_had_none \

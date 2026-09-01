@@ -29,11 +29,11 @@ fn triggers() { ["thought/text"] }
 
 fn on_event(ev, cx) {
     [
-        #{ kind: "spawn", agent: "sol", task: "look into: " + ev.body.text },
-        #{ kind: "mark", agent: "sol", mark: "claim", text: "the ward saw a thought",
+        #{ kind: "spawn", agent: "trunk", task: "look into: " + ev.body.text },
+        #{ kind: "mark", agent: "trunk", mark: "claim", text: "the ward saw a thought",
            cites: ["ledger:traj:" + ev.traj] },
         #{ kind: "act", action_kind: "open_pr", target: "acme/repo", payload: #{} },
-        #{ kind: "hint", agent: "sol", text: "and the list kept going" },
+        #{ kind: "hint", agent: "trunk", text: "and the list kept going" },
     ]
 }
 "#;
@@ -114,10 +114,10 @@ fn bough_wards_test_dry_fires_over_real_ledger_steps_and_prints_would_do_actions
         "the ward saw no `thought/text` step to dry-fire on\nstdout: {stdout}"
     );
     for expected in [
-        "would spawn a worker on `sol`",
-        "would mark Claim on `sol`",
+        "would spawn a worker on `trunk`",
+        "would mark Claim on `trunk`",
         "would act open_pr on acme/repo",
-        "would hint `sol`",
+        "would hint `trunk`",
     ] {
         assert!(
             stdout.contains(expected),
@@ -222,7 +222,7 @@ impl Drop for Scratch {
     }
 }
 
-/// Boot the shipped headless tree with this ward mounted, create a live `sol`, and append one real
+/// Boot the shipped headless tree with this ward mounted, create a live `trunk`, and append one real
 /// step to its lane. Returns the ledger, the appended step and the kernel.
 async fn fire(
     scratch: &Scratch,
@@ -247,10 +247,10 @@ async fn fire(
             .clone(),
     );
 
-    let traj = TrajId::new("lane/sol");
+    let traj = TrajId::new("lane/trunk");
     let (_sol, _disposer) = agents
         .create(CreateAgent {
-            name: AgentName::new("sol"),
+            name: AgentName::new("trunk"),
             traj: traj.clone(),
             kind: AgentKind::Resident,
             scope: None,
@@ -259,7 +259,7 @@ async fn fire(
             at: chrono::Utc::now(),
         })
         .await
-        .expect("a live `sol`");
+        .expect("a live `trunk`");
     // The disposer is deliberately leaked for the test's lifetime: dropping it would retire the
     // agent the ward is about to act on.
     std::mem::forget(_disposer);
@@ -347,7 +347,7 @@ async fn an_example_ward_fires_on_a_real_ledger_step_and_its_actions_execute_thr
     assert_eq!(
         body.actions[0],
         RuntimeAction::Spawn {
-            agent: "sol".into(),
+            agent: "trunk".into(),
             task: "look into: the build is red".into(),
             tools: None,
         }
@@ -367,7 +367,7 @@ async fn an_example_ward_fires_on_a_real_ledger_step_and_its_actions_execute_thr
     );
     assert_eq!(
         starts[0].traj,
-        bough_plugin_ledger::TrajId::new("lane/sol"),
+        bough_plugin_ledger::TrajId::new("lane/trunk"),
         "the seam records the start in the SPAWNER's chain"
     );
 
@@ -400,7 +400,7 @@ async fn an_example_ward_fires_on_a_real_ledger_step_and_its_actions_execute_thr
         .map(|c| format!("{}@{:?}", c.traj.as_str(), c.seq))
         .collect();
     // ONE claim, because ONE firing: `fire` sets `max_firings_per_minute: 1`. Without that bound
-    // this ward is a LOOP -- its `hint` wakes `sol`, `sol`'s reply is another `thought/text`, and
+    // this ward is a LOOP -- its `hint` wakes `trunk`, `trunk`'s reply is another `thought/text`, and
     // the ward triggers on `thought/text`. It fired 5 times in 3 seconds and climbing before the
     // host grew the rate bound, which is what made this assertion flaky under load.
     assert_eq!(
@@ -422,7 +422,7 @@ async fn an_example_ward_fires_on_a_real_ledger_step_and_its_actions_execute_thr
         .collect();
     assert_eq!(
         cites,
-        vec!["ledger:traj:lane/sol".to_string()],
+        vec!["ledger:traj:lane/trunk".to_string()],
         "the claim carries the ward's cite"
     );
 
@@ -449,7 +449,7 @@ async fn a_ward_mark_without_cites_is_refused_and_no_claim_is_written() {
     const UNCITED: &str = r#"
 fn triggers() { ["thought/text"] }
 fn on_event(ev, cx) {
-    [ #{ kind: "mark", agent: "sol", mark: "claim", text: "trust me", cites: [] } ]
+    [ #{ kind: "mark", agent: "trunk", mark: "claim", text: "trust me", cites: [] } ]
 }
 "#;
     let scratch = Scratch::new("uncited", UNCITED);
@@ -459,7 +459,7 @@ fn on_event(ev, cx) {
     assert_eq!(
         body.actions[0],
         RuntimeAction::Mark {
-            agent: "sol".into(),
+            agent: "trunk".into(),
             mark: MarkKind::Claim,
             text: "trust me".into(),
             cites: vec![],
@@ -493,9 +493,9 @@ async fn a_ward_spawn_is_bounded_by_the_hosts_limits_not_by_the_script() {
 fn triggers() { ["thought/text"] }
 fn on_event(ev, cx) {
     [
-        #{ kind: "spawn", agent: "sol", task: "one" },
-        #{ kind: "spawn", agent: "sol", task: "two" },
-        #{ kind: "spawn", agent: "sol", task: "three" },
+        #{ kind: "spawn", agent: "trunk", task: "one" },
+        #{ kind: "spawn", agent: "trunk", task: "two" },
+        #{ kind: "spawn", agent: "trunk", task: "three" },
     ]
 }
 "#;

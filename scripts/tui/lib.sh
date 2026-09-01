@@ -222,7 +222,7 @@ tui_start() {
   # that is not up yet (`05-commands.sh` asked `/agents` and was told "no agents are running").
   # The first rail row is the tree saying it has finished. Best-effort, like every `wait_for`: a
   # boot that deliberately never activates (`08-restore.sh`) has no rail and must still return.
-  wait_for "sol" 15000
+  wait_for "trunk" 15000
   sleep 0.5
 }
 

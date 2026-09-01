@@ -33,7 +33,7 @@ const MOVE_TO_TERRA: &str = "\
 entries:
   leader:
     config:
-      agent: terra
+      agent: roots
       persona: |
         You hold the whole population in view. You adopt mail nobody claimed and keep the
         timeline. Lanes are yours, both ways: open one with create_lane the moment a stream of
@@ -162,8 +162,8 @@ async fn unsorted_lands_on(kernel: &Kernel, tag: &str) -> Option<String> {
                 .len()
         }
     };
-    let sol_before = before("sol").await;
-    let terra_before = before("terra").await;
+    let sol_before = before("trunk").await;
+    let terra_before = before("roots").await;
 
     let mut nobodys_refs = BTreeSet::new();
     nobodys_refs.insert(Ref::new(format!("nobody:{tag}")));
@@ -183,10 +183,10 @@ async fn unsorted_lands_on(kernel: &Kernel, tag: &str) -> Option<String> {
         .expect("the envelope routes");
     assert!(kernel.quiesce().await, "the tree quiesces after the route");
 
-    if before("sol").await > sol_before {
-        Some("sol".to_string())
-    } else if before("terra").await > terra_before {
-        Some("terra".to_string())
+    if before("trunk").await > sol_before {
+        Some("trunk".to_string())
+    } else if before("roots").await > terra_before {
+        Some("roots".to_string())
     } else {
         None
     }
@@ -220,17 +220,17 @@ async fn the_leader_set_activates_in_one_agents_scope() {
     assert_eq!(row(&kernel, "tool.leader").state, FiberState::Active);
     assert_eq!(
         leader(&kernel).target().to_string(),
-        "sol",
+        "trunk",
         "the set names ONE agent, and it is the one the bundle names"
     );
 
-    let mut sol = visible_leader_tools(&kernel, "sol");
+    let mut sol = visible_leader_tools(&kernel, "trunk");
     sol.sort();
     let mut want: Vec<String> = LEADER_ONLY.iter().map(|s| s.to_string()).collect();
     want.sort();
     assert_eq!(sol, want, "the leader's lane sees the leader-only tools");
     assert!(
-        visible_leader_tools(&kernel, "terra").is_empty(),
+        visible_leader_tools(&kernel, "roots").is_empty(),
         "an ordinary lane sees none of them: the set is SCOPED, not global"
     );
     kernel.shutdown().await;
@@ -242,7 +242,7 @@ async fn a_patch_moves_it_to_another_agent_without_a_recompile() {
     let (kernel, _dir) = boot_and_move().await;
     assert_eq!(
         leader(&kernel).target().to_string(),
-        "terra",
+        "roots",
         "one config field moved the whole set; the process never restarted"
     );
     assert_eq!(row(&kernel, "leader").state, FiberState::Active);
@@ -258,7 +258,7 @@ async fn a_patch_moves_it_to_another_agent_without_a_recompile() {
 async fn the_old_agent_loses_the_tools_from_its_schema() {
     let _guard = trace::test_lock();
     let (kernel, _dir) = boot_and_move().await;
-    let left = schema_leader_tools(&kernel, "sol");
+    let left = schema_leader_tools(&kernel, "trunk");
     assert!(
         left.is_empty(),
         "the old agent's schema still offers leader tools: {left:?}"
@@ -270,7 +270,7 @@ async fn the_old_agent_loses_the_tools_from_its_schema() {
 async fn the_old_agent_is_refused_by_the_executor() {
     let _guard = trace::test_lock();
     let (kernel, _dir) = boot_and_move().await;
-    let sol = AgentName::new("sol");
+    let sol = AgentName::new("trunk");
     for name in LEADER_ONLY {
         let err = tools(&kernel)
             .resolve(&sol, &bough_plugin_tools::ToolName::new(name))
@@ -298,7 +298,7 @@ async fn the_old_agent_loses_the_persona_section() {
     let _guard = trace::test_lock();
     let (kernel, dir) = boot().await;
     assert!(
-        has_persona(&kernel, "sol").await,
+        has_persona(&kernel, "trunk").await,
         "this bullet is vacuous unless the persona was there first"
     );
     write_patch(&dir, MOVE_TO_TERRA);
@@ -306,7 +306,7 @@ async fn the_old_agent_loses_the_persona_section() {
         .await
         .expect("the moved tree composes");
     assert!(
-        !has_persona(&kernel, "sol").await,
+        !has_persona(&kernel, "trunk").await,
         "the old agent kept the leader persona after the set moved"
     );
     kernel.shutdown().await;
@@ -317,18 +317,18 @@ async fn the_new_agent_gains_the_tools_the_schema_and_the_persona() {
     let _guard = trace::test_lock();
     let (kernel, _dir) = boot_and_move().await;
 
-    let mut got = visible_leader_tools(&kernel, "terra");
+    let mut got = visible_leader_tools(&kernel, "roots");
     got.sort();
     let mut want: Vec<String> = LEADER_ONLY.iter().map(|s| s.to_string()).collect();
     want.sort();
     assert_eq!(got, want, "1. the tools");
 
-    let mut schema = schema_leader_tools(&kernel, "terra");
+    let mut schema = schema_leader_tools(&kernel, "roots");
     schema.sort();
     assert_eq!(schema, want, "2. the schema the model actually sees");
 
     assert!(
-        has_persona(&kernel, "terra").await,
+        has_persona(&kernel, "roots").await,
         "3. the persona section"
     );
     kernel.shutdown().await;
@@ -340,7 +340,7 @@ async fn the_unsorted_sink_moved_with_it() {
     let (kernel, dir) = boot().await;
     assert_eq!(
         unsorted_lands_on(&kernel, "before").await.as_deref(),
-        Some("sol"),
+        Some("trunk"),
         "before the move, the sink delivers unsorted mail to the leader's own lane"
     );
 
@@ -351,7 +351,7 @@ async fn the_unsorted_sink_moved_with_it() {
 
     assert_eq!(
         unsorted_lands_on(&kernel, "after").await.as_deref(),
-        Some("terra"),
+        Some("roots"),
         "the sink is the leader row's own effect, so it moved with the set (P5-D4)"
     );
     kernel.shutdown().await;
@@ -379,7 +379,7 @@ async fn nothing_in_the_tree_is_failed_after_the_move() {
 async fn moving_it_back_restores_the_first_agent() {
     let _guard = trace::test_lock();
     let (kernel, dir) = boot_and_move().await;
-    assert_eq!(leader(&kernel).target().to_string(), "terra");
+    assert_eq!(leader(&kernel).target().to_string(), "roots");
 
     clear_patch(&dir);
     recompose(&kernel, "", &dir)
@@ -389,20 +389,20 @@ async fn moving_it_back_restores_the_first_agent() {
 
     assert_eq!(
         leader(&kernel).target().to_string(),
-        "sol",
+        "trunk",
         "removing the patch put the set back where the bundle has it"
     );
-    let mut got = visible_leader_tools(&kernel, "sol");
+    let mut got = visible_leader_tools(&kernel, "trunk");
     got.sort();
     let mut want: Vec<String> = LEADER_ONLY.iter().map(|s| s.to_string()).collect();
     want.sort();
     assert_eq!(got, want);
     assert!(
-        visible_leader_tools(&kernel, "terra").is_empty(),
+        visible_leader_tools(&kernel, "roots").is_empty(),
         "…and `terra` is an ordinary lane again"
     );
-    assert!(has_persona(&kernel, "sol").await);
-    assert!(!has_persona(&kernel, "terra").await);
+    assert!(has_persona(&kernel, "trunk").await);
+    assert!(!has_persona(&kernel, "roots").await);
     kernel.shutdown().await;
 }
 
@@ -421,7 +421,7 @@ async fn the_reconsolidation_pass_is_attributed_to_the_leader_and_moves_with_it(
     assert_eq!(
         recon.attribution(),
         bough_plugin_rollups::Attribution::Agent {
-            name: AgentName::new("sol")
+            name: AgentName::new("trunk")
         },
         "the pass is written by the leader, not by `System`"
     );
@@ -438,7 +438,7 @@ async fn the_reconsolidation_pass_is_attributed_to_the_leader_and_moves_with_it(
     assert_eq!(
         recon.attribution(),
         bough_plugin_rollups::Attribution::Agent {
-            name: AgentName::new("terra")
+            name: AgentName::new("roots")
         },
         "the attribution is the leader row's own effect, so it moved with the set"
     );
@@ -455,7 +455,7 @@ async fn the_leader_row_is_routed_and_wakes_on_class_ask() {
     let ledger = ledger(&kernel);
     let row = ledger
         .0
-        .agent(&AgentName::new("sol"))
+        .agent(&AgentName::new("trunk"))
         .await
         .expect("a read")
         .expect("the leader's row");

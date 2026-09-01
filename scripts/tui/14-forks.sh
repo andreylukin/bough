@@ -15,7 +15,7 @@ LANES="$REPO_ROOT/scripts/tui/fixtures/many-agents.patch.yml"
 # edge, no `agents` row) beside the lane children a split would make.
 tui_open
 tui_start "$LANES"
-wait_for "sol" 20000
+wait_for "trunk" 20000
 tui_quit
 tui_close
 
@@ -23,7 +23,7 @@ tui_close
 sqlite3 "$LEDGER" < "$REPO_ROOT/scripts/tui/fixtures/seed-lanes.sql"
 
 # A LANE child too, so "labelled differently" has two things to be different about: `lane/bud` has
-# an `agents` row of its own and an ancestor edge back to `lane/sol`.
+# an `agents` row of its own and an ancestor edge back to `lane/trunk`.
 sqlite3 "$LEDGER" <<'SQL'
 INSERT INTO steps (id, traj_id, seq, at, wake_id, type, class, body, cites, ignorable)
 VALUES ('seed-bud-step', 'lane/bud', 1,
@@ -32,8 +32,8 @@ VALUES ('seed-bud-step', 'lane/bud', 1,
         json_array(), 0);
 
 INSERT INTO edges (child_traj, parent_traj, at_seq, kind, at)
-SELECT 'lane/bud', 'lane/sol',
-       (SELECT COALESCE(MAX(seq), 1) FROM steps WHERE traj_id = 'lane/sol'),
+SELECT 'lane/bud', 'lane/trunk',
+       (SELECT COALESCE(MAX(seq), 1) FROM steps WHERE traj_id = 'lane/trunk'),
        'ancestor', strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
 
 INSERT INTO agents (name, traj_id, routing_refs, wake_classes, model_override, tick_floor, digest_rollup_id)
@@ -42,11 +42,11 @@ SQL
 
 tui_open
 tui_start "$LANES"
-wait_for "sol" 30000
+wait_for "trunk" 30000
 
 # The pane opens on the FIRST rail, which is not necessarily the lane these steps were seeded on.
 shell-use submit "/focus sol" >/dev/null
-wait_for "sol" 10000
+wait_for "trunk" 10000
 
 # `^b` is the FOCUS PANE's key, so the pane must hold the keyboard first. `Tab` cycles pane focus
 # (`tui-shell::run::cycle_focus`) and the pane has no title line to click on, so the picker is

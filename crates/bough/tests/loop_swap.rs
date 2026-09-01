@@ -53,10 +53,10 @@ async fn wake_once(
 ) {
     let ctx = row_ctx(kernel, "exec");
     let agents = ctx.get::<Agents>().expect("the agents key is bound");
-    let traj = TrajId::new("lane/sol");
+    let traj = TrajId::new("lane/trunk");
     let (agent, disposer) = agents
         .create(CreateAgent {
-            name: AgentName::new("sol"),
+            name: AgentName::new("trunk"),
             traj: traj.clone(),
             kind: AgentKind::Resident,
             scope: None,
@@ -96,7 +96,7 @@ async fn consumers_keep_working(driver: &str) {
     let workers = row_ctx(&kernel, "tool.spawn_worker")
         .get::<Workers>()
         .expect("the workers key is bound");
-    let name = AgentName::new("sol");
+    let name = AgentName::new("trunk");
     let (_agent, disposer, traj) = wake_once(&kernel, driver).await;
 
     let steps = ledger

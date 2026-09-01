@@ -140,13 +140,13 @@ async fn fifty_spawns_in_one_wake_stop_at_the_per_wake_cap() {
         .await
         .expect("a test Provider registers like any other");
 
-    let (agent, disposer) = spawner(&kernel, "sol").await;
+    let (agent, disposer) = spawner(&kernel, "trunk").await;
 
     let mut refused: Vec<&'static str> = Vec::new();
     let mut ok = 0usize;
     for _ in 0..50 {
         match workers
-            .start(&ctx, request("sol", agent.id(), "wake:storm", 1))
+            .start(&ctx, request("trunk", agent.id(), "wake:storm", 1))
             .await
         {
             Ok(_) => ok += 1,
@@ -204,7 +204,7 @@ async fn in_flight_never_exceeds_max_in_flight_under_a_three_agent_storm() {
         .expect("a test Provider registers");
 
     let mut spawners = Vec::new();
-    for name in ["sol", "terra", "luna"] {
+    for name in ["trunk", "roots", "luna"] {
         spawners.push((name, spawner(&kernel, name).await));
     }
 
@@ -293,11 +293,11 @@ async fn a_depth_four_spawn_is_refused() {
         )
         .await
         .expect("a test Provider registers");
-    let (agent, disposer) = spawner(&kernel, "sol").await;
+    let (agent, disposer) = spawner(&kernel, "trunk").await;
 
     let depth = workers.bounds().max_depth + 1;
     let err = workers
-        .start(&ctx, request("sol", agent.id(), "wake:deep", depth))
+        .start(&ctx, request("trunk", agent.id(), "wake:deep", depth))
         .await
         .expect_err("a spawn past `max_depth` is refused");
     assert_eq!(
@@ -312,7 +312,7 @@ async fn a_depth_four_spawn_is_refused() {
     );
     // And the generation below it is admitted, so the refusal is a bound and not a blanket no.
     workers
-        .start(&ctx, request("sol", agent.id(), "wake:deep-ok", depth - 1))
+        .start(&ctx, request("trunk", agent.id(), "wake:deep-ok", depth - 1))
         .await
         .expect("the last permitted generation still spawns");
 
@@ -370,7 +370,7 @@ async fn every_refusal_reaches_the_model_as_a_tool_result_failure() {
         .await
         .expect("a test Provider registers");
 
-    let (agent, disposer) = spawner(&kernel, "sol").await;
+    let (agent, disposer) = spawner(&kernel, "trunk").await;
     agent
         .followup(Message {
             id: MessageId::new("m-storm"),
@@ -403,7 +403,7 @@ async fn every_refusal_reaches_the_model_as_a_tool_result_failure() {
     let steps = ledger
         .0
         .steps(&bough_plugin_ledger::StepQuery {
-            trajs: vec![TrajId::new("lane/sol")],
+            trajs: vec![TrajId::new("lane/trunk")],
             kinds: vec![bough_plugin_ledger::StepType::new("tool/result")],
             ..Default::default()
         })

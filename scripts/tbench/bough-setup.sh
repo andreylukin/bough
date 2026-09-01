@@ -10,8 +10,8 @@ cat > "$BOUGH_HOME/bough.patch.yml" <<PATCH
 entries:
   model.policy:
     config:
-      sol: "${BOUGH_MODEL}"
-      terra: "${BOUGH_MODEL}"
+      interactive: "${BOUGH_MODEL}"
+      unattended: "${BOUGH_MODEL}"
       prices: {}
 PATCH
 # BOUGH_HOME must survive into the agent command's shell; the env file the harness

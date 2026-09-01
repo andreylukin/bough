@@ -207,7 +207,7 @@ class Bough(BaseInstalledAgent):
             layers.append(self._patch.read_text())
         if model:
             prices = {model: _PRICES[model]} if model in _PRICES else {}
-            cfg = {"sol": model, "terra": model, "prices": prices}
+            cfg = {"interactive": model, "unattended": model, "prices": prices}
             layers.append(
                 "entries:\n  model.policy:\n    config: " + json.dumps(cfg) + "\n"
             )

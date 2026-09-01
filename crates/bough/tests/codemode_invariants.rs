@@ -100,7 +100,7 @@ async fn one_codemode_wake(program: &str) -> (Arc<Kernel>, TempDir, Vec<Step>) {
         .expect("`agents` is bound");
     let (agent, disposer) = agents
         .create(CreateAgent {
-            name: AgentName::new("sol"),
+            name: AgentName::new("trunk"),
             traj: traj(),
             kind: AgentKind::Resident,
             scope: None,

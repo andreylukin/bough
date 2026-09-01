@@ -98,14 +98,14 @@ async fn a_bud_in_a_booted_tree_leaves_the_parent_running() {
     let _guard = trace::test_lock();
     let (kernel, _dir) = boot_two().await;
     let ledger = ledger(&kernel);
-    let seqs = seed(&ledger, "lane/sol", 6).await;
-    let before = steps_on(&ledger, "lane/sol").await;
+    let seqs = seed(&ledger, "lane/trunk", 6).await;
+    let before = steps_on(&ledger, "lane/trunk").await;
     let past = seqs[2];
 
     let outcome = graph(&kernel)
         .0
         .apply(&OpRequest::Bud(BudRequest {
-            parent: AgentName::new("sol"),
+            parent: AgentName::new("trunk"),
             at_seq: past,
             child: ChildSpec {
                 agent: Some(AgentName::new("bud")),
@@ -123,7 +123,7 @@ async fn a_bud_in_a_booted_tree_leaves_the_parent_running() {
     assert_eq!(outcome.kind, OpKind::Bud);
 
     // 1. The parent's chain is untouched — the past is not partitioned.
-    let after = steps_on(&ledger, "lane/sol").await;
+    let after = steps_on(&ledger, "lane/trunk").await;
     assert_eq!(
         after
             .iter()
@@ -135,7 +135,7 @@ async fn a_bud_in_a_booted_tree_leaves_the_parent_running() {
 
     // 2. The parent is still LIVE and still takes work: it never paused.
     let sol = agents(&kernel)
-        .by_name(&AgentName::new("sol"))
+        .by_name(&AgentName::new("trunk"))
         .expect("sol is still in the registry after a bud of its own past");
     assert!(
         matches!(
@@ -154,7 +154,7 @@ async fn a_bud_in_a_booted_tree_leaves_the_parent_running() {
     assert!(
         edges
             .iter()
-            .any(|e| e.kind == EdgeKind::Ancestor && e.parent == TrajId::new("lane/sol")),
+            .any(|e| e.kind == EdgeKind::Ancestor && e.parent == TrajId::new("lane/trunk")),
         "the bud has no ancestor edge back to the parent: {edges:?}"
     );
     kernel.shutdown().await;
@@ -167,7 +167,7 @@ async fn the_ledger_and_agents_invariants_are_clean_after_a_split_and_a_merge() 
     let _guard = trace::test_lock();
     let (kernel, _dir) = boot_two().await;
     let ledger = ledger(&kernel);
-    seed(&ledger, "lane/sol", 8).await;
+    seed(&ledger, "lane/trunk", 8).await;
 
     let child = |name: &str, r: &str| ChildSpec {
         agent: Some(AgentName::new(name)),
@@ -183,7 +183,7 @@ async fn the_ledger_and_agents_invariants_are_clean_after_a_split_and_a_merge() 
     let split = graph(&kernel)
         .0
         .apply(&OpRequest::Split(SplitRequest {
-            parent: AgentName::new("sol"),
+            parent: AgentName::new("trunk"),
             at_seq: None,
             children: vec![child("left", "repo:left"), child("right", "repo:right")],
             reason: "two concerns, two lanes".to_string(),

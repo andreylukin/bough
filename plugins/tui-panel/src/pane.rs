@@ -183,8 +183,8 @@ impl PanelPane {
 
         let mut model = ModelData::default();
         if let Some(cfg) = data::policy_of(&comp) {
-            model.sol = Some(cfg.sol.clone());
-            model.terra = Some(cfg.terra.clone());
+            model.interactive = Some(cfg.interactive.clone());
+            model.unattended = Some(cfg.unattended.clone());
             if let Some(ledger) = &self.ledger {
                 let agents = ledger.0.agents().await.map_err(|e| e.to_string())?;
                 let pairs: Vec<(String, Option<String>)> = agents

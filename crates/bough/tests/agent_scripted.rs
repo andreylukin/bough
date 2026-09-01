@@ -79,8 +79,8 @@ async fn conversation(
     let agents = ctx.get::<Agents>().expect("the agents key is bound");
     let ledger = ctx.get::<Ledger>().expect("the ledger key is bound");
 
-    let name = AgentName::new("sol");
-    let traj = TrajId::new("lane/sol");
+    let name = AgentName::new("trunk");
+    let traj = TrajId::new("lane/trunk");
     let (agent, disposer) = agents
         .create(CreateAgent {
             name: name.clone(),

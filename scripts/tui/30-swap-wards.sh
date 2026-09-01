@@ -58,7 +58,7 @@ tui_open
 tui_start "$WARDS_PATCH"
 
 t the_tui_is_up_before_the_patch \
-  see "sol" --timeout 20000
+  see "trunk" --timeout 20000
 
 t the_ward_host_row_is_enabled_before_the_patch \
   row_state wards enabled

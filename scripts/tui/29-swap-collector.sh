@@ -64,7 +64,7 @@ tui_open
 tui_start
 
 t the_tui_is_up_before_the_patch \
-  see "sol" --timeout 20000
+  see "trunk" --timeout 20000
 
 t the_collector_row_is_enabled_before_the_patch \
   row_enabled collect.github

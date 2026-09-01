@@ -1,6 +1,6 @@
 //! Invariant (§12): the model a wake runs on is decided HERE, by a PREPEND listener on
-//! `agent/request`, and nowhere else. Anything answering Andrey gets `sol` and cannot be
-//! overridden; everything unattended gets `terra`, or the agent's `model_override` if it has one.
+//! `agent/request`, and nowhere else. Anything answering Andrey gets `interactive` and cannot be
+//! overridden; everything unattended gets `unattended`, or the agent's `model_override` if it has one.
 //! Both names are config fields, so swapping the pair is a patch and never a code change.
 //!
 //! For this build both are `claude-haiku-4-5-20251001` (Andrey's choice for the testing period).
@@ -25,10 +25,15 @@ pub const PLUGIN_NAME: &str = "model-policy";
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyConfig {
-    /// The model for any wake ANSWERING ANDREY. Not overridable (§12).
-    pub sol: String,
+    /// The model for any wake ANSWERING ANDREY. Not overridable (§12). (Renamed from `sol`
+    /// 2026-08-31 — the old spelling collided with a vendor's model codename; the alias keeps
+    /// old patches composing.)
+    #[serde(alias = "sol")]
+    pub interactive: String,
     /// The model for unattended work. `agents.model_override` applies to this one only.
-    pub terra: String,
+    /// (Renamed from `terra`, same day, same alias rule.)
+    #[serde(alias = "terra")]
+    pub unattended: String,
     /// Per-model prices, keyed by the model name the provider reports (phase ux1 §2.10). A model
     /// with no row here has an UNKNOWN cost and the status line shows `—` for it — never `$0.00`.
     #[serde(default)]
@@ -39,13 +44,14 @@ pub struct PolicyConfig {
 /// clock, so V6's four cases are ordinary unit tests.
 pub fn choose(cfg: &PolicyConfig, call: &RequestCall) -> String {
     if call.facts.answers_andrey {
-        // §12: sol is not overridable. `model_override` is read and DISCARDED, not consulted.
-        return cfg.sol.clone();
+        // §12: the interactive model is not overridable: `model_override` is read and
+        // DISCARDED, not consulted.
+        return cfg.interactive.clone();
     }
     call.facts
         .model_override
         .clone()
-        .unwrap_or_else(|| cfg.terra.clone())
+        .unwrap_or_else(|| cfg.unattended.clone())
 }
 
 /// Whether the choice actually applied `agents.model_override`. The invariant records this
@@ -133,8 +139,8 @@ impl Plugin for ModelPolicyPlugin {
 
     fn validate(cfg: &Self::Config) -> Result<(), bough_kernel::ConfigError> {
         let reject = |detail: String| Err(bough_kernel::ConfigError::Rejected { detail });
-        if cfg.sol.trim().is_empty() || cfg.terra.trim().is_empty() {
-            return reject("both `sol` and `terra` must name a model".to_string());
+        if cfg.interactive.trim().is_empty() || cfg.unattended.trim().is_empty() {
+            return reject("both `interactive` and `unattended` must name a model".to_string());
         }
         // The price table is self-contained data, so §0.5's pure-validator rule applies: a
         // negative, NaN or absurd rate would flow through `price::cost_usd` into a DURABLE
@@ -170,7 +176,7 @@ impl Plugin for ModelPolicyPlugin {
     }
 
     async fn apply(ctx: Context, cfg: Arc<Self::Config>) -> Result<(), PluginError> {
-        invariant::set_configured(&cfg.sol, &cfg.terra);
+        invariant::set_configured(&cfg.interactive, &cfg.unattended);
         let entry = ctx.entry_id().clone();
         let ledger = ctx
             .get::<Ledger>()

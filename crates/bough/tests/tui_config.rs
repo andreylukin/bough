@@ -53,7 +53,7 @@ fn search() -> SearchConfig {
 
 fn residents() -> ResidentsConfig {
     ResidentsConfig {
-        bootstrap: vec!["sol".to_string()],
+        bootstrap: vec!["trunk".to_string()],
         traj_prefix: "lane/".to_string(),
         resume_all: true,
         catch_up: true,

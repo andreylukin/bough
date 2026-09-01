@@ -66,10 +66,15 @@ async fn the_reconsolidate_job_is_pending_not_failed_and_the_row_survives_three_
             .expect("the job is registered and fires");
         match &run.outcome {
             JobOutcome::Pending { reason } => {
+                // The pending chain's exact link moved when `commands` joined `bough-base`
+                // (2026-08-31): with the seam and the command both present at boot, the missing
+                // referent on a bare headless home is the AGENT. Any of the three is the same
+                // property: pending names the missing referent, and is never Failed.
                 assert!(
                     reason.contains("no command named `reconsolidate`")
-                        || reason.contains("commands seam"),
-                    "fire {i}: PENDING must be about the missing command, got: {reason}"
+                        || reason.contains("commands seam")
+                        || reason.contains("no live agent"),
+                    "fire {i}: PENDING must name the missing referent, got: {reason}"
                 );
             }
             other => panic!("fire {i}: expected Pending, got {other:?}"),

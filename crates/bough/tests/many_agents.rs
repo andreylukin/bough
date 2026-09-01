@@ -24,7 +24,7 @@ use chrono::{TimeZone, Utc};
 use support::{boot_real, fixture, row};
 
 /// The three lanes this file boots. `luna` is the one that goes to sleep.
-const LANES: [&str; 3] = ["sol", "terra", "luna"];
+const LANES: [&str; 3] = ["trunk", "roots", "luna"];
 
 fn at(secs: i64) -> chrono::DateTime<Utc> {
     Utc.timestamp_opt(1_700_000_000 + secs, 0)
@@ -44,7 +44,7 @@ fn three_lane_patch() -> PathBuf {
 entries:
   residents:
     config:
-      bootstrap: [sol, terra, luna]
+      bootstrap: [trunk, roots, luna]
       traj_prefix: \"lane/\"
       resume_all: true
       catch_up: true
@@ -121,7 +121,7 @@ async fn three_lanes_boot_and_appear_in_the_registry() {
     names.sort();
     assert_eq!(
         names,
-        vec!["luna".to_string(), "sol".to_string(), "terra".to_string()],
+        vec!["luna".to_string(), "roots".to_string(), "trunk".to_string()],
         "one bootstrap list, three `agents` rows"
     );
     for r in &rows {
@@ -150,7 +150,7 @@ async fn mail_fans_out_across_lanes_in_a_booted_tree() {
     let ledger = ledger(&kernel);
 
     // Two lanes claim the SAME ref; the third claims nothing of the sort.
-    for lane in ["sol", "terra"] {
+    for lane in ["trunk", "roots"] {
         mail.link_ref(&AgentName::new(lane), refs("repo:bough"), at(10))
             .await
             .expect("the link lands");
@@ -186,7 +186,7 @@ async fn mail_fans_out_across_lanes_in_a_booted_tree() {
     matched.sort();
     assert_eq!(
         matched,
-        vec!["sol".to_string(), "terra".to_string()],
+        vec!["roots".to_string(), "trunk".to_string()],
         "EVERY matching agent, not the best one (§3)"
     );
     assert!(

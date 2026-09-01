@@ -60,8 +60,8 @@ async fn boot(driver: &str) -> Booted {
     let ledger = ctx.get::<Ledger>().expect("the ledger key is bound");
     let (agent, disposer) = agents
         .create(CreateAgent {
-            name: AgentName::new("sol"),
-            traj: TrajId::new("lane/sol"),
+            name: AgentName::new("trunk"),
+            traj: TrajId::new("lane/trunk"),
             kind: AgentKind::Resident,
             scope: None,
             setup: None,
@@ -96,7 +96,7 @@ impl Booted {
         self.ledger
             .0
             .steps(&StepQuery {
-                trajs: vec![TrajId::new("lane/sol")],
+                trajs: vec![TrajId::new("lane/trunk")],
                 kinds: vec![StepType::new("wake/start")],
                 ..Default::default()
             })

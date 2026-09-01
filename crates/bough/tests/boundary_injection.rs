@@ -78,8 +78,8 @@ async fn the_boundary_block_reaches_the_adapter_on_all_three_paths_with_identica
         .expect("the agents key is bound");
     let workers = ctx.get::<Workers>().expect("the workers key is bound");
 
-    let name = AgentName::new("sol");
-    let traj = TrajId::new("lane/sol");
+    let name = AgentName::new("trunk");
+    let traj = TrajId::new("lane/trunk");
     // WAKE-class seed mail, so the resident actually runs a wake and a request is genuinely sent.
     let seed = bough_plugin_agents::Message {
         id: bough_plugin_agents::MessageId::new("m-v3"),
