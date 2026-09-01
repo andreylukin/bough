@@ -57,6 +57,7 @@ bough-plugin-exec-headless = { workspace = true }
 bough-plugin-commands = { workspace = true }
 bough-plugin-tui-shell = { workspace = true }
 bough-plugin-tui-strip = { workspace = true }
+bough-plugin-tui-cost = { workspace = true }
 bough-plugin-tui-focus = { workspace = true }
 bough-plugin-tui-search = { workspace = true }
 # §11 "The resident": the attach listener row, and the client half in `src/attach.rs` speaks its

@@ -371,6 +371,7 @@ dependencies = [
  "bough-plugin-tools-codemode",
  "bough-plugin-tools-operator",
  "bough-plugin-tui-attach",
+ "bough-plugin-tui-cost",
  "bough-plugin-tui-drafts",
  "bough-plugin-tui-drift",
  "bough-plugin-tui-focus",
@@ -2214,6 +2215,26 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "bough-plugin-tui-cost"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-commands",
+ "bough-plugin-ledger",
+ "bough-plugin-tui-shell",
+ "chrono",
+ "crossterm",
+ "inventory",
+ "parking_lot",
+ "ratatui",
+ "schemars",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

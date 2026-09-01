@@ -53,6 +53,12 @@
     socket: !!expr 'bough_path("tui.sock")'
     handshake_ms: 10000
 
+# §11: the cost pane — `/cost` summons it, zero rows otherwise (2026-09-01: the status line's
+# one number hid WHO was spending; this is the stacked answer, `sys` and workers included).
+- id: tui.cost
+  plugin: tui-cost
+  config:
+    height: 12
 - id: tui.strip
   plugin: tui-strip
   config:

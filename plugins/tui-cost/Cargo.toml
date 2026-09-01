@@ -1,0 +1,27 @@
+[package]
+name = "bough-plugin-tui-cost"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# A Consumer (§11): the cost pane in `Slot::Aux` — where the money went, by lane, over time.
+# Summoned by `/cost`, zero rows otherwise. Nothing depends on it.
+
+[dependencies]
+bough-kernel = { workspace = true }
+bough-plugin-ledger = { workspace = true }
+bough-plugin-tui-shell = { workspace = true }
+bough-plugin-commands = { workspace = true }
+crossterm = { workspace = true }
+ratatui = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
