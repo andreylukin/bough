@@ -833,6 +833,19 @@ pub fn positional_args(
 
 /// Zip positional JS arguments onto the property names an alias named, in order.
 pub fn named_args(order: &[String], args: Vec<serde_json::Value>) -> serde_json::Value {
+    // The NAMED form, same as the un-pinned path allows: one object that is plainly the argument
+    // map is passed through instead of being zipped into the first slot. Without this, pinning
+    // positionals silently outlawed `tell({lane, message})` — the model gets "invalid type: map,
+    // expected a string", a message about a property it never wrote, and burns retries guessing
+    // (live, 2026-09-01: `agent`, then `tell` the same afternoon). A single object is the map
+    // whenever it names any pinned property; an options bag for a one-parameter tool names none.
+    if args.len() == 1 {
+        if let Some(obj) = args[0].as_object() {
+            if order.iter().any(|k| obj.contains_key(k)) {
+                return serde_json::Value::Object(obj.clone());
+            }
+        }
+    }
     let mut out = serde_json::Map::new();
     for (name, value) in order.iter().zip(args) {
         if !value.is_null() {
@@ -1615,6 +1628,50 @@ mod tests {
                 .iter()
                 .any(|n| n.as_str() == "read_file"),
             "a hidden tool must not be injected either"
+        );
+    }
+}
+
+#[cfg(test)]
+mod named_args_tests {
+    use super::named_args;
+
+    /// A pinned-positional tool still takes the NAMED form. `tell({lane, message})` used to bind
+    /// the whole object into `lane` and fail with "invalid type: map, expected a string".
+    #[test]
+    fn one_object_naming_a_pinned_property_is_the_argument_map() {
+        let order = vec!["lane".to_string(), "message".to_string(), "opts".to_string()];
+        let obj = serde_json::json!({ "lane": "cambium", "message": "a lesson" });
+        assert_eq!(named_args(&order, vec![obj.clone()]), obj);
+    }
+
+    /// …and the positional form is untouched, options bag included.
+    #[test]
+    fn positionals_still_zip_in_order() {
+        let order = vec!["lane".to_string(), "message".to_string(), "opts".to_string()];
+        let got = named_args(
+            &order,
+            vec![
+                serde_json::json!("cambium"),
+                serde_json::json!("a lesson"),
+                serde_json::json!({ "wake": true }),
+            ],
+        );
+        assert_eq!(
+            got,
+            serde_json::json!({ "lane": "cambium", "message": "a lesson", "opts": { "wake": true } })
+        );
+    }
+
+    /// An options bag that names NO pinned property is still the first argument — a
+    /// one-parameter tool whose only argument is an object keeps working.
+    #[test]
+    fn an_object_naming_nothing_pinned_is_the_first_argument() {
+        let order = vec!["spec".to_string()];
+        let bag = serde_json::json!({ "cmd": "ls", "cwd": "/tmp" });
+        assert_eq!(
+            named_args(&order, vec![bag.clone()]),
+            serde_json::json!({ "spec": bag })
         );
     }
 }

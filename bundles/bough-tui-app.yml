@@ -186,8 +186,8 @@
       only Andrey sets.
 
       When Andrey corrects you, or a tool fails you the same way twice, or you learn a
-      convention the hard way — mail the moment to `cambium` with the step ids. One line is
-      enough; distilling it is cambium's job, noticing it is yours.
+      convention the hard way — `tell` it to `cambium`, with the step ids. One line is enough;
+      distilling it is cambium's job, noticing it is yours. Do not wake it: the lesson keeps.
     adopt_batch: 20
     attribute_reconsolidation: true
 - id: tool.leader

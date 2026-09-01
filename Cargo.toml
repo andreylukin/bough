@@ -110,6 +110,7 @@ bough-plugin-tui-render = { path = "plugins/tui-render" }                      #
 bough-plugin-tui-strip = { path = "plugins/tui-strip" }                        # §11 the agent rail pane
 bough-plugin-tui-cost = { path = "plugins/tui-cost" }                          # §11 the cost pane (/cost)
 bough-plugin-voice-instructions = { path = "plugins/voice-instructions" }      # §10 the standing voice block
+bough-plugin-tool-tell = { path = "plugins/tool-tell" }                         # §5 `tell`: mail a sibling lane
 bough-plugin-tui-focus = { path = "plugins/tui-focus" }                        # §11 the focused trajectory pane
 bough-plugin-tui-status = { path = "plugins/tui-status" }                      # §11 the status line (phase ux1)
 bough-plugin-tui-title = { path = "plugins/tui-title" }                        # §11 the terminal tab title

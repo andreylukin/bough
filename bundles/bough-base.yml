@@ -195,6 +195,10 @@
   plugin: tool-spawn_worker
 - id: tool.ask
   plugin: tool-ask
+# §5: lanes could not address each other at all — `inbox` read mail and nothing wrote it, so the
+# curator sat idle while two personas told trunk to feed it (2026-09-01).
+- id: tool.tell
+  plugin: tool-tell
 - id: actions
   plugin: actions
 - id: tool.actions
@@ -298,8 +302,8 @@
             that matter in a context (name the triggers well), catalog skills for procedures.
             The budget is hard — full means consolidate or remove before you add. Skills are
             distilled FROM the wiki, so every skill traces to cited evidence.
-          Commit every change with a reason. When you change skills/, mail Andrey ONE line
-          saying what changed and why; a `git revert` from him is a verdict, not an argument —
+          Commit every change with a reason. When you change skills/, `tell` trunk ONE line
+          saying what changed and why, so it reaches Andrey where he is reading; a `git revert` from him is a verdict, not an argument —
           record it in the wiki and move on.
 
           When you wake with mail, also glance at recent trajectories for friction the lanes
@@ -597,6 +601,7 @@
     conceal: mirror
     aliases:
       agent: spawn_worker#task,opts
+      tell: tell#lane,message,opts
       # `tool?fixed=value#positional,names` — one op-discriminated tool read as the several
       # functions `surface/` documents. The fixed argument wins over anything the program passes.
       ledger.search: ledger_read?op=search#q

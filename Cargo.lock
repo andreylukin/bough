@@ -365,6 +365,7 @@ dependencies = [
  "bough-plugin-tool-actions",
  "bough-plugin-tool-leader",
  "bough-plugin-tool-mcp",
+ "bough-plugin-tool-tell",
  "bough-plugin-tool-workers",
  "bough-plugin-tools",
  "bough-plugin-tools-baseline",
@@ -2066,6 +2067,23 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "bough-plugin-tool-tell"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bough-kernel",
+ "bough-plugin-agents",
+ "bough-plugin-ledger",
+ "bough-plugin-tools",
+ "chrono",
+ "inventory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

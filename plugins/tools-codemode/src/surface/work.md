@@ -1,10 +1,18 @@
-<!-- needs-any: inbox,claim,act,agent,fork,ask,schedule -->
+<!-- needs-any: inbox,tell,claim,act,agent,fork,ask,schedule -->
 ## Mail, claims, acts, workers
 
 <!-- needs: inbox -->
 await inbox() — the mail this wake has not consumed yet: what other agents sent
 you, what the user said out of band, what a schedule fired. Read it before deciding
 what the round is for.
+
+<!-- needs: tell -->
+await tell(lane, message, opts) — mail another lane. It reads this on its NEXT wake,
+which costs it nothing until it was going to run anyway; `{wake: true}` opens a wake
+now and is for something that cannot wait. The lane sees your message and nothing of
+this conversation, so it carries its own context — name the step ids when the point
+is evidence. This is how a lesson reaches the curator: a correction you were given,
+a tool that failed you the same way twice, a convention you learned the hard way.
 
 <!-- needs: claim -->
 await claim({kind, title, body, cites}) — write a claim into the shared record: what
