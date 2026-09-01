@@ -945,6 +945,11 @@ removing it from `tools-baseline` is a one-row change and the right follow-up.
 
 ## 8. Bench results
 
+Surface section size (the tripwire in `tests/section.rs`): 4_119 → **4_251** on 2026-09-01 —
+`agent(task, opts)` now documents its real contract, and `shell.md` gained the
+whole-investigation paragraph (plus the leg cap in the `sh` schema, raised 8 → 16) after a
+merge-conflict resolve spent 13 rounds taking one glance each.
+
 `make bench-tools`, the 15-task bank, both consumers, **re-run 2026-08-28 on `rebuild` after the
 track-B, code-mode and track-C merges**. Produced by
 `bench/tools/tests/replay.rs::bench_tools_runs_the_bank_through_both_consumers_offline`.

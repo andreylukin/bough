@@ -418,7 +418,10 @@ fn the_assembled_section_token_estimate_is_recorded() {
     // its function-table row. Recorded in `docs/phase-codemode-plan.md` §8.
     // CLAIMS DEMOLITION (2026-08-30): 4_218 -> 4_119. The `claim` function and its paragraph left
     // the surface with the claims seam; every code-mode request is ~99 tokens cheaper.
-    const RECORDED: usize = 4_119;
+    // ROUND CADENCE (2026-09-01): 4_119 -> 4_251. `agent(task, opts)` documents its real
+    // contract, and shell.md gained the whole-investigation paragraph after a merge-conflict
+    // resolve spent 13 rounds taking one glance each. Recorded in `docs/phase-codemode-plan.md` §8.
+    const RECORDED: usize = 4_251;
     const SLACK: usize = 40;
     assert!(
         tokens.abs_diff(RECORDED) <= SLACK,

@@ -59,6 +59,13 @@ early, read the exit code: bash() reports a failure as `[exit code N]` in its ou
 rather than throwing, and sh() gives you `{code}` per leg — so decide in the program
 whether the next command still makes sense.
 
+A PROGRAM IS A WHOLE INVESTIGATION, not one glance. Branch on results in-code:
+fetch, merge, read the conflict, look at both sides — one program. A round costs
+far more than a command, so end a round because you need a DECISION or have an
+ANSWER, never because you want another look you could have taken in-code. A
+one-command program is right only when what you do next depends on words, not
+data — everything else, keep going.
+
 <!-- needs: sh -->
 await sh([{cmd, tags}, …]) — the same shell, running the commands CONCURRENTLY,
 returning [{code, out}, …] in order. It never throws on a non-zero exit: the code is

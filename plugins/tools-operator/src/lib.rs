@@ -203,16 +203,20 @@ pub fn specs(
             name: ToolName::new("sh"),
             description: format!(
                 "Run several shell commands CONCURRENTLY in the task tree and return \
-                 `[{{code, out}}, …]` in leg order. A non-zero exit is data, never a failure. \
+                 `[{{code, out}}, …]` in leg order — at most {} legs per call. A non-zero exit \
+                 is data, never a failure. \
                  Every leg needs {}-{} short lowercase `tags` naming the tool, the intent and \
                  the subject: they are recorded with the leg, and a leg that carries the wrong \
                  number of them is refused.",
-                cfg.sh_tags_min, cfg.sh_tags_max
+                cfg.sh_max_legs, cfg.sh_tags_min, cfg.sh_tags_max
             ),
             input_schema: schema(serde_json::json!({
                 "type": "object",
                 "properties": { "legs": {
                     "type": "array",
+                    // The cap the model reads and the one `sh::legs` enforces are the same
+                    // number (§0.2): a batch refused only at run time is a whole round lost.
+                    "maxItems": cfg.sh_max_legs,
                     "items": {
                         "type": "object",
                         "properties": {

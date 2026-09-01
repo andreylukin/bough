@@ -127,7 +127,10 @@
     schedule_tick_ms: 5000
     # The CONCURRENT shell. `bash` (tools-baseline) is the serial one and keeps its own timeout;
     # a deployment that shortens one has no reason to shorten the other.
-    sh_max_legs: 8
+    # 16, up from 8 (2026-09-01): a merge-conflict resolve ran one-probe-per-round for 13
+    # rounds after an 11-leg batch was refused — a cap the model discovers by dying teaches it
+    # to stop batching at all. The cap is also in the schema now, so programs are written TO it.
+    sh_max_legs: 16
     sh_timeout_ms: 120000
     sh_tags_min: 3
     sh_tags_max: 5
