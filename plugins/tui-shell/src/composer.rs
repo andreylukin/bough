@@ -41,6 +41,87 @@ pub struct Composer {
     armed: bool,
     /// Sent-message recall over an empty draft (M20).
     history: SentHistory,
+    /// The field width the last render used, so `height` (which runs BEFORE render each frame)
+    /// wraps at the same measure. One frame stale after a resize; the next frame corrects.
+    last_field_w: std::cell::Cell<u16>,
+}
+
+/// One VISUAL row of the wrapped field: which logical line it shows, the char offset it starts
+/// at, and the text. The composer wraps by COLUMNS (a CJK cell is two), chunk-exact rather than
+/// word-aware, because the caret math and the paint must agree to the character.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VisRow {
+    pub line: usize,
+    pub start: usize,
+    pub text: String,
+}
+
+/// PURE: the logical lines as visual rows at `width` columns. Every logical line yields at
+/// least one row, so an empty draft is still one (empty) row and the caret has a home.
+pub fn wrap_rows(lines: &[String], width: u16) -> Vec<VisRow> {
+    use unicode_width::UnicodeWidthChar;
+    let width = width.max(1) as usize;
+    let mut out = Vec::new();
+    for (li, line) in lines.iter().enumerate() {
+        let mut start = 0usize;
+        let mut count = 0usize;
+        let mut cols = 0usize;
+        let mut buf = String::new();
+        for ch in line.chars() {
+            let w = ch.width().unwrap_or(0);
+            if cols + w > width && cols > 0 {
+                out.push(VisRow {
+                    line: li,
+                    start,
+                    text: std::mem::take(&mut buf),
+                });
+                start += count;
+                count = 0;
+                cols = 0;
+            }
+            buf.push(ch);
+            count += 1;
+            cols += w;
+        }
+        out.push(VisRow {
+            line: li,
+            start,
+            text: buf,
+        });
+    }
+    out
+}
+
+/// PURE: a logical cursor `(line, col-chars)` as `(visual row, column-cells)`. A caret exactly
+/// at a wrap point belongs to the NEXT row (column 0), where typing will put the glyph.
+pub fn vis_cursor(rows: &[VisRow], line: usize, col: usize) -> (usize, usize) {
+    use unicode_width::UnicodeWidthChar;
+    let mut at = (0usize, 0usize);
+    for (i, r) in rows.iter().enumerate() {
+        if r.line != line || col < r.start {
+            continue;
+        }
+        let len = r.text.chars().count();
+        let last_of_line = rows.get(i + 1).map(|n| n.line != line).unwrap_or(true);
+        if col < r.start + len || (col == r.start + len && last_of_line) {
+            let cells: usize = r
+                .text
+                .chars()
+                .take(col - r.start)
+                .map(|c| c.width().unwrap_or(0))
+                .sum();
+            at = (i, cells);
+        } else if col == r.start + len && !last_of_line {
+            at = (i + 1, 0);
+        }
+    }
+    at
+}
+
+/// PURE: the first visible visual row — the caret sits at the window's bottom edge when the
+/// draft overflows, because typing lives at the bottom.
+pub fn scroll_to(vrow: usize, shown: usize) -> usize {
+    vrow.saturating_sub(shown.max(1) - 1)
 }
 
 /// The prompt glyph, two cells wide with its trailing space.
@@ -149,6 +230,7 @@ impl Composer {
         Composer {
             area,
             max_lines: cfg.composer_max_lines,
+            last_field_w: std::cell::Cell::new(76),
             prefix: '/',
             armed: false,
             history: SentHistory::new(cfg.history_cap),
@@ -283,14 +365,30 @@ impl Composer {
 
     /// Map a click's column/row to a caret offset (minor 33).
     pub fn caret_at(&mut self, col: u16, row: u16, area: Rect) {
-        let row = row.saturating_sub(area.y) as usize;
-        let col = col.saturating_sub(area.x) as usize;
-        let last = self.area.lines().len().saturating_sub(1);
-        let row = row.min(last);
-        let width = self.area.lines()[row].chars().count();
-        let col = col.min(width);
-        self.area
-            .move_cursor(CursorMove::Jump(row as u16, col as u16));
+        use unicode_width::UnicodeWidthChar;
+        let rows = wrap_rows(self.area.lines(), self.last_field_w.get());
+        let (cur_row, cur_col) = {
+            let c = self.area.cursor();
+            (c.0, c.1)
+        };
+        let (vrow, _) = vis_cursor(&rows, cur_row, cur_col);
+        let offset = scroll_to(vrow, area.height as usize);
+        let clicked = (row.saturating_sub(area.y) as usize + offset).min(rows.len() - 1);
+        let cells = col.saturating_sub(area.x + 2) as usize;
+        let vis = &rows[clicked];
+        let mut seen = 0usize;
+        let mut chars = 0usize;
+        for c in vis.text.chars() {
+            if seen >= cells {
+                break;
+            }
+            seen += c.width().unwrap_or(0);
+            chars += 1;
+        }
+        self.area.move_cursor(CursorMove::Jump(
+            vis.line as u16,
+            (vis.start + chars) as u16,
+        ));
     }
 
     /// The placeholder, now a sentence rather than a fragment.
@@ -303,10 +401,11 @@ impl Composer {
         self.area.insert_str(text);
     }
 
-    /// Rows the composer wants, clamped to `max` and to the configured maximum.
+    /// Rows the composer wants — VISUAL rows, so a long line grows the band downward instead
+    /// of scrolling sideways — clamped to `max` and to the configured maximum.
     pub fn height(&self, max: u16) -> u16 {
-        let lines = self.area.lines().len().max(1) as u16;
-        lines.min(self.max_lines).min(max.max(1)).max(1)
+        let rows = wrap_rows(self.area.lines(), self.last_field_w.get()).len() as u16;
+        rows.max(1).min(self.max_lines).min(max.max(1)).max(1)
     }
 
     /// Draw into the composer's rectangle.
@@ -344,18 +443,66 @@ impl Composer {
             .map(|c| c.x0.saturating_sub(1))
             .unwrap_or(area.width)
             .saturating_sub(2);
-        let mut field = self.area.clone();
-        field.set_style(band);
-        field.set_cursor_line_style(band);
-        field.set_placeholder_style(Style::default().fg(theme.dim).bg(theme.field_bg));
-        cx.frame.render_widget(
-            &field,
-            Rect {
-                x: area.x + 2,
-                width: field_w,
-                ..area
-            },
-        );
+        self.last_field_w.set(field_w.max(1));
+        let field_rect = Rect {
+            x: area.x + 2,
+            width: field_w,
+            ..area
+        };
+        if self.text().is_empty() {
+            cx.frame.render_widget(
+                Paragraph::new(Line::styled(
+                    Composer::placeholder(),
+                    Style::default().fg(theme.dim).bg(theme.field_bg),
+                )),
+                field_rect,
+            );
+        } else {
+            // The wrapped field: chunk-exact rows, a window that keeps the caret visible, and
+            // the caret painted as a reversed cell — `ratatui-textarea` cannot soft-wrap, so
+            // the widget is the MODEL here and this paint is the view.
+            let rows = wrap_rows(self.area.lines(), field_w.max(1));
+            let (cur_row, cur_col) = {
+                let c = self.area.cursor();
+                (c.0, c.1)
+            };
+            let (vrow, vcol) = vis_cursor(&rows, cur_row, cur_col);
+            let offset = scroll_to(vrow, field_rect.height as usize);
+            let shown: Vec<Line<'static>> = rows
+                .iter()
+                .skip(offset)
+                .take(field_rect.height as usize)
+                .map(|r| Line::styled(r.text.clone(), band))
+                .collect();
+            cx.frame.render_widget(Paragraph::new(shown), field_rect);
+            let cy = vrow.saturating_sub(offset) as u16;
+            if cy < field_rect.height && (vcol as u16) < field_rect.width {
+                let under = rows
+                    .get(vrow)
+                    .and_then(|r| {
+                        use unicode_width::UnicodeWidthChar;
+                        let mut cells = 0usize;
+                        r.text.chars().find(|c| {
+                            let here = cells;
+                            cells += c.width().unwrap_or(0);
+                            here == vcol
+                        })
+                    })
+                    .unwrap_or(' ');
+                cx.frame.render_widget(
+                    Paragraph::new(Line::styled(
+                        under.to_string(),
+                        band.add_modifier(ratatui::style::Modifier::REVERSED),
+                    )),
+                    Rect {
+                        x: field_rect.x + vcol as u16,
+                        y: field_rect.y + cy,
+                        width: 1,
+                        height: 1,
+                    },
+                );
+            }
+        }
         let last_row = area.y + area.height.saturating_sub(1);
         for chip in &chips {
             let style = Style::default().fg(theme.fg).bg(theme.sel_bg);
@@ -736,7 +883,9 @@ mod tests {
         c.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT), false);
         typed(&mut c, "world");
         let area = Rect::new(2, 10, 40, 2);
-        c.caret_at(2 + 3, 10, area);
+        // The field starts after the two-cell prompt glyph, so the pointer's column does too
+        // (the old mapping ignored the prompt and every click landed two cells right).
+        c.caret_at(2 + 2 + 3, 10, area);
         assert_eq!(c.area.cursor(), (0, 3));
         c.caret_at(2 + 99, 10 + 1, area);
         assert_eq!(c.area.cursor(), (1, 5), "past the end clamps to the line");

@@ -249,7 +249,8 @@ fn a_click_moves_the_caret_rather_than_the_focus() {
         c.on_key(ch(k), false);
     }
     let area = Rect::new(4, 20, 40, 1);
-    c.caret_at(4 + 2, 20, area);
+    // Column 4 + the two-cell prompt glyph + two characters in.
+    c.caret_at(4 + 2 + 2, 20, area);
     // Typing lands where the caret was put, not at the end.
     c.on_key(ch('X'), false);
     assert_eq!(c.text(), "heXllo");
