@@ -21,6 +21,7 @@ fn main() -> std::process::ExitCode {
     // and even RUST_LOG. The process environment wins over the file (envfile.rs).
     let loaded = bough::envfile::load(&bough_util::bough_path("env"));
     let _log = init_tracing(&cli);
+    install_panic_hook();
     if !loaded.is_empty() {
         tracing::info!(target: "bough", names = %loaded.join(", "), "loaded from $BOUGH_HOME/env");
     }
@@ -75,6 +76,40 @@ fn main() -> std::process::ExitCode {
 /// rule is testable without a TTY.
 pub fn owns_a_terminal(has_subcommand: bool, check: bool, dump_config: bool, tty: bool) -> bool {
     tty && !has_subcommand && !check && !dump_config
+}
+
+/// Log every panic through `tracing` before the default handler runs.
+///
+/// A panic in one task does not kill the process (no `panic = "abort"`), so a panicking RENDER
+/// leaves a live resident with a frozen pane — which reads as a crash and, until now, left NO
+/// trace anywhere: the resident is spawned with a null stderr, which is where the default hook
+/// writes. Andrey pressed a tier summary and the harness had nothing to show for it
+/// (2026-09-01). The hook writes the payload, the location and a backtrace to `bough.log`,
+/// which is the file everyone already reads.
+fn install_panic_hook() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "panic".to_string());
+        let at = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "unknown".to_string());
+        let thread = std::thread::current().name().unwrap_or("unnamed").to_string();
+        tracing::error!(
+            target: "bough",
+            panic = %payload,
+            at = %at,
+            thread = %thread,
+            backtrace = %std::backtrace::Backtrace::force_capture(),
+            "PANIC — a task died; the process may still be running with that work stopped"
+        );
+        default(info);
+    }));
 }
 
 /// Install the tracing subscriber. Returns the worker guard when the log went to a file, which the
