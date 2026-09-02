@@ -130,7 +130,8 @@ type Projection interface {
 }
 
 // Event is the payload emitted on "loop/event".
-// Kind is one of: "assistant", "code", "result", "error", "done" from
+// Kind is one of: "assistant-delta" (a streamed fragment, not recorded),
+// "assistant", "code", "result", "error", "done" from
 // the loop itself; other plugins may emit further kinds (e.g. workers'
 // "sub:*" subagent events). Data carries optional extra payload (e.g.
 // {"worker": N} on sub:* events); nil for the loop's own events.
@@ -302,6 +303,17 @@ func (r *runner) fire(ctx context.Context, event string, payload map[string]any,
 	return res
 }
 
+// complete asks the model for the next step. A streaming provider
+// (llm.Streamer) reports each fragment as an "assistant-delta" event so
+// the ui can show the reply as it forms; only the finished reply is
+// recorded to history, as before, so deltas never reach the model.
+func (r *runner) complete(ctx context.Context, sys string, emit func(kind, text string)) (string, error) {
+	if st, ok := r.llm.(llm.Streamer); ok {
+		return st.Stream(ctx, sys, r.project(), func(delta string) { emit("assistant-delta", delta) })
+	}
+	return r.llm.Complete(ctx, sys, r.project())
+}
+
 // project derives this step's model messages from the history entries.
 func (r *runner) project() []Message {
 	entries := r.hist.Entries()
@@ -373,7 +385,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		if r.cog != nil {
 			sys = r.cog.System(sys)
 		}
-		reply, err := r.llm.Complete(ctx, sys, r.project())
+		reply, err := r.complete(ctx, sys, emit)
 		if ctx.Err() != nil {
 			note("cancelled", "", nil)
 			note("done", "", nil)

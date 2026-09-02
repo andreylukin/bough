@@ -42,6 +42,7 @@ type block struct {
 	answer   string
 	answered bool
 	expired  bool // turn ended (or replay found no answer entry) unanswered
+	live     bool // assistant text still streaming (see addDelta)
 }
 
 // collapsible blocks get a disclosure header and can be toggled.
@@ -291,6 +292,11 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		return "\n" + m.renderUser(b, th)
 	case "assistant":
 		head := th["accent"].Render("●") + " " + th["dim"].Render("bough")
+		if b.live {
+			// Streaming: plain text plus a cursor; markdown waits for
+			// the finished reply so half-open fences never flicker.
+			return head + "\n" + th["assistant"].Width(m.width).Render(b.text+"▌")
+		}
 		return head + "\n" + m.markdown(b.text)
 	case "code", "thinking":
 		if b.collapsed {
@@ -477,7 +483,10 @@ func (m *model) addEvent(ev Event) {
 		if ev.Kind == "result" {
 			m.flushTrailing()
 		}
+	case "assistant-delta":
+		m.addDelta(id, ev.Text)
 	case "assistant":
+		m.dropLive()
 		m.addAssistant(ev.Text)
 	case "todo":
 		// One render per mutation: the system block a /todo mutation

@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/andreylukin/bough/kernel"
@@ -56,6 +58,17 @@ type orMessage struct {
 }
 
 func (o *openrouterLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
+	return o.call(ctx, system, messages, nil)
+}
+
+// Stream implements Streamer: the same request with stream:true,
+// decoding OpenRouter's SSE "data:" lines. The final chunk carries
+// usage (requested via usage.include), so the tally works either way.
+func (o *openrouterLLM) Stream(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
+	return o.call(ctx, system, messages, onDelta)
+}
+
+func (o *openrouterLLM) call(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
 	o.once.Do(func() {
 		o.key = os.Getenv("OPENROUTER_API_KEY")
 		if o.key == "" {
@@ -82,6 +95,7 @@ func (o *openrouterLLM) Complete(ctx context.Context, system string, messages []
 		"model":    o.model,
 		"messages": msgs,
 		"usage":    map[string]any{"include": true},
+		"stream":   onDelta != nil,
 	})
 	if err != nil {
 		return "", fmt.Errorf("llm-openrouter: %w", err)
@@ -100,12 +114,16 @@ func (o *openrouterLLM) Complete(ctx context.Context, system string, messages []
 		return "", fmt.Errorf("llm-openrouter: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		return "", openrouterErr(resp.StatusCode, o.model, data)
+	}
+	if onDelta != nil {
+		return o.readStream(resp.Body, onDelta)
+	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("llm-openrouter: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", openrouterErr(resp.StatusCode, o.model, data)
 	}
 
 	var parsed struct {
@@ -131,14 +149,73 @@ func (o *openrouterLLM) Complete(ctx context.Context, system string, messages []
 		return "", fmt.Errorf("llm-openrouter: no choices in response")
 	}
 	if u := parsed.Usage; u != nil {
-		o.mu.Lock()
-		o.usage.InputTokens += u.PromptTokens
-		o.usage.OutputTokens += u.CompletionTokens
-		o.usage.Cost += u.Cost
-		o.usage.Priced = true
-		o.mu.Unlock()
+		o.addUsage(u.PromptTokens, u.CompletionTokens, u.Cost)
 	}
 	return parsed.Choices[0].Message.Content, nil
+}
+
+func (o *openrouterLLM) addUsage(in, out int, cost float64) {
+	o.mu.Lock()
+	o.usage.InputTokens += in
+	o.usage.OutputTokens += out
+	o.usage.Cost += cost
+	o.usage.Priced = true
+	o.mu.Unlock()
+}
+
+// readStream decodes an SSE body: each "data: {json}" line carries a
+// chunk with choices[0].delta.content; "data: [DONE]" ends it. An
+// error object mid-stream (OpenRouter sends one for provider failures)
+// surfaces as the call's error, with whatever text already arrived
+// discarded by the caller.
+func (o *openrouterLLM) readStream(body io.Reader, onDelta func(string)) (string, error) {
+	var out strings.Builder
+	sc := bufio.NewScanner(body)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		line := sc.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue // comments (": OPENROUTER PROCESSING") and blanks
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			Usage *struct {
+				PromptTokens     int     `json:"prompt_tokens"`
+				CompletionTokens int     `json:"completion_tokens"`
+				Cost             float64 `json:"cost"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return "", fmt.Errorf("llm-openrouter: bad stream chunk: %w", err)
+		}
+		if chunk.Error != nil {
+			return "", fmt.Errorf("llm-openrouter: %s", chunk.Error.Message)
+		}
+		for _, c := range chunk.Choices {
+			if c.Delta.Content != "" {
+				out.WriteString(c.Delta.Content)
+				onDelta(c.Delta.Content)
+			}
+		}
+		if u := chunk.Usage; u != nil {
+			o.addUsage(u.PromptTokens, u.CompletionTokens, u.Cost)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return "", fmt.Errorf("llm-openrouter: stream: %w", err)
+	}
+	return out.String(), nil
 }
 
 // openrouterErr formats a non-200 response. A 400/404 is almost

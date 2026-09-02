@@ -192,6 +192,25 @@ func (m *model) addAssistant(text string) {
 	}
 }
 
+// addDelta grows the turn's live assistant block by one streamed
+// fragment, creating it on the first delta. The block is provisional:
+// the final "assistant" event replaces it (dropLive + addAssistant),
+// which is also where fence splitting and code dedupe happen.
+func (m *model) addDelta(id int, delta string) {
+	if n := len(m.blocks); n > 0 && m.blocks[n-1].live {
+		m.blocks[n-1].text += delta
+		return
+	}
+	m.blocks = append(m.blocks, block{id: id, kind: "assistant", text: delta, live: true})
+}
+
+// dropLive removes the provisional streaming block, if any.
+func (m *model) dropLive() {
+	if n := len(m.blocks); n > 0 && m.blocks[n-1].live {
+		m.blocks = m.blocks[:n-1]
+	}
+}
+
 // splitProse removes the executed fence from an assistant block: the
 // prose before it stays, the prose after it is held back (m.trailing)
 // until the code's result has landed, so the transcript reads in

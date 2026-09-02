@@ -474,3 +474,31 @@ func TestReplaySystemEntry(t *testing.T) {
 		t.Errorf("replayed system text missing:\n%s", p)
 	}
 }
+
+// Streamed fragments grow one live assistant block (with a cursor);
+// the final assistant event replaces it with the rendered reply, so
+// nothing is shown twice.
+func TestAssistantDeltasBuildLiveBlockThenReplaced(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.typeStr("hi")
+	d.press(keyEnter())
+	d.event("assistant-delta", "Hel")
+	d.event("assistant-delta", "lo **there**")
+	n := len(d.m.blocks)
+	if b := d.m.blocks[n-1]; !b.live || b.text != "Hello **there**" {
+		t.Fatalf("live block = %+v", b)
+	}
+	if p := d.plain(); !strings.Contains(p, "Hello **there**▌") {
+		t.Fatalf("streaming text should render raw with a cursor:\n%s", p)
+	}
+	d.event("assistant", "Hello **there**")
+	d.event("done", "")
+	if len(d.m.blocks) != n+1 { // live block replaced, done added
+		t.Fatalf("blocks = %d, want %d", len(d.m.blocks), n+1)
+	}
+	p := d.plain()
+	if strings.Contains(p, "▌") || strings.Count(p, "Hello") != 1 || strings.Contains(p, "**") {
+		t.Fatalf("final reply should replace the live block and render markdown:\n%s", p)
+	}
+}

@@ -19,6 +19,14 @@ type LLM interface {
 	Complete(ctx context.Context, system string, messages []Message) (string, error)
 }
 
+// Streamer is the optional streaming seam: a provider that can stream
+// calls onDelta with each text fragment as it arrives and still
+// returns the complete reply (or the error). Consumers fall back to
+// Complete when the service does not implement it.
+type Streamer interface {
+	Stream(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error)
+}
+
 // Usage is a provider's running token/cost tally for this mount (it
 // resets when the llm row is swapped). Cost is only meaningful when
 // Priced: OpenRouter reports it per response, Anthropic does not.

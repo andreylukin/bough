@@ -94,6 +94,9 @@ func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog h
 // printing so a caller waiting on that line can answer; "[error]" goes
 // to stderr and marks the run failed; everything else to stdout.
 func hlPrint(ev Event) {
+	if ev.Kind == "assistant-delta" {
+		return // the whole reply prints once as "[assistant]"
+	}
 	if ev.Kind == "ask" {
 		hlMu.Lock()
 		hlAsk = &hlAskState{id: ev.ID, options: ev.Options}

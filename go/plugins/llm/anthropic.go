@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
@@ -50,7 +51,7 @@ func (a *anthropicLLM) Usage() Usage {
 	return a.usage
 }
 
-func (a *anthropicLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
+func (a *anthropicLLM) init() error {
 	a.once.Do(func() {
 		key := os.Getenv("ANTHROPIC_API_KEY")
 		if key == "" {
@@ -59,10 +60,10 @@ func (a *anthropicLLM) Complete(ctx context.Context, system string, messages []M
 		}
 		a.client = anthropic.NewClient(option.WithAPIKey(key))
 	})
-	if a.err != nil {
-		return "", a.err
-	}
+	return a.err
+}
 
+func (a *anthropicLLM) params(system string, messages []Message) anthropic.MessageNewParams {
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(a.model),
 		MaxTokens: 4096,
@@ -79,14 +80,57 @@ func (a *anthropicLLM) Complete(ctx context.Context, system string, messages []M
 			params.Messages = append(params.Messages, anthropic.NewUserMessage(block))
 		}
 	}
+	return params
+}
 
-	resp, err := a.client.Messages.New(ctx, params)
-	if err != nil {
-		var apiErr *anthropic.Error
-		if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
-			return "", fmt.Errorf("llm-anthropic: model %q not found on anthropic — switch with /model", a.model)
+func (a *anthropicLLM) wrapErr(err error) error {
+	var apiErr *anthropic.Error
+	if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+		return fmt.Errorf("llm-anthropic: model %q not found on anthropic — switch with /model", a.model)
+	}
+	return fmt.Errorf("llm-anthropic: %w", err)
+}
+
+// Stream implements Streamer over the SDK's SSE stream: text_delta
+// events feed onDelta; message_start/message_delta carry the usage.
+func (a *anthropicLLM) Stream(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
+	if err := a.init(); err != nil {
+		return "", err
+	}
+	stream := a.client.Messages.NewStreaming(ctx, a.params(system, messages))
+	defer stream.Close()
+	var out strings.Builder
+	var in, outTok int
+	for stream.Next() {
+		switch ev := stream.Current().AsAny().(type) {
+		case anthropic.MessageStartEvent:
+			in += int(ev.Message.Usage.InputTokens)
+		case anthropic.MessageDeltaEvent:
+			outTok += int(ev.Usage.OutputTokens)
+		case anthropic.ContentBlockDeltaEvent:
+			if d, ok := ev.Delta.AsAny().(anthropic.TextDelta); ok && d.Text != "" {
+				out.WriteString(d.Text)
+				onDelta(d.Text)
+			}
 		}
-		return "", fmt.Errorf("llm-anthropic: %w", err)
+	}
+	if err := stream.Err(); err != nil {
+		return "", a.wrapErr(err)
+	}
+	a.mu.Lock()
+	a.usage.InputTokens += in
+	a.usage.OutputTokens += outTok
+	a.mu.Unlock()
+	return out.String(), nil
+}
+
+func (a *anthropicLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
+	if err := a.init(); err != nil {
+		return "", err
+	}
+	resp, err := a.client.Messages.New(ctx, a.params(system, messages))
+	if err != nil {
+		return "", a.wrapErr(err)
 	}
 	a.mu.Lock()
 	a.usage.InputTokens += int(resp.Usage.InputTokens)

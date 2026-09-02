@@ -35,3 +35,23 @@ func (echoLLM) Complete(ctx context.Context, system string, messages []Message) 
 	}
 	return "echo: " + last, nil
 }
+
+// Stream implements Streamer for tests: the reply arrives one word at a
+// time (whitespace kept), so the ui's live block is exercised without a
+// network.
+func (e echoLLM) Stream(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
+	reply, err := e.Complete(ctx, system, messages)
+	if err != nil {
+		return "", err
+	}
+	rest := reply
+	for rest != "" {
+		i := strings.IndexAny(rest, " \n")
+		if i < 0 {
+			i = len(rest) - 1
+		}
+		onDelta(rest[:i+1])
+		rest = rest[i+1:]
+	}
+	return reply, nil
+}
