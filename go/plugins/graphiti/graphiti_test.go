@@ -213,3 +213,16 @@ func TestEnsureRowAnchorsAfterMcp(t *testing.T) {
 		t.Fatalf("append at end: %q", out)
 	}
 }
+
+func TestHasKeyReadsTheEnvFileShapes(t *testing.T) {
+	env := []byte("# keys\nexport OPENROUTER_API_KEY=\"sk-or-1\"\nOPENAI_API_KEY=\nEXA_API_KEY='x'\n")
+	if !HasKey(env, "OPENROUTER_API_KEY") || !HasKey(env, "EXA_API_KEY") {
+		t.Fatal("quoted and exported keys count")
+	}
+	if HasKey(env, "OPENAI_API_KEY") || HasKey(env, "NOPE") || HasKey(nil, "OPENROUTER_API_KEY") {
+		t.Fatal("empty, absent, or no file is not a key")
+	}
+	if FromConfig(nil).KeyName() != "OPENROUTER_API_KEY" || FromConfig(map[string]any{"llm": "openai"}).KeyName() != "OPENAI_API_KEY" {
+		t.Fatal("key name follows the llm")
+	}
+}

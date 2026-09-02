@@ -193,6 +193,47 @@ func EnsureRow(yml []byte) ([]byte, bool) {
 	return []byte(s[:j] + row + rest), true
 }
 
+// KeyName is the variable the configured llm needs in ~/.bough/env.
+func (s Settings) KeyName() string {
+	if s.LLM == "openai" {
+		return "OPENAI_API_KEY"
+	}
+	return "OPENROUTER_API_KEY"
+}
+
+// HasKey reports whether an env file (KEY=value lines, optional `export`,
+// quotes, comments) sets name to something non-empty. Pure.
+func HasKey(envFile []byte, name string) bool {
+	for _, line := range strings.Split(string(envFile), "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "export "))
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(k) != name {
+			continue
+		}
+		v = strings.Trim(strings.TrimSpace(v), "\"'")
+		return v != ""
+	}
+	return false
+}
+
+func envPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".bough", "env")
+}
+
+// checkKey fails install/start before launchd would: the job runs with
+// no shell environment, so ~/.bough/env is the only place a key can be.
+func checkKey(s Settings) error {
+	b, _ := os.ReadFile(envPath())
+	if HasKey(b, s.KeyName()) {
+		return nil
+	}
+	return fmt.Errorf("%s is not set in %s (launchd gives the server no shell environment; add `%s=…` there and rerun)", s.KeyName(), envPath(), s.KeyName())
+}
+
 // PromptSection is what the mounted row tells the model.
 func PromptSection(s Settings) string {
 	return "## memory\n" +
@@ -275,6 +316,9 @@ func writeFile(path string, body []byte, mode os.FileMode) error {
 func install(s Settings) error {
 	if _, err := exec.LookPath("uv"); err != nil {
 		return errors.New("uv is required (brew install uv)")
+	}
+	if err := checkKey(s); err != nil {
+		return err
 	}
 	if _, err := os.Stat("/opt/homebrew/opt/libomp/lib/libomp.dylib"); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: FalkorDB needs libomp at runtime: brew install libomp")
@@ -381,6 +425,9 @@ func start(s Settings) error {
 	if _, err := os.Stat(plistPath()); err != nil {
 		return errors.New("not installed: bough graphiti install")
 	}
+	if err := checkKey(s); err != nil {
+		return err
+	}
 	// A fresh bootstrap picks up plist edits. bootout is asynchronous: wait
 	// for the job to be gone, or bootstrap fails with "Input/output error".
 	_ = exec.Command("launchctl", "bootout", domain()+"/"+label).Run()
@@ -440,6 +487,11 @@ func status(s Settings) error {
 		fmt.Printf("hook     %-20s %s\n", ev, state)
 	}
 	fmt.Printf("llm      %s / %s, embedder %s\n", s.LLM, s.Model, s.Embedder)
+	if err := checkKey(s); err != nil {
+		fmt.Printf("key      MISSING: %v\n", err)
+	} else {
+		fmt.Printf("key      %s set in %s\n", s.KeyName(), envPath())
+	}
 	return nil
 }
 
