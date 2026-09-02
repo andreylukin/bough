@@ -140,9 +140,11 @@ func sandbox(t *testing.T, opts launchOpts) (home, cwd, config string) {
 }
 
 func env(home string) []string {
+	// HOME is replaced and BOUGH_ROOT dropped so no test can reach the
+	// real ~/.bough or a real checkout (bough update walks env fallbacks).
 	env := []string{"HOME=" + home}
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "HOME=") {
+		if !strings.HasPrefix(kv, "HOME=") && !strings.HasPrefix(kv, "BOUGH_ROOT=") {
 			env = append(env, kv)
 		}
 	}

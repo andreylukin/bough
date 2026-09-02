@@ -65,6 +65,8 @@ go build ./cmd/bough
 ./bough sessions             # list sessions, newest first
 ./bough -c                   # resume the most recent session
 ./bough -r [id]              # resume by id, or pick from a list
+./bough update               # git pull + rebuild + bounce the web session
+./bough restart              # bounce the running --web session
 ```
 
 The default `llm-anthropic` provider needs `ANTHROPIC_API_KEY` set (and
@@ -76,6 +78,18 @@ printf "say CODE! please\n" | ./bough --headless --set llm.plugin=llm-echo
 
 Swap the LLM permanently by editing the `llm` row in `bough.yml`
 (`llm-echo` instead of `llm-anthropic`).
+
+## Updating
+
+`bough update` finds the checkout (walking up from the binary, then
+`$BOUGH_ROOT`, then `~/repos/bough`), runs `git pull --ff-only`,
+rebuilds the binary in place (an installed copy, e.g.
+`~/.local/bin/bough`, is replaced atomically), and bounces the web
+session if one is running. A `--web` session records itself in
+`~/.bough/web.pid`; `bough restart` alone SIGINTs that recorded pid,
+waits for it to exit, and relaunches `--web` on the same addr detached
+(output appends to `~/.bough/web.log`). With no running web session
+both just note that sessions pick up the new binary on next launch.
 
 ## The codemode loop
 

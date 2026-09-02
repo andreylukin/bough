@@ -65,6 +65,14 @@ func main() {
 		runSessions(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "update" {
+		runUpdate(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "restart" {
+		runRestart(os.Args[2:])
+		return
+	}
 	rowsCmd := len(os.Args) > 1 && os.Args[1] == "rows"
 	args := os.Args[1:]
 	if rowsCmd {
@@ -81,6 +89,7 @@ func main() {
 		sets     setFlags
 	)
 	flag.Var(&sets, "set", "override row config: id.key=value (repeatable)")
+	flag.CommandLine.Usage = usage
 	flag.CommandLine.Parse(args)
 
 	mode := "tui"
@@ -142,6 +151,14 @@ func main() {
 
 	if err := ctx.Mount(rows); err != nil {
 		fatal(err)
+	}
+
+	// A web session records "<pid> <addr>" so `bough restart` can find
+	// it; the deferred remove runs after the clean unmount below.
+	if *web != "" {
+		if rm := writeWebPidfile(*web); rm != nil {
+			defer rm()
+		}
 	}
 
 	stopWatch, err := watchConfig(ctx, *config, ov)
@@ -263,6 +280,22 @@ func printRows(ctx *kernel.Context) {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.ID, r.Plugin, r.State, detail)
 	}
 	w.Flush()
+}
+
+func usage() {
+	fmt.Fprint(os.Stderr, `usage: bough [flags]
+       bough <command> [args]
+
+commands:
+  rows      print the row state table and exit
+  sessions  list stored sessions, newest first
+  log       pretty-print a history JSONL (latest when no arg)
+  update    git pull + rebuild this binary + restart the web session
+  restart   bounce the running --web session onto the current binary
+
+flags:
+`)
+	flag.PrintDefaults()
 }
 
 func fatal(err error) {
