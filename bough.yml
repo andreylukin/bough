@@ -1,0 +1,23 @@
+# bough config tree: a list of plugin rows. Row order carries no
+# semantics — mount order comes from each plugin's Inject() deps.
+
+- id: llm
+  plugin: llm-anthropic
+  config:
+    model: claude-sonnet-5
+
+# Swap the provider by replacing the row above with:
+# - id: llm
+#   plugin: llm-echo
+
+- id: codemode
+  plugin: codemode
+
+- id: tools
+  plugin: tools
+
+- id: loop
+  plugin: loop
+
+- id: ui
+  plugin: ui
