@@ -19,8 +19,14 @@ var readSecret = func(service string) ([]byte, error) {
 	out, err := exec.Command("security", "find-generic-password", "-s", service, "-w").Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("keychain item %q: %s (locked keychain? run from a GUI session, or `security unlock-keychain`)",
-				service, strings.TrimSpace(string(ee.Stderr)))
+			msg := strings.TrimSpace(string(ee.Stderr))
+			if msg == "" {
+				msg = fmt.Sprintf("security exited %d", ee.ExitCode())
+			}
+			if ee.ExitCode() == 36 || strings.Contains(msg, "not allowed") {
+				msg += "; the login keychain is locked to this session (SSH?) — run from a GUI session, or `security unlock-keychain ~/Library/Keychains/login.keychain-db` first"
+			}
+			return nil, fmt.Errorf("keychain item %q: %s", service, msg)
 		}
 		return nil, err
 	}
