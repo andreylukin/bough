@@ -49,9 +49,29 @@ func runUpdate(args []string) {
 		step("build", modDir, "go", "build", "-o", target, "./cmd/bough")
 	}
 	fmt.Printf("bough: installed %s\n", target)
+	graphitiStep(target)
 
 	if err := restartWeb(home, target, os.Stdout); err != nil {
 		fatal(err)
+	}
+}
+
+// graphitiStep keeps the long-term memory current with the binary: the
+// new binary's `graphiti install` clones or pulls the server, syncs its
+// venv, rewrites the launcher, hooks and plist, and restarts the job. A
+// machine without uv is told what to install; a failing install warns,
+// because memory being down must not leave bough un-updated.
+func graphitiStep(bin string) {
+	if _, err := exec.LookPath("uv"); err != nil {
+		fmt.Println("bough: graphiti memory skipped: uv not on PATH (brew install uv libomp, then bough update)")
+		return
+	}
+	fmt.Println("bough: graphiti install…")
+	cmd := exec.Command(bin, "graphiti", "install")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "bough: warning: graphiti install failed: %v (see bough graphiti logs)\n", err)
 	}
 }
 

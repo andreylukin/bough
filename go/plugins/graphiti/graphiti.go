@@ -154,6 +154,45 @@ func MergeServer(doc []byte, name, url string) ([]byte, error) {
 	return json.MarshalIndent(m, "", "  ")
 }
 
+// EnsureRow returns yml with a `graphiti` row inserted after the `mcp`
+// row, and whether it changed anything. A tree that already has the row,
+// or has no `- id: mcp` row to anchor on, comes back untouched. Pure.
+func EnsureRow(yml []byte) ([]byte, bool) {
+	s := string(yml)
+	if strings.Contains(s, "plugin: graphiti") {
+		return yml, false
+	}
+	const anchor = "- id: mcp\n  plugin: mcp\n"
+	i := strings.Index(s, anchor)
+	if i < 0 {
+		return yml, false
+	}
+	// The mcp row may carry an indented config/comment block; skip to the
+	// next top-level line (or the end) before inserting.
+	j := i + len(anchor)
+	for j < len(s) {
+		k := strings.IndexByte(s[j:], '\n')
+		line := s[j:]
+		if k >= 0 {
+			line = s[j : j+k]
+		}
+		if line == "" || (!strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "#")) {
+			break
+		}
+		if k < 0 {
+			j = len(s)
+			break
+		}
+		j += k + 1
+	}
+	row := "\n# Long-term memory (bough graphiti install): prompt section only.\n- id: graphiti\n  plugin: graphiti\n"
+	rest := s[j:]
+	if rest != "" && !strings.HasPrefix(rest, "\n") {
+		row += "\n"
+	}
+	return []byte(s[:j] + row + rest), true
+}
+
 // PromptSection is what the mounted row tells the model.
 func PromptSection(s Settings) string {
 	return "## memory\n" +
@@ -312,12 +351,27 @@ func install(s Settings) error {
 		return err
 	}
 
+	// The prompt-section row, in the global tree when there is one.
+	home, _ := os.UserHomeDir()
+	yml := filepath.Join(home, ".bough", "bough.yml")
+	rowNote := "prompt section: add a `- id: graphiti / plugin: graphiti` row to your config tree"
+	if b, err := os.ReadFile(yml); err == nil {
+		if out, changed := EnsureRow(b); changed {
+			if err := os.WriteFile(yml, out, 0o644); err != nil {
+				return err
+			}
+			rowNote = "row added to " + yml
+		} else if strings.Contains(string(b), "plugin: graphiti") {
+			rowNote = "row present in " + yml
+		}
+	}
+
 	// 3. Run it.
 	if err := start(s); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "installed: %s\n  hooks: %s, %s\n  mcp.json: graphiti → %s\n  prompt section: a `- id: graphiti / plugin: graphiti` row in ~/.bough/bough.yml\n",
-		s.Home, hookPath("stop"), hookPath("user-prompt-submit"), s.url())
+	fmt.Fprintf(os.Stderr, "installed: %s\n  hooks: %s, %s\n  mcp.json: graphiti → %s\n  %s\n",
+		s.Home, hookPath("stop"), hookPath("user-prompt-submit"), s.url(), rowNote)
 	return nil
 }
 

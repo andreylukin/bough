@@ -183,3 +183,33 @@ func TestPromptSectionNamesTheServer(t *testing.T) {
 		t.Fatalf("section: %s", s)
 	}
 }
+
+func TestEnsureRowAnchorsAfterMcp(t *testing.T) {
+	tree := "- id: hooks\n  plugin: hooks-js\n\n- id: mcp\n  plugin: mcp\n  # config:\n  #   servers: {}\n\n- id: todo\n  plugin: todo\n"
+	out, changed := EnsureRow([]byte(tree))
+	if !changed {
+		t.Fatal("want the row added")
+	}
+	got := string(out)
+	mcp, gr, todo := strings.Index(got, "plugin: mcp"), strings.Index(got, "plugin: graphiti"), strings.Index(got, "plugin: todo")
+	if !(mcp < gr && gr < todo) {
+		t.Fatalf("row order: %s", got)
+	}
+	if strings.Contains(got, "\n\n\n") {
+		t.Fatalf("no double blank lines:\n%s", got)
+	}
+	if !strings.Contains(got, "  #   servers: {}\n\n# Long-term memory") {
+		t.Fatalf("must insert after the mcp row's comment block:\n%s", got)
+	}
+	if _, again := EnsureRow(out); again {
+		t.Fatal("second call must be a no-op")
+	}
+	if _, ok := EnsureRow([]byte("- id: llm\n  plugin: llm-echo\n")); ok {
+		t.Fatal("no mcp row: nothing to anchor on, leave it alone")
+	}
+	// mcp row at the very end of the file.
+	out, _ = EnsureRow([]byte("- id: mcp\n  plugin: mcp\n"))
+	if !strings.HasSuffix(string(out), "plugin: graphiti\n") {
+		t.Fatalf("append at end: %q", out)
+	}
+}

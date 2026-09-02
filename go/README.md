@@ -334,8 +334,12 @@ OpenRouter by default (`OPENROUTER_API_KEY` from `~/.bough/env`; model
 `bough graphiti install` again rewrites the plist. Attribute-free entity
 types are on purpose: the typed built-ins fail validation on small models.
 
-`bough graphiti status | logs | start | stop | uninstall` (uninstall keeps
-the checkout and the graph).
+`bough update` runs `graphiti install` after the rebuild (skipped, with a
+hint, when `uv` is not on PATH), so a new machine is `brew install uv libomp`,
+a working `OPENROUTER_API_KEY` in `~/.bough/env`, then `bough update`. The
+install also adds the `graphiti` row to `~/.bough/bough.yml` after its `mcp`
+row when that file exists. `bough graphiti status | logs | start | stop |
+uninstall` (uninstall keeps the checkout and the graph).
 
 ## Skills
 
