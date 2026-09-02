@@ -92,7 +92,7 @@ func TestProgramExternalEventsRender(t *testing.T) {
 	events <- Event{Kind: "code", Text: `tools.bash("echo hi from codemode")`}
 	events <- Event{Kind: "result", Text: "hi from codemode"}
 	events <- Event{Kind: "done"}
-	waitForOutput(t, tm, "hi from codemode", "code js (1 line)")
+	waitForOutput(t, tm, "hi from codemode", "Ran: echo hi from codemode (1 line)")
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
 }

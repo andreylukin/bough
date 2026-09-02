@@ -51,7 +51,7 @@ func (m *model) replay() {
 				m.clearPendingAsk()
 			}
 		default:
-			m.addEvent(Event{Kind: e.Kind, Text: text})
+			m.addEvent(Event{Kind: e.Kind, Text: text, Data: e.Data})
 		}
 	}
 	m.expireAsks()                 // an ask with no answer entry replays as expired

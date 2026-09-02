@@ -74,7 +74,7 @@ func TestProgramReplaysResumedTranscript(t *testing.T) {
 	waitForOutput(t, tm,
 		"❯ prior question",
 		"prior answer",
-		"▸ code js (1 line)",
+		"▸ Ran: ls (1 line)",
 		"▸ result (2 lines)",
 	)
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})

@@ -306,16 +306,40 @@ func TestLongTranscriptScrollback(t *testing.T) {
 	}
 }
 
-func TestNewEventRepinsToBottom(t *testing.T) {
+func TestNewEventWhileScrolledUpShowsCue(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	fillTranscript(d, 40)
 	d.press(keyPgUp())
-	d.event("assistant", "fresh reply")
-	if !d.m.vp.AtBottom() {
-		t.Error("a new event should pin the transcript to the bottom")
+	if p := d.plain(); !strings.Contains(p, "scrolled ↑") {
+		t.Errorf("scrolled-up state should be visible in the status bar:\n%s", p)
 	}
-	if !strings.Contains(d.plain(), "fresh reply") {
-		t.Error("fresh reply should be visible after repin")
+	d.event("assistant", "fresh reply")
+	if d.m.vp.AtBottom() {
+		t.Error("a new event must not yank a scrolled-up reader to the bottom")
+	}
+	p := d.plain()
+	if !strings.Contains(p, "↓ new output") || !strings.Contains(p, "scrolled ↑") {
+		t.Errorf("new output below should be cued:\n%s", p)
+	}
+	for i := 0; i < 50 && !d.m.vp.AtBottom(); i++ {
+		d.press(keyPgDown())
+	}
+	p = d.plain()
+	if strings.Contains(p, "↓ new output") || strings.Contains(p, "scrolled ↑") {
+		t.Errorf("cue should clear at the bottom:\n%s", p)
+	}
+	if !strings.Contains(p, "fresh reply") {
+		t.Error("fresh reply should be visible at the bottom")
+	}
+}
+
+func TestNewEventAtBottomStaysPinned(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	fillTranscript(d, 40)
+	d.event("assistant", "fresh reply")
+	if !d.m.vp.AtBottom() || !strings.Contains(d.plain(), "fresh reply") {
+		t.Error("a reader at the bottom should follow new output")
 	}
 }
