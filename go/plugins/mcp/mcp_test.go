@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
-
 )
 
 func TestMergePrecedence(t *testing.T) {
