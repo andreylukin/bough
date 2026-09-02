@@ -71,6 +71,14 @@ Keys use bubbletea names: `"ctrl+c"`, `"pgup"`, `"q"`, `"shift+tab"`.
 `collapse_all` and `expand_all` ship unbound — they only fire when the
 keymap service binds them.
 
+#### Collapse
+
+Whether code/result blocks *start* collapsed is not an init.js
+setting: it is the ui row's config in `bough.yml` — `collapse: all`
+(default: every block starts collapsed), `large` (only bodies over 3
+lines), or `none` (everything starts expanded). Any other value is a
+boot error.
+
 #### provider.default
 
 Names a provider registered with `bough.provider`. Naming an

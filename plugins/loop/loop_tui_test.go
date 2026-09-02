@@ -23,6 +23,7 @@ func TestCodemodeFlowRenders(t *testing.T) {
 	// Step 2's echo reply quotes the fed-back tool output, so its
 	// arrival proves the full llm -> code -> result -> llm round trip.
 	d.WaitFor("[tool output]")
+	d.Press("tab", "enter", "tab", "enter") // expand the code block, then the result
 	frame := d.Frame()
 	for _, want := range []string{"▾ code js", "▾ result", "hi from codemode"} {
 		if !strings.Contains(frame, want) {
@@ -52,6 +53,9 @@ func TestMultiBlockReplyRenders(t *testing.T) {
 		"codemode", "loop")
 	d.Say("go")
 	d.WaitFor("all done here")
+	// Blocks arrive collapsed; expand both result blocks (tab order:
+	// code1, result1, code2, result2).
+	d.Press("tab", "tab", "enter", "tab", "tab", "enter")
 	frame := d.Frame()
 	if got := strings.Count(frame, "▾ result"); got != 2 {
 		t.Fatalf("want 2 result boxes, got %d:\n%s", got, frame)

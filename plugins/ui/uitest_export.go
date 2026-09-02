@@ -19,7 +19,7 @@ func NewTestModel(ctx *kernel.Context, width, height int) (tea.Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := buildCfg(ctx)
+	cfg, err := buildCfg(ctx, nil)
 	if err != nil {
 		return nil, err
 	}

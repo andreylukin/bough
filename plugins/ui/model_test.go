@@ -15,12 +15,29 @@ func testModel(t *testing.T) model {
 	return newModel(80, 24, func(string) {}, nil, &cfg)
 }
 
+// testModelCollapse is testModel with the collapse mode overridden.
+func testModelCollapse(t *testing.T, mode string) model {
+	t.Helper()
+	var cfg atomic.Pointer[uiCfg]
+	c := newCfg(defaultTheme(), defaultKeymap(), "bough", nil)
+	c.collapse = mode
+	cfg.Store(c)
+	return newModel(80, 24, func(string) {}, nil, &cfg)
+}
+
 func TestCollapseDefaults(t *testing.T) {
-	m := testModel(t)
 	long := strings.TrimSuffix(strings.Repeat("line\n", 20), "\n")
+
+	// "all" (the default): every code/result block starts collapsed,
+	// regardless of size.
+	m := testModel(t)
 	m.addEvent(Event{Kind: "result", Text: long})
-	if !m.blocks[0].collapsed {
-		t.Fatal("20-line result should start collapsed")
+	m.addEvent(Event{Kind: "result", Text: "one\ntwo\nthree"})
+	m.addEvent(Event{Kind: "code", Text: "a\nb\nc\nd"})
+	for i, b := range m.blocks {
+		if !b.collapsed {
+			t.Fatalf("collapse=all: block %d (%s) should start collapsed", i, b.kind)
+		}
 	}
 	out := m.render(&m.blocks[0], m.cfg.Load())
 	if !strings.Contains(out, "▸ result (20 lines): line") {
@@ -29,21 +46,10 @@ func TestCollapseDefaults(t *testing.T) {
 	if strings.Count(out, "\n") != 0 {
 		t.Errorf("collapsed render should be one line:\n%s", out)
 	}
-
 	m.blocks[0].collapsed = false
 	out = m.render(&m.blocks[0], m.cfg.Load())
 	if !strings.Contains(out, "▾ result (20 lines)") || strings.Count(out, "line") < 20 {
 		t.Errorf("expanded render should show header plus all 20 lines:\n%s", out)
-	}
-
-	// A short result starts expanded; a long code block starts collapsed.
-	m.addEvent(Event{Kind: "result", Text: "one\ntwo\nthree"})
-	if m.blocks[1].collapsed {
-		t.Fatal("3-line result should start expanded")
-	}
-	m.addEvent(Event{Kind: "code", Text: "a\nb\nc\nd"})
-	if !m.blocks[2].collapsed {
-		t.Fatal("4-line code block should start collapsed")
 	}
 	if out := m.render(&m.blocks[2], m.cfg.Load()); !strings.Contains(out, "▸ code js (4 lines): a") {
 		t.Errorf("code header wrong:\n%s", out)
@@ -55,6 +61,31 @@ func TestCollapseDefaults(t *testing.T) {
 	for _, i := range []int{3, 4} {
 		if m.blocks[i].collapsed || m.blocks[i].collapsible() {
 			t.Errorf("block %d (%s) should not be collapsible", i, m.blocks[i].kind)
+		}
+	}
+
+	// "large": only blocks over collapseAt lines start collapsed.
+	m = testModelCollapse(t, "large")
+	m.addEvent(Event{Kind: "result", Text: long})
+	m.addEvent(Event{Kind: "result", Text: "one\ntwo\nthree"})
+	m.addEvent(Event{Kind: "code", Text: "a\nb\nc\nd"})
+	if !m.blocks[0].collapsed {
+		t.Error("collapse=large: 20-line result should start collapsed")
+	}
+	if m.blocks[1].collapsed {
+		t.Error("collapse=large: 3-line result should start expanded")
+	}
+	if !m.blocks[2].collapsed {
+		t.Error("collapse=large: 4-line code block should start collapsed")
+	}
+
+	// "none": everything starts expanded.
+	m = testModelCollapse(t, "none")
+	m.addEvent(Event{Kind: "result", Text: long})
+	m.addEvent(Event{Kind: "code", Text: "a\nb\nc\nd"})
+	for i, b := range m.blocks {
+		if b.collapsed {
+			t.Errorf("collapse=none: block %d (%s) should start expanded", i, b.kind)
 		}
 	}
 }
@@ -167,7 +198,9 @@ func TestFocusAndKeyboardToggle(t *testing.T) {
 
 func TestHitRangesRecomputedOnResize(t *testing.T) {
 	m := testModel(t)
-	m.addEvent(Event{Kind: "result", Text: "only line"}) // expanded: header + box
+	m.addEvent(Event{Kind: "result", Text: "only line"})
+	m.blocks[0].collapsed = false // expand: header + box
+	m.refresh()
 	span := m.ranges[0].end - m.ranges[0].start
 	if span != 4 { // header + 3 box lines
 		t.Fatalf("expanded 1-line result should span 4 lines, got %d", span)

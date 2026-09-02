@@ -50,7 +50,7 @@ func (p *plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	// tui/web: themed, keymap-driven views on the process-level live
 	// wiring (see live.go). A remount re-points config and inputs;
 	// the running program/server is a process singleton.
-	ucfg, err := buildCfg(ctx)
+	ucfg, err := buildCfg(ctx, cfg)
 	if err != nil {
 		return err
 	}

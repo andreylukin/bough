@@ -74,6 +74,7 @@ func TestBoundToolResultRenders(t *testing.T) {
 	})
 	d.Say("go")
 	d.WaitFor("mcp turn over")
+	d.Press("tab", "tab", "enter") // focus past code to result, expand it
 	frame := d.Frame()
 	if !strings.Contains(frame, "MCP_GREETING_OK") {
 		t.Fatalf("MCP result missing:\n%s", frame)

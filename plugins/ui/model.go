@@ -341,9 +341,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// addEvent appends the semantic block for a loop event. Code and
-// result blocks start collapsed when their body is over collapseAt
-// lines.
+// addEvent appends the semantic block for a loop event. Whether code
+// and result blocks start collapsed follows cfg.collapse: "all"
+// (default) collapses every one, "large" only those over collapseAt
+// lines, "none" leaves them expanded.
 func (m *model) addEvent(ev Event) {
 	id := m.nextID
 	m.nextID++
@@ -361,7 +362,14 @@ func (m *model) addEvent(ev Event) {
 		// Trailing newlines don't render (box trims them); don't let
 		// them skew the header's line count or the collapse default.
 		text := strings.TrimRight(ev.Text, "\n")
-		collapsed := strings.Count(text, "\n")+1 > collapseAt
+		var collapsed bool
+		switch m.cfg.Load().collapse {
+		case "none":
+		case "large":
+			collapsed = strings.Count(text, "\n")+1 > collapseAt
+		default: // "all"
+			collapsed = true
+		}
 		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: text, collapsed: collapsed})
 	default: // assistant, anything future
 		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: ev.Text})

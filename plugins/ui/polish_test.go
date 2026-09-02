@@ -145,7 +145,10 @@ func TestDedupeKeepsSurroundingAssistantText(t *testing.T) {
 		!strings.Contains(txt, "before words") || !strings.Contains(txt, "after words") {
 		t.Errorf("fence not stripped cleanly: %q", txt)
 	}
-	// The executed code renders exactly once: header preview plus box.
+	// The executed code renders exactly once: header preview plus box
+	// (expand the collapsed block so the box shows).
+	d.press(keyTab())
+	d.press(keyEnter())
 	p := d.plain()
 	if got := strings.Count(p, "X = 1"); got != 2 {
 		t.Errorf("code should render once (header+box = 2 occurrences), got %d:\n%s", got, p)

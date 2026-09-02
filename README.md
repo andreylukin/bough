@@ -120,8 +120,10 @@ See `docs/INIT.md` for the full surface.
 Semantic transcript (themed prompt, markdown-rendered assistant, status
 bar with row/entry counts and a spinner while a turn runs). Code and
 result blocks render behind a one-line disclosure header — `▸ code js
-(N lines): preview` — and start collapsed when the body is over 3
-lines; click anywhere in a block to toggle it (mouse works in the
+(N lines): preview` — and all start collapsed by default; the ui row's
+`collapse` config in `bough.yml` picks the mode (`all` default,
+`large` collapses only bodies over 3 lines, `none` starts everything
+expanded). Click anywhere in a block to toggle it (mouse works in the
 native TUI and through the web terminal alike), and click a history
 inspector row to expand its entry as inline JSON. Default keys, all
 remappable via the `keymap` service: Ctrl+C quit, Ctrl+O history

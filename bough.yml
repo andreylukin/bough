@@ -59,3 +59,5 @@
 
 - id: ui
   plugin: ui
+  # config:
+  #   collapse: all|large|none (default all) — which code/result blocks start collapsed

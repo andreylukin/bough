@@ -96,6 +96,7 @@ bough.setup({provider: {default: "parrot"}})
 	d := mountInit(t, script, "codemode", "init-js", "loop")
 	d.Say("go")
 	d.WaitFor("parrot finished")
+	d.Press("tab", "tab", "enter") // focus past code to result, expand it
 	frame := d.Frame()
 	if !strings.Contains(frame, "JSTOOL_RESULT_77") {
 		t.Fatalf("JS tool result missing:\n%s", frame)

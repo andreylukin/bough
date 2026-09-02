@@ -33,9 +33,10 @@ type uiCfg struct {
 	theme   theme
 	keys    map[string]string // action -> key
 	action  map[string]string // key -> action (derived)
-	status  string            // status-bar left text
-	hist    historyView       // nil when no history service
-	mdStyle string            // "dark"/"light" glamour override; "" = detect
+	status   string      // status-bar left text
+	hist     historyView // nil when no history service
+	mdStyle  string      // "dark"/"light" glamour override; "" = detect
+	collapse string      // "all" | "large" | "none": which code/result blocks start collapsed
 }
 
 var (
@@ -56,13 +57,15 @@ func newCfg(t theme, keys map[string]string, status string, hist historyView) *u
 			action[k] = a
 		}
 	}
-	return &uiCfg{theme: t, keys: keys, action: action, status: status, hist: hist}
+	return &uiCfg{theme: t, keys: keys, action: action, status: status, hist: hist, collapse: "all"}
 }
 
 // buildCfg reads the optional "theme", "keymap" and "history" services
 // (Get during Apply registers them as live dependencies: providing one
 // later remounts the ui row) plus the row table for the status bar.
-func buildCfg(ctx *kernel.Context) (*uiCfg, error) {
+// rowCfg is the ui row's config: collapse: "all" (default) | "large" |
+// "none" picks which code/result blocks start collapsed.
+func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	t := defaultTheme()
 	mdStyle := ""
 	if m, ok, err := getStringMap(ctx, "theme"); err != nil {
@@ -114,6 +117,13 @@ func buildCfg(ctx *kernel.Context) (*uiCfg, error) {
 	status += fmt.Sprintf(" · %d rows", len(rows))
 	cfg := newCfg(t, keys, status, hist)
 	cfg.mdStyle = mdStyle
+	if v, has := rowCfg["collapse"]; has {
+		s, ok := v.(string)
+		if !ok || (s != "all" && s != "large" && s != "none") {
+			return nil, fmt.Errorf("ui: collapse must be \"all\", \"large\" or \"none\", got %v", v)
+		}
+		cfg.collapse = s
+	}
 	return cfg, nil
 }
 

@@ -162,6 +162,8 @@ func TestResizeReflowsBoxes(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	d.event("code", "let x = 1")
+	d.press(keyTab()) // expand the collapsed code block to get a box
+	d.press(keyEnter())
 	boxWidth := func(s string) int {
 		for _, l := range strings.Split(s, "\n") {
 			if strings.Contains(l, "╭") {

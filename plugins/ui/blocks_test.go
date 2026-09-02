@@ -34,6 +34,8 @@ func TestRenderCodeHeaderAndBox(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	d.event("code", `tools.bash("echo hi")`)
+	d.press(keyTab()) // focus the code block (starts collapsed)
+	d.press(keyEnter())
 	p := d.plain()
 	if !strings.Contains(p, `▾ code js (1 line): tools.bash("echo hi")`) {
 		t.Errorf("code block missing expanded disclosure header:\n%s", p)
@@ -50,6 +52,8 @@ func TestRenderResultHeaderAndBox(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	d.event("result", "hi from codemode")
+	d.press(keyTab()) // focus the result block (starts collapsed)
+	d.press(keyEnter())
 	p := d.plain()
 	if !strings.Contains(p, "▾ result (1 line): hi from codemode") {
 		t.Errorf("result block missing expanded disclosure header:\n%s", p)
@@ -134,7 +138,11 @@ func TestLongResultStartsCollapsed(t *testing.T) {
 
 func TestBoundaryResultDoesNotCollapse(t *testing.T) {
 	t.Parallel()
-	d := defaultDrv(t)
+	// The size threshold only exists under collapse: "large" (the
+	// default "all" collapses everything).
+	cfg := cfgWith(t, nil, nil, nil)
+	cfg.collapse = "large"
+	d := newDrv(t, 80, 24, cfg)
 	d.event("result", nLines(collapseAt)) // exactly at the threshold
 	if d.m.blocks[0].collapsed {
 		t.Errorf("%d-line result should not collapse (threshold is >%d)", collapseAt, collapseAt)
