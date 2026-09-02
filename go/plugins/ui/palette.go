@@ -43,6 +43,7 @@ type paletteItem struct {
 	usage   string
 	summary string
 	skill   bool
+	prefix  string // row sigil; "" means "/" (the "@" picker sets "@")
 }
 
 // paletteFilter is PURE: prefix matches first, then substring, then
@@ -212,10 +213,14 @@ func paletteLines(items []paletteItem, selected, width, maxRows int, th theme) [
 // paletteLeft is a row's left cell: "/name", plus the usage hint when
 // the command has one.
 func paletteLeft(it paletteItem) string {
-	if it.usage == "" {
-		return "/" + it.name
+	sigil := it.prefix
+	if sigil == "" {
+		sigil = "/"
 	}
-	return "/" + it.name + " " + it.usage
+	if it.usage == "" {
+		return sigil + it.name
+	}
+	return sigil + it.name + " " + it.usage
 }
 
 // paletteRow renders one row, clipped to width; a summary that does

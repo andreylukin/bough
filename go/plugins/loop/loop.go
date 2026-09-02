@@ -13,6 +13,8 @@ package loop
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -316,6 +318,44 @@ func (r *runner) complete(ctx context.Context, sys string, emit func(kind, text 
 	return r.llm.Complete(ctx, sys, r.project())
 }
 
+// atMaxBytes caps one attached file so a stray "@big.log" cannot
+// swallow the context.
+const atMaxBytes = 64 * 1024
+
+var atRef = regexp.MustCompile(`(?:^|\s)@([^\s@]+)`)
+
+// ExpandAt turns every "@path" word in input that names a regular
+// file under root into an attachment block "[file: path]\n<contents>",
+// in order of first mention, each path once. Words that are not files
+// are left alone (an "@handle" is just text). Pure apart from the reads.
+func ExpandAt(input, root string) []string {
+	var blocks []string
+	seen := map[string]bool{}
+	for _, m := range atRef.FindAllStringSubmatch(input, -1) {
+		p := strings.TrimRight(m[1], ".,;:)")
+		if seen[p] || strings.Contains(p, "..") {
+			continue
+		}
+		full := filepath.Join(root, p)
+		st, err := os.Stat(full)
+		if err != nil || !st.Mode().IsRegular() {
+			continue
+		}
+		seen[p] = true
+		data, err := os.ReadFile(full)
+		if err != nil {
+			continue
+		}
+		note := ""
+		if len(data) > atMaxBytes {
+			data = data[:atMaxBytes]
+			note = fmt.Sprintf("\n[truncated at %d bytes of %d; use tools.view for the rest]", atMaxBytes, st.Size())
+		}
+		blocks = append(blocks, "[file: "+p+"]\n"+string(data)+note)
+	}
+	return blocks
+}
+
 // project derives this step's model messages from the history entries.
 func (r *runner) project() []Message {
 	entries := r.hist.Entries()
@@ -375,6 +415,9 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	}
 
 	msg := input
+	for _, block := range ExpandAt(input, ".") {
+		msg += "\n\n" + block
+	}
 	if r.skills != nil {
 		for _, block := range r.skills.Inject(input) {
 			msg += "\n\n" + block

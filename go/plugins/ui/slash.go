@@ -37,6 +37,15 @@ func (m *model) syncPalette() {
 		m.pal.selected = 0
 	}
 	m.pal.open = open
+	m.syncAt() // the "@" picker follows the same draft
+}
+
+// overlayRows is whichever composer picker is open: "/" or "@".
+func (m *model) overlayRows() []string {
+	if lines := m.paletteRows(); len(lines) > 0 {
+		return lines
+	}
+	return m.atRows()
 }
 
 // slashStart is the index of the "/" the palette is filtering on: 0

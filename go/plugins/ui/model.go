@@ -82,6 +82,8 @@ type model struct {
 	welcome    bool           // fresh-session orientation text (see welcomeView)
 	pendingAsk string         // ask id the composer routes answers to; "" = none
 	pal        palette        // "/" command palette (see palette.go)
+	at         palette        // "@" file picker (see atfiles.go)
+	atFiles    []string       // the picker's file list, read when it opens
 	flash      string
 	trailing   string        // assistant prose after an executed fence, emitted after its result
 	newBelow   bool          // blocks arrived while scrolled up (status cue)
@@ -738,6 +740,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
+	if m.at.open && !m.inspecting {
+		if handled, cmd := m.atKey(key); handled {
+			return m, cmd
+		}
+	}
 
 	// A pending ask owns esc: decline it (the literal "(declined)" is
 	// the tool's return value, so the model knows it was waved off).
@@ -940,7 +947,7 @@ func (m model) frame() string {
 	body := m.vp.View()
 	if m.inspecting {
 		body = m.overlay.View()
-	} else if lines := m.paletteRows(); len(lines) > 0 {
+	} else if lines := m.overlayRows(); len(lines) > 0 {
 		// The "/" palette: an overlay over the transcript's bottom
 		// rows, directly above the composer — sized to its content,
 		// never reflowing the layout under a filtering list.
