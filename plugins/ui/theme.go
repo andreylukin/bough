@@ -17,7 +17,7 @@ import (
 type theme map[string]lipgloss.Style
 
 var themeTokens = []string{
-	"user", "assistant", "code", "result", "error", "accent", "dim", "border", "status",
+	"user", "assistant", "code", "result", "error", "accent", "dim", "border", "status", "focus",
 }
 
 // defaultTheme is restrained and dark-friendly: one cyan accent,
@@ -33,6 +33,7 @@ func defaultTheme() theme {
 		"dim":       "8",
 		"border":    "8",
 		"status":    "250:236",
+		"focus":     "6:bold",
 	}
 	t := theme{}
 	for k, v := range spec {
@@ -124,7 +125,11 @@ func defaultKeymap() map[string]string {
 		"page_up":         "pgup",
 		"page_down":       "pgdown",
 		"history_inspect": "ctrl+o",
-		"collapse_toggle": "tab",
+		"block_next":      "tab",
+		"block_prev":      "shift+tab",
+		"collapse_toggle": "enter", // toggles the focused block; submits otherwise
+		"collapse_all":    "",      // config-only: no default key
+		"expand_all":      "",      // config-only: no default key
 		"clear_input":     "ctrl+l",
 	}
 }

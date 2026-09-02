@@ -47,7 +47,7 @@ Provides the `"theme"` service (token → style), merged over the UI's Go
 defaults. Tokens:
 
 `user`, `assistant`, `code`, `result`, `error`, `accent`, `dim`,
-`border`, `status`
+`border`, `status`, `focus` (the block-cursor highlight)
 
 Style syntax: `fg[:bg][:bold|italic|faint]`, colors as `#rrggbb` hex or
 ANSI-256 numbers (`0`–`255`). Examples: `"#ff5f87"`, `"213:236:bold"`,
@@ -59,9 +59,13 @@ Provides the `"keymap"` service (action → key), merged over Go
 defaults. Actions:
 
 `quit`, `scroll_up`, `scroll_down`, `page_up`, `page_down`,
-`history_inspect`, `collapse_toggle`, `clear_input`
+`history_inspect`, `block_next` (tab), `block_prev` (shift+tab),
+`collapse_toggle` (enter, on the focused block), `collapse_all`,
+`expand_all`, `clear_input`
 
 Keys use bubbletea names: `"ctrl+c"`, `"pgup"`, `"q"`, `"shift+tab"`.
+`collapse_all` and `expand_all` ship unbound — they only fire when the
+keymap service binds them.
 
 #### provider.default
 

@@ -51,7 +51,9 @@ func init() {
 func newCfg(t theme, keys map[string]string, status string, hist historyView) *uiCfg {
 	action := make(map[string]string, len(keys))
 	for a, k := range keys {
-		action[k] = a
+		if k != "" { // unbound (config-only) actions
+			action[k] = a
+		}
 	}
 	return &uiCfg{theme: t, keys: keys, action: action, status: status, hist: hist}
 }

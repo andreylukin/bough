@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -16,17 +17,28 @@ import (
 // eventMsg carries a loop event into the tea event loop.
 type eventMsg Event
 
-// collapseAt: result blocks longer than this many lines start
-// collapsed (head + a "... N more lines" tail).
-const collapseAt = 12
-const collapseHead = 8
+// collapseAt: code and result blocks whose body is longer than this
+// many lines start collapsed (header line only).
+const collapseAt = 3
 
 // block is one semantic transcript unit, stored structurally and
-// styled at render time from the current theme.
+// styled at render time from the current theme. id is stable identity
+// (blocks are append-only) so collapse/focus state survives appends.
 type block struct {
+	id        int
 	kind      string // user, assistant, code, result, error, done
 	text      string
 	collapsed bool
+}
+
+// collapsible blocks get a disclosure header and can be toggled.
+func (b *block) collapsible() bool {
+	return b.kind == "code" || b.kind == "result"
+}
+
+// lineRange maps a rendered line span [start, end) to a block index.
+type lineRange struct {
+	start, end, idx int
 }
 
 // model is the one transcript-plus-composer model used by tui and web.
@@ -40,10 +52,16 @@ type model struct {
 	cfg     *atomic.Pointer[uiCfg]
 
 	blocks     []block
+	nextID     int
+	focusID    int // block-cursor identity; -1 when nothing focused
+	ranges     []lineRange
 	width      int
 	height     int
 	running    bool // a turn is in flight (input sent, no done/error yet)
 	inspecting bool // history overlay open
+	ovRanges   []lineRange   // overlay line span -> entry index
+	ovExpanded map[int64]bool // entry seq -> inline JSON shown
+	ovEntries  []int64        // entry index -> seq, for ovRanges lookups
 	flash      string
 	md         *glamour.TermRenderer
 	mdCache    map[string]string // assistant markdown render cache (cleared on resize)
@@ -64,7 +82,8 @@ func newModel(width, height int, send func(string), events <-chan Event, cfg *at
 	sp := spinner.New()
 	sp.Spinner = spinner.MiniDot
 
-	m := model{vp: vp, overlay: ov, input: ti, spin: sp, send: send, events: events, cfg: cfg, mdCache: map[string]string{}}
+	m := model{vp: vp, overlay: ov, input: ti, spin: sp, send: send, events: events, cfg: cfg,
+		focusID: -1, ovExpanded: map[int64]bool{}, mdCache: map[string]string{}}
 	m.resize(width, height)
 	return m
 }
@@ -82,18 +101,31 @@ func (m *model) resize(w, h int) {
 	m.md = nil // re-wrap markdown at the new width
 	m.mdCache = map[string]string{}
 	m.refresh()
+	if m.inspecting {
+		m.refreshOverlay()
+	}
 }
 
-// refresh restyles every block from the current theme and pins the
-// transcript to the bottom.
+// refresh restyles every block from the current theme, records each
+// block's rendered line span for mouse hit-testing, and keeps the
+// scroll position (still pinned when it was at the bottom).
 func (m *model) refresh() {
 	cfg := m.cfg.Load()
+	atBottom := m.vp.AtBottom()
 	parts := make([]string, 0, len(m.blocks))
+	m.ranges = m.ranges[:0]
+	start := 0
 	for i := range m.blocks {
-		parts = append(parts, m.render(&m.blocks[i], cfg))
+		part := m.render(&m.blocks[i], cfg)
+		n := strings.Count(part, "\n") + 1
+		m.ranges = append(m.ranges, lineRange{start: start, end: start + n, idx: i})
+		start += n
+		parts = append(parts, part)
 	}
 	m.vp.SetContent(strings.Join(parts, "\n"))
-	m.vp.GotoBottom()
+	if atBottom {
+		m.vp.GotoBottom()
+	}
 }
 
 // markdown renders assistant text via glamour, falling back to the
@@ -126,6 +158,35 @@ func (m *model) markdown(text string) string {
 	return out
 }
 
+// header renders the one-line disclosure header for a collapsible
+// block: glyph, kind tag, body line count, first-line preview. The
+// focused block's header takes the "focus" theme style.
+func (m *model) header(b *block, th theme) string {
+	glyph := "▸"
+	if !b.collapsed {
+		glyph = "▾"
+	}
+	tag := "result"
+	if b.kind == "code" {
+		tag = "code js"
+	}
+	n := strings.Count(b.text, "\n") + 1
+	unit := "lines"
+	if n == 1 {
+		unit = "line"
+	}
+	preview := strings.SplitN(b.text, "\n", 2)[0]
+	head := fmt.Sprintf("%s %s (%d %s): %s", glyph, tag, n, unit, preview)
+	if r := []rune(head); len(r) > m.width-1 && m.width > 2 {
+		head = string(r[:m.width-2]) + "…"
+	}
+	st := th["dim"]
+	if b.id == m.focusID {
+		st = th["focus"]
+	}
+	return st.Render(head)
+}
+
 // render turns one semantic block into styled lines.
 func (m *model) render(b *block, cfg *uiCfg) string {
 	th := cfg.theme
@@ -136,17 +197,15 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		head := th["accent"].Render("●") + " " + th["dim"].Render("bough")
 		return head + "\n" + m.markdown(b.text)
 	case "code":
-		return m.box(b.text, "js", th["code"], th["border"], th["dim"])
-	case "result":
-		text := b.text
-		tag := "result"
-		if lines := strings.Split(text, "\n"); b.collapsed && len(lines) > collapseHead {
-			hidden := len(lines) - collapseHead
-			text = strings.Join(lines[:collapseHead], "\n") +
-				"\n" + th["dim"].Render(fmt.Sprintf("… %d more lines (%s)", hidden, cfg.keys["collapse_toggle"]))
-			tag = "result +"
+		if b.collapsed {
+			return m.header(b, th)
 		}
-		return m.box(text, tag, th["result"], th["border"], th["dim"])
+		return m.header(b, th) + "\n" + m.box(b.text, th["code"], th["border"])
+	case "result":
+		if b.collapsed {
+			return m.header(b, th)
+		}
+		return m.header(b, th) + "\n" + m.box(b.text, th["result"], th["border"])
 	case "error":
 		return th["error"].Render("✗ " + b.text)
 	case "done":
@@ -163,29 +222,18 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 	}
 }
 
-// box renders text in a rounded border with a language/kind tag
-// spliced into the top border.
-func (m *model) box(text, tag string, content, border, dim lipgloss.Style) string {
+// box renders text in a rounded border.
+func (m *model) box(text string, content, border lipgloss.Style) string {
 	w := m.width - 4
 	if w < 10 {
 		w = 10
 	}
-	boxed := content.
+	return content.
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(border.GetForeground()).
 		Padding(0, 1).
 		Width(w).
 		Render(strings.TrimRight(text, "\n"))
-	lines := strings.SplitN(boxed, "\n", 2)
-	if len(lines) == 2 {
-		// Rebuild the top border with the tag spliced in, at exactly
-		// the rendered box width.
-		bw := lipgloss.Width(lines[0])
-		top := dim.Render("╭─ ") + dim.Italic(true).Render(tag) + " " +
-			border.Render(strings.Repeat("─", max(0, bw-lipgloss.Width(tag)-5))+"╮")
-		return top + "\n" + lines[1]
-	}
-	return boxed
 }
 
 // waitEvent blocks for the next loop event.
@@ -223,6 +271,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case tea.MouseClickMsg:
+		m.handleClick(msg.Mouse())
+		return m, nil
 	}
 
 	var cmds []tea.Cmd
@@ -238,26 +290,144 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// addEvent appends the semantic block for a loop event.
+// addEvent appends the semantic block for a loop event. Code and
+// result blocks start collapsed when their body is over collapseAt
+// lines.
 func (m *model) addEvent(ev Event) {
+	id := m.nextID
+	m.nextID++
 	switch ev.Kind {
 	case "done":
 		m.running = false
-		m.blocks = append(m.blocks, block{kind: "done"})
+		m.blocks = append(m.blocks, block{id: id, kind: "done"})
 	case "error":
 		m.running = false
-		m.blocks = append(m.blocks, block{kind: "error", text: ev.Text})
-	case "result":
+		m.blocks = append(m.blocks, block{id: id, kind: "error", text: ev.Text})
+	case "code", "result":
 		collapsed := strings.Count(ev.Text, "\n")+1 > collapseAt
-		m.blocks = append(m.blocks, block{kind: "result", text: ev.Text, collapsed: collapsed})
-	default: // assistant, code, anything future
-		m.blocks = append(m.blocks, block{kind: ev.Kind, text: ev.Text})
+		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: ev.Text, collapsed: collapsed})
+	default: // assistant, anything future
+		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: ev.Text})
+	}
+	m.refresh()
+	m.vp.GotoBottom() // new events pin the transcript to the bottom
+}
+
+// handleClick maps a left click to the block (or history entry) under
+// it and toggles its collapsed state. Wheel scrolling stays with the
+// viewports (they handle MouseWheelMsg themselves).
+func (m *model) handleClick(mouse tea.Mouse) {
+	if mouse.Button != tea.MouseLeft {
+		return
+	}
+	if m.inspecting {
+		m.clickOverlay(mouse)
+		return
+	}
+	if mouse.Y >= m.vp.Height() {
+		return // status bar / composer
+	}
+	row := mouse.Y + m.vp.YOffset()
+	for _, r := range m.ranges {
+		if row >= r.start && row < r.end {
+			b := &m.blocks[r.idx]
+			if b.collapsible() {
+				b.collapsed = !b.collapsed
+				m.focusID = b.id
+				m.refresh()
+			}
+			return
+		}
+	}
+}
+
+// clickOverlay toggles the inline pretty-JSON view of the history
+// entry under the click.
+func (m *model) clickOverlay(mouse tea.Mouse) {
+	if mouse.Y >= m.overlay.Height() {
+		return
+	}
+	row := mouse.Y + m.overlay.YOffset()
+	for _, r := range m.ovRanges {
+		if row >= r.start && row < r.end {
+			seq := m.ovEntries[r.idx]
+			m.ovExpanded[seq] = !m.ovExpanded[seq]
+			m.refreshOverlay()
+			return
+		}
+	}
+}
+
+// focusables returns the indices of collapsible blocks, in order.
+func (m *model) focusables() []int {
+	var out []int
+	for i := range m.blocks {
+		if m.blocks[i].collapsible() {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// moveFocus steps the block cursor by delta over the collapsible
+// blocks (wrapping), scrolling the focused header into view.
+func (m *model) moveFocus(delta int) {
+	f := m.focusables()
+	if len(f) == 0 {
+		return
+	}
+	cur := -1
+	for i, idx := range f {
+		if m.blocks[idx].id == m.focusID {
+			cur = i
+			break
+		}
+	}
+	var next int
+	if cur < 0 {
+		next = 0
+		if delta < 0 {
+			next = len(f) - 1
+		}
+	} else {
+		next = (cur + delta + len(f)) % len(f)
+	}
+	m.focusID = m.blocks[f[next]].id
+	m.refresh()
+	for _, r := range m.ranges {
+		if r.idx == f[next] {
+			m.vp.EnsureVisible(r.start, 0, 0)
+			break
+		}
+	}
+}
+
+// toggleFocused flips the focused block's collapsed state; false when
+// nothing is focused.
+func (m *model) toggleFocused() bool {
+	for i := range m.blocks {
+		if m.blocks[i].id == m.focusID && m.blocks[i].collapsible() {
+			m.blocks[i].collapsed = !m.blocks[i].collapsed
+			m.refresh()
+			return true
+		}
+	}
+	return false
+}
+
+// setAllCollapsed collapses or expands every collapsible block.
+func (m *model) setAllCollapsed(collapsed bool) {
+	for i := range m.blocks {
+		if m.blocks[i].collapsible() {
+			m.blocks[i].collapsed = collapsed
+		}
 	}
 	m.refresh()
 }
 
 // handleKey resolves every binding through the keymap service; only
-// enter (submit — not a remappable action) is fixed.
+// enter (submit — not a remappable action) is fixed. Enter first acts
+// as collapse_toggle when a block is focused, and submits otherwise.
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	cfg := m.cfg.Load()
 	m.flash = ""
@@ -281,15 +451,40 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "clear_input":
 		m.input.Reset()
 		return m, nil
-	case "collapse_toggle":
-		for i := len(m.blocks) - 1; i >= 0; i-- {
-			if m.blocks[i].kind == "result" {
-				m.blocks[i].collapsed = !m.blocks[i].collapsed
-				m.refresh()
-				break
-			}
+	case "block_next":
+		if !m.inspecting {
+			m.moveFocus(1)
 		}
 		return m, nil
+	case "block_prev":
+		if !m.inspecting {
+			m.moveFocus(-1)
+		}
+		return m, nil
+	case "collapse_all":
+		m.setAllCollapsed(true)
+		return m, nil
+	case "expand_all":
+		m.setAllCollapsed(false)
+		return m, nil
+	case "collapse_toggle":
+		if key == "enter" && strings.TrimSpace(m.input.Value()) != "" {
+			break // composing: enter submits below
+		}
+		if !m.inspecting && m.toggleFocused() {
+			return m, nil
+		}
+		// nothing focused: enter falls through to submit below; any
+		// other bound key toggles the newest collapsible block.
+		if key != "enter" {
+			if f := m.focusables(); !m.inspecting && len(f) > 0 {
+				i := f[len(f)-1]
+				m.blocks[i].collapsed = !m.blocks[i].collapsed
+				m.focusID = m.blocks[i].id
+				m.refresh()
+			}
+			return m, nil
+		}
 	case "history_inspect":
 		if cfg.hist == nil {
 			m.flash = "no history service mounted"
@@ -297,7 +492,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.inspecting = !m.inspecting
 		if m.inspecting {
-			m.overlay.SetContent(historyDump(cfg))
+			m.refreshOverlay()
 			m.overlay.GotoBottom()
 		}
 		return m, nil
@@ -309,8 +504,10 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.input.Reset()
-		m.blocks = append(m.blocks, block{kind: "user", text: line})
+		m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: line})
+		m.nextID++
 		m.refresh()
+		m.vp.GotoBottom()
 		m.running = true
 		send := m.send
 		return m, tea.Batch(
@@ -333,28 +530,48 @@ func (m *model) pane() *viewport.Model {
 	return &m.vp
 }
 
-// historyDump renders the raw history entries for the inspect overlay.
-func historyDump(cfg *uiCfg) string {
+// refreshOverlay rebuilds the history overlay content, recording each
+// entry's rendered line span for click hit-testing. Entries toggled
+// open show their pretty-printed JSON inline.
+func (m *model) refreshOverlay() {
+	cfg := m.cfg.Load()
 	th := cfg.theme
-	entries := cfg.hist.Entries()
 	var sb strings.Builder
 	sb.WriteString(th["accent"].Render("history") + " " + th["dim"].Render(cfg.hist.Path()) + "\n\n")
-	for _, e := range entries {
+	line := 2
+	m.ovRanges = m.ovRanges[:0]
+	m.ovEntries = m.ovEntries[:0]
+	entries := cfg.hist.Entries()
+	for i, e := range entries {
 		text, _ := e.Data["text"].(string)
 		preview := strings.SplitN(text, "\n", 2)[0]
 		if len(preview) > 80 {
 			preview = preview[:80] + "…"
 		}
-		sb.WriteString(fmt.Sprintf("%s %s %s %s\n",
+		part := fmt.Sprintf("%s %s %s %s",
 			th["dim"].Render(fmt.Sprintf("%4d", e.Seq)),
 			th["dim"].Render(e.At.Format("15:04:05")),
 			th["accent"].Render(fmt.Sprintf("%-9s", e.Kind)),
-			preview))
+			preview)
+		if m.ovExpanded[e.Seq] {
+			js, err := json.MarshalIndent(e, "     ", "  ")
+			if err != nil {
+				js = []byte(fmt.Sprintf("marshal: %v", err))
+			}
+			part += "\n     " + string(js)
+		}
+		n := strings.Count(part, "\n") + 1
+		m.ovRanges = append(m.ovRanges, lineRange{start: line, end: line + n, idx: i})
+		m.ovEntries = append(m.ovEntries, e.Seq)
+		line += n
+		sb.WriteString(part + "\n")
 	}
 	if len(entries) == 0 {
 		sb.WriteString(th["dim"].Render("(no entries yet)"))
 	}
-	return sb.String()
+	off := m.overlay.YOffset()
+	m.overlay.SetContent(sb.String())
+	m.overlay.SetYOffset(off)
 }
 
 // statusBar renders the one-line status: identity left, session
@@ -397,6 +614,6 @@ func (m model) View() tea.View {
 	}
 	v := tea.NewView(body + "\n" + m.statusBar(cfg) + "\n" + m.input.View())
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion // wheel scroll
+	v.MouseMode = tea.MouseModeCellMotion // clicks toggle blocks; wheel scrolls
 	return v
 }
