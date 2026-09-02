@@ -62,7 +62,7 @@ func (c *Context) Mount(rows []Row) error {
 				rest = append(rest, pd)
 				continue
 			}
-			if err := pd.p.Apply(c, pd.row.Config); err != nil {
+			if err := c.applyRow(pd.row, pd.p); err != nil {
 				return fmt.Errorf("kernel: row %q (%s): %w", pd.row.ID, pd.row.Plugin, err)
 			}
 			progressed = true

@@ -1,5 +1,6 @@
-# bough config tree: a list of plugin rows. Row order carries no
-# semantics — mount order comes from each plugin's Inject() deps.
+# bough config tree: a list of plugin rows. Mount order comes from
+# each plugin's Inject() deps; row order only breaks ties within a
+# mount pass (which is why optional loop seams sit above the loop row).
 
 - id: llm
   plugin: llm-anthropic
@@ -20,6 +21,29 @@
 
 - id: tools
   plugin: tools-basic
+
+# Optional loop seams. The loop resolves these at mount time, so their
+# rows sit above the loop row (within a mount pass, row order is the
+# tie-breaker).
+
+- id: hooks
+  plugin: hooks-js
+
+- id: skills
+  plugin: skills
+
+- id: context-md
+  plugin: context-md
+
+- id: mcp
+  plugin: mcp
+  # config:
+  #   servers:
+  #     example:
+  #       command: some-mcp-server
+  #       args: [--flag]
+  #       env: {KEY: value}
+  #   disable: [name]
 
 - id: loop
   plugin: loop

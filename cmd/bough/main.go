@@ -6,13 +6,21 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
+
+	"github.com/fsnotify/fsnotify"
 
 	"github.com/andreylukin/bough/kernel"
 	_ "github.com/andreylukin/bough/plugins/codemode"
+	_ "github.com/andreylukin/bough/plugins/contextmd"
+	_ "github.com/andreylukin/bough/plugins/hooks"
 	_ "github.com/andreylukin/bough/plugins/llm"
 	_ "github.com/andreylukin/bough/plugins/loop"
+	_ "github.com/andreylukin/bough/plugins/mcp"
+	_ "github.com/andreylukin/bough/plugins/skills"
 	_ "github.com/andreylukin/bough/plugins/tools"
 	_ "github.com/andreylukin/bough/plugins/ui"
 )
@@ -56,11 +64,76 @@ func main() {
 		fatal(err)
 	}
 
+	stopWatch, err := watchConfig(ctx, *config, sets)
+	if err != nil {
+		fatal(err)
+	}
+
 	// Block until interrupted, then unmount (effects run LIFO).
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
+	stopWatch()
 	ctx.Unmount()
+}
+
+// watchConfig hot-reloads the config: fsnotify on the file's parent
+// dir (editors replace files, so watching the file itself breaks),
+// 300ms debounce, then parse + overrides + Reconcile. One-line result
+// log either way; a bad candidate keeps the last good tree.
+func watchConfig(ctx *kernel.Context, config string, sets setFlags) (func(), error) {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("watch config: %w", err)
+	}
+	abs, err := filepath.Abs(config)
+	if err != nil {
+		return nil, fmt.Errorf("watch config: %w", err)
+	}
+	if err := w.Add(filepath.Dir(abs)); err != nil {
+		return nil, fmt.Errorf("watch config: %w", err)
+	}
+	go func() {
+		var pending <-chan time.Time
+		for {
+			select {
+			case ev, ok := <-w.Events:
+				if !ok {
+					return
+				}
+				if filepath.Clean(ev.Name) != abs {
+					continue
+				}
+				pending = time.After(300 * time.Millisecond)
+			case <-pending:
+				pending = nil
+				reload(ctx, config, sets)
+			case err, ok := <-w.Errors:
+				if !ok {
+					return
+				}
+				fmt.Fprintln(os.Stderr, "bough: config watch:", err)
+			}
+		}
+	}()
+	return func() { w.Close() }, nil
+}
+
+func reload(ctx *kernel.Context, config string, sets setFlags) {
+	rows, err := kernel.LoadFile(config)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bough: reload: %v (keeping current tree)\n", err)
+		return
+	}
+	if err := applyOverrides(rows, sets); err != nil {
+		fmt.Fprintf(os.Stderr, "bough: reload: %v (keeping current tree)\n", err)
+		return
+	}
+	if err := ctx.Reconcile(rows); err != nil {
+		fmt.Fprintf(os.Stderr, "bough: reload: %v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "bough: reloaded %s\n", config)
 }
 
 // applyOverrides applies each "id.key=value" to the matching row's config.

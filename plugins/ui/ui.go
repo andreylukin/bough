@@ -45,7 +45,7 @@ func (p *plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 
 	switch {
 	case mode == "headless":
-		go runHeadless(inputs, b)
+		ctx.Effect(runHeadless(inputs, b))
 	case mode == "tui":
 		go runTUI(inputs, b)
 	case strings.HasPrefix(mode, "web:"):

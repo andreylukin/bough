@@ -125,6 +125,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	if res := r.fire(ctx, "user-prompt-submit", map[string]any{"input": input}, emit); res != nil {
 		if b, ok := res["block"].(string); ok {
 			emit("error", b)
+			emit("done", "") // end the turn so headless drain sees it
 			return nil
 		}
 		if in, ok := res["input"].(string); ok {

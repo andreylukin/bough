@@ -101,8 +101,9 @@ func TestHookBlocksPrompt(t *testing.T) {
 	if llm.messages != nil {
 		t.Fatalf("llm was called with %v, want no call", llm.messages)
 	}
-	if len(kinds) == 0 || kinds[len(kinds)-1] != "error" || texts[len(texts)-1] != "nope" {
-		t.Fatalf("events %v %v, want trailing error %q", kinds, texts, "nope")
+	// The blocked turn is an error "nope" then a "done" so drains see it end.
+	if len(kinds) < 2 || kinds[len(kinds)-2] != "error" || texts[len(texts)-2] != "nope" || kinds[len(kinds)-1] != "done" {
+		t.Fatalf("events %v %v, want error %q then done", kinds, texts, "nope")
 	}
 }
 
