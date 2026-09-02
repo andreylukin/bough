@@ -149,7 +149,7 @@ func resolveSession(cont, resume bool, id, mode string) (resumePath string, need
 // the picked file via runtimeSet (Reconcile remounts history -> loop ->
 // ui; the kernel's Get-tracking makes that cascade automatic, and the
 // override is recorded so a config hot reload keeps the resumed file).
-func providePicker(ctx *kernel.Context, config string, ov *overrides) {
+func providePicker(ctx *kernel.Context, src configSource, ov *overrides) {
 	infos, err := history.List(sessionsDir())
 	if err != nil {
 		fatal(err)
@@ -161,7 +161,7 @@ func providePicker(ctx *kernel.Context, config string, ov *overrides) {
 			return // fresh session already mounted
 		}
 		set := "history.file=" + filepath.Join(sessionsDir(), id+".jsonl")
-		if err := runtimeSet(ctx, config, ov, set); err != nil {
+		if err := runtimeSet(ctx, src, ov, set); err != nil {
 			fmt.Fprintln(os.Stderr, "bough: resume:", err)
 		}
 	})

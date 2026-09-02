@@ -23,13 +23,18 @@ func LoadFile(path string) ([]Row, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kernel: read config: %w", err)
 	}
+	return LoadBytes(data, path)
+}
+
+// LoadBytes parses a config tree from bytes; name labels errors.
+func LoadBytes(data []byte, name string) ([]Row, error) {
 	var rows []Row
 	if err := yaml.Unmarshal(data, &rows); err != nil {
-		return nil, fmt.Errorf("kernel: parse %s: %w", path, err)
+		return nil, fmt.Errorf("kernel: parse %s: %w", name, err)
 	}
 	for i, r := range rows {
 		if r.ID == "" || r.Plugin == "" {
-			return nil, fmt.Errorf("kernel: %s row %d: id and plugin are required", path, i)
+			return nil, fmt.Errorf("kernel: %s row %d: id and plugin are required", name, i)
 		}
 	}
 	return rows, nil

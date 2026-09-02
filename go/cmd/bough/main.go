@@ -15,6 +15,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
+	"github.com/andreylukin/bough"
 	"github.com/andreylukin/bough/kernel"
 	_ "github.com/andreylukin/bough/plugins/ask"
 	_ "github.com/andreylukin/bough/plugins/codemode"
@@ -59,6 +60,41 @@ func (o *overrides) all() setFlags {
 	return append(setFlags(nil), o.vals...)
 }
 
+// configSource is where the config tree loads from: a file path, or
+// the embedded default when path is "" (no file — no hot reload).
+type configSource struct {
+	path string
+}
+
+func (s configSource) load() ([]kernel.Row, error) {
+	if s.path == "" {
+		return kernel.LoadBytes(bough.DefaultConfig, "embedded default config")
+	}
+	return kernel.LoadFile(s.path)
+}
+
+// resolveConfig picks the config source. An explicit --config is used
+// verbatim (a missing file stays fatal at load). Otherwise: ./bough.yml
+// if present, else ~/.bough/bough.yml, else the embedded default —
+// with one stderr line naming the source when it's not ./bough.yml.
+func resolveConfig(explicit bool, flagVal string) configSource {
+	if explicit {
+		return configSource{path: flagVal}
+	}
+	if _, err := os.Stat("bough.yml"); err == nil {
+		return configSource{path: "bough.yml"}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		global := filepath.Join(home, ".bough", "bough.yml")
+		if _, err := os.Stat(global); err == nil {
+			fmt.Fprintf(os.Stderr, "bough: using %s\n", global)
+			return configSource{path: global}
+		}
+	}
+	fmt.Fprintln(os.Stderr, "bough: using embedded default config")
+	return configSource{}
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "log" {
 		runLog(os.Args[2:])
@@ -85,7 +121,7 @@ func main() {
 	// the flag package can't express; pull them out first.
 	contFlag, resumeFlag, resumeID, args := extractSessionFlags(args)
 	var (
-		config   = flag.String("config", "bough.yml", "path to config tree")
+		config   = flag.String("config", "", "path to config tree (default ./bough.yml, else ~/.bough/bough.yml, else embedded)")
 		headless = flag.Bool("headless", false, "read input from stdin, no TUI")
 		web      = flag.String("web", "", "serve the UI in a browser at this addr (e.g. localhost:7681)")
 		dump     = flag.Bool("dump-config", false, "mount the config tree, print the row state table, and exit")
@@ -94,6 +130,14 @@ func main() {
 	flag.Var(&sets, "set", "override row config: id.key=value (repeatable)")
 	flag.CommandLine.Usage = usage
 	flag.CommandLine.Parse(args)
+
+	explicitConfig := false
+	flag.CommandLine.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			explicitConfig = true
+		}
+	})
+	src := resolveConfig(explicitConfig, *config)
 
 	mode := "tui"
 	switch {
@@ -111,7 +155,7 @@ func main() {
 		sets = append(sets, "history.file="+resumePath)
 	}
 
-	rows, err := kernel.LoadFile(*config)
+	rows, err := src.load()
 	if err != nil {
 		fatal(err)
 	}
@@ -153,10 +197,10 @@ func main() {
 	// Reconcile path as a config hot reload; applied sets are recorded so
 	// a later hot reload keeps them (same mechanics as session resume).
 	ctx.Provide("config-set", func(newSets ...string) error {
-		return runtimeSet(ctx, *config, ov, newSets...)
+		return runtimeSet(ctx, src, ov, newSets...)
 	})
 	if needPicker {
-		providePicker(ctx, *config, ov)
+		providePicker(ctx, src, ov)
 	}
 
 	if err := ctx.Mount(rows); err != nil {
@@ -171,7 +215,7 @@ func main() {
 		}
 	}
 
-	stopWatch, err := watchConfig(ctx, *config, ov)
+	stopWatch, err := watchConfig(ctx, src, ov)
 	if err != nil {
 		fatal(err)
 	}
@@ -186,12 +230,16 @@ func main() {
 // dir (editors replace files, so watching the file itself breaks),
 // 300ms debounce, then parse + overrides + Reconcile. One-line result
 // log either way; a bad candidate keeps the last good tree.
-func watchConfig(ctx *kernel.Context, config string, ov *overrides) (func(), error) {
+func watchConfig(ctx *kernel.Context, src configSource, ov *overrides) (func(), error) {
+	if src.path == "" {
+		fmt.Fprintln(os.Stderr, "bough: embedded config has no file; hot reload disabled")
+		return func() {}, nil
+	}
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("watch config: %w", err)
 	}
-	abs, err := filepath.Abs(config)
+	abs, err := filepath.Abs(src.path)
 	if err != nil {
 		return nil, fmt.Errorf("watch config: %w", err)
 	}
@@ -212,7 +260,7 @@ func watchConfig(ctx *kernel.Context, config string, ov *overrides) (func(), err
 				pending = time.After(300 * time.Millisecond)
 			case <-pending:
 				pending = nil
-				reload(ctx, config, ov.all())
+				reload(ctx, src, ov.all())
 			case err, ok := <-w.Errors:
 				if !ok {
 					return
@@ -229,8 +277,8 @@ func watchConfig(ctx *kernel.Context, config string, ov *overrides) (func(), err
 // same live-swap path the session picker uses. The new sets are
 // recorded only on success, so a later config hot reload (which
 // replays ov.all()) keeps them.
-func runtimeSet(ctx *kernel.Context, config string, ov *overrides, sets ...string) error {
-	rows, err := kernel.LoadFile(config)
+func runtimeSet(ctx *kernel.Context, src configSource, ov *overrides, sets ...string) error {
+	rows, err := src.load()
 	if err != nil {
 		return err
 	}
@@ -246,8 +294,8 @@ func runtimeSet(ctx *kernel.Context, config string, ov *overrides, sets ...strin
 	return nil
 }
 
-func reload(ctx *kernel.Context, config string, sets setFlags) {
-	rows, err := kernel.LoadFile(config)
+func reload(ctx *kernel.Context, src configSource, sets setFlags) {
+	rows, err := src.load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bough: reload: %v (keeping current tree)\n", err)
 		return
@@ -260,7 +308,7 @@ func reload(ctx *kernel.Context, config string, sets setFlags) {
 		fmt.Fprintf(os.Stderr, "bough: reload: %v\n", err)
 		return
 	}
-	fmt.Fprintf(os.Stderr, "bough: reloaded %s\n", config)
+	fmt.Fprintf(os.Stderr, "bough: reloaded %s\n", src.path)
 }
 
 // applyOverrides applies each "id.key=value" to the matching row's config.
