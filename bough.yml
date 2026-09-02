@@ -9,6 +9,11 @@
 # Swap the provider by replacing the row above with:
 # - id: llm
 #   plugin: llm-echo
+# or (needs OPENROUTER_API_KEY):
+# - id: llm
+#   plugin: llm-openrouter
+#   config:
+#     model: deepseek/deepseek-chat
 
 - id: codemode
   plugin: codemode
