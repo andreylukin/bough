@@ -20,23 +20,57 @@ import (
 // past it closes it, and the list can never disagree with the text it
 // is filtering. Esc keeps it closed until the draft changes. With no
 // commands service "/" is plain text and the palette never opens; it
-// is inert under the inspector and the session picker.
+// is inert under the inspector and the session picker. A "/" opens
+// it at line start (dispatch) or at the start of the last word
+// ("look at /he" — accept completes the word in place).
 func (m *model) syncPalette() {
 	draft := m.input.Value()
 	if m.pal.escaped && draft != m.pal.escAt {
 		m.pal.escaped = false
 	}
 	open := m.cfg.Load().cmds != nil && !m.inspecting && !m.picking &&
-		strings.HasPrefix(draft, "/") && !m.pal.escaped
+		slashStart(draft) >= 0 && !m.pal.escaped
 	if open && !m.pal.open {
 		m.pal.selected = 0
 	}
 	m.pal.open = open
 }
 
-// paletteQuery is the text the palette filters: the draft after "/".
+// slashStart is the index of the "/" the palette is filtering on: 0
+// when the draft starts with "/", else the "/" opening the last
+// whitespace-separated word, else -1 (a path like "src/x" never opens).
+func slashStart(draft string) int {
+	if strings.HasPrefix(draft, "/") {
+		return 0
+	}
+	i := strings.LastIndexAny(draft, " \t\n") + 1
+	if i > 0 && i < len(draft) && draft[i] == '/' {
+		return i
+	}
+	return -1
+}
+
+// paletteQuery is the text the palette filters: the draft after the
+// palette's "/".
 func (m *model) paletteQuery() string {
-	return strings.TrimPrefix(m.input.Value(), "/")
+	draft := m.input.Value()
+	if i := slashStart(draft); i >= 0 {
+		return draft[i+1:]
+	}
+	return ""
+}
+
+// completePalette rewrites the palette's word to "/name " in place.
+func (m *model) completePalette(name string) {
+	draft := m.input.Value()
+	i := slashStart(draft)
+	if i < 0 {
+		i = 0
+		draft = ""
+	}
+	m.input.SetValue(draft[:i] + "/" + name + " ")
+	m.input.CursorEnd()
+	m.syncPalette()
 }
 
 // paletteItems adapts the commands service's list to palette rows.
@@ -79,12 +113,15 @@ func (m *model) paletteKey(key string) (bool, tea.Cmd) {
 		m.pal.escAt = m.input.Value()
 		return true, nil
 	case palComplete:
-		// Tab: rewrite the composer to "/name " and stay open.
-		m.input.SetValue("/" + name + " ")
-		m.input.CursorEnd()
-		m.syncPalette()
+		// Tab: rewrite the word to "/name " (stays open at line start).
+		m.completePalette(name)
 		return true, nil
 	case palAccept:
+		if slashStart(m.input.Value()) > 0 {
+			// Mid-text there is nothing to dispatch: complete instead.
+			m.completePalette(name)
+			return true, nil
+		}
 		return true, m.acceptPalette(name)
 	}
 	return false, nil

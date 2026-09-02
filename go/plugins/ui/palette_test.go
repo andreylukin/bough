@@ -90,6 +90,29 @@ func TestSlashMidLineDoesNotOpen(t *testing.T) {
 	}
 }
 
+func TestSlashAtWordStartOpensAndCompletesInPlace(t *testing.T) {
+	t.Parallel()
+	d := drvCmds(t, reg(t, "alpha", "beta"))
+	d.typeStr("look at /al")
+	if !d.m.pal.open {
+		t.Fatal("a / at word start should open the palette")
+	}
+	p := d.plain()
+	if !strings.Contains(p, "/alpha") || strings.Contains(p, "/beta") {
+		t.Errorf("mid-text palette should filter on the word:\n%s", p)
+	}
+	d.press(keyEnter())
+	if got := d.m.input.Value(); got != "look at /alpha " {
+		t.Fatalf("enter mid-text should complete in place, got %q", got)
+	}
+	if d.m.pal.open {
+		t.Error("completing mid-text should close the palette")
+	}
+	if len(d.sent) != 0 {
+		t.Errorf("nothing should be submitted, sent=%v", d.sent)
+	}
+}
+
 func TestSlashWithoutCommandsServiceIsPlainText(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t) // no commands service
