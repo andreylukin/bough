@@ -65,8 +65,9 @@ go build ./cmd/bough
 ./bough log                  # pretty-print the latest session's history
 ./bough log <file> --raw     # a specific history file, raw JSONL
 ./bough sessions             # list sessions, newest first
-./bough mcp list             # tools of every configured MCP server (plugin command)
-./bough mcp call <srv/tool> [args]   # run one; the model uses these via the shell
+./bough mcp list             # configured MCP servers (plugin command)
+./bough mcp tools [server]   # their tools (all, or one server); mcp search <q> finds one
+./bough mcp status           # does each server answer; mcp call <srv/tool> [args] runs one
 ./bough -c                   # resume the most recent session
 ./bough -r [id]              # resume by id, or pick from a list
 ./bough update               # git pull + rebuild + bounce the web session

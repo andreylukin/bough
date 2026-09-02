@@ -140,7 +140,7 @@ func TestPromptSectionCarriesCatalog(t *testing.T) {
 	servers := map[string]ServerConfig{"b": {}, "a": {}}
 	cat := catalog{Servers: map[string][]catalogTool{"a": {{Name: "greet", Desc: "say hi"}}}}
 	sec := promptSection(servers, cat)
-	for _, want := range []string{"bough mcp call", "- a (1 tools):", "a/greet  say hi", "- b: tools not listed yet, run bough mcp list"} {
+	for _, want := range []string{"bough mcp call", "- a (1 tools):", "a/greet  say hi", "- b: tools not listed yet, run bough mcp tools b"} {
 		if !strings.Contains(sec, want) {
 			t.Fatalf("section missing %q:\n%s", want, sec)
 		}
