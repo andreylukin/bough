@@ -142,7 +142,13 @@ func resultText(text string) string {
 // github.com/andreylukin/bough/… (native)"): noise, stripped.
 var nativeRe = regexp.MustCompile(`(?m)\s+at github\.com/andreylukin/\S+ \(native\)$`)
 
-func errorText(text string) string { return nativeRe.ReplaceAllString(text, "") }
+// goErrRe is goja's wrapper name on a Go-side error ("GoError: bash:
+// exit status 1"): runtime plumbing, not something the reader did.
+var goErrRe = regexp.MustCompile(`\bGoError: `)
+
+func errorText(text string) string {
+	return goErrRe.ReplaceAllString(nativeRe.ReplaceAllString(text, ""), "")
+}
 
 // anyFenceRe matches any ``` fence, closed or left open to the end:
 // a reply that is nothing but (malformed) fences said nothing.
@@ -164,6 +170,8 @@ func turnHasReply(blocks []block) bool {
 			if strings.TrimSpace(blocks[i].text) != "" {
 				return true
 			}
+		case "cancelled":
+			return true // "■ cancelled" is the reply; no "without a reply" on top
 		}
 	}
 	return false

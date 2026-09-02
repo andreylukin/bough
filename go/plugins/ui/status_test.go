@@ -134,17 +134,21 @@ func TestSpinnerClearedOnDone(t *testing.T) {
 	}
 }
 
-func TestSpinnerClearedOnError(t *testing.T) {
+// A code error mid-turn is fed back to the model; the loop closes every
+// turn with "done", so the spinner runs through the error and stops at
+// done (ending it at the error froze it while the model recovered).
+func TestSpinnerSurvivesCodeErrorUntilDone(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	d.typeStr("go")
 	d.press(keyEnter())
 	d.event("error", "boom")
-	if d.m.running {
-		t.Error("error should clear running")
+	if !d.m.running || !spinnerFrameIn(d.plain()) {
+		t.Errorf("error should not end the turn:\n%s", d.plain())
 	}
-	if spinnerFrameIn(d.plain()) {
-		t.Errorf("spinner should vanish after error:\n%s", d.plain())
+	d.event("done", "")
+	if d.m.running || spinnerFrameIn(d.plain()) {
+		t.Errorf("spinner should vanish after done:\n%s", d.plain())
 	}
 }
 

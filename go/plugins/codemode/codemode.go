@@ -3,6 +3,7 @@
 package codemode
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"runtime"
@@ -30,8 +31,9 @@ type CodeMode struct {
 	tools   *goja.Object
 	timeout time.Duration
 	out     strings.Builder
-	timer   *time.Timer   // innermost Run's interrupt timer; see Pause
-	scoped  goja.Callable // (src) => eval(src): per-block function scope
+	timer   *time.Timer     // innermost Run's interrupt timer; see Pause
+	scoped  goja.Callable   // (src) => eval(src): per-block function scope
+	runCtx  context.Context // the innermost RunCtx's context; Background between runs
 }
 
 // nativeFrame is the Go-frame tail goja appends to a GoError message
@@ -133,8 +135,29 @@ func (cm *CodeMode) RegisterTool(name string, fn any) {
 // keeps ticking, so a long child run can still trip the parent's
 // timeout.
 func (cm *CodeMode) Run(code string) (string, error) {
+	return cm.RunCtx(context.Background(), code)
+}
+
+// RunContext is the context of the run in progress: a host call that
+// blocks (tools.bash) derives its own from it, so cancelling the turn
+// kills the command instead of waiting for it. Background when idle.
+func (cm *CodeMode) RunContext() context.Context {
 	nested := cm.lock()
 	defer cm.unlock(nested)
+	if cm.runCtx == nil {
+		return context.Background()
+	}
+	return cm.runCtx
+}
+
+// RunCtx is Run under ctx: the VM is interrupted when ctx is done and
+// host calls see it through RunContext.
+func (cm *CodeMode) RunCtx(ctx context.Context, code string) (string, error) {
+	nested := cm.lock()
+	defer cm.unlock(nested)
+	prevCtx := cm.runCtx
+	cm.runCtx = ctx
+	defer func() { cm.runCtx = prevCtx }()
 	saved := ""
 	if nested {
 		saved = cm.out.String()

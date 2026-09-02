@@ -81,23 +81,23 @@ func TestCollapseIdentityStableAcrossAppends(t *testing.T) {
 	d := defaultDrv(t)
 	d.event("result", nLines(10))
 	d.event("result", nLines(10))
-	d.press(keyTab()) // focus first
+	d.press(keyTab()) // focus the newest: the second result
 	d.press(keyEnter())
-	if d.m.blocks[0].collapsed {
-		t.Fatal("first result should be expanded")
+	if d.m.blocks[1].collapsed {
+		t.Fatal("second result should be expanded")
 	}
 	id := d.m.focusID
 
 	d.event("code", nLines(10))
 	d.event("result", nLines(10))
-	if d.m.blocks[0].collapsed {
+	if d.m.blocks[1].collapsed {
 		t.Error("append must not re-collapse the expanded block")
 	}
 	if d.m.focusID != id {
 		t.Error("append must not move the block cursor")
 	}
-	d.press(keyTab()) // cursor steps to the second collapsible, not elsewhere
-	if d.m.focusID != d.m.blocks[1].id {
+	d.press(keyTab()) // cursor steps one older from where it was, not to the new blocks
+	if d.m.focusID != d.m.blocks[0].id {
 		t.Errorf("tab after appends should focus block 1, focusID=%d", d.m.focusID)
 	}
 }
@@ -152,7 +152,8 @@ func TestDedupeKeepsSurroundingAssistantText(t *testing.T) {
 	}
 	// The executed code renders exactly once: header preview plus box
 	// (expand the collapsed block so the box shows).
-	d.press(keyTab())
+	d.press(keyTab()) // newest: the result
+	d.press(keyTab()) // older: the code block
 	d.press(keyEnter())
 	p := d.plain()
 	if got := strings.Count(p, "X = 1"); got != 2 {

@@ -1,6 +1,7 @@
 package codemode
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -160,5 +161,36 @@ func TestToolErrorStripsNativeFrame(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "kaboom") {
 		t.Errorf("message lost: %q", err.Error())
+	}
+}
+
+// RunContext is the innermost run's context while a script runs and
+// Background between runs, so a host call can tell a live turn from
+// idle and nested runs restore the outer one.
+func TestRunContextFollowsTheRun(t *testing.T) {
+	cm := New(2 * time.Second)
+	if cm.RunContext() != context.Background() {
+		t.Fatal("idle: Background")
+	}
+	type key struct{}
+	outer := context.WithValue(context.Background(), key{}, "outer")
+	var seen []any
+	cm.RegisterTool("peek", func() string {
+		seen = append(seen, cm.RunContext().Value(key{}))
+		return ""
+	})
+	cm.RegisterTool("nested", func() string {
+		inner := context.WithValue(context.Background(), key{}, "inner")
+		_, _ = cm.RunCtx(inner, "tools.peek()")
+		return ""
+	})
+	if _, err := cm.RunCtx(outer, "tools.peek(); tools.nested(); tools.peek()"); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 3 || seen[0] != "outer" || seen[1] != "inner" || seen[2] != "outer" {
+		t.Fatalf("contexts seen: %v", seen)
+	}
+	if cm.RunContext() != context.Background() {
+		t.Fatal("after the run: Background again")
 	}
 }

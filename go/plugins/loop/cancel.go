@@ -45,9 +45,17 @@ type interrupter interface {
 	Interrupt()
 }
 
-// runCode runs one code block, interrupting it when ctx is cancelled
-// mid-run (a host call such as tools.bash still returns on its own
-// first: the interrupt lands when the script resumes).
+// ctxRunner is the optional slice that runs a script under a context,
+// so host calls (tools.bash) can die with the turn instead of the
+// interrupt waiting for them to return.
+type ctxRunner interface {
+	RunCtx(ctx context.Context, code string) (string, error)
+}
+
+// runCode runs one code block under ctx: a cancel kills a blocking
+// host call through the context and interrupts the script for the
+// rest. A codemode without RunCtx still gets the interrupt, after the
+// host call returns on its own.
 func (r *runner) runCode(ctx context.Context, code string) (string, error) {
 	type res struct {
 		out string
@@ -55,7 +63,13 @@ func (r *runner) runCode(ctx context.Context, code string) (string, error) {
 	}
 	ch := make(chan res, 1)
 	go func() {
-		out, err := r.code.Run(code)
+		var out string
+		var err error
+		if cr, ok := r.code.(ctxRunner); ok {
+			out, err = cr.RunCtx(ctx, code)
+		} else {
+			out, err = r.code.Run(code)
+		}
 		ch <- res{out, err}
 	}()
 	select {

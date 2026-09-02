@@ -461,8 +461,11 @@ func (m *model) addEvent(ev Event) {
 		m.expireAsks() // a turn never ends with a live ask
 		m.finishTurn(id, ev)
 	case "error":
-		m.running = false
-		m.expireAsks() // e.g. the ask timed out into a run error
+		// Not the end of the turn: a failed code block is fed back to
+		// the model, which usually carries on (the loop always closes a
+		// turn with "done", which is what stops the spinner and expires
+		// asks). Ending the turn here froze the spinner mid-run and
+		// hid the recovery that followed.
 		m.blocks = append(m.blocks, block{id: id, kind: "error", text: errorText(ev.Text)})
 		m.flushTrailing()
 	case "ask":
@@ -660,8 +663,10 @@ func (m *model) focusables() []int {
 	return out
 }
 
-// moveFocus steps the block cursor by delta over the collapsible
-// blocks (wrapping), scrolling the focused header into view.
+// moveFocus steps the block cursor over the collapsible blocks
+// (wrapping), scrolling the focused header into view. With nothing
+// focused it starts at the newest block; delta +1 (tab) then walks
+// older, -1 (shift+tab) newer.
 func (m *model) moveFocus(delta int) {
 	f := m.focusables()
 	if len(f) == 0 {
@@ -676,12 +681,14 @@ func (m *model) moveFocus(delta int) {
 	}
 	var next int
 	if cur < 0 {
-		next = 0
-		if delta < 0 {
-			next = len(f) - 1
-		}
+		// Nothing focused: start from the NEWEST block (the one you were
+		// just looking at), whichever way you step. Starting at the top
+		// of the transcript yanked the view to the oldest block.
+		next = len(f) - 1
 	} else {
-		next = (cur + delta + len(f)) % len(f)
+		// tab (delta +1) walks OLDER, up the transcript from where you
+		// are; shift+tab walks back toward the newest.
+		next = (cur - delta + len(f)) % len(f)
 	}
 	m.focusID = m.blocks[f[next]].id
 	m.refresh()

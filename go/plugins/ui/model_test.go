@@ -156,17 +156,21 @@ func TestFocusAndKeyboardToggle(t *testing.T) {
 		return next.(model)
 	}
 
-	m = press(m, "tab") // first collapsible: the code block
-	if m.focusID != m.blocks[0].id {
-		t.Fatalf("tab should focus code block, focusID=%d", m.focusID)
-	}
-	m = press(m, "tab") // next: the result block (skips assistant)
+	m = press(m, "tab") // newest collapsible first: the result block
 	if m.focusID != m.blocks[2].id {
-		t.Fatalf("tab should move to result block, focusID=%d", m.focusID)
+		t.Fatalf("tab should focus the newest (result) block, focusID=%d", m.focusID)
+	}
+	m = press(m, "tab") // older: the code block (skips assistant)
+	if m.focusID != m.blocks[0].id {
+		t.Fatalf("tab should move up to the code block, focusID=%d", m.focusID)
 	}
 	m = press(m, "shift+tab")
+	if m.focusID != m.blocks[2].id {
+		t.Fatal("shift+tab should move back down to the result block")
+	}
+	m = press(m, "tab") // back on the code block for the toggle checks below
 	if m.focusID != m.blocks[0].id {
-		t.Fatal("shift+tab should move back to code block")
+		t.Fatal("tab should return to the code block")
 	}
 
 	wasCollapsed := m.blocks[0].collapsed
@@ -244,5 +248,53 @@ func TestThemeAndKeymapValidation(t *testing.T) {
 	}
 	if err := applyKeymap(keys, map[string]string{"histry": "ctrl+g"}); err == nil {
 		t.Error("unknown keymap action should fail loud")
+	}
+}
+
+// A failed code block is fed back to the model, which carries on; the
+// turn is over only at "done". Ending it on the error froze the spinner
+// and hid the recovery that followed.
+func TestErrorEventKeepsTheTurnRunning(t *testing.T) {
+	m := testModel(t)
+	m.running = true
+	m.addEvent(Event{Kind: "error", Text: "error: GoError: bash: exit status 126"})
+	if !m.running {
+		t.Fatal("a code error is not the end of the turn")
+	}
+	if got := m.blocks[len(m.blocks)-1].text; strings.Contains(got, "GoError") {
+		t.Fatalf("runtime wrapper name shown: %q", got)
+	}
+	m.addEvent(Event{Kind: "done"})
+	if m.running {
+		t.Fatal("done ends the turn")
+	}
+}
+
+// Tab with nothing focused starts at the NEWEST collapsible block, the
+// one on screen, not the oldest at the top of the transcript.
+func TestFocusStartsAtTheNewestBlock(t *testing.T) {
+	m := testModel(t)
+	for i := 0; i < 3; i++ {
+		m.addEvent(Event{Kind: "code", Text: "console.log(" + strings.Repeat("x", i+1) + ")"})
+		m.addEvent(Event{Kind: "result", Text: "ok"})
+	}
+	m.moveFocus(1)
+	f := m.focusables()
+	if m.focusID != m.blocks[f[len(f)-1]].id {
+		t.Fatalf("first tab focused block id %d, want the newest %d", m.focusID, m.blocks[f[len(f)-1]].id)
+	}
+	m.moveFocus(1)
+	if m.focusID != m.blocks[f[len(f)-2]].id {
+		t.Fatalf("a second tab goes one older; got id %d", m.focusID)
+	}
+	m.moveFocus(-1)
+	if m.focusID != m.blocks[f[len(f)-1]].id {
+		t.Fatalf("shift+tab comes back to the newest; got id %d", m.focusID)
+	}
+	m2 := testModel(t)
+	m2.addEvent(Event{Kind: "code", Text: "a"})
+	m2.moveFocus(-1)
+	if m2.focusID != m2.blocks[0].id {
+		t.Fatal("shift+tab with nothing focused also starts at the newest")
 	}
 }

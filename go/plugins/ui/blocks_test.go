@@ -339,8 +339,7 @@ func TestCollapseExpandFeedbackAndPreviewCap(t *testing.T) {
 	if !strings.Contains(d.plain(), "collapsed 1 block") {
 		t.Errorf("/collapse should report what it did:\n%s", d.plain())
 	}
-	// Focused, the huge block expands on request.
-	d.press(keyTab())
+	// Focused (tab lands on the newest block, the huge one), it expands on request.
 	d.press(keyTab())
 	d.typeStr("/expand")
 	d.press(keyEnter())
@@ -536,5 +535,19 @@ func TestSubagentBlocksCollapseByDefault(t *testing.T) {
 	}
 	if got := subLabel(Event{Kind: "sub:error", Text: "boom"}); got != "sub · error" {
 		t.Fatalf("no worker id: %q", got)
+	}
+}
+
+// A cancelled turn already says "cancelled"; the "without a reply"
+// marker is for a turn that silently produced nothing.
+func TestCancelledTurnHasNoWithoutReplyMarker(t *testing.T) {
+	m := testModel(t)
+	m.addEvent(Event{Kind: "user", Text: "go"})
+	m.addEvent(Event{Kind: "cancelled"})
+	m.addEvent(Event{Kind: "done"})
+	for _, b := range m.blocks {
+		if strings.Contains(b.text, "without a reply") {
+			t.Fatalf("redundant marker after cancel: %+v", m.blocks)
+		}
 	}
 }

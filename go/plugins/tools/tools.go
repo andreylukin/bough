@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/andreylukin/bough/kernel"
@@ -28,9 +29,18 @@ type registry interface {
 	RegisterTool(name string, fn any)
 }
 
+// runContexter is the optional slice of codemode that exposes the
+// running script's context: the turn's cancel reaches tools.bash
+// through it.
+type runContexter interface {
+	RunContext() context.Context
+}
+
 // Stats is the "turn-stats" service: side-effect tallies of the basic
 // tools, reset by Take.
 type Stats struct {
+	runCtx func() context.Context // the running script's context; nil = none
+
 	mu    sync.Mutex
 	files []string
 	exit  int
@@ -74,6 +84,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		return err
 	}
 	st := &Stats{}
+	if rc, ok := reg.(runContexter); ok {
+		st.runCtx = rc.RunContext
+	}
 	reg.RegisterTool("bash", st.bash)
 	reg.RegisterTool("view", view)
 	reg.RegisterTool("patch", st.patch)
@@ -82,12 +95,27 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 }
 
 func (s *Stats) bash(cmd string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), bashTimeout)
+	parent := context.Background()
+	if s.runCtx != nil {
+		parent = s.runCtx()
+	}
+	ctx, cancel := context.WithTimeout(parent, bashTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "sh", "-c", cmd).CombinedOutput()
+	c := exec.CommandContext(ctx, "sh", "-c", cmd)
+	// Its own process group, killed as a group: `sh -c` execs or forks
+	// the command, and killing sh alone leaves a sleep, a server, a
+	// build running after the turn was cancelled.
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) }
+	c.WaitDelay = 2 * time.Second
+	out, err := c.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		s.exited(-1)
 		return "", fmt.Errorf("bash: killed after %s: %s\n%s", bashTimeout, cmd, out)
+	}
+	if ctx.Err() == context.Canceled {
+		s.exited(-1)
+		return "", fmt.Errorf("bash: cancelled: %s\n%s", cmd, out)
 	}
 	if err != nil {
 		code := -1

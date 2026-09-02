@@ -1,6 +1,10 @@
 package tools
 
 import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -126,5 +130,38 @@ func TestViewAndPatch(t *testing.T) {
 	files, _, _ := st.Take()
 	if len(files) != 2 {
 		t.Fatalf("stats files = %v", files)
+	}
+}
+
+// Cancelling the run's context kills the command AND its children
+// (the whole process group) at once: a cancelled turn must not wait
+// out a sleep, and must not leave the sleep running.
+func TestBashDiesWithTheRunContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	st := &Stats{runCtx: func() context.Context { return ctx }}
+	marker := fmt.Sprintf("bough-cancel-test-%d", os.Getpid())
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := st.bash("sleep 30; echo " + marker + "; sleep 30")
+		done <- err
+	}()
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || !strings.HasPrefix(err.Error(), "bash: cancelled: ") {
+			t.Fatalf("want a cancelled error, got %v", err)
+		}
+		if time.Since(start) > 5*time.Second {
+			t.Fatalf("cancel took %s: waited for the command", time.Since(start))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("bash did not return after cancel")
+	}
+	time.Sleep(200 * time.Millisecond)
+	out, _ := exec.Command("pgrep", "-f", "sleep 30; echo "+marker).Output()
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("the shell survived the cancel: pids %s", out)
 	}
 }
