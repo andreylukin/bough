@@ -28,12 +28,17 @@ func (l *recordLLM) Complete(ctx context.Context, system string, messages []Mess
 
 // stubHooks returns canned results per event and records fired events.
 type stubHooks struct {
-	results map[string]map[string]any
-	fired   []string
+	results  map[string]map[string]any
+	fired    []string
+	payloads map[string]map[string]any
 }
 
 func (h *stubHooks) Fire(ctx context.Context, event string, payload map[string]any) (map[string]any, error) {
 	h.fired = append(h.fired, event)
+	if h.payloads == nil {
+		h.payloads = map[string]map[string]any{}
+	}
+	h.payloads[event] = payload
 	return h.results[event], nil
 }
 
@@ -396,5 +401,25 @@ func TestSkillsInjection(t *testing.T) {
 	want := "update the wiki\n\n[skill: wiki]\nuse the wiki cli"
 	if len(llm.messages) != 1 || llm.messages[0].Content != want {
 		t.Fatalf("llm saw %q, want %q", llm.messages, want)
+	}
+}
+
+// The stop hook receives the turn it closes: the (possibly rewritten)
+// input and the model's final reply, so a memory hook has something to
+// remember without re-reading history.
+func TestStopHookGetsTurn(t *testing.T) {
+	llm := &recordLLM{reply: "hello there"}
+	hooks := &stubHooks{results: map[string]map[string]any{
+		"user-prompt-submit": {"input": "rewritten"},
+	}}
+	r := buildRunner(t, llm, &stubCode{}, hooks, nil)
+
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "original", collect(&kinds, &texts)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	p := hooks.payloads["stop"]
+	if p["input"] != "rewritten" || p["reply"] != "hello there" {
+		t.Fatalf("stop payload %v, want input=rewritten reply=hello there", p)
 	}
 }

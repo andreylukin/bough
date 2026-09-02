@@ -308,6 +308,35 @@ Events and honored result keys:
 | `stop`               | `{}`                | —                                 |
 | `session-end`        | `{}`                | — (fires at unmount, not from the loop) |
 
+## Memory (graphiti)
+
+Long-term memory on [getzep/graphiti](https://github.com/getzep/graphiti),
+self-hosted with no Docker: `bough graphiti install` clones Graphiti's
+`mcp_server`, builds its venv (python 3.12, `uv`) with `falkordblite` (an
+embedded FalkorDB: one file, `~/.bough/graphiti/graph.db`), and runs the
+stock MCP server under launchd (`com.bough.graphiti`) on
+`http://127.0.0.1:8621/mcp/`. One server, every bough talks to it over
+http — the embedded database is single-process, so nothing spawns its own.
+
+The loop is two hook files the install writes:
+
+| hook                 | does                                                        |
+|----------------------|-------------------------------------------------------------|
+| `user-prompt-submit` | `search_memory_facts` for the prompt, appended as a `[memory]` block |
+| `stop`               | `add_memory` of `{input, reply}`, backgrounded (`nohup … &`) |
+
+Both go through `bough mcp call graphiti/…`; a server that is down is
+silence, never a blocked turn. The `graphiti` row only adds a prompt
+section naming the memory. Extraction and embeddings run through
+OpenRouter by default (`OPENROUTER_API_KEY` from `~/.bough/env`; model
+`openai/gpt-5-mini`, embedder `openai/text-embedding-3-small`); row config
+`{port, llm: openrouter|openai, model, embedder}` overrides, then
+`bough graphiti install` again rewrites the plist. Attribute-free entity
+types are on purpose: the typed built-ins fail validation on small models.
+
+`bough graphiti status | logs | start | stop | uninstall` (uninstall keeps
+the checkout and the graph).
+
 ## Skills
 
 Mention-triggered injection. Pools: `~/.claude/skills` and

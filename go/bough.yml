@@ -70,6 +70,13 @@
   #       env: {KEY: value}
   #   disable: [name]
 
+# Long-term memory on getzep/graphiti, self-hosted: `bough graphiti install`
+# builds the server (embedded FalkorDB, launchd), the two hook files and the
+# mcp.json entry; this row only tells the model the memory exists.
+# config: {port: 8621, llm: openrouter|openai, model: ..., embedder: ...}
+- id: graphiti
+  plugin: graphiti
+
 # Session TODO list: /todo, tools.todo, and a system-prompt section.
 # State is derived from history entries, so it survives resume.
 - id: todo

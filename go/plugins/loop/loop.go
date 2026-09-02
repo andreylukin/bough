@@ -401,7 +401,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
 		if len(blocks) == 0 {
 			note("done", "", r.doneData())
-			r.fire(ctx, "stop", map[string]any{}, emit)
+			r.fire(ctx, "stop", map[string]any{"input": input, "reply": reply}, emit)
 			return nil
 		}
 		for _, m := range blocks {
@@ -446,7 +446,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	err := fmt.Errorf("loop: gave up after %d steps", maxSteps)
 	note("error", err.Error(), nil)
 	note("done", "", r.doneData())
-	r.fire(ctx, "stop", map[string]any{}, emit)
+	r.fire(ctx, "stop", map[string]any{"input": input, "reply": ""}, emit)
 	return err
 }
 

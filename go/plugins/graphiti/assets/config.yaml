@@ -1,0 +1,39 @@
+# bough graphiti: the Graphiti MCP server config. ${VAR:default} expands from the environment.
+server:
+  transport: "http"
+  host: "127.0.0.1"
+  port: ${GRAPHITI_PORT:8621}
+
+llm:
+  provider: "openai"
+  model: ${MODEL_NAME:openai/gpt-5-mini}
+  max_tokens: 4096
+  structured_output_mode: ${LLM_STRUCTURED_OUTPUT_MODE:json_object}
+  providers:
+    openai:
+      api_key: ${OPENAI_API_KEY}
+      api_url: ${OPENAI_API_URL:https://api.openai.com/v1}
+
+embedder:
+  provider: "openai"
+  model: ${EMBEDDER_MODEL:openai/text-embedding-3-small}
+  dimensions: 1536
+  providers:
+    openai:
+      api_key: ${OPENAI_API_KEY}
+      api_url: ${OPENAI_API_URL:https://api.openai.com/v1}
+
+database:
+  provider: "falkordb"
+  providers:
+    falkordb:
+      uri: ${FALKORDB_URI:redis://127.0.0.1:6399}
+      password: ""
+      database: ${FALKORDB_DATABASE:bough}
+
+graphiti:
+  group_id: ${GRAPHITI_GROUP_ID:bough}
+  user_id: ${USER_ID:bough}
+  # Attribute-free extraction: the typed built-in entity types make small and
+  # OpenAI-compatible models fail validation (null attributes).
+  entity_types: []
