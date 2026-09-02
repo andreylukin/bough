@@ -319,43 +319,33 @@ from a built-in first-party $/Mtok table matched on the model id with its
 adds models; an unknown model shows tokens, never a guess. `/cost` says
 which of the three the number came from.
 
-## Memory (graphiti)
+## Memory (graph)
 
-Long-term memory on [getzep/graphiti](https://github.com/getzep/graphiti),
-self-hosted with no Docker: `bough graphiti install` clones Graphiti's
-`mcp_server`, builds its venv (python 3.12, `uv`), and runs the stock MCP
-server under launchd (`com.bough.graphiti`) on `http://127.0.0.1:8621/mcp/`.
-The graph lives in **Neo4j** (default, `db: neo4j`): install brews it, mints
-its password once (`~/.bough/graphiti/neo4j.password`, or `NEO4J_PASSWORD`
-in `~/.bough/env` for a Neo4j you run yourself), starts it as a brew service
-and waits for bolt on `neo4j_uri` (default `bolt://127.0.0.1:7687`); browse
-it at http://localhost:7474. `db: falkordb` keeps the earlier embedded
-FalkorDB (`falkordblite`, one file under the home dir, single-process).
-One server, every bough talks to it over http.
+Long-term memory is a bi-temporal property graph in SQLite,
+`~/.bough/graph.db` (design: `docs/graph-memory.md`). Entities have
+deterministic keys (ticket `NME-1673`, pr `repo#50`, repo
+`github.com/owner/name`, person email, concept slug, session id); every
+edge cites an episode and carries `valid_from/valid_to` (true in the
+world) and `observed_at/recorded_at` (when bough learned it). Nothing is
+deleted: a contradiction closes a window, and `timeline` shows both.
 
-The loop is two hook files the install writes:
+The `graph` row records this session (touches its repo, and the tickets
+in the branch name), injects the workspace's neighborhood as a `memory`
+prompt section (empty until the graph knows something about here), and
+binds the verbs in codemode: `tools.graph.search(q, n)` (FTS5 + embedding
+cosine, reciprocal-rank fused, no model call), `.neighbors(ref, hops,
+rel)` (open windows only), `.timeline(ref)`, `.resolve(ref)`, and the two
+writes `.assert(src, rel, dst, evidence)` / `.invalidate(edgeId, reason)`
+which stamp author and episode themselves. Embeddings use
+`OPENROUTER_API_KEY` or `OPENAI_API_KEY` when present; without one search
+is FTS-only and everything still works.
 
-| hook                 | does                                                        |
-|----------------------|-------------------------------------------------------------|
-| `user-prompt-submit` | `search_memory_facts` for the prompt, appended as a `[memory]` block |
-| `stop`               | `add_memory` of `{input, reply}`, backgrounded (`nohup … &`) |
-
-Both go through `bough mcp call graphiti/…`; a server that is down is
-silence, never a blocked turn. The `graphiti` row only adds a prompt
-section naming the memory. Extraction and embeddings use OpenAI by default
-(`OPENAI_API_KEY` from `~/.bough/env`; model `gpt-5-mini`, embedder
-`text-embedding-3-small`); `llm: openrouter` routes both through OpenRouter
-on `OPENROUTER_API_KEY` instead. Row config
-`{port, llm: openai|openrouter, model, embedder}` overrides, then
-`bough graphiti install` again rewrites the plist. Attribute-free entity
-types are on purpose: the typed built-ins fail validation on small models.
-
-`bough update` runs `graphiti install` after the rebuild (skipped, with a
-hint, when `uv` is not on PATH), so a new machine is `brew install uv libomp`,
-the llm's key in `~/.bough/env`, then `bough update`. The
-install also adds the `graphiti` row to `~/.bough/bough.yml` after its `mcp`
-row when that file exists. `bough graphiti status | logs | start | stop |
-uninstall` (uninstall keeps the checkout and the graph).
+`bough graph stats | backfill | search <q> | neighbors <ref> [hops] |
+timeline <ref> | resolve <ref>`. `backfill` seeds from the old
+`~/.bough/bough.db` (notes → concepts, citations → `cites`,
+command_history → commands, repos, `touches`) and `~/.bough/history`
+(one session entity per file). Collectors (GitHub, Linear, Slack) are the
+next ingest step and not yet wired.
 
 ## Skills
 

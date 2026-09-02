@@ -77,14 +77,6 @@
   #       env: {KEY: value}
   #   disable: [name]
 
-# Long-term memory on getzep/graphiti, self-hosted: `bough graphiti install`
-# builds the server (embedded FalkorDB, launchd), the two hook files and the
-# mcp.json entry; this row only tells the model the memory exists.
-# config: {port: 8621, llm: openai|openrouter, model: ..., embedder: ...,
-#          db: neo4j|falkordb, neo4j_uri: bolt://127.0.0.1:7687, neo4j_user: neo4j}
-- id: graphiti
-  plugin: graphiti
-
 # Session TODO list: /todo, tools.todo, and a system-prompt section.
 # State is derived from history entries, so it survives resume.
 - id: todo
@@ -102,6 +94,18 @@
 
 - id: loop
   plugin: loop
+
+# Long-term memory: the graph core (docs/graph-memory.md). A bi-temporal
+# graph in ~/.bough/graph.db; this session and its repo/branch tickets are
+# recorded at mount, the workspace's neighborhood is a prompt section, and
+# the verbs are tools.graph.{search,neighbors,timeline,resolve,assert,
+# invalidate}. `bough graph backfill` seeds it from bough.db + history.
+# config: {path: ~/.bough/graph.db, embed: true, hops: 1, max_rows: 40}
+# After loop (its prompt-sections exist, so this row never remounts) and
+# before ui (which goes live and holds the codemode VM mid-turn): a mount
+# that blocks on the VM would stall the settle pass behind the first turn.
+- id: graph
+  plugin: graph
 
 - id: ui
   plugin: ui

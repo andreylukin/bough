@@ -23,7 +23,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/commands"
 	_ "github.com/andreylukin/bough/plugins/contextmd"
 	_ "github.com/andreylukin/bough/plugins/cost"
-	_ "github.com/andreylukin/bough/plugins/graphiti"
+	_ "github.com/andreylukin/bough/plugins/graph"
 	_ "github.com/andreylukin/bough/plugins/history"
 	_ "github.com/andreylukin/bough/plugins/hooks"
 	_ "github.com/andreylukin/bough/plugins/initjs"
