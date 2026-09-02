@@ -4,11 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/andreylukin/bough/plugins/codemode"
 )
 
 func TestMergePrecedence(t *testing.T) {
@@ -94,39 +92,53 @@ func inMemorySession(t *testing.T) *sdk.ClientSession {
 	return cs
 }
 
-func TestCodemodeRoundTrip(t *testing.T) {
+// The CLI helpers over an in-memory server: list renders
+// "server/tool  description"; call maps plain text onto the schema's
+// required property and JSON onto the arguments; IsError is an error.
+func TestListAndCall(t *testing.T) {
 	cs := inMemorySession(t)
-	cm := codemode.New(5 * time.Second)
+	lines, err := listLines("test", cs)
+	if err != nil || len(lines) != 1 || lines[0] != "test/greet  say hi" {
+		t.Fatalf("listLines = %v, %v", lines, err)
+	}
+	out, err := callOn(cs, "greet", "you")
+	if err != nil || out != "hi you" {
+		t.Fatalf("call with text = (%q, %v)", out, err)
+	}
+	out, err = callOn(cs, "greet", `{"name": "json"}`)
+	if err != nil || out != "hi json" {
+		t.Fatalf("call with json = (%q, %v)", out, err)
+	}
+	if _, err := callOn(cs, "greet", "boom"); err == nil || !strings.Contains(err.Error(), "kaboom") {
+		t.Fatalf("IsError should surface: %v", err)
+	}
+}
 
-	lines, err := registerSession(cm, "test", cs)
-	if err != nil {
-		t.Fatal(err)
+func TestArgsFor(t *testing.T) {
+	schema := map[string]any{"required": []any{"q"}, "properties": map[string]any{"q": 1, "n": 2}}
+	if got := argsFor(schema, "hello world"); got["q"] != "hello world" {
+		t.Fatalf("required property binding = %v", got)
 	}
-	if len(lines) != 1 {
-		t.Fatalf("want 1 tool bound, got %d", len(lines))
+	one := map[string]any{"properties": map[string]any{"path": 1}}
+	if got := argsFor(one, "x"); got["path"] != "x" {
+		t.Fatalf("single property binding = %v", got)
 	}
-	want := "tools.mcp_test_greet(args) -> string: say hi"
-	if lines[0] != want {
-		t.Fatalf("prompt line = %q, want %q", lines[0], want)
+	if got := argsFor(nil, "x"); got["query"] != "x" {
+		t.Fatalf("fallback binding = %v", got)
 	}
-	if sec := promptSection(lines); !strings.Contains(sec, "MCP tools") || !strings.Contains(sec, "- "+want) {
-		t.Fatalf("promptSection = %q", sec)
+	if got := argsFor(nil, ""); len(got) != 0 {
+		t.Fatalf("empty query = %v", got)
 	}
+}
+
+// The model gets one line naming the servers and the CLI, nothing
+// else; no servers, no line.
+func TestPromptSectionIsOnlyAPointer(t *testing.T) {
 	if promptSection(nil) != "" {
-		t.Fatal("empty section must be empty")
+		t.Fatal("no servers should mean no section")
 	}
-
-	out, err := cm.Run(`tools.mcp_test_greet({name: "you"})`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "hi you" {
-		t.Fatalf("want %q, got %q", "hi you", out)
-	}
-
-	// IsError result surfaces as a JS exception.
-	_, err = cm.Run(`tools.mcp_test_greet({name: "boom"})`)
-	if err == nil || !strings.Contains(err.Error(), "kaboom") {
-		t.Fatalf("want kaboom error, got %v", err)
+	sec := promptSection(map[string]ServerConfig{"b": {}, "a": {}})
+	if !strings.Contains(sec, "(a, b)") || !strings.Contains(sec, "bough mcp list") || strings.Contains(sec, "tools.mcp_") {
+		t.Fatalf("section = %q", sec)
 	}
 }

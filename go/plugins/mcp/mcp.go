@@ -1,5 +1,9 @@
-// Package mcp is the "mcp" plugin: it spawns stdio MCP servers and
-// binds their tools into the codemode service as tools.mcp_<server>_<tool>.
+// Package mcp is the "mcp" plugin: MCP servers as a CLI, not as
+// model tools. `bough mcp list` shows every configured server's tools;
+// `bough mcp call <server/tool> [args]` runs one and prints its text.
+// The model reaches them through the shell, so nothing is injected
+// into its tool surface or prompt beyond a one-line pointer to the
+// CLI (only when servers are configured).
 //
 // Config sources, merged by server name (highest precedence first):
 // row config (config.servers / config.disable) > ./.mcp.json mcpServers
@@ -35,25 +39,24 @@ type ServerConfig struct {
 	Env     map[string]string
 }
 
-// registry is the slice of the codemode service we need.
-type registry interface {
-	RegisterTool(name string, fn any)
-}
-
 // sections is the slice of the loop's "prompt-sections" service we need.
 type sections interface {
 	Set(name, text string)
 }
 
-// promptSection renders the bound tools as a system-prompt section:
-// one line per tool, "tools.<name>(args) -> string: <description>".
-// Empty when nothing is bound.
-func promptSection(lines []string) string {
-	if len(lines) == 0 {
+// promptSection is the one line the model gets: how to reach MCP from
+// the shell. Empty when no server is configured.
+func promptSection(servers map[string]ServerConfig) string {
+	if len(servers) == 0 {
 		return ""
 	}
-	sort.Strings(lines)
-	return "MCP tools (call with one object argument matching the tool's input schema; returns the text result):\n- " + strings.Join(lines, "\n- ")
+	names := make([]string, 0, len(servers))
+	for n := range servers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return "MCP servers (" + strings.Join(names, ", ") + ") are reachable from the shell, not as tools: " +
+		"tools.bash(\"bough mcp list\") shows their tools; tools.bash(\"bough mcp call <server/tool> '<json args or plain text>'\") runs one."
 }
 
 type plugin struct{}
@@ -63,54 +66,106 @@ func init() {
 }
 
 func (plugin) Name() string     { return "mcp" }
-func (plugin) Inject() []string { return []string{"codemode"} }
+func (plugin) Inject() []string { return nil }
 
+// Apply only documents the CLI to the model; servers are spawned on
+// demand by the subcommands, never at mount.
 func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
-	reg, err := kernel.Get[registry](ctx, "codemode")
+	servers, err := configuredServers(cfg)
 	if err != nil {
 		return err
 	}
+	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
+		s.Set("mcp", promptSection(servers))
+		ctx.Effect(func() { s.Set("mcp", "") })
+	}
+	return nil
+}
 
+// configuredServers merges every config source for the given row config.
+func configuredServers(cfg map[string]any) (map[string]ServerConfig, error) {
 	row, err := rowServers(cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var global map[string]ServerConfig
 	if home, err := os.UserHomeDir(); err == nil {
 		global = loadServersFile(filepath.Join(home, ".claude.json"))
 	}
 	project := loadServersFile(".mcp.json")
-	servers := merge(disableList(cfg), global, project, row)
+	return merge(disableList(cfg), global, project, row), nil
+}
 
-	var sessions []*sdk.ClientSession
-	var lines []string
-	for name, sc := range servers {
+// Commands implements kernel.Commander: `bough mcp list|call`.
+func (plugin) Commands() []kernel.Command {
+	return []kernel.Command{{
+		Name:    "mcp",
+		Usage:   "list | call <server/tool> [json-args|text]",
+		Summary: "list configured MCP servers' tools, or call one",
+		Run:     runCLI,
+	}}
+}
+
+func runCLI(cfg map[string]any, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: bough mcp list | call <server/tool> [json-args|text]")
+	}
+	servers, err := configuredServers(cfg)
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "list":
+		if len(servers) == 0 {
+			return fmt.Errorf("no MCP servers configured (row config, ./.mcp.json, ~/.claude.json)")
+		}
+		names := make([]string, 0, len(servers))
+		for n := range servers {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			session, err := connect(servers[n])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "mcp: %s: connect: %v\n", n, err)
+				continue
+			}
+			lines, err := listLines(n, session)
+			session.Close()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "mcp: %s: list tools: %v\n", n, err)
+				continue
+			}
+			for _, l := range lines {
+				fmt.Println(l)
+			}
+		}
+		return nil
+	case "call":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: bough mcp call <server/tool> [json-args|text]")
+		}
+		server, tool, _ := strings.Cut(args[1], "/")
+		if tool == "" {
+			return fmt.Errorf("name %q must be <server>/<tool> (see bough mcp list)", args[1])
+		}
+		sc, ok := servers[server]
+		if !ok {
+			return fmt.Errorf("no MCP server %q configured", server)
+		}
 		session, err := connect(sc)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "mcp: server %q: connect: %v (skipped)\n", name, err)
-			continue
+			return fmt.Errorf("%s: connect: %w", server, err)
 		}
-		bound, err := registerSession(reg, name, session)
+		defer session.Close()
+		out, err := callOn(session, tool, strings.Join(args[2:], " "))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "mcp: server %q: list tools: %v (skipped)\n", name, err)
-			session.Close()
-			continue
+			return err
 		}
-		kernel.Logf("mcp: server %q: %d tools bound\n", name, len(bound))
-		sessions = append(sessions, session)
-		lines = append(lines, bound...)
+		fmt.Println(out)
+		return nil
 	}
-	// Optional seam: document the bound tools to the model.
-	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
-		s.Set("mcp", promptSection(lines))
-		ctx.Effect(func() { s.Set("mcp", "") })
-	}
-	ctx.Effect(func() {
-		for _, s := range sessions {
-			s.Close()
-		}
-	})
-	return nil
+	return fmt.Errorf("unknown mcp command %q (list | call)", args[0])
 }
 
 // merge combines server maps lowest-precedence FIRST (later layers win
@@ -233,10 +288,8 @@ func connect(sc ServerConfig) (*sdk.ClientSession, error) {
 	return client.Connect(ctx, &sdk.CommandTransport{Command: cmd}, nil)
 }
 
-// registerSession lists the session's tools and binds each into
-// codemode as mcp_<server>_<tool>. Returns one prompt line per bound
-// tool ("tools.<name>(args) -> string: <description>").
-func registerSession(reg registry, server string, session *sdk.ClientSession) ([]string, error) {
+// listLines renders one "server/tool  description" line per tool.
+func listLines(server string, session *sdk.ClientSession) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
 	var lines []string
@@ -244,45 +297,62 @@ func registerSession(reg registry, server string, session *sdk.ClientSession) ([
 		if err != nil {
 			return lines, err
 		}
-		name := "mcp_" + sanitize(server) + "_" + sanitize(tool.Name)
-		reg.RegisterTool(name, bindTool(session, tool.Name))
-		lines = append(lines, "tools."+name+"(args) -> string: "+strings.TrimSpace(tool.Description))
+		desc := strings.SplitN(strings.TrimSpace(tool.Description), "\n", 2)[0]
+		lines = append(lines, fmt.Sprintf("%s/%s  %s", server, tool.Name, desc))
 	}
 	return lines, nil
 }
 
-// bindTool returns the codemode tool fn: one map arg in, concatenated
-// text content out, IsError as a Go error.
-func bindTool(session *sdk.ClientSession, tool string) func(map[string]any) (string, error) {
-	return func(args map[string]any) (string, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
-		defer cancel()
-		res, err := session.CallTool(ctx, &sdk.CallToolParams{Name: tool, Arguments: args})
-		if err != nil {
-			return "", fmt.Errorf("mcp: %s: %w", tool, err)
+// callOn runs one tool: query is a JSON object (used as the arguments)
+// or plain text (bound to the schema's first required property, else
+// "query"). Text content is concatenated; IsError is a Go error.
+func callOn(session *sdk.ClientSession, tool, query string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	var schema any
+	for t, err := range session.Tools(ctx, nil) {
+		if err == nil && t.Name == tool {
+			schema = t.InputSchema
 		}
-		var b strings.Builder
-		for _, c := range res.Content {
-			if tc, ok := c.(*sdk.TextContent); ok {
-				b.WriteString(tc.Text)
-			}
-		}
-		if res.IsError {
-			return "", fmt.Errorf("mcp: %s: %s", tool, b.String())
-		}
-		return b.String(), nil
 	}
+	args := argsFor(schema, query)
+	res, err := session.CallTool(ctx, &sdk.CallToolParams{Name: tool, Arguments: args})
+	if err != nil {
+		return "", fmt.Errorf("mcp: %s: %w", tool, err)
+	}
+	var b strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*sdk.TextContent); ok {
+			b.WriteString(tc.Text)
+		}
+	}
+	if res.IsError {
+		return "", fmt.Errorf("mcp: %s: %s", tool, b.String())
+	}
+	return b.String(), nil
 }
 
-// sanitize maps a name onto JS-identifier-safe characters so
-// tools.mcp_x_y works with dot access.
-func sanitize(s string) string {
-	return strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
-			return r
-		default:
-			return '_'
+// argsFor turns the CLI's free-form argument into tool arguments.
+func argsFor(schema any, query string) map[string]any {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return map[string]any{}
+	}
+	var obj map[string]any
+	if strings.HasPrefix(query, "{") && json.Unmarshal([]byte(query), &obj) == nil {
+		return obj
+	}
+	key := "query"
+	if m, ok := schema.(map[string]any); ok {
+		if req, ok := m["required"].([]any); ok && len(req) > 0 {
+			if k, ok := req[0].(string); ok {
+				key = k
+			}
+		} else if props, ok := m["properties"].(map[string]any); ok && len(props) == 1 {
+			for k := range props {
+				key = k
+			}
 		}
-	}, s)
+	}
+	return map[string]any{key: query}
 }

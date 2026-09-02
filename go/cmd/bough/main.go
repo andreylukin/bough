@@ -113,9 +113,35 @@ func command(args []string) (name string, rest []string, err error) {
 		return "", args, nil
 	}
 	if !commands[args[0]] {
+		if _, ok := kernel.FindCommand(args[0]); ok {
+			return args[0], args[1:], nil
+		}
 		return "", nil, fmt.Errorf("unknown command: %s (try --help)", args[0])
 	}
 	return args[0], args[1:], nil
+}
+
+// runPluginCommand dispatches `bough <name> args` to the plugin that
+// contributed it, handing over the config of the first row running
+// that plugin (from the same config source the TUI would load).
+func runPluginCommand(pc kernel.PluginCommand, args []string) {
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help" || args[0] == "-help") {
+		fmt.Fprintf(os.Stderr, "usage: bough %s %s   %s\n", pc.Name, pc.Usage, pc.Summary)
+		return
+	}
+	var cfg map[string]any
+	if rows, err := resolveConfig(false, "").load(); err == nil {
+		for _, r := range rows {
+			if r.Plugin == pc.Plugin && !r.Disabled {
+				cfg = r.Config
+				break
+			}
+		}
+	}
+	if err := pc.Run(cfg, args); err != nil {
+		fmt.Fprintf(os.Stderr, "bough %s: %v\n", pc.Name, err)
+		os.Exit(1)
+	}
 }
 
 // version is set by -ldflags "-X main.version=..."; otherwise the
@@ -167,6 +193,10 @@ func main() {
 		return
 	case "restart":
 		runRestart(args)
+		return
+	}
+	if pc, ok := kernel.FindCommand(cmd); ok && cmd != "" {
+		runPluginCommand(pc, args)
 		return
 	}
 	rowsCmd := cmd == "rows"
@@ -470,6 +500,16 @@ config:
 
 func usage() {
 	fmt.Fprint(os.Stderr, usageText)
+	if cmds := kernel.Commands(); len(cmds) > 0 {
+		fmt.Fprintln(os.Stderr, "\nplugin commands:")
+		for _, c := range cmds {
+			left := c.Name
+			if c.Usage != "" {
+				left += " " + c.Usage
+			}
+			fmt.Fprintf(os.Stderr, "  %-34s %s\n", left, c.Summary)
+		}
+	}
 }
 
 func fatal(err error) {
