@@ -77,6 +77,7 @@ type model struct {
 	ovEntries  []int64        // entry index -> seq, for ovRanges lookups
 	picking    bool           // session picker shown instead of the chat view
 	pick       int            // picker cursor index into cfg.sessions
+	sessRows   sessList       // mid-session picker list (see session.go); nil = launch picker
 	welcome    bool           // fresh-session orientation text (see welcomeView)
 	pendingAsk string         // ask id the composer routes answers to; "" = none
 	pal        palette        // "/" command palette (see palette.go)
@@ -564,8 +565,12 @@ func (m *model) handleClick(mouse tea.Mouse) tea.Cmd {
 	if handled, cmd := m.clickPalette(mouse); handled {
 		return cmd
 	}
+	if mouse.Y == m.vp.Height() && m.cfg.Load().hist != nil {
+		m.openPicker() // status bar names the session: click to switch
+		return nil
+	}
 	if mouse.Y >= m.vp.Height() {
-		return nil // status bar / composer
+		return nil // composer
 	}
 	row := mouse.Y + m.vp.YOffset()
 	for _, r := range m.ranges {

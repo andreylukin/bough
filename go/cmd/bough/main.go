@@ -266,8 +266,9 @@ func main() {
 	ctx.Provide("config-set", func(newSets ...string) error {
 		return runtimeSet(ctx, src, ov, newSets...)
 	})
+	provideChoose(ctx, src, ov)
 	if needPicker {
-		providePicker(ctx, src, ov)
+		providePicker(ctx)
 	}
 
 	if err := ctx.Mount(rows); err != nil {

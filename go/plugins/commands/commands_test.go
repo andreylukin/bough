@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/andreylukin/bough/kernel"
-	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
 )
 
@@ -213,7 +212,9 @@ func TestCostReportsUsage(t *testing.T) {
 	}
 }
 
-func TestSessionsWithoutHistoryService(t *testing.T) {
+// /sessions opens the picker; /sessions <id> is a resume action for
+// that id (a trailing .jsonl is tolerated).
+func TestSessionsOpensPickerOrResumesID(t *testing.T) {
 	ctx := kernel.NewContext()
 	if err := (plugin{}).Apply(ctx, nil); err != nil {
 		t.Fatal(err)
@@ -222,43 +223,17 @@ func TestSessionsWithoutHistoryService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Run("sessions", ""); err == nil || !strings.Contains(err.Error(), "no history service") {
-		t.Fatalf("/sessions without history = %v", err)
+	var a UIAction
+	if _, err := r.Run("sessions", ""); !errors.As(err, &a) || a != ActionOpenPicker {
+		t.Fatalf("/sessions = %v, want %q", err, ActionOpenPicker)
 	}
-}
-
-func TestSessionsListsStoredSessions(t *testing.T) {
-	dir := t.TempDir()
-	s, err := history.Open(dir + "/2026-09-01T00:00:00Z-1.jsonl")
-	if err != nil {
-		t.Fatal(err)
+	if _, err := r.Run("sessions", " 2026-09-01T00:00:00Z-1.jsonl "); !errors.As(err, &a) {
+		t.Fatalf("/sessions <id> = %v, want a UIAction", err)
 	}
-	s.Append("input", map[string]any{"text": "first words of the session"})
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
+	if id, ok := ResumeID(a); !ok || id != "2026-09-01T00:00:00Z-1" {
+		t.Fatalf("ResumeID(%q) = %q, %v", a, id, ok)
 	}
-	s2, err := history.OpenExisting(s.Path())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s2.Close()
-
-	ctx := kernel.NewContext()
-	ctx.Provide("history", s2)
-	if err := (plugin{}).Apply(ctx, nil); err != nil {
-		t.Fatal(err)
-	}
-	r, err := kernel.Get[*Registry](ctx, "commands")
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := r.Run("sessions", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"2026-09-01T00:00:00Z-1", "1 entries", "first words of the session"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("/sessions output missing %q:\n%s", want, out)
-		}
+	if _, ok := ResumeID(ActionOpenPicker); ok {
+		t.Fatal("open-picker is not a resume action")
 	}
 }

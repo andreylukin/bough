@@ -63,7 +63,7 @@ func TestLatestSessionSkipsEmpty(t *testing.T) {
 		}
 		return p
 	}
-	if _, err := latestSession(dir); err == nil {
+	if _, err := latestSessionIn(dir, "/nowhere"); err == nil {
 		t.Fatal("empty dir: want error")
 	}
 	full := write("2026-01-01T00-00-00.jsonl", `{"seq":1,"at":"2026-01-01T00:00:00Z","kind":"input","data":{"text":"hi"}}`+"\n")
@@ -71,7 +71,7 @@ func TestLatestSessionSkipsEmpty(t *testing.T) {
 	if err := os.Chtimes(empty, time.Now().Add(time.Hour), time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	got, err := latestSession(dir)
+	got, err := latestSessionIn(dir, "/nowhere")
 	if err != nil {
 		t.Fatal(err)
 	}

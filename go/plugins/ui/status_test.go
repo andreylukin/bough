@@ -27,10 +27,15 @@ func TestStatusBarShowsUsageAndKeysHint(t *testing.T) {
 	cfg := cfgWith(t, nil, nil, h)
 	d := newDrv(t, 80, 24, cfg)
 	p := d.plain()
-	if strings.Contains(p, "entries") || strings.Contains(p, ".jsonl") {
+	// The bar is the second-to-last line (the composer sits below it);
+	// the transcript's "resumed …" row may name the session, the bar
+	// never does.
+	lines := strings.Split(strings.TrimRight(p, "\n"), "\n")
+	bar := lines[len(lines)-2]
+	if strings.Contains(bar, "entries") || strings.Contains(bar, ".jsonl") || strings.Contains(bar, "abc") {
 		t.Errorf("status bar should not show the session file:\n%s", p)
 	}
-	if !strings.Contains(p, "? keys") {
+	if !strings.Contains(bar, "? keys") {
 		t.Errorf("status bar missing the keys hint:\n%s", p)
 	}
 	cfg.usage = fakeUsage{llm.Usage{InputTokens: 1200, OutputTokens: 300, Cost: 0.0042, Priced: true}}

@@ -257,6 +257,10 @@ func (m *model) dispatchAs(line, echo string) tea.Cmd {
 // perform applies a UIAction: the effect is the command's visible
 // answer. Unknown actions fail loud as an error block.
 func (m *model) perform(act commands.UIAction) tea.Cmd {
+	if id, ok := commands.ResumeID(act); ok {
+		m.resumeID(id)
+		return nil
+	}
 	switch act {
 	case commands.ActionClear:
 		// The visible transcript only; history is untouched. The
@@ -272,9 +276,7 @@ func (m *model) perform(act commands.UIAction) tea.Cmd {
 	case commands.ActionQuit:
 		return tea.Quit
 	case commands.ActionOpenPicker:
-		m.picking = true
-		m.pick = 0
-		m.syncPalette()
+		m.openPicker()
 	case commands.ActionKeys:
 		m.showKeys()
 	default:

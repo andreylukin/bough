@@ -28,7 +28,7 @@ func runLog(args []string) {
 
 	path := fs.Arg(0)
 	if path == "" {
-		p, err := latestSession(sessionsDir())
+		p, err := latestSession()
 		if err != nil {
 			fatal(err)
 		}
@@ -71,20 +71,34 @@ func runLog(args []string) {
 	}
 }
 
-// latestSession returns the newest session file in dir that has at
-// least one entry: `bough rows` and an aborted launch each leave an
-// empty file behind, and "latest" must never be one of those.
-func latestSession(dir string) (string, error) {
-	infos, err := history.List(dir)
+// latestSession returns the newest session recorded in this directory
+// (falling back to the newest anywhere, with a stderr note); with no
+// sessions at all it says so.
+func latestSession() (string, error) {
+	return latestSessionIn(sessionsDir(), cwd())
+}
+
+func latestSessionIn(dir, here string) (string, error) {
+	all, err := history.List(dir)
 	if err != nil {
 		return "", err
 	}
-	for _, in := range infos {
+	// `bough rows` and an aborted launch each leave an empty file
+	// behind; "latest" must never be one of those.
+	var infos []history.SessionInfo
+	for _, in := range all {
 		if in.Entries > 0 {
-			return in.Path, nil
+			infos = append(infos, in)
 		}
 	}
-	return "", fmt.Errorf("no session files in %s", dir)
+	if len(infos) == 0 {
+		return "", fmt.Errorf("no sessions in %s", dir)
+	}
+	if mine := forCwd(infos, here); len(mine) > 0 {
+		return mine[0].Path, nil
+	}
+	fmt.Fprintln(os.Stderr, "bough: no session for this directory, showing newest")
+	return infos[0].Path, nil
 }
 
 func fileExists(p string) bool {

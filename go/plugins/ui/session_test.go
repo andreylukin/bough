@@ -80,8 +80,8 @@ func TestProgramReplaysResumedTranscript(t *testing.T) {
 	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
 	fm := tm.FinalModel(t).(model)
-	if len(fm.blocks) != 5 {
-		t.Errorf("replayed %d blocks, want 5 (user/assistant/code/result/done)", len(fm.blocks))
+	if len(fm.blocks) != 6 {
+		t.Errorf("replayed %d blocks, want 6 (user/assistant/code/result/done + resumed row)", len(fm.blocks))
 	}
 	if fm.running {
 		t.Error("a replayed transcript must not be mid-turn")
@@ -250,8 +250,8 @@ func TestReplayIsIdempotent(t *testing.T) {
 	t.Parallel()
 	d := newDrv(t, 80, 24, cfgWith(t, nil, nil, seededHist()))
 	n := len(d.m.blocks)
-	if n != 5 {
-		t.Fatalf("replayed %d blocks, want 5", n)
+	if n != 6 { // 5 entries + the resumed row
+		t.Fatalf("replayed %d blocks, want 6", n)
 	}
 	d.m.replay() // a second replay must not double-render
 	if got := len(d.m.blocks); got != n {
