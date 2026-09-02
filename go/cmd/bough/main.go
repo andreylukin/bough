@@ -16,6 +16,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/andreylukin/bough/kernel"
+	_ "github.com/andreylukin/bough/plugins/ask"
 	_ "github.com/andreylukin/bough/plugins/codemode"
 	_ "github.com/andreylukin/bough/plugins/commands"
 	_ "github.com/andreylukin/bough/plugins/contextmd"
@@ -26,8 +27,10 @@ import (
 	_ "github.com/andreylukin/bough/plugins/loop"
 	_ "github.com/andreylukin/bough/plugins/mcp"
 	_ "github.com/andreylukin/bough/plugins/skills"
+	_ "github.com/andreylukin/bough/plugins/todo"
 	_ "github.com/andreylukin/bough/plugins/tools"
 	_ "github.com/andreylukin/bough/plugins/ui"
+	_ "github.com/andreylukin/bough/plugins/workers"
 )
 
 // setFlags collects repeatable --set id.key=value overrides.

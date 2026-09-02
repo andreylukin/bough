@@ -27,13 +27,29 @@ func (m *model) replay() {
 	}
 	for _, e := range cfg.hist.Entries() {
 		text, _ := e.Data["text"].(string)
-		if e.Kind == "input" {
+		switch e.Kind {
+		case "input":
 			m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: text})
 			m.nextID++
-			continue
+		case "ask":
+			q, _ := e.Data["question"].(string)
+			id, _ := e.Data["id"].(string)
+			m.addEvent(Event{Kind: "ask", Text: q, ID: id, Options: strList(e.Data["options"])})
+		case "ask/answer":
+			id, _ := e.Data["id"].(string)
+			for i := range m.blocks {
+				if b := &m.blocks[i]; b.kind == "ask" && b.askID == id {
+					b.answered, b.answer = true, text
+				}
+			}
+			if m.pendingAsk == id {
+				m.clearPendingAsk()
+			}
+		default:
+			m.addEvent(Event{Kind: e.Kind, Text: text})
 		}
-		m.addEvent(Event{Kind: e.Kind, Text: text})
 	}
+	m.expireAsks()    // an ask with no answer entry replays as expired
 	m.running = false // a replayed transcript is never mid-turn
 	m.refresh()
 	m.vp.GotoBottom()

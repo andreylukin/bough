@@ -16,10 +16,13 @@ func init() {
 	kernel.Register("ui", func() kernel.Plugin { return &plugin{} })
 }
 
-// Event is a normalized loop/event payload.
+// Event is a normalized loop/event payload. ID and Options are only
+// set for kind "ask" (the ask plugin's event carries them).
 type Event struct {
-	Kind string
-	Text string
+	Kind    string
+	Text    string
+	ID      string
+	Options []string
 }
 
 type plugin struct{}
@@ -54,7 +57,11 @@ func (p *plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		if a, err := kernel.Get[historyAppender](ctx, "history"); err == nil {
 			hlog = a
 		}
-		ctx.Effect(runHeadless(inputs, b, cmds, hlog))
+		var ask askAnswers
+		if a, err := kernel.Get[askAnswers](ctx, "ask-answers"); err == nil {
+			ask = a
+		}
+		ctx.Effect(runHeadless(inputs, b, cmds, hlog, ask))
 		return nil
 	}
 
@@ -143,7 +150,16 @@ func eventOf(payload any) Event {
 		k := rv.FieldByName("Kind")
 		t := rv.FieldByName("Text")
 		if k.IsValid() && t.IsValid() && k.Kind() == reflect.String && t.Kind() == reflect.String {
-			return Event{Kind: k.String(), Text: t.String()}
+			ev := Event{Kind: k.String(), Text: t.String()}
+			if f := rv.FieldByName("ID"); f.IsValid() && f.Kind() == reflect.String {
+				ev.ID = f.String()
+			}
+			if f := rv.FieldByName("Options"); f.IsValid() && f.CanInterface() {
+				if opts, ok := f.Interface().([]string); ok {
+					ev.Options = opts
+				}
+			}
+			return ev
 		}
 	}
 	return Event{Kind: "event", Text: fmt.Sprint(payload)}

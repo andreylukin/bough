@@ -40,7 +40,9 @@ and are wired together only through service keys:
 | `skills`   | plugins/skills     | loop (optional) |
 | `context-md` | plugins/contextmd | loop (optional) |
 | `history`  | plugins/history    | loop, ui (optional) |
-| `cognition` | plugins/initjs    | loop (optional) |
+| `todo`     | plugins/todo       | (tools.todo, /todo) |
+| `ask-answers` | plugins/ask     | ui              |
+| `cognition` | plugins/initjs, plugins/todo (chained) | loop (optional) |
 | `projection` | plugins/initjs   | loop (optional) |
 | `theme`    | plugins/initjs     | ui (optional)   |
 | `keymap`   | plugins/initjs     | ui (optional)   |
@@ -183,6 +185,40 @@ Register your own from init.js:
 ```js
 bough.command("shout", "<text>", "uppercase the args", (args) => args.toUpperCase());
 ```
+
+## Claude-Code parity: subagents, todo, ask
+
+Three plugins close the day-to-day gap with Claude Code. Each is one
+`bough.yml` row — delete or `disabled: true` the row to turn it off.
+
+**Subagents (`workers` row).** The model calls `tools.spawn(task)` from
+a code block: a bounded child agent (its own step loop, same LLM and
+tools, depth 1 — a child cannot spawn) runs the task and its final
+plain-text reply is the tool's return value. The child's activity
+streams into the transcript and history as `sub:assistant`, `sub:code`,
+`sub:result`, `sub:error`, `sub:done` entries tagged with a worker
+number. Config: `max_spawns` (per parent turn, default 4), `max_steps`
+(child steps, default 6).
+
+**TODO list (`todo` row).** Three surfaces over one list: the `/todo`
+command (`/todo`, `/todo add <text>`, `/todo done <id>`, `/todo
+clear`), `tools.todo` for the model (`add(text) -> id`, `done(id)`,
+`list()`), and a live "Current TODO list:" section appended to the
+system prompt each step (`inject_prompt: false` turns that off). State
+is derived from history entries (`todo/add`, `todo/done`, `todo/clear`)
+so the list survives session resume; ids are never reused. Rendered
+lines are Claude-style checkboxes: `[ ] 1 buy milk`, `[x] 2 done
+thing`.
+
+**Interactive questions (`ask` row).** The model calls
+`tools.ask(question, options...)`: the turn blocks, the UI shows the
+question with numbered options, and your next composer submission is
+the answer — a bare number picks that option, anything else is
+freeform, clicking an option row answers with it, esc declines. The
+answer returns as the tool's output and both halves are history entries
+(`ask`, `ask/answer`). Headless: `[ask] question` + numbered lines
+print, the next stdin line answers. Unanswered asks expire (config
+`timeout_minutes`, default 10) and render as `(expired)`.
 
 ## TUI
 

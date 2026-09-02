@@ -129,7 +129,7 @@ func TestMouseClickToggles(t *testing.T) {
 	// Clicks on non-collapsible blocks do nothing.
 	before := m.blocks[0]
 	m = clickAt(m, m.ranges[0].start-m.vp.YOffset())
-	if m.blocks[0] != before {
+	if b := m.blocks[0]; b.kind != before.kind || b.text != before.text || b.collapsed != before.collapsed {
 		t.Error("click on assistant block should be a no-op")
 	}
 }

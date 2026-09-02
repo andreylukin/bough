@@ -75,10 +75,14 @@ type Projection interface {
 }
 
 // Event is the payload emitted on "loop/event".
-// Kind is one of: "assistant", "code", "result", "error", "done".
+// Kind is one of: "assistant", "code", "result", "error", "done" from
+// the loop itself; other plugins may emit further kinds (e.g. workers'
+// "sub:*" subagent events). Data carries optional extra payload (e.g.
+// {"worker": N} on sub:* events); nil for the loop's own events.
 type Event struct {
 	Kind string
 	Text string
+	Data map[string]any
 }
 
 const maxSteps = 10
@@ -242,6 +246,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		reply, err := r.llm.Complete(ctx, sys, r.project())
 		if err != nil {
 			note("error", err.Error(), nil)
+			note("done", "", nil) // every turn ends with a done, even on llm failure
 			return err
 		}
 		note("assistant", reply, nil)

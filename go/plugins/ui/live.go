@@ -41,6 +41,13 @@ type historyAppender interface {
 	Append(kind string, data map[string]any) history.Entry
 }
 
+// askAnswers is the optional "ask-answers" service seam (the ask
+// plugin's Asker satisfies it): resolving a pending tools.ask unblocks
+// the tool call with text as its return value.
+type askAnswers interface {
+	Answer(id, text string) error
+}
+
 // uiCfg is one mount's immutable UI configuration; models read the
 // current one through liveCfg on every render, so a remount (new
 // theme/keymap row, history landing) restyles running views.
@@ -58,6 +65,10 @@ type uiCfg struct {
 	// ("command"/"system" entries); nil is fine (no recording).
 	cmds commandsView
 	hlog historyAppender
+
+	// "ask" seam: nil when no ask plugin is mounted (ask events then
+	// render pending forever and the composer never routes answers).
+	ask askAnswers
 
 	// Session-resume seam (all optional, provided by the launcher):
 	// "session-picker" marker present => a new model starts in the
@@ -158,6 +169,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	cfg.mdStyle = mdStyle
 	cfg.cmds = cmds
 	cfg.hlog = hlog
+	if a, err := kernel.Get[askAnswers](ctx, "ask-answers"); err == nil {
+		cfg.ask = a
+	}
 	if _, err := kernel.Get[any](ctx, "session-picker"); err == nil {
 		cfg.picker = true
 	}

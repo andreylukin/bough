@@ -26,9 +26,17 @@ const collapseAt = 3
 // (blocks are append-only) so collapse/focus state survives appends.
 type block struct {
 	id        int
-	kind      string // user, assistant, code, result, error, done
+	kind      string // user, assistant, code, result, error, done, ask, ...
 	text      string
 	collapsed bool
+
+	// ask blocks only (see ask.go): the pending question's options and
+	// id, and how it resolved.
+	askID    string
+	options  []string
+	answer   string
+	answered bool
+	expired  bool // turn ended (or replay found no answer entry) unanswered
 }
 
 // collapsible blocks get a disclosure header and can be toggled.
@@ -64,6 +72,7 @@ type model struct {
 	ovEntries  []int64        // entry index -> seq, for ovRanges lookups
 	picking    bool           // session picker shown instead of the chat view
 	pick       int            // picker cursor index into cfg.sessions
+	pendingAsk string         // ask id the composer routes answers to; "" = none
 	pal        palette        // "/" command palette (see palette.go)
 	flash      string
 	md         *glamour.TermRenderer
@@ -263,6 +272,8 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		return th["system"].Render(b.text)
 	case "error":
 		return th["error"].Render("✗ " + b.text)
+	case "ask":
+		return m.renderAsk(b, th)
 	case "done":
 		w := m.width - 2
 		if w > 40 {
@@ -366,10 +377,17 @@ func (m *model) addEvent(ev Event) {
 	switch ev.Kind {
 	case "done":
 		m.running = false
+		m.expireAsks() // a turn never ends with a live ask
 		m.blocks = append(m.blocks, block{id: id, kind: "done"})
 	case "error":
 		m.running = false
+		m.expireAsks() // e.g. the ask timed out into a run error
 		m.blocks = append(m.blocks, block{id: id, kind: "error", text: ev.Text})
+	case "ask":
+		m.blocks = append(m.blocks, block{id: id, kind: "ask", text: ev.Text,
+			askID: ev.ID, options: ev.Options})
+		m.pendingAsk = ev.ID
+		m.input.Placeholder = "(answering)"
 	case "code", "result":
 		if ev.Kind == "code" {
 			m.dedupeCode(ev.Text)
@@ -462,6 +480,13 @@ func (m *model) handleClick(mouse tea.Mouse) tea.Cmd {
 	for _, r := range m.ranges {
 		if row >= r.start && row < r.end {
 			b := &m.blocks[r.idx]
+			if b.kind == "ask" && b.askID == m.pendingAsk && !b.answered && !b.expired {
+				// Option rows sit directly under the question line.
+				if off := row - r.start; off >= 1 && off <= len(b.options) {
+					m.answerAsk(b, b.options[off-1])
+				}
+				return nil
+			}
 			if b.collapsible() {
 				b.collapsed = !b.collapsed
 				m.focusID = b.id
@@ -577,6 +602,13 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// A pending ask owns esc: decline it (the literal "(declined)" is
+	// the tool's return value, so the model knows it was waved off).
+	if key == "esc" && m.pendingAsk != "" && !m.inspecting {
+		m.answerPending("(declined)")
+		return m, nil
+	}
+
 	switch cfg.action[key] {
 	case "quit":
 		return m, tea.Quit
@@ -653,6 +685,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// through the commands service (absent service: plain text).
 		if strings.HasPrefix(line, "/") && cfg.cmds != nil {
 			return m, m.dispatch(line)
+		}
+		// A pending ask routes the submission as its ANSWER: a number
+		// picks that option, anything else is freeform text.
+		if m.pendingAsk != "" && m.answerPending(line) {
+			return m, nil
 		}
 		m.input.Reset()
 		m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: line})

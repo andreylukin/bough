@@ -4,8 +4,11 @@ package codemode
 
 import (
 	"fmt"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dop251/goja"
@@ -14,13 +17,53 @@ import (
 )
 
 // CodeMode is one persistent goja VM. Not safe for concurrent Run;
-// a mutex serializes all access.
+// a mutex serializes all access. The mutex is re-entrant for the
+// goroutine that holds it (see lock): a Go tool called from inside Run
+// may re-enter the VM (e.g. workers' tools.spawn running a subagent's
+// code blocks), which is safe because the VM sits idle waiting for the
+// native call to return. Cross-goroutine callers still serialize.
 type CodeMode struct {
 	mu      sync.Mutex
+	owner   atomic.Int64 // goroutine id holding mu; 0 when free
 	vm      *goja.Runtime
 	tools   *goja.Object
 	timeout time.Duration
 	out     strings.Builder
+	timer   *time.Timer // innermost Run's interrupt timer; see Pause
+}
+
+// gid returns the current goroutine id (parsed from runtime.Stack),
+// used only to detect same-goroutine re-entry in lock.
+func gid() int64 {
+	var buf [64]byte
+	n := runtime.Stack(buf[:], false)
+	s := strings.TrimPrefix(string(buf[:n]), "goroutine ")
+	if i := strings.IndexByte(s, ' '); i > 0 {
+		if id, err := strconv.ParseInt(s[:i], 10, 64); err == nil {
+			return id
+		}
+	}
+	return -1
+}
+
+// lock takes the VM mutex, or reports nested=true when this goroutine
+// already holds it (a tool fn re-entering the VM mid-Run).
+func (cm *CodeMode) lock() (nested bool) {
+	g := gid()
+	if cm.owner.Load() == g {
+		return true
+	}
+	cm.mu.Lock()
+	cm.owner.Store(g)
+	return false
+}
+
+func (cm *CodeMode) unlock(nested bool) {
+	if nested {
+		return
+	}
+	cm.owner.Store(0)
+	cm.mu.Unlock()
 }
 
 // New builds a VM with a "tools" object and a console.log that
@@ -47,26 +90,43 @@ func New(timeout time.Duration) *CodeMode {
 // func(args...) (string, error); goja converts a non-nil trailing
 // error into a JS exception.
 func (cm *CodeMode) RegisterTool(name string, fn any) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	nested := cm.lock()
+	defer cm.unlock(nested)
 	cm.tools.Set(name, fn)
 }
 
 // Run executes code with an interrupt after the timeout. Returns any
 // console output plus the final expression value if non-undefined.
+// A nested Run (a subagent's code block executing while the parent's
+// block waits on its tool call) saves and restores the parent's console
+// output around the child's; the child's ClearInterrupt may drop a
+// concurrently-fired outer timeout (accepted v0), and the outer timer
+// keeps ticking, so a long child run can still trip the parent's
+// timeout.
 func (cm *CodeMode) Run(code string) (string, error) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	nested := cm.lock()
+	defer cm.unlock(nested)
+	saved := ""
+	if nested {
+		saved = cm.out.String()
+	}
 	cm.out.Reset()
 
 	timer := time.AfterFunc(cm.timeout, func() {
 		cm.vm.Interrupt("codemode: timeout after " + cm.timeout.String())
 	})
+	prevTimer := cm.timer // nested Run: restore the parent's timer after
+	cm.timer = timer
 	v, err := cm.vm.RunString(code)
+	cm.timer = prevTimer
 	timer.Stop()
 	cm.vm.ClearInterrupt()
 
 	out := cm.out.String()
+	if nested {
+		cm.out.Reset()
+		cm.out.WriteString(saved)
+	}
 	if err != nil {
 		return out, err
 	}
@@ -76,13 +136,27 @@ func (cm *CodeMode) Run(code string) (string, error) {
 	return out, nil
 }
 
+// Pause stops the current Run's interrupt timer so a tool may block on
+// external input (e.g. tools.ask waiting on the user) longer than the
+// script timeout; the returned resume re-arms a fresh full timeout.
+// Only meaningful from inside a running tool (the VM goroutine, under
+// the Run lock); outside a Run it is a no-op.
+func (cm *CodeMode) Pause() func() {
+	t := cm.timer
+	if t == nil {
+		return func() {}
+	}
+	t.Stop()
+	return func() { t.Reset(cm.timeout) }
+}
+
 // RunHook runs fileBody as the body of function(event){...} in the same
 // VM (same mutex, same globals and tools.*) and calls it with event.
 // A returned object comes back as map[string]any; no return (undefined
 // or null) is nil, nil; a non-object return or JS exception is an error.
 func (cm *CodeMode) RunHook(fileBody string, event map[string]any) (map[string]any, error) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	nested := cm.lock()
+	defer cm.unlock(nested)
 
 	v, err := cm.vm.RunString("(function(event){\n" + fileBody + "\n})")
 	if err != nil {
@@ -116,8 +190,8 @@ func (cm *CodeMode) RunHook(fileBody string, event map[string]any) (map[string]a
 // the VM mutex. For extension plugins (init-js) that define globals or
 // run whole scripts; fn must not retain the runtime past the call.
 func (cm *CodeMode) WithVM(fn func(vm *goja.Runtime, tools *goja.Object) error) error {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	nested := cm.lock()
+	defer cm.unlock(nested)
 	return fn(cm.vm, cm.tools)
 }
 
@@ -126,8 +200,8 @@ func (cm *CodeMode) WithVM(fn func(vm *goja.Runtime, tools *goja.Object) error) 
 // Exported to Go inside the lock; a JS exception or interrupt is an
 // error, never a panic.
 func (cm *CodeMode) Call(fn goja.Callable, args ...any) (out any, err error) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	nested := cm.lock()
+	defer cm.unlock(nested)
 	defer func() {
 		if r := recover(); r != nil {
 			out, err = nil, fmt.Errorf("codemode: call panic: %v", r)

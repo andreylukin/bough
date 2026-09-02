@@ -140,6 +140,13 @@ Provides the `"cognition"` service: `fn(baseSystem) -> string`
 transforms or replaces the system prompt each step. A JS error is
 logged and the base prompt is used unchanged.
 
+The `todo` row also touches the system prompt: it chains onto any
+existing cognition provider, appending its "Current TODO list:" section
+to the base before your function runs — so a `bough.cognition` that
+transforms its input keeps the section, while one that ignores its
+input drops it. Opt the section out with `inject_prompt: false` on the
+todo row.
+
 ### bough.project(fn)
 
 Provides the `"projection"` service: `fn(entries) -> [{role, content}]`
@@ -152,8 +159,12 @@ Entries arrive as plain objects:
 ```
 
 Kinds: `input`, `assistant`, `code`, `result`, `error`, `done`, plus
-`system` (dispatched slash-command output; carries no model-visible
-text in the built-in projection). A JS
+kinds the built-in projection deliberately ignores: `command` /
+`system` (dispatched slash-command lines and output), `ask` /
+`ask/answer` (tools.ask questions and answers — the answer reaches the
+model as tool output, not as an entry), `sub:*` (subagent activity),
+and `todo/add` / `todo/done` / `todo/clear` (TODO mutations — the list
+reaches the model via the system prompt). A JS
 error or bad return shape is logged and the built-in projection
 (input→user, assistant→assistant, result→user `[tool output]`) is used
 for that step.
