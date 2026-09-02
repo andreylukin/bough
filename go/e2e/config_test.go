@@ -36,10 +36,10 @@ func TestEmbeddedConfigHeadlessTurn(t *testing.T) {
 		t.Fatalf("run: %v\noutput:\n%s", err, out)
 	}
 	mustContain(t, string(out),
-		"bough: using embedded default config",
 		"[assistant] echo: hello from nowhere",
 		"[done]",
 	)
+	mustNotContain(t, string(out), "bough: using") // headless stderr stays quiet
 }
 
 func TestEmbeddedConfigRows(t *testing.T) {
@@ -50,5 +50,12 @@ func TestEmbeddedConfigRows(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code %d; output:\n%s", code, out)
 	}
-	mustContain(t, out, "bough: using embedded default config", "llm", "ui")
+	mustContain(t, out, "llm", "ui")
+	mustNotContain(t, out, "bough: using") // a subcommand's stderr stays quiet
+
+	out, code = runCLI(t, home, cwd, "rows", "--verbose")
+	if code != 0 {
+		t.Fatalf("exit code %d; output:\n%s", code, out)
+	}
+	mustContain(t, out, "bough: using embedded default config")
 }

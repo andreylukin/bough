@@ -28,7 +28,11 @@ func sessionsDir() string {
 // runSessions is `bough sessions`: list stored sessions, newest first.
 func runSessions(args []string) {
 	if len(args) > 0 {
-		fatal(fmt.Errorf("sessions takes no arguments, got %v", args))
+		fmt.Fprintln(os.Stderr, "usage: bough sessions   (no arguments; lists ~/.bough/history newest first)")
+		if args[0] == "-h" || args[0] == "--help" || args[0] == "-help" {
+			return
+		}
+		os.Exit(2)
 	}
 	dir := sessionsDir()
 	infos, err := history.List(dir)

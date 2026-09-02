@@ -154,7 +154,7 @@ func (c *Context) settle() {
 		c.mu.Unlock()
 		for i := len(stale) - 1; i >= 0; i-- {
 			st := stale[i]
-			fmt.Fprintf(os.Stderr, "kernel: row %q reloading (service %q changed)\n",
+			Logf("kernel: row %q reloading (service %q changed)\n",
 				st.row.ID, keys[st.row.ID])
 			c.disposeRow(st)
 			remounted[st.row.ID] = true

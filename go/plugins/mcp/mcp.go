@@ -78,7 +78,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			session.Close()
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "mcp: server %q: %d tools bound\n", name, n)
+		kernel.Logf("mcp: server %q: %d tools bound\n", name, n)
 		sessions = append(sessions, session)
 	}
 	ctx.Effect(func() {
