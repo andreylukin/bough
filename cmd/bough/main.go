@@ -17,6 +17,7 @@ import (
 
 	"github.com/andreylukin/bough/kernel"
 	_ "github.com/andreylukin/bough/plugins/codemode"
+	_ "github.com/andreylukin/bough/plugins/commands"
 	_ "github.com/andreylukin/bough/plugins/contextmd"
 	_ "github.com/andreylukin/bough/plugins/history"
 	_ "github.com/andreylukin/bough/plugins/hooks"

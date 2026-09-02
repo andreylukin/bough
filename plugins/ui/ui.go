@@ -43,7 +43,18 @@ func (p *plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			b.publish(eventOf(payload))
 		})
 		ctx.Effect(dispose)
-		ctx.Effect(runHeadless(inputs, b))
+		// Optional seams, like the tui/web modes: without a commands
+		// service a "/" line is plain text; without history the
+		// dispatches just aren't recorded.
+		var cmds commandsView
+		if c, err := kernel.Get[commandsView](ctx, "commands"); err == nil {
+			cmds = c
+		}
+		var hlog historyAppender
+		if a, err := kernel.Get[historyAppender](ctx, "history"); err == nil {
+			hlog = a
+		}
+		ctx.Effect(runHeadless(inputs, b, cmds, hlog))
 		return nil
 	}
 

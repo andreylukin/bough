@@ -19,6 +19,12 @@
 - id: codemode
   plugin: codemode
 
+# Slash-command registry ("/help", "/quit", ...). The ui palette and
+# dispatch read the "commands" service; init.js registers into it via
+# bough.command.
+- id: commands
+  plugin: commands
+
 # User configuration in JS: runs ~/.bough/init.js then ./.bough/init.js
 # (both optional) with a global `bough` API; may provide theme, keymap,
 # llm, cognition, projection. See docs/INIT.md.

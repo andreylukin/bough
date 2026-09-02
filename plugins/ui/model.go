@@ -64,6 +64,7 @@ type model struct {
 	ovEntries  []int64        // entry index -> seq, for ovRanges lookups
 	picking    bool           // session picker shown instead of the chat view
 	pick       int            // picker cursor index into cfg.sessions
+	pal        palette        // "/" command palette (see palette.go)
 	flash      string
 	md         *glamour.TermRenderer
 	mdCache    map[string]string // assistant markdown render cache (cleared on resize)
@@ -253,6 +254,13 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 			return m.header(b, th)
 		}
 		return m.header(b, th) + "\n" + m.box(b.text, th["result"], th["border"])
+	case "command":
+		// The dispatched "/" line: a dim echo of what was typed, so
+		// the system block below reads as its answer.
+		return "\n" + th["dim"].Render("❯ "+b.text)
+	case "system":
+		// Plain dimmed command output: not collapsible, no ● header.
+		return th["system"].Render(b.text)
 	case "error":
 		return th["error"].Render("✗ " + b.text)
 	case "done":
@@ -331,13 +339,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 
 	case tea.MouseClickMsg:
-		m.handleClick(msg.Mouse())
-		return m, nil
+		return m, m.handleClick(msg.Mouse())
 	}
 
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.syncPalette() // e.g. paste can change the draft
 	cmds = append(cmds, cmd)
 	if m.inspecting {
 		m.overlay, cmd = m.overlay.Update(msg)
@@ -436,16 +444,19 @@ func stripFence(text, want string) (string, bool) {
 // handleClick maps a left click to the block (or history entry) under
 // it and toggles its collapsed state. Wheel scrolling stays with the
 // viewports (they handle MouseWheelMsg themselves).
-func (m *model) handleClick(mouse tea.Mouse) {
+func (m *model) handleClick(mouse tea.Mouse) tea.Cmd {
 	if mouse.Button != tea.MouseLeft || m.picking {
-		return
+		return nil
 	}
 	if m.inspecting {
 		m.clickOverlay(mouse)
-		return
+		return nil
+	}
+	if handled, cmd := m.clickPalette(mouse); handled {
+		return cmd
 	}
 	if mouse.Y >= m.vp.Height() {
-		return // status bar / composer
+		return nil // status bar / composer
 	}
 	row := mouse.Y + m.vp.YOffset()
 	for _, r := range m.ranges {
@@ -456,9 +467,10 @@ func (m *model) handleClick(mouse tea.Mouse) {
 				m.focusID = b.id
 				m.refresh()
 			}
-			return
+			return nil
 		}
 	}
+	return nil
 }
 
 // clickOverlay toggles the inline pretty-JSON view of the history
@@ -556,6 +568,15 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.flash = ""
 	key := msg.String()
 
+	// The palette owns Up/Down/Tab/Enter/Esc while it is open, and
+	// nothing else: what it passes on falls through to the keymap
+	// waterfall and the composer (which re-filters).
+	if m.pal.open && !m.inspecting {
+		if handled, cmd := m.paletteKey(key); handled {
+			return m, cmd
+		}
+	}
+
 	switch cfg.action[key] {
 	case "quit":
 		return m, tea.Quit
@@ -573,6 +594,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "clear_input":
 		m.input.Reset()
+		m.syncPalette()
 		return m, nil
 	case "block_next":
 		if !m.inspecting {
@@ -618,6 +640,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.refreshOverlay()
 			m.overlay.GotoBottom()
 		}
+		m.syncPalette() // the palette is inert under the inspector
 		return m, nil
 	}
 
@@ -625,6 +648,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		line := strings.TrimSpace(m.input.Value())
 		if line == "" {
 			return m, nil
+		}
+		// A submitted "/" line NEVER reaches the LLM: it dispatches
+		// through the commands service (absent service: plain text).
+		if strings.HasPrefix(line, "/") && cfg.cmds != nil {
+			return m, m.dispatch(line)
 		}
 		m.input.Reset()
 		m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: line})
@@ -641,6 +669,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.syncPalette()
 	return m, cmd
 }
 
@@ -739,6 +768,15 @@ func (m model) View() tea.View {
 	body := m.vp.View()
 	if m.inspecting {
 		body = m.overlay.View()
+	} else if lines := m.paletteRows(); len(lines) > 0 {
+		// The "/" palette: an overlay over the transcript's bottom
+		// rows, directly above the composer — sized to its content,
+		// never reflowing the layout under a filtering list.
+		bl := strings.Split(body, "\n")
+		if k := len(lines); len(bl) >= k {
+			copy(bl[len(bl)-k:], lines)
+			body = strings.Join(bl, "\n")
+		}
 	}
 	v := tea.NewView(body + "\n" + m.statusBar(cfg) + "\n" + m.input.View())
 	v.AltScreen = true

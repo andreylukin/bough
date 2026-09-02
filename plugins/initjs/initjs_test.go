@@ -10,6 +10,7 @@ import (
 
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/codemode"
+	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
 	"github.com/andreylukin/bough/plugins/loop"
@@ -37,6 +38,7 @@ func apply(t *testing.T, globalJS, projectJS string) (*kernel.Context, *codemode
 	ctx := kernel.NewContext()
 	cm := codemode.New(5 * time.Second)
 	ctx.Provide("codemode", cm)
+	ctx.Provide("commands", commands.NewRegistry())
 	err := plugin{}.Apply(ctx, nil)
 	return ctx, cm, err
 }
@@ -206,3 +208,85 @@ func TestSealedAfterInit(t *testing.T) {
 		t.Fatalf("live bough.tool: %v", err)
 	}
 }
+
+func TestJSCommandRegistersAndRuns(t *testing.T) {
+	ctx, _, err := apply(t, "", `
+bough.command("shout", "<text>", "make it loud", function(args) {
+  return args.toUpperCase() + "!"
+})
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := kernel.Get[*commands.Registry](ctx, "commands")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, in := range r.List() {
+		if in.Name == "shout" {
+			found = true
+			if in.Usage != "<text>" || in.Summary != "make it loud" {
+				t.Fatalf("shout info = %+v", in)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("shout not listed: %v", r.List())
+	}
+	out, err := r.Run("shout", "hey there")
+	if err != nil || out != "HEY THERE!" {
+		t.Fatalf("Run shout = (%q, %v)", out, err)
+	}
+}
+
+func TestJSCommandErrorSurfaces(t *testing.T) {
+	ctx, _, err := apply(t, "", `
+bough.command("boom", "", "always fails", function() { throw new Error("kaboom-742") })
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := kernel.Get[*commands.Registry](ctx, "commands")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := r.Run("boom", "")
+	if runErr == nil || !strings.Contains(runErr.Error(), "kaboom-742") || !strings.Contains(runErr.Error(), "/boom") {
+		t.Fatalf("Run boom error = %v", runErr)
+	}
+}
+
+func TestJSCommandNonStringReturnErrors(t *testing.T) {
+	ctx, _, err := apply(t, "", `
+bough.command("num", "", "returns a number", function() { return 42 })
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := kernel.Get[*commands.Registry](ctx, "commands")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, runErr := r.Run("num", ""); runErr == nil || !strings.Contains(runErr.Error(), "not string") {
+		t.Fatalf("Run num error = %v", runErr)
+	}
+}
+
+func TestJSCommandBadArgsFailApply(t *testing.T) {
+	if _, _, err := apply(t, "", `bough.command("x", "usage")`); err == nil {
+		t.Fatal("bough.command with 2 args should fail apply")
+	}
+	if _, _, err := apply(t, "", `bough.command("", "", "", function(){})`); err == nil {
+		t.Fatal("bough.command with empty name should fail apply")
+	}
+}
+
+func TestJSCommandDuplicateBuiltinFailsApply(t *testing.T) {
+	_, _, err := apply(t, "", `bough.command("dup", "", "", function(){return ""})
+bough.command("dup", "", "", function(){return ""})`)
+	if err == nil || !strings.Contains(err.Error(), "already registered") {
+		t.Fatalf("duplicate command error = %v", err)
+	}
+}
+

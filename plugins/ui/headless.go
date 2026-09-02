@@ -2,11 +2,15 @@ package ui
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/andreylukin/bough/plugins/commands"
 )
 
 // Headless mode reads lines from stdin into inputs and prints loop
@@ -22,6 +26,8 @@ var (
 	hlOnce    sync.Once
 	hlMu      sync.Mutex
 	hlInputs  chan<- string // current mount's inputs; nil while unmounted
+	hlCmds    commandsView  // current mount's commands service; nil = "/" is plain text
+	hlHist    historyAppender
 	hlPending atomic.Int64
 	hlTick    = make(chan struct{}, 1)
 )
@@ -31,7 +37,7 @@ var (
 // inputs so a reload never sends into a closed channel. The printer
 // goroutine for a disposed mount leaks quietly (its broadcaster stops
 // publishing); one idle goroutine per reload is accepted.
-func runHeadless(inputs chan<- string, b *broadcaster) func() {
+func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog historyAppender) func() {
 	events, _ := b.subscribe()
 	go func() {
 		for ev := range events {
@@ -48,12 +54,16 @@ func runHeadless(inputs chan<- string, b *broadcaster) func() {
 
 	hlMu.Lock()
 	hlInputs = inputs
+	hlCmds = cmds
+	hlHist = hlog
 	hlMu.Unlock()
 	hlOnce.Do(func() { go headlessPump() })
 
 	return func() {
 		hlMu.Lock()
 		hlInputs = nil
+		hlCmds = nil
+		hlHist = nil
 		hlMu.Unlock()
 	}
 }
@@ -63,6 +73,9 @@ func headlessPump() {
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := sc.Text()
+		if strings.HasPrefix(line, "/") && hlDispatch(line) {
+			continue // dispatched: never reaches the loop/LLM
+		}
 		hlPending.Add(1)
 		for {
 			hlMu.Lock()
@@ -81,6 +94,52 @@ func headlessPump() {
 	}
 
 	// EOF: drain until every sent line saw its "done", or events go idle.
+	drainHeadless()
+	interruptSelf()
+}
+
+// hlDispatch runs a "/" line through the commands service, printing
+// "[system] <output>" — the line never reaches the loop/LLM. False
+// when no commands service is mounted ("/" is then plain text). The
+// UI-owned actions have no UI here: quit stops the process like stdin
+// EOF; the rest echo the command name as the notice (M27: output or a
+// reason). Dispatches are recorded as "command"/"system" entries.
+func hlDispatch(line string) bool {
+	hlMu.Lock()
+	cmds, hlog := hlCmds, hlHist
+	hlMu.Unlock()
+	if cmds == nil {
+		return false
+	}
+	name, args, _ := strings.Cut(strings.TrimPrefix(line, "/"), " ")
+	args = strings.TrimSpace(args)
+	if hlog != nil {
+		hlog.Append("command", map[string]any{"text": line})
+	}
+	out, err := cmds.Run(name, args)
+	var act commands.UIAction
+	switch {
+	case errors.As(err, &act):
+		out = "/" + name
+	case err != nil:
+		out = err.Error()
+	case out == "":
+		out = "/" + name
+	}
+	if hlog != nil {
+		hlog.Append("system", map[string]any{"text": out})
+	}
+	fmt.Printf("[system] %s\n", out)
+	if act == commands.ActionQuit {
+		drainHeadless()
+		interruptSelf()
+	}
+	return true
+}
+
+// drainHeadless waits for every sent line's "done" (with an idle
+// timeout), so quitting never races an in-flight turn's output.
+func drainHeadless() {
 	for hlPending.Load() > 0 {
 		select {
 		case <-hlTick:
@@ -89,5 +148,4 @@ func headlessPump() {
 			hlPending.Store(0)
 		}
 	}
-	interruptSelf()
 }

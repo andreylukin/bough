@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/history"
 )
 
@@ -26,6 +27,20 @@ type historyView interface {
 	Path() string
 }
 
+// commandsView is the slice of the "commands" service the UI uses
+// (*commands.Registry satisfies it): the palette lists, dispatch runs.
+type commandsView interface {
+	List() []commands.CommandInfo
+	Run(name, args string) (string, error)
+}
+
+// historyAppender is the Append slice of the "history" service, used
+// to record "/" dispatches as "command"/"system" entries — NEVER
+// "input", which DefaultProject would leak into model context.
+type historyAppender interface {
+	Append(kind string, data map[string]any) history.Entry
+}
+
 // uiCfg is one mount's immutable UI configuration; models read the
 // current one through liveCfg on every render, so a remount (new
 // theme/keymap row, history landing) restyles running views.
@@ -37,6 +52,12 @@ type uiCfg struct {
 	hist     historyView // nil when no history service
 	mdStyle  string      // "dark"/"light" glamour override; "" = detect
 	collapse string      // "all" | "large" | "none": which code/result blocks start collapsed
+
+	// "/" command seam: with no commands service, "/" is plain text
+	// and the palette never opens. hlog records dispatches to history
+	// ("command"/"system" entries); nil is fine (no recording).
+	cmds commandsView
+	hlog historyAppender
 
 	// Session-resume seam (all optional, provided by the launcher):
 	// "session-picker" marker present => a new model starts in the
@@ -112,6 +133,14 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	if h, err := kernel.Get[historyView](ctx, "history"); err == nil {
 		hist = h
 	}
+	var cmds commandsView
+	if c, err := kernel.Get[commandsView](ctx, "commands"); err == nil {
+		cmds = c
+	}
+	var hlog historyAppender
+	if a, err := kernel.Get[historyAppender](ctx, "history"); err == nil {
+		hlog = a
+	}
 
 	status := "bough"
 	rows := ctx.Rows()
@@ -127,6 +156,8 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	status += fmt.Sprintf(" · %d rows", len(rows))
 	cfg := newCfg(t, keys, status, hist)
 	cfg.mdStyle = mdStyle
+	cfg.cmds = cmds
+	cfg.hlog = hlog
 	if _, err := kernel.Get[any](ctx, "session-picker"); err == nil {
 		cfg.picker = true
 	}

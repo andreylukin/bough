@@ -59,7 +59,7 @@ func mountInit(t *testing.T, script string, plugins ...string) *uitest.Driver {
 func TestThemeAccentChangesFrame(t *testing.T) {
 	t.Parallel()
 	d := mountInit(t, `bough.setup({ui: {theme: {user: "#ff0000:bold"}}})`,
-		"codemode", "llm-echo", "init-js", "loop")
+		"codemode", "commands", "llm-echo", "init-js", "loop")
 	d.Say("styled line")
 	d.WaitFor("echo: styled line")
 	raw := d.RawFrame()
@@ -72,7 +72,7 @@ func TestThemeAccentChangesFrame(t *testing.T) {
 func TestReboundQuitKey(t *testing.T) {
 	t.Parallel()
 	d := mountInit(t, `bough.setup({ui: {keymap: {quit: "ctrl+q"}}})`,
-		"codemode", "llm-echo", "init-js", "loop")
+		"codemode", "commands", "llm-echo", "init-js", "loop")
 	d.Press("ctrl+q")
 	d.WaitQuit()
 }
@@ -93,7 +93,7 @@ bough.provider("parrot", function(system, messages) {
 })
 bough.setup({provider: {default: "parrot"}})
 `
-	d := mountInit(t, script, "codemode", "init-js", "loop")
+	d := mountInit(t, script, "codemode", "commands", "init-js", "loop")
 	d.Say("go")
 	d.WaitFor("parrot finished")
 	d.Press("tab", "tab", "enter") // focus past code to result, expand it

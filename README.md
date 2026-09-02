@@ -143,6 +143,33 @@ bough.project((entries) => [{role: "user", content: "..."}]); // history -> mess
 
 See `docs/INIT.md` for the full surface.
 
+## Commands
+
+Typing `/` at the start of the composer opens an fzf-style palette
+over the `commands` service (the `commands` plugin's registry). The
+filter is pure and keyed on the name alone — prefix matches, then
+substring, then subsequence (`mnr` finds `monarch`), each tier
+alphabetical — so a growing query only ever removes rows and the
+selection is never swapped out under the typist. Up/Down move the
+selection (wrapping), Tab completes the draft to `/name ` and keeps
+the palette open, Enter dispatches, Esc closes; everything else falls
+through to the composer, which re-filters.
+
+A submitted `/` line never reaches the LLM: the UI dispatches it
+through the registry and renders the output as a dim `system` block
+(headless prints `[system] <output>`). Unknown names answer
+`unknown command: /x (try /help)`. Built-ins: `/help`, `/sessions`,
+`/clear` (visible transcript only; history untouched), `/collapse`,
+`/expand`, `/quit`. UI-owned effects come back to the UI as a typed
+`UIAction` sentinel on the error channel — the registry itself never
+touches the UI.
+
+Register your own from init.js:
+
+```js
+bough.command("shout", "<text>", "uppercase the args", (args) => args.toUpperCase());
+```
+
 ## TUI
 
 Semantic transcript (themed prompt, markdown-rendered assistant, status

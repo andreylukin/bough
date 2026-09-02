@@ -18,6 +18,7 @@ type theme map[string]lipgloss.Style
 
 var themeTokens = []string{
 	"user", "assistant", "code", "result", "error", "accent", "dim", "border", "status", "focus",
+	"select", "system",
 }
 
 // defaultTheme is restrained and dark-friendly: one cyan accent,
@@ -34,6 +35,8 @@ func defaultTheme() theme {
 		"border":    "8",
 		"status":    "250:236",
 		"focus":     "6:bold",
+		"select":    "254:237", // palette selected row: near-white on dark grey bar
+		"system":    "8",       // dim "/" command output blocks
 	}
 	t := theme{}
 	for k, v := range spec {

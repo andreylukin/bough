@@ -6,6 +6,8 @@ package ui
 import (
 	"strings"
 	"testing"
+
+	"github.com/andreylukin/bough/plugins/history"
 )
 
 func TestRenderUserMarker(t *testing.T) {
@@ -241,5 +243,35 @@ func TestMarkdownCacheClearedOnResize(t *testing.T) {
 	d.feed(windowSize(120, 40))
 	if len(d.m.mdCache) != 1 { // refresh re-rendered the one block at the new width
 		t.Errorf("resize should rebuild the cache, got %d entries", len(d.m.mdCache))
+	}
+}
+
+func TestRenderSystemBlock(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.event("system", "cleared\nsecond line")
+	if p := d.plain(); !strings.Contains(p, "cleared") || !strings.Contains(p, "second line") {
+		t.Errorf("system block text missing:\n%s", p)
+	}
+	b := &d.m.blocks[0]
+	if b.collapsible() {
+		t.Error("system blocks must not be collapsible")
+	}
+	if p := d.plain(); strings.Contains(p, "▸") || strings.Contains(p, "●") {
+		t.Errorf("system block must have no disclosure or speaker header:\n%s", p)
+	}
+}
+
+func TestReplaySystemEntry(t *testing.T) {
+	t.Parallel()
+	h := fakeHist{path: "/tmp/x.jsonl", entries: []history.Entry{
+		{Seq: 1, Kind: "system", Data: map[string]any{"text": "unknown command: /x (try /help)"}},
+	}}
+	d := newDrv(t, 80, 24, cfgWith(t, nil, nil, h))
+	if len(d.m.blocks) != 1 || d.m.blocks[0].kind != "system" {
+		t.Fatalf("system entry should replay as a system block, got %+v", d.m.blocks)
+	}
+	if p := d.plain(); !strings.Contains(p, "unknown command: /x") {
+		t.Errorf("replayed system text missing:\n%s", p)
 	}
 }

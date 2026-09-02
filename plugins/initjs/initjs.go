@@ -19,6 +19,7 @@ import (
 	"github.com/dop251/goja"
 
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
 	"github.com/andreylukin/bough/plugins/loop"
@@ -56,14 +57,17 @@ type state struct {
 	cogFn     goja.Callable
 	projFn    goja.Callable
 	toolNames []string
+	cmdNames  []string
 	setupUsed bool // reset per init file: setup is callable once per file
 	sealed    bool // set after init files run: config surface closes
 }
 
 // install defines the global `bough` object. Callbacks panic with a JS
 // value on misuse, which goja throws as a JS exception — so a typo
-// stops the init file and surfaces as an Apply error.
-func install(vm *goja.Runtime, tools *goja.Object, st *state) {
+// stops the init file and surfaces as an Apply error. cm is used to
+// call JS command fns later, under the VM mutex; reg is the "commands"
+// registry bough.command registers into.
+func install(vm *goja.Runtime, tools *goja.Object, st *state, cm vmHost, reg *commands.Registry) {
 	throw := func(format string, a ...any) {
 		panic(vm.ToValue(fmt.Sprintf(format, a...)))
 	}
@@ -119,6 +123,49 @@ func install(vm *goja.Runtime, tools *goja.Object, st *state) {
 		}
 		tools.Set(name, call.Argument(1))
 		st.toolNames = append(st.toolNames, name)
+		return goja.Undefined()
+	})
+	b.Set("command", func(call goja.FunctionCall) goja.Value {
+		// Like bough.tool, deliberately allowed after init too: live
+		// command registration from model code is the extension path.
+		if len(call.Arguments) != 4 {
+			throw("bough.command: want (name, usage, summary, fn)")
+		}
+		name, ok := call.Argument(0).Export().(string)
+		if !ok || name == "" {
+			throw("bough.command: name is not a non-empty string")
+		}
+		usage, ok := call.Argument(1).Export().(string)
+		if !ok {
+			throw("bough.command: usage is not a string")
+		}
+		summary, ok := call.Argument(2).Export().(string)
+		if !ok {
+			throw("bough.command: summary is not a string")
+		}
+		fn, ok := goja.AssertFunction(call.Argument(3))
+		if !ok {
+			throw("bough.command: fn is not a function")
+		}
+		info := commands.CommandInfo{Name: name, Usage: usage, Summary: summary}
+		err := reg.Register(info, func(args string) (string, error) {
+			v, err := cm.Call(fn, args)
+			if err != nil {
+				return "", fmt.Errorf("init-js: command /%s: %w", name, err)
+			}
+			if v == nil {
+				return "", nil
+			}
+			s, ok := v.(string)
+			if !ok {
+				return "", fmt.Errorf("init-js: command /%s returned %T, not string", name, v)
+			}
+			return s, nil
+		})
+		if err != nil {
+			throw("bough.command: %s", err)
+		}
+		st.cmdNames = append(st.cmdNames, name)
 		return goja.Undefined()
 	})
 	b.Set("provider", func(call goja.FunctionCall) goja.Value {
@@ -391,10 +438,14 @@ func init() {
 }
 
 func (plugin) Name() string     { return "init-js" }
-func (plugin) Inject() []string { return []string{"codemode"} }
+func (plugin) Inject() []string { return []string{"codemode", "commands"} }
 
 func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	cm, err := kernel.Get[vmHost](ctx, "codemode")
+	if err != nil {
+		return err
+	}
+	reg, err := kernel.Get[*commands.Registry](ctx, "commands")
 	if err != nil {
 		return err
 	}
@@ -411,7 +462,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	files = append(files, filepath.Join(".bough", "init.js"))
 
 	err = cm.WithVM(func(vm *goja.Runtime, tools *goja.Object) error {
-		install(vm, tools, st)
+		install(vm, tools, st, cm, reg)
 		for _, path := range files {
 			body, err := os.ReadFile(path)
 			if err != nil {
@@ -432,8 +483,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		return err
 	}
 
-	// Unmount: drop the global and JS-registered tools so a remount
-	// (or removal of this row) leaves the shared VM clean.
+	// Unmount: drop the global, JS-registered tools, and JS-registered
+	// commands so a remount (or removal of this row) leaves the shared
+	// VM and the commands registry clean.
 	ctx.Effect(func() {
 		_ = cm.WithVM(func(vm *goja.Runtime, tools *goja.Object) error {
 			_ = vm.GlobalObject().Delete("bough")
@@ -442,6 +494,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			}
 			return nil
 		})
+		for _, n := range st.cmdNames {
+			reg.Unregister(n)
+		}
 	})
 
 	if len(st.theme) > 0 {

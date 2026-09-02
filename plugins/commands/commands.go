@@ -1,0 +1,229 @@
+// Package commands is the "commands" plugin: a registry of slash
+// commands ("/help", "/quit", ...) behind the "commands" service. The
+// registry only lists and runs commands — parsing the composer line,
+// palette UI, and rendering output are the ui plugin's job, and a
+// dispatched "/" line never reaches the LLM.
+//
+// A command's Run returns either text output or, for effects only the
+// UI can perform (clear, collapse, expand, quit, open the session
+// picker), a UIAction sentinel on the error channel; the UI detects it
+// with errors.As. Every command yields output or a reason: an empty
+// output with a nil error is echoed back as "/name" (the M27 rule).
+package commands
+
+import (
+	"fmt"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"text/tabwriter"
+
+	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/history"
+)
+
+// CommandInfo describes one command for /help and the palette.
+type CommandInfo struct {
+	Name    string // without the leading "/"
+	Usage   string // argument hint, "" for none
+	Summary string // one line, shown dimmed in the palette
+}
+
+// UIAction is the sentinel a UI-owned command returns on the error
+// channel: Run gives ("", UIAction("...")) and the UI detects it with
+// errors.As and performs the effect itself. It is not a failure.
+type UIAction string
+
+func (a UIAction) Error() string { return string(a) }
+
+// The UI actions built-ins return.
+const (
+	ActionClear      UIAction = "clear"
+	ActionCollapse   UIAction = "collapse"
+	ActionExpand     UIAction = "expand"
+	ActionQuit       UIAction = "quit"
+	ActionOpenPicker UIAction = "open-picker"
+)
+
+// Registry is the "commands" service: a concurrency-safe name ->
+// command table. Other plugins register against the concrete type.
+type Registry struct {
+	mu   sync.Mutex
+	cmds map[string]command
+}
+
+type command struct {
+	info CommandInfo
+	run  func(args string) (string, error)
+}
+
+// NewRegistry returns an empty registry.
+func NewRegistry() *Registry {
+	return &Registry{cmds: map[string]command{}}
+}
+
+// Register adds a command. The name must be non-empty, without the
+// leading "/" and without whitespace; a duplicate name is an error.
+func (r *Registry) Register(info CommandInfo, run func(args string) (string, error)) error {
+	if info.Name == "" || strings.HasPrefix(info.Name, "/") || strings.ContainsAny(info.Name, " \t\n") {
+		return fmt.Errorf("commands: bad name %q (want non-empty, no leading /, no whitespace)", info.Name)
+	}
+	if run == nil {
+		return fmt.Errorf("commands: /%s: nil run function", info.Name)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, dup := r.cmds[info.Name]; dup {
+		return fmt.Errorf("commands: /%s already registered", info.Name)
+	}
+	r.cmds[info.Name] = command{info: info, run: run}
+	return nil
+}
+
+// Unregister removes a command; unknown names are a no-op (unmount
+// cleanup must be idempotent).
+func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.cmds, name)
+}
+
+// List returns every command, sorted by name.
+func (r *Registry) List() []CommandInfo {
+	r.mu.Lock()
+	infos := make([]CommandInfo, 0, len(r.cmds))
+	for _, c := range r.cmds {
+		infos = append(infos, c.info)
+	}
+	r.mu.Unlock()
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+	return infos
+}
+
+// Run dispatches one command. An unknown name is the canonical
+// "unknown command: /x (try /help)" error. A command's own error (or
+// UIAction sentinel) passes through unchanged; empty output with a nil
+// error comes back as "/name" so every command shows something.
+func (r *Registry) Run(name, args string) (string, error) {
+	r.mu.Lock()
+	c, ok := r.cmds[name]
+	r.mu.Unlock()
+	if !ok {
+		return "", fmt.Errorf("unknown command: /%s (try /help)", name)
+	}
+	out, err := c.run(args)
+	if err != nil {
+		return "", err
+	}
+	if out == "" {
+		out = "/" + name
+	}
+	return out, nil
+}
+
+// histService is the slice of the "history" service /sessions needs.
+type histService interface{ Path() string }
+
+// registerBuiltins installs the stock commands. UI-owned effects
+// return UIAction sentinels; /help and /sessions produce text here.
+func registerBuiltins(r *Registry, ctx *kernel.Context) error {
+	builtins := []struct {
+		info CommandInfo
+		run  func(args string) (string, error)
+	}{
+		{CommandInfo{Name: "help", Usage: "", Summary: "list commands"}, func(string) (string, error) {
+			return helpText(r), nil
+		}},
+		{CommandInfo{Name: "sessions", Usage: "", Summary: "pick a session to resume"}, func(string) (string, error) {
+			return sessionsText(ctx)
+		}},
+		{CommandInfo{Name: "clear", Usage: "", Summary: "clear the visible transcript"}, uiAction(ActionClear)},
+		{CommandInfo{Name: "collapse", Usage: "", Summary: "collapse all blocks"}, uiAction(ActionCollapse)},
+		{CommandInfo{Name: "expand", Usage: "", Summary: "expand all blocks"}, uiAction(ActionExpand)},
+		{CommandInfo{Name: "quit", Usage: "", Summary: "exit bough"}, uiAction(ActionQuit)},
+	}
+	for _, b := range builtins {
+		if err := r.Register(b.info, b.run); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func uiAction(a UIAction) func(string) (string, error) {
+	return func(string) (string, error) { return "", a }
+}
+
+// helpText renders every command as "/name usage  summary" with the
+// left column padded to one shared width.
+func helpText(r *Registry) string {
+	infos := r.List()
+	lefts := make([]string, len(infos))
+	width := 0
+	for i, in := range infos {
+		lefts[i] = "/" + in.Name
+		if in.Usage != "" {
+			lefts[i] += " " + in.Usage
+		}
+		if len(lefts[i]) > width {
+			width = len(lefts[i])
+		}
+	}
+	var b strings.Builder
+	for i, in := range infos {
+		fmt.Fprintf(&b, "%-*s  %s\n", width, lefts[i], in.Summary)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// sessionsText is the honest v0 of /sessions: it prints the stored
+// session list (the same data `bough sessions` shows) instead of
+// opening the picker; the picker seam is only mountable at launch.
+func sessionsText(ctx *kernel.Context) (string, error) {
+	h, err := kernel.Get[histService](ctx, "history")
+	if err != nil {
+		return "", fmt.Errorf("sessions: no history service mounted")
+	}
+	dir := filepath.Dir(h.Path())
+	infos, err := history.List(dir)
+	if err != nil {
+		return "", err
+	}
+	if len(infos) == 0 {
+		return "no sessions in " + dir, nil
+	}
+	var b strings.Builder
+	tw := tabwriter.NewWriter(&b, 2, 8, 2, ' ', 0)
+	for _, in := range infos {
+		title := strings.SplitN(in.Title, "\n", 2)[0]
+		if r := []rune(title); len(r) > 60 {
+			title = string(r[:59]) + "…"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%d entries\t%s\n",
+			in.ID, in.ModTime.Local().Format("2006-01-02 15:04"), in.Entries, title)
+	}
+	tw.Flush()
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+type plugin struct{}
+
+func init() {
+	kernel.Register("commands", func() kernel.Plugin { return plugin{} })
+}
+
+func (plugin) Name() string     { return "commands" }
+func (plugin) Inject() []string { return nil }
+
+// Apply provides the "commands" registry with the built-ins installed.
+// /sessions resolves the "history" service lazily at Run time, so this
+// row has no mount-order dependency.
+func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
+	r := NewRegistry()
+	if err := registerBuiltins(r, ctx); err != nil {
+		return err
+	}
+	ctx.Provide("commands", r)
+	return nil
+}

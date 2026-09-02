@@ -103,6 +103,30 @@ bough.tool("shout", function (s) { return s.toUpperCase() + "!" })
 // model code: tools.shout("hi") -> "HI!"
 ```
 
+### bough.command(name, usage, summary, fn)
+
+Registers a slash command in the `"commands"` registry: it appears in
+the composer's `/` palette and in `/help`, and dispatches when you
+submit `/name args`. `fn(args)` receives everything after the name as
+one trimmed string and must return a string (the system output); the
+call runs in the codemode VM under its mutex, so `tools.*` is
+available. A thrown JS exception (or a non-string return) becomes the
+command's error output. An empty return echoes `/name` as a notice —
+every command shows something.
+
+```js
+bough.command("branch", "", "current git branch", function () {
+  return tools.bash("git branch --show-current").trim()
+})
+// composer: /branch  ->  dim system block with the branch name
+```
+
+Duplicate names (including the built-ins `/help`, `/sessions`,
+`/clear`, `/collapse`, `/expand`, `/quit`) are boot errors. Like
+`bough.tool`, `bough.command` stays live after init. Dispatched
+command output is recorded in history as a `system` entry; a `/` line
+never reaches the LLM.
+
 ### bough.provider(name, fn)
 
 Registers a JS LLM provider: `fn(system, messages) -> string`, where
@@ -127,7 +151,9 @@ Entries arrive as plain objects:
   data: { text: "...", code: "..." } }
 ```
 
-Kinds: `input`, `assistant`, `code`, `result`, `error`, `done`. A JS
+Kinds: `input`, `assistant`, `code`, `result`, `error`, `done`, plus
+`system` (dispatched slash-command output; carries no model-visible
+text in the built-in projection). A JS
 error or bad return shape is logged and the built-in projection
 (input→user, assistant→assistant, result→user `[tool output]`) is used
 for that step.
