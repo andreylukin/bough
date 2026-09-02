@@ -196,3 +196,46 @@ tearing the tree down; a row that fails Apply is isolated as `failed`
 until its spec changes. A config that fails to parse or validate keeps
 the last good tree and logs loudly. `--set` overrides are re-applied on
 every reload.
+
+## Testing
+
+Three e2e layers on top of the per-package unit tests, all designed to
+run fully parallel: every test gets its own temp HOME, temp cwd, config
+copy, and (where one is needed) its own bough process and port. The LLM
+is always deterministic — `llm-echo` or a JS parrot provider from
+`init.js` — never a real API.
+
+**1. teatest model tests** (`plugins/ui`, `internal/uitest`, and the
+`*_tui_test.go` files in each plugin): the real bubbletea model driven
+in-process — typed keys, loop events, rendered frames, golden files
+(`go test ./plugins/ui -run Golden -update` to regenerate).
+
+```sh
+go test -race ./plugins/... ./internal/... ./kernel/
+```
+
+**2. Headless + PTY binary e2e** (`e2e/`): `TestMain` builds the binary
+once per run (or reuses `$BOUGH_BIN`), then each test execs it —
+`--headless` with stdin lines in and `[kind] text` events out, the CLI
+subcommands (`bough log`, `bough rows`), config hot-reload, and 3
+native-TTY cases on a real PTY (status bar renders, echo roundtrip,
+quit restores the terminal). PTY cases skip on Windows/no-PTY.
+
+```sh
+go test -race ./e2e/
+```
+
+**3. Playwright web e2e** (`tests/web/`): real `bough --web` processes,
+a real browser reading the sip/WebTerm buffer.
+
+```sh
+cd tests/web && npm ci && npx playwright install chromium && npm test
+```
+
+Parallelism knobs: `go test -parallel N` (Go layers; every test calls
+`t.Parallel()`), `npx playwright test --workers=N` or `--shard=k/n`
+(web layer; defaults to one worker per CPU).
+
+CI runs all three on every push/PR to `go-rewrite` — see
+`.github/workflows/ci.yml` (one `unit` job for both Go layers, a
+4-shard `web-e2e` matrix; traces uploaded as artifacts on failure).
