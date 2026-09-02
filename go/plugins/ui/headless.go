@@ -113,26 +113,32 @@ func headlessPump() {
 			hlBang(line)
 			continue // ran as a shell command: never reaches the loop/LLM
 		}
-		hlPending.Add(1)
-		for {
-			hlMu.Lock()
-			ch := hlInputs
-			if ch != nil {
-				// Send under the lock: the disposer (which runs before the
-				// loop row closes the channel) blocks until we finish.
-				ch <- line
-				hlMu.Unlock()
-				break
-			}
-			hlMu.Unlock()
-			// Mid-reload: wait for the remounted ui row to reattach.
-			time.Sleep(50 * time.Millisecond)
-		}
+		hlSubmit(line)
 	}
 
 	// EOF: drain until every sent line saw its "done", or events go idle.
 	drainHeadless()
 	interruptSelf()
+}
+
+// hlSubmit sends one line to the loop as user input, waiting out a
+// mid-reload gap until the remounted ui row reattaches. Always true.
+func hlSubmit(line string) bool {
+	hlPending.Add(1)
+	for {
+		hlMu.Lock()
+		ch := hlInputs
+		if ch != nil {
+			// Send under the lock: the disposer (which runs before the
+			// loop row closes the channel) blocks until we finish.
+			ch <- line
+			hlMu.Unlock()
+			return true
+		}
+		hlMu.Unlock()
+		// Mid-reload: wait for the remounted ui row to reattach.
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // hlAnswerPending routes one stdin line to the pending tools.ask, if
@@ -192,6 +198,9 @@ func hlDispatch(line string) bool {
 	if act == commands.ActionQuit {
 		drainHeadless()
 		interruptSelf()
+	}
+	if text, ok := commands.SubmitText(act); ok {
+		return hlSubmit(text)
 	}
 	return true
 }

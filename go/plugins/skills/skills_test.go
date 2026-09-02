@@ -88,3 +88,16 @@ func TestInjectMissingPools(t *testing.T) {
 		t.Errorf("got %d blocks from missing pools, want 0", len(got))
 	}
 }
+
+func TestScanFollowsSymlinkedSkill(t *testing.T) {
+	pool := t.TempDir()
+	real := t.TempDir()
+	addSkill(t, real, "linked", "linked body")
+	if err := os.Symlink(filepath.Join(real, "linked"), filepath.Join(pool, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	s := New(pool)
+	if got := s.Inject("use linked"); len(got) != 1 {
+		t.Fatalf("symlinked skill: got %d blocks, want 1", len(got))
+	}
+}

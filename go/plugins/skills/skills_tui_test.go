@@ -72,3 +72,21 @@ func TestUnmentionedSkillNotInjected(t *testing.T) {
 		t.Fatalf("unmentioned skill injected:\n%s", d.Frame())
 	}
 }
+
+// A skill is a "/name" palette command: typing "/zzskillcmd" lists it,
+// and Enter submits the line to the loop with the skill injected.
+func TestSkillIsSlashCommand(t *testing.T) {
+	t.Parallel()
+	writeSkill(t, "zzskillcmd", "---\ndescription: \"Run the cmd thing.\"\n---\nSKILLMARK_CMD here.")
+	d := uitest.Mount(t, nil, "codemode", "llm-echo", "commands", "skills", "loop")
+	d.Type("/zzskillcmd")
+	if f := d.Frame(); !strings.Contains(f, "Run the cmd thing.") {
+		t.Fatalf("palette should list the skill with its description:\n%s", f)
+	}
+	d.Type(" go")
+	d.Press("enter")
+	d.WaitFor("SKILLMARK_CMD")
+	if !strings.Contains(d.Frame(), "echo: /zzskillcmd go") {
+		t.Fatalf("the / line should reach the loop as input:\n%s", d.Frame())
+	}
+}

@@ -186,6 +186,11 @@ func (m *model) dispatch(line string) tea.Cmd {
 	out, err := cfg.cmds.Run(name, args)
 	var act commands.UIAction
 	if errors.As(err, &act) {
+		if text, ok := commands.SubmitText(act); ok {
+			// A skill command: the line goes to the loop as input.
+			m.log(cfg, "system", "/"+name)
+			return m.submit(text)
+		}
 		m.refresh()
 		m.vp.GotoBottom()
 		return m.perform(act)

@@ -46,6 +46,19 @@ const (
 	ActionOpenPicker UIAction = "open-picker"
 )
 
+// submitPrefix marks a UIAction that submits text to the loop as if
+// the user had typed it (skills: "/exa foo" becomes the input "/exa
+// foo", which the skills seam then injects on).
+const submitPrefix = "submit:"
+
+// SubmitAction is the UIAction that submits text as user input.
+func SubmitAction(text string) UIAction { return UIAction(submitPrefix + text) }
+
+// SubmitText reports whether a is a submit action and the text to submit.
+func SubmitText(a UIAction) (string, bool) {
+	return strings.CutPrefix(string(a), submitPrefix)
+}
+
 // Registry is the "commands" service: a concurrency-safe name ->
 // command table. Other plugins register against the concrete type.
 type Registry struct {

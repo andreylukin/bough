@@ -765,22 +765,28 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.input.Reset()
-		m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: line})
-		m.nextID++
-		m.refresh()
-		m.vp.GotoBottom()
-		m.running = true
-		send := m.send
-		return m, tea.Batch(
-			func() tea.Msg { send(line); return nil },
-			m.spin.Tick,
-		)
+		return m, m.submit(line)
 	}
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.syncPalette()
 	return m, cmd
+}
+
+// submit sends one line to the loop as user input, echoing it as a
+// "user" block and starting the spinner.
+func (m *model) submit(line string) tea.Cmd {
+	m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: line})
+	m.nextID++
+	m.refresh()
+	m.vp.GotoBottom()
+	m.running = true
+	send := m.send
+	return tea.Batch(
+		func() tea.Msg { send(line); return nil },
+		m.spin.Tick,
+	)
 }
 
 // pane returns the scroll target: the overlay while inspecting,

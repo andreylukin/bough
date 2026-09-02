@@ -1,8 +1,10 @@
 // Package skills is the "skills" plugin: mention-triggered SKILL.md
-// injection. Pools (~/.claude/skills and ./.claude/skills) are
-// rescanned fresh on every Inject call; a skill directory whose name
-// appears as a case-insensitive whole word in the human input gets
-// its SKILL.md injected into that turn.
+// injection. Pools (~/.claude/skills, ~/.bough/skills and
+// ./.claude/skills) are rescanned fresh on every Inject call; a skill
+// directory whose name appears as a case-insensitive whole word in the
+// human input gets its SKILL.md injected into that turn. Each skill is
+// also a "/name" command in the palette: "/exa foo" submits that line
+// as input, so the mention rule injects it.
 package skills
 
 import (
@@ -11,8 +13,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/commands"
 )
 
 const maxBlocks = 3
@@ -29,23 +33,7 @@ func New(pools ...string) *Skills { return &Skills{pools: pools} }
 // Inject returns "[skill: <name>]\n<SKILL.md contents>" blocks for
 // every skill mentioned in input, capped at maxBlocks.
 func (s *Skills) Inject(input string) []string {
-	found := map[string]string{} // name -> SKILL.md path
-	for _, pool := range s.pools {
-		entries, err := os.ReadDir(pool)
-		if err != nil {
-			continue // missing pool is fine
-		}
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			p := filepath.Join(pool, e.Name(), "SKILL.md")
-			if _, err := os.Stat(p); err == nil {
-				found[e.Name()] = p
-			}
-		}
-	}
-
+	found := s.scan()
 	names := make([]string, 0, len(found))
 	for n := range found {
 		names = append(names, n)
@@ -76,6 +64,61 @@ func (s *Skills) Inject(input string) []string {
 	return blocks
 }
 
+// scan returns name -> SKILL.md path across the pools (later pools
+// shadow earlier ones). A symlinked skill directory counts.
+func (s *Skills) scan() map[string]string {
+	found := map[string]string{}
+	for _, pool := range s.pools {
+		entries, err := os.ReadDir(pool)
+		if err != nil {
+			continue // missing pool is fine
+		}
+		for _, e := range entries {
+			p := filepath.Join(pool, e.Name(), "SKILL.md")
+			if _, err := os.Stat(p); err == nil {
+				found[e.Name()] = p
+			}
+		}
+	}
+	return found
+}
+
+// description pulls the frontmatter "description:" line of a SKILL.md
+// for the palette summary; "" when absent.
+func description(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if v, ok := strings.CutPrefix(line, "description:"); ok {
+			return strings.Trim(strings.TrimSpace(v), `"'`)
+		}
+	}
+	return ""
+}
+
+// registerCommands adds a "/name" command per skill to the commands
+// registry (when one is mounted) and unregisters them on unmount.
+func (s *Skills) registerCommands(ctx *kernel.Context) {
+	reg, err := kernel.Get[*commands.Registry](ctx, "commands")
+	if err != nil {
+		return
+	}
+	for name, path := range s.scan() {
+		name := name
+		info := commands.CommandInfo{Name: name, Usage: "[args]", Summary: "skill: " + description(path)}
+		err := reg.Register(info, func(args string) (string, error) {
+			return "", commands.SubmitAction(strings.TrimSpace("/" + name + " " + args))
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "skills: %v\n", err)
+			continue
+		}
+		ctx.Effect(func() { reg.Unregister(name) })
+	}
+}
+
 type plugin struct{}
 
 func init() {
@@ -90,9 +133,12 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("skills: home dir: %w", err)
 	}
-	ctx.Provide("skills", New(
+	s := New(
 		filepath.Join(home, ".claude", "skills"),
+		filepath.Join(home, ".bough", "skills"),
 		filepath.Join(".claude", "skills"),
-	))
+	)
+	s.registerCommands(ctx)
+	ctx.Provide("skills", s)
 	return nil
 }
