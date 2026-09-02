@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync/atomic"
 
@@ -28,6 +29,7 @@ type block struct {
 	id        int
 	kind      string // user, assistant, code, result, error, done, ask, ...
 	text      string
+	label     string // header tag override ("! <cmd>" bang blocks); "" = by kind
 	collapsed bool
 
 	// ask blocks only (see ask.go): the pending question's options and
@@ -72,6 +74,7 @@ type model struct {
 	ovEntries  []int64        // entry index -> seq, for ovRanges lookups
 	picking    bool           // session picker shown instead of the chat view
 	pick       int            // picker cursor index into cfg.sessions
+	welcome    bool           // fresh-session orientation text (see welcomeView)
 	pendingAsk string         // ask id the composer routes answers to; "" = none
 	pal        palette        // "/" command palette (see palette.go)
 	flash      string
@@ -130,6 +133,14 @@ func (m *model) resize(w, h int) {
 // blank-squeezed so at most one blank line separates blocks.
 func (m *model) refresh() {
 	cfg := m.cfg.Load()
+	if m.welcome && len(m.blocks) == 0 {
+		// Fresh session: orientation text instead of an empty pane. Not
+		// a block (no hit-test ranges, never in history); it vanishes as
+		// soon as anything lands in the transcript, and /clear drops it.
+		m.ranges = m.ranges[:0]
+		m.vp.SetContent(m.welcomeView(cfg))
+		return
+	}
 	atBottom := m.vp.AtBottom()
 	parts := make([]string, 0, len(m.blocks))
 	m.ranges = m.ranges[:0]
@@ -227,6 +238,9 @@ func (m *model) header(b *block, th theme) string {
 	if b.kind == "code" {
 		tag = "code js"
 	}
+	if b.label != "" {
+		tag = b.label
+	}
 	n := strings.Count(b.text, "\n") + 1
 	unit := "lines"
 	if n == 1 {
@@ -243,6 +257,22 @@ func (m *model) header(b *block, th theme) string {
 	}
 	return st.Render(head)
 }
+
+// welcomeView is the fresh-session orientation text (tui/web only):
+// shown while the transcript is empty on a session with no history,
+// suppressed on resume, gone once anything renders, removed by /clear.
+func (m *model) welcomeView(cfg *uiCfg) string {
+	th := cfg.theme
+	return th["accent"].Render("● ") + th["dim"].Render("bough — a coding agent") + "\n" +
+		th["dim"].Render("  type / for commands") + "\n" +
+		th["dim"].Render("  ask me to do something — I act by running code")
+}
+
+// authErrRe spots credential-shaped failures in error text; the match
+// appends the credential hint below the error block.
+var authErrRe = regexp.MustCompile(`(?i)\b401\b|unauthorized|api[ _-]?key|x-api-key`)
+
+const authHint = "hint: check your provider credentials (ANTHROPIC_API_KEY / OPENROUTER_API_KEY), or swap the llm row — /model"
 
 // render turns one semantic block into styled lines.
 func (m *model) render(b *block, cfg *uiCfg) string {
@@ -271,7 +301,27 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		// Plain dimmed command output: not collapsible, no ● header.
 		return th["system"].Render(b.text)
 	case "error":
-		return th["error"].Render("✗ " + b.text)
+		// Wrap to width — the viewport clips long lines, and the tail
+		// of an error is usually the actionable part.
+		w := m.width
+		if w < 10 {
+			w = 10
+		}
+		out := th["error"].Width(w).Render("✗ " + b.text)
+		if authErrRe.MatchString(b.text) {
+			out += "\n" + th["dim"].Width(w).Render(authHint)
+		}
+		return out
+	case "todo":
+		// Dedicated todo render: dim tag + checkbox lines, done items
+		// dimmed. See addEvent for the one-render-per-mutation rule.
+		lines := strings.Split(b.text, "\n")
+		for i, l := range lines {
+			if strings.HasPrefix(l, "[x]") {
+				lines[i] = th["dim"].Render(l)
+			}
+		}
+		return th["dim"].Render("todo") + "\n" + strings.Join(lines, "\n")
 	case "ask":
 		return m.renderAsk(b, th)
 	case "done":
@@ -334,6 +384,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventMsg:
 		m.addEvent(Event(msg))
 		return m, m.waitEvent()
+
+	case bangDoneMsg:
+		m.finishBang(msg)
+		return m, nil
 
 	case tea.BackgroundColorMsg:
 		// Re-render markdown for the actual terminal background so
@@ -404,6 +458,21 @@ func (m *model) addEvent(ev Event) {
 			collapsed = true
 		}
 		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: text, collapsed: collapsed})
+	case "todo":
+		// One render per mutation: the system block a /todo mutation
+		// just printed (same text) becomes the todo block, and
+		// back-to-back todo events (several mutations in one script)
+		// update one block instead of stacking copies.
+		if n := len(m.blocks); n > 0 {
+			if last := &m.blocks[n-1]; last.kind == "todo" ||
+				(last.kind == "system" && last.text == ev.Text) {
+				last.kind, last.text = "todo", ev.Text
+				m.refresh()
+				m.vp.GotoBottom()
+				return
+			}
+		}
+		m.blocks = append(m.blocks, block{id: id, kind: "todo", text: ev.Text})
 	default: // assistant, anything future
 		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: ev.Text})
 	}
@@ -685,6 +754,10 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// through the commands service (absent service: plain text).
 		if strings.HasPrefix(line, "/") && cfg.cmds != nil {
 			return m, m.dispatch(line)
+		}
+		// A "!" line runs directly as a shell command — never the LLM.
+		if strings.HasPrefix(line, "!") {
+			return m, m.dispatchBang(line)
 		}
 		// A pending ask routes the submission as its ANSWER: a number
 		// picks that option, anything else is freeform text.

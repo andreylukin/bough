@@ -109,6 +109,10 @@ func headlessPump() {
 		if strings.HasPrefix(line, "/") && hlDispatch(line) {
 			continue // dispatched: never reaches the loop/LLM
 		}
+		if strings.HasPrefix(line, "!") {
+			hlBang(line)
+			continue // ran as a shell command: never reaches the loop/LLM
+		}
 		hlPending.Add(1)
 		for {
 			hlMu.Lock()
@@ -190,6 +194,23 @@ func hlDispatch(line string) bool {
 		interruptSelf()
 	}
 	return true
+}
+
+// hlBang runs a "!" line directly as a shell command — never the
+// loop/LLM — printing "[system] <output>" and recording the same
+// "command"/"system" history entries the tui/web block pair gets.
+func hlBang(line string) {
+	hlMu.Lock()
+	hlog := hlHist
+	hlMu.Unlock()
+	if hlog != nil {
+		hlog.Append("command", map[string]any{"text": line})
+	}
+	out := runBang(bangCmd(line))
+	if hlog != nil {
+		hlog.Append("system", map[string]any{"text": out})
+	}
+	fmt.Printf("[system] %s\n", out)
 }
 
 // drainHeadless waits for every sent line's "done" (with an idle

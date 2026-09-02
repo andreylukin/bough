@@ -148,7 +148,7 @@ func registerBuiltins(r *Registry, ctx *kernel.Context) error {
 			return err
 		}
 	}
-	return nil
+	return registerModel(r, ctx)
 }
 
 func uiAction(a UIAction) func(string) (string, error) {

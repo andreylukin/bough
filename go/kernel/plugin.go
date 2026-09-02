@@ -2,6 +2,7 @@ package kernel
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -26,6 +27,19 @@ func Register(name string, factory func() Plugin) {
 		panic(fmt.Sprintf("kernel: duplicate plugin %q", name))
 	}
 	registry[name] = factory
+}
+
+// Plugins returns every registered plugin name, sorted — the
+// compile-time catalog (e.g. so /model can list the llm-* providers).
+func Plugins() []string {
+	regMu.Lock()
+	defer regMu.Unlock()
+	names := make([]string, 0, len(registry))
+	for n := range registry {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func lookup(name string) (func() Plugin, bool) {

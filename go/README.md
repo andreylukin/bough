@@ -175,10 +175,29 @@ A submitted `/` line never reaches the LLM: the UI dispatches it
 through the registry and renders the output as a dim `system` block
 (headless prints `[system] <output>`). Unknown names answer
 `unknown command: /x (try /help)`. Built-ins: `/help`, `/sessions`,
-`/clear` (visible transcript only; history untouched), `/collapse`,
-`/expand`, `/quit`. UI-owned effects come back to the UI as a typed
-`UIAction` sentinel on the error channel — the registry itself never
-touches the UI.
+`/model`, `/clear` (visible transcript only; history untouched),
+`/collapse`, `/expand`, `/quit`. UI-owned effects come back to the UI
+as a typed `UIAction` sentinel on the error channel — the registry
+itself never touches the UI.
+
+**`/model`** shows or live-swaps the LLM provider row. Bare `/model`
+prints the current row (`plugin · model`), the registered `llm-*`
+providers, and usage. `/model <provider> [model]` swaps the row's
+plugin (and optionally model); `/model <model>` keeps the plugin and
+changes only the model. The swap is a real runtime reconcile — the llm
+row remounts and the loop follows — and it survives a config hot
+reload. It needs the bough launcher (`bough`, `--web`, `--headless`);
+in bare embeddings without the `config-set` service the swap errors
+and only showing works.
+
+**`!` bash mode.** A composer line starting with `!` runs the rest
+directly as `sh -c` (60s timeout, the process cwd) and never reaches
+the LLM. The output lands as a collapsible result block labeled
+`! <cmd>` (expanded by default — you asked for it), with a loud
+trailing `! exit status N` / `! timeout` line on failure and
+`(no output)` for silence. Headless prints `[system] <output>`. Both
+halves are recorded to history as `command`/`system` entries, which the
+default projection hides from the model.
 
 Register your own from init.js:
 

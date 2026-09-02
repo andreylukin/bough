@@ -18,11 +18,16 @@ const pickerTitleWidth = 60
 // existing entries, exactly as the live session that wrote them did:
 // input entries become the ❯ user line, everything else goes through
 // addEvent so collapse defaults (and code de-dup) apply. A fresh
-// session (no history, or no entries) is a no-op; a model that already
-// has blocks never replays (no double-render).
+// session (no history, or no entries) shows the welcome text instead;
+// a model that already has blocks never replays (no double-render).
 func (m *model) replay() {
 	cfg := m.cfg.Load()
-	if cfg.hist == nil || len(m.blocks) > 0 {
+	if len(m.blocks) > 0 {
+		return
+	}
+	if cfg.hist == nil {
+		m.welcome = true // fresh (no history service at all)
+		m.refresh()
 		return
 	}
 	for _, e := range cfg.hist.Entries() {
@@ -49,8 +54,9 @@ func (m *model) replay() {
 			m.addEvent(Event{Kind: e.Kind, Text: text})
 		}
 	}
-	m.expireAsks()    // an ask with no answer entry replays as expired
-	m.running = false // a replayed transcript is never mid-turn
+	m.expireAsks()                 // an ask with no answer entry replays as expired
+	m.running = false              // a replayed transcript is never mid-turn
+	m.welcome = len(m.blocks) == 0 // fresh session (0 entries): orient
 	m.refresh()
 	m.vp.GotoBottom()
 }

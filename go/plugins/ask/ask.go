@@ -136,6 +136,11 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if h, err := kernel.Get[appender](ctx, "history"); err == nil {
 		a.hist = h
 	}
+	// The loop documents tools.ask (and the separate-arguments nudge)
+	// in its system prompt when it sees this "ask-answers" service —
+	// NOT via a "cognition" provider here: two chaining cognition
+	// providers (this plus todo's) Get+Provide the same single-slot
+	// service and reload each other forever.
 	code.RegisterTool("ask", a.ask)
 	ctx.Provide("ask-answers", a)
 	return nil

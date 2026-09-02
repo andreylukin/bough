@@ -172,9 +172,11 @@ func (m *model) dispatch(line string) tea.Cmd {
 func (m *model) perform(act commands.UIAction) tea.Cmd {
 	switch act {
 	case commands.ActionClear:
-		// The visible transcript only; history is untouched.
+		// The visible transcript only; history is untouched. The
+		// welcome text does not come back either.
 		m.blocks = nil
 		m.focusID = -1
+		m.welcome = false
 		m.refresh()
 	case commands.ActionCollapse:
 		m.setAllCollapsed(true)

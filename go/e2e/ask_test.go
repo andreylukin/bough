@@ -40,6 +40,29 @@ func TestHeadlessAskFreeform(t *testing.T) {
 	mustContain(t, log, `"kind":"ask"`, `"kind":"ask/answer"`, "fav color?", "chartreuse actually")
 }
 
+// sysCheckProvider reports whether the ask options nudge (pass each
+// option as a separate argument) reached the system prompt.
+const sysCheckProvider = `
+bough.provider("syschk", function (system, messages) {
+  if (system.indexOf("separate argument") >= 0 && system.indexOf("tools.ask(") >= 0) return "NUDGE_PRESENT";
+  return "NUDGE_MISSING";
+});
+bough.setup({ provider: { default: "syschk" } });
+`
+
+func TestAskOptionsNudgeInSystemPrompt(t *testing.T) {
+	t.Parallel()
+	b := launchHeadless(t, launchOpts{
+		cwd: map[string]string{".bough/init.js": sysCheckProvider},
+	})
+	b.send("go")
+	b.waitFor("NUDGE_PRESENT")
+	b.closeStdin()
+	if code := b.waitExit(); code != 0 {
+		t.Fatalf("exit %d; output:\n%s", code, b.out.String())
+	}
+}
+
 func TestHeadlessAskNumberPicksOption(t *testing.T) {
 	t.Parallel()
 	b := launchHeadless(t, launchOpts{

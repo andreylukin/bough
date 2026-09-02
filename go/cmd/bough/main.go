@@ -148,8 +148,15 @@ func main() {
 	ctx.Provide("ui-mode", mode)
 
 	ov := &overrides{vals: sets}
+	// Runtime override seam: plugins (e.g. /model) change a row's config
+	// or plugin at runtime through the same LoadFile + overrides +
+	// Reconcile path as a config hot reload; applied sets are recorded so
+	// a later hot reload keeps them (same mechanics as session resume).
+	ctx.Provide("config-set", func(newSets ...string) error {
+		return runtimeSet(ctx, *config, ov, newSets...)
+	})
 	if needPicker {
-		providePicker(ctx, rows, ov)
+		providePicker(ctx, *config, ov)
 	}
 
 	if err := ctx.Mount(rows); err != nil {
@@ -215,6 +222,28 @@ func watchConfig(ctx *kernel.Context, config string, ov *overrides) (func(), err
 		}
 	}()
 	return func() { w.Close() }, nil
+}
+
+// runtimeSet applies "id.key=value" overrides at runtime: fresh config
+// parse + the recorded overrides + the new sets, then Reconcile — the
+// same live-swap path the session picker uses. The new sets are
+// recorded only on success, so a later config hot reload (which
+// replays ov.all()) keeps them.
+func runtimeSet(ctx *kernel.Context, config string, ov *overrides, sets ...string) error {
+	rows, err := kernel.LoadFile(config)
+	if err != nil {
+		return err
+	}
+	if err := applyOverrides(rows, append(ov.all(), sets...)); err != nil {
+		return err
+	}
+	if err := ctx.Reconcile(rows); err != nil {
+		return err
+	}
+	for _, s := range sets {
+		ov.add(s)
+	}
+	return nil
 }
 
 func reload(ctx *kernel.Context, config string, sets setFlags) {

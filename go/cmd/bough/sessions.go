@@ -146,45 +146,23 @@ func resolveSession(cont, resume bool, id, mode string) (resumePath string, need
 // providePicker wires the launcher side of the picker seam for a bare
 // --resume in tui/web mode: the mount proceeds with a fresh session
 // underneath the picker, and "session-choose" swaps the history row to
-// the picked file via Reconcile (which remounts history -> loop -> ui;
-// the kernel's Get-tracking makes that cascade automatic). The chosen
-// override is also recorded so a config hot reload keeps the resumed
-// file.
-func providePicker(ctx *kernel.Context, rows []kernel.Row, ov *overrides) {
+// the picked file via runtimeSet (Reconcile remounts history -> loop ->
+// ui; the kernel's Get-tracking makes that cascade automatic, and the
+// override is recorded so a config hot reload keeps the resumed file).
+func providePicker(ctx *kernel.Context, config string, ov *overrides) {
 	infos, err := history.List(sessionsDir())
 	if err != nil {
 		fatal(err)
 	}
 	ctx.Provide("sessions", infos)
 	ctx.Provide("session-picker", "pending")
-	var choose func(string)
-	choose = func(id string) {
+	ctx.Provide("session-choose", func(id string) {
 		if id == "" {
 			return // fresh session already mounted
 		}
 		set := "history.file=" + filepath.Join(sessionsDir(), id+".jsonl")
-		// Deep-copy row configs: the kernel holds references to these
-		// maps, and Reconcile detects change by deep-inequality.
-		next := make([]kernel.Row, len(rows))
-		for i, r := range rows {
-			next[i] = r
-			if r.Config != nil {
-				cp := make(map[string]any, len(r.Config))
-				for k, v := range r.Config {
-					cp[k] = v
-				}
-				next[i].Config = cp
-			}
-		}
-		if err := applyOverrides(next, setFlags{set}); err != nil {
+		if err := runtimeSet(ctx, config, ov, set); err != nil {
 			fmt.Fprintln(os.Stderr, "bough: resume:", err)
-			return
 		}
-		if err := ctx.Reconcile(next); err != nil {
-			fmt.Fprintln(os.Stderr, "bough: resume:", err)
-			return
-		}
-		ov.add(set)
-	}
-	ctx.Provide("session-choose", choose)
+	})
 }

@@ -122,10 +122,13 @@ bough.command("branch", "", "current git branch", function () {
 ```
 
 Duplicate names (including the built-ins `/help`, `/sessions`,
-`/clear`, `/collapse`, `/expand`, `/quit`) are boot errors. Like
-`bough.tool`, `bough.command` stays live after init. Dispatched
+`/model`, `/clear`, `/collapse`, `/expand`, `/quit`) are boot errors.
+Like `bough.tool`, `bough.command` stays live after init. Dispatched
 command output is recorded in history as a `system` entry; a `/` line
-never reaches the LLM.
+never reaches the LLM. The same is true of `!` bash mode (a composer
+line starting with `!` runs directly as `sh -c`): its line and output
+are recorded as `command`/`system` entries, model-invisible under the
+default projection.
 
 ### bough.provider(name, fn)
 

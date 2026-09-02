@@ -105,6 +105,13 @@ Each code block you write is executed and its output is sent back to you
 as the next message. Take as many steps as you need. When you are done,
 reply with plain text only — no code block — and that ends the turn.`
 
+// askPromptSection documents tools.ask; appended to the system prompt
+// only when an "ask-answers" service (the ask plugin) is mounted. The
+// options nudge matters: options inlined into the question string
+// render as plain text, separate arguments render as clickable option
+// rows in the UI.
+const askPromptSection = `You may ask the user a question from code: tools.ask(question, ...options) -> string blocks until they answer and returns the answer. Pass each option as a separate argument — tools.ask(question, opt1, opt2, ...) — so they render as clickable choices; never inline the options into the question text.`
+
 var jsBlock = regexp.MustCompile("(?s)```js\\s*\n(.*?)```")
 
 // DefaultProject is the built-in history -> model-messages projection:
@@ -163,6 +170,7 @@ type runner struct {
 	hist    History
 	cog     Cognition
 	proj    Projection
+	hasAsk  bool // an "ask-answers" service is mounted: document tools.ask
 	system  string
 	started bool
 }
@@ -207,6 +215,9 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	if !r.started {
 		r.started = true
 		r.system = systemPrompt
+		if r.hasAsk {
+			r.system += "\n\n" + askPromptSection
+		}
 		if r.sysctx != nil {
 			if p := r.sysctx.Preamble(); p != "" {
 				r.system = p + "\n\n" + r.system
@@ -341,6 +352,9 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	}
 	if pr, err := kernel.Get[Projection](kctx, "projection"); err == nil {
 		r.proj = pr
+	}
+	if _, err := kernel.Get[any](kctx, "ask-answers"); err == nil {
+		r.hasAsk = true
 	}
 	kctx.Provide("runner", r)
 

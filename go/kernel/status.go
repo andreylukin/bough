@@ -57,6 +57,15 @@ func (c *Context) Rows() []RowStatus {
 	return out
 }
 
+// Desired returns a copy of the last desired row set (Mount/Reconcile),
+// in config order — the composed specs, including each row's Config
+// (which RowStatus omits). Treat the Config maps as read-only.
+func (c *Context) Desired() []Row {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]Row(nil), c.desired...)
+}
+
 // pendingDesired returns desired rows that are enabled but neither
 // mounted nor failed — the rows a settle pass should try to mount.
 func (c *Context) pendingDesired() []Row {

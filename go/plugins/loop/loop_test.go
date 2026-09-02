@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -108,4 +109,78 @@ func TestLoopCodeResultDoneSequence(t *testing.T) {
 		t.Fatalf("result entry carries no code: %+v", entries[3])
 	}
 	kctx.Unmount()
+}
+
+// sysLLM records the system prompt it was called with.
+type sysLLM struct {
+	mu     sync.Mutex
+	system string
+}
+
+func (s *sysLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
+	s.mu.Lock()
+	s.system = system
+	s.mu.Unlock()
+	return "ok", nil
+}
+
+func (s *sysLLM) seen() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.system
+}
+
+// runTurn mounts the loop over llm/code (plus extra services), sends
+// one input and waits for its done event.
+func runTurn(t *testing.T, llm LLM, extra map[string]any) {
+	t.Helper()
+	kctx := kernel.NewContext()
+	kctx.Provide("llm", llm)
+	kctx.Provide("codemode", &stubCode{})
+	for k, v := range extra {
+		kctx.Provide(k, v)
+	}
+	done := make(chan struct{})
+	kctx.On("loop/event", func(p any) {
+		if ev, ok := p.(Event); ok && ev.Kind == "done" {
+			select {
+			case <-done:
+			default:
+				close(done)
+			}
+		}
+	})
+	if err := (&plugin{}).Apply(kctx, nil); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	inputs, err := kernel.Get[chan string](kctx, "inputs")
+	if err != nil {
+		t.Fatalf("inputs: %v", err)
+	}
+	inputs <- "hi"
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for done event")
+	}
+	kctx.Unmount()
+}
+
+func TestSystemPromptDocumentsAskWhenMounted(t *testing.T) {
+	llm := &sysLLM{}
+	runTurn(t, llm, map[string]any{"ask-answers": struct{}{}})
+	sys := llm.seen()
+	for _, want := range []string{"tools.ask(", "separate argument", "clickable choices"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("system prompt should contain %q:\n%s", want, sys)
+		}
+	}
+}
+
+func TestSystemPromptOmitsAskWhenAbsent(t *testing.T) {
+	llm := &sysLLM{}
+	runTurn(t, llm, nil)
+	if strings.Contains(llm.seen(), "tools.ask(") {
+		t.Errorf("no ask plugin mounted, prompt must not document tools.ask:\n%s", llm.seen())
+	}
 }
