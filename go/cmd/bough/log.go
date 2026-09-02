@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/andreylukin/bough/plugins/history"
@@ -17,16 +16,28 @@ import (
 
 func runLog(args []string) {
 	fs := flag.NewFlagSet("log", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: bough log [--raw] [session-id|path]   (latest non-empty session when no arg)")
+	}
 	raw := fs.Bool("raw", false, "print full JSON lines")
 	fs.Parse(args)
+	if fs.NArg() > 1 {
+		fs.Usage()
+		os.Exit(2)
+	}
 
 	path := fs.Arg(0)
 	if path == "" {
-		p, err := latestSession()
+		p, err := latestSession(sessionsDir())
 		if err != nil {
 			fatal(err)
 		}
 		path = p
+	} else if _, err := os.Stat(path); err != nil {
+		// A session id (as `bough sessions` prints) works too.
+		if p := filepath.Join(sessionsDir(), strings.TrimSuffix(path, ".jsonl")+".jsonl"); fileExists(p) {
+			path = p
+		}
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -60,18 +71,23 @@ func runLog(args []string) {
 	}
 }
 
-// latestSession returns the lexically last file in ~/.bough/history
-// (RFC3339-prefixed names sort chronologically).
-func latestSession() (string, error) {
-	home, err := os.UserHomeDir()
+// latestSession returns the newest session file in dir that has at
+// least one entry: `bough rows` and an aborted launch each leave an
+// empty file behind, and "latest" must never be one of those.
+func latestSession(dir string) (string, error) {
+	infos, err := history.List(dir)
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".bough", "history")
-	names, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
-	if err != nil || len(names) == 0 {
-		return "", fmt.Errorf("no session files in %s", dir)
+	for _, in := range infos {
+		if in.Entries > 0 {
+			return in.Path, nil
+		}
 	}
-	sort.Strings(names)
-	return names[len(names)-1], nil
+	return "", fmt.Errorf("no session files in %s", dir)
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }

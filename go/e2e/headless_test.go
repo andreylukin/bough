@@ -45,11 +45,18 @@ func TestHeadlessHookRewritesPrompt(t *testing.T) {
 
 func TestHeadlessHookBlocksPrompt(t *testing.T) {
 	t.Parallel()
-	out := runHeadless(t, launchOpts{
+	b := launchHeadless(t, launchOpts{
 		cwd: map[string]string{
 			".bough/hooks/user-prompt-submit/block.js": `return {block: "blocked-by-policy-xyz"}`,
 		},
-	}, "try me")
+	})
+	b.send("try me")
+	b.closeStdin()
+	// An errored turn is a non-zero exit (the error line went to stderr).
+	if code := b.waitExit(); code != 1 {
+		t.Fatalf("exit code %d, want 1; output:\n%s", code, b.out.String())
+	}
+	out := b.out.String()
 	inOrder(t, out, "[error] blocked-by-policy-xyz", "[done]")
 	mustNotContain(t, out, "echo: try me") // the llm never saw it
 }
@@ -325,4 +332,51 @@ func TestHeadlessBrokenReloadKeepsLastGoodTree(t *testing.T) {
 	if code := b.waitExit(); code != 0 {
 		t.Fatalf("exit %d; output:\n%s", code, b.out.String())
 	}
+}
+
+// A typo'd subcommand is refused (exit 2) instead of opening the TUI;
+// --version prints one line; --help lists the flags and subcommands.
+func TestCLIUnknownCommandVersionHelp(t *testing.T) {
+	t.Parallel()
+	home, cwd := emptySandbox(t)
+
+	out, code := runCLI(t, home, cwd, "bogus")
+	if code != 2 {
+		t.Fatalf("bogus: exit %d, want 2:\n%s", code, out)
+	}
+	mustContain(t, out, "unknown command: bogus (try --help)")
+
+	out, code = runCLI(t, home, cwd, "--version")
+	if code != 0 || !strings.HasPrefix(out, "bough ") || strings.Count(out, "\n") != 1 {
+		t.Fatalf("--version: exit %d, out %q", code, out)
+	}
+
+	out, code = runCLI(t, home, cwd, "--help")
+	if code != 0 {
+		t.Fatalf("--help: exit %d:\n%s", code, out)
+	}
+	mustContain(t, out, "--continue", "--resume", "--set", "--headless", "--web", "sessions", "~/.bough/bough.yml")
+
+	out, code = runCLI(t, home, cwd, "sessions", "--help")
+	if code != 0 {
+		t.Fatalf("sessions --help: exit %d:\n%s", code, out)
+	}
+	mustContain(t, out, "usage: bough sessions")
+
+	out, code = runCLI(t, home, cwd, "log", "--help")
+	if code != 0 {
+		t.Fatalf("log --help: exit %d:\n%s", code, out)
+	}
+	mustContain(t, out, "usage: bough log")
+}
+
+// A normal run's stderr is quiet: no config-source note, no kernel row
+// reload chatter, no MCP binding lines. --verbose brings them back.
+func TestHeadlessQuietStderr(t *testing.T) {
+	t.Parallel()
+	out := runHeadless(t, launchOpts{}, "hello")
+	mustNotContain(t, out, "bough: using", "reloading (service", "tools bound")
+
+	loud := runHeadless(t, launchOpts{args: []string{"--verbose"}}, "hello")
+	mustContain(t, loud, `reloading (service "history" changed)`)
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -30,7 +31,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/skills"
 	_ "github.com/andreylukin/bough/plugins/todo"
 	_ "github.com/andreylukin/bough/plugins/tools"
-	_ "github.com/andreylukin/bough/plugins/ui"
+	"github.com/andreylukin/bough/plugins/ui"
 	_ "github.com/andreylukin/bough/plugins/workers"
 )
 
@@ -75,8 +76,8 @@ func (s configSource) load() ([]kernel.Row, error) {
 
 // resolveConfig picks the config source. An explicit --config is used
 // verbatim (a missing file stays fatal at load). Otherwise: ./bough.yml
-// if present, else ~/.bough/bough.yml, else the embedded default —
-// with one stderr line naming the source when it's not ./bough.yml.
+// if present, else ~/.bough/bough.yml, else the embedded default.
+// (main notes a non-./bough.yml source on stderr in TUI mode.)
 func resolveConfig(explicit bool, flagVal string) configSource {
 	if explicit {
 		return configSource{path: flagVal}
@@ -87,36 +88,88 @@ func resolveConfig(explicit bool, flagVal string) configSource {
 	if home, err := os.UserHomeDir(); err == nil {
 		global := filepath.Join(home, ".bough", "bough.yml")
 		if _, err := os.Stat(global); err == nil {
-			fmt.Fprintf(os.Stderr, "bough: using %s\n", global)
 			return configSource{path: global}
 		}
 	}
-	fmt.Fprintln(os.Stderr, "bough: using embedded default config")
 	return configSource{}
 }
 
+// describe names the source for the "bough: using ..." note.
+func (s configSource) describe() string {
+	if s.path == "" {
+		return "embedded default config"
+	}
+	return s.path
+}
+
+// commands are the subcommands `bough <name>` dispatches to.
+var commands = map[string]bool{"rows": true, "sessions": true, "log": true, "update": true, "restart": true}
+
+// command splits argv into the subcommand (if any) and its args. A
+// first arg that is neither a flag nor a known subcommand is an error
+// — the launcher must not fall through into the TUI on a typo.
+func command(args []string) (name string, rest []string, err error) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return "", args, nil
+	}
+	if !commands[args[0]] {
+		return "", nil, fmt.Errorf("unknown command: %s (try --help)", args[0])
+	}
+	return args[0], args[1:], nil
+}
+
+// version is set by -ldflags "-X main.version=..."; otherwise the
+// module's VCS revision from the build info, else "dev".
+var version = ""
+
+func versionString() string {
+	if version != "" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		rev, dirty := "", false
+		for _, kv := range bi.Settings {
+			switch kv.Key {
+			case "vcs.revision":
+				rev = kv.Value
+			case "vcs.modified":
+				dirty = kv.Value == "true"
+			}
+		}
+		if rev != "" {
+			if len(rev) > 8 {
+				rev = rev[:8]
+			}
+			if dirty {
+				rev += "-dirty"
+			}
+			return rev
+		}
+	}
+	return "dev"
+}
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "log" {
-		runLog(os.Args[2:])
+	cmd, args, err := command(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "bough:", err)
+		os.Exit(2)
+	}
+	switch cmd {
+	case "log":
+		runLog(args)
+		return
+	case "sessions":
+		runSessions(args)
+		return
+	case "update":
+		runUpdate(args)
+		return
+	case "restart":
+		runRestart(args)
 		return
 	}
-	if len(os.Args) > 1 && os.Args[1] == "sessions" {
-		runSessions(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "update" {
-		runUpdate(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "restart" {
-		runRestart(os.Args[2:])
-		return
-	}
-	rowsCmd := len(os.Args) > 1 && os.Args[1] == "rows"
-	args := os.Args[1:]
-	if rowsCmd {
-		args = os.Args[2:]
-	}
+	rowsCmd := cmd == "rows"
 	// -c/--continue and -r/--resume [id] take an optional value, which
 	// the flag package can't express; pull them out first.
 	contFlag, resumeFlag, resumeID, args := extractSessionFlags(args)
@@ -125,11 +178,20 @@ func main() {
 		headless = flag.Bool("headless", false, "read input from stdin, no TUI")
 		web      = flag.String("web", "", "serve the UI in a browser at this addr (e.g. localhost:7681)")
 		dump     = flag.Bool("dump-config", false, "mount the config tree, print the row state table, and exit")
+		verbose  = flag.Bool("verbose", false, "print kernel/mcp/config diagnostics on stderr")
+		showVer  = flag.Bool("version", false, "print the version and exit")
 		sets     setFlags
 	)
 	flag.Var(&sets, "set", "override row config: id.key=value (repeatable)")
 	flag.CommandLine.Usage = usage
 	flag.CommandLine.Parse(args)
+	if *showVer {
+		fmt.Println("bough " + versionString())
+		return
+	}
+	if *verbose {
+		kernel.Verbose = true
+	}
 
 	explicitConfig := false
 	flag.CommandLine.Visit(func(f *flag.Flag) {
@@ -145,6 +207,11 @@ func main() {
 		mode = "headless"
 	case *web != "":
 		mode = "web:" + *web
+	}
+	// Name a non-./bough.yml source once, where a person is looking
+	// (TUI) — or under --verbose, so scripts can check which file won.
+	if src.path != "bough.yml" && ((mode == "tui" && !rowsCmd && !*dump) || kernel.Verbose) {
+		fmt.Fprintf(os.Stderr, "bough: using %s\n", src.describe())
 	}
 
 	// Resolve session flags before anything mounts: --continue and
@@ -220,10 +287,12 @@ func main() {
 		fatal(err)
 	}
 
-	// Block until interrupted, then unmount (effects run LIFO).
+	// Block until interrupted, then unmount (effects run LIFO). Exit 1
+	// when a headless turn errored, else 0 (TUI /quit and ctrl+c too).
 	<-sig
 	stopWatch()
 	ctx.Unmount()
+	os.Exit(ui.ExitCode())
 }
 
 // watchConfig hot-reloads the config: fsnotify on the file's parent
@@ -232,7 +301,7 @@ func main() {
 // log either way; a bad candidate keeps the last good tree.
 func watchConfig(ctx *kernel.Context, src configSource, ov *overrides) (func(), error) {
 	if src.path == "" {
-		fmt.Fprintln(os.Stderr, "bough: embedded config has no file; hot reload disabled")
+		kernel.Logf("bough: embedded config has no file; hot reload disabled\n")
 		return func() {}, nil
 	}
 	w, err := fsnotify.NewWatcher()
@@ -362,20 +431,44 @@ func printRows(ctx *kernel.Context) {
 	w.Flush()
 }
 
-func usage() {
-	fmt.Fprint(os.Stderr, `usage: bough [flags]
+const usageText = `usage: bough [flags]                 start the TUI
        bough <command> [args]
+
+flags:
+  -c, --continue          resume the most recent session
+  -r, --resume [id]       resume a session by id, or pick from a list
+      --set id.key=value  override a row's config (repeatable);
+                          id.plugin=name swaps a row's plugin
+      --config <path>     config tree (default ./bough.yml, else
+                          ~/.bough/bough.yml, else the embedded default)
+      --headless          read lines from stdin, print "[kind] text"
+                          events on stdout ("[error]" on stderr; exit 1
+                          if any turn errored), no TUI
+      --web <addr>        serve the UI in a browser (e.g. localhost:7681)
+      --dump-config       mount the config tree, print the row table, exit
+      --verbose           kernel/mcp/config diagnostics on stderr
+                          (also BOUGH_VERBOSE=1)
+      --version           print the version and exit
+  -h, --help              this help
+
+Single-dash long flags (-set, -headless) are accepted too.
 
 commands:
   rows      print the row state table and exit
   sessions  list stored sessions, newest first
-  log       pretty-print a history JSONL (latest when no arg)
+  log       pretty-print a session's history (latest when no arg)
   update    git pull + rebuild this binary + restart the web session
   restart   bounce the running --web session onto the current binary
 
-flags:
-`)
-	flag.PrintDefaults()
+config:
+  ./bough.yml           project config tree (row list)
+  ~/.bough/bough.yml    global config, used when there is no ./bough.yml
+  ~/.bough/init.js      startup script: providers, tools, settings
+  ~/.bough/history/     one JSONL per session (bough sessions / log)
+`
+
+func usage() {
+	fmt.Fprint(os.Stderr, usageText)
 }
 
 func fatal(err error) {

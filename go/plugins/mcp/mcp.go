@@ -96,7 +96,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			session.Close()
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "mcp: server %q: %d tools bound\n", name, len(bound))
+		kernel.Logf("mcp: server %q: %d tools bound\n", name, len(bound))
 		sessions = append(sessions, session)
 		lines = append(lines, bound...)
 	}

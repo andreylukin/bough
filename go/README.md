@@ -69,7 +69,22 @@ go build ./cmd/bough
 ./bough -r [id]              # resume by id, or pick from a list
 ./bough update               # git pull + rebuild + bounce the web session
 ./bough restart              # bounce the running --web session
+./bough --version            # print "bough <version>"
+./bough --help               # flags, subcommands, config locations
 ```
+
+Flags take `--long` or `-long`; `-c`/`--continue` and `-r`/`--resume`
+are the short pairs. Config comes from `./bough.yml`, else
+`~/.bough/bough.yml`, else an embedded default (`--config <path>` to
+be explicit); `~/.bough/init.js` is the startup script.
+
+Output contract: `--headless` prints `[assistant]`, `[done]` and the
+other event lines on **stdout** and `[error]` lines on **stderr**, and
+exits 1 if any turn errored (0 otherwise; `/quit` and ctrl+c in the TUI
+exit 0). An unknown subcommand exits 2. Kernel/MCP/config diagnostics
+(row reloads, `N tools bound`, which config file loaded) are quiet
+unless `--verbose` or `BOUGH_VERBOSE=1`; failures and warnings always
+print on stderr.
 
 The default `llm-anthropic` provider needs `ANTHROPIC_API_KEY` set (and
 a `model` in config). No key handy? Smoke-test with the echo provider:

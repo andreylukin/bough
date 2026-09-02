@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -33,7 +34,24 @@ var (
 	hlAsk     *hlAskState
 	hlPending atomic.Int64
 	hlTick    = make(chan struct{}, 1)
+
+	// hlErrored flips on the first "error" event; the launcher exits 1
+	// after the clean unmount when any turn errored.
+	hlErrored atomic.Bool
+	// hlOut/hlErr are the event sinks: "[assistant]" and friends on
+	// stdout, "[error]" on stderr. Vars so tests can capture them.
+	hlOut io.Writer = os.Stdout
+	hlErr io.Writer = os.Stderr
 )
+
+// ExitCode is the process exit status the launcher should use after
+// unmounting: 1 when a headless turn errored, else 0.
+func ExitCode() int {
+	if hlErrored.Load() {
+		return 1
+	}
+	return 0
+}
 
 // hlAskState is the pending tools.ask the next stdin line answers.
 type hlAskState struct {
@@ -50,33 +68,7 @@ func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog h
 	events, _ := b.subscribe()
 	go func() {
 		for ev := range events {
-			if ev.Kind == "ask" {
-				// Arm the answer routing BEFORE printing, so a caller
-				// that waits for the "[ask]" line can send the answer.
-				hlMu.Lock()
-				hlAsk = &hlAskState{id: ev.ID, options: ev.Options}
-				hlMu.Unlock()
-				fmt.Printf("[ask] %s\n", ev.Text)
-				for i, o := range ev.Options {
-					fmt.Printf("  %d. %s\n", i+1, o)
-				}
-				continue
-			}
-			if ev.Kind == "done" || ev.Kind == "error" {
-				// The turn ended (or the ask timed out into a run
-				// error): stop routing stdin to a dead ask.
-				hlMu.Lock()
-				hlAsk = nil
-				hlMu.Unlock()
-			}
-			fmt.Printf("[%s] %s\n", ev.Kind, ev.Text)
-			if ev.Kind == "done" {
-				hlPending.Add(-1)
-			}
-			select {
-			case hlTick <- struct{}{}:
-			default:
-			}
+			hlPrint(ev)
 		}
 	}()
 
@@ -95,6 +87,42 @@ func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog h
 		hlHist = nil
 		hlAnswer = nil
 		hlMu.Unlock()
+	}
+}
+
+// hlPrint renders one loop event: "[ask]" arms answer routing before
+// printing so a caller waiting on that line can answer; "[error]" goes
+// to stderr and marks the run failed; everything else to stdout.
+func hlPrint(ev Event) {
+	if ev.Kind == "ask" {
+		hlMu.Lock()
+		hlAsk = &hlAskState{id: ev.ID, options: ev.Options}
+		hlMu.Unlock()
+		fmt.Fprintf(hlOut, "[ask] %s\n", ev.Text)
+		for i, o := range ev.Options {
+			fmt.Fprintf(hlOut, "  %d. %s\n", i+1, o)
+		}
+		return
+	}
+	if ev.Kind == "done" || ev.Kind == "error" {
+		// The turn ended (or the ask timed out into a run error):
+		// stop routing stdin to a dead ask.
+		hlMu.Lock()
+		hlAsk = nil
+		hlMu.Unlock()
+	}
+	if ev.Kind == "error" {
+		hlErrored.Store(true)
+		fmt.Fprintf(hlErr, "[error] %s\n", ev.Text)
+	} else {
+		fmt.Fprintf(hlOut, "[%s] %s\n", ev.Kind, ev.Text)
+	}
+	if ev.Kind == "done" {
+		hlPending.Add(-1)
+	}
+	select {
+	case hlTick <- struct{}{}:
+	default:
 	}
 }
 
@@ -158,7 +186,8 @@ func hlAnswerPending(line string) bool {
 		text = pa.options[n-1]
 	}
 	if err := ans.Answer(pa.id, text); err != nil {
-		fmt.Printf("[error] %s\n", err)
+		hlErrored.Store(true)
+		fmt.Fprintf(hlErr, "[error] %s\n", err)
 	}
 	return true
 }
@@ -194,7 +223,7 @@ func hlDispatch(line string) bool {
 	if hlog != nil {
 		hlog.Append("system", map[string]any{"text": out})
 	}
-	fmt.Printf("[system] %s\n", out)
+	fmt.Fprintf(hlOut, "[system] %s\n", out)
 	if act == commands.ActionQuit {
 		drainHeadless()
 		interruptSelf()
@@ -219,7 +248,7 @@ func hlBang(line string) {
 	if hlog != nil {
 		hlog.Append("system", map[string]any{"text": out})
 	}
-	fmt.Printf("[system] %s\n", out)
+	fmt.Fprintf(hlOut, "[system] %s\n", out)
 }
 
 // drainHeadless waits for every sent line's "done" (with an idle
