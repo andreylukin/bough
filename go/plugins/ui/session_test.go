@@ -77,7 +77,7 @@ func TestProgramReplaysResumedTranscript(t *testing.T) {
 		"▸ code js (1 line)",
 		"▸ result (2 lines)",
 	)
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
 	fm := tm.FinalModel(t).(model)
 	if len(fm.blocks) != 5 {
@@ -100,7 +100,7 @@ func TestProgramFreshSessionNoReplay(t *testing.T) {
 	tm := teatest.NewTestModel(t, newModel(80, 24, func(string) {}, events, &p),
 		teatest.WithInitialTermSize(80, 24))
 	waitForOutput(t, tm, "bough") // first frame drawn
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
 	if fm := tm.FinalModel(t).(model); len(fm.blocks) != 0 {
 		t.Errorf("fresh session replayed %d blocks, want 0", len(fm.blocks))
@@ -140,7 +140,7 @@ func TestProgramPickerResumeSelected(t *testing.T) {
 	}
 	// …and the chat view replays the resumed transcript.
 	waitForOutput(t, tm, "❯ prior question", "▸ result (2 lines)")
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
 	if fm := tm.FinalModel(t).(model); fm.picking {
 		t.Error("still picking after enter")
@@ -167,7 +167,7 @@ func TestProgramPickerEscStartsFresh(t *testing.T) {
 	case <-time.After(4 * time.Second):
 		t.Fatal("session-choose was never invoked on esc")
 	}
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
 	fm := tm.FinalModel(t).(model)
 	if fm.picking {

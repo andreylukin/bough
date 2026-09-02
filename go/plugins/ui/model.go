@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 
 	"charm.land/bubbles/v2/spinner"
-	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
@@ -55,7 +55,7 @@ type lineRange struct {
 type model struct {
 	vp      viewport.Model
 	overlay viewport.Model
-	input   textinput.Model
+	input   textarea.Model
 	spin    spinner.Model
 	events  <-chan Event
 	send    func(string)
@@ -78,17 +78,15 @@ type model struct {
 	pendingAsk string         // ask id the composer routes answers to; "" = none
 	pal        palette        // "/" command palette (see palette.go)
 	flash      string
+	stop       stopState     // quit-key arming (see stop.go)
+	comp       composerState // prompt recall (see composer.go)
 	md         *glamour.TermRenderer
 	mdCache    map[string]string // assistant markdown render cache (cleared on resize)
 	bgLight    bool              // terminal background is light (tea.BackgroundColorMsg)
 }
 
 func newModel(width, height int, send func(string), events <-chan Event, cfg *atomic.Pointer[uiCfg]) model {
-	ti := textinput.New()
-	ti.Prompt = "> "
-	ti.Placeholder = "say something"
-	ti.SetVirtualCursor(true)
-	ti.Focus()
+	ti := newComposer()
 
 	vp := viewport.New()
 	vp.KeyMap = viewport.KeyMap{} // all keys resolve through the keymap service
@@ -99,7 +97,7 @@ func newModel(width, height int, send func(string), events <-chan Event, cfg *at
 	sp.Spinner = spinner.MiniDot
 
 	m := model{vp: vp, overlay: ov, input: ti, spin: sp, send: send, events: events, cfg: cfg,
-		focusID: -1, ovExpanded: map[int64]bool{}, mdCache: map[string]string{}}
+		focusID: -1, ovExpanded: map[int64]bool{}, mdCache: map[string]string{}, comp: composerState{recall: -1}}
 	m.resize(width, height)
 	if cfg.Load().picker {
 		m.picking = true // replay happens after the pick (leavePicker)
@@ -118,7 +116,7 @@ func (m *model) resize(w, h int) {
 	}
 	m.vp.SetWidth(w)
 	m.overlay.SetWidth(w)
-	m.input.SetWidth(w - len(m.input.Prompt))
+	m.input.SetWidth(w)
 	m.md = nil // re-wrap markdown at the new width
 	m.mdCache = map[string]string{}
 	m.refresh()
@@ -132,6 +130,7 @@ func (m *model) resize(w, h int) {
 // scroll position (still pinned when it was at the bottom). Parts are
 // blank-squeezed so at most one blank line separates blocks.
 func (m *model) refresh() {
+	m.layoutComposer()
 	cfg := m.cfg.Load()
 	if m.welcome && len(m.blocks) == 0 {
 		// Fresh session: orientation text instead of an empty pane. Not
@@ -279,7 +278,7 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 	th := cfg.theme
 	switch b.kind {
 	case "user":
-		return "\n" + th["user"].Render("❯ "+b.text)
+		return "\n" + th["user"].Width(m.width).Render("❯ "+b.text)
 	case "assistant":
 		head := th["accent"].Render("●") + " " + th["dim"].Render("bough")
 		return head + "\n" + m.markdown(b.text)
@@ -405,12 +404,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		return m, m.handleClick(msg.Mouse())
+
+	case tea.MouseReleaseMsg, tea.MouseMotionMsg:
+		return m, nil // never the composer's business
 	}
 
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.syncPalette() // e.g. paste can change the draft
+	m.layoutComposer()
 	cmds = append(cmds, cmd)
 	if m.inspecting {
 		m.overlay, cmd = m.overlay.Update(msg)
@@ -678,6 +681,13 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if handled, cmd := m.stopKey(key, cfg); handled {
+		return m, cmd
+	}
+	if handled, cmd := m.composerKey(key, msg); handled {
+		return m, cmd
+	}
+
 	switch cfg.action[key] {
 	case "quit":
 		return m, tea.Quit
@@ -696,6 +706,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "clear_input":
 		m.input.Reset()
 		m.syncPalette()
+		m.layoutComposer()
 		return m, nil
 	case "block_next":
 		if !m.inspecting {
@@ -771,6 +782,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.syncPalette()
+	m.layoutComposer()
 	return m, cmd
 }
 

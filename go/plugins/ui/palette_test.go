@@ -603,6 +603,6 @@ func TestProgramSlashDispatch(t *testing.T) {
 		t.Fatalf("dispatched line reached the loop: %q", l)
 	default:
 	}
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
 }

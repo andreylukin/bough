@@ -255,6 +255,11 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			sys = r.cog.System(sys)
 		}
 		reply, err := r.llm.Complete(ctx, sys, r.project())
+		if ctx.Err() != nil {
+			note("cancelled", "", nil)
+			note("done", "", nil)
+			return ctx.Err()
+		}
 		if err != nil {
 			note("error", err.Error(), nil)
 			note("done", "", nil) // every turn ends with a done, even on llm failure
@@ -279,7 +284,12 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				}
 			}
 			note("code", code, nil)
-			out, runErr := r.code.Run(code)
+			out, runErr := r.runCode(ctx, code)
+			if ctx.Err() != nil {
+				note("cancelled", "", nil)
+				note("done", "", nil)
+				return ctx.Err()
+			}
 			if runErr != nil {
 				out = "error: " + runErr.Error()
 			} else {
@@ -361,10 +371,13 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	inputs := make(chan string, 8)
 	kctx.Provide("inputs", inputs)
 
+	t := &turns{}
+	kctx.Provide("cancel", t.Cancel)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		for input := range inputs {
-			_ = r.Run(ctx, input, func(kind, text string) {
+			t.run(ctx, r, input, func(kind, text string) {
 				kctx.Emit("loop/event", Event{Kind: kind, Text: text})
 			})
 		}

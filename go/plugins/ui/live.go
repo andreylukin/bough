@@ -52,19 +52,22 @@ type askAnswers interface {
 // current one through liveCfg on every render, so a remount (new
 // theme/keymap row, history landing) restyles running views.
 type uiCfg struct {
-	theme   theme
-	keys    map[string]string // action -> key
-	action  map[string]string // key -> action (derived)
-	status   string      // status-bar left text
-	hist     historyView // nil when no history service
-	mdStyle  string      // "dark"/"light" glamour override; "" = detect
-	collapse string      // "all" | "large" | "none": which code/result blocks start collapsed
+	theme    theme
+	keys     map[string]string // action -> key
+	action   map[string]string // key -> action (derived)
+	status   string            // status-bar left text
+	hist     historyView       // nil when no history service
+	mdStyle  string            // "dark"/"light" glamour override; "" = detect
+	collapse string            // "all" | "large" | "none": which code/result blocks start collapsed
 
 	// "/" command seam: with no commands service, "/" is plain text
 	// and the palette never opens. hlog records dispatches to history
 	// ("command"/"system" entries); nil is fine (no recording).
 	cmds commandsView
 	hlog historyAppender
+
+	// "cancel" seam (the loop's turn cancel); nil = nothing to stop.
+	cancel func()
 
 	// "ask" seam: nil when no ask plugin is mounted (ask events then
 	// render pending forever and the composer never routes answers).
@@ -171,6 +174,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	cfg.hlog = hlog
 	if a, err := kernel.Get[askAnswers](ctx, "ask-answers"); err == nil {
 		cfg.ask = a
+	}
+	if c, err := kernel.Get[func()](ctx, "cancel"); err == nil {
+		cfg.cancel = c
 	}
 	if _, err := kernel.Get[any](ctx, "session-picker"); err == nil {
 		cfg.picker = true

@@ -28,6 +28,6 @@ func TestHarnessEchoTurn(t *testing.T) {
 func TestHarnessDefaultQuitKey(t *testing.T) {
 	t.Parallel()
 	d := uitest.Mount(t, nil, "codemode", "llm-echo", "loop")
-	d.Press("ctrl+c")
+	d.Press("ctrl+c", "ctrl+c") // once arms, twice quits
 	d.WaitQuit()
 }
