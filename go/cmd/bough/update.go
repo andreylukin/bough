@@ -220,10 +220,24 @@ func restartWeb(home, bin string, out io.Writer) error {
 	}
 	os.Remove(pf) // best-effort; the exiting process usually removed it
 
+	pid, logPath, err := launchWeb(home, bin, addr)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "bough: restarted web session on %s (pid %d, log %s)\n", addr, pid, logPath)
+	return nil
+}
+
+// launchWeb starts `bin --web addr` detached (own session, output to
+// ~/.bough/web.log) and returns its pid and log path.
+func launchWeb(home, bin, addr string) (int, string, error) {
 	logPath := filepath.Join(home, ".bough", "web.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return 0, "", err
+	}
 	logF, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", logPath, err)
+		return 0, "", fmt.Errorf("open %s: %w", logPath, err)
 	}
 	defer logF.Close()
 	cmd := exec.Command(bin, "--web", addr)
@@ -231,10 +245,25 @@ func restartWeb(home, bin string, out io.Writer) error {
 	cmd.Stderr = logF
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("relaunch %s --web %s: %w", bin, addr, err)
+		return 0, "", fmt.Errorf("launch %s --web %s: %w", bin, addr, err)
 	}
-	fmt.Fprintf(out, "bough: restarted web session on %s (pid %d, log %s)\n", addr, cmd.Process.Pid, logPath)
-	return nil
+	return cmd.Process.Pid, logPath, nil
+}
+
+// runningWeb reports the live web session recorded in the pidfile, if
+// any; a stale pidfile is removed.
+func runningWeb(home string) (pid int, addr string, ok bool) {
+	pf := webPidfile(home)
+	b, err := os.ReadFile(pf)
+	if err != nil {
+		return 0, "", false
+	}
+	pid, addr, perr := parsePidfile(string(b))
+	if perr != nil || !alive(pid) {
+		os.Remove(pf)
+		return 0, "", false
+	}
+	return pid, addr, true
 }
 
 func webPidfile(home string) string {
