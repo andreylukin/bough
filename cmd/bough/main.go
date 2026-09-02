@@ -10,12 +10,11 @@ import (
 	"syscall"
 
 	"github.com/andreylukin/bough/kernel"
-	// TODO(integrate): uncomment as plugin packages land.
-	// _ "github.com/andreylukin/bough/plugins/codemode"
-	// _ "github.com/andreylukin/bough/plugins/llm"
-	// _ "github.com/andreylukin/bough/plugins/loop"
-	// _ "github.com/andreylukin/bough/plugins/tools"
-	// _ "github.com/andreylukin/bough/plugins/ui"
+	_ "github.com/andreylukin/bough/plugins/codemode"
+	_ "github.com/andreylukin/bough/plugins/llm"
+	_ "github.com/andreylukin/bough/plugins/loop"
+	_ "github.com/andreylukin/bough/plugins/tools"
+	_ "github.com/andreylukin/bough/plugins/ui"
 )
 
 // setFlags collects repeatable --set id.key=value overrides.
@@ -80,10 +79,14 @@ func applyOverrides(rows []kernel.Row, sets setFlags) error {
 		found := false
 		for i := range rows {
 			if rows[i].ID == id {
-				if rows[i].Config == nil {
-					rows[i].Config = map[string]any{}
+				if key == "plugin" {
+					rows[i].Plugin = value
+				} else {
+					if rows[i].Config == nil {
+						rows[i].Config = map[string]any{}
+					}
+					rows[i].Config[key] = value
 				}
-				rows[i].Config[key] = value
 				found = true
 			}
 		}

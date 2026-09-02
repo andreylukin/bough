@@ -14,7 +14,7 @@
   plugin: codemode
 
 - id: tools
-  plugin: tools
+  plugin: tools-basic
 
 - id: loop
   plugin: loop

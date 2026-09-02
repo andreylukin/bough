@@ -35,13 +35,21 @@ and are wired together only through service keys:
 go build ./cmd/bough
 
 ./bough                      # native TUI (bubbletea)
-./bough --web localhost:7681 # browser UI (sip)
+./bough --web 127.0.0.1:7681 # browser UI (sip)
 ./bough --headless           # stdin/stdout
 ./bough --set llm.model=claude-haiku-4-5   # override any row config
+./bough --set llm.plugin=llm-echo          # swap a row's plugin
 ```
 
-Swap the LLM by editing the `llm` row in `bough.yml` (e.g. `llm-echo`
-instead of `llm-anthropic`).
+The default `llm-anthropic` provider needs `ANTHROPIC_API_KEY` set (and
+a `model` in config). No key handy? Smoke-test with the echo provider:
+
+```sh
+printf "say CODE! please\n" | ./bough --headless --set llm.plugin=llm-echo
+```
+
+Swap the LLM permanently by editing the `llm` row in `bough.yml`
+(`llm-echo` instead of `llm-anthropic`).
 
 ## The codemode loop
 
