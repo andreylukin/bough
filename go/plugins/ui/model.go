@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"time"
+
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -127,6 +129,9 @@ func (m *model) resize(w, h int) {
 	}
 	m.vp.SetWidth(w)
 	m.overlay.SetWidth(w)
+	// A short pane caps the composer below composerMaxLines so status
+	// bar + composer + one transcript row always fit.
+	m.input.MaxHeight = max(1, min(composerMaxLines, h-2))
 	m.input.SetWidth(max(w, 1))
 	m.md = nil // re-wrap markdown at the new width
 	m.mdCache = map[string]string{}
@@ -291,6 +296,13 @@ const authHint = "hint: check your provider credentials (ANTHROPIC_API_KEY / OPE
 
 // render turns one semantic block into styled lines.
 func (m *model) render(b *block, cfg *uiCfg) string {
+	// Block text is stored raw (a copy must be the true output); the
+	// frame gets a sanitized view of it.
+	if s := sanitizeText(b.text); s != b.text {
+		c := *b
+		c.text = s
+		b = &c
+	}
 	th := cfg.theme
 	switch b.kind {
 	case "user":
@@ -439,6 +451,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseReleaseMsg:
 		return m, m.releaseSelect(msg.Mouse())
+
+	case tea.PasteMsg:
+		m.stop.armedAt = time.Time{} // a paste is typing: it disarms quit like any key
 	}
 
 	var cmds []tea.Cmd
@@ -752,6 +767,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	cfg := m.cfg.Load()
 	m.flash = ""
 	key := msg.String()
+	if cfg.action[key] != "quit" {
+		m.stop.armedAt = time.Time{} // any other key disarms, whichever handler takes it
+	}
 
 	// The palette owns Up/Down/Tab/Enter/Esc while it is open, and
 	// nothing else: what it passes on falls through to the keymap

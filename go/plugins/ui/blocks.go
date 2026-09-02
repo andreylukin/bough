@@ -5,6 +5,8 @@ package ui
 // panic guard. Rendering policy lives here; model.go only hooks in.
 
 import (
+	"github.com/charmbracelet/x/ansi"
+
 	"fmt"
 	"regexp"
 	"strings"
@@ -206,6 +208,34 @@ func safeView(render func() string) (out string) {
 		}
 	}()
 	return render()
+}
+
+// sanitizeText makes model/tool text safe to put in a frame: escape
+// sequences are stripped (a CSI/OSC in tool output would otherwise
+// reach the terminal as-is — hyperlinks, a title, even an OSC 52
+// clipboard write), a carriage return keeps only what a terminal
+// would show (the text after the last \r on the line), tabs become
+// spaces, other control characters are dropped.
+func sanitizeText(s string) string {
+	if strings.IndexFunc(s, func(r rune) bool { return (r < 0x20 && r != '\n') || r == 0x7f }) < 0 {
+		return s
+	}
+	s = ansi.Strip(s)
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		if j := strings.LastIndexByte(ln, '\r'); j >= 0 {
+			ln = ln[j+1:]
+		}
+		ln = strings.ReplaceAll(ln, "\t", "    ")
+		lines[i] = strings.Map(func(r rune) rune {
+			if r < 0x20 || r == 0x7f {
+				return -1
+			}
+			return r
+		}, ln)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // --- model hooks (called from model.go) ---

@@ -9,6 +9,8 @@ package ui
 // file is reachable via /sessions, not the bar.
 
 import (
+	"github.com/charmbracelet/x/ansi"
+
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -44,5 +46,8 @@ func (m *model) statusBar(cfg *uiCfg) string {
 	if gap < 1 {
 		gap = 1
 	}
-	return th["status"].Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
+	// One row, always: a narrow pane truncates rather than wrapping the
+	// bar onto a second row and pushing the composer off screen.
+	line := ansi.Truncate(left+strings.Repeat(" ", gap)+right, m.width, "…")
+	return th["status"].Width(m.width).Render(line)
 }

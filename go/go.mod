@@ -12,15 +12,19 @@ require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/exp/golden v0.0.0-20251109135125-8916d276318f
 	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260901172002-a5dee49b2863
+	github.com/charmbracelet/x/vt v0.0.0-20260902165432-6f6ad8b37b0a
+	github.com/charmbracelet/x/xpty v0.1.4
 	github.com/creack/pty v1.1.24
 	github.com/dop251/goja v0.0.0-20260901132549-43234fa61381
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.58.0
+	pgregory.net/rapid v1.3.0
 )
 
 require (
@@ -33,15 +37,13 @@ require (
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/log v0.4.2 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
-	github.com/charmbracelet/x/conpty v0.1.1 // indirect
-	github.com/charmbracelet/x/errors v0.0.0-20251110184232-6ab307057ac7 // indirect
+	github.com/charmbracelet/x/conpty v0.2.0 // indirect
+	github.com/charmbracelet/x/exp/ordered v0.1.0 // indirect
 	github.com/charmbracelet/x/exp/slice v0.0.0-20250327172914-2fdc97757edf // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
-	github.com/charmbracelet/x/xpty v0.1.3 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
@@ -90,7 +92,7 @@ require (
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.30.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	modernc.org/libc v1.75.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

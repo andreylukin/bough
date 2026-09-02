@@ -134,6 +134,7 @@ func (m *model) atKey(key string) (bool, tea.Cmd) {
 		m.input.SetValue(draft[:i] + "@" + name + " ")
 		m.input.CursorEnd()
 		m.syncPalette()
+		m.layoutComposer() // the completion can add a wrapped row
 		return true, nil
 	}
 	return false, nil

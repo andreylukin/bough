@@ -7,6 +7,8 @@ package ui
 // the list is re-read from the history directory.
 
 import (
+	"github.com/charmbracelet/x/ansi"
+
 	"fmt"
 	"os"
 	"path/filepath"
@@ -151,7 +153,10 @@ func (m model) handlePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	rows := m.pickerRows(cfg)
 	key := msg.String()
 	if cfg.action[key] == "quit" {
-		return m, tea.Quit
+		if m.sessRows == nil {
+			return m, tea.Quit // the launch chooser: nothing to go back to
+		}
+		return m.leavePicker(""), nil // in-session: back, like esc — never a one-press quit
 	}
 	switch key {
 	case "up":
@@ -269,7 +274,14 @@ func (m *model) pickerView(cfg *uiCfg) string {
 	for len(lines) < m.height-1 {
 		lines = append(lines, "")
 	}
-	return strings.Join(append(lines, hints), "\n")
+	if m.height > 1 && len(lines) > m.height-1 {
+		lines = lines[:m.height-1] // a short pane: the hint row still fits
+	}
+	lines = append(lines, hints)
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], m.width, "…")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // shortDir renders a session's working directory: "." for this
