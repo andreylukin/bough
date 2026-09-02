@@ -142,8 +142,12 @@ func TestDedupeKeepsSurroundingAssistantText(t *testing.T) {
 		t.Fatalf("want assistant+code, got %+v", d.m.blocks)
 	}
 	if txt := d.m.blocks[0].text; strings.Contains(txt, "```") ||
-		!strings.Contains(txt, "before words") || !strings.Contains(txt, "after words") {
-		t.Errorf("fence not stripped cleanly: %q", txt)
+		!strings.Contains(txt, "before words") || strings.Contains(txt, "after words") {
+		t.Errorf("fence not stripped cleanly (prose after the fence waits for the result): %q", txt)
+	}
+	d.event("result", "1")
+	if len(d.m.blocks) != 4 || d.m.blocks[3].kind != "assistant" || d.m.blocks[3].text != "after words" {
+		t.Fatalf("prose after the fence should follow the result, got %+v", d.m.blocks)
 	}
 	// The executed code renders exactly once: header preview plus box
 	// (expand the collapsed block so the box shows).
@@ -161,7 +165,9 @@ func TestDedupeStopsAtTurnBoundary(t *testing.T) {
 	d.event("assistant", "```js\nold()\n```")
 	d.event("done", "")
 	d.event("code", "old()") // next turn: must not eat last turn's fence
-	if len(d.m.blocks) != 3 {
+	// assistant, "turn ended without a reply" (a fence-only reply said
+	// nothing), done, code.
+	if len(d.m.blocks) != 4 || !strings.Contains(d.m.blocks[0].text, "old()") {
 		t.Fatalf("dedupe crossed a done boundary, blocks=%+v", d.m.blocks)
 	}
 }

@@ -25,12 +25,12 @@ func TestCodemodeFlowRenders(t *testing.T) {
 	d.WaitFor("[tool output]")
 	d.Press("tab", "enter", "tab", "enter") // expand the code block, then the result
 	frame := d.Frame()
-	for _, want := range []string{"▾ code js", "▾ result", "hi from codemode"} {
+	for _, want := range []string{"▾ Ran: echo hi from codemode", "▾ result", "hi from codemode"} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("frame missing %q:\n%s", want, frame)
 		}
 	}
-	code := strings.Index(frame, "▾ code js")
+	code := strings.Index(frame, "▾ Ran: echo hi from codemode")
 	result := strings.Index(frame, "▾ result")
 	final := strings.Index(frame, "[tool output]")
 	if !(code < result && result < final) {

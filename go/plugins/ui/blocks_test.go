@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/history"
 )
 
@@ -39,7 +40,7 @@ func TestRenderCodeHeaderAndBox(t *testing.T) {
 	d.press(keyTab()) // focus the code block (starts collapsed)
 	d.press(keyEnter())
 	p := d.plain()
-	if !strings.Contains(p, `▾ code js (1 line): tools.bash("echo hi")`) {
+	if !strings.Contains(p, `▾ Ran: echo hi (1 line): tools.bash("echo hi")`) {
 		t.Errorf("code block missing expanded disclosure header:\n%s", p)
 	}
 	if !strings.Contains(p, `tools.bash("echo hi")`) {
@@ -259,6 +260,204 @@ func TestRenderSystemBlock(t *testing.T) {
 	}
 	if p := d.plain(); strings.Contains(p, "▸") || strings.Contains(p, "●") {
 		t.Errorf("system block must have no disclosure or speaker header:\n%s", p)
+	}
+}
+
+// --- transcript readability (8-persona audit) ---
+
+func TestEmissionOrderProseAroundCode(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.event("assistant", "Looking…\n```js\nconsole.log(1)\n```\nDone.")
+	d.event("code", "console.log(1)")
+	d.event("result", "1")
+	d.event("done", "")
+	p := d.plain()
+	iL, iC, iR, iD := strings.Index(p, "Looking…"), strings.Index(p, "▸ code js (1 line)"),
+		strings.Index(p, "▸ result (1 line): 1"), strings.Index(p, "Done.")
+	if iL < 0 || iC < 0 || iR < 0 || iD < 0 || !(iL < iC && iC < iR && iR < iD) {
+		t.Errorf("transcript not in emission order (prose@%d code@%d result@%d prose@%d):\n%s", iL, iC, iR, iD, p)
+	}
+}
+
+func TestThinkingSpanCollapses(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.event("assistant", "<thinking_analyses>alpha\nbeta\ngamma</thinking_analyses>\n<system_warning>budget low</system_warning>\nHello there")
+	p := d.plain()
+	if !strings.Contains(p, "▸ thinking (3 lines)") {
+		t.Errorf("thinking span should be a collapsed row:\n%s", p)
+	}
+	if strings.Contains(p, "beta") || strings.Contains(p, "<thinking") {
+		t.Errorf("thinking body must be hidden:\n%s", p)
+	}
+	if strings.Contains(p, "budget low") {
+		t.Errorf("system_warning span must be dropped:\n%s", p)
+	}
+	if !strings.Contains(p, "Hello there") {
+		t.Errorf("prose after the spans should render:\n%s", p)
+	}
+}
+
+func TestCodeLabels(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("x", 70)
+	for code, want := range map[string]string{
+		`tools.writeFile("main.go", src)`:    "Edited main.go",
+		`const s = tools.readFile('go.mod')`: "Read go.mod",
+		"tools.bash(`go test ./...`)":        "Ran: go test ./...",
+		`tools.bash("` + long + `")`:         "Ran: " + long[:60] + "…",
+		`tools.ask("ok?", ["y","n"])`:        "Asked you",
+		`tools.spawn("review the diff")`:     "Subagent: review the diff",
+		`console.log(1)`:                     "code js",
+		`tools.bash(cmd)`:                    "Ran: ",
+	} {
+		if got := codeLabel(code); got != want {
+			t.Errorf("codeLabel(%q) = %q, want %q", code, got, want)
+		}
+	}
+}
+
+func TestCollapseExpandFeedbackAndPreviewCap(t *testing.T) {
+	t.Parallel()
+	d := drvCmds(t, uiActionReg(t, map[string]commands.UIAction{
+		"collapse": commands.ActionCollapse, "expand": commands.ActionExpand,
+	}))
+	d.event("result", nLines(10))
+	d.event("result", nLines(previewCap+1))
+	d.typeStr("/expand")
+	d.press(keyEnter())
+	p := d.plain()
+	if !strings.Contains(p, "expanded 1 block (blocks over 200 lines stay collapsed unless focused)") {
+		t.Errorf("/expand should report what it did:\n%s", p)
+	}
+	if d.m.blocks[0].collapsed || !d.m.blocks[1].collapsed {
+		t.Error("/expand should open the short block and leave the huge one collapsed")
+	}
+	d.typeStr("/collapse")
+	d.press(keyEnter())
+	if !strings.Contains(d.plain(), "collapsed 1 block") {
+		t.Errorf("/collapse should report what it did:\n%s", d.plain())
+	}
+	// Focused, the huge block expands on request.
+	d.press(keyTab())
+	d.press(keyTab())
+	d.typeStr("/expand")
+	d.press(keyEnter())
+	if d.m.blocks[1].collapsed {
+		t.Error("/expand should open a focused huge block")
+	}
+}
+
+func TestQueuedPromptMarked(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.typeStr("first")
+	d.press(keyEnter())
+	d.typeStr("second")
+	d.press(keyEnter())
+	if !d.m.blocks[1].queued || !strings.Contains(d.plain(), "❯ second (queued)") {
+		t.Errorf("a prompt submitted mid-turn should read (queued):\n%s", d.plain())
+	}
+	d.event("assistant", "one")
+	d.event("done", "")
+	if d.m.blocks[1].queued || strings.Contains(d.plain(), "(queued)") {
+		t.Errorf("the queued mark should clear once its turn starts:\n%s", d.plain())
+	}
+	if !d.m.running {
+		t.Error("the queued turn is now in flight: spinner must keep running")
+	}
+}
+
+func TestLongUserPromptWraps(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.event("user", strings.Repeat("word ", 30)+"TAIL")
+	if !strings.Contains(d.plain(), "TAIL") {
+		t.Errorf("long prompt should wrap, not clip at the right edge:\n%s", d.plain())
+	}
+}
+
+func TestTurnWithoutReplyMarked(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.event("user", "hi")
+	d.event("assistant", "```js\nbroken(\n") // malformed fence: nothing visible
+	d.event("done", "")
+	if !strings.Contains(d.plain(), "✗ turn ended without a reply") {
+		t.Errorf("empty turn needs an explicit end marker:\n%s", d.plain())
+	}
+	d.event("user", "again")
+	d.event("assistant", "a reply")
+	d.event("done", "")
+	if strings.Count(d.plain(), "turn ended without a reply") != 1 {
+		t.Errorf("a turn with a reply must not be marked:\n%s", d.plain())
+	}
+}
+
+func TestDoneSummaryRendersFilesAndExit(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.event("assistant", "wrote it")
+	d.feed(eventMsg{Kind: "done", Data: map[string]any{"files": []any{"main.go", "main_test.go"}, "exit": float64(0)}})
+	if !strings.Contains(d.plain(), "✔ wrote main.go, main_test.go · exit 0") {
+		t.Errorf("done entry data should render:\n%s", d.plain())
+	}
+	d.event("assistant", "plain")
+	d.event("done", "") // no data: divider only
+	if strings.Count(d.plain(), "✔") != 1 {
+		t.Errorf("a done without data must render no summary:\n%s", d.plain())
+	}
+}
+
+func TestSafeViewRecovers(t *testing.T) {
+	t.Parallel()
+	out := safeView(func() string { panic("slice bounds out of range [:5] with length 2") })
+	if out != "✗ render failed: slice bounds out of range [:5] with length 2" {
+		t.Errorf("panic should become one error line, got %q", out)
+	}
+	if strings.Contains(out, "goroutine") {
+		t.Error("no stack trace in the transcript")
+	}
+}
+
+func TestNarrowFrameNoPanic(t *testing.T) {
+	t.Parallel()
+	for _, w := range []int{0, 1, 3, 8} {
+		d := newDrv(t, w, 2, cfgWith(t, nil, nil, nil))
+		for _, k := range []string{"user", "assistant", "code", "result", "error", "system", "todo", "done"} {
+			d.event(k, "some text\nmore")
+		}
+		if p := d.plain(); strings.Contains(p, "render failed") {
+			t.Errorf("width %d: frame render panicked:\n%s", w, p)
+		}
+	}
+}
+
+func TestBinaryResultPlaceholder(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	bin := "\xcf\xfa\xed\xfe\x07\x00\x00\x01\x03\x00\x00\x80\x02\x00\x00\x00\x19\x00\x00\x00"
+	d.event("result", bin)
+	if !strings.Contains(d.plain(), "▸ result (1 line): (binary, 20 bytes)") {
+		t.Errorf("binary output should render as a placeholder:\n%s", d.plain())
+	}
+	d.event("result", "plain text\nwith a tab\there")
+	if d.m.blocks[1].text != "plain text\nwith a tab\there" {
+		t.Error("text output must pass through untouched")
+	}
+}
+
+func TestErrorNativeSuffixStripped(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.event("error", "readFile: open x: no such file or directory at github.com/andreylukin/bough/plugins/codemode.(*rt).readFile-fm (native)")
+	p := d.plain()
+	if strings.Contains(p, "(native)") || strings.Contains(p, "github.com/andreylukin") {
+		t.Errorf("goja stack suffix should be stripped:\n%s", p)
+	}
+	if !strings.Contains(p, "✗ readFile: open x: no such file or directory") {
+		t.Errorf("error text lost:\n%s", p)
 	}
 }
 

@@ -23,6 +23,7 @@ type Event struct {
 	Text    string
 	ID      string
 	Options []string
+	Data    map[string]any // extra payload (e.g. done's files/exit); nil when absent
 }
 
 type plugin struct{}
@@ -157,6 +158,11 @@ func eventOf(payload any) Event {
 			if f := rv.FieldByName("Options"); f.IsValid() && f.CanInterface() {
 				if opts, ok := f.Interface().([]string); ok {
 					ev.Options = opts
+				}
+			}
+			if f := rv.FieldByName("Data"); f.IsValid() && f.CanInterface() {
+				if d, ok := f.Interface().(map[string]any); ok {
+					ev.Data = d
 				}
 			}
 			return ev

@@ -221,9 +221,9 @@ func (m *model) perform(act commands.UIAction) tea.Cmd {
 		m.welcome = false
 		m.refresh()
 	case commands.ActionCollapse:
-		m.setAllCollapsed(true)
+		m.noteSystem(collapseNote(true, m.setAllCollapsed(true)))
 	case commands.ActionExpand:
-		m.setAllCollapsed(false)
+		m.noteSystem(collapseNote(false, m.setAllCollapsed(false)))
 	case commands.ActionQuit:
 		return tea.Quit
 	case commands.ActionOpenPicker:

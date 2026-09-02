@@ -31,6 +31,9 @@ type block struct {
 	text      string
 	label     string // header tag override ("! <cmd>" bang blocks); "" = by kind
 	collapsed bool
+	queued    bool     // user block submitted mid-turn, not yet started
+	files     []string // done blocks: files the turn wrote (from the entry's data)
+	exit      *int     // done blocks: exit status, nil when absent
 
 	// ask blocks only (see ask.go): the pending question's options and
 	// id, and how it resolved.
@@ -43,7 +46,7 @@ type block struct {
 
 // collapsible blocks get a disclosure header and can be toggled.
 func (b *block) collapsible() bool {
-	return b.kind == "code" || b.kind == "result"
+	return b.kind == "code" || b.kind == "result" || b.kind == "thinking"
 }
 
 // lineRange maps a rendered line span [start, end) to a block index.
@@ -78,6 +81,8 @@ type model struct {
 	pendingAsk string         // ask id the composer routes answers to; "" = none
 	pal        palette        // "/" command palette (see palette.go)
 	flash      string
+	trailing   string // assistant prose after an executed fence, emitted after its result
+	newBelow   bool   // blocks arrived while scrolled up (status cue)
 	md         *glamour.TermRenderer
 	mdCache    map[string]string // assistant markdown render cache (cleared on resize)
 	bgLight    bool              // terminal background is light (tea.BackgroundColorMsg)
@@ -118,7 +123,9 @@ func (m *model) resize(w, h int) {
 	}
 	m.vp.SetWidth(w)
 	m.overlay.SetWidth(w)
-	m.input.SetWidth(w - len(m.input.Prompt))
+	// textinput's placeholderView makes a slice of width+1: a negative
+	// width (frame narrower than the prompt) panics.
+	m.input.SetWidth(max(w-len(m.input.Prompt), 1))
 	m.md = nil // re-wrap markdown at the new width
 	m.mdCache = map[string]string{}
 	m.refresh()
@@ -235,8 +242,11 @@ func (m *model) header(b *block, th theme) string {
 		glyph = "▾"
 	}
 	tag := "result"
-	if b.kind == "code" {
-		tag = "code js"
+	switch b.kind {
+	case "code":
+		tag = codeLabel(b.text)
+	case "thinking":
+		tag = "thinking"
 	}
 	if b.label != "" {
 		tag = b.label
@@ -279,11 +289,11 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 	th := cfg.theme
 	switch b.kind {
 	case "user":
-		return "\n" + th["user"].Render("❯ "+b.text)
+		return "\n" + m.renderUser(b, th)
 	case "assistant":
 		head := th["accent"].Render("●") + " " + th["dim"].Render("bough")
 		return head + "\n" + m.markdown(b.text)
-	case "code":
+	case "code", "thinking":
 		if b.collapsed {
 			return m.header(b, th)
 		}
@@ -325,14 +335,9 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 	case "ask":
 		return m.renderAsk(b, th)
 	case "done":
-		w := m.width - 2
-		if w > 40 {
-			w = 40
-		}
-		if w < 1 {
-			w = 1
-		}
-		return th["dim"].Render(strings.Repeat("─", w))
+		return m.renderDone(b, th)
+	case "cancelled":
+		return th["dim"].Render("■ cancelled")
 	default:
 		return th["dim"].Render(b.kind+" ") + b.text
 	}
@@ -428,15 +433,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) addEvent(ev Event) {
 	id := m.nextID
 	m.nextID++
+	if ev.Kind != "code" && ev.Kind != "result" && ev.Kind != "error" {
+		m.flushTrailing()
+	}
 	switch ev.Kind {
 	case "done":
 		m.running = false
 		m.expireAsks() // a turn never ends with a live ask
-		m.blocks = append(m.blocks, block{id: id, kind: "done"})
+		m.finishTurn(id, ev)
 	case "error":
 		m.running = false
 		m.expireAsks() // e.g. the ask timed out into a run error
-		m.blocks = append(m.blocks, block{id: id, kind: "error", text: ev.Text})
+		m.blocks = append(m.blocks, block{id: id, kind: "error", text: errorText(ev.Text)})
+		m.flushTrailing()
 	case "ask":
 		m.blocks = append(m.blocks, block{id: id, kind: "ask", text: ev.Text,
 			askID: ev.ID, options: ev.Options})
@@ -449,6 +458,9 @@ func (m *model) addEvent(ev Event) {
 		// Trailing newlines don't render (box trims them); don't let
 		// them skew the header's line count or the collapse default.
 		text := strings.TrimRight(ev.Text, "\n")
+		if ev.Kind == "result" {
+			text = resultText(text)
+		}
 		var collapsed bool
 		switch m.cfg.Load().collapse {
 		case "none":
@@ -458,6 +470,11 @@ func (m *model) addEvent(ev Event) {
 			collapsed = true
 		}
 		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: text, collapsed: collapsed})
+		if ev.Kind == "result" {
+			m.flushTrailing()
+		}
+	case "assistant":
+		m.addAssistant(ev.Text)
 	case "todo":
 		// One render per mutation: the system block a /todo mutation
 		// just printed (same text) becomes the todo block, and
@@ -476,8 +493,10 @@ func (m *model) addEvent(ev Event) {
 	default: // assistant, anything future
 		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: ev.Text})
 	}
-	m.refresh()
-	m.vp.GotoBottom() // new events pin the transcript to the bottom
+	m.refresh() // pins to the bottom only when it already was there
+	if !m.vp.AtBottom() {
+		m.newBelow = true
+	}
 }
 
 // dedupeCode strips, from this turn's assistant blocks, the fenced
@@ -493,7 +512,7 @@ func (m *model) dedupeCode(code string) {
 		case "user", "done", "error":
 			return // turn boundary
 		case "assistant":
-			txt, ok := stripFence(b.text, want)
+			txt, ok := m.splitProse(b, want)
 			if !ok {
 				continue
 			}
@@ -641,14 +660,19 @@ func (m *model) toggleFocused() bool {
 	return false
 }
 
-// setAllCollapsed collapses or expands every collapsible block.
-func (m *model) setAllCollapsed(collapsed bool) {
+// setAllCollapsed collapses or expands every collapsible block,
+// returning how many changed. Expanding skips blocks over previewCap
+// lines unless focused (see blocks.go).
+func (m *model) setAllCollapsed(collapsed bool) int {
+	n := 0
 	for i := range m.blocks {
-		if m.blocks[i].collapsible() {
-			m.blocks[i].collapsed = collapsed
+		if b := &m.blocks[i]; b.collapsible() && b.collapsed != collapsed && m.mayExpand(b, collapsed) {
+			b.collapsed = collapsed
+			n++
 		}
 	}
 	m.refresh()
+	return n
 }
 
 // handleKey resolves every binding through the keymap service; only
@@ -708,10 +732,10 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "collapse_all":
-		m.setAllCollapsed(true)
+		m.flash = collapseNote(true, m.setAllCollapsed(true))
 		return m, nil
 	case "expand_all":
-		m.setAllCollapsed(false)
+		m.flash = collapseNote(false, m.setAllCollapsed(false))
 		return m, nil
 	case "collapse_toggle":
 		if key == "enter" && strings.TrimSpace(m.input.Value()) != "" {
@@ -777,7 +801,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // submit sends one line to the loop as user input, echoing it as a
 // "user" block and starting the spinner.
 func (m *model) submit(line string) tea.Cmd {
-	m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: line})
+	m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: line, queued: m.running})
 	m.nextID++
 	m.refresh()
 	m.vp.GotoBottom()
@@ -850,6 +874,8 @@ func (m *model) statusBar(cfg *uiCfg) string {
 	var right string
 	if m.flash != "" {
 		right = m.flash
+	} else if cue := m.scrollCue(); cue != "" {
+		right = cue
 	} else {
 		if cfg.hist != nil {
 			n := len(cfg.hist.Entries())
@@ -875,11 +901,17 @@ func (m *model) statusBar(cfg *uiCfg) string {
 }
 
 func (m model) View() tea.View {
+	v := tea.NewView(safeView(m.frame))
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion // clicks toggle blocks; wheel scrolls
+	return v
+}
+
+// frame renders the full-screen content; View wraps it in a panic guard.
+func (m model) frame() string {
 	cfg := m.cfg.Load()
 	if m.picking {
-		v := tea.NewView(m.pickerView(cfg))
-		v.AltScreen = true
-		return v
+		return m.pickerView(cfg)
 	}
 	body := m.vp.View()
 	if m.inspecting {
@@ -894,8 +926,5 @@ func (m model) View() tea.View {
 			body = strings.Join(bl, "\n")
 		}
 	}
-	v := tea.NewView(body + "\n" + m.statusBar(cfg) + "\n" + m.input.View())
-	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion // clicks toggle blocks; wheel scrolls
-	return v
+	return body + "\n" + m.statusBar(cfg) + "\n" + m.input.View()
 }
