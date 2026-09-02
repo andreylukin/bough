@@ -1,25 +1,42 @@
 package ui
 
 // Session resume: transcript replay from the "history" service, and
-// the pre-chat session picker driven by the launcher's session seam
-// ("sessions" + "session-picker" + "session-choose", see uiCfg).
+// the session picker — pre-chat at launch, driven by the launcher's
+// session seam ("sessions" + "session-picker" + "session-choose", see
+// uiCfg), and mid-session from /sessions or a status-bar click, where
+// the list is re-read from the history directory.
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/andreylukin/bough/plugins/history"
 )
 
 // pickerTitleWidth caps a session title in the picker, Claude-style.
 const pickerTitleWidth = 60
 
+// sessList is the mid-session picker's own list (nil = the launch
+// picker, which reads cfg.sessions).
+type sessList = []history.SessionInfo
+
+// sessionID is the id of a history file path (base name sans .jsonl).
+func sessionID(path string) string {
+	return strings.TrimSuffix(filepath.Base(path), ".jsonl")
+}
+
 // replay synthesizes the transcript blocks for the history service's
 // existing entries, exactly as the live session that wrote them did:
 // input entries become the ❯ user line, everything else goes through
 // addEvent so collapse defaults (and code de-dup) apply. A fresh
-// session (no history, or no entries) shows the welcome text instead;
-// a model that already has blocks never replays (no double-render).
+// session (no history, or no entries beyond the meta one) shows the
+// welcome text instead; a model that already has blocks never replays
+// (no double-render). A resumed transcript ends with a system row
+// naming the session, its size and the last prompt, and lands on it.
 func (m *model) replay() {
 	cfg := m.cfg.Load()
 	if len(m.blocks) > 0 {
@@ -30,9 +47,12 @@ func (m *model) replay() {
 		m.refresh()
 		return
 	}
-	for _, e := range cfg.hist.Entries() {
+	entries := cfg.hist.Entries()
+	for _, e := range entries {
 		text, _ := e.Data["text"].(string)
 		switch e.Kind {
+		case "meta":
+			// session bookkeeping (cwd), nothing to render
 		case "input":
 			m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: text})
 			m.nextID++
@@ -57,17 +77,78 @@ func (m *model) replay() {
 	m.expireAsks()                 // an ask with no answer entry replays as expired
 	m.running = false              // a replayed transcript is never mid-turn
 	m.welcome = len(m.blocks) == 0 // fresh session (0 entries): orient
+	if len(m.blocks) > 0 {
+		m.blocks = append(m.blocks, block{id: m.nextID, kind: "system", text: resumedLine(cfg.hist)})
+		m.nextID++
+	}
 	m.refresh()
 	m.vp.GotoBottom()
 }
 
+// resumedLine is the one-line system row a resumed transcript ends
+// with: "resumed <id> · <n> entries · last: <first line of last prompt>".
+func resumedLine(h historyView) string {
+	entries := h.Entries()
+	s := fmt.Sprintf("resumed %s · %d entries", sessionID(h.Path()), len(entries))
+	if last := history.LastPrompt(entries); last != "" {
+		s += " · last: " + truncateCols(last, pickerTitleWidth)
+	}
+	return s
+}
+
+// openPicker shows the picker mid-session: the list is re-read from
+// the history directory (this directory's sessions first), the cursor
+// on the newest.
+func (m *model) openPicker() {
+	m.picking = true
+	m.pick = 0
+	m.sessRows = m.listSessions()
+	m.syncPalette()
+}
+
+// listSessions reads the session directory next to the current
+// history file, this directory's sessions first. Never nil: a non-nil
+// list is what marks the picker as mid-session (see leavePicker).
+func (m *model) listSessions() sessList {
+	rows := sessList{}
+	h := m.cfg.Load().hist
+	if h == nil {
+		return rows
+	}
+	infos, err := history.List(filepath.Dir(h.Path()))
+	if err != nil {
+		return rows
+	}
+	cwd, _ := os.Getwd()
+	return append(rows, history.PreferCwd(infos, cwd)...)
+}
+
+// pickerRows is the list the picker shows: its own mid-session list,
+// else the launcher-provided one.
+func (m *model) pickerRows(cfg *uiCfg) []history.SessionInfo {
+	if m.sessRows != nil {
+		return m.sessRows
+	}
+	return cfg.sessions
+}
+
+// currentID is the mounted session's id ("" without history).
+func (m *model) currentID(cfg *uiCfg) string {
+	if cfg.hist == nil {
+		return ""
+	}
+	return sessionID(cfg.hist.Path())
+}
+
 // handlePickerKey drives the session picker: up/down move, enter
-// resumes the selected session, esc starts a fresh one. The quit
-// binding still works. Without a "session-choose" callback the list is
-// read-only (the view says so loudly): enter does nothing and esc
-// falls through to a fresh chat without choosing.
+// resumes the selected session, esc starts a fresh one (at launch) or
+// goes back to the chat (mid-session). The quit binding still works.
+// Without a "session-choose" callback the list is read-only (the view
+// says so loudly): enter does nothing and esc falls through to a
+// fresh chat without choosing.
 func (m model) handlePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	cfg := m.cfg.Load()
+	rows := m.pickerRows(cfg)
 	key := msg.String()
 	if cfg.action[key] == "quit" {
 		return m, tea.Quit
@@ -78,42 +159,77 @@ func (m model) handlePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.pick--
 		}
 	case "down":
-		if m.pick < len(cfg.sessions)-1 {
+		if m.pick < len(rows)-1 {
 			m.pick++
 		}
 	case "enter":
-		if cfg.choose == nil || len(cfg.sessions) == 0 {
+		if cfg.choose == nil || len(rows) == 0 {
 			return m, nil
 		}
-		if m.pick >= len(cfg.sessions) { // sessions swapped under us (hot reload)
+		if m.pick >= len(rows) { // sessions swapped under us (hot reload)
 			m.pick = 0
 		}
-		return m.leavePicker(cfg.sessions[m.pick].ID), nil
+		return m.leavePicker(rows[m.pick].ID), nil
 	case "esc":
 		return m.leavePicker(""), nil
 	}
 	return m, nil
 }
 
-// leavePicker invokes the choose seam once (id "" = fresh session) and
-// enters the chat view, replaying whatever the now-current history
-// service holds. choose is synchronous: the launcher has swapped the
-// "history" service before it returns.
+// leavePicker enters the chat view. At launch (no own list) the choose
+// seam is invoked once (id "" = fresh session) and the now-current
+// history replays. Mid-session, id "" is "back" (nothing changes) and
+// a different session swaps history through the seam and replays from
+// scratch; the current session's id is a no-op resume.
 func (m model) leavePicker(id string) model {
-	if choose := m.cfg.Load().choose; choose != nil {
-		choose(id)
-	}
+	cfg := m.cfg.Load()
+	launch := m.sessRows == nil
 	m.picking = false
+	m.sessRows = nil
+	if !launch && (id == "" || id == m.currentID(cfg)) {
+		return m
+	}
+	if cfg.choose != nil {
+		cfg.choose(id)
+	}
+	if id != "" {
+		m.blocks = nil
+		m.focusID = -1
+		m.welcome = false
+	}
 	m.replay()
 	return m
 }
 
-// pickerView renders the full-screen session list: newest first, one
-// row per session (local time, entry count, first-input title), the
-// selected row in the focus style, key hints pinned to the bottom.
+// resumeID is "/sessions <id>": resume that session directly, with an
+// error block for an unknown id.
+func (m *model) resumeID(id string) {
+	found := false
+	for _, s := range m.listSessions() {
+		if s.ID == id {
+			found = true
+		}
+	}
+	if !found {
+		m.blocks = append(m.blocks, block{id: m.nextID, kind: "error",
+			text: fmt.Sprintf("no session %q (/sessions lists them)", id)})
+		m.nextID++
+		m.refresh()
+		m.vp.GotoBottom()
+		return
+	}
+	m.sessRows = sessList{} // mid-session semantics for leavePicker
+	*m = m.leavePicker(id)
+}
+
+// pickerView renders the full-screen session list: this directory's
+// sessions first, one row per session (local time, entry count,
+// first-input title, working directory), the current session marked,
+// the selected row in the focus style, key hints pinned to the bottom.
 func (m *model) pickerView(cfg *uiCfg) string {
 	th := cfg.theme
-	if m.pick >= len(cfg.sessions) { // sessions swapped under us
+	rows := m.pickerRows(cfg)
+	if m.pick >= len(rows) { // sessions swapped under us
 		m.pick = 0
 	}
 	lines := []string{
@@ -123,26 +239,52 @@ func (m *model) pickerView(cfg *uiCfg) string {
 	if cfg.choose == nil {
 		lines = append(lines, th["error"].Render("✗ session-choose service missing — list is read-only"), "")
 	}
-	if len(cfg.sessions) == 0 {
+	if len(rows) == 0 {
 		lines = append(lines, th["dim"].Render("  (no sessions)"))
 	}
-	for i, s := range cfg.sessions {
+	cur := m.currentID(cfg)
+	cwd, _ := os.Getwd()
+	home, _ := os.UserHomeDir()
+	for i, s := range rows {
 		marker, st := "  ", th["result"]
 		if i == m.pick {
 			marker, st = "▸ ", th["focus"]
 		}
 		row := fmt.Sprintf("%s%s  %3d entries  %s",
 			marker, s.ModTime.Local().Format("2006-01-02 15:04"), s.Entries, truncateCols(s.Title, pickerTitleWidth))
+		if s.ID == cur {
+			row += " (current)"
+		}
+		row += "  " + shortDir(s.Cwd, cwd, home)
 		if r := []rune(row); len(r) > m.width-1 && m.width > 2 {
 			row = string(r[:m.width-2]) + "…"
 		}
 		lines = append(lines, st.Render(row))
 	}
-	hints := th["dim"].Render("↑/↓ select · enter resume · esc new session")
+	hint := "↑/↓ select · enter resume · esc new session"
+	if m.sessRows != nil {
+		hint = "↑/↓ select · enter resume · esc back"
+	}
+	hints := th["dim"].Render(hint)
 	for len(lines) < m.height-1 {
 		lines = append(lines, "")
 	}
 	return strings.Join(append(lines, hints), "\n")
+}
+
+// shortDir renders a session's working directory: "." for this
+// directory, "?" for a file predating the meta entry, ~-abbreviated
+// otherwise.
+func shortDir(dir, cwd, home string) string {
+	switch {
+	case dir == "":
+		return "?"
+	case dir == cwd:
+		return "."
+	case home != "" && strings.HasPrefix(dir, home+"/"):
+		return "~" + strings.TrimPrefix(dir, home)
+	}
+	return dir
 }
 
 // truncateCols caps s at n runes, first line only, with an ellipsis.

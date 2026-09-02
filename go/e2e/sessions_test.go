@@ -197,3 +197,48 @@ func TestSessionsCommand(t *testing.T) {
 	}
 	mustContain(t, out, "no sessions")
 }
+
+// Sessions are global across projects: `bough sessions` lists this
+// directory's (from the meta cwd entry) and --all adds the rest with a
+// cwd column; `bough log` with no arg prints this directory's latest.
+func TestSessionsPreferThisDirectory(t *testing.T) {
+	t.Parallel()
+	home, cwd, _ := sandbox(t, launchOpts{home: map[string]string{
+		".bough/history/foreign.jsonl": `{"seq":1,"kind":"meta","data":{"cwd":"/elsewhere/proj"}}` + "\n" +
+			`{"seq":2,"kind":"input","data":{"text":"foreign question"}}` + "\n",
+	}})
+	dir := filepath.Join(home, ".bough", "history")
+	real, err := filepath.EvalSymlinks(cwd) // what os.Getwd reports in the binary
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := `{"seq":1,"kind":"meta","data":{"cwd":"` + real + `"}}` + "\n" +
+		`{"seq":2,"kind":"input","data":{"text":"local question"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "local.jsonl"), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().Add(-time.Hour) // the local one is OLDER
+	if err := os.Chtimes(filepath.Join(dir, "local.jsonl"), base, base); err != nil {
+		t.Fatal(err)
+	}
+
+	out, code := runCLI(t, home, cwd, "sessions")
+	if code != 0 {
+		t.Fatalf("sessions exit %d:\n%s", code, out)
+	}
+	mustContain(t, out, "local question")
+	mustNotContain(t, out, "foreign question")
+
+	out, code = runCLI(t, home, cwd, "sessions", "--all")
+	if code != 0 {
+		t.Fatalf("sessions --all exit %d:\n%s", code, out)
+	}
+	inOrder(t, out, "local question", "foreign question", "/elsewhere/proj")
+
+	out, code = runCLI(t, home, cwd, "log")
+	if code != 0 {
+		t.Fatalf("log exit %d:\n%s", code, out)
+	}
+	mustContain(t, out, "local question")
+	mustNotContain(t, out, "foreign question")
+}

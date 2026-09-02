@@ -573,7 +573,7 @@ func TestReplayCommandEntry(t *testing.T) {
 		{Seq: 1, Kind: "command", Data: map[string]any{"text": "/help"}},
 	}}
 	d := newDrv(t, 80, 24, cfgWith(t, nil, nil, h))
-	if len(d.m.blocks) != 1 || d.m.blocks[0].kind != "command" {
+	if len(d.m.blocks) != 2 || d.m.blocks[0].kind != "command" { // + the resumed row
 		t.Fatalf("command entry should replay as a command block, got %+v", d.m.blocks)
 	}
 	if p := d.plain(); !strings.Contains(p, "❯ /help") {

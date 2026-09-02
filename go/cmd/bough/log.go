@@ -8,8 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/andreylukin/bough/plugins/history"
@@ -60,18 +58,24 @@ func runLog(args []string) {
 	}
 }
 
-// latestSession returns the lexically last file in ~/.bough/history
-// (RFC3339-prefixed names sort chronologically).
+// latestSession returns the newest session recorded in this directory
+// (falling back to the newest anywhere, with a stderr note); with no
+// sessions at all it says so.
 func latestSession() (string, error) {
-	home, err := os.UserHomeDir()
+	return latestSessionIn(sessionsDir(), cwd())
+}
+
+func latestSessionIn(dir, here string) (string, error) {
+	infos, err := history.List(dir)
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".bough", "history")
-	names, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
-	if err != nil || len(names) == 0 {
-		return "", fmt.Errorf("no session files in %s", dir)
+	if len(infos) == 0 {
+		return "", fmt.Errorf("no sessions in %s", dir)
 	}
-	sort.Strings(names)
-	return names[len(names)-1], nil
+	if mine := forCwd(infos, here); len(mine) > 0 {
+		return mine[0].Path, nil
+	}
+	fmt.Fprintln(os.Stderr, "bough: no session for this directory, showing newest")
+	return infos[0].Path, nil
 }

@@ -25,10 +25,23 @@ func sessionsDir() string {
 	return filepath.Join(home, ".bough", "history")
 }
 
-// runSessions is `bough sessions`: list stored sessions, newest first.
+// cwd is the working directory sessions are matched against ("" when
+// unknown: then nothing matches and every listing is global).
+func cwd() string {
+	d, _ := os.Getwd()
+	return d
+}
+
+// runSessions is `bough sessions [--all]`: list this directory's
+// sessions, newest first; --all (or no session here) lists every
+// session, this directory's first, with a cwd column.
 func runSessions(args []string) {
-	if len(args) > 0 {
-		fatal(fmt.Errorf("sessions takes no arguments, got %v", args))
+	all := false
+	for _, a := range args {
+		if a != "--all" && a != "-a" {
+			fatal(fmt.Errorf("sessions takes only --all, got %v", args))
+		}
+		all = true
 	}
 	dir := sessionsDir()
 	infos, err := history.List(dir)
@@ -39,20 +52,50 @@ func runSessions(args []string) {
 		fmt.Fprintf(os.Stderr, "bough: no sessions in %s\n", dir)
 		return
 	}
-	printSessions(os.Stdout, infos)
+	here := cwd()
+	mine := forCwd(infos, here)
+	if !all && len(mine) == 0 {
+		fmt.Fprintf(os.Stderr, "bough: no sessions for this directory; showing all %d\n", len(infos))
+		all = true
+	}
+	if all {
+		printSessions(os.Stdout, history.PreferCwd(infos, here), true)
+		return
+	}
+	printSessions(os.Stdout, mine, false)
+}
+
+// forCwd filters infos to the sessions recorded in dir.
+func forCwd(infos []history.SessionInfo, dir string) []history.SessionInfo {
+	var out []history.SessionInfo
+	for _, in := range infos {
+		if in.Cwd == dir {
+			out = append(out, in)
+		}
+	}
+	return out
 }
 
 // printSessions renders the session table: id, local time, entry
-// count, first-input title truncated to ~60 columns.
-func printSessions(w io.Writer, infos []history.SessionInfo) {
+// count, first-input title truncated to ~60 columns, and with withCwd
+// the recorded working directory ("?" for files predating it).
+func printSessions(w io.Writer, infos []history.SessionInfo, withCwd bool) {
 	tw := tabwriter.NewWriter(w, 2, 8, 2, ' ', 0)
 	for _, in := range infos {
 		title := strings.SplitN(in.Title, "\n", 2)[0]
 		if r := []rune(title); len(r) > 60 {
 			title = string(r[:59]) + "…"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d entries\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%d entries\t%s",
 			in.ID, in.ModTime.Local().Format("2006-01-02 15:04"), in.Entries, title)
+		if withCwd {
+			d := in.Cwd
+			if d == "" {
+				d = "?"
+			}
+			fmt.Fprintf(tw, "\t%s", d)
+		}
+		fmt.Fprintln(tw)
 	}
 	tw.Flush()
 }
@@ -105,6 +148,11 @@ func resolveSession(cont, resume bool, id, mode string) (resumePath string, need
 			fmt.Fprintln(os.Stderr, "bough: no previous session, starting fresh")
 			return "", false
 		}
+		// Sessions are global across projects: prefer this directory's.
+		if mine := forCwd(infos, cwd()); len(mine) > 0 {
+			return mine[0].Path, false
+		}
+		fmt.Fprintln(os.Stderr, "bough: no session for this directory, resuming newest")
 		return infos[0].Path, false
 	case resume && id != "":
 		id = strings.TrimSuffix(id, ".jsonl")
@@ -135,7 +183,7 @@ func resolveSession(cont, resume bool, id, mode string) (resumePath string, need
 				fatal(err)
 			}
 			fmt.Fprintln(os.Stderr, "bough: --resume needs a session id in headless mode; sessions:")
-			printSessions(os.Stdout, infos)
+			printSessions(os.Stdout, history.PreferCwd(infos, cwd()), true)
 			os.Exit(2)
 		}
 		return "", true
@@ -145,17 +193,23 @@ func resolveSession(cont, resume bool, id, mode string) (resumePath string, need
 
 // providePicker wires the launcher side of the picker seam for a bare
 // --resume in tui/web mode: the mount proceeds with a fresh session
-// underneath the picker, and "session-choose" swaps the history row to
-// the picked file via runtimeSet (Reconcile remounts history -> loop ->
-// ui; the kernel's Get-tracking makes that cascade automatic, and the
-// override is recorded so a config hot reload keeps the resumed file).
-func providePicker(ctx *kernel.Context, src configSource, ov *overrides) {
+// underneath the picker, and the session list (this directory's
+// sessions first) is provided for it. provideChoose supplies the swap.
+func providePicker(ctx *kernel.Context) {
 	infos, err := history.List(sessionsDir())
 	if err != nil {
 		fatal(err)
 	}
-	ctx.Provide("sessions", infos)
+	ctx.Provide("sessions", history.PreferCwd(infos, cwd()))
 	ctx.Provide("session-picker", "pending")
+}
+
+// provideChoose wires "session-choose", which swaps the history row to
+// the picked file via runtimeSet (Reconcile remounts history -> loop ->
+// ui; the kernel's Get-tracking makes that cascade automatic, and the
+// override is recorded so a config hot reload keeps the resumed file).
+// Always provided: the ui's /sessions picker resumes mid-session too.
+func provideChoose(ctx *kernel.Context, src configSource, ov *overrides) {
 	ctx.Provide("session-choose", func(id string) {
 		if id == "" {
 			return // fresh session already mounted

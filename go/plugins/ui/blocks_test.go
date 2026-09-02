@@ -268,7 +268,7 @@ func TestReplaySystemEntry(t *testing.T) {
 		{Seq: 1, Kind: "system", Data: map[string]any{"text": "unknown command: /x (try /help)"}},
 	}}
 	d := newDrv(t, 80, 24, cfgWith(t, nil, nil, h))
-	if len(d.m.blocks) != 1 || d.m.blocks[0].kind != "system" {
+	if len(d.m.blocks) != 2 || d.m.blocks[0].kind != "system" { // + the resumed row
 		t.Fatalf("system entry should replay as a system block, got %+v", d.m.blocks)
 	}
 	if p := d.plain(); !strings.Contains(p, "unknown command: /x") {

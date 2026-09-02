@@ -13,14 +13,11 @@ package commands
 
 import (
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
-	"text/tabwriter"
 
 	"github.com/andreylukin/bough/kernel"
-	"github.com/andreylukin/bough/plugins/history"
 )
 
 // CommandInfo describes one command for /help and the palette.
@@ -57,6 +54,19 @@ func SubmitAction(text string) UIAction { return UIAction(submitPrefix + text) }
 // SubmitText reports whether a is a submit action and the text to submit.
 func SubmitText(a UIAction) (string, bool) {
 	return strings.CutPrefix(string(a), submitPrefix)
+}
+
+// resumePrefix marks a UIAction that resumes one session by id
+// ("/sessions <id>"): the UI swaps history through the session-choose
+// seam and replays, as the picker does.
+const resumePrefix = "resume:"
+
+// ResumeAction is the UIAction that resumes the session id.
+func ResumeAction(id string) UIAction { return UIAction(resumePrefix + id) }
+
+// ResumeID reports whether a is a resume action and the session id.
+func ResumeID(a UIAction) (string, bool) {
+	return strings.CutPrefix(string(a), resumePrefix)
 }
 
 // Registry is the "commands" service: a concurrency-safe name ->
@@ -135,11 +145,8 @@ func (r *Registry) Run(name, args string) (string, error) {
 	return out, nil
 }
 
-// histService is the slice of the "history" service /sessions needs.
-type histService interface{ Path() string }
-
 // registerBuiltins installs the stock commands. UI-owned effects
-// return UIAction sentinels; /help and /sessions produce text here.
+// return UIAction sentinels; /help produces text here.
 func registerBuiltins(r *Registry, ctx *kernel.Context) error {
 	builtins := []struct {
 		info CommandInfo
@@ -148,8 +155,11 @@ func registerBuiltins(r *Registry, ctx *kernel.Context) error {
 		{CommandInfo{Name: "help", Usage: "", Summary: "list commands"}, func(string) (string, error) {
 			return helpText(r), nil
 		}},
-		{CommandInfo{Name: "sessions", Usage: "", Summary: "pick a session to resume"}, func(string) (string, error) {
-			return sessionsText(ctx)
+		{CommandInfo{Name: "sessions", Usage: "[id]", Summary: "pick a session to resume"}, func(args string) (string, error) {
+			if id := strings.TrimSpace(args); id != "" {
+				return "", ResumeAction(strings.TrimSuffix(id, ".jsonl"))
+			}
+			return "", ActionOpenPicker
 		}},
 		{CommandInfo{Name: "clear", Usage: "", Summary: "clear the visible transcript"}, uiAction(ActionClear)},
 		{CommandInfo{Name: "collapse", Usage: "", Summary: "collapse all blocks"}, uiAction(ActionCollapse)},
@@ -190,36 +200,6 @@ func helpText(r *Registry) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// sessionsText is the honest v0 of /sessions: it prints the stored
-// session list (the same data `bough sessions` shows) instead of
-// opening the picker; the picker seam is only mountable at launch.
-func sessionsText(ctx *kernel.Context) (string, error) {
-	h, err := kernel.Get[histService](ctx, "history")
-	if err != nil {
-		return "", fmt.Errorf("sessions: no history service mounted")
-	}
-	dir := filepath.Dir(h.Path())
-	infos, err := history.List(dir)
-	if err != nil {
-		return "", err
-	}
-	if len(infos) == 0 {
-		return "no sessions in " + dir, nil
-	}
-	var b strings.Builder
-	tw := tabwriter.NewWriter(&b, 2, 8, 2, ' ', 0)
-	for _, in := range infos {
-		title := strings.SplitN(in.Title, "\n", 2)[0]
-		if r := []rune(title); len(r) > 60 {
-			title = string(r[:59]) + "…"
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%d entries\t%s\n",
-			in.ID, in.ModTime.Local().Format("2006-01-02 15:04"), in.Entries, title)
-	}
-	tw.Flush()
-	return strings.TrimRight(b.String(), "\n"), nil
-}
-
 type plugin struct{}
 
 func init() {
@@ -230,7 +210,7 @@ func (plugin) Name() string     { return "commands" }
 func (plugin) Inject() []string { return nil }
 
 // Apply provides the "commands" registry with the built-ins installed.
-// /sessions resolves the "history" service lazily at Run time, so this
+// /model resolves the services it needs lazily at Run time, so this
 // row has no mount-order dependency.
 func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	r := NewRegistry()

@@ -7,7 +7,82 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/andreylukin/bough/kernel"
 )
+
+// Apply on a missing {file: path} creates it (with the meta entry)
+// instead of failing with a raw open error; List exposes the cwd.
+func TestApplyCreatesMissingFileWithMeta(t *testing.T) {
+	ctx := kernel.NewContext()
+	p := filepath.Join(t.TempDir(), "sub", "named.jsonl")
+	if err := (plugin{}).Apply(ctx, map[string]any{"file": p}); err != nil {
+		t.Fatalf("Apply on a missing file: %v", err)
+	}
+	s, err := kernel.Get[*Store](ctx, "history")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Append("input", map[string]any{"text": "hello"})
+	ctx.Unmount()
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("named file must survive unmount: %v", err)
+	}
+	infos, err := List(filepath.Dir(p))
+	if err != nil || len(infos) != 1 {
+		t.Fatalf("List = %v, %v", infos, err)
+	}
+	cwd, _ := os.Getwd()
+	if infos[0].Cwd != cwd {
+		t.Fatalf("Cwd = %q, want %q", infos[0].Cwd, cwd)
+	}
+	if infos[0].Entries != 2 || infos[0].Title != "hello" {
+		t.Fatalf("info = %+v", infos[0])
+	}
+}
+
+func TestFreshSessionOnlyMetaIsRemoved(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ctx := kernel.NewContext()
+	if err := (plugin{}).Apply(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	s, err := kernel.Get[*Store](ctx, "history")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if es := s.Entries(); len(es) != 1 || es[0].Kind != "meta" {
+		t.Fatalf("fresh session entries = %+v, want one meta", es)
+	}
+	ctx.Unmount()
+	if _, err := os.Stat(s.Path()); !os.IsNotExist(err) {
+		t.Fatalf("meta-only fresh session should be removed, stat = %v", err)
+	}
+}
+
+func TestPreferCwdAndLastPrompt(t *testing.T) {
+	infos := []SessionInfo{
+		{ID: "a", Cwd: "/x"}, {ID: "b", Cwd: "/here"}, {ID: "c"}, {ID: "d", Cwd: "/here"},
+	}
+	got := PreferCwd(infos, "/here")
+	if ids := got[0].ID + got[1].ID + got[2].ID + got[3].ID; ids != "bdac" {
+		t.Fatalf("PreferCwd order = %s, want bdac", ids)
+	}
+	if infos[0].ID != "a" {
+		t.Fatal("PreferCwd must not reorder its input")
+	}
+	es := []Entry{
+		{Kind: "input", Data: map[string]any{"text": "first"}},
+		{Kind: "input", Data: map[string]any{"text": "last\nmore"}},
+		{Kind: "assistant", Data: map[string]any{"text": "reply"}},
+	}
+	if lp := LastPrompt(es); lp != "last" {
+		t.Fatalf("LastPrompt = %q", lp)
+	}
+	if lp := LastPrompt(nil); lp != "" {
+		t.Fatalf("LastPrompt(nil) = %q", lp)
+	}
+}
 
 func TestAppendReadBack(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "s.jsonl")

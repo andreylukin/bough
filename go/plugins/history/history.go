@@ -7,7 +7,9 @@ package history
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -109,6 +111,7 @@ type SessionInfo struct {
 	ModTime time.Time // file mtime (last activity)
 	Entries int       // parseable entry count
 	Title   string    // first input entry's text, first line
+	Cwd     string    // working directory from the "meta" entry; "" for old files
 }
 
 // List scans dir for session JSONL files, newest first (mtime, then
@@ -132,14 +135,16 @@ func List(dir string) ([]SessionInfo, error) {
 			fmt.Fprintf(os.Stderr, "bough: history: skipping %s: %v\n", p, err)
 			continue
 		}
-		title := ""
+		title, cwd := "", ""
 		for _, e := range entries {
-			if e.Kind == "input" {
+			if e.Kind == "meta" && cwd == "" {
+				cwd, _ = e.Data["cwd"].(string)
+			}
+			if e.Kind == "input" && title == "" {
 				title, _ = e.Data["text"].(string)
 				if i := strings.IndexByte(title, '\n'); i >= 0 {
 					title = title[:i]
 				}
-				break
 			}
 		}
 		infos = append(infos, SessionInfo{
@@ -148,6 +153,7 @@ func List(dir string) ([]SessionInfo, error) {
 			ModTime: st.ModTime(),
 			Entries: len(entries),
 			Title:   title,
+			Cwd:     cwd,
 		})
 	}
 	sort.Slice(infos, func(i, j int) bool {
@@ -157,6 +163,28 @@ func List(dir string) ([]SessionInfo, error) {
 		return infos[i].ID > infos[j].ID
 	})
 	return infos, nil
+}
+
+// PreferCwd reorders infos (stably) so sessions recorded in cwd come
+// first: sessions are global across projects, so every listing and
+// -c lead with this directory's.
+func PreferCwd(infos []SessionInfo, cwd string) []SessionInfo {
+	out := append([]SessionInfo(nil), infos...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Cwd == cwd && out[j].Cwd != cwd
+	})
+	return out
+}
+
+// LastPrompt is the first line of the last "input" entry, "" if none.
+func LastPrompt(entries []Entry) string {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind == "input" {
+			text, _ := entries[i].Data["text"].(string)
+			return strings.SplitN(text, "\n", 2)[0]
+		}
+	}
+	return ""
 }
 
 // Append records one entry: monotonically increasing Seq, current time,
@@ -188,6 +216,18 @@ func (s *Store) Entries() []Entry {
 	return append([]Entry(nil), s.entries...)
 }
 
+// onlyMeta reports whether nothing but the "meta" entry was recorded.
+func (s *Store) onlyMeta() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range s.entries {
+		if e.Kind != "meta" {
+			return false
+		}
+	}
+	return true
+}
+
 // Path returns the JSONL file path.
 func (s *Store) Path() string { return s.path }
 
@@ -211,22 +251,31 @@ func (plugin) Name() string     { return "history" }
 func (plugin) Inject() []string { return nil }
 
 // Apply mounts the "history" service. Config: {file: <path>} resumes
-// that exact session file (append continues, entries preloaded);
-// absent, a fresh session file is created under ~/.bough/history.
+// that exact session file (append continues, entries preloaded) — a
+// missing file is created; absent, a fresh session file is created
+// under ~/.bough/history. A created file opens with a "meta" entry
+// recording the working directory (SessionInfo.Cwd).
 func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	var s *Store
-	fresh := false
+	fresh := false // auto-named: removed at close if nothing but meta landed
+	created := false
 	if v, has := cfg["file"]; has {
 		path, ok := v.(string)
 		if !ok || path == "" {
 			return fmt.Errorf("history: file must be a non-empty string, got %v", v)
 		}
 		var err error
-		if s, err = OpenExisting(path); err != nil {
+		if _, serr := os.Stat(path); errors.Is(serr, fs.ErrNotExist) {
+			created = true
+			s, err = Open(path)
+		} else {
+			s, err = OpenExisting(path)
+		}
+		if err != nil {
 			return err
 		}
 	} else {
-		fresh = true
+		fresh, created = true, true
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return fmt.Errorf("history: home dir: %w", err)
@@ -236,6 +285,11 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			return err
 		}
 	}
+	if created {
+		if cwd, err := os.Getwd(); err == nil {
+			s.Append("meta", map[string]any{"cwd": cwd})
+		}
+	}
 	ctx.Provide("history", s)
 	ctx.Effect(func() {
 		if err := s.Close(); err != nil {
@@ -243,11 +297,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 		// A fresh session that never got an entry (e.g. the row was
 		// swapped to a resumed file by the session picker, or the user
-		// quit immediately) leaves no empty stray in the listing.
-		if fresh {
-			if st, err := os.Stat(s.Path()); err == nil && st.Size() == 0 {
-				_ = os.Remove(s.Path())
-			}
+		// quit immediately) leaves no stray in the listing.
+		if fresh && s.onlyMeta() {
+			_ = os.Remove(s.Path())
 		}
 	})
 	return nil
