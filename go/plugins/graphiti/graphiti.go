@@ -45,7 +45,7 @@ type sections interface {
 type Settings struct {
 	Home     string // state dir: source checkout, venv, graph.db, config.yaml, serve.log
 	Port     int    // MCP http port on 127.0.0.1
-	LLM      string // openrouter | openai: which key in ~/.bough/env drives extraction
+	LLM      string // openai (default) | openrouter: which key in ~/.bough/env drives extraction
 	Model    string // extraction model, in the provider's naming
 	Embedder string // embedding model, same
 }
@@ -56,9 +56,9 @@ func FromConfig(cfg map[string]any) Settings {
 	s := Settings{
 		Home:     filepath.Join(home, ".bough", "graphiti"),
 		Port:     8621,
-		LLM:      "openrouter",
-		Model:    "openai/gpt-5-mini",
-		Embedder: "openai/text-embedding-3-small",
+		LLM:      "openai",
+		Model:    "gpt-5-mini",
+		Embedder: "text-embedding-3-small",
 	}
 	if v, ok := cfg["home"].(string); ok && v != "" {
 		s.Home = v
@@ -71,8 +71,9 @@ func FromConfig(cfg map[string]any) Settings {
 	}
 	if v, ok := cfg["llm"].(string); ok && v != "" {
 		s.LLM = v
-		if v == "openai" {
-			s.Model, s.Embedder = "gpt-5-mini", "text-embedding-3-small"
+		if v == "openrouter" {
+			// OpenRouter proxies the same two models under its own names.
+			s.Model, s.Embedder = "openai/gpt-5-mini", "openai/text-embedding-3-small"
 		}
 	}
 	if v, ok := cfg["model"].(string); ok && v != "" {

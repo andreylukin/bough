@@ -68,6 +68,11 @@ func graphitiStep(bin string) {
 	}
 	fmt.Println("bough: graphiti install…")
 	cmd := exec.Command(bin, "graphiti", "install")
+	// From $HOME, so the row config comes from the global tree, not from
+	// whatever project tree the update happened to be run in.
+	if home, err := os.UserHomeDir(); err == nil {
+		cmd.Dir = home
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

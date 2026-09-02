@@ -327,16 +327,17 @@ The loop is two hook files the install writes:
 
 Both go through `bough mcp call graphiti/…`; a server that is down is
 silence, never a blocked turn. The `graphiti` row only adds a prompt
-section naming the memory. Extraction and embeddings run through
-OpenRouter by default (`OPENROUTER_API_KEY` from `~/.bough/env`; model
-`openai/gpt-5-mini`, embedder `openai/text-embedding-3-small`); row config
-`{port, llm: openrouter|openai, model, embedder}` overrides, then
+section naming the memory. Extraction and embeddings use OpenAI by default
+(`OPENAI_API_KEY` from `~/.bough/env`; model `gpt-5-mini`, embedder
+`text-embedding-3-small`); `llm: openrouter` routes both through OpenRouter
+on `OPENROUTER_API_KEY` instead. Row config
+`{port, llm: openai|openrouter, model, embedder}` overrides, then
 `bough graphiti install` again rewrites the plist. Attribute-free entity
 types are on purpose: the typed built-ins fail validation on small models.
 
 `bough update` runs `graphiti install` after the rebuild (skipped, with a
 hint, when `uv` is not on PATH), so a new machine is `brew install uv libomp`,
-a working `OPENROUTER_API_KEY` in `~/.bough/env`, then `bough update`. The
+the llm's key in `~/.bough/env`, then `bough update`. The
 install also adds the `graphiti` row to `~/.bough/bough.yml` after its `mcp`
 row when that file exists. `bough graphiti status | logs | start | stop |
 uninstall` (uninstall keeps the checkout and the graph).

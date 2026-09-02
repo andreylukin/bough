@@ -12,14 +12,14 @@ import (
 
 func TestFromConfigDefaultsAndOverrides(t *testing.T) {
 	d := FromConfig(nil)
-	if d.Port != 8621 || d.LLM != "openrouter" || !strings.HasSuffix(d.Home, "/.bough/graphiti") {
+	if d.Port != 8621 || d.LLM != "openai" || d.Model != "gpt-5-mini" || !strings.HasSuffix(d.Home, "/.bough/graphiti") {
 		t.Fatalf("defaults: %+v", d)
 	}
-	s := FromConfig(map[string]any{"port": 9000, "llm": "openai", "home": "/x"})
-	if s.Port != 9000 || s.Model != "gpt-5-mini" || s.Embedder != "text-embedding-3-small" || s.Home != "/x" {
-		t.Fatalf("openai switch should rename both models: %+v", s)
+	s := FromConfig(map[string]any{"port": 9000, "llm": "openrouter", "home": "/x"})
+	if s.Port != 9000 || s.Model != "openai/gpt-5-mini" || s.Embedder != "openai/text-embedding-3-small" || s.Home != "/x" {
+		t.Fatalf("openrouter switch should rename both models: %+v", s)
 	}
-	s = FromConfig(map[string]any{"port": float64(9001), "model": "anthropic/claude-haiku-4.5"})
+	s = FromConfig(map[string]any{"port": float64(9001), "llm": "openrouter", "model": "anthropic/claude-haiku-4.5"})
 	if s.Port != 9001 || s.Model != "anthropic/claude-haiku-4.5" || s.Embedder != "openai/text-embedding-3-small" {
 		t.Fatalf("yaml numbers and a model override: %+v", s)
 	}
@@ -222,7 +222,7 @@ func TestHasKeyReadsTheEnvFileShapes(t *testing.T) {
 	if HasKey(env, "OPENAI_API_KEY") || HasKey(env, "NOPE") || HasKey(nil, "OPENROUTER_API_KEY") {
 		t.Fatal("empty, absent, or no file is not a key")
 	}
-	if FromConfig(nil).KeyName() != "OPENROUTER_API_KEY" || FromConfig(map[string]any{"llm": "openai"}).KeyName() != "OPENAI_API_KEY" {
+	if FromConfig(nil).KeyName() != "OPENAI_API_KEY" || FromConfig(map[string]any{"llm": "openrouter"}).KeyName() != "OPENROUTER_API_KEY" {
 		t.Fatal("key name follows the llm")
 	}
 }

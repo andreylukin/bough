@@ -3,7 +3,7 @@
 
 Written by `bough graphiti install`; run by launchd (com.bough.graphiti). Env, all
 optional: GRAPHITI_HOME (state dir), GRAPHITI_PORT (MCP http port), FALKORDB_PORT
-(embedded redis port), GRAPHITI_LLM (openrouter | openai), MODEL_NAME,
+(embedded redis port), GRAPHITI_LLM (openai | openrouter), MODEL_NAME,
 EMBEDDER_MODEL, GRAPHITI_GROUP_ID. API keys come from $BOUGH_HOME/env (default
 ~/.bough/env), the same file the bough server sources.
 """
@@ -56,7 +56,7 @@ os.environ.setdefault("GRAPHITI_GROUP_ID", "bough")
 # OpenRouter serves both chat and /embeddings on an OpenAI-compatible surface,
 # so one key covers extraction and embedding. Structured output is json_object:
 # json_schema through OpenRouter fails OpenAI's strict-schema check.
-llm = os.environ.get("GRAPHITI_LLM", "openrouter")
+llm = os.environ.get("GRAPHITI_LLM", "openai")
 if llm == "openrouter":
     os.environ["OPENAI_API_URL"] = "https://openrouter.ai/api/v1"
     os.environ["OPENAI_API_KEY"] = os.environ.get("OPENROUTER_API_KEY", "")
