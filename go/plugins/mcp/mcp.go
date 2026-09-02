@@ -44,9 +44,58 @@ type sections interface {
 	Set(name, text string)
 }
 
-// promptSection is the one line the model gets: how to reach MCP from
-// the shell. Empty when no server is configured.
-func promptSection(servers map[string]ServerConfig) string {
+// catalog is the cached tool list, written by `bough mcp list` and
+// `bough mcp status`, read at mount so the model's context names the
+// real tools without spawning a server at startup.
+type catalog struct {
+	At      time.Time                `json:"at"`
+	Servers map[string][]catalogTool `json:"servers"`
+}
+
+type catalogTool struct {
+	Name string `json:"name"`
+	Desc string `json:"desc"`
+}
+
+func catalogPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".bough", "mcp-catalog.json")
+}
+
+func loadCatalog() catalog {
+	var c catalog
+	if p := catalogPath(); p != "" {
+		if data, err := os.ReadFile(p); err == nil {
+			_ = json.Unmarshal(data, &c)
+		}
+	}
+	return c
+}
+
+func saveCatalog(c catalog) error {
+	p := catalogPath()
+	if p == "" {
+		return nil
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(p, data, 0o644)
+}
+
+// promptSection is the model's MCP context: how to reach servers from
+// the shell, plus the cached tool catalog for the configured servers
+// (one "server/tool  description" line each). A configured server
+// missing from the cache is named with a hint to run `bough mcp list`.
+// Empty when no server is configured.
+func promptSection(servers map[string]ServerConfig, cat catalog) string {
 	if len(servers) == 0 {
 		return ""
 	}
@@ -55,8 +104,22 @@ func promptSection(servers map[string]ServerConfig) string {
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	return "MCP servers (" + strings.Join(names, ", ") + ") are reachable from the shell, not as tools: " +
-		"tools.bash(\"bough mcp list\") shows their tools; tools.bash(\"bough mcp call <server/tool> '<json args or plain text>'\") runs one."
+	var b strings.Builder
+	b.WriteString("MCP servers are reachable from the shell, not as tools: " +
+		"tools.bash(\"bough mcp call <server/tool> '<json args or plain text>'\") runs one " +
+		"(plain text binds to the tool's first required argument); tools.bash(\"bough mcp list\") refreshes this catalog.\n")
+	for _, n := range names {
+		tools := cat.Servers[n]
+		if len(tools) == 0 {
+			fmt.Fprintf(&b, "- %s: tools not listed yet, run bough mcp list\n", n)
+			continue
+		}
+		fmt.Fprintf(&b, "- %s (%d tools):\n", n, len(tools))
+		for _, t := range tools {
+			fmt.Fprintf(&b, "  %s/%s  %s\n", n, t.Name, t.Desc)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 type plugin struct{}
@@ -76,7 +139,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		return err
 	}
 	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
-		s.Set("mcp", promptSection(servers))
+		s.Set("mcp", promptSection(servers, loadCatalog()))
 		ctx.Effect(func() { s.Set("mcp", "") })
 	}
 	return nil
@@ -100,22 +163,22 @@ func configuredServers(cfg map[string]any) (map[string]ServerConfig, error) {
 func (plugin) Commands() []kernel.Command {
 	return []kernel.Command{{
 		Name:    "mcp",
-		Usage:   "list | call <server/tool> [json-args|text]",
-		Summary: "list configured MCP servers' tools, or call one",
+		Usage:   "list | status | call <server/tool> [json-args|text]",
+		Summary: "MCP servers: list their tools, check they answer, or call one",
 		Run:     runCLI,
 	}}
 }
 
 func runCLI(cfg map[string]any, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: bough mcp list | call <server/tool> [json-args|text]")
+		return fmt.Errorf("usage: bough mcp list | status | call <server/tool> [json-args|text]")
 	}
 	servers, err := configuredServers(cfg)
 	if err != nil {
 		return err
 	}
 	switch args[0] {
-	case "list":
+	case "list", "status":
 		if len(servers) == 0 {
 			return fmt.Errorf("no MCP servers configured (row config, ./.mcp.json, ~/.claude.json)")
 		}
@@ -124,21 +187,52 @@ func runCLI(cfg map[string]any, args []string) error {
 			names = append(names, n)
 		}
 		sort.Strings(names)
+		cat := loadCatalog()
+		if cat.Servers == nil {
+			cat.Servers = map[string][]catalogTool{}
+		}
+		failed := 0
 		for _, n := range names {
+			started := time.Now()
 			session, err := connect(servers[n])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "mcp: %s: connect: %v\n", n, err)
+				failed++
+				if args[0] == "status" {
+					fmt.Printf("%-20s DOWN  %v\n", n, err)
+				} else {
+					fmt.Fprintf(os.Stderr, "mcp: %s: connect: %v\n", n, err)
+				}
 				continue
 			}
-			lines, err := listLines(n, session)
+			tools, err := listTools(session)
 			session.Close()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "mcp: %s: list tools: %v\n", n, err)
+				failed++
+				if args[0] == "status" {
+					fmt.Printf("%-20s DOWN  list tools: %v\n", n, err)
+				} else {
+					fmt.Fprintf(os.Stderr, "mcp: %s: list tools: %v\n", n, err)
+				}
 				continue
 			}
-			for _, l := range lines {
-				fmt.Println(l)
+			cat.Servers[n] = tools
+			if args[0] == "status" {
+				fmt.Printf("%-20s ok    %d tools  %s  %s %s\n", n, len(tools),
+					time.Since(started).Round(time.Millisecond), servers[n].Command, strings.Join(servers[n].Args, " "))
+				continue
 			}
+			for _, t := range tools {
+				fmt.Printf("%s/%s  %s\n", n, t.Name, t.Desc)
+			}
+		}
+		cat.At = time.Now()
+		if err := saveCatalog(cat); err != nil {
+			fmt.Fprintf(os.Stderr, "mcp: catalog not saved: %v\n", err)
+		} else if args[0] == "status" {
+			fmt.Printf("catalog: %s (the model's context is rebuilt from it at the next start)\n", catalogPath())
+		}
+		if failed > 0 {
+			return fmt.Errorf("%d of %d servers failed", failed, len(names))
 		}
 		return nil
 	case "call":
@@ -165,7 +259,7 @@ func runCLI(cfg map[string]any, args []string) error {
 		fmt.Println(out)
 		return nil
 	}
-	return fmt.Errorf("unknown mcp command %q (list | call)", args[0])
+	return fmt.Errorf("unknown mcp command %q (list | status | call)", args[0])
 }
 
 // merge combines server maps lowest-precedence FIRST (later layers win
@@ -288,19 +382,19 @@ func connect(sc ServerConfig) (*sdk.ClientSession, error) {
 	return client.Connect(ctx, &sdk.CommandTransport{Command: cmd}, nil)
 }
 
-// listLines renders one "server/tool  description" line per tool.
-func listLines(server string, session *sdk.ClientSession) ([]string, error) {
+// listTools returns the session's tools with one-line descriptions.
+func listTools(session *sdk.ClientSession) ([]catalogTool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
-	var lines []string
+	var out []catalogTool
 	for tool, err := range session.Tools(ctx, nil) {
 		if err != nil {
-			return lines, err
+			return out, err
 		}
 		desc := strings.SplitN(strings.TrimSpace(tool.Description), "\n", 2)[0]
-		lines = append(lines, fmt.Sprintf("%s/%s  %s", server, tool.Name, desc))
+		out = append(out, catalogTool{Name: tool.Name, Desc: desc})
 	}
-	return lines, nil
+	return out, nil
 }
 
 // callOn runs one tool: query is a JSON object (used as the arguments)

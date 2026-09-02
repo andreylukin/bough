@@ -96,9 +96,9 @@ func inMemorySession(t *testing.T) *sdk.ClientSession {
 // required property and JSON onto the arguments; IsError is an error.
 func TestListAndCall(t *testing.T) {
 	cs := inMemorySession(t)
-	lines, err := listLines("test", cs)
-	if err != nil || len(lines) != 1 || lines[0] != "test/greet  say hi" {
-		t.Fatalf("listLines = %v, %v", lines, err)
+	tools, err := listTools(cs)
+	if err != nil || len(tools) != 1 || tools[0] != (catalogTool{Name: "greet", Desc: "say hi"}) {
+		t.Fatalf("listTools = %v, %v", tools, err)
 	}
 	out, err := callOn(cs, "greet", "you")
 	if err != nil || out != "hi you" {
@@ -130,14 +130,36 @@ func TestArgsFor(t *testing.T) {
 	}
 }
 
-// The model gets one line naming the servers and the CLI, nothing
-// else; no servers, no line.
-func TestPromptSectionIsOnlyAPointer(t *testing.T) {
-	if promptSection(nil) != "" {
+// The model's context names the cached tools per configured server
+// and points at the CLI; a server missing from the cache is named with
+// the refresh hint; no servers, no section.
+func TestPromptSectionCarriesCatalog(t *testing.T) {
+	if promptSection(nil, catalog{}) != "" {
 		t.Fatal("no servers should mean no section")
 	}
-	sec := promptSection(map[string]ServerConfig{"b": {}, "a": {}})
-	if !strings.Contains(sec, "(a, b)") || !strings.Contains(sec, "bough mcp list") || strings.Contains(sec, "tools.mcp_") {
-		t.Fatalf("section = %q", sec)
+	servers := map[string]ServerConfig{"b": {}, "a": {}}
+	cat := catalog{Servers: map[string][]catalogTool{"a": {{Name: "greet", Desc: "say hi"}}}}
+	sec := promptSection(servers, cat)
+	for _, want := range []string{"bough mcp call", "- a (1 tools):", "a/greet  say hi", "- b: tools not listed yet, run bough mcp list"} {
+		if !strings.Contains(sec, want) {
+			t.Fatalf("section missing %q:\n%s", want, sec)
+		}
+	}
+	if strings.Contains(sec, "tools.mcp_") {
+		t.Fatalf("no codemode tool names: %s", sec)
+	}
+}
+
+func TestCatalogRoundTrip(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if got := loadCatalog(); got.Servers != nil {
+		t.Fatalf("fresh home should have no catalog: %+v", got)
+	}
+	want := catalog{Servers: map[string][]catalogTool{"s": {{Name: "t", Desc: "d"}}}}
+	if err := saveCatalog(want); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadCatalog(); len(got.Servers["s"]) != 1 || got.Servers["s"][0].Name != "t" {
+		t.Fatalf("loadCatalog = %+v", got)
 	}
 }
