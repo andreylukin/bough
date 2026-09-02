@@ -239,6 +239,17 @@ func (m *model) dropLive() {
 	}
 }
 
+// liveView is what a streaming reply shows: the prose before the first
+// code fence, and whether a fence has started. A fence opener still
+// arriving ("`", "“") is held back too, so the tail never flickers
+// between backticks and the note. Pure.
+func liveView(text string) (prose string, coding bool) {
+	if i := strings.Index(text, "```"); i >= 0 {
+		return strings.TrimRight(text[:i], "\n `"), true
+	}
+	return strings.TrimRight(text, "`"), false
+}
+
 // splitProse removes the executed fence from an assistant block: the
 // prose before it stays, the prose after it is held back (m.trailing)
 // until the code's result has landed, so the transcript reads in

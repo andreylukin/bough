@@ -298,9 +298,20 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 	case "assistant":
 		head := th["accent"].Render("●") + " " + th["dim"].Render("bough")
 		if b.live {
-			// Streaming: plain text plus a cursor; markdown waits for
-			// the finished reply so half-open fences never flicker.
-			return head + "\n" + th["assistant"].Width(m.width).Render(b.text+"▌")
+			// Streaming: the prose so far, plain, with a cursor; markdown
+			// waits for the finished reply. A code fence being written
+			// is NOT shown: it would type out as text and then jump into
+			// a collapsed code block when the reply lands. A dim note
+			// stands in for it until then.
+			prose, coding := liveView(b.text)
+			out := head
+			if prose != "" || !coding {
+				out += "\n" + th["assistant"].Width(m.width).Render(prose+"▌")
+			}
+			if coding {
+				out += "\n" + th["dim"].Render("▸ writing code…")
+			}
+			return out
 		}
 		return head + "\n" + m.markdown(b.text)
 	case "code", "thinking":

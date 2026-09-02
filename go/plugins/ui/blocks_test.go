@@ -551,3 +551,29 @@ func TestCancelledTurnHasNoWithoutReplyMarker(t *testing.T) {
 		}
 	}
 }
+
+// A fence being streamed is not typed out as text: the prose before it
+// shows, then a "writing code" note, and the code block arrives whole
+// when the reply lands.
+func TestStreamingHidesTheFenceBeingWritten(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.typeStr("go")
+	d.press(keyEnter())
+	d.event("assistant-delta", "Let me check.\n``")
+	if p := d.plain(); strings.Contains(p, "``") || !strings.Contains(p, "Let me check.") {
+		t.Fatalf("a half fence must be held back:\n%s", p)
+	}
+	d.event("assistant-delta", "`js\nconsole.log(tools.bash(\"ls\"))")
+	p := d.plain()
+	if strings.Contains(p, "console.log") || strings.Contains(p, "```") {
+		t.Fatalf("the code being written leaked into the live view:\n%s", p)
+	}
+	if !strings.Contains(p, "Let me check.") || !strings.Contains(p, "▸ writing code…") {
+		t.Fatalf("want the prose and the note:\n%s", p)
+	}
+	prose, coding := liveView("```js\nx")
+	if prose != "" || !coding {
+		t.Fatalf("fence-first reply: %q %v", prose, coding)
+	}
+}
