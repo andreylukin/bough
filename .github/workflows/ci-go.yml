@@ -1,0 +1,73 @@
+# CI for the Go bough under go/: everything runs in parallel.
+#   unit    — go vet + go test -race ./... (kernel, plugin, teatest,
+#             headless e2e, and PTY suites; each test is isolated, so
+#             the whole tree runs fully parallel in one job)
+#   web-e2e — Playwright specs against real `bough --web` processes,
+#             sharded 4 ways
+name: ci-go
+
+on:
+  push:
+    branches: [main]
+    paths: ['go/**', '.github/workflows/ci-go.yml']
+  pull_request:
+    paths: ['go/**', '.github/workflows/ci-go.yml']
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache: true # modules + build cache
+          cache-dependency-path: go/go.sum
+      - run: go vet ./...
+      - run: go test -race -parallel 16 ./...
+
+  web-e2e:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache: true
+          cache-dependency-path: go/go.sum
+      # Build the binary once here; global-setup skips its own build
+      # when BOUGH_BIN is set.
+      - run: go build -o "$GITHUB_WORKSPACE/bough-go-bin" ./cmd/bough
+        working-directory: go
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: go/tests/web/package-lock.json
+      - run: npm ci
+        working-directory: go/tests/web
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('go/tests/web/package-lock.json') }}
+      - run: npx playwright install --with-deps chromium
+        working-directory: go/tests/web
+      - run: npx playwright test --shard=${{ matrix.shard }}/4
+        working-directory: go/tests/web
+        env:
+          BOUGH_BIN: ${{ github.workspace }}/bough-go-bin
+      - name: Upload traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces-shard-${{ matrix.shard }}
+          path: go/tests/web/test-results/
+          if-no-files-found: ignore

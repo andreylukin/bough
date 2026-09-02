@@ -1,0 +1,275 @@
+package loop
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/history"
+)
+
+// recordLLM records the system prompt and every message it was sent,
+// and always replies with plain text (ending the turn).
+type recordLLM struct {
+	system   string
+	messages []Message
+	reply    string
+}
+
+func (l *recordLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
+	l.system = system
+	l.messages = append([]Message(nil), messages...)
+	if l.reply == "" {
+		return "ok", nil
+	}
+	return l.reply, nil
+}
+
+// stubHooks returns canned results per event and records fired events.
+type stubHooks struct {
+	results map[string]map[string]any
+	fired   []string
+}
+
+func (h *stubHooks) Fire(ctx context.Context, event string, payload map[string]any) (map[string]any, error) {
+	h.fired = append(h.fired, event)
+	return h.results[event], nil
+}
+
+type stubSkills struct{ blocks []string }
+
+func (s *stubSkills) Inject(input string) []string { return s.blocks }
+
+// buildRunner mounts the loop plugin against stub services and returns
+// the runner directly so tests can call Run synchronously.
+func buildRunner(t *testing.T, llm *recordLLM, code Codemode, hooks Hooks, skills Skills) *runner {
+	t.Helper()
+	kctx := kernel.NewContext()
+	kctx.Provide("llm", llm)
+	kctx.Provide("codemode", code)
+	if hooks != nil {
+		kctx.Provide("hooks", hooks)
+	}
+	if skills != nil {
+		kctx.Provide("skills", skills)
+	}
+	if err := (&plugin{}).Apply(kctx, nil); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	r, err := kernel.Get[*runner](kctx, "runner")
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+	t.Cleanup(kctx.Unmount)
+	return r
+}
+
+func collect(kinds *[]string, texts *[]string) func(kind, text string) {
+	return func(kind, text string) {
+		*kinds = append(*kinds, kind)
+		*texts = append(*texts, text)
+	}
+}
+
+func TestHookRewritesPrompt(t *testing.T) {
+	llm := &recordLLM{}
+	hooks := &stubHooks{results: map[string]map[string]any{
+		"user-prompt-submit": {"input": "rewritten"},
+	}}
+	r := buildRunner(t, llm, &stubCode{}, hooks, nil)
+
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "original", collect(&kinds, &texts)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(llm.messages) != 1 || llm.messages[0].Content != "rewritten" {
+		t.Fatalf("llm saw %v, want single message %q", llm.messages, "rewritten")
+	}
+}
+
+func TestHookBlocksPrompt(t *testing.T) {
+	llm := &recordLLM{}
+	hooks := &stubHooks{results: map[string]map[string]any{
+		"user-prompt-submit": {"block": "nope"},
+	}}
+	r := buildRunner(t, llm, &stubCode{}, hooks, nil)
+
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "do it", collect(&kinds, &texts)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if llm.messages != nil {
+		t.Fatalf("llm was called with %v, want no call", llm.messages)
+	}
+	// The blocked turn is an error "nope" then a "done" so drains see it end.
+	if len(kinds) < 2 || kinds[len(kinds)-2] != "error" || texts[len(texts)-2] != "nope" || kinds[len(kinds)-1] != "done" {
+		t.Fatalf("events %v %v, want error %q then done", kinds, texts, "nope")
+	}
+}
+
+func TestHookDeniesCodeExec(t *testing.T) {
+	llm := &recordLLM{reply: "Trying.\n```js\nrm()\n```"}
+	code := &stubCode{}
+	hooks := &stubHooks{results: map[string]map[string]any{
+		"pre-code-exec": {"deny": "too spicy"},
+	}}
+	r := buildRunner(t, llm, code, hooks, nil)
+
+	var kinds, texts []string
+	err := r.Run(context.Background(), "go", collect(&kinds, &texts))
+	if err == nil {
+		t.Fatal("expected gave-up error (every step denied)")
+	}
+	if len(code.ran) != 0 {
+		t.Fatalf("codemode ran %q, want nothing", code.ran)
+	}
+	found := false
+	for i, k := range kinds {
+		if k == "result" && texts[i] == "[hook denied: too spicy]" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no denied result in events %v %v", kinds, texts)
+	}
+	// history got the denial as a result entry, so the projection
+	// feeds it back to the model
+	got := ""
+	for _, e := range r.hist.Entries() {
+		if text, _ := e.Data["text"].(string); e.Kind == "result" && strings.Contains(text, "[hook denied: too spicy]") {
+			got = text
+		}
+	}
+	if got == "" {
+		t.Fatalf("denial not recorded as result entry; entries %v", r.hist.Entries())
+	}
+}
+
+// buildRunnerWith mounts the loop plugin against a stub llm/codemode
+// plus any extra services (history/cognition/projection/...).
+func buildRunnerWith(t *testing.T, llm *recordLLM, extra map[string]any) *runner {
+	t.Helper()
+	kctx := kernel.NewContext()
+	kctx.Provide("llm", llm)
+	kctx.Provide("codemode", &stubCode{})
+	for k, v := range extra {
+		kctx.Provide(k, v)
+	}
+	if err := (&plugin{}).Apply(kctx, nil); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	r, err := kernel.Get[*runner](kctx, "runner")
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+	t.Cleanup(kctx.Unmount)
+	return r
+}
+
+// stubProjection collapses all entries into one fixed user message.
+type stubProjection struct{ saw []history.Entry }
+
+func (p *stubProjection) Project(entries []history.Entry) []Message {
+	p.saw = append([]history.Entry(nil), entries...)
+	return []Message{{Role: "user", Content: "PROJECTED"}}
+}
+
+type stubCognition struct{ base string }
+
+func (c *stubCognition) System(base string) string {
+	c.base = base
+	return "COGNITION SAYS"
+}
+
+func TestProjectionOverridesMessages(t *testing.T) {
+	llm := &recordLLM{}
+	proj := &stubProjection{}
+	r := buildRunnerWith(t, llm, map[string]any{"projection": proj})
+
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "hello", collect(&kinds, &texts)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(llm.messages) != 1 || llm.messages[0].Content != "PROJECTED" {
+		t.Fatalf("llm saw %v, want single PROJECTED message", llm.messages)
+	}
+	if len(proj.saw) != 1 || proj.saw[0].Kind != "input" || proj.saw[0].Data["text"] != "hello" {
+		t.Fatalf("projection saw %v, want the input entry", proj.saw)
+	}
+}
+
+func TestCognitionOverridesSystem(t *testing.T) {
+	llm := &recordLLM{}
+	cog := &stubCognition{}
+	r := buildRunnerWith(t, llm, map[string]any{"cognition": cog})
+
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "hello", collect(&kinds, &texts)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if llm.system != "COGNITION SAYS" {
+		t.Fatalf("llm system = %q, want cognition override", llm.system)
+	}
+	if !strings.Contains(cog.base, "You are bough") {
+		t.Fatalf("cognition got base %q, want built default", cog.base)
+	}
+}
+
+func TestHistoryServiceUsed(t *testing.T) {
+	llm := &recordLLM{}
+	mem := &memHistory{}
+	r := buildRunnerWith(t, llm, map[string]any{"history": mem})
+
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "hello", collect(&kinds, &texts)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := mem.Entries()
+	if len(got) != 3 || got[0].Kind != "input" || got[1].Kind != "assistant" || got[2].Kind != "done" {
+		t.Fatalf("history service entries = %v, want input/assistant/done", got)
+	}
+	if r.hist != History(mem) {
+		t.Fatal("runner did not adopt the mounted history service")
+	}
+}
+
+func TestDefaultProject(t *testing.T) {
+	entries := []history.Entry{
+		{Kind: "input", Data: map[string]any{"text": "hi"}},
+		{Kind: "assistant", Data: map[string]any{"text": "running"}},
+		{Kind: "code", Data: map[string]any{"text": "1+1"}},
+		{Kind: "result", Data: map[string]any{"text": "2", "code": "1+1"}},
+		{Kind: "error", Data: map[string]any{"text": "boom"}},
+		{Kind: "done", Data: map[string]any{"text": ""}},
+	}
+	got := DefaultProject(entries)
+	want := []Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "running"},
+		{Role: "user", Content: "[tool output]\n2"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("DefaultProject = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("DefaultProject = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestSkillsInjection(t *testing.T) {
+	llm := &recordLLM{}
+	skills := &stubSkills{blocks: []string{"[skill: wiki]\nuse the wiki cli"}}
+	r := buildRunner(t, llm, &stubCode{}, nil, skills)
+
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "update the wiki", collect(&kinds, &texts)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := "update the wiki\n\n[skill: wiki]\nuse the wiki cli"
+	if len(llm.messages) != 1 || llm.messages[0].Content != want {
+		t.Fatalf("llm saw %q, want %q", llm.messages, want)
+	}
+}
