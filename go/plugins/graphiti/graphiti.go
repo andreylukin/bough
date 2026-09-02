@@ -13,7 +13,9 @@ package graphiti
 
 import (
 	"bytes"
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,22 +45,28 @@ type sections interface {
 // Settings is the row config with defaults applied. Every field maps to
 // an environment variable serve.py reads.
 type Settings struct {
-	Home     string // state dir: source checkout, venv, graph.db, config.yaml, serve.log
-	Port     int    // MCP http port on 127.0.0.1
-	LLM      string // openai (default) | openrouter: which key in ~/.bough/env drives extraction
-	Model    string // extraction model, in the provider's naming
-	Embedder string // embedding model, same
+	Home      string // state dir: source checkout, venv, graph.db, config.yaml, serve.log
+	Port      int    // MCP http port on 127.0.0.1
+	LLM       string // openai (default) | openrouter: which key in ~/.bough/env drives extraction
+	Model     string // extraction model, in the provider's naming
+	Embedder  string // embedding model, same
+	DB        string // neo4j (default) | falkordb: the graph store
+	Neo4jURI  string // bolt address of the Neo4j the server uses
+	Neo4jUser string
 }
 
 // FromConfig applies defaults over a (possibly nil) row config.
 func FromConfig(cfg map[string]any) Settings {
 	home, _ := os.UserHomeDir()
 	s := Settings{
-		Home:     filepath.Join(home, ".bough", "graphiti"),
-		Port:     8621,
-		LLM:      "openai",
-		Model:    "gpt-5-mini",
-		Embedder: "text-embedding-3-small",
+		Home:      filepath.Join(home, ".bough", "graphiti"),
+		Port:      8621,
+		LLM:       "openai",
+		Model:     "gpt-5-mini",
+		Embedder:  "text-embedding-3-small",
+		DB:        "neo4j",
+		Neo4jURI:  "bolt://127.0.0.1:7687",
+		Neo4jUser: "neo4j",
 	}
 	if v, ok := cfg["home"].(string); ok && v != "" {
 		s.Home = v
@@ -82,7 +90,30 @@ func FromConfig(cfg map[string]any) Settings {
 	if v, ok := cfg["embedder"].(string); ok && v != "" {
 		s.Embedder = v
 	}
+	if v, ok := cfg["db"].(string); ok && v != "" {
+		s.DB = v
+	}
+	if v, ok := cfg["neo4j_uri"].(string); ok && v != "" {
+		s.Neo4jURI = v
+	}
+	if v, ok := cfg["neo4j_user"].(string); ok && v != "" {
+		s.Neo4jUser = v
+	}
 	return s
+}
+
+// neo4jPasswordFile holds the password install generated for the local
+// Neo4j (mode 0600). A `NEO4J_PASSWORD` in ~/.bough/env wins over it,
+// for a Neo4j you run yourself.
+func (s Settings) neo4jPasswordFile() string { return filepath.Join(s.Home, "neo4j.password") }
+
+// neo4jHostPort is the dial address behind the bolt URI.
+func (s Settings) neo4jHostPort() string {
+	u := s.Neo4jURI
+	if i := strings.Index(u, "://"); i >= 0 {
+		u = u[i+3:]
+	}
+	return strings.TrimSuffix(u, "/")
 }
 
 func (s Settings) url() string    { return fmt.Sprintf("http://127.0.0.1:%d/mcp/", s.Port) }
@@ -129,6 +160,9 @@ func RenderPlist(s Settings) (string, error) {
 		"__LLM__", s.LLM,
 		"__MODEL__", s.Model,
 		"__EMBEDDER__", s.Embedder,
+		"__DB__", s.DB,
+		"__NEO4J_URI__", s.Neo4jURI,
+		"__NEO4J_USER__", s.Neo4jUser,
 	)
 	return r.Replace(string(b)), nil
 }
@@ -360,6 +394,15 @@ func install(s Settings) error {
 		return err
 	}
 
+	// 1b. The graph store. Neo4j is Homebrew's, run as a brew service so
+	// it outlives bough; install mints its password once. falkordb needs
+	// nothing: serve.py embeds it.
+	if s.DB == "neo4j" {
+		if err := ensureNeo4j(s); err != nil {
+			return err
+		}
+	}
+
 	// 2. Our files: launcher, config (kept if you edited it), hooks, mcp.json entry, plist.
 	serve, _ := assets.ReadFile("assets/serve.py")
 	if err := writeFile(filepath.Join(s.Home, "serve.py"), serve, 0o755); err != nil {
@@ -421,6 +464,71 @@ func install(s Settings) error {
 }
 
 func domain() string { return "gui/" + strconv.Itoa(os.Getuid()) }
+
+// ensureNeo4j installs Neo4j (brew), sets its initial password the
+// first time, starts it as a brew service and waits for bolt.
+func ensureNeo4j(s Settings) error {
+	if _, err := exec.LookPath("brew"); err != nil {
+		return errors.New("db: neo4j needs Homebrew (or set db: falkordb on the graphiti row)")
+	}
+	if _, err := exec.LookPath("neo4j"); err != nil {
+		fmt.Fprintln(os.Stderr, "installing neo4j (brew)…")
+		if err := run("", nil, "brew", "install", "-q", "neo4j"); err != nil {
+			return err
+		}
+	}
+	if !HasKey(readEnv(), "NEO4J_PASSWORD") {
+		if _, err := os.Stat(s.neo4jPasswordFile()); err != nil {
+			pw, err := randomPassword()
+			if err != nil {
+				return err
+			}
+			// Only valid before the first start; on a Neo4j that already
+			// ran, the user sets NEO4J_PASSWORD in ~/.bough/env instead.
+			if err := run("", nil, "neo4j-admin", "dbms", "set-initial-password", pw); err != nil {
+				return fmt.Errorf("%w\n  (a Neo4j that already ran keeps its password: put NEO4J_PASSWORD=… in %s)", err, envPath())
+			}
+			if err := writeFile(s.neo4jPasswordFile(), []byte(pw+"\n"), 0o600); err != nil {
+				return err
+			}
+		}
+	}
+	if !listeningAt(s.neo4jHostPort()) {
+		fmt.Fprintln(os.Stderr, "starting neo4j (brew services)…")
+		if err := run("", nil, "brew", "services", "start", "neo4j"); err != nil {
+			return err
+		}
+		for i := 0; i < 120 && !listeningAt(s.neo4jHostPort()); i++ {
+			time.Sleep(time.Second)
+		}
+		if !listeningAt(s.neo4jHostPort()) {
+			return fmt.Errorf("neo4j never opened %s (brew services info neo4j; log under $(brew --prefix)/var/log/neo4j)", s.neo4jHostPort())
+		}
+	}
+	return nil
+}
+
+func readEnv() []byte {
+	b, _ := os.ReadFile(envPath())
+	return b
+}
+
+func randomPassword() (string, error) {
+	b := make([]byte, 18)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "bough-" + hex.EncodeToString(b), nil
+}
+
+func listeningAt(hostport string) bool {
+	c, err := net.DialTimeout("tcp", hostport, 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
+}
 
 func start(s Settings) error {
 	if _, err := os.Stat(plistPath()); err != nil {
@@ -488,6 +596,16 @@ func status(s Settings) error {
 		fmt.Printf("hook     %-20s %s\n", ev, state)
 	}
 	fmt.Printf("llm      %s / %s, embedder %s\n", s.LLM, s.Model, s.Embedder)
+	switch s.DB {
+	case "neo4j":
+		state := "down"
+		if listeningAt(s.neo4jHostPort()) {
+			state = "LISTENING"
+		}
+		fmt.Printf("db       neo4j at %s  %s (brew services)\n", s.Neo4jURI, state)
+	default:
+		fmt.Printf("db       %s (embedded, %s)\n", s.DB, filepath.Join(s.Home, "graph.db"))
+	}
 	if err := checkKey(s); err != nil {
 		fmt.Printf("key      MISSING: %v\n", err)
 	} else {
@@ -518,6 +636,6 @@ func uninstall(s Settings) error {
 			return err
 		}
 	}
-	fmt.Fprintf(os.Stderr, "uninstalled; %s (checkout + graph.db) kept\n", s.Home)
+	fmt.Fprintf(os.Stderr, "uninstalled; %s kept, and a brew-run neo4j keeps running (brew services stop neo4j)\n", s.Home)
 	return nil
 }

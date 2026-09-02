@@ -323,11 +323,15 @@ which of the three the number came from.
 
 Long-term memory on [getzep/graphiti](https://github.com/getzep/graphiti),
 self-hosted with no Docker: `bough graphiti install` clones Graphiti's
-`mcp_server`, builds its venv (python 3.12, `uv`) with `falkordblite` (an
-embedded FalkorDB: one file, `~/.bough/graphiti/graph.db`), and runs the
-stock MCP server under launchd (`com.bough.graphiti`) on
-`http://127.0.0.1:8621/mcp/`. One server, every bough talks to it over
-http — the embedded database is single-process, so nothing spawns its own.
+`mcp_server`, builds its venv (python 3.12, `uv`), and runs the stock MCP
+server under launchd (`com.bough.graphiti`) on `http://127.0.0.1:8621/mcp/`.
+The graph lives in **Neo4j** (default, `db: neo4j`): install brews it, mints
+its password once (`~/.bough/graphiti/neo4j.password`, or `NEO4J_PASSWORD`
+in `~/.bough/env` for a Neo4j you run yourself), starts it as a brew service
+and waits for bolt on `neo4j_uri` (default `bolt://127.0.0.1:7687`); browse
+it at http://localhost:7474. `db: falkordb` keeps the earlier embedded
+FalkorDB (`falkordblite`, one file under the home dir, single-process).
+One server, every bough talks to it over http.
 
 The loop is two hook files the install writes:
 

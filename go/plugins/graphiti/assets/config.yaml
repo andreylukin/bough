@@ -24,8 +24,13 @@ embedder:
       api_url: ${OPENAI_API_URL:https://api.openai.com/v1}
 
 database:
-  provider: "falkordb"
+  provider: ${GRAPHITI_DB:neo4j}
   providers:
+    neo4j:
+      uri: ${NEO4J_URI:bolt://127.0.0.1:7687}
+      username: ${NEO4J_USER:neo4j}
+      password: ${NEO4J_PASSWORD}
+      database: ${NEO4J_DATABASE:neo4j}
     falkordb:
       uri: ${FALKORDB_URI:redis://127.0.0.1:6399}
       password: ""

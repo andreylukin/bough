@@ -2,7 +2,8 @@
 """bough graphiti launcher: embedded FalkorDB (falkordblite) + the stock Graphiti MCP server.
 
 Written by `bough graphiti install`; run by launchd (com.bough.graphiti). Env, all
-optional: GRAPHITI_HOME (state dir), GRAPHITI_PORT (MCP http port), FALKORDB_PORT
+optional: GRAPHITI_HOME (state dir), GRAPHITI_PORT (MCP http port), GRAPHITI_DB
+(neo4j | falkordb), NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD, FALKORDB_PORT
 (embedded redis port), GRAPHITI_LLM (openai | openrouter), MODEL_NAME,
 EMBEDDER_MODEL, GRAPHITI_GROUP_ID. API keys come from $BOUGH_HOME/env (default
 ~/.bough/env), the same file the bough server sources.
@@ -28,29 +29,45 @@ src = home / "src" / "mcp_server"
 sys.path.insert(0, str(src / "src"))
 os.chdir(src)
 
-# The graph: an embedded redis-server with the FalkorDB module, one file, this
-# process only. That is why exactly one launcher runs and every bough talks to
-# it over http instead of spawning its own.
-db_port = os.environ.get("FALKORDB_PORT", "6399")
-from redislite.falkordb_client import FalkorDB  # noqa: E402
+db = os.environ.get("GRAPHITI_DB", "neo4j")
+db_args: list[str] = []
+if db == "neo4j":
+    # Neo4j runs on its own (brew services); the password is what install
+    # minted unless ~/.bough/env sets NEO4J_PASSWORD.
+    os.environ.setdefault("NEO4J_URI", "bolt://127.0.0.1:7687")
+    os.environ.setdefault("NEO4J_USER", "neo4j")
+    if not os.environ.get("NEO4J_PASSWORD"):
+        pw = home / "neo4j.password"
+        if not pw.exists():
+            sys.exit(f"no NEO4J_PASSWORD in {envfile} and no {pw}: run bough graphiti install")
+        os.environ["NEO4J_PASSWORD"] = pw.read_text().strip()
+    db_args = ["--database-provider", "neo4j"]
+elif db == "falkordb":
+    # An embedded redis-server with the FalkorDB module, one file, this process
+    # only. That is why exactly one launcher runs and every bough talks to it
+    # over http instead of spawning its own.
+    db_port = os.environ.get("FALKORDB_PORT", "6399")
+    from redislite.falkordb_client import FalkorDB  # noqa: E402
 
-_db = FalkorDB(str(home / "graph.db"), serverconfig={"port": db_port, "bind": "127.0.0.1"})
-os.environ["FALKORDB_URI"] = f"redis://127.0.0.1:{db_port}"
+    _db = FalkorDB(str(home / "graph.db"), serverconfig={"port": db_port, "bind": "127.0.0.1"})
+    os.environ["FALKORDB_URI"] = f"redis://127.0.0.1:{db_port}"
 
+    # The redis must die with this process: launchd's SIGTERM (bough graphiti
+    # stop) bypasses atexit, and redislite only stops a server it started
+    # itself, so an orphan on FALKORDB_PORT would be silently adopted by the
+    # next start.
+    def _shutdown(*_):
+        try:
+            _db.client.execute_command("SHUTDOWN")  # saves the rdb first
+        except Exception:  # noqa: BLE001 - the connection drops as it obeys
+            pass
+        os._exit(0)
 
-# The redis must die with this process: launchd's SIGTERM (bough graphiti
-# stop) bypasses atexit, and redislite only stops a server it started itself,
-# so an orphan on FALKORDB_PORT would be silently adopted by the next start.
-def _shutdown(*_):
-    try:
-        _db.client.execute_command("SHUTDOWN")  # saves the rdb first
-    except Exception:  # noqa: BLE001 - the connection drops as it obeys
-        pass
-    os._exit(0)
-
-
-signal.signal(signal.SIGTERM, _shutdown)
-atexit.register(_shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+    atexit.register(_shutdown)
+    db_args = ["--database-provider", "falkordb"]
+else:
+    sys.exit(f"GRAPHITI_DB={db!r}: want neo4j or falkordb")
 os.environ.setdefault("GRAPHITI_GROUP_ID", "bough")
 
 # OpenRouter serves both chat and /embeddings on an OpenAI-compatible surface,
@@ -71,7 +88,7 @@ else:
 
 port = os.environ.get("GRAPHITI_PORT", "8621")
 argv = ["graphiti", "--config", str(home / "config.yaml"), "--transport", "http",
-        "--host", "127.0.0.1", "--port", port]
+        "--host", "127.0.0.1", "--port", port] + db_args
 if m := os.environ.get("MODEL_NAME"):
     argv += ["--model", m, "--small-model", m]
 if m := os.environ.get("EMBEDDER_MODEL"):

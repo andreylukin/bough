@@ -15,6 +15,9 @@
     <key>GRAPHITI_LLM</key><string>__LLM__</string>
     <key>MODEL_NAME</key><string>__MODEL__</string>
     <key>EMBEDDER_MODEL</key><string>__EMBEDDER__</string>
+    <key>GRAPHITI_DB</key><string>__DB__</string>
+    <key>NEO4J_URI</key><string>__NEO4J_URI__</string>
+    <key>NEO4J_USER</key><string>__NEO4J_USER__</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>

@@ -15,6 +15,12 @@ func TestFromConfigDefaultsAndOverrides(t *testing.T) {
 	if d.Port != 8621 || d.LLM != "openai" || d.Model != "gpt-5-mini" || !strings.HasSuffix(d.Home, "/.bough/graphiti") {
 		t.Fatalf("defaults: %+v", d)
 	}
+	if d.DB != "neo4j" || d.Neo4jURI != "bolt://127.0.0.1:7687" || d.Neo4jUser != "neo4j" || d.neo4jHostPort() != "127.0.0.1:7687" {
+		t.Fatalf("db defaults: %+v", d)
+	}
+	if f := FromConfig(map[string]any{"db": "falkordb", "neo4j_uri": "bolt://db:7688"}); f.DB != "falkordb" || f.neo4jHostPort() != "db:7688" {
+		t.Fatalf("db overrides: %+v", f)
+	}
 	s := FromConfig(map[string]any{"port": 9000, "llm": "openrouter", "home": "/x"})
 	if s.Port != 9000 || s.Model != "openai/gpt-5-mini" || s.Embedder != "openai/text-embedding-3-small" || s.Home != "/x" {
 		t.Fatalf("openrouter switch should rename both models: %+v", s)
@@ -57,11 +63,11 @@ func TestMergeServerKeepsOthers(t *testing.T) {
 }
 
 func TestRenderPlist(t *testing.T) {
-	p, err := RenderPlist(Settings{Home: "/h", Port: 1234, LLM: "openrouter", Model: "m", Embedder: "e"})
+	p, err := RenderPlist(Settings{Home: "/h", Port: 1234, LLM: "openrouter", Model: "m", Embedder: "e", DB: "neo4j", Neo4jURI: "bolt://127.0.0.1:7687", Neo4jUser: "neo4j"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"/h/src/mcp_server/.venv/bin/python", "/h/serve.py", "<string>1234</string>", "<string>m</string>", "/h/serve.log", label} {
+	for _, want := range []string{"/h/src/mcp_server/.venv/bin/python", "/h/serve.py", "<string>1234</string>", "<string>m</string>", "/h/serve.log", label, "<string>neo4j</string>", "<string>bolt://127.0.0.1:7687</string>"} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("plist lacks %q:\n%s", want, p)
 		}
