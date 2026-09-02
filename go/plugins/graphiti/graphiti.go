@@ -308,10 +308,10 @@ func install(s Settings) error {
 	}
 	fmt.Fprintln(os.Stderr, "syncing the server venv (python 3.12) and falkordblite…")
 	env := []string{"UV_PYTHON=3.12"}
-	if err := run(s.src(), env, "uv", "sync", "-q"); err != nil {
+	if err := run(s.src(), env, "uv", "sync"); err != nil {
 		return err
 	}
-	if err := run(s.src(), env, "uv", "pip", "install", "-q", "falkordblite"); err != nil {
+	if err := run(s.src(), env, "uv", "pip", "install", "falkordblite"); err != nil {
 		return err
 	}
 
