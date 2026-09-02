@@ -3,6 +3,7 @@
 package codemode
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +74,42 @@ func (cm *CodeMode) Run(code string) (string, error) {
 		out += v.String()
 	}
 	return out, nil
+}
+
+// RunHook runs fileBody as the body of function(event){...} in the same
+// VM (same mutex, same globals and tools.*) and calls it with event.
+// A returned object comes back as map[string]any; no return (undefined
+// or null) is nil, nil; a non-object return or JS exception is an error.
+func (cm *CodeMode) RunHook(fileBody string, event map[string]any) (map[string]any, error) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	v, err := cm.vm.RunString("(function(event){\n" + fileBody + "\n})")
+	if err != nil {
+		return nil, err
+	}
+	fn, ok := goja.AssertFunction(v)
+	if !ok {
+		return nil, fmt.Errorf("codemode: hook did not compile to a function")
+	}
+
+	timer := time.AfterFunc(cm.timeout, func() {
+		cm.vm.Interrupt("codemode: hook timeout after " + cm.timeout.String())
+	})
+	ret, err := fn(goja.Undefined(), cm.vm.ToValue(event))
+	timer.Stop()
+	cm.vm.ClearInterrupt()
+	if err != nil {
+		return nil, err
+	}
+	if ret == nil || goja.IsUndefined(ret) || goja.IsNull(ret) {
+		return nil, nil
+	}
+	m, ok := ret.Export().(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("codemode: hook returned %s, not an object", ret.ExportType())
+	}
+	return m, nil
 }
 
 type plugin struct{}

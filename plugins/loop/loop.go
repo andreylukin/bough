@@ -27,6 +27,25 @@ type Codemode interface {
 	Run(code string) (string, error)
 }
 
+// Hooks is the optional "hooks" service seam. Fire runs every hook
+// file for event and returns the merged result object (nil if none).
+type Hooks interface {
+	Fire(ctx context.Context, event string, payload map[string]any) (map[string]any, error)
+}
+
+// Skills is the optional "skills" service seam. Inject returns
+// ready-formatted "[skill: <name>]\n<body>" blocks for skills whose
+// name is mentioned in the human input.
+type Skills interface {
+	Inject(input string) []string
+}
+
+// SystemContext is the optional "context-md" service seam. Preamble
+// is prepended to the system prompt once, at session start.
+type SystemContext interface {
+	Preamble() string
+}
+
 // Event is the payload emitted on "loop/event".
 // Kind is one of: "assistant", "code", "result", "error", "done".
 type Event struct {
@@ -56,20 +75,73 @@ reply with plain text only — no code block — and that ends the turn.`
 
 var jsBlock = regexp.MustCompile("(?s)```js\\s*\n(.*?)```")
 
-// runner implements the "runner" service.
+// runner implements the "runner" service. hooks, skills and sysctx are
+// optional seams; nil means no-op.
 type runner struct {
 	mu      sync.Mutex
 	llm     LLM
 	code    Codemode
+	hooks   Hooks
+	skills  Skills
+	sysctx  SystemContext
 	history []Message
+	system  string
+	started bool
+}
+
+// fire runs a hook event if a hooks service is present. A Fire error
+// is logged as a loop error event and treated as no-op, never fatal.
+func (r *runner) fire(ctx context.Context, event string, payload map[string]any, emit func(kind, text string)) map[string]any {
+	if r.hooks == nil {
+		return nil
+	}
+	res, err := r.hooks.Fire(ctx, event, payload)
+	if err != nil {
+		emit("error", "hook "+event+": "+err.Error())
+		return nil
+	}
+	return res
 }
 
 func (r *runner) Run(ctx context.Context, input string, emit func(kind, text string)) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.history = append(r.history, Message{Role: "user", Content: input})
+
+	if !r.started {
+		r.started = true
+		r.system = systemPrompt
+		if r.sysctx != nil {
+			if p := r.sysctx.Preamble(); p != "" {
+				r.system = p + "\n\n" + r.system
+			}
+		}
+		if res := r.fire(ctx, "session-start", map[string]any{}, emit); res != nil {
+			if c, ok := res["context"].(string); ok && c != "" {
+				r.system += "\n\n" + c
+			}
+		}
+	}
+
+	if res := r.fire(ctx, "user-prompt-submit", map[string]any{"input": input}, emit); res != nil {
+		if b, ok := res["block"].(string); ok {
+			emit("error", b)
+			return nil
+		}
+		if in, ok := res["input"].(string); ok {
+			input = in
+		}
+	}
+
+	msg := input
+	if r.skills != nil {
+		for _, block := range r.skills.Inject(input) {
+			msg += "\n\n" + block
+		}
+	}
+
+	r.history = append(r.history, Message{Role: "user", Content: msg})
 	for step := 0; step < maxSteps; step++ {
-		reply, err := r.llm.Complete(ctx, systemPrompt, r.history)
+		reply, err := r.llm.Complete(ctx, r.system, r.history)
 		if err != nil {
 			emit("error", err.Error())
 			return err
@@ -79,17 +151,37 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
 		if len(blocks) == 0 {
 			emit("done", "")
+			r.fire(ctx, "stop", map[string]any{}, emit)
 			return nil
 		}
 		for _, m := range blocks {
 			code := m[1]
+			if res := r.fire(ctx, "pre-code-exec", map[string]any{"code": code}, emit); res != nil {
+				if reason, ok := res["deny"].(string); ok {
+					out := "[hook denied: " + reason + "]"
+					emit("result", out)
+					r.history = append(r.history, Message{Role: "user", Content: "[tool output]\n" + out})
+					continue
+				}
+				if c, ok := res["code"].(string); ok {
+					code = c
+				}
+			}
 			emit("code", code)
-			out, err := r.code.Run(code)
-			if err != nil {
-				out = "error: " + err.Error()
-				emit("error", out)
+			out, runErr := r.code.Run(code)
+			if runErr != nil {
+				out = "error: " + runErr.Error()
 			} else {
 				out = truncate(out, maxResultBytes)
+			}
+			if res := r.fire(ctx, "post-result", map[string]any{"code": code, "result": out}, emit); res != nil {
+				if s, ok := res["result"].(string); ok {
+					out = s
+				}
+			}
+			if runErr != nil {
+				emit("error", out)
+			} else {
 				emit("result", out)
 			}
 			r.history = append(r.history, Message{Role: "user", Content: "[tool output]\n" + out})
@@ -98,6 +190,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	err := fmt.Errorf("loop: gave up after %d steps", maxSteps)
 	emit("error", err.Error())
 	emit("done", "")
+	r.fire(ctx, "stop", map[string]any{}, emit)
 	return err
 }
 
@@ -127,6 +220,16 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		return err
 	}
 	r := &runner{llm: llm, code: code}
+	// Optional seams: absent services are a clean no-op.
+	if h, err := kernel.Get[Hooks](kctx, "hooks"); err == nil {
+		r.hooks = h
+	}
+	if s, err := kernel.Get[Skills](kctx, "skills"); err == nil {
+		r.skills = s
+	}
+	if sc, err := kernel.Get[SystemContext](kctx, "context-md"); err == nil {
+		r.sysctx = sc
+	}
 	kctx.Provide("runner", r)
 
 	inputs := make(chan string, 8)

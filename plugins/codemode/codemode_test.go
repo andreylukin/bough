@@ -65,6 +65,53 @@ func TestInterruptInfiniteLoop(t *testing.T) {
 	}
 }
 
+func TestRunHookReturnsObjectAndSeesTools(t *testing.T) {
+	cm := New(5 * time.Second)
+	cm.RegisterTool("greet", func(name string) (string, error) {
+		return "hello " + name, nil
+	})
+	res, err := cm.RunHook(`return {who: tools.greet(event.input), echo: event.input}`,
+		map[string]any{"input": "world"})
+	if err != nil {
+		t.Fatalf("RunHook: %v", err)
+	}
+	if res["who"] != "hello world" || res["echo"] != "world" {
+		t.Fatalf("res = %v", res)
+	}
+}
+
+func TestRunHookNoReturnIsNil(t *testing.T) {
+	cm := New(5 * time.Second)
+	res, err := cm.RunHook(`var x = event`, map[string]any{})
+	if err != nil {
+		t.Fatalf("RunHook: %v", err)
+	}
+	if res != nil {
+		t.Fatalf("res = %v, want nil", res)
+	}
+}
+
+func TestRunHookExceptionIsError(t *testing.T) {
+	cm := New(5 * time.Second)
+	if _, err := cm.RunHook(`throw new Error("bad hook")`, map[string]any{}); err == nil {
+		t.Fatal("expected error from throwing hook")
+	}
+}
+
+func TestRunHookSharesVMGlobals(t *testing.T) {
+	cm := New(5 * time.Second)
+	if _, err := cm.Run(`var counter = 41`); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	res, err := cm.RunHook(`counter++; return {n: counter}`, map[string]any{})
+	if err != nil {
+		t.Fatalf("RunHook: %v", err)
+	}
+	if res["n"] != int64(42) {
+		t.Fatalf("res = %v (%T), want 42", res["n"], res["n"])
+	}
+}
+
 func TestUndefinedResultOmitted(t *testing.T) {
 	cm := New(5 * time.Second)
 	out, err := cm.Run(`var x = 1;`)
