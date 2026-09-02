@@ -18,9 +18,10 @@ test('CODE! runs the js block and shows code, result, and done separator', async
   expect(screen).toContain('result');
 });
 
-// A long tool result (> 12 lines) starts collapsed with a "... N more
-// lines" tail; the collapse_toggle key (default: tab) expands it.
-test('long result collapses and tab expands it', async ({ launchBough, page }) => {
+// A long tool result (> 3 lines) starts collapsed to a "▸ result
+// (N lines): <preview>" header; tab (block_next) focuses it and enter
+// (collapse_toggle with an empty composer) expands it.
+test('long result collapses; tab + enter expands it', async ({ launchBough, page }) => {
   const init = `
 bough.provider("longres", function (system, messages) {
   var last = messages[messages.length - 1].content;
@@ -35,11 +36,12 @@ bough.setup({ provider: { default: "longres" } });
   const b = await launchBough({ cwd: { '.bough/init.js': init } });
   await boot(page, b.url);
   await say(page, 'RUNIT');
-  await waitForTermText(page, 'more lines');
+  await waitForTermText(page, '▸ result (30 lines)');
   let screen = await termText(page);
-  expect(screen).toContain('RESLINE_1_X'); // head shown
-  expect(screen).not.toContain('RESLINE_30_X'); // tail hidden while collapsed
-  await page.keyboard.press('Tab');
+  expect(screen).toContain('RESLINE_1_X'); // header preview shows the first line
+  expect(screen).not.toContain('RESLINE_30_X'); // body hidden while collapsed
+  await page.keyboard.press('Shift+Tab'); // block_prev: focus the newest block (the result)
+  await page.keyboard.press('Enter'); // collapse_toggle on the focused block
   await waitForTermText(page, 'RESLINE_30_X');
 });
 

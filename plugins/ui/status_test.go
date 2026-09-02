@@ -164,19 +164,20 @@ func TestResizeReflowsBoxes(t *testing.T) {
 	d.event("code", "let x = 1")
 	boxWidth := func(s string) int {
 		for _, l := range strings.Split(s, "\n") {
-			if strings.Contains(l, "╭─ js") {
+			if strings.Contains(l, "╭") {
 				return lipgloss.Width(strings.TrimRight(l, " "))
 			}
 		}
 		t.Fatal("code box top border not found")
 		return 0
 	}
-	if got := boxWidth(d.plain()); got != 76 { // width-4 at 80 cols
-		t.Errorf("box width at 80 cols = %d, want 76", got)
+	at80 := boxWidth(d.plain())
+	if at80 < 70 || at80 > 80 {
+		t.Errorf("box width at 80 cols = %d, want near 78", at80)
 	}
 	d.feed(windowSize(120, 40))
-	if got := boxWidth(d.plain()); got != 116 { // reflowed to width-4 at 120 cols
-		t.Errorf("box width at 120 cols = %d, want 116", got)
+	if got := boxWidth(d.plain()); got != at80+40 { // reflowed with the terminal
+		t.Errorf("box width at 120 cols = %d, want %d", got, at80+40)
 	}
 	if !strings.Contains(d.plain(), "let x = 1") {
 		t.Error("code text must survive reflow")

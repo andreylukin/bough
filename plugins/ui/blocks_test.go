@@ -30,13 +30,13 @@ func TestRenderAssistantMarker(t *testing.T) {
 	}
 }
 
-func TestRenderCodeBoxTag(t *testing.T) {
+func TestRenderCodeHeaderAndBox(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	d.event("code", `tools.bash("echo hi")`)
 	p := d.plain()
-	if !strings.Contains(p, "╭─ js ") {
-		t.Errorf("code block missing js tag in top border:\n%s", p)
+	if !strings.Contains(p, `▾ code js (1 line): tools.bash("echo hi")`) {
+		t.Errorf("code block missing expanded disclosure header:\n%s", p)
 	}
 	if !strings.Contains(p, `tools.bash("echo hi")`) {
 		t.Errorf("code text missing:\n%s", p)
@@ -46,16 +46,16 @@ func TestRenderCodeBoxTag(t *testing.T) {
 	}
 }
 
-func TestRenderResultBoxTag(t *testing.T) {
+func TestRenderResultHeaderAndBox(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	d.event("result", "hi from codemode")
 	p := d.plain()
-	if !strings.Contains(p, "╭─ result ") {
-		t.Errorf("result block missing result tag:\n%s", p)
+	if !strings.Contains(p, "▾ result (1 line): hi from codemode") {
+		t.Errorf("result block missing expanded disclosure header:\n%s", p)
 	}
-	if !strings.Contains(p, "hi from codemode") {
-		t.Errorf("result text missing:\n%s", p)
+	if !strings.Contains(p, "│ hi from codemode") {
+		t.Errorf("result text missing from box:\n%s", p)
 	}
 }
 
@@ -124,79 +124,79 @@ func TestLongResultStartsCollapsed(t *testing.T) {
 		t.Fatal("20-line result should start collapsed")
 	}
 	p := d.plain()
-	if !strings.Contains(p, "… 12 more lines") {
-		t.Errorf("collapsed result missing '… 12 more lines' hint:\n%s", p)
+	if !strings.Contains(p, "▸ result (20 lines): l0xxx") {
+		t.Errorf("collapsed result missing header with line count and preview:\n%s", p)
 	}
-}
-
-func TestCollapseHintNamesToggleKey(t *testing.T) {
-	t.Parallel()
-	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"collapse_toggle": "ctrl+t"}, nil))
-	d.event("result", nLines(20))
-	if p := d.plain(); !strings.Contains(p, "(ctrl+t)") {
-		t.Errorf("collapse hint should name the bound key:\n%s", p)
+	if strings.Contains(p, "l9xxx") {
+		t.Errorf("collapsed result body should be hidden:\n%s", p)
 	}
 }
 
 func TestBoundaryResultDoesNotCollapse(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
-	d.event("result", nLines(collapseAt)) // exactly 12 lines
+	d.event("result", nLines(collapseAt)) // exactly at the threshold
 	if d.m.blocks[0].collapsed {
-		t.Error("12-line result should not collapse (threshold is >12)")
+		t.Errorf("%d-line result should not collapse (threshold is >%d)", collapseAt, collapseAt)
 	}
 	d.event("result", nLines(collapseAt+1))
 	if !d.m.blocks[1].collapsed {
-		t.Error("13-line result should collapse")
+		t.Errorf("%d-line result should collapse", collapseAt+1)
 	}
 }
 
-func TestCollapseToggleExpands(t *testing.T) {
+func TestFocusEnterExpands(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	d.event("result", nLines(20))
-	d.press(keyTab())
+	d.press(keyTab()) // block_next: focus the result
+	d.press(keyEnter())
 	if d.m.blocks[0].collapsed {
-		t.Fatal("tab should expand the collapsed result")
+		t.Fatal("enter on the focused result should expand it")
 	}
-	if p := d.plain(); strings.Contains(p, "more lines") {
-		t.Errorf("expanded result still shows collapse hint:\n%s", p)
+	d.press(keyPgUp()) // the 20-line body pushed the header off the top
+	if p := d.plain(); !strings.Contains(p, "▾ result (20 lines)") {
+		t.Errorf("expanded result missing ▾ header:\n%s", p)
 	}
 }
 
-func TestCollapseToggleTogglesBack(t *testing.T) {
+func TestFocusEnterTogglesBack(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	d.event("result", nLines(20))
 	d.press(keyTab())
-	d.press(keyTab())
+	d.press(keyEnter())
+	d.press(keyEnter())
 	if !d.m.blocks[0].collapsed {
-		t.Error("second tab should re-collapse")
+		t.Error("second enter should re-collapse")
 	}
-	if p := d.plain(); !strings.Contains(p, "… 12 more lines") {
-		t.Errorf("re-collapsed result missing hint:\n%s", p)
+	if p := d.plain(); !strings.Contains(p, "▸ result (20 lines)") {
+		t.Errorf("re-collapsed result missing ▸ header:\n%s", p)
 	}
 }
 
-func TestCollapseToggleHitsLastResult(t *testing.T) {
+func TestRemappedToggleHitsNewestBlock(t *testing.T) {
 	t.Parallel()
-	d := defaultDrv(t)
+	// collapse_toggle remapped off enter: with nothing focused it
+	// toggles the newest collapsible block.
+	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"collapse_toggle": "ctrl+t"}, nil))
 	d.event("result", nLines(20))
 	d.event("result", nLines(30))
-	d.press(keyTab())
-	if d.m.blocks[0].collapsed == false {
+	d.press(keyCtrl('t'))
+	if !d.m.blocks[0].collapsed {
 		t.Error("first result should stay collapsed")
 	}
 	if d.m.blocks[1].collapsed {
-		t.Error("last result should have been expanded")
+		t.Error("newest result should have been expanded")
 	}
 }
 
-func TestCollapseToggleNoResultsIsNoop(t *testing.T) {
+func TestToggleNoResultsIsNoop(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	d.event("assistant", "no results here")
-	d.press(keyTab()) // must not panic or alter blocks
+	d.press(keyTab())   // no collapsible block to focus
+	d.press(keyEnter()) // must not panic or alter blocks
 	if len(d.m.blocks) != 1 || d.m.blocks[0].kind != "assistant" {
 		t.Error("toggle with no results changed the transcript")
 	}

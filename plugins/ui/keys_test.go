@@ -32,9 +32,9 @@ func TestKeymapRebindCollapseToggle(t *testing.T) {
 	t.Parallel()
 	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"collapse_toggle": "ctrl+t"}, nil))
 	d.event("result", nLines(20))
-	d.press(keyTab()) // old key: inert (typed into composer at worst)
+	d.press(keyEnter()) // old key: enter no longer toggles, and empty submit is a no-op
 	if !d.m.blocks[0].collapsed {
-		t.Fatal("old tab binding should be inert after rebind")
+		t.Fatal("old enter binding should be inert after rebind")
 	}
 	d.press(keyCtrl('t'))
 	if d.m.blocks[0].collapsed {

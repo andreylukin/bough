@@ -78,8 +78,8 @@ func TestBoundToolResultRenders(t *testing.T) {
 	if !strings.Contains(frame, "MCP_GREETING_OK") {
 		t.Fatalf("MCP result missing:\n%s", frame)
 	}
-	if !strings.Contains(frame, "╭─ result") {
-		t.Fatalf("result box missing:\n%s", frame)
+	if !strings.Contains(frame, "▾ result") {
+		t.Fatalf("result block missing:\n%s", frame)
 	}
 }
 

@@ -117,13 +117,19 @@ See `docs/INIT.md` for the full surface.
 
 ## TUI
 
-Semantic transcript (themed prompt, markdown-rendered assistant, code
-and result boxes with auto-collapse, status bar with row/entry counts
-and a spinner while a turn runs). Default keys, all remappable via the
-`keymap` service: Ctrl+C quit, Ctrl+O history inspector, Tab collapse
-toggle on the last result, Ctrl+L clear input, arrows/PgUp/PgDn/mouse
-wheel scroll. Colors come from the `theme` service
-(`"fg[:bg][:bold|italic|faint]"`, hex or ANSI-256).
+Semantic transcript (themed prompt, markdown-rendered assistant, status
+bar with row/entry counts and a spinner while a turn runs). Code and
+result blocks render behind a one-line disclosure header — `▸ code js
+(N lines): preview` — and start collapsed when the body is over 3
+lines; click anywhere in a block to toggle it (mouse works in the
+native TUI and through the web terminal alike), and click a history
+inspector row to expand its entry as inline JSON. Default keys, all
+remappable via the `keymap` service: Ctrl+C quit, Ctrl+O history
+inspector, Tab/Shift+Tab move the block cursor (styled by the `focus`
+theme token), Enter toggles the focused block (submits input
+otherwise), Ctrl+L clear input, arrows/PgUp/PgDn/mouse wheel scroll;
+`collapse_all`/`expand_all` are available unbound. Colors come from the
+`theme` service (`"fg[:bg][:bold|italic|faint]"`, hex or ANSI-256).
 
 ## Hooks (hooks-js)
 

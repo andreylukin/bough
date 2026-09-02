@@ -56,9 +56,12 @@ export async function waitForTermText(
   }
 }
 
-/** Click the terminal (focus) and type s through real key events. */
+/** Focus the terminal and type s through real key events. Focus goes
+ * through the client's own focus() — the app has mouse reporting on
+ * (clicks toggle transcript blocks), so a synthetic focus-click could
+ * toggle whatever block happens to sit under the cursor. */
 export async function typeInTerm(page: Page, s: string): Promise<void> {
-  await page.click('#terminal');
+  await page.evaluate(() => (window as any).sipTerm.webterm.focus());
   await page.keyboard.type(s);
 }
 
@@ -77,4 +80,42 @@ export async function ask(page: Page, line: string, expectOnScreen: string): Pro
 /** Assert substr is nowhere on the screen right now. */
 export async function expectNotOnScreen(page: Page, substr: string): Promise<void> {
   expect(await termText(page)).not.toContain(substr);
+}
+
+/** First buffer row whose text contains substr, or -1. */
+export async function findRow(page: Page, substr: string): Promise<number> {
+  return page.evaluate((m: string) => {
+    const b = (window as any).sipTerm.term.buffer.active;
+    for (let i = 0; i < b.length; i++) {
+      if (b.getLine(i).translateToString(true).includes(m)) return i;
+    }
+    return -1;
+  }, substr);
+}
+
+/** The terminal's cell geometry in CSS pixels, from xterm's own
+ * measured dimensions plus the on-page screen rect. */
+export async function cellMetrics(page: Page): Promise<{
+  left: number; top: number; cellWidth: number; cellHeight: number; cols: number; rows: number;
+}> {
+  return page.evaluate(() => {
+    const term = (window as any).sipTerm.term;
+    const dims = term._core._renderService.dimensions.css.cell;
+    const screen = term.element.querySelector('.xterm-screen');
+    const r = screen.getBoundingClientRect();
+    return {
+      left: r.left, top: r.top,
+      cellWidth: dims.width, cellHeight: dims.height,
+      cols: term.cols, rows: term.rows,
+    };
+  });
+}
+
+/** Real-mouse click on cell (row, col), coords from xterm metrics. */
+export async function clickCell(page: Page, row: number, col: number): Promise<void> {
+  const m = await cellMetrics(page);
+  await page.mouse.click(
+    m.left + (col + 0.5) * m.cellWidth,
+    m.top + (row + 0.5) * m.cellHeight,
+  );
 }

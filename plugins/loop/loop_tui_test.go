@@ -24,13 +24,13 @@ func TestCodemodeFlowRenders(t *testing.T) {
 	// arrival proves the full llm -> code -> result -> llm round trip.
 	d.WaitFor("[tool output]")
 	frame := d.Frame()
-	for _, want := range []string{"╭─ js", "╭─ result", "hi from codemode"} {
+	for _, want := range []string{"▾ code js", "▾ result", "hi from codemode"} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("frame missing %q:\n%s", want, frame)
 		}
 	}
-	code := strings.Index(frame, "╭─ js")
-	result := strings.Index(frame, "╭─ result")
+	code := strings.Index(frame, "▾ code js")
+	result := strings.Index(frame, "▾ result")
 	final := strings.Index(frame, "[tool output]")
 	if !(code < result && result < final) {
 		t.Fatalf("blocks out of order (js@%d result@%d final@%d):\n%s", code, result, final, frame)
@@ -53,7 +53,7 @@ func TestMultiBlockReplyRenders(t *testing.T) {
 	d.Say("go")
 	d.WaitFor("all done here")
 	frame := d.Frame()
-	if got := strings.Count(frame, "╭─ result"); got != 2 {
+	if got := strings.Count(frame, "▾ result"); got != 2 {
 		t.Fatalf("want 2 result boxes, got %d:\n%s", got, frame)
 	}
 	if !strings.Contains(frame, "OUT_ONE") || !strings.Contains(frame, "OUT_TWO") {

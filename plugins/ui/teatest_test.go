@@ -92,7 +92,27 @@ func TestProgramExternalEventsRender(t *testing.T) {
 	events <- Event{Kind: "code", Text: `tools.bash("echo hi from codemode")`}
 	events <- Event{Kind: "result", Text: "hi from codemode"}
 	events <- Event{Kind: "done"}
-	waitForOutput(t, tm, "hi from codemode", "╭─ js")
+	waitForOutput(t, tm, "hi from codemode", "code js (1 line)")
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
+}
+
+func TestProgramMouseClickTogglesBlock(t *testing.T) {
+	t.Parallel()
+	events := make(chan Event, 16)
+	tm := startProgram(t, events, func(string) {})
+	long := strings.TrimSuffix(strings.Repeat("BODYLINE\n", 20), "\n")
+	events <- Event{Kind: "result", Text: long}
+	// The collapsed 20-line result is the only block: its header is
+	// the first transcript row.
+	waitForOutput(t, tm, "▸ result (20 lines)")
+	tm.Send(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
+	// Expanded: the body is visible (the ▾ header itself is pushed off
+	// the top of the 22-row viewport by the 20-line body + box).
+	waitForOutput(t, tm, "│ BODYLINE")
+	// Clicking the body (still row 0) collapses it again.
+	tm.Send(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
+	waitForOutput(t, tm, "▸ result (20 lines)")
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
 }

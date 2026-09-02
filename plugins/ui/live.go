@@ -30,11 +30,12 @@ type historyView interface {
 // current one through liveCfg on every render, so a remount (new
 // theme/keymap row, history landing) restyles running views.
 type uiCfg struct {
-	theme  theme
-	keys   map[string]string // action -> key
-	action map[string]string // key -> action (derived)
-	status string            // status-bar left text
-	hist   historyView       // nil when no history service
+	theme   theme
+	keys    map[string]string // action -> key
+	action  map[string]string // key -> action (derived)
+	status  string            // status-bar left text
+	hist    historyView       // nil when no history service
+	mdStyle string            // "dark"/"light" glamour override; "" = detect
 }
 
 var (
@@ -51,7 +52,9 @@ func init() {
 func newCfg(t theme, keys map[string]string, status string, hist historyView) *uiCfg {
 	action := make(map[string]string, len(keys))
 	for a, k := range keys {
-		action[k] = a
+		if k != "" { // unbound (config-only) actions
+			action[k] = a
+		}
 	}
 	return &uiCfg{theme: t, keys: keys, action: action, status: status, hist: hist}
 }
@@ -61,9 +64,25 @@ func newCfg(t theme, keys map[string]string, status string, hist historyView) *u
 // later remounts the ui row) plus the row table for the status bar.
 func buildCfg(ctx *kernel.Context) (*uiCfg, error) {
 	t := defaultTheme()
+	mdStyle := ""
 	if m, ok, err := getStringMap(ctx, "theme"); err != nil {
 		return nil, err
 	} else if ok {
+		// "markdown" is not a style token: it overrides the glamour
+		// style ("dark"/"light") picked from the detected background.
+		if v, has := m["markdown"]; has {
+			if v != "dark" && v != "light" {
+				return nil, fmt.Errorf("ui: theme: markdown must be \"dark\" or \"light\", got %q", v)
+			}
+			mdStyle = v
+			m2 := make(map[string]string, len(m))
+			for k, vv := range m {
+				if k != "markdown" {
+					m2[k] = vv
+				}
+			}
+			m = m2
+		}
 		if err := t.apply(m); err != nil {
 			return nil, err
 		}
@@ -93,7 +112,9 @@ func buildCfg(ctx *kernel.Context) (*uiCfg, error) {
 		status += " · " + provider
 	}
 	status += fmt.Sprintf(" · %d rows", len(rows))
-	return newCfg(t, keys, status, hist), nil
+	cfg := newCfg(t, keys, status, hist)
+	cfg.mdStyle = mdStyle
+	return cfg, nil
 }
 
 // getStringMap fetches a map[string]string service, tolerating the

@@ -100,7 +100,7 @@ bough.setup({provider: {default: "parrot"}})
 	if !strings.Contains(frame, "JSTOOL_RESULT_77") {
 		t.Fatalf("JS tool result missing:\n%s", frame)
 	}
-	if !strings.Contains(frame, "╭─ result") {
-		t.Fatalf("result box missing:\n%s", frame)
+	if !strings.Contains(frame, "▾ result") {
+		t.Fatalf("result block missing:\n%s", frame)
 	}
 }

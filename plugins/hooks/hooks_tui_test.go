@@ -64,7 +64,7 @@ func TestPreCodeExecDenyRenders(t *testing.T) {
 	// The assistant's quoted js legitimately mentions the command; what
 	// must not appear is an executed-code box or its boxed output line.
 	frame := d.Frame()
-	if strings.Contains(frame, "╭─ js") || strings.Contains(frame, "│ hi from codemode") {
+	if strings.Contains(frame, "code js (") || strings.Contains(frame, "│ hi from codemode") {
 		t.Fatalf("denied code ran anyway:\n%s", frame)
 	}
 }

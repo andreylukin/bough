@@ -88,6 +88,13 @@ func main() {
 		mode = "web:" + *web
 	}
 
+	// Catch interrupts BEFORE the mount: the headless ui row interrupts
+	// the process on stdin EOF, which on a fast run can fire before main
+	// reaches the wait below — with no handler installed yet the default
+	// disposition would kill the process instead of unmounting cleanly.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+
 	ctx := kernel.NewContext()
 	ctx.Provide("ui-mode", mode)
 
@@ -101,8 +108,6 @@ func main() {
 	}
 
 	// Block until interrupted, then unmount (effects run LIFO).
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
 	stopWatch()
 	ctx.Unmount()
