@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/commands"
 )
 
 // addSkill creates <pool>/<name>/SKILL.md with body.
@@ -86,6 +89,33 @@ func TestInjectMissingPools(t *testing.T) {
 	s := New("/nonexistent/a", "/nonexistent/b")
 	if got := s.Inject("anything"); len(got) != 0 {
 		t.Errorf("got %d blocks from missing pools, want 0", len(got))
+	}
+}
+
+func TestSummarizeDescription(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"Use when the user needs to interact with websites, including forms. Triggers include x.", "The user needs to interact with websites, including forms"},
+		{"Read bough's conversation history — list sessions.\n  Use when asked.", "Read bough's conversation history — list sessions"},
+		{"trigger when the user asks about a GarageBand project", "The user asks about a GarageBand project"},
+		{"", ""},
+	} {
+		if got := summarize(c.in); got != c.want {
+			t.Errorf("summarize(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// A skill command is Kind "skill" with the summarized description.
+func TestRegisterCommandsSkillKind(t *testing.T) {
+	pool := t.TempDir()
+	addSkill(t, pool, "deploy", "---\ndescription: \"Use when you need to deploy the thing. More words.\"\n---\nbody")
+	ctx := kernel.NewContext()
+	reg := commands.NewRegistry()
+	ctx.Provide("commands", reg)
+	New(pool).registerCommands(ctx)
+	infos := reg.List()
+	if len(infos) != 1 || infos[0].Kind != "skill" || infos[0].Summary != "skill: You need to deploy the thing" {
+		t.Fatalf("skill command = %+v", infos)
 	}
 }
 

@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/andreylukin/bough/kernel"
@@ -49,5 +50,34 @@ func TestEchoProvidesLLM(t *testing.T) {
 	}
 	if got != "echo: x" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestUsageStrings(t *testing.T) {
+	if got := (Usage{}).Short(); got != "" {
+		t.Errorf("empty usage Short = %q", got)
+	}
+	u := Usage{InputTokens: 1500, OutputTokens: 20}
+	if got := u.Short(); got != "1.5k tok" {
+		t.Errorf("unpriced Short = %q", got)
+	}
+	u.Priced, u.Cost = true, 0.0123
+	if got := u.Short(); got != "$0.0123" {
+		t.Errorf("priced Short = %q", got)
+	}
+	if got := u.String(); got != "1.5k in · 20 out · $0.0123" {
+		t.Errorf("String = %q", got)
+	}
+}
+
+func TestOpenrouterErrHidesRawBody(t *testing.T) {
+	body := []byte(`{"error":{"message":"foo/bar is not a valid model ID","code":400},"user_id":"user_secret"}`)
+	err := openrouterErr(400, "foo/bar", body)
+	if !strings.Contains(err.Error(), `model "foo/bar" not found on openrouter`) ||
+		strings.Contains(err.Error(), "user_secret") {
+		t.Errorf("400 error = %v", err)
+	}
+	if err := openrouterErr(500, "m", []byte("nope")); !strings.Contains(err.Error(), "HTTP 500") {
+		t.Errorf("500 error = %v", err)
 	}
 }

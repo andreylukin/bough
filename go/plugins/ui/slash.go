@@ -28,6 +28,9 @@ func (m *model) syncPalette() {
 	if m.pal.escaped && draft != m.pal.escAt {
 		m.pal.escaped = false
 	}
+	if m.pal.cycling && draft != m.pal.cycleDraft {
+		m.pal.cycling = false // any edit ends a Tab cycle
+	}
 	open := m.cfg.Load().cmds != nil && !m.inspecting && !m.picking &&
 		slashStart(draft) >= 0 && !m.pal.escaped
 	if open && !m.pal.open {
@@ -51,13 +54,28 @@ func slashStart(draft string) int {
 }
 
 // paletteQuery is the text the palette filters: the draft after the
-// palette's "/".
+// palette's "/" — or, mid Tab-cycle, the query the cycle started
+// from, so the list keeps every match while Tab walks them.
 func (m *model) paletteQuery() string {
 	draft := m.input.Value()
+	if m.pal.cycling && draft == m.pal.cycleDraft {
+		return m.pal.cycleQuery
+	}
 	if i := slashStart(draft); i >= 0 {
 		return draft[i+1:]
 	}
 	return ""
+}
+
+// draftWord is the "/word" the composer holds (without args): what
+// the user actually typed, for the fuzzy-accept echo.
+func (m *model) draftWord() string {
+	draft := strings.TrimSpace(m.input.Value())
+	if i := slashStart(m.input.Value()); i >= 0 {
+		draft = m.input.Value()[i:]
+	}
+	word, _, _ := strings.Cut(strings.TrimSpace(draft), " ")
+	return word
 }
 
 // completePalette rewrites the palette's word to "/name " in place.
@@ -70,6 +88,7 @@ func (m *model) completePalette(name string) {
 	}
 	m.input.SetValue(draft[:i] + "/" + name + " ")
 	m.input.CursorEnd()
+	m.pal.cycleDraft = m.input.Value()
 	m.syncPalette()
 }
 
@@ -82,7 +101,7 @@ func (m *model) paletteItems() []paletteItem {
 	infos := cmds.List()
 	items := make([]paletteItem, len(infos))
 	for i, in := range infos {
-		items[i] = paletteItem{name: in.Name, usage: in.Usage, summary: in.Summary}
+		items[i] = paletteItem{name: in.Name, usage: in.Usage, summary: in.Summary, skill: in.IsSkill()}
 	}
 	return items
 }
@@ -109,11 +128,27 @@ func (m *model) paletteKey(key string) (bool, tea.Cmd) {
 	case palMoved:
 		return true, nil
 	case palClose:
+		// Esc on a lone "/query" drops it (the user backed out of a
+		// command); text with anything more stays.
+		if draft := m.input.Value(); strings.HasPrefix(draft, "/") &&
+			!strings.ContainsAny(strings.TrimSpace(draft), " \t\n") {
+			m.input.Reset()
+			m.pal.cycling = false
+		}
 		m.pal.escaped = true
 		m.pal.escAt = m.input.Value()
 		return true, nil
 	case palComplete:
-		// Tab: rewrite the word to "/name " (stays open at line start).
+		// Tab: rewrite the word to "/name " (stays open at line
+		// start); a repeated Tab walks the matches of the query the
+		// first one completed from.
+		if m.pal.cycling {
+			m.pal.selected = (m.pal.selected + 1) % len(items)
+			name = items[m.pal.selected].name
+		} else {
+			m.pal.cycling = true
+			m.pal.cycleQuery = m.paletteQuery()
+		}
 		m.completePalette(name)
 		return true, nil
 	case palAccept:
@@ -129,14 +164,20 @@ func (m *model) paletteKey(key string) (bool, tea.Cmd) {
 
 // acceptPalette dispatches the selected name — plus the typed args
 // when the draft already names it ("/clear now" accepts as typed, a
-// half-typed "/cl" accepts as the bare "/clear").
+// half-typed "/cl" accepts as the bare "/clear"). A fuzzy accept (the
+// typed word is not a prefix of the name: "/sesion" → /sessions) says
+// so in the echo, so the command that actually ran is never a secret.
 func (m *model) acceptPalette(name string) tea.Cmd {
 	line := "/" + name
+	echo := line
 	if draft := strings.TrimSpace(m.input.Value()); draft == line ||
 		strings.HasPrefix(draft, line+" ") {
-		line = draft
+		line, echo = draft, draft
+	} else if word := m.draftWord(); word != "/" &&
+		!strings.HasPrefix(strings.ToLower(line), strings.ToLower(word)) {
+		echo = line + " (from " + word + ")"
 	}
-	return m.dispatch(line)
+	return m.dispatchAs(line, echo)
 }
 
 // clickPalette maps a left click on a palette row to select + accept.
@@ -174,14 +215,18 @@ func (m *model) clickPalette(mouse tea.Mouse) (bool, tea.Cmd) {
 // output or a reason (M27): an empty output echoes the command name.
 // Both halves are recorded to history as "command"/"system" entries —
 // never "input", which DefaultProject would feed to the model.
-func (m *model) dispatch(line string) tea.Cmd {
+func (m *model) dispatch(line string) tea.Cmd { return m.dispatchAs(line, line) }
+
+// dispatchAs is dispatch with a distinct echo text (the fuzzy-accept
+// "/sessions (from /sesion)").
+func (m *model) dispatchAs(line, echo string) tea.Cmd {
 	cfg := m.cfg.Load()
 	m.input.Reset()
 	m.syncPalette()
 	name, args, _ := strings.Cut(strings.TrimPrefix(line, "/"), " ")
 	args = strings.TrimSpace(args)
-	m.log(cfg, "command", line)
-	m.blocks = append(m.blocks, block{id: m.nextID, kind: "command", text: line})
+	m.log(cfg, "command", echo)
+	m.blocks = append(m.blocks, block{id: m.nextID, kind: "command", text: echo})
 	m.nextID++
 	out, err := cfg.cmds.Run(name, args)
 	var act commands.UIAction
@@ -230,6 +275,8 @@ func (m *model) perform(act commands.UIAction) tea.Cmd {
 		m.picking = true
 		m.pick = 0
 		m.syncPalette()
+	case commands.ActionKeys:
+		m.showKeys()
 	default:
 		m.blocks = append(m.blocks, block{id: m.nextID, kind: "error",
 			text: fmt.Sprintf("unknown ui action %q", string(act))})
@@ -238,6 +285,57 @@ func (m *model) perform(act commands.UIAction) tea.Cmd {
 		m.vp.GotoBottom()
 	}
 	return nil
+}
+
+// keysText renders the live keymap (cfg.action, so rebinds show) plus
+// the fixed keys the composer and palette own.
+func keysText(cfg *uiCfg) string {
+	rows := [][2]string{
+		{"enter", "send the line (/cmd dispatches, !cmd runs a shell command)"},
+	}
+	order := []string{"quit", "clear_input", "history_inspect", "block_next", "block_prev",
+		"collapse_toggle", "collapse_all", "expand_all", "scroll_up", "scroll_down", "page_up", "page_down"}
+	desc := map[string]string{
+		"quit": "quit", "clear_input": "clear the composer", "history_inspect": "inspect history (toggle)",
+		"block_next": "focus next block", "block_prev": "focus previous block",
+		"collapse_toggle": "toggle the focused block", "collapse_all": "collapse all blocks",
+		"expand_all": "expand all blocks", "scroll_up": "scroll up", "scroll_down": "scroll down",
+		"page_up": "page up", "page_down": "page down",
+	}
+	for _, a := range order {
+		if k := cfg.keys[a]; k != "" {
+			rows = append(rows, [2]string{k, desc[a]})
+		}
+	}
+	rows = append(rows,
+		[2]string{"esc", "close the palette · decline a pending ask"},
+		[2]string{"tab", "in the palette: complete, again to cycle matches"},
+		[2]string{"?", "on an empty composer: this list (/keys)"},
+	)
+	w := 0
+	for _, r := range rows {
+		if len(r[0]) > w {
+			w = len(r[0])
+		}
+	}
+	var b strings.Builder
+	b.WriteString("keys\n")
+	for _, r := range rows {
+		fmt.Fprintf(&b, "  %-*s  %s\n", w, r[0], r[1])
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// showKeys appends the keymap as a system block (the /keys answer,
+// and "?" on an empty composer).
+func (m *model) showKeys() {
+	cfg := m.cfg.Load()
+	text := keysText(cfg)
+	m.log(cfg, "system", text)
+	m.blocks = append(m.blocks, block{id: m.nextID, kind: "system", text: text})
+	m.nextID++
+	m.refresh()
+	m.vp.GotoBottom()
 }
 
 // log records one dispatch half to history when a writable history

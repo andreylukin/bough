@@ -148,12 +148,163 @@ func TestEscClosesAndTypingReopens(t *testing.T) {
 	if d.m.pal.open {
 		t.Fatal("esc should close the palette")
 	}
-	if d.m.input.Value() != "/" {
-		t.Fatalf("esc must not touch the draft, got %q", d.m.input.Value())
+	if d.m.input.Value() != "" {
+		t.Fatalf("esc on a lone /query should clear the composer, got %q", d.m.input.Value())
 	}
-	d.typeStr("a")
+	d.typeStr("/a")
 	if !d.m.pal.open {
 		t.Error("typing after esc should reopen the palette")
+	}
+	// A draft with more than the /word keeps its text.
+	d.typeStr("lpha now")
+	d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if got := d.m.input.Value(); got != "/alpha now" {
+		t.Errorf("esc must not drop a draft with args, got %q", got)
+	}
+}
+
+// --- ordering: builtins before skills, /help first on a bare "/" ---
+
+func TestFilterBuiltinsBeforeSkillsHelpFirst(t *testing.T) {
+	t.Parallel()
+	all := []paletteItem{
+		{name: "zeta", skill: true}, {name: "aardvark", skill: true},
+		{name: "quit"}, {name: "help"}, {name: "clear"},
+	}
+	eq(t, names(paletteFilter(all, "")), []string{"help", "clear", "quit", "aardvark", "zeta"},
+		"bare /: help pinned, builtins alphabetical, skills last")
+	// With a query the tiers still hold, builtins above skills inside one.
+	all = append(all, paletteItem{name: "aquit", skill: true}, paletteItem{name: "acquit"})
+	eq(t, names(paletteFilter(all, "quit")), []string{"quit", "acquit", "aquit"},
+		"prefix tier first; then substring tier with the builtin above the skill")
+}
+
+func TestEnterOnBareSlashRunsHelpNotASkill(t *testing.T) {
+	t.Parallel()
+	r := reg(t, "help")
+	if err := r.Register(commands.CommandInfo{Name: "agent", Kind: "skill", Summary: "skill: x"},
+		func(string) (string, error) { return "", commands.SubmitAction("/agent") }); err != nil {
+		t.Fatal(err)
+	}
+	d := drvCmds(t, r)
+	d.typeStr("/")
+	d.press(keyEnter())
+	if len(d.sent) != 0 {
+		t.Fatalf("enter on a bare / must not submit a skill, sent=%v", d.sent)
+	}
+	if p := d.plain(); !strings.Contains(p, "❯ /help") {
+		t.Errorf("enter on a bare / should run /help:\n%s", p)
+	}
+}
+
+func TestSkillRowsWearDimName(t *testing.T) {
+	t.Parallel()
+	th := defaultTheme()
+	sk := paletteRow(paletteItem{name: "agent", skill: true, summary: "s"}, false, 40, 8, th)
+	bi := paletteRow(paletteItem{name: "quit", summary: "s"}, false, 40, 8, th)
+	if strings.HasPrefix(sk, "  /agent") {
+		t.Errorf("skill row name should be styled (dim), got %q", sk)
+	}
+	if !strings.HasPrefix(bi, "  /quit") {
+		t.Errorf("builtin row name should be plain, got %q", bi)
+	}
+}
+
+// --- summaries ellipsize at a word boundary ---
+
+func TestSummaryEllipsizedNotCutMidWord(t *testing.T) {
+	t.Parallel()
+	it := paletteItem{name: "x", summary: "alpha beta gamma delta epsilon zeta eta theta"}
+	row := stripANSI(paletteRow(it, false, 30, 4, defaultTheme()))
+	if !strings.HasSuffix(strings.TrimRight(row, " "), "…") || strings.Contains(row, "gam ") {
+		t.Errorf("summary should end in … at a word boundary: %q", row)
+	}
+	sel := stripANSI(paletteRow(it, true, 30, 4, defaultTheme()))
+	if !strings.Contains(sel, "…") {
+		t.Errorf("selected row should ellipsize too: %q", sel)
+	}
+}
+
+// --- fuzzy accept echo, tab cycling ---
+
+func TestFuzzyAcceptEchoesRealCommand(t *testing.T) {
+	t.Parallel()
+	d := drvCmds(t, reg(t, "sessions", "clear"))
+	d.typeStr("/sesion") // subsequence match
+	d.press(keyEnter())
+	if d.m.blocks[0].text != "/sessions (from /sesion)" {
+		t.Errorf("fuzzy accept echo = %q", d.m.blocks[0].text)
+	}
+	if d.m.blocks[1].text != "sessions ran" {
+		t.Errorf("fuzzy accept should run the match, got %q", d.m.blocks[1].text)
+	}
+	// A prefix accept is a plain completion: no annotation.
+	d.typeStr("/cl")
+	d.press(keyEnter())
+	if d.m.blocks[2].text != "/clear" {
+		t.Errorf("prefix accept echo = %q", d.m.blocks[2].text)
+	}
+}
+
+func TestTabCyclesMatches(t *testing.T) {
+	t.Parallel()
+	d := drvCmds(t, reg(t, "clear", "collapse", "cost", "quit"))
+	d.typeStr("/c")
+	d.press(keyTab())
+	if got := d.m.input.Value(); got != "/clear " {
+		t.Fatalf("first tab = %q", got)
+	}
+	d.press(keyTab())
+	if got := d.m.input.Value(); got != "/collapse " {
+		t.Fatalf("second tab should move to the next match, got %q", got)
+	}
+	if p := d.plain(); !strings.Contains(p, "/cost") {
+		t.Errorf("the list should keep every match of the original query while cycling:\n%s", p)
+	}
+	d.press(keyTab())
+	d.press(keyTab())
+	if got := d.m.input.Value(); got != "/clear " {
+		t.Fatalf("cycling should wrap, got %q", got)
+	}
+	d.typeStr("x") // an edit ends the cycle
+	if d.m.pal.cycling {
+		t.Error("typing should end the tab cycle")
+	}
+	d.press(keyEnter())
+	if got := d.m.blocks[0].text; got != "/clear x" {
+		t.Errorf("enter after the cycle dispatches the draft, got %q", got)
+	}
+}
+
+// --- /keys and "?" ---
+
+func TestKeysCommandAndQuestionMark(t *testing.T) {
+	t.Parallel()
+	r := commands.NewRegistry()
+	if err := r.Register(commands.CommandInfo{Name: "keys"},
+		func(string) (string, error) { return "", commands.ActionKeys }); err != nil {
+		t.Fatal(err)
+	}
+	d := drvCmds(t, r)
+	d.typeStr("?")
+	if d.m.input.Value() != "" {
+		t.Fatalf("? on an empty composer must not type, got %q", d.m.input.Value())
+	}
+	p := d.plain()
+	for _, want := range []string{"ctrl+c", "quit", "ctrl+o", "inspect history", "esc", "tab"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("? should show the keymap with %q:\n%s", want, p)
+		}
+	}
+	d.typeStr("what?")
+	if got := d.m.input.Value(); got != "what?" {
+		t.Errorf("? mid-text is a character, got %q", got)
+	}
+	d.press(keyCtrl('l'))
+	d.typeStr("/keys")
+	d.press(keyEnter())
+	if last := d.m.blocks[len(d.m.blocks)-1]; last.kind != "system" || !strings.HasPrefix(last.text, "keys\n") {
+		t.Errorf("/keys should print the keymap block, got %+v", last)
 	}
 }
 

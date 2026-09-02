@@ -264,7 +264,8 @@ func (m *model) header(b *block, th theme) string {
 func (m *model) welcomeView(cfg *uiCfg) string {
 	th := cfg.theme
 	return th["accent"].Render("● ") + th["dim"].Render("bough — a coding agent") + "\n" +
-		th["dim"].Render("  type / for commands") + "\n" +
+		th["dim"].Render("  type / for commands (/help lists them) · /keys or ? for the keys") + "\n" +
+		th["dim"].Render("  !cmd runs a shell command") + "\n" +
 		th["dim"].Render("  ask me to do something — I act by running code")
 }
 
@@ -298,8 +299,9 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		// the system block below reads as its answer.
 		return "\n" + th["dim"].Render("❯ "+b.text)
 	case "system":
-		// Plain dimmed command output: not collapsible, no ● header.
-		return th["system"].Render(b.text)
+		// Plain dimmed command output: not collapsible, no ● header;
+		// wrapped to width so /help rows never clip off the right edge.
+		return th["system"].Width(max(m.width, 10)).Render(b.text)
 	case "error":
 		// Wrap to width — the viewport clips long lines, and the tail
 		// of an error is usually the actionable part.
@@ -441,7 +443,7 @@ func (m *model) addEvent(ev Event) {
 		m.blocks = append(m.blocks, block{id: id, kind: "ask", text: ev.Text,
 			askID: ev.ID, options: ev.Options})
 		m.pendingAsk = ev.ID
-		m.input.Placeholder = "(answering)"
+		m.input.Placeholder = askPlaceholder
 	case "code", "result":
 		if ev.Kind == "code" {
 			m.dedupeCode(ev.Text)
@@ -678,6 +680,12 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// "?" on an empty composer is the keymap (/keys), not a typed "?".
+	if key == "?" && !m.inspecting && strings.TrimSpace(m.input.Value()) == "" {
+		m.showKeys()
+		return m, nil
+	}
+
 	switch cfg.action[key] {
 	case "quit":
 		return m, tea.Quit
@@ -840,38 +848,6 @@ func (m *model) refreshOverlay() {
 	off := m.overlay.YOffset()
 	m.overlay.SetContent(sb.String())
 	m.overlay.SetYOffset(off)
-}
-
-// statusBar renders the one-line status: identity left, session
-// state right, filled with the status style.
-func (m *model) statusBar(cfg *uiCfg) string {
-	th := cfg.theme
-	left := " " + cfg.status
-	var right string
-	if m.flash != "" {
-		right = m.flash
-	} else {
-		if cfg.hist != nil {
-			n := len(cfg.hist.Entries())
-			name := cfg.hist.Path()
-			if i := strings.LastIndexByte(name, '/'); i >= 0 {
-				name = name[i+1:]
-			}
-			right = fmt.Sprintf("%d entries · %s", n, name)
-		}
-		if m.inspecting {
-			right = "inspecting · " + cfg.keys["history_inspect"] + " to close"
-		}
-	}
-	if m.running {
-		right = m.spin.View() + " " + right
-	}
-	right += " "
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
-	}
-	return th["status"].Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
 }
 
 func (m model) View() tea.View {

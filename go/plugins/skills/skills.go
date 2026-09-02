@@ -98,6 +98,35 @@ func description(path string) string {
 	return ""
 }
 
+// triggerPrefixes are the model-facing openers a SKILL.md description
+// tends to start with; the palette summary drops them.
+var triggerPrefixes = []string{
+	"use this skill when ", "use this skill to ", "use this when ", "use when ",
+	"trigger when ", "triggers when ", "used when ", "use to ", "use for ",
+}
+
+// summarize turns a SKILL.md description (written for the model:
+// "Use when the user needs to…") into a palette one-liner: the first
+// sentence, minus a leading trigger phrase, capitalized.
+func summarize(desc string) string {
+	s := strings.Join(strings.Fields(desc), " ")
+	if i := strings.Index(s, ". "); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.TrimSuffix(s, ".")
+	low := strings.ToLower(s)
+	for _, p := range triggerPrefixes {
+		if strings.HasPrefix(low, p) {
+			s = s[len(p):]
+			break
+		}
+	}
+	if r := []rune(s); len(r) > 0 {
+		s = strings.ToUpper(string(r[0])) + string(r[1:])
+	}
+	return s
+}
+
 // registerCommands adds a "/name" command per skill to the commands
 // registry (when one is mounted) and unregisters them on unmount.
 func (s *Skills) registerCommands(ctx *kernel.Context) {
@@ -107,7 +136,8 @@ func (s *Skills) registerCommands(ctx *kernel.Context) {
 	}
 	for name, path := range s.scan() {
 		name := name
-		info := commands.CommandInfo{Name: name, Usage: "[args]", Summary: "skill: " + description(path)}
+		info := commands.CommandInfo{Name: name, Usage: "[args]", Kind: "skill",
+			Summary: "skill: " + summarize(description(path))}
 		err := reg.Register(info, func(args string) (string, error) {
 			return "", commands.SubmitAction(strings.TrimSpace("/" + name + " " + args))
 		})

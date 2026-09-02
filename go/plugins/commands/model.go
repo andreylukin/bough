@@ -71,6 +71,29 @@ func describeRow(r kernel.Row) string {
 
 const modelUsage = "usage: /model <provider> [model] | /model <model>"
 
+// curatedModels is the short list /model suggests per provider (there
+// is no history of used models yet; OpenRouter's catalog is too long
+// to print).
+var curatedModels = map[string][]string{
+	"llm-openrouter": {
+		"anthropic/claude-sonnet-4.5", "anthropic/claude-opus-4.1",
+		"openai/gpt-5", "google/gemini-2.5-pro", "deepseek/deepseek-chat-v3.1",
+	},
+	"llm-anthropic": {"claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"},
+}
+
+// showModel is /model with no args: the current row, the providers,
+// and a few model ids to try on the current provider.
+func showModel(row kernel.Row, provs []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "model: %s\nproviders: %s\n", describeRow(row), strings.Join(provs, ", "))
+	if list := curatedModels[row.Plugin]; len(list) > 0 {
+		fmt.Fprintf(&b, "try: %s\n", strings.Join(list, ", "))
+	}
+	b.WriteString(modelUsage)
+	return b.String()
+}
+
 func runModel(ctx *kernel.Context, args string) (string, error) {
 	row, err := llmRow(ctx)
 	if err != nil {
@@ -80,8 +103,7 @@ func runModel(ctx *kernel.Context, args string) (string, error) {
 
 	fields := strings.Fields(args)
 	if len(fields) == 0 {
-		return fmt.Sprintf("model: %s\nproviders: %s\n%s",
-			describeRow(row), strings.Join(provs, ", "), modelUsage), nil
+		return showModel(row, provs), nil
 	}
 	if len(fields) > 2 {
 		return "", fmt.Errorf("model: too many arguments\n%s", modelUsage)

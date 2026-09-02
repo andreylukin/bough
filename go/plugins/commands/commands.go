@@ -21,6 +21,7 @@ import (
 
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/history"
+	"github.com/andreylukin/bough/plugins/llm"
 )
 
 // CommandInfo describes one command for /help and the palette.
@@ -28,7 +29,12 @@ type CommandInfo struct {
 	Name    string // without the leading "/"
 	Usage   string // argument hint, "" for none
 	Summary string // one line, shown dimmed in the palette
+	Kind    string // "builtin" (default when ""), "skill", "user"
 }
+
+// IsSkill reports whether the command is a skill ("/name" submits to
+// the loop) — the UI ranks and styles those below the built-ins.
+func (c CommandInfo) IsSkill() bool { return c.Kind == "skill" }
 
 // UIAction is the sentinel a UI-owned command returns on the error
 // channel: Run gives ("", UIAction("...")) and the UI detects it with
@@ -44,6 +50,7 @@ const (
 	ActionExpand     UIAction = "expand"
 	ActionQuit       UIAction = "quit"
 	ActionOpenPicker UIAction = "open-picker"
+	ActionKeys       UIAction = "keys" // /keys: the UI prints its live keymap
 )
 
 // submitPrefix marks a UIAction that submits text to the loop as if
@@ -102,7 +109,8 @@ func (r *Registry) Unregister(name string) {
 	delete(r.cmds, name)
 }
 
-// List returns every command, sorted by name.
+// List returns every command: built-ins (and user commands) first,
+// then skills, each group sorted by name.
 func (r *Registry) List() []CommandInfo {
 	r.mu.Lock()
 	infos := make([]CommandInfo, 0, len(r.cmds))
@@ -110,7 +118,12 @@ func (r *Registry) List() []CommandInfo {
 		infos = append(infos, c.info)
 	}
 	r.mu.Unlock()
-	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+	sort.Slice(infos, func(i, j int) bool {
+		if a, b := infos[i].IsSkill(), infos[j].IsSkill(); a != b {
+			return !a
+		}
+		return infos[i].Name < infos[j].Name
+	})
 	return infos
 }
 
@@ -148,8 +161,12 @@ func registerBuiltins(r *Registry, ctx *kernel.Context) error {
 		{CommandInfo{Name: "help", Usage: "", Summary: "list commands"}, func(string) (string, error) {
 			return helpText(r), nil
 		}},
+		{CommandInfo{Name: "keys", Usage: "", Summary: "show the keybindings"}, uiAction(ActionKeys)},
 		{CommandInfo{Name: "sessions", Usage: "", Summary: "pick a session to resume"}, func(string) (string, error) {
 			return sessionsText(ctx)
+		}},
+		{CommandInfo{Name: "cost", Usage: "", Summary: "tokens and cost this session"}, func(string) (string, error) {
+			return costText(ctx)
 		}},
 		{CommandInfo{Name: "clear", Usage: "", Summary: "clear the visible transcript"}, uiAction(ActionClear)},
 		{CommandInfo{Name: "collapse", Usage: "", Summary: "collapse all blocks"}, uiAction(ActionCollapse)},
@@ -157,6 +174,7 @@ func registerBuiltins(r *Registry, ctx *kernel.Context) error {
 		{CommandInfo{Name: "quit", Usage: "", Summary: "exit bough"}, uiAction(ActionQuit)},
 	}
 	for _, b := range builtins {
+		b.info.Kind = "builtin"
 		if err := r.Register(b.info, b.run); err != nil {
 			return err
 		}
@@ -168,8 +186,13 @@ func uiAction(a UIAction) func(string) (string, error) {
 	return func(string) (string, error) { return "", a }
 }
 
+// helpSummaryMax caps a /help summary (the UI wraps the block to the
+// terminal, but a paragraph-long skill description is still noise).
+const helpSummaryMax = 72
+
 // helpText renders every command as "/name usage  summary" with the
-// left column padded to one shared width.
+// left column padded to one shared width; built-ins first, then a
+// "skills" heading over the skill rows.
 func helpText(r *Registry) string {
 	infos := r.List()
 	lefts := make([]string, len(infos))
@@ -184,10 +207,52 @@ func helpText(r *Registry) string {
 		}
 	}
 	var b strings.Builder
+	skills := false
 	for i, in := range infos {
-		fmt.Fprintf(&b, "%-*s  %s\n", width, lefts[i], in.Summary)
+		if in.IsSkill() && !skills {
+			skills = true
+			b.WriteString("skills\n")
+		}
+		fmt.Fprintf(&b, "%-*s  %s\n", width, lefts[i], Ellipsize(in.Summary, helpSummaryMax))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// Ellipsize clips s to at most n runes, breaking at a word boundary
+// where one exists and ending with "…" rather than a cut word.
+func Ellipsize(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 1 {
+		return "…"
+	}
+	cut := n - 1
+	if i := strings.LastIndexAny(string(r[:cut+1]), " \t"); i > 0 {
+		if k := len([]rune(string(r[:cut+1])[:i])); k >= n/2 {
+			cut = k
+		}
+	}
+	return strings.TrimRight(string(r[:cut]), " \t") + "…"
+}
+
+// costText is /cost: the llm service's running tally, when it reports
+// one.
+func costText(ctx *kernel.Context) (string, error) {
+	rep, err := kernel.Get[llm.UsageReporter](ctx, "llm")
+	if err != nil {
+		return "", fmt.Errorf("cost: the llm provider reports no usage")
+	}
+	u := rep.Usage()
+	if u.String() == "" {
+		return "cost: nothing used yet this session", nil
+	}
+	out := "cost: " + u.String()
+	if !u.Priced {
+		out += " (this provider reports tokens, not price)"
+	}
+	return out, nil
 }
 
 // sessionsText is the honest v0 of /sessions: it prints the stored

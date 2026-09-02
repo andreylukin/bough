@@ -80,7 +80,7 @@ func TestSkillIsSlashCommand(t *testing.T) {
 	writeSkill(t, "zzskillcmd", "---\ndescription: \"Run the cmd thing.\"\n---\nSKILLMARK_CMD here.")
 	d := uitest.Mount(t, nil, "codemode", "llm-echo", "commands", "skills", "loop")
 	d.Type("/zzskillcmd")
-	if f := d.Frame(); !strings.Contains(f, "Run the cmd thing.") {
+	if f := d.Frame(); !strings.Contains(f, "skill: Run the cmd thing") {
 		t.Fatalf("palette should list the skill with its description:\n%s", f)
 	}
 	d.Type(" go")
