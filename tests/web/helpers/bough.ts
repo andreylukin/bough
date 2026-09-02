@@ -14,6 +14,8 @@ export const boughBin = process.env.BOUGH_BIN ?? path.join(repoRoot, 'bough');
 export interface LaunchOpts {
   /** Extra --set overrides ("id.key=value"). llm.plugin=llm-echo is always applied first. */
   sets?: string[];
+  /** Extra CLI args (e.g. ["-c"] or ["-r"]), appended before --web. */
+  args?: string[];
   /** Files under the temp HOME, relative path -> content (e.g. ".bough/init.js"). */
   home?: Record<string, string>;
   /** Files under the temp cwd, relative path -> content (e.g. "AGENTS.md"). */
@@ -104,6 +106,7 @@ export async function launch(opts: LaunchOpts = {}): Promise<Bough> {
   const sets = ['llm.plugin=llm-echo', ...(opts.sets ?? [])];
   const args = ['--config', 'bough.yml'];
   for (const s of sets) args.push('--set', s);
+  args.push(...(opts.args ?? []));
   args.push('--web', `127.0.0.1:${port}`);
 
   const env = { ...process.env, HOME: home };

@@ -34,6 +34,8 @@
 
 - id: history
   plugin: history
+  # config:
+  #   file: /path/to/session.jsonl  # resume that exact session (what -c/-r set)
 
 - id: hooks
   plugin: hooks-js

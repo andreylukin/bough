@@ -46,7 +46,7 @@ test('multi-turn conversation keeps all turns on the transcript', async ({ launc
   expect(screen).toContain('echo: third turn');
 });
 
-test('server survives a page reload; a fresh session starts (v0: transcript is per-connection)', async ({ launchBough, page }) => {
+test('server survives a page reload; the transcript replays from history', async ({ launchBough, page }) => {
   const b = await launchBough();
   await boot(page, b.url);
   await ask(page, 'before reload', 'echo: before reload');
@@ -54,11 +54,10 @@ test('server survives a page reload; a fresh session starts (v0: transcript is p
   await page.reload();
   await page.waitForFunction(() => (window as any).sipTerm?.connected, null, { timeout: 15_000 });
 
-  // v0 behavior: each web connection is a fresh bubbletea session, so
-  // the old transcript is NOT replayed into the new page.
-  await waitForTermText(page, '>');
-  expect(await termText(page)).not.toContain('echo: before reload');
+  // Each web connection builds a fresh bubbletea model, which replays
+  // the session's history — the old transcript IS on the new page.
+  await waitForTermText(page, 'echo: before reload');
 
-  // But the server and loop are alive: a new prompt still answers.
+  // And the server and loop are alive: a new prompt still answers.
   await ask(page, 'after reload', 'echo: after reload');
 });

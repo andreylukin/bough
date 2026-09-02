@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -34,9 +35,33 @@ type setFlags []string
 func (s *setFlags) String() string     { return strings.Join(*s, ",") }
 func (s *setFlags) Set(v string) error { *s = append(*s, v); return nil }
 
+// overrides is the shared --set list: hot reload re-applies it, and the
+// session picker appends the resumed file's override at runtime, so a
+// later config reload keeps the resumed session.
+type overrides struct {
+	mu   sync.Mutex
+	vals setFlags
+}
+
+func (o *overrides) add(v string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.vals = append(o.vals, v)
+}
+
+func (o *overrides) all() setFlags {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append(setFlags(nil), o.vals...)
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "log" {
 		runLog(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "sessions" {
+		runSessions(os.Args[2:])
 		return
 	}
 	rowsCmd := len(os.Args) > 1 && os.Args[1] == "rows"
@@ -44,6 +69,9 @@ func main() {
 	if rowsCmd {
 		args = os.Args[2:]
 	}
+	// -c/--continue and -r/--resume [id] take an optional value, which
+	// the flag package can't express; pull them out first.
+	contFlag, resumeFlag, resumeID, args := extractSessionFlags(args)
 	var (
 		config   = flag.String("config", "bough.yml", "path to config tree")
 		headless = flag.Bool("headless", false, "read input from stdin, no TUI")
@@ -53,6 +81,22 @@ func main() {
 	)
 	flag.Var(&sets, "set", "override row config: id.key=value (repeatable)")
 	flag.CommandLine.Parse(args)
+
+	mode := "tui"
+	switch {
+	case *headless:
+		mode = "headless"
+	case *web != "":
+		mode = "web:" + *web
+	}
+
+	// Resolve session flags before anything mounts: --continue and
+	// --resume <id> become a history row override; a bare --resume in
+	// tui/web asks for the picker (headless prints the list, exit 2).
+	resumePath, needPicker := resolveSession(contFlag, resumeFlag, resumeID, mode)
+	if resumePath != "" {
+		sets = append(sets, "history.file="+resumePath)
+	}
 
 	rows, err := kernel.LoadFile(*config)
 	if err != nil {
@@ -80,14 +124,6 @@ func main() {
 		return
 	}
 
-	mode := "tui"
-	switch {
-	case *headless:
-		mode = "headless"
-	case *web != "":
-		mode = "web:" + *web
-	}
-
 	// Catch interrupts BEFORE the mount: the headless ui row interrupts
 	// the process on stdin EOF, which on a fast run can fire before main
 	// reaches the wait below — with no handler installed yet the default
@@ -98,11 +134,16 @@ func main() {
 	ctx := kernel.NewContext()
 	ctx.Provide("ui-mode", mode)
 
+	ov := &overrides{vals: sets}
+	if needPicker {
+		providePicker(ctx, rows, ov)
+	}
+
 	if err := ctx.Mount(rows); err != nil {
 		fatal(err)
 	}
 
-	stopWatch, err := watchConfig(ctx, *config, sets)
+	stopWatch, err := watchConfig(ctx, *config, ov)
 	if err != nil {
 		fatal(err)
 	}
@@ -117,7 +158,7 @@ func main() {
 // dir (editors replace files, so watching the file itself breaks),
 // 300ms debounce, then parse + overrides + Reconcile. One-line result
 // log either way; a bad candidate keeps the last good tree.
-func watchConfig(ctx *kernel.Context, config string, sets setFlags) (func(), error) {
+func watchConfig(ctx *kernel.Context, config string, ov *overrides) (func(), error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("watch config: %w", err)
@@ -143,7 +184,7 @@ func watchConfig(ctx *kernel.Context, config string, sets setFlags) (func(), err
 				pending = time.After(300 * time.Millisecond)
 			case <-pending:
 				pending = nil
-				reload(ctx, config, sets)
+				reload(ctx, config, ov.all())
 			case err, ok := <-w.Errors:
 				if !ok {
 					return

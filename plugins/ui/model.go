@@ -62,6 +62,8 @@ type model struct {
 	ovRanges   []lineRange    // overlay line span -> entry index
 	ovExpanded map[int64]bool // entry seq -> inline JSON shown
 	ovEntries  []int64        // entry index -> seq, for ovRanges lookups
+	picking    bool           // session picker shown instead of the chat view
+	pick       int            // picker cursor index into cfg.sessions
 	flash      string
 	md         *glamour.TermRenderer
 	mdCache    map[string]string // assistant markdown render cache (cleared on resize)
@@ -86,6 +88,11 @@ func newModel(width, height int, send func(string), events <-chan Event, cfg *at
 	m := model{vp: vp, overlay: ov, input: ti, spin: sp, send: send, events: events, cfg: cfg,
 		focusID: -1, ovExpanded: map[int64]bool{}, mdCache: map[string]string{}}
 	m.resize(width, height)
+	if cfg.Load().picker {
+		m.picking = true // replay happens after the pick (leavePicker)
+	} else {
+		m.replay()
+	}
 	return m
 }
 
@@ -430,7 +437,7 @@ func stripFence(text, want string) (string, bool) {
 // it and toggles its collapsed state. Wheel scrolling stays with the
 // viewports (they handle MouseWheelMsg themselves).
 func (m *model) handleClick(mouse tea.Mouse) {
-	if mouse.Button != tea.MouseLeft {
+	if mouse.Button != tea.MouseLeft || m.picking {
 		return
 	}
 	if m.inspecting {
@@ -542,6 +549,9 @@ func (m *model) setAllCollapsed(collapsed bool) {
 // enter (submit — not a remappable action) is fixed. Enter first acts
 // as collapse_toggle when a block is focused, and submits otherwise.
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.picking {
+		return m.handlePickerKey(msg)
+	}
 	cfg := m.cfg.Load()
 	m.flash = ""
 	key := msg.String()
@@ -721,6 +731,11 @@ func (m *model) statusBar(cfg *uiCfg) string {
 
 func (m model) View() tea.View {
 	cfg := m.cfg.Load()
+	if m.picking {
+		v := tea.NewView(m.pickerView(cfg))
+		v.AltScreen = true
+		return v
+	}
 	body := m.vp.View()
 	if m.inspecting {
 		body = m.overlay.View()

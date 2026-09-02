@@ -37,6 +37,16 @@ type uiCfg struct {
 	hist     historyView // nil when no history service
 	mdStyle  string      // "dark"/"light" glamour override; "" = detect
 	collapse string      // "all" | "large" | "none": which code/result blocks start collapsed
+
+	// Session-resume seam (all optional, provided by the launcher):
+	// "session-picker" marker present => a new model starts in the
+	// picker; "sessions" is the picker's rows (newest first);
+	// "session-choose" is called exactly once with the chosen session
+	// id ("" = fresh session) and must have swapped the "history"
+	// service to the chosen session by the time it returns.
+	picker   bool
+	sessions []history.SessionInfo
+	choose   func(string) // nil with sessions present => read-only list
 }
 
 var (
@@ -117,6 +127,15 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	status += fmt.Sprintf(" · %d rows", len(rows))
 	cfg := newCfg(t, keys, status, hist)
 	cfg.mdStyle = mdStyle
+	if _, err := kernel.Get[any](ctx, "session-picker"); err == nil {
+		cfg.picker = true
+	}
+	if s, err := kernel.Get[[]history.SessionInfo](ctx, "sessions"); err == nil {
+		cfg.sessions = s
+	}
+	if c, err := kernel.Get[func(string)](ctx, "session-choose"); err == nil {
+		cfg.choose = c
+	}
 	if v, has := rowCfg["collapse"]; has {
 		s, ok := v.(string)
 		if !ok || (s != "all" && s != "large" && s != "none") {

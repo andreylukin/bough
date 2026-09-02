@@ -73,9 +73,11 @@ func (b *safeBuf) String() string {
 // launchOpts configures one isolated bough process.
 type launchOpts struct {
 	sets   []string          // extra --set overrides; llm.plugin=llm-echo is always first
+	args   []string          // extra CLI args (e.g. -c, -r <id>)
 	home   map[string]string // files under temp HOME, relative path -> content
 	cwd    map[string]string // files under temp cwd, relative path -> content
 	config string            // replaces the copied bough.yml when non-empty
+	from   *bough            // reuse this instance's HOME/cwd/config (session resume tests)
 }
 
 // bough is one running (or exited) bough process.
@@ -103,9 +105,15 @@ func writeTree(t *testing.T, base string, files map[string]string) {
 	}
 }
 
-// sandbox creates the temp HOME + cwd + config copy for one test.
+// sandbox creates the temp HOME + cwd + config copy for one test —
+// or reuses a previous instance's (opts.from) for resume round-trips.
 func sandbox(t *testing.T, opts launchOpts) (home, cwd, config string) {
 	t.Helper()
+	if opts.from != nil {
+		writeTree(t, opts.from.home, opts.home)
+		writeTree(t, opts.from.cwd, opts.cwd)
+		return opts.from.home, opts.from.cwd, opts.from.config
+	}
 	base := t.TempDir()
 	home = filepath.Join(base, "home")
 	cwd = filepath.Join(base, "cwd")
@@ -150,6 +158,7 @@ func launchHeadless(t *testing.T, opts launchOpts) *bough {
 	for _, s := range opts.sets {
 		args = append(args, "--set", s)
 	}
+	args = append(args, opts.args...)
 	args = append(args, "--headless")
 
 	cmd := exec.Command(boughBin, args...)
@@ -194,14 +203,16 @@ func (b *bough) closeStdin() { b.stdin.Close() }
 // waitFor polls the combined output for substr.
 func (b *bough) waitFor(substr string) {
 	b.t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	// Generous: a full-module -race run at max parallelism can starve
+	// process startup for many seconds on a loaded machine.
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if strings.Contains(b.out.String(), substr) {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	b.t.Fatalf("%q not in output after 10s; output:\n%s", substr, b.out.String())
+	b.t.Fatalf("%q not in output after 30s; output:\n%s", substr, b.out.String())
 }
 
 // waitExit waits for the process to exit and returns its exit code.

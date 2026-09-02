@@ -62,6 +62,9 @@ go build ./cmd/bough
 ./bough rows                 # print the row state table and exit
 ./bough log                  # pretty-print the latest session's history
 ./bough log <file> --raw     # a specific history file, raw JSONL
+./bough sessions             # list sessions, newest first
+./bough -c                   # resume the most recent session
+./bough -r [id]              # resume by id, or pick from a list
 ```
 
 The default `llm-anthropic` provider needs `ANTHROPIC_API_KEY` set (and
@@ -93,6 +96,31 @@ mounted the log is durable JSONL in `~/.bough/history/<ts>-<pid>.jsonl`
 conversation survives loop remounts (e.g. swapping the llm row live).
 Without the row the loop keeps an in-memory log and everything still
 works.
+
+## Sessions
+
+Every run writes one JSONL file under `~/.bough/history/`; resuming
+reopens that same file for append (entries load into memory, `seq`
+continues from max+1 — append-only is never violated) and the UI
+replays the transcript as the same blocks a live session renders.
+Because model context is projected from history every step, a resumed
+session picks up the full prior conversation with no extra machinery.
+
+```sh
+bough sessions        # id · local time · entry count · first-input title
+bough -c              # --continue: most recent session (by file mtime)
+bough -r <id>         # --resume: that session (id with or without .jsonl)
+bough -r              # tui/web: session picker before the chat view
+                      # headless: prints the session list, exit 2
+```
+
+The picker (Claude Code-style) lists sessions newest first — local
+time, entry count, first input truncated to 60 columns — ↑/↓ select,
+enter resumes, esc starts a fresh session. The status bar always shows
+the live session file.
+
+Long-term storage is TBD; the `history` row (its `file` config is how
+resume works today) is the swap point for a future store.
 
 ## init.js
 
