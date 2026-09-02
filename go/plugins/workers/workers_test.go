@@ -21,11 +21,13 @@ type scriptLLM struct {
 	script  []string
 	calls   int
 	seenMsg []llm.Message
+	seenSys string // the system prompt of the last call
 }
 
 func (s *scriptLLM) Complete(ctx context.Context, system string, messages []llm.Message) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.seenSys = system
 	s.seenMsg = append(s.seenMsg, messages...)
 	i := s.calls
 	s.calls++
@@ -267,5 +269,40 @@ func TestDefaultProjectIgnoresSubKinds(t *testing.T) {
 	}
 	if msgs[0].Content != "hi" || !strings.Contains(msgs[1].Content, "parent result") {
 		t.Fatalf("messages = %+v", msgs)
+	}
+}
+
+// stubCode is a Codemode that never runs anything (the scripted child
+// replies without a code block).
+type stubCode struct{}
+
+func (stubCode) RegisterTool(name string, fn any) {}
+func (stubCode) Run(code string) (string, error)  { return "", nil }
+
+type stubSections struct{ text string }
+
+func (s stubSections) Set(name, text string) {}
+func (s stubSections) Text() string          { return s.text }
+
+// The child runs in the parent's VM, so it is told the parent's tools:
+// the loop's base prompt (bash/view/patch), the live sections (mcp,
+// skills, ...), then its own identity. Not the bare one-liner it had.
+func TestChildGetsTheParentsToolPrompt(t *testing.T) {
+	l := &scriptLLM{script: []string{"done"}}
+	w := &Workers{llm: l, code: &stubCode{}, secs: stubSections{text: "## mcp\nbough mcp call graphiti/..."}, ctx: context.Background(), maxSteps: 2}
+	w.emit = func(kind, text string, worker int) {}
+	if _, err := w.runChild("count files", 1); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"tools.bash(cmd)", "tools.patch(path, old, new)", "bough mcp call graphiti/", SubSystemPrompt} {
+		if !strings.Contains(l.seenSys, want) {
+			t.Fatalf("child system prompt lacks %q:\n%s", want, l.seenSys)
+		}
+	}
+	if strings.Index(l.seenSys, "tools.bash") > strings.Index(l.seenSys, "## mcp") || strings.Index(l.seenSys, "## mcp") > strings.Index(l.seenSys, SubSystemPrompt) {
+		t.Fatalf("order must be base, sections, identity:\n%s", l.seenSys)
+	}
+	if got := systemFor("base", ""); got != "base\n\n"+SubSystemPrompt {
+		t.Fatalf("no sections: %q", got)
 	}
 }

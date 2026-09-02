@@ -33,16 +33,34 @@ import (
 	"github.com/andreylukin/bough/plugins/loop"
 )
 
-// SubSystemPrompt is the child agent's system prompt.
-const SubSystemPrompt = "You are a bough subagent. Complete exactly this task, using js code blocks with the tools API when needed, and reply with your final answer as plain text."
+// SubSystemPrompt is the child agent's identity, appended to the same
+// base prompt and live prompt sections the parent runs on: the child
+// executes in the parent's codemode VM, so it must be told the same
+// tools (bash, view, patch, mcp, ...) in the same words. Without this
+// the child was told only that "the tools API" exists.
+const SubSystemPrompt = "You are a bough subagent spawned for ONE task. Complete exactly that task with the tools above (you cannot spawn), then reply with your final answer as plain text — no code block in the final reply."
 
 // promptSection documents tools.spawn to the parent model (registered
 // into the loop's "prompt-sections" service when present).
 const promptSection = `Subagents: tools.spawn(task) -> string runs a bounded child agent (same tools, fresh context, no nested spawns) on the task string and returns its final plain-text reply. Use it to delegate self-contained work, never a shell command.`
 
-// sections is the slice of the loop's "prompt-sections" service we need.
+// sections is the slice of the loop's "prompt-sections" service we need:
+// Set to advertise tools.spawn to the parent, Text to hand the child the
+// same tool documentation the parent has.
 type sections interface {
 	Set(name, text string)
+	Text() string
+}
+
+// systemFor builds the child's system prompt: the loop's base prompt,
+// the live sections (minus this plugin's own spawn advert), then the
+// subagent identity. Pure over its inputs.
+func systemFor(base, sections string) string {
+	s := base
+	if sections != "" {
+		s += "\n\n" + sections
+	}
+	return s + "\n\n" + SubSystemPrompt
 }
 
 const defaultMaxSpawns = 4
@@ -71,7 +89,8 @@ type Workers struct {
 	mu        sync.Mutex
 	llm       llm.LLM
 	code      Codemode
-	hist      History // nil when no "history" service is mounted
+	hist      History  // nil when no "history" service is mounted
+	secs      sections // nil when the loop's prompt-sections are absent
 	emit      func(kind, text string, worker int)
 	ctx       context.Context
 	maxSpawns int
@@ -120,9 +139,16 @@ func (w *Workers) runChild(task string, id int) (string, error) {
 		w.emit("sub:"+kind, text, id)
 	}
 
+	// The sections are read per run, like the parent's per turn: a plugin
+	// mounted since (mcp catalog, skills) is documented to the child too.
+	var secText string
+	if w.secs != nil {
+		secText = w.secs.Text()
+	}
+	system := systemFor(loop.SystemPrompt, secText)
 	msgs := []llm.Message{{Role: "user", Content: task}}
 	for step := 0; step < w.maxSteps; step++ {
-		reply, err := w.llm.Complete(w.ctx, SubSystemPrompt, msgs)
+		reply, err := w.llm.Complete(w.ctx, system, msgs)
 		if err != nil {
 			note("error", err.Error())
 			note("done", "")
@@ -251,6 +277,7 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	// Optional seam: the loop's prompt-sections registry, so the model
 	// learns tools.spawn exists. Withdrawn on unmount.
 	if s, err := kernel.Get[sections](kctx, "prompt-sections"); err == nil {
+		w.secs = s
 		s.Set("workers", promptSection)
 		kctx.Effect(func() { s.Set("workers", "") })
 	}

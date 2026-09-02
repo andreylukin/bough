@@ -32,6 +32,14 @@ func newComposer() textarea.Model {
 	ta.Placeholder = "say something"
 	ta.ShowLineNumbers = false
 	ta.MaxHeight = composerMaxLines
+	// Grow with the draft's VISUAL rows: a long single line soft-wraps,
+	// and sizing by logical LineCount left the top row scrolled out of
+	// view. The textarea counts wrapped rows itself under DynamicHeight.
+	ta.DynamicHeight = true
+	ta.MinHeight = 1
+	// MaxHeight alone caps the draft at 8 logical lines; the content cap
+	// is what lets a longer paste in and scroll.
+	ta.MaxContentHeight = 100000
 	ta.SetVirtualCursor(true)
 	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "alt+enter", "ctrl+j"))
 	// The transcript's ground shows through: no cursor-line bar, no
@@ -47,18 +55,18 @@ func newComposer() textarea.Model {
 	return ta
 }
 
-// layoutComposer sizes the composer to its draft (1..composerMaxLines
-// rows) and gives the transcript the rest of the screen: status bar
-// plus composer rows come off the height.
+// layoutComposer takes the composer's height (the textarea sizes itself
+// to the draft's wrapped rows, 1..composerMaxLines) and gives the
+// transcript the rest of the screen: status bar plus composer rows come
+// off the height.
 func (m *model) layoutComposer() {
-	n := m.input.LineCount()
+	n := m.input.Height()
 	if n < 1 {
 		n = 1
 	}
 	if n > composerMaxLines {
 		n = composerMaxLines
 	}
-	m.input.SetHeight(n)
 	if h := m.height - 1 - n; h > 0 {
 		atBottom := m.vp.AtBottom()
 		m.vp.SetHeight(h)

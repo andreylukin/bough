@@ -45,6 +45,9 @@ type anthropicLLM struct {
 
 // Usage implements UsageReporter: token counts only (no price table
 // here, so Priced stays false).
+// Model implements Modeler.
+func (a *anthropicLLM) Model() string { return a.model }
+
 func (a *anthropicLLM) Usage() Usage {
 	a.mu.Lock()
 	defer a.mu.Unlock()

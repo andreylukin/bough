@@ -250,17 +250,23 @@ func Ellipsize(s string, n int) string {
 // costText is /cost: the llm service's running tally, when it reports
 // one.
 func costText(ctx *kernel.Context) (string, error) {
-	rep, err := kernel.Get[llm.UsageReporter](ctx, "llm")
+	// The cost row's priced view first (it also says where the price
+	// came from); the llm's own tally otherwise.
+	rep, err := kernel.Get[llm.UsageReporter](ctx, "usage")
 	if err != nil {
-		return "", fmt.Errorf("cost: the llm provider reports no usage")
+		if rep, err = kernel.Get[llm.UsageReporter](ctx, "llm"); err != nil {
+			return "", fmt.Errorf("cost: the llm provider reports no usage")
+		}
 	}
 	u := rep.Usage()
 	if u.String() == "" {
 		return "cost: nothing used yet this session", nil
 	}
 	out := "cost: " + u.String()
-	if !u.Priced {
-		out += " (this provider reports tokens, not price)"
+	if s, ok := rep.(interface{ Source() string }); ok {
+		out += " — " + s.Source()
+	} else if !u.Priced {
+		out += " (this provider reports tokens, not price; mount the cost row)"
 	}
 	return out, nil
 }

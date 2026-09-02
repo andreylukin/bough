@@ -37,6 +37,12 @@ type Usage struct {
 	Priced       bool
 }
 
+// Modeler is the optional seam naming the model an llm service runs;
+// the cost row prices a token tally by it.
+type Modeler interface {
+	Model() string
+}
+
 // UsageReporter is the optional seam an llm service exposes for the
 // status bar and /cost; a provider that cannot count stays silent.
 type UsageReporter interface {

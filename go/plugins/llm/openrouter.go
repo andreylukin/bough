@@ -46,6 +46,9 @@ type openrouterLLM struct {
 
 // Usage implements UsageReporter: OpenRouter returns a usage object
 // on every response, cost included since the request asks for it.
+// Model implements Modeler.
+func (o *openrouterLLM) Model() string { return o.model }
+
 func (o *openrouterLLM) Usage() Usage {
 	o.mu.Lock()
 	defer o.mu.Unlock()

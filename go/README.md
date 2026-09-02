@@ -308,6 +308,17 @@ Events and honored result keys:
 | `stop`               | `{}`                | —                                 |
 | `session-end`        | `{}`                | — (fires at unmount, not from the loop) |
 
+## Cost (status bar)
+
+The `cost` row provides the `usage` service the status bar and `/cost`
+read first: the llm's running token tally, priced. OpenRouter prices its
+own responses and passes through; OpenAI and Anthropic tallies are priced
+from a built-in first-party $/Mtok table matched on the model id with its
+`vendor/` prefix and `-YYYYMMDD` suffix stripped (longest prefix wins, so
+`gpt-5-mini-2026…` still prices). `prices:` in the row config overrides or
+adds models; an unknown model shows tokens, never a guess. `/cost` says
+which of the three the number came from.
+
 ## Memory (graphiti)
 
 Long-term memory on [getzep/graphiti](https://github.com/getzep/graphiti),

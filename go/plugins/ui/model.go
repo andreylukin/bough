@@ -47,7 +47,7 @@ type block struct {
 
 // collapsible blocks get a disclosure header and can be toggled.
 func (b *block) collapsible() bool {
-	return b.kind == "code" || b.kind == "result" || b.kind == "thinking"
+	return b.kind == "code" || b.kind == "result" || b.kind == "thinking" || b.kind == "sub"
 }
 
 // lineRange maps a rendered line span [start, end) to a block index.
@@ -306,7 +306,7 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 			return m.header(b, th)
 		}
 		return m.header(b, th) + "\n" + m.box(b.text, th["code"], th["border"])
-	case "result":
+	case "result", "sub":
 		if b.collapsed {
 			return m.header(b, th)
 		}
@@ -490,6 +490,19 @@ func (m *model) addEvent(ev Event) {
 		if ev.Kind == "result" {
 			m.flushTrailing()
 		}
+	case "sub:assistant", "sub:code", "sub:result", "sub:error":
+		// A subagent's activity: one collapsible block per event, tagged
+		// with the worker number, collapsed by default whatever the
+		// code/result policy says — the parent's transcript is the
+		// story, the child's is detail. "none" still expands them.
+		text := strings.TrimRight(ev.Text, "\n")
+		if ev.Kind == "sub:result" {
+			text = resultText(text)
+		}
+		m.blocks = append(m.blocks, block{id: id, kind: "sub", text: text,
+			label: subLabel(ev), collapsed: m.cfg.Load().collapse != "none"})
+	case "sub:done":
+		// The child's end: nothing to show; the spawn's result block follows.
 	case "assistant-delta":
 		m.addDelta(id, ev.Text)
 	case "assistant":

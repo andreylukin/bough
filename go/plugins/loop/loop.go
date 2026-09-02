@@ -144,7 +144,9 @@ type Event struct {
 const maxSteps = 10
 const maxResultBytes = 8 * 1024
 
-const systemPrompt = `You are bough, a coding agent. You act by writing JavaScript
+// SystemPrompt is the base identity and tool catalogue every agent in
+// this process shares; a subagent (workers) starts from the same text.
+const SystemPrompt = `You are bough, a coding agent. You act by writing JavaScript
 in fenced code blocks:
 
 ` + "```js" + `
@@ -339,7 +341,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 
 	if !r.started {
 		r.started = true
-		r.system = systemPrompt
+		r.system = SystemPrompt
 		if r.hasAsk {
 			r.system += "\n\n" + askPromptSection
 		}

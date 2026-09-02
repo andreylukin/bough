@@ -61,6 +61,9 @@ type openaiLLM struct {
 	usage Usage
 }
 
+// Model implements Modeler.
+func (o *openaiLLM) Model() string { return o.model }
+
 func (o *openaiLLM) Usage() Usage {
 	o.mu.Lock()
 	defer o.mu.Unlock()

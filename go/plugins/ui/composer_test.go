@@ -222,3 +222,20 @@ func TestMouseNeverWritesComposer(t *testing.T) {
 		t.Errorf("mouse activity wrote into the composer: %q", got)
 	}
 }
+
+// A long single line soft-wraps; the composer must grow by VISUAL rows
+// (sizing by logical lines left the first row scrolled out of view).
+func TestComposerGrowsForWrappedLine(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.feed(tea.PasteMsg{Content: strings.Repeat("word ", 40)}) // ~200 cells on an 80-wide screen
+	if got := d.m.input.Height(); got < 3 {
+		t.Fatalf("composer height = %d for a 3-row wrapped line", got)
+	}
+	if d.m.vp.Height() != 24-1-d.m.input.Height() {
+		t.Errorf("transcript height %d does not account for the composer's %d rows", d.m.vp.Height(), d.m.input.Height())
+	}
+	if !strings.Contains(d.m.input.View(), "word word") {
+		t.Fatalf("first row not visible:\n%s", d.m.input.View())
+	}
+}

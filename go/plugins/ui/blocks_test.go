@@ -502,3 +502,39 @@ func TestAssistantDeltasBuildLiveBlockThenReplaced(t *testing.T) {
 		t.Fatalf("final reply should replace the live block and render markdown:\n%s", p)
 	}
 }
+
+// A subagent's events land as collapsible "sub" blocks, collapsed by
+// default under every policy but "none", tagged with the worker number.
+func TestSubagentBlocksCollapseByDefault(t *testing.T) {
+	for _, mode := range []string{"all", "large"} {
+		m := testModelCollapse(t, mode)
+		m.addEvent(Event{Kind: "sub:code", Text: "console.log(tools.bash(\"ls\"))", Data: map[string]any{"worker": 2}})
+		m.addEvent(Event{Kind: "sub:result", Text: "a\nb\n", Data: map[string]any{"worker": 2}})
+		m.addEvent(Event{Kind: "sub:assistant", Text: "two files", Data: map[string]any{"worker": 2}})
+		m.addEvent(Event{Kind: "sub:done", Data: map[string]any{"worker": 2}})
+		if len(m.blocks) != 3 {
+			t.Fatalf("%s: want 3 sub blocks (done adds none), got %d", mode, len(m.blocks))
+		}
+		for _, b := range m.blocks {
+			if b.kind != "sub" || !b.collapsed || !b.collapsible() {
+				t.Fatalf("%s: block %+v should be a collapsed collapsible sub block", mode, b)
+			}
+		}
+		if m.blocks[0].label != "sub 2 · Ran: ls" || m.blocks[1].label != "sub 2 · result" || m.blocks[2].label != "sub 2 · reply" {
+			t.Fatalf("labels: %q %q %q", m.blocks[0].label, m.blocks[1].label, m.blocks[2].label)
+		}
+		// Collapsed: the one-line disclosure header (glyph, tag, preview), no box.
+		view := m.render(&m.blocks[1], m.cfg.Load())
+		if strings.Count(view, "\n") != 0 || !strings.Contains(view, "▸ sub 2 · result") {
+			t.Fatalf("collapsed render should be one header line:\n%s", view)
+		}
+	}
+	m := testModelCollapse(t, "none")
+	m.addEvent(Event{Kind: "sub:result", Text: "x", Data: map[string]any{"worker": 1}})
+	if m.blocks[0].collapsed {
+		t.Fatal("collapse: none must expand sub blocks too")
+	}
+	if got := subLabel(Event{Kind: "sub:error", Text: "boom"}); got != "sub · error" {
+		t.Fatalf("no worker id: %q", got)
+	}
+}

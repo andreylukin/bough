@@ -58,7 +58,7 @@ type uiCfg struct {
 	action   map[string]string // key -> action (derived)
 	status   string            // status-bar left text
 	hist     historyView       // nil when no history service
-	usage    llm.UsageReporter // nil when the llm service reports no usage
+	usage    llm.UsageReporter // the "usage" (cost row) or llm service; nil when neither reports
 	mdStyle  string            // "dark"/"light" glamour override; "" = detect
 	collapse string            // "all" | "large" | "none": which code/result blocks start collapsed
 
@@ -173,7 +173,10 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	cfg.mdStyle = mdStyle
 	cfg.cmds = cmds
 	cfg.hlog = hlog
-	if u, err := kernel.Get[llm.UsageReporter](ctx, "llm"); err == nil {
+	// The cost row's priced view first; the llm's own tally otherwise.
+	if u, err := kernel.Get[llm.UsageReporter](ctx, "usage"); err == nil {
+		cfg.usage = u
+	} else if u, err := kernel.Get[llm.UsageReporter](ctx, "llm"); err == nil {
 		cfg.usage = u
 	}
 	if a, err := kernel.Get[askAnswers](ctx, "ask-answers"); err == nil {

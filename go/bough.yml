@@ -16,6 +16,13 @@
 #   config:
 #     model: deepseek/deepseek-chat
 
+# Dollar cost in the status bar and /cost for every provider: OpenRouter
+# prices its own responses; OpenAI and Anthropic tallies are priced from
+# a built-in table (first-party $/Mtok) that `prices:` overrides, e.g.
+#   config: {prices: {gpt-5-mini: {input: 0.25, output: 2}}}
+- id: cost
+  plugin: cost
+
 - id: codemode
   plugin: codemode
 
