@@ -4,6 +4,7 @@ package codemode
 
 import (
 	"fmt"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -29,7 +30,22 @@ type CodeMode struct {
 	tools   *goja.Object
 	timeout time.Duration
 	out     strings.Builder
-	timer   *time.Timer // innermost Run's interrupt timer; see Pause
+	timer   *time.Timer   // innermost Run's interrupt timer; see Pause
+	scoped  goja.Callable // (src) => eval(src): per-block function scope
+}
+
+// nativeFrame is the Go-frame tail goja appends to a GoError message
+// ("... at github.com/andreylukin/bough/plugins/tools.readFile (native)");
+// noise to the model and the user, stripped by cleanErr.
+var nativeFrame = regexp.MustCompile(` at github\.com/andreylukin/bough/\S+ \(native\)`)
+
+// cleanErr strips native Go frames from a JS error message.
+func cleanErr(err error) error {
+	msg := err.Error()
+	if c := nativeFrame.ReplaceAllString(msg, ""); c != msg {
+		return fmt.Errorf("%s", c)
+	}
+	return err
 }
 
 // gid returns the current goroutine id (parsed from runtime.Stack),
@@ -83,6 +99,17 @@ func New(timeout time.Duration) *CodeMode {
 		return goja.Undefined()
 	})
 	cm.vm.Set("console", console)
+
+	// Each Run evaluates its block via direct eval inside a fresh
+	// function call, so const/let/var/function declarations are scoped
+	// to that block (a later block may reuse the names) while globals
+	// (tools, console, anything assigned without a declaration) stay
+	// shared. eval keeps the block's completion value.
+	v, err := cm.vm.RunString("(function(__src){ return eval(__src) })")
+	if err != nil {
+		panic("codemode: scoped runner: " + err.Error())
+	}
+	cm.scoped, _ = goja.AssertFunction(v)
 	return cm
 }
 
@@ -97,6 +124,8 @@ func (cm *CodeMode) RegisterTool(name string, fn any) {
 
 // Run executes code with an interrupt after the timeout. Returns any
 // console output plus the final expression value if non-undefined.
+// Declarations are scoped to the block (see New); errors have their
+// native Go frames stripped (cleanErr).
 // A nested Run (a subagent's code block executing while the parent's
 // block waits on its tool call) saves and restores the parent's console
 // output around the child's; the child's ClearInterrupt may drop a
@@ -117,7 +146,7 @@ func (cm *CodeMode) Run(code string) (string, error) {
 	})
 	prevTimer := cm.timer // nested Run: restore the parent's timer after
 	cm.timer = timer
-	v, err := cm.vm.RunString(code)
+	v, err := cm.scoped(goja.Undefined(), cm.vm.ToValue(code))
 	cm.timer = prevTimer
 	timer.Stop()
 	cm.vm.ClearInterrupt()
@@ -128,7 +157,7 @@ func (cm *CodeMode) Run(code string) (string, error) {
 		cm.out.WriteString(saved)
 	}
 	if err != nil {
-		return out, err
+		return out, cleanErr(err)
 	}
 	if v != nil && !goja.IsUndefined(v) {
 		out += v.String()

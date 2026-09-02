@@ -270,7 +270,7 @@ func (m *model) welcomeView(cfg *uiCfg) string {
 
 // authErrRe spots credential-shaped failures in error text; the match
 // appends the credential hint below the error block.
-var authErrRe = regexp.MustCompile(`(?i)\b401\b|unauthorized|api[ _-]?key|x-api-key`)
+var authErrRe = regexp.MustCompile(`(?i)\b40[13]\b|unauthorized|credentials|api[ _-]?key|x-api-key`)
 
 const authHint = "hint: check your provider credentials (ANTHROPIC_API_KEY / OPENROUTER_API_KEY), or swap the llm row — /model"
 

@@ -98,12 +98,22 @@ func TestCodemodeRoundTrip(t *testing.T) {
 	cs := inMemorySession(t)
 	cm := codemode.New(5 * time.Second)
 
-	n, err := registerSession(cm, "test", cs)
+	lines, err := registerSession(cm, "test", cs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Fatalf("want 1 tool bound, got %d", n)
+	if len(lines) != 1 {
+		t.Fatalf("want 1 tool bound, got %d", len(lines))
+	}
+	want := "tools.mcp_test_greet(args) -> string: say hi"
+	if lines[0] != want {
+		t.Fatalf("prompt line = %q, want %q", lines[0], want)
+	}
+	if sec := promptSection(lines); !strings.Contains(sec, "MCP tools") || !strings.Contains(sec, "- "+want) {
+		t.Fatalf("promptSection = %q", sec)
+	}
+	if promptSection(nil) != "" {
+		t.Fatal("empty section must be empty")
 	}
 
 	out, err := cm.Run(`tools.mcp_test_greet({name: "you"})`)

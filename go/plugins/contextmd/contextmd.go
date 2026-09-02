@@ -1,7 +1,8 @@
-// Package contextmd is the "context-md" plugin: at session start the
-// loop prepends Preamble() — whichever exist of ./AGENTS.md,
+// Package contextmd is the "context-md" plugin: at the start of every
+// turn the loop prepends Preamble() — whichever exist of ./AGENTS.md,
 // ./CLAUDE.md, ~/.claude/CLAUDE.md, ~/.bough/BOUGH.md — to the
-// system prompt, labeled per file.
+// system prompt, labeled per file, so a file created or edited
+// mid-session is seen on the next turn.
 package contextmd
 
 import (

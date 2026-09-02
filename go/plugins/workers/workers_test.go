@@ -152,6 +152,24 @@ func TestSpawnRunsChild(t *testing.T) {
 	}
 }
 
+func TestSpawnDocumentedInPromptSections(t *testing.T) {
+	kctx := kernel.NewContext()
+	kctx.Provide("llm", &scriptLLM{script: []string{"ok"}})
+	kctx.Provide("codemode", codemode.New(5*time.Second))
+	secs := &loop.Sections{}
+	kctx.Provide("prompt-sections", secs)
+	if err := (plugin{}).Apply(kctx, nil); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !strings.Contains(secs.Text(), "tools.spawn(task) -> string") {
+		t.Fatalf("section = %q, want tools.spawn documented", secs.Text())
+	}
+	kctx.Unmount()
+	if secs.Text() != "" {
+		t.Fatalf("section not withdrawn on unmount: %q", secs.Text())
+	}
+}
+
 func TestSpawnDepthRefused(t *testing.T) {
 	_, cm, l, _, _ := mount(t, nil,
 		"trying\n```js\ntools.spawn('nested')\n```",
