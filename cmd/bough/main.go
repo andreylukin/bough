@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -16,7 +17,9 @@ import (
 	"github.com/andreylukin/bough/kernel"
 	_ "github.com/andreylukin/bough/plugins/codemode"
 	_ "github.com/andreylukin/bough/plugins/contextmd"
+	_ "github.com/andreylukin/bough/plugins/history"
 	_ "github.com/andreylukin/bough/plugins/hooks"
+	_ "github.com/andreylukin/bough/plugins/initjs"
 	_ "github.com/andreylukin/bough/plugins/llm"
 	_ "github.com/andreylukin/bough/plugins/loop"
 	_ "github.com/andreylukin/bough/plugins/mcp"
@@ -32,14 +35,24 @@ func (s *setFlags) String() string     { return strings.Join(*s, ",") }
 func (s *setFlags) Set(v string) error { *s = append(*s, v); return nil }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "log" {
+		runLog(os.Args[2:])
+		return
+	}
+	rowsCmd := len(os.Args) > 1 && os.Args[1] == "rows"
+	args := os.Args[1:]
+	if rowsCmd {
+		args = os.Args[2:]
+	}
 	var (
 		config   = flag.String("config", "bough.yml", "path to config tree")
 		headless = flag.Bool("headless", false, "read input from stdin, no TUI")
 		web      = flag.String("web", "", "serve the UI in a browser at this addr (e.g. localhost:7681)")
+		dump     = flag.Bool("dump-config", false, "mount the config tree, print the row state table, and exit")
 		sets     setFlags
 	)
 	flag.Var(&sets, "set", "override row config: id.key=value (repeatable)")
-	flag.Parse()
+	flag.CommandLine.Parse(args)
 
 	rows, err := kernel.LoadFile(*config)
 	if err != nil {
@@ -47,6 +60,24 @@ func main() {
 	}
 	if err := applyOverrides(rows, sets); err != nil {
 		fatal(err)
+	}
+
+	// 'bough rows' and --dump-config: mount the tree fresh (tolerant —
+	// Failed and Pending rows are the point of the table, not fatal),
+	// print the live state table, and exit without starting a real UI.
+	// Reconcile on an empty context is that tolerant mount.
+	if rowsCmd || *dump {
+		// The headless ui row interrupts the process on stdin EOF; this
+		// command prints and exits on its own, so swallow that signal.
+		signal.Notify(make(chan os.Signal, 1), os.Interrupt)
+		ctx := kernel.NewContext()
+		ctx.Provide("ui-mode", "headless")
+		if err := ctx.Reconcile(rows); err != nil {
+			fatal(err)
+		}
+		printRows(ctx)
+		ctx.Unmount()
+		return
 	}
 
 	mode := "tui"
@@ -168,6 +199,23 @@ func applyOverrides(rows []kernel.Row, sets setFlags) error {
 		}
 	}
 	return nil
+}
+
+// printRows renders the composed rows + live state table from Rows().
+func printRows(ctx *kernel.Context) {
+	w := tabwriter.NewWriter(os.Stdout, 2, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tPLUGIN\tSTATE\tDETAIL")
+	for _, r := range ctx.Rows() {
+		detail := ""
+		switch r.State {
+		case kernel.StatePending:
+			detail = "missing: " + strings.Join(r.Missing, ", ")
+		case kernel.StateFailed:
+			detail = r.Err.Error()
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.ID, r.Plugin, r.State, detail)
+	}
+	w.Flush()
 }
 
 func fatal(err error) {

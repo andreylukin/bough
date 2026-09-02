@@ -112,6 +112,46 @@ func (cm *CodeMode) RunHook(fileBody string, event map[string]any) (map[string]a
 	return m, nil
 }
 
+// WithVM runs fn with the VM and the shared tools object while holding
+// the VM mutex. For extension plugins (init-js) that define globals or
+// run whole scripts; fn must not retain the runtime past the call.
+func (cm *CodeMode) WithVM(fn func(vm *goja.Runtime, tools *goja.Object) error) error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	return fn(cm.vm, cm.tools)
+}
+
+// Call invokes a stored JS function with args (converted by goja) under
+// the VM mutex and the standard interrupt timeout. The result is
+// Exported to Go inside the lock; a JS exception or interrupt is an
+// error, never a panic.
+func (cm *CodeMode) Call(fn goja.Callable, args ...any) (out any, err error) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			out, err = nil, fmt.Errorf("codemode: call panic: %v", r)
+		}
+	}()
+	gargs := make([]goja.Value, len(args))
+	for i, a := range args {
+		gargs[i] = cm.vm.ToValue(a)
+	}
+	timer := time.AfterFunc(cm.timeout, func() {
+		cm.vm.Interrupt("codemode: call timeout after " + cm.timeout.String())
+	})
+	v, err := fn(goja.Undefined(), gargs...)
+	timer.Stop()
+	cm.vm.ClearInterrupt()
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, nil
+	}
+	return v.Export(), nil
+}
+
 type plugin struct{}
 
 func init() {

@@ -17,7 +17,14 @@ The kernel (`kernel/`) is the only non-plugin code besides the launcher
   disabled}`), mounts each enabled row once its plugin's `Inject()` keys
   are provided. Row order only breaks ties within a mount pass (which is
   why the optional loop seams sit above the loop row in `bough.yml`).
-  Unresolvable deps fail loud, naming the row and missing key.
+  At boot, unresolvable deps fail loud, naming the row and missing key.
+- **Lifecycle**: every row is in one of four states — `pending`
+  (waiting on services), `active`, `failed` (Apply error; isolated, not
+  retried until its spec changes), `disabled`. The kernel tracks not
+  just `Inject()` deps but every service a row `Get`s during Apply, so
+  when a service lands, changes, or is withdrawn, its dependents remount
+  automatically — add a `history` row to a running session and the loop
+  picks it up. `./bough rows` prints the live state table.
 
 Plugins register via `kernel.Register(name, factory)` in their `init()`
 and are wired together only through service keys:
@@ -32,9 +39,15 @@ and are wired together only through service keys:
 | `hooks`    | plugins/hooks      | loop (optional) |
 | `skills`   | plugins/skills     | loop (optional) |
 | `context-md` | plugins/contextmd | loop (optional) |
+| `history`  | plugins/history    | loop, ui (optional) |
+| `cognition` | plugins/initjs    | loop (optional) |
+| `projection` | plugins/initjs   | loop (optional) |
+| `theme`    | plugins/initjs     | ui (optional)   |
+| `keymap`   | plugins/initjs     | ui (optional)   |
 
-The three optional seams are resolved by the loop at mount time and
-no-op cleanly when their rows are absent.
+The optional seams are resolved at mount time and no-op cleanly when
+their rows are absent; thanks to Get-tracking they also hot-attach when
+a provider row appears later.
 
 ## Running
 
@@ -46,6 +59,9 @@ go build ./cmd/bough
 ./bough --headless           # stdin/stdout
 ./bough --set llm.model=claude-haiku-4-5   # override any row config
 ./bough --set llm.plugin=llm-echo          # swap a row's plugin
+./bough rows                 # print the row state table and exit
+./bough log                  # pretty-print the latest session's history
+./bough log <file> --raw     # a specific history file, raw JSONL
 ```
 
 The default `llm-anthropic` provider needs `ANTHROPIC_API_KEY` set (and
@@ -65,6 +81,49 @@ The LLM writes JavaScript; the codemode plugin runs it in a goja runtime
 where each registered tool is a JS function. Tool output feeds back to
 the LLM until it's done, and every step is emitted as a `loop/event`
 (`assistant`, `code`, `result`, `error`, `done`) that any UI renders.
+
+## History
+
+Conversation state lives in an append-only entry log, not in the loop.
+Every turn appends `input`, `assistant`, `code`, `result`, `error`,
+`done` entries; each step's model messages are projected from the log
+(`projection` service, or the built-in default). With the `history` row
+mounted the log is durable JSONL in `~/.bough/history/<ts>-<pid>.jsonl`
+— inspect it with `./bough log`, or Ctrl+O in the TUI — and the
+conversation survives loop remounts (e.g. swapping the llm row live).
+Without the row the loop keeps an in-memory log and everything still
+works.
+
+## init.js
+
+User configuration is JavaScript, run in the shared codemode VM:
+`~/.bough/init.js` then `./.bough/init.js` (both optional). A global
+`bough` API registers things Maki-style — typos fail the row loud,
+naming the key:
+
+```js
+bough.setup({
+  ui: {theme: {accent: "#7aa2f7"}, keymap: {quit: "ctrl+q"}},
+  provider: {default: "parrot"},
+  system: {append: "reply tersely"},
+});
+bough.tool("shout", (s) => s.toUpperCase());          // a codemode tool
+bough.provider("parrot", (sys, msgs) => "...");        // a full LLM provider
+bough.cognition((base) => base + "\nmore");            // system prompt transform
+bough.project((entries) => [{role: "user", content: "..."}]); // history -> messages
+```
+
+See `docs/INIT.md` for the full surface.
+
+## TUI
+
+Semantic transcript (themed prompt, markdown-rendered assistant, code
+and result boxes with auto-collapse, status bar with row/entry counts
+and a spinner while a turn runs). Default keys, all remappable via the
+`keymap` service: Ctrl+C quit, Ctrl+O history inspector, Tab collapse
+toggle on the last result, Ctrl+L clear input, arrows/PgUp/PgDn/mouse
+wheel scroll. Colors come from the `theme` service
+(`"fg[:bg][:bold|italic|faint]"`, hex or ANSI-256).
 
 ## Hooks (hooks-js)
 
@@ -130,6 +189,10 @@ mount.
 The launcher watches the `--config` file (fsnotify, 300ms debounce) and
 reconciles per row: changed/removed rows are unmounted (plus their
 dependent closure, transitively — swapping the `llm` row remounts the
-loop, which loses its in-memory conversation), added rows are mounted.
-A bad new config keeps the last good tree and logs loudly. `--set`
-overrides are re-applied on every reload.
+loop, but with the `history` row mounted the conversation survives:
+projection replays the log), added rows are mounted. Rows whose deps
+aren't satisfied stay `pending` (visible in `./bough rows`) instead of
+tearing the tree down; a row that fails Apply is isolated as `failed`
+until its spec changes. A config that fails to parse or validate keeps
+the last good tree and logs loudly. `--set` overrides are re-applied on
+every reload.

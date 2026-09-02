@@ -37,20 +37,30 @@ func (p *plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		return err
 	}
 
-	b := &broadcaster{subs: map[int]chan Event{}}
-	dispose := ctx.On("loop/event", func(payload any) {
-		b.publish(eventOf(payload))
-	})
-	ctx.Effect(dispose)
+	if mode == "headless" {
+		b := &broadcaster{subs: map[int]chan Event{}}
+		dispose := ctx.On("loop/event", func(payload any) {
+			b.publish(eventOf(payload))
+		})
+		ctx.Effect(dispose)
+		ctx.Effect(runHeadless(inputs, b))
+		return nil
+	}
+
+	// tui/web: themed, keymap-driven views on the process-level live
+	// wiring (see live.go). A remount re-points config and inputs;
+	// the running program/server is a process singleton.
+	ucfg, err := buildCfg(ctx)
+	if err != nil {
+		return err
+	}
+	attachLive(ctx, inputs, ucfg)
 
 	switch {
-	case mode == "headless":
-		ctx.Effect(runHeadless(inputs, b))
 	case mode == "tui":
-		go runTUI(inputs, b)
+		runTUI()
 	case strings.HasPrefix(mode, "web:"):
-		addr := strings.TrimPrefix(mode, "web:")
-		return startWeb(ctx, addr, inputs, b)
+		return startWeb(strings.TrimPrefix(mode, "web:"))
 	default:
 		return fmt.Errorf("ui: unknown ui-mode %q", mode)
 	}

@@ -19,12 +19,21 @@
 - id: codemode
   plugin: codemode
 
+# User configuration in JS: runs ~/.bough/init.js then ./.bough/init.js
+# (both optional) with a global `bough` API; may provide theme, keymap,
+# llm, cognition, projection. See docs/INIT.md.
+- id: init-js
+  plugin: init-js
+
 - id: tools
   plugin: tools-basic
 
 # Optional loop seams. The loop resolves these at mount time, so their
 # rows sit above the loop row (within a mount pass, row order is the
 # tie-breaker).
+
+- id: history
+  plugin: history
 
 - id: hooks
   plugin: hooks-js

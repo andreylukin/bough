@@ -80,5 +80,32 @@ func TestLoopCodeResultDoneSequence(t *testing.T) {
 	if len(code.ran) != 1 || code.ran[0] != "console.log('CODE!')\n" {
 		t.Fatalf("codemode ran %q", code.ran)
 	}
+
+	// The turn is recorded in history: input first, then the event
+	// mirror (a run's output lands as a "result" entry either way).
+	r, err := kernel.Get[*runner](kctx, "runner")
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+	var entryKinds []string
+	for _, e := range r.hist.Entries() {
+		entryKinds = append(entryKinds, e.Kind)
+	}
+	wantEntries := []string{"input", "assistant", "code", "result", "assistant", "done"}
+	if len(entryKinds) != len(wantEntries) {
+		t.Fatalf("entry kinds = %v, want %v", entryKinds, wantEntries)
+	}
+	for i := range wantEntries {
+		if entryKinds[i] != wantEntries[i] {
+			t.Fatalf("entry kinds = %v, want %v", entryKinds, wantEntries)
+		}
+	}
+	entries := r.hist.Entries()
+	if entries[0].Data["text"] != "do the thing" {
+		t.Fatalf("input entry = %+v", entries[0])
+	}
+	if entries[3].Data["code"] != "console.log('CODE!')\n" {
+		t.Fatalf("result entry carries no code: %+v", entries[3])
+	}
 	kctx.Unmount()
 }

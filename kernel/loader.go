@@ -37,8 +37,17 @@ func LoadFile(path string) ([]Row, error) {
 
 // Mount instantiates and applies every enabled row, ordering by
 // dependencies: a row mounts once every key in its plugin's Inject()
-// is provided. Fails loud naming the row and missing keys if stuck.
+// is provided. Fails loud naming the row and missing keys if stuck —
+// initial boot does not tolerate a degraded tree (Reconcile does).
+// After the strict fixpoint a settle pass reloads any row whose
+// optional dependencies (Get misses during Apply) were provided by a
+// later-mounted row; if that reload fails, Mount fails.
 func (c *Context) Mount(rows []Row) error {
+	c.mu.Lock()
+	c.desired = append([]Row(nil), rows...)
+	c.failed = map[string]failure{}
+	c.mu.Unlock()
+
 	type pending struct {
 		row Row
 		p   Plugin
@@ -77,6 +86,16 @@ func (c *Context) Mount(rows []Row) error {
 			return fmt.Errorf("kernel: unresolvable dependencies:\n  %s",
 				strings.Join(lines, "\n  "))
 		}
+	}
+	c.settle()
+	c.mu.Lock()
+	var failedRows []string
+	for id, f := range c.failed {
+		failedRows = append(failedRows, fmt.Sprintf("row %q: %v", id, f.err))
+	}
+	c.mu.Unlock()
+	if len(failedRows) > 0 {
+		return fmt.Errorf("kernel: mount:\n  %s", strings.Join(failedRows, "\n  "))
 	}
 	return nil
 }

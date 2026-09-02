@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/history"
 )
 
 // recordLLM records the system prompt and every message it was sent,
@@ -132,15 +133,129 @@ func TestHookDeniesCodeExec(t *testing.T) {
 	if !found {
 		t.Fatalf("no denied result in events %v %v", kinds, texts)
 	}
-	// history got the denial as the block's result
+	// history got the denial as a result entry, so the projection
+	// feeds it back to the model
 	got := ""
-	for _, m := range r.history {
-		if strings.Contains(m.Content, "[hook denied: too spicy]") {
-			got = m.Content
+	for _, e := range r.hist.Entries() {
+		if text, _ := e.Data["text"].(string); e.Kind == "result" && strings.Contains(text, "[hook denied: too spicy]") {
+			got = text
 		}
 	}
 	if got == "" {
-		t.Fatalf("denial not fed back to model; history %v", r.history)
+		t.Fatalf("denial not recorded as result entry; entries %v", r.hist.Entries())
+	}
+}
+
+// buildRunnerWith mounts the loop plugin against a stub llm/codemode
+// plus any extra services (history/cognition/projection/...).
+func buildRunnerWith(t *testing.T, llm *recordLLM, extra map[string]any) *runner {
+	t.Helper()
+	kctx := kernel.NewContext()
+	kctx.Provide("llm", llm)
+	kctx.Provide("codemode", &stubCode{})
+	for k, v := range extra {
+		kctx.Provide(k, v)
+	}
+	if err := (&plugin{}).Apply(kctx, nil); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	r, err := kernel.Get[*runner](kctx, "runner")
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+	t.Cleanup(kctx.Unmount)
+	return r
+}
+
+// stubProjection collapses all entries into one fixed user message.
+type stubProjection struct{ saw []history.Entry }
+
+func (p *stubProjection) Project(entries []history.Entry) []Message {
+	p.saw = append([]history.Entry(nil), entries...)
+	return []Message{{Role: "user", Content: "PROJECTED"}}
+}
+
+type stubCognition struct{ base string }
+
+func (c *stubCognition) System(base string) string {
+	c.base = base
+	return "COGNITION SAYS"
+}
+
+func TestProjectionOverridesMessages(t *testing.T) {
+	llm := &recordLLM{}
+	proj := &stubProjection{}
+	r := buildRunnerWith(t, llm, map[string]any{"projection": proj})
+
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "hello", collect(&kinds, &texts)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(llm.messages) != 1 || llm.messages[0].Content != "PROJECTED" {
+		t.Fatalf("llm saw %v, want single PROJECTED message", llm.messages)
+	}
+	if len(proj.saw) != 1 || proj.saw[0].Kind != "input" || proj.saw[0].Data["text"] != "hello" {
+		t.Fatalf("projection saw %v, want the input entry", proj.saw)
+	}
+}
+
+func TestCognitionOverridesSystem(t *testing.T) {
+	llm := &recordLLM{}
+	cog := &stubCognition{}
+	r := buildRunnerWith(t, llm, map[string]any{"cognition": cog})
+
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "hello", collect(&kinds, &texts)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if llm.system != "COGNITION SAYS" {
+		t.Fatalf("llm system = %q, want cognition override", llm.system)
+	}
+	if !strings.Contains(cog.base, "You are bough") {
+		t.Fatalf("cognition got base %q, want built default", cog.base)
+	}
+}
+
+func TestHistoryServiceUsed(t *testing.T) {
+	llm := &recordLLM{}
+	mem := &memHistory{}
+	r := buildRunnerWith(t, llm, map[string]any{"history": mem})
+
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "hello", collect(&kinds, &texts)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := mem.Entries()
+	if len(got) != 3 || got[0].Kind != "input" || got[1].Kind != "assistant" || got[2].Kind != "done" {
+		t.Fatalf("history service entries = %v, want input/assistant/done", got)
+	}
+	if r.hist != History(mem) {
+		t.Fatal("runner did not adopt the mounted history service")
+	}
+}
+
+func TestDefaultProject(t *testing.T) {
+	entries := []history.Entry{
+		{Kind: "input", Data: map[string]any{"text": "hi"}},
+		{Kind: "assistant", Data: map[string]any{"text": "running"}},
+		{Kind: "code", Data: map[string]any{"text": "1+1"}},
+		{Kind: "result", Data: map[string]any{"text": "2", "code": "1+1"}},
+		{Kind: "error", Data: map[string]any{"text": "boom"}},
+		{Kind: "done", Data: map[string]any{"text": ""}},
+	}
+	got := DefaultProject(entries)
+	want := []Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "running"},
+		{Role: "user", Content: "[tool output]\n2"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("DefaultProject = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("DefaultProject = %v, want %v", got, want)
+		}
 	}
 }
 

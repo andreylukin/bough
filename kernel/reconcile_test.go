@@ -121,7 +121,8 @@ func TestReconcileRemovedRowDisposed(t *testing.T) {
 	}
 }
 
-// A bad candidate leaves the old tree serving.
+// An invalid candidate is rejected before anything unmounts; an
+// unsatisfiable row is tolerated as Pending while the rest reconciles.
 func TestReconcileBadCandidateKeepsOldTree(t *testing.T) {
 	var log []string
 	Register("rec-good", func() Plugin { return &recPlugin{name: "rec-good", provide: []string{"rec-svc-good"}, log: &log} })
@@ -144,13 +145,23 @@ func TestReconcileBadCandidateKeepsOldTree(t *testing.T) {
 		t.Fatalf("tree was touched: %v", log)
 	}
 
-	// Stuck dependencies: restore remounts the previous rows.
-	err = c.Reconcile([]Row{{ID: "g", Plugin: "rec-good", Config: map[string]any{"v": 2}}, {ID: "s", Plugin: "rec-stuck"}})
-	if err == nil || !strings.Contains(err.Error(), "restored") {
-		t.Fatalf("want restored error, got %v", err)
+	// Unsatisfiable dependencies: the stuck row stays Pending with its
+	// missing keys; the rest of the tree reconciles.
+	if err := c.Reconcile([]Row{{ID: "g", Plugin: "rec-good", Config: map[string]any{"v": 2}}, {ID: "s", Plugin: "rec-stuck"}}); err != nil {
+		t.Fatal(err)
 	}
 	v, gerr := Get[string](c, "rec-svc-good")
-	if gerr != nil || v != "rec-good:1" {
-		t.Fatalf("old tree not serving: %q, %v", v, gerr)
+	if gerr != nil || v != "rec-good:2" {
+		t.Fatalf("tree not reconciled: %q, %v", v, gerr)
+	}
+	var stuck *RowStatus
+	for _, rs := range c.Rows() {
+		if rs.ID == "s" {
+			stuck = &rs
+		}
+	}
+	if stuck == nil || stuck.State != StatePending ||
+		len(stuck.Missing) != 1 || stuck.Missing[0] != "rec-never-provided" {
+		t.Fatalf("stuck row status = %+v", stuck)
 	}
 }
