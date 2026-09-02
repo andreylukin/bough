@@ -106,11 +106,12 @@ func (p *tuiProc) write(s string) {
 	}
 }
 
-// quit sends the default quit key (ctrl+c reaches the app as a key —
-// bubbletea has the terminal in raw mode) and asserts a prompt, clean exit.
+// quit sends the default quit key twice (ctrl+c reaches the app as a
+// key — bubbletea has the terminal in raw mode; the first press only
+// arms the quit) and asserts a prompt, clean exit.
 func (p *tuiProc) quit() {
 	p.t.Helper()
-	p.write("\x03")
+	p.write("\x03\x03")
 	select {
 	case err := <-p.exited:
 		p.exited <- err
@@ -138,6 +139,10 @@ func TestPTYEchoRoundtrip(t *testing.T) {
 	p.write("hello from the pty\r")
 	p.waitFor("echo: hello from the pty")
 	p.quit()
+	// The exit line names the session and how to get back into it.
+	if out := stripANSI(p.out.String()); !strings.Contains(out, "resume with: bough -r ") {
+		t.Fatalf("exit line missing after quit; output:\n%s", out)
+	}
 }
 
 func TestPTYQuitRestoresTerminal(t *testing.T) {

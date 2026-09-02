@@ -68,6 +68,9 @@ type uiCfg struct {
 	cmds commandsView
 	hlog historyAppender
 
+	// "cancel" seam (the loop's turn cancel); nil = nothing to stop.
+	cancel func()
+
 	// "ask" seam: nil when no ask plugin is mounted (ask events then
 	// render pending forever and the composer never routes answers).
 	ask askAnswers
@@ -175,6 +178,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if a, err := kernel.Get[askAnswers](ctx, "ask-answers"); err == nil {
 		cfg.ask = a
+	}
+	if c, err := kernel.Get[func()](ctx, "cancel"); err == nil {
+		cfg.cancel = c
 	}
 	if _, err := kernel.Get[any](ctx, "session-picker"); err == nil {
 		cfg.picker = true

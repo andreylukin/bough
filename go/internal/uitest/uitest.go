@@ -166,6 +166,12 @@ func (d *Driver) WaitFor(substr string) {
 	d.wait(func() bool { return strings.Contains(d.Frame(), substr) }, "frame to contain "+substr)
 }
 
+// WaitUntil pumps events until pred holds for the rendered frame.
+func (d *Driver) WaitUntil(pred func(frame string) bool, what string) {
+	d.t.Helper()
+	d.wait(func() bool { return pred(d.Frame()) }, what)
+}
+
 // WaitQuit pumps until the model requested tea.Quit.
 func (d *Driver) WaitQuit() {
 	d.t.Helper()

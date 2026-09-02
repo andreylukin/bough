@@ -73,7 +73,7 @@ func TestReboundQuitKey(t *testing.T) {
 	t.Parallel()
 	d := mountInit(t, `bough.setup({ui: {keymap: {quit: "ctrl+q"}}})`,
 		"codemode", "commands", "llm-echo", "init-js", "loop")
-	d.Press("ctrl+q")
+	d.Press("ctrl+q", "ctrl+q") // once arms, twice quits
 	d.WaitQuit()
 }
 

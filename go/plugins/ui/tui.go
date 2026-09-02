@@ -27,6 +27,9 @@ func runTUI() {
 				fmt.Fprintln(os.Stderr, "ui: tui:", err)
 				os.Exit(1)
 			}
+			if line := exitLine(liveCfg.Load().hist); line != "" {
+				fmt.Fprintln(os.Stderr, line)
+			}
 			interruptSelf()
 		}()
 	})

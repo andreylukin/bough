@@ -146,6 +146,7 @@ func (cm *CodeMode) Run(code string) (string, error) {
 	})
 	prevTimer := cm.timer // nested Run: restore the parent's timer after
 	cm.timer = timer
+	cm.vm.ClearInterrupt() // a cancel that landed between runs must not abort this one
 	v, err := cm.scoped(goja.Undefined(), cm.vm.ToValue(code))
 	cm.timer = prevTimer
 	timer.Stop()
@@ -177,6 +178,12 @@ func (cm *CodeMode) Pause() func() {
 	}
 	t.Stop()
 	return func() { t.Reset(cm.timeout) }
+}
+
+// Interrupt aborts the running script (the loop's turn cancel); the
+// next Run clears it, so an interrupt landing between runs is inert.
+func (cm *CodeMode) Interrupt() {
+	cm.vm.Interrupt("codemode: cancelled")
 }
 
 // RunHook runs fileBody as the body of function(event){...} in the same

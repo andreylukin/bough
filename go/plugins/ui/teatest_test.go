@@ -17,6 +17,13 @@ import (
 // startProgram runs the model under teatest with a fake loop: send
 // pushes the input line to sendFn, and events flow through the channel
 // exactly as the live broadcaster would deliver them.
+// sendQuit presses the quit key twice: one press only arms the quit
+// (see stop.go), the second within the window quits.
+func sendQuit(tm *teatest.TestModel) {
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+}
+
 func startProgram(t *testing.T, events chan Event, sendFn func(string)) *teatest.TestModel {
 	t.Helper()
 	t.Cleanup(func() { close(events) }) // unblock the final waitEvent
@@ -58,7 +65,7 @@ func TestProgramTurnFlow(t *testing.T) {
 	// drains the output reader).
 	waitForOutput(t, tm, "❯ hello world", "echo: hello world")
 
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
 }
 
@@ -81,7 +88,7 @@ func TestProgramSpinnerBetweenSendAndDone(t *testing.T) {
 
 	close(gate)
 	waitForOutput(t, tm, "late")
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
 }
 
@@ -93,7 +100,7 @@ func TestProgramExternalEventsRender(t *testing.T) {
 	events <- Event{Kind: "result", Text: "hi from codemode"}
 	events <- Event{Kind: "done"}
 	waitForOutput(t, tm, "hi from codemode", "Ran: echo hi from codemode (1 line)")
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
 }
 
@@ -113,7 +120,7 @@ func TestProgramMouseClickTogglesBlock(t *testing.T) {
 	// Clicking the body (still row 0) collapses it again.
 	tm.Send(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
 	waitForOutput(t, tm, "▸ result (20 lines)")
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
 }
 
@@ -121,7 +128,7 @@ func TestProgramQuitCleanly(t *testing.T) {
 	t.Parallel()
 	tm := startProgram(t, make(chan Event, 16), func(string) {})
 	waitForOutput(t, tm, "bough") // first frame drawn
-	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
 	if fm, ok := tm.FinalModel(t).(model); !ok {
 		t.Errorf("final model has unexpected type %T", tm.FinalModel(t))

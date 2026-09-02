@@ -12,17 +12,28 @@ import (
 func TestQuitOnDefaultCtrlC(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
+	if hasQuit(d.press(keyCtrl('c'))) {
+		t.Error("a single ctrl+c should only arm the quit")
+	}
+	if !strings.Contains(d.plain(), quitHint) {
+		t.Errorf("first ctrl+c should show %q:\n%s", quitHint, d.plain())
+	}
 	if !hasQuit(d.press(keyCtrl('c'))) {
-		t.Error("ctrl+c should quit with the default keymap")
+		t.Error("second ctrl+c should quit with the default keymap")
 	}
 }
 
 func TestKeymapRebindQuit(t *testing.T) {
 	t.Parallel()
 	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"quit": "ctrl+q"}, nil))
-	if !hasQuit(d.press(keyCtrl('q'))) {
-		t.Error("ctrl+q should quit after rebind")
+	d.press(keyCtrl('q'))
+	if !strings.Contains(d.plain(), "press ctrl+q again to quit") {
+		t.Errorf("hint should name the rebound key:\n%s", d.plain())
 	}
+	if !hasQuit(d.press(keyCtrl('q'))) {
+		t.Error("ctrl+q twice should quit after rebind")
+	}
+	d.press(keyCtrl('c'))
 	if hasQuit(d.press(keyCtrl('c'))) {
 		t.Error("old quit key ctrl+c should be inert after rebind")
 	}
@@ -234,7 +245,7 @@ func TestInspectorRebound(t *testing.T) {
 // fillTranscript adds enough blocks to overflow the 22-line viewport.
 func fillTranscript(d *drv, n int) {
 	for i := 0; i < n; i++ {
-		d.event("user", "message")
+		d.event("assistant", "message") // not "user": those would be recallable prompts
 	}
 }
 
