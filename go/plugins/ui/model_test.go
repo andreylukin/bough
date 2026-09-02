@@ -93,6 +93,7 @@ func TestCollapseDefaults(t *testing.T) {
 // clickAt sends a left click at terminal row y through Update.
 func clickAt(m model, y int) model {
 	next, _ := m.Update(tea.MouseClickMsg{X: 0, Y: y, Button: tea.MouseLeft})
+	next, _ = next.(model).Update(tea.MouseReleaseMsg{X: 0, Y: y, Button: tea.MouseLeft})
 	return next.(model)
 }
 

@@ -155,8 +155,8 @@ Available in the runtime:
 - tools.bash(cmd) -> string: run a shell command, returns its output.
   It is killed after 60 s (the error says so); split long work into
   shorter commands or background it yourself.
-- tools.readFile(path) -> string: read a file
-- tools.writeFile(path, content): write a file
+- tools.view(path, [start, end]) -> string: a file's lines, numbered ("12│text"); optional 1-based inclusive range
+- tools.patch(path, old, new) -> string: replace ONE exact occurrence of old with new (copy old verbatim from view, enough lines to be unique); old = "" creates a new file with new
 - console.log(...): print; everything printed is returned to you
 
 Each code block you write is executed and its output is sent back to you

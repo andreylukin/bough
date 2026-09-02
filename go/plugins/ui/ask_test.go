@@ -152,6 +152,7 @@ func TestAskOptionClickAnswers(t *testing.T) {
 		t.Fatal("no ask block range")
 	}
 	d.feed(tea.MouseClickMsg{X: 0, Y: start + 1 - d.m.vp.YOffset(), Button: tea.MouseLeft})
+	d.feed(tea.MouseReleaseMsg{X: 0, Y: start + 1 - d.m.vp.YOffset(), Button: tea.MouseLeft})
 	if len(fa.texts) != 1 || fa.texts[0] != "red" {
 		t.Fatalf("clicking option row 1 should answer red: %v", fa.texts)
 	}

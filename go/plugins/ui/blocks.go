@@ -72,9 +72,9 @@ func codeLabel(code string) string {
 		arg = string(r[:60]) + "…"
 	}
 	switch m[1] {
-	case "writeFile":
+	case "patch":
 		return "Edited " + arg
-	case "readFile":
+	case "view":
 		return "Read " + arg
 	case "bash":
 		return "Ran: " + strings.SplitN(arg, "\n", 2)[0]

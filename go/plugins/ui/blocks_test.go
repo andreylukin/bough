@@ -303,14 +303,14 @@ func TestCodeLabels(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("x", 70)
 	for code, want := range map[string]string{
-		`tools.writeFile("main.go", src)`:    "Edited main.go",
-		`const s = tools.readFile('go.mod')`: "Read go.mod",
-		"tools.bash(`go test ./...`)":        "Ran: go test ./...",
-		`tools.bash("` + long + `")`:         "Ran: " + long[:60] + "…",
-		`tools.ask("ok?", ["y","n"])`:        "Asked you",
-		`tools.spawn("review the diff")`:     "Subagent: review the diff",
-		`console.log(1)`:                     "code js",
-		`tools.bash(cmd)`:                    "Ran: ",
+		`tools.patch("main.go", a, b)`:   "Edited main.go",
+		`const s = tools.view('go.mod')`: "Read go.mod",
+		"tools.bash(`go test ./...`)":    "Ran: go test ./...",
+		`tools.bash("` + long + `")`:     "Ran: " + long[:60] + "…",
+		`tools.ask("ok?", ["y","n"])`:    "Asked you",
+		`tools.spawn("review the diff")`: "Subagent: review the diff",
+		`console.log(1)`:                 "code js",
+		`tools.bash(cmd)`:                "Ran: ",
 	} {
 		if got := codeLabel(code); got != want {
 			t.Errorf("codeLabel(%q) = %q, want %q", code, got, want)

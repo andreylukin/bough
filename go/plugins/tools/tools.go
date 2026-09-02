@@ -1,4 +1,4 @@
-// Package tools is the "tools-basic" plugin: bash, readFile, writeFile
+// Package tools is the "tools-basic" plugin: bash, view, patch
 // registered into the codemode service. It also provides "turn-stats":
 // the files written and the last bash exit code since the last Take,
 // which the loop stamps onto its end-of-turn "done" entry.
@@ -10,6 +10,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,8 +75,8 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	}
 	st := &Stats{}
 	reg.RegisterTool("bash", st.bash)
-	reg.RegisterTool("readFile", readFile)
-	reg.RegisterTool("writeFile", st.writeFile)
+	reg.RegisterTool("view", view)
+	reg.RegisterTool("patch", st.patch)
 	ctx.Provide("turn-stats", st)
 	return nil
 }
@@ -99,18 +102,71 @@ func (s *Stats) bash(cmd string) (string, error) {
 	return string(out), nil
 }
 
-func readFile(path string) (string, error) {
-	b, err := os.ReadFile(path)
+// view returns a file's lines numbered "N│text", optionally only
+// lines start..end (1-based, inclusive; end 0 = to the end). Numbers
+// make patch targets and error lines easy to refer to.
+func view(path string, rng ...int) (string, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-	return string(b), nil
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	start, end := 1, len(lines)
+	if len(rng) > 0 && rng[0] > 0 {
+		start = rng[0]
+	}
+	if len(rng) > 1 && rng[1] > 0 && rng[1] < end {
+		end = rng[1]
+	}
+	if start > len(lines) {
+		return "", fmt.Errorf("view: %s has %d lines, start %d is past the end", path, len(lines), start)
+	}
+	width := len(strconv.Itoa(end))
+	var b strings.Builder
+	for n := start; n <= end; n++ {
+		fmt.Fprintf(&b, "%*d│%s\n", width, n, lines[n-1])
+	}
+	return b.String(), nil
 }
 
-func (s *Stats) writeFile(path, content string) (string, error) {
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+// patch replaces one exact occurrence of old with new in path. old
+// must match exactly once (include more context when it repeats). An
+// empty old creates the file with new when it does not exist yet.
+func (s *Stats) patch(path, old, new string) (string, error) {
+	data, err := os.ReadFile(path)
+	if old == "" {
+		if err == nil {
+			return "", fmt.Errorf("patch: %s exists; give the text to replace (old) or create a new path", path)
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		if dir := filepath.Dir(path); dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return "", err
+			}
+		}
+		if err := os.WriteFile(path, []byte(new), 0o644); err != nil {
+			return "", err
+		}
+		s.wrote(path)
+		return fmt.Sprintf("created %s (%d bytes)", path, len(new)), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	switch n := strings.Count(string(data), old); n {
+	case 0:
+		return "", fmt.Errorf("patch: old text not found in %s (view it and copy the exact lines)", path)
+	case 1:
+	default:
+		return "", fmt.Errorf("patch: old text occurs %d times in %s; include more surrounding lines", n, path)
+	}
+	out := strings.Replace(string(data), old, new, 1)
+	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
 		return "", err
 	}
 	s.wrote(path)
-	return fmt.Sprintf("wrote %d bytes to %s", len(content), path), nil
+	return fmt.Sprintf("patched %s (%+d lines)", path,
+		strings.Count(new, "\n")-strings.Count(old, "\n")), nil
 }

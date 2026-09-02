@@ -114,11 +114,13 @@ func TestProgramMouseClickTogglesBlock(t *testing.T) {
 	// the first transcript row.
 	waitForOutput(t, tm, "▸ result (20 lines)")
 	tm.Send(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
+	tm.Send(tea.MouseReleaseMsg{X: 0, Y: 0, Button: tea.MouseLeft})
 	// Expanded: the body is visible (the ▾ header itself is pushed off
 	// the top of the 22-row viewport by the 20-line body + box).
 	waitForOutput(t, tm, "│ BODYLINE")
 	// Clicking the body (still row 0) collapses it again.
 	tm.Send(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
+	tm.Send(tea.MouseReleaseMsg{X: 0, Y: 0, Button: tea.MouseLeft})
 	waitForOutput(t, tm, "▸ result (20 lines)")
 	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))

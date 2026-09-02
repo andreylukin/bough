@@ -35,7 +35,7 @@ type CodeMode struct {
 }
 
 // nativeFrame is the Go-frame tail goja appends to a GoError message
-// ("... at github.com/andreylukin/bough/plugins/tools.readFile (native)");
+// ("... at github.com/andreylukin/bough/plugins/tools.view (native)");
 // noise to the model and the user, stripped by cleanErr.
 var nativeFrame = regexp.MustCompile(` at github\.com/andreylukin/bough/\S+ \(native\)`)
 

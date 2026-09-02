@@ -25,6 +25,7 @@ func frameRow(d *drv, substr string) int {
 
 func (d *drv) click(y int) {
 	d.feed(tea.MouseClickMsg{X: 0, Y: y, Button: tea.MouseLeft})
+	d.feed(tea.MouseReleaseMsg{X: 0, Y: y, Button: tea.MouseLeft})
 }
 
 func TestClickToggleCoordsFromRenderedFrame(t *testing.T) {

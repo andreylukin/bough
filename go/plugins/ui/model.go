@@ -85,6 +85,8 @@ type model struct {
 	flash      string
 	trailing   string        // assistant prose after an executed fence, emitted after its result
 	newBelow   bool          // blocks arrived while scrolled up (status cue)
+	sel        selection     // mouse drag selection (see select.go)
+	lines      []string      // rendered content lines, for the selection
 	stop       stopState     // quit-key arming (see stop.go)
 	comp       composerState // prompt recall (see composer.go)
 	md         *glamour.TermRenderer
@@ -161,7 +163,8 @@ func (m *model) refresh() {
 		start += n
 		parts = append(parts, part)
 	}
-	m.vp.SetContent(strings.Join(parts, "\n"))
+	m.lines = strings.Split(strings.Join(parts, "\n"), "\n")
+	m.vp.SetContent(strings.Join(m.highlight(m.lines, cfg), "\n"))
 	if atBottom {
 		m.vp.GotoBottom()
 	}
@@ -417,8 +420,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		return m, m.handleClick(msg.Mouse())
 
-	case tea.MouseReleaseMsg, tea.MouseMotionMsg:
+	case tea.MouseMotionMsg:
+		m.dragSelect(msg.Mouse())
 		return m, nil // never the composer's business
+
+	case tea.MouseReleaseMsg:
+		return m, m.releaseSelect(msg.Mouse())
 	}
 
 	var cmds []tea.Cmd
@@ -581,7 +588,14 @@ func (m *model) handleClick(mouse tea.Mouse) tea.Cmd {
 	if mouse.Y >= m.vp.Height() {
 		return nil // composer
 	}
-	row := mouse.Y + m.vp.YOffset()
+	m.pressSelect(mouse) // acts on release unless the mouse moves (drag = select)
+	return nil
+}
+
+// clickTranscript is a plain click (press and release without a drag)
+// on a transcript row: answer an ask option, else toggle the block.
+func (m *model) clickTranscript(y int) tea.Cmd {
+	row := y + m.vp.YOffset()
 	for _, r := range m.ranges {
 		if row >= r.start && row < r.end {
 			b := &m.blocks[r.idx]

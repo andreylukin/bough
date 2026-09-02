@@ -208,10 +208,15 @@ func TestMouseNeverWritesComposer(t *testing.T) {
 	d.event("result", nLines(10))
 	row := frameRow(d, "▸ result (10 lines)")
 	d.feed(tea.MouseClickMsg{X: 3, Y: row, Button: tea.MouseLeft})
+	d.feed(tea.MouseReleaseMsg{X: 3, Y: row, Button: tea.MouseLeft})
+	if d.m.blocks[0].collapsed {
+		t.Error("click should expand the block")
+	}
+	d.feed(tea.MouseClickMsg{X: 3, Y: row, Button: tea.MouseLeft})
 	d.feed(tea.MouseMotionMsg{X: 8, Y: row, Button: tea.MouseLeft})
 	d.feed(tea.MouseReleaseMsg{X: 8, Y: row, Button: tea.MouseLeft})
 	if d.m.blocks[0].collapsed {
-		t.Error("click should expand the block")
+		t.Error("a drag is a selection, not a click: the block must stay as it was")
 	}
 	if got := d.m.input.Value(); got != "" {
 		t.Errorf("mouse activity wrote into the composer: %q", got)
