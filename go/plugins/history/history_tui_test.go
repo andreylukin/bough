@@ -28,18 +28,21 @@ func mountWithStore(t *testing.T, name string) *uitest.Driver {
 		"codemode", "llm-echo", "loop")
 }
 
-// The status bar's entry count grows turn over turn: the loop appends
-// to the real store and the renderer reads it live.
-func TestStatusBarEntryCountAcrossTurns(t *testing.T) {
+// The inspector's entry list grows turn over turn: the loop appends
+// to the real store and the renderer reads it live (the status bar no
+// longer counts entries; /sessions and the inspector own that).
+func TestInspectorEntryCountAcrossTurns(t *testing.T) {
 	t.Parallel()
 	d := mountWithStore(t, "session-a.jsonl")
 	d.Say("first")
-	d.WaitFor("3 entries") // input + assistant + done
-	if !strings.Contains(d.Frame(), "session-a.jsonl") {
-		t.Fatalf("status bar missing session file name:\n%s", d.Frame())
-	}
+	d.WaitFor("echo: first")
+	d.Press("ctrl+o")
+	d.WaitFor("   3 ") // input + assistant + done
+	d.Press("ctrl+o")
 	d.Say("second")
-	d.WaitFor("6 entries")
+	d.WaitFor("echo: second")
+	d.Press("ctrl+o")
+	d.WaitFor("   6 ")
 }
 
 // The inspector overlay lists the real entries and closes again.

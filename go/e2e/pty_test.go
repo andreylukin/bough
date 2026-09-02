@@ -125,10 +125,9 @@ func (p *tuiProc) quit() {
 func TestPTYBootsToStatusBar(t *testing.T) {
 	t.Parallel()
 	p := launchTUI(t, launchOpts{})
-	// Status bar: " bough · <provider> · N rows" plus the history entry count.
+	// Status bar: " bough · <model>" left, "? keys" right.
 	p.waitFor("bough")
-	p.waitFor("llm-echo")
-	p.waitFor("rows")
+	p.waitFor("? keys")
 	p.quit()
 }
 

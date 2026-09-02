@@ -54,8 +54,36 @@ func TestAskRendersQuestionAndOptions(t *testing.T) {
 	if d.m.pendingAsk != "ask-1" {
 		t.Errorf("pendingAsk = %q, want ask-1", d.m.pendingAsk)
 	}
-	if d.m.input.Placeholder != "(answering)" {
-		t.Errorf("placeholder = %q, want (answering)", d.m.input.Placeholder)
+	if d.m.input.Placeholder != askPlaceholder {
+		t.Errorf("placeholder = %q, want %q", d.m.input.Placeholder, askPlaceholder)
+	}
+}
+
+// A pending ask must not swallow a "/" or "!" line: those route as
+// usual and the ask stays pending.
+func TestAskDoesNotSwallowSlashOrBang(t *testing.T) {
+	t.Parallel()
+	fa := &fakeAsk{}
+	cfg := cfgWith(t, nil, nil, nil)
+	cfg.ask = fa
+	cfg.cmds = reg(t, "help")
+	d := newDrv(t, 80, 24, cfg)
+	d.feed(askEvent())
+	d.typeStr("/help")
+	d.press(keyEnter())
+	if len(fa.ids) != 0 {
+		t.Fatalf("a / line must not answer the ask: %v", fa.texts)
+	}
+	if d.m.pendingAsk != "ask-1" {
+		t.Fatal("the ask should still be pending after a / command")
+	}
+	if p := d.plain(); !strings.Contains(p, "help ran") {
+		t.Errorf("/help should have dispatched:\n%s", p)
+	}
+	d.typeStr("!true")
+	d.press(keyEnter())
+	if len(fa.ids) != 0 || d.m.pendingAsk != "ask-1" {
+		t.Fatalf("a ! line must not answer the ask: %v pending=%q", fa.texts, d.m.pendingAsk)
 	}
 }
 

@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -36,6 +37,17 @@ type anthropicLLM struct {
 	once   sync.Once
 	client anthropic.Client
 	err    error
+
+	mu    sync.Mutex
+	usage Usage
+}
+
+// Usage implements UsageReporter: token counts only (no price table
+// here, so Priced stays false).
+func (a *anthropicLLM) Usage() Usage {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.usage
 }
 
 func (a *anthropicLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
@@ -70,8 +82,16 @@ func (a *anthropicLLM) Complete(ctx context.Context, system string, messages []M
 
 	resp, err := a.client.Messages.New(ctx, params)
 	if err != nil {
+		var apiErr *anthropic.Error
+		if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+			return "", fmt.Errorf("llm-anthropic: model %q not found on anthropic — switch with /model", a.model)
+		}
 		return "", fmt.Errorf("llm-anthropic: %w", err)
 	}
+	a.mu.Lock()
+	a.usage.InputTokens += int(resp.Usage.InputTokens)
+	a.usage.OutputTokens += int(resp.Usage.OutputTokens)
+	a.mu.Unlock()
 	var out string
 	for _, b := range resp.Content {
 		if b.Type == "text" {

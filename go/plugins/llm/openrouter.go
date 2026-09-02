@@ -37,6 +37,17 @@ type openrouterLLM struct {
 	once sync.Once
 	key  string
 	err  error
+
+	mu    sync.Mutex
+	usage Usage
+}
+
+// Usage implements UsageReporter: OpenRouter returns a usage object
+// on every response, cost included since the request asks for it.
+func (o *openrouterLLM) Usage() Usage {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.usage
 }
 
 type orMessage struct {
@@ -70,6 +81,7 @@ func (o *openrouterLLM) Complete(ctx context.Context, system string, messages []
 	body, err := json.Marshal(map[string]any{
 		"model":    o.model,
 		"messages": msgs,
+		"usage":    map[string]any{"include": true},
 	})
 	if err != nil {
 		return "", fmt.Errorf("llm-openrouter: %w", err)
@@ -93,7 +105,7 @@ func (o *openrouterLLM) Complete(ctx context.Context, system string, messages []
 		return "", fmt.Errorf("llm-openrouter: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("llm-openrouter: HTTP %d: %s", resp.StatusCode, data)
+		return "", openrouterErr(resp.StatusCode, o.model, data)
 	}
 
 	var parsed struct {
@@ -103,6 +115,11 @@ func (o *openrouterLLM) Complete(ctx context.Context, system string, messages []
 		Error *struct {
 			Message string `json:"message"`
 		} `json:"error"`
+		Usage *struct {
+			PromptTokens     int     `json:"prompt_tokens"`
+			CompletionTokens int     `json:"completion_tokens"`
+			Cost             float64 `json:"cost"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return "", fmt.Errorf("llm-openrouter: bad response: %w", err)
@@ -113,5 +130,39 @@ func (o *openrouterLLM) Complete(ctx context.Context, system string, messages []
 	if len(parsed.Choices) == 0 {
 		return "", fmt.Errorf("llm-openrouter: no choices in response")
 	}
+	if u := parsed.Usage; u != nil {
+		o.mu.Lock()
+		o.usage.InputTokens += u.PromptTokens
+		o.usage.OutputTokens += u.CompletionTokens
+		o.usage.Cost += u.Cost
+		o.usage.Priced = true
+		o.mu.Unlock()
+	}
 	return parsed.Choices[0].Message.Content, nil
+}
+
+// openrouterErr formats a non-200 response. A 400/404 is almost
+// always an unknown model id, so it reads as such; only the parsed
+// error message is quoted, never the raw body (its metadata carries
+// the account's user_id).
+func openrouterErr(status int, model string, data []byte) error {
+	var parsed struct {
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	msg := ""
+	if json.Unmarshal(data, &parsed) == nil && parsed.Error != nil {
+		msg = parsed.Error.Message
+	}
+	if status == http.StatusBadRequest || status == http.StatusNotFound {
+		if msg != "" {
+			return fmt.Errorf("llm-openrouter: model %q not found on openrouter (%s) — switch with /model", model, msg)
+		}
+		return fmt.Errorf("llm-openrouter: model %q not found on openrouter — switch with /model", model)
+	}
+	if msg == "" {
+		msg = http.StatusText(status)
+	}
+	return fmt.Errorf("llm-openrouter: HTTP %d: %s", status, msg)
 }

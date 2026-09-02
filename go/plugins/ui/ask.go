@@ -13,6 +13,11 @@ import (
 	"strings"
 )
 
+// askPlaceholder replaces the composer placeholder while an ask is
+// pending; the status bar says "waiting for you" and the spinner
+// stops (see statusbar.go).
+const askPlaceholder = "type a number or your answer · esc to skip"
+
 // renderAsk renders one ask block: pending = accent question over
 // numbered option rows (hit-testing in handleClick relies on option i
 // sitting on line i of the part); resolved = the "❯? question →

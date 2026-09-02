@@ -11,6 +11,7 @@ import (
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/history"
+	"github.com/andreylukin/bough/plugins/llm"
 )
 
 // Live wiring shared by the tui and web modes across row remounts.
@@ -52,13 +53,14 @@ type askAnswers interface {
 // current one through liveCfg on every render, so a remount (new
 // theme/keymap row, history landing) restyles running views.
 type uiCfg struct {
-	theme   theme
-	keys    map[string]string // action -> key
-	action  map[string]string // key -> action (derived)
-	status   string      // status-bar left text
-	hist     historyView // nil when no history service
-	mdStyle  string      // "dark"/"light" glamour override; "" = detect
-	collapse string      // "all" | "large" | "none": which code/result blocks start collapsed
+	theme    theme
+	keys     map[string]string // action -> key
+	action   map[string]string // key -> action (derived)
+	status   string            // status-bar left text
+	hist     historyView       // nil when no history service
+	usage    llm.UsageReporter // nil when the llm service reports no usage
+	mdStyle  string            // "dark"/"light" glamour override; "" = detect
+	collapse string            // "all" | "large" | "none": which code/result blocks start collapsed
 
 	// "/" command seam: with no commands service, "/" is plain text
 	// and the palette never opens. hlog records dispatches to history
@@ -153,22 +155,24 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 		hlog = a
 	}
 
+	// Status bar identity: "bough · <model>" (the provider name when
+	// the row names no model).
 	status := "bough"
-	rows := ctx.Rows()
-	provider := ""
-	for _, r := range rows {
+	for _, r := range ctx.Desired() {
 		if r.ID == "llm" || strings.HasPrefix(r.Plugin, "llm-") {
-			provider = r.Plugin
+			status = "bough · " + r.Plugin
+			if mdl, ok := r.Config["model"].(string); ok && mdl != "" {
+				status = "bough · " + mdl
+			}
 		}
 	}
-	if provider != "" {
-		status += " · " + provider
-	}
-	status += fmt.Sprintf(" · %d rows", len(rows))
 	cfg := newCfg(t, keys, status, hist)
 	cfg.mdStyle = mdStyle
 	cfg.cmds = cmds
 	cfg.hlog = hlog
+	if u, err := kernel.Get[llm.UsageReporter](ctx, "llm"); err == nil {
+		cfg.usage = u
+	}
 	if a, err := kernel.Get[askAnswers](ctx, "ask-answers"); err == nil {
 		cfg.ask = a
 	}

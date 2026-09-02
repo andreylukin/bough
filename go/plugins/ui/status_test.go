@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/andreylukin/bough/plugins/llm"
 )
 
 func TestStatusBarShowsIdentity(t *testing.T) {
@@ -17,19 +19,56 @@ func TestStatusBarShowsIdentity(t *testing.T) {
 	}
 }
 
-func TestStatusBarShowsEntryCountAndBasename(t *testing.T) {
+// The bar is identity · usage · "? keys" — no session file or entry
+// count (that is /sessions' job).
+func TestStatusBarShowsUsageAndKeysHint(t *testing.T) {
 	t.Parallel()
 	h := histWith("/home/x/.bough/history/2026-09-01-abc.jsonl", "a", "b", "c")
-	d := newDrv(t, 80, 24, cfgWith(t, nil, nil, h))
+	cfg := cfgWith(t, nil, nil, h)
+	d := newDrv(t, 80, 24, cfg)
 	p := d.plain()
-	if !strings.Contains(p, "3 entries") {
-		t.Errorf("status bar missing entry count:\n%s", p)
+	if strings.Contains(p, "entries") || strings.Contains(p, ".jsonl") {
+		t.Errorf("status bar should not show the session file:\n%s", p)
 	}
-	if !strings.Contains(p, "2026-09-01-abc.jsonl") {
-		t.Errorf("status bar missing history basename:\n%s", p)
+	if !strings.Contains(p, "? keys") {
+		t.Errorf("status bar missing the keys hint:\n%s", p)
 	}
-	if strings.Contains(p, "/home/x/.bough") {
-		t.Errorf("status bar should show basename, not full path:\n%s", p)
+	cfg.usage = fakeUsage{llm.Usage{InputTokens: 1200, OutputTokens: 300, Cost: 0.0042, Priced: true}}
+	if p := d.plain(); !strings.Contains(p, "$0.0042 · ? keys") {
+		t.Errorf("status bar missing the priced usage:\n%s", p)
+	}
+	cfg.usage = fakeUsage{llm.Usage{InputTokens: 1200, OutputTokens: 300}}
+	if p := d.plain(); !strings.Contains(p, "1.5k tok · ? keys") {
+		t.Errorf("status bar missing the token usage:\n%s", p)
+	}
+}
+
+type fakeUsage struct{ u llm.Usage }
+
+func (f fakeUsage) Usage() llm.Usage { return f.u }
+
+// A pending ask stops the spinner and says the turn is waiting on the
+// user; the ask's placeholder tells them how to answer.
+func TestStatusBarWaitingOnAsk(t *testing.T) {
+	t.Parallel()
+	d, _ := askDrv(t)
+	d.typeStr("go")
+	d.press(keyEnter())
+	d.feed(askEvent())
+	p := d.plain()
+	if !strings.Contains(p, "waiting for you") {
+		t.Errorf("status bar should say waiting for you:\n%s", p)
+	}
+	if spinnerFrameIn(p) {
+		t.Errorf("spinner should stop while an ask is pending:\n%s", p)
+	}
+	if !strings.Contains(p, "type a number or your answer") {
+		t.Errorf("ask placeholder missing:\n%s", p)
+	}
+	d.typeStr("1")
+	d.press(keyEnter())
+	if p := d.plain(); strings.Contains(p, "waiting for you") || !spinnerFrameIn(p) {
+		t.Errorf("answering should resume the running state:\n%s", p)
 	}
 }
 

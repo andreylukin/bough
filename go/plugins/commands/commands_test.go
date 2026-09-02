@@ -8,6 +8,7 @@ import (
 
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/history"
+	"github.com/andreylukin/bough/plugins/llm"
 )
 
 func text(out string) func(string) (string, error) {
@@ -134,6 +135,81 @@ func TestPluginBuiltins(t *testing.T) {
 		if !errors.As(err, &a) || a != want {
 			t.Fatalf("/%s -> (%v), want UIAction %q", name, err, want)
 		}
+	}
+}
+
+// Built-ins list before skills, each group alphabetical; /help puts
+// a "skills" heading over the skill rows and ellipsizes summaries at
+// a word boundary.
+func TestListBuiltinsBeforeSkills(t *testing.T) {
+	r := NewRegistry()
+	long := strings.Repeat("word ", 30)
+	for _, in := range []CommandInfo{
+		{Name: "zeta", Kind: "skill", Summary: long},
+		{Name: "alpha", Kind: "skill", Summary: "a skill"},
+		{Name: "quit", Kind: "builtin"},
+		{Name: "help"},
+	} {
+		if err := r.Register(in, text("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var names []string
+	for _, in := range r.List() {
+		names = append(names, in.Name)
+	}
+	if got := strings.Join(names, " "); got != "help quit alpha zeta" {
+		t.Fatalf("List order = %q, want builtins first then skills", got)
+	}
+	help := helpText(r)
+	lines := strings.Split(help, "\n")
+	if len(lines) != 5 || lines[2] != "skills" {
+		t.Fatalf("/help should carry a skills heading before the skill rows:\n%s", help)
+	}
+	if strings.Contains(help, long) || !strings.Contains(help, "word…") {
+		t.Fatalf("/help should ellipsize long summaries at a word boundary:\n%s", help)
+	}
+}
+
+func TestEllipsize(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"short", "short"},
+		{"one two three four", "one two…"},
+		{"averyveryverylongword", "averyvery…"},
+	} {
+		if got := Ellipsize(c.in, 10); got != c.want {
+			t.Errorf("Ellipsize(%q, 10) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+type stubUsage struct{ u llm.Usage }
+
+func (s stubUsage) Usage() llm.Usage { return s.u }
+
+func TestCostReportsUsage(t *testing.T) {
+	ctx := kernel.NewContext()
+	if err := (plugin{}).Apply(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	r, err := kernel.Get[*Registry](ctx, "commands")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Run("cost", ""); err == nil || !strings.Contains(err.Error(), "no usage") {
+		t.Fatalf("/cost without a reporting llm = %v", err)
+	}
+	ctx.Provide("llm", stubUsage{})
+	if out, _ := r.Run("cost", ""); !strings.Contains(out, "nothing used yet") {
+		t.Fatalf("/cost on a fresh tally = %q", out)
+	}
+	ctx.Provide("llm", stubUsage{llm.Usage{InputTokens: 2000, OutputTokens: 100, Cost: 0.05, Priced: true}})
+	out, err := r.Run("cost", "")
+	if err != nil || !strings.Contains(out, "2.0k in · 100 out · $0.0500") {
+		t.Fatalf("/cost = (%q, %v)", out, err)
+	}
+	if _, err := r.Run("keys", ""); !errors.Is(err, ActionKeys) {
+		t.Fatalf("/keys should return the keys UIAction, got %v", err)
 	}
 }
 

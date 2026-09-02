@@ -131,6 +131,21 @@ func TestModelShowsCurrentAndProviders(t *testing.T) {
 	}
 }
 
+// With no args, a known provider gets a short "try:" list of model
+// ids; a stub provider has none to suggest.
+func TestModelShowSuggestsModels(t *testing.T) {
+	row := kernel.Row{ID: "llm", Plugin: "llm-openrouter", Config: map[string]any{"model": "x/y"}}
+	out := showModel(row, []string{"llm-openrouter"})
+	for _, want := range []string{"model: llm-openrouter · x/y", "try: anthropic/claude-sonnet-4.5", "usage: /model"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("showModel missing %q:\n%s", want, out)
+		}
+	}
+	if out := showModel(kernel.Row{Plugin: "llm-stub"}, nil); strings.Contains(out, "try:") {
+		t.Fatalf("stub provider should suggest nothing:\n%s", out)
+	}
+}
+
 func TestModelSwapsProvider(t *testing.T) {
 	ctx, r := mountModelTree(t)
 	if got := liveLLM(t, ctx); got != "stub-one:m1" {
