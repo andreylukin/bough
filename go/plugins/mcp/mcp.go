@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,11 +35,19 @@ const (
 	callTimeout    = 60 * time.Second
 )
 
-// ServerConfig is one stdio MCP server.
+// ServerConfig is one MCP server: stdio (Command) or streamable HTTP
+// (URL). Header values may be "${keychain:<service>#<json.path>}"
+// references, resolved from the login keychain at connect time so no
+// token lives in a file. Disabled entries are kept for listing (a
+// stale grant from sync-mcp) but never connected.
 type ServerConfig struct {
-	Command string
-	Args    []string
-	Env     map[string]string
+	Command  string
+	Args     []string
+	Env      map[string]string
+	URL      string
+	Headers  map[string]string
+	Disabled bool
+	Note     string // why it is disabled, for `bough mcp list`
 }
 
 // sections is the slice of the loop's "prompt-sections" service we need.
@@ -153,17 +162,24 @@ func configuredServers(cfg map[string]any) (map[string]ServerConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	var global map[string]ServerConfig
+	var global, synced, mine map[string]ServerConfig
 	if home, err := os.UserHomeDir(); err == nil {
 		global = loadServersFile(filepath.Join(home, ".claude.json"))
+		synced = loadServersFile(filepath.Join(home, ".bough", "mcp.sync.json"))
+		mine = loadServersFile(filepath.Join(home, ".bough", "mcp.json"))
 	}
 	project := loadServersFile(".mcp.json")
-	return merge(disableList(cfg), global, project, row), nil
+	return merge(disableList(cfg), global, project, synced, mine, row), nil
 }
 
 // Commands implements kernel.Commander: `bough mcp list|call`.
 func (plugin) Commands() []kernel.Command {
 	return []kernel.Command{{
+		Name:    "sync-mcp",
+		Usage:   "[--dry-run]",
+		Summary: "adopt Claude Code's MCP OAuth grants by keychain reference (writes ~/.bough/mcp.sync.json)",
+		Run:     func(_ map[string]any, args []string) error { return runSync(args) },
+	}, {
 		Name:    "mcp",
 		Usage:   "list | tools [server] | search <q> | status | call <server/tool> [args]",
 		Summary: "MCP servers: list them, their tools, search tools, check health, call one",
@@ -172,7 +188,7 @@ func (plugin) Commands() []kernel.Command {
 }
 
 func runCLI(cfg map[string]any, args []string) error {
-	const usage = "usage: bough mcp list | tools [server] | search <query> | status | call <server/tool> [json-args|text]"
+	const usage = "usage: bough mcp list | tools [server] | search <query> | status | sync [--dry-run] | call <server/tool> [json-args|text]"
 	if len(args) == 0 {
 		return fmt.Errorf("%s", usage)
 	}
@@ -191,6 +207,8 @@ func runCLI(cfg map[string]any, args []string) error {
 	cat := loadCatalog()
 
 	switch args[0] {
+	case "sync":
+		return runSync(args[1:])
 	case "list":
 		// Servers only, from config plus the cached tool counts: no
 		// connections. `tools`/`status` refresh the counts.
@@ -199,7 +217,10 @@ func runCLI(cfg map[string]any, args []string) error {
 			if ts := cat.Servers[n]; len(ts) > 0 {
 				count = fmt.Sprintf("%d tools", len(ts))
 			}
-			fmt.Printf("%-20s %-22s %s %s\n", n, count, servers[n].Command, strings.Join(servers[n].Args, " "))
+			if servers[n].Disabled {
+				count = "disabled: " + servers[n].Note
+			}
+			fmt.Printf("%-20s %-22s %s\n", n, count, where(servers[n]))
 		}
 		return nil
 
@@ -256,6 +277,10 @@ func runCLI(cfg map[string]any, args []string) error {
 	case "status":
 		failed := 0
 		for _, n := range names {
+			if servers[n].Disabled {
+				fmt.Printf("%-20s off   %s\n", n, servers[n].Note)
+				continue
+			}
 			started := time.Now()
 			session, err := connect(servers[n])
 			if err != nil {
@@ -274,8 +299,8 @@ func runCLI(cfg map[string]any, args []string) error {
 				cat.Servers = map[string][]catalogTool{}
 			}
 			cat.Servers[n] = tools
-			fmt.Printf("%-20s ok    %d tools  %s  %s %s\n", n, len(tools),
-				time.Since(started).Round(time.Millisecond), servers[n].Command, strings.Join(servers[n].Args, " "))
+			fmt.Printf("%-20s ok    %d tools  %s  %s\n", n, len(tools),
+				time.Since(started).Round(time.Millisecond), where(servers[n]))
 		}
 		cat.At = time.Now()
 		if err := saveCatalog(cat); err != nil {
@@ -327,6 +352,9 @@ func refresh(servers map[string]ServerConfig, names []string, cat *catalog, onEr
 	}
 	failed := 0
 	for _, n := range names {
+		if servers[n].Disabled {
+			continue
+		}
 		session, err := connect(servers[n])
 		if err != nil {
 			failed++
@@ -347,6 +375,14 @@ func refresh(servers map[string]ServerConfig, names []string, cat *catalog, onEr
 		onErr("catalog", err)
 	}
 	return failed
+}
+
+// where renders a server's location for listings.
+func where(sc ServerConfig) string {
+	if sc.URL != "" {
+		return sc.URL
+	}
+	return strings.TrimSpace(sc.Command + " " + strings.Join(sc.Args, " "))
 }
 
 // merge combines server maps lowest-precedence FIRST (later layers win
@@ -382,7 +418,7 @@ func rowServers(cfg map[string]any) (map[string]ServerConfig, error) {
 		}
 		sc, ok := parseEntry(m)
 		if !ok {
-			return nil, fmt.Errorf("mcp: config.servers.%s: command is required", name)
+			return nil, fmt.Errorf("mcp: config.servers.%s: command or url is required", name)
 		}
 		out[name] = sc
 	}
@@ -412,17 +448,22 @@ func loadServersFile(path string) map[string]ServerConfig {
 		return nil
 	}
 	var doc struct {
-		MCPServers map[string]map[string]any `json:"mcpServers"`
+		MCPServers map[string]map[string]any `json:"mcpServers"` // Claude Code
+		Servers    map[string]map[string]any `json:"servers"`    // bough
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
 		fmt.Fprintf(os.Stderr, "mcp: %s: %v (skipped)\n", path, err)
 		return nil
 	}
+	entries := doc.MCPServers
+	if entries == nil {
+		entries = doc.Servers
+	}
 	out := map[string]ServerConfig{}
-	for name, m := range doc.MCPServers {
+	for name, m := range entries {
 		sc, ok := parseEntry(m)
 		if !ok {
-			fmt.Fprintf(os.Stderr, "mcp: %s: server %q is not stdio (no command), skipped\n", path, name)
+			fmt.Fprintf(os.Stderr, "mcp: %s: server %q has neither command nor url, skipped\n", path, name)
 			continue
 		}
 		out[name] = sc
@@ -430,14 +471,29 @@ func loadServersFile(path string) map[string]ServerConfig {
 	return out
 }
 
-// parseEntry converts one raw server entry. ok=false when there is no
-// command (url/http servers).
+// parseEntry converts one raw server entry: a command (stdio) or a
+// url (streamable HTTP, with optional headers). ok=false with neither.
 func parseEntry(m map[string]any) (ServerConfig, bool) {
 	cmd, _ := m["command"].(string)
-	if cmd == "" {
+	url, _ := m["url"].(string)
+	if cmd == "" && url == "" {
 		return ServerConfig{}, false
 	}
-	sc := ServerConfig{Command: cmd}
+	sc := ServerConfig{Command: cmd, URL: url}
+	if h, ok := m["headers"].(map[string]any); ok && len(h) > 0 {
+		sc.Headers = map[string]string{}
+		for k, v := range h {
+			if s, ok := v.(string); ok {
+				sc.Headers[k] = s
+			}
+		}
+	}
+	if d, ok := m["disabled"].(bool); ok {
+		sc.Disabled = d
+	}
+	if n, ok := m["note"].(string); ok {
+		sc.Note = n
+	}
 	if args, ok := m["args"].([]any); ok {
 		for _, a := range args {
 			if s, ok := a.(string); ok {
@@ -456,17 +512,47 @@ func parseEntry(m map[string]any) (ServerConfig, bool) {
 	return sc, true
 }
 
-// connect spawns the server process and initializes an MCP session.
+// connect opens an MCP session: an HTTP server via streamable HTTP
+// with its headers resolved, else the stdio server process.
 func connect(sc ServerConfig) (*sdk.ClientSession, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
+	if sc.Disabled {
+		return nil, fmt.Errorf("disabled: %s", sc.Note)
+	}
+	client := sdk.NewClient(&sdk.Implementation{Name: "bough", Version: "0.1"}, nil)
+	if sc.URL != "" {
+		headers := map[string]string{}
+		for k, v := range sc.Headers {
+			rv, err := resolveRef(v)
+			if err != nil {
+				return nil, fmt.Errorf("header %s: %w", k, err)
+			}
+			headers[k] = rv
+		}
+		hc := &http.Client{Transport: headerRoundTripper{headers: headers, next: http.DefaultTransport}}
+		return client.Connect(ctx, &sdk.StreamableClientTransport{Endpoint: sc.URL, HTTPClient: hc}, nil)
+	}
 	cmd := exec.Command(sc.Command, sc.Args...)
 	cmd.Env = os.Environ()
 	for k, v := range sc.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
-	client := sdk.NewClient(&sdk.Implementation{Name: "bough", Version: "0.1"}, nil)
 	return client.Connect(ctx, &sdk.CommandTransport{Command: cmd}, nil)
+}
+
+// headerRoundTripper adds fixed headers to every request.
+type headerRoundTripper struct {
+	headers map[string]string
+	next    http.RoundTripper
+}
+
+func (h headerRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	for k, v := range h.headers {
+		r.Header.Set(k, v)
+	}
+	return h.next.RoundTrip(r)
 }
 
 // listTools returns the session's tools with one-line descriptions.

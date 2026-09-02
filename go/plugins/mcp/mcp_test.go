@@ -40,9 +40,12 @@ func TestMergePrecedence(t *testing.T) {
 	}
 }
 
-func TestParseEntrySkipsNonStdio(t *testing.T) {
-	if _, ok := parseEntry(map[string]any{"url": "http://x", "type": "http"}); ok {
-		t.Fatal("url server should not parse as stdio")
+func TestParseEntryStdioAndHTTP(t *testing.T) {
+	if sc, ok := parseEntry(map[string]any{"url": "http://x", "type": "http", "headers": map[string]any{"A": "b"}}); !ok || sc.URL != "http://x" || sc.Headers["A"] != "b" {
+		t.Fatalf("url server should parse as http: %+v ok=%v", sc, ok)
+	}
+	if _, ok := parseEntry(map[string]any{"type": "http"}); ok {
+		t.Fatal("neither command nor url should not parse")
 	}
 	sc, ok := parseEntry(map[string]any{
 		"command": "srv",

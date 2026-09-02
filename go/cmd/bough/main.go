@@ -176,6 +176,7 @@ func versionString() string {
 }
 
 func main() {
+	loadEnvFile() // ~/.bough/env: API keys for launchd/fresh shells
 	cmd, args, err := command(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bough:", err)
