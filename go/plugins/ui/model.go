@@ -459,6 +459,9 @@ func (m *model) addEvent(ev Event) {
 	case "done":
 		m.running = false
 		m.expireAsks() // a turn never ends with a live ask
+		if m.flash == "cancelling…" {
+			m.flash = "" // the cancel landed: the transcript says so, the bar goes back to its chips
+		}
 		m.finishTurn(id, ev)
 	case "error":
 		// Not the end of the turn: a failed code block is fed back to

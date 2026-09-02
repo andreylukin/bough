@@ -155,3 +155,22 @@ func TestExitLine(t *testing.T) {
 		t.Error("no session file: no line")
 	}
 }
+
+// The "cancelling…" flash is for the wait; once the turn closes it
+// would only hide the usage chip.
+func TestCancellingFlashClearsWhenTheTurnEnds(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.m.cfg.Load().cancel = func() {}
+	d.typeStr("go")
+	d.press(keyEnter())
+	d.press(keyEsc())
+	if d.m.flash != "cancelling…" {
+		t.Fatalf("flash after esc: %q", d.m.flash)
+	}
+	d.event("cancelled", "")
+	d.event("done", "")
+	if d.m.flash != "" {
+		t.Fatalf("flash should clear at done, got %q", d.m.flash)
+	}
+}
