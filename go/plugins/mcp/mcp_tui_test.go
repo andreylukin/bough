@@ -45,9 +45,9 @@ func bindInMemoryTool(t *testing.T, d *uitest.Driver, server, tool string, resul
 	if err != nil {
 		t.Fatalf("codemode service: %v", err)
 	}
-	n, err := registerSession(reg, server, cs)
-	if err != nil || n != 1 {
-		t.Fatalf("registerSession: bound %d, err %v", n, err)
+	lines, err := registerSession(reg, server, cs)
+	if err != nil || len(lines) != 1 {
+		t.Fatalf("registerSession: bound %d, err %v", len(lines), err)
 	}
 }
 

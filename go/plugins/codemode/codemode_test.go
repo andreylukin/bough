@@ -100,7 +100,9 @@ func TestRunHookExceptionIsError(t *testing.T) {
 
 func TestRunHookSharesVMGlobals(t *testing.T) {
 	cm := New(5 * time.Second)
-	if _, err := cm.Run(`var counter = 41`); err != nil {
+	// Declarations are block-scoped since blocks run in their own
+	// function scope; an undeclared assignment is the shared global.
+	if _, err := cm.Run(`counter = 41`); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	res, err := cm.RunHook(`counter++; return {n: counter}`, map[string]any{})
@@ -120,5 +122,43 @@ func TestUndefinedResultOmitted(t *testing.T) {
 	}
 	if out != "" {
 		t.Errorf("expected empty output, got %q", out)
+	}
+}
+
+func TestBlocksDoNotLeakDeclarations(t *testing.T) {
+	cm := New(5 * time.Second)
+	blocks := []string{"const x = 1; let y = 2; var z = 3; x + y + z", "const x = 10; let y = 20; var z = 30; x + y + z"}
+	for i, want := range []string{"6", "60"} {
+		out, err := cm.Run(blocks[i])
+		if err != nil {
+			t.Fatalf("block %d: %v", i, err)
+		}
+		if out != want {
+			t.Errorf("block %d = %q, want %q", i, out, want)
+		}
+	}
+	// Undeclared assignment is still a shared global; tools stays reachable.
+	cm.RegisterTool("id", func(s string) (string, error) { return s, nil })
+	if _, err := cm.Run(`shared = tools.id("g")`); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cm.Run(`shared + tools.id("!")`)
+	if err != nil || out != "g!" {
+		t.Errorf("globals: %q %v", out, err)
+	}
+}
+
+func TestToolErrorStripsNativeFrame(t *testing.T) {
+	cm := New(5 * time.Second)
+	cm.RegisterTool("boom", func() (string, error) { return "", &testErr{} })
+	_, err := cm.Run(`tools.boom()`)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if strings.Contains(err.Error(), "(native)") {
+		t.Errorf("native frame leaked: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "kaboom") {
+		t.Errorf("message lost: %q", err.Error())
 	}
 }

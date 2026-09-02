@@ -1,6 +1,7 @@
 // Package loop is the agent loop plugin: it owns the conversation,
-// provides the "inputs" channel and the "runner" service, and drives
-// the codemode loop (llm -> extract js -> run -> feed back).
+// provides the "inputs" channel, the "runner" service and the
+// "prompt-sections" registry (see Sections), and drives the codemode
+// loop (llm -> extract js -> run -> feed back).
 //
 // Conversation state lives in history entries (the optional "history"
 // service makes them durable; absent, a process-local list is used).
@@ -13,6 +14,8 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,9 +52,58 @@ type Skills interface {
 }
 
 // SystemContext is the optional "context-md" service seam. Preamble
-// is prepended to the system prompt once, at session start.
+// is prepended to the system prompt at the start of every turn, so a
+// context file created or edited mid-session is picked up.
 type SystemContext interface {
 	Preamble() string
+}
+
+// TurnStats is the optional "turn-stats" service seam (tools-basic):
+// files written and the last bash exit code since the previous Take.
+// Stamped onto the "done" entry as data {"files": [...], "exit": n}
+// ("exit" only when a bash call ran this turn).
+type TurnStats interface {
+	Take() (files []string, exit int, ran bool)
+}
+
+// Sections is the "prompt-sections" service: named system-prompt
+// sections that plugins register (workers documents tools.spawn, mcp
+// its bound tools). The loop appends every section, sorted by name,
+// to the system prompt on each model call. Safe for concurrent use.
+type Sections struct {
+	mu sync.Mutex
+	m  map[string]string
+}
+
+// Set registers (or replaces) the section named name; empty text
+// removes it.
+func (s *Sections) Set(name, text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.m == nil {
+		s.m = map[string]string{}
+	}
+	if text == "" {
+		delete(s.m, name)
+		return
+	}
+	s.m[name] = text
+}
+
+// Text joins all sections, sorted by name, with blank lines.
+func (s *Sections) Text() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	names := make([]string, 0, len(s.m))
+	for n := range s.m {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		parts = append(parts, s.m[n])
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // History is the optional "history" service seam: append-only session
@@ -96,14 +148,19 @@ console.log(tools.bash("ls"))
 ` + "```" + `
 
 Available in the runtime:
-- tools.bash(cmd) -> string: run a shell command, returns its output
+- tools.bash(cmd) -> string: run a shell command, returns its output.
+  It is killed after 60 s (the error says so); split long work into
+  shorter commands or background it yourself.
 - tools.readFile(path) -> string: read a file
 - tools.writeFile(path, content): write a file
 - console.log(...): print; everything printed is returned to you
 
 Each code block you write is executed and its output is sent back to you
-as the next message. Take as many steps as you need. When you are done,
-reply with plain text only — no code block — and that ends the turn.`
+as the next message. Declarations (const/let/var) do not persist between
+blocks; print what you need to carry over. Never write output or result
+blocks yourself; only the runtime returns output. Take as many steps as
+you need. When you are done, reply with plain text only — no code block —
+and that ends the turn.`
 
 // askPromptSection documents tools.ask; appended to the system prompt
 // only when an "ask-answers" service (the ask plugin) is mounted. The
@@ -114,13 +171,34 @@ const askPromptSection = `You may ask the user a question from code: tools.ask(q
 
 var jsBlock = regexp.MustCompile("(?s)```js\\s*\n(.*?)```")
 
+// anyBlock matches every fenced block; group 1 is the info string.
+var anyBlock = regexp.MustCompile("(?s)```([^\\s`]*)[^\n]*\n.*?```")
+
+const removedBlock = "[model-written block removed]"
+
+// stripFakeBlocks replaces every non-js fenced block (```output,
+// ```text, bare ```...) in an assistant reply with removedBlock: those
+// are model-guessed results, and left in the transcript they render
+// like real runtime output.
+func stripFakeBlocks(reply string) string {
+	return anyBlock.ReplaceAllStringFunc(reply, func(m string) string {
+		if anyBlock.FindStringSubmatch(m)[1] == "js" {
+			return m
+		}
+		return removedBlock
+	})
+}
+
 // DefaultProject is the built-in history -> model-messages projection:
-// input -> user, assistant -> assistant, result -> user "[tool output]\n...".
-// Other kinds (code, error, done) carry no model-visible text. Pure:
-// no state, entries in -> messages out.
+// input -> user, assistant -> assistant, result -> user "[tool output]\n...",
+// and a "!" command entry (the ui's bash mode) paired with its following
+// "system" output entry -> user "[shell]\n$ cmd\noutput". "/" command
+// entries are UI-only. Other kinds (code, error, done) carry no
+// model-visible text. Pure: no state, entries in -> messages out.
 func DefaultProject(entries []history.Entry) []llm.Message {
 	var msgs []llm.Message
-	for _, e := range entries {
+	for i := 0; i < len(entries); i++ {
+		e := entries[i]
 		text, _ := e.Data["text"].(string)
 		switch e.Kind {
 		case "input":
@@ -129,6 +207,17 @@ func DefaultProject(entries []history.Entry) []llm.Message {
 			msgs = append(msgs, llm.Message{Role: "assistant", Content: text})
 		case "result":
 			msgs = append(msgs, llm.Message{Role: "user", Content: "[tool output]\n" + text})
+		case "command":
+			if !strings.HasPrefix(text, "!") {
+				continue
+			}
+			cmd := strings.TrimSpace(text[1:])
+			out := ""
+			if i+1 < len(entries) && entries[i+1].Kind == "system" {
+				out, _ = entries[i+1].Data["text"].(string)
+				i++
+			}
+			msgs = append(msgs, llm.Message{Role: "user", Content: "[shell]\n$ " + cmd + "\n" + out})
 		}
 	}
 	return msgs
@@ -170,9 +259,30 @@ type runner struct {
 	hist    History
 	cog     Cognition
 	proj    Projection
+	stats   TurnStats
+	secs    *Sections
 	hasAsk  bool // an "ask-answers" service is mounted: document tools.ask
 	system  string
 	started bool
+}
+
+// doneData builds the "done" entry's data: files written this turn and
+// the last bash exit code (when a bash call ran), from the optional
+// turn-stats seam. Without it, only "files": [] is present.
+func (r *runner) doneData() map[string]any {
+	data := map[string]any{"files": []string{}}
+	if r.stats == nil {
+		return data
+	}
+	files, exit, ran := r.stats.Take()
+	if files == nil {
+		files = []string{}
+	}
+	data["files"] = files
+	if ran {
+		data["exit"] = exit
+	}
+	return data
 }
 
 // fire runs a hook event if a hooks service is present. A Fire error
@@ -218,22 +328,28 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		if r.hasAsk {
 			r.system += "\n\n" + askPromptSection
 		}
-		if r.sysctx != nil {
-			if p := r.sysctx.Preamble(); p != "" {
-				r.system = p + "\n\n" + r.system
-			}
-		}
 		if res := r.fire(ctx, "session-start", map[string]any{}, emit); res != nil {
 			if c, ok := res["context"].(string); ok && c != "" {
 				r.system += "\n\n" + c
 			}
 		}
 	}
+	// Per turn: context files re-read (they may have appeared or
+	// changed mid-session) and the live plugin prompt sections.
+	system := r.system
+	if r.sysctx != nil {
+		if p := r.sysctx.Preamble(); p != "" {
+			system = p + "\n\n" + system
+		}
+	}
+	if s := r.secs.Text(); s != "" {
+		system += "\n\n" + s
+	}
 
 	if res := r.fire(ctx, "user-prompt-submit", map[string]any{"input": input}, emit); res != nil {
 		if b, ok := res["block"].(string); ok {
 			note("error", b, nil)
-			note("done", "", nil) // end the turn so headless drain sees it
+			note("done", "", r.doneData()) // end the turn so headless drain sees it
 			return nil
 		}
 		if in, ok := res["input"].(string); ok {
@@ -250,20 +366,21 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	r.hist.Append("input", map[string]any{"text": msg})
 
 	for step := 0; step < maxSteps; step++ {
-		sys := r.system
+		sys := system
 		if r.cog != nil {
 			sys = r.cog.System(sys)
 		}
 		reply, err := r.llm.Complete(ctx, sys, r.project())
 		if err != nil {
 			note("error", err.Error(), nil)
-			note("done", "", nil) // every turn ends with a done, even on llm failure
+			note("done", "", r.doneData()) // every turn ends with a done, even on llm failure
 			return err
 		}
+		reply = stripFakeBlocks(reply)
 		note("assistant", reply, nil)
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
 		if len(blocks) == 0 {
-			note("done", "", nil)
+			note("done", "", r.doneData())
 			r.fire(ctx, "stop", map[string]any{}, emit)
 			return nil
 		}
@@ -303,7 +420,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	}
 	err := fmt.Errorf("loop: gave up after %d steps", maxSteps)
 	note("error", err.Error(), nil)
-	note("done", "", nil)
+	note("done", "", r.doneData())
 	r.fire(ctx, "stop", map[string]any{}, emit)
 	return err
 }
@@ -333,7 +450,8 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	if err != nil {
 		return err
 	}
-	r := &runner{llm: llm, code: code, hist: &memHistory{}}
+	r := &runner{llm: llm, code: code, hist: &memHistory{}, secs: &Sections{}}
+	kctx.Provide("prompt-sections", r.secs)
 	// Optional seams: absent services are a clean no-op / built-in.
 	if h, err := kernel.Get[Hooks](kctx, "hooks"); err == nil {
 		r.hooks = h
@@ -355,6 +473,9 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	}
 	if _, err := kernel.Get[any](kctx, "ask-answers"); err == nil {
 		r.hasAsk = true
+	}
+	if st, err := kernel.Get[TurnStats](kctx, "turn-stats"); err == nil {
+		r.stats = st
 	}
 	kctx.Provide("runner", r)
 

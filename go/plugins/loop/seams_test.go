@@ -259,6 +259,131 @@ func TestDefaultProject(t *testing.T) {
 	}
 }
 
+func TestDefaultProjectBangCommands(t *testing.T) {
+	entries := []history.Entry{
+		{Kind: "command", Data: map[string]any{"text": "/help"}},
+		{Kind: "system", Data: map[string]any{"text": "help text"}},
+		{Kind: "command", Data: map[string]any{"text": "! ls -1"}},
+		{Kind: "system", Data: map[string]any{"text": "a\nb"}},
+		{Kind: "command", Data: map[string]any{"text": "!pwd"}}, // output still pending
+	}
+	got := DefaultProject(entries)
+	want := []Message{
+		{Role: "user", Content: "[shell]\n$ ls -1\na\nb"},
+		{Role: "user", Content: "[shell]\n$ pwd\n"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("DefaultProject = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("DefaultProject[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestStripFakeBlocks(t *testing.T) {
+	reply := "Running.\n```js\nconsole.log(1)\n```\nResult:\n```output\n1\n```\n```\nguess\n```\ndone"
+	llm := &recordLLM{reply: reply}
+	mem := &memHistory{}
+	r := buildRunnerWith(t, llm, map[string]any{"history": mem})
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "go", collect(&kinds, &texts))
+
+	got := mem.Entries()[1]
+	if got.Kind != "assistant" {
+		t.Fatalf("entry[1] = %v", got)
+	}
+	text := got.Data["text"].(string)
+	want := "Running.\n```js\nconsole.log(1)\n```\nResult:\n" + removedBlock + "\n" + removedBlock + "\ndone"
+	if text != want {
+		t.Fatalf("assistant text = %q, want %q", text, want)
+	}
+	if !strings.Contains(llm.system, "only the runtime returns output") {
+		t.Fatalf("system prompt lacks the no-fake-output rule:\n%s", llm.system)
+	}
+}
+
+type stubSysctx struct{ text string }
+
+func (s *stubSysctx) Preamble() string { return s.text }
+
+func TestContextPreambleRereadEachTurn(t *testing.T) {
+	llm := &recordLLM{}
+	sc := &stubSysctx{}
+	r := buildRunnerWith(t, llm, map[string]any{"context-md": sc})
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "one", collect(&kinds, &texts))
+	if strings.Contains(llm.system, "# Context") {
+		t.Fatalf("no context yet, got %q", llm.system)
+	}
+	sc.text = "# Context: AGENTS.md\nbe terse"
+	_ = r.Run(context.Background(), "two", collect(&kinds, &texts))
+	if !strings.HasPrefix(llm.system, sc.text+"\n\n") {
+		t.Fatalf("mid-session context not picked up:\n%s", llm.system)
+	}
+}
+
+func TestPromptSectionsAppended(t *testing.T) {
+	llm := &recordLLM{}
+	r := buildRunnerWith(t, llm, nil)
+	r.secs.Set("b", "SECTION B")
+	r.secs.Set("a", "SECTION A")
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "hi", collect(&kinds, &texts))
+	if !strings.HasSuffix(llm.system, "SECTION A\n\nSECTION B") {
+		t.Fatalf("sections missing or unsorted:\n%s", llm.system)
+	}
+	if !strings.Contains(llm.system, "killed after 60 s") {
+		t.Fatalf("bash timeout not documented:\n%s", llm.system)
+	}
+	r.secs.Set("a", "")
+	_ = r.Run(context.Background(), "again", collect(&kinds, &texts))
+	if strings.Contains(llm.system, "SECTION A") || !strings.HasSuffix(llm.system, "SECTION B") {
+		t.Fatalf("section removal not live:\n%s", llm.system)
+	}
+}
+
+type stubStats struct {
+	files []string
+	exit  int
+	ran   bool
+}
+
+func (s *stubStats) Take() ([]string, int, bool) {
+	f, e, r := s.files, s.exit, s.ran
+	s.files, s.exit, s.ran = nil, 0, false
+	return f, e, r
+}
+
+func TestDoneCarriesTurnStats(t *testing.T) {
+	llm := &recordLLM{}
+	mem := &memHistory{}
+	st := &stubStats{files: []string{"a.go", "b.go"}, exit: 2, ran: true}
+	r := buildRunnerWith(t, llm, map[string]any{"history": mem, "turn-stats": st})
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "hi", collect(&kinds, &texts))
+	es := mem.Entries()
+	done := es[len(es)-1]
+	if done.Kind != "done" {
+		t.Fatalf("last entry = %v", done)
+	}
+	files, _ := done.Data["files"].([]string)
+	if len(files) != 2 || files[0] != "a.go" || done.Data["exit"] != 2 {
+		t.Fatalf("done data = %v, want files [a.go b.go] exit 2", done.Data)
+	}
+	// Next turn: nothing ran, so files is empty and exit absent.
+	_ = r.Run(context.Background(), "again", collect(&kinds, &texts))
+	es = mem.Entries()
+	done = es[len(es)-1]
+	if _, has := done.Data["exit"]; has {
+		t.Fatalf("exit present with no bash run: %v", done.Data)
+	}
+	if files, ok := done.Data["files"].([]string); !ok || files == nil || len(files) != 0 {
+		t.Fatalf("files = %v (%T), want empty non-nil slice", done.Data["files"], done.Data["files"])
+	}
+}
+
 func TestSkillsInjection(t *testing.T) {
 	llm := &recordLLM{}
 	skills := &stubSkills{blocks: []string{"[skill: wiki]\nuse the wiki cli"}}

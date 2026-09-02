@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -37,6 +38,22 @@ type ServerConfig struct {
 // registry is the slice of the codemode service we need.
 type registry interface {
 	RegisterTool(name string, fn any)
+}
+
+// sections is the slice of the loop's "prompt-sections" service we need.
+type sections interface {
+	Set(name, text string)
+}
+
+// promptSection renders the bound tools as a system-prompt section:
+// one line per tool, "tools.<name>(args) -> string: <description>".
+// Empty when nothing is bound.
+func promptSection(lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	sort.Strings(lines)
+	return "MCP tools (call with one object argument matching the tool's input schema; returns the text result):\n- " + strings.Join(lines, "\n- ")
 }
 
 type plugin struct{}
@@ -66,20 +83,27 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	servers := merge(disableList(cfg), global, project, row)
 
 	var sessions []*sdk.ClientSession
+	var lines []string
 	for name, sc := range servers {
 		session, err := connect(sc)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "mcp: server %q: connect: %v (skipped)\n", name, err)
 			continue
 		}
-		n, err := registerSession(reg, name, session)
+		bound, err := registerSession(reg, name, session)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "mcp: server %q: list tools: %v (skipped)\n", name, err)
 			session.Close()
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "mcp: server %q: %d tools bound\n", name, n)
+		fmt.Fprintf(os.Stderr, "mcp: server %q: %d tools bound\n", name, len(bound))
 		sessions = append(sessions, session)
+		lines = append(lines, bound...)
+	}
+	// Optional seam: document the bound tools to the model.
+	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
+		s.Set("mcp", promptSection(lines))
+		ctx.Effect(func() { s.Set("mcp", "") })
 	}
 	ctx.Effect(func() {
 		for _, s := range sessions {
@@ -210,19 +234,21 @@ func connect(sc ServerConfig) (*sdk.ClientSession, error) {
 }
 
 // registerSession lists the session's tools and binds each into
-// codemode as mcp_<server>_<tool>. Returns the number bound.
-func registerSession(reg registry, server string, session *sdk.ClientSession) (int, error) {
+// codemode as mcp_<server>_<tool>. Returns one prompt line per bound
+// tool ("tools.<name>(args) -> string: <description>").
+func registerSession(reg registry, server string, session *sdk.ClientSession) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
-	n := 0
+	var lines []string
 	for tool, err := range session.Tools(ctx, nil) {
 		if err != nil {
-			return n, err
+			return lines, err
 		}
-		reg.RegisterTool("mcp_"+sanitize(server)+"_"+sanitize(tool.Name), bindTool(session, tool.Name))
-		n++
+		name := "mcp_" + sanitize(server) + "_" + sanitize(tool.Name)
+		reg.RegisterTool(name, bindTool(session, tool.Name))
+		lines = append(lines, "tools."+name+"(args) -> string: "+strings.TrimSpace(tool.Description))
 	}
-	return n, nil
+	return lines, nil
 }
 
 // bindTool returns the codemode tool fn: one map arg in, concatenated

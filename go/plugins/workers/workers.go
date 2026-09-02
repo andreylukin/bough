@@ -36,6 +36,15 @@ import (
 // SubSystemPrompt is the child agent's system prompt.
 const SubSystemPrompt = "You are a bough subagent. Complete exactly this task, using js code blocks with the tools API when needed, and reply with your final answer as plain text."
 
+// promptSection documents tools.spawn to the parent model (registered
+// into the loop's "prompt-sections" service when present).
+const promptSection = `Subagents: tools.spawn(task) -> string runs a bounded child agent (same tools, fresh context, no nested spawns) on the task string and returns its final plain-text reply. Use it to delegate self-contained work, never a shell command.`
+
+// sections is the slice of the loop's "prompt-sections" service we need.
+type sections interface {
+	Set(name, text string)
+}
+
 const defaultMaxSpawns = 4
 const defaultMaxSteps = 6
 const maxResultBytes = 8 * 1024
@@ -239,5 +248,11 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	})
 
 	cm.RegisterTool("spawn", w.spawn)
+	// Optional seam: the loop's prompt-sections registry, so the model
+	// learns tools.spawn exists. Withdrawn on unmount.
+	if s, err := kernel.Get[sections](kctx, "prompt-sections"); err == nil {
+		s.Set("workers", promptSection)
+		kctx.Effect(func() { s.Set("workers", "") })
+	}
 	return nil
 }
