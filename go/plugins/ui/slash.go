@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -32,16 +33,36 @@ func (m *model) syncPalette() {
 	if m.pal.cycling && draft != m.pal.cycleDraft {
 		m.pal.cycling = false // any edit ends a Tab cycle
 	}
-	open := (m.cfg.Load().cmds != nil || m.pal.actionsOnly) && !m.inspecting && !m.picking && !m.mp.open &&
-		slashStart(draft) >= 0 && !m.pal.escaped
+	open := m.paletteOpens(draft)
+	if !open && m.pal.actionsOnly {
+		// Actions mode is over (the "/" erased, or an overlay took
+		// the screen): the draft it displaced comes back.
+		m.leaveActions()
+		draft = m.input.Value()
+		open = m.paletteOpens(draft)
+	}
 	if open && !m.pal.open {
 		m.pal.selected = 0
 	}
-	if !open {
-		m.pal.actionsOnly = false
-	}
 	m.pal.open = open
 	m.syncAt() // the "@" picker follows the same draft
+}
+
+// paletteOpens says whether the palette shows for this draft.
+func (m *model) paletteOpens(draft string) bool {
+	return (m.cfg.Load().cmds != nil || m.pal.actionsOnly) && !m.inspecting && !m.picking && !m.mp.open &&
+		slashStart(draft) >= 0 && !m.pal.escaped
+}
+
+// leaveActions ends the actions-only mode, putting back the draft
+// the mode displaced (see palette.stash).
+func (m *model) leaveActions() {
+	m.pal.actionsOnly = false
+	m.pal.cycling = false
+	m.input.SetValue(m.pal.stash)
+	m.input.CursorEnd()
+	m.pal.stash = ""
+	m.layoutComposer()
 }
 
 // overlayRows is whichever composer picker is open: "/" or "@".
@@ -141,32 +162,51 @@ func (m *model) paletteRows() []string {
 // the palette consumed it.
 func (m *model) paletteKey(key string) (bool, tea.Cmd) {
 	items := paletteFilter(m.paletteItems(), m.paletteQuery())
+	if key == "enter" && len(items) == 0 && m.pal.actionsOnly {
+		// Actions mode lists actions alone: a query matching none has
+		// nothing to run, and the "/query" is not a message either.
+		m.flash = "no action matches " + strconv.Quote(m.paletteQuery())
+		return true, nil
+	}
 	act, name := m.pal.onKey(key, items)
 	switch act {
 	case palMoved:
 		return true, nil
 	case palClose:
 		// Esc on a lone "/query" drops it (the user backed out of a
-		// command); text with anything more stays.
-		if draft := m.input.Value(); strings.HasPrefix(draft, "/") &&
+		// command); text with anything more stays. Actions mode gives
+		// back the draft its "/" displaced.
+		if m.pal.actionsOnly {
+			m.leaveActions()
+		} else if draft := m.input.Value(); strings.HasPrefix(draft, "/") &&
 			!strings.ContainsAny(strings.TrimSpace(draft), " \t\n") {
 			m.input.Reset()
 			m.pal.cycling = false
 		}
 		m.pal.escaped = true
 		m.pal.escAt = m.input.Value()
-		m.pal.actionsOnly = false
 		return true, nil
 	case palComplete:
 		// Tab: rewrite the word to "/name " (stays open at line
 		// start); a repeated Tab walks the matches of the query the
-		// first one completed from.
+		// first one completed from. Action rows are not words: the
+		// cycle skips them (there is no "/quit" command to write),
+		// and Tab on one only keeps the selection.
 		if m.pal.cycling {
-			m.pal.selected = (m.pal.selected + 1) % len(items)
+			for i := 1; i <= len(items); i++ {
+				if j := (m.pal.selected + i) % len(items); !items[j].action {
+					m.pal.selected = j
+					break
+				}
+			}
 			name = items[m.pal.selected].name
 		} else {
 			m.pal.cycling = true
 			m.pal.cycleQuery = m.paletteQuery()
+		}
+		if items[m.pal.selected].action {
+			m.pal.cycleDraft = m.input.Value()
+			return true, nil
 		}
 		m.completePalette(name)
 		return true, nil

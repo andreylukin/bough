@@ -89,7 +89,7 @@ func TestActionRowsAbsentMidText(t *testing.T) {
 	}
 }
 
-func TestQuitActionRowArmsLikeTheKey(t *testing.T) {
+func TestQuitActionRowQuitsOutright(t *testing.T) {
 	t.Parallel()
 	d := drvCmds(t, reg(t, "alpha"))
 	d.typeStr("/quit")
@@ -98,14 +98,152 @@ func TestQuitActionRowArmsLikeTheKey(t *testing.T) {
 	if !strings.Contains(rows, "> quit ctrl+c") {
 		t.Fatalf("expected the quit action row selected:\n%s", rows)
 	}
-	if hasQuit(d.press(keyEnter())) {
-		t.Fatal("the quit action arms, never quits on one press")
+	// An explicit pick quits like /quit: the enter that accepts the
+	// row would otherwise disarm the one-press arming it just did.
+	if !hasQuit(d.press(keyEnter())) {
+		t.Fatal("enter on the quit action row should quit")
 	}
-	if !strings.Contains(d.plain(), quitHint) {
-		t.Errorf("arming should show %q:\n%s", quitHint, d.plain())
+}
+
+func TestTabOnActionRowKeepsDraft(t *testing.T) {
+	t.Parallel()
+	d := drvCmds(t, reg(t, "alpha"))
+	d.typeStr("/expand_")
+	d.press(keyTab())
+	if got := d.m.input.Value(); got != "/expand_" {
+		t.Errorf("tab on an action row writes no fake command, draft=%q", got)
 	}
-	if !hasQuit(d.press(keyCtrl('c'))) {
-		t.Error("ctrl+c after the armed action row should quit")
+	d.event("result", nLines(10))
+	d.press(keyEnter())
+	if d.m.blocks[0].collapsed || len(d.sent) != 0 {
+		t.Errorf("enter still runs the row (collapsed=%v sent=%v)", d.m.blocks[0].collapsed, d.sent)
+	}
+}
+
+// --- actions mode keeps the draft ---
+
+func TestActionPaletteRestoresDraftOnEsc(t *testing.T) {
+	t.Parallel()
+	d := drvCmds(t, reg(t, "alpha"))
+	d.typeStr("some long draft")
+	d.press(keyCtrl('x'))
+	d.press(keyRune('p'))
+	if !d.m.pal.actionsOnly || d.m.input.Value() != "/" {
+		t.Fatalf("ctrl+x p opens actions mode over a \"/\" (actions=%v draft=%q)", d.m.pal.actionsOnly, d.m.input.Value())
+	}
+	d.typeStr("exp")
+	d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if got := d.m.input.Value(); got != "some long draft" {
+		t.Errorf("esc should give the displaced draft back, got %q", got)
+	}
+	if d.m.pal.open || d.m.pal.actionsOnly {
+		t.Error("esc closes the actions mode")
+	}
+	d.typeStr("!")
+	if got := d.m.input.Value(); got != "some long draft!" {
+		t.Errorf("typing continues the restored draft, got %q", got)
+	}
+}
+
+func TestActionPaletteRestoresDraftOnAccept(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.event("result", nLines(10))
+	d.typeStr("keep me")
+	d.press(keyCtrl('x'))
+	d.press(keyRune('p'))
+	d.typeStr("expand_")
+	d.press(keyEnter())
+	if d.m.blocks[0].collapsed {
+		t.Error("the accepted row should run")
+	}
+	if got := d.m.input.Value(); got != "keep me" {
+		t.Errorf("an accepted row gives the draft back, got %q", got)
+	}
+	if d.m.pal.open || d.m.pal.actionsOnly || len(d.sent) != 0 {
+		t.Errorf("nothing submitted, mode closed (open=%v actions=%v sent=%v)", d.m.pal.open, d.m.pal.actionsOnly, d.sent)
+	}
+}
+
+func TestActionPaletteRestoresDraftWhenSlashErased(t *testing.T) {
+	t.Parallel()
+	d := drvCmds(t, reg(t, "alpha"))
+	d.typeStr("keep me")
+	d.press(keyCtrl('x'))
+	d.press(keyRune('p'))
+	d.press(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if got := d.m.input.Value(); got != "keep me" {
+		t.Errorf("erasing the mode's \"/\" gives the draft back, got %q", got)
+	}
+	if d.m.pal.open || d.m.pal.actionsOnly {
+		t.Error("the mode is over once its \"/\" is gone")
+	}
+}
+
+func TestActionPaletteReopensAfterEscOnSlash(t *testing.T) {
+	t.Parallel()
+	d := drvCmds(t, reg(t, "alpha"))
+	d.typeStr("/")
+	d.press(tea.KeyPressMsg{Code: tea.KeyEscape}) // the palette stays shut on "/" until the draft changes
+	d.press(keyCtrl('x'))
+	d.press(keyRune('p'))
+	if !d.m.pal.open || !d.m.pal.actionsOnly || d.m.input.Value() != "/" {
+		t.Errorf("ctrl+x p opens regardless of an earlier esc (open=%v actions=%v draft=%q)", d.m.pal.open, d.m.pal.actionsOnly, d.m.input.Value())
+	}
+}
+
+func TestActionPaletteUnderInspectorFlashes(t *testing.T) {
+	t.Parallel()
+	d := newDrv(t, 80, 24, cfgWith(t, nil, nil, fakeHist{}))
+	d.typeStr("keep me")
+	d.press(keyCtrl('o'))
+	if !d.m.inspecting {
+		t.Fatal("precondition: ctrl+o opens the inspector")
+	}
+	d.press(keyCtrl('x'))
+	d.press(keyRune('p'))
+	if d.m.pal.open || d.m.pal.actionsOnly || d.m.input.Value() != "keep me" {
+		t.Errorf("no palette under the inspector, and no stray \"/\" (open=%v actions=%v draft=%q)", d.m.pal.open, d.m.pal.actionsOnly, d.m.input.Value())
+	}
+	if !strings.Contains(d.plain(), "no palette under the inspector") {
+		t.Errorf("the chord should say why it did nothing:\n%s", d.plain())
+	}
+}
+
+func TestActionPaletteEnterOverNoRowsSubmitsNothing(t *testing.T) {
+	t.Parallel()
+	for _, cmds := range []commandsView{nil, reg(t, "alpha")} {
+		d := defaultDrv(t)
+		if cmds != nil {
+			d = drvCmds(t, cmds)
+		}
+		d.press(keyCtrl('x'))
+		d.press(keyRune('p'))
+		d.typeStr("alpha") // no such action (a command of that name is not on this list)
+		d.press(keyEnter())
+		if len(d.sent) != 0 || len(d.m.blocks) != 0 {
+			t.Errorf("enter over no action rows submits and dispatches nothing (sent=%v blocks=%d)", d.sent, len(d.m.blocks))
+		}
+		if !d.m.pal.open || !d.m.pal.actionsOnly || d.m.input.Value() != "/alpha" {
+			t.Errorf("the mode stays for a retry (open=%v actions=%v draft=%q)", d.m.pal.open, d.m.pal.actionsOnly, d.m.input.Value())
+		}
+		if !strings.Contains(d.plain(), `no action matches "alpha"`) {
+			t.Errorf("should flash the miss:\n%s", d.plain())
+		}
+	}
+}
+
+func TestClickClearsPendingLeader(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.press(keyCtrl('x'))
+	d.feed(tea.MouseClickMsg{X: 1, Y: 1, Button: tea.MouseLeft})
+	if d.m.leader {
+		t.Fatal("a click should drop the pending leader")
+	}
+	d.press(keyRune('q'))
+	if got := d.m.input.Value(); got != "q" {
+		t.Errorf("the next key is typed, not a chord, got %q", got)
 	}
 }
 
@@ -267,6 +405,35 @@ func TestKeymapRejectsBadChordTarget(t *testing.T) {
 	}
 	if err := applyKeymap(keys, map[string]string{"chord:": "quit"}); err == nil {
 		t.Error("an empty chord key should fail loud")
+	}
+}
+
+func TestKeymapRejectsDuplicateKey(t *testing.T) {
+	t.Parallel()
+	keys := defaultKeymap()
+	err := applyKeymap(keys, map[string]string{"clear_input": "ctrl+x"})
+	if err == nil || !strings.Contains(err.Error(), `key "ctrl+x" bound to both "clear_input" and "leader"`) {
+		t.Errorf("one key on two actions should fail loud, got %v", err)
+	}
+	// A swap is not a collision.
+	if err := applyKeymap(defaultKeymap(), map[string]string{"quit": "ctrl+l", "clear_input": "ctrl+c"}); err != nil {
+		t.Errorf("swapping two keys should pass, got %v", err)
+	}
+}
+
+func TestKeymapChordUnbinds(t *testing.T) {
+	t.Parallel()
+	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"chord:l": ""}, nil))
+	d.press(keyCtrl('x'))
+	d.press(keyRune('l'))
+	if d.m.picking {
+		t.Error("an unbound chord should not run its old action")
+	}
+	if !strings.Contains(d.plain(), "ctrl+x l: no such chord") {
+		t.Errorf("an unbound chord is unknown:\n%s", d.plain())
+	}
+	if strings.Contains(keysText(d.m.cfg.Load()), "ctrl+x l") {
+		t.Error("/keys should not list the unbound chord")
 	}
 }
 

@@ -76,12 +76,15 @@ keymap service binds them.
 in `chords`, a `{key: action}` object. Defaults: `l` sessions, `c`
 collapse_all, `e` expand_all, `u` undo (`/undo` when a command
 provides it), `k` keys, `q` quit (arms like ctrl+c), `p` palette (the
-`/` palette over the actions alone). A chord may target any keymap
-action or `sessions`, `clear`, `keys`, `palette`, `undo`; an unknown
-action fails the mount. Every action is also a row in the `/` palette.
+`/` palette over the actions alone — esc, or a chosen row, gives the
+draft it displaced back). A chord may target any keymap action or
+`sessions`, `clear`, `keys`, `palette`, `undo`; an unknown action
+fails the mount, as does one key bound to two actions. An empty
+value unbinds a default chord. Every action is also a row in the `/`
+palette (its `quit` row quits outright, like `/quit`).
 
 ```js
-bough.setup({ui: {keymap: {leader: "ctrl+g", chords: {x: "expand_all"}}}});
+bough.setup({ui: {keymap: {leader: "ctrl+g", chords: {x: "expand_all", u: ""}}}});
 ```
 
 #### Collapse

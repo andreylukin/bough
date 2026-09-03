@@ -79,13 +79,15 @@ func actionKey(cfg *uiCfg, name string) string {
 
 // runAction performs one action by name — the one switch behind the
 // keymap, the chords and the palette's action rows. via is the key
-// label that triggered it ("" from the palette), named in the quit
-// hint.
+// label that triggered it, named in the quit hint; "" is the palette,
+// whose quit row is an explicit pick and quits outright like /quit
+// (a key's press only arms — the enter that accepted the row would
+// otherwise disarm it first).
 func (m *model) runAction(name, via string, cfg *uiCfg) tea.Cmd {
 	switch name {
 	case "quit":
 		if via == "" {
-			via = cfg.keys["quit"]
+			return tea.Quit
 		}
 		return m.quitPress(via)
 	case "scroll_up":
@@ -159,7 +161,18 @@ func (m *model) runAction(name, via string, cfg *uiCfg) tea.Cmd {
 		m.showKeys()
 	case "palette":
 		// Actions mode: the "/" palette over the action rows alone.
+		// The palette is inert under the inspector, so say so rather
+		// than leave a stray "/" behind; the draft it displaces is
+		// stashed and comes back when the mode ends.
+		if m.inspecting {
+			m.flash = "no palette under the inspector (" + cfg.keys["history_inspect"] + " closes it)"
+			return nil
+		}
+		if !m.pal.actionsOnly {
+			m.pal.stash = m.input.Value()
+		}
 		m.pal.actionsOnly = true
+		m.pal.escaped = false // an earlier esc on "/" must not keep this one shut
 		m.setDraft("/")
 		m.input.CursorEnd()
 	case "undo":

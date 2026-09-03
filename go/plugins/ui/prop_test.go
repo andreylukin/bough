@@ -171,6 +171,7 @@ func (d *drv) apply(t *rapid.T, st *propState, s propStep, checkQuit bool) {
 	case "click":
 		d.feed(tea.MouseClickMsg{X: s.x, Y: s.y, Button: tea.MouseLeft})
 		d.feed(tea.MouseReleaseMsg{X: s.x, Y: s.y, Button: tea.MouseLeft})
+		st.leader = false // a click drops a pending leader (the quit stays armed)
 	case "wheel":
 		b := tea.MouseWheelUp
 		if s.w == 1 {

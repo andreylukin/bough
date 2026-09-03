@@ -495,6 +495,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 
 	case tea.MouseClickMsg:
+		if m.leader {
+			m.leader, m.flash = false, "" // a click is not a chord: the pending leader lapses
+		}
 		return m, m.handleClick(msg.Mouse())
 
 	case tea.MouseMotionMsg:

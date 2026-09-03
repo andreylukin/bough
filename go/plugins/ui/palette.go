@@ -37,8 +37,11 @@ type palette struct {
 	cycleDraft string
 
 	// actionsOnly is the leader's "p" chord: the palette over the
-	// action rows alone. Dropped when the palette closes.
+	// action rows alone. It displaces the composer's draft with "/";
+	// stash keeps that draft, restored when the mode ends (esc, an
+	// accepted row, the "/" erased) — nothing typed is ever lost.
 	actionsOnly bool
+	stash       string
 }
 
 // paletteItem is one row: a command name with its usage and summary.
@@ -227,7 +230,9 @@ const actionTag = "action · "
 // paletteRow renders one row, clipped to width; a summary that does
 // not fit ends in "…" at a word boundary rather than a cut word, and
 // a skill row's name is dimmed so the group reads apart from the
-// built-ins; an action row's summary wears the "action" tag.
+// built-ins; an action row's summary wears the "action" tag, and on
+// a narrow terminal the description is what gets ellipsized — the
+// grouping cue is never the first thing to go.
 func paletteRow(it paletteItem, sel bool, width, col int, th theme) string {
 	marker := "  "
 	if sel {
@@ -239,10 +244,14 @@ func paletteRow(it paletteItem, sel bool, width, col int, th theme) string {
 	if it.action {
 		summary = actionTag + summary
 	}
+	summary = commands.Ellipsize(summary, left)
+	if tag := len([]rune(actionTag)); it.action && left > tag+1 {
+		summary = actionTag + commands.Ellipsize(it.summary, left-tag)
+	}
 	if sel {
 		line := head
 		if summary != "" && left > 0 {
-			line += "  " + commands.Ellipsize(summary, left)
+			line += "  " + summary
 		}
 		return th["select"].Render(padRunes(clipRunes(line, width), width))
 	}
@@ -252,7 +261,7 @@ func paletteRow(it paletteItem, sel bool, width, col int, th theme) string {
 	if left <= 0 || summary == "" {
 		return head
 	}
-	return head + "  " + th["dim"].Render(commands.Ellipsize(summary, left))
+	return head + "  " + th["dim"].Render(summary)
 }
 
 // padRunes pads s with spaces to n runes (never truncates).

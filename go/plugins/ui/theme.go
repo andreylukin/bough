@@ -158,9 +158,14 @@ const chordPrefix = "chord:"
 func applyKeymap(keys map[string]string, m map[string]string) error {
 	for action, key := range m {
 		if k, ok := strings.CutPrefix(action, chordPrefix); ok {
-			// A chord: the value names an action, not a key.
+			// A chord: the value names an action, not a key; an empty
+			// value unbinds a default chord.
 			if strings.TrimSpace(k) == "" {
 				return fmt.Errorf("ui: keymap: empty chord key in %q", action)
+			}
+			if strings.TrimSpace(key) == "" {
+				delete(keys, action)
+				continue
 			}
 			if !knownAction(key) {
 				return fmt.Errorf("ui: keymap: chord %q: unknown action %q (have %s)", k, key, strings.Join(actionNames(), ", "))
@@ -179,6 +184,20 @@ func applyKeymap(keys map[string]string, m map[string]string) error {
 			return fmt.Errorf("ui: keymap: empty key for action %q", action)
 		}
 		keys[action] = key
+	}
+	// One key, one action: a collision (the leader's ctrl+x is an easy
+	// one to hit) would otherwise resolve by map order, differently
+	// each run.
+	bound := map[string]string{}
+	for _, action := range sortedKeys(keys) {
+		key := keys[action]
+		if key == "" || strings.HasPrefix(action, chordPrefix) {
+			continue
+		}
+		if other, dup := bound[key]; dup {
+			return fmt.Errorf("ui: keymap: key %q bound to both %q and %q", key, other, action)
+		}
+		bound[key] = action
 	}
 	return nil
 }
