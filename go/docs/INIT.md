@@ -43,8 +43,9 @@ untouched entries survive.
 
 #### Theme
 
-Provides the `"theme"` service (token → style), merged over the UI's Go
-defaults. Tokens:
+Provides the `"theme"` service (token → style), merged over the
+active palette (the `theme` row's bundled scheme, `forest` by default;
+`/theme` lists them). Tokens:
 
 `user`, `assistant`, `code`, `result`, `error`, `accent`, `dim`,
 `border`, `status`, `focus` (the block-cursor highlight)

@@ -44,6 +44,7 @@ and are wired together only through service keys:
 | `ask-answers` | plugins/ask     | ui              |
 | `cognition` | plugins/initjs, plugins/todo (chained) | loop (optional) |
 | `projection` | plugins/initjs   | loop (optional) |
+| `palette`  | plugins/theme      | ui (optional)   |
 | `theme`    | plugins/initjs     | ui (optional)   |
 | `keymap`   | plugins/initjs     | ui (optional)   |
 
@@ -176,6 +177,16 @@ bough.project((entries) => [{role: "user", content: "..."}]); // history -> mess
 ```
 
 See `docs/INIT.md` for the full surface.
+
+## Themes
+
+Colors come from the `theme` row: a bundled palette by name —
+`forest` (the default: Everforest dark), `forest_light`, `ansi` (the
+terminal's own colors), `tokyonight`, `catppuccin_mocha`, `gruvbox`,
+`nord`, `dracula`. `/theme` lists them, `/theme <name>` switches live
+for the session; `name:` on the row keeps a choice. The palette is
+the `palette` service; init.js `ui.theme` tokens overlay it, so a
+one-token tweak (`{accent: "#7aa2f7"}`) still works on any palette.
 
 ## Commands
 

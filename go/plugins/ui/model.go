@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image/color"
 	"time"
 
 	"encoding/json"
@@ -14,6 +15,8 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
+	"charm.land/glamour/v2/ansi"
+	"charm.land/glamour/v2/styles"
 	"charm.land/lipgloss/v2"
 )
 
@@ -182,6 +185,35 @@ func (m *model) refresh() {
 	}
 }
 
+// mdStyles is glamour's dark or light style with inline code recolored
+// from the theme: the stock red-on-grey fought every palette. Inline
+// code takes the accent on the status bar's ground.
+func mdStyles(style string, th theme) ansi.StyleConfig {
+	cfg := styles.DarkStyleConfig
+	if style == "light" {
+		cfg = styles.LightStyleConfig
+	}
+	if fg := hexOf(th["accent"].GetForeground()); fg != "" {
+		cfg.Code.Color = &fg
+	}
+	if bg := hexOf(th["status"].GetBackground()); bg != "" {
+		cfg.Code.BackgroundColor = &bg
+	}
+	return cfg
+}
+
+// hexOf renders a color as "#rrggbb"; "" for none.
+func hexOf(c color.Color) string {
+	if c == nil {
+		return ""
+	}
+	r, g, b, a := c.RGBA()
+	if a == 0 {
+		return ""
+	}
+	return fmt.Sprintf("#%02x%02x%02x", r>>8, g>>8, b>>8)
+}
+
 // markdown renders assistant text via glamour, falling back to the
 // raw text on any error. The style follows the detected terminal
 // background (dark until told otherwise); a theme service "markdown"
@@ -203,7 +235,7 @@ func (m *model) markdown(text string) string {
 			style = s
 		}
 		r, err := glamour.NewTermRenderer(
-			glamour.WithStandardStyle(style),
+			glamour.WithStyles(mdStyles(style, m.cfg.Load().theme)),
 			glamour.WithWordWrap(w),
 			glamour.WithEmoji(),
 			// Hard newlines survive: "[tool output]\nhi" is two lines,

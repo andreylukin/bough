@@ -115,9 +115,16 @@ func newCfg(t theme, keys map[string]string, status string, hist historyView) *u
 func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	t := defaultTheme()
 	mdStyle := ""
-	if m, ok, err := getStringMap(ctx, "theme"); err != nil {
-		return nil, err
-	} else if ok {
+	// The "palette" (theme row: a whole bundled scheme) goes under the
+	// "theme" (init.js: per-token overrides).
+	for _, key := range []string{"palette", "theme"} {
+		m, ok, err := getStringMap(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
 		// "markdown" is not a style token: it overrides the glamour
 		// style ("dark"/"light") picked from the detected background.
 		if v, has := m["markdown"]; has {

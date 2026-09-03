@@ -107,6 +107,14 @@
 - id: graph
   plugin: graph
 
+# Colors: a bundled palette by name (forest, forest_light, ansi,
+# tokyonight, catppuccin_mocha, gruvbox, nord, dracula); /theme lists
+# and switches live. init.js `ui.theme` tokens overlay the palette.
+- id: theme
+  plugin: theme
+  config:
+    name: forest
+
 - id: ui
   plugin: ui
   # config:

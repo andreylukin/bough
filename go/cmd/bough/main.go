@@ -31,6 +31,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/loop"
 	_ "github.com/andreylukin/bough/plugins/mcp"
 	_ "github.com/andreylukin/bough/plugins/skills"
+	_ "github.com/andreylukin/bough/plugins/theme"
 	_ "github.com/andreylukin/bough/plugins/todo"
 	_ "github.com/andreylukin/bough/plugins/tools"
 	"github.com/andreylukin/bough/plugins/ui"

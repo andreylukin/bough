@@ -21,24 +21,24 @@ var themeTokens = []string{
 	"select", "system",
 }
 
-// defaultTheme is restrained and dark-friendly: one cyan accent,
-// ANSI palette colors so the user's terminal scheme shows through.
+// defaultTheme is "forest" — the Everforest dark palette (moss green
+// for the person, aqua for bough, amber focus, grey-green dims) — so
+// a bare mount without a theme row still looks like bough. The theme
+// plugin's "palette" and the init.js "theme" services overlay it.
 func defaultTheme() theme {
 	spec := map[string]string{
-		"user":      "5:bold",
+		"user":      "#a7c080:bold",
 		"assistant": "",
-		"code":      "252:faint",
+		"code":      "#9da9a0",
 		"result":    "",
-		"error":     "1",
-		"accent":    "6",
-		// 245 (mid grey) reads on dark and light grounds alike; ANSI 8
-		// ("bright black") is near-invisible on a navy or black theme.
-		"dim":    "245",
-		"border": "245",
-		"status": "250:236",
-		"focus":  "6:bold",
-		"select": "254:237", // palette selected row: near-white on dark grey bar
-		"system": "245",     // dim "/" command output blocks
+		"error":     "#e67e80",
+		"accent":    "#83c092",
+		"dim":       "#859289",
+		"border":    "#56635f",
+		"status":    "#d3c6aa:#3d484d",
+		"focus":     "#dbbc7f:bold",
+		"select":    "#d3c6aa:#475258",
+		"system":    "#9da9a0",
 	}
 	t := theme{}
 	for k, v := range spec {
