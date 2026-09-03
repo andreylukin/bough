@@ -204,6 +204,7 @@ func (o *openrouterLLM) readStream(body io.Reader, onDelta func(string)) (string
 				Delta struct {
 					Content string `json:"content"`
 				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
 			Error *struct {
 				Message string `json:"message"`
@@ -224,6 +225,12 @@ func (o *openrouterLLM) readStream(body io.Reader, onDelta func(string)) (string
 			if c.Delta.Content != "" {
 				out.WriteString(c.Delta.Content)
 				onDelta(c.Delta.Content)
+			}
+			// A stream that stops for a reason other than the model
+			// finishing (provider "error", "content_filter") would
+			// otherwise come back as a silent empty reply.
+			if fr := c.FinishReason; fr != "" && fr != "stop" && fr != "length" && fr != "tool_calls" {
+				return "", fmt.Errorf("llm-openrouter: stream ended: %s", fr)
 			}
 		}
 		if u := chunk.Usage; u != nil {

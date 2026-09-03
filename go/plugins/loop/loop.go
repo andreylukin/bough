@@ -12,6 +12,7 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -218,6 +219,9 @@ var jsBlock = regexp.MustCompile("(?s)```js\\s*\n(.*?)```")
 var anyBlock = regexp.MustCompile("(?s)```([^\\s`]*)[^\n]*\n.*?```")
 
 const removedBlock = "[guessed output omitted]"
+
+// errEmptyReply is the turn error after two empty replies in a row.
+var errEmptyReply = errors.New("the model returned an empty reply twice (provider hiccup) — send again, or switch with /model")
 
 // outputTags are the fence info strings a model uses for invented
 // results. A bare fence counts too. Anything else (```python,
@@ -495,6 +499,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	if maxSteps <= 0 {
 		maxSteps = defaultMaxSteps
 	}
+	retried := false
 	for step := 0; step < maxSteps; step++ {
 		sys := system
 		if r.cog != nil {
@@ -506,11 +511,23 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			note("done", "", nil)
 			return ctx.Err()
 		}
+		if err == nil && strings.TrimSpace(reply) == "" {
+			// A provider hiccup (a stream that ends with no content)
+			// gets one silent retry; a second empty reply is an error
+			// the user can act on, never a blank assistant entry.
+			if !retried {
+				retried = true
+				step--
+				continue
+			}
+			err = errEmptyReply
+		}
 		if err != nil {
 			note("error", err.Error(), nil)
 			note("done", "", r.doneData()) // every turn ends with a done, even on llm failure
 			return err
 		}
+		retried = false
 		reply = stripFakeBlocks(reply)
 		note("assistant", reply, nil)
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)

@@ -447,3 +447,50 @@ func TestStopHookGetsTurn(t *testing.T) {
 		t.Fatalf("stop payload %v, want input=rewritten reply=hello there", p)
 	}
 }
+
+// flakyLLM replies empty n times, then "fine".
+type flakyLLM struct{ empties, calls int }
+
+func (l *flakyLLM) Complete(context.Context, string, []Message) (string, error) {
+	l.calls++
+	if l.calls <= l.empties {
+		return "", nil
+	}
+	return "fine", nil
+}
+
+// One empty reply is retried silently; two in a row end the turn
+// with an actionable error — never a blank assistant entry.
+func TestEmptyReplyRetriedThenErrors(t *testing.T) {
+	for _, tc := range []struct {
+		empties   int
+		wantKinds string
+	}{
+		{1, "assistant done"},
+		{2, "error done"},
+	} {
+		l := &flakyLLM{empties: tc.empties}
+		kctx := kernel.NewContext()
+		kctx.Provide("llm", l)
+		kctx.Provide("codemode", &stubCode{})
+		if err := (&plugin{}).Apply(kctx, nil); err != nil {
+			t.Fatal(err)
+		}
+		r, _ := kernel.Get[*runner](kctx, "runner")
+		var kinds, texts []string
+		_ = r.Run(context.Background(), "go", collect(&kinds, &texts))
+		kctx.Unmount()
+		got := strings.Join(kinds, " ")
+		if got != tc.wantKinds {
+			t.Fatalf("empties=%d: events %q, want %q (texts %q)", tc.empties, got, tc.wantKinds, texts)
+		}
+		for _, e := range r.hist.Entries() {
+			if e.Kind == "assistant" && strings.TrimSpace(e.Data["text"].(string)) == "" {
+				t.Fatalf("empties=%d: blank assistant entry recorded", tc.empties)
+			}
+		}
+		if tc.empties == 2 && !strings.Contains(texts[0], "empty reply") {
+			t.Fatalf("error should name the empty reply: %q", texts[0])
+		}
+	}
+}
