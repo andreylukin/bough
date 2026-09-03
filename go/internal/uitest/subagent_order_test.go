@@ -17,8 +17,8 @@ func TestSubagentTurnStreamsInEmissionOrder(t *testing.T) {
 	t.Parallel()
 	stub := &uitest.Streaming{Script: uitest.Script{Replies: []string{
 		"I'll spawn.\n" + uitest.JS(`console.log(tools.spawn("make notes"))`) +
-			"\nThe subagent has finished. Let me verify:\n" + uitest.Bash("cat notes.md") + "\nVerification confirms.",
-		"Writing.\n" + uitest.Bash("printf 'x' > notes.md"),
+			"\nThe subagent has finished. Let me verify:\n" + uitest.Bash("printf 'x'") + "\nVerification confirms.",
+		"Writing.\n" + uitest.Bash("printf 'x'"),
 		"Findings: wrote notes.md",
 		"Done, verified.",
 	}}, Chunk: uitest.ByN(7)}
