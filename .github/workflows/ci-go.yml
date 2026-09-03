@@ -46,7 +46,7 @@ jobs:
       # when BOUGH_BIN is set.
       - run: go build -o "$GITHUB_WORKSPACE/bough-go-bin" ./cmd/bough
         working-directory: go
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
