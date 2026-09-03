@@ -21,14 +21,17 @@ func TestActionPaletteAndChords(t *testing.T) {
 	d.Say("go")
 	d.WaitFor("▸ result (1 line): 42") // collapsed by default
 
-	d.Type("/")
+	// The bare "/" list is capped at the built-ins (they outnumber the
+	// visible rows); a query matching both shows the order.
+	d.Type("/clear")
 	d.Step()
 	f := d.Frame()
-	iCmd, iAct := strings.Index(f, "/help"), strings.Index(f, "action · ")
+	iCmd, iAct := strings.Index(f, "/clear"), strings.Index(f, "action · ")
 	if iCmd < 0 || iAct < 0 || iAct < iCmd {
-		t.Fatalf("\"/\" should list the commands above the action rows:\n%s", f)
+		t.Fatalf("\"/clear\" should list the command above the action rows:\n%s", f)
 	}
-	d.Type("expand_all")
+	d.Press("ctrl+l")
+	d.Type("/expand_all")
 	d.Step()
 	if !strings.Contains(d.Frame(), "action · expand all blocks") {
 		t.Fatalf("the query should narrow to the action row:\n%s", d.Frame())
