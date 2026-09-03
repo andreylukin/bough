@@ -29,6 +29,9 @@ BINARY_PATH = "/installed-agent/bough"
 HOME_PATH = "/installed-agent/home"
 CONFIG_PATH = "/installed-agent/bough.yml"
 PROMPT_PATH = "/installed-agent/prompt.jsonl"
+STDOUT_PATH = "/installed-agent/stdout.txt"
+STDERR_PATH = "/installed-agent/stderr.txt"
+EXIT_PATH = "/installed-agent/exit.txt"
 
 # Benchmark hosts a model must not consult (the answer key lives there), plus the raw GitHub
 # hosts a leaked solution would come from. Loopback in /etc/hosts; the bench's own rule.
@@ -172,20 +175,36 @@ class BoughGo(BaseInstalledAgent):
         prompt.write_text(json.dumps({"prompt": instruction}) + "\n")
         await environment.upload_file(prompt, PROMPT_PATH)
         turn = self._timeout
+        # Output goes to files in the sandbox and is downloaded afterwards:
+        # a tool result with a stray invalid byte must not kill the trial
+        # in the environment's stdout stream decoder.
         command = (
             f"cd /app 2>/dev/null || cd ~; "
             f"timeout -s INT -k 30 {turn} "
             f"{shlex.quote(BINARY_PATH)} -headless -config {shlex.quote(CONFIG_PATH)} "
-            f"< {shlex.quote(PROMPT_PATH)}"
+            f"< {shlex.quote(PROMPT_PATH)} > {shlex.quote(STDOUT_PATH)} 2> {shlex.quote(STDERR_PATH)}; "
+            f"echo $? > {shlex.quote(EXIT_PATH)}"
         )
         result = await environment.exec(
             command=command, env=self._agent_env(), timeout_sec=turn + 120
         )
-        out = result.stdout or ""
-        err = result.stderr or ""
-        (self.logs_dir / "stdout.txt").write_text(out)
-        (self.logs_dir / "stderr.txt").write_text(err)
-        (self.logs_dir / "exit.txt").write_text(f"{result.return_code}\n")
+        out, err, code = "", "", result.return_code
+        for remote, local in ((STDOUT_PATH, "stdout.txt"), (STDERR_PATH, "stderr.txt"), (EXIT_PATH, "exit.txt")):
+            try:
+                await environment.download_file(remote, self.logs_dir / local)
+            except Exception as e:  # noqa: BLE001 — a missing file is reported, not fatal
+                (self.logs_dir / local).write_text(f"(download failed: {e})\n")
+        out = (self.logs_dir / "stdout.txt").read_text(errors="replace")
+        err = (self.logs_dir / "stderr.txt").read_text(errors="replace")
+        try:
+            code = int((self.logs_dir / "exit.txt").read_text().split()[0])
+        except (ValueError, IndexError):
+            pass
+
+        class _R:
+            return_code = code
+
+        result = _R()
         # Usage: the last "[usage] {...}" line is the cumulative total.
         usage = None
         for line in out.splitlines():

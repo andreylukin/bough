@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/andreylukin/bough/kernel"
 )
@@ -182,5 +183,19 @@ func TestSystemPromptOmitsAskWhenAbsent(t *testing.T) {
 	runTurn(t, llm, nil)
 	if strings.Contains(llm.seen(), "tools.ask(") {
 		t.Errorf("no ask plugin mounted, prompt must not document tools.ask:\n%s", llm.seen())
+	}
+}
+
+// truncate never splits a multi-byte rune.
+func TestTruncateKeepsUTF8Whole(t *testing.T) {
+	s := strings.Repeat("日", 10) // 30 bytes
+	for n := 1; n < 30; n++ {
+		out := truncate(s, n)
+		if !utf8.ValidString(out) {
+			t.Fatalf("n=%d: invalid UTF-8 %q", n, out)
+		}
+		if !strings.HasSuffix(out, "[truncated]") {
+			t.Fatalf("n=%d: no marker", n)
+		}
 	}
 }

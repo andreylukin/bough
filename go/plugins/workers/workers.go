@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/history"
@@ -239,6 +240,11 @@ func (w *Workers) runChild(task string, id int) (string, error) {
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	// Never cut inside a multi-byte rune: the tail would be invalid
+	// UTF-8 for the model and for anything streaming our output.
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n] + "\n[truncated]"
 }
