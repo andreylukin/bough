@@ -165,3 +165,29 @@ func TestBashDiesWithTheRunContext(t *testing.T) {
 		t.Fatalf("the shell survived the cancel: pids %s", out)
 	}
 }
+
+// write puts a whole file down (dirs made) and counts as a written file;
+// bash takes its script on stdin, so a NUL byte or a very long script
+// does not fail at exec.
+func TestWriteAndStdinBash(t *testing.T) {
+	st := &Stats{}
+	dir := t.TempDir()
+	p := dir + "/a/b/c.txt"
+	out, err := st.write(p, "one\ntwo\n")
+	if err != nil || !strings.Contains(out, "2 lines") && !strings.Contains(out, "3 lines") {
+		t.Fatalf("write: %q %v", out, err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != "one\ntwo\n" {
+		t.Fatalf("content = %q", b)
+	}
+	if files, _, _ := st.Take(); len(files) != 1 || files[0] != p {
+		t.Fatalf("written files = %v", files)
+	}
+	long := "echo start; x='" + strings.Repeat("y", 300*1024) + "'; echo ${#x}"
+	if out, err := st.bash(long); err != nil || !strings.Contains(out, "307200") {
+		t.Fatalf("long script: %q %v", out, err)
+	}
+	if out, err := st.bash("printf 'a\\0b' | tr '\\0' -"); err != nil || strings.TrimSpace(out) != "a-b" {
+		t.Fatalf("nul in output: %q %v", out, err)
+	}
+}

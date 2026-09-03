@@ -160,7 +160,8 @@ Available in the runtime:
   It is killed after 60 s (the error says so); split long work into
   shorter commands or background it yourself.
 - tools.view(path, [start, end]) -> string: a file's lines, numbered ("12│text"); optional 1-based inclusive range
-- tools.patch(path, old, new) -> string: replace ONE exact occurrence of old with new (copy old verbatim from view, enough lines to be unique); old = "" creates a new file with new
+- tools.write(path, content) -> string: create or overwrite a whole file (use this for new files and rewrites, never a shell heredoc)
+- tools.patch(path, old, new) -> string: replace ONE exact occurrence of old with new (copy old verbatim from view, enough lines to be unique)
 - console.log(...): print; everything printed is returned to you
 
 Each code block you write is executed and its output is sent back to you

@@ -90,6 +90,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	reg.RegisterTool("bash", st.bash)
 	reg.RegisterTool("view", view)
 	reg.RegisterTool("patch", st.patch)
+	reg.RegisterTool("write", st.write)
 	ctx.Provide("turn-stats", st)
 	return nil
 }
@@ -101,7 +102,11 @@ func (s *Stats) bash(cmd string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(parent, bashTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, "sh", "-c", cmd)
+	// The script goes in on stdin, not as an argument: a heredoc'd file
+	// or a long one-liner is not bounded by ARG_MAX, and a stray NUL
+	// byte no longer makes exec fail with "invalid argument".
+	c := exec.CommandContext(ctx, "sh", "-s")
+	c.Stdin = strings.NewReader(cmd)
 	// Its own process group, killed as a group: `sh -c` execs or forks
 	// the command, and killing sh alone leaves a sleep, a server, a
 	// build running after the turn was cancelled.
@@ -128,6 +133,22 @@ func (s *Stats) bash(cmd string) (string, error) {
 	}
 	s.exited(0)
 	return string(out), nil
+}
+
+// write creates or overwrites path with content, making parent
+// directories. The plain way to put a whole file down: no heredoc
+// quoting, no shell at all.
+func (s *Stats) write(path, content string) (string, error) {
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", err
+		}
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return "", err
+	}
+	s.wrote(path)
+	return fmt.Sprintf("wrote %s (%d bytes, %d lines)", path, len(content), strings.Count(content, "\n")+1), nil
 }
 
 // view returns a file's lines numbered "N│text", optionally only
