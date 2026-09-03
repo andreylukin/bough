@@ -18,12 +18,12 @@ test('fresh session shows the welcome text; the first turn removes it', async ({
   await boot(page, b.url);
 
   await waitForTermText(page, 'bough — a coding agent');
-  await waitForTermText(page, 'type / for commands');
+  await waitForTermText(page, '/ for commands');
   await waitForTermText(page, 'ask me to do something — I act by running code');
 
   await say(page, 'hello');
   await waitForTermText(page, 'echo: hello');
-  expect(await termText(page)).not.toContain('type / for commands');
+  expect(await termText(page)).not.toContain('/ for commands');
 });
 
 test('a long auth error wraps to the terminal width and carries the credential hint', async ({ launchBough, page }) => {
@@ -67,7 +67,7 @@ test('reloading with history replays the transcript without the welcome text', a
   await waitForTermText(page, 'echo: seeded question');
   // … and the fresh-session welcome never shows on a non-empty replay.
   const screen = await termText(page);
-  expect(screen).not.toContain('type / for commands');
+  expect(screen).not.toContain('/ for commands');
   expect(screen).not.toContain('bough — a coding agent');
 });
 

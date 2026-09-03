@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/andreylukin/bough/kernel"
@@ -73,6 +74,7 @@ func TestExpand(t *testing.T) {
 		{"all: $ARGUMENTS / one: $1", "  x  y ", "all: x  y / one: x"},
 		{"no args: [$ARGUMENTS] [$1]", "", "no args: [] []"},
 		{"cost is $5 or $ten", "", "cost is  or $ten"},
+		{"$1 then $10 then $12x", "a", "a then $10 then $12x"},
 		{"plain body", "ignored", "plain body"},
 	}
 	for _, c := range cases {
@@ -119,4 +121,37 @@ func TestRegisterCommands(t *testing.T) {
 	if _, err := reg.Run("greet", ""); err == nil || err.Error() != "unknown command: /greet (try /help)" {
 		t.Errorf("after unmount: %v", err)
 	}
+}
+
+// A remount (the reload path) rescans: a changed summary, a template
+// added since, and a removed one all show in the new set.
+func TestRegisterCommandsRescansOnRemount(t *testing.T) {
+	dir := t.TempDir()
+	addTemplate(t, dir, "greet", "# Greet\nhi $1\n")
+	addTemplate(t, dir, "old", "gone soon\n")
+	reg := commands.NewRegistry()
+	tp := New(dir)
+	ctx := kernel.NewContext()
+	tp.registerCommands(ctx, reg)
+	ctx.Unmount()
+
+	addTemplate(t, dir, "greet", "# Wave\nhi $1\n")
+	addTemplate(t, dir, "review", "look at $ARGUMENTS\n")
+	if err := os.Remove(filepath.Join(dir, "old.md")); err != nil {
+		t.Fatal(err)
+	}
+	ctx = kernel.NewContext()
+	tp.registerCommands(ctx, reg)
+	var got []string
+	for _, in := range reg.List() {
+		got = append(got, in.Name+": "+in.Summary)
+	}
+	want := []string{"greet: template: Wave", "review: template: look at $ARGUMENTS"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("List after remount = %v, want %v", got, want)
+	}
+	if _, err := reg.Run("old", ""); err == nil {
+		t.Error("removed template should be gone after remount")
+	}
+	ctx.Unmount()
 }

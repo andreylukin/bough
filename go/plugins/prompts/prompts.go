@@ -84,17 +84,21 @@ func summary(path string) string {
 	return first
 }
 
-var argRe = regexp.MustCompile(`\$(ARGUMENTS|[1-9])`)
+var argRe = regexp.MustCompile(`\$(ARGUMENTS|[1-9][0-9]*)`)
 
 // Expand substitutes args into body: "$ARGUMENTS" is the whole
 // argument string (trimmed), "$1".."$9" its whitespace-split words
-// ("" past the last one).
+// ("" past the last one). Placeholders expand anywhere in the body,
+// fenced code included; "$10" and up are left as written.
 func Expand(body, args string) string {
 	args = strings.TrimSpace(args)
 	words := strings.Fields(args)
 	return argRe.ReplaceAllStringFunc(body, func(m string) string {
 		if m == "$ARGUMENTS" {
 			return args
+		}
+		if len(m) > 2 {
+			return m // "$10"…: not a placeholder
 		}
 		if i := int(m[1] - '1'); i < len(words) {
 			return words[i]
