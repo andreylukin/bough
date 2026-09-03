@@ -121,7 +121,7 @@ func TestViewAndPatch(t *testing.T) {
 	if _, err := st.patch(path, "e", "E"); err == nil || !strings.Contains(err.Error(), "occurs") {
 		t.Fatalf("ambiguous old = %v", err)
 	}
-	if out, err := st.patch(path, "two\n", "2\n2b\n"); err != nil || out != "patched "+path+" (+1 lines)" {
+	if out, err := st.patch(path, "two\n", "2\n2b\n"); err != nil || out != "patched "+path+" (+1 lines)\n\n-two\n+2\n+2b" {
 		t.Fatalf("patch = (%q, %v)", out, err)
 	}
 	if got, _ := view(path, 1, 3); got != "1│one\n2│2\n3│2b\n" {
@@ -189,5 +189,26 @@ func TestWriteAndStdinBash(t *testing.T) {
 	}
 	if out, err := st.bash("printf 'a\\0b' | tr '\\0' -"); err != nil || strings.TrimSpace(out) != "a-b" {
 		t.Fatalf("nul in output: %q %v", out, err)
+	}
+}
+
+func TestLineDiff(t *testing.T) {
+	got := lineDiff("a\nb\nc\nd\ne\n", "a\nb\nX\nd\ne\n")
+	want := "\n\n b\n-c\n+X\n d"
+	if got != want {
+		t.Fatalf("diff = %q, want %q", got, want)
+	}
+	if lineDiff("same", "same") != "" {
+		t.Fatal("equal texts should have no diff")
+	}
+	if got := lineDiff("", "new\n"); got != "\n\n+new" {
+		t.Fatalf("new content diff = %q", got)
+	}
+}
+
+func TestLineDiffGap(t *testing.T) {
+	got := lineDiff("a\nb\nc\nd\ne\nf\ng\n", "A\nb\nc\nd\ne\nf\nG\n")
+	if want := "\n\n-a\n+A\n b\n…\n f\n-g\n+G"; got != want {
+		t.Fatalf("diff = %q, want %q", got, want)
 	}
 }

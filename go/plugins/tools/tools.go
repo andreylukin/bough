@@ -139,6 +139,7 @@ func (s *Stats) bash(cmd string) (string, error) {
 // directories. The plain way to put a whole file down: no heredoc
 // quoting, no shell at all.
 func (s *Stats) write(path, content string) (string, error) {
+	before, hadFile := os.ReadFile(path)
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return "", err
@@ -148,7 +149,89 @@ func (s *Stats) write(path, content string) (string, error) {
 		return "", err
 	}
 	s.wrote(path)
-	return fmt.Sprintf("wrote %s (%d bytes, %d lines)", path, len(content), strings.Count(content, "\n")+1), nil
+	out := fmt.Sprintf("wrote %s (%d bytes, %d lines)", path, len(content), strings.Count(content, "\n")+1)
+	if hadFile == nil {
+		out += lineDiff(string(before), content)
+	}
+	return out, nil
+}
+
+// diffLimit caps the lines a diff considers; past it the change is
+// reported without one (a rewrite of a big file is the code block).
+const diffLimit = 400
+
+// lineDiff renders old → new as "\n-old\n+new" lines, a blank line
+// after the summary: an LCS over lines, unchanged lines omitted
+// except one line of context on each side of a change, "…" for a
+// gap between shown lines. "" when the
+// texts are equal or either exceeds diffLimit lines. Pure.
+func lineDiff(old, new string) string {
+	if old == new {
+		return ""
+	}
+	a, b := splitLines(old), splitLines(new)
+	if len(a) > diffLimit || len(b) > diffLimit {
+		return ""
+	}
+	// lcs[i][j] = LCS length of a[i:], b[j:].
+	lcs := make([][]int, len(a)+1)
+	for i := range lcs {
+		lcs[i] = make([]int, len(b)+1)
+	}
+	for i := len(a) - 1; i >= 0; i-- {
+		for j := len(b) - 1; j >= 0; j-- {
+			if a[i] == b[j] {
+				lcs[i][j] = lcs[i+1][j+1] + 1
+			} else {
+				lcs[i][j] = max(lcs[i+1][j], lcs[i][j+1])
+			}
+		}
+	}
+	type op struct {
+		tag  byte
+		text string
+	}
+	var ops []op
+	for i, j := 0, 0; i < len(a) || j < len(b); {
+		switch {
+		case i < len(a) && j < len(b) && a[i] == b[j]:
+			ops = append(ops, op{' ', a[i]})
+			i++
+			j++
+		case i < len(a) && (j == len(b) || lcs[i+1][j] >= lcs[i][j+1]):
+			ops = append(ops, op{'-', a[i]})
+			i++
+		default:
+			ops = append(ops, op{'+', b[j]})
+			j++
+		}
+	}
+	var sb strings.Builder
+	sb.WriteString("\n")
+	skipped, shown := false, false
+	for k, o := range ops {
+		if o.tag == ' ' {
+			near := (k > 0 && ops[k-1].tag != ' ') || (k+1 < len(ops) && ops[k+1].tag != ' ')
+			if !near {
+				skipped = true
+				continue
+			}
+		}
+		if skipped && shown {
+			sb.WriteString("\n…")
+		}
+		skipped, shown = false, true
+		sb.WriteString("\n" + string(o.tag) + o.text)
+	}
+	return sb.String()
+}
+
+// splitLines splits on newlines without a trailing empty element.
+func splitLines(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(s, "\n"), "\n")
 }
 
 // view returns a file's lines numbered "N│text", optionally only
@@ -217,5 +300,5 @@ func (s *Stats) patch(path, old, new string) (string, error) {
 	}
 	s.wrote(path)
 	return fmt.Sprintf("patched %s (%+d lines)", path,
-		strings.Count(new, "\n")-strings.Count(old, "\n")), nil
+		strings.Count(new, "\n")-strings.Count(old, "\n")) + lineDiff(old, new), nil
 }

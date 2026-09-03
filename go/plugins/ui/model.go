@@ -81,6 +81,7 @@ type model struct {
 	width      int
 	height     int
 	running    bool           // a turn is in flight (input sent, no done/error yet)
+	turnStart  time.Time      // when the in-flight turn started (status bar elapsed)
 	inspecting bool           // history overlay open
 	diving     int            // spawn card id whose child transcript the overlay shows (0 = history)
 	ovRanges   []lineRange    // overlay line span -> entry index
@@ -380,7 +381,7 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		if b.collapsed {
 			return m.header(b, th)
 		}
-		return m.header(b, th) + "\n" + m.box(b.text, th["result"], th["border"])
+		return m.header(b, th) + "\n" + m.box(colorDiff(b.text, th), th["result"], th["border"])
 	case "spawn":
 		return m.renderSpawn(b, th)
 	case "command":
@@ -993,6 +994,9 @@ func (m *model) submit(line string) tea.Cmd {
 	m.nextID++
 	m.refresh()
 	m.vp.GotoBottom()
+	if !m.running {
+		m.turnStart = time.Now()
+	}
 	m.running = true
 	send := m.send
 	return tea.Batch(

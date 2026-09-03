@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -92,6 +93,8 @@ func callLabel(m []string) string {
 	switch m[1] {
 	case "patch":
 		return "Edited " + arg
+	case "write":
+		return "Wrote " + arg
 	case "view":
 		return "Read " + arg
 	case "bash":
@@ -333,6 +336,7 @@ func (m *model) finishTurn(id int, ev Event) {
 		if m.blocks[i].queued {
 			m.blocks[i].queued = false
 			m.running = true
+			m.turnStart = time.Now()
 			break
 		}
 	}
@@ -415,4 +419,24 @@ func (m *model) scrollCue() string {
 		cue = "↓ new output · " + cue
 	}
 	return cue
+}
+
+// colorDiff colors the +/- lines of an edit result ("patched …" or
+// "wrote …" followed by a diff, see tools.lineDiff): added lines in
+// the accent, removed in the error color, so an edit reads like a
+// diff rather than a dump. Other results pass through.
+func colorDiff(text string, th theme) string {
+	if !strings.HasPrefix(text, "patched ") && !strings.HasPrefix(text, "wrote ") {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	for i, l := range lines[1:] {
+		switch {
+		case strings.HasPrefix(l, "+"):
+			lines[i+1] = th["accent"].Render(l)
+		case strings.HasPrefix(l, "-"):
+			lines[i+1] = th["error"].Render(l)
+		}
+	}
+	return strings.Join(lines, "\n")
 }

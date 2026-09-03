@@ -11,7 +11,9 @@ package ui
 import (
 	"github.com/charmbracelet/x/ansi"
 
+	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 )
@@ -43,7 +45,7 @@ func (m *model) statusBar(cfg *uiCfg) string {
 	}
 	right += "? keys"
 	if m.running && m.pendingAsk == "" {
-		right = m.spin.View() + " " + right
+		right = m.spin.View() + " " + m.elapsed() + " · " + right
 	}
 	right += " "
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
@@ -62,4 +64,17 @@ func (m *model) statusBar(cfg *uiCfg) string {
 	// bar onto a second row and pushing the composer off screen.
 	line := ansi.Truncate(left+strings.Repeat(" ", gap)+right, m.width, "…")
 	return th["status"].Width(m.width).Render(line)
+}
+
+// elapsed is the in-flight turn's age, whole seconds ("12s", "2m05s"),
+// redrawn on every spinner tick.
+func (m *model) elapsed() string {
+	if m.turnStart.IsZero() {
+		return "0s"
+	}
+	d := time.Since(m.turnStart).Round(time.Second)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
 }

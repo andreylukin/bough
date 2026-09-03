@@ -217,15 +217,24 @@ var jsBlock = regexp.MustCompile("(?s)```js\\s*\n(.*?)```")
 // anyBlock matches every fenced block; group 1 is the info string.
 var anyBlock = regexp.MustCompile("(?s)```([^\\s`]*)[^\n]*\n.*?```")
 
-const removedBlock = "[model-written block removed]"
+const removedBlock = "[guessed output omitted]"
 
-// stripFakeBlocks replaces every non-js fenced block (```output,
-// ```text, bare ```...) in an assistant reply with removedBlock: those
-// are model-guessed results, and left in the transcript they render
-// like real runtime output.
+// outputTags are the fence info strings a model uses for invented
+// results. A bare fence counts too. Anything else (```python,
+// ```yaml, ```diff …) is code the model wants the user to see and
+// stays.
+var outputTags = map[string]bool{"": true, "output": true, "text": true, "txt": true,
+	"plaintext": true, "console": true, "stdout": true, "stderr": true, "result": true, "log": true}
+
+// stripFakeBlocks replaces every output-looking fenced block
+// (```output, ```text, bare ```...) in an assistant reply with
+// removedBlock: those are model-guessed results, and left in the
+// transcript they render like real runtime output. Language-tagged
+// fences are kept: they are code being shown, not results.
 func stripFakeBlocks(reply string) string {
 	return anyBlock.ReplaceAllStringFunc(reply, func(m string) string {
-		if anyBlock.FindStringSubmatch(m)[1] == "js" {
+		tag := anyBlock.FindStringSubmatch(m)[1]
+		if tag == "js" || !outputTags[strings.ToLower(tag)] {
 			return m
 		}
 		return removedBlock

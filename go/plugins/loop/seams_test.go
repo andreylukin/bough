@@ -312,7 +312,7 @@ func TestDefaultProjectBangCommands(t *testing.T) {
 }
 
 func TestStripFakeBlocks(t *testing.T) {
-	reply := "Running.\n```js\nconsole.log(1)\n```\nResult:\n```output\n1\n```\n```\nguess\n```\ndone"
+	reply := "Running.\n```js\nconsole.log(1)\n```\nResult:\n```output\n1\n```\n```\nguess\n```\ndone\n```python\nprint(1)\n```"
 	llm := &recordLLM{reply: reply}
 	mem := &memHistory{}
 	r := buildRunnerWith(t, llm, map[string]any{"history": mem})
@@ -324,7 +324,7 @@ func TestStripFakeBlocks(t *testing.T) {
 		t.Fatalf("entry[1] = %v", got)
 	}
 	text := got.Data["text"].(string)
-	want := "Running.\n```js\nconsole.log(1)\n```\nResult:\n" + removedBlock + "\n" + removedBlock + "\ndone"
+	want := "Running.\n```js\nconsole.log(1)\n```\nResult:\n" + removedBlock + "\n" + removedBlock + "\ndone\n```python\nprint(1)\n```"
 	if text != want {
 		t.Fatalf("assistant text = %q, want %q", text, want)
 	}
