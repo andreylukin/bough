@@ -9,6 +9,8 @@ import (
 
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -327,23 +329,77 @@ func (m *model) header(b *block, th theme) string {
 // welcomeView is the fresh-session orientation text (tui/web only):
 // shown while the transcript is empty on a session with no history,
 // suppressed on resume, gone once anything renders, removed by /clear.
+// Under the title, one dim line each for what is loaded (context
+// files, skills, templates — omitted when empty) and the keys to
+// know; every line is clipped to the width.
 func (m *model) welcomeView(cfg *uiCfg) string {
 	th := cfg.theme
-	out := th["accent"].Render("● ") + th["dim"].Render("bough — a coding agent") + "\n"
+	out := th["accent"].Render("● ") + th["dim"].Render("bough — a coding agent")
+	for _, l := range welcomeLines(cfg) {
+		out += "\n" + th["dim"].Render(truncateCols("  "+l, max(m.width, 4)))
+	}
+	return out
+}
+
+// welcomeNames caps the skill names the header spells out.
+const welcomeNames = 5
+
+// welcomeLines is the header body: "model <name> · <n> context",
+// "context: <files>", "skills: N
+// (names…)", "templates: /a /b", each omitted when there is nothing,
+// then the keys line and the invitation.
+func welcomeLines(cfg *uiCfg) []string {
+	var out []string
 	// The startup line: which model answers and, when known, how much
 	// context it has.
 	if cfg.modeler != nil && cfg.modeler.Model() != "" {
-		line := "  model " + cfg.modeler.Model()
+		line := "model " + cfg.modeler.Model()
 		if cfg.limit != nil && cfg.limit.ContextLimit() > 0 {
 			line += " · " + ctxAbbrev(cfg.limit.ContextLimit()) + " context"
 		}
-		out += th["dim"].Render(line) + "\n"
+		out = append(out, line)
 	}
-	return out +
-		th["dim"].Render("  type / for commands (/help lists them) · /keys or ? for the keys") + "\n" +
-		th["dim"].Render("  enter sends · ctrl+j or a trailing \\ starts a new line · esc stops a turn") + "\n" +
-		th["dim"].Render("  tab picks a ▸ step, enter expands it · !cmd runs a shell command") + "\n" +
-		th["dim"].Render("  ask me to do something — I act by running code")
+	if cfg.ctxmd != nil {
+		if files := cfg.ctxmd.Loaded(); len(files) > 0 {
+			out = append(out, "context: "+strings.Join(tildePaths(files), ", "))
+		}
+	}
+	if cfg.skills != nil {
+		if names := cfg.skills.Names(); len(names) > 0 {
+			shown := names
+			if len(shown) > welcomeNames {
+				shown = append(shown[:welcomeNames:welcomeNames], "…")
+			}
+			out = append(out, fmt.Sprintf("skills: %d (%s)", len(names), strings.Join(shown, ", ")))
+		}
+	}
+	if cfg.cmds != nil {
+		var names []string
+		for _, in := range cfg.cmds.List() {
+			if in.IsTemplate() {
+				names = append(names, "/"+in.Name)
+			}
+		}
+		if len(names) > 0 {
+			out = append(out, "templates: "+strings.Join(names, " "))
+		}
+	}
+	return append(out,
+		"keys: ? for the list · / for commands · ! for shell",
+		"ask me to do something — I act by running code")
+}
+
+// tildePaths shortens paths under the home directory to "~/…".
+func tildePaths(paths []string) []string {
+	home, _ := os.UserHomeDir()
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		if rest, ok := strings.CutPrefix(p, home+string(filepath.Separator)); ok && home != "" {
+			p = "~/" + rest
+		}
+		out[i] = p
+	}
+	return out
 }
 
 // authErrRe spots credential-shaped failures in error text; the match

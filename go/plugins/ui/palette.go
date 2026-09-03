@@ -38,7 +38,8 @@ type palette struct {
 }
 
 // paletteItem is one row: a command name with its usage and summary.
-// skill rows rank below built-ins and wear a dim name.
+// skill rows (skills and prompt templates) rank below built-ins and
+// wear a dim name.
 type paletteItem struct {
 	name    string
 	usage   string

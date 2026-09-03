@@ -27,12 +27,32 @@ type CommandInfo struct {
 	Name    string // without the leading "/"
 	Usage   string // argument hint, "" for none
 	Summary string // one line, shown dimmed in the palette
-	Kind    string // "builtin" (default when ""), "skill", "user"
+	Kind    string // "builtin" (default when ""), "user", "template", "skill"
 }
 
 // IsSkill reports whether the command is a skill ("/name" submits to
 // the loop) — the UI ranks and styles those below the built-ins.
 func (c CommandInfo) IsSkill() bool { return c.Kind == "skill" }
+
+// IsTemplate reports whether the command is a prompt template ("/name
+// args" submits the expanded file) — listed like a skill, below the
+// built-ins, under its own /help heading.
+func (c CommandInfo) IsTemplate() bool { return c.Kind == "template" }
+
+// group orders List: built-ins and user commands, then templates,
+// then skills.
+func (c CommandInfo) group() int {
+	switch {
+	case c.IsSkill():
+		return 2
+	case c.IsTemplate():
+		return 1
+	}
+	return 0
+}
+
+// groupHeading is the /help heading over each non-zero group.
+var groupHeading = [...]string{"", "templates", "skills"}
 
 // UIAction is the sentinel a UI-owned command returns on the error
 // channel: Run gives ("", UIAction("...")) and the UI detects it with
@@ -145,7 +165,7 @@ func (r *Registry) Unregister(name string) {
 }
 
 // List returns every command: built-ins (and user commands) first,
-// then skills, each group sorted by name.
+// then templates, then skills, each group sorted by name.
 func (r *Registry) List() []CommandInfo {
 	r.mu.Lock()
 	infos := make([]CommandInfo, 0, len(r.cmds))
@@ -154,13 +174,7 @@ func (r *Registry) List() []CommandInfo {
 	}
 	r.mu.Unlock()
 	slices.SortFunc(infos, func(a, b CommandInfo) int {
-		if x, y := a.IsSkill(), b.IsSkill(); x != y {
-			if x {
-				return 1
-			}
-			return -1
-		}
-		return cmp.Compare(a.Name, b.Name)
+		return cmp.Or(cmp.Compare(a.group(), b.group()), cmp.Compare(a.Name, b.Name))
 	})
 	return infos
 }
@@ -230,7 +244,8 @@ const helpSummaryMax = 72
 
 // helpText renders every command as "/name usage  summary" with the
 // left column padded to one shared width; built-ins first, then a
-// "skills" heading over the skill rows.
+// "templates" heading over the template rows and "skills" over the
+// skill rows.
 func helpText(r *Registry) string {
 	infos := r.List()
 	lefts := make([]string, len(infos))
@@ -245,11 +260,11 @@ func helpText(r *Registry) string {
 		}
 	}
 	var b strings.Builder
-	skills := false
+	group := 0
 	for i, in := range infos {
-		if in.IsSkill() && !skills {
-			skills = true
-			b.WriteString("skills\n")
+		if g := in.group(); g != group {
+			group = g
+			b.WriteString(groupHeading[g] + "\n")
 		}
 		fmt.Fprintf(&b, "%-*s  %s\n", width, lefts[i], Ellipsize(in.Summary, helpSummaryMax))
 	}

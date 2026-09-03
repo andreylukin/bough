@@ -30,6 +30,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/llm"
 	_ "github.com/andreylukin/bough/plugins/loop"
 	_ "github.com/andreylukin/bough/plugins/mcp"
+	_ "github.com/andreylukin/bough/plugins/prompts"
 	_ "github.com/andreylukin/bough/plugins/skills"
 	_ "github.com/andreylukin/bough/plugins/theme"
 	_ "github.com/andreylukin/bough/plugins/todo"

@@ -36,6 +36,18 @@ func (s *SystemContext) Preamble() string {
 	return out.String()
 }
 
+// Loaded returns the paths that exist right now — what Preamble
+// includes — for the startup header.
+func (s *SystemContext) Loaded() []string {
+	var out []string
+	for _, p := range s.paths {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 type plugin struct{}
 
 func init() {

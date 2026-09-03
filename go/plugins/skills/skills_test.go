@@ -131,3 +131,17 @@ func TestScanFollowsSymlinkedSkill(t *testing.T) {
 		t.Fatalf("symlinked skill: got %d blocks, want 1", len(got))
 	}
 }
+
+func TestNamesSortedAcrossPools(t *testing.T) {
+	global, project := t.TempDir(), t.TempDir()
+	addSkill(t, global, "zeta", "z")
+	addSkill(t, global, "alpha", "a")
+	addSkill(t, project, "alpha", "a2")
+	addSkill(t, project, "mid", "m")
+	if got := strings.Join(New(global, project).Names(), " "); got != "alpha mid zeta" {
+		t.Errorf("Names = %q, want %q", got, "alpha mid zeta")
+	}
+	if got := New(filepath.Join(global, "nope")).Names(); len(got) != 0 {
+		t.Errorf("Names with no pool = %v, want none", got)
+	}
+}

@@ -13,7 +13,7 @@ import (
 
 // --- welcome ---
 
-const welcomeLine = "type / for commands"
+const welcomeLine = "/ for commands"
 
 func TestWelcomeShownOnFreshSession(t *testing.T) {
 	t.Parallel()

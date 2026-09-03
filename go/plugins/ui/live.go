@@ -55,6 +55,18 @@ type contextLimiter interface {
 	ContextLimit() int
 }
 
+// contextFiles is the slice of the "context-md" service the startup
+// header reads: the files in the system prompt.
+type contextFiles interface {
+	Loaded() []string
+}
+
+// skillNames is the slice of the "skills" service the startup header
+// reads.
+type skillNames interface {
+	Names() []string
+}
+
 // uiCfg is one mount's immutable UI configuration; models read the
 // current one through liveCfg on every render, so a remount (new
 // theme/keymap row, history landing) restyles running views.
@@ -76,6 +88,10 @@ type uiCfg struct {
 	// ("command"/"system" entries); nil is fine (no recording).
 	cmds commandsView
 	hlog historyAppender
+
+	// Startup-header seams (welcomeView): both optional.
+	ctxmd  contextFiles
+	skills skillNames
 
 	// "cancel" seam (the loop's turn cancel); nil = nothing to stop.
 	cancel func()
@@ -193,6 +209,12 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	cfg.cmds = cmds
 	cfg.hlog = hlog
+	if c, err := kernel.Get[contextFiles](ctx, "context-md"); err == nil {
+		cfg.ctxmd = c
+	}
+	if s, err := kernel.Get[skillNames](ctx, "skills"); err == nil {
+		cfg.skills = s
+	}
 	// The cost row's priced view first; the llm's own tally otherwise.
 	if u, err := kernel.Get[llm.UsageReporter](ctx, "usage"); err == nil {
 		cfg.usage = u

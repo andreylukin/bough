@@ -170,6 +170,33 @@ func TestListBuiltinsBeforeSkills(t *testing.T) {
 	}
 }
 
+// Templates list after the built-ins and before the skills, under
+// their own /help heading.
+func TestListAndHelpGroupTemplates(t *testing.T) {
+	r := NewRegistry()
+	for _, in := range []CommandInfo{
+		{Name: "zskill", Kind: "skill", Summary: "skill: z"},
+		{Name: "review", Kind: "template", Summary: "template: Review a diff"},
+		{Name: "quit", Kind: "builtin"},
+		{Name: "greet", Kind: "template", Summary: "template: greet"},
+	} {
+		if err := r.Register(in, text("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var names []string
+	for _, in := range r.List() {
+		names = append(names, in.Name)
+	}
+	if got := strings.Join(names, " "); got != "quit greet review zskill" {
+		t.Fatalf("List order = %q, want builtins, templates, skills", got)
+	}
+	lines := strings.Split(helpText(r), "\n")
+	if len(lines) != 6 || lines[1] != "templates" || lines[4] != "skills" {
+		t.Fatalf("/help should head the template and skill groups:\n%s", helpText(r))
+	}
+}
+
 func TestEllipsize(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
 		{"short", "short"},
