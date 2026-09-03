@@ -132,6 +132,13 @@ func (w *Workers) spawn(task string) (string, error) {
 	}()
 	reply, err := w.runChild(task, id)
 	if err != nil {
+		// A child the provider killed never got to work: refund its
+		// slot, or a flaky minute burns the whole turn's budget.
+		if strings.Contains(err.Error(), "subagent llm:") {
+			w.mu.Lock()
+			w.spawns--
+			w.mu.Unlock()
+		}
 		return "", err
 	}
 	// Provenance: the parent (and the user reading its code output)

@@ -497,11 +497,20 @@ func (r *runner) fire(ctx context.Context, event string, payload map[string]any,
 // the ui can show the reply as it forms; only the finished reply is
 // recorded to history, as before, so deltas never reach the model.
 func (r *runner) complete(ctx context.Context, sys string, emit func(kind, text string)) (string, error) {
-	if st, ok := r.llm.(llm.Streamer); ok {
-		return st.Stream(ctx, sys, r.project(), func(delta string) { emit("assistant-delta", delta) })
-	}
-	return r.llm.Complete(ctx, sys, r.project())
+	return r.completeMsgs(ctx, sys, r.project(), emit)
 }
+
+func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, emit func(kind, text string)) (string, error) {
+	if st, ok := r.llm.(llm.Streamer); ok {
+		return st.Stream(ctx, sys, msgs, func(delta string) { emit("assistant-delta", delta) })
+	}
+	return r.llm.Complete(ctx, sys, msgs)
+}
+
+// outOfSteps is the last thing the model is asked when the step budget
+// runs out. A turn that spent every step on tools still owes the user
+// an answer: what was found, and what is left.
+const outOfSteps = `You are out of steps for this turn. Do not write a code block — nothing more will run. Reply now, as plain text, with what you found and what you would do next. If you never reached an answer, say so plainly and name the obstacle.`
 
 // atMaxBytes caps one attached file so a stray "@big.log" cannot
 // swallow the context.
@@ -666,11 +675,16 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				finish("cancelled", nil)
 				return ctx.Err()
 			}
+			// Whatever the block printed BEFORE it failed is kept: a
+			// block that logged a finished subagent's report and then
+			// threw on the next call must not lose the report.
 			if runErr != nil {
-				out = "error: " + runErr.Error()
-			} else {
-				out = truncate(out, maxResultBytes)
+				if out = strings.TrimRight(out, "\n"); out != "" {
+					out += "\n"
+				}
+				out += "error: " + runErr.Error()
 			}
+			out = truncate(out, maxResultBytes)
 			if res := r.fire(ctx, "post-result", map[string]any{"code": code, "result": out}, emit); res != nil {
 				if s, ok := res["result"].(string); ok {
 					out = s
@@ -687,11 +701,26 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			}
 		}
 	}
-	err := fmt.Errorf("loop: gave up after %d steps", maxSteps)
-	note("error", err.Error(), nil)
+	// The budget is spent. Ending here would leave the user with tool
+	// output and no answer, so the last call buys one: no blocks run,
+	// whatever comes back is the turn's reply.
+	note("system", fmt.Sprintf("step budget spent (%d steps); asking for a final answer", maxSteps), nil)
+	msgs := append(r.project(), Message{Role: "user", Content: outOfSteps})
+	reply, err := r.completeMsgs(ctx, system, msgs, emit)
+	if ctx.Err() != nil {
+		finish("cancelled", nil)
+		return ctx.Err()
+	}
+	if err != nil {
+		note("error", err.Error(), nil)
+		finish("", r.doneData())
+		return err
+	}
+	reply = strings.TrimSpace(jsBlock.ReplaceAllString(stripFakeBlocks(reply), ""))
+	note("assistant", reply, nil)
 	finish("", r.doneData())
-	r.fire(ctx, "stop", map[string]any{"input": input, "reply": ""}, emit)
-	return err
+	r.fire(ctx, "stop", map[string]any{"input": input, "reply": reply}, emit)
+	return nil
 }
 
 // toInt reads a yaml int, float, or --set string.

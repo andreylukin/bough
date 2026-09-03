@@ -122,9 +122,13 @@ func TestHookDeniesCodeExec(t *testing.T) {
 	r := buildRunner(t, llm, code, hooks, nil)
 
 	var kinds, texts []string
-	err := r.Run(context.Background(), "go", collect(&kinds, &texts))
-	if err == nil {
-		t.Fatal("expected gave-up error (every step denied)")
+	// Every step is denied, so the budget runs out — and the turn still
+	// ends with an answer, not an error.
+	if err := r.Run(context.Background(), "go", collect(&kinds, &texts)); err != nil {
+		t.Fatalf("a spent budget is not an error any more: %v", err)
+	}
+	if kinds[len(kinds)-1] != "done" || kinds[len(kinds)-2] != "assistant" {
+		t.Fatalf("a spent budget must still answer, got %v", kinds[len(kinds)-3:])
 	}
 	if len(code.ran) != 0 {
 		t.Fatalf("codemode ran %q, want nothing", code.ran)

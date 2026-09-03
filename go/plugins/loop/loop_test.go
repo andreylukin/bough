@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -197,5 +198,89 @@ func TestTruncateKeepsUTF8Whole(t *testing.T) {
 		if !strings.HasSuffix(out, "[truncated]") {
 			t.Fatalf("n=%d: no marker", n)
 		}
+	}
+}
+
+// stepLLM answers with a code block until it is told the budget is
+// spent, then with plain text. It records the last user message.
+type stepLLM struct {
+	final string
+	last  string
+}
+
+func (l *stepLLM) Complete(_ context.Context, _ string, msgs []Message) (string, error) {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			l.last = msgs[i].Content
+			break
+		}
+	}
+	if strings.Contains(l.last, "out of steps") {
+		return l.final, nil
+	}
+	return "working\n```js\nconsole.log(1)\n```", nil
+}
+
+// failCode prints, then fails — a block whose first call succeeded and
+// whose second threw.
+type failCode struct{ out string }
+
+func (failCode) RegisterTool(string, any) {}
+func (f failCode) Run(string) (string, error) {
+	return f.out, errors.New("GoError: tls: bad record MAC")
+}
+
+// A turn that spends its whole step budget still answers: the last call
+// asks for one, no block runs, and the turn ends "done" without error.
+func TestSpentBudgetStillAnswers(t *testing.T) {
+	l := &stepLLM{final: "I ran out of room. I read the kernel; the plugins are next."}
+	kctx := kernel.NewContext()
+	kctx.Provide("llm", l)
+	kctx.Provide("codemode", &stubCode{})
+	if err := (&plugin{}).Apply(kctx, map[string]any{"max_steps": 3}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	t.Cleanup(kctx.Unmount)
+	r, err := kernel.Get[*runner](kctx, "runner")
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "explain the codebase", collect(&kinds, &texts)); err != nil {
+		t.Fatalf("a spent budget must not be an error: %v", err)
+	}
+	if kinds[len(kinds)-1] != "done" || kinds[len(kinds)-2] != "assistant" {
+		t.Fatalf("the turn must end with an answer then done, got %v", kinds)
+	}
+	if !strings.Contains(texts[len(texts)-2], "ran out of room") {
+		t.Fatalf("the final answer is the turn's last message, got %q", texts[len(texts)-2])
+	}
+	if !strings.Contains(l.last, "out of steps") {
+		t.Fatalf("the final call must say the budget is spent: %q", l.last)
+	}
+}
+
+// Everything a failing block printed before it threw reaches the model:
+// a block that logs one subagent's report and then throws must not lose
+// the report.
+func TestFailedBlockKeepsWhatItPrinted(t *testing.T) {
+	l := &recordLLM{reply: "go\n```js\nboom()\n```"}
+	r := buildRunner(t, l, failCode{out: "REPORT FROM THE FIRST CHILD"}, nil, nil)
+	r.maxSteps = 1
+
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "go", collect(&kinds, &texts))
+	var result string
+	for i, k := range kinds {
+		if k == "error" || k == "result" {
+			result = texts[i]
+		}
+	}
+	if !strings.Contains(result, "REPORT FROM THE FIRST CHILD") {
+		t.Fatalf("partial output lost: %q", result)
+	}
+	if !strings.Contains(result, "bad record MAC") {
+		t.Fatalf("the error must still be reported: %q", result)
 	}
 }
