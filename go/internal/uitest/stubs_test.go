@@ -72,8 +72,9 @@ func spinnerIn(s string) bool {
 // --- providers ---
 
 // Streaming with every chunking: one code block, rendered once, and
-// the surrounding prose intact — chunk boundaries inside a fence or a
+// the prose before it intact — chunk boundaries inside a fence or a
 // rune never leak a partial fence or mojibake into the transcript.
+// (The prose under the fence is superseded by the "final." reply.)
 func TestStreamingChunkingsRenderOneCodeBlock(t *testing.T) {
 	t.Parallel()
 	reply := "Résumé → 日本語 first.\n```js\ntools.bash(\"echo chunked\")\n```\nAnd after 🐛."
@@ -89,7 +90,7 @@ func TestStreamingChunkingsRenderOneCodeBlock(t *testing.T) {
 			turnDone(d, "final.")
 			f := d.Frame()
 			fits(t, d)
-			for _, want := range []string{"Résumé → 日本語 first.", "▸ Ran: echo chunked", "chunked", "And after 🐛.", "final."} {
+			for _, want := range []string{"Résumé → 日本語 first.", "▸ Ran: echo chunked", "chunked", "final."} {
 				if !strings.Contains(f, want) {
 					t.Fatalf("%s: frame missing %q:\n%s", name, want, f)
 				}

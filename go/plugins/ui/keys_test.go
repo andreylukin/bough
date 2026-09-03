@@ -41,15 +41,15 @@ func TestKeymapRebindQuit(t *testing.T) {
 
 func TestKeymapRebindCollapseToggle(t *testing.T) {
 	t.Parallel()
-	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"collapse_toggle": "ctrl+t"}, nil))
+	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"collapse_toggle": "ctrl+g"}, nil))
 	d.event("result", nLines(20))
 	d.press(keyEnter()) // old key: enter no longer toggles, and empty submit is a no-op
 	if !d.m.blocks[0].collapsed {
 		t.Fatal("old enter binding should be inert after rebind")
 	}
-	d.press(keyCtrl('t'))
+	d.press(keyCtrl('g'))
 	if d.m.blocks[0].collapsed {
-		t.Error("ctrl+t should toggle collapse after rebind")
+		t.Error("ctrl+g should toggle collapse after rebind")
 	}
 }
 
@@ -352,5 +352,41 @@ func TestNewEventAtBottomStaysPinned(t *testing.T) {
 	d.event("assistant", "fresh reply")
 	if !d.m.vp.AtBottom() || !strings.Contains(d.plain(), "fresh reply") {
 		t.Error("a reader at the bottom should follow new output")
+	}
+}
+
+// ctrl+t pins the latest todo list above the composer; again unpins;
+// without a list it only flashes a hint.
+func TestTodoTogglePinsList(t *testing.T) {
+	d := defaultDrv(t)
+	d.press(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	if d.m.todoPinned || !strings.Contains(d.plain(), "no todo list yet") {
+		t.Fatalf("ctrl+t without todos should flash a hint:\n%s", d.plain())
+	}
+	d.event("todo", "[ ] 1. write tests\n[x] 2. read code")
+	d.event("assistant", "filler one")
+	d.event("assistant", "filler two")
+	d.press(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	p := d.plain()
+	if !d.m.todoPinned || !strings.Contains(p, "todo · ctrl+t hides") {
+		t.Fatalf("ctrl+t should pin the todo panel:\n%s", p)
+	}
+	lines := strings.Split(p, "\n")
+	hdr := -1
+	for i, l := range lines {
+		if strings.Contains(l, "ctrl+t hides") {
+			hdr = i
+		}
+	}
+	if hdr < 0 || !strings.Contains(lines[hdr+1], "write tests") || !strings.Contains(lines[hdr+2], "read code") {
+		t.Fatalf("panel rows should sit under the header at the pane bottom:\n%s", p)
+	}
+	d.event("todo", "[x] 1. write tests\n[x] 2. read code\n[ ] 3. ship")
+	if !strings.Contains(d.plain(), "3. ship") {
+		t.Fatalf("pinned panel should track todo events:\n%s", d.plain())
+	}
+	d.press(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	if d.m.todoPinned || strings.Contains(d.plain(), "ctrl+t hides") {
+		t.Fatal("second ctrl+t should unpin")
 	}
 }

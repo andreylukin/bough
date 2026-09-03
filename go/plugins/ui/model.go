@@ -1,6 +1,7 @@
 package ui
 
 import (
+	xansi "github.com/charmbracelet/x/ansi"
 	"image/color"
 	"time"
 
@@ -90,6 +91,8 @@ type model struct {
 	picking    bool           // session picker shown instead of the chat view
 	pick       int            // picker cursor index into cfg.sessions
 	mp         modelPicker    // "/model" picker (see modelpick.go)
+	todoText   string         // latest todo list text (the todo plugin's event)
+	todoPinned bool           // todo list pinned above the composer (todo_toggle)
 	sessRows   sessList       // mid-session picker list (see session.go); nil = launch picker
 	welcome    bool           // fresh-session orientation text (see welcomeView)
 	pendingAsk string         // ask id the composer routes answers to; "" = none
@@ -533,7 +536,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) addEvent(ev Event) {
 	id := m.nextID
 	m.nextID++
-	if ev.Kind != "code" && ev.Kind != "result" && ev.Kind != "error" {
+	switch ev.Kind {
+	case "code", "result", "error":
+	case "assistant", "assistant-delta":
+		// The model speaks again after seeing its results: the prose
+		// it wrote under the fence BEFORE seeing them ("Done, here's
+		// the file:") is superseded, not a second answer. Drop it.
+		m.trailing = ""
+	default:
 		m.flushTrailing()
 	}
 	switch ev.Kind {
@@ -576,9 +586,6 @@ func (m *model) addEvent(ev Event) {
 			collapsed = true
 		}
 		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: text, collapsed: collapsed})
-		if ev.Kind == "result" {
-			m.flushTrailing()
-		}
 	case "sub:start", "sub:assistant", "sub:code", "sub:result", "sub:error", "sub:done":
 		// A subagent's activity folds into ONE card per worker (spawn.go):
 		// the parent's transcript is the story, the child's is detail
@@ -590,6 +597,7 @@ func (m *model) addEvent(ev Event) {
 		m.dropLive()
 		m.addAssistant(ev.Text)
 	case "todo":
+		m.todoText = ev.Text
 		// One render per mutation: the system block a /todo mutation
 		// just printed (same text) becomes the todo block, and
 		// back-to-back todo events (several mutations in one script)
@@ -924,6 +932,13 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+	case "todo_toggle":
+		if m.todoText == "" {
+			m.flash = "no todo list yet (/todo add <text>)"
+			return m, nil
+		}
+		m.todoPinned = !m.todoPinned
+		return m, nil
 	case "history_inspect":
 		if m.inspecting {
 			m.inspecting, m.diving = false, 0
@@ -1092,11 +1107,43 @@ func (m model) frame() string {
 		// The "/" palette: an overlay over the transcript's bottom
 		// rows, directly above the composer — sized to its content,
 		// never reflowing the layout under a filtering list.
-		bl := strings.Split(body, "\n")
-		if k := len(lines); len(bl) >= k {
-			copy(bl[len(bl)-k:], lines)
-			body = strings.Join(bl, "\n")
-		}
+		body = overlayBottom(body, lines)
+	} else if m.todoPinned && m.todoText != "" {
+		body = overlayBottom(body, m.todoPanel(cfg))
 	}
 	return body + "\n" + m.statusBar(cfg) + "\n" + m.input.View()
+}
+
+// overlayBottom replaces the bottom rows of body with lines (when
+// they fit), the overlay pattern the palette and the todo panel share.
+func overlayBottom(body string, lines []string) string {
+	bl := strings.Split(body, "\n")
+	if k := len(lines); len(bl) >= k {
+		copy(bl[len(bl)-k:], lines)
+		body = strings.Join(bl, "\n")
+	}
+	return body
+}
+
+// todoPanelMax caps the pinned todo panel's item rows.
+const todoPanelMax = 8
+
+// todoPanel renders the pinned todo list: a dim header naming the key
+// that hides it, open items first as they are, done items dimmed,
+// "+N more" past todoPanelMax. Pinned it tracks every todo event.
+func (m *model) todoPanel(cfg *uiCfg) []string {
+	th := cfg.theme
+	items := strings.Split(strings.TrimRight(m.todoText, "\n"), "\n")
+	lines := []string{th["dim"].Render("todo · " + cfg.keys["todo_toggle"] + " hides")}
+	for i, l := range items {
+		if i == todoPanelMax {
+			lines = append(lines, th["dim"].Render(fmt.Sprintf("  +%d more", len(items)-i)))
+			break
+		}
+		if strings.HasPrefix(l, "[x]") {
+			l = th["dim"].Render(l)
+		}
+		lines = append(lines, xansi.Truncate(l, max(m.width, 1), "…"))
+	}
+	return lines
 }

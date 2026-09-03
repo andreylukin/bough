@@ -287,8 +287,8 @@ func liveView(text string) (prose string, coding bool) {
 
 // splitProse removes the executed fence from an assistant block: the
 // prose before it stays, the prose after it is held back (m.trailing)
-// until the code's result has landed, so the transcript reads in
-// emission order. Falls back to a plain strip for a non-js fence.
+// until the turn ends (or an ask needs it), so the transcript reads in
+// emission order; a further reply in the turn supersedes it (addEvent). Falls back to a plain strip for a non-js fence.
 func (m *model) splitProse(b *block, want string) (string, bool) {
 	if before, after, ok := splitAtFence(b.text, want); ok {
 		if after != "" {

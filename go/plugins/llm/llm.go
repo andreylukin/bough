@@ -68,10 +68,11 @@ func (u Usage) Short() string {
 	if u.InputTokens == 0 && u.OutputTokens == 0 {
 		return ""
 	}
+	tok := kilo(u.InputTokens+u.OutputTokens) + " tok"
 	if u.Priced {
-		return fmt.Sprintf("$%.4f", u.Cost)
+		return fmt.Sprintf("$%.4f · %s", u.Cost, tok)
 	}
-	return kilo(u.InputTokens+u.OutputTokens) + " tok"
+	return tok
 }
 
 func kilo(n int) string {

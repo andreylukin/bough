@@ -62,7 +62,7 @@ func TestUsageStrings(t *testing.T) {
 		t.Errorf("unpriced Short = %q", got)
 	}
 	u.Priced, u.Cost = true, 0.0123
-	if got := u.Short(); got != "$0.0123" {
+	if got := u.Short(); got != "$0.0123 · 1.5k tok" {
 		t.Errorf("priced Short = %q", got)
 	}
 	if got := u.String(); got != "1.5k in · 20 out · $0.0123" {

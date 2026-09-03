@@ -27,8 +27,10 @@ func TestHarnessEchoTurn(t *testing.T) {
 }
 
 // A real turn through the loop renders in emission order: the prose
-// before a fence, then the code and result rows, then the prose after
-// it — never the whole reply above the tool rows it triggered.
+// before a fence, then the code and result rows, then the reply that
+// followed the result — never the whole reply above the tool rows it
+// triggered. Prose the model wrote under the fence before seeing the
+// result ("Done.") is superseded by that reply and not shown.
 func TestTurnRendersInEmissionOrder(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32
@@ -44,8 +46,11 @@ func TestTurnRendersInEmissionOrder(t *testing.T) {
 	f := d.Frame()
 	iL, iC, iR := strings.Index(f, "Looking…"), strings.Index(f, "▸ code js (1 line)"), strings.Index(f, "▸ result (1 line): 1")
 	iD, iA := strings.Index(f, "Done."), strings.Index(f, "All good.")
-	if iL < 0 || iC < 0 || iR < 0 || iD < 0 || !(iL < iC && iC < iR && iR < iD && iD < iA) {
-		t.Fatalf("not in emission order (prose@%d code@%d result@%d prose@%d next@%d):\n%s", iL, iC, iR, iD, iA, f)
+	if iL < 0 || iC < 0 || iR < 0 || iA < 0 || !(iL < iC && iC < iR && iR < iA) {
+		t.Fatalf("not in emission order (prose@%d code@%d result@%d next@%d):\n%s", iL, iC, iR, iA, f)
+	}
+	if iD >= 0 {
+		t.Fatalf("pre-result prose should be superseded by the next reply:\n%s", f)
 	}
 }
 

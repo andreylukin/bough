@@ -39,7 +39,7 @@ func TestStatusBarShowsUsageAndKeysHint(t *testing.T) {
 		t.Errorf("status bar missing the keys hint:\n%s", p)
 	}
 	cfg.usage = fakeUsage{llm.Usage{InputTokens: 1200, OutputTokens: 300, Cost: 0.0042, Priced: true}}
-	if p := d.plain(); !strings.Contains(p, "$0.0042 · ? keys") {
+	if p := d.plain(); !strings.Contains(p, "$0.0042 · 1.5k tok · ? keys") {
 		t.Errorf("status bar missing the priced usage:\n%s", p)
 	}
 	cfg.usage = fakeUsage{llm.Usage{InputTokens: 1200, OutputTokens: 300}}

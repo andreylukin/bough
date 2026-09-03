@@ -147,8 +147,12 @@ func TestDedupeKeepsSurroundingAssistantText(t *testing.T) {
 		t.Errorf("fence not stripped cleanly (prose after the fence waits for the result): %q", txt)
 	}
 	d.event("result", "1")
-	if len(d.m.blocks) != 4 || d.m.blocks[3].kind != "assistant" || d.m.blocks[3].text != "after words" {
-		t.Fatalf("prose after the fence should follow the result, got %+v", d.m.blocks)
+	if len(d.m.blocks) != 3 {
+		t.Fatalf("prose after the fence waits for the turn to end, got %+v", d.m.blocks)
+	}
+	d.event("done", "")
+	if len(d.m.blocks) < 5 || d.m.blocks[3].kind != "assistant" || d.m.blocks[3].text != "after words" {
+		t.Fatalf("prose after the fence should land before the done row, got %+v", d.m.blocks)
 	}
 	// The executed code renders exactly once: header preview plus box
 	// (expand the collapsed block so the box shows).
@@ -215,5 +219,23 @@ func TestNoDoubleBlankLinesBetweenBlocks(t *testing.T) {
 		} else {
 			blanks = 0
 		}
+	}
+}
+
+// Prose the model wrote under a fence before seeing its result is a
+// guess ("Done, here's the file:"); when the model replies again after
+// the result, that guess is dropped rather than shown as a second,
+// contradictory answer.
+func TestTrailingProseSupersededByNextReply(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.event("assistant", "```js\nconsole.log(1)\n```\nDone, it printed 2.")
+	d.event("code", "console.log(1)\n")
+	d.event("result", "1")
+	d.event("assistant", "Done, it printed 1.")
+	d.event("done", "")
+	p := d.plain()
+	if strings.Contains(p, "printed 2") || !strings.Contains(p, "printed 1") {
+		t.Fatalf("superseded trailing prose should be dropped:\n%s", p)
 	}
 }

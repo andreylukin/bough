@@ -68,7 +68,7 @@ func TestServicePricesTokensAndPassesPricedThrough(t *testing.T) {
 	if !u.Priced || math.Abs(u.Cost-(0.25+0.2)) > 1e-9 {
 		t.Fatalf("priced from the table: %+v", u)
 	}
-	if u.Short() != "$0.4500" {
+	if u.Short() != "$0.4500 · 1.1M tok" && u.Short() != "$0.4500 · 1100.0k tok" {
 		t.Fatalf("status bar text: %q", u.Short())
 	}
 	if s.Source() != "the cost table for gpt-5-mini" {

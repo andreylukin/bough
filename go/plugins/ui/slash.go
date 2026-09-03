@@ -309,12 +309,12 @@ func keysText(cfg *uiCfg) string {
 		{"enter", "send the line (/cmd dispatches, !cmd runs a shell command)"},
 	}
 	order := []string{"quit", "clear_input", "history_inspect", "block_next", "block_prev",
-		"collapse_toggle", "collapse_all", "expand_all", "scroll_up", "scroll_down", "page_up", "page_down"}
+		"collapse_toggle", "collapse_all", "expand_all", "todo_toggle", "scroll_up", "scroll_down", "page_up", "page_down"}
 	desc := map[string]string{
 		"quit": "quit", "clear_input": "clear the composer", "history_inspect": "inspect history (toggle)",
 		"block_next": "focus next block", "block_prev": "focus previous block",
 		"collapse_toggle": "toggle the focused block", "collapse_all": "collapse all blocks",
-		"expand_all": "expand all blocks", "scroll_up": "scroll up", "scroll_down": "scroll down",
+		"expand_all": "expand all blocks", "todo_toggle": "pin/unpin the todo list", "scroll_up": "scroll up", "scroll_down": "scroll down",
 		"page_up": "page up", "page_down": "page down",
 	}
 	for _, a := range order {
