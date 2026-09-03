@@ -72,6 +72,15 @@ type TurnStats interface {
 	Take() (files []string, exit int, ran bool)
 }
 
+// Checkpointer is the optional "checkpoints" service seam (history):
+// Snapshot records the working tree before a turn ("" when there is
+// no git repo to snapshot) and Pin names the tree for the turn's seq,
+// which is what /undo reverts against.
+type Checkpointer interface {
+	Snapshot() string
+	Pin(seq int64, tree string)
+}
+
 // Sections is the "prompt-sections" service: named system-prompt
 // sections that plugins register (workers documents tools.spawn, mcp
 // its bound tools). The loop appends every section, sorted by name,
@@ -252,6 +261,10 @@ func stripFakeBlocks(reply string) string {
 // cancelledNote is what a cancelled turn projects to.
 const cancelledNote = "[cancelled] The user interrupted this turn. Do not resume or redo its work unless asked again."
 
+// undoPrefix opens the note an "undo" entry projects to; the reverted
+// paths follow.
+const undoPrefix = "[undo] The user reverted these files to their content from before the turn that wrote them: "
+
 func DefaultProject(entries []history.Entry) []llm.Message {
 	var msgs []llm.Message
 	for i := 0; i < len(entries); i++ {
@@ -274,6 +287,29 @@ func DefaultProject(entries []history.Entry) []llm.Message {
 				msgs[n-1].Content += "\n\n" + cancelledNote
 			} else {
 				msgs = append(msgs, llm.Message{Role: "user", Content: cancelledNote})
+			}
+		case "undo":
+			// /undo put files back; the model's "wrote X" results are
+			// stale, so tell it (folded like the cancelled note).
+			var files []string
+			switch l := e.Data["files"].(type) {
+			case []string:
+				files = l
+			case []any:
+				for _, x := range l {
+					if s, ok := x.(string); ok {
+						files = append(files, s)
+					}
+				}
+			}
+			if len(files) == 0 {
+				continue
+			}
+			undoNote := undoPrefix + strings.Join(files, ", ")
+			if n := len(msgs); n > 0 && msgs[n-1].Role == "user" {
+				msgs[n-1].Content += "\n\n" + undoNote
+			} else {
+				msgs = append(msgs, llm.Message{Role: "user", Content: undoNote})
 			}
 		case "command":
 			if !strings.HasPrefix(text, "!") {
@@ -334,6 +370,7 @@ type runner struct {
 	cog      Cognition
 	proj     Projection
 	stats    TurnStats
+	cp       Checkpointer
 	secs     *Sections
 	hasAsk   bool // an "ask-answers" service is mounted: document tools.ask
 	// steer hands over the steering messages sent since the last
@@ -381,7 +418,19 @@ func (r *runner) admit(ctx context.Context, input string, steer bool, emit func(
 	if steer {
 		data["steer"] = true
 	}
-	r.hist.Append("input", data)
+	// The turn's checkpoint: the working tree as it was before the
+	// model touched anything, on the turn's input entry and pinned
+	// by seq (a steer lands mid-turn: no checkpoint of its own).
+	tree := ""
+	if !steer && r.cp != nil {
+		if tree = r.cp.Snapshot(); tree != "" {
+			data["checkpoint"] = tree
+		}
+	}
+	in := r.hist.Append("input", data)
+	if tree != "" {
+		r.cp.Pin(in.Seq, tree)
+	}
 	return input, ""
 }
 
@@ -562,7 +611,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		}
 		reply, err := r.complete(ctx, sys, emit)
 		if ctx.Err() != nil {
-			finish("cancelled", nil)
+			finish("cancelled", r.doneData()) // what it wrote so far: /undo after esc reverts it
 			return ctx.Err()
 		}
 		if err == nil && strings.TrimSpace(reply) == "" {
@@ -725,6 +774,9 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	}
 	if st, err := kernel.Get[TurnStats](kctx, "turn-stats"); err == nil {
 		r.stats = st
+	}
+	if c, err := kernel.Get[Checkpointer](kctx, "checkpoints"); err == nil {
+		r.cp = c
 	}
 	kctx.Provide("runner", r)
 

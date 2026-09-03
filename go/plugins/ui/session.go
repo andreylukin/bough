@@ -54,8 +54,9 @@ func (m *model) replay() {
 	for _, e := range entries {
 		text, _ := e.Data["text"].(string)
 		switch e.Kind {
-		case "meta":
-			// session bookkeeping (cwd), nothing to render
+		case "meta", "undo":
+			// session bookkeeping (cwd, a /undo's revert record —
+			// its system row follows), nothing to render
 		case "input":
 			steer, _ := e.Data["steer"].(bool)
 			m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: text, steer: steer})

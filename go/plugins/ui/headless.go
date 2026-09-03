@@ -269,6 +269,10 @@ func hlDispatch(line string) bool {
 		if cur, rows, ok := commands.ModelPickerChoices(act); ok {
 			out = "model: " + cur + "\nchoices: " + strings.Join(rows, ", ")
 		}
+		if id, ok := commands.ResumeID(act); ok {
+			// No session swap here: name the file so it can be resumed.
+			out = "session " + id + " (bough --resume " + id + ")"
+		}
 	case err != nil:
 		out = err.Error()
 	case out == "":
