@@ -23,6 +23,8 @@ func (m *model) statusBar(cfg *uiCfg) string {
 	switch {
 	case m.flash != "":
 		right = m.flash
+	case m.inspecting && m.diving != 0:
+		right = "subagent transcript · esc to close"
 	case m.inspecting:
 		right = "inspecting · " + cfg.keys["history_inspect"] + " to close"
 	case m.pendingAsk != "":

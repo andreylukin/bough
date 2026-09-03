@@ -502,39 +502,109 @@ func TestAssistantDeltasBuildLiveBlockThenReplaced(t *testing.T) {
 	}
 }
 
-// A subagent's events land as collapsible "sub" blocks, collapsed by
-// default under every policy but "none", tagged with the worker number.
-func TestSubagentBlocksCollapseByDefault(t *testing.T) {
+// A subagent's events fold into ONE card per worker, collapsed by
+// default under every policy but "none": the header carries the task,
+// call count and last call while running, then the status; the body is
+// the child's report.
+func TestSubagentEventsFoldIntoOneCard(t *testing.T) {
 	for _, mode := range []string{"all", "large"} {
 		m := testModelCollapse(t, mode)
-		m.addEvent(Event{Kind: "sub:code", Text: "console.log(tools.bash(\"ls\"))", Data: map[string]any{"worker": 2}})
-		m.addEvent(Event{Kind: "sub:result", Text: "a\nb\n", Data: map[string]any{"worker": 2}})
-		m.addEvent(Event{Kind: "sub:assistant", Text: "two files", Data: map[string]any{"worker": 2}})
-		m.addEvent(Event{Kind: "sub:done", Data: map[string]any{"worker": 2}})
-		if len(m.blocks) != 3 {
-			t.Fatalf("%s: want 3 sub blocks (done adds none), got %d", mode, len(m.blocks))
+		w := map[string]any{"worker": 2}
+		m.addEvent(Event{Kind: "sub:start", Text: "count the files", Data: w})
+		m.addEvent(Event{Kind: "sub:assistant", Text: "on it\n```js\ntools.bash(\"ls\")\n```", Data: w})
+		m.addEvent(Event{Kind: "sub:code", Text: "console.log(tools.bash(\"ls\"))", Data: w})
+		if len(m.blocks) != 1 || m.blocks[0].kind != "spawn" || !m.blocks[0].collapsed || !m.blocks[0].collapsible() {
+			t.Fatalf("%s: want one collapsed spawn card, got %+v", mode, m.blocks)
 		}
-		for _, b := range m.blocks {
-			if b.kind != "sub" || !b.collapsed || !b.collapsible() {
-				t.Fatalf("%s: block %+v should be a collapsed collapsible sub block", mode, b)
+		head := stripANSI(m.render(&m.blocks[0], m.cfg.Load()))
+		for _, want := range []string{"sub 2 · count the files", "1 call", "Ran: ls"} {
+			if !strings.Contains(head, want) {
+				t.Fatalf("%s: running header missing %q: %q", mode, want, head)
 			}
 		}
-		if m.blocks[0].label != "sub 2 · Ran: ls" || m.blocks[1].label != "sub 2 · result" || m.blocks[2].label != "sub 2 · reply" {
-			t.Fatalf("labels: %q %q %q", m.blocks[0].label, m.blocks[1].label, m.blocks[2].label)
+		m.addEvent(Event{Kind: "sub:result", Text: "a\nb\n", Data: w})
+		m.addEvent(Event{Kind: "sub:assistant", Text: "Status: ok\nFindings: two files", Data: w})
+		m.addEvent(Event{Kind: "sub:done", Data: map[string]any{"worker": 2, "status": "ok", "steps": 2}})
+		if len(m.blocks) != 1 {
+			t.Fatalf("%s: done must not add blocks, got %d", mode, len(m.blocks))
 		}
-		// Collapsed: the one-line disclosure header (glyph, tag, preview), no box.
-		view := m.render(&m.blocks[1], m.cfg.Load())
-		if strings.Count(view, "\n") != 0 || !strings.Contains(view, "▸ sub 2 · result") {
-			t.Fatalf("collapsed render should be one header line:\n%s", view)
+		head = stripANSI(m.render(&m.blocks[0], m.cfg.Load()))
+		if strings.Count(head, "\n") != 0 || !strings.Contains(head, "✔") || !strings.Contains(head, "1 call") || strings.Contains(head, "Ran: ls") {
+			t.Fatalf("%s: finished collapsed header should be one ✔ line with the count, no last call: %q", mode, head)
+		}
+		m.blocks[0].collapsed = false
+		body := stripANSI(m.render(&m.blocks[0], m.cfg.Load()))
+		if !strings.Contains(body, "Findings: two files") || strings.Contains(body, "on it") {
+			t.Fatalf("%s: expanded card shows the report, not earlier replies:\n%s", mode, body)
+		}
+		if n := len(m.blocks[0].sub.log); n != 4 {
+			t.Fatalf("%s: child transcript has %d events, want 4", mode, n)
 		}
 	}
 	m := testModelCollapse(t, "none")
-	m.addEvent(Event{Kind: "sub:result", Text: "x", Data: map[string]any{"worker": 1}})
+	m.addEvent(Event{Kind: "sub:start", Text: "x", Data: map[string]any{"worker": 1}})
 	if m.blocks[0].collapsed {
-		t.Fatal("collapse: none must expand sub blocks too")
+		t.Fatal("collapse: none must expand spawn cards too")
 	}
-	if got := subLabel(Event{Kind: "sub:error", Text: "boom"}); got != "sub · error" {
-		t.Fatalf("no worker id: %q", got)
+}
+
+// A child that errors or reports failure shows ✗ with the reason.
+func TestSubagentCardFailureStates(t *testing.T) {
+	m := testModel(t)
+	w := map[string]any{"worker": 1}
+	m.addEvent(Event{Kind: "sub:start", Text: "t", Data: w})
+	m.addEvent(Event{Kind: "sub:error", Text: "error: boom\nstack", Data: w})
+	m.addEvent(Event{Kind: "sub:done", Data: map[string]any{"worker": 1, "status": "error"}})
+	if h := stripANSI(m.render(&m.blocks[0], m.cfg.Load())); !strings.Contains(h, "✗") || !strings.Contains(h, "error: boom") || strings.Contains(h, "stack") {
+		t.Fatalf("error card: %q", h)
+	}
+	m.addEvent(Event{Kind: "sub:start", Text: "u", Data: map[string]any{"worker": 2}})
+	m.addEvent(Event{Kind: "sub:assistant", Text: "Status: failed\nFindings: nope", Data: map[string]any{"worker": 2}})
+	m.addEvent(Event{Kind: "sub:done", Data: map[string]any{"worker": 2, "status": "failed"}})
+	if h := stripANSI(m.render(&m.blocks[1], m.cfg.Load())); !strings.Contains(h, "✗") || !strings.Contains(h, "reported failure") {
+		t.Fatalf("failed card: %q", h)
+	}
+}
+
+// Events for a worker without a start (old histories) still get a card.
+func TestSubagentCardWithoutStart(t *testing.T) {
+	m := testModel(t)
+	m.addEvent(Event{Kind: "sub:result", Text: "x", Data: map[string]any{"worker": 3}})
+	if len(m.blocks) != 1 || m.blocks[0].kind != "spawn" || m.blocks[0].sub.worker != 3 {
+		t.Fatalf("blocks = %+v", m.blocks)
+	}
+}
+
+// ctrl+o on a focused card opens the child's transcript in the overlay;
+// esc (or ctrl+o) returns to the parent. Elsewhere ctrl+o is history.
+func TestSubagentDiveOverlay(t *testing.T) {
+	d := newDrv(t, 80, 24, cfgWith(t, nil, nil, histWith("/tmp/h.jsonl", "prompt")))
+	w := map[string]any{"worker": 1}
+	d.m.addEvent(Event{Kind: "sub:start", Text: "list files", Data: w})
+	d.m.addEvent(Event{Kind: "sub:code", Text: "tools.bash(\"ls\")", Data: w})
+	d.m.addEvent(Event{Kind: "sub:result", Text: "a.go\nb.go", Data: w})
+	d.m.addEvent(Event{Kind: "sub:assistant", Text: "Status: ok\nFindings: 2 go files", Data: w})
+	d.m.addEvent(Event{Kind: "sub:done", Data: map[string]any{"worker": 1, "status": "ok", "steps": 2}})
+	d.feed(keyTab()) // focus the newest card
+	d.feed(keyCtrl('o'))
+	if !d.m.inspecting || d.m.diving == 0 {
+		t.Fatalf("ctrl+o on a focused card should dive (inspecting=%v diving=%d)", d.m.inspecting, d.m.diving)
+	}
+	p := d.plain()
+	for _, want := range []string{"subagent 1", "list files", "Ran: ls", "a.go", "Findings: 2 go files", "✔ done · 2 steps", "subagent transcript · esc to close"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("dive overlay missing %q:\n%s", want, p)
+		}
+	}
+	d.feed(keyEsc())
+	if d.m.inspecting || d.m.diving != 0 {
+		t.Fatal("esc should close the dive")
+	}
+	// Focus off the card: ctrl+o is the history inspector again.
+	d.m.focusID = -1
+	d.feed(keyCtrl('o'))
+	if !d.m.inspecting || d.m.diving != 0 || !strings.Contains(d.plain(), "history") {
+		t.Fatalf("ctrl+o without a focused card should open history:\n%s", d.plain())
 	}
 }
 

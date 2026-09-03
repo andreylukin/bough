@@ -129,7 +129,9 @@ func (a *app) waitFor(substr string) {
 
 func (a *app) waitUntil(pred func(screen string) bool, what string) {
 	a.t.Helper()
-	deadline := time.Now().Add(8 * time.Second)
+	// Generous: under a full -race run a bough boot can take well over
+	// a few seconds; a real regression still fails, just later.
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if pred(a.text()) {
 			return

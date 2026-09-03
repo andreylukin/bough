@@ -230,12 +230,20 @@ Three plugins close the day-to-day gap with Claude Code. Each is one
 
 **Subagents (`workers` row).** The model calls `tools.spawn(task)` from
 a code block: a bounded child agent (its own step loop, same LLM and
-tools, depth 1 — a child cannot spawn) runs the task and its final
-plain-text reply is the tool's return value. The child's activity
-streams into the transcript and history as `sub:assistant`, `sub:code`,
-`sub:result`, `sub:error`, `sub:done` entries tagged with a worker
-number. Config: `max_spawns` (per parent turn, default 4), `max_steps`
-(child steps, default 6).
+tools, depth 1 — a child cannot spawn) runs the task and returns its
+final report under a provenance line (`[subagent 2 · task: …]`). The
+child is told to end with a short report (`Status: ok|failed`,
+`Findings:`, `Files:`, `Open:`), so the parent gets a summary rather
+than a transcript. In the TUI each spawn is ONE card, updated in place:
+`▸ ⠋ sub 2 · task · 3 calls · Ran: go test` while running, then `✔`
+with the elapsed time or `✗` with the reason; expanding the card shows
+the report, and `ctrl+o` on the focused card opens the child's full
+transcript in the overlay (`esc` returns). The child's activity is
+recorded in history as `sub:start`, `sub:assistant`, `sub:code`,
+`sub:result`, `sub:error`, `sub:done` entries tagged with the worker
+number (never part of the parent's model context). Config:
+`max_spawns` (per parent turn, default 4), `max_steps` (child steps,
+default 6).
 
 **TODO list (`todo` row).** Three surfaces over one list: the `/todo`
 command (`/todo`, `/todo add <text>`, `/todo done <id>`, `/todo

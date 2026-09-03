@@ -44,12 +44,16 @@ type block struct {
 	answer   string
 	answered bool
 	expired  bool // turn ended (or replay found no answer entry) unanswered
-	live     bool // assistant text still streaming (see addDelta)
+
+	// spawn blocks only (see spawn.go): the subagent card's live state;
+	// label is the task, text the child's report.
+	sub  *subState
+	live bool // assistant text still streaming (see addDelta)
 }
 
 // collapsible blocks get a disclosure header and can be toggled.
 func (b *block) collapsible() bool {
-	return b.kind == "code" || b.kind == "result" || b.kind == "thinking" || b.kind == "sub"
+	return b.kind == "code" || b.kind == "result" || b.kind == "thinking" || b.kind == "spawn"
 }
 
 // lineRange maps a rendered line span [start, end) to a block index.
@@ -75,6 +79,7 @@ type model struct {
 	height     int
 	running    bool           // a turn is in flight (input sent, no done/error yet)
 	inspecting bool           // history overlay open
+	diving     int            // spawn card id whose child transcript the overlay shows (0 = history)
 	ovRanges   []lineRange    // overlay line span -> entry index
 	ovExpanded map[int64]bool // entry seq -> inline JSON shown
 	ovEntries  []int64        // entry index -> seq, for ovRanges lookups
@@ -331,11 +336,13 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 			return m.header(b, th)
 		}
 		return m.header(b, th) + "\n" + m.box(b.text, th["code"], th["border"])
-	case "result", "sub":
+	case "result":
 		if b.collapsed {
 			return m.header(b, th)
 		}
 		return m.header(b, th) + "\n" + m.box(b.text, th["result"], th["border"])
+	case "spawn":
+		return m.renderSpawn(b, th)
 	case "command":
 		// The dispatched "/" line: a dim echo of what was typed, so
 		// the system block below reads as its answer.
@@ -524,19 +531,11 @@ func (m *model) addEvent(ev Event) {
 		if ev.Kind == "result" {
 			m.flushTrailing()
 		}
-	case "sub:assistant", "sub:code", "sub:result", "sub:error":
-		// A subagent's activity: one collapsible block per event, tagged
-		// with the worker number, collapsed by default whatever the
-		// code/result policy says — the parent's transcript is the
-		// story, the child's is detail. "none" still expands them.
-		text := strings.TrimRight(ev.Text, "\n")
-		if ev.Kind == "sub:result" {
-			text = resultText(text)
-		}
-		m.blocks = append(m.blocks, block{id: id, kind: "sub", text: text,
-			label: subLabel(ev), collapsed: m.cfg.Load().collapse != "none"})
-	case "sub:done":
-		// The child's end: nothing to show; the spawn's result block follows.
+	case "sub:start", "sub:assistant", "sub:code", "sub:result", "sub:error", "sub:done":
+		// A subagent's activity folds into ONE card per worker (spawn.go):
+		// the parent's transcript is the story, the child's is detail
+		// behind the card.
+		m.addSubEvent(ev)
 	case "assistant-delta":
 		m.addDelta(id, ev.Text)
 	case "assistant":
@@ -665,7 +664,7 @@ func (m *model) clickTranscript(y int) tea.Cmd {
 // clickOverlay toggles the inline pretty-JSON view of the history
 // entry under the click.
 func (m *model) clickOverlay(mouse tea.Mouse) {
-	if mouse.Y >= m.overlay.Height() {
+	if mouse.Y >= m.overlay.Height() || m.diving != 0 {
 		return
 	}
 	row := mouse.Y + m.overlay.YOffset()
@@ -797,6 +796,13 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// esc closes a subagent dive (the history inspector keeps its own key).
+	if key == "esc" && m.inspecting && m.diving != 0 {
+		m.inspecting, m.diving = false, 0
+		m.syncPalette()
+		return m, nil
+	}
+
 	// A pending ask owns esc: decline it (the literal "(declined)" is
 	// the tool's return value, so the model knows it was waved off).
 	if key == "esc" && m.pendingAsk != "" && !m.inspecting {
@@ -868,15 +874,26 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "history_inspect":
+		if m.inspecting {
+			m.inspecting, m.diving = false, 0
+			m.syncPalette()
+			return m, nil
+		}
+		// On a focused subagent card: dive into the child's transcript.
+		if i := m.focusedSpawn(); i >= 0 {
+			m.inspecting, m.diving = true, m.blocks[i].id
+			m.refreshOverlay()
+			m.overlay.GotoTop()
+			m.syncPalette()
+			return m, nil
+		}
 		if cfg.hist == nil {
 			m.flash = "no history service mounted"
 			return m, nil
 		}
-		m.inspecting = !m.inspecting
-		if m.inspecting {
-			m.refreshOverlay()
-			m.overlay.GotoBottom()
-		}
+		m.inspecting = true
+		m.refreshOverlay()
+		m.overlay.GotoBottom()
 		m.syncPalette() // the palette is inert under the inspector
 		return m, nil
 	}
@@ -940,6 +957,17 @@ func (m *model) pane() *viewport.Model {
 // open show their pretty-printed JSON inline.
 func (m *model) refreshOverlay() {
 	cfg := m.cfg.Load()
+	if m.diving != 0 {
+		for i := range m.blocks {
+			if b := &m.blocks[i]; b.id == m.diving && b.sub != nil {
+				off := m.overlay.YOffset()
+				m.overlay.SetContent(m.subTranscript(b, cfg))
+				m.overlay.SetYOffset(off)
+				return
+			}
+		}
+		m.diving = 0 // the card is gone (/clear): fall back to history
+	}
 	th := cfg.theme
 	var sb strings.Builder
 	sb.WriteString(th["accent"].Render("history") + " " + th["dim"].Render(cfg.hist.Path()) + "\n\n")

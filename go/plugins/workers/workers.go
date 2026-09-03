@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/andreylukin/bough/kernel"
@@ -38,7 +39,12 @@ import (
 // executes in the parent's codemode VM, so it must be told the same
 // tools (bash, view, patch, mcp, ...) in the same words. Without this
 // the child was told only that "the tools API" exists.
-const SubSystemPrompt = "You are a bough subagent spawned for ONE task. Complete exactly that task with the tools above (you cannot spawn), then reply with your final answer as plain text — no code block in the final reply."
+const SubSystemPrompt = `You are a bough subagent spawned for ONE task. Complete exactly that task with the tools above (you cannot spawn), then reply with a REPORT as plain text — no code block in the final reply. The report is all the parent agent sees, so make it self-contained and short (under 30 lines):
+
+Status: ok | failed
+Findings: what you established, as bullets (facts, numbers, paths)
+Files: paths you changed, or "none"
+Open: questions or blockers for the parent, or "none"`
 
 // promptSection documents tools.spawn to the parent model (registered
 // into the loop's "prompt-sections" service when present).
@@ -89,9 +95,9 @@ type Workers struct {
 	mu        sync.Mutex
 	llm       llm.LLM
 	code      Codemode
-	hist      History  // nil when no "history" service is mounted
-	secs      sections // nil when the loop's prompt-sections are absent
-	emit      func(kind, text string, worker int)
+	hist      History                                      // nil when no "history" service is mounted
+	secs      sections                                     // nil when the loop's prompt-sections are absent
+	emit      func(kind, text string, data map[string]any) // data always carries "worker"
 	ctx       context.Context
 	maxSpawns int
 	maxSteps  int
@@ -122,7 +128,43 @@ func (w *Workers) spawn(task string) (string, error) {
 		w.inChild = false
 		w.mu.Unlock()
 	}()
-	return w.runChild(task, id)
+	reply, err := w.runChild(task, id)
+	if err != nil {
+		return "", err
+	}
+	// Provenance: the parent (and the user reading its code output)
+	// can tell delegated findings from the parent's own work.
+	return fmt.Sprintf("[subagent %d · task: %s]\n%s", id, oneLine(task, 80), reply), nil
+}
+
+// oneLine is the first line of s, cut to n runes with an ellipsis.
+func oneLine(s string, n int) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
+}
+
+// reportStatus reads the report's "Status:" line: "ok", "failed", or
+// "" when the child did not follow the contract.
+func reportStatus(report string) string {
+	for _, ln := range strings.Split(report, "\n") {
+		ln = strings.TrimSpace(strings.TrimLeft(ln, "*#- "))
+		if v, ok := strings.CutPrefix(strings.ToLower(ln), "status:"); ok {
+			v = strings.TrimSpace(strings.Trim(v, "*` "))
+			switch {
+			case strings.HasPrefix(v, "ok"):
+				return "ok"
+			case strings.HasPrefix(v, "fail"):
+				return "failed"
+			}
+			return ""
+		}
+	}
+	return ""
 }
 
 // runChild drives one child agent run: fresh context seeded with the
@@ -132,12 +174,20 @@ func (w *Workers) runChild(task string, id int) (string, error) {
 	// note mirrors child activity: a "sub:<kind>" session-history entry
 	// (when history is mounted) and a "loop/event" with the same kind,
 	// both carrying the worker number.
-	note := func(kind, text string) {
-		if w.hist != nil {
-			w.hist.Append("sub:"+kind, map[string]any{"text": text, "worker": id})
+	note := func(kind, text string, extra map[string]any) {
+		data := map[string]any{"text": text, "worker": id}
+		for k, v := range extra {
+			data[k] = v
 		}
-		w.emit("sub:"+kind, text, id)
+		if w.hist != nil {
+			w.hist.Append("sub:"+kind, data)
+		}
+		delete(data, "text")
+		w.emit("sub:"+kind, text, data)
 	}
+	// The start event carries the task: the UI's card for this worker.
+	note("start", task, nil)
+	steps := 0
 
 	// The sections are read per run, like the parent's per turn: a plugin
 	// mounted since (mcp catalog, skills) is documented to the child too.
@@ -148,36 +198,41 @@ func (w *Workers) runChild(task string, id int) (string, error) {
 	system := systemFor(loop.SystemPrompt, secText)
 	msgs := []llm.Message{{Role: "user", Content: task}}
 	for step := 0; step < w.maxSteps; step++ {
+		steps++
 		reply, err := w.llm.Complete(w.ctx, system, msgs)
 		if err != nil {
-			note("error", err.Error())
-			note("done", "")
+			note("error", err.Error(), nil)
+			note("done", "", map[string]any{"status": "error", "steps": steps})
 			return "", fmt.Errorf("workers: subagent llm: %w", err)
 		}
-		note("assistant", reply)
+		note("assistant", reply, nil)
 		msgs = append(msgs, llm.Message{Role: "assistant", Content: reply})
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
 		if len(blocks) == 0 {
-			note("done", "")
+			status := reportStatus(reply)
+			if status == "" {
+				status = "ok" // no contract line: the reply is the report
+			}
+			note("done", "", map[string]any{"status": status, "steps": steps})
 			return reply, nil
 		}
 		for _, m := range blocks {
 			code := m[1]
-			note("code", code)
+			note("code", code, nil)
 			out, runErr := w.code.Run(code)
 			if runErr != nil {
 				out = "error: " + runErr.Error()
-				note("error", out)
+				note("error", out, nil)
 			} else {
 				out = truncate(out, maxResultBytes)
-				note("result", out)
+				note("result", out, nil)
 			}
 			msgs = append(msgs, llm.Message{Role: "user", Content: "[tool output]\n" + out})
 		}
 	}
 	err := fmt.Errorf("workers: subagent gave up after %d steps", w.maxSteps)
-	note("error", err.Error())
-	note("done", "")
+	note("error", err.Error(), nil)
+	note("done", "", map[string]any{"status": "error", "steps": steps})
 	return "", err
 }
 
@@ -260,8 +315,8 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	w.ctx = ctx
 	kctx.Effect(cancel)
 
-	w.emit = func(kind, text string, worker int) {
-		kctx.Emit("loop/event", loop.Event{Kind: kind, Text: text, Data: map[string]any{"worker": worker}})
+	w.emit = func(kind, text string, data map[string]any) {
+		kctx.Emit("loop/event", loop.Event{Kind: kind, Text: text, Data: data})
 	}
 	// The loop emits "done" at the end of every turn (all end paths);
 	// that is the per-wake reset for the spawn counter.

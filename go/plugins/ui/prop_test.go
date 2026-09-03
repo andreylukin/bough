@@ -33,6 +33,7 @@ var propMinW = func() int {
 var propKinds = []string{
 	"assistant", "user", "error", "code", "result", "thinking", "system",
 	"todo", "done", "cancelled", "spawn", "command", "bash", "patch",
+	"sub:start", "sub:assistant", "sub:code", "sub:result", "sub:error", "sub:done",
 }
 
 // propWord is one "word": ascii, wide CJK, emoji, combining marks, or a
@@ -108,6 +109,13 @@ func propStepGen(w, h int) *rapid.Generator[propStep] {
 			return propStep{kind: "key", key: tea.KeyPressMsg{Code: r, Text: string(r)}}
 		case 5, 6:
 			ev := Event{Kind: rapid.SampledFrom(propKinds).Draw(t, "evkind"), Text: propText().Draw(t, "text")}
+			if strings.HasPrefix(ev.Kind, "sub:") {
+				ev.Data = map[string]any{"worker": rapid.IntRange(1, 3).Draw(t, "worker")}
+				if ev.Kind == "sub:done" {
+					ev.Data["status"] = rapid.SampledFrom([]string{"ok", "failed", "error", ""}).Draw(t, "status")
+					ev.Data["steps"] = rapid.IntRange(0, 6).Draw(t, "steps")
+				}
+			}
 			if rapid.Bool().Draw(t, "ask") {
 				ev.Kind = "ask"
 				ev.ID = rapid.StringMatching(`[a-z]{3}`).Draw(t, "askid")

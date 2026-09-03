@@ -32,6 +32,11 @@ func mixedDrv(t *testing.T) (*drv, *fakeAsk) {
 	d.event("system", "a system note")
 	d.event("command", "/help")
 	d.event("done", "")
+	w := map[string]any{"worker": 1}
+	d.feed(eventMsg{Kind: "sub:start", Text: "count files", Data: w})
+	d.feed(eventMsg{Kind: "sub:code", Text: "tools.bash(\"ls\")", Data: w})
+	d.feed(eventMsg{Kind: "sub:assistant", Text: "Status: ok\nFindings: 3", Data: w})
+	d.feed(eventMsg{Kind: "sub:done", Data: map[string]any{"worker": 1, "status": "ok", "steps": 1}})
 	d.event("user", "second")
 	d.feed(askEvent())
 	d.typeStr("draft text")

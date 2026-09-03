@@ -88,26 +88,6 @@ func codeLabel(code string) string {
 	return "code js"
 }
 
-// subLabel is a subagent block's header tag: "sub 2 · Ran: ls" for a
-// code event (the same call label the parent's code blocks get), "sub 2
-// · reply" / "result" / "error" otherwise. The worker number comes from
-// the event's data; a missing one reads as "sub".
-func subLabel(ev Event) string {
-	tag := "sub"
-	if n, ok := ev.Data["worker"]; ok {
-		tag = fmt.Sprintf("sub %v", n)
-	}
-	switch ev.Kind {
-	case "sub:code":
-		return tag + " · " + codeLabel(ev.Text)
-	case "sub:assistant":
-		return tag + " · reply"
-	case "sub:error":
-		return tag + " · error"
-	}
-	return tag + " · result"
-}
-
 // binaryText reports whether text is mostly non-printable (a cat of a
 // binary), judged on its first 512 bytes.
 func binaryText(text string) bool {

@@ -120,7 +120,9 @@ func TestSpawnRunsChild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	for _, want := range []string{"BEFORE", "AFTER FINAL_FROM_CHILD"} {
+	// The reply comes back under a provenance line naming the worker
+	// and its task.
+	for _, want := range []string{"BEFORE", "AFTER [subagent 1 · task: do the task]\nFINAL_FROM_CHILD"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("parent output missing %q: %q", want, out)
 		}
@@ -129,7 +131,7 @@ func TestSpawnRunsChild(t *testing.T) {
 		t.Fatalf("child console output leaked into the parent's: %q", out)
 	}
 
-	wantKinds := []string{"sub:assistant", "sub:code", "sub:result", "sub:assistant", "sub:done"}
+	wantKinds := []string{"sub:start", "sub:assistant", "sub:code", "sub:result", "sub:assistant", "sub:done"}
 	evs := events()
 	if len(evs) != len(wantKinds) {
 		t.Fatalf("events %+v, want kinds %v", evs, wantKinds)
@@ -142,8 +144,14 @@ func TestSpawnRunsChild(t *testing.T) {
 			t.Fatalf("event[%d].Data = %v, want worker 1", i, ev.Data)
 		}
 	}
-	if evs[2].Text != "CHILD_TOOL_RAN\n" {
-		t.Fatalf("sub:result text = %q", evs[2].Text)
+	if evs[3].Text != "CHILD_TOOL_RAN\n" {
+		t.Fatalf("sub:result text = %q", evs[3].Text)
+	}
+	if evs[0].Text != "do the task" {
+		t.Fatalf("sub:start text = %q, want the task", evs[0].Text)
+	}
+	if last := evs[len(evs)-1]; last.Data["status"] != "ok" || last.Data["steps"] != 2 {
+		t.Fatalf("sub:done data = %v, want status ok, steps 2", last.Data)
 	}
 
 	hk := h.kinds()
@@ -181,7 +189,7 @@ func TestSpawnDepthRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if out != "child gave up" {
+	if !strings.HasSuffix(out, "\nchild gave up") {
 		t.Fatalf("spawn returned %q", out)
 	}
 	// The nested spawn threw; the child saw the refusal as tool output.
@@ -202,14 +210,14 @@ func TestSpawnCapAndReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !strings.Contains(out, "okok") || !strings.Contains(out, "CAPPED") || !strings.Contains(out, "spawn limit reached (2 per turn)") {
+	if strings.Count(out, "\nok") != 2 || !strings.Contains(out, "CAPPED") || !strings.Contains(out, "spawn limit reached (2 per turn)") {
 		t.Fatalf("output = %q", out)
 	}
 
 	// The loop's turn-end "done" resets the counter.
 	kctx.Emit("loop/event", loop.Event{Kind: "done"})
 	out, err = cm.Run(`tools.spawn("four")`)
-	if err != nil || out != "ok" {
+	if err != nil || !strings.HasSuffix(out, "\nok") {
 		t.Fatalf("spawn after reset = %q, %v", out, err)
 	}
 }
@@ -290,7 +298,7 @@ func (s stubSections) Text() string          { return s.text }
 func TestChildGetsTheParentsToolPrompt(t *testing.T) {
 	l := &scriptLLM{script: []string{"done"}}
 	w := &Workers{llm: l, code: &stubCode{}, secs: stubSections{text: "## mcp\nbough mcp call graphiti/..."}, ctx: context.Background(), maxSteps: 2}
-	w.emit = func(kind, text string, worker int) {}
+	w.emit = func(kind, text string, data map[string]any) {}
 	if _, err := w.runChild("count files", 1); err != nil {
 		t.Fatal(err)
 	}
