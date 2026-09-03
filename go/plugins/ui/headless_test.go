@@ -38,3 +38,39 @@ func TestHeadlessErrorsToStderrAndExitCode(t *testing.T) {
 		t.Fatalf("errored turn: ExitCode = %d, want 1", got)
 	}
 }
+
+// A line that arrives between "[assistant]" and "[done]" steers the
+// running turn: it prints as "[steer]", the turn's own done pays for
+// it, and the pending count ends at zero — the drain neither returns
+// early nor goes negative.
+func TestHeadlessSteerMidTurnKeepsPendingBalanced(t *testing.T) {
+	var out bytes.Buffer
+	oldOut := hlOut
+	hlOut = &out
+	hlMu.Lock()
+	oldSteer := hlSteer
+	hlSteer = func(string) bool { return true } // a turn runs: the loop takes it
+	hlMu.Unlock()
+	defer func() {
+		hlOut = oldOut
+		hlMu.Lock()
+		hlSteer = oldSteer
+		hlMu.Unlock()
+	}()
+
+	hlPending.Store(1) // the turn hlSubmit("a") started
+	hlPrint(Event{Kind: "assistant", Text: "reply to a"})
+	if !hlSteerLine("b") {
+		t.Fatal("mid-turn line should steer")
+	}
+	hlPrint(Event{Kind: "steer", Text: "b"})
+	hlPrint(Event{Kind: "assistant", Text: "reply to b"})
+	hlPrint(Event{Kind: "done"})
+	if n := hlPending.Load(); n != 0 {
+		t.Fatalf("hlPending = %d after the one done, want 0", n)
+	}
+	want := "[assistant] reply to a\n[steer] b\n[assistant] reply to b\n[done] \n"
+	if s := out.String(); s != want {
+		t.Fatalf("stdout = %q, want %q", s, want)
+	}
+}

@@ -334,6 +334,8 @@ func (m *model) finishTurn(id int, ev Event) {
 		b.exit = &e
 	}
 	m.blocks = append(m.blocks, b)
+	// A queued line starts now. (A steer never outlives its turn: the
+	// loop lands every accepted one — "steer" event — before the done.)
 	for i := range m.blocks {
 		if m.blocks[i].queued {
 			m.blocks[i].queued = false
@@ -344,11 +346,17 @@ func (m *model) finishTurn(id int, ev Event) {
 	}
 }
 
-// renderUser wraps the prompt to the pane width; a queued line says so.
+// renderUser wraps the prompt to the pane width; a queued line says
+// so, and a steer says whether the loop has picked it up yet.
 func (m *model) renderUser(b *block, th theme) string {
 	text := "❯ " + b.text
-	if b.queued {
+	switch {
+	case b.queued:
 		text += " (queued)"
+	case b.pending:
+		text += " (steer · pending)"
+	case b.steer:
+		text += " (steer)"
 	}
 	st := th["user"]
 	if m.width >= 10 {

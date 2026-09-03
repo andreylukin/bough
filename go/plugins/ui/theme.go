@@ -136,8 +136,9 @@ func defaultKeymap() map[string]string {
 		"collapse_all":    "",      // config-only: no default key
 		"expand_all":      "",      // config-only: no default key
 		"clear_input":     "ctrl+l",
-		"todo_toggle":     "ctrl+t", // pin the todo list above the composer
-		"external_editor": "ctrl+g", // edit the draft in $VISUAL / $EDITOR
+		"todo_toggle":     "ctrl+t",    // pin the todo list above the composer
+		"external_editor": "ctrl+g",    // edit the draft in $VISUAL / $EDITOR
+		"follow_up":       "alt+enter", // mid-turn: queue the line for after the turn (enter steers it)
 
 		// The leader key: the key after it is looked up in the chords
 		// ("chord:<key>" -> ACTION, see actions.go). opencode's ctrl+x.

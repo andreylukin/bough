@@ -67,7 +67,9 @@ defaults. Actions:
 `history_inspect`, `block_next` (tab), `block_prev` (shift+tab),
 `collapse_toggle` (enter, on the focused block), `collapse_all`,
 `expand_all`, `clear_input`, `todo_toggle` (ctrl+t), `external_editor`
-(ctrl+g: edit the draft in `$VISUAL` / `$EDITOR`)
+(ctrl+g: edit the draft in `$VISUAL` / `$EDITOR`), `follow_up`
+(alt+enter: while a turn runs, queue the line for after it — plain
+enter steers the running turn instead)
 
 Keys use bubbletea names: `"ctrl+c"`, `"pgup"`, `"q"`, `"shift+tab"`.
 `collapse_all` and `expand_all` ship unbound — they only fire when the

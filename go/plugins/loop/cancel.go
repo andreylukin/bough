@@ -4,6 +4,18 @@ package loop
 // flight. The runner sees ctx.Err() after the pending LLM call (or
 // code run) unwinds, records a "cancelled" entry (model-invisible
 // under DefaultProject) and ends the turn with the usual "done".
+//
+// Steering: the "steer" service (func(text string) bool) hands the
+// turn in flight a message without ending it. It never interrupts a
+// block mid-execution; the runner lands pending steers at the next
+// boundary (between blocks, before each LLM call, and once more
+// before the turn's done — a steer sent during the final reply is
+// asked about inside the same turn), drops the rest of the current
+// reply, and asks the model again with the steer in context. False
+// when no turn is running, or once the running turn has taken its
+// last boundary (the caller queues it as ordinary input instead:
+// nothing is ever stranded, and a turn never runs on a steer's
+// behalf after its done).
 
 import (
 	"context"
@@ -11,10 +23,38 @@ import (
 )
 
 // turns hands each input its own cancellable context and remembers
-// the live one's cancel func for the "cancel" service.
+// the live one's cancel func for the "cancel" service, plus the
+// steering messages sent since the runner last looked.
 type turns struct {
-	mu     sync.Mutex
-	cancel context.CancelFunc
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	steering bool // a turn runs and has a boundary left for a steer
+	steers   []string
+}
+
+// Steer queues text for the turn in flight; false while idle or past
+// the turn's last boundary.
+func (t *turns) Steer(text string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.steering {
+		return false
+	}
+	t.steers = append(t.steers, text)
+	return true
+}
+
+// takeSteers hands the runner every steer sent since the last take.
+// A final take shuts the gate in the same instant (the runner is
+// about to end the turn), a later non-final one reopens it (the turn
+// went on after all).
+func (t *turns) takeSteers(final bool) []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.steers
+	t.steers = nil
+	t.steering = !final
+	return s
 }
 
 // Cancel aborts the turn in flight; a no-op while idle.
@@ -26,15 +66,19 @@ func (t *turns) Cancel() {
 	}
 }
 
-// run executes one input under a per-turn child of ctx.
+// run executes one input under a per-turn child of ctx, taking
+// steers from the start; the runner's final take shuts the gate
+// before its done.
 func (t *turns) run(ctx context.Context, r *runner, input string, emit func(kind, text string)) {
 	tctx, cancel := context.WithCancel(ctx)
 	t.mu.Lock()
 	t.cancel = cancel
+	t.steering = true
 	t.mu.Unlock()
 	_ = r.Run(tctx, input, emit)
 	t.mu.Lock()
 	t.cancel = nil
+	t.steering = false
 	t.mu.Unlock()
 	cancel()
 }

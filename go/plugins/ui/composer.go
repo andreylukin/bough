@@ -1,8 +1,8 @@
 package ui
 
-// The composer: a multi-line textarea. Enter submits (model.go);
-// shift+enter / alt+enter / ctrl+j insert a newline; a paste keeps its
-// newlines. Up/Down on the first/last line (or an empty composer)
+// The composer: a multi-line textarea. Enter submits (model.go;
+// alt+enter is the follow_up keymap action there); shift+enter /
+// ctrl+j insert a newline; a paste keeps its newlines. Up/Down on the first/last line (or an empty composer)
 // recall this session's prompts, newest first; Home/End on an empty
 // composer jump the transcript to top/bottom. Emacs-style ctrl+a/e/w/u/k
 // are the textarea's own bindings.
@@ -43,7 +43,7 @@ func newComposer() textarea.Model {
 	// is what lets a longer paste in and scroll.
 	ta.MaxContentHeight = 100000
 	ta.SetVirtualCursor(true)
-	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "alt+enter", "ctrl+j"))
+	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "ctrl+j"))
 	// The transcript's ground shows through: no cursor-line bar, no
 	// end-of-buffer tint.
 	st := ta.Styles()

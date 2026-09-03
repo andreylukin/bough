@@ -369,7 +369,10 @@ func (m *model) perform(act commands.UIAction) tea.Cmd {
 // chords.
 func keysText(cfg *uiCfg) string {
 	rows := [][2]string{
-		{"enter", "send the line (/cmd dispatches, !cmd runs a shell command)"},
+		{"enter", "send the line (/cmd dispatches, !cmd runs a shell command); mid-turn: steer the running turn"},
+	}
+	if k := cfg.keys["follow_up"]; k != "" {
+		rows = append(rows, [2]string{k, "mid-turn: queue the line for after the turn instead"})
 	}
 	for _, a := range uiActions {
 		if k := cfg.keys[a.name]; k != "" {

@@ -382,3 +382,38 @@ func TestHeadlessQuietStderr(t *testing.T) {
 	loud := runHeadless(t, launchOpts{args: []string{"--verbose"}}, "hello")
 	mustContain(t, loud, "reloading (service")
 }
+
+// A line piped in while a turn runs steers it, and one that lands
+// during the final model call (the turn's longest phase) is still
+// answered inside that turn: one "[steer]", the model asked again,
+// exactly one "[done]", and the process exits clean at EOF instead
+// of killing the steer's reply.
+func TestHeadlessSteerDuringFinalReply(t *testing.T) {
+	t.Parallel()
+	b := launchHeadless(t, launchOpts{
+		cwd: map[string]string{".bough/init.js": `
+var calls = 0;
+bough.provider("slowfinal", function (system, messages) {
+  calls++;
+  var last = messages[messages.length - 1].content;
+  if (calls === 1) return "\u0060\u0060\u0060js\nconsole.log(tools.bash('echo FIRST_RAN'))\n\u0060\u0060\u0060";
+  if (calls === 2) { var t0 = Date.now(); while (Date.now() - t0 < 1500) {} }
+  return "reply" + calls + "(" + last + ")";
+});
+bough.setup({ provider: { default: "slowfinal" } });
+`},
+	})
+	b.send("a")
+	b.waitFor("[result] FIRST_RAN")
+	time.Sleep(200 * time.Millisecond) // into the slow final call
+	b.send("b")
+	b.closeStdin()
+	if code := b.waitExit(); code != 0 {
+		t.Fatalf("exit %d; output:\n%s", code, b.out.String())
+	}
+	out := b.out.String()
+	inOrder(t, out, "[result] FIRST_RAN", "[steer] b", "(b)", "[done]")
+	if n := strings.Count(out, "[done]"); n != 1 {
+		t.Fatalf("[done] printed %d times, want 1:\n%s", n, out)
+	}
+}

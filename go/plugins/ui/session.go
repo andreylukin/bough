@@ -57,7 +57,8 @@ func (m *model) replay() {
 		case "meta":
 			// session bookkeeping (cwd), nothing to render
 		case "input":
-			m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: text})
+			steer, _ := e.Data["steer"].(bool)
+			m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: text, steer: steer})
 			m.nextID++
 		case "ask":
 			q, _ := e.Data["question"].(string)

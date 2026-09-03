@@ -96,6 +96,9 @@ type uiCfg struct {
 
 	// "cancel" seam (the loop's turn cancel); nil = nothing to stop.
 	cancel func()
+	// "steer" seam (the loop's mid-turn message); nil = enter queues
+	// a follow-up while a turn runs, as it always did.
+	steer func(string) bool
 
 	// "ask" seam: nil when no ask plugin is mounted (ask events then
 	// render pending forever and the composer never routes answers).
@@ -238,6 +241,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if c, err := kernel.Get[func()](ctx, "cancel"); err == nil {
 		cfg.cancel = c
+	}
+	if s, err := kernel.Get[func(string) bool](ctx, "steer"); err == nil {
+		cfg.steer = s
 	}
 	if _, err := kernel.Get[any](ctx, "session-picker"); err == nil {
 		cfg.picker = true
