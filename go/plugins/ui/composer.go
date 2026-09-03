@@ -62,13 +62,7 @@ func newComposer() textarea.Model {
 // transcript the rest of the screen: status bar plus composer rows come
 // off the height.
 func (m *model) layoutComposer() {
-	n := m.input.Height()
-	if n < 1 {
-		n = 1
-	}
-	if n > composerMaxLines {
-		n = composerMaxLines
-	}
+	n := min(max(m.input.Height(), 1), composerMaxLines)
 	if h := m.height - 1 - n; h > 0 {
 		atBottom := m.vp.AtBottom()
 		m.vp.SetHeight(h)

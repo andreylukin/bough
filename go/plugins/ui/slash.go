@@ -238,8 +238,7 @@ func (m *model) dispatchAs(line, echo string) tea.Cmd {
 	m.blocks = append(m.blocks, block{id: m.nextID, kind: "command", text: echo})
 	m.nextID++
 	out, err := cfg.cmds.Run(name, args)
-	var act commands.UIAction
-	if errors.As(err, &act) {
+	if act, ok := errors.AsType[commands.UIAction](err); ok {
 		if text, ok := commands.SubmitText(act); ok {
 			// A skill command: the line goes to the loop as input.
 			m.log(cfg, "system", "/"+name)

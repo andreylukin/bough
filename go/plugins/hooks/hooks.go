@@ -8,9 +8,10 @@ package hooks
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/andreylukin/bough/kernel"
@@ -50,9 +51,7 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 		if merged == nil {
 			merged = map[string]any{}
 		}
-		for k, v := range res {
-			merged[k] = v
-		}
+		maps.Copy(merged, res)
 		if _, ok := res["block"]; ok {
 			break
 		}
@@ -85,11 +84,7 @@ func hookFiles(event string) []string {
 			byName[e.Name()] = filepath.Join(dir, e.Name())
 		}
 	}
-	names := make([]string, 0, len(byName))
-	for n := range byName {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(byName))
 	paths := make([]string, len(names))
 	for i, n := range names {
 		paths[i] = byName[n]

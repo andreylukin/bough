@@ -15,13 +15,13 @@ import (
 // ("Verification confirms.") is superseded by the final reply.
 func TestSubagentTurnStreamsInEmissionOrder(t *testing.T) {
 	t.Parallel()
-	stub := &uitest.Streaming{Script: uitest.Script{Replies: []string{
+	stub := &uitest.Streaming{Replies: []string{
 		"I'll spawn.\n" + uitest.JS(`console.log(tools.spawn("make notes"))`) +
 			"\nThe subagent has finished. Let me verify:\n" + uitest.Bash("printf 'x'") + "\nVerification confirms.",
 		"Writing.\n" + uitest.Bash("printf 'x'"),
 		"Findings: wrote notes.md",
 		"Done, verified.",
-	}}, Chunk: uitest.ByN(7)}
+	}, Chunk: uitest.ByN(7)}
 	d := mountLLM(t, stub, "workers")
 	d.Say("go")
 	turnDone(d, "Done, verified.")

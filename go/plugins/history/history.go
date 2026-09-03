@@ -6,13 +6,14 @@ package history
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -156,11 +157,8 @@ func List(dir string) ([]SessionInfo, error) {
 			Cwd:     cwd,
 		})
 	}
-	sort.Slice(infos, func(i, j int) bool {
-		if !infos[i].ModTime.Equal(infos[j].ModTime) {
-			return infos[i].ModTime.After(infos[j].ModTime)
-		}
-		return infos[i].ID > infos[j].ID
+	slices.SortFunc(infos, func(a, b SessionInfo) int {
+		return cmp.Or(b.ModTime.Compare(a.ModTime), cmp.Compare(b.ID, a.ID))
 	})
 	return infos, nil
 }
@@ -169,18 +167,24 @@ func List(dir string) ([]SessionInfo, error) {
 // first: sessions are global across projects, so every listing and
 // -c lead with this directory's.
 func PreferCwd(infos []SessionInfo, cwd string) []SessionInfo {
-	out := append([]SessionInfo(nil), infos...)
-	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].Cwd == cwd && out[j].Cwd != cwd
+	out := slices.Clone(infos)
+	slices.SortStableFunc(out, func(a, b SessionInfo) int {
+		if x, y := a.Cwd == cwd, b.Cwd == cwd; x != y {
+			if x {
+				return -1
+			}
+			return 1
+		}
+		return 0
 	})
 	return out
 }
 
 // LastPrompt is the first line of the last "input" entry, "" if none.
 func LastPrompt(entries []Entry) string {
-	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].Kind == "input" {
-			text, _ := entries[i].Data["text"].(string)
+	for _, e := range slices.Backward(entries) {
+		if e.Kind == "input" {
+			text, _ := e.Data["text"].(string)
 			return strings.SplitN(text, "\n", 2)[0]
 		}
 	}

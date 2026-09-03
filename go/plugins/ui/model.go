@@ -228,10 +228,7 @@ func (m *model) markdown(text string) string {
 		return cached
 	}
 	if m.md == nil {
-		w := m.width - 2
-		if w < 20 {
-			w = 20
-		}
+		w := max(m.width-2, 20)
 		style := "dark"
 		if m.bgLight {
 			style = "light"
@@ -398,10 +395,7 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 	case "error":
 		// Wrap to width — the viewport clips long lines, and the tail
 		// of an error is usually the actionable part.
-		w := m.width
-		if w < 10 {
-			w = 10
-		}
+		w := max(m.width, 10)
 		out := th["error"].Width(w).Render("✗ " + b.text)
 		if authErrRe.MatchString(b.text) {
 			out += "\n" + th["dim"].Width(w).Render(authHint)
@@ -430,10 +424,7 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 
 // box renders text in a rounded border.
 func (m *model) box(text string, content, border lipgloss.Style) string {
-	w := m.width - 4
-	if w < 10 {
-		w = 10
-	}
+	w := max(m.width-4, 10)
 	return content.
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(border.GetForeground()).
@@ -1067,7 +1058,7 @@ func (m *model) refreshOverlay() {
 	entries := cfg.hist.Entries()
 	for i, e := range entries {
 		text, _ := e.Data["text"].(string)
-		preview := strings.SplitN(text, "\n", 2)[0]
+		preview, _, _ := strings.Cut(text, "\n")
 		if len(preview) > 80 {
 			preview = preview[:80] + "…"
 		}

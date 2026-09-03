@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/andreylukin/bough/kernel"
 )
@@ -24,15 +25,15 @@ func New(paths ...string) *SystemContext { return &SystemContext{paths: paths} }
 
 // Preamble concatenates every existing path as a labeled section.
 func (s *SystemContext) Preamble() string {
-	var out string
+	var out strings.Builder
 	for _, p := range s.paths {
 		body, err := os.ReadFile(p)
 		if err != nil {
 			continue // missing file is fine
 		}
-		out += "# Context: " + p + "\n" + string(body) + "\n"
+		out.WriteString("# Context: " + p + "\n" + string(body) + "\n")
 	}
-	return out
+	return out.String()
 }
 
 type plugin struct{}

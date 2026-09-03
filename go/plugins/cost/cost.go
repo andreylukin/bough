@@ -12,7 +12,8 @@ package cost
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/andreylukin/bough/kernel"
@@ -56,8 +57,8 @@ var builtin = map[string]Price{
 // and case. Pure.
 func Canonical(model string) string {
 	m := strings.ToLower(strings.TrimSpace(model))
-	if i := strings.LastIndex(m, "/"); i >= 0 {
-		m = m[i+1:]
+	if _, after, ok := strings.CutLast(m, "/"); ok {
+		m = after
 	}
 	if n := len(m); n > 9 && m[n-9] == '-' && allDigits(m[n-8:]) {
 		m = m[:n-9]
@@ -181,11 +182,7 @@ func num(v any) (float64, error) {
 
 // Known lists the built-in model ids, for the help text.
 func Known() []string {
-	out := make([]string, 0, len(builtin))
-	for k := range builtin {
-		out = append(out, k)
-	}
-	sort.Strings(out)
+	out := slices.Sorted(maps.Keys(builtin))
 	return out
 }
 

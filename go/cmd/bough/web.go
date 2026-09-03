@@ -103,7 +103,7 @@ func runWeb(args []string) {
 	}
 	// Wait for the port, so the browser opens on a page and a failed
 	// start is reported here with its log, not discovered later.
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
 			c.Close()
 			fmt.Printf("bough web: %s (pid %d, log %s)\n", webURL(addr), pid, logPath)

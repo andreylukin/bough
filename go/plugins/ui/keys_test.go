@@ -244,7 +244,7 @@ func TestInspectorRebound(t *testing.T) {
 
 // fillTranscript adds enough blocks to overflow the 22-line viewport.
 func fillTranscript(d *drv, n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		d.event("assistant", "message") // not "user": those would be recallable prompts
 	}
 }

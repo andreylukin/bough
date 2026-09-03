@@ -190,10 +190,7 @@ func (m *model) renderSpawn(b *block, th theme) string {
 
 	// The body: an accent bar down the left, the task in full, then
 	// the heartbeat or the report.
-	w := m.width - 4
-	if w < 10 {
-		w = 10
-	}
+	w := max(m.width-4, 10)
 	bar := th["accent"].Render("┃")
 	if s.status != "running" {
 		bar = th["border"].Render("┃")
@@ -203,7 +200,7 @@ func (m *model) renderSpawn(b *block, th theme) string {
 	if task == "" {
 		task = "task"
 	}
-	for _, ln := range strings.Split(th["dim"].Width(w).Render(task), "\n") {
+	for ln := range strings.SplitSeq(th["dim"].Width(w).Render(task), "\n") {
 		rows = append(rows, "  "+bar+" "+ln)
 	}
 	switch {
@@ -237,7 +234,7 @@ func (m *model) renderSpawn(b *block, th theme) string {
 // findings.
 func reportBody(text string) string {
 	var out []string
-	for _, ln := range strings.Split(strings.TrimSpace(text), "\n") {
+	for ln := range strings.SplitSeq(strings.TrimSpace(text), "\n") {
 		t := strings.TrimSpace(ln)
 		lower := strings.ToLower(t)
 		if lower == "report" || lower == "# report" || strings.HasPrefix(lower, "status:") {

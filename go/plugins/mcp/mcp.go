@@ -17,11 +17,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -110,11 +111,7 @@ func promptSection(servers map[string]ServerConfig, cat catalog) string {
 	if len(servers) == 0 {
 		return ""
 	}
-	names := make([]string, 0, len(servers))
-	for n := range servers {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(servers))
 	var b strings.Builder
 	b.WriteString("MCP servers are reachable from the shell, not as tools: " +
 		"tools.bash(\"bough mcp call <server/tool> '<json args or plain text>'\") runs one " +
@@ -199,11 +196,7 @@ func runCLI(cfg map[string]any, args []string) error {
 	if len(servers) == 0 && args[0] != "call" {
 		return fmt.Errorf("no MCP servers configured (row config, ./.mcp.json, ~/.claude.json)")
 	}
-	names := make([]string, 0, len(servers))
-	for n := range servers {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(servers))
 	cat := loadCatalog()
 
 	switch args[0] {
@@ -390,9 +383,7 @@ func where(sc ServerConfig) string {
 func merge(disable []string, layers ...map[string]ServerConfig) map[string]ServerConfig {
 	out := map[string]ServerConfig{}
 	for _, layer := range layers {
-		for name, sc := range layer {
-			out[name] = sc
-		}
+		maps.Copy(out, layer)
 	}
 	for _, name := range disable {
 		delete(out, name)
@@ -564,7 +555,7 @@ func listTools(session *sdk.ClientSession) ([]catalogTool, error) {
 		if err != nil {
 			return out, err
 		}
-		desc := strings.SplitN(strings.TrimSpace(tool.Description), "\n", 2)[0]
+		desc, _, _ := strings.Cut(strings.TrimSpace(tool.Description), "\n")
 		out = append(out, catalogTool{Name: tool.Name, Desc: desc})
 	}
 	return out, nil

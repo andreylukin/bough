@@ -8,6 +8,7 @@ package commands
 
 import (
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -75,9 +76,7 @@ func mountModelTree(t *testing.T) (*kernel.Context, *Registry) {
 		for i, r := range base {
 			next[i] = r
 			cp := make(map[string]any, len(r.Config))
-			for k, v := range r.Config {
-				cp[k] = v
-			}
+			maps.Copy(cp, r.Config)
 			next[i].Config = cp
 		}
 		applyTestSets(next, all)

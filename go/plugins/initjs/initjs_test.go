@@ -289,4 +289,3 @@ bough.command("dup", "", "", function(){return ""})`)
 		t.Fatalf("duplicate command error = %v", err)
 	}
 }
-

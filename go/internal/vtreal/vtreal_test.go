@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -144,7 +145,7 @@ func (a *app) waitUntil(pred func(screen string) bool, what string) {
 // settled waits until two consecutive snapshots 60ms apart match.
 func (a *app) settled() string {
 	prev := a.text()
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		time.Sleep(60 * time.Millisecond)
 		cur := a.text()
 		if cur == prev {
@@ -169,8 +170,8 @@ func (a *app) click(x, y int) {
 // composerRow returns the index of the last row starting with the
 // composer prompt, -1 when the composer is not on screen.
 func composerRow(lines []string) int {
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.HasPrefix(lines[i], "> ") {
+	for i, line := range slices.Backward(lines) {
+		if strings.HasPrefix(line, "> ") {
 			return i
 		}
 	}
@@ -376,7 +377,7 @@ func TestLongReplyKeepsComposerPinned(t *testing.T) {
 func TestWheelScrollsTranscript(t *testing.T) {
 	t.Parallel()
 	a := start(t, 80, 16)
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		a.typeText(fmt.Sprintf("turn %d", i))
 		a.key(uv.KeyEnter, 0)
 		a.waitFor(fmt.Sprintf("echo: turn %d", i))

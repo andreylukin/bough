@@ -9,10 +9,11 @@ package skills
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/andreylukin/bough/kernel"
@@ -34,11 +35,7 @@ func New(pools ...string) *Skills { return &Skills{pools: pools} }
 // every skill mentioned in input, capped at maxBlocks.
 func (s *Skills) Inject(input string) []string {
 	found := s.scan()
-	names := make([]string, 0, len(found))
-	for n := range found {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(found))
 
 	var blocks []string
 	matched := 0
@@ -90,7 +87,7 @@ func description(path string) string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		if v, ok := strings.CutPrefix(line, "description:"); ok {
 			return strings.Trim(strings.TrimSpace(v), `"'`)
 		}
@@ -135,7 +132,6 @@ func (s *Skills) registerCommands(ctx *kernel.Context) {
 		return
 	}
 	for name, path := range s.scan() {
-		name := name
 		info := commands.CommandInfo{Name: name, Usage: "[args]", Kind: "skill",
 			Summary: "skill: " + summarize(description(path))}
 		err := reg.Register(info, func(args string) (string, error) {

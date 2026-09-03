@@ -13,7 +13,8 @@ package theme
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/andreylukin/bough/kernel"
@@ -33,11 +34,7 @@ func (plugin) Inject() []string { return []string{"commands"} }
 
 // Names lists the bundled palettes, sorted.
 func Names() []string {
-	out := make([]string, 0, len(palettes))
-	for n := range palettes {
-		out = append(out, n)
-	}
-	sort.Strings(out)
+	out := slices.Sorted(maps.Keys(palettes))
 	return out
 }
 

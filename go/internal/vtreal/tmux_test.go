@@ -63,7 +63,7 @@ func (tm *tmuxApp) screen() string {
 // settled waits until two captures 80ms apart match, then returns it.
 func (tm *tmuxApp) settled() string {
 	prev := tm.screen()
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		time.Sleep(80 * time.Millisecond)
 		cur := tm.screen()
 		if cur == prev {

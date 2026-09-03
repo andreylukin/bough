@@ -100,7 +100,7 @@ func TestClickEveryCellLeft(t *testing.T) {
 	d, fa := mixedDrv(t)
 	d.m.vp.GotoTop()
 	d.refreshFrame()
-	for y := 0; y < 40; y++ {
+	for y := range 40 {
 		for _, x := range []int{0, 1, 3, 20, 79} {
 			before := d.clickState(fa)
 			idx, opt := d.hit(y)
@@ -164,7 +164,7 @@ func TestClickEveryCellOtherButtons(t *testing.T) {
 	t.Parallel()
 	d, fa := mixedDrv(t)
 	for _, btn := range []tea.MouseButton{tea.MouseRight, tea.MouseMiddle} {
-		for y := 0; y < 40; y++ {
+		for y := range 40 {
 			for _, x := range []int{0, 40, 79} {
 				before := d.clickState(fa)
 				d.clickAt(x, y, btn)
@@ -195,7 +195,7 @@ func TestClickOutOfBounds(t *testing.T) {
 func TestWheelEveryCellOnlyScrolls(t *testing.T) {
 	t.Parallel()
 	d, fa := mixedDrv(t)
-	for y := 0; y < 40; y++ {
+	for y := range 40 {
 		for _, btn := range []tea.MouseButton{tea.MouseWheelUp, tea.MouseWheelDown} {
 			before := d.clickState(fa)
 			d.feed(tea.MouseWheelMsg{X: 10, Y: y, Button: btn})
@@ -226,7 +226,7 @@ func TestStatusBarClickNeedsHistory(t *testing.T) {
 		t.Fatalf("status bar click did not open the picker")
 	}
 	before := h.m.pick
-	for y := 0; y < 24; y++ {
+	for y := range 24 {
 		h.clickAt(3, y, tea.MouseLeft)
 	}
 	if !h.m.picking || h.m.pick != before {
@@ -264,7 +264,7 @@ func TestClickEveryCellInspector(t *testing.T) {
 	if !d.m.inspecting {
 		t.Fatal("inspector did not open")
 	}
-	for y := 0; y < 24; y++ {
+	for y := range 24 {
 		before := d.clickState(fa)
 		open := len(d.m.ovExpanded)
 		d.clickAt(4, y, tea.MouseLeft)
@@ -301,7 +301,7 @@ func TestClickEveryCellPalette(t *testing.T) {
 	}
 	rows := len(d.overlayRowsNow())
 	top := d.m.vp.Height() - rows
-	for y := 0; y < 24; y++ {
+	for y := range 24 {
 		d.m.input.SetValue("/")
 		d.m.syncPalette()
 		d.refreshFrame()

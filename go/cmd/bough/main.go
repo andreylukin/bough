@@ -435,16 +435,16 @@ func reload(ctx *kernel.Context, src configSource, sets setFlags) {
 // applyOverrides applies each "id.key=value" to the matching row's config.
 func applyOverrides(rows []kernel.Row, sets setFlags) error {
 	for _, s := range sets {
-		eq := strings.IndexByte(s, '=')
-		if eq < 0 {
+		before, after, ok := strings.Cut(s, "=")
+		if !ok {
 			return fmt.Errorf("bad --set %q: want id.key=value", s)
 		}
-		path, value := s[:eq], s[eq+1:]
-		dot := strings.IndexByte(path, '.')
-		if dot < 0 {
+		path, value := before, after
+		before0, after0, ok0 := strings.Cut(path, ".")
+		if !ok0 {
 			return fmt.Errorf("bad --set %q: want id.key=value", s)
 		}
-		id, key := path[:dot], path[dot+1:]
+		id, key := before0, after0
 		found := false
 		for i := range rows {
 			if rows[i].ID == id {

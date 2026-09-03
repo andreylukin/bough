@@ -236,9 +236,9 @@ func hlDispatch(line string) bool {
 		hlog.Append("command", map[string]any{"text": line})
 	}
 	out, err := cmds.Run(name, args)
-	var act commands.UIAction
+	act, isAct := errors.AsType[commands.UIAction](err)
 	switch {
-	case errors.As(err, &act):
+	case isAct:
 		out = "/" + name
 		if cur, rows, ok := commands.ModelPickerChoices(act); ok {
 			out = "model: " + cur + "\nchoices: " + strings.Join(rows, ", ")

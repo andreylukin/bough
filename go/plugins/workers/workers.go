@@ -23,6 +23,7 @@ package workers
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"strconv"
 	"strings"
@@ -152,7 +153,7 @@ func oneLine(s string, n int) string {
 // reportStatus reads the report's "Status:" line: "ok", "failed", or
 // "" when the child did not follow the contract.
 func reportStatus(report string) string {
-	for _, ln := range strings.Split(report, "\n") {
+	for ln := range strings.SplitSeq(report, "\n") {
 		ln = strings.TrimSpace(strings.TrimLeft(ln, "*#- "))
 		if v, ok := strings.CutPrefix(strings.ToLower(ln), "status:"); ok {
 			v = strings.TrimSpace(strings.Trim(v, "*` "))
@@ -177,9 +178,7 @@ func (w *Workers) runChild(task string, id int) (string, error) {
 	// both carrying the worker number.
 	note := func(kind, text string, extra map[string]any) {
 		data := map[string]any{"text": text, "worker": id}
-		for k, v := range extra {
-			data[k] = v
-		}
+		maps.Copy(data, extra)
 		if w.hist != nil {
 			w.hist.Append("sub:"+kind, data)
 		}

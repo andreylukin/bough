@@ -87,7 +87,7 @@ func forCwd(infos []history.SessionInfo, dir string) []history.SessionInfo {
 func printSessions(w io.Writer, infos []history.SessionInfo, withCwd bool) {
 	tw := tabwriter.NewWriter(w, 2, 8, 2, ' ', 0)
 	for _, in := range infos {
-		title := strings.SplitN(in.Title, "\n", 2)[0]
+		title, _, _ := strings.Cut(in.Title, "\n")
 		if r := []rune(title); len(r) > 60 {
 			title = string(r[:59]) + "…"
 		}

@@ -5,6 +5,8 @@ package ui
 // panic guard. Rendering policy lives here; model.go only hooks in.
 
 import (
+	"slices"
+
 	"github.com/charmbracelet/x/ansi"
 
 	"fmt"
@@ -159,16 +161,16 @@ var anyFenceRe = regexp.MustCompile("(?s)```.*?```|```.*$")
 // user line) produced anything visible: assistant prose, an error, an
 // ask, or a todo. A turn ending without one gets an explicit marker.
 func turnHasReply(blocks []block) bool {
-	for i := len(blocks) - 1; i >= 0; i-- {
-		switch blocks[i].kind {
+	for _, block := range slices.Backward(blocks) {
+		switch block.kind {
 		case "user":
 			return false
 		case "assistant":
-			if strings.TrimSpace(anyFenceRe.ReplaceAllString(blocks[i].text, "")) != "" {
+			if strings.TrimSpace(anyFenceRe.ReplaceAllString(block.text, "")) != "" {
 				return true
 			}
 		case "error", "ask", "todo":
-			if strings.TrimSpace(blocks[i].text) != "" {
+			if strings.TrimSpace(block.text) != "" {
 				return true
 			}
 		case "cancelled":
@@ -279,8 +281,8 @@ func (m *model) dropLive() {
 // arriving ("`", "“") is held back too, so the tail never flickers
 // between backticks and the note. Pure.
 func liveView(text string) (prose string, coding bool) {
-	if i := strings.Index(text, "```"); i >= 0 {
-		return strings.TrimRight(text[:i], "\n `"), true
+	if before, _, ok := strings.Cut(text, "```"); ok {
+		return strings.TrimRight(before, "\n `"), true
 	}
 	return strings.TrimRight(text, "`"), false
 }
@@ -358,13 +360,7 @@ func (m *model) renderUser(b *block, th theme) string {
 // renderDone is the dim files/exit summary (when the entry carries
 // one) over the turn divider.
 func (m *model) renderDone(b *block, th theme) string {
-	w := m.width - 2
-	if w > 40 {
-		w = 40
-	}
-	if w < 1 {
-		w = 1
-	}
+	w := max(min(m.width-2, 40), 1)
 	out := th["dim"].Render(strings.Repeat("─", w))
 	exit, hasExit := 0, false
 	if b.exit != nil {

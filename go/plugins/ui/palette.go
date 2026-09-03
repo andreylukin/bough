@@ -11,7 +11,8 @@ package ui
 // no content for.
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 
 	"github.com/andreylukin/bough/plugins/commands"
@@ -81,11 +82,8 @@ func paletteFilter(all []paletteItem, query string) []paletteItem {
 		return 1
 	}
 	for _, tier := range [][]paletteItem{prefix, substr, subseq} {
-		sort.Slice(tier, func(i, j int) bool {
-			if a, b := rank(tier[i]), rank(tier[j]); a != b {
-				return a < b
-			}
-			return tier[i].name < tier[j].name
+		slices.SortFunc(tier, func(a, b paletteItem) int {
+			return cmp.Or(cmp.Compare(rank(a), rank(b)), cmp.Compare(a.name, b.name))
 		})
 	}
 	return append(append(prefix, substr...), subseq...)
@@ -159,20 +157,11 @@ func (p *palette) onKey(key string, items []paletteItem) (paletteAction, string)
 // screen, so a long list does not re-page under the cursor on every
 // keystroke: (first, rows) of the visible slice.
 func paletteWindow(nItems, selected, maxRows int) (first, rows int) {
-	rows = maxRows
-	if nItems < rows {
-		rows = nItems
-	}
+	rows = min(nItems, maxRows)
 	if rows <= 0 {
 		return 0, 0
 	}
-	first = selected - (rows - 1)
-	if first < 0 {
-		first = 0
-	}
-	if first > nItems-rows {
-		first = nItems - rows
-	}
+	first = min(max(selected-(rows-1), 0), nItems-rows)
 	return first, rows
 }
 

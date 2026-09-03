@@ -118,7 +118,7 @@ func TestFileIsValidJSONLSeqMonotonic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		e := s.Append("result", map[string]any{"text": "out", "code": "1+1"})
 		if e.Seq != int64(i+1) {
 			t.Fatalf("Append seq = %d, want %d", e.Seq, i+1)

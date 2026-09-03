@@ -76,7 +76,7 @@ func parseStyle(spec string) (lipgloss.Style, error) {
 		return st, nil
 	}
 	fgSet, bgSet := false, false
-	for _, seg := range strings.Split(spec, ":") {
+	for seg := range strings.SplitSeq(spec, ":") {
 		seg = strings.TrimSpace(seg)
 		switch seg {
 		case "bold":

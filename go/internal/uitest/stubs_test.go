@@ -84,7 +84,7 @@ func TestStreamingChunkingsRenderOneCodeBlock(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			stub := &uitest.Streaming{Script: uitest.Script{Replies: []string{reply, "final."}}, Chunk: ch}
+			stub := &uitest.Streaming{Replies: []string{reply, "final."}, Chunk: ch}
 			d := mountLLM(t, stub)
 			d.Say("go")
 			turnDone(d, "final.")
@@ -116,11 +116,11 @@ func TestStreamingByteChunksNeverShowMojibakeLive(t *testing.T) {
 	// buffer (256): a flood of deltas would drop the done event.
 	reply := strings.Repeat("日本語🐛 ", 8)
 	gate := make(chan struct{})
-	stub := &gated{Streaming: uitest.Streaming{Script: uitest.Script{Replies: []string{reply, "end"}}, Chunk: uitest.ByBytes(1)}, gate: gate}
+	stub := &gated{Replies: []string{reply, "end"}, Chunk: uitest.ByBytes(1), gate: gate}
 	d := mountLLM(t, stub)
 	d.Say("go")
 	d.WaitFor("日本語")
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		d.Step()
 		if strings.Contains(d.Frame(), "�") {
 			t.Fatalf("mojibake in the live block:\n%s", d.Frame())
@@ -177,7 +177,7 @@ func TestProviderErrorEndsTheTurn(t *testing.T) {
 // retry (the user's next prompt) succeeds.
 func TestProviderRecoversAfterFailure(t *testing.T) {
 	t.Parallel()
-	stub := &uitest.Failing{Script: uitest.Script{Replies: []string{"recovered"}}, Err: errors.New("provider: connection reset"), After: 1}
+	stub := &uitest.Failing{Replies: []string{"recovered"}, Err: errors.New("provider: connection reset"), After: 1}
 	d := mountLLM(t, stub)
 	d.Say("one")
 	turnDone(d, "connection reset")
@@ -350,7 +350,7 @@ func TestToolOutputShapes(t *testing.T) {
 			// section: from its header to the next block.
 			var results []string
 			in := false
-			for _, ln := range strings.Split(f, "\n") {
+			for ln := range strings.SplitSeq(f, "\n") {
 				switch {
 				case strings.Contains(ln, "▾ result") || strings.Contains(ln, "▸ result"):
 					in = true

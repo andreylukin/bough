@@ -15,6 +15,7 @@ package commands
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/andreylukin/bough/kernel"
@@ -103,10 +104,8 @@ func modelChoices(row kernel.Row, provs []string) (current string, choices []str
 			choices = append(choices, p+" "+m)
 		}
 	}
-	for _, c := range choices {
-		if c == current {
-			return current, choices
-		}
+	if slices.Contains(choices, current) {
+		return current, choices
 	}
 	return current, append([]string{current}, choices...)
 }

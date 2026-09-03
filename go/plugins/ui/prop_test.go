@@ -218,7 +218,7 @@ func TestPropFrameInvariants(t *testing.T) {
 				d := newDrv(t, st.w, st.h, cfgWith(t, nil, nil, histWith("/tmp/h.jsonl", "one", "two")))
 				checkFrame(rt, d, st, which, "init")
 				n := rapid.IntRange(1, 60).Draw(rt, "n")
-				for i := 0; i < n; i++ {
+				for range n {
 					s := propStepGen(st.w, st.h).Draw(rt, "step")
 					d.apply(rt, st, s, which == "quit")
 					checkFrame(rt, d, st, which, s.kind)
@@ -259,7 +259,7 @@ func TestPropFocusCycle(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		d := newDrv(t, 100, 40, cfgWith(t, nil, nil, nil))
 		n := rapid.IntRange(1, 8).Draw(rt, "blocks")
-		for i := 0; i < n; i++ {
+		for range n {
 			d.event(rapid.SampledFrom([]string{"code", "result", "assistant", "bash"}).Draw(rt, "kind"), nLines(rapid.IntRange(1, 30).Draw(rt, "len")))
 		}
 		d.event("done", "")
@@ -268,7 +268,7 @@ func TestPropFocusCycle(t *testing.T) {
 			return
 		}
 		k := rapid.IntRange(1, 12).Draw(rt, "tabs")
-		for i := 0; i < k; i++ {
+		for range k {
 			d.feed(keyTab())
 		}
 		want := d.m.blocks[f[((len(f)-1)-(k-1)%len(f)+len(f))%len(f)]].id

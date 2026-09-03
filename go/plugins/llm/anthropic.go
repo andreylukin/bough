@@ -87,8 +87,7 @@ func (a *anthropicLLM) params(system string, messages []Message) anthropic.Messa
 }
 
 func (a *anthropicLLM) wrapErr(err error) error {
-	var apiErr *anthropic.Error
-	if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+	if apiErr, ok := errors.AsType[*anthropic.Error](err); ok && apiErr.StatusCode == 404 {
 		return fmt.Errorf("llm-anthropic: model %q not found on anthropic — switch with /model", a.model)
 	}
 	return fmt.Errorf("llm-anthropic: %w", err)
@@ -139,11 +138,11 @@ func (a *anthropicLLM) Complete(ctx context.Context, system string, messages []M
 	a.usage.InputTokens += int(resp.Usage.InputTokens)
 	a.usage.OutputTokens += int(resp.Usage.OutputTokens)
 	a.mu.Unlock()
-	var out string
+	var out strings.Builder
 	for _, b := range resp.Content {
 		if b.Type == "text" {
-			out += b.Text
+			out.WriteString(b.Text)
 		}
 	}
-	return out, nil
+	return out.String(), nil
 }

@@ -12,8 +12,9 @@
 package commands
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -152,11 +153,14 @@ func (r *Registry) List() []CommandInfo {
 		infos = append(infos, c.info)
 	}
 	r.mu.Unlock()
-	sort.Slice(infos, func(i, j int) bool {
-		if a, b := infos[i].IsSkill(), infos[j].IsSkill(); a != b {
-			return !a
+	slices.SortFunc(infos, func(a, b CommandInfo) int {
+		if x, y := a.IsSkill(), b.IsSkill(); x != y {
+			if x {
+				return 1
+			}
+			return -1
 		}
-		return infos[i].Name < infos[j].Name
+		return cmp.Compare(a.Name, b.Name)
 	})
 	return infos
 }

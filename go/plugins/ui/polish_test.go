@@ -182,7 +182,7 @@ func TestAssistantHardNewlineSurvives(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	d.event("assistant", "[tool output]\nhi")
-	for _, l := range strings.Split(d.plain(), "\n") {
+	for l := range strings.SplitSeq(d.plain(), "\n") {
 		if strings.Contains(l, "[tool output]") && strings.Contains(l, "hi") {
 			t.Fatalf("single newline was eaten, joined line: %q", l)
 		}

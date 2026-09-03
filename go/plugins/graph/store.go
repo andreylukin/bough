@@ -7,13 +7,14 @@
 package graph
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -429,7 +430,7 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]Hit, err
 				all = append(all, scored{r, cosine(qv, decode(blob))})
 			}
 			vrows.Close()
-			sort.Slice(all, func(i, j int) bool { return all[i].c > all[j].c })
+			slices.SortFunc(all, func(a, b scored) int { return cmp.Compare(b.c, a.c) })
 			var sem []ref
 			for i, a := range all {
 				if i >= limit*3 || a.c < 0.2 {
@@ -448,11 +449,8 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]Hit, err
 	for r, sc := range ranks {
 		fused = append(fused, kv{r, sc})
 	}
-	sort.Slice(fused, func(i, j int) bool {
-		if fused[i].s != fused[j].s {
-			return fused[i].s > fused[j].s
-		}
-		return fused[i].r.id < fused[j].r.id
+	slices.SortFunc(fused, func(a, b kv) int {
+		return cmp.Or(cmp.Compare(b.s, a.s), cmp.Compare(a.r.id, b.r.id))
 	})
 	var out []Hit
 	for _, f := range fused {
@@ -479,7 +477,7 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]Hit, err
 // is matched literally instead of parsed as FTS syntax.
 func ftsQuery(q string) string {
 	var parts []string
-	for _, f := range strings.Fields(q) {
+	for f := range strings.FieldsSeq(q) {
 		parts = append(parts, `"`+strings.ReplaceAll(f, `"`, `""`)+`"`)
 	}
 	return strings.Join(parts, " OR ")

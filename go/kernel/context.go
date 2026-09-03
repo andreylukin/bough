@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -213,12 +214,12 @@ func (c *Context) Unmount() {
 	effects := c.effects
 	c.effects = nil
 	c.mu.Unlock()
-	for i := len(rows) - 1; i >= 0; i-- {
-		for j := len(rows[i].effects) - 1; j >= 0; j-- {
-			rows[i].effects[j]()
+	for _, row := range slices.Backward(rows) {
+		for _, v := range slices.Backward(row.effects) {
+			v()
 		}
 	}
-	for i := len(effects) - 1; i >= 0; i-- {
-		effects[i]()
+	for _, effect := range slices.Backward(effects) {
+		effect()
 	}
 }

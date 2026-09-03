@@ -1,5 +1,7 @@
 package kernel
 
+import "maps"
+
 // State is a row's live lifecycle state.
 type State string
 
@@ -28,9 +30,7 @@ func (c *Context) Rows() []RowStatus {
 		active[st.row.ID] = true
 	}
 	failed := map[string]failure{}
-	for id, f := range c.failed {
-		failed[id] = f
-	}
+	maps.Copy(failed, c.failed)
 	c.mu.Unlock()
 
 	out := make([]RowStatus, 0, len(desired))

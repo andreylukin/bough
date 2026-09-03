@@ -85,7 +85,7 @@ func entriesOf(t *testing.T, path string) []history.Entry {
 		t.Fatal(err)
 	}
 	var out []history.Entry
-	for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+	for l := range strings.SplitSeq(strings.TrimSpace(string(b)), "\n") {
 		var e history.Entry
 		if err := json.Unmarshal([]byte(l), &e); err != nil {
 			t.Fatal(err)
@@ -138,7 +138,7 @@ func TestSlashSessionsOpensPickerCwdFirstCurrentMarked(t *testing.T) {
 	if !(iCur < iHere && iHere < iOther) {
 		t.Errorf("this directory's sessions should come first (cur, here, then other):\n%s", p)
 	}
-	for _, l := range strings.Split(p, "\n") {
+	for l := range strings.SplitSeq(p, "\n") {
 		switch {
 		case strings.Contains(l, "current prompt"):
 			if !strings.Contains(l, "(current)") || !strings.Contains(l, "  .") {

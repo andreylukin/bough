@@ -267,7 +267,7 @@ func attachLive(ctx *kernel.Context, inputs chan<- string, cfg *uiCfg) {
 // disposer blocks until an in-flight send finishes). After ~5s with
 // no loop attached the line is dropped loudly.
 func sendLive(line string) {
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		liveMu.Lock()
 		ch := liveInputs
 		if ch != nil {

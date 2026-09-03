@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 )
 
 // applyRow runs p.Apply with attribution: Provide/Effect/On/Get calls
@@ -42,8 +43,8 @@ func (c *Context) applyRow(r Row, p Plugin) error {
 // still-mounted row also provides the same key (a duplicate-provider
 // config; the surviving value is whatever was written last).
 func (c *Context) disposeRow(st *rowState) {
-	for i := len(st.effects) - 1; i >= 0; i-- {
-		st.effects[i]()
+	for _, v := range slices.Backward(st.effects) {
+		v()
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -152,8 +153,8 @@ func (c *Context) settle() {
 			}
 		}
 		c.mu.Unlock()
-		for i := len(stale) - 1; i >= 0; i-- {
-			st := stale[i]
+		for _, st := range slices.Backward(stale) {
+
 			Logf("kernel: row %q reloading (service %q changed)\n",
 				st.row.ID, keys[st.row.ID])
 			c.disposeRow(st)
@@ -252,10 +253,8 @@ func (c *Context) Reconcile(newRows []Row) error {
 	// withdrawn key must unmount too (its reference is dead), and its
 	// own provides join the withdrawn set.
 	depends := func(st *rowState, key string) bool {
-		for _, k := range st.injects {
-			if k == key {
-				return true
-			}
+		if slices.Contains(st.injects, key) {
+			return true
 		}
 		return st.observed[key]
 	}
@@ -280,9 +279,9 @@ func (c *Context) Reconcile(newRows []Row) error {
 
 	// Unmount dropped rows in reverse mount order, then settle: dropped
 	// dependents remount once their provider lands (or stay Pending).
-	for i := len(mounted) - 1; i >= 0; i-- {
-		if drop[mounted[i].row.ID] {
-			c.disposeRow(mounted[i])
+	for _, m := range slices.Backward(mounted) {
+		if drop[m.row.ID] {
+			c.disposeRow(m)
 		}
 	}
 	c.settle()

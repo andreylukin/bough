@@ -2,7 +2,8 @@ package kernel
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"sync"
 )
 
@@ -34,11 +35,7 @@ func Register(name string, factory func() Plugin) {
 func Plugins() []string {
 	regMu.Lock()
 	defer regMu.Unlock()
-	names := make([]string, 0, len(registry))
-	for n := range registry {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(registry))
 	return names
 }
 

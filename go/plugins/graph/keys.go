@@ -66,9 +66,9 @@ func RepoKey(origin string) string {
 	if o == "" {
 		return ""
 	}
-	if strings.HasPrefix(o, "git@") {
+	if after, ok := strings.CutPrefix(o, "git@"); ok {
 		// git@github.com:owner/name.git
-		o = "ssh://" + strings.Replace(strings.TrimPrefix(o, "git@"), ":", "/", 1)
+		o = "ssh://" + strings.Replace(after, ":", "/", 1)
 	}
 	if u, err := url.Parse(o); err == nil && u.Host != "" {
 		p := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
@@ -79,8 +79,8 @@ func RepoKey(origin string) string {
 
 // RepoName is the last segment of a repo key ("bough").
 func RepoName(repoKey string) string {
-	if i := strings.LastIndex(repoKey, "/"); i >= 0 {
-		return repoKey[i+1:]
+	if _, after, ok := strings.CutLast(repoKey, "/"); ok {
+		return after
 	}
 	return repoKey
 }
@@ -125,10 +125,10 @@ func ParseRef(s string) (Ref, bool) {
 
 // PRNumber splits a PR key.
 func PRNumber(key string) (repo string, n int, ok bool) {
-	i := strings.LastIndex(key, "#")
-	if i < 0 {
+	before, after, found := strings.CutLast(key, "#")
+	if !found {
 		return "", 0, false
 	}
-	n, err := strconv.Atoi(key[i+1:])
-	return key[:i], n, err == nil
+	n, err := strconv.Atoi(after)
+	return before, n, err == nil
 }

@@ -10,11 +10,12 @@ package mcp
 // note. ~/.bough/mcp.json (hand-written) outranks this file by name.
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 )
@@ -62,7 +63,7 @@ func grantsOf(payload []byte, warn func(string)) ([]grant, error) {
 		}
 		out = append(out, g)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	slices.SortFunc(out, func(a, b grant) int { return cmp.Compare(a.Name, b.Name) })
 	return out, nil
 }
 
@@ -90,7 +91,7 @@ func render(grants []grant, now time.Time) []byte {
 	type entry struct {
 		URL      string            `json:"url"`
 		Headers  map[string]string `json:"headers"`
-		Disabled bool              `json:"disabled,omitempty"`
+		Disabled bool              `json:"disabled,omitzero"`
 		Note     string            `json:"note,omitempty"`
 	}
 	doc := struct {

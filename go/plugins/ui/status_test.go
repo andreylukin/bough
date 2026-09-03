@@ -213,7 +213,7 @@ func TestResizeReflowsBoxes(t *testing.T) {
 	d.press(keyTab()) // expand the collapsed code block to get a box
 	d.press(keyEnter())
 	boxWidth := func(s string) int {
-		for _, l := range strings.Split(s, "\n") {
+		for l := range strings.SplitSeq(s, "\n") {
 			if strings.Contains(l, "╭") {
 				return lipgloss.Width(strings.TrimRight(l, " "))
 			}

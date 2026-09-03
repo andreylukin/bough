@@ -563,7 +563,7 @@ func TestRunningSpawnCardSpinsOnTick(t *testing.T) {
 	d.feed(keyEnter()) // submit without running its commands: the turn stays in flight
 	d.feed(eventMsg{Kind: "sub:start", Text: "task", Data: map[string]any{"worker": 1}})
 	before := d.plain()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		d.feed(d.m.spin.Tick())
 	}
 	if d.plain() == before {

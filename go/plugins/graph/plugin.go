@@ -15,7 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -267,7 +267,7 @@ func (s *Service) PromptSection(ws WorkspaceInfo, hops, maxRows int) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	sort.Strings(lines)
+	slices.Sort(lines)
 	if len(lines) > maxRows {
 		lines = append(lines[:maxRows], fmt.Sprintf("- … %d more; tools.graph.neighbors(key) for the rest", len(lines)-maxRows))
 	}

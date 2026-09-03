@@ -11,6 +11,7 @@ package vtreal
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os/exec"
 	"sync"
 	"testing"
@@ -106,9 +107,7 @@ func (t *Terminal) Snapshot() Snapshot {
 	t.mu.Lock()
 	s := Snapshot{Cols: t.cols, Rows: t.rows, Title: t.title, AltScreen: t.altScreen,
 		Cursor: t.cursor, CursorVis: t.cursorVis, DEC: make(map[ansi.DECMode]ansi.ModeSetting, len(t.dec))}
-	for k, v := range t.dec {
-		s.DEC[k] = v
-	}
+	maps.Copy(s.DEC, t.dec)
 	t.mu.Unlock()
 	// Draw copies the screen into a private buffer under the emulator's
 	// lock; CellAt would hand back pointers into the live buffer that

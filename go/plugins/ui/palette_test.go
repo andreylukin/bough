@@ -23,7 +23,6 @@ func reg(t *testing.T, names ...string) *commands.Registry {
 	t.Helper()
 	r := commands.NewRegistry()
 	for _, n := range names {
-		n := n
 		err := r.Register(commands.CommandInfo{Name: n, Usage: "", Summary: "do " + n},
 			func(args string) (string, error) {
 				return strings.TrimSpace(n + " ran " + args), nil
@@ -479,7 +478,7 @@ func TestWindowSlidesToKeepSelectionVisible(t *testing.T) {
 	}
 	d := drvCmds(t, reg(t, nm...))
 	d.typeStr("/")
-	for i := 0; i < 12; i++ {
+	for range 12 {
 		d.press(keyDown())
 	}
 	if d.m.pal.selected != 12 {
@@ -615,7 +614,6 @@ func uiActionReg(t *testing.T, acts map[string]commands.UIAction) *commands.Regi
 	t.Helper()
 	r := commands.NewRegistry()
 	for name, act := range acts {
-		act := act
 		err := r.Register(commands.CommandInfo{Name: name, Summary: "ui: " + string(act)},
 			func(string) (string, error) { return "", act })
 		if err != nil {

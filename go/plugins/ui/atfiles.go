@@ -9,7 +9,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -60,7 +60,7 @@ func listFiles(root string) []string {
 		}
 		return nil
 	})
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

@@ -14,10 +14,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,11 +103,7 @@ func (s *Sections) Text() string {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	names := make([]string, 0, len(s.m))
-	for n := range s.m {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(s.m))
 	parts := make([]string, 0, len(names))
 	for _, n := range names {
 		parts = append(parts, s.m[n])
@@ -440,9 +437,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	// note appends a history entry and emits the matching event.
 	note := func(kind, text string, extra map[string]any) {
 		data := map[string]any{"text": text}
-		for k, v := range extra {
-			data[k] = v
-		}
+		maps.Copy(data, extra)
 		r.hist.Append(kind, data)
 		r.noteData = extra
 		emit(kind, text)
@@ -484,16 +479,17 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		}
 	}
 
-	msg := input
+	var msg strings.Builder
+	msg.WriteString(input)
 	for _, block := range ExpandAt(input, ".") {
-		msg += "\n\n" + block
+		msg.WriteString("\n\n" + block)
 	}
 	if r.skills != nil {
 		for _, block := range r.skills.Inject(input) {
-			msg += "\n\n" + block
+			msg.WriteString("\n\n" + block)
 		}
 	}
-	r.hist.Append("input", map[string]any{"text": msg})
+	r.hist.Append("input", map[string]any{"text": msg.String()})
 
 	maxSteps := r.maxSteps
 	if maxSteps <= 0 {

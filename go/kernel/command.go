@@ -1,6 +1,9 @@
 package kernel
 
-import "sort"
+import (
+	"cmp"
+	"slices"
+)
 
 // Command is a CLI subcommand a plugin contributes: `bough <name>
 // [args]` runs it without mounting the config tree. Run receives the
@@ -36,7 +39,7 @@ func Commands() []PluginCommand {
 		names = append(names, n)
 	}
 	regMu.Unlock()
-	sort.Strings(names)
+	slices.Sort(names)
 	var out []PluginCommand
 	for _, n := range names {
 		regMu.Lock()
@@ -48,7 +51,7 @@ func Commands() []PluginCommand {
 			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	slices.SortFunc(out, func(a, b PluginCommand) int { return cmp.Compare(a.Name, b.Name) })
 	return out
 }
 

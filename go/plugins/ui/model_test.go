@@ -274,7 +274,7 @@ func TestErrorEventKeepsTheTurnRunning(t *testing.T) {
 // one on screen, not the oldest at the top of the transcript.
 func TestFocusStartsAtTheNewestBlock(t *testing.T) {
 	m := testModel(t)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		m.addEvent(Event{Kind: "code", Text: "console.log(" + strings.Repeat("x", i+1) + ")"})
 		m.addEvent(Event{Kind: "result", Text: "ok"})
 	}

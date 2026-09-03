@@ -183,7 +183,7 @@ func TestProgramPickerEscStartsFresh(t *testing.T) {
 // markerOn reports whether the picker row containing title carries the
 // selection marker.
 func markerOn(plain, title string) bool {
-	for _, l := range strings.Split(plain, "\n") {
+	for l := range strings.SplitSeq(plain, "\n") {
 		if strings.Contains(l, title) {
 			return strings.Contains(l, "▸")
 		}
