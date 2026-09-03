@@ -29,12 +29,20 @@ func (p *openrouterPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error 
 	if !ok || model == "" {
 		return fmt.Errorf("llm-openrouter: config needs model (string)")
 	}
-	ctx.Provide("llm", &openrouterLLM{model: model})
+	effort, _ := cfg["effort"].(string) // "" = the provider's default
+	switch effort {
+	case "", "low", "medium", "high", "xhigh":
+	default:
+		return fmt.Errorf("llm-openrouter: effort must be low, medium, high or xhigh, got %q", effort)
+	}
+	ctx.Provide("llm", &openrouterLLM{model: model, effort: effort})
 	return nil
 }
 
 type openrouterLLM struct {
-	model string
+	model    string
+	effort   string // reasoning effort sent as {"reasoning": {"effort": …}}; "" omits it
+	endpoint string // tests point this at a local server; "" = OpenRouter
 
 	once sync.Once
 	key  string
@@ -94,18 +102,25 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 		msgs = append(msgs, orMessage{Role: role, Content: m.Content})
 	}
 
-	body, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"model":    o.model,
 		"messages": msgs,
 		"usage":    map[string]any{"include": true},
 		"stream":   onDelta != nil,
-	})
+	}
+	if o.effort != "" {
+		payload["reasoning"] = map[string]any{"effort": o.effort}
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("llm-openrouter: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(body))
+	endpoint := o.endpoint
+	if endpoint == "" {
+		endpoint = "https://openrouter.ai/api/v1/chat/completions"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("llm-openrouter: %w", err)
 	}
