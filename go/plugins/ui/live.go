@@ -175,7 +175,8 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 
 	// Status bar identity: "bough · <model>" (the provider name when
-	// the row names no model).
+	// the row names no model); the bar keeps only "bough" once the llm
+	// names its model itself (statusBar).
 	status := "bough"
 	for _, r := range ctx.Desired() {
 		if r.ID == "llm" || strings.HasPrefix(r.Plugin, "llm-") {

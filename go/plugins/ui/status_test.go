@@ -120,6 +120,47 @@ func TestStatusBarTruncationTiers(t *testing.T) {
 	}
 }
 
+// The real app's left identity is "bough · <model>" from the row
+// config; once the llm names its model on the right the left is bare
+// "bough", so the spec's 80-column bar fits a long Anthropic id.
+func TestStatusBarModelShowsOnce(t *testing.T) {
+	t.Parallel()
+	const mdl = "claude-sonnet-4-6-20251114"
+	cases := []struct {
+		w    int
+		want string
+	}{
+		{120, "↑12.3k ↓3.4k · $0.052 · 34% ctx · " + mdl + " · ? keys"},
+		{80, "↑12.3k ↓3.4k · $0.052 · 34% ctx · " + mdl + " · ? keys"},
+		{64, "$0.052 · 34% ctx · " + mdl + " · ? keys"},
+		{30, "$0.052 · ? keys"},
+	}
+	for _, c := range cases {
+		cfg := footerCfg(t)
+		cfg.status = "bough · " + mdl
+		cfg.modeler = fakeModel(mdl)
+		d := newDrv(t, c.w, 24, cfg)
+		got := bar(t, d, c.w)
+		if !strings.HasPrefix(got, " bough ") {
+			t.Errorf("width %d: the left is bare bough: %q", c.w, got)
+		}
+		if !strings.HasSuffix(strings.TrimRight(got, " "), c.want) {
+			t.Errorf("width %d: bar = %q, want the right side %q", c.w, got, c.want)
+		}
+		if n := strings.Count(got, mdl); n > 1 {
+			t.Errorf("width %d: the model shows %d times: %q", c.w, n, got)
+		}
+	}
+	// No Modeler: the row's model stays on the left, the only place
+	// that names it.
+	cfg := footerCfg(t)
+	cfg.status, cfg.modeler = "bough · "+mdl, nil
+	d := newDrv(t, 100, 24, cfg)
+	if got := bar(t, d, 100); !strings.HasPrefix(got, " bough · "+mdl) {
+		t.Errorf("no Modeler: the left keeps the row's model: %q", got)
+	}
+}
+
 func TestStatusBarUnpricedNoModelNoLimit(t *testing.T) {
 	t.Parallel()
 	cfg := footerCfg(t)

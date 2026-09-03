@@ -57,7 +57,8 @@ var builtin = map[string]Price{
 // model ids like builtin's. Unknown stays 0 and the bar shows no
 // percentage.
 var contexts = map[string]int{
-	// Anthropic: the 4.6+/5 line at 1M, haiku 4.5 at 200k.
+	// Anthropic: the 4.6+/5 line at 1M, haiku 4.5 and the 4.x line
+	// before it at 200k.
 	"claude-fable-5-1":  1_000_000,
 	"claude-fable-5":    1_000_000,
 	"claude-opus-5":     1_000_000,
@@ -67,6 +68,11 @@ var contexts = map[string]int{
 	"claude-sonnet-5":   1_000_000,
 	"claude-sonnet-4-6": 1_000_000,
 	"claude-haiku-4-5":  200_000,
+	"claude-sonnet-4-5": 200_000,
+	"claude-opus-4-5":   200_000,
+	"claude-opus-4-1":   200_000,
+	"claude-opus-4":     200_000,
+	"claude-sonnet-4":   200_000,
 	// OpenAI.
 	"gpt-5.6-luna": 1_050_000,
 	"gpt-5":        400_000,

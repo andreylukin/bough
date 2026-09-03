@@ -1,7 +1,9 @@
 package ui
 
-// The one-line status bar: "bough · <model>" on the left; on the
-// right the flash message, or the state — "waiting for you" while an
+// The one-line status bar: the identity on the left — "bough · <model>"
+// from the row config, bare "bough" once the llm names its model on
+// the right, so the model never shows twice; on the right the flash
+// message, or the state — "waiting for you" while an
 // ask is pending, the inspector hint — else, when idle, the truth
 // about this session: "↑in ↓out · $cost · N% ctx · model" (each part
 // only when known: cost when priced, the context percentage when the
@@ -25,7 +27,13 @@ import (
 
 func (m *model) statusBar(cfg *uiCfg) string {
 	th := cfg.theme
+	tokens, cost, ctx, mdl := usageParts(cfg)
 	left := " " + cfg.status
+	if mdl != "" {
+		// The right side names the model; a duplicate on the left
+		// would crowd the tokens out at 80-100 columns.
+		left, _, _ = strings.Cut(left, " · ")
+	}
 	// Candidate right segments, widest first; the first that fits wins
 	// and the bare "? keys" is the floor.
 	var cands []string
@@ -43,16 +51,15 @@ func (m *model) statusBar(cfg *uiCfg) string {
 	case m.scrollCue() != "":
 		cands = []string{m.scrollCue()}
 	default:
-		tokens, cost, ctx, mdl := usageParts(cfg)
 		join := func(parts ...string) string {
 			return strings.Join(slices.DeleteFunc(parts, func(s string) bool { return s == "" }), " · ")
 		}
-		cands = []string{
+		cands = slices.Compact([]string{
 			join(tokens, cost, ctx, mdl),
 			join(cost, ctx, mdl),
 			join(cost, ctx),
 			join(cost),
-		}
+		})
 	}
 	if m.flash == "" {
 		// Narrow pane: the usage/scroll cue goes before "? keys" does.

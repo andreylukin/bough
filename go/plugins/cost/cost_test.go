@@ -58,6 +58,8 @@ func TestContextLimit(t *testing.T) {
 		"claude-haiku-4-5":           200_000,
 		"anthropic/claude-opus-5":    1_000_000,
 		"gpt-5-mini-2026-01-01":      400_000, // longest prefix, not gpt-5's
+		"claude-sonnet-4-5-20250929": 200_000,
+		"claude-opus-4-1":            200_000,
 		"z-ai/glm-5.3-flash":         0,
 		"":                           0,
 	}

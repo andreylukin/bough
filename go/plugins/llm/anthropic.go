@@ -106,6 +106,10 @@ func (a *anthropicLLM) Stream(ctx context.Context, system string, messages []Mes
 	for stream.Next() {
 		switch ev := stream.Current().AsAny().(type) {
 		case anthropic.MessageStartEvent:
+			// InputTokens excludes cache_read/cache_creation tokens;
+			// nothing sets cache_control today, so it is the whole
+			// prompt. Sum the three once caching lands or the
+			// context % reads ~0.
 			in += int(ev.Message.Usage.InputTokens)
 		case anthropic.MessageDeltaEvent:
 			outTok += int(ev.Usage.OutputTokens)
