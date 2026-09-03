@@ -80,6 +80,7 @@ var curatedModels = map[string][]string{
 		"openai/gpt-5", "google/gemini-2.5-pro", "deepseek/deepseek-chat-v3.1",
 	},
 	"llm-anthropic": {"claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"},
+	"llm-cerebras":  {"gpt-oss-120b", "qwen-3.8-27b"},
 }
 
 // showModel is /model with no args: the current row, the providers,

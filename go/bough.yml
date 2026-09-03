@@ -15,6 +15,12 @@
 #   plugin: llm-openrouter
 #   config:
 #     model: deepseek/deepseek-chat
+# or (needs CEREBRAS_API_KEY; ~3000 tok/s, no dollar cost reported, so
+# price it under the cost row: prices: {gpt-oss-120b: {input: …, output: …}}):
+# - id: llm
+#   plugin: llm-cerebras
+#   config:
+#     model: gpt-oss-120b
 
 # Dollar cost in the status bar and /cost for every provider: OpenRouter
 # prices its own responses; OpenAI and Anthropic tallies are priced from

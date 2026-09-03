@@ -93,7 +93,7 @@ bough.provider("parrot", (sys, msgs) => "...");             // a full LLM provid
 
 ```yaml
 - id: llm
-  plugin: llm-openrouter        # or llm-anthropic, llm-openai, llm-echo
+  plugin: llm-openrouter        # or llm-anthropic, llm-openai, llm-cerebras, llm-echo
   config:
     model: anthropic/claude-sonnet-4.5
 - id: cost

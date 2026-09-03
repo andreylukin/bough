@@ -81,3 +81,15 @@ func TestOpenrouterErrHidesRawBody(t *testing.T) {
 		t.Errorf("500 error = %v", err)
 	}
 }
+
+func TestCerebrasErrHidesRawBody(t *testing.T) {
+	body := []byte(`{"message":"Model qwen-9 does not exist","type":"not_found_error","user_id":"u_1"}`)
+	err := cerebrasErr(404, "qwen-9", body)
+	if !strings.Contains(err.Error(), `model "qwen-9" not found on cerebras`) ||
+		!strings.Contains(err.Error(), "does not exist") || strings.Contains(err.Error(), "u_1") {
+		t.Fatalf("got %v", err)
+	}
+	if err := cerebrasErr(500, "m", []byte("nope")); !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("got %v", err)
+	}
+}
