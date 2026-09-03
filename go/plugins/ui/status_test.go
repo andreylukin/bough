@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"pgregory.net/rapid"
 
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -39,11 +40,11 @@ func TestStatusBarShowsUsageAndKeysHint(t *testing.T) {
 		t.Errorf("status bar missing the keys hint:\n%s", p)
 	}
 	cfg.usage = fakeUsage{llm.Usage{InputTokens: 1200, OutputTokens: 300, Cost: 0.0042, Priced: true}}
-	if p := d.plain(); !strings.Contains(p, "$0.0042 · 1.5k tok · ? keys") {
+	if p := d.plain(); !strings.Contains(p, "↑1.2k ↓300 · $0.0042 · ? keys") {
 		t.Errorf("status bar missing the priced usage:\n%s", p)
 	}
 	cfg.usage = fakeUsage{llm.Usage{InputTokens: 1200, OutputTokens: 300}}
-	if p := d.plain(); !strings.Contains(p, "1.5k tok · ? keys") {
+	if p := d.plain(); !strings.Contains(p, "↑1.2k ↓300 · ? keys") {
 		t.Errorf("status bar missing the token usage:\n%s", p)
 	}
 }
@@ -51,6 +52,177 @@ func TestStatusBarShowsUsageAndKeysHint(t *testing.T) {
 type fakeUsage struct{ u llm.Usage }
 
 func (f fakeUsage) Usage() llm.Usage { return f.u }
+
+// fakeLimit is a usage service that also knows the context window
+// (the cost row's shape).
+type fakeLimit struct {
+	fakeUsage
+	limit int
+}
+
+func (f fakeLimit) ContextLimit() int { return f.limit }
+
+type fakeModel string
+
+func (f fakeModel) Model() string { return string(f) }
+
+// footerCfg is the idle bar's full truth: a priced tally, a last
+// request at 34% of a known window, a named model.
+func footerCfg(t *testing.T) *uiCfg {
+	cfg := cfgWith(t, nil, nil, nil)
+	cfg.usage = fakeLimit{fakeUsage{llm.Usage{InputTokens: 12_300, OutputTokens: 3_400, LastInputTokens: 357_000, Cost: 0.052, Priced: true}}, 1_050_000}
+	cfg.limit = cfg.usage.(fakeLimit)
+	cfg.modeler = fakeModel("gpt-5.6-luna")
+	return cfg
+}
+
+// bar is the status row of the frame; it must be exactly one row of
+// exactly the terminal's width.
+func bar(t *testing.T, d *drv, w int) string {
+	t.Helper()
+	line := d.m.statusBar(d.cfgp.Load())
+	if strings.Contains(line, "\n") {
+		t.Fatalf("status bar wrapped at width %d:\n%q", w, stripANSI(line))
+	}
+	if got := lipgloss.Width(line); got != w {
+		t.Fatalf("status bar width = %d, want %d:\n%q", got, w, stripANSI(line))
+	}
+	return stripANSI(line)
+}
+
+// A narrow pane drops parts from the left — tokens, then the model,
+// then the context — and "? keys" is the floor.
+func TestStatusBarTruncationTiers(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		w    int
+		want string
+	}{
+		{120, "↑12.3k ↓3.4k · $0.052 · 34% ctx · gpt-5.6-luna · ? keys"},
+		{80, "↑12.3k ↓3.4k · $0.052 · 34% ctx · gpt-5.6-luna · ? keys"},
+		{50, "$0.052 · 34% ctx · gpt-5.6-luna · ? keys"},
+		{40, "$0.052 · 34% ctx · ? keys"},
+		{30, "$0.052 · ? keys"},
+		{20, "? keys"},
+	}
+	for _, c := range cases {
+		d := newDrv(t, c.w, 24, footerCfg(t))
+		got := bar(t, d, c.w)
+		if !strings.HasSuffix(strings.TrimRight(got, " "), c.want) {
+			t.Errorf("width %d: bar = %q, want the right side %q", c.w, got, c.want)
+		}
+		if c.w >= 50 && strings.Count(got, "gpt-5.6-luna") != 1 {
+			t.Errorf("width %d: the model shows once: %q", c.w, got)
+		}
+		if strings.Contains(got, "…") {
+			t.Errorf("width %d: a tier that fits is never truncated: %q", c.w, got)
+		}
+	}
+}
+
+func TestStatusBarUnpricedNoModelNoLimit(t *testing.T) {
+	t.Parallel()
+	cfg := footerCfg(t)
+	u := cfg.usage.(fakeLimit)
+	u.u.Priced = false
+	cfg.usage, cfg.limit = u, u
+	d := newDrv(t, 100, 24, cfg)
+	if got := bar(t, d, 100); !strings.Contains(got, "↑12.3k ↓3.4k · 34% ctx · gpt-5.6-luna · ? keys") || strings.Contains(got, "$") {
+		t.Errorf("unpriced: no dollar figure: %q", got)
+	}
+
+	cfg = footerCfg(t)
+	cfg.modeler = nil
+	d = newDrv(t, 100, 24, cfg)
+	if got := bar(t, d, 100); !strings.Contains(got, "↑12.3k ↓3.4k · $0.052 · 34% ctx · ? keys") {
+		t.Errorf("no Modeler: no model name: %q", got)
+	}
+
+	cfg = footerCfg(t)
+	cfg.limit = nil
+	d = newDrv(t, 100, 24, cfg)
+	if got := bar(t, d, 100); !strings.Contains(got, "↑12.3k ↓3.4k · $0.052 · gpt-5.6-luna · ? keys") || strings.Contains(got, "ctx") {
+		t.Errorf("no context limit: no percentage: %q", got)
+	}
+
+	cfg = footerCfg(t)
+	cfg.limit = fakeLimit{limit: 0}
+	d = newDrv(t, 100, 24, cfg)
+	if got := bar(t, d, 100); strings.Contains(got, "ctx") {
+		t.Errorf("unknown limit (0): no percentage: %q", got)
+	}
+
+	cfg = footerCfg(t)
+	cfg.usage = fakeUsage{}
+	cfg.limit = nil
+	d = newDrv(t, 100, 24, cfg)
+	if got := bar(t, d, 100); !strings.HasSuffix(strings.TrimRight(got, " "), "gpt-5.6-luna · ? keys") || strings.Contains(got, "↑") {
+		t.Errorf("nothing used yet: just the model: %q", got)
+	}
+}
+
+// The bar is one row of exactly the terminal's width whatever the
+// width and whatever it has to say.
+func TestPropStatusBarFitsWidth(t *testing.T) {
+	t.Parallel()
+	rapid.Check(t, func(rt *rapid.T) {
+		w := rapid.IntRange(20, 200).Draw(rt, "w")
+		cfg := cfgWith(t, nil, nil, nil)
+		u := llm.Usage{
+			InputTokens:     rapid.IntRange(0, 5_000_000).Draw(rt, "in"),
+			OutputTokens:    rapid.IntRange(0, 5_000_000).Draw(rt, "out"),
+			LastInputTokens: rapid.IntRange(0, 2_000_000).Draw(rt, "last"),
+			Cost:            rapid.Float64Range(0, 500).Draw(rt, "cost"),
+			Priced:          rapid.Bool().Draw(rt, "priced"),
+		}
+		lim := fakeLimit{fakeUsage{u}, rapid.SampledFrom([]int{0, 200_000, 1_000_000, 1_050_000}).Draw(rt, "limit")}
+		cfg.usage = lim
+		if rapid.Bool().Draw(rt, "haslimit") {
+			cfg.limit = lim
+		}
+		if rapid.Bool().Draw(rt, "hasmodel") {
+			cfg.modeler = fakeModel(rapid.StringMatching(`[a-z0-9./-]{0,40}`).Draw(rt, "model"))
+		}
+		d := newDrv(t, w, 24, cfg)
+		if rapid.Bool().Draw(rt, "running") {
+			d.typeStr("go")
+			d.press(keyEnter())
+		}
+		line := d.m.statusBar(cfg)
+		if strings.Contains(line, "\n") {
+			rt.Fatalf("width %d: bar wrapped: %q", w, stripANSI(line))
+		}
+		if got := lipgloss.Width(line); got != w {
+			rt.Fatalf("width %d: bar is %d wide: %q", w, got, stripANSI(line))
+		}
+		if !strings.Contains(stripANSI(line), "? keys") && w >= 40 {
+			rt.Fatalf("width %d: keys hint lost: %q", w, stripANSI(line))
+		}
+	})
+}
+
+// The welcome names the model and, when known, its context window.
+func TestWelcomeNamesModelAndContext(t *testing.T) {
+	t.Parallel()
+	d := newDrv(t, 80, 24, footerCfg(t))
+	if p := d.plain(); !strings.Contains(p, "model gpt-5.6-luna · 1.05M context") {
+		t.Errorf("welcome missing the model line:\n%s", p)
+	}
+	cfg := footerCfg(t)
+	cfg.limit = nil
+	d = newDrv(t, 80, 24, cfg)
+	if p := d.plain(); !strings.Contains(p, "model gpt-5.6-luna") || strings.Contains(p, "context") {
+		t.Errorf("unknown limit: the model alone:\n%s", p)
+	}
+	if p := defaultDrv(t).plain(); strings.Contains(p, "model ") {
+		t.Errorf("no Modeler: no model line:\n%s", p)
+	}
+	for n, want := range map[int]string{200_000: "200k", 1_000_000: "1M", 1_050_000: "1.05M", 128_000: "128k", 1_047_576: "1.05M"} {
+		if got := ctxAbbrev(n); got != want {
+			t.Errorf("ctxAbbrev(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
 
 // A pending ask stops the spinner and says the turn is waiting on the
 // user; the ask's placeholder tells them how to answer.

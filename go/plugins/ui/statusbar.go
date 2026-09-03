@@ -2,16 +2,21 @@ package ui
 
 // The one-line status bar: "bough · <model>" on the left; on the
 // right the flash message, or the state — "waiting for you" while an
-// ask is pending, the inspector hint, else the llm's running usage
-// (cost when priced, tokens otherwise, nothing when unknown) — and
-// always "? keys" as the way in to the keymap. The spinner shows only
-// while a turn is in flight AND not blocked on the user. The session
-// file is reachable via /sessions, not the bar.
+// ask is pending, the inspector hint — else, when idle, the truth
+// about this session: "↑in ↓out · $cost · N% ctx · model" (each part
+// only when known: cost when priced, the context percentage when the
+// model's window is known, the model when the llm names one) — and
+// always "? keys" as the way in to the keymap. A narrow pane drops
+// parts from the left (tokens, then the model, then the context) until
+// the bar fits; it never wraps. The spinner shows only while a turn is
+// in flight AND not blocked on the user. The session file is reachable
+// via /sessions, not the bar.
 
 import (
 	"github.com/charmbracelet/x/ansi"
 
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,41 +26,54 @@ import (
 func (m *model) statusBar(cfg *uiCfg) string {
 	th := cfg.theme
 	left := " " + cfg.status
-	var right string
+	// Candidate right segments, widest first; the first that fits wins
+	// and the bare "? keys" is the floor.
+	var cands []string
 	switch {
 	case m.flash != "":
-		right = m.flash
+		cands = []string{m.flash}
 	case m.inspecting && m.diving != 0:
-		right = "subagent transcript · esc to close"
+		cands = []string{"subagent transcript · esc to close"}
 	case m.inspecting:
-		right = "inspecting · " + cfg.keys["history_inspect"] + " to close"
+		cands = []string{"inspecting · " + cfg.keys["history_inspect"] + " to close"}
 	case m.pendingAsk != "":
-		right = "waiting for you"
+		cands = []string{"waiting for you"}
 	case m.focusedSpawn() >= 0:
-		right = "subagent card · enter folds · " + cfg.keys["history_inspect"] + " opens its transcript"
+		cands = []string{"subagent card · enter folds · " + cfg.keys["history_inspect"] + " opens its transcript"}
 	case m.scrollCue() != "":
-		right = m.scrollCue()
+		cands = []string{m.scrollCue()}
 	default:
-		if cfg.usage != nil {
-			right = cfg.usage.Usage().Short()
+		tokens, cost, ctx, mdl := usageParts(cfg)
+		join := func(parts ...string) string {
+			return strings.Join(slices.DeleteFunc(parts, func(s string) bool { return s == "" }), " · ")
+		}
+		cands = []string{
+			join(tokens, cost, ctx, mdl),
+			join(cost, ctx, mdl),
+			join(cost, ctx),
+			join(cost),
 		}
 	}
-	if right != "" {
-		right += " · "
-	}
-	right += "? keys"
-	if m.running && m.pendingAsk == "" {
-		right = m.spin.View() + " " + m.elapsed() + " · " + right
-	}
-	right += " "
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 && m.flash == "" {
+	if m.flash == "" {
 		// Narrow pane: the usage/scroll cue goes before "? keys" does.
-		right = "? keys "
-		if m.running && m.pendingAsk == "" {
-			right = m.spin.View() + " " + right
+		cands = append(cands, "")
+	}
+	var right string
+	gap := 0
+	for _, c := range cands {
+		right = c
+		if right != "" {
+			right += " · "
 		}
+		right += "? keys"
+		if m.running && m.pendingAsk == "" {
+			right = m.spin.View() + " " + m.elapsed() + " · " + right
+		}
+		right += " "
 		gap = m.width - lipgloss.Width(left) - lipgloss.Width(right)
+		if gap >= 1 {
+			break
+		}
 	}
 	if gap < 1 {
 		gap = 1
@@ -64,6 +82,65 @@ func (m *model) statusBar(cfg *uiCfg) string {
 	// bar onto a second row and pushing the composer off screen.
 	line := ansi.Truncate(left+strings.Repeat(" ", gap)+right, m.width, "…")
 	return th["status"].Width(m.width).Render(line)
+}
+
+// usageParts renders the idle bar's four facts, "" for each unknown:
+// the session's token tally as "↑in ↓out", its cost when priced, the
+// last request's share of the model's context window, and the model.
+func usageParts(cfg *uiCfg) (tokens, cost, ctx, mdl string) {
+	if cfg.usage != nil {
+		u := cfg.usage.Usage()
+		if u.InputTokens > 0 || u.OutputTokens > 0 {
+			tokens = "↑" + tokAbbrev(u.InputTokens) + " ↓" + tokAbbrev(u.OutputTokens)
+			if u.Priced {
+				cost = costText(u.Cost)
+			}
+		}
+		if cfg.limit != nil && u.LastInputTokens > 0 {
+			if limit := cfg.limit.ContextLimit(); limit > 0 {
+				ctx = fmt.Sprintf("%d%% ctx", u.LastInputTokens*100/limit)
+			}
+		}
+	}
+	if cfg.modeler != nil {
+		mdl = cfg.modeler.Model()
+	}
+	return
+}
+
+// costText is a dollar figure to the mill, one more place under a
+// cent so a cheap turn is not "$0.000".
+func costText(c float64) string {
+	if c < 0.01 {
+		return fmt.Sprintf("$%.4f", c)
+	}
+	return fmt.Sprintf("$%.3f", c)
+}
+
+// tokAbbrev shortens a token count: 850, 12.3k, 1.1M.
+func tokAbbrev(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	}
+	return fmt.Sprint(n)
+}
+
+// ctxAbbrev shortens a context window without rounding it away:
+// 200k, 1M, 1.05M.
+func ctxAbbrev(n int) string {
+	trim := func(f float64) string {
+		return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", f), "0"), ".")
+	}
+	switch {
+	case n >= 1_000_000:
+		return trim(float64(n)/1e6) + "M"
+	case n >= 1000:
+		return trim(float64(n)/1e3) + "k"
+	}
+	return fmt.Sprint(n)
 }
 
 // elapsed is the in-flight turn's age, whole seconds ("12s", "2m05s"),

@@ -49,6 +49,12 @@ type askAnswers interface {
 	Answer(id, text string) error
 }
 
+// contextLimiter is the optional seam the cost row's usage service
+// satisfies: the current model's context window in tokens, 0 unknown.
+type contextLimiter interface {
+	ContextLimit() int
+}
+
 // uiCfg is one mount's immutable UI configuration; models read the
 // current one through liveCfg on every render, so a remount (new
 // theme/keymap row, history landing) restyles running views.
@@ -59,6 +65,8 @@ type uiCfg struct {
 	status   string            // status-bar left text
 	hist     historyView       // nil when no history service
 	usage    llm.UsageReporter // the "usage" (cost row) or llm service; nil when neither reports
+	modeler  llm.Modeler       // the llm service when it names its model; nil otherwise
+	limit    contextLimiter    // the usage service when it knows the model's context window; nil otherwise
 	mdStyle  string            // "dark"/"light" glamour override; "" = detect
 	notice   string            // launcher "notice" service: a first-row warning (stale binary)
 	collapse string            // "all" | "large" | "none": which code/result blocks start collapsed
@@ -189,6 +197,12 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 		cfg.usage = u
 	} else if u, err := kernel.Get[llm.UsageReporter](ctx, "llm"); err == nil {
 		cfg.usage = u
+	}
+	if l, ok := cfg.usage.(contextLimiter); ok {
+		cfg.limit = l
+	}
+	if m, err := kernel.Get[llm.Modeler](ctx, "llm"); err == nil {
+		cfg.modeler = m
 	}
 	if a, err := kernel.Get[askAnswers](ctx, "ask-answers"); err == nil {
 		cfg.ask = a

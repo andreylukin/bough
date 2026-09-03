@@ -172,6 +172,7 @@ func (c *cerebrasLLM) addUsage(in, out int) {
 	c.mu.Lock()
 	c.usage.InputTokens += in
 	c.usage.OutputTokens += out
+	c.usage.LastInputTokens = in
 	c.mu.Unlock()
 }
 

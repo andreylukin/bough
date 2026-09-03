@@ -176,6 +176,7 @@ func (o *openrouterLLM) addUsage(in, out int, cost float64) {
 	o.mu.Lock()
 	o.usage.InputTokens += in
 	o.usage.OutputTokens += out
+	o.usage.LastInputTokens = in
 	o.usage.Cost += cost
 	o.usage.Priced = true
 	o.mu.Unlock()

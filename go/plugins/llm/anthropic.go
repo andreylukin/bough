@@ -122,6 +122,7 @@ func (a *anthropicLLM) Stream(ctx context.Context, system string, messages []Mes
 	a.mu.Lock()
 	a.usage.InputTokens += in
 	a.usage.OutputTokens += outTok
+	a.usage.LastInputTokens = in
 	a.mu.Unlock()
 	return out.String(), nil
 }
@@ -137,6 +138,7 @@ func (a *anthropicLLM) Complete(ctx context.Context, system string, messages []M
 	a.mu.Lock()
 	a.usage.InputTokens += int(resp.Usage.InputTokens)
 	a.usage.OutputTokens += int(resp.Usage.OutputTokens)
+	a.usage.LastInputTokens = int(resp.Usage.InputTokens)
 	a.mu.Unlock()
 	var out strings.Builder
 	for _, b := range resp.Content {
