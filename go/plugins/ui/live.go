@@ -54,8 +54,9 @@ type askAnswers interface {
 // theme/keymap row, history landing) restyles running views.
 type uiCfg struct {
 	theme    theme
-	keys     map[string]string // action -> key
+	keys     map[string]string // action -> key (plus "leader" and "chord:<key>" -> action)
 	action   map[string]string // key -> action (derived)
+	chords   map[string]string // key after the leader -> action (derived)
 	status   string            // status-bar left text
 	hist     historyView       // nil when no history service
 	usage    llm.UsageReporter // the "usage" (cost row) or llm service; nil when neither reports
@@ -100,12 +101,17 @@ func init() {
 
 func newCfg(t theme, keys map[string]string, status string, hist historyView) *uiCfg {
 	action := make(map[string]string, len(keys))
+	chords := map[string]string{}
 	for a, k := range keys {
+		if c, ok := strings.CutPrefix(a, chordPrefix); ok {
+			chords[c] = k // k is the action here
+			continue
+		}
 		if k != "" { // unbound (config-only) actions
 			action[k] = a
 		}
 	}
-	return &uiCfg{theme: t, keys: keys, action: action, status: status, hist: hist, collapse: "all"}
+	return &uiCfg{theme: t, keys: keys, action: action, chords: chords, status: status, hist: hist, collapse: "all"}
 }
 
 // buildCfg reads the optional "theme", "keymap" and "history" services

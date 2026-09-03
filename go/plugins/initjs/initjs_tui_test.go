@@ -77,6 +77,19 @@ func TestReboundQuitKey(t *testing.T) {
 	d.WaitQuit()
 }
 
+// A configured leader + chord runs its action through the real keymap
+// service; a chord to an unknown action fails the ui mount loud.
+func TestConfiguredChord(t *testing.T) {
+	t.Parallel()
+	d := mountInit(t, `bough.setup({ui: {keymap: {leader: "ctrl+g", chords: {x: "keys"}}}})`,
+		"codemode", "commands", "llm-echo", "init-js", "loop")
+	d.Press("ctrl+g", "x")
+	d.WaitFor("chords (ctrl+g, then a key)")
+	if f := d.Frame(); !strings.Contains(f, "ctrl+g x") || !strings.Contains(f, "show the keybindings") {
+		t.Fatalf("/keys should list the configured chord:\n%s", f)
+	}
+}
+
 // A JS provider (bough.provider + setup.provider.default) drives the
 // loop, and a JS-registered tool's result block renders.
 func TestJSProviderAndToolRender(t *testing.T) {

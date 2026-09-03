@@ -107,6 +107,7 @@ type model struct {
 	sel        selection     // mouse drag selection (see select.go)
 	lines      []string      // rendered content lines, for the selection
 	stop       stopState     // quit-key arming (see stop.go)
+	leader     bool          // the leader key was pressed: the next key is a chord (see actions.go)
 	comp       composerState // prompt recall (see composer.go)
 	md         *glamour.TermRenderer
 	mdCache    map[string]string // assistant markdown render cache (cleared on resize)
@@ -833,6 +834,7 @@ func (m *model) setAllCollapsed(collapsed bool) int {
 // handleKey resolves every binding through the keymap service; only
 // enter (submit — not a remappable action) is fixed. Enter first acts
 // as collapse_toggle when a block is focused, and submits otherwise.
+// The leader key takes the key after it as a chord (see actions.go).
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.picking {
 		return m.handlePickerKey(msg)
@@ -843,6 +845,17 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	cfg := m.cfg.Load()
 	m.flash = ""
 	key := msg.String()
+	if m.leader {
+		m.leader = false
+		return m, m.chordKey(key, cfg)
+	}
+	if cfg.action[key] == "leader" {
+		// Pending: the bar says so, and the quit stays armed across it
+		// (ctrl+x q twice must quit like ctrl+c twice).
+		m.leader = true
+		m.flash = key + " …"
+		return m, nil
+	}
 	if cfg.action[key] != "quit" {
 		m.stop.armedAt = time.Time{} // any other key disarms, whichever handler takes it
 	}
@@ -887,87 +900,17 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	switch cfg.action[key] {
-	case "quit":
-		return m, tea.Quit
-	case "scroll_up":
-		m.pane().ScrollUp(1)
-		return m, nil
-	case "scroll_down":
-		m.pane().ScrollDown(1)
-		return m, nil
-	case "page_up":
-		m.pane().PageUp()
-		return m, nil
-	case "page_down":
-		m.pane().PageDown()
-		return m, nil
-	case "clear_input":
-		m.input.Reset()
-		m.syncPalette()
-		m.layoutComposer()
-		return m, nil
-	case "block_next":
-		if !m.inspecting {
-			m.moveFocus(1)
-		}
-		return m, nil
-	case "block_prev":
-		if !m.inspecting {
-			m.moveFocus(-1)
-		}
-		return m, nil
-	case "collapse_all":
-		m.flash = collapseNote(true, m.setAllCollapsed(true))
-		return m, nil
-	case "expand_all":
-		m.flash = collapseNote(false, m.setAllCollapsed(false))
-		return m, nil
-	case "collapse_toggle":
-		if key == "enter" && strings.TrimSpace(m.input.Value()) != "" {
-			break // composing: enter submits below
-		}
-		if !m.inspecting && m.toggleFocused() {
+	action := cfg.action[key]
+	if action == "collapse_toggle" && key == "enter" {
+		// Enter toggles only a focused block on an empty composer;
+		// composing, or with nothing focused, it submits below.
+		if strings.TrimSpace(m.input.Value()) == "" && !m.inspecting && m.toggleFocused() {
 			return m, nil
 		}
-		// nothing focused: enter falls through to submit below; any
-		// other bound key toggles the newest collapsible block.
-		if key != "enter" {
-			if f := m.focusables(); !m.inspecting && len(f) > 0 {
-				m.toggleBlock(f[len(f)-1])
-			}
-			return m, nil
-		}
-	case "todo_toggle":
-		if m.todoText == "" {
-			m.flash = "no todo list yet (/todo add <text>)"
-			return m, nil
-		}
-		m.todoPinned = !m.todoPinned
-		return m, nil
-	case "history_inspect":
-		if m.inspecting {
-			m.inspecting, m.diving = false, 0
-			m.syncPalette()
-			return m, nil
-		}
-		// On a focused subagent card: dive into the child's transcript.
-		if i := m.focusedSpawn(); i >= 0 {
-			m.inspecting, m.diving = true, m.blocks[i].id
-			m.refreshOverlay()
-			m.overlay.GotoTop()
-			m.syncPalette()
-			return m, nil
-		}
-		if cfg.hist == nil {
-			m.flash = "no history service mounted"
-			return m, nil
-		}
-		m.inspecting = true
-		m.refreshOverlay()
-		m.overlay.GotoBottom()
-		m.syncPalette() // the palette is inert under the inspector
-		return m, nil
+		action = ""
+	}
+	if action != "" {
+		return m, m.runAction(action, key, cfg)
 	}
 
 	if key == "enter" && !m.inspecting {

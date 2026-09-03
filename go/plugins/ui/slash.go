@@ -8,6 +8,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -31,10 +32,13 @@ func (m *model) syncPalette() {
 	if m.pal.cycling && draft != m.pal.cycleDraft {
 		m.pal.cycling = false // any edit ends a Tab cycle
 	}
-	open := m.cfg.Load().cmds != nil && !m.inspecting && !m.picking && !m.mp.open &&
+	open := (m.cfg.Load().cmds != nil || m.pal.actionsOnly) && !m.inspecting && !m.picking && !m.mp.open &&
 		slashStart(draft) >= 0 && !m.pal.escaped
 	if open && !m.pal.open {
 		m.pal.selected = 0
+	}
+	if !open {
+		m.pal.actionsOnly = false
 	}
 	m.pal.open = open
 	m.syncAt() // the "@" picker follows the same draft
@@ -101,16 +105,21 @@ func (m *model) completePalette(name string) {
 	m.syncPalette()
 }
 
-// paletteItems adapts the commands service's list to palette rows.
+// paletteItems adapts the commands service's list to palette rows,
+// plus one row per UI action ("name  key") at line start — mid-text
+// there is nothing to run, only a word to complete.
 func (m *model) paletteItems() []paletteItem {
-	cmds := m.cfg.Load().cmds
-	if cmds == nil {
-		return nil
+	cfg := m.cfg.Load()
+	var items []paletteItem
+	if cfg.cmds != nil && !m.pal.actionsOnly {
+		for _, in := range cfg.cmds.List() {
+			items = append(items, paletteItem{name: in.Name, usage: in.Usage, summary: in.Summary, skill: in.IsSkill()})
+		}
 	}
-	infos := cmds.List()
-	items := make([]paletteItem, len(infos))
-	for i, in := range infos {
-		items[i] = paletteItem{name: in.Name, usage: in.Usage, summary: in.Summary, skill: in.IsSkill()}
+	if slashStart(m.input.Value()) == 0 {
+		for _, a := range uiActions {
+			items = append(items, paletteItem{name: a.name, usage: actionKey(cfg, a.name), summary: a.desc, action: true})
+		}
 	}
 	return items
 }
@@ -146,6 +155,7 @@ func (m *model) paletteKey(key string) (bool, tea.Cmd) {
 		}
 		m.pal.escaped = true
 		m.pal.escAt = m.input.Value()
+		m.pal.actionsOnly = false
 		return true, nil
 	case palComplete:
 		// Tab: rewrite the word to "/name " (stays open at line
@@ -166,9 +176,20 @@ func (m *model) paletteKey(key string) (bool, tea.Cmd) {
 			m.completePalette(name)
 			return true, nil
 		}
-		return true, m.acceptPalette(name)
+		return true, m.acceptItem(items[m.pal.selected])
 	}
 	return false, nil
+}
+
+// acceptItem runs the selected row: an action row performs its action
+// and drops the query — nothing is submitted; a command dispatches.
+func (m *model) acceptItem(it paletteItem) tea.Cmd {
+	if it.action {
+		m.input.Reset()
+		m.syncPalette()
+		return m.runAction(it.name, "", m.cfg.Load())
+	}
+	return m.acceptPalette(it.name)
 }
 
 // acceptPalette dispatches the selected name — plus the typed args
@@ -213,7 +234,7 @@ func (m *model) clickPalette(mouse tea.Mouse) (bool, tea.Cmd) {
 	}
 	m.pal.selected = first + (mouse.Y - top)
 	m.pal.open = false
-	return true, m.acceptPalette(items[m.pal.selected].name)
+	return true, m.acceptItem(items[m.pal.selected])
 }
 
 // dispatch runs one submitted "/" line through the commands service —
@@ -301,24 +322,16 @@ func (m *model) perform(act commands.UIAction) tea.Cmd {
 	return nil
 }
 
-// keysText renders the live keymap (cfg.action, so rebinds show) plus
-// the fixed keys the composer and palette own.
+// keysText renders the live keymap (cfg.keys, so rebinds show) plus
+// the fixed keys the composer and palette own, then the leader's
+// chords.
 func keysText(cfg *uiCfg) string {
 	rows := [][2]string{
 		{"enter", "send the line (/cmd dispatches, !cmd runs a shell command)"},
 	}
-	order := []string{"quit", "clear_input", "history_inspect", "block_next", "block_prev",
-		"collapse_toggle", "collapse_all", "expand_all", "todo_toggle", "scroll_up", "scroll_down", "page_up", "page_down"}
-	desc := map[string]string{
-		"quit": "quit", "clear_input": "clear the composer", "history_inspect": "inspect history (toggle)",
-		"block_next": "focus next block", "block_prev": "focus previous block",
-		"collapse_toggle": "toggle the focused block", "collapse_all": "collapse all blocks",
-		"expand_all": "expand all blocks", "todo_toggle": "pin/unpin the todo list", "scroll_up": "scroll up", "scroll_down": "scroll down",
-		"page_up": "page up", "page_down": "page down",
-	}
-	for _, a := range order {
-		if k := cfg.keys[a]; k != "" {
-			rows = append(rows, [2]string{k, desc[a]})
+	for _, a := range uiActions {
+		if k := cfg.keys[a.name]; k != "" {
+			rows = append(rows, [2]string{k, a.desc})
 		}
 	}
 	rows = append(rows,
@@ -326,8 +339,9 @@ func keysText(cfg *uiCfg) string {
 		[2]string{"tab", "in the palette: complete, again to cycle matches"},
 		[2]string{"?", "on an empty composer: this list (/keys)"},
 	)
+	chords := chordRows(cfg)
 	w := 0
-	for _, r := range rows {
+	for _, r := range slices.Concat(rows, chords) {
 		if len(r[0]) > w {
 			w = len(r[0])
 		}
@@ -336,6 +350,12 @@ func keysText(cfg *uiCfg) string {
 	b.WriteString("keys\n")
 	for _, r := range rows {
 		fmt.Fprintf(&b, "  %-*s  %s\n", w, r[0], r[1])
+	}
+	if len(chords) > 0 {
+		fmt.Fprintf(&b, "chords (%s, then a key)\n", cfg.keys["leader"])
+		for _, r := range chords {
+			fmt.Fprintf(&b, "  %-*s  %s\n", w, r[0], r[1])
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

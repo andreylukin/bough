@@ -44,17 +44,8 @@ func (m *model) stopKey(key string, cfg *uiCfg) (bool, tea.Cmd) {
 		m.stop.armedAt = time.Time{} // any other key disarms
 	}
 	switch {
-	case quit && m.running:
-		m.cancelTurn()
-		return true, nil
 	case quit:
-		now := m.stop.clock()
-		if !m.stop.armedAt.IsZero() && now.Sub(m.stop.armedAt) <= quitWindow {
-			return true, tea.Quit
-		}
-		m.stop.armedAt = now
-		m.flash = strings.Replace(quitHint, "ctrl+c", cfg.keys["quit"], 1)
-		return true, nil
+		return true, m.quitPress(cfg.keys["quit"])
 	// A draft goes before the turn: esc with text in the composer
 	// (typed, or a recalled prompt) clears it, and only an empty
 	// composer's esc cancels the turn in flight. Clearing a draft is
@@ -71,6 +62,24 @@ func (m *model) stopKey(key string, cfg *uiCfg) (bool, tea.Cmd) {
 		return true, tea.Quit
 	}
 	return false, nil
+}
+
+// quitPress is one press of the quit key (or the quit chord, or the
+// palette's quit row): it cancels a running turn; idle, a first press
+// arms and a second within quitWindow quits. label names the key in
+// the arming hint.
+func (m *model) quitPress(label string) tea.Cmd {
+	if m.running {
+		m.cancelTurn()
+		return nil
+	}
+	now := m.stop.clock()
+	if !m.stop.armedAt.IsZero() && now.Sub(m.stop.armedAt) <= quitWindow {
+		return tea.Quit
+	}
+	m.stop.armedAt = now
+	m.flash = strings.Replace(quitHint, "ctrl+c", label, 1)
+	return nil
 }
 
 // cancelTurn asks the loop to abort the turn in flight. The spinner

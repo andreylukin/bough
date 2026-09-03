@@ -36,7 +36,7 @@ type vmHost interface {
 // themeTokens and keymapActions are the closed vocabularies of the
 // "theme" and "keymap" service contracts; anything else is a typo.
 var themeTokens = set("user", "assistant", "code", "result", "error", "accent", "dim", "border", "status")
-var keymapActions = set("quit", "scroll_up", "scroll_down", "page_up", "page_down", "history_inspect", "collapse_toggle", "clear_input", "todo_toggle")
+var keymapActions = set("quit", "scroll_up", "scroll_down", "page_up", "page_down", "history_inspect", "collapse_toggle", "clear_input", "todo_toggle", "leader")
 
 func set(keys ...string) map[string]bool {
 	m := make(map[string]bool, len(keys))
@@ -216,7 +216,7 @@ func applySetup(st *state, m map[string]any) error {
 						return err
 					}
 				case "keymap":
-					if err := mergeStrMap(st.keymap, uv, "ui.keymap", keymapActions, validKeyName); err != nil {
+					if err := mergeKeymap(st.keymap, uv); err != nil {
 						return err
 					}
 				default:
@@ -282,6 +282,36 @@ func mergeStrMap(dst map[string]string, v any, where string, allowed map[string]
 		dst[k] = s
 	}
 	return nil
+}
+
+// mergeKeymap is mergeStrMap for ui.keymap, whose "chords" entry is a
+// nested {key: action} object (the keys after the leader): it lands
+// flattened as "chord:<key>" entries in the keymap service, the
+// action names validated by the ui plugin.
+func mergeKeymap(dst map[string]string, v any) error {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return fmt.Errorf("bough.setup: ui.keymap is not an object")
+	}
+	rest := make(map[string]any, len(m))
+	for k, val := range m {
+		if k != "chords" {
+			rest[k] = val
+			continue
+		}
+		chords, ok := val.(map[string]any)
+		if !ok {
+			return fmt.Errorf("bough.setup: ui.keymap.chords is not an object")
+		}
+		for key, action := range chords {
+			s, ok := action.(string)
+			if !ok {
+				return fmt.Errorf("bough.setup: ui.keymap.chords.%s is not a string", key)
+			}
+			dst["chord:"+key] = s
+		}
+	}
+	return mergeStrMap(dst, rest, "ui.keymap", keymapActions, validKeyName)
 }
 
 // Style grammar: "fg[:bg][:bold|italic|faint]" — colors are #rrggbb hex

@@ -137,11 +137,37 @@ func defaultKeymap() map[string]string {
 		"expand_all":      "",      // config-only: no default key
 		"clear_input":     "ctrl+l",
 		"todo_toggle":     "ctrl+t", // pin the todo list above the composer
+
+		// The leader key: the key after it is looked up in the chords
+		// ("chord:<key>" -> ACTION, see actions.go). opencode's ctrl+x.
+		"leader":  "ctrl+x",
+		"chord:l": "sessions",
+		"chord:c": "collapse_all",
+		"chord:e": "expand_all",
+		"chord:u": "undo",
+		"chord:k": "keys",
+		"chord:q": "quit",
+		"chord:p": "palette",
 	}
 }
 
+// chordPrefix marks a keymap entry binding a leader chord: the entry
+// names the chord's second key, its value the action to run.
+const chordPrefix = "chord:"
+
 func applyKeymap(keys map[string]string, m map[string]string) error {
 	for action, key := range m {
+		if k, ok := strings.CutPrefix(action, chordPrefix); ok {
+			// A chord: the value names an action, not a key.
+			if strings.TrimSpace(k) == "" {
+				return fmt.Errorf("ui: keymap: empty chord key in %q", action)
+			}
+			if !knownAction(key) {
+				return fmt.Errorf("ui: keymap: chord %q: unknown action %q (have %s)", k, key, strings.Join(actionNames(), ", "))
+			}
+			keys[action] = key
+			continue
+		}
 		if _, ok := keys[action]; !ok {
 			known := make([]string, 0, len(keys))
 			for a := range keys {

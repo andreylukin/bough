@@ -72,6 +72,18 @@ Keys use bubbletea names: `"ctrl+c"`, `"pgup"`, `"q"`, `"shift+tab"`.
 `collapse_all` and `expand_all` ship unbound — they only fire when the
 keymap service binds them.
 
+`leader` (default `ctrl+x`) starts a chord: the next key is looked up
+in `chords`, a `{key: action}` object. Defaults: `l` sessions, `c`
+collapse_all, `e` expand_all, `u` undo (`/undo` when a command
+provides it), `k` keys, `q` quit (arms like ctrl+c), `p` palette (the
+`/` palette over the actions alone). A chord may target any keymap
+action or `sessions`, `clear`, `keys`, `palette`, `undo`; an unknown
+action fails the mount. Every action is also a row in the `/` palette.
+
+```js
+bough.setup({ui: {keymap: {leader: "ctrl+g", chords: {x: "expand_all"}}}});
+```
+
 #### Collapse
 
 Whether code/result blocks *start* collapsed is not an init.js

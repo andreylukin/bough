@@ -292,17 +292,19 @@ func TestClickEveryCellInspector(t *testing.T) {
 func TestClickEveryCellPalette(t *testing.T) {
 	t.Parallel()
 	d := newDrv(t, 80, 24, cfgWith(t, nil, nil, nil))
-	d.m.cfg.Load().cmds = reg(t, "help", "clear", "quit")
+	// "/zz" keeps the action rows (clear, sessions, ...) out of the list:
+	// a click on one of those runs it, which is not what this test pins.
+	d.m.cfg.Load().cmds = reg(t, "zzhelp", "zzclear", "zzquit")
 	d.event("code", "x")
 	d.event("result", nLines(3))
-	d.typeStr("/")
+	d.typeStr("/zz")
 	if !d.m.pal.open {
 		t.Fatal("palette did not open")
 	}
 	rows := len(d.overlayRowsNow())
 	top := d.m.vp.Height() - rows
 	for y := range 24 {
-		d.m.input.SetValue("/")
+		d.m.input.SetValue("/zz")
 		d.m.syncPalette()
 		d.refreshFrame()
 		collapsedBefore := fmt.Sprint(d.m.blocks[0].collapsed, d.m.blocks[1].collapsed)
@@ -310,11 +312,11 @@ func TestClickEveryCellPalette(t *testing.T) {
 		draft := d.m.input.Value()
 		switch {
 		case y >= top && y < d.m.vp.Height():
-			if d.m.pal.open || draft == "/" {
+			if d.m.pal.open || draft == "/zz" {
 				t.Fatalf("row %d is palette row %d but the click did not accept (open=%v draft=%q)", y, y-top, d.m.pal.open, draft)
 			}
 		default:
-			if draft != "/" {
+			if draft != "/zz" {
 				t.Fatalf("row %d outside the palette changed the draft to %q", y, draft)
 			}
 			if got := fmt.Sprint(d.m.blocks[0].collapsed, d.m.blocks[1].collapsed); got != collapsedBefore {

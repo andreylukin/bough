@@ -154,6 +154,27 @@ func TestThemeKeymapServices(t *testing.T) {
 	}
 }
 
+// ui.keymap.leader and the nested ui.keymap.chords {key: action}
+// object land in the keymap service, chords flattened to "chord:<key>".
+func TestKeymapLeaderAndChords(t *testing.T) {
+	ctx, _, err := apply(t, "",
+		`bough.setup({ui: {keymap: {leader: "ctrl+g", chords: {x: "expand_all", q: "quit"}}}})`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keymap, err := kernel.Get[map[string]string](ctx, "keymap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keymap["leader"] != "ctrl+g" || keymap["chord:x"] != "expand_all" || keymap["chord:q"] != "quit" {
+		t.Fatalf("keymap = %v", keymap)
+	}
+	if _, _, err := apply(t, "", `bough.setup({ui: {keymap: {chords: "x"}}})`); err == nil ||
+		!strings.Contains(err.Error(), "ui.keymap.chords is not an object") {
+		t.Fatalf("a non-object chords should fail loud, got %v", err)
+	}
+}
+
 func TestSystemAppendCognition(t *testing.T) {
 	ctx, _, err := apply(t, "", `bough.setup({system: {append: "Always answer in haiku."}})`)
 	if err != nil {

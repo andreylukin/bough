@@ -35,15 +35,21 @@ type palette struct {
 	cycling    bool
 	cycleQuery string
 	cycleDraft string
+
+	// actionsOnly is the leader's "p" chord: the palette over the
+	// action rows alone. Dropped when the palette closes.
+	actionsOnly bool
 }
 
 // paletteItem is one row: a command name with its usage and summary.
-// skill rows rank below built-ins and wear a dim name.
+// skill rows rank below built-ins and wear a dim name; action rows
+// (a keymap action, usage = its key) rank last under a dim tag.
 type paletteItem struct {
 	name    string
 	usage   string
 	summary string
 	skill   bool
+	action  bool
 	prefix  string // row sigil; "" means "/" (the "@" picker sets "@")
 }
 
@@ -74,6 +80,8 @@ func paletteFilter(all []paletteItem, query string) []paletteItem {
 	}
 	rank := func(it paletteItem) int {
 		switch {
+		case it.action:
+			return 3
 		case it.skill:
 			return 2
 		case q == "" && it.name == "help":
@@ -200,10 +208,10 @@ func paletteLines(items []paletteItem, selected, width, maxRows int, th theme) [
 }
 
 // paletteLeft is a row's left cell: "/name", plus the usage hint when
-// the command has one.
+// the command has one. An action row has no sigil: "name key".
 func paletteLeft(it paletteItem) string {
 	sigil := it.prefix
-	if sigil == "" {
+	if sigil == "" && !it.action {
 		sigil = "/"
 	}
 	if it.usage == "" {
@@ -212,10 +220,14 @@ func paletteLeft(it paletteItem) string {
 	return sigil + it.name + " " + it.usage
 }
 
+// actionTag is the dim tag an action row's summary carries, so the
+// group reads apart from the commands.
+const actionTag = "action · "
+
 // paletteRow renders one row, clipped to width; a summary that does
 // not fit ends in "…" at a word boundary rather than a cut word, and
 // a skill row's name is dimmed so the group reads apart from the
-// built-ins.
+// built-ins; an action row's summary wears the "action" tag.
 func paletteRow(it paletteItem, sel bool, width, col int, th theme) string {
 	marker := "  "
 	if sel {
@@ -223,20 +235,24 @@ func paletteRow(it paletteItem, sel bool, width, col int, th theme) string {
 	}
 	head := clipRunes(marker+padRunes(paletteLeft(it), col), width)
 	left := width - len([]rune(head)) - 2
+	summary := it.summary
+	if it.action {
+		summary = actionTag + summary
+	}
 	if sel {
 		line := head
-		if it.summary != "" && left > 0 {
-			line += "  " + commands.Ellipsize(it.summary, left)
+		if summary != "" && left > 0 {
+			line += "  " + commands.Ellipsize(summary, left)
 		}
 		return th["select"].Render(padRunes(clipRunes(line, width), width))
 	}
 	if it.skill {
 		head = th["dim"].Render(head)
 	}
-	if left <= 0 || it.summary == "" {
+	if left <= 0 || summary == "" {
 		return head
 	}
-	return head + "  " + th["dim"].Render(commands.Ellipsize(it.summary, left))
+	return head + "  " + th["dim"].Render(commands.Ellipsize(summary, left))
 }
 
 // padRunes pads s with spaces to n runes (never truncates).
