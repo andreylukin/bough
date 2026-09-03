@@ -4,7 +4,7 @@
     export PYTHONPATH=$PWD/bench/harbor
     harbor run -d terminal-bench/terminal-bench@4.0.0 --env modal \
       --agent bough_go_agent:BoughGo --model openrouter/openai/gpt-5.6-luna \
-      --ak binary=$PWD/bench/harbor/dist/bough-go-linux-amd64 --ak timeout=2400 \
+      --ak binary=$PWD/bench/harbor/dist/bough-go-linux-amd64 --ak timeout=5400 \
       -i html-js-filter -k 3 --n-concurrent 3 --jobs-dir ~/.cache/bough-tbench/jobs
 
 One `bough -headless` process per trial: the task brief goes in as one JSON prompt line, the
@@ -97,7 +97,7 @@ class BoughGo(BaseInstalledAgent):
         self,
         *args,
         binary: str | None = None,
-        timeout: int = 2400,
+        timeout: int = 5400,
         config: str | None = None,
         **kwargs,
     ):
