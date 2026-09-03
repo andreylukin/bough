@@ -54,7 +54,7 @@ jobs:
       - run: npm ci
         working-directory: go/tests/web
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('go/tests/web/package-lock.json') }}
