@@ -258,20 +258,25 @@ func (m *memHistory) Path() string { return "" }
 // and proj are optional seams; nil means built-in behavior. hist is
 // never nil (memHistory fallback).
 type runner struct {
-	mu      sync.Mutex
-	llm     LLM
-	code    Codemode
-	hooks   Hooks
-	skills  Skills
-	sysctx  SystemContext
-	hist    History
-	cog     Cognition
-	proj    Projection
-	stats   TurnStats
-	secs    *Sections
-	hasAsk  bool // an "ask-answers" service is mounted: document tools.ask
-	system  string
-	started bool
+	mu   sync.Mutex
+	llm  LLM
+	code Codemode
+	// noteData is the extra data of the history entry being emitted
+	// (the done entry's files/exit), set around the emit call so the
+	// mount's publisher can attach it to the live event. Run holds mu
+	// for the whole turn, so a plain field is enough.
+	noteData map[string]any
+	hooks    Hooks
+	skills   Skills
+	sysctx   SystemContext
+	hist     History
+	cog      Cognition
+	proj     Projection
+	stats    TurnStats
+	secs     *Sections
+	hasAsk   bool // an "ask-answers" service is mounted: document tools.ask
+	system   string
+	started  bool
 }
 
 // doneData builds the "done" entry's data: files written this turn and
@@ -376,7 +381,9 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			data[k] = v
 		}
 		r.hist.Append(kind, data)
+		r.noteData = extra
 		emit(kind, text)
+		r.noteData = nil
 	}
 
 	if !r.started {
@@ -559,7 +566,9 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	go func() {
 		for input := range inputs {
 			t.run(ctx, r, input, func(kind, text string) {
-				kctx.Emit("loop/event", Event{Kind: kind, Text: text})
+				// Live gets what replay gets: a noted entry's data
+				// (the done marker's files and exit) rides along.
+				kctx.Emit("loop/event", Event{Kind: kind, Text: text, Data: r.noteData})
 			})
 		}
 	}()

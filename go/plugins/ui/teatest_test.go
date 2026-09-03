@@ -115,15 +115,19 @@ func TestProgramMouseClickTogglesBlock(t *testing.T) {
 	waitForOutput(t, tm, "▸ result (20 lines)")
 	tm.Send(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
 	tm.Send(tea.MouseReleaseMsg{X: 0, Y: 0, Button: tea.MouseLeft})
-	// Expanded: the body is visible (the ▾ header itself is pushed off
-	// the top of the 22-row viewport by the 20-line body + box).
-	waitForOutput(t, tm, "│ BODYLINE")
-	// Clicking the body (still row 0) collapses it again.
+	// Expanded: the body is visible and the ▾ header stays on row 0
+	// (expanding keeps the clicked header on screen).
+	waitForOutput(t, tm, "▾ result", "│ BODYLINE")
+	// Clicking the header again collapses it. The renderer only
+	// rewrites the changed glyph, so judge by the final model.
 	tm.Send(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
 	tm.Send(tea.MouseReleaseMsg{X: 0, Y: 0, Button: tea.MouseLeft})
-	waitForOutput(t, tm, "▸ result (20 lines)")
 	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
+	fm, ok := tm.FinalModel(t).(model)
+	if !ok || len(fm.blocks) != 1 || !fm.blocks[0].collapsed {
+		t.Fatalf("second click did not collapse the block (ok=%v blocks=%d)", ok, len(fm.blocks))
+	}
 }
 
 func TestProgramQuitCleanly(t *testing.T) {

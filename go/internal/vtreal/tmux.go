@@ -81,7 +81,9 @@ func (tm *tmuxApp) waitFor(substr string) {
 
 func (tm *tmuxApp) waitUntil(pred func(string) bool, what string) {
 	tm.t.Helper()
-	deadline := time.Now().Add(8 * time.Second)
+	// Generous: under a full -race run a fresh tmux server plus a bough
+	// boot can take well over the emulator suite's 8 s.
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if pred(tm.screen()) {
 			return

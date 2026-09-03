@@ -654,9 +654,7 @@ func (m *model) clickTranscript(y int) tea.Cmd {
 				return nil
 			}
 			if b.collapsible() {
-				b.collapsed = !b.collapsed
-				m.focusID = b.id
-				m.refresh()
+				m.toggleBlock(r.idx)
 			}
 			return nil
 		}
@@ -734,12 +732,26 @@ func (m *model) moveFocus(delta int) {
 func (m *model) toggleFocused() bool {
 	for i := range m.blocks {
 		if m.blocks[i].id == m.focusID && m.blocks[i].collapsible() {
-			m.blocks[i].collapsed = !m.blocks[i].collapsed
-			m.refresh()
+			m.toggleBlock(i)
 			return true
 		}
 	}
 	return false
+}
+
+// toggleBlock flips block i, focuses it, and keeps its header on
+// screen: with the transcript pinned to the bottom, expanding a long
+// block used to scroll the header you just clicked out of view.
+func (m *model) toggleBlock(i int) {
+	m.blocks[i].collapsed = !m.blocks[i].collapsed
+	m.focusID = m.blocks[i].id
+	m.refresh()
+	for _, r := range m.ranges {
+		if r.idx == i {
+			m.vp.EnsureVisible(r.start, 0, 0)
+			break
+		}
+	}
 }
 
 // setAllCollapsed collapses or expands every collapsible block,
@@ -851,10 +863,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// other bound key toggles the newest collapsible block.
 		if key != "enter" {
 			if f := m.focusables(); !m.inspecting && len(f) > 0 {
-				i := f[len(f)-1]
-				m.blocks[i].collapsed = !m.blocks[i].collapsed
-				m.focusID = m.blocks[i].id
-				m.refresh()
+				m.toggleBlock(f[len(f)-1])
 			}
 			return m, nil
 		}
