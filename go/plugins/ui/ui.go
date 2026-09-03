@@ -3,6 +3,8 @@
 package ui
 
 import (
+	"github.com/andreylukin/bough/plugins/llm"
+
 	"fmt"
 	"os"
 	"reflect"
@@ -62,6 +64,15 @@ func (p *plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		if a, err := kernel.Get[askAnswers](ctx, "ask-answers"); err == nil {
 			ask = a
 		}
+		// With a usage service (cost row) every done line is followed by
+		// a "[usage] {...}" JSON line: harness benchmarks read spend
+		// from it.
+		hlMu.Lock()
+		hlUsage = nil
+		if u, err := kernel.Get[llm.UsageReporter](ctx, "usage"); err == nil {
+			hlUsage = u
+		}
+		hlMu.Unlock()
 		ctx.Effect(runHeadless(inputs, b, cmds, hlog, ask))
 		return nil
 	}

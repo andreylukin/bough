@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/andreylukin/bough/plugins/commands"
+	"github.com/andreylukin/bough/plugins/llm"
 )
 
 // Headless mode reads lines from stdin into inputs and prints loop
@@ -30,7 +32,8 @@ var (
 	hlInputs  chan<- string // current mount's inputs; nil while unmounted
 	hlCmds    commandsView  // current mount's commands service; nil = "/" is plain text
 	hlHist    historyAppender
-	hlAnswer  askAnswers // current mount's "ask-answers" service; nil = no asks
+	hlAnswer  askAnswers        // current mount's "ask-answers" service; nil = no asks
+	hlUsage   llm.UsageReporter // current mount's "usage" service; nil = no usage lines
 	hlAsk     *hlAskState
 	hlPending atomic.Int64
 	hlTick    = make(chan struct{}, 1)
@@ -121,6 +124,14 @@ func hlPrint(ev Event) {
 		fmt.Fprintf(hlOut, "[%s] %s\n", ev.Kind, ev.Text)
 	}
 	if ev.Kind == "done" {
+		hlMu.Lock()
+		u := hlUsage
+		hlMu.Unlock()
+		if u != nil {
+			us := u.Usage()
+			fmt.Fprintf(hlOut, "[usage] {\"input_tokens\":%d,\"output_tokens\":%d,\"cost_usd\":%.6f,\"priced\":%t}\n",
+				us.InputTokens, us.OutputTokens, us.Cost, us.Priced)
+		}
 		hlPending.Add(-1)
 	}
 	select {
@@ -132,8 +143,19 @@ func hlPrint(ev Event) {
 func headlessPump() {
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024) // a task brief can be long
 	for sc.Scan() {
 		line := sc.Text()
+		// A JSON object line {"prompt": "..."} is one multi-line prompt:
+		// the way a harness hands over a task brief with its newlines.
+		if strings.HasPrefix(line, "{") {
+			var obj struct {
+				Prompt string `json:"prompt"`
+			}
+			if err := json.Unmarshal([]byte(line), &obj); err == nil && obj.Prompt != "" {
+				line = obj.Prompt
+			}
+		}
 		if hlAnswerPending(line) {
 			continue // the line answered a pending tools.ask
 		}
