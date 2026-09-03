@@ -110,7 +110,8 @@ func (m *model) paletteItems() []paletteItem {
 	infos := cmds.List()
 	items := make([]paletteItem, len(infos))
 	for i, in := range infos {
-		items[i] = paletteItem{name: in.Name, usage: in.Usage, summary: in.Summary, skill: in.IsSkill()}
+		items[i] = paletteItem{name: in.Name, usage: in.Usage, summary: in.Summary,
+			skill: in.IsSkill() || in.IsTemplate()}
 	}
 	return items
 }
@@ -240,7 +241,8 @@ func (m *model) dispatchAs(line, echo string) tea.Cmd {
 	out, err := cfg.cmds.Run(name, args)
 	if act, ok := errors.AsType[commands.UIAction](err); ok {
 		if text, ok := commands.SubmitText(act); ok {
-			// A skill command: the line goes to the loop as input.
+			// A skill or template command: the text goes to the loop
+			// as input.
 			m.log(cfg, "system", "/"+name)
 			return m.submit(text)
 		}

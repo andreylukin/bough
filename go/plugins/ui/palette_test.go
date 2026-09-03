@@ -209,6 +209,27 @@ func TestSkillRowsWearDimName(t *testing.T) {
 	}
 }
 
+// A prompt template lists like a skill: below the built-ins with a
+// dim name and its "template: …" tag.
+func TestTemplateRowsListedLikeSkills(t *testing.T) {
+	t.Parallel()
+	r := reg(t, "help")
+	if err := r.Register(commands.CommandInfo{Name: "areview", Kind: "template", Summary: "template: Review a diff"},
+		func(string) (string, error) { return "", commands.SubmitAction("review this") }); err != nil {
+		t.Fatal(err)
+	}
+	d := drvCmds(t, r)
+	d.typeStr("/")
+	rows := d.m.paletteRows()
+	if len(rows) != 2 || !strings.Contains(stripANSI(rows[1]), "/areview") ||
+		!strings.Contains(stripANSI(rows[1]), "template: Review a diff") {
+		t.Fatalf("template should rank below /help with its tag:\n%s", strings.Join(rows, "\n"))
+	}
+	if strings.HasPrefix(rows[1], "  /areview") {
+		t.Errorf("template row name should be styled (dim), got %q", rows[1])
+	}
+}
+
 // --- summaries ellipsize at a word boundary ---
 
 func TestSummaryEllipsizedNotCutMidWord(t *testing.T) {

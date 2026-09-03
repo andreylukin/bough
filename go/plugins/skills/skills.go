@@ -61,6 +61,10 @@ func (s *Skills) Inject(input string) []string {
 	return blocks
 }
 
+// Names returns every skill name across the pools, sorted, for the
+// startup header.
+func (s *Skills) Names() []string { return slices.Sorted(maps.Keys(s.scan())) }
+
 // scan returns name -> SKILL.md path across the pools (later pools
 // shadow earlier ones). A symlinked skill directory counts.
 func (s *Skills) scan() map[string]string {

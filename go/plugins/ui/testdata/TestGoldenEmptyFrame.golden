@@ -1,8 +1,8 @@
 [38;2;131;192;146m● [m[38;2;133;146;137mbough — a coding agent[m                                                        
-[38;2;133;146;137m  type / for commands (/help lists them) · /keys or ? for the keys[m              
-[38;2;133;146;137m  enter sends · ctrl+j or a trailing \ starts a new line · esc stops a turn[m     
-[38;2;133;146;137m  tab picks a ▸ step, enter expands it · !cmd runs a shell command[m              
+[38;2;133;146;137m  keys: ? for the list · / for commands · ! for shell[m                           
 [38;2;133;146;137m  ask me to do something — I act by running code[m                                
+                                                                                
+                                                                                
                                                                                 
                                                                                 
                                                                                 

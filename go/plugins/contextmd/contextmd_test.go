@@ -46,3 +46,23 @@ func TestPreambleFresh(t *testing.T) {
 		t.Errorf("Preamble = %q", got)
 	}
 }
+
+func TestLoaded(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "AGENTS.md")
+	missing := filepath.Join(dir, "BOUGH.md")
+	c := filepath.Join(dir, "CLAUDE.md")
+	for _, p := range []string{a, c} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := New(a, missing, c)
+	got := s.Loaded()
+	if len(got) != 2 || got[0] != a || got[1] != c {
+		t.Errorf("Loaded = %v, want [%s %s]", got, a, c)
+	}
+	if got := New(missing).Loaded(); len(got) != 0 {
+		t.Errorf("Loaded with nothing on disk = %v, want none", got)
+	}
+}
