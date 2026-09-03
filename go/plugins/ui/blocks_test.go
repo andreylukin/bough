@@ -191,10 +191,10 @@ func TestRemappedToggleHitsNewestBlock(t *testing.T) {
 	t.Parallel()
 	// collapse_toggle remapped off enter: with nothing focused it
 	// toggles the newest collapsible block.
-	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"collapse_toggle": "ctrl+g"}, nil))
+	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"collapse_toggle": "ctrl+y"}, nil))
 	d.event("result", nLines(20))
 	d.event("result", nLines(30))
-	d.press(keyCtrl('g'))
+	d.press(keyCtrl('y'))
 	if !d.m.blocks[0].collapsed {
 		t.Error("first result should stay collapsed")
 	}

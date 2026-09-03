@@ -137,6 +137,7 @@ func defaultKeymap() map[string]string {
 		"expand_all":      "",      // config-only: no default key
 		"clear_input":     "ctrl+l",
 		"todo_toggle":     "ctrl+t", // pin the todo list above the composer
+		"external_editor": "ctrl+g", // edit the draft in $VISUAL / $EDITOR
 	}
 }
 

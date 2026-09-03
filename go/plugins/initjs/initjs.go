@@ -36,7 +36,7 @@ type vmHost interface {
 // themeTokens and keymapActions are the closed vocabularies of the
 // "theme" and "keymap" service contracts; anything else is a typo.
 var themeTokens = set("user", "assistant", "code", "result", "error", "accent", "dim", "border", "status")
-var keymapActions = set("quit", "scroll_up", "scroll_down", "page_up", "page_down", "history_inspect", "collapse_toggle", "clear_input", "todo_toggle")
+var keymapActions = set("quit", "scroll_up", "scroll_down", "page_up", "page_down", "history_inspect", "collapse_toggle", "clear_input", "todo_toggle", "external_editor")
 
 func set(keys ...string) map[string]bool {
 	m := make(map[string]bool, len(keys))

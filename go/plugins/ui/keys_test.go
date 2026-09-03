@@ -41,15 +41,15 @@ func TestKeymapRebindQuit(t *testing.T) {
 
 func TestKeymapRebindCollapseToggle(t *testing.T) {
 	t.Parallel()
-	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"collapse_toggle": "ctrl+g"}, nil))
+	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"collapse_toggle": "ctrl+y"}, nil))
 	d.event("result", nLines(20))
 	d.press(keyEnter()) // old key: enter no longer toggles, and empty submit is a no-op
 	if !d.m.blocks[0].collapsed {
 		t.Fatal("old enter binding should be inert after rebind")
 	}
-	d.press(keyCtrl('g'))
+	d.press(keyCtrl('y'))
 	if d.m.blocks[0].collapsed {
-		t.Error("ctrl+g should toggle collapse after rebind")
+		t.Error("ctrl+y should toggle collapse after rebind")
 	}
 }
 
@@ -229,14 +229,14 @@ func TestInspectorWithoutHistoryFlashes(t *testing.T) {
 func TestInspectorRebound(t *testing.T) {
 	t.Parallel()
 	h := histWith("/tmp/s.jsonl", "one")
-	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"history_inspect": "ctrl+g"}, h))
+	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"history_inspect": "ctrl+y"}, h))
 	d.press(keyCtrl('o'))
 	if d.m.inspecting {
 		t.Error("old inspector key should be inert after rebind")
 	}
-	d.press(keyCtrl('g'))
+	d.press(keyCtrl('y'))
 	if !d.m.inspecting {
-		t.Error("ctrl+g should open the inspector after rebind")
+		t.Error("ctrl+y should open the inspector after rebind")
 	}
 }
 
