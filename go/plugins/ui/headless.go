@@ -24,11 +24,14 @@ import (
 // exits 0.
 //
 // A line that arrives while a turn runs STEERS it (the loop's "steer"
-// service, when mounted): it lands at the turn's next block boundary
-// as a user message and the model is asked again, inside the same
-// turn — one "[steer]" line, no extra "[done]". A line that arrives
-// between turns is a turn of its own, as before. Pipe prompts one at a
-// time (wait for "[done]") when each must be its own turn.
+// service, when mounted): it lands at the turn's next boundary —
+// between blocks, or right after the final reply — as a user message
+// and the model is asked again, inside the same turn: one "[steer]"
+// line, no extra "[done]", and the pending count is untouched (the
+// turn's own done pays for it). A line the loop refuses (no turn, or
+// the turn just took its last boundary) is sent as input and is a
+// turn of its own, as before. Pipe prompts one at a time (wait for
+// "[done]") when each must be its own turn.
 //
 // Stdin can only be read once per process, but hot reload can remount
 // the ui row (with a fresh inputs channel), so the stdin pump is a

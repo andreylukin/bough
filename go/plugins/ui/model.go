@@ -853,14 +853,20 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// The palette owns Up/Down/Tab/Enter/Esc while it is open, and
 	// nothing else: what it passes on falls through to the keymap
-	// waterfall and the composer (which re-filters).
+	// waterfall and the composer (which re-filters). follow_up
+	// (alt+enter) accepts the selection like enter: it never submits
+	// a half-typed "/mo" past the open list.
+	pkey := key
+	if cfg.action[key] == "follow_up" {
+		pkey = "enter"
+	}
 	if m.pal.open && !m.inspecting {
-		if handled, cmd := m.paletteKey(key); handled {
+		if handled, cmd := m.paletteKey(pkey); handled {
 			return m, cmd
 		}
 	}
 	if m.at.open && !m.inspecting {
-		if handled, cmd := m.atKey(key); handled {
+		if handled, cmd := m.atKey(pkey); handled {
 			return m, cmd
 		}
 	}

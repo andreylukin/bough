@@ -131,24 +131,65 @@ func TestSteerRefusedFallsBackToSend(t *testing.T) {
 // A steer the loop had no boundary left for runs as the next turn:
 // done with a pending steer keeps the spinner on until that turn's
 // own done.
-func TestDoneWithPendingSteerKeepsRunning(t *testing.T) {
+func TestSteerDuringFinalReplyLandsBeforeDone(t *testing.T) {
 	t.Parallel()
 	d, _ := steerDrv(t, true)
 	d.typeStr("more")
 	d.press(keyEnter())
 	d.event("assistant", "final words")
-	d.event("done", "")
+	d.event("steer", "more") // the loop lands it before its done and asks again
 	if !d.m.running {
-		t.Fatal("pending steer: the loop will run it next, the turn is not over")
+		t.Fatal("a landed steer does not end the turn")
 	}
-	d.event("steer", "more")
 	d.event("assistant", "did more")
 	d.event("done", "")
 	if d.m.running {
-		t.Fatal("the steer's own turn ended")
+		t.Fatal("the one done ends the turn")
 	}
-	if f := d.plain(); !strings.Contains(f, "❯ more (steer)") || strings.Contains(f, "pending") {
+	f := d.plain()
+	if !strings.Contains(f, "❯ more (steer)") || strings.Contains(f, "pending") {
 		t.Fatalf("landed steer row:\n%s", f)
+	}
+	iS, iR := strings.Index(f, "❯ more"), strings.Index(f, "did more")
+	if iS < 0 || iR < iS {
+		t.Fatalf("the second reply should follow the steer row:\n%s", f)
+	}
+}
+
+// Esc with a steer pending: the loop records the steer, then
+// cancels — the row stops pending and the spinner stops with the
+// done; nothing runs on its own.
+func TestCancelWithPendingSteerStops(t *testing.T) {
+	t.Parallel()
+	d, _ := steerDrv(t, true)
+	d.typeStr("stop doing X")
+	d.press(keyEnter())
+	d.event("steer", "stop doing X")
+	d.event("cancelled", "")
+	d.event("done", "")
+	if d.m.running {
+		t.Fatal("still running after the cancelled turn's done")
+	}
+	if f := d.plain(); !strings.Contains(f, "❯ stop doing X (steer)") || strings.Contains(f, "pending") {
+		t.Fatalf("recorded steer row:\n%s", f)
+	}
+}
+
+// alt+enter with the slash palette open accepts the selection like
+// enter — it never submits a half-typed "/mo" past the list.
+func TestAltEnterAcceptsPaletteSelection(t *testing.T) {
+	t.Parallel()
+	d := drvCmds(t, reg(t, "alpha"))
+	d.typeStr("/al")
+	if !d.m.pal.open {
+		t.Fatal("palette did not open on /al")
+	}
+	d.press(keyAltEnter())
+	if len(d.sent) != 0 {
+		t.Fatalf("alt+enter on the palette must dispatch, not send: sent=%v", d.sent)
+	}
+	if f := d.plain(); !strings.Contains(f, "alpha ran") || d.m.pal.open {
+		t.Fatalf("expected /alpha to run and the palette to close:\n%s", f)
 	}
 }
 

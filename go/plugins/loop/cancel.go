@@ -8,14 +8,17 @@ package loop
 // Steering: the "steer" service (func(text string) bool) hands the
 // turn in flight a message without ending it. It never interrupts a
 // block mid-execution; the runner lands pending steers at the next
-// boundary (between blocks, and before each LLM call), drops the rest
-// of the current reply, and asks the model again with the steer in
-// context. False when no turn is running (the caller queues it as
-// ordinary input instead).
+// boundary (between blocks, before each LLM call, and once more
+// before the turn's done — a steer sent during the final reply is
+// asked about inside the same turn), drops the rest of the current
+// reply, and asks the model again with the steer in context. False
+// when no turn is running, or once the running turn has taken its
+// last boundary (the caller queues it as ordinary input instead:
+// nothing is ever stranded, and a turn never runs on a steer's
+// behalf after its done).
 
 import (
 	"context"
-	"strings"
 	"sync"
 )
 
@@ -23,16 +26,18 @@ import (
 // the live one's cancel func for the "cancel" service, plus the
 // steering messages sent since the runner last looked.
 type turns struct {
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	steers []string
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	steering bool // a turn runs and has a boundary left for a steer
+	steers   []string
 }
 
-// Steer queues text for the turn in flight; false while idle.
+// Steer queues text for the turn in flight; false while idle or past
+// the turn's last boundary.
 func (t *turns) Steer(text string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.cancel == nil {
+	if !t.steering {
 		return false
 	}
 	t.steers = append(t.steers, text)
@@ -40,11 +45,15 @@ func (t *turns) Steer(text string) bool {
 }
 
 // takeSteers hands the runner every steer sent since the last take.
-func (t *turns) takeSteers() []string {
+// A final take shuts the gate in the same instant (the runner is
+// about to end the turn), a later non-final one reopens it (the turn
+// went on after all).
+func (t *turns) takeSteers(final bool) []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	s := t.steers
 	t.steers = nil
+	t.steering = !final
 	return s
 }
 
@@ -57,31 +66,21 @@ func (t *turns) Cancel() {
 	}
 }
 
-// run executes one input under a per-turn child of ctx. A steer that
-// arrived after the runner's last boundary (during the final reply)
-// missed its turn: it is announced and run as the next turn's input,
-// never dropped.
+// run executes one input under a per-turn child of ctx, taking
+// steers from the start; the runner's final take shuts the gate
+// before its done.
 func (t *turns) run(ctx context.Context, r *runner, input string, emit func(kind, text string)) {
-	for {
-		tctx, cancel := context.WithCancel(ctx)
-		t.mu.Lock()
-		t.cancel = cancel
-		t.mu.Unlock()
-		_ = r.Run(tctx, input, emit)
-		t.mu.Lock()
-		t.cancel = nil
-		late := t.steers
-		t.steers = nil
-		t.mu.Unlock()
-		cancel()
-		if len(late) == 0 {
-			return
-		}
-		for _, s := range late {
-			emit("steer", s)
-		}
-		input = strings.Join(late, "\n")
-	}
+	tctx, cancel := context.WithCancel(ctx)
+	t.mu.Lock()
+	t.cancel = cancel
+	t.steering = true
+	t.mu.Unlock()
+	_ = r.Run(tctx, input, emit)
+	t.mu.Lock()
+	t.cancel = nil
+	t.steering = false
+	t.mu.Unlock()
+	cancel()
 }
 
 // interrupter is the optional slice of the codemode service that

@@ -334,11 +334,10 @@ func (m *model) finishTurn(id int, ev Event) {
 		b.exit = &e
 	}
 	m.blocks = append(m.blocks, b)
-	// A queued line starts now; so does a steer the loop had no
-	// boundary left to land (it runs it as the next turn, announcing
-	// it with a "steer" event first).
+	// A queued line starts now. (A steer never outlives its turn: the
+	// loop lands every accepted one — "steer" event — before the done.)
 	for i := range m.blocks {
-		if m.blocks[i].queued || m.blocks[i].pending {
+		if m.blocks[i].queued {
 			m.blocks[i].queued = false
 			m.running = true
 			m.turnStart = time.Now()

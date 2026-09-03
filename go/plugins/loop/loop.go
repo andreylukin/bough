@@ -337,32 +337,77 @@ type runner struct {
 	secs     *Sections
 	hasAsk   bool // an "ask-answers" service is mounted: document tools.ask
 	// steer hands over the steering messages sent since the last
-	// call (turns.takeSteers); nil = no steering.
-	steer   func() []string
+	// call (turns.takeSteers); final shuts the gate, see there. nil =
+	// no steering.
+	steer   func(final bool) []string
 	system  string
 	started bool
 }
 
-// landSteers records every pending steering message as an "input"
-// entry (the projection shows it as a user message, @files expanded
-// like any input) and announces each as a "steer" event. True when
-// any landed: the caller then drops the rest of the current reply and
-// goes straight back to the model.
-func (r *runner) landSteers(emit func(kind, text string)) bool {
+// note appends a history entry and emits the matching event.
+func (r *runner) note(emit func(kind, text string), kind, text string, extra map[string]any) {
+	data := map[string]any{"text": text}
+	maps.Copy(data, extra)
+	r.hist.Append(kind, data)
+	r.noteData = extra
+	emit(kind, text)
+	r.noteData = nil
+}
+
+// admit runs one user line through the user-prompt-submit hook (which
+// may rewrite or block it), expands @files, injects skills and records
+// the "input" entry. Returns the line as admitted and, when the hook
+// blocked it, its reason (nothing recorded then).
+func (r *runner) admit(ctx context.Context, input string, steer bool, emit func(kind, text string)) (line, blocked string) {
+	if res := r.fire(ctx, "user-prompt-submit", map[string]any{"input": input}, emit); res != nil {
+		if b, ok := res["block"].(string); ok {
+			return input, b
+		}
+		if in, ok := res["input"].(string); ok {
+			input = in
+		}
+	}
+	var msg strings.Builder
+	msg.WriteString(input)
+	for _, block := range ExpandAt(input, ".") {
+		msg.WriteString("\n\n" + block)
+	}
+	if r.skills != nil {
+		for _, block := range r.skills.Inject(input) {
+			msg.WriteString("\n\n" + block)
+		}
+	}
+	data := map[string]any{"text": msg.String()}
+	if steer {
+		data["steer"] = true
+	}
+	r.hist.Append("input", data)
+	return input, ""
+}
+
+// landSteers admits every pending steering message like any input
+// (hook, @files, skills; an "input" entry the projection shows as a
+// user message) and announces each as a "steer" event — a blocked one
+// too, followed by the hook's reason as an error, so the ui stops
+// showing it pending. True when any was admitted: the caller then
+// drops the rest of the current reply and goes straight back to the
+// model. final is the turn's last boundary: the take shuts the steer
+// gate, so a message arriving behind it is refused and its sender
+// queues it as ordinary input, never stranded.
+func (r *runner) landSteers(ctx context.Context, emit func(kind, text string), final bool) bool {
 	if r.steer == nil {
 		return false
 	}
-	texts := r.steer()
-	for _, text := range texts {
-		var msg strings.Builder
-		msg.WriteString(text)
-		for _, block := range ExpandAt(text, ".") {
-			msg.WriteString("\n\n" + block)
-		}
-		r.hist.Append("input", map[string]any{"text": msg.String(), "steer": true})
+	landed := false
+	for _, text := range r.steer(final) {
 		emit("steer", text)
+		if _, blocked := r.admit(ctx, text, true, emit); blocked != "" {
+			r.note(emit, "error", blocked, nil)
+			continue
+		}
+		landed = true
 	}
-	return len(texts) > 0
+	return landed
 }
 
 // doneData builds the "done" entry's data: files written this turn and
@@ -460,14 +505,17 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// note appends a history entry and emits the matching event.
-	note := func(kind, text string, extra map[string]any) {
-		data := map[string]any{"text": text}
-		maps.Copy(data, extra)
-		r.hist.Append(kind, data)
-		r.noteData = extra
-		emit(kind, text)
-		r.noteData = nil
+	note := func(kind, text string, extra map[string]any) { r.note(emit, kind, text, extra) }
+	// finish ends the turn: steers sent since the last boundary land
+	// first (history the next turn sees; under a cancelled turn's
+	// [cancelled] note, so nothing runs on its own) and the gate
+	// shuts, then the marker (if any) and the done.
+	finish := func(marker string, extra map[string]any) {
+		r.landSteers(ctx, emit, true)
+		if marker != "" {
+			note(marker, "", nil)
+		}
+		note("done", "", extra)
 	}
 
 	if !r.started {
@@ -494,28 +542,12 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		system += "\n\n" + s
 	}
 
-	if res := r.fire(ctx, "user-prompt-submit", map[string]any{"input": input}, emit); res != nil {
-		if b, ok := res["block"].(string); ok {
-			note("error", b, nil)
-			note("done", "", r.doneData()) // end the turn so headless drain sees it
-			return nil
-		}
-		if in, ok := res["input"].(string); ok {
-			input = in
-		}
+	input, blocked := r.admit(ctx, input, false, emit)
+	if blocked != "" {
+		note("error", blocked, nil)
+		finish("", r.doneData()) // end the turn so headless drain sees it
+		return nil
 	}
-
-	var msg strings.Builder
-	msg.WriteString(input)
-	for _, block := range ExpandAt(input, ".") {
-		msg.WriteString("\n\n" + block)
-	}
-	if r.skills != nil {
-		for _, block := range r.skills.Inject(input) {
-			msg.WriteString("\n\n" + block)
-		}
-	}
-	r.hist.Append("input", map[string]any{"text": msg.String()})
 
 	maxSteps := r.maxSteps
 	if maxSteps <= 0 {
@@ -523,15 +555,14 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	}
 	retried := false
 	for step := 0; step < maxSteps; step++ {
-		r.landSteers(emit) // a steer sent during the last block joins the context now
+		r.landSteers(ctx, emit, false) // a steer sent during the last block joins the context now
 		sys := system
 		if r.cog != nil {
 			sys = r.cog.System(sys)
 		}
 		reply, err := r.complete(ctx, sys, emit)
 		if ctx.Err() != nil {
-			note("cancelled", "", nil)
-			note("done", "", nil)
+			finish("cancelled", nil)
 			return ctx.Err()
 		}
 		if err == nil && strings.TrimSpace(reply) == "" {
@@ -547,7 +578,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		}
 		if err != nil {
 			note("error", err.Error(), nil)
-			note("done", "", r.doneData()) // every turn ends with a done, even on llm failure
+			finish("", r.doneData()) // every turn ends with a done, even on llm failure
 			return err
 		}
 		retried = false
@@ -555,12 +586,19 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		note("assistant", reply, nil)
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
 		if len(blocks) == 0 {
+			// A steer sent while the model wrote this final reply
+			// lands inside the turn: ask again, no done yet. (The
+			// final take shut the gate; the next boundary's take
+			// reopens it.)
+			if r.landSteers(ctx, emit, true) {
+				continue
+			}
 			note("done", "", r.doneData())
 			r.fire(ctx, "stop", map[string]any{"input": input, "reply": reply}, emit)
 			return nil
 		}
 		for _, m := range blocks {
-			if r.landSteers(emit) {
+			if r.landSteers(ctx, emit, false) {
 				break // steered: the rest of this reply is stale, ask again
 			}
 			code := m[1]
@@ -576,8 +614,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			note("code", code, nil)
 			out, runErr := r.runCode(ctx, code)
 			if ctx.Err() != nil {
-				note("cancelled", "", nil)
-				note("done", "", nil)
+				finish("cancelled", nil)
 				return ctx.Err()
 			}
 			if runErr != nil {
@@ -603,7 +640,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	}
 	err := fmt.Errorf("loop: gave up after %d steps", maxSteps)
 	note("error", err.Error(), nil)
-	note("done", "", r.doneData())
+	finish("", r.doneData())
 	r.fire(ctx, "stop", map[string]any{"input": input, "reply": ""}, emit)
 	return err
 }
