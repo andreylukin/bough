@@ -329,7 +329,17 @@ func (m *model) header(b *block, th theme) string {
 // suppressed on resume, gone once anything renders, removed by /clear.
 func (m *model) welcomeView(cfg *uiCfg) string {
 	th := cfg.theme
-	return th["accent"].Render("● ") + th["dim"].Render("bough — a coding agent") + "\n" +
+	out := th["accent"].Render("● ") + th["dim"].Render("bough — a coding agent") + "\n"
+	// The startup line: which model answers and, when known, how much
+	// context it has.
+	if cfg.modeler != nil && cfg.modeler.Model() != "" {
+		line := "  model " + cfg.modeler.Model()
+		if cfg.limit != nil && cfg.limit.ContextLimit() > 0 {
+			line += " · " + ctxAbbrev(cfg.limit.ContextLimit()) + " context"
+		}
+		out += th["dim"].Render(line) + "\n"
+	}
+	return out +
 		th["dim"].Render("  type / for commands (/help lists them) · /keys or ? for the keys") + "\n" +
 		th["dim"].Render("  enter sends · ctrl+j or a trailing \\ starts a new line · esc stops a turn") + "\n" +
 		th["dim"].Render("  tab picks a ▸ step, enter expands it · !cmd runs a shell command") + "\n" +

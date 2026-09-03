@@ -38,7 +38,7 @@ func TestOpenaiReadStream(t *testing.T) {
 	if err != nil || out != "Hello" || strings.Join(got, "|") != "Hel|lo" {
 		t.Fatalf("readStream = (%q, %v) deltas=%v", out, err, got)
 	}
-	if u := o.Usage(); u.InputTokens != 7 || u.OutputTokens != 3 || u.Priced {
+	if u := o.Usage(); u.InputTokens != 7 || u.OutputTokens != 3 || u.LastInputTokens != 7 || u.Priced {
 		t.Fatalf("usage = %+v", u)
 	}
 	_, err = o.readStream(strings.NewReader(`data: {"type":"response.failed","response":{"status":"failed","error":{"message":"quota"}}}`), func(string) {})

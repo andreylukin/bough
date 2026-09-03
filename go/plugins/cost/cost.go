@@ -52,6 +52,56 @@ var builtin = map[string]Price{
 	"gpt-4o-mini":  {0.15, 0.60},
 }
 
+// contexts is the context window in tokens for the models whose limit
+// is known; the status bar's "N% ctx" needs one. Keys are canonical
+// model ids like builtin's. Unknown stays 0 and the bar shows no
+// percentage.
+var contexts = map[string]int{
+	// Anthropic: the 4.6+/5 line at 1M, haiku 4.5 and the 4.x line
+	// before it at 200k.
+	"claude-fable-5-1":  1_000_000,
+	"claude-fable-5":    1_000_000,
+	"claude-opus-5":     1_000_000,
+	"claude-opus-4-8":   1_000_000,
+	"claude-opus-4-7":   1_000_000,
+	"claude-opus-4-6":   1_000_000,
+	"claude-sonnet-5":   1_000_000,
+	"claude-sonnet-4-6": 1_000_000,
+	"claude-haiku-4-5":  200_000,
+	"claude-sonnet-4-5": 200_000,
+	"claude-opus-4-5":   200_000,
+	"claude-opus-4-1":   200_000,
+	"claude-opus-4":     200_000,
+	"claude-sonnet-4":   200_000,
+	// OpenAI.
+	"gpt-5.6-luna": 1_050_000,
+	"gpt-5":        400_000,
+	"gpt-5-mini":   400_000,
+	"gpt-5-nano":   400_000,
+	"gpt-4.1":      1_047_576,
+	"gpt-4.1-mini": 1_047_576,
+	"gpt-4.1-nano": 1_047_576,
+	"gpt-4o":       128_000,
+	"gpt-4o-mini":  128_000,
+}
+
+// ContextLimit is a model's context window in tokens, matched like
+// Lookup (exact canonical id, then the longest key the id starts
+// with); 0 when unknown. Pure.
+func ContextLimit(model string) int {
+	c := Canonical(model)
+	if n, ok := contexts[c]; ok {
+		return n
+	}
+	best, out := "", 0
+	for k, n := range contexts {
+		if strings.HasPrefix(c, k+"-") && len(k) > len(best) {
+			best, out = k, n
+		}
+	}
+	return out
+}
+
 // Canonical strips what providers hang on a model id: a "vendor/"
 // prefix (OpenRouter), a "-YYYYMMDD" date suffix (Anthropic snapshots),
 // and case. Pure.
@@ -128,6 +178,10 @@ func (s *Service) Usage() llm.Usage {
 	}
 	return u
 }
+
+// ContextLimit is the current model's context window in tokens (0 =
+// unknown), for the status bar's context percentage.
+func (s *Service) ContextLimit() int { return ContextLimit(s.model()) }
 
 // Source says where the price came from, for /cost.
 func (s *Service) Source() string {

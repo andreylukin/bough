@@ -106,6 +106,10 @@ func (a *anthropicLLM) Stream(ctx context.Context, system string, messages []Mes
 	for stream.Next() {
 		switch ev := stream.Current().AsAny().(type) {
 		case anthropic.MessageStartEvent:
+			// InputTokens excludes cache_read/cache_creation tokens;
+			// nothing sets cache_control today, so it is the whole
+			// prompt. Sum the three once caching lands or the
+			// context % reads ~0.
 			in += int(ev.Message.Usage.InputTokens)
 		case anthropic.MessageDeltaEvent:
 			outTok += int(ev.Usage.OutputTokens)
@@ -122,6 +126,7 @@ func (a *anthropicLLM) Stream(ctx context.Context, system string, messages []Mes
 	a.mu.Lock()
 	a.usage.InputTokens += in
 	a.usage.OutputTokens += outTok
+	a.usage.LastInputTokens = in
 	a.mu.Unlock()
 	return out.String(), nil
 }
@@ -137,6 +142,7 @@ func (a *anthropicLLM) Complete(ctx context.Context, system string, messages []M
 	a.mu.Lock()
 	a.usage.InputTokens += int(resp.Usage.InputTokens)
 	a.usage.OutputTokens += int(resp.Usage.OutputTokens)
+	a.usage.LastInputTokens = int(resp.Usage.InputTokens)
 	a.mu.Unlock()
 	var out strings.Builder
 	for _, b := range resp.Content {

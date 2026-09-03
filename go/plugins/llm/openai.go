@@ -188,6 +188,7 @@ func (o *openaiLLM) finish(r *openaiResponse) (string, error) {
 		o.mu.Lock()
 		o.usage.InputTokens += u.InputTokens
 		o.usage.OutputTokens += u.OutputTokens
+		o.usage.LastInputTokens = u.InputTokens
 		o.mu.Unlock()
 	}
 	if r.Status == "incomplete" && r.IncompleteDetails != nil && r.IncompleteDetails.Reason == "max_output_tokens" {

@@ -27,7 +27,7 @@ func TestOpenrouterReadStream(t *testing.T) {
 	if strings.Join(got, "|") != "Hel|lo" {
 		t.Fatalf("deltas = %v", got)
 	}
-	if u := o.Usage(); u.InputTokens != 5 || u.OutputTokens != 2 || !u.Priced || u.Cost != 0.001 {
+	if u := o.Usage(); u.InputTokens != 5 || u.OutputTokens != 2 || u.LastInputTokens != 5 || !u.Priced || u.Cost != 0.001 {
 		t.Fatalf("usage = %+v", u)
 	}
 }

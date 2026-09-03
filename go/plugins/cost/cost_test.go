@@ -50,6 +50,35 @@ func TestLookupExactPrefixAndOverride(t *testing.T) {
 	}
 }
 
+func TestContextLimit(t *testing.T) {
+	cases := map[string]int{
+		"gpt-5.6-luna":               1_050_000,
+		"openai/gpt-5.6-luna":        1_050_000,
+		"claude-sonnet-4-6-20251114": 1_000_000,
+		"claude-haiku-4-5":           200_000,
+		"anthropic/claude-opus-5":    1_000_000,
+		"gpt-5-mini-2026-01-01":      400_000, // longest prefix, not gpt-5's
+		"claude-sonnet-4-5-20250929": 200_000,
+		"claude-opus-4-1":            200_000,
+		"z-ai/glm-5.3-flash":         0,
+		"":                           0,
+	}
+	for in, want := range cases {
+		if got := ContextLimit(in); got != want {
+			t.Errorf("ContextLimit(%q) = %d, want %d", in, got, want)
+		}
+	}
+	l := &stubLLM{model: "claude-haiku-4-5"}
+	s := &Service{rep: l, model: l.Model, table: Table{}}
+	if s.ContextLimit() != 200_000 {
+		t.Fatalf("service limit: %d", s.ContextLimit())
+	}
+	l.model = "mystery-9000"
+	if s.ContextLimit() != 0 {
+		t.Fatalf("unknown model: %d", s.ContextLimit())
+	}
+}
+
 type stubLLM struct {
 	u     llm.Usage
 	model string

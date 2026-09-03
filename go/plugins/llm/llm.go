@@ -30,11 +30,15 @@ type Streamer interface {
 // Usage is a provider's running token/cost tally for this mount (it
 // resets when the llm row is swapped). Cost is only meaningful when
 // Priced: OpenRouter reports it per response, Anthropic does not.
+// LastInputTokens is the most recent request's input alone — the
+// size of the context the model last saw — for the status bar's
+// context percentage; 0 when the provider reports no per-request usage.
 type Usage struct {
-	InputTokens  int
-	OutputTokens int
-	Cost         float64
-	Priced       bool
+	InputTokens     int
+	OutputTokens    int
+	LastInputTokens int
+	Cost            float64
+	Priced          bool
 }
 
 // Modeler is the optional seam naming the model an llm service runs;
