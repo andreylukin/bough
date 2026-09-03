@@ -1,4 +1,4 @@
-// Wave-2 features, end to end: /model (show + live swap via the
+// Wave-2 features, end to end: /model (picker choices, list, live swap via the
 // launcher's config-set / Reconcile path, surviving hot reload) and
 // "!" bash mode (direct shell, [system] output, command/system history,
 // never an LLM turn).
@@ -16,8 +16,13 @@ func TestHeadlessModelShowSwapAndReload(t *testing.T) {
 	t.Parallel()
 	b := launchHeadless(t, launchOpts{})
 
-	// Show: current row (the llm.plugin=llm-echo override) + catalog.
+	// Bare /model is the picker: headless prints its choices.
 	b.send("/model")
+	b.waitFor("choices: ")
+	b.waitFor("llm-cerebras gpt-oss-120b")
+
+	// List: current row (the llm.plugin=llm-echo override) + catalog.
+	b.send("/model list")
 	b.waitFor("model: llm-echo")
 	b.waitFor("llm-anthropic")
 	b.waitFor("usage: /model")
@@ -44,7 +49,7 @@ func TestHeadlessModelShowSwapAndReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.waitFor("bough: reloaded")
-	b.send("/model")
+	b.send("/model list")
 	b.closeStdin()
 	if code := b.waitExit(); code != 0 {
 		t.Fatalf("exit %d; output:\n%s", code, b.out.String())

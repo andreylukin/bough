@@ -7,6 +7,8 @@ package commands
 // assert exactly which provider (and model config) is live.
 
 import (
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -107,7 +109,7 @@ func liveLLM(t *testing.T, ctx *kernel.Context) string {
 
 func TestModelShowsCurrentAndProviders(t *testing.T) {
 	_, r := mountModelTree(t)
-	out, err := r.Run("model", "")
+	out, err := r.Run("model", "list")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +219,7 @@ func TestModelWithoutConfigSetService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := r.Run("model", ""); err != nil || !strings.Contains(out, "model: llm-stub") {
+	if out, err := r.Run("model", "list"); err != nil || !strings.Contains(out, "model: llm-stub") {
 		t.Fatalf("show without config-set = (%q, %v)", out, err)
 	}
 	if _, err := r.Run("model", "llm-stub2"); err == nil ||
@@ -238,5 +240,32 @@ func TestModelNoLLMRow(t *testing.T) {
 	}
 	if _, err := r.Run("model", ""); err == nil || !strings.Contains(err.Error(), "no llm row") {
 		t.Fatalf("no-llm-row error = %v", err)
+	}
+}
+
+// Bare /model opens the picker: the action carries the current
+// "provider model" pair and one choice per registered provider (a
+// stub provider has no curated models, so its choice is bare).
+func TestModelBareOpensPicker(t *testing.T) {
+	_, r := mountModelTree(t)
+	_, err := r.Run("model", "")
+	var act UIAction
+	if !errors.As(err, &act) {
+		t.Fatalf("bare /model should return a UIAction, got %v", err)
+	}
+	cur, rows, ok := ModelPickerChoices(act)
+	if !ok || cur != "llm-stub m1" {
+		t.Fatalf("picker action: ok=%v current=%q", ok, cur)
+	}
+	if rows[0] != "llm-stub m1" || !slices.Contains(rows, "llm-stub2") || !slices.Contains(rows, "llm-cerebras gpt-oss-120b") {
+		t.Fatalf("choices: %v", rows)
+	}
+}
+
+func TestModelChoicesCurrentCurated(t *testing.T) {
+	row := kernel.Row{Plugin: "llm-cerebras", Config: map[string]any{"model": "qwen-3.8-27b"}}
+	cur, rows := modelChoices(row, []string{"llm-cerebras"})
+	if cur != "llm-cerebras qwen-3.8-27b" || len(rows) != 2 {
+		t.Fatalf("curated current should not be duplicated: %q %v", cur, rows)
 	}
 }

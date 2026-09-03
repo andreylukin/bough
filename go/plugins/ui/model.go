@@ -88,6 +88,7 @@ type model struct {
 	ovEntries  []int64        // entry index -> seq, for ovRanges lookups
 	picking    bool           // session picker shown instead of the chat view
 	pick       int            // picker cursor index into cfg.sessions
+	mp         modelPicker    // "/model" picker (see modelpick.go)
 	sessRows   sessList       // mid-session picker list (see session.go); nil = launch picker
 	welcome    bool           // fresh-session orientation text (see welcomeView)
 	pendingAsk string         // ask id the composer routes answers to; "" = none
@@ -663,7 +664,7 @@ func stripFence(text, want string) (string, bool) {
 // it and toggles its collapsed state. Wheel scrolling stays with the
 // viewports (they handle MouseWheelMsg themselves).
 func (m *model) handleClick(mouse tea.Mouse) tea.Cmd {
-	if mouse.Button != tea.MouseLeft || m.picking {
+	if mouse.Button != tea.MouseLeft || m.picking || m.mp.open {
 		return nil
 	}
 	if m.inspecting {
@@ -820,6 +821,9 @@ func (m *model) setAllCollapsed(collapsed bool) int {
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.picking {
 		return m.handlePickerKey(msg)
+	}
+	if m.mp.open {
+		return m.handleModelPickerKey(msg)
 	}
 	cfg := m.cfg.Load()
 	m.flash = ""
@@ -1073,6 +1077,9 @@ func (m model) frame() string {
 	cfg := m.cfg.Load()
 	if m.picking {
 		return m.pickerView(cfg)
+	}
+	if m.mp.open {
+		return m.modelPickerView(cfg)
 	}
 	body := m.vp.View()
 	if m.inspecting {

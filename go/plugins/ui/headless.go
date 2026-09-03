@@ -240,6 +240,9 @@ func hlDispatch(line string) bool {
 	switch {
 	case errors.As(err, &act):
 		out = "/" + name
+		if cur, rows, ok := commands.ModelPickerChoices(act); ok {
+			out = "model: " + cur + "\nchoices: " + strings.Join(rows, ", ")
+		}
 	case err != nil:
 		out = err.Error()
 	case out == "":

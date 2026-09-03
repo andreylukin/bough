@@ -1,9 +1,9 @@
 package commands
 
-// /model: show or live-swap the llm row. With no args it prints the
-// current provider row (plugin + model from the row config), the
-// registered llm-* providers from the kernel's plugin catalog, and the
-// usage line. "/model <provider> [model]" swaps the row's plugin (and
+// /model: pick or live-swap the llm row. With no args it opens the
+// UI's model picker (ModelPickerAction) over every registered llm-*
+// provider's curated models, the current row marked; "/model list"
+// prints the same as text. "/model <provider> [model]" swaps the row's plugin (and
 // optionally model); the shorthand "/model <model>" keeps the current
 // plugin and changes only the model.
 //
@@ -25,7 +25,7 @@ import (
 // dependency.
 func registerModel(r *Registry, ctx *kernel.Context) error {
 	return r.Register(
-		CommandInfo{Name: "model", Usage: "[provider] [model]", Summary: "show or switch the llm provider/model"},
+		CommandInfo{Name: "model", Usage: "[list | provider [model] | model]", Summary: "pick or switch the llm provider/model"},
 		func(args string) (string, error) { return runModel(ctx, args) },
 	)
 }
@@ -69,7 +69,7 @@ func describeRow(r kernel.Row) string {
 	return s
 }
 
-const modelUsage = "usage: /model <provider> [model] | /model <model>"
+const modelUsage = "usage: /model | /model list | /model <provider> [model] | /model <model>"
 
 // curatedModels is the short list /model suggests per provider (there
 // is no history of used models yet; OpenRouter's catalog is too long
@@ -80,7 +80,35 @@ var curatedModels = map[string][]string{
 		"openai/gpt-5", "google/gemini-2.5-pro", "deepseek/deepseek-chat-v3.1",
 	},
 	"llm-anthropic": {"claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"},
+	"llm-openai":    {"gpt-5", "gpt-5-mini", "gpt-5-nano"},
 	"llm-cerebras":  {"gpt-oss-120b", "qwen-3.8-27b"},
+}
+
+// modelChoices is the picker's list: "provider model" for every
+// curated model of every registered provider (a bare "provider" for
+// one with no curated list), the current row's pair first when it is
+// not curated. Pure.
+func modelChoices(row kernel.Row, provs []string) (current string, choices []string) {
+	current = row.Plugin
+	if m, ok := row.Config["model"].(string); ok && m != "" {
+		current += " " + m
+	}
+	for _, p := range provs {
+		list := curatedModels[p]
+		if len(list) == 0 {
+			choices = append(choices, p)
+			continue
+		}
+		for _, m := range list {
+			choices = append(choices, p+" "+m)
+		}
+	}
+	for _, c := range choices {
+		if c == current {
+			return current, choices
+		}
+	}
+	return current, append([]string{current}, choices...)
 }
 
 // showModel is /model with no args: the current row, the providers,
@@ -95,6 +123,11 @@ func showModel(row kernel.Row, provs []string) string {
 	return b.String()
 }
 
+func pickerAction(row kernel.Row, provs []string) UIAction {
+	cur, choices := modelChoices(row, provs)
+	return ModelPickerAction(cur, choices)
+}
+
 func runModel(ctx *kernel.Context, args string) (string, error) {
 	row, err := llmRow(ctx)
 	if err != nil {
@@ -104,6 +137,9 @@ func runModel(ctx *kernel.Context, args string) (string, error) {
 
 	fields := strings.Fields(args)
 	if len(fields) == 0 {
+		return "", pickerAction(row, provs)
+	}
+	if len(fields) == 1 && fields[0] == "list" {
 		return showModel(row, provs), nil
 	}
 	if len(fields) > 2 {

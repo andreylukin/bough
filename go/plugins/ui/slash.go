@@ -31,7 +31,7 @@ func (m *model) syncPalette() {
 	if m.pal.cycling && draft != m.pal.cycleDraft {
 		m.pal.cycling = false // any edit ends a Tab cycle
 	}
-	open := m.cfg.Load().cmds != nil && !m.inspecting && !m.picking &&
+	open := m.cfg.Load().cmds != nil && !m.inspecting && !m.picking && !m.mp.open &&
 		slashStart(draft) >= 0 && !m.pal.escaped
 	if open && !m.pal.open {
 		m.pal.selected = 0
@@ -268,6 +268,10 @@ func (m *model) dispatchAs(line, echo string) tea.Cmd {
 func (m *model) perform(act commands.UIAction) tea.Cmd {
 	if id, ok := commands.ResumeID(act); ok {
 		m.resumeID(id)
+		return nil
+	}
+	if cur, rows, ok := commands.ModelPickerChoices(act); ok {
+		m.openModelPicker(cur, rows)
 		return nil
 	}
 	switch act {

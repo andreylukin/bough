@@ -73,7 +73,7 @@ func (m *model) syncAt() {
 	if m.at.escaped && draft != m.at.escAt {
 		m.at.escaped = false
 	}
-	open := !m.pal.open && !m.inspecting && !m.picking && atStart(draft) >= 0 && !m.at.escaped
+	open := !m.pal.open && !m.inspecting && !m.picking && !m.mp.open && atStart(draft) >= 0 && !m.at.escaped
 	if open && !m.at.open {
 		m.at.selected = 0
 		m.atFiles = listFiles(".")

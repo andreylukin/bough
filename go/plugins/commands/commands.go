@@ -76,6 +76,30 @@ func ResumeID(a UIAction) (string, bool) {
 	return strings.CutPrefix(string(a), resumePrefix)
 }
 
+// modelPickerPrefix marks a UIAction that opens the model picker
+// ("/model" with no args): the payload is the current "provider
+// model" line followed by one choice per line, so the UI (or a
+// headless run, which prints them) needs no llm knowledge of its own.
+const modelPickerPrefix = "model-picker:"
+
+// ModelPickerAction is the UIAction that opens the model picker over
+// choices ("provider" or "provider model"), current marking the row
+// in effect.
+func ModelPickerAction(current string, choices []string) UIAction {
+	return UIAction(modelPickerPrefix + current + "\n" + strings.Join(choices, "\n"))
+}
+
+// ModelPickerChoices reports whether a is a model-picker action and
+// its current line and choices.
+func ModelPickerChoices(a UIAction) (current string, choices []string, ok bool) {
+	body, ok := strings.CutPrefix(string(a), modelPickerPrefix)
+	if !ok {
+		return "", nil, false
+	}
+	lines := strings.Split(body, "\n")
+	return lines[0], lines[1:], true
+}
+
 // Registry is the "commands" service: a concurrency-safe name ->
 // command table. Other plugins register against the concrete type.
 type Registry struct {
