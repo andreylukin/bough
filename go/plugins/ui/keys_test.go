@@ -53,6 +53,39 @@ func TestKeymapRebindCollapseToggle(t *testing.T) {
 	}
 }
 
+// A user key wins over a default on the same key: the default is
+// unbound, never a coin flip over map order. Swapping two defaults
+// is fine; two user bindings on one key is an error.
+func TestKeymapUserKeyWinsOverDefault(t *testing.T) {
+	t.Parallel()
+	keys := defaultKeymap()
+	if err := applyKeymap(keys, map[string]string{"clear_input": "ctrl+g"}); err != nil {
+		t.Fatal(err)
+	}
+	if keys["external_editor"] != "" || keys["clear_input"] != "ctrl+g" {
+		t.Errorf("default external_editor should be unbound: %v", keys)
+	}
+	keys = defaultKeymap()
+	if err := applyKeymap(keys, map[string]string{"quit": "ctrl+l", "clear_input": "ctrl+c"}); err != nil {
+		t.Fatalf("swap: %v", err)
+	}
+	if keys["quit"] != "ctrl+l" || keys["clear_input"] != "ctrl+c" {
+		t.Errorf("swap not applied: %v", keys)
+	}
+	if err := applyKeymap(defaultKeymap(), map[string]string{"quit": "ctrl+y", "clear_input": "ctrl+y"}); err == nil {
+		t.Error("two user actions on one key should fail loud")
+	}
+	for range 20 {
+		d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"clear_input": "ctrl+g"}, nil))
+		d.typeStr("draft")
+		next, cmd := d.m.Update(keyCtrl('g'))
+		d.m = next.(model)
+		if cmd != nil || d.m.input.Value() != "" {
+			t.Fatalf("ctrl+g should clear, not open the editor: cmd=%v draft=%q", cmd != nil, d.m.input.Value())
+		}
+	}
+}
+
 func TestKeymapEmptyKeyRejected(t *testing.T) {
 	t.Parallel()
 	keys := defaultKeymap()

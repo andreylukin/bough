@@ -88,7 +88,8 @@ func (m *model) prompts() []string {
 // composerKey handles the composer's navigation keys before the keymap
 // waterfall: up/down inside a multi-line draft move the cursor, on its
 // edge lines they browse prompt history; home/end on an empty draft
-// jump the transcript. Anything else ends a recall browse. Reports
+// jump the transcript; tab on a path-like word completes it (see
+// pathcomplete.go). Anything else ends a recall browse. Reports
 // whether the key was consumed.
 func (m *model) composerKey(key string, msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	if m.inspecting || m.pal.open {
@@ -136,6 +137,10 @@ func (m *model) composerKey(key string, msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			m.flash = recallNote(m.comp.recall, len(ps))
 		}
 		return true, nil
+	case "tab":
+		if m.tabComplete() {
+			return true, nil
+		}
 	case "home", "end":
 		if m.input.Value() != "" {
 			return m.editKey(msg) // line start/end inside the draft

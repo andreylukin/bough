@@ -110,6 +110,7 @@ type model struct {
 	lines      []string      // rendered content lines, for the selection
 	stop       stopState     // quit-key arming (see stop.go)
 	comp       composerState // prompt recall (see composer.go)
+	tab        tabState      // Tab path-completion cycling (see pathcomplete.go)
 	md         *glamour.TermRenderer
 	mdCache    map[string]string // assistant markdown render cache (cleared on resize)
 	bgLight    bool              // terminal background is light (tea.BackgroundColorMsg)
@@ -545,6 +546,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.finishBang(msg)
 		return m, nil
 
+	case editorDoneMsg:
+		m.finishEditor(msg)
+		return m, nil
+
+	case imagePasteMsg:
+		return m, m.finishPaste(msg)
+
 	case tea.BackgroundColorMsg:
 		// Re-render markdown for the actual terminal background so
 		// dark-style grays never land on a light terminal.
@@ -949,6 +957,12 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.stopKey(key, cfg); handled {
 		return m, cmd
 	}
+	// ctrl+v probes the clipboard for an image first (imagepaste.go);
+	// a text clipboard replays the key into the textarea. A keymap
+	// binding on ctrl+v takes it instead.
+	if key == "ctrl+v" && !m.inspecting && cfg.action[key] == "" {
+		return m, m.pasteKey(msg)
+	}
 	if handled, cmd := m.composerKey(key, msg); handled {
 		return m, cmd
 	}
@@ -1004,6 +1018,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+	case "external_editor":
+		if m.inspecting {
+			return m, nil
+		}
+		return m, m.openEditor()
 	case "todo_toggle":
 		if m.todoText == "" {
 			m.flash = "no todo list yet (/todo add <text>)"
