@@ -1,11 +1,13 @@
 package ui
 
 // ctrl+v with an image on the clipboard saves it to
-// ~/.bough/attachments/<timestamp>.png and inserts "@<path> " so the
-// "@" attachment path carries it. A text clipboard falls through to
-// the textarea's own ctrl+v paste; bracketed paste never comes this
-// way. The clipboard probe is an external command, so it runs as a
-// tea.Cmd under a short timeout and never blocks the UI.
+// ~/.bough/attachments/<timestamp>.png and inserts "@<path> ". The
+// model sees that path as text: llm.Message is text-only and
+// loop.ExpandAt reads relative text files, so the pixels are not sent
+// (the flash says so). A text clipboard falls through to the
+// textarea's own ctrl+v paste; bracketed paste never comes this way.
+// The clipboard probe is an external command, so it runs as a tea.Cmd
+// under a short timeout and never blocks the UI.
 
 import (
 	"bytes"
@@ -96,8 +98,9 @@ func (m *model) pasteKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 }
 
-// finishPaste inserts the "@path " reference, or hands a text
-// clipboard's ctrl+v to the textarea.
+// finishPaste inserts the "@path " reference (honestly labelled: the
+// image is saved, not attached), or hands a text clipboard's ctrl+v
+// to the textarea.
 func (m *model) finishPaste(msg imagePasteMsg) tea.Cmd {
 	if msg.err != nil {
 		m.flash = "image paste: " + msg.err.Error()
@@ -110,6 +113,6 @@ func (m *model) finishPaste(msg imagePasteMsg) tea.Cmd {
 	m.input.InsertString("@" + msg.path + " ")
 	m.syncPalette()
 	m.layoutComposer()
-	m.flash = "attached " + msg.path
+	m.flash = "image saved: " + msg.path + " · the model gets the path, not the pixels"
 	return nil
 }

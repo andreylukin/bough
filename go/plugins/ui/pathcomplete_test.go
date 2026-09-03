@@ -18,7 +18,7 @@ func keyLeft() tea.KeyPressMsg { return tea.KeyPressMsg{Code: tea.KeyLeft} }
 func chdirTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, f := range []string{"main.go", "main_test.go", "pkg/util.go", "pkg/x.go", "docs/a.md", ".hidden"} {
+	for _, f := range []string{"main.go", "main_test.go", "pkg/util.go", "pkg/x.go", "docs/a.md", ".hidden", "my dir/f.txt"} {
 		os.MkdirAll(filepath.Dir(filepath.Join(dir, f)), 0o755)
 		os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644)
 	}
@@ -40,6 +40,7 @@ func TestTabCompletesPaths(t *testing.T) {
 		{"slash word in a subdir", "read ./docs/a", []string{"read ./docs/a.md"}},
 		{"a final @ word is the picker's (trailing space)", "look at @pkg/u", []string{"look at @pkg/util.go "}},
 		{"dotfile only when typed", ".hid", []string{".hidden"}},
+		{"a blank in the name is escaped, next tab descends", "my", []string{"my\\ dir/", "my\\ dir/f.txt"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -90,7 +91,7 @@ func TestTabCompletesMidDraft(t *testing.T) {
 // is untouched and the newest block gets the focus.
 func TestTabOffPathFocusesBlock(t *testing.T) {
 	chdirTree(t)
-	for _, typed := range []string{"", "hello", "fix the bug"} {
+	for _, typed := range []string{"", "hello", "fix the bug", "see https://x.y/z"} {
 		d := defaultDrv(t)
 		d.event("result", nLines(20))
 		d.typeStr(typed)
@@ -113,10 +114,30 @@ func TestTabOffPathFocusesBlock(t *testing.T) {
 	}
 }
 
+// Moving the cursor ends a cycle: the next Tab completes the word
+// there afresh instead of backspacing the old candidate's length.
+func TestTabCycleEndsOnCursorMove(t *testing.T) {
+	chdirTree(t)
+	d := defaultDrv(t)
+	d.typeStr("see ma")
+	d.press(keyTab())
+	d.press(keyTab())
+	if got := d.m.input.Value(); got != "see main.go" {
+		t.Fatalf("draft = %q", got)
+	}
+	for range 3 {
+		d.feed(keyLeft())
+	}
+	d.press(keyTab())
+	if got := d.m.input.Value(); got != "see main.go.go" {
+		t.Fatalf("after a cursor move tab should complete %q afresh, got %q", "main", got)
+	}
+}
+
 func TestPathCandidatesPure(t *testing.T) {
 	chdirTree(t)
 	got := pathCandidates("")
-	want := []string{"docs/", "main.go", "main_test.go", "pkg/"}
+	want := []string{"docs/", "main.go", "main_test.go", "my dir/", "pkg/"}
 	if len(got) != len(want) {
 		t.Fatalf("cwd listing = %v, want %v", got, want)
 	}

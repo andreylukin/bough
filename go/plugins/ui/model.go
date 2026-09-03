@@ -892,8 +892,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	// ctrl+v probes the clipboard for an image first (imagepaste.go);
-	// a text clipboard replays the key into the textarea.
-	if key == "ctrl+v" && !m.inspecting {
+	// a text clipboard replays the key into the textarea. A keymap
+	// binding on ctrl+v takes it instead.
+	if key == "ctrl+v" && !m.inspecting && cfg.action[key] == "" {
 		return m, m.pasteKey(msg)
 	}
 	if handled, cmd := m.composerKey(key, msg); handled {

@@ -324,7 +324,7 @@ func keysText(cfg *uiCfg) string {
 	rows = append(rows,
 		[2]string{"esc", "close the palette · decline a pending ask"},
 		[2]string{"tab", "on a path: complete it, again to cycle · in the palette: complete"},
-		[2]string{"ctrl+v", "an image on the clipboard: attach it as @file"},
+		[2]string{"ctrl+v", "an image on the clipboard: save it under ~/.bough/attachments as @path"},
 		[2]string{"?", "on an empty composer: this list (/keys)"},
 	)
 	w := 0

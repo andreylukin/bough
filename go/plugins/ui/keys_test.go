@@ -41,15 +41,48 @@ func TestKeymapRebindQuit(t *testing.T) {
 
 func TestKeymapRebindCollapseToggle(t *testing.T) {
 	t.Parallel()
-	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"collapse_toggle": "ctrl+y"}, nil))
+	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"collapse_toggle": "ctrl+g"}, nil))
 	d.event("result", nLines(20))
 	d.press(keyEnter()) // old key: enter no longer toggles, and empty submit is a no-op
 	if !d.m.blocks[0].collapsed {
 		t.Fatal("old enter binding should be inert after rebind")
 	}
-	d.press(keyCtrl('y'))
+	d.press(keyCtrl('g'))
 	if d.m.blocks[0].collapsed {
-		t.Error("ctrl+y should toggle collapse after rebind")
+		t.Error("ctrl+g should toggle collapse after rebind")
+	}
+}
+
+// A user key wins over a default on the same key: the default is
+// unbound, never a coin flip over map order. Swapping two defaults
+// is fine; two user bindings on one key is an error.
+func TestKeymapUserKeyWinsOverDefault(t *testing.T) {
+	t.Parallel()
+	keys := defaultKeymap()
+	if err := applyKeymap(keys, map[string]string{"clear_input": "ctrl+g"}); err != nil {
+		t.Fatal(err)
+	}
+	if keys["external_editor"] != "" || keys["clear_input"] != "ctrl+g" {
+		t.Errorf("default external_editor should be unbound: %v", keys)
+	}
+	keys = defaultKeymap()
+	if err := applyKeymap(keys, map[string]string{"quit": "ctrl+l", "clear_input": "ctrl+c"}); err != nil {
+		t.Fatalf("swap: %v", err)
+	}
+	if keys["quit"] != "ctrl+l" || keys["clear_input"] != "ctrl+c" {
+		t.Errorf("swap not applied: %v", keys)
+	}
+	if err := applyKeymap(defaultKeymap(), map[string]string{"quit": "ctrl+y", "clear_input": "ctrl+y"}); err == nil {
+		t.Error("two user actions on one key should fail loud")
+	}
+	for range 20 {
+		d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"clear_input": "ctrl+g"}, nil))
+		d.typeStr("draft")
+		next, cmd := d.m.Update(keyCtrl('g'))
+		d.m = next.(model)
+		if cmd != nil || d.m.input.Value() != "" {
+			t.Fatalf("ctrl+g should clear, not open the editor: cmd=%v draft=%q", cmd != nil, d.m.input.Value())
+		}
 	}
 }
 
@@ -229,14 +262,14 @@ func TestInspectorWithoutHistoryFlashes(t *testing.T) {
 func TestInspectorRebound(t *testing.T) {
 	t.Parallel()
 	h := histWith("/tmp/s.jsonl", "one")
-	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"history_inspect": "ctrl+y"}, h))
+	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"history_inspect": "ctrl+g"}, h))
 	d.press(keyCtrl('o'))
 	if d.m.inspecting {
 		t.Error("old inspector key should be inert after rebind")
 	}
-	d.press(keyCtrl('y'))
+	d.press(keyCtrl('g'))
 	if !d.m.inspecting {
-		t.Error("ctrl+y should open the inspector after rebind")
+		t.Error("ctrl+g should open the inspector after rebind")
 	}
 }
 

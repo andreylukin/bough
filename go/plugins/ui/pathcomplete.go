@@ -18,26 +18,33 @@ import (
 )
 
 // tabState is the cycling cursor: cands are the last completion's
-// candidates (as they sit in the draft, "@" prefix included), idx the
-// one shown (-1 while the common prefix is showing), value the draft
-// as that completion left it — any other draft starts afresh.
+// candidates (as they sit in the draft, "@" prefix and escapes
+// included), idx the one shown (-1 while the common prefix is
+// showing), value/line/col the draft and cursor as that completion
+// left them — any other draft or cursor starts afresh.
 type tabState struct {
-	cands []string
-	idx   int
-	value string
+	cands     []string
+	idx       int
+	value     string
+	line, col int
 }
 
 // wordBeforeCursor is the run of non-blank runes ending at the cursor
-// on its line.
+// on its line; a backslash-escaped blank ("my\ dir") is part of it.
 func (m *model) wordBeforeCursor() string {
 	line := []rune(strings.Split(m.input.Value(), "\n")[m.input.Line()])
 	col := min(m.input.Column(), len(line))
 	start := col
-	for start > 0 && !unicode.IsSpace(line[start-1]) {
+	for start > 0 && (!unicode.IsSpace(line[start-1]) || (start > 1 && line[start-2] == '\\')) {
 		start--
 	}
 	return string(line[start:col])
 }
+
+// escapePath / unescapePath shell-escape blanks in a name so a
+// completed "my dir/" stays one word for the next Tab.
+func escapePath(s string) string   { return strings.ReplaceAll(s, " ", "\\ ") }
+func unescapePath(s string) string { return strings.ReplaceAll(s, "\\ ", " ") }
 
 // pathCandidates lists the filesystem entries word is a prefix of
 // ("~" expanded, dotfiles only when the typed name starts with ".");
@@ -81,8 +88,11 @@ func pathCandidates(word string) []string {
 }
 
 // pathLike: a word worth completing as a path — it has a "/", starts
-// with "." or "~", or already names something in cwd.
+// with "." or "~", or already names something in cwd. A URL is not.
 func pathLike(word string, cands []string) bool {
+	if strings.Contains(word, "://") {
+		return false
+	}
 	return strings.Contains(word, "/") || strings.HasPrefix(word, ".") || strings.HasPrefix(word, "~") || len(cands) > 0
 }
 
@@ -103,14 +113,14 @@ func commonPrefix(cands []string) string {
 // tabComplete handles Tab in the composer. Reports whether it took
 // the key: false leaves Tab to the keymap (block focus).
 func (m *model) tabComplete() bool {
-	if len(m.tab.cands) > 0 && m.input.Value() == m.tab.value {
+	if len(m.tab.cands) > 0 && m.input.Value() == m.tab.value && m.input.Line() == m.tab.line && m.input.Column() == m.tab.col {
 		old := commonPrefix(m.tab.cands)
 		if m.tab.idx >= 0 {
 			old = m.tab.cands[m.tab.idx]
 		}
 		m.tab.idx = (m.tab.idx + 1) % len(m.tab.cands)
 		m.replaceWord(old, m.tab.cands[m.tab.idx])
-		m.tab.value = m.input.Value()
+		m.tab.value, m.tab.line, m.tab.col = m.input.Value(), m.input.Line(), m.input.Column()
 		return true
 	}
 	word := m.wordBeforeCursor()
@@ -121,7 +131,7 @@ func (m *model) tabComplete() bool {
 	if word[0] == '@' {
 		at, word = "@", word[1:]
 	}
-	cands := pathCandidates(word)
+	cands := pathCandidates(unescapePath(word))
 	if !pathLike(word, cands) {
 		return false
 	}
@@ -130,7 +140,7 @@ func (m *model) tabComplete() bool {
 		return true
 	}
 	for i := range cands {
-		cands[i] = at + cands[i]
+		cands[i] = at + escapePath(cands[i])
 	}
 	prefix := commonPrefix(cands)
 	if len(cands) == 1 {
@@ -147,7 +157,7 @@ func (m *model) tabComplete() bool {
 		m.tab.idx = 0
 		m.replaceWord(at+word, cands[0])
 	}
-	m.tab.value = m.input.Value()
+	m.tab.value, m.tab.line, m.tab.col = m.input.Value(), m.input.Line(), m.input.Column()
 	return true
 }
 

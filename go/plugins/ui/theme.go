@@ -153,6 +153,21 @@ func applyKeymap(keys map[string]string, m map[string]string) error {
 		if strings.TrimSpace(key) == "" {
 			return fmt.Errorf("ui: keymap: empty key for action %q", action)
 		}
+		// A user key wins: a default sharing it is unbound, so the
+		// key never resolves by map-iteration luck. Two user
+		// bindings on one key is a config error.
+		for other, k := range keys {
+			if k != key || other == action {
+				continue
+			}
+			if uk, user := m[other]; user {
+				if uk == key {
+					return fmt.Errorf("ui: keymap: %q bound to both %q and %q", key, other, action)
+				}
+				continue // rebound by the user too (a swap)
+			}
+			keys[other] = ""
+		}
 		keys[action] = key
 	}
 	return nil

@@ -71,7 +71,8 @@ defaults. Actions:
 
 Keys use bubbletea names: `"ctrl+c"`, `"pgup"`, `"q"`, `"shift+tab"`.
 `collapse_all` and `expand_all` ship unbound — they only fire when the
-keymap service binds them.
+keymap service binds them. A key you bind wins: a default sharing it
+is unbound.
 
 #### Collapse
 

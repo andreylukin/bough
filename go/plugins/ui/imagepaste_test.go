@@ -31,8 +31,23 @@ func TestImagePasteAttaches(t *testing.T) {
 	if err != nil || string(data) != string(png) {
 		t.Fatalf("attachment file: %v %q", err, data)
 	}
-	if !strings.Contains(d.m.flash, "attached") {
+	// The model cannot take pixels yet, so the flash must not claim
+	// the image was attached.
+	if !strings.Contains(d.m.flash, "image saved") || strings.Contains(d.m.flash, "attached") {
 		t.Errorf("flash = %q", d.m.flash)
+	}
+}
+
+// A keymap binding on ctrl+v wins over the clipboard probe.
+func TestImagePasteYieldsToKeymap(t *testing.T) {
+	probed := false
+	readClipboardImage = func() []byte { probed = true; return []byte("\x89PNG") }
+	t.Cleanup(func() { readClipboardImage = clipboardImage })
+	d := newDrv(t, 80, 24, cfgWith(t, nil, map[string]string{"scroll_down": "ctrl+v"}, nil))
+	d.typeStr("plain ")
+	d.press(keyCtrl('v'))
+	if probed || d.m.input.Value() != "plain " {
+		t.Errorf("ctrl+v bound to scroll_down: probed=%v draft=%q", probed, d.m.input.Value())
 	}
 }
 
