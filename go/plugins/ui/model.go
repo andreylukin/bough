@@ -537,13 +537,15 @@ func (m *model) addEvent(ev Event) {
 	id := m.nextID
 	m.nextID++
 	switch ev.Kind {
-	case "code", "result", "error":
 	case "assistant", "assistant-delta":
 		// The model speaks again after seeing its results: the prose
 		// it wrote under the fence BEFORE seeing them ("Done, here's
 		// the file:") is superseded, not a second answer. Drop it.
 		m.trailing = ""
-	default:
+	case "done", "ask":
+		// The turn ends (or pauses on the user) on that prose: it is
+		// the model's last word, so it shows. Mid-turn events (code,
+		// results, subagent activity, todo updates) keep it held.
 		m.flushTrailing()
 	}
 	switch ev.Kind {
@@ -628,6 +630,17 @@ func (m *model) addEvent(ev Event) {
 // whitespace is dropped entirely — no orphan "● bough" header.
 func (m *model) dedupeCode(code string) {
 	want := strings.TrimRight(code, "\n")
+	// A multi-fence reply: the fence sits in the held prose after an
+	// earlier fence. The prose before it is now in order (that
+	// fence's result has landed) and shows; the rest stays held.
+	if before, after, ok := splitAtFence(m.trailing, want); ok {
+		m.trailing = ""
+		if before != "" {
+			m.addAssistant(before)
+		}
+		m.trailing = after
+		return
+	}
 	for i := len(m.blocks) - 1; i >= 0; i-- {
 		b := &m.blocks[i]
 		switch b.kind {
