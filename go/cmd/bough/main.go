@@ -223,7 +223,11 @@ func main() {
 	flag.CommandLine.Usage = usage
 	flag.CommandLine.Parse(args)
 	if *showVer {
-		fmt.Println("bough " + versionString())
+		v := "bough " + versionString()
+		if n := staleNotice(resolveExe()); n != "" {
+			v += " (stale: " + n + ")"
+		}
+		fmt.Println(v)
 		return
 	}
 	if *verbose {
@@ -294,6 +298,16 @@ func main() {
 
 	ctx := kernel.NewContext()
 	ctx.Provide("ui-mode", mode)
+	// A dev install running a build older than its checkout: say so
+	// where a person will see it (the ui shows the "notice" service as
+	// its first row; headless prints it), naming `bough update`.
+	if n := staleNotice(resolveExe()); n != "" {
+		if mode == "headless" {
+			fmt.Fprintln(os.Stderr, "bough: "+n)
+		} else {
+			ctx.Provide("notice", n)
+		}
+	}
 
 	ov := &overrides{vals: sets}
 	// Runtime override seam: plugins (e.g. /model) change a row's config

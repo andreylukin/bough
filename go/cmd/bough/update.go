@@ -35,7 +35,11 @@ func runUpdate(args []string) {
 	}
 	target, installed := installTarget(exe, root, modDir)
 
+	was := versionString()
 	step("pull", root, "git", "pull", "--ff-only")
+	if head := gitHead(root); head != "" {
+		fmt.Printf("bough: checkout at %s (this binary was built from %s)\n", short(head), was)
+	}
 	if installed {
 		// Overwrite the installed copy atomically: build next to it,
 		// then rename (same dir, so same filesystem).

@@ -60,6 +60,7 @@ type uiCfg struct {
 	hist     historyView       // nil when no history service
 	usage    llm.UsageReporter // the "usage" (cost row) or llm service; nil when neither reports
 	mdStyle  string            // "dark"/"light" glamour override; "" = detect
+	notice   string            // launcher "notice" service: a first-row warning (stale binary)
 	collapse string            // "all" | "large" | "none": which code/result blocks start collapsed
 
 	// "/" command seam: with no commands service, "/" is plain text
@@ -178,6 +179,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	cfg := newCfg(t, keys, status, hist)
 	cfg.mdStyle = mdStyle
+	if n, err := kernel.Get[string](ctx, "notice"); err == nil {
+		cfg.notice = n
+	}
 	cfg.cmds = cmds
 	cfg.hlog = hlog
 	// The cost row's priced view first; the llm's own tally otherwise.

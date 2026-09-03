@@ -206,3 +206,17 @@ func TestTodoEventAfterCodeAppends(t *testing.T) {
 		t.Fatalf("a code-driven mutation appends the todo block, got %+v", d.m.blocks)
 	}
 }
+
+// The launcher's "notice" (a stale dev binary) is the first thing on
+// screen, as an error row, with or without a history service.
+func TestLaunchNoticeShowsAsErrorRow(t *testing.T) {
+	t.Parallel()
+	for _, hist := range []historyView{nil, histWith("/tmp/h.jsonl")} {
+		cfg := cfgWith(t, nil, nil, hist)
+		cfg.notice = "this binary was built from 11111111; the checkout is at 22222222 — run `bough update`"
+		d := newDrv(t, 80, 24, cfg)
+		if p := d.plain(); !strings.Contains(p, "✗ this binary was built from 11111111") {
+			t.Fatalf("notice missing (hist=%v):\n%s", hist != nil, p)
+		}
+	}
+}

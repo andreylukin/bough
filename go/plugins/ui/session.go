@@ -46,6 +46,7 @@ func (m *model) replay() {
 	}
 	if cfg.hist == nil {
 		m.welcome = true // fresh (no history service at all)
+		m.noteLaunch(cfg)
 		m.refresh()
 		return
 	}
@@ -83,8 +84,21 @@ func (m *model) replay() {
 		m.blocks = append(m.blocks, block{id: m.nextID, kind: "system", text: resumedLine(cfg.hist)})
 		m.nextID++
 	}
+	m.noteLaunch(cfg)
 	m.refresh()
 	m.vp.GotoBottom()
+}
+
+// noteLaunch appends the launcher's notice (a stale dev binary) as an
+// error row: it must be read, and a fresh session keeps its welcome
+// text above it.
+func (m *model) noteLaunch(cfg *uiCfg) {
+	if cfg.notice == "" {
+		return
+	}
+	m.blocks = append(m.blocks, block{id: m.nextID, kind: "error", text: cfg.notice})
+	m.nextID++
+	m.welcome = false
 }
 
 // resumedLine is the one-line system row a resumed transcript ends

@@ -112,6 +112,11 @@ waits for it to exit, and relaunches `--web` on the same addr detached
 (output appends to `~/.bough/web.log`). With no running web session
 both just note that sessions pick up the new binary on next launch.
 
+A dev install (the binary inside its own checkout, e.g. a symlink to
+`go/bough`) that falls behind — a newer HEAD, or sources newer than the
+binary — says so at launch (first row of the TUI, stderr headless) and
+in `--version`, naming `bough update` as the fix.
+
 ## The codemode loop
 
 The loop plugin waits for human input, then asks the LLM for a response.
