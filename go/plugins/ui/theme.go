@@ -136,7 +136,8 @@ func defaultKeymap() map[string]string {
 		"collapse_all":    "",      // config-only: no default key
 		"expand_all":      "",      // config-only: no default key
 		"clear_input":     "ctrl+l",
-		"todo_toggle":     "ctrl+t", // pin the todo list above the composer
+		"todo_toggle":     "ctrl+t",    // pin the todo list above the composer
+		"follow_up":       "alt+enter", // mid-turn: queue the line for after the turn (enter steers it)
 	}
 }
 

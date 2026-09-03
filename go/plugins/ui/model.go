@@ -40,6 +40,8 @@ type block struct {
 	label     string // header tag override ("! <cmd>" bang blocks); "" = by kind
 	collapsed bool
 	queued    bool     // user block submitted mid-turn, not yet started
+	steer     bool     // user block sent INTO the running turn (see steerLine)
+	pending   bool     // steer the loop has not landed yet (its next block boundary)
 	files     []string // done blocks: files the turn wrote (from the entry's data)
 	exit      *int     // done blocks: exit status, nil when absent
 
@@ -591,6 +593,8 @@ func (m *model) addEvent(ev Event) {
 	case "assistant":
 		m.dropLive()
 		m.addAssistant(ev.Text)
+	case "steer":
+		m.landSteer(id, ev.Text)
 	case "todo":
 		m.todoText = ev.Text
 		// One render per mutation: the system block a /todo mutation
@@ -970,7 +974,10 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if key == "enter" && !m.inspecting {
+	// follow_up (alt+enter) is enter that always queues: while a turn
+	// runs and the loop takes steers, plain enter steers it instead.
+	followUp := cfg.action[key] == "follow_up"
+	if (key == "enter" || followUp) && !m.inspecting {
 		// A trailing backslash asks for a newline, not a send: the one
 		// newline key that survives every terminal and the browser
 		// (xterm.js sends shift+enter as a plain enter).
@@ -998,6 +1005,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.input.Reset()
+		if m.running && cfg.steer != nil && !followUp {
+			return m, m.steerLine(line, cfg.steer)
+		}
 		return m, m.submit(line)
 	}
 
@@ -1006,6 +1016,36 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.syncPalette()
 	m.layoutComposer()
 	return m, cmd
+}
+
+// steerLine hands one line to the turn in flight (pi's model): it
+// lands at the loop's next block boundary and the model is asked
+// again with it in context. The block shows as pending until the
+// loop's "steer" event says it landed. When the loop reports no turn
+// running (it ended before the key reached it), the line is sent as
+// ordinary input instead, never dropped.
+func (m *model) steerLine(line string, steer func(string) bool) tea.Cmd {
+	if !steer(line) {
+		return m.submit(line)
+	}
+	m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: line, steer: true, pending: true})
+	m.nextID++
+	m.refresh()
+	m.vp.GotoBottom()
+	return nil
+}
+
+// landSteer marks the oldest pending steer block with this text as
+// landed; without one (the steer was typed in another view of this
+// session — tui and web share the loop) it appends the block.
+func (m *model) landSteer(id int, text string) {
+	for i := range m.blocks {
+		if b := &m.blocks[i]; b.pending && b.text == text {
+			b.pending = false
+			return
+		}
+	}
+	m.blocks = append(m.blocks, block{id: id, kind: "user", text: text, steer: true})
 }
 
 // submit sends one line to the loop as user input, echoing it as a

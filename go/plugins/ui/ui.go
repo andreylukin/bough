@@ -64,6 +64,10 @@ func (p *plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		if a, err := kernel.Get[askAnswers](ctx, "ask-answers"); err == nil {
 			ask = a
 		}
+		var steer func(string) bool
+		if s, err := kernel.Get[func(string) bool](ctx, "steer"); err == nil {
+			steer = s
+		}
 		// With a usage service (cost row) every done line is followed by
 		// a "[usage] {...}" JSON line: harness benchmarks read spend
 		// from it.
@@ -73,7 +77,7 @@ func (p *plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			hlUsage = u
 		}
 		hlMu.Unlock()
-		ctx.Effect(runHeadless(inputs, b, cmds, hlog, ask))
+		ctx.Effect(runHeadless(inputs, b, cmds, hlog, ask, steer))
 		return nil
 	}
 

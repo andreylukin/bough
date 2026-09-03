@@ -23,6 +23,13 @@ import (
 // timeout), then interrupts the process so the launcher unmounts and
 // exits 0.
 //
+// A line that arrives while a turn runs STEERS it (the loop's "steer"
+// service, when mounted): it lands at the turn's next block boundary
+// as a user message and the model is asked again, inside the same
+// turn — one "[steer]" line, no extra "[done]". A line that arrives
+// between turns is a turn of its own, as before. Pipe prompts one at a
+// time (wait for "[done]") when each must be its own turn.
+//
 // Stdin can only be read once per process, but hot reload can remount
 // the ui row (with a fresh inputs channel), so the stdin pump is a
 // process-wide singleton and the target channel is swapped per mount.
@@ -33,6 +40,7 @@ var (
 	hlCmds    commandsView  // current mount's commands service; nil = "/" is plain text
 	hlHist    historyAppender
 	hlAnswer  askAnswers        // current mount's "ask-answers" service; nil = no asks
+	hlSteer   func(string) bool // current mount's "steer" service; nil = mid-turn lines queue
 	hlUsage   llm.UsageReporter // current mount's "usage" service; nil = no usage lines
 	hlAsk     *hlAskState
 	hlPending atomic.Int64
@@ -67,7 +75,7 @@ type hlAskState struct {
 // inputs so a reload never sends into a closed channel. The printer
 // goroutine for a disposed mount leaks quietly (its broadcaster stops
 // publishing); one idle goroutine per reload is accepted.
-func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog historyAppender, ask askAnswers) func() {
+func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog historyAppender, ask askAnswers, steer func(string) bool) func() {
 	events, _ := b.subscribe()
 	go func() {
 		for ev := range events {
@@ -80,6 +88,7 @@ func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog h
 	hlCmds = cmds
 	hlHist = hlog
 	hlAnswer = ask
+	hlSteer = steer
 	hlMu.Unlock()
 	hlOnce.Do(func() { go headlessPump() })
 
@@ -89,6 +98,7 @@ func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog h
 		hlCmds = nil
 		hlHist = nil
 		hlAnswer = nil
+		hlSteer = nil
 		hlMu.Unlock()
 	}
 }
@@ -166,6 +176,9 @@ func headlessPump() {
 			hlBang(line)
 			continue // ran as a shell command: never reaches the loop/LLM
 		}
+		if hlSteerLine(line) {
+			continue // mid-turn: steered the running turn (its own done still ends it)
+		}
 		hlSubmit(line)
 	}
 
@@ -192,6 +205,16 @@ func hlSubmit(line string) bool {
 		// Mid-reload: wait for the remounted ui row to reattach.
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// hlSteerLine hands one stdin line to the turn in flight through the
+// loop's "steer" service. False (send it as input instead) without
+// the service or when no turn is running.
+func hlSteerLine(line string) bool {
+	hlMu.Lock()
+	steer := hlSteer
+	hlMu.Unlock()
+	return steer != nil && steer(line)
 }
 
 // hlAnswerPending routes one stdin line to the pending tools.ask, if

@@ -66,7 +66,9 @@ defaults. Actions:
 `quit`, `scroll_up`, `scroll_down`, `page_up`, `page_down`,
 `history_inspect`, `block_next` (tab), `block_prev` (shift+tab),
 `collapse_toggle` (enter, on the focused block), `collapse_all`,
-`expand_all`, `clear_input`
+`expand_all`, `clear_input`, `todo_toggle`, `follow_up` (alt+enter:
+while a turn runs, queue the line for after it — plain enter steers
+the running turn instead)
 
 Keys use bubbletea names: `"ctrl+c"`, `"pgup"`, `"q"`, `"shift+tab"`.
 `collapse_all` and `expand_all` ship unbound — they only fire when the

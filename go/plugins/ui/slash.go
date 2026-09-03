@@ -305,12 +305,13 @@ func (m *model) perform(act commands.UIAction) tea.Cmd {
 // the fixed keys the composer and palette own.
 func keysText(cfg *uiCfg) string {
 	rows := [][2]string{
-		{"enter", "send the line (/cmd dispatches, !cmd runs a shell command)"},
+		{"enter", "send the line (/cmd dispatches, !cmd runs a shell command); mid-turn: steer the running turn"},
 	}
-	order := []string{"quit", "clear_input", "history_inspect", "block_next", "block_prev",
+	order := []string{"follow_up", "quit", "clear_input", "history_inspect", "block_next", "block_prev",
 		"collapse_toggle", "collapse_all", "expand_all", "todo_toggle", "scroll_up", "scroll_down", "page_up", "page_down"}
 	desc := map[string]string{
-		"quit": "quit", "clear_input": "clear the composer", "history_inspect": "inspect history (toggle)",
+		"follow_up": "mid-turn: queue the line for after the turn instead",
+		"quit":      "quit", "clear_input": "clear the composer", "history_inspect": "inspect history (toggle)",
 		"block_next": "focus next block", "block_prev": "focus previous block",
 		"collapse_toggle": "toggle the focused block", "collapse_all": "collapse all blocks",
 		"expand_all": "expand all blocks", "todo_toggle": "pin/unpin the todo list", "scroll_up": "scroll up", "scroll_down": "scroll down",

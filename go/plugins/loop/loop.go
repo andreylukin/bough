@@ -133,7 +133,8 @@ type Projection interface {
 
 // Event is the payload emitted on "loop/event".
 // Kind is one of: "assistant-delta" (a streamed fragment, not recorded),
-// "assistant", "code", "result", "error", "done" from
+// "assistant", "code", "result", "error", "done", "steer" (a mid-turn
+// user message landed; recorded as an "input" entry) from
 // the loop itself; other plugins may emit further kinds (e.g. workers'
 // "sub:*" subagent events). Data carries optional extra payload (e.g.
 // {"worker": N} on sub:* events); nil for the loop's own events.
@@ -335,8 +336,33 @@ type runner struct {
 	stats    TurnStats
 	secs     *Sections
 	hasAsk   bool // an "ask-answers" service is mounted: document tools.ask
-	system   string
-	started  bool
+	// steer hands over the steering messages sent since the last
+	// call (turns.takeSteers); nil = no steering.
+	steer   func() []string
+	system  string
+	started bool
+}
+
+// landSteers records every pending steering message as an "input"
+// entry (the projection shows it as a user message, @files expanded
+// like any input) and announces each as a "steer" event. True when
+// any landed: the caller then drops the rest of the current reply and
+// goes straight back to the model.
+func (r *runner) landSteers(emit func(kind, text string)) bool {
+	if r.steer == nil {
+		return false
+	}
+	texts := r.steer()
+	for _, text := range texts {
+		var msg strings.Builder
+		msg.WriteString(text)
+		for _, block := range ExpandAt(text, ".") {
+			msg.WriteString("\n\n" + block)
+		}
+		r.hist.Append("input", map[string]any{"text": msg.String(), "steer": true})
+		emit("steer", text)
+	}
+	return len(texts) > 0
 }
 
 // doneData builds the "done" entry's data: files written this turn and
@@ -497,6 +523,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	}
 	retried := false
 	for step := 0; step < maxSteps; step++ {
+		r.landSteers(emit) // a steer sent during the last block joins the context now
 		sys := system
 		if r.cog != nil {
 			sys = r.cog.System(sys)
@@ -533,6 +560,9 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			return nil
 		}
 		for _, m := range blocks {
+			if r.landSteers(emit) {
+				break // steered: the rest of this reply is stale, ask again
+			}
 			code := m[1]
 			if res := r.fire(ctx, "pre-code-exec", map[string]any{"code": code}, emit); res != nil {
 				if reason, ok := res["deny"].(string); ok {
@@ -666,6 +696,8 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 
 	t := &turns{}
 	kctx.Provide("cancel", t.Cancel)
+	r.steer = t.takeSteers
+	kctx.Provide("steer", t.Steer)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

@@ -11,7 +11,6 @@ import (
 )
 
 func keyShiftEnter() tea.KeyPressMsg { return tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift} }
-func keyAltEnter() tea.KeyPressMsg   { return tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt} }
 func keyHome() tea.KeyPressMsg       { return tea.KeyPressMsg{Code: tea.KeyHome} }
 func keyEnd() tea.KeyPressMsg        { return tea.KeyPressMsg{Code: tea.KeyEnd} }
 
@@ -24,7 +23,7 @@ func (d *drv) say(line string) {
 
 func TestShiftEnterInsertsNewlineEnterSubmits(t *testing.T) {
 	t.Parallel()
-	for _, nl := range []tea.KeyPressMsg{keyShiftEnter(), keyAltEnter(), keyCtrl('j')} {
+	for _, nl := range []tea.KeyPressMsg{keyShiftEnter(), keyCtrl('j')} {
 		d := defaultDrv(t)
 		d.typeStr("first")
 		d.feed(nl)

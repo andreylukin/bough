@@ -4,17 +4,48 @@ package loop
 // flight. The runner sees ctx.Err() after the pending LLM call (or
 // code run) unwinds, records a "cancelled" entry (model-invisible
 // under DefaultProject) and ends the turn with the usual "done".
+//
+// Steering: the "steer" service (func(text string) bool) hands the
+// turn in flight a message without ending it. It never interrupts a
+// block mid-execution; the runner lands pending steers at the next
+// boundary (between blocks, and before each LLM call), drops the rest
+// of the current reply, and asks the model again with the steer in
+// context. False when no turn is running (the caller queues it as
+// ordinary input instead).
 
 import (
 	"context"
+	"strings"
 	"sync"
 )
 
 // turns hands each input its own cancellable context and remembers
-// the live one's cancel func for the "cancel" service.
+// the live one's cancel func for the "cancel" service, plus the
+// steering messages sent since the runner last looked.
 type turns struct {
 	mu     sync.Mutex
 	cancel context.CancelFunc
+	steers []string
+}
+
+// Steer queues text for the turn in flight; false while idle.
+func (t *turns) Steer(text string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.cancel == nil {
+		return false
+	}
+	t.steers = append(t.steers, text)
+	return true
+}
+
+// takeSteers hands the runner every steer sent since the last take.
+func (t *turns) takeSteers() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.steers
+	t.steers = nil
+	return s
 }
 
 // Cancel aborts the turn in flight; a no-op while idle.
@@ -26,17 +57,31 @@ func (t *turns) Cancel() {
 	}
 }
 
-// run executes one input under a per-turn child of ctx.
+// run executes one input under a per-turn child of ctx. A steer that
+// arrived after the runner's last boundary (during the final reply)
+// missed its turn: it is announced and run as the next turn's input,
+// never dropped.
 func (t *turns) run(ctx context.Context, r *runner, input string, emit func(kind, text string)) {
-	tctx, cancel := context.WithCancel(ctx)
-	t.mu.Lock()
-	t.cancel = cancel
-	t.mu.Unlock()
-	_ = r.Run(tctx, input, emit)
-	t.mu.Lock()
-	t.cancel = nil
-	t.mu.Unlock()
-	cancel()
+	for {
+		tctx, cancel := context.WithCancel(ctx)
+		t.mu.Lock()
+		t.cancel = cancel
+		t.mu.Unlock()
+		_ = r.Run(tctx, input, emit)
+		t.mu.Lock()
+		t.cancel = nil
+		late := t.steers
+		t.steers = nil
+		t.mu.Unlock()
+		cancel()
+		if len(late) == 0 {
+			return
+		}
+		for _, s := range late {
+			emit("steer", s)
+		}
+		input = strings.Join(late, "\n")
+	}
 }
 
 // interrupter is the optional slice of the codemode service that
