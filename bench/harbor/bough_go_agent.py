@@ -44,7 +44,10 @@ _BLOCK_BENCHMARK_HOSTS = (
 _FORWARDED_ENV = ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
 
 # The tree a trial mounts: provider row from --model, then the daily-driver's plugins minus
-# anything that needs a GUI or the host (no init-js, no mcp, no graph, no skills catalog).
+# anything that needs a GUI or the host (no init-js, no mcp, no graph, no skills catalog) and
+# minus `workers`: with subagents Luna spent steps on spawns that gave up ("spawn limit
+# reached", "subagent gave up after 6 steps"); without them embedding-drift-monitor went
+# 4/6 → 5/6 at a third of the cost per trial.
 _CONFIG = """\
 - id: llm
   plugin: {plugin}
@@ -58,10 +61,6 @@ _CONFIG = """\
   plugin: commands
 - id: tools
   plugin: tools-basic
-- id: workers
-  plugin: workers
-  config:
-    max_steps: 30
 - id: history
   plugin: history
 - id: todo
