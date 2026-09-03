@@ -155,7 +155,7 @@ type Event struct {
 
 // defaultMaxSteps caps model steps per turn; the loop row's `max_steps`
 // config raises it (a benchmark turn is one long task).
-const defaultMaxSteps = 10
+const defaultMaxSteps = 100
 const maxResultBytes = 8 * 1024
 
 // SystemPrompt is the base identity and tool catalogue every agent in

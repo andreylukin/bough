@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/andreylukin/bough/internal/uitest"
+	"github.com/andreylukin/bough/plugins/llm"
 
 	_ "github.com/andreylukin/bough/plugins/workers"
 )
@@ -61,16 +62,19 @@ func TestSubagentCardThroughRealWorkers(t *testing.T) {
 // still ends (the spawn error is the parent's tool error).
 func TestSubagentCardOnChildError(t *testing.T) {
 	t.Parallel()
-	stub := &uitest.Script{Replies: []string{
-		uitest.JS(`try { tools.spawn("break") } catch (e) { console.log("caught: " + e) }`),
-		uitest.JS(`throw new Error("child exploded")`),
-		uitest.JS(`throw new Error("child exploded")`),
-		uitest.JS(`throw new Error("child exploded")`),
-		uitest.JS(`throw new Error("child exploded")`),
-		uitest.JS(`throw new Error("child exploded")`),
-		uitest.JS(`throw new Error("child exploded")`),
-		"parent recovered",
-	}}
+	// Driven by the conversation, not by a reply count: the child throws
+	// until it exhausts whatever step budget it has, so this holds for
+	// any workers max_steps.
+	stub := uitest.LLMFunc(func(_ string, msgs []llm.Message) string {
+		switch last := uitest.LastUser(msgs); {
+		case strings.Contains(last, "caught:"):
+			return "parent recovered"
+		case last == "go":
+			return uitest.JS(`try { tools.spawn("break") } catch (e) { console.log("caught: " + e) }`)
+		default: // the child, every step
+			return uitest.JS(`throw new Error("child exploded")`)
+		}
+	})
 	d := mountLLM(t, stub, "workers")
 	d.Say("go")
 	turnDone(d, "parent recovered")

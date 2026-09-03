@@ -212,3 +212,27 @@ func TestLineDiffGap(t *testing.T) {
 		t.Fatalf("diff = %q, want %q", got, want)
 	}
 }
+
+// A missing file names its real neighbours: a model that guessed
+// turn.go is told loop.go exists instead of guessing again.
+func TestViewMissingFileSuggestsNeighbours(t *testing.T) {
+	dir := t.TempDir()
+	for _, n := range []string{"loop.go", "cancel.go", "unrelated.md"} {
+		if err := os.WriteFile(dir+"/"+n, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := view(dir + "/turn.go")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(err.Error(), "loop.go") || !strings.Contains(err.Error(), dir) {
+		t.Fatalf("error should name the directory and its files: %v", err)
+	}
+	if _, err := view(dir + "/nope/deep.go"); err == nil || !strings.Contains(err.Error(), "no directory") {
+		t.Fatalf("a missing directory says so: %v", err)
+	}
+	if _, err := (&Stats{}).patch(dir+"/turn.go", "a", "b"); err == nil || !strings.Contains(err.Error(), "loop.go") {
+		t.Fatalf("patch suggests neighbours too: %v", err)
+	}
+}

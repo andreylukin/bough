@@ -120,29 +120,39 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 	if endpoint == "" {
 		endpoint = "https://openrouter.ai/api/v1/chat/completions"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("llm-openrouter: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+o.key)
-	req.Header.Set("Content-Type", "application/json")
+	// A stream that has already delivered deltas is never retried (the
+	// caller has seen partial text); everything before the first delta is.
+	delivered := false
+	return withRetries(ctx, func() (string, bool, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return "", false, fmt.Errorf("llm-openrouter: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+o.key)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return "", retryableErr(err), fmt.Errorf("llm-openrouter: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			data, _ := io.ReadAll(resp.Body)
+			return "", retryableStatus(resp.StatusCode), openrouterErr(resp.StatusCode, o.model, data)
+		}
+		if onDelta != nil {
+			out, err := o.readStream(resp.Body, func(d string) { delivered = true; onDelta(d) })
+			return out, err != nil && !delivered && retryableErr(err), err
+		}
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", retryableErr(err), fmt.Errorf("llm-openrouter: %w", err)
+		}
+		return o.parse(data)
+	})
+}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("llm-openrouter: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(resp.Body)
-		return "", openrouterErr(resp.StatusCode, o.model, data)
-	}
-	if onDelta != nil {
-		return o.readStream(resp.Body, onDelta)
-	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("llm-openrouter: %w", err)
-	}
+// parse reads a non-streaming completion body: the reply text, usage.
+func (o *openrouterLLM) parse(data []byte) (string, bool, error) {
 
 	var parsed struct {
 		Choices []struct {
@@ -158,18 +168,18 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		return "", fmt.Errorf("llm-openrouter: bad response: %w", err)
+		return "", false, fmt.Errorf("llm-openrouter: bad response: %w", err)
 	}
 	if parsed.Error != nil {
-		return "", fmt.Errorf("llm-openrouter: %s", parsed.Error.Message)
+		return "", false, fmt.Errorf("llm-openrouter: %s", parsed.Error.Message)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("llm-openrouter: no choices in response")
+		return "", false, fmt.Errorf("llm-openrouter: no choices in response")
 	}
 	if u := parsed.Usage; u != nil {
 		o.addUsage(u.PromptTokens, u.CompletionTokens, u.Cost)
 	}
-	return parsed.Choices[0].Message.Content, nil
+	return parsed.Choices[0].Message.Content, false, nil
 }
 
 func (o *openrouterLLM) addUsage(in, out int, cost float64) {

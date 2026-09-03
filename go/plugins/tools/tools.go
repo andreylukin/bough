@@ -240,7 +240,7 @@ func splitLines(s string) []string {
 func view(path string, rng ...int) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return "", withNeighbours(path, err)
 	}
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 	start, end := 1, len(lines)
@@ -261,11 +261,52 @@ func view(path string, rng ...int) (string, error) {
 	return b.String(), nil
 }
 
+// withNeighbours turns a bare "no such file" into one that names the
+// files actually next to the guessed path: a model that invents
+// go/plugins/loop/turn.go should be told loop.go and cancel.go exist,
+// not left to guess again.
+func withNeighbours(path string, err error) error {
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	dir := filepath.Dir(path)
+	ents, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		return fmt.Errorf("%w (no directory %s either)", err, dir)
+	}
+	base := strings.ToLower(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+	var near, all []string
+	for _, e := range ents {
+		n := e.Name()
+		if e.IsDir() {
+			n += "/"
+		}
+		all = append(all, n)
+		if l := strings.ToLower(n); strings.Contains(l, base) || strings.Contains(base, strings.TrimSuffix(l, filepath.Ext(l))) {
+			near = append(near, n)
+		}
+	}
+	list := near
+	if len(list) == 0 {
+		list = all
+	}
+	if len(list) > 12 {
+		list = append(list[:12:12], "…")
+	}
+	if len(list) == 0 {
+		return fmt.Errorf("%w (%s is empty)", err, dir)
+	}
+	return fmt.Errorf("%w — %s holds: %s", err, dir, strings.Join(list, " "))
+}
+
 // patch replaces one exact occurrence of old with new in path. old
 // must match exactly once (include more context when it repeats). An
 // empty old creates the file with new when it does not exist yet.
 func (s *Stats) patch(path, old, new string) (string, error) {
 	data, err := os.ReadFile(path)
+	if err != nil && old != "" {
+		err = withNeighbours(path, err)
+	}
 	if old == "" {
 		if err == nil {
 			return "", fmt.Errorf("patch: %s exists; give the text to replace (old) or create a new path", path)

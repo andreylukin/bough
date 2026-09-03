@@ -252,15 +252,17 @@ func TestRenderSystemBlock(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	d.event("system", "cleared\nsecond line")
+	b := &d.m.blocks[0]
+	if !b.collapsible() || !b.collapsed {
+		t.Fatalf("a multi-line system note is detail: closed and collapsible, got %+v", b)
+	}
+	b.collapsed = false
+	d.m.refresh()
 	if p := d.plain(); !strings.Contains(p, "cleared") || !strings.Contains(p, "second line") {
 		t.Errorf("system block text missing:\n%s", p)
 	}
-	b := &d.m.blocks[0]
-	if b.collapsible() {
-		t.Error("system blocks must not be collapsible")
-	}
-	if p := d.plain(); strings.Contains(p, "▸") || strings.Contains(p, "●") {
-		t.Errorf("system block must have no disclosure or speaker header:\n%s", p)
+	if p := d.plain(); strings.Contains(p, "●") {
+		t.Errorf("an open system block has no speaker header:\n%s", p)
 	}
 }
 
@@ -339,11 +341,13 @@ func TestCollapseExpandFeedbackAndPreviewCap(t *testing.T) {
 	}
 	d.typeStr("/collapse")
 	d.press(keyEnter())
-	if !strings.Contains(d.plain(), "collapsed 1 block") {
+	// Two: the short result and the /expand command's own output — a
+	// note is collapsible too, so collapse-all takes it.
+	if !strings.Contains(d.plain(), "collapsed 2 blocks") {
 		t.Errorf("/collapse should report what it did:\n%s", d.plain())
 	}
-	// Focused (tab lands on the newest block, the huge one), it expands on request.
-	d.press(keyTab())
+	// Focused, the huge block expands on request.
+	d.m.focusID = d.m.blocks[1].id
 	d.typeStr("/expand")
 	d.press(keyEnter())
 	if d.m.blocks[1].collapsed {

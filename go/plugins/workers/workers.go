@@ -50,7 +50,7 @@ Open: questions or blockers for the parent, or "none"`
 
 // promptSection documents tools.spawn to the parent model (registered
 // into the loop's "prompt-sections" service when present).
-const promptSection = `Subagents: tools.spawn(task) -> string runs a bounded child agent (same tools, fresh context, no nested spawns) on the task string and returns its final plain-text reply. Use it to delegate self-contained work, never a shell command.`
+const promptSection = `Subagents: tools.spawn(task) -> string runs a bounded child agent (same tools, fresh context, no nested spawns) on the task string and returns its final report. Use it to delegate self-contained work, never a shell command. Limits: at most %d spawns per turn and %d steps per child — give each child one well-scoped task and do small things yourself.`
 
 // sections is the slice of the loop's "prompt-sections" service we need:
 // Set to advertise tools.spawn to the parent, Text to hand the child the
@@ -71,8 +71,8 @@ func systemFor(base, sections string) string {
 	return s + "\n\n" + SubSystemPrompt
 }
 
-const defaultMaxSpawns = 4
-const defaultMaxSteps = 6
+const defaultMaxSpawns = 8
+const defaultMaxSteps = 20
 const maxResultBytes = 8 * 1024
 
 // jsBlock is a local copy of the loop plugin's fence matcher (unexported
@@ -118,7 +118,7 @@ func (w *Workers) spawn(task string) (string, error) {
 	}
 	if w.spawns >= w.maxSpawns {
 		w.mu.Unlock()
-		return "", fmt.Errorf("workers: spawn limit reached (%d per turn)", w.maxSpawns)
+		return "", fmt.Errorf("workers: spawn limit reached (%d per turn) — do the remaining work yourself in this turn", w.maxSpawns)
 	}
 	w.spawns++
 	w.nextID++
@@ -338,7 +338,7 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	// learns tools.spawn exists. Withdrawn on unmount.
 	if s, err := kernel.Get[sections](kctx, "prompt-sections"); err == nil {
 		w.secs = s
-		s.Set("workers", promptSection)
+		s.Set("workers", fmt.Sprintf(promptSection, maxSpawns, maxSteps))
 		kctx.Effect(func() { s.Set("workers", "") })
 	}
 	return nil

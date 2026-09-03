@@ -145,7 +145,10 @@ func newCfg(t theme, keys map[string]string, status string, hist historyView) *u
 // (Get during Apply registers them as live dependencies: providing one
 // later remounts the ui row) plus the row table for the status bar.
 // rowCfg is the ui row's config: collapse: "all" (default) | "large" |
-// "none" picks which code/result blocks start collapsed.
+// "none" picks what starts closed. Under "all" every detail block —
+// code, result, thinking, a subagent card, and a MULTI-LINE note
+// (error, system, todo) — opens as a one-row header; a one-line note
+// stays as it is, since its header would be longer than the line.
 func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	t := defaultTheme()
 	mdStyle := ""

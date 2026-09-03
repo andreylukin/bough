@@ -147,6 +147,11 @@ func TestTodoEventDedicatedRender(t *testing.T) {
 	if len(d.m.blocks) != 1 || d.m.blocks[0].kind != "todo" {
 		t.Fatalf("want one todo block, got %+v", d.m.blocks)
 	}
+	if !d.m.blocks[0].collapsed {
+		t.Error("a multi-line todo starts closed under collapse: all")
+	}
+	d.m.blocks[0].collapsed = false // open it: the render below is the open one
+	d.m.refresh()
 	p := d.plain()
 	if !strings.Contains(p, "[ ] 1 buy milk") || !strings.Contains(p, "[x] 2 done thing") {
 		t.Errorf("checkbox lines missing:\n%s", p)

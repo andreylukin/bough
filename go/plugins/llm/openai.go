@@ -117,28 +117,38 @@ func (o *openaiLLM) call(ctx context.Context, system string, messages []Message,
 	if err != nil {
 		return "", fmt.Errorf("llm-openai: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.base+"/v1/responses", bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("llm-openai: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+o.key)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("llm-openai: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(resp.Body)
-		return "", openaiErr(resp.StatusCode, o.model, data)
-	}
-	if onDelta != nil {
-		return o.readStream(resp.Body, onDelta)
-	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("llm-openai: %w", err)
-	}
+	delivered := false
+	return withRetries(ctx, func() (string, bool, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.base+"/v1/responses", bytes.NewReader(body))
+		if err != nil {
+			return "", false, fmt.Errorf("llm-openai: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+o.key)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return "", retryableErr(err), fmt.Errorf("llm-openai: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			data, _ := io.ReadAll(resp.Body)
+			return "", retryableStatus(resp.StatusCode), openaiErr(resp.StatusCode, o.model, data)
+		}
+		if onDelta != nil {
+			out, err := o.readStream(resp.Body, func(d string) { delivered = true; onDelta(d) })
+			return out, err != nil && !delivered && retryableErr(err), err
+		}
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", retryableErr(err), fmt.Errorf("llm-openai: %w", err)
+		}
+		out, err := o.parse(data)
+		return out, false, err
+	})
+}
+
+// parse reads a non-streaming Responses body.
+func (o *openaiLLM) parse(data []byte) (string, error) {
 	var r openaiResponse
 	if err := json.Unmarshal(data, &r); err != nil {
 		return "", fmt.Errorf("llm-openai: bad response: %w", err)

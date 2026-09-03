@@ -55,13 +55,20 @@ func TestCollapseDefaults(t *testing.T) {
 		t.Errorf("code header wrong:\n%s", out)
 	}
 
-	// Assistant and error blocks get no disclosure header.
+	// The assistant's prose is the story: never collapsible. A note
+	// (error/system/todo) is detail — collapsible, but a ONE-LINE one
+	// starts open, since its header would be longer than the line.
 	m.addEvent(Event{Kind: "assistant", Text: "hi\nthere\nfriend\nagain"})
 	m.addEvent(Event{Kind: "error", Text: "boom"})
-	for _, i := range []int{3, 4} {
-		if m.blocks[i].collapsed || m.blocks[i].collapsible() {
-			t.Errorf("block %d (%s) should not be collapsible", i, m.blocks[i].kind)
-		}
+	m.addEvent(Event{Kind: "error", Text: "boom\nstack\ntrace"})
+	if m.blocks[3].collapsed || m.blocks[3].collapsible() {
+		t.Errorf("assistant blocks are never collapsible: %+v", m.blocks[3])
+	}
+	if m.blocks[4].collapsed || !m.blocks[4].collapsible() {
+		t.Errorf("a one-line error is collapsible but starts open: %+v", m.blocks[4])
+	}
+	if !m.blocks[5].collapsed {
+		t.Errorf("a multi-line error starts closed under collapse: all: %+v", m.blocks[5])
 	}
 
 	// "large": only blocks over collapseAt lines start collapsed.

@@ -62,8 +62,18 @@ type block struct {
 }
 
 // collapsible blocks get a disclosure header and can be toggled.
+// closedByDefault is the "all" policy: every collapsible block starts
+// closed — the transcript is the story, the detail is a click away.
+func (m *model) closedByDefault(text string) bool {
+	return m.cfg.Load().collapse == "all" && strings.Contains(text, "\n")
+}
+
 func (b *block) collapsible() bool {
-	return b.kind == "code" || b.kind == "result" || b.kind == "thinking" || b.kind == "spawn"
+	switch b.kind {
+	case "code", "result", "thinking", "spawn", "error", "system", "todo":
+		return true
+	}
+	return false
 }
 
 // lineRange maps a rendered line span [start, end) to a block index.
@@ -301,8 +311,8 @@ func (m *model) header(b *block, th theme) string {
 	switch b.kind {
 	case "code":
 		tag = codeLabel(b.text)
-	case "thinking":
-		tag = "thinking"
+	case "thinking", "error", "system", "todo":
+		tag = b.kind
 	}
 	if b.label != "" {
 		tag = b.label
@@ -461,14 +471,27 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		// the system block below reads as its answer.
 		return "\n" + th["dim"].Render("❯ "+b.text)
 	case "system":
-		// Plain dimmed command output: not collapsible, no ● header;
-		// wrapped to width so /help rows never clip off the right edge.
+		// Dimmed command output, wrapped to width so /help rows never
+		// clip off the right edge; a collapsed one is a header row.
+		if b.collapsed {
+			return m.header(b, th)
+		}
 		return th["system"].Width(max(m.width, 10)).Render(b.text)
 	case "error":
 		// Wrap to width — the viewport clips long lines, and the tail
-		// of an error is usually the actionable part.
+		// of an error is usually the actionable part. Collapsed, the
+		// first line stays visible: an error you cannot read is worse
+		// than a row of noise.
 		w := max(m.width, 10)
-		out := th["error"].Width(w).Render("✗ " + b.text)
+		text := b.text
+		glyph := ""
+		if b.collapsible() && strings.Contains(b.text, "\n") {
+			glyph = "▾ "
+			if b.collapsed {
+				glyph, text = "▸ ", strings.SplitN(b.text, "\n", 2)[0]+" …"
+			}
+		}
+		out := th["error"].Width(w).Render(glyph + "✗ " + text)
 		if authErrRe.MatchString(b.text) {
 			out += "\n" + th["dim"].Width(w).Render(authHint)
 		}
@@ -476,6 +499,9 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 	case "todo":
 		// Dedicated todo render: dim tag + checkbox lines, done items
 		// dimmed. See addEvent for the one-render-per-mutation rule.
+		if b.collapsed {
+			return m.header(b, th)
+		}
 		lines := strings.Split(b.text, "\n")
 		for i, l := range lines {
 			if strings.HasPrefix(l, "[x]") {
@@ -635,7 +661,7 @@ func (m *model) addEvent(ev Event) {
 		// turn with "done", which is what stops the spinner and expires
 		// asks). Ending the turn here froze the spinner mid-run and
 		// hid the recovery that followed.
-		m.blocks = append(m.blocks, block{id: id, kind: "error", text: errorText(ev.Text)})
+		m.blocks = append(m.blocks, block{id: id, kind: "error", text: errorText(ev.Text), collapsed: m.closedByDefault(errorText(ev.Text))})
 		m.flushTrailing()
 	case "ask":
 		m.blocks = append(m.blocks, block{id: id, kind: "ask", text: ev.Text,
@@ -688,9 +714,11 @@ func (m *model) addEvent(ev Event) {
 				return
 			}
 		}
-		m.blocks = append(m.blocks, block{id: id, kind: "todo", text: ev.Text})
+		m.blocks = append(m.blocks, block{id: id, kind: "todo", text: ev.Text, collapsed: m.closedByDefault(ev.Text)})
 	default: // assistant, anything future
-		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: ev.Text})
+		// A loop-event system note is detail; command output (slash.go)
+		// is what the user asked for and stays open.
+		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: ev.Text, collapsed: ev.Kind == "system" && m.closedByDefault(ev.Text)})
 	}
 	m.refresh() // pins to the bottom only when it already was there
 	if !m.vp.AtBottom() {
