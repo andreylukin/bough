@@ -29,6 +29,8 @@ func (m *model) statusBar(cfg *uiCfg) string {
 		right = "inspecting · " + cfg.keys["history_inspect"] + " to close"
 	case m.pendingAsk != "":
 		right = "waiting for you"
+	case m.focusedSpawn() >= 0:
+		right = "subagent card · enter folds · " + cfg.keys["history_inspect"] + " opens its transcript"
 	case m.scrollCue() != "":
 		right = m.scrollCue()
 	default:

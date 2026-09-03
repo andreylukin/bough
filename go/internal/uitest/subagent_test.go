@@ -29,7 +29,7 @@ func TestSubagentCardThroughRealWorkers(t *testing.T) {
 	turnDone(d, "parent sees two files")
 	fits(t, d)
 	f := d.Frame()
-	if n := strings.Count(f, "sub 1 ·"); n != 1 {
+	if n := strings.Count(f, "subagent 1 · done"); n != 1 {
 		t.Fatalf("want exactly one card row for worker 1, got %d:\n%s", n, f)
 	}
 	if !strings.Contains(f, "✔") || !strings.Contains(f, "1 call") {
@@ -76,7 +76,7 @@ func TestSubagentCardOnChildError(t *testing.T) {
 	turnDone(d, "parent recovered")
 	fits(t, d)
 	f := d.Frame()
-	if !strings.Contains(f, "✗") || !strings.Contains(f, "sub 1 ·") {
+	if !strings.Contains(f, "✗") || !strings.Contains(f, "subagent 1 ·") {
 		t.Fatalf("card should show ✗ for a failed child:\n%s", f)
 	}
 }

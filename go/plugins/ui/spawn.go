@@ -31,6 +31,7 @@ type subState struct {
 	status  string // "running", "ok", "failed", "error"
 	calls   int
 	last    string // label of the last code event ("Ran: ls")
+	lastOut string // first line of the last result (the heartbeat under last)
 	steps   int
 	errText string
 	started time.Time
@@ -59,7 +60,10 @@ func (m *model) spawnCard(worker int) *block {
 			return b
 		}
 	}
-	m.blocks = append(m.blocks, block{id: m.nextID, kind: "spawn", collapsed: m.cfg.Load().collapse != "none",
+	// Cards start open under every collapse policy: a subagent is
+	// something to watch, and the card's body is the only place its
+	// progress and report show.
+	m.blocks = append(m.blocks, block{id: m.nextID, kind: "spawn",
 		sub: &subState{worker: worker, status: "running", started: time.Now()}})
 	m.nextID++
 	return &m.blocks[len(m.blocks)-1]
@@ -84,13 +88,21 @@ func (m *model) addSubEvent(ev Event) {
 	case "code":
 		s.calls++
 		s.last = codeLabel(ev.Text)
+		s.lastOut = ""
+	case "result":
+		s.lastOut = line(ev.Text, 200)
 	case "assistant":
 		b.text = strings.TrimSpace(ev.Text) // the latest reply is the report
 	case "error":
 		s.errText = strings.SplitN(strings.TrimSpace(ev.Text), "\n", 2)[0]
 		s.status = "error"
 	case "done":
-		s.elapsed = time.Since(s.started)
+		// A replayed history lands in one burst: its cards would all
+		// claim "<1s". No real subagent finishes inside a second, so
+		// that reads as "unknown" and the header omits it.
+		if s.elapsed = time.Since(s.started); s.elapsed < time.Second {
+			s.elapsed = 0
+		}
 		if st, _ := ev.Data["status"].(string); st != "" {
 			s.status = st
 		} else if s.status == "running" {
@@ -109,8 +121,16 @@ func (m *model) addSubEvent(ev Event) {
 	m.refresh()
 }
 
-// renderSpawn is the card: one header row, plus the report in a box
-// when expanded.
+// reportCap is how many report lines a finished card shows inline;
+// the rest is a "+N lines" note (the full transcript is ctrl+o away).
+const reportCap = 6
+
+// renderSpawn is the card. Expanded (the default — a subagent is
+// something to watch, not a tool row to fold): a status header, the
+// whole task under an accent bar, then while running the last call
+// and the first line of its output (the child's heartbeat), and once
+// done the report, capped at reportCap lines. Collapsed: one line with
+// the task cut short. Focus restyles only; the text is the same.
 func (m *model) renderSpawn(b *block, th theme) string {
 	s := b.sub
 	if s == nil { // a bare "spawn" event (no worker state): render as a result
@@ -120,36 +140,41 @@ func (m *model) renderSpawn(b *block, th theme) string {
 	if !b.collapsed {
 		glyph = "▾"
 	}
-	var mark string
+	var mark, state string
 	switch s.status {
 	case "running":
-		mark = m.spin.View()
+		mark, state = m.spin.View(), "running"
 	case "ok":
-		mark = th["accent"].Render("✔")
+		mark, state = th["accent"].Render("✔"), "done"
+	case "failed":
+		mark, state = th["error"].Render("✗"), "reported failure"
 	default:
-		mark = th["error"].Render("✗")
+		mark, state = th["error"].Render("✗"), "error"
 	}
-	task := line(b.label, 60)
-	if task == "" {
-		task = "task"
+	elapsed := s.elapsed
+	if s.status == "running" {
+		elapsed = time.Since(s.started)
 	}
-	parts := []string{fmt.Sprintf("sub %d · %s", s.worker, task)}
+	parts := []string{fmt.Sprintf("subagent %d", s.worker)}
+	if b.collapsed {
+		task := line(b.label, 50)
+		if task == "" {
+			task = "task"
+		}
+		parts = append(parts, task)
+	}
+	parts = append(parts, state)
 	if s.calls > 0 {
 		parts = append(parts, plural(s.calls, "call"))
 	}
-	switch s.status {
-	case "running":
-		if s.last != "" {
-			parts = append(parts, line(s.last, 60))
-		}
-	case "ok":
-		parts = append(parts, fmtElapsed(s.elapsed))
-	case "failed":
-		parts = append(parts, "reported failure")
-	default:
-		if s.errText != "" {
-			parts = append(parts, line(s.errText, 80))
-		}
+	if elapsed >= time.Second {
+		parts = append(parts, fmtElapsed(elapsed))
+	}
+	if b.collapsed && s.status == "running" && s.last != "" {
+		parts = append(parts, line(s.last, 40))
+	}
+	if s.status != "running" && s.status != "ok" && s.status != "failed" && s.errText != "" {
+		parts = append(parts, line(s.errText, 80))
 	}
 	st := th["dim"]
 	if b.id == m.focusID {
@@ -162,15 +187,68 @@ func (m *model) renderSpawn(b *block, th theme) string {
 	if b.collapsed {
 		return head
 	}
-	body := b.text
-	if body == "" {
-		if s.status == "running" {
-			body = "(working…)"
-		} else {
-			body = "(no report)"
-		}
+
+	// The body: an accent bar down the left, the task in full, then
+	// the heartbeat or the report.
+	w := m.width - 4
+	if w < 10 {
+		w = 10
 	}
-	return head + "\n" + m.box(body, th["result"], th["border"])
+	bar := th["accent"].Render("┃")
+	if s.status != "running" {
+		bar = th["border"].Render("┃")
+	}
+	var rows []string
+	task := strings.TrimSpace(sanitizeText(b.label))
+	if task == "" {
+		task = "task"
+	}
+	for _, ln := range strings.Split(th["dim"].Width(w).Render(task), "\n") {
+		rows = append(rows, "  "+bar+" "+ln)
+	}
+	switch {
+	case s.status == "running":
+		if s.last != "" {
+			rows = append(rows, "  "+bar+" "+m.spin.View()+" "+th["dim"].Render(line(s.last, w-2)))
+			if s.lastOut != "" {
+				rows = append(rows, "  "+bar+"   "+th["dim"].Render(line(s.lastOut, w-4)))
+			}
+		} else {
+			rows = append(rows, "  "+bar+" "+m.spin.View()+" "+th["dim"].Render("starting…"))
+		}
+		return head + "\n" + strings.Join(rows, "\n")
+	case s.errText != "" && s.status != "failed":
+		rows = append(rows, "  "+bar+" "+th["error"].Render(line(s.errText, w-2)))
+	}
+	body := reportBody(sanitizeText(b.text))
+	if body == "" {
+		body = "(no report)"
+	}
+	if lines := strings.Split(body, "\n"); len(lines) > reportCap {
+		body = strings.Join(lines[:reportCap], "\n") +
+			fmt.Sprintf("\n… +%d lines · ctrl+o opens the full transcript", len(lines)-reportCap)
+	}
+	return head + "\n" + strings.Join(rows, "\n") + "\n" + m.box(body, th["result"], th["border"])
+}
+
+// reportBody strips the report contract's scaffolding — a "REPORT"
+// heading and the "Status:" line the header already shows — and
+// squeezes blank runs, so the capped inline view spends its lines on
+// findings.
+func reportBody(text string) string {
+	var out []string
+	for _, ln := range strings.Split(strings.TrimSpace(text), "\n") {
+		t := strings.TrimSpace(ln)
+		lower := strings.ToLower(t)
+		if lower == "report" || lower == "# report" || strings.HasPrefix(lower, "status:") {
+			continue
+		}
+		if t == "" && (len(out) == 0 || out[len(out)-1] == "") {
+			continue
+		}
+		out = append(out, ln)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
 func fmtElapsed(d time.Duration) string {

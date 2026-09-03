@@ -4,6 +4,7 @@ package ui
 // unknown kinds.
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -504,10 +505,11 @@ func TestAssistantDeltasBuildLiveBlockThenReplaced(t *testing.T) {
 	}
 }
 
-// A subagent's events fold into ONE card per worker, collapsed by
-// default under every policy but "none": the header carries the task,
-// call count and last call while running, then the status; the body is
-// the child's report.
+// A subagent's events fold into ONE card per worker, open by default
+// under every policy: the header carries the state, call count and
+// elapsed; the body the whole task, then the last call and its first
+// output line while running, then the child's report (capped) once
+// done. Collapsed, it is one line with the task cut short.
 func TestSubagentEventsFoldIntoOneCard(t *testing.T) {
 	for _, mode := range []string{"all", "large"} {
 		m := testModelCollapse(t, mode)
@@ -515,42 +517,64 @@ func TestSubagentEventsFoldIntoOneCard(t *testing.T) {
 		m.addEvent(Event{Kind: "sub:start", Text: "count the files", Data: w})
 		m.addEvent(Event{Kind: "sub:assistant", Text: "on it\n```js\ntools.bash(\"ls\")\n```", Data: w})
 		m.addEvent(Event{Kind: "sub:code", Text: "console.log(tools.bash(\"ls\"))", Data: w})
-		if len(m.blocks) != 1 || m.blocks[0].kind != "spawn" || !m.blocks[0].collapsed || !m.blocks[0].collapsible() {
-			t.Fatalf("%s: want one collapsed spawn card, got %+v", mode, m.blocks)
+		if len(m.blocks) != 1 || m.blocks[0].kind != "spawn" || m.blocks[0].collapsed || !m.blocks[0].collapsible() {
+			t.Fatalf("%s: want one open spawn card, got %+v", mode, m.blocks)
 		}
-		head := stripANSI(m.render(&m.blocks[0], m.cfg.Load()))
-		for _, want := range []string{"sub 2 · count the files", "1 call", "Ran: ls"} {
-			if !strings.Contains(head, want) {
-				t.Fatalf("%s: running header missing %q: %q", mode, want, head)
+		card := stripANSI(m.render(&m.blocks[0], m.cfg.Load()))
+		for _, want := range []string{"subagent 2", "running", "1 call", "┃ count the files", "Ran: ls"} {
+			if !strings.Contains(card, want) {
+				t.Fatalf("%s: running card missing %q:\n%s", mode, want, card)
 			}
 		}
 		m.addEvent(Event{Kind: "sub:result", Text: "a\nb\n", Data: w})
+		if card = stripANSI(m.render(&m.blocks[0], m.cfg.Load())); !strings.Contains(card, "Ran: ls\n") || !strings.Contains(card, "┃   a") {
+			t.Fatalf("%s: running card should show the last output line under the call:\n%s", mode, card)
+		}
 		m.addEvent(Event{Kind: "sub:assistant", Text: "Status: ok\nFindings: two files", Data: w})
 		m.addEvent(Event{Kind: "sub:done", Data: map[string]any{"worker": 2, "status": "ok", "steps": 2}})
 		if len(m.blocks) != 1 {
 			t.Fatalf("%s: done must not add blocks, got %d", mode, len(m.blocks))
 		}
-		head = stripANSI(m.render(&m.blocks[0], m.cfg.Load()))
-		if strings.Count(head, "\n") != 0 || !strings.Contains(head, "✔") || !strings.Contains(head, "1 call") || strings.Contains(head, "Ran: ls") {
-			t.Fatalf("%s: finished collapsed header should be one ✔ line with the count, no last call: %q", mode, head)
+		card = stripANSI(m.render(&m.blocks[0], m.cfg.Load()))
+		if strings.Contains(card, "<1s") {
+			t.Fatalf("%s: an instant (replayed) card must not claim an elapsed time:\n%s", mode, card)
 		}
-		m.blocks[0].collapsed = false
-		body := stripANSI(m.render(&m.blocks[0], m.cfg.Load()))
-		if !strings.Contains(body, "Findings: two files") || strings.Contains(body, "on it") {
-			t.Fatalf("%s: expanded card shows the report, not earlier replies:\n%s", mode, body)
+		if !strings.Contains(card, "✔") || !strings.Contains(card, "done · 1 call") || strings.Contains(card, "Ran: ls") ||
+			!strings.Contains(card, "Findings: two files") || strings.Contains(card, "on it") {
+			t.Fatalf("%s: finished card shows ✔, the count, the report, no call or earlier replies:\n%s", mode, card)
+		}
+		m.blocks[0].collapsed = true
+		head := stripANSI(m.render(&m.blocks[0], m.cfg.Load()))
+		if strings.Count(head, "\n") != 0 || !strings.Contains(head, "subagent 2 · count the files · done") {
+			t.Fatalf("%s: collapsed card should be one line with the task: %q", mode, head)
 		}
 		if n := len(m.blocks[0].sub.log); n != 4 {
 			t.Fatalf("%s: child transcript has %d events, want 4", mode, n)
 		}
 	}
-	m := testModelCollapse(t, "none")
-	m.addEvent(Event{Kind: "sub:start", Text: "x", Data: map[string]any{"worker": 1}})
-	if m.blocks[0].collapsed {
-		t.Fatal("collapse: none must expand spawn cards too")
+}
+
+func TestReportBodyStripsScaffolding(t *testing.T) {
+	t.Parallel()
+	got := reportBody("REPORT\n\nStatus: ok\n\nFindings:\n- two files\n\n\nOpen: none\n")
+	if got != "Findings:\n- two files\n\nOpen: none" {
+		t.Fatalf("reportBody = %q", got)
 	}
 }
 
-// A child that errors or reports failure shows ✗ with the reason.
+// A long report is capped inline; the note points at the transcript.
+func TestSubagentReportCapped(t *testing.T) {
+	m := testModel(t)
+	w := map[string]any{"worker": 1}
+	m.addEvent(Event{Kind: "sub:start", Text: "t", Data: w})
+	m.addEvent(Event{Kind: "sub:assistant", Text: nLines(reportCap + 5), Data: w})
+	m.addEvent(Event{Kind: "sub:done", Data: map[string]any{"worker": 1, "status": "ok"}})
+	card := stripANSI(m.render(&m.blocks[0], m.cfg.Load()))
+	if !strings.Contains(card, "… +5 lines") || strings.Contains(card, "l"+strconv.Itoa(reportCap+1)) {
+		t.Fatalf("report should be capped at %d lines:\n%s", reportCap, card)
+	}
+}
+
 func TestSubagentCardFailureStates(t *testing.T) {
 	m := testModel(t)
 	w := map[string]any{"worker": 1}
