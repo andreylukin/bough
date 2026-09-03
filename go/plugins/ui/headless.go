@@ -279,12 +279,27 @@ func hlBang(line string) {
 // drainHeadless waits for every sent line's "done" (with an idle
 // timeout), so quitting never races an in-flight turn's output.
 func drainHeadless() {
+	idle := hlIdleTimeout()
 	for hlPending.Load() > 0 {
 		select {
 		case <-hlTick:
-		case <-time.After(60 * time.Second):
-			fmt.Fprintln(os.Stderr, "ui: headless: timed out waiting for loop to finish")
+		case <-time.After(idle):
+			fmt.Fprintf(os.Stderr, "ui: headless: no loop event for %s, giving up (BOUGH_HEADLESS_IDLE)\n", idle)
 			hlPending.Store(0)
 		}
 	}
+}
+
+// hlIdleTimeout is how long the drain waits between loop events before
+// it gives the turn up: BOUGH_HEADLESS_IDLE seconds, default 30 min. A
+// long model call or a long tool run produces no event while it runs,
+// so this is a hang guard, not a turn budget — the caller's own
+// timeout is the budget.
+func hlIdleTimeout() time.Duration {
+	if s := os.Getenv("BOUGH_HEADLESS_IDLE"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 30 * time.Minute
 }
