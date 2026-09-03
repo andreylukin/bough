@@ -377,7 +377,7 @@ func TestDoneChipShowsExit(t *testing.T) {
 	d := mountLLM(t, stub)
 	d.Say("x")
 	turnDone(d, "after")
-	if f := d.Frame(); !strings.Contains(f, "✔ exit 7") {
+	if f := d.Frame(); !strings.Contains(f, "✗ exit 7") {
 		t.Fatalf("done chip missing exit 7:\n%s", f)
 	}
 }

@@ -31,12 +31,14 @@ func defaultTheme() theme {
 		"result":    "",
 		"error":     "1",
 		"accent":    "6",
-		"dim":       "8",
-		"border":    "8",
-		"status":    "250:236",
-		"focus":     "6:bold",
-		"select":    "254:237", // palette selected row: near-white on dark grey bar
-		"system":    "8",       // dim "/" command output blocks
+		// 245 (mid grey) reads on dark and light grounds alike; ANSI 8
+		// ("bright black") is near-invisible on a navy or black theme.
+		"dim":    "245",
+		"border": "245",
+		"status": "250:236",
+		"focus":  "6:bold",
+		"select": "254:237", // palette selected row: near-white on dark grey bar
+		"system": "245",     // dim "/" command output blocks
 	}
 	t := theme{}
 	for k, v := range spec {

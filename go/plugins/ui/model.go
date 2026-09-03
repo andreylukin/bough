@@ -270,8 +270,14 @@ func (m *model) header(b *block, th theme) string {
 	if n == 1 {
 		unit = "line"
 	}
-	preview := strings.SplitN(b.text, "\n", 2)[0]
-	head := fmt.Sprintf("%s %s (%d %s): %s", glyph, tag, n, unit, preview)
+	// A recognized call ("Ran: …", "Edited …") already says what the
+	// code does: the raw `console.log(tools.bash(…` preview underneath
+	// it only leaked internals. Unlabeled code and results keep their
+	// first line as the preview.
+	head := fmt.Sprintf("%s %s (%d %s)", glyph, tag, n, unit)
+	if b.kind != "code" || tag == "code js" {
+		head += ": " + strings.SplitN(b.text, "\n", 2)[0]
+	}
 	if r := []rune(head); len(r) > m.width-1 && m.width > 2 {
 		head = string(r[:m.width-2]) + "…"
 	}
@@ -289,7 +295,8 @@ func (m *model) welcomeView(cfg *uiCfg) string {
 	th := cfg.theme
 	return th["accent"].Render("● ") + th["dim"].Render("bough — a coding agent") + "\n" +
 		th["dim"].Render("  type / for commands (/help lists them) · /keys or ? for the keys") + "\n" +
-		th["dim"].Render("  !cmd runs a shell command") + "\n" +
+		th["dim"].Render("  enter sends · ctrl+j or a trailing \\ starts a new line · esc stops a turn") + "\n" +
+		th["dim"].Render("  tab picks a ▸ step, enter expands it · !cmd runs a shell command") + "\n" +
 		th["dim"].Render("  ask me to do something — I act by running code")
 }
 
@@ -378,7 +385,7 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 	case "done":
 		return m.renderDone(b, th)
 	case "cancelled":
-		return th["dim"].Render("■ cancelled")
+		return th["accent"].Bold(true).Render("■ cancelled") + th["dim"].Render(" — stopped by you")
 	default:
 		return th["dim"].Render(b.kind+" ") + b.text
 	}
@@ -899,6 +906,14 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key == "enter" && !m.inspecting {
+		// A trailing backslash asks for a newline, not a send: the one
+		// newline key that survives every terminal and the browser
+		// (xterm.js sends shift+enter as a plain enter).
+		if v := m.input.Value(); strings.HasSuffix(v, "\\") {
+			m.setDraft(strings.TrimSuffix(v, "\\") + "\n")
+			m.input.CursorEnd()
+			return m, nil
+		}
 		line := strings.TrimSpace(m.input.Value())
 		if line == "" {
 			return m, nil

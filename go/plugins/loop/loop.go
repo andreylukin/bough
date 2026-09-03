@@ -238,6 +238,9 @@ func stripFakeBlocks(reply string) string {
 // "system" output entry -> user "[shell]\n$ cmd\noutput". "/" command
 // entries are UI-only. Other kinds (code, error, done) carry no
 // model-visible text. Pure: no state, entries in -> messages out.
+// cancelledNote is what a cancelled turn projects to.
+const cancelledNote = "[cancelled] The user interrupted this turn. Do not resume or redo its work unless asked again."
+
 func DefaultProject(entries []history.Entry) []llm.Message {
 	var msgs []llm.Message
 	for i := 0; i < len(entries); i++ {
@@ -250,6 +253,17 @@ func DefaultProject(entries []history.Entry) []llm.Message {
 			msgs = append(msgs, llm.Message{Role: "assistant", Content: text})
 		case "result":
 			msgs = append(msgs, llm.Message{Role: "user", Content: "[tool output]\n" + text})
+		case "cancelled":
+			// The user interrupted the turn. Without this the killed
+			// request sits in context looking merely unfinished, and a
+			// later unrelated question resumed it (re-running the slow
+			// command that was cancelled). Folded into the preceding
+			// user message when there is one, so roles keep alternating.
+			if n := len(msgs); n > 0 && msgs[n-1].Role == "user" {
+				msgs[n-1].Content += "\n\n" + cancelledNote
+			} else {
+				msgs = append(msgs, llm.Message{Role: "user", Content: cancelledNote})
+			}
 		case "command":
 			if !strings.HasPrefix(text, "!") {
 				continue

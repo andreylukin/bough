@@ -1,8 +1,8 @@
-[36m● [m[90mbough — a coding agent[m                                                        
-[90m  type / for commands (/help lists them) · /keys or ? for the keys[m              
-[90m  !cmd runs a shell command[m                                                     
-[90m  ask me to do something — I act by running code[m                                
-                                                                                
+[36m● [m[38;5;245mbough — a coding agent[m                                                        
+[38;5;245m  type / for commands (/help lists them) · /keys or ? for the keys[m              
+[38;5;245m  enter sends · ctrl+j or a trailing \ starts a new line · esc stops a turn[m     
+[38;5;245m  tab picks a ▸ step, enter expands it · !cmd runs a shell command[m              
+[38;5;245m  ask me to do something — I act by running code[m                                
                                                                                 
                                                                                 
                                                                                 

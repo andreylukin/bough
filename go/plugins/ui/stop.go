@@ -2,7 +2,7 @@ package ui
 
 // Stopping things: the quit key (ctrl+c by default) cancels the turn
 // in flight, and when idle arms a two-press quit; esc cancels a turn
-// too (or clears the composer); ctrl+d on an idle, empty composer
+// too (a non-empty composer clears first); ctrl+d on an idle, empty composer
 // quits outright. The turn cancel goes through the loop's "cancel"
 // service — the loop records and renders the "cancelled" row, the UI
 // only reports that it asked.
@@ -17,7 +17,7 @@ import (
 )
 
 // quitWindow is how long a first quit press stays armed.
-const quitWindow = 1500 * time.Millisecond
+const quitWindow = 3 * time.Second
 
 const quitHint = "press ctrl+c again to quit"
 
@@ -55,13 +55,17 @@ func (m *model) stopKey(key string, cfg *uiCfg) (bool, tea.Cmd) {
 		m.stop.armedAt = now
 		m.flash = strings.Replace(quitHint, "ctrl+c", cfg.keys["quit"], 1)
 		return true, nil
-	case key == "esc" && m.running && !m.inspecting:
-		m.cancelTurn()
-		return true, nil
+	// A draft goes before the turn: esc with text in the composer
+	// (typed, or a recalled prompt) clears it, and only an empty
+	// composer's esc cancels the turn in flight. Clearing a draft is
+	// cheap to redo; a cancelled turn is not.
 	case key == "esc" && !m.inspecting && m.input.Value() != "":
 		m.input.Reset()
 		m.syncPalette()
 		m.layoutComposer()
+		return true, nil
+	case key == "esc" && m.running && !m.inspecting:
+		m.cancelTurn()
 		return true, nil
 	case key == "ctrl+d" && !m.running && m.input.Value() == "":
 		return true, tea.Quit

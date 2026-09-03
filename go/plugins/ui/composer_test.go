@@ -239,3 +239,37 @@ func TestComposerGrowsForWrappedLine(t *testing.T) {
 		t.Fatalf("first row not visible:\n%s", d.m.input.View())
 	}
 }
+
+// A recalled prompt announces itself in the status bar: Up is what a
+// user reaches for to scroll, and a silently loaded prompt got typed
+// onto and sent glued together.
+func TestRecallShowsCueAndBackslashEnterNewline(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.say("first prompt")
+	d.say("second prompt")
+	d.press(keyUp())
+	if p := d.plain(); !strings.Contains(p, "recalled prompt 1/2") {
+		t.Fatalf("recall cue missing:\n%s", p)
+	}
+	d.press(keyUp())
+	if p := d.plain(); !strings.Contains(p, "recalled prompt 2/2") {
+		t.Fatalf("second recall cue missing:\n%s", p)
+	}
+	d.press(keyDown())
+	d.press(keyDown())
+	if p := d.plain(); !strings.Contains(p, "draft restored") {
+		t.Fatalf("draft-restored cue missing:\n%s", p)
+	}
+	// A trailing backslash + enter inserts a newline instead of sending.
+	d.typeStr("line one\\")
+	d.press(keyEnter())
+	if got := d.m.input.Value(); got != "line one\n" {
+		t.Fatalf("backslash-enter should insert a newline, got %q", got)
+	}
+	d.typeStr("line two")
+	d.press(keyEnter())
+	if len(d.sent) != 3 || d.sent[2] != "line one\nline two" {
+		t.Errorf("sent = %q", d.sent)
+	}
+}

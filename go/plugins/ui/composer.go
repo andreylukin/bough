@@ -8,6 +8,8 @@ package ui
 // are the textarea's own bindings.
 
 import (
+	"fmt"
+
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
@@ -121,6 +123,7 @@ func (m *model) composerKey(key string, msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			return true, nil // oldest already shown
 		}
 		m.setDraft(ps[m.comp.recall])
+		m.flash = recallNote(m.comp.recall, len(ps))
 		return true, nil
 	case "down":
 		if m.input.Line() < m.input.LineCount()-1 {
@@ -133,8 +136,10 @@ func (m *model) composerKey(key string, msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		if m.comp.recall++; m.comp.recall >= len(ps) {
 			m.comp.recall = -1
 			m.setDraft(m.comp.draft)
+			m.flash = "draft restored"
 		} else {
 			m.setDraft(ps[m.comp.recall])
+			m.flash = recallNote(m.comp.recall, len(ps))
 		}
 		return true, nil
 	case "home", "end":
@@ -149,6 +154,13 @@ func (m *model) composerKey(key string, msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// recallNote is the status-bar cue while a past prompt sits in the
+// composer: Up put it there silently, and a user who meant to scroll
+// would otherwise type onto its end and send the two glued together.
+func recallNote(i, n int) string {
+	return fmt.Sprintf("↑ recalled prompt %d/%d · esc clears · ↓ back", n-i, n)
 }
 
 // editKey feeds one key straight to the textarea.

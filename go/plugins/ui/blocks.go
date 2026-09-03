@@ -62,13 +62,29 @@ func splitAtFence(text, code string) (before, after string, ok bool) {
 // callRe matches the first tools.<name>(<string literal>?) call.
 var callRe = regexp.MustCompile("tools\\.(\\w+)\\(\\s*(?:\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)'|`([^`]*)`)?")
 
-// codeLabel derives a human header tag from a code block's first tool
-// call; "code js" when nothing recognizable leads the block.
+// codeLabel derives a human header tag from a code block's tool
+// calls: the first recognized call, plus " · " and the second when the
+// block makes more than one (an edit followed by the test run reads as
+// both, not just "Edited"); "code js" when nothing recognizable leads
+// the block.
 func codeLabel(code string) string {
-	m := callRe.FindStringSubmatch(code)
-	if m == nil {
+	var parts []string
+	for _, m := range callRe.FindAllStringSubmatch(code, 3) {
+		if l := callLabel(m); l != "" && (len(parts) == 0 || parts[len(parts)-1] != l) {
+			parts = append(parts, l)
+		}
+		if len(parts) == 2 {
+			break
+		}
+	}
+	if len(parts) == 0 {
 		return "code js"
 	}
+	return strings.Join(parts, " · ")
+}
+
+// callLabel names one callRe match; "" for an unrecognized tool.
+func callLabel(m []string) string {
 	arg := m[2] + m[3] + m[4]
 	if r := []rune(arg); len(r) > 60 {
 		arg = string(r[:60]) + "…"
@@ -85,7 +101,7 @@ func codeLabel(code string) string {
 	case "spawn":
 		return "Subagent: " + arg
 	}
-	return "code js"
+	return ""
 }
 
 // binaryText reports whether text is mostly non-printable (a cat of a
@@ -166,13 +182,19 @@ func doneSummary(files []string, exit int, hasExit bool) string {
 	if len(files) > 0 {
 		parts = append(parts, "wrote "+strings.Join(files, ", "))
 	}
-	if hasExit {
+	// A -1 exit is a killed or cancelled command, already reported in
+	// its own error row; "✔ exit -1" only read as a contradiction.
+	if hasExit && exit >= 0 {
 		parts = append(parts, fmt.Sprintf("exit %d", exit))
 	}
 	if len(parts) == 0 {
 		return ""
 	}
-	return "✔ " + strings.Join(parts, " · ")
+	mark := "✔"
+	if hasExit && exit > 0 {
+		mark = "✗"
+	}
+	return mark + " " + strings.Join(parts, " · ")
 }
 
 // safeView runs one frame render, turning a panic into a single error
@@ -360,6 +382,12 @@ func collapseNote(collapsed bool, n int) string {
 	unit := "blocks"
 	if n == 1 {
 		unit = "block"
+	}
+	if n == 0 {
+		if collapsed {
+			return "nothing to collapse: every step is already folded"
+		}
+		return "nothing to expand: every step is already open"
 	}
 	if collapsed {
 		return fmt.Sprintf("collapsed %d %s", n, unit)

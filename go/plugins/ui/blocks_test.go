@@ -40,7 +40,7 @@ func TestRenderCodeHeaderAndBox(t *testing.T) {
 	d.press(keyTab()) // focus the code block (starts collapsed)
 	d.press(keyEnter())
 	p := d.plain()
-	if !strings.Contains(p, `▾ Ran: echo hi (1 line): tools.bash("echo hi")`) {
+	if !strings.Contains(p, "▾ Ran: echo hi (1 line)") || strings.Contains(p, `(1 line): tools.bash`) {
 		t.Errorf("code block missing expanded disclosure header:\n%s", p)
 	}
 	if !strings.Contains(p, `tools.bash("echo hi")`) {
@@ -311,6 +311,8 @@ func TestCodeLabels(t *testing.T) {
 		`tools.spawn("review the diff")`: "Subagent: review the diff",
 		`console.log(1)`:                 "code js",
 		`tools.bash(cmd)`:                "Ran: ",
+		"tools.patch(\"calc.py\", a, b); console.log(tools.bash(\"python3 test_calc.py\"))": "Edited calc.py · Ran: python3 test_calc.py",
+		"tools.bash(\"ls\"); tools.bash(\"ls\"); tools.bash(\"pwd\")":                       "Ran: ls · Ran: pwd",
 	} {
 		if got := codeLabel(code); got != want {
 			t.Errorf("codeLabel(%q) = %q, want %q", code, got, want)
@@ -645,5 +647,21 @@ func TestStreamingHidesTheFenceBeingWritten(t *testing.T) {
 	prose, coding := liveView("```js\nx")
 	if prose != "" || !coding {
 		t.Fatalf("fence-first reply: %q %v", prose, coding)
+	}
+}
+
+func TestDoneSummaryMarksFailureAndHidesKilled(t *testing.T) {
+	t.Parallel()
+	if got := doneSummary(nil, 1, true); got != "✗ exit 1" {
+		t.Errorf("nonzero exit = %q", got)
+	}
+	if got := doneSummary(nil, -1, true); got != "" {
+		t.Errorf("killed (-1) should render nothing, got %q", got)
+	}
+	if got := doneSummary([]string{"a"}, -1, true); got != "✔ wrote a" {
+		t.Errorf("killed with files = %q", got)
+	}
+	if got := collapseNote(true, 0); !strings.Contains(got, "already folded") {
+		t.Errorf("zero collapse note = %q", got)
 	}
 }

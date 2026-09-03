@@ -264,6 +264,30 @@ func TestDefaultProject(t *testing.T) {
 	}
 }
 
+// A cancelled turn projects a marker into the preceding user message
+// (or its own when nothing precedes it), so the model does not resume
+// the interrupted work on the next unrelated question.
+func TestDefaultProjectCancelled(t *testing.T) {
+	entries := []history.Entry{
+		{Kind: "input", Data: map[string]any{"text": "list every file"}},
+		{Kind: "cancelled", Data: map[string]any{}},
+		{Kind: "done", Data: map[string]any{}},
+		{Kind: "input", Data: map[string]any{"text": "what time is it"}},
+	}
+	got := DefaultProject(entries)
+	if len(got) != 2 || got[0].Role != "user" || got[0].Content != "list every file\n\n"+cancelledNote || got[1].Content != "what time is it" {
+		t.Fatalf("DefaultProject = %v", got)
+	}
+	got = DefaultProject([]history.Entry{
+		{Kind: "input", Data: map[string]any{"text": "x"}},
+		{Kind: "assistant", Data: map[string]any{"text": "ok"}},
+		{Kind: "cancelled", Data: map[string]any{}},
+	})
+	if len(got) != 3 || got[2].Role != "user" || got[2].Content != cancelledNote {
+		t.Fatalf("DefaultProject after assistant = %v", got)
+	}
+}
+
 func TestDefaultProjectBangCommands(t *testing.T) {
 	entries := []history.Entry{
 		{Kind: "command", Data: map[string]any{"text": "/help"}},

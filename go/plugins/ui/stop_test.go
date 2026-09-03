@@ -105,7 +105,7 @@ func TestQuitArmExpires(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	d.m.stop.now = func() time.Time { return now }
 	d.press(keyCtrl('c'))
-	now = now.Add(2 * time.Second)
+	now = now.Add(quitWindow + time.Second)
 	if hasQuit(d.press(keyCtrl('c'))) {
 		t.Fatal("second press after the window should re-arm, not quit")
 	}

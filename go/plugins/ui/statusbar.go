@@ -45,6 +45,14 @@ func (m *model) statusBar(cfg *uiCfg) string {
 	}
 	right += " "
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 && m.flash == "" {
+		// Narrow pane: the usage/scroll cue goes before "? keys" does.
+		right = "? keys "
+		if m.running && m.pendingAsk == "" {
+			right = m.spin.View() + " " + right
+		}
+		gap = m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	}
 	if gap < 1 {
 		gap = 1
 	}
