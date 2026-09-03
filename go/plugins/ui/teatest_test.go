@@ -24,6 +24,9 @@ func sendQuit(tm *teatest.TestModel) {
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 }
 
+// waitBudget is generous on purpose: CI runs under -race on two vCPUs.
+const waitBudget = 15 * time.Second
+
 func startProgram(t *testing.T, events chan Event, sendFn func(string)) *teatest.TestModel {
 	t.Helper()
 	t.Cleanup(func() { close(events) }) // unblock the final waitEvent
@@ -47,7 +50,7 @@ func waitForOutput(t *testing.T, tm *teatest.TestModel, wants ...string) {
 			}
 		}
 		return true
-	}, teatest.WithDuration(4*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
+	}, teatest.WithDuration(waitBudget), teatest.WithCheckInterval(10*time.Millisecond))
 }
 
 func TestProgramTurnFlow(t *testing.T) {
@@ -84,7 +87,7 @@ func TestProgramSpinnerBetweenSendAndDone(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
 		return spinnerFrameIn(string(b))
-	}, teatest.WithDuration(4*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
+	}, teatest.WithDuration(waitBudget), teatest.WithCheckInterval(10*time.Millisecond))
 
 	close(gate)
 	waitForOutput(t, tm, "late")

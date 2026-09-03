@@ -27,7 +27,9 @@ jobs:
           cache: true # modules + build cache
           cache-dependency-path: go/go.sum
       - run: go vet ./...
-      - run: go test -race -parallel 16 ./...
+      # Two vCPUs: 16-way parallelism only starves the timing-sensitive
+      # TUI and PTY tests. -race is the point of running it here.
+      - run: go test -race -parallel 4 -timeout 20m ./...
 
   web-e2e:
     runs-on: ubuntu-latest

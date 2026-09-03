@@ -377,6 +377,8 @@ func TestHeadlessQuietStderr(t *testing.T) {
 	out := runHeadless(t, launchOpts{}, "hello")
 	mustNotContain(t, out, "bough: using", "reloading (service", "tools bound")
 
+	// Which rows reload (and on which service) depends on mount order
+	// within a pass, so assert the chatter is back, not one exact line.
 	loud := runHeadless(t, launchOpts{args: []string{"--verbose"}}, "hello")
-	mustContain(t, loud, `reloading (service "history" changed)`)
+	mustContain(t, loud, "reloading (service")
 }

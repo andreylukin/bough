@@ -22,7 +22,9 @@ import (
 	"github.com/andreylukin/bough/plugins/ui"
 )
 
-const waitTimeout = 4 * time.Second
+// Generous on purpose: CI runs the whole tree under -race on two vCPUs,
+// where a turn that spawns a shell can take seconds to come back.
+const waitTimeout = 15 * time.Second
 
 // LLMFunc adapts a pure func to the "llm" service for deterministic
 // stub providers. It is the test's parrot: no network, ever.
