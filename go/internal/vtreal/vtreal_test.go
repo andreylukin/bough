@@ -350,7 +350,16 @@ func TestDoubleCtrlCExitsCleanly(t *testing.T) {
 	case <-time.After(8 * time.Second):
 		t.Fatalf("process did not exit after two ctrl+c:\n%s", a.text())
 	}
-	if a.term.Snapshot().AltScreen {
+	// The process has exited; the emulator may still be draining the
+	// bytes that leave the alt screen. Give it a moment under load.
+	left := false
+	for i := 0; i < 100 && !left; i++ {
+		left = !a.term.Snapshot().AltScreen
+		if !left {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	if !left {
 		t.Fatalf("still in the alt screen after exit")
 	}
 }
