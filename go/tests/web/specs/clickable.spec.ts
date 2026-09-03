@@ -141,5 +141,10 @@ test('click toggling still correct after a browser resize', async ({ launchBough
   const row = await findRow(page, '▸ result (30 lines)');
   expect(row).toBeGreaterThanOrEqual(0);
   await clickCell(page, row, 2);
+  // Expanding keeps the header on screen; at this height the 30-line
+  // body runs past the bottom, so the tail is one page down.
+  await waitForTermText(page, '▾ result (30 lines)');
+  await waitForTermText(page, 'RESLINE_1_X');
+  await page.keyboard.press('PageDown');
   await waitForTermText(page, 'RESLINE_30_X');
 });

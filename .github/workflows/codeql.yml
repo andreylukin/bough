@@ -31,15 +31,25 @@ jobs:
       matrix:
         include:
           - language: go
-            build-mode: none
+            build-mode: manual
           - language: actions
             build-mode: none
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        if: matrix.language == 'go'
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
       - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+      # Go has no "none" build mode: the module lives under go/, so build it
+      # by hand where autobuild would look at the repo root and find nothing.
+      - if: matrix.language == 'go'
+        run: go build ./...
+        working-directory: go
       - uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"

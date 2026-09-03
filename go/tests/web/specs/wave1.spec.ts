@@ -76,14 +76,15 @@ test('a spawn renders sub: blocks and the parent reply carries the child output'
   await boot(page, b.url);
   await say(page, 'go');
 
-  // Child activity surfaces as sub:* blocks (unknown-kind fallback).
-  await waitForTermText(page, 'sub:code');
-  await waitForTermText(page, 'sub:result');
-  await waitForTermText(page, 'from-child');
-  await waitForTermText(page, 'sub:assistant');
-  await waitForTermText(page, 'CHILD_FINAL');
-  await waitForTermText(page, 'sub:done');
+  // One card per spawn, updated in place: task, call count, and a
+  // ✔ once the child is done.
+  await waitForTermText(page, 'sub 1 · run the echo');
+  await waitForTermText(page, '✔ sub 1');
 
-  // The child's answer re-enters the parent turn as the spawn result.
+  // The child's answer re-enters the parent turn as the spawn result,
+  // under its provenance line.
+  await waitForTermText(page, '[subagent 1 · task: run the echo]');
+  await waitForTermText(page, 'CHILD_FINAL');
+  await waitForTermText(page, 'from-child');
   await waitForTermText(page, 'PARENT_FINAL');
 });

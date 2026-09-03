@@ -56,9 +56,12 @@ test('ctrl+c ends one web session; the server and other sessions survive', async
     await ask(page, 'about to quit', 'echo: about to quit');
 
     await page.click('#terminal');
+    // ctrl+c on an idle session arms a two-press quit (1.5 s window);
+    // the second press quits the bubbletea program for THIS session,
+    // and sip reports the session end and drops the connection.
     await page.keyboard.press('Control+c');
-    // The bubbletea program for THIS session quits; sip reports the
-    // session end and drops the connection.
+    await waitForTermText(page, 'press ctrl+c again to quit');
+    await page.keyboard.press('Control+c');
     await page.waitForFunction(
       () => !(window as any).sipTerm.connected,
       null,

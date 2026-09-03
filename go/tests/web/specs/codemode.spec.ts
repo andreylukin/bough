@@ -6,7 +6,7 @@ test('CODE! runs the js block and shows code, result, and done separator', async
   const b = await launchBough();
   await boot(page, b.url);
   await say(page, 'CODE!');
-  // The code box carries the js tag and the tool call.
+  // The code header names the action and carries the tool call.
   await waitForTermText(page, 'tools.bash');
   // The bash tool actually ran.
   await waitForTermText(page, 'hi from codemode');
@@ -14,7 +14,7 @@ test('CODE! runs the js block and shows code, result, and done separator', async
   await waitForTermText(page, 'echo: [tool output]');
   await waitForTermText(page, '────────');
   const screen = await termText(page);
-  expect(screen).toContain('js');
+  expect(screen).toContain('Ran: echo hi from codemode');
   expect(screen).toContain('result');
 });
 
@@ -54,7 +54,7 @@ bough.provider("longp", function (system, messages) {
   if (last.indexOf("GIMME") >= 0) {
     var lines = [];
     for (var i = 1; i <= 200; i++) lines.push("LINE_" + i + "_END");
-    return "\\u0060\\u0060\\u0060text\\n" + lines.join("\\n") + "\\n\\u0060\\u0060\\u0060";
+    return lines.join("\\n");
   }
   return "plain: " + last;
 });

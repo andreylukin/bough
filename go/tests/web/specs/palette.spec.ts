@@ -48,11 +48,10 @@ test('arrows + Enter run /help and the system block renders', async ({ launchBou
 
   await typeInTerm(page, '/');
   await waitForTermText(page, 'exit bough');
-  // Alphabetical list: clear, collapse, expand, help, ... Three downs
-  // land on /help; Enter dispatches it.
+  // /help sits first; a down then an up walks off it and back, and
+  // Enter dispatches the selected row.
   await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowUp');
   await page.keyboard.press('Enter');
 
   // The dispatched line echoes as a command block, and the /help table
