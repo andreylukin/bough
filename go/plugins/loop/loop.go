@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -143,7 +144,9 @@ type Event struct {
 	Data map[string]any
 }
 
-const maxSteps = 10
+// defaultMaxSteps caps model steps per turn; the loop row's `max_steps`
+// config raises it (a benchmark turn is one long task).
+const defaultMaxSteps = 10
 const maxResultBytes = 8 * 1024
 
 // SystemPrompt is the base identity and tool catalogue every agent in
@@ -259,9 +262,10 @@ func (m *memHistory) Path() string { return "" }
 // and proj are optional seams; nil means built-in behavior. hist is
 // never nil (memHistory fallback).
 type runner struct {
-	mu   sync.Mutex
-	llm  LLM
-	code Codemode
+	mu       sync.Mutex
+	llm      LLM
+	code     Codemode
+	maxSteps int // model steps per turn; 0 = defaultMaxSteps
 	// noteData is the extra data of the history entry being emitted
 	// (the done entry's files/exit), set around the emit call so the
 	// mount's publisher can attach it to the live event. Run holds mu
@@ -433,6 +437,10 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	}
 	r.hist.Append("input", map[string]any{"text": msg})
 
+	maxSteps := r.maxSteps
+	if maxSteps <= 0 {
+		maxSteps = defaultMaxSteps
+	}
 	for step := 0; step < maxSteps; step++ {
 		sys := system
 		if r.cog != nil {
@@ -503,6 +511,23 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	return err
 }
 
+// toInt reads a yaml int, float, or --set string.
+func toInt(v any) (int, error) {
+	switch n := v.(type) {
+	case int:
+		return n, nil
+	case int64:
+		return int(n), nil
+	case float64:
+		if n == float64(int(n)) {
+			return int(n), nil
+		}
+	case string:
+		return strconv.Atoi(n)
+	}
+	return 0, fmt.Errorf("not an integer: %v", v)
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -529,6 +554,13 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		return err
 	}
 	r := &runner{llm: llm, code: code, hist: &memHistory{}, secs: &Sections{}}
+	if v, ok := cfg["max_steps"]; ok {
+		n, err := toInt(v)
+		if err != nil || n < 1 {
+			return fmt.Errorf("loop: max_steps must be a positive integer, got %v", v)
+		}
+		r.maxSteps = n
+	}
 	kctx.Provide("prompt-sections", r.secs)
 	// Optional seams: absent services are a clean no-op / built-in.
 	if h, err := kernel.Get[Hooks](kctx, "hooks"); err == nil {

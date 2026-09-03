@@ -57,12 +57,16 @@ _CONFIG = """\
   plugin: tools-basic
 - id: workers
   plugin: workers
+  config:
+    max_steps: 30
 - id: history
   plugin: history
 - id: todo
   plugin: todo
 - id: loop
   plugin: loop
+  config:
+    max_steps: 300
 - id: ui
   plugin: ui
 """
