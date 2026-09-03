@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -21,7 +20,7 @@ func TestOpenrouterEffortInBody(t *testing.T) {
 		o := &openrouterLLM{model: "m", effort: effort, key: "k"}
 		o.once.Do(func() {})
 		o.endpoint = srv.URL
-		if _, err := o.Complete(context.Background(), "sys", []Message{{Role: "user", Content: "hi"}}); err != nil {
+		if _, err := o.Complete(t.Context(), "sys", []Message{{Role: "user", Content: "hi"}}); err != nil {
 			t.Fatalf("effort %q: %v", effort, err)
 		}
 		r, has := got["reasoning"]

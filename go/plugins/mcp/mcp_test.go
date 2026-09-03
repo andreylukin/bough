@@ -79,14 +79,14 @@ func inMemorySession(t *testing.T) *sdk.ClientSession {
 		})
 
 	ct, st := sdk.NewInMemoryTransports()
-	ss, err := server.Connect(context.Background(), st, nil)
+	ss, err := server.Connect(t.Context(), st, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ss.Close() })
 
 	client := sdk.NewClient(&sdk.Implementation{Name: "bough-test", Version: "0.1"}, nil)
-	cs, err := client.Connect(context.Background(), ct, nil)
+	cs, err := client.Connect(t.Context(), ct, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

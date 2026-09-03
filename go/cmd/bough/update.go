@@ -284,7 +284,7 @@ func writeWebPidfile(addr string) func() {
 		fmt.Fprintln(os.Stderr, "bough: web pidfile:", err)
 		return nil
 	}
-	if err := os.WriteFile(pf, []byte(fmt.Sprintf("%d %s\n", os.Getpid(), addr)), 0o644); err != nil {
+	if err := os.WriteFile(pf, fmt.Appendf(nil, "%d %s\n", os.Getpid(), addr), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "bough: web pidfile:", err)
 		return nil
 	}

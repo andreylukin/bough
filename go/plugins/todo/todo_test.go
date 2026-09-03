@@ -197,7 +197,7 @@ func TestCognitionInjectsIntoSystemPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runner: %v", err)
 	}
-	if err := r.Run(context.Background(), "hello", func(kind, text string) {}); err != nil {
+	if err := r.Run(t.Context(), "hello", func(kind, text string) {}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if !strings.Contains(stub.system, "Current TODO list:\n[ ] 1 ship it") {

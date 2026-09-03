@@ -1,6 +1,7 @@
 package ask
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -50,7 +51,7 @@ func (f *fakeHist) Append(kind string, data map[string]any) history.Entry {
 func (f *fakeHist) all() []history.Entry {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]history.Entry(nil), f.entries...)
+	return slices.Clone(f.entries)
 }
 
 // mount applies the ask plugin onto a context with fake codemode and

@@ -19,6 +19,7 @@ package todo
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -63,7 +64,7 @@ func (m *memLog) Append(kind string, data map[string]any) history.Entry {
 func (m *memLog) Entries() []history.Entry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([]history.Entry(nil), m.entries...)
+	return slices.Clone(m.entries)
 }
 
 // Todos is the "todo" service: state is never stored, only derived

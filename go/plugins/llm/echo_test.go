@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -11,7 +10,7 @@ import (
 func TestEchoComplete(t *testing.T) {
 	var e echoLLM
 
-	got, err := e.Complete(context.Background(), "sys", []Message{
+	got, err := e.Complete(t.Context(), "sys", []Message{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "hi"},
 		{Role: "user", Content: "world"},
@@ -23,7 +22,7 @@ func TestEchoComplete(t *testing.T) {
 		t.Errorf("got %q, want %q", got, "echo: world")
 	}
 
-	got, err = e.Complete(context.Background(), "", []Message{
+	got, err = e.Complete(t.Context(), "", []Message{
 		{Role: "user", Content: "please CODE! now"},
 	})
 	if err != nil {
@@ -44,7 +43,7 @@ func TestEchoProvidesLLM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := svc.Complete(context.Background(), "", []Message{{Role: "user", Content: "x"}})
+	got, err := svc.Complete(t.Context(), "", []Message{{Role: "user", Content: "x"}})
 	if err != nil {
 		t.Fatal(err)
 	}

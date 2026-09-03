@@ -137,7 +137,7 @@ func TestViewAndPatch(t *testing.T) {
 // (the whole process group) at once: a cancelled turn must not wait
 // out a sleep, and must not leave the sleep running.
 func TestBashDiesWithTheRunContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	st := &Stats{runCtx: func() context.Context { return ctx }}
 	marker := fmt.Sprintf("bough-cancel-test-%d", os.Getpid())
 	done := make(chan error, 1)

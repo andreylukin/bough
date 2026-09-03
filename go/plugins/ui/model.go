@@ -1,9 +1,11 @@
 package ui
 
 import (
-	xansi "github.com/charmbracelet/x/ansi"
 	"image/color"
+	"slices"
 	"time"
+
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"encoding/json"
 	"fmt"
@@ -665,7 +667,7 @@ func stripFence(text, want string) (string, bool) {
 			j++
 		}
 		if j < len(lines) && strings.TrimRight(strings.Join(lines[i+1:j], "\n"), "\n") == want {
-			out := append(append([]string{}, lines[:i]...), lines[j+1:]...)
+			out := slices.Concat(lines[:i], lines[j+1:])
 			return strings.Join(out, "\n"), true
 		}
 		i = j // skip past this fence (or to EOF)
@@ -1070,7 +1072,7 @@ func (m *model) refreshOverlay() {
 		if m.ovExpanded[e.Seq] {
 			js, err := json.MarshalIndent(e, "     ", "  ")
 			if err != nil {
-				js = []byte(fmt.Sprintf("marshal: %v", err))
+				js = fmt.Appendf(nil, "marshal: %v", err)
 			}
 			part += "\n     " + string(js)
 		}

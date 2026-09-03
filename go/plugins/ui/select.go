@@ -8,6 +8,7 @@ package ui
 // offset applied) and cells, so the selection survives scrolling.
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -133,7 +134,7 @@ func (m *model) highlight(lines []string, cfg *uiCfg) []string {
 	}
 	r0, c0, r1, c1 := m.sel.bounds()
 	hl := cfg.theme["focus"].Reverse(true)
-	out := append([]string(nil), lines...)
+	out := slices.Clone(lines)
 	for r := r0; r <= r1 && r < len(out); r++ {
 		line := out[r]
 		w := ansi.StringWidth(line)

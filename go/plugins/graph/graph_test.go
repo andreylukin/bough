@@ -167,14 +167,14 @@ func TestSearchFusesLexicalAndSemantic(t *testing.T) {
 	st.Assert(a, "relates", c, ep, "cheap", AssertOpts{Claim: "the memory graph is tracked under NME-1673"})
 	st.Assert(b, "relates", c, ep, "cheap", AssertOpts{Claim: "deploy promotion is unrelated"})
 
-	hits, err := st.Search(context.Background(), "NME-1673", 5)
+	hits, err := st.Search(t.Context(), "NME-1673", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(hits) == 0 || hits[0].Entity == nil || hits[0].Entity.Key != "NME-1673" {
 		t.Fatalf("a key with punctuation must match lexically first: %+v", hits)
 	}
-	hits, _ = st.Search(context.Background(), "memory", 5)
+	hits, _ = st.Search(t.Context(), "memory", 5)
 	var keys []string
 	for _, h := range hits {
 		if h.Entity != nil {
@@ -194,7 +194,7 @@ func TestSearchFusesLexicalAndSemantic(t *testing.T) {
 	if s.Embeddings != 5 {
 		t.Fatalf("every entity and claim embedded at write time: %+v", s)
 	}
-	if hits, _ := st.Search(context.Background(), "   ", 5); hits != nil {
+	if hits, _ := st.Search(t.Context(), "   ", 5); hits != nil {
 		t.Fatal("empty query: nothing")
 	}
 }
