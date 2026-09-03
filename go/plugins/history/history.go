@@ -22,12 +22,24 @@ import (
 	"github.com/andreylukin/bough/kernel"
 )
 
-// Entry is one history record. At marshals as RFC3339Nano.
+// Entry is one history record. At marshals as RFC3339Nano. Parent is
+// the seq this entry follows (the session tree, see Ancestors); absent
+// (0) it defaults to the previous seq — use ParentOf.
 type Entry struct {
-	Seq  int64          `json:"seq"`
-	At   time.Time      `json:"at"`
-	Kind string         `json:"kind"`
-	Data map[string]any `json:"data,omitempty"`
+	Seq    int64          `json:"seq"`
+	At     time.Time      `json:"at"`
+	Kind   string         `json:"kind"`
+	Data   map[string]any `json:"data,omitempty"`
+	Parent int64          `json:"parent,omitempty"`
+}
+
+// ParentOf is the seq e follows: its parent field, else the previous
+// seq (0 for the first entry).
+func ParentOf(e Entry) int64 {
+	if e.Parent != 0 {
+		return e.Parent
+	}
+	return e.Seq - 1
 }
 
 // Store is an append-only JSONL session log. It implements the
@@ -197,8 +209,8 @@ func LastPrompt(entries []Entry) string {
 func (s *Store) Append(kind string, data map[string]any) Entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	e := Entry{Seq: s.seq + 1, At: time.Now(), Kind: kind, Data: data, Parent: s.seq}
 	s.seq++
-	e := Entry{Seq: s.seq, At: time.Now(), Kind: kind, Data: data}
 	s.entries = append(s.entries, e)
 	line, err := json.Marshal(e)
 	if err == nil {
@@ -295,6 +307,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 	}
 	ctx.Provide("history", s)
+	ctx.Provide("checkpoints", &Checkpoints{session: strings.TrimSuffix(filepath.Base(s.Path()), ".jsonl")})
 	ctx.Effect(func() {
 		if err := s.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "bough: history close: %v\n", err)

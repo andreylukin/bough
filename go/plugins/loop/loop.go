@@ -72,6 +72,15 @@ type TurnStats interface {
 	Take() (files []string, exit int, ran bool)
 }
 
+// Checkpointer is the optional "checkpoints" service seam (history):
+// Snapshot records the working tree before a turn ("" when there is
+// no git repo to snapshot) and Pin names the tree for the turn's seq,
+// which is what /undo reverts against.
+type Checkpointer interface {
+	Snapshot() string
+	Pin(seq int64, tree string)
+}
+
 // Sections is the "prompt-sections" service: named system-prompt
 // sections that plugins register (workers documents tools.spawn, mcp
 // its bound tools). The loop appends every section, sorted by name,
@@ -333,6 +342,7 @@ type runner struct {
 	cog      Cognition
 	proj     Projection
 	stats    TurnStats
+	cp       Checkpointer
 	secs     *Sections
 	hasAsk   bool // an "ask-answers" service is mounted: document tools.ask
 	system   string
@@ -489,7 +499,19 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			msg.WriteString("\n\n" + block)
 		}
 	}
-	r.hist.Append("input", map[string]any{"text": msg.String()})
+	// The turn's checkpoint: the working tree as it was before the
+	// model touched anything, on the input entry and pinned by seq.
+	inData := map[string]any{"text": msg.String()}
+	tree := ""
+	if r.cp != nil {
+		if tree = r.cp.Snapshot(); tree != "" {
+			inData["checkpoint"] = tree
+		}
+	}
+	in := r.hist.Append("input", inData)
+	if tree != "" {
+		r.cp.Pin(in.Seq, tree)
+	}
 
 	maxSteps := r.maxSteps
 	if maxSteps <= 0 {
@@ -658,6 +680,9 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	}
 	if st, err := kernel.Get[TurnStats](kctx, "turn-stats"); err == nil {
 		r.stats = st
+	}
+	if c, err := kernel.Get[Checkpointer](kctx, "checkpoints"); err == nil {
+		r.cp = c
 	}
 	kctx.Provide("runner", r)
 

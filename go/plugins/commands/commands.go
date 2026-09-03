@@ -217,7 +217,10 @@ func registerBuiltins(r *Registry, ctx *kernel.Context) error {
 			return err
 		}
 	}
-	return registerModel(r, ctx)
+	if err := registerModel(r, ctx); err != nil {
+		return err
+	}
+	return registerTree(r, ctx)
 }
 
 func uiAction(a UIAction) func(string) (string, error) {
