@@ -288,6 +288,22 @@ func TestDefaultProjectCancelled(t *testing.T) {
 	}
 }
 
+// An "undo" entry projects a note naming the reverted files (its own
+// user message after an assistant reply; folded into a preceding user
+// message); one that reverted nothing projects nothing.
+func TestDefaultProjectUndo(t *testing.T) {
+	got := DefaultProject([]history.Entry{
+		{Kind: "input", Data: map[string]any{"text": "x"}},
+		{Kind: "assistant", Data: map[string]any{"text": "wrote a.txt"}},
+		{Kind: "done", Data: map[string]any{"files": []string{"a.txt"}}},
+		{Kind: "undo", Data: map[string]any{"seq_of_turn": float64(1), "files": []any{"a.txt", "b.txt"}}},
+		{Kind: "undo", Data: map[string]any{"seq_of_turn": float64(0), "files": []any{}}},
+	})
+	if len(got) != 3 || got[2].Role != "user" || got[2].Content != undoPrefix+"a.txt, b.txt" {
+		t.Fatalf("DefaultProject = %v", got)
+	}
+}
+
 func TestDefaultProjectBangCommands(t *testing.T) {
 	entries := []history.Entry{
 		{Kind: "command", Data: map[string]any{"text": "/help"}},

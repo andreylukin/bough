@@ -110,7 +110,7 @@ func TestRestoreExactlyTheListedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	if strings.Join(restored, ",") != "a.txt,made.txt" || strings.Join(skipped, ",") != outside {
+	if strings.Join(restored, ",") != "a.txt,made.txt" || len(skipped) != 1 || skipped[0] != (Skipped{outside, "outside the repo"}) {
 		t.Fatalf("restored %v skipped %v", restored, skipped)
 	}
 	if b, _ := os.ReadFile(filepath.Join(repo, "a.txt")); string(b) != "one\n" {
@@ -124,6 +124,82 @@ func TestRestoreExactlyTheListedFiles(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(outside); string(b) != "keep\n" {
 		t.Fatalf("outside file touched: %q", b)
+	}
+}
+
+// Restore from a subdirectory of the repo (bough started in go/, say)
+// finds the file in the checkpoint under its toplevel-relative path
+// and puts it back — it is not "absent" and deleted.
+func TestRestoreFromSubdirectory(t *testing.T) {
+	repo := newRepo(t)
+	sub := filepath.Join(repo, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "f.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "sub")
+	runGit(t, repo, "commit", "-q", "-m", "sub")
+	tree, err := Snapshot(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "f.txt"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restored, skipped, err := Restore(sub, tree, []string{"f.txt"})
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if strings.Join(restored, ",") != "f.txt" || len(skipped) != 0 {
+		t.Fatalf("restored %v skipped %v", restored, skipped)
+	}
+	if b, err := os.ReadFile(filepath.Join(sub, "f.txt")); err != nil || string(b) != "one\n" {
+		t.Fatalf("sub/f.txt = %q, %v; want the checkpoint content", b, err)
+	}
+}
+
+// A gitignored file is never in a checkpoint, so Restore must not
+// read its absence as "created this turn" and delete it: it is
+// skipped with a reason. A symlink in the checkpoint is skipped too,
+// never rewritten as a regular file holding the link target.
+func TestRestoreSkipsIgnoredAndSymlinks(t *testing.T) {
+	repo := newRepo(t)
+	write := func(name, s string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".gitignore", ".env\n")
+	write(".env", "SECRET=1\n")
+	if err := os.Symlink("a.txt", filepath.Join(repo, "link")); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := Snapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := runGit(t, repo, "ls-tree", "--name-only", tree); strings.Contains(got, ".env") || !strings.Contains(got, "link") {
+		t.Fatalf("setup: tree lists %q", got)
+	}
+	write(".env", "SECRET=2\n")
+	os.Remove(filepath.Join(repo, "link"))
+	write("link", "not a link\n")
+
+	restored, skipped, err := Restore(repo, tree, []string{".env", "link"})
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if len(restored) != 0 || len(skipped) != 2 || skipped[0] != (Skipped{".env", "gitignored"}) || skipped[1].Path != "link" {
+		t.Fatalf("restored %v skipped %v", restored, skipped)
+	}
+	if b, err := os.ReadFile(filepath.Join(repo, ".env")); err != nil || string(b) != "SECRET=2\n" {
+		t.Fatalf(".env = %q, %v; must be left alone", b, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(repo, "link")); err != nil || string(b) != "not a link\n" {
+		t.Fatalf("link = %q, %v; must be left alone", b, err)
 	}
 }
 

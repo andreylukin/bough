@@ -150,6 +150,28 @@ func TestUndoRevertsListedFilesOnly(t *testing.T) {
 	}
 }
 
+// /undo refuses while the last turn has no done yet: the model may
+// still be writing the files it would revert.
+func TestUndoRefusesWhileRunning(t *testing.T) {
+	repo := newRepo(t)
+	t.Chdir(repo)
+	store, err := history.Open(filepath.Join(t.TempDir(), "s.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	reg := mountCommands(t, store)
+	turn(t, store, repo, "one", func() { write(t, "keep.txt", "turn1\n") }, "keep.txt")
+	store.Append("input", map[string]any{"text": "two"}) // no done yet
+
+	if _, err := reg.Run("undo", ""); err == nil || !strings.Contains(err.Error(), "turn 3 is still running") {
+		t.Fatalf("/undo mid-turn = %v", err)
+	}
+	if read(t, "keep.txt") != "turn1\n" {
+		t.Fatal("keep.txt reverted under a running turn")
+	}
+}
+
 // /tree lists the turns newest first; "/tree <seq>" writes the fork
 // next to the current file (ancestors through that turn's done, the
 // origin on its meta) and answers with the resume action for it.

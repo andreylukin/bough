@@ -120,6 +120,11 @@ func runUndo(ctx *kernel.Context) (string, error) {
 	}
 	ts := turns(h.Entries())
 	i := len(ts) - 1
+	if i >= 0 && !ts[i].done {
+		// Mid-turn the model is still writing; rewriting under it
+		// would race, and the list of what it wrote is not final.
+		return "", fmt.Errorf("undo: turn %d is still running (esc stops it first)", ts[i].seq)
+	}
 	for ; i >= 0; i-- {
 		if ts[i].done && !ts[i].undone {
 			break
@@ -129,7 +134,8 @@ func runUndo(ctx *kernel.Context) (string, error) {
 		return "", fmt.Errorf("undo: nothing to undo")
 	}
 	t := ts[i]
-	var restored, skipped []string
+	var restored []string
+	var skipped []history.Skipped
 	if len(t.files) > 0 {
 		if t.checkpoint == "" {
 			return "", fmt.Errorf("undo: turn %d has no checkpoint (not in a git repo)", t.seq)
@@ -155,8 +161,8 @@ func runUndo(ctx *kernel.Context) (string, error) {
 	for _, f := range restored {
 		b.WriteString("\n  " + f)
 	}
-	for _, f := range skipped {
-		b.WriteString("\n  " + f + " (outside the repo, left alone)")
+	for _, s := range skipped {
+		b.WriteString("\n  " + s.Path + " (" + s.Why + ", left alone)")
 	}
 	return b.String(), nil
 }

@@ -85,13 +85,27 @@ func PinRef(dir, session string, seq int64, tree string) error {
 	return err
 }
 
+// Skipped is a path Restore left alone, and why.
+type Skipped struct {
+	Path, Why string
+}
+
+// ignored reports whether rel (toplevel-relative) is gitignored. Such
+// a file is never in a checkpoint (Snapshot honours .gitignore), so
+// its absence from the tree says nothing about whether it existed.
+func ignored(top, rel string) bool {
+	c := exec.Command("git", "check-ignore", "-q", "--", rel)
+	c.Dir = top
+	return c.Run() == nil
+}
+
 // Restore puts exactly the listed files back to their content in tree
 // (a Snapshot id): a path the tree lacks is deleted. Nothing else in
 // the working tree is touched. Paths are as the tools recorded them
-// (relative to dir, or absolute); one outside the repo is skipped,
-// never deleted (it was never in the checkpoint). Returns the paths
-// restored and the ones skipped.
-func Restore(dir, tree string, files []string) (restored, skipped []string, err error) {
+// (relative to dir, or absolute); one outside the repo, gitignored,
+// or not a regular file in the checkpoint is skipped, never deleted.
+// Returns the paths restored and the ones skipped.
+func Restore(dir, tree string, files []string) (restored []string, skipped []Skipped, err error) {
 	top, err := git(dir, nil, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return nil, nil, err
@@ -111,28 +125,35 @@ func Restore(dir, tree string, files []string) (restored, skipped []string, err 
 		abs = filepath.Join(parent, filepath.Base(abs))
 		rel, err := filepath.Rel(top, abs)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
-			skipped = append(skipped, f)
+			skipped = append(skipped, Skipped{f, "outside the repo"})
 			continue
 		}
-		entry, err := git(dir, nil, "ls-tree", "-z", tree, "--", rel)
+		// rel is toplevel-relative and ls-tree scopes a pathspec to
+		// its cwd, so run in top (dir may be a subdirectory).
+		entry, err := git(top, nil, "ls-tree", "-z", tree, "--", rel)
 		if err != nil {
 			return restored, skipped, err
 		}
 		if entry == "" {
+			if ignored(top, rel) {
+				skipped = append(skipped, Skipped{f, "gitignored"})
+				continue
+			}
 			if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return restored, skipped, err
 			}
 			restored = append(restored, f)
 			continue
 		}
-		// "<mode> blob <hash>\t<path>"
+		// "<mode> blob <hash>\t<path>"; a symlink is a blob too
+		// (mode 120000) and must not come back as a regular file.
 		fields := strings.Fields(strings.SplitN(entry, "\t", 2)[0])
-		if len(fields) != 3 || fields[1] != "blob" {
-			skipped = append(skipped, f)
+		if len(fields) != 3 || fields[1] != "blob" || (fields[0] != "100644" && fields[0] != "100755") {
+			skipped = append(skipped, Skipped{f, "not a regular file in the checkpoint"})
 			continue
 		}
 		c := exec.Command("git", "cat-file", "blob", fields[2])
-		c.Dir = dir
+		c.Dir = top
 		content, err := c.Output()
 		if err != nil {
 			return restored, skipped, fmt.Errorf("git cat-file %s: %w", rel, err)

@@ -260,6 +260,10 @@ func stripFakeBlocks(reply string) string {
 // cancelledNote is what a cancelled turn projects to.
 const cancelledNote = "[cancelled] The user interrupted this turn. Do not resume or redo its work unless asked again."
 
+// undoPrefix opens the note an "undo" entry projects to; the reverted
+// paths follow.
+const undoPrefix = "[undo] The user reverted these files to their content from before the turn that wrote them: "
+
 func DefaultProject(entries []history.Entry) []llm.Message {
 	var msgs []llm.Message
 	for i := 0; i < len(entries); i++ {
@@ -282,6 +286,29 @@ func DefaultProject(entries []history.Entry) []llm.Message {
 				msgs[n-1].Content += "\n\n" + cancelledNote
 			} else {
 				msgs = append(msgs, llm.Message{Role: "user", Content: cancelledNote})
+			}
+		case "undo":
+			// /undo put files back; the model's "wrote X" results are
+			// stale, so tell it (folded like the cancelled note).
+			var files []string
+			switch l := e.Data["files"].(type) {
+			case []string:
+				files = l
+			case []any:
+				for _, x := range l {
+					if s, ok := x.(string); ok {
+						files = append(files, s)
+					}
+				}
+			}
+			if len(files) == 0 {
+				continue
+			}
+			undoNote := undoPrefix + strings.Join(files, ", ")
+			if n := len(msgs); n > 0 && msgs[n-1].Role == "user" {
+				msgs[n-1].Content += "\n\n" + undoNote
+			} else {
+				msgs = append(msgs, llm.Message{Role: "user", Content: undoNote})
 			}
 		case "command":
 			if !strings.HasPrefix(text, "!") {
@@ -526,7 +553,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		reply, err := r.complete(ctx, sys, emit)
 		if ctx.Err() != nil {
 			note("cancelled", "", nil)
-			note("done", "", nil)
+			note("done", "", r.doneData()) // what it wrote so far: /undo after esc reverts it
 			return ctx.Err()
 		}
 		if err == nil && strings.TrimSpace(reply) == "" {
