@@ -1,6 +1,0 @@
-# profiles/headless.yml — no terminal surface (§0.5).
-#
-# `bough-codemode` LAST, as in `profiles/tui.yml`: `bough exec` runs code mode with no flags.
-name: headless
-bundles: [bough-base, bough-headless, bough-codemode]
-invariants: false

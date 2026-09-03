@@ -1,3 +1,0 @@
-bough: layer `patch:0:/tmp/disable-ledger.sqlite.yml` names row `ledger.sqlite`, which no layer created
-bough: 1 enabled row(s) never activated:
-  projection (plugin `projection-assembler`) is Pending; unmet: ledger

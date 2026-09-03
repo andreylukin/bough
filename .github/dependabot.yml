@@ -1,13 +1,13 @@
 version: 2
 updates:
-  - package-ecosystem: cargo
-    directory: /
+  - package-ecosystem: gomod
+    directory: /go
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
       # One PR a week for routine bumps; majors still come through individually.
-      cargo-minor-and-patch:
+      go-minor-and-patch:
         update-types: [minor, patch]
     commit-message:
       prefix: "chore(deps)"

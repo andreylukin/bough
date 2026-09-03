@@ -1,4 +1,0 @@
-bough: 3 enabled row(s) never activated:
-  reconsolidation (plugin `reconsolidation`) is Pending; unmet: rollups
-  drift.watch (plugin `drift-watch`) is Pending; unmet: rollups
-  graph (plugin `graph-ops`) is Pending; unmet: rollups

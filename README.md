@@ -126,12 +126,12 @@ The full reference, including the service-key table, the history and projection 
 
 | Path | What lives there |
 |---|---|
-| `go/` | bough. `kernel/` (services, events, effects, loader, lifecycle), `cmd/bough/` (the launcher), `plugins/` (llm, codemode, loop, tools, workers, ui, history, graph, mcp, hooks, skills, todo, ask, cost, …), `e2e/`, `internal/vtreal/` (real-PTY suite) |
-| `crates/`, `plugins/`, `bundles/`, `profiles/` | the Rust rebuild: resident lane-agents over an append-only SQLite ledger. `REQUIREMENTS.md` is its spec, `BUILD.md` its phase ledger, `AGENTS.md` how to work in it |
-| `bench/` | tool-surface benchmarks and Terminal-Bench adapters |
-| `docs/` | design notes for both trees |
-
-The two trees share ideas (code mode, append-only history, plugin rows) but not code. The Go tree is the one that runs day to day and the one this README describes; the Rust tree is the resident-agent design (`bough --resident`, `~/.bough/tui.sock`) and builds with `make release` from the root.
+| `go/kernel/` | services, events, effects, the loader, row lifecycle. The only non-plugin code besides the launcher |
+| `go/cmd/bough/` | the launcher: flags, config discovery, hot reload, subcommands |
+| `go/plugins/` | llm, codemode, loop, tools, workers, ui, history, graph, mcp, hooks, skills, todo, ask, cost, commands, initjs, contextmd |
+| `go/e2e/`, `go/internal/` | headless and PTY end-to-end suites, shared LLM stubs, the real-terminal suite |
+| `go/docs/` | `INIT.md` (the init.js API), `graph-memory.md` (the memory graph design) |
+| `bench/harbor/` | Terminal-Bench 4.0 via Harbor on Modal |
 
 ## Development
 
@@ -145,8 +145,6 @@ cd tests/web && npm ci && npx playwright install chromium && npm test
 ```
 
 Every test gets its own temp HOME and a deterministic LLM (`llm-echo` or a JS provider from `init.js`); nothing touches `~/.bough` or the network. CI runs the Go layers and a four-shard Playwright matrix on every push that touches `go/`.
-
-Rust tree: `make gates` (lint + nextest + the TUI replay suite) from the repo root.
 
 ## License
 

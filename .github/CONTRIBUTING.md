@@ -5,43 +5,34 @@ that design.
 
 ## Before you start
 
-- [`docs/spec.md`](../docs/spec.md) is authoritative for product behavior.
-- [`specs/`](../specs/) pins per-subsystem invariants you cannot rediscover from the code.
-  Read the relevant one before touching `turn/`, `harness/`, or `workflow/`.
-- [`AGENTS.md`](../AGENTS.md) has the layout and the commands.
+- [`README.md`](../README.md) is the overview; [`go/README.md`](../go/README.md) is the
+  reference for the kernel, the service keys, the loop, history, and the test layers.
+- Behavior attaches as a plugin row, not as a change to the loop. If your change needs the
+  kernel or the loop to know something new, open an issue first.
 
-Open an issue first for anything that changes a spec, adds a host function, or reshapes a
-turn. Bugs, typos, flaky tests, better error messages: just send the PR.
+Bugs, typos, flaky tests, better error messages: just send the PR.
 
 ## Setup
 
 ```
-./scripts/setup.sh     # fresh machine
-make dev               # run THIS checkout, on its own profile
-make gates             # build + test
-make lint              # rustfmt + clippy, warnings as errors
+cd go
+go build ./cmd/bough      # the binary
+go test -race ./...       # every layer that does not need a browser
 ```
 
-`make dev` is the one to know: it runs the checkout you are editing against `.dev/` on
-port 4322, so it never touches your real install at `~/.bough:4321`. `make dev-stop` when
-you are done. There is no file watcher, so rebuild and restart to pick up changes.
-
-Stable Rust, one workspace, `make help` for the rest. CI lints on the *latest* stable and
-is deliberately unpinned: if CI flags what `make lint` didn't, `rustup update`.
+Go 1.27 or newer. The Playwright layer (`go/tests/web`) needs Node and a Chromium; see the
+Testing section of `go/README.md`.
 
 ## The bar for a pull request
 
-1. **`make gates` and `make lint` pass.** Red PRs aren't reviewed.
-2. **New behavior has a test**, offline and hermetic. If it's only visible in the TUI,
-   drive a real PTY (`make tui-test`), because data-only assertions have let broken rendering
-   ship more than once. That suite needs `shell-use` to drive the PTY, which is not
-   packaged yet; if you don't have it, say so in the PR and describe what you exercised
-   by hand, and a maintainer will run it. Don't claim it passed.
-3. **Spec changes travel with the code.** A spec that disagrees with the code is worse
-   than no spec.
-4. **Surgical diffs, one logical change.** No drive-by reformatting. Split anything whose
+1. **`go vet ./...` and `go test -race ./...` pass.** Red PRs aren't reviewed.
+2. **New behavior has a test**, offline and hermetic, with a deterministic LLM (`llm-echo`
+   or a JS provider). If it's only visible in the TUI, cover it in the teatest layer or in
+   `internal/vtreal`, because data-only assertions have let broken rendering ship more than
+   once.
+3. **Surgical diffs, one logical change.** No drive-by reformatting. Split anything whose
    title needs an "and".
-5. **You have verified it yourself.** See below.
+4. **You have verified it yourself.** See below.
 
 ## AI-generated code
 
@@ -52,7 +43,7 @@ What is not acceptable is unverified output. **You are the author of every line 
 a PR with**, however it was produced. Before you push, you must have:
 
 - read the whole diff and be able to explain why each part is there;
-- run `make gates` and `make lint` locally, rather than trusting a claim that they pass;
+- run the tests locally, rather than trusting a claim that they pass;
 - confirmed the change actually does what the PR says, by exercising it, not by reading
   a summary of it.
 
@@ -68,11 +59,11 @@ description of a change is not.
 
 ## Commits
 
-Conventional prefixes, scoped to the crate:
+Conventional prefixes, scoped to the plugin or package:
 
 ```
-feat(bough-tui): fold thinking blocks in the transcript
-fix(bough-core): stop the turn runner erasing a part written outside it
+ui: fold thinking blocks in the transcript
+loop: a code error no longer ends the turn
 ```
 
 Rebase on `main`; don't merge it in.

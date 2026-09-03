@@ -1,9 +1,0 @@
-# A worker spawn through the §10 seam, with its bounds unchanged.
-id: 08-spawn-a-worker
-prompt: >-
-  Spawn one worker to summarise src/notes.md in a single sentence, and tell me you spawned it.
-covers: [agent]
-pass:
-  - pass: step_appended
-    kind: worker/started
-    count: 1

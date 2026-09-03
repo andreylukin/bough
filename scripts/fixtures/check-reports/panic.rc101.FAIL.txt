@@ -1,2 +1,0 @@
-thread 'main' panicked at crates/bough/src/main.rs:42:9:
-the launcher fell over

@@ -4,7 +4,7 @@
 # empty for this repo, so its list was stuck at a stale snapshot that included
 # javascript-typescript — and that analysis fails hard when the only JS in the tree
 # is gitignored or fixture material. Here the languages are pinned to what the repo
-# actually is: Rust, and the workflows themselves.
+# actually is: Go, and the workflows themselves.
 name: CodeQL
 
 on:
@@ -30,7 +30,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - language: rust
+          - language: go
             build-mode: none
           - language: actions
             build-mode: none

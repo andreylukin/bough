@@ -1,9 +1,0 @@
----
-source: plugins/tui-shell/tests/layout.rs
-expression: rects
----
-[
-    "rail 0,0 16x11",
-    "focus 16,0 24x7",
-    "search 16,7 24x4",
-]

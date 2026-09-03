@@ -1,13 +1,6 @@
-# cargo build output
-/target
-
 # OS
 .DS_Store
 __pycache__/
-
-# npm working tree — only ever populated by scripts/build-chart-bundle.sh, which
-# vendors its output into the crate. A clean checkout never needs it.
-node_modules/
 
 # leftovers of the deleted TypeScript tree (ahe run outputs, vendored bun builds);
 # safe to delete from your checkout by hand.
@@ -15,23 +8,21 @@ ahe/
 .bough-bun/
 .bough-bun-linux
 .bough-bun-linux-musl
+node_modules/
+/.dev/
+
+# leftovers of the deleted Rust tree (bench outputs, the prompt tuner's workspace)
+bench/pier/
+bench/tune/
 
 # local harness state (worktrees, session settings)
 .claude/
 
-# the dev profile: this checkout run against its own data root (make dev)
-/.dev/
-
 # prebuilt linux bough for the Harbor/terminal-bench adapter (bench/harbor)
 bench/harbor/dist/
-/target-linux
 
-# Linux binaries for the bench containers (bench/pier/build-linux-binary.sh)
-bench/pier/dist/
-
-# WikiSkill tuner: its own git repo + lane home
-bench/tune/workspace/
-bench/tune/home/
+# the built binary
+/go/bough
 
 # tmux debug logs and the unevaluated-expr sqlite artifact (2026-09-01) never belong here
 tmux-*.log

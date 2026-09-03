@@ -1,9 +1,0 @@
-# profiles/tui.yml — the default profile (§0.5).
-#
-# `bough-codemode` comes LAST: code mode is the DEFAULT tool consumer (Andrey, 2026-08-28), and the
-# three rows are already enabled in `bough-base` — this layer asserts the switch at the profile
-# level so the tool surface is readable here and not only in the base bundle. The fallback is in
-# `docs/configuration.md`.
-name: tui
-bundles: [bough-base, bough-tui-app, bough-codemode]
-invariants: false

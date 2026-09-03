@@ -1,45 +1,35 @@
-# bough-next on Terminal-Bench (Harbor)
+# bough on Terminal-Bench (Harbor)
 
-`bough_agent.py` is a Harbor `BaseInstalledAgent` for the REBUILD, out-of-tree
-(`--agent-import-path`). Simpler than the daily driver's adapter: `bough exec` is in-process
-(no server to boot), and the ledger under `$BOUGH_HOME` carries a lane across attempts, so a
-turn the clock cut off is continued, not restarted.
+`bough_go_agent.py` is a Harbor `BaseInstalledAgent` that runs bough headless inside each trial's
+container, out-of-tree (`--agent-import-path`). `tb4.sh` wraps the three steps for Terminal-Bench
+4.0 on Modal; `summarize.py` turns a jobs directory into a per-trial table with pass rates.
 
 ```sh
 uv tool install harbor
-ARCH=x86_64 bench/pier/build-linux-binary.sh      # TB 2.0 images are amd64; Rosetta runs them
 
-# the harness alone, no bough, no API spend
-harbor run --dataset terminal-bench@2.0 --agent oracle --include-task-name chess-best-move \
-  --jobs-dir ~/.cache/bough-tbench/jobs -y
-
-# bough on one task
-export ANTHROPIC_API_KEY=… PYTHONPATH=$PWD/bench/harbor
-harbor run --dataset terminal-bench@2.0 \
-  --agent-import-path bough_agent:Bough \
-  --model anthropic/claude-haiku-4-5-20251001 \
-  --ak binary=$PWD/bench/pier/dist/bough-linux-x86_64 \
-  --include-task-name chess-best-move \
-  --jobs-dir ~/.cache/bough-tbench/jobs -y
-
-# the suite, leaderboard-shaped
-harbor run --dataset terminal-bench@2.0 --agent-import-path bough_agent:Bough \
-  --model anthropic/claude-sonnet-5 --ak binary=… -k 5 --n-concurrent 4 \
-  --jobs-dir ~/.cache/bough-tbench/jobs
+bench/harbor/tb4.sh build                       # linux/amd64 binary into bench/harbor/dist
+bench/harbor/tb4.sh run <job> <k> task [task…]  # k trials per task
+bench/harbor/tb4.sh sum <job> [<job>…]          # per-trial table + pass rates
 ```
 
-`--ak` keys: `binary` (required), `timeout` (one turn, s; 1800), `attempts` (2), `budget`,
-`cap` (Harbor's phase cap when the task cache cannot be read), `patch` (an ARM: a patch file
-over the bundles — projection knobs, rollups, prompts). The model goes in through
-`model.policy` as a second patch, with prices for the models `_PRICES` knows.
+Env for `run`: `MODEL` (default `openrouter/openai/gpt-5.6-luna`), `TIMEOUT` (agent seconds,
+default 2400), `CONC` (default 4), `CONFIG` (an arm: a `bough.yml` instead of the adapter's
+default), `BIN` (an arm binary). Keys come from `~/.bough/env`.
 
-Per trial, next to Harbor's own logs: `bough-exec.json` (every attempt's envelope: the answer
-wake's steps), `ledger.db`, `requests/` (every request the model was sent, verbatim), and
-`patch-N.yml`. Tokens and cost come from the ledger's `usage/round` steps, so a turn the clock
-killed still counts.
+By hand, the same thing:
 
-Traps (from the Terminal-Bench campaign on the daily driver): keep `--jobs-dir` under `$HOME`
-(Colima shares nothing else — every trial reads `RewardFileNotFound`, oracle included); match
-the CONTAINER's arch, not the host's; the three clocks (Harbor's cap → budget → turn) are ordered
-so the phase is never shot mid-attempt; `bench/*` is a cargo workspace glob, which is why this
-directory is in the workspace's `exclude`.
+```sh
+export PYTHONPATH=$PWD/bench/harbor
+harbor run -d terminal-bench/terminal-bench@4.0.0 --env modal \
+  --agent bough_go_agent:BoughGo --model openrouter/openai/gpt-5.6-luna \
+  --ak binary=$PWD/bench/harbor/dist/bough-go-linux-amd64 --ak timeout=2400 \
+  -i html-js-filter -k 3 --n-concurrent 3 --jobs-dir ~/.cache/bough-tbench/jobs
+```
+
+One `bough --headless` process per trial: the task brief goes in as one JSON prompt line, the
+loop's events come out as `[kind] text` lines, and the cost row prints `[usage] {...}` after the
+turn. The agent phase is capped by `timeout` (TB 4.0's own limit is 8 h), one attempt, with `-c`
+continuation available if a second attempt is ever wanted.
+
+Traps: task names are namespaced (`-i` takes `terminal-bench/<task>`, which `tb4.sh` adds for
+you); keep `--jobs-dir` under `$HOME` when running locally under Colima, which shares nothing else.
