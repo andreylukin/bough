@@ -554,6 +554,23 @@ func TestSubagentEventsFoldIntoOneCard(t *testing.T) {
 	}
 }
 
+// A running card's spinner moves on spinner ticks: the pane is rebuilt
+// on the tick, not only on the next event.
+func TestRunningSpawnCardSpinsOnTick(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.typeStr("go")
+	d.feed(keyEnter()) // submit without running its commands: the turn stays in flight
+	d.feed(eventMsg{Kind: "sub:start", Text: "task", Data: map[string]any{"worker": 1}})
+	before := d.plain()
+	for i := 0; i < 3; i++ {
+		d.feed(d.m.spin.Tick())
+	}
+	if d.plain() == before {
+		t.Fatalf("running card should redraw on ticks (running=%v):\nBEFORE\n%s\nAFTER\n%s", d.m.running, before, d.plain())
+	}
+}
+
 func TestReportBodyStripsScaffolding(t *testing.T) {
 	t.Parallel()
 	got := reportBody("REPORT\n\nStatus: ok\n\nFindings:\n- two files\n\n\nOpen: none\n")

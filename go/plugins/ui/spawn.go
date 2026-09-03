@@ -261,6 +261,16 @@ func fmtElapsed(d time.Duration) string {
 	return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
 }
 
+// hasRunningSpawn reports whether any subagent card is still running.
+func (m *model) hasRunningSpawn() bool {
+	for i := range m.blocks {
+		if b := &m.blocks[i]; b.kind == "spawn" && b.sub != nil && b.sub.status == "running" {
+			return true
+		}
+	}
+	return false
+}
+
 // focusedSpawn returns the index of the focused spawn card, -1 if the
 // focus is elsewhere.
 func (m *model) focusedSpawn() int {

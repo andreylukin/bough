@@ -464,6 +464,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
+		// The transcript pane is content set at refresh time, not
+		// drawn per frame like the status bar: a running subagent
+		// card's spinner and elapsed only move if the pane is rebuilt
+		// on the tick.
+		if m.hasRunningSpawn() {
+			m.refresh()
+		}
 		return m, cmd
 
 	case eventMsg:
