@@ -94,6 +94,8 @@ var propKeys = []tea.KeyPressMsg{
 	{Code: 'o', Mod: tea.ModCtrl}, {Code: 'l', Mod: tea.ModCtrl}, {Code: 'a', Mod: tea.ModCtrl},
 	{Code: 'e', Mod: tea.ModCtrl}, {Code: 'k', Mod: tea.ModCtrl}, {Code: 'u', Mod: tea.ModCtrl},
 	{Code: 'w', Mod: tea.ModCtrl}, {Code: 'c', Mod: tea.ModCtrl},
+	// The leader and its chords (q arms the quit like ctrl+c).
+	{Code: 'x', Mod: tea.ModCtrl}, {Code: 'q', Text: "q"}, {Code: 'k', Text: "k"}, {Code: 'p', Text: "p"},
 }
 
 func propStepGen(w, h int) *rapid.Generator[propStep] {
@@ -141,7 +143,8 @@ func propStepGen(w, h int) *rapid.Generator[propStep] {
 
 type propState struct {
 	w, h     int
-	lastCtrl bool // previous key was ctrl+c (quit is armed)
+	lastCtrl bool // previous key was ctrl+c, or the ctrl+x q chord (quit is armed)
+	leader   bool // previous key was ctrl+x (the next key is a chord)
 }
 
 func (d *drv) apply(t *rapid.T, st *propState, s propStep, checkQuit bool) {
@@ -150,13 +153,16 @@ func (d *drv) apply(t *rapid.T, st *propState, s propStep, checkQuit bool) {
 		next, cmd := d.m.Update(s.key)
 		d.m = next.(model)
 		isCtrlC := s.key.Code == 'c' && s.key.Mod == tea.ModCtrl
+		isLeader := s.key.Code == 'x' && s.key.Mod == tea.ModCtrl
 		if isCtrlC && checkQuit {
 			// The only path to tea.Quit; execute the cmd to see it.
 			if hasQuit(runCmd(cmd)) && !st.lastCtrl {
 				t.Fatalf("quit on a single ctrl+c (quit must be armed by a first press); picking=%v inspecting=%v", d.m.picking, d.m.inspecting)
 			}
 		}
-		st.lastCtrl = isCtrlC
+		// ctrl+x q arms like ctrl+c; a second ctrl+x is an unknown chord.
+		st.lastCtrl = isCtrlC || (st.leader && s.key.String() == "q")
+		st.leader = isLeader && !st.leader
 	case "event":
 		d.feed(eventMsg(s.ev))
 	case "resize":
@@ -165,6 +171,7 @@ func (d *drv) apply(t *rapid.T, st *propState, s propStep, checkQuit bool) {
 	case "click":
 		d.feed(tea.MouseClickMsg{X: s.x, Y: s.y, Button: tea.MouseLeft})
 		d.feed(tea.MouseReleaseMsg{X: s.x, Y: s.y, Button: tea.MouseLeft})
+		st.leader = false // a click drops a pending leader (the quit stays armed)
 	case "wheel":
 		b := tea.MouseWheelUp
 		if s.w == 1 {

@@ -8,6 +8,8 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -31,13 +33,36 @@ func (m *model) syncPalette() {
 	if m.pal.cycling && draft != m.pal.cycleDraft {
 		m.pal.cycling = false // any edit ends a Tab cycle
 	}
-	open := m.cfg.Load().cmds != nil && !m.inspecting && !m.picking && !m.mp.open &&
-		slashStart(draft) >= 0 && !m.pal.escaped
+	open := m.paletteOpens(draft)
+	if !open && m.pal.actionsOnly {
+		// Actions mode is over (the "/" erased, or an overlay took
+		// the screen): the draft it displaced comes back.
+		m.leaveActions()
+		draft = m.input.Value()
+		open = m.paletteOpens(draft)
+	}
 	if open && !m.pal.open {
 		m.pal.selected = 0
 	}
 	m.pal.open = open
 	m.syncAt() // the "@" picker follows the same draft
+}
+
+// paletteOpens says whether the palette shows for this draft.
+func (m *model) paletteOpens(draft string) bool {
+	return (m.cfg.Load().cmds != nil || m.pal.actionsOnly) && !m.inspecting && !m.picking && !m.mp.open &&
+		slashStart(draft) >= 0 && !m.pal.escaped
+}
+
+// leaveActions ends the actions-only mode, putting back the draft
+// the mode displaced (see palette.stash).
+func (m *model) leaveActions() {
+	m.pal.actionsOnly = false
+	m.pal.cycling = false
+	m.input.SetValue(m.pal.stash)
+	m.input.CursorEnd()
+	m.pal.stash = ""
+	m.layoutComposer()
 }
 
 // overlayRows is whichever composer picker is open: "/" or "@".
@@ -101,17 +126,22 @@ func (m *model) completePalette(name string) {
 	m.syncPalette()
 }
 
-// paletteItems adapts the commands service's list to palette rows.
+// paletteItems adapts the commands service's list to palette rows,
+// plus one row per UI action ("name  key") at line start — mid-text
+// there is nothing to run, only a word to complete.
 func (m *model) paletteItems() []paletteItem {
-	cmds := m.cfg.Load().cmds
-	if cmds == nil {
-		return nil
+	cfg := m.cfg.Load()
+	var items []paletteItem
+	if cfg.cmds != nil && !m.pal.actionsOnly {
+		for _, in := range cfg.cmds.List() {
+			items = append(items, paletteItem{name: in.Name, usage: in.Usage, summary: in.Summary,
+				skill: in.IsSkill() || in.IsTemplate()})
+		}
 	}
-	infos := cmds.List()
-	items := make([]paletteItem, len(infos))
-	for i, in := range infos {
-		items[i] = paletteItem{name: in.Name, usage: in.Usage, summary: in.Summary,
-			skill: in.IsSkill() || in.IsTemplate()}
+	if slashStart(m.input.Value()) == 0 {
+		for _, a := range uiActions {
+			items = append(items, paletteItem{name: a.name, usage: actionKey(cfg, a.name), summary: a.desc, action: true})
+		}
 	}
 	return items
 }
@@ -133,14 +163,23 @@ func (m *model) paletteRows() []string {
 // the palette consumed it.
 func (m *model) paletteKey(key string) (bool, tea.Cmd) {
 	items := paletteFilter(m.paletteItems(), m.paletteQuery())
+	if key == "enter" && len(items) == 0 && m.pal.actionsOnly {
+		// Actions mode lists actions alone: a query matching none has
+		// nothing to run, and the "/query" is not a message either.
+		m.flash = "no action matches " + strconv.Quote(m.paletteQuery())
+		return true, nil
+	}
 	act, name := m.pal.onKey(key, items)
 	switch act {
 	case palMoved:
 		return true, nil
 	case palClose:
 		// Esc on a lone "/query" drops it (the user backed out of a
-		// command); text with anything more stays.
-		if draft := m.input.Value(); strings.HasPrefix(draft, "/") &&
+		// command); text with anything more stays. Actions mode gives
+		// back the draft its "/" displaced.
+		if m.pal.actionsOnly {
+			m.leaveActions()
+		} else if draft := m.input.Value(); strings.HasPrefix(draft, "/") &&
 			!strings.ContainsAny(strings.TrimSpace(draft), " \t\n") {
 			m.input.Reset()
 			m.pal.cycling = false
@@ -151,13 +190,24 @@ func (m *model) paletteKey(key string) (bool, tea.Cmd) {
 	case palComplete:
 		// Tab: rewrite the word to "/name " (stays open at line
 		// start); a repeated Tab walks the matches of the query the
-		// first one completed from.
+		// first one completed from. Action rows are not words: the
+		// cycle skips them (there is no "/quit" command to write),
+		// and Tab on one only keeps the selection.
 		if m.pal.cycling {
-			m.pal.selected = (m.pal.selected + 1) % len(items)
+			for i := 1; i <= len(items); i++ {
+				if j := (m.pal.selected + i) % len(items); !items[j].action {
+					m.pal.selected = j
+					break
+				}
+			}
 			name = items[m.pal.selected].name
 		} else {
 			m.pal.cycling = true
 			m.pal.cycleQuery = m.paletteQuery()
+		}
+		if items[m.pal.selected].action {
+			m.pal.cycleDraft = m.input.Value()
+			return true, nil
 		}
 		m.completePalette(name)
 		return true, nil
@@ -167,9 +217,20 @@ func (m *model) paletteKey(key string) (bool, tea.Cmd) {
 			m.completePalette(name)
 			return true, nil
 		}
-		return true, m.acceptPalette(name)
+		return true, m.acceptItem(items[m.pal.selected])
 	}
 	return false, nil
+}
+
+// acceptItem runs the selected row: an action row performs its action
+// and drops the query — nothing is submitted; a command dispatches.
+func (m *model) acceptItem(it paletteItem) tea.Cmd {
+	if it.action {
+		m.input.Reset()
+		m.syncPalette()
+		return m.runAction(it.name, "", m.cfg.Load())
+	}
+	return m.acceptPalette(it.name)
 }
 
 // acceptPalette dispatches the selected name — plus the typed args
@@ -214,7 +275,7 @@ func (m *model) clickPalette(mouse tea.Mouse) (bool, tea.Cmd) {
 	}
 	m.pal.selected = first + (mouse.Y - top)
 	m.pal.open = false
-	return true, m.acceptPalette(items[m.pal.selected].name)
+	return true, m.acceptItem(items[m.pal.selected])
 }
 
 // dispatch runs one submitted "/" line through the commands service —
@@ -303,24 +364,16 @@ func (m *model) perform(act commands.UIAction) tea.Cmd {
 	return nil
 }
 
-// keysText renders the live keymap (cfg.action, so rebinds show) plus
-// the fixed keys the composer and palette own.
+// keysText renders the live keymap (cfg.keys, so rebinds show) plus
+// the fixed keys the composer and palette own, then the leader's
+// chords.
 func keysText(cfg *uiCfg) string {
 	rows := [][2]string{
 		{"enter", "send the line (/cmd dispatches, !cmd runs a shell command)"},
 	}
-	order := []string{"quit", "clear_input", "history_inspect", "block_next", "block_prev",
-		"collapse_toggle", "collapse_all", "expand_all", "todo_toggle", "external_editor", "scroll_up", "scroll_down", "page_up", "page_down"}
-	desc := map[string]string{
-		"quit": "quit", "clear_input": "clear the composer", "history_inspect": "inspect history (toggle)",
-		"block_next": "focus next block", "block_prev": "focus previous block",
-		"collapse_toggle": "toggle the focused block", "collapse_all": "collapse all blocks",
-		"expand_all": "expand all blocks", "todo_toggle": "pin/unpin the todo list", "external_editor": "edit the draft in $VISUAL / $EDITOR", "scroll_up": "scroll up", "scroll_down": "scroll down",
-		"page_up": "page up", "page_down": "page down",
-	}
-	for _, a := range order {
-		if k := cfg.keys[a]; k != "" {
-			rows = append(rows, [2]string{k, desc[a]})
+	for _, a := range uiActions {
+		if k := cfg.keys[a.name]; k != "" {
+			rows = append(rows, [2]string{k, a.desc})
 		}
 	}
 	rows = append(rows,
@@ -329,8 +382,9 @@ func keysText(cfg *uiCfg) string {
 		[2]string{"ctrl+v", "an image on the clipboard: save it under ~/.bough/attachments as @path"},
 		[2]string{"?", "on an empty composer: this list (/keys)"},
 	)
+	chords := chordRows(cfg)
 	w := 0
-	for _, r := range rows {
+	for _, r := range slices.Concat(rows, chords) {
 		if len(r[0]) > w {
 			w = len(r[0])
 		}
@@ -339,6 +393,12 @@ func keysText(cfg *uiCfg) string {
 	b.WriteString("keys\n")
 	for _, r := range rows {
 		fmt.Fprintf(&b, "  %-*s  %s\n", w, r[0], r[1])
+	}
+	if len(chords) > 0 {
+		fmt.Fprintf(&b, "chords (%s, then a key)\n", cfg.keys["leader"])
+		for _, r := range chords {
+			fmt.Fprintf(&b, "  %-*s  %s\n", w, r[0], r[1])
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

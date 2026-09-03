@@ -138,11 +138,42 @@ func defaultKeymap() map[string]string {
 		"clear_input":     "ctrl+l",
 		"todo_toggle":     "ctrl+t", // pin the todo list above the composer
 		"external_editor": "ctrl+g", // edit the draft in $VISUAL / $EDITOR
+
+		// The leader key: the key after it is looked up in the chords
+		// ("chord:<key>" -> ACTION, see actions.go). opencode's ctrl+x.
+		"leader":  "ctrl+x",
+		"chord:l": "sessions",
+		"chord:c": "collapse_all",
+		"chord:e": "expand_all",
+		"chord:u": "undo",
+		"chord:k": "keys",
+		"chord:q": "quit",
+		"chord:p": "palette",
 	}
 }
 
+// chordPrefix marks a keymap entry binding a leader chord: the entry
+// names the chord's second key, its value the action to run.
+const chordPrefix = "chord:"
+
 func applyKeymap(keys map[string]string, m map[string]string) error {
 	for action, key := range m {
+		if k, ok := strings.CutPrefix(action, chordPrefix); ok {
+			// A chord: the value names an action, not a key; an empty
+			// value unbinds a default chord.
+			if strings.TrimSpace(k) == "" {
+				return fmt.Errorf("ui: keymap: empty chord key in %q", action)
+			}
+			if strings.TrimSpace(key) == "" {
+				delete(keys, action)
+				continue
+			}
+			if !knownAction(key) {
+				return fmt.Errorf("ui: keymap: chord %q: unknown action %q (have %s)", k, key, strings.Join(actionNames(), ", "))
+			}
+			keys[action] = key
+			continue
+		}
 		if _, ok := keys[action]; !ok {
 			known := make([]string, 0, len(keys))
 			for a := range keys {
@@ -166,9 +197,28 @@ func applyKeymap(keys map[string]string, m map[string]string) error {
 				}
 				continue // rebound by the user too (a swap)
 			}
+			if other == "leader" {
+				// Displacing the leader would silently drop every
+				// chord: an easy key to hit (ctrl+x), so fail loud.
+				return fmt.Errorf("ui: keymap: key %q bound to both %q and %q", key, action, other)
+			}
 			keys[other] = ""
 		}
 		keys[action] = key
+	}
+	// One key, one action: a collision (the leader's ctrl+x is an easy
+	// one to hit) would otherwise resolve by map order, differently
+	// each run.
+	bound := map[string]string{}
+	for _, action := range sortedKeys(keys) {
+		key := keys[action]
+		if key == "" || strings.HasPrefix(action, chordPrefix) {
+			continue
+		}
+		if other, dup := bound[key]; dup {
+			return fmt.Errorf("ui: keymap: key %q bound to both %q and %q", key, other, action)
+		}
+		bound[key] = action
 	}
 	return nil
 }

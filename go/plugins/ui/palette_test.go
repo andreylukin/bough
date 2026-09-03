@@ -221,7 +221,7 @@ func TestTemplateRowsListedLikeSkills(t *testing.T) {
 	d := drvCmds(t, r)
 	d.typeStr("/")
 	rows := d.m.paletteRows()
-	if len(rows) != 2 || !strings.Contains(stripANSI(rows[1]), "/areview") ||
+	if len(rows) < 2 || !strings.Contains(stripANSI(rows[1]), "/areview") ||
 		!strings.Contains(stripANSI(rows[1]), "template: Review a diff") {
 		t.Fatalf("template should rank below /help with its tag:\n%s", strings.Join(rows, "\n"))
 	}
@@ -310,7 +310,12 @@ func TestKeysCommandAndQuestionMark(t *testing.T) {
 	if d.m.input.Value() != "" {
 		t.Fatalf("? on an empty composer must not type, got %q", d.m.input.Value())
 	}
-	p := d.plain()
+	// The list outgrows a 24-row screen (chords included): read the
+	// block, and check the screen holds its tail.
+	p := d.m.blocks[len(d.m.blocks)-1].text
+	if !strings.Contains(d.plain(), "chords (ctrl+x, then a key)") {
+		t.Errorf("? should show the keymap:\n%s", d.plain())
+	}
 	for _, want := range []string{"ctrl+c", "quit", "ctrl+o", "inspect history", "esc", "tab"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("? should show the keymap with %q:\n%s", want, p)
@@ -365,8 +370,8 @@ func TestFilterStableAsQueryGrows(t *testing.T) {
 
 func TestSelectionWrapsBothEnds(t *testing.T) {
 	t.Parallel()
-	d := drvCmds(t, reg(t, "a1", "b2", "c3"))
-	d.typeStr("/")
+	d := drvCmds(t, reg(t, "zz1", "zz2", "zz3"))
+	d.typeStr("/zz") // no action row matches "zz"
 	if d.m.pal.selected != 0 {
 		t.Fatalf("selection starts at 0, got %d", d.m.pal.selected)
 	}
@@ -484,8 +489,8 @@ func TestOverlaySizedToContent(t *testing.T) {
 	if rows := d.m.paletteRows(); len(rows) != palMaxRows {
 		t.Errorf("15 items cap at %d rows, got %d", palMaxRows, len(rows))
 	}
-	d2 := drvCmds(t, reg(t, "a1", "b2", "c3"))
-	d2.typeStr("/")
+	d2 := drvCmds(t, reg(t, "zz1", "zz2", "zz3"))
+	d2.typeStr("/zz") // no action row matches "zz"
 	if rows := d2.m.paletteRows(); len(rows) != 3 {
 		t.Errorf("3 items draw 3 rows — never reserved blanks — got %d", len(rows))
 	}
@@ -545,12 +550,12 @@ func TestUsageColumnShared(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(r.Register(commands.CommandInfo{Name: "go", Usage: "<pkg> <flags...>", Summary: "SUMA"},
+	must(r.Register(commands.CommandInfo{Name: "zzgo", Usage: "<pkg> <flags...>", Summary: "SUMA"},
 		func(string) (string, error) { return "x", nil }))
-	must(r.Register(commands.CommandInfo{Name: "quit", Usage: "", Summary: "SUMB"},
+	must(r.Register(commands.CommandInfo{Name: "zzquit", Usage: "", Summary: "SUMB"},
 		func(string) (string, error) { return "x", nil }))
 	d := drvCmds(t, r)
-	d.typeStr("/")
+	d.typeStr("/zz") // no action row matches "zz"
 	rows := d.m.paletteRows()
 	if len(rows) != 2 {
 		t.Fatalf("want 2 rows, got %d", len(rows))
@@ -616,11 +621,11 @@ func TestPaletteInertWhilePicking(t *testing.T) {
 
 func TestMouseClickSelectsAndAccepts(t *testing.T) {
 	t.Parallel()
-	d := drvCmds(t, reg(t, "alpha", "beta", "gamma"))
-	d.typeStr("/")
+	d := drvCmds(t, reg(t, "zzalpha", "zzbeta", "zzgamma"))
+	d.typeStr("/zz")           // no action row matches "zz"
 	top := d.m.vp.Height() - 3 // three rows, bottom-anchored above the status bar
 	d.feed(tea.MouseClickMsg{X: 0, Y: top + 1, Button: tea.MouseLeft})
-	if len(d.m.blocks) != 2 || d.m.blocks[1].text != "beta ran" {
+	if len(d.m.blocks) != 2 || d.m.blocks[1].text != "zzbeta ran" {
 		t.Fatalf("clicking row 2 should dispatch beta, blocks=%+v", d.m.blocks)
 	}
 	if d.m.pal.open {

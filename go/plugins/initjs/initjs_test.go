@@ -154,6 +154,50 @@ func TestThemeKeymapServices(t *testing.T) {
 	}
 }
 
+// ui.keymap.leader and the nested ui.keymap.chords {key: action}
+// object land in the keymap service, chords flattened to "chord:<key>".
+func TestKeymapLeaderAndChords(t *testing.T) {
+	ctx, _, err := apply(t, "",
+		`bough.setup({ui: {keymap: {leader: "ctrl+g", chords: {x: "expand_all", q: "quit"}}}})`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keymap, err := kernel.Get[map[string]string](ctx, "keymap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keymap["leader"] != "ctrl+g" || keymap["chord:x"] != "expand_all" || keymap["chord:q"] != "quit" {
+		t.Fatalf("keymap = %v", keymap)
+	}
+	if _, _, err := apply(t, "", `bough.setup({ui: {keymap: {chords: "x"}}})`); err == nil ||
+		!strings.Contains(err.Error(), "ui.keymap.chords is not an object") {
+		t.Fatalf("a non-object chords should fail loud, got %v", err)
+	}
+	// A chord's key is a key name like any other: "Ctrl+X" or "foo bar"
+	// would never match a press.
+	for _, bad := range []string{`{"Ctrl+X": "quit"}`, `{"foo bar": "quit"}`} {
+		if _, _, err := apply(t, "", `bough.setup({ui: {keymap: {chords: `+bad+`}}})`); err == nil ||
+			!strings.Contains(err.Error(), "ui.keymap.chords") {
+			t.Errorf("chords %s should fail loud, got %v", bad, err)
+		}
+	}
+	// An empty value unbinds a default chord (the ui plugin drops it).
+	ctx, _, err = apply(t, "", `bough.setup({ui: {keymap: {chords: {u: ""}, collapse_all: "ctrl+g"}}})`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keymap, err = kernel.Get[map[string]string](ctx, "keymap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keymap["chord:u"] != "" || keymap["collapse_all"] != "ctrl+g" {
+		t.Fatalf("keymap = %v", keymap)
+	}
+	if _, ok := keymap["chord:u"]; !ok {
+		t.Fatal("the unbinding entry should reach the keymap service")
+	}
+}
+
 func TestSystemAppendCognition(t *testing.T) {
 	ctx, _, err := apply(t, "", `bough.setup({system: {append: "Always answer in haiku."}})`)
 	if err != nil {
