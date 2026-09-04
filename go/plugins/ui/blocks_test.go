@@ -116,9 +116,40 @@ func TestTranscriptOrder(t *testing.T) {
 	d.event("done", "")
 	p := d.plain()
 	iq, ia := strings.Index(p, "q1"), strings.Index(p, "a1")
-	id := strings.Index(p, "────")
+	id := strings.LastIndex(p, "────") // the turn marker; rules also draw ─
 	if iq < 0 || ia < 0 || id < 0 || !(iq < ia && ia < id) {
 		t.Errorf("blocks out of order (q1@%d a1@%d done@%d):\n%s", iq, ia, id, p)
+	}
+	// A rule separates the voices, and there is no blank line doing it too.
+	lines := strings.Split(p, "\n")
+	var iqL, iaL int
+	for i, l := range lines {
+		if strings.Contains(l, "q1") {
+			iqL = i
+		}
+		if strings.Contains(l, "a1") {
+			iaL = i
+		}
+	}
+	if !strings.Contains(lines[iqL+1], "────") || iaL <= iqL {
+		t.Errorf("want a rule row right after the user line, got %q", lines[iqL+1:iaL+1])
+	}
+}
+
+// Consecutive blocks in the same voice get no separator at all: the
+// transcript is denser than one-blank-line-between-everything.
+func TestSameVoiceBlocksSitTogether(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.event("code", "one()")
+	d.event("result", "1")
+	d.event("code", "two()")
+	p := d.plain()
+	for _, l := range strings.Split(p, "\n") {
+		if strings.Contains(l, "────") {
+			t.Errorf("no rule belongs between tool blocks:\n%s", p)
+			break
+		}
 	}
 }
 

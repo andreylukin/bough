@@ -188,18 +188,24 @@ func (m *model) refresh() {
 		return
 	}
 	atBottom := m.vp.AtBottom()
-	parts := make([]string, 0, len(m.blocks))
+	parts := make([]string, 0, 2*len(m.blocks))
 	m.ranges = m.ranges[:0]
-	start := 0
+	start, prev := 0, ""
 	for i := range m.blocks {
-		part := squeezeBlanks(m.render(&m.blocks[i], cfg))
-		if i == 0 {
-			part = strings.TrimLeft(part, "\n")
+		// The block renders own their content; the transcript owns the
+		// space between them: nothing between blocks of the same voice,
+		// one rule where the voice changes.
+		part := strings.Trim(squeezeBlanks(m.render(&m.blocks[i], cfg)), "\n")
+		voice := voiceOf(m.blocks[i].kind)
+		if i > 0 && separates(prev, voice) {
+			parts = append(parts, cfg.theme["border"].Render(strings.Repeat("─", max(m.width, 1))))
+			start++
 		}
 		n := strings.Count(part, "\n") + 1
 		m.ranges = append(m.ranges, lineRange{start: start, end: start + n, idx: i})
 		start += n
 		parts = append(parts, part)
+		prev = voice
 	}
 	m.lines = strings.Split(strings.Join(parts, "\n"), "\n")
 	m.vp.SetContent(strings.Join(m.highlight(m.lines, cfg), "\n"))
@@ -279,6 +285,26 @@ func (m *model) markdown(text string) string {
 // squeezeBlanks trims trailing blank lines from a rendered part and
 // collapses interior runs of blank lines to a single one, keeping the
 // transcript to at most one blank line between blocks.
+// voiceOf groups a block by who is speaking: you, the model, or the
+// machinery it drove. A rule is drawn where the voice changes.
+func voiceOf(kind string) string {
+	switch kind {
+	case "user", "steer":
+		return "user"
+	case "assistant":
+		return "assistant"
+	case "done":
+		return "done" // its own divider; never doubled with a rule
+	}
+	return "tool"
+}
+
+// separates reports whether a rule belongs between two voices. The turn
+// marker draws its own, so nothing is added on either side of it.
+func separates(prev, cur string) bool {
+	return prev != cur && prev != "done" && cur != "done"
+}
+
 func squeezeBlanks(s string) string {
 	lines := strings.Split(s, "\n")
 	out := lines[:0]
