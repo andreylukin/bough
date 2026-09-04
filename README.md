@@ -57,6 +57,9 @@ mkdir -p ~/.bough && echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.bough/env   # or 
 bough
 ```
 
+Any one of those four is enough: with no `bough.yml` of your own, bough runs
+whichever provider you have a key for. `/model` switches at any time.
+
 `~/.bough/env` is read at boot, so keys never need to be in your shell. No key handy? The echo provider proves the loop works:
 
 ```sh

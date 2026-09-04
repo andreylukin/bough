@@ -79,7 +79,17 @@ type configSource struct {
 
 func (s configSource) load() ([]kernel.Row, error) {
 	if s.path == "" {
-		return kernel.LoadBytes(bough.DefaultConfig, "embedded default config")
+		rows, err := kernel.LoadBytes(bough.DefaultConfig, "embedded default config")
+		if err != nil {
+			return nil, err
+		}
+		// No config of their own: run with whichever provider they
+		// actually have a key for (see provider.go).
+		rows, why := pickProvider(rows)
+		if why != "" {
+			kernel.Logf("bough: %s\n", why)
+		}
+		return rows, nil
 	}
 	return kernel.LoadFile(s.path)
 }
