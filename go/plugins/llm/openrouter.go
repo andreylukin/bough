@@ -3,6 +3,7 @@ package llm
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -69,17 +70,43 @@ type orMessage struct {
 }
 
 func (o *openrouterLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
-	return o.call(ctx, system, messages, nil)
+	return o.call(ctx, system, messages, nil, nil)
 }
 
 // Stream implements Streamer: the same request with stream:true,
 // decoding OpenRouter's SSE "data:" lines. The final chunk carries
 // usage (requested via usage.include), so the tally works either way.
 func (o *openrouterLLM) Stream(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
-	return o.call(ctx, system, messages, onDelta)
+	return o.call(ctx, system, messages, onDelta, nil)
 }
 
-func (o *openrouterLLM) call(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
+// StreamThinking implements ThinkingStreamer: OpenRouter puts the
+// model's reasoning in delta.reasoning (some providers send
+// reasoning_content), separate from the reply, so it can be shown
+// without ever entering the conversation.
+func (o *openrouterLLM) StreamThinking(ctx context.Context, system string, messages []Message, onDelta, onThink func(string)) (string, error) {
+	return o.call(ctx, system, messages, onDelta, onThink)
+}
+
+// Effort is the reasoning level in force; "" means the provider's own.
+func (o *openrouterLLM) Effort() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.effort
+}
+
+// SetEffort changes it for the next request (/think).
+func (o *openrouterLLM) SetEffort(level string) error {
+	if !ValidEffort(level) {
+		return fmt.Errorf("llm-openrouter: unknown thinking level %q", level)
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.effort = level
+	return nil
+}
+
+func (o *openrouterLLM) call(ctx context.Context, system string, messages []Message, onDelta, onThink func(string)) (string, error) {
 	o.once.Do(func() {
 		o.key = os.Getenv("OPENROUTER_API_KEY")
 		if o.key == "" {
@@ -108,8 +135,12 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 		"usage":    map[string]any{"include": true},
 		"stream":   onDelta != nil,
 	}
-	if o.effort != "" {
-		payload["reasoning"] = map[string]any{"effort": o.effort}
+	switch effort := o.Effort(); effort {
+	case "":
+	case "off":
+		payload["reasoning"] = map[string]any{"exclude": true, "enabled": false}
+	default:
+		payload["reasoning"] = map[string]any{"effort": effort}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -140,7 +171,7 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 			return "", retryableStatus(resp.StatusCode), openrouterErr(resp.StatusCode, o.model, data)
 		}
 		if onDelta != nil {
-			out, err := o.readStream(resp.Body, func(d string) { delivered = true; onDelta(d) })
+			out, err := o.readStream(resp.Body, func(d string) { delivered = true; onDelta(d) }, onThink)
 			return out, err != nil && !delivered && retryableErr(err), err
 		}
 		data, err := io.ReadAll(resp.Body)
@@ -197,7 +228,7 @@ func (o *openrouterLLM) addUsage(in, out int, cost float64) {
 // error object mid-stream (OpenRouter sends one for provider failures)
 // surfaces as the call's error, with whatever text already arrived
 // discarded by the caller.
-func (o *openrouterLLM) readStream(body io.Reader, onDelta func(string)) (string, error) {
+func (o *openrouterLLM) readStream(body io.Reader, onDelta, onThink func(string)) (string, error) {
 	var out strings.Builder
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -214,6 +245,11 @@ func (o *openrouterLLM) readStream(body io.Reader, onDelta func(string)) (string
 			Choices []struct {
 				Delta struct {
 					Content string `json:"content"`
+					// OpenRouter normalises reasoning to "reasoning";
+					// providers proxied raw (deepseek, glm) send
+					// "reasoning_content". Take whichever arrives.
+					Reasoning        string `json:"reasoning"`
+					ReasoningContent string `json:"reasoning_content"`
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
@@ -233,6 +269,11 @@ func (o *openrouterLLM) readStream(body io.Reader, onDelta func(string)) (string
 			return "", fmt.Errorf("llm-openrouter: %s", chunk.Error.Message)
 		}
 		for _, c := range chunk.Choices {
+			if onThink != nil {
+				if t := cmp.Or(c.Delta.Reasoning, c.Delta.ReasoningContent); t != "" {
+					onThink(t)
+				}
+			}
 			if c.Delta.Content != "" {
 				out.WriteString(c.Delta.Content)
 				onDelta(c.Delta.Content)

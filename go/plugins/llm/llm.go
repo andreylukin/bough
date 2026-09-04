@@ -4,6 +4,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"slices"
 )
 
 // Message is one turn of a conversation.
@@ -25,6 +26,31 @@ type LLM interface {
 // Complete when the service does not implement it.
 type Streamer interface {
 	Stream(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error)
+}
+
+// ThinkingStreamer is the optional seam for a provider that also
+// streams the model's reasoning. onThink receives the reasoning
+// fragments, onDelta the reply as usual; the return value is the reply
+// alone, so reasoning never becomes part of the conversation the model
+// is fed back.
+type ThinkingStreamer interface {
+	StreamThinking(ctx context.Context, system string, messages []Message, onDelta, onThink func(string)) (string, error)
+}
+
+// Efforter is the optional seam for changing how hard the model thinks
+// at runtime (the /think command). "" is the provider's own default.
+type Efforter interface {
+	Effort() string
+	SetEffort(level string) error
+}
+
+// Efforts are the levels Efforter accepts, weakest first; "off" asks
+// the provider for no reasoning at all and "" restores its default.
+var Efforts = []string{"off", "low", "medium", "high", "xhigh"}
+
+// ValidEffort reports whether level is one Efforter accepts.
+func ValidEffort(level string) bool {
+	return level == "" || slices.Contains(Efforts, level)
 }
 
 // Usage is a provider's running token/cost tally for this mount (it

@@ -264,8 +264,30 @@ func (m *model) addAssistant(text string) {
 // fragment, creating it on the first delta. The block is provisional:
 // the final "assistant" event replaces it (dropLive + addAssistant),
 // which is also where fence splitting and code dedupe happen.
+// addThinkDelta grows the live reasoning block. Thinking starts
+// collapsed whatever the collapse policy says: it is the model talking
+// to itself, one header row until you want it.
+func (m *model) addThinkDelta(id int, delta string) {
+	if n := len(m.blocks); n > 0 && m.blocks[n-1].live && m.blocks[n-1].kind == "thinking" {
+		m.blocks[n-1].text += delta
+		return
+	}
+	m.blocks = append(m.blocks, block{id: id, kind: "thinking", text: delta, live: true, collapsed: true})
+}
+
+// finishThinking settles the live reasoning block on the final text.
+func (m *model) finishThinking(id int, text string) {
+	for i := len(m.blocks) - 1; i >= 0; i-- {
+		if b := &m.blocks[i]; b.kind == "thinking" && b.live {
+			b.text, b.live = text, false
+			return
+		}
+	}
+	m.blocks = append(m.blocks, block{id: id, kind: "thinking", text: text, collapsed: true})
+}
+
 func (m *model) addDelta(id int, delta string) {
-	if n := len(m.blocks); n > 0 && m.blocks[n-1].live {
+	if n := len(m.blocks); n > 0 && m.blocks[n-1].live && m.blocks[n-1].kind == "assistant" {
 		m.blocks[n-1].text += delta
 		return
 	}
@@ -274,7 +296,7 @@ func (m *model) addDelta(id int, delta string) {
 
 // dropLive removes the provisional streaming block, if any.
 func (m *model) dropLive() {
-	if n := len(m.blocks); n > 0 && m.blocks[n-1].live {
+	if n := len(m.blocks); n > 0 && m.blocks[n-1].live && m.blocks[n-1].kind == "assistant" {
 		m.blocks = m.blocks[:n-1]
 	}
 }

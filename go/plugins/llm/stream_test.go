@@ -20,7 +20,7 @@ func TestOpenrouterReadStream(t *testing.T) {
 	}, "\n")
 	o := &openrouterLLM{model: "m"}
 	var got []string
-	out, err := o.readStream(strings.NewReader(body), func(d string) { got = append(got, d) })
+	out, err := o.readStream(strings.NewReader(body), func(d string) { got = append(got, d) }, nil)
 	if err != nil || out != "Hello" {
 		t.Fatalf("readStream = (%q, %v)", out, err)
 	}
@@ -35,7 +35,7 @@ func TestOpenrouterReadStream(t *testing.T) {
 func TestOpenrouterReadStreamError(t *testing.T) {
 	body := "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\ndata: {\"error\":{\"message\":\"provider down\"}}\n"
 	o := &openrouterLLM{model: "m"}
-	_, err := o.readStream(strings.NewReader(body), func(string) {})
+	_, err := o.readStream(strings.NewReader(body), func(string) {}, nil)
 	if err == nil || !strings.Contains(err.Error(), "provider down") {
 		t.Fatalf("err = %v", err)
 	}

@@ -79,6 +79,7 @@ type uiCfg struct {
 	hist     historyView       // nil when no history service
 	usage    llm.UsageReporter // the "usage" (cost row) or llm service; nil when neither reports
 	modeler  llm.Modeler       // the llm service when it names its model; nil otherwise
+	effort   llm.Efforter      // the llm service when its thinking level can be changed; nil otherwise
 	limit    contextLimiter    // the usage service when it knows the model's context window; nil otherwise
 	mdStyle  string            // "dark"/"light" glamour override; "" = detect
 	notice   string            // launcher "notice" service: a first-row warning (stale binary)
@@ -238,6 +239,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if m, err := kernel.Get[llm.Modeler](ctx, "llm"); err == nil {
 		cfg.modeler = m
+	}
+	if e, err := kernel.Get[llm.Efforter](ctx, "llm"); err == nil {
+		cfg.effort = e
 	}
 	if a, err := kernel.Get[askAnswers](ctx, "ask-answers"); err == nil {
 		cfg.ask = a

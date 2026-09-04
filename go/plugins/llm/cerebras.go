@@ -70,16 +70,38 @@ func (c *cerebrasLLM) Usage() Usage {
 }
 
 func (c *cerebrasLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
-	return c.call(ctx, system, messages, nil)
+	return c.call(ctx, system, messages, nil, nil)
 }
 
 // Stream implements Streamer: stream:true with stream_options
 // include_usage so the last chunk carries the token tally.
 func (c *cerebrasLLM) Stream(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
-	return c.call(ctx, system, messages, onDelta)
+	return c.call(ctx, system, messages, onDelta, nil)
 }
 
-func (c *cerebrasLLM) call(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
+// StreamThinking implements ThinkingStreamer (delta.reasoning).
+func (c *cerebrasLLM) StreamThinking(ctx context.Context, system string, messages []Message, onDelta, onThink func(string)) (string, error) {
+	return c.call(ctx, system, messages, onDelta, onThink)
+}
+
+// Effort is the reasoning level in force; SetEffort changes it (/think).
+func (c *cerebrasLLM) Effort() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.effort
+}
+
+func (c *cerebrasLLM) SetEffort(level string) error {
+	if !ValidEffort(level) {
+		return fmt.Errorf("llm-cerebras: unknown thinking level %q", level)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.effort = level
+	return nil
+}
+
+func (c *cerebrasLLM) call(ctx context.Context, system string, messages []Message, onDelta, onThink func(string)) (string, error) {
 	c.once.Do(func() {
 		c.key = os.Getenv("CEREBRAS_API_KEY")
 		if c.key == "" {
@@ -110,8 +132,8 @@ func (c *cerebrasLLM) call(ctx context.Context, system string, messages []Messag
 	if onDelta != nil {
 		payload["stream_options"] = map[string]any{"include_usage": true}
 	}
-	if c.effort != "" {
-		payload["reasoning_effort"] = c.effort
+	if e := c.Effort(); e != "" && e != "off" {
+		payload["reasoning_effort"] = e
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -139,7 +161,7 @@ func (c *cerebrasLLM) call(ctx context.Context, system string, messages []Messag
 		if onDelta != nil {
 			// A stream that already delivered text is never retried:
 			// the user would see the reply twice.
-			out, err := c.readStream(resp.Body, func(d string) { delivered = true; onDelta(d) })
+			out, err := c.readStream(resp.Body, func(d string) { delivered = true; onDelta(d) }, onThink)
 			return out, err != nil && !delivered && retryableErr(err), err
 		}
 		data, err := io.ReadAll(resp.Body)
@@ -186,7 +208,7 @@ func (c *cerebrasLLM) addUsage(in, out int) {
 // readStream decodes an SSE body: each "data: {json}" line carries a
 // chunk with choices[0].delta.content; "data: [DONE]" ends it. The
 // usage-only final chunk has no choices.
-func (c *cerebrasLLM) readStream(body io.Reader, onDelta func(string)) (string, error) {
+func (c *cerebrasLLM) readStream(body io.Reader, onDelta, onThink func(string)) (string, error) {
 	var out strings.Builder
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -202,7 +224,8 @@ func (c *cerebrasLLM) readStream(body io.Reader, onDelta func(string)) (string, 
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content string `json:"content"`
+					Content   string `json:"content"`
+					Reasoning string `json:"reasoning"`
 				} `json:"delta"`
 			} `json:"choices"`
 			Error *struct {
@@ -220,6 +243,9 @@ func (c *cerebrasLLM) readStream(body io.Reader, onDelta func(string)) (string, 
 			return "", fmt.Errorf("llm-cerebras: %s", chunk.Error.Message)
 		}
 		for _, ch := range chunk.Choices {
+			if onThink != nil && ch.Delta.Reasoning != "" {
+				onThink(ch.Delta.Reasoning)
+			}
 			if ch.Delta.Content != "" {
 				out.WriteString(ch.Delta.Content)
 				onDelta(ch.Delta.Content)

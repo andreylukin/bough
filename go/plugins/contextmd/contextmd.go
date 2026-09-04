@@ -23,15 +23,97 @@ type SystemContext struct {
 // New returns a SystemContext reading the given paths in order.
 func New(paths ...string) *SystemContext { return &SystemContext{paths: paths} }
 
-// Preamble concatenates every existing path as a labeled section.
-func (s *SystemContext) Preamble() string {
-	var out strings.Builder
+// Part is one file's contribution after de-duplication: Text is what
+// actually goes into the prompt, Dropped counts the sections already
+// said by an earlier file, and Same names that file.
+type Part struct {
+	Path    string
+	Text    string
+	Dropped int
+	Same    string
+}
+
+// Parts reads every existing path and de-duplicates them by section.
+// CLAUDE.md is very often a copy of AGENTS.md (or a symlink, or the
+// same house rules pasted twice); sending both spends the context
+// twice and tells the model the same rule with two voices. A section
+// whose body was already said by an earlier file is dropped, and a
+// file left with nothing at all disappears.
+func (s *SystemContext) Parts() []Part {
+	seen := map[string]string{} // section key -> the file that said it
+	var parts []Part
 	for _, p := range s.paths {
 		body, err := os.ReadFile(p)
 		if err != nil {
 			continue // missing file is fine
 		}
-		out.WriteString("# Context: " + p + "\n" + string(body) + "\n")
+		var kept []string
+		dropped, same := 0, ""
+		for _, sec := range sections(string(body)) {
+			k := key(sec)
+			if k == "" {
+				continue // whitespace only
+			}
+			if first, dup := seen[k]; dup {
+				dropped++
+				if same == "" {
+					same = first
+				}
+				continue
+			}
+			seen[k] = p
+			kept = append(kept, sec)
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		parts = append(parts, Part{
+			Path:    p,
+			Text:    "# Context: " + p + "\n" + strings.Join(kept, "\n") + "\n",
+			Dropped: dropped,
+			Same:    same,
+		})
+	}
+	return parts
+}
+
+// sections splits a markdown file at its headings: the text before the
+// first heading is its own section, then one per heading. Splitting at
+// every level means a shared "## Testing" block is caught even when
+// the files disagree about the rest.
+func sections(body string) []string {
+	var out []string
+	var cur strings.Builder
+	for _, line := range strings.SplitAfter(body, "\n") {
+		if strings.HasPrefix(line, "#") && cur.Len() > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
+		}
+		cur.WriteString(line)
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
+// key normalises a section for comparison: blank lines and trailing
+// whitespace do not make two copies of the same rule different.
+func key(sec string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(sec, "\n") {
+		if line = strings.TrimRight(line, " \t"); line != "" {
+			b.WriteString(line + "\n")
+		}
+	}
+	return b.String()
+}
+
+// Preamble is every part's text, in path order.
+func (s *SystemContext) Preamble() string {
+	var out strings.Builder
+	for _, p := range s.Parts() {
+		out.WriteString(p.Text)
 	}
 	return out.String()
 }

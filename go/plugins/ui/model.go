@@ -337,7 +337,12 @@ func (m *model) header(b *block, th theme) string {
 	switch b.kind {
 	case "code":
 		tag = codeLabel(b.text)
-	case "thinking", "error", "system", "todo", "job", "context":
+	case "thinking":
+		tag = "thinking"
+		if b.live {
+			tag = "thinking…" // still arriving; the count grows as it does
+		}
+	case "error", "system", "todo", "job", "context":
 		tag = b.kind
 	}
 	if b.label != "" {
@@ -740,6 +745,12 @@ func (m *model) addEvent(ev Event) {
 		// the parent's transcript is the story, the child's is detail
 		// behind the card.
 		m.addSubEvent(ev)
+	case "thinking-delta":
+		m.addThinkDelta(id, ev.Text)
+	case "thinking":
+		// The finished reasoning replaces what streamed: same block,
+		// same collapsed state, no second copy.
+		m.finishThinking(id, ev.Text)
 	case "assistant-delta":
 		m.addDelta(id, ev.Text)
 	case "assistant":

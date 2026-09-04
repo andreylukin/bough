@@ -28,6 +28,7 @@ import (
 
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
+	"github.com/andreylukin/bough/plugins/contextmd"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -79,6 +80,13 @@ type SystemContext interface {
 // provider without it is announced as one "context files" piece.
 type loadedLister interface {
 	Loaded() []string
+}
+
+// contextParter is the richer half: what each file actually
+// contributed after de-duplication, so the context row shows the text
+// that went in rather than the file on disk.
+type contextParter interface {
+	Parts() []contextmd.Part
 }
 
 // TurnStats is the optional "turn-stats" service seam (tools-basic):
@@ -674,7 +682,15 @@ type part struct {
 func (r *runner) systemParts(base string) []part {
 	parts := []part{{"environment", envSection()}}
 	if r.sysctx != nil {
-		if l, ok := r.sysctx.(loadedLister); ok {
+		if cp, ok := r.sysctx.(contextParter); ok {
+			for _, p := range cp.Parts() {
+				name := filepath.Base(p.Path) + " (" + p.Path + ")"
+				if p.Dropped > 0 {
+					name += fmt.Sprintf(" — %d section(s) already in %s, dropped", p.Dropped, filepath.Base(p.Same))
+				}
+				parts = append(parts, part{name, p.Text})
+			}
+		} else if l, ok := r.sysctx.(loadedLister); ok {
 			for _, p := range l.Loaded() {
 				if body, err := os.ReadFile(p); err == nil {
 					parts = append(parts, part{filepath.Base(p) + " (" + p + ")", string(body)})
@@ -813,6 +829,24 @@ func (r *runner) complete(ctx context.Context, sys string, emit func(kind, text 
 }
 
 func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, emit func(kind, text string)) (string, error) {
+	// A reasoning model's thinking is streamed to the ui as it arrives
+	// and recorded once at the end. It is NEVER fed back: DefaultProject
+	// ignores "thinking" entries, so the model re-reasons each step
+	// instead of reading its own half-thoughts as fact.
+	if th, ok := r.llm.(llm.ThinkingStreamer); ok {
+		var think strings.Builder
+		reply, err := th.StreamThinking(ctx, sys, msgs,
+			func(delta string) { emit("assistant-delta", delta) },
+			func(delta string) {
+				think.WriteString(delta)
+				emit("thinking-delta", delta)
+			})
+		if t := strings.TrimSpace(think.String()); t != "" {
+			r.hist.Append("thinking", map[string]any{"text": t})
+			emit("thinking", t)
+		}
+		return reply, err
+	}
 	if st, ok := r.llm.(llm.Streamer); ok {
 		return st.Stream(ctx, sys, msgs, func(delta string) { emit("assistant-delta", delta) })
 	}

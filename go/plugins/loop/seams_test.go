@@ -708,3 +708,51 @@ func TestContextCommandListsEveryPiece(t *testing.T) {
 		}
 	}
 }
+
+// thinkLLM streams reasoning alongside the reply.
+type thinkLLM struct {
+	think, reply string
+	sawEffort    string
+}
+
+func (t *thinkLLM) Complete(ctx context.Context, system string, msgs []Message) (string, error) {
+	return t.reply, nil
+}
+func (t *thinkLLM) StreamThinking(ctx context.Context, system string, msgs []Message, onDelta, onThink func(string)) (string, error) {
+	onThink(t.think)
+	onDelta(t.reply)
+	return t.reply, nil
+}
+
+// Reasoning reaches the ui (streamed, then settled) and the history,
+// but NEVER the model: a half-thought fed back as an assistant message
+// would be read as established fact.
+func TestThinkingStreamedRecordedNotFedBack(t *testing.T) {
+	l := &thinkLLM{think: "the tests look stale", reply: "they are stale"}
+	hist := &memHistory{}
+	r := &runner{llm: l, code: &stubCode{}, hist: hist, secs: &Sections{}}
+
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "are the tests stale?", collect(&kinds, &texts))
+
+	if i := slices.Index(kinds, "thinking-delta"); i < 0 || texts[i] != "the tests look stale" {
+		t.Fatalf("no streamed reasoning: %v", kinds)
+	}
+	if i := slices.Index(kinds, "thinking"); i < 0 || texts[i] != "the tests look stale" {
+		t.Fatalf("no settled reasoning: %v", kinds)
+	}
+	var recorded int
+	for _, e := range hist.Entries() {
+		if e.Kind == "thinking" {
+			recorded++
+		}
+	}
+	if recorded != 1 {
+		t.Fatalf("history holds %d thinking entries, want 1", recorded)
+	}
+	for _, m := range DefaultProject(hist.Entries()) {
+		if strings.Contains(m.Content, "the tests look stale") {
+			t.Fatalf("reasoning was fed back to the model: %+v", m)
+		}
+	}
+}

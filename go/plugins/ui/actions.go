@@ -27,6 +27,7 @@ var uiActions = []uiAction{
 	{"history_inspect", "inspect history (toggle)"},
 	{"block_next", "focus next block"},
 	{"block_prev", "focus previous block"},
+	{"think_cycle", "cycle how hard the model thinks (steps back through blocks while one is focused)"},
 	{"collapse_toggle", "toggle the focused block"},
 	{"collapse_all", "collapse all blocks"},
 	{"expand_all", "expand all blocks"},
@@ -111,6 +112,14 @@ func (m *model) runAction(name, via string, cfg *uiCfg) tea.Cmd {
 		if !m.inspecting {
 			m.moveFocus(-1)
 		}
+	case "think_cycle":
+		// shift+tab does two jobs, and which one is unambiguous: while
+		// you are walking the transcript it steps back through blocks
+		// (its old job), and at rest it changes the thinking level.
+		if m.focusID >= 0 || m.inspecting {
+			return m.runAction("block_prev", via, cfg)
+		}
+		m.flash = m.cycleThinking()
 	case "collapse_all":
 		m.flash = collapseNote(true, m.setAllCollapsed(true))
 	case "expand_all":

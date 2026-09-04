@@ -97,10 +97,30 @@ func (o *openaiLLM) body(system string, messages []Message, stream bool) map[str
 	if system != "" {
 		b["instructions"] = system
 	}
-	if o.effort != "" {
-		b["reasoning"] = map[string]any{"effort": o.effort}
+	if e := o.Effort(); e != "" && e != "off" {
+		b["reasoning"] = map[string]any{"effort": e}
 	}
 	return b
+}
+
+// Effort is the reasoning level in force; SetEffort changes it
+// (/think). The Responses API streams reasoning SUMMARIES as their own
+// event type, which is not wired up: /think changes how hard it
+// thinks, but openai's thinking is not shown.
+func (o *openaiLLM) Effort() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.effort
+}
+
+func (o *openaiLLM) SetEffort(level string) error {
+	if !ValidEffort(level) {
+		return fmt.Errorf("llm-openai: unknown thinking level %q", level)
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.effort = level
+	return nil
 }
 
 func (o *openaiLLM) call(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {

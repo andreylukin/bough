@@ -54,8 +54,10 @@ func (m *model) statusBar(cfg *uiCfg) string {
 		join := func(parts ...string) string {
 			return strings.Join(slices.DeleteFunc(parts, func(s string) bool { return s == "" }), " · ")
 		}
+		think := thinkChip(cfg)
 		cands = slices.Compact([]string{
-			join(tokens, cost, ctx, mdl),
+			join(tokens, cost, ctx, think, mdl),
+			join(cost, ctx, think, mdl),
 			join(cost, ctx, mdl),
 			join(cost, ctx),
 			join(cost),

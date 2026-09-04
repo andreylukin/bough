@@ -131,10 +131,11 @@ func defaultKeymap() map[string]string {
 		"page_down":       "pgdown",
 		"history_inspect": "ctrl+o",
 		"block_next":      "tab",
-		"block_prev":      "shift+tab",
-		"collapse_toggle": "enter", // toggles the focused block; submits otherwise
-		"collapse_all":    "",      // config-only: no default key
-		"expand_all":      "",      // config-only: no default key
+		"block_prev":      "",          // shift+tab reaches it while a block is focused
+		"think_cycle":     "shift+tab", // at rest: how hard the model thinks
+		"collapse_toggle": "enter",     // toggles the focused block; submits otherwise
+		"collapse_all":    "",          // config-only: no default key
+		"expand_all":      "",          // config-only: no default key
 		"clear_input":     "ctrl+l",
 		"todo_toggle":     "ctrl+t",    // pin the todo list above the composer
 		"external_editor": "ctrl+g",    // edit the draft in $VISUAL / $EDITOR
