@@ -69,26 +69,29 @@ func runWeb(args []string) {
 	}
 	switch verb {
 	case "status":
-		if pid, a, ok := runningWeb(home); ok {
-			fmt.Printf("bough web: running at %s (pid %d)\n", webURL(a), pid)
+		if w, ok := runningWeb(home); ok {
+			fmt.Printf("bough web: running at %s (pid %d)\n", webURL(w.addr), w.pid)
+			if where := w.where(); where != "" {
+				fmt.Println("bough web: started " + where)
+			}
 		} else {
 			fmt.Println("bough web: not running")
 		}
 		return
 	case "stop":
-		pid, a, ok := runningWeb(home)
+		w, ok := runningWeb(home)
 		if !ok {
 			fmt.Println("bough web: not running")
 			return
 		}
-		if err := syscall.Kill(pid, syscall.SIGINT); err != nil {
-			fatal(fmt.Errorf("signal pid %d: %w", pid, err))
+		if err := syscall.Kill(w.pid, syscall.SIGINT); err != nil {
+			fatal(fmt.Errorf("signal pid %d: %w", w.pid, err))
 		}
-		for i := 0; i < 100 && alive(pid); i++ {
+		for i := 0; i < 100 && alive(w.pid); i++ {
 			time.Sleep(50 * time.Millisecond)
 		}
 		os.Remove(webPidfile(home))
-		fmt.Printf("bough web: stopped %s (pid %d)\n", webURL(a), pid)
+		fmt.Printf("bough web: stopped %s (pid %d)\n", webURL(w.addr), w.pid)
 		return
 	}
 
@@ -98,10 +101,18 @@ func runWeb(args []string) {
 	if n := staleNotice(resolveExe()); n != "" {
 		fmt.Fprintln(os.Stderr, "bough web: "+n)
 	}
-	if pid, a, ok := runningWeb(home); ok {
-		fmt.Printf("bough web: already running at %s (pid %d)\n", webURL(a), pid)
-		fmt.Println("bough web: `bough web stop` then `bough web` to pick up a new build or config")
-		openBrowser(webURL(a))
+	if w, ok := runningWeb(home); ok {
+		fmt.Printf("bough web: already running at %s (pid %d)\n", webURL(w.addr), w.pid)
+		// The trap: a session started elsewhere runs THAT directory's
+		// bough.yml, so opening it from here shows someone else's
+		// model and no cost, with nothing to say why.
+		if here, err := os.Getwd(); err == nil && w.dir != "" && w.dir != here {
+			fmt.Printf("bough web: it was started in %s, so it is running that directory's config, not this one\n", w.dir)
+			fmt.Println("bough web: `bough web stop` then `bough web` here to use this directory's")
+		} else if where := w.where(); where != "" {
+			fmt.Println("bough web: started " + where)
+		}
+		openBrowser(webURL(w.addr))
 		return
 	}
 	pid, logPath, err := launchWeb(home, resolveExe(), addr)

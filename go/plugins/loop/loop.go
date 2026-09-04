@@ -255,14 +255,18 @@ output or result blocks yourself; only the runtime returns output. Take
 as many steps as you need.
 
 Ending the turn is an ACT, not the absence of one. When the work is
-done, put your answer to the user in a stop block:
+done — and only when your last block actually SUCCEEDED, never straight
+after an error — put your answer to the user in a stop block:
 
 ` + "```stop" + `
 What you did, what you found, what is left.
 ` + "```" + `
 
-That is the only thing that hands the turn back. A reply with neither a
-js block nor a stop block runs nothing and ends nothing: you will simply
+That is the only thing that hands the turn back. It is final: never ask
+a question inside it ("shall I also…?", "do you want me to…?") — the
+turn is over by the time it is read, so ask with tools.ask inside a js
+block, or decide and say what you decided. A reply with neither a js
+block nor a stop block runs nothing and ends nothing: you will simply
 be asked again. So never announce what you are about to do ("I'll
 verify…", "Next, let me…") — either do it in a js block in that same
 reply, or stop. Everything the user needs to read goes inside the stop
@@ -878,6 +882,15 @@ func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, e
 // wants the user to read goes inside it.
 var stopFence = regexp.MustCompile("(?s)```stop[^\n]*\n(.*?)```")
 
+// stoppedOnErrorNote is fed back when the model stops immediately
+// after a failed block. Cline's attempt_completion has the same rule —
+// never complete before confirming the previous tool use succeeded —
+// and it is the difference between "done" and "done, apparently".
+const stoppedOnErrorNote = "[unfinished] Your last block FAILED and you stopped on it: the error above is the last thing that happened, so whatever you just claimed is unverified. Fix it, or run the check again, or stop with an honest account of what failed and what you did not do."
+
+// askedInStopNote is fed back when the final answer ends in a question.
+const askedInStopNote = "[unfinished] You ended the turn with a question. The turn is over when you stop, so the user reads it with no way to answer inside it. Either decide it yourself and say what you decided, or ask properly with tools.ask(question, ...options) inside a js block, which blocks until they answer."
+
 // noStopNote is fed back to a model whose reply neither ran anything
 // nor ended the turn. The commonest shape by far is a plan with
 // nothing attached ("I'm locating the service definition, then I'll
@@ -1064,7 +1077,8 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		maxSteps = defaultMaxSteps
 	}
 	retried := false
-	nudges := 0 // push-backs spent asking for a stop block
+	nudges := 0         // push-backs spent asking for a stop block
+	lastFailed := false // the previous block errored: a stop on it is unverified
 	for step := 0; step < maxSteps; step++ {
 		r.landSteers(ctx, emit, false) // a steer sent during the last block joins the context now
 		r.landJobs(emit)               // a background job that finished during the last block reports now
@@ -1119,20 +1133,36 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			// model says so with a ```stop block. A reply that neither
 			// runs anything nor stops is a plan the user cannot use,
 			// so the turn goes back for another round.
-			if !stopped {
+			// A stop is refused twice over: on the heels of a failed
+			// block (the claim is unverified) and when it asks the
+			// user something (nobody can answer a finished turn).
+			why, note0 := "", ""
+			switch {
+			case !stopped:
+				why, note0 = "ran nothing and did not stop", noStopNote
+			case lastFailed:
+				why, note0 = "stopped straight after a failed block", stoppedOnErrorNote
+			case strings.HasSuffix(strings.TrimSpace(reply), "?"):
+				why, note0 = "ended the turn with a question", askedInStopNote
+			}
+			if why != "" {
 				if nudges < r.stopRetries {
 					nudges++
-					r.hist.Append("nudge", map[string]any{"text": noStopNote})
+					// The point of refusing a stop-on-failure is to
+					// make the model look again, not to trap it: once
+					// it has been told, an honest report gets through.
+					lastFailed = false
+					r.hist.Append("nudge", map[string]any{"text": note0})
 					// The reply stays in history (the model said it,
 					// and the next call needs it), but on screen it is
 					// superseded by the answer that follows: the user
 					// should not read the same thing twice.
-					note("system", fmt.Sprintf("that reply ran nothing and did not stop; asking again (%d/%d)", nudges, r.stopRetries),
+					note("system", fmt.Sprintf("that reply %s; asking again (%d/%d)", why, nudges, r.stopRetries),
 						map[string]any{"supersedes": true})
 					continue
 				}
 				if r.stopRetries > 0 {
-					note("system", "no stop block after "+strconv.Itoa(r.stopRetries)+" tries; taking the reply as final", nil)
+					note("system", "still "+why+" after "+strconv.Itoa(r.stopRetries)+" tries; taking the reply as final", nil)
 				}
 			}
 			note("done", "", r.doneData())
@@ -1182,8 +1212,10 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			// model; the UI event keeps the "error" kind.
 			r.hist.Append("result", map[string]any{"text": out, "code": code})
 			if runErr != nil {
+				lastFailed = true
 				emit("error", out)
 			} else {
+				lastFailed = false
 				emit("result", out)
 			}
 		}

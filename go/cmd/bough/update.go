@@ -179,7 +179,7 @@ func restartWeb(home, bin string, out io.Writer) error {
 		fmt.Fprintln(out, noWebMsg)
 		return nil
 	}
-	pid, addr, perr := parsePidfile(string(b))
+	pid, addr, _, _, perr := parsePidfile(string(b))
 	if perr != nil || !alive(pid) {
 		os.Remove(pf)
 		fmt.Fprintln(out, noWebMsg)
@@ -229,35 +229,69 @@ func launchWeb(home, bin, addr string) (int, string, error) {
 	return cmd.Process.Pid, logPath, nil
 }
 
+// webSession is the live detached session: where it runs and what it
+// runs on, not just where to point a browser.
+type webSession struct {
+	pid    int
+	addr   string
+	dir    string // the cwd it was started in — which bough.yml it found
+	config string
+}
+
+// where renders the session's directory and config for a person
+// deciding whether it is the session they meant.
+func (w webSession) where() string {
+	if w.dir == "" {
+		return ""
+	}
+	s := "in " + w.dir
+	if w.config != "" {
+		s += " (config " + w.config + ")"
+	}
+	return s
+}
+
 // runningWeb reports the live web session recorded in the pidfile, if
 // any; a stale pidfile is removed.
-func runningWeb(home string) (pid int, addr string, ok bool) {
+func runningWeb(home string) (webSession, bool) {
 	pf := webPidfile(home)
 	b, err := os.ReadFile(pf)
 	if err != nil {
-		return 0, "", false
+		return webSession{}, false
 	}
-	pid, addr, perr := parsePidfile(string(b))
+	pid, addr, dir, config, perr := parsePidfile(string(b))
 	if perr != nil || !alive(pid) {
 		os.Remove(pf)
-		return 0, "", false
+		return webSession{}, false
 	}
-	return pid, addr, true
+	return webSession{pid: pid, addr: addr, dir: dir, config: config}, true
 }
 
 func webPidfile(home string) string {
 	return filepath.Join(home, ".bough", "web.pid")
 }
 
-func parsePidfile(s string) (pid int, addr string, err error) {
-	fields := strings.Fields(s)
-	if len(fields) != 2 {
-		return 0, "", fmt.Errorf("malformed pidfile: %q", s)
+// parsePidfile reads "<pid> <addr>[\t<cwd>\t<config>]" — tabs, because
+// a path may contain spaces. The trailing two
+// are what a detached session is actually attached to: without them
+// `bough web` in one directory silently hands you the session someone
+// started in another, running that directory's bough.yml.
+func parsePidfile(s string) (pid int, addr, dir, config string, err error) {
+	parts := strings.Split(strings.TrimRight(s, "\n"), "\t")
+	head := strings.Fields(parts[0])
+	if len(head) != 2 {
+		return 0, "", "", "", fmt.Errorf("malformed pidfile: %q", s)
 	}
-	if _, err := fmt.Sscanf(fields[0], "%d", &pid); err != nil || pid <= 0 {
-		return 0, "", fmt.Errorf("malformed pidfile pid: %q", fields[0])
+	if _, err := fmt.Sscanf(head[0], "%d", &pid); err != nil || pid <= 0 {
+		return 0, "", "", "", fmt.Errorf("malformed pidfile pid: %q", head[0])
 	}
-	return pid, fields[1], nil
+	if len(parts) > 1 {
+		dir = parts[1]
+	}
+	if len(parts) > 2 {
+		config = parts[2]
+	}
+	return pid, head[1], dir, config, nil
 }
 
 // alive is a signal-0 liveness probe. pid must be positive — never
@@ -273,6 +307,10 @@ func alive(pid int) bool {
 // writeWebPidfile records "<pid> <addr>" for restart to find.
 // Best-effort: a failure warns and the session runs on. The returned
 // cleanup (nil on failure) removes the file on clean shutdown.
+// webConfig is the config path the web session resolved, recorded in
+// the pidfile so `bough web` can say which one is in force.
+var webConfig = "(embedded)"
+
 func writeWebPidfile(addr string) func() {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -284,7 +322,9 @@ func writeWebPidfile(addr string) func() {
 		fmt.Fprintln(os.Stderr, "bough: web pidfile:", err)
 		return nil
 	}
-	if err := os.WriteFile(pf, fmt.Appendf(nil, "%d %s\n", os.Getpid(), addr), 0o644); err != nil {
+	dir, _ := os.Getwd()
+	if err := os.WriteFile(pf, fmt.Appendf(nil, "%d %s\t%s\t%s\n",
+		os.Getpid(), addr, dir, webConfig), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "bough: web pidfile:", err)
 		return nil
 	}

@@ -581,3 +581,65 @@ func (l *seqLLM) Complete(ctx context.Context, system string, messages []Message
 	}
 	return l.replies[i], nil // scripted verbatim: these tests are about the contract
 }
+
+// Two rules the stop tool needs beyond "you must call it", both from
+// how other harnesses do completion: never stop on the heels of a
+// failed block (the claim is unverified), and never ask a question in
+// the block that ends the turn (nobody can answer it).
+func TestStopRefusedAfterAFailedBlockAndOnAQuestion(t *testing.T) {
+	t.Run("after a failure", func(t *testing.T) {
+		llm := &seqLLM{replies: []string{
+			"```js\nboom()\n```",
+			"```stop\nAll done, the build passes.\n```",
+			"```stop\nThe build FAILED: boom is not defined. I changed nothing.\n```",
+		}}
+		hist := &memHistory{}
+		r := &runner{llm: llm, code: failCode{}, hist: hist, secs: &Sections{}, stopRetries: 2}
+		var kinds, texts []string
+		_ = r.Run(context.Background(), "build it", collect(&kinds, &texts))
+
+		if llm.calls != 3 {
+			t.Fatalf("%d calls, want 3 (the stop on a failed block was refused once)", llm.calls)
+		}
+		var sawNote bool
+		for _, m := range DefaultProject(hist.Entries()) {
+			if strings.Contains(m.Content, "Your last block FAILED") {
+				sawNote = true
+			}
+		}
+		if !sawNote {
+			t.Fatal("the model was not told why its stop was refused")
+		}
+		if last := texts[slices.Index(kinds, "done")-1]; !strings.Contains(last, "FAILED") {
+			t.Fatalf("the honest answer did not land: %q", last)
+		}
+	})
+
+	t.Run("on a question", func(t *testing.T) {
+		llm := &seqLLM{replies: []string{
+			"```stop\nI rebased it. Shall I also push?\n```",
+			"```stop\nI rebased it and left the push to you.\n```",
+		}}
+		r := &runner{llm: llm, code: &stubCode{}, hist: &memHistory{}, secs: &Sections{}, stopRetries: 2}
+		var kinds, texts []string
+		_ = r.Run(context.Background(), "rebase it", collect(&kinds, &texts))
+		if llm.calls != 2 {
+			t.Fatalf("%d calls, want 2 (the question was refused once)", llm.calls)
+		}
+		if i := slices.Index(kinds, "system"); i < 0 || !strings.Contains(texts[i], "ended the turn with a question") {
+			t.Fatalf("no visible note: %v %v", kinds, texts)
+		}
+	})
+
+	// A clean stop is never pushed back on, question mark or not in the
+	// middle of it.
+	t.Run("clean", func(t *testing.T) {
+		llm := &seqLLM{replies: []string{"```stop\nDone. The flaky test was a stale golden file.\n```"}}
+		r := &runner{llm: llm, code: &stubCode{}, hist: &memHistory{}, secs: &Sections{}, stopRetries: 2}
+		var kinds, texts []string
+		_ = r.Run(context.Background(), "fix it", collect(&kinds, &texts))
+		if llm.calls != 1 {
+			t.Fatalf("a clean stop was pushed back on (%d calls)", llm.calls)
+		}
+	})
+}

@@ -245,6 +245,9 @@ func main() {
 		}
 	})
 	src := resolveConfig(explicitConfig, *config)
+	// The web pidfile records it, so `bough web` elsewhere can say
+	// which config the running session is on.
+	webConfig = src.describe()
 
 	mode := "tui"
 	switch {

@@ -31,3 +31,41 @@ func TestWebArgs(t *testing.T) {
 		t.Errorf("webURL v6: %s", got)
 	}
 }
+
+// The pidfile carries where the session runs and what it runs on: a
+// `bough web` in another directory silently hands you the session
+// someone started elsewhere, on that directory's config.
+func TestPidfileCarriesDirAndConfig(t *testing.T) {
+	pid, addr, dir, config, err := parsePidfile("4242 localhost:7681\t/Users/a/repos/my code\t/Users/a/.bough/bough.yml\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pid != 4242 || addr != "localhost:7681" {
+		t.Fatalf("pid=%d addr=%q", pid, addr)
+	}
+	if dir != "/Users/a/repos/my code" {
+		t.Fatalf("a space in the path did not survive: %q", dir)
+	}
+	if config != "/Users/a/.bough/bough.yml" {
+		t.Fatalf("config = %q", config)
+	}
+
+	// An old two-field pidfile still parses (no dir, no config).
+	pid, addr, dir, config, err = parsePidfile("7 localhost:1\n")
+	if err != nil || pid != 7 || addr != "localhost:1" || dir != "" || config != "" {
+		t.Fatalf("legacy pidfile: %d %q %q %q %v", pid, addr, dir, config, err)
+	}
+	if _, _, _, _, err := parsePidfile("nonsense"); err == nil {
+		t.Fatal("a malformed pidfile must error")
+	}
+}
+
+// where() is what the "already running" line prints.
+func TestWebSessionWhere(t *testing.T) {
+	if got := (webSession{dir: "/x", config: "/y.yml"}).where(); got != "in /x (config /y.yml)" {
+		t.Fatalf("where = %q", got)
+	}
+	if got := (webSession{}).where(); got != "" {
+		t.Fatalf("an old pidfile has nothing to say, got %q", got)
+	}
+}
