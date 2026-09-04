@@ -21,14 +21,39 @@ The model sees one tool: it writes JavaScript, bough runs it, and whatever the p
 - **Cost in the status bar** — every provider's token tally is priced (OpenRouter passes its own price through; Anthropic and OpenAI use a built-in table). `/cost` says where the number came from.
 - **Three UIs, one model** — the native TUI (bubbletea), the same UI in a browser (`bough web`), and `--headless` for pipes and scripts.
 
-## Quick start
+## Install
 
-Requires Go 1.27+.
+macOS and Linux, x86-64 and arm64. One static binary, no runtime to install
+alongside it: code mode runs JavaScript in-process and SQLite is pure Go.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh | sh
+```
+
+<details>
+<summary>Homebrew, or from source</summary>
+
+```sh
+brew tap andreylukin/bough https://github.com/andreylukin/bough
+brew install bough
+```
 
 ```sh
 git clone https://github.com/andreylukin/bough && cd bough/go
-go build -o ~/.local/bin/bough ./cmd/bough
-mkdir -p ~/.bough && echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.bough/env   # or OPENROUTER_API_KEY / OPENAI_API_KEY
+go build -o ~/.local/bin/bough ./cmd/bough      # needs Go 1.27+
+```
+
+The installer takes `BOUGH_VERSION` to pin a tag and `BOUGH_INSTALL_DIR` to
+choose where the binary lands (default `~/.local/bin`). Release archives and
+their `checksums.txt` are on the [releases page](https://github.com/andreylukin/bough/releases);
+the installer verifies the checksum when both are present.
+
+</details>
+
+Then give it a key and run it:
+
+```sh
+mkdir -p ~/.bough && echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.bough/env   # or OPENROUTER_API_KEY / OPENAI_API_KEY / CEREBRAS_API_KEY
 bough
 ```
 
@@ -83,7 +108,7 @@ bough.provider("parrot", (sys, msgs) => "...");             // a full LLM provid
 | `bough mcp list \| tools \| search \| status \| call` | MCP servers and their tools, from the CLI |
 | `bough sync-mcp` | adopt Claude Code's MCP OAuth grants by keychain reference |
 | `bough graph stats \| backfill \| search \| neighbors \| timeline` | the memory graph |
-| `bough update` / `bough restart` | `git pull --ff-only`, rebuild in place, bounce the web session |
+| `bough update` / `bough restart` | `git pull --ff-only`, rebuild in place (source checkouts; use your installer otherwise), bounce the web session |
 
 `bough --help` has the full list; `--dump-config` mounts the tree, prints it, and exits.
 

@@ -1,0 +1,75 @@
+# Cutting a release: tag and push, and this builds the binaries a person
+# actually installs.
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# Until this existed, the only way to get bough was `git clone && go
+# build`, which is not how anyone tries a tool. The Go tree needs no
+# cgo (modernc.org/sqlite is pure Go), so one ubuntu runner
+# cross-compiles every target — no build matrix, no runner-specific
+# toolchains, and every artifact comes out of the same commit.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (must already exist)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache: true
+          cache-dependency-path: go/go.sum
+
+      # The gate runs here too. A tag that cannot pass the tests is not
+      # a release, and a broken binary on the releases page outlives
+      # any apology for it.
+      - name: Test
+        working-directory: go
+        run: go vet ./... && go test -parallel 4 -timeout 20m ./...
+
+      - name: Build every target
+        working-directory: go
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../dist
+          # -s -w drops the symbol table and DWARF: 74M -> 55M, and
+          # nothing here reads a stack trace out of a shipped binary.
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            os="${target%/*}"; arch="${target#*/}"
+            echo "building $os/$arch"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags "-s -w -X main.version=${TAG}" \
+              -o "../dist/bough" ./cmd/bough
+            tar -C ../dist -czf "../dist/bough_${TAG}_${os}_${arch}.tar.gz" bough
+            rm ../dist/bough
+          done
+          cd ../dist && sha256sum *.tar.gz > checksums.txt && cat checksums.txt
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/*.tar.gz dist/checksums.txt \
+            --title "bough $TAG" \
+            --generate-notes \
+            --verify-tag || \
+          gh release upload "$TAG" dist/*.tar.gz dist/checksums.txt --clobber

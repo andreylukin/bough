@@ -1,3 +1,0 @@
-go/plugins/ui/session.go:319:func truncateCols(s string, n int) string {
-go/plugins/ui/session.go-320-	s = strings.SplitN(s, "\n", 2)[0]
-go/plugins/ui/session.go-321-	if r := []rune(s); len(r) > n {

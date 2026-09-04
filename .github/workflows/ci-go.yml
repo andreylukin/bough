@@ -1,7 +1,11 @@
 # CI for the Go bough under go/: everything runs in parallel.
 #   unit    — go vet + go test -race ./... (kernel, plugin, teatest,
 #             headless e2e, and PTY suites; each test is isolated, so
-#             the whole tree runs fully parallel in one job)
+#             the whole tree runs fully parallel in one job) on Linux
+#             AND macOS: macOS is where bough is used most, and it was
+#             the one platform nothing here checked
+#   cross   — every release target compiles, so a tag never discovers a
+#             build break on an architecture nobody ran
 #   web-e2e — Playwright specs against real `bough --web` processes,
 #             sharded 4 ways
 name: ci-go
@@ -15,7 +19,11 @@ on:
 
 jobs:
   unit:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: go
@@ -30,6 +38,29 @@ jobs:
       # Two vCPUs: 16-way parallelism only starves the timing-sensitive
       # TUI and PTY tests. -race is the point of running it here.
       - run: go test -race -parallel 4 -timeout 20m ./...
+
+  # A release cross-compiles four targets from one runner. Finding out
+  # at tag time that one of them does not build is finding out too late.
+  cross:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache: true
+          cache-dependency-path: go/go.sum
+      - name: Build every release target
+        run: |
+          set -euo pipefail
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            echo "building $target"
+            CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" \
+              go build -trimpath -o /dev/null ./cmd/bough
+          done
 
   web-e2e:
     runs-on: ubuntu-latest

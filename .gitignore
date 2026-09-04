@@ -1,27 +1,36 @@
-
-__pycache__/
-.bough-bun-linux
-.bough-bun-linux-musl
-.bough-bun/
-.claude/
-.DS_Store
-**/testdata/rapid/
-/.dev/
+# The built binary (repo root and go/, since both are build targets).
 /bough
 /go/bough
-# leftovers of the deleted Rust tree (bench outputs, the prompt tuner's workspace)
-# leftovers of the deleted TypeScript tree (ahe run outputs, vendored bun builds);
-# local harness state (worktrees, session settings)
-# OS
-# prebuilt linux bough for the Harbor/terminal-bench adapter (bench/harbor)
-# rapid property-test failure replays
-# safe to delete from your checkout by hand.
-# the built binary
-# tmux debug logs and the unevaluated-expr sqlite artifact (2026-09-01) never belong here
+
+# OS and editor droppings.
+.DS_Store
+__pycache__/
+
+# Local harness state: worktrees, session settings, scratch shots.
+/.dev/
+.claude/
+.shots-tmp/
+
+# Rapid property-test failure replays.
+**/testdata/rapid/
+
+# Leftovers of the deleted TypeScript tree: ahe run outputs and the
+# vendored bun builds. Safe to delete from your checkout by hand.
 ahe/
-bench/harbor/dist/
+.bough-bun/
+.bough-bun-linux
+.bough-bun-linux-musl
+node_modules/
+
+# Leftovers of the deleted Rust tree: bench outputs and the prompt
+# tuner's workspace.
 bench/pier/
 bench/tune/
 bough_path(*
-node_modules/
+
+# Prebuilt linux bough for the Harbor/terminal-bench adapter.
+bench/harbor/dist/
+
+# tmux debug logs and the unevaluated-expr sqlite artifact (2026-09-01);
+# these never belong in the tree.
 tmux-*.log

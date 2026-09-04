@@ -8,83 +8,53 @@
 # here first. The url names a TAG, not a commit sha: a commit pin goes stale on
 # the next push and quietly ships a `brew install` of yesterday's tree.
 #
-# WHAT THIS FORMULA INSTALLS. Two files and a wrapper, because bough is two
-# things: the Rust binary (server, TUI, `exec`, the CLIs — one build) and the
-# lifecycle script that owns `start`/`kill`/`restart`/`status`/`logs`, which are
-# launchd and systemd verbs the binary has no equivalent for. The script is the
-# `bough` a person types; it finds its binary through BOUGH_BIN.
-#
-# Every path in the wrapper goes through `opt_libexec`, never the Cellar: the
-# LaunchAgent the script writes names its own path, and a version-pinned one
-# would point at a directory `brew upgrade` has already deleted.
+# WHAT THIS FORMULA INSTALLS. One static binary and nothing else. bough used to
+# be a Rust server with a lifecycle script, a LaunchAgent, and a runtime set of
+# node/ripgrep/ast-grep/uv; that tree is gone. The Go bough is a single
+# terminal program with no sidecar, no service to manage, and no external
+# runtime — code mode runs JavaScript in-process (goja) and SQLite is pure Go
+# (modernc.org/sqlite), so there is nothing here to depend on but a build
+# toolchain.
 class Bough < Formula
   desc "Coding agent that acts by writing programs"
   homepage "https://github.com/andreylukin/bough"
-  url "https://github.com/andreylukin/bough/archive/refs/tags/v0.1.1.tar.gz"
-  sha256 "68902dce1cd8f1b36485598de61012d1e05eabfd31ac9f1b1f52dd3ab6ef1d06"
+  url "https://github.com/andreylukin/bough/archive/refs/tags/v0.2.0.tar.gz"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "Apache-2.0"
   head "https://github.com/andreylukin/bough.git", branch: "main"
 
-  depends_on "rust" => :build
-
-  # The runtime set is the one `scripts/setup.sh` installs, and it is not
-  # decoration: `node` runs the code-mode sidecar (bough uses `bun` instead when
-  # it is on PATH — that is an upgrade, never a requirement), and the system
-  # prompt names `rg` and `ast-grep` unconditionally, so an install without them
-  # documents tools it does not have.
-  depends_on "ast-grep"
-  depends_on "node"
-  depends_on "ripgrep"
-  depends_on "uv"
+  depends_on "go" => :build
 
   def install
-    # Into libexec, not bin: `bin/bough` is the wrapper below, and the binary
-    # would collide with it. `std_cargo_args` carries --locked.
-    system "cargo", "install", *std_cargo_args(root: libexec, path: "crates/bough")
-
-    # The lifecycle script, beside the binary it drives. `libexec/bin/bough` and
-    # `libexec/bough` are different files — the install above owns the first.
-    libexec.install "scripts/bough"
-
-    # The command on PATH. It names the binary and the installer so the script
-    # never has to guess at either: `bough update` is git-and-cargo against a
-    # source tree this layout does not have, and BOUGH_INSTALLER is what lets it
-    # answer "brew upgrade bough" instead of failing in a package prefix.
-    (bin/"bough").write <<~BASH
-      #!/bin/bash
-      export BOUGH_BIN="#{opt_libexec}/bin/bough"
-      export BOUGH_INSTALLER="homebrew"
-      exec /bin/bash "#{opt_libexec}/bough" "$@"
-    BASH
+    # The version the binary reports has to be the tag brew installed, not the
+    # "dev" a checkout-less build would otherwise fall back to: `bough
+    # --version` is the first thing a bug report quotes.
+    ldflags = "-s -w -X main.version=v#{version}"
+    system "go", "build", *std_go_args(ldflags: ldflags), "./cmd/bough"
   end
 
   def caveats
     <<~EOS
-      Put an API key in ~/.bough/env, then start the server:
+      Put an API key where bough reads it, then start it:
 
-        bough setup     # prompts for ANTHROPIC_API_KEY and starts the service
-        bough           # the TUI
+        mkdir -p ~/.bough
+        echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.bough/env
+        bough
 
-      `bough start` installs bough's own LaunchAgent (systemd user unit on
-      Linux) — this is deliberately not a `brew services` formula, because two
-      service managers pointed at one server is a way to have neither work.
+      ~/.bough/env is read at boot, so keys never need to live in your shell.
+      OPENAI_API_KEY, OPENROUTER_API_KEY and CEREBRAS_API_KEY work too; swap
+      providers with /model or the llm row in ~/.bough/bough.yml.
 
       There is NO isolation boundary: programs run as you, with your full
       authority. Run bough only where you would run the code it writes.
-
-      Update with `brew upgrade bough`. (`bough update` is for the from-source
-      install, which has a checkout to pull; this one does not.)
     EOS
   end
 
   test do
-    # Exercises the whole chain the wrapper sets up — shim, script, binary —
-    # and needs no server, no key and no network.
-    assert_match "bough #{version}", shell_output("#{bin}/bough --version")
-
-    # `update` in a package prefix must refuse and name the command that works,
-    # rather than running git against a directory that has no repository in it.
-    output = shell_output("#{bin}/bough update 2>&1", 1)
-    assert_match "brew upgrade bough", output
+    # The binary reports the version brew built, and the config tree mounts
+    # without a network or an API key: --dump-config prints the row table and
+    # exits, which fails loudly if any plugin's Apply is broken.
+    assert_match version.to_s, shell_output("#{bin}/bough --version")
+    assert_match "codemode", shell_output("#{bin}/bough --dump-config")
   end
 end

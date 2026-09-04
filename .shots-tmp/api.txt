@@ -1,4 +1,0 @@
-go/plugins/history/history.go:59:func Open(path string) (*Store, error) {
-go/plugins/history/history.go:75:func OpenExisting(path string) (*Store, error) {
-go/plugins/history/history.go:243:func (s *Store) Entries() []Entry {
-go/plugins/ui/session.go:319:func truncateCols(s string, n int) string {
