@@ -28,5 +28,13 @@ func TestUpdateOutsideCheckout(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("want nonzero exit; output:\n%s", out)
 	}
-	mustContain(t, out, "cannot find a bough checkout", "repos/bough")
+	// The message is aimed at a binary install, which is how most
+	// people have bough: it names the two ways to update one, and
+	// keeps the search trail for a checkout that really was missed.
+	mustContain(t, out,
+		"not installed from a source checkout",
+		"install.sh",
+		"brew upgrade bough",
+		"BOUGH_ROOT",
+		"repos/bough")
 }
