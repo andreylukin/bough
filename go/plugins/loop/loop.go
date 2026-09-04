@@ -26,6 +26,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/andreylukin/bough/internal/schema"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/contextmd"
@@ -581,6 +582,9 @@ type runner struct {
 	stats    TurnStats
 	notices  Notices
 	cat      func() string // the live tool catalogue; nil without the seam
+	// schema, when set, is the shape this turn's stop block must
+	// carry: the answer is validated and handed back on a mismatch.
+	schema schema.Schema
 	// shown is the injection summary already announced, so an
 	// unchanged set is not re-announced every turn.
 	shown string
@@ -888,6 +892,22 @@ var stopFence = regexp.MustCompile("(?s)```stop[^\n]*\n(.*?)```")
 // and it is the difference between "done" and "done, apparently".
 const stoppedOnErrorNote = "[unfinished] Your last block FAILED and you stopped on it: the error above is the last thing that happened, so whatever you just claimed is unverified. Fix it, or run the check again, or stop with an honest account of what failed and what you did not do."
 
+// schemaSection tells the model the stop block must be JSON of a
+// given shape. Appended per turn, never baked into the base prompt: a
+// schema is set by the caller (headless --schema, a spawn), not by the
+// session.
+const SchemaSection = `This turn's answer is STRUCTURED. The stop block must contain JSON matching this schema and nothing else — no prose above it, no fence inside it, no trailing commentary:
+
+%s
+
+Everything you want to say goes in the JSON's own fields. Get it right the first time: an answer that does not match is handed back to you with the mismatches.`
+
+// schemaNote is fed back when the stop block does not match the
+// schema. The issues are the model's own mistakes in its own terms —
+// the recovery path a constrained decoder gives you for free, done
+// here by checking and asking again.
+const SchemaNote = "[unfinished] Your stop block does not match the schema this turn requires:\n\n%s\n\nAnswer again with a stop block containing ONLY the corrected JSON."
+
 // askedInStopNote is fed back when the final answer ends in a question.
 const askedInStopNote = "[unfinished] You ended the turn with a question. The turn is over when you stop, so the user reads it with no way to answer inside it. Either decide it yourself and say what you decided, or ask properly with tools.ask(question, ...options) inside a js block, which blocks until they answer."
 
@@ -1063,6 +1083,9 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	if s := r.secs.Text(); s != "" {
 		system += "\n\n" + s
 	}
+	if len(r.schema) > 0 {
+		system += "\n\n" + fmt.Sprintf(SchemaSection, r.schema.Describe())
+	}
 	r.announceContext(emit)
 
 	input, blocked := r.admit(ctx, input, false, emit)
@@ -1142,6 +1165,13 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				why, note0 = "ran nothing and did not stop", noStopNote
 			case lastFailed:
 				why, note0 = "stopped straight after a failed block", stoppedOnErrorNote
+			case len(r.schema) > 0:
+				// A structured turn ends on a valid answer or not at
+				// all: the mismatches go back in the model's own terms.
+				if _, issues := r.schema.ValidateJSON(reply); len(issues) > 0 {
+					why = "does not match the schema"
+					note0 = fmt.Sprintf(SchemaNote, "- "+strings.Join(issues, "\n- "))
+				}
 			case strings.HasSuffix(strings.TrimSpace(reply), "?"):
 				why, note0 = "ended the turn with a question", askedInStopNote
 			}
@@ -1356,6 +1386,11 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	}
 	if n, err := kernel.Get[Notices](kctx, "job-notices"); err == nil {
 		r.notices = n
+	}
+	// A structured turn: the launcher's --schema, so a scripted run
+	// gets JSON it can pipe instead of prose it has to parse.
+	if sc, err := kernel.Get[schema.Schema](kctx, "stop-schema"); err == nil {
+		r.schema = sc
 	}
 	if c, err := kernel.Get[Checkpointer](kctx, "checkpoints"); err == nil {
 		r.cp = c

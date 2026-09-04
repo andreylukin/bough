@@ -317,7 +317,7 @@ func TestChildGetsTheParentsToolPrompt(t *testing.T) {
 	// sections, so the child is told the same tools as the parent.
 	w := &Workers{llm: l, code: &stubCode{}, secs: stubSections{text: "Available in the runtime:\n- tools.bash(cmd) -> string: run it\n- tools.patch(path, old, new) -> string: replace one occurrence\n\n## mcp\nbough mcp call graphiti/..."}, ctx: context.Background(), maxSteps: 2}
 	w.emit = func(kind, text string, data map[string]any) {}
-	if _, err := w.runChild(context.Background(), "count files", 1, w.code.Run, false); err != nil {
+	if _, err := w.runChild(context.Background(), "count files", 1, w.code.Run, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"tools.bash(cmd)", "tools.patch(path, old, new)", "bough mcp call graphiti/", SubSystemPrompt} {
@@ -417,8 +417,11 @@ func TestSpawnAllRunsChildrenConcurrently(t *testing.T) {
 		t.Fatalf("want 3 reports, got %d", len(got))
 	}
 	for i, want := range []string{"subagent 1 · task: alpha", "subagent 2 · task: beta", "subagent 3 · task: gamma"} {
-		if !strings.Contains(got[i], want) {
-			t.Fatalf("report %d out of order: %q", i, got[i])
+		// Reports are `any` now (a schema makes them objects); without
+		// one they are the plain text they always were.
+		text, ok := got[i].(string)
+		if !ok || !strings.Contains(text, want) {
+			t.Fatalf("report %d out of order: %#v", i, got[i])
 		}
 	}
 	if atomic.LoadInt32(&peak) < 2 {
@@ -584,4 +587,72 @@ func (c *ctxStubCode) RunCtx(ctx context.Context, code string) (string, error) {
 	default:
 	}
 	return "ok", nil
+}
+
+// With a schema the child's report is checked before it counts as
+// finished, and comes back as a value the parent's program can index.
+func TestSpawnWithSchemaReturnsAValue(t *testing.T) {
+	shape := map[string]any{
+		"type":     "object",
+		"required": []any{"status", "files"},
+		"properties": map[string]any{
+			"status": map[string]any{"type": "string", "enum": []any{"ok", "failed"}},
+			"files":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		},
+	}
+	l := &scriptLLM{script: []string{
+		"```stop\n{\"status\":\"maybe\",\"files\":\"one.go\"}\n```", // wrong enum, wrong type
+		"```stop\n{\"status\":\"ok\",\"files\":[\"one.go\"]}\n```",
+	}}
+	w := &Workers{llm: l, code: &stubCode{}, ctx: context.Background(), maxSpawns: 4, maxSteps: 5}
+	w.emit = func(kind, text string, data map[string]any) {}
+
+	got, err := w.spawn("look at one.go", shape)
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("want a parsed object, got %#v", got)
+	}
+	if m["status"] != "ok" {
+		t.Fatalf("report = %#v", m)
+	}
+	files, _ := m["files"].([]any)
+	if len(files) != 1 || files[0] != "one.go" {
+		t.Fatalf("files = %#v", m["files"])
+	}
+	if l.calls != 2 {
+		t.Fatalf("the mismatched report was accepted (%d calls)", l.calls)
+	}
+	// The child was told the shape, and told its mistakes.
+	if !strings.Contains(l.seenSys, `"enum"`) {
+		t.Fatalf("the schema never reached the child:\n%s", l.seenSys)
+	}
+	var sawIssues bool
+	for _, m := range l.seenMsg {
+		if strings.Contains(m.Content, "does not match the schema") &&
+			strings.Contains(m.Content, "must be one of") {
+			sawIssues = true
+		}
+	}
+	if !sawIssues {
+		t.Fatalf("the mismatches were not handed back: %+v", l.seenMsg)
+	}
+}
+
+// A child that never matches the schema fails its run rather than
+// returning something the parent would have to parse anyway.
+func TestSpawnWithSchemaGivesUpCleanly(t *testing.T) {
+	shape := map[string]any{"type": "object", "required": []any{"n"}}
+	l := &scriptLLM{script: []string{"```stop\nnot json at all\n```"}}
+	w := &Workers{llm: l, code: &stubCode{}, ctx: context.Background(), maxSpawns: 4, maxSteps: 2}
+	w.emit = func(kind, text string, data map[string]any) {}
+	got, err := w.spawn("count things", shape)
+	if err == nil {
+		t.Fatalf("want an error, got %#v", got)
+	}
+	if !strings.Contains(err.Error(), "gave up") {
+		t.Fatalf("err = %v", err)
+	}
 }

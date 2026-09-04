@@ -17,6 +17,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/andreylukin/bough"
+	"github.com/andreylukin/bough/internal/schema"
 	"github.com/andreylukin/bough/kernel"
 	_ "github.com/andreylukin/bough/plugins/activity"
 	_ "github.com/andreylukin/bough/plugins/ask"
@@ -218,6 +219,7 @@ func main() {
 		config   = flag.String("config", "", "path to config tree (default ./bough.yml, else ~/.bough/bough.yml, else embedded)")
 		headless = flag.Bool("headless", false, "read input from stdin, no TUI")
 		web      = flag.String("web", "", "serve the UI in a browser at this addr (e.g. localhost:7681)")
+		schemaF  = flag.String("schema", "", "JSON Schema the turn's answer must match (headless: the answer is JSON, checked and asked again on a mismatch)")
 		dump     = flag.Bool("dump-config", false, "mount the config tree, print the row state table, and exit")
 		verbose  = flag.Bool("verbose", false, "print kernel/mcp/config diagnostics on stderr")
 		showVer  = flag.Bool("version", false, "print the version and exit")
@@ -314,6 +316,20 @@ func main() {
 		} else {
 			ctx.Provide("notice", n)
 		}
+	}
+
+	// A structured run: the answer must be JSON of this shape, so a
+	// script gets a value instead of prose it has to parse.
+	if *schemaF != "" {
+		b, err := os.ReadFile(*schemaF)
+		if err != nil {
+			fatal(fmt.Errorf("schema: %w", err))
+		}
+		sc, err := schema.Parse(b)
+		if err != nil {
+			fatal(err)
+		}
+		ctx.Provide("stop-schema", sc)
 	}
 
 	ov := &overrides{vals: sets}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/andreylukin/bough/internal/schema"
 	"os"
 	"runtime"
 	"slices"
@@ -571,9 +572,11 @@ func TestStopAnswer(t *testing.T) {
 type seqLLM struct {
 	replies []string
 	calls   int
+	system  string
 }
 
 func (l *seqLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
+	l.system = system
 	i := l.calls
 	l.calls++
 	if i >= len(l.replies) {
@@ -642,4 +645,67 @@ func TestStopRefusedAfterAFailedBlockAndOnAQuestion(t *testing.T) {
 			t.Fatalf("a clean stop was pushed back on (%d calls)", llm.calls)
 		}
 	})
+}
+
+// A structured turn ends on a valid answer or not at all: the schema
+// reaches the model, a mismatch comes back as its own mistakes, and a
+// model that cannot comply still leaves the user its last reply.
+func TestStopBlockValidatedAgainstTheSchema(t *testing.T) {
+	shape := schema.Schema{
+		"type":     "object",
+		"required": []any{"files", "verdict"},
+		"properties": map[string]any{
+			"files":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"verdict": map[string]any{"type": "string", "enum": []any{"pass", "fail"}},
+		},
+	}
+	llm := &seqLLM{replies: []string{
+		"```stop\n{\"files\":\"model.go\",\"verdict\":\"maybe\"}\n```",
+		"```stop\n{\"files\":[\"model.go\"],\"verdict\":\"pass\"}\n```",
+	}}
+	hist := &memHistory{}
+	r := &runner{llm: llm, code: &stubCode{}, hist: hist, secs: &Sections{}, stopRetries: 2, schema: shape}
+
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "check it", collect(&kinds, &texts))
+
+	if llm.calls != 2 {
+		t.Fatalf("%d calls, want 2 (the mismatch was refused once)", llm.calls)
+	}
+	msgs := DefaultProject(hist.Entries())
+	var sawSchema, sawIssues bool
+	for _, m := range msgs {
+		if strings.Contains(m.Content, "does not match the schema") {
+			sawIssues = true
+			for _, want := range []string{"files: expected array", "must be one of"} {
+				if !strings.Contains(m.Content, want) {
+					t.Fatalf("issue text missing %q:\n%s", want, m.Content)
+				}
+			}
+		}
+	}
+	if !sawIssues {
+		t.Fatal("the mismatches never reached the model")
+	}
+	// The schema itself is in the system prompt, per turn.
+	if strings.Contains(llm.system, `"verdict"`) {
+		sawSchema = true
+	}
+	if !sawSchema {
+		t.Fatalf("the schema was not shown to the model:\n%s", llm.system)
+	}
+	if last := texts[slices.Index(kinds, "done")-1]; !strings.Contains(last, `"pass"`) {
+		t.Fatalf("the valid answer did not land: %q", last)
+	}
+}
+
+// Without a schema nothing changes: prose stops the turn as before.
+func TestNoSchemaLeavesProseAlone(t *testing.T) {
+	llm := &seqLLM{replies: []string{"```stop\nJust words.\n```"}}
+	r := &runner{llm: llm, code: &stubCode{}, hist: &memHistory{}, secs: &Sections{}, stopRetries: 2}
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "hi", collect(&kinds, &texts))
+	if llm.calls != 1 {
+		t.Fatalf("prose was refused without a schema (%d calls)", llm.calls)
+	}
 }

@@ -31,6 +31,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/andreylukin/bough/internal/schema"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
@@ -49,6 +50,11 @@ Findings: what you established, as bullets (facts, numbers, paths)
 Files: paths you changed, or "none"
 Open: questions or blockers for the parent, or "none"`
 
+// schemaSection and schemaNote are the loop's, so a child follows the
+// same structured-answer contract its parent does.
+const schemaSection = loop.SchemaSection
+const schemaNote = loop.SchemaNote
+
 // promptSection documents tools.spawn to the parent model (registered
 // into the loop's "prompt-sections" service when present).
 const promptSection = `Subagents — when to delegate:
@@ -56,6 +62,7 @@ const promptSection = `Subagents — when to delegate:
 - A needle lookup you can do in one command — a known path, a single grep — is faster done yourself. Do not delegate a shell command.
 - Prefer spawnAll over several spawn calls: the children wait on the model in parallel, so N tasks take about as long as the slowest one.
 - Give each child one self-contained brief: what to find out, where to look, and what to report. It cannot see this conversation and cannot spawn.
+- Pass a JSON Schema as a second argument — tools.spawn(task, schema) or tools.spawnAll(tasks, schema) — when you want a VALUE rather than a paragraph: the child's report must then match it, is checked before it counts as finished, and comes back as a parsed object your program can index. Use it whenever you are going to pick fields out of the reply anyway.
 Both calls are synchronous — no await. Limits: at most %d spawns per turn and %d steps per child, so scope each child's task to fit and do small things yourself.`
 
 // sections is the slice of the loop's "prompt-sections" service we need:
@@ -141,7 +148,7 @@ type Workers struct {
 
 // spawn is tools.spawn(task) -> final reply. A returned error becomes a
 // JS exception in the calling code block.
-func (w *Workers) spawn(task string) (string, error) {
+func (w *Workers) spawn(task string, shape ...map[string]any) (any, error) {
 	w.mu.Lock()
 	if w.inChild {
 		w.mu.Unlock()
@@ -166,7 +173,8 @@ func (w *Workers) spawn(task string) (string, error) {
 	}
 	tctx := w.turnCtx()
 	run := func(code string) (string, error) { return w.runBlock(tctx, code) }
-	reply, err := w.runChild(tctx, task, id, run, false)
+	sch := shapeOf(shape)
+	reply, err := w.runChild(tctx, task, id, run, false, sch)
 	if err != nil {
 		// A child the provider killed never got to work: refund its
 		// slot, or a flaky minute burns the whole turn's budget.
@@ -177,9 +185,24 @@ func (w *Workers) spawn(task string) (string, error) {
 		}
 		return "", err
 	}
+	// With a schema the caller wanted a value, not a paragraph: hand
+	// back the parsed object so the parent's program can use it.
+	if len(sch) > 0 {
+		if v, issues := sch.ValidateJSON(reply); len(issues) == 0 {
+			return v, nil
+		}
+	}
 	// Provenance: the parent (and the user reading its code output)
 	// can tell delegated findings from the parent's own work.
 	return fmt.Sprintf("[subagent %d · task: %s]\n%s", id, oneLine(task, 80), reply), nil
+}
+
+// shapeOf reads the optional schema argument of spawn/spawnAll.
+func shapeOf(shape []map[string]any) schema.Schema {
+	if len(shape) == 0 || len(shape[0]) == 0 {
+		return nil
+	}
+	return schema.Schema(shape[0])
 }
 
 // turnCtx is the context a spawned child lives under: the parent
@@ -250,7 +273,7 @@ type codeRes struct {
 // spawnAll runs several children at once and returns their reports in
 // the order the tasks were given. Each child's code executes on this
 // goroutine (the VM owner); only the waiting overlaps.
-func (w *Workers) spawnAll(tasks []string) ([]string, error) {
+func (w *Workers) spawnAll(tasks []string, shape ...map[string]any) ([]any, error) {
 	if len(tasks) == 0 {
 		return nil, fmt.Errorf("workers: spawnAll needs at least one task")
 	}
@@ -294,7 +317,8 @@ func (w *Workers) spawnAll(tasks []string) ([]string, error) {
 	tctx := w.turnCtx()
 	reqCh := make(chan codeReq)
 	doneCh := make(chan struct{}, len(tasks))
-	reports := make([]string, len(tasks))
+	sch := shapeOf(shape)
+	reports := make([]any, len(tasks))
 	for i := range tasks {
 		go func(i int) {
 			defer func() { doneCh <- struct{}{} }()
@@ -308,10 +332,16 @@ func (w *Workers) spawnAll(tasks []string) ([]string, error) {
 				res := <-r.resp
 				return res.out, res.err
 			}
-			reply, err := w.runChild(tctx, tasks[i], ids[i], run, true)
+			reply, err := w.runChild(tctx, tasks[i], ids[i], run, true, sch)
 			if err != nil {
 				reports[i] = fmt.Sprintf("[subagent %d · task: %s]\nStatus: failed\n%v", ids[i], oneLine(tasks[i], 80), err)
 				return
+			}
+			if len(sch) > 0 {
+				if v, issues := sch.ValidateJSON(reply); len(issues) == 0 {
+					reports[i] = v
+					return
+				}
 			}
 			reports[i] = fmt.Sprintf("[subagent %d · task: %s]\n%s", ids[i], oneLine(tasks[i], 80), reply)
 		}(i)
@@ -342,7 +372,7 @@ func (w *Workers) spawnAll(tasks []string) ([]string, error) {
 // runChild drives one child agent run: fresh context seeded with the
 // task, up to maxSteps llm steps, js blocks executed via codemode. The
 // final plain-text reply (no js block) is the result.
-func (w *Workers) runChild(ctx context.Context, task string, id int, run func(string) (string, error), announced bool) (string, error) {
+func (w *Workers) runChild(ctx context.Context, task string, id int, run func(string) (string, error), announced bool, sch schema.Schema) (string, error) {
 	// note mirrors child activity: a "sub:<kind>" session-history entry
 	// (when history is mounted) and a "loop/event" with the same kind,
 	// both carrying the worker number.
@@ -372,6 +402,9 @@ func (w *Workers) runChild(ctx context.Context, task string, id int, run func(st
 		secText = w.secs.TextExcept("workers")
 	}
 	system := systemFor(loop.SystemPrompt, secText)
+	if len(sch) > 0 {
+		system += "\n\n" + fmt.Sprintf(schemaSection, sch.Describe())
+	}
 	msgs := []llm.Message{{Role: "user", Content: task}}
 	ranClean := false // did any block of this child's work actually succeed?
 	for step := 0; step < w.maxSteps; step++ {
@@ -410,6 +443,17 @@ func (w *Workers) runChild(ctx context.Context, task string, id int, run func(st
 		msgs = append(msgs, llm.Message{Role: "assistant", Content: reply})
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
 		if len(blocks) == 0 {
+			// A structured report is checked before it counts as
+			// finished: the mismatches go back as the child's next
+			// message, inside its own step budget.
+			if len(sch) > 0 {
+				if _, issues := sch.ValidateJSON(reply); len(issues) > 0 {
+					note("error", "report does not match the schema:\n- "+strings.Join(issues, "\n- "), nil)
+					msgs = append(msgs, llm.Message{Role: "user",
+						Content: fmt.Sprintf(schemaNote, "- "+strings.Join(issues, "\n- "))})
+					continue
+				}
+			}
 			status := reportStatus(reply)
 			if status == "" {
 				status = "ok" // no contract line: the reply is the report
