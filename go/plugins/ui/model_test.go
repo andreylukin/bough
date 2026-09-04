@@ -281,10 +281,10 @@ func TestErrorEventKeepsTheTurnRunning(t *testing.T) {
 // one on screen, not the oldest at the top of the transcript.
 func TestFocusStartsAtTheNewestBlock(t *testing.T) {
 	m := testModel(t)
-	for i := range 3 {
-		m.addEvent(Event{Kind: "code", Text: "console.log(" + strings.Repeat("x", i+1) + ")"})
-		m.addEvent(Event{Kind: "result", Text: "ok"})
-	}
+	// One step: three or more collapsed step rows fold into a single
+	// row (fold.go), and the block cursor walks what is on screen.
+	m.addEvent(Event{Kind: "code", Text: "console.log(1)"})
+	m.addEvent(Event{Kind: "result", Text: "ok"})
 	m.moveFocus(1)
 	f := m.focusables()
 	if m.focusID != m.blocks[f[len(f)-1]].id {

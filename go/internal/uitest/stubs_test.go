@@ -244,8 +244,8 @@ func TestPromptQueuedDuringTurn(t *testing.T) {
 	fits(t, d)
 }
 
-// A three-step tool chain renders code/result pairs in order with the
-// final prose last.
+// A three-step tool chain folds into one summary row, and opening it
+// shows the code/result pairs in order with the final prose last.
 func TestThreeStepToolChain(t *testing.T) {
 	t.Parallel()
 	stub := &uitest.Script{Replies: []string{
@@ -255,6 +255,10 @@ func TestThreeStepToolChain(t *testing.T) {
 	d.Say("chain")
 	turnDone(d, "all three ran")
 	fits(t, d)
+	if f := d.Frame(); !strings.Contains(f, "▸ 3 steps · ran 3 commands") {
+		t.Fatalf("the finished steps should fold into one row:\n%s", f)
+	}
+	d.Press("tab", "enter") // focus the fold row and open it
 	f := d.Frame()
 	last := -1
 	for _, want := range []string{"echo step-one", "echo step-two", "echo step-three", "all three ran"} {

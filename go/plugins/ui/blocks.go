@@ -70,7 +70,14 @@ var callRe = regexp.MustCompile("tools\\.(\\w+)\\(\\s*(?:\"((?:[^\"\\\\]|\\\\.)*
 // block makes more than one (an edit followed by the test run reads as
 // both, not just "Edited"); "code js" when nothing recognizable leads
 // the block.
+//
+// Past two calls the specific labels stop being the story — naming the
+// first two of nine hides the other seven — so a busy block is
+// summarized by the count instead: "read 3 files, ran 5 commands".
 func codeLabel(code string) string {
+	if n := countCalls(code); totalCalls(n) > 2 {
+		return summarize(n)
+	}
 	var parts []string
 	for _, m := range callRe.FindAllStringSubmatch(code, 3) {
 		if l := callLabel(m); l != "" && (len(parts) == 0 || parts[len(parts)-1] != l) {
@@ -560,4 +567,63 @@ func colorDiff(text string, th theme) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// --- step summaries ---------------------------------------------------
+//
+// One code block is many tool calls, and a turn is many code blocks, so
+// a transcript of "Edited x · Ran: y" rows says less the more the agent
+// did. A summary counts the calls instead: "read 2 files, ran 3
+// commands, edited 1 file" — what happened, at the scale it happened.
+
+// verbs is the summary's vocabulary, in the order a summary lists
+// them: the tools.* name, the verb, and the noun it counts ("" for a
+// verb that counts nothing, like ask).
+var verbs = []struct{ call, verb, noun string }{
+	{"view", "read", "file"},
+	{"patch", "edited", "file"},
+	{"write", "wrote", "file"},
+	{"bash", "ran", "command"},
+	{"spawn", "spawned", "subagent"},
+	{"ask", "asked you", ""},
+}
+
+// countCalls tallies the recognized tools.* calls in code by name.
+func countCalls(code string) map[string]int {
+	out := map[string]int{}
+	for _, m := range callRe.FindAllStringSubmatch(code, -1) {
+		out[m[1]]++
+	}
+	return out
+}
+
+// summarize phrases a call tally: "read 2 files, ran 1 command". Empty
+// when nothing recognized was called.
+func summarize(n map[string]int) string {
+	var parts []string
+	for _, v := range verbs {
+		c := n[v.call]
+		if c == 0 {
+			continue
+		}
+		if v.noun == "" {
+			parts = append(parts, v.verb)
+			continue
+		}
+		noun := v.noun
+		if c > 1 {
+			noun += "s"
+		}
+		parts = append(parts, fmt.Sprintf("%s %d %s", v.verb, c, noun))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// totalCalls is how many recognized calls a tally holds.
+func totalCalls(n map[string]int) int {
+	t := 0
+	for _, v := range verbs {
+		t += n[v.call]
+	}
+	return t
 }

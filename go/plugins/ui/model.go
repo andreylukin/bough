@@ -114,6 +114,7 @@ type model struct {
 	todoHidden bool           // the todo strip dismissed for now (todo_toggle)
 	sessRows   sessList       // mid-session picker list (see session.go); nil = launch picker
 	welcome    bool           // fresh-session orientation text (see welcomeView)
+	unfolded   map[int]bool   // fold lead id -> its run is shown as rows (see fold.go)
 	pendingAsk string         // ask id the composer routes answers to; "" = none
 	pal        palette        // "/" command palette (see palette.go)
 	at         palette        // "@" file picker (see atfiles.go)
@@ -194,12 +195,28 @@ func (m *model) refresh() {
 	parts := make([]string, 0, 2*len(m.blocks))
 	m.ranges = m.ranges[:0]
 	start, prev := 0, ""
+	folds := m.foldRuns()
+	next := map[int]foldRun{}
+	for _, r := range folds {
+		next[r.from] = r
+	}
+	skipTo := 0
 	for i := range m.blocks {
+		if i < skipTo {
+			continue
+		}
 		// The block renders own their content; the transcript owns the
 		// space between them: nothing between blocks of the same voice,
 		// one rule where the voice changes.
 		part := strings.Trim(squeezeBlanks(m.render(&m.blocks[i], cfg)), "\n")
 		voice := voiceOf(m.blocks[i].kind)
+		if r, ok := next[i]; ok {
+			// A folded run draws as one row owned by its lead block, so
+			// a click or the block cursor lands on the fold, not on a
+			// step the reader cannot see.
+			part = m.renderFold(r, cfg.theme)
+			skipTo = r.to
+		}
 		if i > 0 && separates(prev, voice) {
 			parts = append(parts, cfg.theme["border"].Render(strings.Repeat("─", max(m.width, 1))))
 			start++
@@ -984,9 +1001,15 @@ func (m *model) clickOverlay(mouse tea.Mouse) {
 
 // focusables returns the indices of collapsible blocks, in order.
 func (m *model) focusables() []int {
+	hidden := map[int]bool{}
+	for _, r := range m.foldRuns() {
+		for i := r.from + 1; i < r.to; i++ {
+			hidden[i] = true // drawn as part of the lead's fold row
+		}
+	}
 	var out []int
 	for i := range m.blocks {
-		if m.blocks[i].collapsible() {
+		if m.blocks[i].collapsible() && !hidden[i] {
 			out = append(out, i)
 		}
 	}
@@ -1046,6 +1069,12 @@ func (m *model) toggleFocused() bool {
 // screen: with the transcript pinned to the bottom, expanding a long
 // block used to scroll the header you just clicked out of view.
 func (m *model) toggleBlock(i int) {
+	// The lead of a folded run answers for the whole run: opening it
+	// puts the steps back as rows, each still closed.
+	if _, ok := m.foldAt(i); ok {
+		m.unfold(i)
+		return
+	}
 	m.blocks[i].collapsed = !m.blocks[i].collapsed
 	m.focusID = m.blocks[i].id
 	m.refresh()

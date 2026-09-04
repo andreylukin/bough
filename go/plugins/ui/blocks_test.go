@@ -346,7 +346,9 @@ func TestCodeLabels(t *testing.T) {
 		`console.log(1)`:                 "code js",
 		`tools.bash(cmd)`:                "Ran: ",
 		"tools.patch(\"calc.py\", a, b); console.log(tools.bash(\"python3 test_calc.py\"))": "Edited calc.py · Ran: python3 test_calc.py",
-		"tools.bash(\"ls\"); tools.bash(\"ls\"); tools.bash(\"pwd\")":                       "Ran: ls · Ran: pwd",
+		// Past two calls the names stop fitting: the tally is the label.
+		"tools.bash(\"ls\"); tools.bash(\"ls\"); tools.bash(\"pwd\")":                       "ran 3 commands",
+		"tools.view(\"a\"); tools.view(\"b\"); tools.patch(\"c\"); tools.bash(\"go test\")":     "read 2 files, edited 1 file, ran 1 command",
 	} {
 		if got := codeLabel(code); got != want {
 			t.Errorf("codeLabel(%q) = %q, want %q", code, got, want)
