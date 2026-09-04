@@ -173,8 +173,20 @@ func TestSpawnDocumentedInPromptSections(t *testing.T) {
 	if err := (plugin{}).Apply(kctx, nil); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if !strings.Contains(secs.Text(), "tools.spawn(task) -> string") {
-		t.Fatalf("section = %q, want tools.spawn documented", secs.Text())
+	// The section carries the POLICY (when to delegate); the call
+	// signatures come from the codemode catalogue, which is where
+	// every other tool documents itself too.
+	if !strings.Contains(secs.Text(), "when to delegate") || !strings.Contains(secs.Text(), "tools.spawnAll") {
+		t.Fatalf("section = %q, want the delegation policy", secs.Text())
+	}
+	cm, err := kernel.Get[*codemode.CodeMode](kctx, "codemode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"tools.spawn(task)", "tools.spawnAll("} {
+		if !strings.Contains(cm.Catalogue(), want) {
+			t.Fatalf("catalogue lacks %q:\n%s", want, cm.Catalogue())
+		}
 	}
 	kctx.Unmount()
 	if secs.Text() != "" {
@@ -301,7 +313,9 @@ func (s stubSections) Text() string          { return s.text }
 // skills, ...), then its own identity. Not the bare one-liner it had.
 func TestChildGetsTheParentsToolPrompt(t *testing.T) {
 	l := &scriptLLM{script: []string{"done"}}
-	w := &Workers{llm: l, code: &stubCode{}, secs: stubSections{text: "## mcp\nbough mcp call graphiti/..."}, ctx: context.Background(), maxSteps: 2}
+	// In production the loop puts the generated tool catalogue in the
+	// sections, so the child is told the same tools as the parent.
+	w := &Workers{llm: l, code: &stubCode{}, secs: stubSections{text: "Available in the runtime:\n- tools.bash(cmd) -> string: run it\n- tools.patch(path, old, new) -> string: replace one occurrence\n\n## mcp\nbough mcp call graphiti/..."}, ctx: context.Background(), maxSteps: 2}
 	w.emit = func(kind, text string, data map[string]any) {}
 	if _, err := w.runChild(context.Background(), "count files", 1, w.code.Run, false); err != nil {
 		t.Fatal(err)

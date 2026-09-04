@@ -27,6 +27,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -73,6 +74,13 @@ type SystemContext interface {
 	Preamble() string
 }
 
+// loadedLister is the optional half of the context-md seam: the files
+// Preamble is currently reading, so each can be announced by name. A
+// provider without it is announced as one "context files" piece.
+type loadedLister interface {
+	Loaded() []string
+}
+
 // TurnStats is the optional "turn-stats" service seam (tools-basic):
 // files written and the last bash exit code since the previous Take.
 // Stamped onto the "done" entry as data {"files": [...], "exit": n}
@@ -112,6 +120,27 @@ func (s *Sections) Set(name, text string) {
 		return
 	}
 	s.m[name] = text
+}
+
+// Names is the registered section names, sorted — the order Text
+// joins them in.
+func (s *Sections) Names() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Sorted(maps.Keys(s.m))
+}
+
+// Get is one section's text, "" when it is not registered.
+func (s *Sections) Get(name string) string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.m[name]
 }
 
 // TextExcept is Text without the named sections: a subagent must not
@@ -519,10 +548,18 @@ type runner struct {
 	stats    TurnStats
 	notices  Notices
 	cat      func() string // the live tool catalogue; nil without the seam
-	guidance string        // the benchmark brief, when task_guidance is set
-	cp       Checkpointer
-	secs     *Sections
-	hasAsk   bool // an "ask-answers" service is mounted: document tools.ask
+	// shown is the injection summary already announced, so an
+	// unchanged set is not re-announced every turn.
+	shown string
+	// snapSystem is the base prompt as the last turn assembled it,
+	// under its own mutex: /context reads it from the ui goroutine
+	// while a turn holds mu for its whole run.
+	snapMu     sync.Mutex
+	snapSystem string
+	guidance   string // the benchmark brief, when task_guidance is set
+	cp         Checkpointer
+	secs       *Sections
+	hasAsk     bool // an "ask-answers" service is mounted: document tools.ask
 	// steer hands over the steering messages sent since the last
 	// call (turns.takeSteers); final shuts the gate, see there. nil =
 	// no steering.
@@ -550,7 +587,10 @@ func (r *runner) admit(ctx context.Context, input string, steer bool, emit func(
 		if b, ok := res["block"].(string); ok {
 			return input, b
 		}
-		if in, ok := res["input"].(string); ok {
+		if in, ok := res["input"].(string); ok && in != input {
+			// A hook rewriting what you typed is not allowed to do it
+			// behind your back.
+			emit("context", "hook user-prompt-submit rewrote your message\n"+in)
 			input = in
 		}
 	}
@@ -562,6 +602,10 @@ func (r *runner) admit(ctx context.Context, input string, steer bool, emit func(
 	if r.skills != nil {
 		for _, block := range r.skills.Inject(input) {
 			msg.WriteString("\n\n" + block)
+			// Say which skill matched and show what it added: a skill
+			// fires on a word in your message, so the model can be
+			// following instructions you never saw.
+			emit("context", "skill injected: "+skillName(block)+" ("+size(block)+")\n"+block)
 		}
 	}
 	data := map[string]any{"text": msg.String()}
@@ -582,6 +626,15 @@ func (r *runner) admit(ctx context.Context, input string, steer bool, emit func(
 		r.cp.Pin(in.Seq, tree)
 	}
 	return input, ""
+}
+
+// skillName reads the name out of a "[skill: <name>]" block header.
+func skillName(block string) string {
+	line, _, _ := strings.Cut(block, "\n")
+	if n, ok := strings.CutPrefix(strings.TrimSpace(line), "[skill:"); ok {
+		return strings.TrimSpace(strings.TrimSuffix(n, "]"))
+	}
+	return "unknown"
 }
 
 // landSteers admits every pending steering message like any input
@@ -607,6 +660,103 @@ func (r *runner) landSteers(ctx context.Context, emit func(kind, text string), f
 		landed = true
 	}
 	return landed
+}
+
+// part is one contributor to the system prompt, for the context
+// summary and /context.
+type part struct {
+	name string
+	text string
+}
+
+// systemParts is the assembled prompt broken down by where each piece
+// came from, in the order they are concatenated.
+func (r *runner) systemParts(base string) []part {
+	parts := []part{{"environment", envSection()}}
+	if r.sysctx != nil {
+		if l, ok := r.sysctx.(loadedLister); ok {
+			for _, p := range l.Loaded() {
+				if body, err := os.ReadFile(p); err == nil {
+					parts = append(parts, part{filepath.Base(p) + " (" + p + ")", string(body)})
+				}
+			}
+		} else if pre := r.sysctx.Preamble(); pre != "" {
+			parts = append(parts, part{"context files", pre})
+		}
+	}
+	parts = append(parts, part{"base prompt", base})
+	for _, name := range r.secs.Names() {
+		parts = append(parts, part{"section " + name, r.secs.Get(name)})
+	}
+	return parts
+}
+
+// announceContext records what is being injected into the model's
+// system prompt — the AGENTS.md/CLAUDE.md files, the plugin sections,
+// the tool catalogue — the first time and whenever the set changes.
+// Injection is otherwise invisible: the user sees a reply shaped by
+// text they never saw.
+func (r *runner) announceContext(emit func(kind, text string)) {
+	r.snapMu.Lock()
+	r.snapSystem = r.system
+	r.snapMu.Unlock()
+	parts := r.systemParts(r.system)
+	var names []string
+	total := 0
+	var b strings.Builder
+	for _, p := range parts {
+		names = append(names, fmt.Sprintf("%s:%d", p.name, len(p.text)))
+		total += len(p.text)
+		fmt.Fprintf(&b, "- %s: %s\n", p.name, size(p.text))
+	}
+	sum := strings.Join(names, "|")
+	if sum == r.shown || len(parts) <= 2 {
+		return // nothing beyond the environment and the base prompt
+	}
+	r.shown = sum
+	head := fmt.Sprintf("context: %d pieces, %d chars in the system prompt (/context to read it)",
+		len(parts), total)
+	// Event only, never a history entry: the injected text is already
+	// in the record (a skill's block is part of the input entry, the
+	// files are on disk) and an extra entry would shift the turn
+	// numbering /tree and /undo show. A resumed session re-announces
+	// on its first turn.
+	emit("context", head+"\n"+strings.TrimRight(b.String(), "\n"))
+}
+
+// size renders a chunk's weight the way a reader thinks about it.
+func size(s string) string {
+	lines := strings.Count(strings.TrimRight(s, "\n"), "\n") + 1
+	if s == "" {
+		lines = 0
+	}
+	return fmt.Sprintf("%d lines, %d chars", lines, len(s))
+}
+
+// Context is the whole assembled system prompt with a header naming
+// each piece — what /context prints. Built fresh when no turn has run
+// yet, so it is readable before you say anything.
+func (r *runner) Context() string {
+	if r.cat != nil {
+		if c := r.cat(); c != "" {
+			r.secs.Set("tools", "Available in the runtime:\n"+c+
+				"\n- console.log(...): print; everything printed is returned to you")
+		}
+	}
+	r.snapMu.Lock()
+	base := r.snapSystem
+	r.snapMu.Unlock()
+	if base == "" {
+		base = SystemPrompt // no turn yet: what the next one will use
+	}
+	parts := r.systemParts(base)
+
+	var b strings.Builder
+	b.WriteString("Everything the model is told before your message:\n\n")
+	for _, p := range parts {
+		fmt.Fprintf(&b, "## %s — %s\n\n%s\n\n", p.name, size(p.text), strings.TrimRight(p.text, "\n"))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // landJobs records every notice a background job has queued as a "job"
@@ -786,6 +936,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		if res := r.fire(ctx, "session-start", map[string]any{}, emit); res != nil {
 			if c, ok := res["context"].(string); ok && c != "" {
 				r.system += "\n\n" + c
+				emit("context", "hook session-start added context ("+size(c)+")\n"+c)
 			}
 		}
 	}
@@ -801,6 +952,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	if s := r.secs.Text(); s != "" {
 		system += "\n\n" + s
 	}
+	r.announceContext(emit)
 
 	input, blocked := r.admit(ctx, input, false, emit)
 	if blocked != "" {
@@ -1041,6 +1193,16 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		r.cp = c
 	}
 	kctx.Provide("runner", r)
+	// /context prints what the model is told before your message: the
+	// AGENTS.md files, the plugin sections, the generated tool
+	// catalogue. Optional seam — headless has no command registry.
+	if reg, err := kernel.Get[*commands.Registry](kctx, "commands"); err == nil {
+		info := commands.CommandInfo{Name: "context", Summary: "show everything injected into the system prompt"}
+		if err := reg.Register(info, func(string) (string, error) { return r.Context(), nil }); err != nil {
+			return err
+		}
+		kctx.Effect(func() { reg.Unregister("context") })
+	}
 
 	inputs := make(chan string, 8)
 	kctx.Provide("inputs", inputs)

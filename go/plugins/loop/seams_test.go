@@ -2,6 +2,9 @@ package loop
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -606,3 +609,102 @@ func (f *fakeNotices) Take() []string {
 }
 
 func (f *fakeNotices) Wake() <-chan struct{} { return f.wake }
+
+// ctxFiles is a context-md stub that also lists what it loaded.
+type ctxFiles struct{ paths []string }
+
+func (c *ctxFiles) Preamble() string {
+	var b strings.Builder
+	for _, p := range c.paths {
+		body, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		b.WriteString("# Context: " + p + "\n" + string(body) + "\n")
+	}
+	return b.String()
+}
+func (c *ctxFiles) Loaded() []string { return c.paths }
+
+// Injection is announced: the user sees WHICH files and sections went
+// into the system prompt, named and sized, and can open the row to
+// read them. Announced once, not on every turn, and only when there is
+// something beyond the base prompt.
+func TestContextInjectionAnnounced(t *testing.T) {
+	dir := t.TempDir()
+	agents := filepath.Join(dir, "AGENTS.md")
+	if err := os.WriteFile(agents, []byte("house rules: no tabs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	llm := &recordLLM{}
+	r := buildRunnerWith(t, llm, nil)
+	r.sysctx = &ctxFiles{paths: []string{agents}}
+	r.secs.Set("mcp", "MCP SECTION")
+
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "hi", collect(&kinds, &texts))
+	i := slices.Index(kinds, "context")
+	if i < 0 {
+		t.Fatalf("no context announcement: %v", kinds)
+	}
+	for _, want := range []string{"AGENTS.md", "section mcp", "chars"} {
+		if !strings.Contains(texts[i], want) {
+			t.Fatalf("announcement missing %q:\n%s", want, texts[i])
+		}
+	}
+
+	// Unchanged next turn: announced once, not per turn.
+	before := len(kinds)
+	_ = r.Run(context.Background(), "again", collect(&kinds, &texts))
+	if slices.Index(kinds[before:], "context") >= 0 {
+		t.Fatalf("re-announced an unchanged context: %v", kinds[before:])
+	}
+
+	// A file that changes IS announced again — the model is now being
+	// told something different.
+	if err := os.WriteFile(agents, []byte("house rules: tabs are fine now\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before = len(kinds)
+	_ = r.Run(context.Background(), "third", collect(&kinds, &texts))
+	if slices.Index(kinds[before:], "context") < 0 {
+		t.Fatalf("a changed AGENTS.md was not re-announced: %v", kinds[before:])
+	}
+}
+
+// A skill fires on a word in the message, so the model can be
+// following instructions the user never saw. Both the name and the
+// injected text are shown.
+func TestSkillInjectionAnnounced(t *testing.T) {
+	llm := &recordLLM{}
+	r := buildRunnerWith(t, llm, nil)
+	r.skills = &stubSkills{blocks: []string{"[skill: deploy]\nrun make ship\n"}}
+
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "please deploy", collect(&kinds, &texts))
+	i := slices.Index(kinds, "context")
+	if i < 0 {
+		t.Fatalf("no skill announcement: %v", kinds)
+	}
+	for _, want := range []string{"skill injected: deploy", "run make ship"} {
+		if !strings.Contains(texts[i], want) {
+			t.Fatalf("announcement missing %q:\n%s", want, texts[i])
+		}
+	}
+}
+
+// /context prints the whole assembled prompt, piece by piece, before
+// any turn has run — the banner scrolls away, this does not.
+func TestContextCommandListsEveryPiece(t *testing.T) {
+	llm := &recordLLM{}
+	r := buildRunnerWith(t, llm, nil)
+	r.secs.Set("mcp", "MCP SECTION")
+	r.cat = func() string { return "tools.bash(cmd): run it" }
+
+	got := r.Context()
+	for _, want := range []string{"## environment", "## base prompt", "## section mcp", "MCP SECTION", "tools.bash(cmd): run it"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("/context is missing %q:\n%s", want, got)
+		}
+	}
+}
