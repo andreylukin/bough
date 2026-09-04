@@ -303,7 +303,7 @@ func TestChildGetsTheParentsToolPrompt(t *testing.T) {
 	l := &scriptLLM{script: []string{"done"}}
 	w := &Workers{llm: l, code: &stubCode{}, secs: stubSections{text: "## mcp\nbough mcp call graphiti/..."}, ctx: context.Background(), maxSteps: 2}
 	w.emit = func(kind, text string, data map[string]any) {}
-	if _, err := w.runChild("count files", 1, w.code.Run); err != nil {
+	if _, err := w.runChild("count files", 1, w.code.Run, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"tools.bash(cmd)", "tools.patch(path, old, new)", "bough mcp call graphiti/", SubSystemPrompt} {
@@ -440,4 +440,27 @@ func (g *gateLLM) Complete(context.Context, string, []llm.Message) (string, erro
 	time.Sleep(30 * time.Millisecond) // long enough for the others to arrive
 	atomic.AddInt32(g.live, -1)
 	return g.reply, nil
+}
+
+// spawnAll announces every child before any starts, so the cards read
+// 1..N instead of in whichever order the goroutines got going.
+func TestSpawnAllAnnouncesInTaskOrder(t *testing.T) {
+	var mu sync.Mutex
+	var starts []int
+	w := &Workers{llm: &scriptLLM{script: []string{"Status: ok\nFindings: x"}}, code: stubCode{},
+		maxSpawns: 8, maxSteps: 6, ctx: context.Background(),
+		emit: func(kind, _ string, data map[string]any) {
+			if kind != "sub:start" {
+				return
+			}
+			mu.Lock()
+			starts = append(starts, data["worker"].(int))
+			mu.Unlock()
+		}}
+	if _, err := w.spawnAll([]string{"a", "b", "c"}); err != nil {
+		t.Fatalf("spawnAll: %v", err)
+	}
+	if len(starts) != 3 || starts[0] != 1 || starts[1] != 2 || starts[2] != 3 {
+		t.Fatalf("cards must be announced in task order, got %v", starts)
+	}
 }

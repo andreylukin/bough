@@ -148,7 +148,7 @@ func (w *Workers) spawn(task string) (string, error) {
 	if p, ok := w.code.(pauser); ok {
 		defer p.Pause()()
 	}
-	reply, err := w.runChild(task, id, w.code.Run)
+	reply, err := w.runChild(task, id, w.code.Run, false)
 	if err != nil {
 		// A child the provider killed never got to work: refund its
 		// slot, or a flaky minute burns the whole turn's budget.
@@ -242,6 +242,16 @@ func (w *Workers) spawnAll(tasks []string) ([]string, error) {
 		defer p.Pause()()
 	}
 
+	// Announce every child before any of them starts, so the cards read
+	// 1..N down the transcript instead of in scheduling order.
+	for i, task := range tasks {
+		data := map[string]any{"text": task, "worker": ids[i]}
+		if w.hist != nil {
+			w.hist.Append("sub:start", data)
+		}
+		w.emit("sub:start", task, map[string]any{"worker": ids[i]})
+	}
+
 	reqCh := make(chan codeReq)
 	doneCh := make(chan struct{}, len(tasks))
 	reports := make([]string, len(tasks))
@@ -258,7 +268,7 @@ func (w *Workers) spawnAll(tasks []string) ([]string, error) {
 				res := <-r.resp
 				return res.out, res.err
 			}
-			reply, err := w.runChild(tasks[i], ids[i], run)
+			reply, err := w.runChild(tasks[i], ids[i], run, true)
 			if err != nil {
 				reports[i] = fmt.Sprintf("[subagent %d · task: %s]\nStatus: failed\n%v", ids[i], oneLine(tasks[i], 80), err)
 				return
@@ -282,7 +292,7 @@ func (w *Workers) spawnAll(tasks []string) ([]string, error) {
 // runChild drives one child agent run: fresh context seeded with the
 // task, up to maxSteps llm steps, js blocks executed via codemode. The
 // final plain-text reply (no js block) is the result.
-func (w *Workers) runChild(task string, id int, run func(string) (string, error)) (string, error) {
+func (w *Workers) runChild(task string, id int, run func(string) (string, error), announced bool) (string, error) {
 	// note mirrors child activity: a "sub:<kind>" session-history entry
 	// (when history is mounted) and a "loop/event" with the same kind,
 	// both carrying the worker number.
@@ -296,7 +306,11 @@ func (w *Workers) runChild(task string, id int, run func(string) (string, error)
 		w.emit("sub:"+kind, text, data)
 	}
 	// The start event carries the task: the UI's card for this worker.
-	note("start", task, nil)
+	// spawnAll announces its whole batch up front so the cards appear in
+	// task order rather than in whichever order the children got going.
+	if !announced {
+		note("start", task, nil)
+	}
 	steps := 0
 
 	// The sections are read per run, like the parent's per turn: a plugin
