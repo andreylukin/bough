@@ -176,7 +176,7 @@ type Event struct {
 // defaultMaxSteps caps model steps per turn; the loop row's `max_steps`
 // config raises it (a benchmark turn is one long task).
 const defaultMaxSteps = 100
-const maxResultBytes = 8 * 1024
+const maxResultBytes = 64 * 1024
 
 // SystemPrompt is the base identity and tool catalogue every agent in
 // this process shares; a subagent (workers) starts from the same text.
@@ -798,12 +798,18 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	// Never cut inside a multi-byte rune: the tail would be invalid
-	// UTF-8 for the model and for anything streaming our output.
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
+	// Keep the head AND the tail. A tail-only cut threw away three of
+	// six subagent reports and left the third mid-sentence; a report's
+	// conclusion lives at its end, so both ends are worth more than the
+	// middle. Never cut inside a multi-byte rune.
+	head, tail := n*2/3, n-n*2/3
+	for head > 0 && !utf8.RuneStart(s[head]) {
+		head--
 	}
-	return s[:n] + "\n[truncated]"
+	for tail > 0 && !utf8.RuneStart(s[len(s)-tail]) {
+		tail--
+	}
+	return fmt.Sprintf("%s\n… [%d bytes cut] …\n%s", s[:head], len(s)-head-tail, s[len(s)-tail:])
 }
 
 type plugin struct{}

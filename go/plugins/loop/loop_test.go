@@ -189,6 +189,25 @@ func TestSystemPromptOmitsAskWhenAbsent(t *testing.T) {
 	}
 }
 
+// truncate keeps both ends: a tail-only cut threw away three of six
+// subagent reports and left the third mid-sentence.
+func TestTruncateKeepsBothEnds(t *testing.T) {
+	s := "HEAD" + strings.Repeat("x", 5000) + "TAIL"
+	got := truncate(s, 400)
+	if !strings.HasPrefix(got, "HEAD") {
+		t.Fatalf("the head must survive: %.20q", got)
+	}
+	if !strings.HasSuffix(got, "TAIL") {
+		t.Fatalf("the tail must survive: %q", got[len(got)-20:])
+	}
+	if !strings.Contains(got, "bytes cut") {
+		t.Fatalf("the cut must be named: %q", got)
+	}
+	if len(got) > 500 {
+		t.Fatalf("the cut must actually cut: %d bytes", len(got))
+	}
+}
+
 // truncate never splits a multi-byte rune.
 func TestTruncateKeepsUTF8Whole(t *testing.T) {
 	s := strings.Repeat("日", 10) // 30 bytes
@@ -197,8 +216,8 @@ func TestTruncateKeepsUTF8Whole(t *testing.T) {
 		if !utf8.ValidString(out) {
 			t.Fatalf("n=%d: invalid UTF-8 %q", n, out)
 		}
-		if !strings.HasSuffix(out, "[truncated]") {
-			t.Fatalf("n=%d: no marker", n)
+		if !strings.Contains(out, "bytes cut") {
+			t.Fatalf("n=%d: no marker: %q", n, out)
 		}
 	}
 }
