@@ -1013,6 +1013,11 @@ var announceRe = regexp.MustCompile(`(?i)\b(?:` +
 	`|running it now|doing that now` +
 	`)\b`)
 
+// truncatedNote is fed back when the provider cut a reply off at the
+// output limit. The partial text stays in history — the model wrote it
+// and the next call needs it — but it cannot be the turn's answer.
+const truncatedNote = "[unfinished] Your reply was cut off at the output limit, so it stops mid-thought and is not an answer. Say it again, shorter: lead with the conclusion, drop the recap, and if there is genuinely more to do, do it in a ```js block instead of describing it."
+
 // meantToRunNote is fed back when a reply tried to call a tool in a
 // form the loop cannot run.
 const meantToRunNote = "[unfinished] You wrote a tool call, but not inside a ```js block, so nothing ran and nobody saw it. Only a fenced ```js block is executed — no <script> tags, no other language tags, no bare code. Write the block again, properly fenced."
@@ -1315,6 +1320,8 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			switch {
 			case strings.TrimSpace(reply) == "":
 				why, note0 = "was empty", saidNothingNote
+			case strings.Contains(reply, llm.Truncated):
+				why, note0 = "was cut off at the output limit", truncatedNote
 			case meantToRunCode(reply):
 				why, note0 = "wrote a tool call that was not in a ```js block", meantToRunNote
 			case announcesWork(reply):

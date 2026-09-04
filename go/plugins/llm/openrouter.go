@@ -283,6 +283,7 @@ func (o *openrouterLLM) addUsage(in, out int, cost float64, d *orPromptTokensDet
 // discarded by the caller.
 func (o *openrouterLLM) readStream(body io.Reader, onDelta, onThink func(string)) (string, error) {
 	var out strings.Builder
+	truncated := false
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
@@ -335,7 +336,13 @@ func (o *openrouterLLM) readStream(body io.Reader, onDelta, onThink func(string)
 			// A stream that stops for a reason other than the model
 			// finishing (provider "error", "content_filter") would
 			// otherwise come back as a silent empty reply.
-			if fr := c.FinishReason; fr != "" && fr != "stop" && fr != "length" && fr != "tool_calls" {
+			switch fr := c.FinishReason; {
+			case fr == "length":
+				// Cut off at the output cap. The text so far is real
+				// and worth keeping, but it is not an answer, so it is
+				// marked rather than returned as if complete.
+				truncated = true
+			case fr != "" && fr != "stop" && fr != "tool_calls":
 				return "", fmt.Errorf("llm-openrouter: stream ended: %s", fr)
 			}
 		}
@@ -345,6 +352,9 @@ func (o *openrouterLLM) readStream(body io.Reader, onDelta, onThink func(string)
 	}
 	if err := sc.Err(); err != nil {
 		return "", fmt.Errorf("llm-openrouter: stream: %w", err)
+	}
+	if truncated {
+		return MarkTruncated(out.String()), nil
 	}
 	return out.String(), nil
 }

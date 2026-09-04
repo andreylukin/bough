@@ -9,6 +9,8 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+
+	"github.com/andreylukin/bough/kernel"
 )
 
 func TestAnthropicParamsCacheControl(t *testing.T) {
@@ -85,3 +87,36 @@ func TestAnthropicStreamUsageCache(t *testing.T) {
 		t.Errorf("CacheCreationTokens = %d, want 20", u.CacheCreationTokens)
 	}
 }
+
+// max_tokens is configurable, and 4096 is no longer the silent cap: an
+// agent that writes files hits it and comes back cut in half.
+func TestMaxTokensConfig(t *testing.T) {
+	ctx := kernel.NewContext()
+	if err := (&anthropicPlugin{}).Apply(ctx, map[string]any{"model": "claude-sonnet-5"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := kernel.Get[llmAny](ctx, "llm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, ok := got.(*anthropicLLM); !ok || a.maxTokens != defaultMaxTokens {
+		t.Errorf("default max_tokens should be %d, got %v", defaultMaxTokens, got)
+	}
+
+	ctx2 := kernel.NewContext()
+	if err := (&anthropicPlugin{}).Apply(ctx2, map[string]any{"model": "m", "max_tokens": 32000}); err != nil {
+		t.Fatal(err)
+	}
+	a2, _ := kernel.Get[llmAny](ctx2, "llm")
+	if a, ok := a2.(*anthropicLLM); !ok || a.maxTokens != 32000 {
+		t.Errorf("max_tokens should be honoured, got %v", a2)
+	}
+
+	for _, bad := range []any{0, -5, "lots", 1.5} {
+		if err := (&anthropicPlugin{}).Apply(kernel.NewContext(), map[string]any{"model": "m", "max_tokens": bad}); err == nil {
+			t.Errorf("max_tokens %v (%T) should be rejected", bad, bad)
+		}
+	}
+}
+
+type llmAny = any

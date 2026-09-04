@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/andreylukin/bough/kernel"
 )
@@ -164,6 +165,23 @@ func kilo(n int) string {
 		return fmt.Sprintf("%.1fk", float64(n)/1000)
 	}
 	return fmt.Sprint(n)
+}
+
+// Truncated is appended to a reply the provider cut off at the output
+// limit. It is a marker rather than an error because the partial text
+// is still worth keeping — the model wrote it, the next call needs it,
+// and the loop refuses to end a turn on it (see the veto in
+// plugins/loop). Without this a reply that stopped mid-sentence was
+// handed to the user as a finished answer: an OpenRouter stream
+// reporting finish_reason "length" was allowed through silently.
+const Truncated = "\n\n[reply truncated at the output limit]"
+
+// MarkTruncated appends the marker unless it is already there.
+func MarkTruncated(reply string) string {
+	if strings.HasSuffix(reply, Truncated) {
+		return reply
+	}
+	return reply + Truncated
 }
 
 // Ready is the optional seam a provider implements to answer, before

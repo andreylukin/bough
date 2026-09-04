@@ -6,6 +6,8 @@
   plugin: llm-anthropic
   config:
     model: claude-sonnet-5
+    # max_tokens: 16384   # cap on one reply; raise it if long patches
+    #                     # come back cut off (the loop says when they do)
 
 # Swap the provider by replacing the row above with:
 # - id: llm

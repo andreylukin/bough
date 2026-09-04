@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/andreylukin/bough/plugins/llm"
 )
 
 // restated are real final replies that the old rule refused. Each is a
@@ -152,5 +154,43 @@ func TestProseAboutToolsStillAnswers(t *testing.T) {
 func TestFencedBlockIsNotMisfenced(t *testing.T) {
 	if meantToRunCode("```js\nconsole.log(tools.bash(\"ls\"))\n```") {
 		t.Error("a real js block is not a misfenced call")
+	}
+}
+
+// A provider that cut the reply off at its output limit has not
+// produced an answer, however complete the prose looks. Before this,
+// OpenRouter's finish_reason "length" was allowed through silently and
+// a reply that stopped mid-sentence was handed over as final.
+func TestTruncatedReplyDoesNotEndTheTurn(t *testing.T) {
+	partial := "## What decides a turn is over\n\nThe regex that finds a "
+	llmStub := &seqLLM{replies: []string{
+		llm.MarkTruncated(partial),
+		"The turn ends when the reply runs nothing.",
+	}}
+	r := &runner{llm: llmStub, code: &stubCode{}, hist: &memHistory{}, secs: &Sections{}, stopRetries: 2}
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "what ends a turn?", collect(&kinds, &texts)); err != nil {
+		t.Fatal(err)
+	}
+	if llmStub.calls != 2 {
+		t.Fatalf("a truncated reply should be asked again, %d calls", llmStub.calls)
+	}
+	if i := slices.Index(texts, "The turn ends when the reply runs nothing."); i < 0 {
+		t.Fatalf("the complete answer never landed: %v", texts)
+	}
+	// The marker is machinery: it belongs in the record, never as the
+	// last thing the user reads.
+	last := texts[len(texts)-1]
+	if strings.Contains(last, "truncated at the output limit") {
+		t.Errorf("the final answer should not carry the marker: %q", last)
+	}
+}
+
+// The marker is only added once, however many times a reply passes
+// through it.
+func TestMarkTruncatedIsIdempotent(t *testing.T) {
+	once := llm.MarkTruncated("half a thought")
+	if llm.MarkTruncated(once) != once {
+		t.Error("marking twice should not double the marker")
 	}
 }

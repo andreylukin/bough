@@ -28,12 +28,26 @@ func (p *anthropicPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if !ok || model == "" {
 		return fmt.Errorf("llm-anthropic: config needs model (string)")
 	}
-	ctx.Provide(serviceKey(cfg), &anthropicLLM{model: model})
+	// 4096 was hardcoded, which is not much for an agent that writes
+	// files: a long patch hit the cap and came back cut in half.
+	var maxTokens int64 = defaultMaxTokens
+	if v, ok := cfg["max_tokens"]; ok {
+		n, ok := v.(int)
+		if !ok || n < 1 {
+			return fmt.Errorf("llm-anthropic: max_tokens must be a positive integer, got %v", v)
+		}
+		maxTokens = int64(n)
+	}
+	ctx.Provide(serviceKey(cfg), &anthropicLLM{model: model, maxTokens: maxTokens})
 	return nil
 }
 
+// defaultMaxTokens is the reply cap when the row does not set one.
+const defaultMaxTokens = 16384
+
 type anthropicLLM struct {
-	model string
+	model     string
+	maxTokens int64
 
 	once   sync.Once
 	client anthropic.Client
@@ -73,7 +87,7 @@ func (a *anthropicLLM) init() error {
 func (a *anthropicLLM) params(system string, messages []Message) anthropic.MessageNewParams {
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(a.model),
-		MaxTokens: 4096,
+		MaxTokens: a.maxTokens,
 	}
 	if system != "" {
 		// cache_control on the system prompt lets Anthropic reuse it
@@ -180,6 +194,10 @@ func (a *anthropicLLM) complete(ctx context.Context, system string, messages []M
 		if b.Type == "text" {
 			out.WriteString(b.Text)
 		}
+	}
+	// Cut off at max_tokens: the text is real but it is not an answer.
+	if resp.StopReason == "max_tokens" {
+		return MarkTruncated(out.String()), nil
 	}
 	return out.String(), nil
 }
