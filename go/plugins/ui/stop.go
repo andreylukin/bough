@@ -51,6 +51,12 @@ func (m *model) stopKey(key string, cfg *uiCfg) (bool, tea.Cmd) {
 	// composer's esc cancels the turn in flight. Clearing a draft is
 	// cheap to redo; a cancelled turn is not.
 	case key == "esc" && !m.inspecting && m.input.Value() != "":
+		// A recalled prompt is already in history; only something
+		// typed is worth saving back.
+		if m.comp.recall < 0 {
+			m.dropDraft(m.input.Value()) // Up brings it back
+		}
+		m.comp.recall = -1
 		m.input.Reset()
 		m.syncPalette()
 		m.layoutComposer()

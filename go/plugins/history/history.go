@@ -343,3 +343,100 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	})
 	return nil
 }
+
+// RecentPrompts is what the composer's Up arrow recalls: the prompts
+// typed in this directory before now, oldest last (index 0 is the most
+// recent), consecutive duplicates squeezed.
+//
+// Prompt history has to outlive the session or it is not history at
+// all — a bough started in a directory it has been used in all week
+// opened with an empty Up arrow, and it got worse when every launch
+// started a new session by default. Sessions from other directories
+// are skipped: recalling another project's prompts is noise.
+//
+// Files are read newest-first and the scan stops as soon as limit
+// prompts are in hand, so the common case touches a handful of the
+// hundreds of session files rather than parsing all of them the way
+// List does.
+func RecentPrompts(dir, cwd string, limit int) []string {
+	paths, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	if err != nil || len(paths) == 0 {
+		return nil
+	}
+	type stamped struct {
+		path string
+		mod  time.Time
+	}
+	files := make([]stamped, 0, len(paths))
+	for _, p := range paths {
+		if st, err := os.Stat(p); err == nil {
+			files = append(files, stamped{p, st.ModTime()})
+		}
+	}
+	slices.SortFunc(files, func(a, b stamped) int {
+		return cmp.Or(b.mod.Compare(a.mod), cmp.Compare(b.path, a.path))
+	})
+	var out []string
+	for _, f := range files {
+		prompts, ok := filePrompts(f.path, cwd)
+		if !ok {
+			continue
+		}
+		// Within a file the prompts are oldest-first; the newest file
+		// comes first overall, so each file's prompts are prepended in
+		// reverse to keep "most recent" at index 0.
+		for i := len(prompts) - 1; i >= 0; i-- {
+			if len(out) > 0 && out[len(out)-1] == prompts[i] {
+				continue // consecutive duplicate
+			}
+			out = append(out, prompts[i])
+			if len(out) >= limit {
+				return out
+			}
+		}
+	}
+	return out
+}
+
+// filePrompts reads one session file's input texts in order. ok is
+// false when the session belongs to another directory — decided from
+// the "meta" entry, which is the first line, so a foreign session
+// costs one line rather than a full parse. A file with no meta (an old
+// one) is accepted: its prompts are better than none.
+func filePrompts(path, cwd string) (prompts []string, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		var e Entry
+		if json.Unmarshal(sc.Bytes(), &e) != nil {
+			continue
+		}
+		switch e.Kind {
+		case "meta":
+			if c, _ := e.Data["cwd"].(string); c != "" && cwd != "" && c != cwd {
+				return nil, false
+			}
+		case "input":
+			// "typed" is the raw line when the message sent differs
+			// from it (@file expansion, an injected skill); recalling
+			// the expansion would put a file's contents in the
+			// composer.
+			t, _ := e.Data["typed"].(string)
+			if t == "" {
+				t, _ = e.Data["text"].(string)
+			}
+			// A background job waking an idle agent is written as an
+			// input, but the user never typed it.
+			if strings.TrimSpace(t) == "" || strings.HasPrefix(t, "[background job] ") {
+				continue
+			}
+			prompts = append(prompts, t)
+		}
+	}
+	return prompts, true
+}

@@ -2,13 +2,17 @@ package ui
 
 // The composer: a multi-line textarea. Enter submits (model.go;
 // alt+enter is the follow_up keymap action there); shift+enter /
-// ctrl+j insert a newline; a paste keeps its newlines. Up/Down on the first/last line (or an empty composer)
-// recall this session's prompts, newest first; Home/End on an empty
-// composer jump the transcript to top/bottom. Emacs-style ctrl+a/e/w/u/k
-// are the textarea's own bindings.
+// ctrl+j insert a newline; a paste keeps its newlines. Up/Down (or
+// ctrl+p/ctrl+n) move the cursor while the draft spans more than one
+// visual row, and recall prompts once it is on the first/last row —
+// this directory's earlier sessions included, newest first. Home/End
+// on an empty composer jump the transcript to top/bottom. Emacs-style
+// ctrl+a/e/w/u/k are the textarea's own bindings.
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
@@ -22,10 +26,30 @@ const composerMaxLines = 8
 
 // composerState is the prompt-recall cursor: recall is the index into
 // prompts() being shown, -1 while not browsing; draft is what was
-// typed before browsing began.
+// typed before browsing began. past caches this directory's earlier
+// sessions' prompts, read once on the first recall (loaded marks that
+// read, since the answer can legitimately be empty).
 type composerState struct {
 	recall int
 	draft  string
+	past   []string
+	loaded bool
+	// dropped are drafts esc cleared. Claude Code does the same on
+	// double-esc ("saves the draft to history so Up recalls it"): a
+	// draft is cheap to clear only if clearing it is undoable.
+	dropped []string
+}
+
+// dropDraft remembers a draft esc is about to clear, so Up brings it
+// back. Consecutive duplicates are squeezed, like the rest of history.
+func (m *model) dropDraft(text string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	if n := len(m.comp.dropped); n > 0 && m.comp.dropped[n-1] == text {
+		return
+	}
+	m.comp.dropped = append(m.comp.dropped, text)
 }
 
 func newComposer() textarea.Model {
@@ -77,16 +101,59 @@ func (m *model) layoutComposer() {
 	}
 }
 
-// prompts returns this session's user prompts in transcript order
-// (replayed history included), consecutive duplicates squeezed.
+// prompts is what Up walks: this directory's prompts from earlier
+// sessions first, then this session's, in transcript order with
+// consecutive duplicates squeezed. Index len-1 is the most recent, so
+// the first Up lands on the last thing typed.
+//
+// History that ends with the session is not history. Every launch in a
+// directory now starts a new session, so a composer that only knew its
+// own transcript opened with an empty Up arrow every time.
 func (m *model) prompts() []string {
-	var out []string
+	if !m.comp.loaded {
+		m.comp.loaded = true
+		if p := m.cfg.Load().past; p != nil {
+			// RecentPrompts is newest-first; the composer walks
+			// oldest-first, and this session's go on the end.
+			past := p()
+			m.comp.past = make([]string, 0, len(past))
+			for i := len(past) - 1; i >= 0; i-- {
+				m.comp.past = append(m.comp.past, past[i])
+			}
+		}
+	}
+	out := slices.Clone(m.comp.past)
 	for i := range m.blocks {
 		if b := &m.blocks[i]; b.kind == "user" && (len(out) == 0 || out[len(out)-1] != b.text) {
 			out = append(out, b.text)
 		}
 	}
+	// A draft cleared by esc is the most recent thing typed, so it is
+	// the first thing Up offers.
+	for _, d := range m.comp.dropped {
+		if len(out) == 0 || out[len(out)-1] != d {
+			out = append(out, d)
+		}
+	}
 	return out
+}
+
+// onFirstRow and onLastRow are the edges Up and Down browse history
+// from. They count VISUAL rows, not logical lines: a single long line
+// soft-wraps to several rows, and Claude Code's rule — "when the input
+// spans more than one visual row, whether wrapped or multiline, first
+// moves the cursor within the prompt; once the cursor is on the first
+// or last visual row, pressing again navigates command history" — is
+// the one that matches what the eye sees. Judging by logical line sent
+// a wrapped paragraph straight to history with the cursor three rows
+// down.
+func (m *model) onFirstRow() bool {
+	return m.input.Line() == 0 && m.input.LineInfo().RowOffset == 0
+}
+
+func (m *model) onLastRow() bool {
+	li := m.input.LineInfo()
+	return m.input.Line() >= m.input.LineCount()-1 && li.RowOffset >= li.Height-1
 }
 
 // composerKey handles the composer's navigation keys before the keymap
@@ -99,6 +166,14 @@ func (m *model) composerKey(key string, msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	if m.inspecting || m.pal.open {
 		return false, nil
 	}
+	// readline's history keys, which Claude Code also binds: ctrl+p and
+	// ctrl+n are up and down for every purpose below.
+	switch key {
+	case "ctrl+p":
+		key = "up"
+	case "ctrl+n":
+		key = "down"
+	}
 	switch key {
 	case "up", "down":
 	default:
@@ -106,7 +181,7 @@ func (m *model) composerKey(key string, msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	}
 	switch key {
 	case "up":
-		if m.input.Line() > 0 {
+		if !m.onFirstRow() {
 			return m.editKey(msg)
 		}
 		ps := m.prompts()
@@ -125,7 +200,7 @@ func (m *model) composerKey(key string, msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		m.flash = recallNote(m.comp.recall, len(ps))
 		return true, nil
 	case "down":
-		if m.input.Line() < m.input.LineCount()-1 {
+		if !m.onLastRow() {
 			return m.editKey(msg)
 		}
 		if m.comp.recall < 0 {

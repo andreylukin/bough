@@ -228,6 +228,24 @@ func providePicker(ctx *kernel.Context) {
 	ctx.Provide("session-picker", "pending")
 }
 
+// providePrompts wires "prompt-history": this directory's prompts from
+// earlier sessions, for the composer's Up arrow. Reading them is file
+// work, so it is a func the ui calls once on the first recall rather
+// than a list built at launch — and it is recomputed per call so a
+// session started an hour ago still recalls what was typed since.
+//
+// promptRecall caps how far back Up reaches. Deep enough to cover a
+// week of work in one directory, shallow enough that the scan stops
+// after a few files.
+const promptRecall = 200
+
+func providePrompts(ctx *kernel.Context) {
+	dir, wd := sessionsDir(), cwd()
+	ctx.Provide("prompt-history", func() []string {
+		return history.RecentPrompts(dir, wd, promptRecall)
+	})
+}
+
 // provideChoose wires "session-choose", which swaps the history row to
 // the picked file via runtimeSet (Reconcile remounts history -> loop ->
 // ui; the kernel's Get-tracking makes that cascade automatic, and the

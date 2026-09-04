@@ -712,6 +712,12 @@ func (r *runner) admit(ctx context.Context, input string, steer bool, emit func(
 		}
 	}
 	data := map[string]any{"text": msg.String()}
+	// What the user actually typed, when the message sent is not it:
+	// @file expansions and injected skills belong in the model's
+	// context, not in the composer's Up-arrow history.
+	if msg.String() != input {
+		data["typed"] = input
+	}
 	if steer {
 		data["steer"] = true
 	}

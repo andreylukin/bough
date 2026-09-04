@@ -349,6 +349,7 @@ func main() {
 		return runtimeSet(ctx, src, ov, newSets...)
 	})
 	provideChoose(ctx, src, ov)
+	providePrompts(ctx)
 	if needPicker {
 		providePicker(ctx)
 	}

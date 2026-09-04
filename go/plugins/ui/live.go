@@ -86,7 +86,12 @@ type uiCfg struct {
 	small llm.LLM
 	// jobs is the background-job service, for the strip under the
 	// composer; nil when the tools row is absent.
-	jobs     jobLister
+	jobs jobLister
+	// past is this directory's prompts from earlier sessions, newest
+	// first, for the composer's Up arrow. A func because reading them
+	// is file work: the composer calls it once, on the first recall.
+	// nil when the launcher provides no history directory.
+	past     func() []string
 	limit    contextLimiter // the usage service when it knows the model's context window; nil otherwise
 	mdStyle  string         // "dark"/"light" glamour override; "" = detect
 	notice   string         // launcher "notice" service: a first-row warning (stale binary)
@@ -278,6 +283,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if s, err := kernel.Get[[]history.SessionInfo](ctx, "sessions"); err == nil {
 		cfg.sessions = s
+	}
+	if p, err := kernel.Get[func() []string](ctx, "prompt-history"); err == nil {
+		cfg.past = p
 	}
 	if c, err := kernel.Get[func(string)](ctx, "session-choose"); err == nil {
 		cfg.choose = c
