@@ -265,7 +265,7 @@ func TestThreeStepToolChain(t *testing.T) {
 	}
 }
 
-// Two fences in one reply run in order; a reply with a fence the loop
+// Only the first fence of a reply runs; a reply with a fence the loop
 // must not run (indented, quoted) is prose only.
 func TestFenceVariants(t *testing.T) {
 	t.Parallel()
@@ -274,7 +274,7 @@ func TestFenceVariants(t *testing.T) {
 		ran   int
 		end   string // what marks the turn's end on screen
 	}{
-		"two":       {uitest.Bash("echo A") + "\nthen\n" + uitest.Bash("echo B"), 2, "end-two"},
+		"two":       {uitest.Bash("echo A") + "\nthen\n" + uitest.Bash("echo B"), 1, "end-two"},
 		"non-js":    {"```python\nprint('x')\n```\nnot run", 0, "not run"},
 		"unclosed":  {"```js\ntools.bash(\"echo U\")", 0, "echo U"},
 		"tilde":     {"~~~js\ntools.bash(\"echo T\")\n~~~\nnot run", 0, "not run"},

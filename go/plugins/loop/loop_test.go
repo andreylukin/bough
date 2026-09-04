@@ -3,6 +3,7 @@ package loop
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"runtime"
 	"strings"
@@ -405,5 +406,46 @@ func TestStripFakeSystemLeavesRealText(t *testing.T) {
 		if got := stripFakeBlocks(reply); got != reply {
 			t.Fatalf("stripFakeBlocks(%q) = %q, want it unchanged", reply, got)
 		}
+	}
+}
+
+// One reply, one action. A reply carrying several fences runs only the
+// first; the rest — and the prose after it, which narrates results
+// that do not exist yet — are replaced by a marker.
+func TestFirstBlockOnly(t *testing.T) {
+	one := "let me look:\n```js\ntools.bash(\"ls\")\n```"
+	if got, n := firstBlockOnly(one); got != one || n != 0 {
+		t.Fatalf("a single block was rewritten: %q (%d)", got, n)
+	}
+	if got, n := firstBlockOnly("no code here"); got != "no code here" || n != 0 {
+		t.Fatalf("prose was rewritten: %q (%d)", got, n)
+	}
+
+	got, n := firstBlockOnly(one + "\nThe output shows 12 files.\n```js\ntools.bash(\"wc -l *\")\n```\nAll verified.")
+	if n != 1 {
+		t.Fatalf("dropped %d blocks, want 1", n)
+	}
+	for _, gone := range []string{"wc -l", "The output shows 12 files", "All verified"} {
+		if strings.Contains(got, gone) {
+			t.Fatalf("%q survived: %q", gone, got)
+		}
+	}
+	if !strings.Contains(got, `tools.bash("ls")`) || !strings.Contains(got, "1 further code block") {
+		t.Fatalf("kept text or marker missing: %q", got)
+	}
+
+	// The pathological case this exists for: a reply that imagines a
+	// whole session costs exactly one command.
+	var big strings.Builder
+	big.WriteString("here we go\n")
+	for i := range 138 {
+		fmt.Fprintf(&big, "```js\ntools.bash(\"step %d\")\n```\nlooks good.\n", i)
+	}
+	got, n = firstBlockOnly(big.String())
+	if n != 137 {
+		t.Fatalf("dropped %d, want 137", n)
+	}
+	if c := strings.Count(got, "```js"); c != 1 {
+		t.Fatalf("%d blocks survived, want 1: %q", c, got)
 	}
 }

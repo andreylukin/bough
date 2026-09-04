@@ -9,10 +9,11 @@ import (
 
 // The live sequence seen 2026-09-03 through the real loop + workers
 // with a streaming provider: the parent's ONE reply carries two fences
-// (spawn, then a verification) with prose between. The prose between
-// them must render below the card and the spawn result (once the
-// spawn has actually returned), and the guess under the last fence
-// ("Verification confirms.") is superseded by the final reply.
+// (spawn, then a verification) with prose between. Only the first
+// fence runs, so the card and its result render under the opening
+// prose, and everything the model wrote after that fence — narration
+// of results it had not seen ("The subagent has finished.",
+// "Verification confirms.") — is dropped rather than shown as fact.
 func TestSubagentTurnStreamsInEmissionOrder(t *testing.T) {
 	t.Parallel()
 	stub := &uitest.Streaming{Replies: []string{
@@ -26,11 +27,13 @@ func TestSubagentTurnStreamsInEmissionOrder(t *testing.T) {
 	d.Say("go")
 	turnDone(d, "Done, verified.")
 	f := d.Frame()
-	iCard, iRes, iReply := strings.Index(f, "subagent 1 ·"), strings.Index(f, "[subagent 1 · task"), strings.Index(f, "The subagent has finished")
-	if iCard < 0 || iRes < 0 || iReply < 0 || !(iCard < iRes && iRes < iReply) {
-		t.Fatalf("out of order (card@%d result@%d reply@%d):\n%s", iCard, iRes, iReply, f)
+	iOpen, iCard, iRes := strings.Index(f, "I'll spawn."), strings.Index(f, "subagent 1 ·"), strings.Index(f, "[subagent 1 · task")
+	if iOpen < 0 || iCard < 0 || iRes < 0 || !(iOpen < iCard && iCard < iRes) {
+		t.Fatalf("out of order (prose@%d card@%d result@%d):\n%s", iOpen, iCard, iRes, f)
 	}
-	if strings.Contains(f, "Verification confirms") {
-		t.Fatalf("pre-result guess should be superseded:\n%s", f)
+	for _, guess := range []string{"The subagent has finished", "Verification confirms"} {
+		if strings.Contains(f, guess) {
+			t.Fatalf("prose after the first block should be dropped, found %q:\n%s", guess, f)
+		}
 	}
 }

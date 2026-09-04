@@ -220,10 +220,11 @@ func TestSteerGoesThroughHookAndSkills(t *testing.T) {
 	}
 }
 
-// A steer the hook blocks never reaches the model: the reply's
-// remaining blocks run as if nothing was sent, the reason shows as an
-// error, and the ui still gets its "steer" event (the row stops
-// pending).
+// A steer the hook blocks never reaches the model: the turn carries on
+// as if nothing was sent, the reason shows as an error, and the ui
+// still gets its "steer" event (the row stops pending). Only the
+// reply's first block ever runs, so the turn goes back to the model
+// after it.
 func TestSteerBlockedByHook(t *testing.T) {
 	t.Parallel()
 	llm := &steerLLM{}
@@ -234,12 +235,12 @@ func TestSteerBlockedByHook(t *testing.T) {
 	code.steer = steer
 	inputs <- "go"
 	waitDone(t, done, kinds)
-	want := []string{"assistant", "code", "result", "steer", "error", "code", "result", "assistant", "done"}
+	want := []string{"assistant", "code", "result", "steer", "error", "assistant", "done"}
 	if got := kinds(); strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("events = %v, want %v", got, want)
 	}
-	if len(code.ran) != 2 {
-		t.Fatalf("codemode ran %d blocks, want both (nothing landed)", len(code.ran))
+	if len(code.ran) != 1 {
+		t.Fatalf("codemode ran %d blocks, want 1 (only the first runs)", len(code.ran))
 	}
 	llm.mu.Lock()
 	defer llm.mu.Unlock()

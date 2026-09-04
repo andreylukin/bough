@@ -1,0 +1,54 @@
+commit 2973bf6bd3290599008b6460d00f6363b163102a
+Author: Andrey Lukin <luk.andrey@gmail.com>
+Date:   Thu Sep 3 20:25:25 2026 -0400
+
+    agent: the seven basic things that made "explore with subagents" unusable
+    
+    Ran the user's own prompt against a real terminal three times and fixed
+    what each run hit. In order of how much damage they did:
+    
+    - The runtime is synchronous and the prompt never said so. Asked for
+      "parallel subagents" the model writes `await Promise.all(...)`; goja
+      has no event loop, so the WHOLE block is a syntax error and no
+      subagent ever runs. Three runs out of three died on exactly this.
+    - A syntax error said only "Line 7:23 Unexpected identifier". It now
+      quotes the line and points at the column.
+    - A block that printed nothing came back as an empty "[tool output]",
+      which the model reads as a broken runtime — one run spent its budget
+      probing "why do the tools return nothing" and then told the user the
+      repository tools were down. An empty result now says so.
+    - A subagent ran on the parent's 30s script deadline (tools.ask pauses
+      it; spawn did not), so a slow child killed the block that spawned it
+      and threw away the child's finished work. spawn pauses it now.
+    - The child was handed the parent's spawn advert and tried to delegate,
+      which depth 1 refuses. Sections are filtered for children.
+    - The child was never told its working directory, so it invented
+      absolute paths and reported findings about files that do not exist.
+      Both the parent and the child are now told cwd and platform (BSD vs
+      GNU userland), which they previously burned a step discovering.
+    - A child whose every command failed could still report "Status: ok".
+      It cannot.
+    
+    ui: subagent cards follow the collapse policy again. Four open panels
+    buried the transcript they were meant to summarise; the closed head is
+    already a live row — spinner, state, call count, elapsed and the call
+    running right now. tools.view on a directory lists it instead of
+    returning "is a directory".
+    
+    Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+    Claude-Session: https://claude.ai/code/session_01L48vw7xGsGMppotKYD7sW6
+
+ go/internal/uitest/subagent_order_test.go |  2 +-
+ go/internal/uitest/subagent_test.go       |  3 +-
+ go/plugins/codemode/codemode.go           | 33 ++++++++++++++
+ go/plugins/codemode/codemode_test.go      | 13 ++++++
+ go/plugins/loop/loop.go                   | 62 ++++++++++++++++++++++++--
+ go/plugins/loop/loop_test.go              | 43 ++++++++++++++++++
+ go/plugins/tools/tools.go                 | 15 +++++++
+ go/plugins/ui/blocks.go                   |  3 ++
+ go/plugins/ui/blocks_test.go              |  6 ++-
+ go/plugins/ui/model.go                    |  8 +++-
+ go/plugins/ui/spawn.go                    | 13 +++---
+ go/plugins/workers/workers.go             | 45 +++++++++++++++++--
+ go/plugins/workers/workers_test.go        | 73 ++++++++++++++++++++++++++++++-
+ 13 files changed, 300 insertions(+), 19 deletions(-)

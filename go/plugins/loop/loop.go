@@ -224,8 +224,11 @@ and Promise are SYNTAX ERRORS that kill the whole block. Every tool
 returns its value directly — write tools.bash("ls"), not await. To do
 several things, call them one after another or map over a list.
 
-Each code block you write is executed and its output is sent back to you
-as the next message. Declarations (const/let/var) do not persist between
+Write ONE code block per reply: only the first block runs, anything
+after it is dropped. That block is executed and its output is sent back
+to you as the next message. Do not write the next command before you
+have seen the output of this one — put several steps in ONE program
+instead when they belong together. Declarations (const/let/var) do not persist between
 blocks; print what you need to carry over. Never write output or result
 blocks yourself; only the runtime returns output. Take as many steps as
 you need. When you are done, reply with plain text only — no code block —
@@ -317,6 +320,36 @@ func stripFakeSystem(reply string) string {
 	out := fakeSystem.ReplaceAllString(reply, removedSystem)
 	return looseSystemTag.ReplaceAllString(out, removedSystem)
 }
+
+// extraBlocks is the marker replacing the code blocks after the first.
+const extraBlocks = "[%d further code block(s) dropped — only the first block of a reply runs]"
+
+// firstBlockOnly keeps a reply's first js block and replaces the rest
+// with a marker, returning how many were dropped.
+//
+// A reply is a PLAN plus its first action; the actions after it were
+// written blind, before their predecessor's output existed. Running
+// them all made a degenerate reply catastrophic: one glm-5.3-flash
+// reply carried 138 fenced blocks — a whole imagined session, complete
+// with invented outputs between them — and the loop dutifully executed
+// every one, so a single step produced 138 commands and 138 results
+// the model then had to reconcile. One block per step also keeps the
+// recorded reply small: the dropped text never re-enters the context.
+func firstBlockOnly(reply string) (string, int) {
+	locs := jsBlock.FindAllStringIndex(reply, -1)
+	if len(locs) <= 1 {
+		return reply, 0
+	}
+	// Everything after the first block goes, prose included: that prose
+	// narrates results that do not exist yet ("The subagent has
+	// finished. Verification confirms."), which is exactly the
+	// invented-output problem in a different costume.
+	return reply[:locs[0][1]] + "\n" + fmt.Sprintf(extraBlocks, len(locs)-1), len(locs) - 1
+}
+
+// FirstBlockOnly is firstBlockOnly for other plugins (workers runs the
+// same one-block-per-step rule for subagents).
+func FirstBlockOnly(reply string) (string, int) { return firstBlockOnly(reply) }
 
 // StripFabrications is stripFakeSystem for other plugins: a subagent's
 // report crosses into the parent's context as tool output, so a child
@@ -775,6 +808,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		}
 		retried = false
 		reply = stripFakeBlocks(reply)
+		reply, dropped := firstBlockOnly(reply)
 		note("assistant", reply, nil)
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
 		if len(blocks) == 0 {
@@ -819,6 +853,9 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				out += "error: " + runErr.Error()
 			}
 			out = truncate(noneNoted(out), maxResultBytes)
+			if dropped > 0 {
+				out += fmt.Sprintf("\n\n[only the first of your %d code blocks ran. Write ONE block per reply, read its output, then decide the next one.]", dropped+1)
+			}
 			if res := r.fire(ctx, "post-result", map[string]any{"code": code, "result": out}, emit); res != nil {
 				if s, ok := res["result"].(string); ok {
 					out = s

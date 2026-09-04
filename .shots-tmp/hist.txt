@@ -1,0 +1,2 @@
+go/plugins/history/history.go:59:func Open(path string) (*Store, error) {
+go/plugins/history/history.go:75:func OpenExisting(path string) (*Store, error) {

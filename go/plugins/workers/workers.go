@@ -94,6 +94,19 @@ type Codemode interface {
 	Run(code string) (string, error)
 }
 
+// ctxCodemode is codemode's optional context-aware run: a child's
+// block executes under the TURN's context, so tools.bash inside a
+// subagent dies with the turn like the parent's own does.
+type ctxCodemode interface {
+	RunCtx(ctx context.Context, code string) (string, error)
+}
+
+// runContexter exposes the context of the block in flight — the
+// parent's turn context, since spawn is only ever called from one.
+type runContexter interface {
+	RunContext() context.Context
+}
+
 // pauser is codemode's optional seam for a tool that blocks longer than
 // the script timeout (tools.ask uses it too). Without it a child run
 // ticks the PARENT's deadline and a slow child kills the block that
@@ -115,7 +128,8 @@ type Workers struct {
 	hist      History                                      // nil when no "history" service is mounted
 	secs      sections                                     // nil when the loop's prompt-sections are absent
 	emit      func(kind, text string, data map[string]any) // data always carries "worker"
-	ctx       context.Context
+	ctx       context.Context                              // the plugin's: outlives any one turn
+	turn      func() context.Context                       // the running block's turn context
 	maxSpawns int
 	maxSteps  int
 	spawns    int  // spawns this parent turn; reset on the loop's "done"
@@ -148,7 +162,9 @@ func (w *Workers) spawn(task string) (string, error) {
 	if p, ok := w.code.(pauser); ok {
 		defer p.Pause()()
 	}
-	reply, err := w.runChild(task, id, w.code.Run, false)
+	tctx := w.turnCtx()
+	run := func(code string) (string, error) { return w.runBlock(tctx, code) }
+	reply, err := w.runChild(tctx, task, id, run, false)
 	if err != nil {
 		// A child the provider killed never got to work: refund its
 		// slot, or a flaky minute burns the whole turn's budget.
@@ -162,6 +178,27 @@ func (w *Workers) spawn(task string) (string, error) {
 	// Provenance: the parent (and the user reading its code output)
 	// can tell delegated findings from the parent's own work.
 	return fmt.Sprintf("[subagent %d · task: %s]\n%s", id, oneLine(task, 80), reply), nil
+}
+
+// turnCtx is the context a spawned child lives under: the parent
+// turn's, so pressing esc kills the children with it. Background jobs
+// deliberately do NOT hang off this — they outlive the turn. Falls
+// back to the plugin's context when there is no block in flight.
+func (w *Workers) turnCtx() context.Context {
+	if w.turn != nil {
+		if c := w.turn(); c != nil {
+			return c
+		}
+	}
+	return w.ctx
+}
+
+// runBlock executes a child's code block under ctx.
+func (w *Workers) runBlock(ctx context.Context, code string) (string, error) {
+	if cr, ok := w.code.(ctxCodemode); ok {
+		return cr.RunCtx(ctx, code)
+	}
+	return w.code.Run(code)
 }
 
 // oneLine is the first line of s, cut to n runes with an ellipsis.
@@ -252,6 +289,7 @@ func (w *Workers) spawnAll(tasks []string) ([]string, error) {
 		w.emit("sub:start", task, map[string]any{"worker": ids[i]})
 	}
 
+	tctx := w.turnCtx()
 	reqCh := make(chan codeReq)
 	doneCh := make(chan struct{}, len(tasks))
 	reports := make([]string, len(tasks))
@@ -262,13 +300,13 @@ func (w *Workers) spawnAll(tasks []string) ([]string, error) {
 				r := codeReq{code: code, resp: make(chan codeRes, 1)}
 				select {
 				case reqCh <- r:
-				case <-w.ctx.Done():
-					return "", w.ctx.Err()
+				case <-tctx.Done():
+					return "", tctx.Err()
 				}
 				res := <-r.resp
 				return res.out, res.err
 			}
-			reply, err := w.runChild(tasks[i], ids[i], run, true)
+			reply, err := w.runChild(tctx, tasks[i], ids[i], run, true)
 			if err != nil {
 				reports[i] = fmt.Sprintf("[subagent %d · task: %s]\nStatus: failed\n%v", ids[i], oneLine(tasks[i], 80), err)
 				return
@@ -280,11 +318,21 @@ func (w *Workers) spawnAll(tasks []string) ([]string, error) {
 	for left := len(tasks); left > 0; {
 		select {
 		case r := <-reqCh:
-			out, err := w.code.Run(r.code)
+			// After a cancel every pending block fails at once: the
+			// children then unwind on their own, so the serve loop
+			// still drains to zero instead of leaking goroutines.
+			if err := tctx.Err(); err != nil {
+				r.resp <- codeRes{err: err}
+				continue
+			}
+			out, err := w.runBlock(tctx, r.code)
 			r.resp <- codeRes{out: out, err: err}
 		case <-doneCh:
 			left--
 		}
+	}
+	if err := tctx.Err(); err != nil {
+		return nil, fmt.Errorf("workers: cancelled: %w", err)
 	}
 	return reports, nil
 }
@@ -292,7 +340,7 @@ func (w *Workers) spawnAll(tasks []string) ([]string, error) {
 // runChild drives one child agent run: fresh context seeded with the
 // task, up to maxSteps llm steps, js blocks executed via codemode. The
 // final plain-text reply (no js block) is the result.
-func (w *Workers) runChild(task string, id int, run func(string) (string, error), announced bool) (string, error) {
+func (w *Workers) runChild(ctx context.Context, task string, id int, run func(string) (string, error), announced bool) (string, error) {
 	// note mirrors child activity: a "sub:<kind>" session-history entry
 	// (when history is mounted) and a "loop/event" with the same kind,
 	// both carrying the worker number.
@@ -326,7 +374,11 @@ func (w *Workers) runChild(task string, id int, run func(string) (string, error)
 	ranClean := false // did any block of this child's work actually succeed?
 	for step := 0; step < w.maxSteps; step++ {
 		steps++
-		reply, err := w.llm.Complete(w.ctx, system, msgs)
+		if err := ctx.Err(); err != nil {
+			note("done", "", map[string]any{"status": "cancelled", "steps": steps})
+			return "", fmt.Errorf("workers: cancelled: %w", err)
+		}
+		reply, err := w.llm.Complete(ctx, system, msgs)
 		if err != nil {
 			note("error", err.Error(), nil)
 			note("done", "", map[string]any{"status": "error", "steps": steps})
@@ -336,6 +388,9 @@ func (w *Workers) runChild(task string, id int, run func(string) (string, error)
 		// fabricated system message in it would read there as an
 		// instruction from the harness.
 		reply = loop.StripFabrications(reply)
+		// One block per step, like the parent: a child that writes a
+		// dozen blind commands in one reply is the same failure.
+		reply, dropped := loop.FirstBlockOnly(reply)
 		note("assistant", reply, nil)
 		msgs = append(msgs, llm.Message{Role: "assistant", Content: reply})
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
@@ -368,6 +423,9 @@ func (w *Workers) runChild(task string, id int, run func(string) (string, error)
 				out = truncate(noneNoted(out), maxResultBytes)
 				ranClean = true
 				note("result", out, nil)
+			}
+			if dropped > 0 {
+				out += fmt.Sprintf("\n\n[only the first of your %d code blocks ran. Write ONE block per reply, read its output, then decide the next one.]", dropped+1)
 			}
 			msgs = append(msgs, llm.Message{Role: "user", Content: "[tool output]\n" + out})
 		}
@@ -474,6 +532,9 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	w.ctx = ctx
+	if rc, ok := cm.(runContexter); ok {
+		w.turn = rc.RunContext
+	}
 	kctx.Effect(cancel)
 
 	w.emit = func(kind, text string, data map[string]any) {

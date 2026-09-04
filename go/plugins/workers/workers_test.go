@@ -303,7 +303,7 @@ func TestChildGetsTheParentsToolPrompt(t *testing.T) {
 	l := &scriptLLM{script: []string{"done"}}
 	w := &Workers{llm: l, code: &stubCode{}, secs: stubSections{text: "## mcp\nbough mcp call graphiti/..."}, ctx: context.Background(), maxSteps: 2}
 	w.emit = func(kind, text string, data map[string]any) {}
-	if _, err := w.runChild("count files", 1, w.code.Run, false); err != nil {
+	if _, err := w.runChild(context.Background(), "count files", 1, w.code.Run, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"tools.bash(cmd)", "tools.patch(path, old, new)", "bough mcp call graphiti/", SubSystemPrompt} {
@@ -463,4 +463,111 @@ func TestSpawnAllAnnouncesInTaskOrder(t *testing.T) {
 	if len(starts) != 3 || starts[0] != 1 || starts[1] != 2 || starts[2] != 3 {
 		t.Fatalf("cards must be announced in task order, got %v", starts)
 	}
+}
+
+// slowLLM blocks until its context is cancelled: a child waiting on
+// the model is where a cancel almost always lands.
+type slowLLM struct {
+	started chan struct{}
+	once    sync.Once
+}
+
+func (s *slowLLM) Complete(ctx context.Context, system string, messages []llm.Message) (string, error) {
+	s.once.Do(func() { close(s.started) })
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+func (s *slowLLM) Model() string { return "slow" }
+func (s *slowLLM) Usage() llm.Usage {
+	return llm.Usage{}
+}
+
+// Cancelling the turn kills the children with it: spawn returns the
+// cancellation instead of hanging until the child's own step budget
+// runs out. (Background jobs deliberately do NOT die — they hang off
+// the plugin context, see plugins/tools.)
+func TestCancelKillsChild(t *testing.T) {
+	l := &slowLLM{started: make(chan struct{})}
+	turn, cancel := context.WithCancel(context.Background())
+	w := &Workers{llm: l, code: &stubCode{}, ctx: context.Background(),
+		turn: func() context.Context { return turn }, maxSpawns: 4, maxSteps: 5}
+	w.emit = func(kind, text string, data map[string]any) {}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := w.spawn("a long task")
+		errCh <- err
+	}()
+	<-l.started
+	cancel()
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "cancel") {
+			t.Fatalf("spawn returned %v, want a cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("spawn did not return after the turn was cancelled")
+	}
+}
+
+// The same for a batch: every child dies and spawnAll reports the
+// cancellation rather than returning half-written reports as findings.
+func TestCancelKillsSpawnAll(t *testing.T) {
+	l := &slowLLM{started: make(chan struct{})}
+	turn, cancel := context.WithCancel(context.Background())
+	w := &Workers{llm: l, code: &stubCode{}, ctx: context.Background(),
+		turn: func() context.Context { return turn }, maxSpawns: 8, maxSteps: 5}
+	w.emit = func(kind, text string, data map[string]any) {}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := w.spawnAll([]string{"one", "two", "three"})
+		errCh <- err
+	}()
+	<-l.started
+	cancel()
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "cancel") {
+			t.Fatalf("spawnAll returned %v, want a cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("spawnAll did not return after the turn was cancelled")
+	}
+}
+
+// A child's block runs under the turn's context, not a background one:
+// without this a subagent's tools.bash outlived the cancelled turn.
+func TestChildBlocksRunUnderTheTurnContext(t *testing.T) {
+	seen := make(chan context.Context, 1)
+	code := &ctxStubCode{seen: seen}
+	turn, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := &Workers{llm: &scriptLLM{script: []string{"```js\nx\n```", "Status: ok"}},
+		code: code, ctx: context.Background(),
+		turn: func() context.Context { return turn }, maxSpawns: 4, maxSteps: 3}
+	w.emit = func(kind, text string, data map[string]any) {}
+	if _, err := w.spawn("do a thing"); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	select {
+	case got := <-seen:
+		if got != turn {
+			t.Fatalf("child block ran under %v, want the turn context", got)
+		}
+	default:
+		t.Fatal("the child never ran a block")
+	}
+}
+
+type ctxStubCode struct{ seen chan context.Context }
+
+func (c *ctxStubCode) RegisterTool(name string, fn any) {}
+func (c *ctxStubCode) Run(code string) (string, error)  { return "", nil }
+func (c *ctxStubCode) RunCtx(ctx context.Context, code string) (string, error) {
+	select {
+	case c.seen <- ctx:
+	default:
+	}
+	return "ok", nil
 }

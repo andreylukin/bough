@@ -1,0 +1,17 @@
+go/plugins/history/history.go:39:func ParentOf(e Entry) int64 {
+go/plugins/history/history.go:59:func Open(path string) (*Store, error) {
+go/plugins/history/history.go:75:func OpenExisting(path string) (*Store, error) {
+go/plugins/history/history.go:95:func readEntries(path string) ([]Entry, error) {
+go/plugins/history/history.go:126:func NewID() string {
+go/plugins/history/history.go:148:func List(dir string) ([]SessionInfo, error) {
+go/plugins/history/history.go:195:func PreferCwd(infos []SessionInfo, cwd string) []SessionInfo {
+go/plugins/history/history.go:210:func LastPrompt(entries []Entry) string {
+go/plugins/history/history.go:223:func (s *Store) Append(kind string, data map[string]any) Entry {
+go/plugins/history/history.go:243:func (s *Store) Entries() []Entry {
+go/plugins/history/history.go:250:func (s *Store) onlyMeta() bool {
+go/plugins/history/history.go:262:func (s *Store) Path() string { return s.path }
+go/plugins/history/history.go:265:func (s *Store) Close() error {
+go/plugins/history/history.go:276:func init() {
+go/plugins/history/history.go:280:func (plugin) Name() string     { return "history" }
+go/plugins/history/history.go:281:func (plugin) Inject() []string { return nil }
+go/plugins/history/history.go:288:func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {

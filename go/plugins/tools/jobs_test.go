@@ -195,3 +195,33 @@ func TestJobOutputKeepsBothEnds(t *testing.T) {
 		}
 	}
 }
+
+// Cancelling the turn (esc) kills the foreground command and every
+// subagent, but NOT a background job: that is the whole point of
+// starting one. The job hangs off the plugin's context, so a cancelled
+// script context leaves it running.
+func TestBackgroundJobSurvivesTurnCancel(t *testing.T) {
+	s := newTestStats(t)
+	turn, cancel := context.WithCancel(context.Background())
+	s.runCtx = func() context.Context { return turn }
+
+	if _, err := s.bash("sleep 0.3; echo SURVIVED", 60); err != nil {
+		t.Fatalf("bash: %v", err)
+	}
+	cancel() // the user pressed esc
+
+	// A foreground call under the same cancelled context does die.
+	if _, err := s.bash("echo foreground"); err == nil {
+		t.Fatal("a foreground command must not survive the cancel")
+	}
+
+	select {
+	case <-s.jobs.Wake():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the background job died with the turn")
+	}
+	n := s.jobs.Take()
+	if len(n) != 1 || !strings.Contains(n[0], "SURVIVED") {
+		t.Fatalf("job notice = %q", n)
+	}
+}
