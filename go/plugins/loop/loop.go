@@ -241,6 +241,10 @@ in fenced code blocks:
 console.log(tools.bash("ls"))
 ` + "```" + `
 
+Only a fence tagged exactly ` + "`js`" + ` runs. Not ` + "`javascript`" + `, not a
+<script> tag, not bare code in prose — anything else is read as text,
+nothing happens, and you are asked again.
+
 The runtime is JavaScript but it is NOT Node: no require, no import, no
 fs, no fetch, no process, no Buffer, no npm. Everything you can reach
 is tools.* and console.log. It is also synchronous: there is no event
