@@ -26,6 +26,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/contextmd"
 	_ "github.com/andreylukin/bough/plugins/cost"
 	_ "github.com/andreylukin/bough/plugins/graph"
+	"github.com/andreylukin/bough/plugins/history"
 	_ "github.com/andreylukin/bough/plugins/history"
 	_ "github.com/andreylukin/bough/plugins/hooks"
 	_ "github.com/andreylukin/bough/plugins/initjs"
@@ -305,6 +306,12 @@ func main() {
 	// disposition would kill the process instead of unmounting cleanly.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	// SIGUSR1 asks a running session to start a fresh one. A detached
+	// `bough web` session otherwise keeps the same conversation
+	// forever: opening the browser again is not a new session the way
+	// running `bough` again is.
+	fresh := make(chan os.Signal, 1)
+	signal.Notify(fresh, syscall.SIGUSR1)
 
 	ctx := kernel.NewContext()
 	ctx.Provide("ui-mode", mode)
@@ -362,6 +369,15 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
+
+	go func() {
+		for range fresh {
+			if choose, err := kernel.Get[func(string)](ctx, "session-choose"); err == nil {
+				choose(history.NewID())
+				fmt.Fprintln(os.Stderr, "bough: started a new session")
+			}
+		}
+	}()
 
 	// Block until interrupted, then unmount (effects run LIFO). Exit 1
 	// when a headless turn errored, else 0 (TUI /quit and ctrl+c too).

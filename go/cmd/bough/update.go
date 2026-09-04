@@ -179,7 +179,7 @@ func restartWeb(home, bin string, out io.Writer) error {
 		fmt.Fprintln(out, noWebMsg)
 		return nil
 	}
-	pid, addr, _, _, perr := parsePidfile(string(b))
+	pid, addr, _, _, _, perr := parsePidfile(string(b))
 	if perr != nil || !alive(pid) {
 		os.Remove(pf)
 		fmt.Fprintln(out, noWebMsg)
@@ -236,6 +236,20 @@ type webSession struct {
 	addr   string
 	dir    string // the cwd it was started in — which bough.yml it found
 	config string
+	caps   string // what the running binary understands, comma separated
+}
+
+// canNewSession reports whether the running session handles SIGUSR1 as
+// "start a new session". A bough that predates it takes SIGUSR1's
+// default disposition instead, which is to DIE — so an old session is
+// left alone and the user is told to restart it.
+func (w webSession) canNewSession() bool {
+	for _, c := range strings.Split(w.caps, ",") {
+		if c == capNewSession {
+			return true
+		}
+	}
+	return false
 }
 
 // where renders the session's directory and config for a person
@@ -259,12 +273,12 @@ func runningWeb(home string) (webSession, bool) {
 	if err != nil {
 		return webSession{}, false
 	}
-	pid, addr, dir, config, perr := parsePidfile(string(b))
+	pid, addr, dir, config, caps, perr := parsePidfile(string(b))
 	if perr != nil || !alive(pid) {
 		os.Remove(pf)
 		return webSession{}, false
 	}
-	return webSession{pid: pid, addr: addr, dir: dir, config: config}, true
+	return webSession{pid: pid, addr: addr, dir: dir, config: config, caps: caps}, true
 }
 
 func webPidfile(home string) string {
@@ -276,14 +290,14 @@ func webPidfile(home string) string {
 // are what a detached session is actually attached to: without them
 // `bough web` in one directory silently hands you the session someone
 // started in another, running that directory's bough.yml.
-func parsePidfile(s string) (pid int, addr, dir, config string, err error) {
+func parsePidfile(s string) (pid int, addr, dir, config, caps string, err error) {
 	parts := strings.Split(strings.TrimRight(s, "\n"), "\t")
 	head := strings.Fields(parts[0])
 	if len(head) != 2 {
-		return 0, "", "", "", fmt.Errorf("malformed pidfile: %q", s)
+		return 0, "", "", "", "", fmt.Errorf("malformed pidfile: %q", s)
 	}
 	if _, err := fmt.Sscanf(head[0], "%d", &pid); err != nil || pid <= 0 {
-		return 0, "", "", "", fmt.Errorf("malformed pidfile pid: %q", head[0])
+		return 0, "", "", "", "", fmt.Errorf("malformed pidfile pid: %q", head[0])
 	}
 	if len(parts) > 1 {
 		dir = parts[1]
@@ -291,7 +305,10 @@ func parsePidfile(s string) (pid int, addr, dir, config string, err error) {
 	if len(parts) > 2 {
 		config = parts[2]
 	}
-	return pid, head[1], dir, config, nil
+	if len(parts) > 3 {
+		caps = parts[3]
+	}
+	return pid, head[1], dir, config, caps, nil
 }
 
 // alive is a signal-0 liveness probe. pid must be positive — never
@@ -311,6 +328,9 @@ func alive(pid int) bool {
 // the pidfile so `bough web` can say which one is in force.
 var webConfig = "(embedded)"
 
+// capNewSession marks a running session that understands SIGUSR1.
+const capNewSession = "new-session"
+
 func writeWebPidfile(addr string) func() {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -323,8 +343,8 @@ func writeWebPidfile(addr string) func() {
 		return nil
 	}
 	dir, _ := os.Getwd()
-	if err := os.WriteFile(pf, fmt.Appendf(nil, "%d %s\t%s\t%s\n",
-		os.Getpid(), addr, dir, webConfig), 0o644); err != nil {
+	if err := os.WriteFile(pf, fmt.Appendf(nil, "%d %s\t%s\t%s\t%s\n",
+		os.Getpid(), addr, dir, webConfig, capNewSession), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "bough: web pidfile:", err)
 		return nil
 	}

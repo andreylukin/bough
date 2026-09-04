@@ -102,7 +102,21 @@ func runWeb(args []string) {
 		fmt.Fprintln(os.Stderr, "bough web: "+n)
 	}
 	if w, ok := runningWeb(home); ok {
-		fmt.Printf("bough web: already running at %s (pid %d)\n", webURL(w.addr), w.pid)
+		// Running `bough` again is a new session; opening the browser
+		// again should be too. The detached process is asked for one
+		// rather than restarted, so nothing in flight is lost — but
+		// only when it is new enough to understand the request, since
+		// SIGUSR1 kills a bough that is not.
+		switch {
+		case w.canNewSession():
+			if err := syscall.Kill(w.pid, syscall.SIGUSR1); err != nil {
+				fmt.Fprintf(os.Stderr, "bough web: could not ask for a new session: %v\n", err)
+			}
+			fmt.Printf("bough web: %s (pid %d) — new session\n", webURL(w.addr), w.pid)
+		default:
+			fmt.Printf("bough web: already running at %s (pid %d)\n", webURL(w.addr), w.pid)
+			fmt.Println("bough web: that session predates `bough web` starting a new one; `bough web stop` then `bough web`")
+		}
 		// The trap: a session started elsewhere runs THAT directory's
 		// bough.yml, so opening it from here shows someone else's
 		// model and no cost, with nothing to say why.

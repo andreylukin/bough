@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
 )
 
@@ -218,6 +219,16 @@ func registerBuiltins(r *Registry, ctx *kernel.Context) error {
 				return "", ResumeAction(strings.TrimSuffix(id, ".jsonl"))
 			}
 			return "", ActionOpenPicker
+		}},
+		{CommandInfo{Name: "new", Usage: "", Summary: "start a fresh session, keeping the model and config"}, func(string) (string, error) {
+			// A new session is the picker's swap with an id nothing
+			// has written yet: history.Apply creates the file.
+			choose, err := kernel.Get[func(string)](ctx, "session-choose")
+			if err != nil {
+				return "", fmt.Errorf("new: this build cannot swap sessions (needs the bough launcher)")
+			}
+			choose(history.NewID())
+			return "", ActionClear
 		}},
 		{CommandInfo{Name: "cost", Usage: "", Summary: "tokens and cost this session"}, func(string) (string, error) {
 			return costText(ctx)

@@ -36,7 +36,7 @@ func TestWebArgs(t *testing.T) {
 // `bough web` in another directory silently hands you the session
 // someone started elsewhere, on that directory's config.
 func TestPidfileCarriesDirAndConfig(t *testing.T) {
-	pid, addr, dir, config, err := parsePidfile("4242 localhost:7681\t/Users/a/repos/my code\t/Users/a/.bough/bough.yml\n")
+	pid, addr, dir, config, caps, err := parsePidfile("4242 localhost:7681\t/Users/a/repos/my code\t/Users/a/.bough/bough.yml\tnew-session\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,13 +49,21 @@ func TestPidfileCarriesDirAndConfig(t *testing.T) {
 	if config != "/Users/a/.bough/bough.yml" {
 		t.Fatalf("config = %q", config)
 	}
+	// The capability marker: SIGUSR1 kills a bough that predates it,
+	// so `bough web` only asks a session that says it understands.
+	if !(webSession{caps: caps}).canNewSession() {
+		t.Fatalf("caps = %q", caps)
+	}
+	if (webSession{caps: ""}).canNewSession() {
+		t.Fatal("an old pidfile must not be signalled")
+	}
 
 	// An old two-field pidfile still parses (no dir, no config).
-	pid, addr, dir, config, err = parsePidfile("7 localhost:1\n")
-	if err != nil || pid != 7 || addr != "localhost:1" || dir != "" || config != "" {
-		t.Fatalf("legacy pidfile: %d %q %q %q %v", pid, addr, dir, config, err)
+	pid, addr, dir, config, caps, err = parsePidfile("7 localhost:1\n")
+	if err != nil || pid != 7 || addr != "localhost:1" || dir != "" || config != "" || caps != "" {
+		t.Fatalf("legacy pidfile: %d %q %q %q %q %v", pid, addr, dir, config, caps, err)
 	}
-	if _, _, _, _, err := parsePidfile("nonsense"); err == nil {
+	if _, _, _, _, _, err := parsePidfile("nonsense"); err == nil {
 		t.Fatal("a malformed pidfile must error")
 	}
 }
