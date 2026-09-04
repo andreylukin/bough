@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/andreylukin/bough/internal/schema"
 	"github.com/andreylukin/bough/plugins/llm"
 )
 
@@ -192,5 +193,52 @@ func TestMarkTruncatedIsIdempotent(t *testing.T) {
 	once := llm.MarkTruncated("half a thought")
 	if llm.MarkTruncated(once) != once {
 		t.Error("marking twice should not double the marker")
+	}
+}
+
+// Models fall back to the tool-calling convention they were trained on.
+// A real reply from claude-sonnet-5 through OpenRouter was exactly
+// this, twice in a row, with no prose and no tools.* call — so the
+// other shapes missed it and the turn nearly ended on it.
+func TestJSONToolCallIsRefused(t *testing.T) {
+	for _, reply := range []string{
+		"{\n\"cmd\": \"cd /repo && find . -name '*.go'\"\n}",
+		"{\"name\": \"bash\", \"arguments\": {\"command\": \"ls\"}}",
+		"  {\n  \"tool\": \"view\", \"path\": \"a.go\"\n}  ",
+	} {
+		if !meantToRunCode(reply) {
+			t.Errorf("a bare JSON object is a misfired tool call, not an answer: %q", reply)
+		}
+	}
+}
+
+// An answer that happens to contain JSON is still an answer.
+func TestJSONInsideAnAnswerIsFine(t *testing.T) {
+	for _, reply := range []string{
+		"The config is:\n\n```json\n{\"model\": \"claude-sonnet-5\"}\n```\n\nThat is all it needs.",
+		"It returns {\"ok\": true} on success.",
+		"{\"ok\": true} is what it returns, and nothing else changed.",
+	} {
+		if meantToRunCode(reply) {
+			t.Errorf("prose carrying JSON is an answer: %q", reply)
+		}
+	}
+}
+
+// A schema'd turn's answer IS a bare JSON object, so the JSON veto
+// must not fire on it — the schema check is what judges those.
+func TestSchemaTurnAcceptsBareJSON(t *testing.T) {
+	sch := schema.Schema{"type": "object", "properties": map[string]any{
+		"files": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+	}, "required": []any{"files"}}
+	llmStub := &seqLLM{replies: []string{"{\"files\": [\"a.go\"]}"}}
+	r := &runner{llm: llmStub, code: &stubCode{}, hist: &memHistory{}, secs: &Sections{},
+		stopRetries: 2, schema: sch}
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "list files", collect(&kinds, &texts)); err != nil {
+		t.Fatal(err)
+	}
+	if llmStub.calls != 1 {
+		t.Fatalf("a valid structured answer should not be refused, %d calls", llmStub.calls)
 	}
 }

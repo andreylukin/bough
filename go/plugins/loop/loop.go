@@ -243,7 +243,9 @@ console.log(tools.bash("ls"))
 
 Only a fence tagged exactly ` + "`js`" + ` runs. Not ` + "`javascript`" + `, not a
 <script> tag, not bare code in prose — anything else is read as text,
-nothing happens, and you are asked again.
+nothing happens, and you are asked again. You have no JSON tool-calling
+interface here: a reply like {"cmd": "ls"} or {"name": …, "arguments":
+…} calls nothing. The fenced program IS the tool call.
 
 The runtime is JavaScript but it is NOT Node: no require, no import, no
 fs, no fetch, no process, no Buffer, no npm. Everything you can reach
@@ -1027,7 +1029,13 @@ const meantToRunNote = "[unfinished] You wrote a tool call, but not inside a ```
 // <script>console.log(tools.write(…))</script>) and a fence tagged
 // with the wrong language.
 var (
-	scriptTag  = regexp.MustCompile(`(?i)<script[\s>]`)
+	scriptTag = regexp.MustCompile(`(?i)<script[\s>]`)
+	// jsonCall: a reply that is nothing but a JSON object. Models fall
+	// back to the tool-calling convention they were trained on and
+	// answer with {"cmd": "find …"} — no prose around it, so it is not
+	// an answer to anybody, and no tools.* call, so the other shapes
+	// miss it.
+	jsonCall   = regexp.MustCompile(`(?s)\A\s*\{.*\}\s*\z`)
 	wrongFence = regexp.MustCompile("(?s)```(?:javascript|typescript|ts|node|jsx)[^\n]*\n(.*?)```")
 	toolLine   = regexp.MustCompile(`(?m)^\s*(?:console\.log\(\s*)?tools\.\w+\(`)
 )
@@ -1051,6 +1059,9 @@ func meantToRunCode(reply string) bool {
 		return true
 	}
 	if m := wrongFence.FindStringSubmatch(reply); m != nil && strings.Contains(m[1], "tools.") {
+		return true
+	}
+	if jsonCall.MatchString(strings.TrimSpace(reply)) {
 		return true
 	}
 	// A bare tool call at the start of a line: prose that mentions
@@ -1322,7 +1333,10 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				why, note0 = "was empty", saidNothingNote
 			case strings.Contains(reply, llm.Truncated):
 				why, note0 = "was cut off at the output limit", truncatedNote
-			case meantToRunCode(reply):
+			// Not under a schema: a structured turn's answer IS a bare
+			// JSON object, which is the shape jsonCall refuses. The
+			// schema case below is what judges those.
+			case len(r.schema) == 0 && meantToRunCode(reply):
 				why, note0 = "wrote a tool call that was not in a ```js block", meantToRunNote
 			case announcesWork(reply):
 				why, note0 = "announced work it did not do", announcedNote
