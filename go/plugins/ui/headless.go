@@ -114,7 +114,7 @@ func hlPrint(ev Event) {
 		return // the whole reply prints once as "[assistant]"
 	}
 	switch ev.Kind {
-	case "title", "memory", "context", "thinking-delta":
+	case "title", "memory", "context", "thinking-delta", "activity":
 		// Bookkeeping around the turn, not the turn's output: a script
 		// (and the benchmark harness) reads these lines as results.
 		return

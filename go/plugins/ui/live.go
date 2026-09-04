@@ -71,19 +71,23 @@ type skillNames interface {
 // current one through liveCfg on every render, so a remount (new
 // theme/keymap row, history landing) restyles running views.
 type uiCfg struct {
-	theme    theme
-	keys     map[string]string // action -> key (plus "leader" and "chord:<key>" -> action)
-	action   map[string]string // key -> action (derived)
-	chords   map[string]string // key after the leader -> action (derived)
-	status   string            // status-bar left text
-	hist     historyView       // nil when no history service
-	usage    llm.UsageReporter // the "usage" (cost row) or llm service; nil when neither reports
-	modeler  llm.Modeler       // the llm service when it names its model; nil otherwise
-	effort   llm.Efforter      // the llm service when its thinking level can be changed; nil otherwise
-	limit    contextLimiter    // the usage service when it knows the model's context window; nil otherwise
-	mdStyle  string            // "dark"/"light" glamour override; "" = detect
-	notice   string            // launcher "notice" service: a first-row warning (stale binary)
-	collapse string            // "all" | "large" | "none": which code/result blocks start collapsed
+	theme   theme
+	keys    map[string]string // action -> key (plus "leader" and "chord:<key>" -> action)
+	action  map[string]string // key -> action (derived)
+	chords  map[string]string // key after the leader -> action (derived)
+	status  string            // status-bar left text
+	hist    historyView       // nil when no history service
+	usage   llm.UsageReporter // the "usage" (cost row) or llm service; nil when neither reports
+	modeler llm.Modeler       // the llm service when it names its model; nil otherwise
+	effort  llm.Efforter      // the llm service when its thinking level can be changed; nil otherwise
+	// small is the "llm-small" service and ONLY that: the status-line
+	// label and the composer's guess are worth a cheap model's time,
+	// never the agent's own (in money or in latency).
+	small    llm.LLM
+	limit    contextLimiter // the usage service when it knows the model's context window; nil otherwise
+	mdStyle  string         // "dark"/"light" glamour override; "" = detect
+	notice   string         // launcher "notice" service: a first-row warning (stale binary)
+	collapse string         // "all" | "large" | "none": which code/result blocks start collapsed
 
 	// "/" command seam: with no commands service, "/" is plain text
 	// and the palette never opens. hlog records dispatches to history
@@ -242,6 +246,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if e, err := kernel.Get[llm.Efforter](ctx, "llm"); err == nil {
 		cfg.effort = e
+	}
+	if s, err := kernel.Get[llm.LLM](ctx, llm.SmallKey); err == nil {
+		cfg.small = s
 	}
 	if a, err := kernel.Get[askAnswers](ctx, "ask-answers"); err == nil {
 		cfg.ask = a

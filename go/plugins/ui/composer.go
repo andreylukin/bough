@@ -138,7 +138,10 @@ func (m *model) composerKey(key string, msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		}
 		return true, nil
 	case "tab":
-		if m.tabComplete() {
+		// A path under the cursor is the certain completion, so it
+		// wins; otherwise tab takes the small model's guess at the
+		// rest of the sentence.
+		if m.tabComplete() || m.acceptSuggestion() {
 			return true, nil
 		}
 	case "home", "end":
@@ -162,13 +165,15 @@ func recallNote(i, n int) string {
 	return fmt.Sprintf("↑ recalled prompt %d/%d · esc clears · ↓ back", n-i, n)
 }
 
-// editKey feeds one key straight to the textarea.
+// editKey feeds one key straight to the textarea. Every edit re-arms
+// the autocomplete pause (predict.go); with no llm-small row that is a
+// nil command.
 func (m *model) editKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.syncPalette()
 	m.layoutComposer()
-	return true, cmd
+	return true, tea.Batch(cmd, m.schedulePredict(m.cfg.Load()))
 }
 
 func (m *model) setDraft(s string) {

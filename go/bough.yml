@@ -131,6 +131,12 @@
 - id: auto-memory
   plugin: auto-memory
 
+# While the agent works, a small model says what it is doing in a few
+# words, on the bottom line. Needs the llm-small row; without it the
+# plugin is quiet (a status line is not worth the agent's own model).
+- id: activity
+  plugin: activity
+
 # One cheap call per session names it, so `bough sessions` and the
 # picker read as a list of jobs instead of opening sentences.
 - id: session-title

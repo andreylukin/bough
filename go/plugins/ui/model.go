@@ -109,6 +109,8 @@ type model struct {
 	mp         modelPicker    // "/model" picker (see modelpick.go)
 	todoText   string         // latest todo list text (the todo plugin's event)
 	title      string         // the session's name (session-title plugin); "" until named
+	activity   string         // what the agent is doing now (activity plugin); "" when idle
+	pred       predictState   // the small model's guess at the rest of the draft (predict.go)
 	todoPinned bool           // todo list pinned above the composer (todo_toggle)
 	sessRows   sessList       // mid-session picker list (see session.go); nil = launch picker
 	welcome    bool           // fresh-session orientation text (see welcomeView)
@@ -637,6 +639,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addEvent(Event(msg))
 		return m, m.waitEvent()
 
+	case predictTickMsg:
+		return m, m.startPredict(m.cfg.Load(), msg.draft)
+
+	case predictMsg:
+		m.finishPredict(msg)
+		return m, nil
+
 	case bangDoneMsg:
 		m.finishBang(msg)
 		return m, nil
@@ -758,6 +767,17 @@ func (m *model) addEvent(ev Event) {
 		// the parent's transcript is the story, the child's is detail
 		// behind the card.
 		m.addSubEvent(ev)
+	case "activity":
+		// What the agent is doing right now, for the status line: the
+		// transcript already says what it did. A label that arrives
+		// after the turn ended is dropped, or it would caption the
+		// NEXT turn's first seconds with the last one's work.
+		if !m.running && ev.Text != "" {
+			return
+		}
+		m.activity = ev.Text
+		m.refresh()
+		return
 	case "title":
 		// The session's name belongs in the bar, not the transcript:
 		// it is what this conversation IS, not something that happened
@@ -1152,11 +1172,13 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.submit(line)
 	}
 
+	// The ordinary typing path: every edit re-arms the autocomplete
+	// pause (predict.go), a nil command without an llm-small row.
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.syncPalette()
 	m.layoutComposer()
-	return m, cmd
+	return m, tea.Batch(cmd, m.schedulePredict(cfg))
 }
 
 // steerLine hands one line to the turn in flight (pi's model): it

@@ -29,7 +29,12 @@ func (m *model) statusBar(cfg *uiCfg) string {
 	th := cfg.theme
 	tokens, cost, ctx, mdl := usageParts(cfg)
 	left := " " + cfg.status
-	if m.title != "" {
+	switch {
+	case m.running && m.activity != "":
+		// While it works, the bottom line says what it is doing — the
+		// one thing a transcript of collapsed rows cannot show.
+		left = " ▸ " + m.activity
+	case m.title != "":
 		// Once the session has a name it is more use than the app's:
 		// several bough windows are told apart by what they are doing.
 		left = " " + m.title
@@ -53,6 +58,11 @@ func (m *model) statusBar(cfg *uiCfg) string {
 		cands = []string{"waiting for you"}
 	case m.focusedSpawn() >= 0:
 		cands = []string{"subagent card · enter folds · " + cfg.keys["history_inspect"] + " opens its transcript"}
+	case m.suggestion() != "":
+		// The small model's guess at the rest of what you are typing;
+		// tab takes it. Shown here rather than as ghost text in the
+		// composer, where it would hide the draft's real end.
+		cands = []string{"↹ …" + strings.TrimSpace(m.suggestion())}
 	case m.scrollCue() != "":
 		cands = []string{m.scrollCue()}
 	default:
