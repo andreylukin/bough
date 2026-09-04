@@ -141,3 +141,53 @@ func TestListShowsTheContents(t *testing.T) {
 		t.Fatalf("the state file is plumbing, not content:\n%s", got)
 	}
 }
+
+// The pad is shared with subagents — they run on the parent's tools —
+// so a note says which one wrote it, and the parent's notes stay
+// unattributed.
+func TestNotesSayWhoWroteThem(t *testing.T) {
+	p := newPad(t)
+	p.Note("the parent looked here")
+	p.Writer("subagent 2")
+	p.Note("the child found this")
+	p.Writer("")
+	p.Note("and the parent again")
+
+	notes := p.Notes()
+	if !strings.Contains(notes, "[subagent 2] the child found this") {
+		t.Fatalf("child note unattributed:\n%s", notes)
+	}
+	for _, mine := range []string{"the parent looked here", "and the parent again"} {
+		for _, l := range strings.Split(notes, "\n") {
+			if strings.Contains(l, mine) && strings.Contains(l, "[") {
+				t.Fatalf("the parent's own note was tagged: %q", l)
+			}
+		}
+	}
+}
+
+// A session that never uses the scratchpad leaves nothing behind: the
+// previous era of this feature left 9,434 empty directories.
+func TestNothingOnDiskUntilSomethingIsWritten(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "pad")
+	p, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("the directory was made before anything was written: %v", err)
+	}
+	if got := p.List(); !strings.Contains(got, "(empty)") {
+		t.Fatalf("List on an unused pad = %q", got)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("listing an unused pad created it")
+	}
+
+	if _, err := p.Set("k", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, stateFile)); err != nil {
+		t.Fatalf("the first write did not create the pad: %v", err)
+	}
+}

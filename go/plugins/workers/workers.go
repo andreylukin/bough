@@ -116,6 +116,11 @@ type runContexter interface {
 	RunContext() context.Context
 }
 
+// scratchpad is the optional "scratch" service: the pad is shared with
+// children (they run on the parent's tools), so each child announces
+// itself while its block runs and a note says which one wrote it.
+type scratchpad interface{ Writer(string) }
+
 // pauser is codemode's optional seam for a tool that blocks longer than
 // the script timeout (tools.ask uses it too). Without it a child run
 // ticks the PARENT's deadline and a slow child kills the block that
@@ -139,6 +144,7 @@ type Workers struct {
 	emit      func(kind, text string, data map[string]any) // data always carries "worker"
 	ctx       context.Context                              // the plugin's: outlives any one turn
 	turn      func() context.Context                       // the running block's turn context
+	pad       scratchpad                                   // the shared scratchpad; nil when absent
 	maxSpawns int
 	maxSteps  int
 	spawns    int  // spawns this parent turn; reset on the loop's "done"
@@ -172,7 +178,7 @@ func (w *Workers) spawn(task string, shape ...map[string]any) (any, error) {
 		defer p.Pause()()
 	}
 	tctx := w.turnCtx()
-	run := func(code string) (string, error) { return w.runBlock(tctx, code) }
+	run := func(code string) (string, error) { return w.runBlock(tctx, id, code) }
 	sch := shapeOf(shape)
 	reply, err := w.runChild(tctx, task, id, run, false, sch)
 	if err != nil {
@@ -218,8 +224,14 @@ func (w *Workers) turnCtx() context.Context {
 	return w.ctx
 }
 
-// runBlock executes a child's code block under ctx.
-func (w *Workers) runBlock(ctx context.Context, code string) (string, error) {
+// runBlock executes a child's code block under ctx, tagged with the
+// child that asked for it so anything it writes to the shared
+// scratchpad says where it came from.
+func (w *Workers) runBlock(ctx context.Context, id int, code string) (string, error) {
+	if w.pad != nil {
+		w.pad.Writer(fmt.Sprintf("subagent %d", id))
+		defer w.pad.Writer("")
+	}
 	if cr, ok := w.code.(ctxCodemode); ok {
 		return cr.RunCtx(ctx, code)
 	}
@@ -261,8 +273,9 @@ func reportStatus(report string) string {
 // code back to the owner and wait; their LLM calls, which is where the
 // minutes go, overlap freely.
 type codeReq struct {
-	code string
-	resp chan codeRes
+	code   string
+	worker int // which child asked, for the scratchpad's attribution
+	resp   chan codeRes
 }
 
 type codeRes struct {
@@ -323,7 +336,7 @@ func (w *Workers) spawnAll(tasks []string, shape ...map[string]any) ([]any, erro
 		go func(i int) {
 			defer func() { doneCh <- struct{}{} }()
 			run := func(code string) (string, error) {
-				r := codeReq{code: code, resp: make(chan codeRes, 1)}
+				r := codeReq{code: code, worker: ids[i], resp: make(chan codeRes, 1)}
 				select {
 				case reqCh <- r:
 				case <-tctx.Done():
@@ -357,7 +370,7 @@ func (w *Workers) spawnAll(tasks []string, shape ...map[string]any) ([]any, erro
 				r.resp <- codeRes{err: err}
 				continue
 			}
-			out, err := w.runBlock(tctx, r.code)
+			out, err := w.runBlock(tctx, r.worker, r.code)
 			r.resp <- codeRes{out: out, err: err}
 		case <-doneCh:
 			left--
@@ -588,6 +601,9 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	w.ctx = ctx
 	if rc, ok := cm.(runContexter); ok {
 		w.turn = rc.RunContext
+	}
+	if p, err := kernel.Get[scratchpad](kctx, "scratch"); err == nil {
+		w.pad = p
 	}
 	kctx.Effect(cancel)
 

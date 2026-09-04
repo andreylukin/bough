@@ -62,14 +62,15 @@ type Pad struct {
 
 	mu     sync.Mutex
 	values map[string]any
+	writer string // the subagent writing right now; "" is the parent
 }
 
-// New opens (and creates) a scratchpad at dir, reading back whatever
-// an earlier session in the same directory left.
+// New opens a scratchpad at dir, reading back whatever an earlier
+// session in the same directory left. The directory itself is made on
+// the first write, not here: a session that never needs a scratchpad
+// should not leave one behind (the previous era of this feature left
+// 9,434 empty directories in ~/.bough/scratch).
 func New(dir string) (*Pad, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("scratch: %w", err)
-	}
 	p := &Pad{dir: dir, values: map[string]any{}}
 	if b, err := os.ReadFile(filepath.Join(dir, stateFile)); err == nil {
 		_ = json.Unmarshal(b, &p.values) // a corrupt state file starts empty
@@ -79,6 +80,34 @@ func New(dir string) (*Pad, error) {
 
 // Dir is the scratchpad's path.
 func (p *Pad) Dir() string { return p.dir }
+
+// ready makes the directory on the first write.
+func (p *Pad) ready() error {
+	if err := os.MkdirAll(p.dir, 0o755); err != nil {
+		return fmt.Errorf("scratch: %w", err)
+	}
+	return nil
+}
+
+// Writer names who is writing: the pad is shared with subagents (they
+// run in the parent's VM, on the parent's tools), so a note or a value
+// from a child is otherwise indistinguishable from the parent's. Empty
+// is the parent itself.
+func (p *Pad) Writer(who string) {
+	p.mu.Lock()
+	p.writer = who
+	p.mu.Unlock()
+}
+
+// who is the current writer's tag for a note, "" for the parent.
+func (p *Pad) who() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.writer == "" {
+		return ""
+	}
+	return "[" + p.writer + "] "
+}
 
 // Set stores a value under name for the rest of the session (and the
 // next one, resumed). Returns what a model wants to see: that it
@@ -143,13 +172,16 @@ func (p *Pad) Note(text string) (string, error) {
 	if text == "" {
 		return "", fmt.Errorf("scratch.note: nothing to write")
 	}
+	if err := p.ready(); err != nil {
+		return "", err
+	}
 	path := filepath.Join(p.dir, notesFile)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return "", fmt.Errorf("scratch.note: %w", err)
 	}
 	defer f.Close()
-	if _, err := fmt.Fprintf(f, "- %s %s\n", time.Now().Format("15:04"), text); err != nil {
+	if _, err := fmt.Fprintf(f, "- %s %s%s\n", time.Now().Format("15:04"), p.who(), text); err != nil {
 		return "", fmt.Errorf("scratch.note: %w", err)
 	}
 	return "noted in " + path, nil
@@ -226,6 +258,9 @@ func (p *Pad) save() error {
 	p.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("scratch: %w", err)
+	}
+	if err := p.ready(); err != nil {
+		return err
 	}
 	tmp := filepath.Join(p.dir, stateFile+".tmp")
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
