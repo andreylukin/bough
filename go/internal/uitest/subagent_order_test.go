@@ -26,7 +26,7 @@ func TestSubagentTurnStreamsInEmissionOrder(t *testing.T) {
 	d.Say("go")
 	turnDone(d, "Done, verified.")
 	f := d.Frame()
-	iCard, iRes, iReply := strings.Index(f, "subagent 1 · done"), strings.Index(f, "[subagent 1 · task"), strings.Index(f, "The subagent has finished")
+	iCard, iRes, iReply := strings.Index(f, "subagent 1 ·"), strings.Index(f, "[subagent 1 · task"), strings.Index(f, "The subagent has finished")
 	if iCard < 0 || iRes < 0 || iReply < 0 || !(iCard < iRes && iRes < iReply) {
 		t.Fatalf("out of order (card@%d result@%d reply@%d):\n%s", iCard, iRes, iReply, f)
 	}

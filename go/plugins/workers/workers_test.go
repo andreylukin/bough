@@ -2,6 +2,7 @@ package workers
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -289,6 +290,8 @@ func (stubCode) Run(code string) (string, error)  { return "", nil }
 
 type stubSections struct{ text string }
 
+func (s stubSections) TextExcept(...string) string { return s.text }
+
 func (s stubSections) Set(name, text string) {}
 func (s stubSections) Text() string          { return s.text }
 
@@ -310,7 +313,75 @@ func TestChildGetsTheParentsToolPrompt(t *testing.T) {
 	if strings.Index(l.seenSys, "tools.bash") > strings.Index(l.seenSys, "## mcp") || strings.Index(l.seenSys, "## mcp") > strings.Index(l.seenSys, SubSystemPrompt) {
 		t.Fatalf("order must be base, sections, identity:\n%s", l.seenSys)
 	}
-	if got := systemFor("base", ""); got != "base\n\n"+SubSystemPrompt {
+	if got := systemFor("base", ""); !strings.HasPrefix(got, "base\n\n"+SubSystemPrompt) {
 		t.Fatalf("no sections: %q", got)
+	}
+	// The child is told where it is: it invented absolute paths and then
+	// reported findings about files that never existed.
+	wd, _ := os.Getwd()
+	if got := systemFor("base", ""); !strings.Contains(got, wd) {
+		t.Fatalf("child system prompt must name the working directory: %q", got)
+	}
+}
+
+// pausingCode records whether a child run happened inside a Pause: the
+// parent's script deadline must not tick while a subagent works.
+type pausingCode struct {
+	paused, resumed int
+	ranWhilePaused  bool
+}
+
+func (*pausingCode) RegisterTool(string, any) {}
+
+func (p *pausingCode) Pause() func() {
+	p.paused++
+	return func() { p.resumed++ }
+}
+
+func (p *pausingCode) Run(string) (string, error) {
+	if p.paused > p.resumed {
+		p.ranWhilePaused = true
+	}
+	return "", nil
+}
+
+func TestSpawnPausesTheParentDeadline(t *testing.T) {
+	pc := &pausingCode{}
+	w := &Workers{
+		llm:       &scriptLLM{script: []string{"on it\n```js\nnoop()\n```", "Status: ok\nFindings: done"}},
+		code:      pc,
+		maxSpawns: 4,
+		maxSteps:  6,
+		ctx:       context.Background(),
+		emit:      func(string, string, map[string]any) {},
+	}
+	if _, err := w.spawn("look around"); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if pc.paused != 1 || pc.resumed != 1 {
+		t.Fatalf("spawn must pause the parent's deadline exactly once: %d/%d", pc.paused, pc.resumed)
+	}
+	if !pc.ranWhilePaused {
+		t.Fatal("the child's blocks must run while the parent's deadline is paused")
+	}
+}
+
+// The child never sees the spawn advert: it read it, tried to delegate,
+// and got "subagent depth 1 only" — twice in one real session.
+func TestChildDoesNotSeeTheSpawnAdvert(t *testing.T) {
+	secs := &loop.Sections{}
+	secs.Set("workers", "Subagents: tools.spawn(task) -> string runs a child")
+	secs.Set("tools", "## tools\ntools.bash(cmd)")
+	l := &scriptLLM{script: []string{"Status: ok\nFindings: none"}}
+	w := &Workers{llm: l, code: stubCode{}, secs: secs, maxSpawns: 4, maxSteps: 6,
+		ctx: context.Background(), emit: func(string, string, map[string]any) {}}
+	if _, err := w.spawn("look"); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if strings.Contains(l.seenSys, "tools.spawn(task)") {
+		t.Fatalf("the child must not be told it can spawn:\n%s", l.seenSys)
+	}
+	if !strings.Contains(l.seenSys, "tools.bash(cmd)") {
+		t.Fatalf("the child keeps every other section:\n%s", l.seenSys)
 	}
 }

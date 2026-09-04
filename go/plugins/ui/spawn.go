@@ -60,11 +60,14 @@ func (m *model) spawnCard(worker int) *block {
 			return b
 		}
 	}
-	// Cards start open under every collapse policy: a subagent is
-	// something to watch, and the card's body is the only place its
-	// progress and report show.
+	// A card follows the collapse policy like every other detail block.
+	// Its closed head is a live row on its own — spinner, state, call
+	// count, elapsed, and the call running right now — so watching a
+	// subagent costs one line, not a panel. Four open panels buried the
+	// transcript they were supposed to summarise.
 	m.blocks = append(m.blocks, block{id: m.nextID, kind: "spawn",
-		sub: &subState{worker: worker, status: "running", started: time.Now()}})
+		collapsed: m.cfg.Load().collapse != "none",
+		sub:       &subState{worker: worker, status: "running", started: time.Now()}})
 	m.nextID++
 	return &m.blocks[len(m.blocks)-1]
 }
@@ -157,7 +160,7 @@ func (m *model) renderSpawn(b *block, th theme) string {
 	}
 	parts := []string{fmt.Sprintf("subagent %d", s.worker)}
 	if b.collapsed {
-		task := line(b.label, 50)
+		task := line(b.label, 44)
 		if task == "" {
 			task = "task"
 		}

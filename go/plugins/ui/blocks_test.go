@@ -552,9 +552,10 @@ func TestSubagentEventsFoldIntoOneCard(t *testing.T) {
 		m.addEvent(Event{Kind: "sub:start", Text: "count the files", Data: w})
 		m.addEvent(Event{Kind: "sub:assistant", Text: "on it\n```js\ntools.bash(\"ls\")\n```", Data: w})
 		m.addEvent(Event{Kind: "sub:code", Text: "console.log(tools.bash(\"ls\"))", Data: w})
-		if len(m.blocks) != 1 || m.blocks[0].kind != "spawn" || m.blocks[0].collapsed || !m.blocks[0].collapsible() {
-			t.Fatalf("%s: want one open spawn card, got %+v", mode, m.blocks)
+		if len(m.blocks) != 1 || m.blocks[0].kind != "spawn" || !m.blocks[0].collapsed || !m.blocks[0].collapsible() {
+			t.Fatalf("%s: a card follows the collapse policy — one CLOSED card, got %+v", mode, m.blocks)
 		}
+		m.blocks[0].collapsed = false // the rest is the open card
 		card := stripANSI(m.render(&m.blocks[0], m.cfg.Load()))
 		for _, want := range []string{"subagent 2", "running", "1 call", "┃ count the files", "Ran: ls"} {
 			if !strings.Contains(card, want) {
@@ -621,6 +622,7 @@ func TestSubagentReportCapped(t *testing.T) {
 	m.addEvent(Event{Kind: "sub:start", Text: "t", Data: w})
 	m.addEvent(Event{Kind: "sub:assistant", Text: nLines(reportCap + 5), Data: w})
 	m.addEvent(Event{Kind: "sub:done", Data: map[string]any{"worker": 1, "status": "ok"}})
+	m.blocks[0].collapsed = false
 	card := stripANSI(m.render(&m.blocks[0], m.cfg.Load()))
 	if !strings.Contains(card, "… +5 lines") || strings.Contains(card, "l"+strconv.Itoa(reportCap+1)) {
 		t.Fatalf("report should be capped at %d lines:\n%s", reportCap, card)

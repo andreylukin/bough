@@ -517,7 +517,13 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 				glyph, text = "▸ ", strings.SplitN(b.text, "\n", 2)[0]+" …"
 			}
 		}
-		out := th["error"].Width(w).Render(glyph + "✗ " + text)
+		var out string
+		if b.collapsed {
+			// One row, like every other closed block: truncate, never wrap.
+			out = xansi.Truncate(th["error"].Render(glyph+"✗ "+text), m.width, "…")
+		} else {
+			out = th["error"].Width(w).Render(glyph + "✗ " + text)
+		}
 		if authErrRe.MatchString(b.text) {
 			out += "\n" + th["dim"].Width(w).Render(authHint)
 		}

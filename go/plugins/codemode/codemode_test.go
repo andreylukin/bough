@@ -194,3 +194,16 @@ func TestRunContextFollowsTheRun(t *testing.T) {
 		t.Fatal("after the run: Background again")
 	}
 }
+
+// A syntax error points at the line it failed on: goja reports only
+// "Line L:C", which leaves the author guessing.
+func TestSyntaxErrorShowsTheOffendingLine(t *testing.T) {
+	cm := New(time.Second)
+	_, err := cm.Run("var a = 1\nvar b = 2\nconsole.log(a b c)\n")
+	if err == nil {
+		t.Fatal("want a syntax error")
+	}
+	if !strings.Contains(err.Error(), "console.log(a b c)") || !strings.Contains(err.Error(), "^") {
+		t.Fatalf("the error must quote the line and point at the column:\n%v", err)
+	}
+}

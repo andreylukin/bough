@@ -104,6 +104,9 @@ func callLabel(m []string) string {
 	case "ask":
 		return "Asked you"
 	case "spawn":
+		if arg == "" { // the task came from a variable or a template
+			return "Subagent"
+		}
 		return "Subagent: " + arg
 	}
 	return ""

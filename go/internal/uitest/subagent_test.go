@@ -30,7 +30,8 @@ func TestSubagentCardThroughRealWorkers(t *testing.T) {
 	turnDone(d, "parent sees two files")
 	fits(t, d)
 	f := d.Frame()
-	if n := strings.Count(f, "subagent 1 · done"); n != 1 {
+	// The card head, not the provenance line on the spawn's result.
+	if n := strings.Count(f, "subagent 1 ·") - strings.Count(f, "[subagent 1 ·"); n != 1 {
 		t.Fatalf("want exactly one card row for worker 1, got %d:\n%s", n, f)
 	}
 	if !strings.Contains(f, "✔") || !strings.Contains(f, "1 call") {

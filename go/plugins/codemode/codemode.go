@@ -50,6 +50,38 @@ func cleanErr(err error) error {
 	return err
 }
 
+// syntaxAt matches goja's "Line L:C" position in a SyntaxError.
+var syntaxAt = regexp.MustCompile(`Line (\d+):(\d+)`)
+
+// withSource points a SyntaxError at the line it failed on. goja
+// reports "Line 9:23 Unexpected identifier" and nothing else, which
+// leaves the author — usually a model — to guess which of its own
+// lines is wrong; it guesses badly and reruns the same broken block.
+func withSource(code string, err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := strings.Replace(err.Error(), "SyntaxError: SyntaxError:", "SyntaxError:", 1)
+	m := syntaxAt.FindStringSubmatch(msg)
+	if m == nil || !strings.Contains(msg, "SyntaxError") {
+		return err
+	}
+	ln, _ := strconv.Atoi(m[1])
+	col, _ := strconv.Atoi(m[2])
+	lines := strings.Split(code, "\n")
+	if ln < 1 || ln > len(lines) {
+		return err
+	}
+	src := lines[ln-1]
+	if len(src) > 200 { // keep the pointer meaningful on a long line
+		lo := max(0, col-100)
+		hi := min(len(src), lo+200)
+		src, col = "…"+src[lo:hi], col-lo+1
+	}
+	caret := strings.Repeat(" ", max(col-1, 0)) + "^"
+	return fmt.Errorf("%s\n  %s\n  %s", msg, src, caret)
+}
+
 // gid returns the current goroutine id (parsed from runtime.Stack),
 // used only to detect same-goroutine re-entry in lock.
 func gid() int64 {
@@ -171,6 +203,7 @@ func (cm *CodeMode) RunCtx(ctx context.Context, code string) (string, error) {
 	cm.timer = timer
 	cm.vm.ClearInterrupt() // a cancel that landed between runs must not abort this one
 	v, err := cm.scoped(goja.Undefined(), cm.vm.ToValue(code))
+	err = withSource(code, err)
 	cm.timer = prevTimer
 	timer.Stop()
 	cm.vm.ClearInterrupt()

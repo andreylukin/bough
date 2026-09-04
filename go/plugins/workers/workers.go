@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -58,6 +59,7 @@ const promptSection = `Subagents: tools.spawn(task) -> string runs a bounded chi
 type sections interface {
 	Set(name, text string)
 	Text() string
+	TextExcept(skip ...string) string
 }
 
 // systemFor builds the child's system prompt: the loop's base prompt,
@@ -68,7 +70,11 @@ func systemFor(base, sections string) string {
 	if sections != "" {
 		s += "\n\n" + sections
 	}
-	return s + "\n\n" + SubSystemPrompt
+	s += "\n\n" + SubSystemPrompt
+	if wd, err := os.Getwd(); err == nil {
+		s += "\n\nYour working directory is " + wd + ". Every path in your task is relative to it unless it starts with /. If a path in the task does not exist, do not guess another one: run ls to find what is actually there, and say so in your report."
+	}
+	return s
 }
 
 const defaultMaxSpawns = 8
@@ -84,6 +90,12 @@ type Codemode interface {
 	RegisterTool(name string, fn any)
 	Run(code string) (string, error)
 }
+
+// pauser is codemode's optional seam for a tool that blocks longer than
+// the script timeout (tools.ask uses it too). Without it a child run
+// ticks the PARENT's deadline and a slow child kills the block that
+// spawned it — losing the child's finished work with it.
+type pauser interface{ Pause() func() }
 
 // History is the optional "history" service seam: only Append is needed
 // (sub:* entries mirror the child's activity for replay).
@@ -130,6 +142,9 @@ func (w *Workers) spawn(task string) (string, error) {
 		w.inChild = false
 		w.mu.Unlock()
 	}()
+	if p, ok := w.code.(pauser); ok {
+		defer p.Pause()()
+	}
 	reply, err := w.runChild(task, id)
 	if err != nil {
 		// A child the provider killed never got to work: refund its
@@ -200,10 +215,13 @@ func (w *Workers) runChild(task string, id int) (string, error) {
 	// mounted since (mcp catalog, skills) is documented to the child too.
 	var secText string
 	if w.secs != nil {
-		secText = w.secs.Text()
+		// Without "workers" the child would read the spawn advert and
+		// try to delegate, which depth 1 refuses.
+		secText = w.secs.TextExcept("workers")
 	}
 	system := systemFor(loop.SystemPrompt, secText)
 	msgs := []llm.Message{{Role: "user", Content: task}}
+	ranClean := false // did any block of this child's work actually succeed?
 	for step := 0; step < w.maxSteps; step++ {
 		steps++
 		reply, err := w.llm.Complete(w.ctx, system, msgs)
@@ -220,6 +238,12 @@ func (w *Workers) runChild(task string, id int) (string, error) {
 			if status == "" {
 				status = "ok" // no contract line: the reply is the report
 			}
+			// A child whose every command failed does not get to say ok,
+			// whatever its report claims: the parent summarised one of
+			// those once and had to retract it.
+			if steps > 1 && !ranClean {
+				status = "failed"
+			}
 			note("done", "", map[string]any{"status": status, "steps": steps})
 			return reply, nil
 		}
@@ -228,10 +252,15 @@ func (w *Workers) runChild(task string, id int) (string, error) {
 			note("code", code, nil)
 			out, runErr := w.code.Run(code)
 			if runErr != nil {
-				out = "error: " + runErr.Error()
+				if out = strings.TrimRight(out, "\n"); out != "" {
+					out += "\n"
+				}
+				out += "error: " + runErr.Error()
+				out = truncate(out, maxResultBytes)
 				note("error", out, nil)
 			} else {
-				out = truncate(out, maxResultBytes)
+				out = truncate(noneNoted(out), maxResultBytes)
+				ranClean = true
 				note("result", out, nil)
 			}
 			msgs = append(msgs, llm.Message{Role: "user", Content: "[tool output]\n" + out})
@@ -241,6 +270,14 @@ func (w *Workers) runChild(task string, id int) (string, error) {
 	note("error", err.Error(), nil)
 	note("done", "", map[string]any{"status": "error", "steps": steps})
 	return "", err
+}
+
+// noneNoted names an empty result; see the loop's copy for why.
+func noneNoted(out string) string {
+	if strings.TrimSpace(out) == "" {
+		return "(the block ran and printed nothing — console.log a value to see it)"
+	}
+	return out
 }
 
 func truncate(s string, n int) string {

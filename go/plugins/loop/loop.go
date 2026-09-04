@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -105,6 +106,25 @@ func (s *Sections) Set(name, text string) {
 	s.m[name] = text
 }
 
+// TextExcept is Text without the named sections: a subagent must not
+// be handed the advert for a tool it is forbidden to call.
+func (s *Sections) TextExcept(skip ...string) string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	names := slices.Sorted(maps.Keys(s.m))
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		if slices.Contains(skip, n) {
+			continue
+		}
+		parts = append(parts, s.m[n])
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 // Text joins all sections, sorted by name, with blank lines.
 func (s *Sections) Text() string {
 	if s == nil {
@@ -175,6 +195,11 @@ Available in the runtime:
 - tools.write(path, content) -> string: create or overwrite a whole file (use this for new files and rewrites, never a shell heredoc)
 - tools.patch(path, old, new) -> string: replace ONE exact occurrence of old with new (copy old verbatim from view, enough lines to be unique)
 - console.log(...): print; everything printed is returned to you
+
+The runtime is synchronous: there is no event loop, and async, await
+and Promise are SYNTAX ERRORS that kill the whole block. Every tool
+returns its value directly — write tools.bash("ls"), not await. To do
+several things, call them one after another or map over a list.
 
 Each code block you write is executed and its output is sent back to you
 as the next message. Declarations (const/let/var) do not persist between
@@ -551,6 +576,34 @@ func ExpandAt(input, root string) []string {
 }
 
 // project derives this step's model messages from the history entries.
+// noneNoted names an empty result. A block that computes a value and
+// never prints it comes back as a bare "[tool output]" — which a model
+// reads as a broken runtime, not as its own missing console.log. One
+// session spent its whole budget probing "why do the tools return
+// nothing" and then told the user the repository tools were down.
+func noneNoted(out string) string {
+	if strings.TrimSpace(out) == "" {
+		return "(the block ran and printed nothing — console.log a value to see it)"
+	}
+	return out
+}
+
+// envSection tells the model what it would otherwise spend a step
+// discovering — and get wrong. Without it a turn opens with `pwd`,
+// reaches for GNU flags on a BSD userland, and invents absolute paths.
+func envSection() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		wd = "unknown"
+	}
+	s := "Environment:\n- Working directory: " + wd +
+		"\n  Paths you write are relative to it. Never guess an absolute path; list a directory instead.\n- Platform: " + runtime.GOOS
+	if runtime.GOOS == "darwin" {
+		s += " — BSD userland, not GNU: find has no -printf, sed -i takes an argument, stat uses -f. Prefer portable flags."
+	}
+	return s
+}
+
 func (r *runner) project() []Message {
 	entries := r.hist.Entries()
 	if r.proj != nil {
@@ -588,9 +641,10 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			}
 		}
 	}
-	// Per turn: context files re-read (they may have appeared or
-	// changed mid-session) and the live plugin prompt sections.
-	system := r.system
+	// Per turn: where we are (the cwd can change between turns), the
+	// context files re-read (they may have appeared or changed
+	// mid-session) and the live plugin prompt sections.
+	system := envSection() + "\n\n" + r.system
 	if r.sysctx != nil {
 		if p := r.sysctx.Preamble(); p != "" {
 			system = p + "\n\n" + system
@@ -684,7 +738,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				}
 				out += "error: " + runErr.Error()
 			}
-			out = truncate(out, maxResultBytes)
+			out = truncate(noneNoted(out), maxResultBytes)
 			if res := r.fire(ctx, "post-result", map[string]any{"code": code, "result": out}, emit); res != nil {
 				if s, ok := res["result"].(string); ok {
 					out = s

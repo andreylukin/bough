@@ -238,6 +238,21 @@ func splitLines(s string) []string {
 // lines start..end (1-based, inclusive; end 0 = to the end). Numbers
 // make patch targets and error lines easy to refer to.
 func view(path string, rng ...int) (string, error) {
+	if st, serr := os.Stat(path); serr == nil && st.IsDir() {
+		ents, rerr := os.ReadDir(path)
+		if rerr != nil {
+			return "", rerr
+		}
+		names := make([]string, 0, len(ents))
+		for _, e := range ents {
+			n := e.Name()
+			if e.IsDir() {
+				n += "/"
+			}
+			names = append(names, n)
+		}
+		return fmt.Sprintf("%s is a directory: %s", path, strings.Join(names, " ")), nil
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", withNeighbours(path, err)

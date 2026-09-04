@@ -3,6 +3,8 @@ package loop
 import (
 	"context"
 	"errors"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -282,5 +284,46 @@ func TestFailedBlockKeepsWhatItPrinted(t *testing.T) {
 	}
 	if !strings.Contains(result, "bad record MAC") {
 		t.Fatalf("the error must still be reported: %q", result)
+	}
+}
+
+// The model is told where it is and what userland it has: without this
+// a turn opens with `pwd` and reaches for GNU flags on macOS.
+func TestSystemPromptNamesCwdAndPlatform(t *testing.T) {
+	l := &recordLLM{}
+	r := buildRunner(t, l, &stubCode{}, nil, nil)
+	if err := r.Run(context.Background(), "hi", func(string, string) {}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	wd, _ := os.Getwd()
+	for _, want := range []string{wd, runtime.GOOS, "Working directory"} {
+		if !strings.Contains(l.system, want) {
+			t.Fatalf("system prompt lacks %q:\n%s", want, l.system)
+		}
+	}
+}
+
+// A block that prints nothing says so. An empty "[tool output]" reads
+// to a model as a broken runtime, not as its own missing console.log.
+func TestSilentBlockSaysSo(t *testing.T) {
+	if got := noneNoted(""); !strings.Contains(got, "printed nothing") {
+		t.Fatalf("empty output must be named: %q", got)
+	}
+	if got := noneNoted("  \n "); !strings.Contains(got, "printed nothing") {
+		t.Fatalf("whitespace-only output must be named: %q", got)
+	}
+	if got := noneNoted("real"); got != "real" {
+		t.Fatalf("real output passes through: %q", got)
+	}
+}
+
+// The prompt must rule out async/await: goja has no event loop, and a
+// model asked for "parallel" work writes `await Promise.all(...)`,
+// which is a syntax error that kills the entire block.
+func TestSystemPromptRulesOutAwait(t *testing.T) {
+	for _, want := range []string{"synchronous", "await", "Promise"} {
+		if !strings.Contains(SystemPrompt, want) {
+			t.Fatalf("system prompt must mention %q", want)
+		}
 	}
 }
