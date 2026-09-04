@@ -18,8 +18,8 @@ func TestEchoComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "echo: world" {
-		t.Errorf("got %q, want %q", got, "echo: world")
+	if got != "```stop\necho: world\n```" {
+		t.Errorf("got %q, want %q", got, "```stop\necho: world\n```")
 	}
 
 	got, err = e.Complete(t.Context(), "", []Message{
@@ -47,7 +47,7 @@ func TestEchoProvidesLLM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "echo: x" {
+	if got != "```stop\necho: x\n```" {
 		t.Errorf("got %q", got)
 	}
 }

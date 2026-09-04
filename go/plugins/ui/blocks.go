@@ -334,8 +334,20 @@ func hiddenTag(name string) (thinking bool, hidden bool) {
 // has not yet declared itself. coding and thinking say which of those
 // is in flight, so the caller can show a marker in its place. Pure.
 func liveView(text string) (prose string, coding, thinking bool) {
-	if before, _, ok := strings.Cut(text, "```"); ok {
-		text, coding = before, true
+	if before, after, ok := strings.Cut(text, "```"); ok {
+		// A stop block is the answer, not machinery: it keeps typing
+		// out. Any other fence is code, and waits for its block.
+		if info, body, cut := strings.Cut(after, "\n"); cut && strings.TrimSpace(info) == "stop" {
+			body, _, _ = strings.Cut(body, "```")
+			text = strings.TrimRight(before, "\n") + "\n" + body
+			if strings.TrimSpace(before) == "" {
+				text = body
+			}
+		} else if strings.HasPrefix(strings.TrimSpace(after), "stop") && !cut {
+			text = before // "```stop" still arriving: hold the fence line
+		} else {
+			text, coding = before, true
+		}
 	} else {
 		text = strings.TrimRight(text, "`") // a fence opener still arriving
 	}

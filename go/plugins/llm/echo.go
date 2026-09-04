@@ -40,7 +40,9 @@ func (echoLLM) Complete(ctx context.Context, system string, messages []Message) 
 	if strings.Contains(last, "CODE!") {
 		return "```js\ntools.bash(\"echo hi from codemode\")\n```", nil
 	}
-	return "echo: " + last, nil
+	// The reply ends the turn, so it comes back inside a stop block —
+	// the contract a real model follows (loop.stopAnswer unwraps it).
+	return "```stop\necho: " + last + "\n```", nil
 }
 
 // Stream implements Streamer for tests: the reply arrives one word at a

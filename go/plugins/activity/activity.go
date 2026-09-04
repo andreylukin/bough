@@ -49,8 +49,13 @@ type Activity struct {
 	busy bool
 }
 
-// Clean trims a small model's label down to what fits a status line.
+// Clean trims a small model's label down to what fits a status line
+// (and unwraps a stop block, for a provider that answers every call
+// the way it ends a turn).
 func Clean(s string) string {
+	if answer, ok := loop.StopAnswer(s); ok {
+		s = answer
+	}
 	s = strings.TrimSpace(s)
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]

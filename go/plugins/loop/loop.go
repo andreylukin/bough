@@ -252,15 +252,25 @@ have seen the output of this one — put several steps in ONE program
 instead when they belong together. Declarations (const/let/var) do not
 persist between blocks; print what you need to carry over. Never write
 output or result blocks yourself; only the runtime returns output. Take
-as many steps as you need. When you are done, reply with plain text
-only — no code block — and that ends the turn.
+as many steps as you need.
 
-A reply without a code block ENDS the turn, whatever it says. Never
-announce what you will do next ("I'll verify…", "Next, let me…") without
-the code block that does it in the same reply. Before you finish, run the
-task's own checks (its tests, a build, the command the brief names) and
-fix what they show; end only when the work is actually done or you have
-hit a wall, and say which.
+Ending the turn is an ACT, not the absence of one. When the work is
+done, put your answer to the user in a stop block:
+
+` + "```stop" + `
+What you did, what you found, what is left.
+` + "```" + `
+
+That is the only thing that hands the turn back. A reply with neither a
+js block nor a stop block runs nothing and ends nothing: you will simply
+be asked again. So never announce what you are about to do ("I'll
+verify…", "Next, let me…") — either do it in a js block in that same
+reply, or stop. Everything the user needs to read goes inside the stop
+block; the transcript above it is machinery they have collapsed.
+
+Before you stop, run the task's own checks (its tests, a build, the
+command the brief names) and fix what they show; stop only when the work
+is actually done or you have hit a wall, and say which.
 
 Answering:
 - Your reply is read in a terminal. Be brief and direct: answer the
@@ -411,6 +421,10 @@ func firstBlockOnly(reply string) (string, int) {
 // same one-block-per-step rule for subagents).
 func FirstBlockOnly(reply string) (string, int) { return firstBlockOnly(reply) }
 
+// StopAnswer is stopAnswer for other plugins: workers ends a child's
+// run on the same contract.
+func StopAnswer(reply string) (string, bool) { return stopAnswer(reply) }
+
 // StripFabrications is stripFakeSystem for other plugins: a subagent's
 // report crosses into the parent's context as tool output, so a child
 // that invents a system message must not be able to hand it upward.
@@ -545,6 +559,10 @@ type runner struct {
 	llm      LLM
 	code     Codemode
 	maxSteps int // model steps per turn; 0 = defaultMaxSteps
+	// stopRetries is how many times a turn is asked again for a stop
+	// block. 0 (a bare runner in a test) keeps the old contract: any
+	// block-less reply ends the turn.
+	stopRetries int
 	// noteData is the extra data of the history entry being emitted
 	// (the done entry's files/exit), set around the emit call so the
 	// mount's publisher can attach it to the live event. Run holds mu
@@ -856,32 +874,50 @@ func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, e
 	return r.llm.Complete(ctx, sys, msgs)
 }
 
-// unfinishedNote is fed back to a model that ended its turn without
-// doing anything: an announcement of work it did not do, or a question
-// the user cannot answer (the turn is over by the time they read it).
-// Once per turn — a model that answers prose twice is taken at its
-// word.
-const unfinishedNote = `[unfinished] That reply ended the turn: it has no code block, so nothing ran and the user is now looking at a plan instead of a result.
+// stopFence matches the block that ends a turn: everything the model
+// wants the user to read goes inside it.
+var stopFence = regexp.MustCompile("(?s)```stop[^\n]*\n(.*?)```")
 
-If you were about to do something, do it NOW in a code block. If you genuinely cannot proceed without the user, call tools.ask(question, ...options) inside a block — a question in plain text does not reach them as a question. If you really are done, say what you did, in the past tense, and nothing else.`
+// noStopNote is fed back to a model whose reply neither ran anything
+// nor ended the turn. The commonest shape by far is a plan with
+// nothing attached ("I'm locating the service definition, then I'll
+// open the PR."), which used to end the turn silently and leave the
+// user looking at an intention.
+const noStopNote = "[unfinished] That reply did neither: no ```js block, so nothing ran, and no ```stop block, so the turn is not over. Do the next thing in a ```js block, or — if the work really is done — put your answer in a ```stop block. A question in plain text does not reach the user; ask with tools.ask(question, ...options) inside a ```js block."
 
-// announcing matches a reply that opens by promising work.
-var announcing = regexp.MustCompile(`(?i)^\s*(i['’]?(m| a[m]? |ll| will| need| am going| going)|let me|next[,:]|now i|first,? i|i plan to)`)
-
-// unfinished reports whether a block-less reply looks like a turn that
-// stopped mid-plan rather than an answer.
-func unfinished(reply string) bool {
-	s := strings.TrimSpace(reply)
-	if s == "" {
-		return false
+// stopAnswer returns the turn's final answer when the reply carries a
+// stop block: the prose around it plus the block's body, with the
+// fence markers gone. ok is false when there is no stop block, or when
+// it and the prose around it are empty (nothing to end a turn with).
+func stopAnswer(reply string) (string, bool) {
+	loc := stopFence.FindStringSubmatchIndex(reply)
+	if loc == nil {
+		return "", false
 	}
-	if strings.HasSuffix(s, "?") {
-		return true // a question nobody was asked
-	}
-	return announcing.MatchString(s)
+	body := strings.TrimSpace(reply[loc[2]:loc[3]])
+	// Prose before the fence is kept (a model likes to introduce its
+	// answer); anything after it is dropped, like a second js block.
+	head := strings.TrimSpace(reply[:loc[0]])
+	out := strings.TrimSpace(head + "\n\n" + body)
+	return out, out != ""
 }
 
-// outOfSteps is the last thing the model is asked when the step budget
+// jsFirst reports whether a js block comes before the reply's stop
+// block: a model that plans a step and then stops in the same reply
+// gets its step run, and is asked again afterwards.
+func jsFirst(reply string) bool {
+	js := jsBlock.FindStringIndex(reply)
+	stop := stopFence.FindStringIndex(reply)
+	return js != nil && (stop == nil || js[0] < stop[0])
+}
+
+// defaultStopRetries is how many times a turn is asked again for a
+// stop block before the loop gives up and takes the reply as final: a
+// model that cannot follow the contract must not cost an unbounded
+// number of calls, and the user must never be left with nothing.
+const defaultStopRetries = 2
+
+// outOfSteps// outOfSteps is the last thing the model is asked when the step budget
 // runs out. A turn that spent every step on tools still owes the user
 // an answer: what was found, and what is left.
 const outOfSteps = `You are out of steps for this turn. Do not write a code block — nothing more will run. Reply now, as plain text, with what you found and what you would do next. If you never reached an answer, say so plainly and name the obstacle.`
@@ -1028,7 +1064,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		maxSteps = defaultMaxSteps
 	}
 	retried := false
-	nudged := false // one push-back per turn, see unfinished()
+	nudges := 0 // push-backs spent asking for a stop block
 	for step := 0; step < maxSteps; step++ {
 		r.landSteers(ctx, emit, false) // a steer sent during the last block joins the context now
 		r.landJobs(emit)               // a background job that finished during the last block reports now
@@ -1059,7 +1095,16 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		}
 		retried = false
 		reply = stripFakeBlocks(reply)
-		reply, dropped := firstBlockOnly(reply)
+		// A stop block ends the turn: its body (plus any prose before
+		// it) IS the answer, and nothing after it runs.
+		stopped := false
+		if answer, ok := stopAnswer(reply); ok && !jsFirst(reply) {
+			reply, stopped = answer, true
+		}
+		dropped := 0
+		if !stopped {
+			reply, dropped = firstBlockOnly(reply)
+		}
 		note("assistant", reply, nil)
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
 		if len(blocks) == 0 {
@@ -1070,14 +1115,25 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			if r.landSteers(ctx, emit, true) {
 				continue
 			}
-			// "I'll go and look at the config" with nothing attached
-			// is not the end of a turn, it is the start of one. Push
-			// back once and let it do the thing.
-			if !nudged && unfinished(reply) {
-				nudged = true
-				r.hist.Append("nudge", map[string]any{"text": unfinishedNote})
-				note("system", "that reply announced work without doing it; asking again", nil)
-				continue
+			// Ending a turn is an act, not the absence of one: the
+			// model says so with a ```stop block. A reply that neither
+			// runs anything nor stops is a plan the user cannot use,
+			// so the turn goes back for another round.
+			if !stopped {
+				if nudges < r.stopRetries {
+					nudges++
+					r.hist.Append("nudge", map[string]any{"text": noStopNote})
+					// The reply stays in history (the model said it,
+					// and the next call needs it), but on screen it is
+					// superseded by the answer that follows: the user
+					// should not read the same thing twice.
+					note("system", fmt.Sprintf("that reply ran nothing and did not stop; asking again (%d/%d)", nudges, r.stopRetries),
+						map[string]any{"supersedes": true})
+					continue
+				}
+				if r.stopRetries > 0 {
+					note("system", "no stop block after "+strconv.Itoa(r.stopRetries)+" tries; taking the reply as final", nil)
+				}
 			}
 			note("done", "", r.doneData())
 			r.fire(ctx, "stop", map[string]any{"input": input, "reply": reply}, emit)
@@ -1224,6 +1280,14 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		if on {
 			r.guidance = TaskGuidance
 		}
+	}
+	r.stopRetries = defaultStopRetries
+	if v, ok := cfg["stop_retries"]; ok {
+		n, err := toInt(v)
+		if err != nil || n < 0 {
+			return fmt.Errorf("loop: stop_retries must be a non-negative integer, got %v", v)
+		}
+		r.stopRetries = n
 	}
 	if v, ok := cfg["max_steps"]; ok {
 		n, err := toInt(v)

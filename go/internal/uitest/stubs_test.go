@@ -141,9 +141,13 @@ type gated struct {
 
 func (g *gated) Stream(ctx context.Context, sys string, msgs []llm.Message, onDelta func(string)) (string, error) {
 	n := 0
+	// Hold after the stop fence plus three whole runes ("日本語"): the
+	// point is to freeze the live view mid-reply with nothing partial
+	// on screen.
+	hold := len("```stop\n") + 9
 	return g.Streaming.Stream(ctx, sys, msgs, func(d string) {
 		onDelta(d)
-		if n++; n == 9 {
+		if n++; n == hold {
 			select {
 			case <-g.gate:
 			case <-ctx.Done():

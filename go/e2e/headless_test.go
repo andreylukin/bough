@@ -101,7 +101,7 @@ func TestHeadlessSkillInjection(t *testing.T) {
 // reply (backticks stripped so codemode never executes the reflection).
 const sysHeadProvider = `
 bough.provider("syshead", function (system, messages) {
-  return "SYSHEAD::" + system.slice(0, 500).replace(/\u0060/g, "'");
+  return "\u0060\u0060\u0060stop\nSYSHEAD::" + system.slice(0, 500).replace(/\u0060/g, "'") + "\n\u0060\u0060\u0060";
 });
 bough.setup({ provider: { default: "syshead" } });
 `
@@ -136,7 +136,7 @@ func TestHeadlessJSTool(t *testing.T) {
 bough.tool("greet", function () { return "TOOL_SAYS_HI_5150"; });
 bough.provider("toolp", function (system, messages) {
   var last = messages[messages.length - 1].content;
-  if (last.indexOf("[tool output]") >= 0) return "tool done";
+  if (last.indexOf("[tool output]") >= 0) return "\u0060\u0060\u0060stop\ntool done\n\u0060\u0060\u0060";
   return "\u0060\u0060\u0060js\nconsole.log(tools.greet())\n\u0060\u0060\u0060";
 });
 bough.setup({ provider: { default: "toolp" } });
@@ -151,7 +151,7 @@ func TestHeadlessParrotProvider(t *testing.T) {
 		cwd: map[string]string{".bough/init.js": `
 bough.provider("parrot", function (system, messages) {
   var last = messages[messages.length - 1].content;
-  return "parrot(" + last + ") after " + messages.length + " msgs";
+  return "\u0060\u0060\u0060stop\nparrot(" + last + ") after " + messages.length + " msgs\n\u0060\u0060\u0060";
 });
 bough.setup({ provider: { default: "parrot" } });
 `},
@@ -167,7 +167,7 @@ func TestHeadlessSystemAppendCognition(t *testing.T) {
 	out := runHeadless(t, launchOpts{
 		cwd: map[string]string{".bough/init.js": `
 bough.provider("systail", function (system, messages) {
-  return "SYSTAIL::" + system.slice(-80).replace(/\u0060/g, "'");
+  return "\u0060\u0060\u0060stop\nSYSTAIL::" + system.slice(-80).replace(/\u0060/g, "'") + "\n\u0060\u0060\u0060";
 });
 bough.setup({
   provider: { default: "systail" },
@@ -398,7 +398,7 @@ bough.provider("slowfinal", function (system, messages) {
   var last = messages[messages.length - 1].content;
   if (calls === 1) return "\u0060\u0060\u0060js\nconsole.log(tools.bash('echo FIRST_RAN'))\n\u0060\u0060\u0060";
   if (calls === 2) { var t0 = Date.now(); while (Date.now() - t0 < 1500) {} }
-  return "reply" + calls + "(" + last + ")";
+  return "\u0060\u0060\u0060stop\nreply" + calls + "(" + last + ")\n\u0060\u0060\u0060";
 });
 bough.setup({ provider: { default: "slowfinal" } });
 `},

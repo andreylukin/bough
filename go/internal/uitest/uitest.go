@@ -30,8 +30,10 @@ const waitTimeout = 15 * time.Second
 // stub providers. It is the test's parrot: no network, ever.
 type LLMFunc func(system string, messages []llm.Message) string
 
+// The reply is wrapped like a Script's: plain prose becomes a stop
+// block, the way a model that follows the contract answers.
 func (f LLMFunc) Complete(_ context.Context, system string, messages []llm.Message) (string, error) {
-	return f(system, messages), nil
+	return endTurn(f(system, messages)), nil
 }
 
 // LastUser returns the last user message's content (what llm-echo keys on).

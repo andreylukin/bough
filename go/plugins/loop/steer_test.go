@@ -29,12 +29,12 @@ func (s *steerLLM) Complete(ctx context.Context, system string, messages []Messa
 	if s.calls == 1 {
 		if s.hook != nil {
 			s.hook()
-			return "plain reply, no code", nil
+			return endTurn("plain reply, no code"), nil
 		}
 		return "two blocks:\n```js\nconsole.log('ONE')\n```\nand\n```js\nconsole.log('TWO')\n```", nil
 	}
 	s.seen = append(s.seen, messages)
-	return "steered reply", nil
+	return endTurn("steered reply"), nil
 }
 
 // steerCode steers the running turn from inside the first block.

@@ -45,7 +45,7 @@ func TestOpenrouterReadStreamError(t *testing.T) {
 func TestEchoStreams(t *testing.T) {
 	var got []string
 	out, err := echoLLM{}.Stream(nil, "", []Message{{Role: "user", Content: "a b"}}, func(d string) { got = append(got, d) })
-	if err != nil || out != "echo: a b" || strings.Join(got, "") != out || len(got) < 3 {
+	if err != nil || out != "```stop\necho: a b\n```" || strings.Join(got, "") != out || len(got) < 3 {
 		t.Fatalf("out=%q deltas=%v err=%v", out, got, err)
 	}
 }

@@ -109,3 +109,38 @@ func TestSessionTitleGoesToTheBar(t *testing.T) {
 		t.Fatalf("status bar = %q", bar)
 	}
 }
+
+// The loop's push-back supersedes the reply it rejected: the user
+// reads the answer once, not twice.
+func TestSupersedingNoteDropsTheReply(t *testing.T) {
+	m := testModel(t)
+	m.addEvent(Event{Kind: "assistant", Text: "1 file: err.log"})
+	m.addEvent(Event{Kind: "system", Text: "that reply ran nothing and did not stop; asking again (1/2)",
+		Data: map[string]any{"supersedes": true}})
+	m.addEvent(Event{Kind: "assistant", Text: "1 file: err.log (plus a .bough directory)."})
+
+	var assistants int
+	for _, b := range m.blocks {
+		if b.kind == "assistant" {
+			assistants++
+		}
+	}
+	if assistants != 1 {
+		t.Fatalf("%d assistant blocks, want 1: %+v", assistants, m.blocks)
+	}
+	if got := m.blocks[len(m.blocks)-1].text; got != "1 file: err.log (plus a .bough directory)." {
+		t.Fatalf("the surviving answer = %q", got)
+	}
+	// An ordinary system note leaves the transcript alone.
+	m.addEvent(Event{Kind: "assistant", Text: "and one more thing"})
+	m.addEvent(Event{Kind: "system", Text: "just a note"})
+	assistants = 0
+	for _, b := range m.blocks {
+		if b.kind == "assistant" {
+			assistants++
+		}
+	}
+	if assistants != 2 {
+		t.Fatalf("an ordinary note ate a reply: %+v", m.blocks)
+	}
+}

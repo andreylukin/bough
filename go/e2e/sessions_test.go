@@ -13,10 +13,13 @@ import (
 	"time"
 )
 
-const parrotInit = `
+// The parrot ends the turn the way a model does: its reply comes back
+// inside a stop block (the loop unwraps it, so the transcript still
+// reads "parrot(…) after N msgs").
+const parrotInit = "\n" + `
 bough.provider("parrot", function (system, messages) {
   var last = messages[messages.length - 1].content;
-  return "parrot(" + last + ") after " + messages.length + " msgs";
+  return "` + "```stop" + `\n" + "parrot(" + last + ") after " + messages.length + " msgs" + "\n` + "```" + `";
 });
 bough.setup({ provider: { default: "parrot" } });
 `

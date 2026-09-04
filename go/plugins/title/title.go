@@ -44,8 +44,13 @@ type Titler struct {
 	done bool
 }
 
-// Clean trims what a small model tends to wrap around a title.
+// Clean trims what a small model tends to wrap around a title — and a
+// stop block, for a provider that answers every call the way it ends a
+// turn.
 func Clean(s string) string {
+	if answer, ok := loop.StopAnswer(s); ok {
+		s = answer
+	}
 	s = strings.TrimSpace(s)
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i] // a chatty model explains underneath; take the name

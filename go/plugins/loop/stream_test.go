@@ -17,10 +17,12 @@ func (s *streamLLM) Complete(context.Context, string, []Message) (string, error)
 }
 
 func (s *streamLLM) Stream(_ context.Context, _ string, _ []Message, onDelta func(string)) (string, error) {
-	for _, d := range []string{"one ", "two ", "three"} {
+	// The fence arrives in the stream like any other text; the loop
+	// unwraps it, so the recorded reply is the answer alone.
+	for _, d := range []string{"```stop\n", "one ", "two ", "three", "\n```"} {
 		onDelta(d)
 	}
-	return "one two three", nil
+	return "```stop\none two three\n```", nil
 }
 
 // A streaming provider's fragments reach the ui as assistant-delta
@@ -53,7 +55,7 @@ func TestStreamingEmitsDeltasRecordsWhole(t *testing.T) {
 			deltas = append(deltas, texts[i])
 		}
 	}
-	if got := strings.Join(deltas, "|"); got != "one |two |three" {
+	if got := strings.Join(deltas, "|"); got != "```stop\n|one |two |three|\n```" {
 		t.Fatalf("deltas = %q", got)
 	}
 	last := -1

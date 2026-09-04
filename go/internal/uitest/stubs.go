@@ -35,8 +35,30 @@ func (s *Script) Complete(_ context.Context, _ string, _ []llm.Message) (string,
 	if i < 0 {
 		return "", nil
 	}
-	return s.Replies[i], nil
+	return endTurn(s.Replies[i]), nil
 }
+
+// endTurn wraps a fixture's plain prose in a stop block, the way a
+// model that follows the contract would. A reply that already carries
+// a js or stop block is left exactly as written, so a test can still
+// script the reply that ends nothing (Raw).
+func endTurn(reply string) string {
+	if strings.Contains(reply, "```") || strings.HasPrefix(reply, rawMarker) {
+		return strings.TrimPrefix(reply, rawMarker)
+	}
+	return Stop(reply)
+}
+
+// rawMarker opts a fixture out of the automatic stop block: prefix a
+// reply with it to script a model that neither runs nor stops.
+const rawMarker = "\x00raw\x00"
+
+// Raw is a reply the loop will find neither a js block nor a stop
+// block in — the shape that gets asked again.
+func Raw(text string) string { return rawMarker + text }
+
+// Stop is a reply that ends the turn with text as its answer.
+func Stop(text string) string { return "```stop\n" + text + "\n```" }
 
 // Chunker splits a reply into the deltas a streaming provider would send.
 type Chunker func(reply string) []string

@@ -24,9 +24,20 @@ func (l *recordLLM) Complete(ctx context.Context, system string, messages []Mess
 	l.system = system
 	l.messages = append([]Message(nil), messages...)
 	if l.reply == "" {
-		return "ok", nil
+		return endTurn("ok"), nil
 	}
-	return l.reply, nil
+	return endTurn(l.reply), nil
+}
+
+// endTurn wraps a fixture's plain prose in the stop block a model that
+// follows the contract would send; a reply that already carries a
+// fence is left alone (that is how a test scripts the reply which ends
+// nothing).
+func endTurn(reply string) string {
+	if strings.Contains(reply, "```") {
+		return reply
+	}
+	return "```stop\n" + reply + "\n```"
 }
 
 // stubHooks returns canned results per event and records fired events.
@@ -520,7 +531,7 @@ func (l *flakyLLM) Complete(context.Context, string, []Message) (string, error) 
 	if l.calls <= l.empties {
 		return "", nil
 	}
-	return "fine", nil
+	return endTurn("fine"), nil
 }
 
 // One empty reply is retried silently; two in a row end the turn

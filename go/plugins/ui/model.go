@@ -814,6 +814,20 @@ func (m *model) addEvent(ev Event) {
 			}
 		}
 		m.blocks = append(m.blocks, block{id: id, kind: "todo", text: ev.Text, collapsed: m.closedByDefault(ev.Text)})
+	case "system":
+		// A note that supersedes the reply above it (the loop asking
+		// again for a stop block): drop that reply, or the user reads
+		// the same answer twice.
+		if ev.Data["supersedes"] == true {
+			for i := len(m.blocks) - 1; i >= 0; i-- {
+				if m.blocks[i].kind == "assistant" {
+					m.blocks = append(m.blocks[:i], m.blocks[i+1:]...)
+					break
+				}
+			}
+		}
+		m.blocks = append(m.blocks, block{id: id, kind: "system", text: ev.Text,
+			collapsed: m.closedByDefault(ev.Text)})
 	default: // assistant, anything future
 		// A loop-event system note is detail; command output (slash.go)
 		// is what the user asked for and stays open.

@@ -106,6 +106,9 @@ func (f Fact) key() string {
 // four-field line is dropped rather than guessed at: a small model that
 // wandered off the format has nothing worth saving in that line.
 func ParseFacts(reply string, max int) []Fact {
+	if answer, ok := loop.StopAnswer(reply); ok {
+		reply = answer
+	}
 	var out []Fact
 	for _, line := range strings.Split(reply, "\n") {
 		line = strings.TrimSpace(strings.TrimLeft(line, "-*0123456789. "))

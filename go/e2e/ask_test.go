@@ -9,7 +9,7 @@ import "testing"
 const askProvider = `
 bough.provider("asker", function (system, messages) {
   var last = messages[messages.length - 1].content;
-  if (last.indexOf("[tool output]") >= 0) return "final answer: " + last;
+  if (last.indexOf("[tool output]") >= 0) return "\u0060\u0060\u0060stop\nfinal answer: " + last + "\n\u0060\u0060\u0060";
   return "\u0060\u0060\u0060js\nconsole.log(tools.ask('fav color?', 'red', 'blue'))\n\u0060\u0060\u0060";
 });
 bough.setup({ provider: { default: "asker" } });
@@ -44,8 +44,8 @@ func TestHeadlessAskFreeform(t *testing.T) {
 // option as a separate argument) reached the system prompt.
 const sysCheckProvider = `
 bough.provider("syschk", function (system, messages) {
-  if (system.indexOf("separate argument") >= 0 && system.indexOf("tools.ask(") >= 0) return "NUDGE_PRESENT";
-  return "NUDGE_MISSING";
+  if (system.indexOf("separate argument") >= 0 && system.indexOf("tools.ask(") >= 0) return "\u0060\u0060\u0060stop\nNUDGE_PRESENT\n\u0060\u0060\u0060";
+  return "\u0060\u0060\u0060stop\nNUDGE_MISSING\n\u0060\u0060\u0060";
 });
 bough.setup({ provider: { default: "syschk" } });
 `

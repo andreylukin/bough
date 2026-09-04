@@ -24,7 +24,7 @@ func (s *stubLLM) Complete(ctx context.Context, system string, messages []Messag
 	if s.calls == 1 {
 		return "Running it.\n```js\nconsole.log('CODE!')\n```", nil
 	}
-	return "All done.", nil
+	return endTurn("All done."), nil
 }
 
 type stubCode struct{ ran []string }
@@ -451,53 +451,41 @@ func TestFirstBlockOnly(t *testing.T) {
 	}
 }
 
-// A reply that promises work, or asks a question nobody can answer,
-// is not the end of a turn.
-func TestUnfinished(t *testing.T) {
-	yes := []string{
-		"I’m locating the GitOps service definition, then I’ll open the PR.",
-		"I'll check the config first.",
-		"Let me look at the failing test.",
-		"Next, I will run the suite.",
-		"Which environment should this point at?",
-		"I need the target image tag or the prototype branch.",
+// The stop block is the only thing that ends a turn. A reply that
+// neither runs anything nor stops is asked again, up to the cap, and
+// then taken as final so the user is never left with nothing.
+func TestStopBlockEndsTheTurn(t *testing.T) {
+	llm := &seqLLM{replies: []string{"```stop\nDone — 184 files.\n```"}}
+	hist := &memHistory{}
+	r := &runner{llm: llm, code: &stubCode{}, hist: hist, secs: &Sections{}, stopRetries: 2}
+	var kinds, texts []string
+	if err := r.Run(context.Background(), "count them", collect(&kinds, &texts)); err != nil {
+		t.Fatal(err)
 	}
-	no := []string{
-		"Done — the PR is open at #412.",
-		"There are 184 Go files; the biggest is plugins/ui/model.go.",
-		"I found the bug: the golden file was stale, and I updated it.",
-		"", "  ",
-		"The build failed because CGO was enabled; I set CGO_ENABLED=0 and it passes.",
+	if llm.calls != 1 {
+		t.Fatalf("a stop block was pushed back on (%d calls)", llm.calls)
 	}
-	for _, s := range yes {
-		if !unfinished(s) {
-			t.Errorf("should be unfinished: %q", s)
-		}
+	i := slices.Index(kinds, "assistant")
+	if i < 0 || texts[i] != "Done — 184 files." {
+		t.Fatalf("the answer is not the stop block's body: %q", texts)
 	}
-	for _, s := range no {
-		if unfinished(s) {
-			t.Errorf("should be a finished answer: %q", s)
-		}
+	if strings.Contains(texts[i], "```") {
+		t.Fatalf("the fence markers survived: %q", texts[i])
 	}
 }
 
-// The push-back happens once: the model gets the note as a user
-// message, and if it answers with prose again the turn ends rather
-// than looping.
-func TestNudgeOncePerTurn(t *testing.T) {
+func TestNoStopIsAskedAgain(t *testing.T) {
 	llm := &seqLLM{replies: []string{
 		"I'll go and look at the config.",
-		"Still just talking about it, I'm afraid.",
+		"```stop\nThe config is fine.\n```",
 	}}
 	hist := &memHistory{}
-	r := &runner{llm: llm, code: &stubCode{}, hist: hist, secs: &Sections{}}
-
+	r := &runner{llm: llm, code: &stubCode{}, hist: hist, secs: &Sections{}, stopRetries: 2}
 	var kinds, texts []string
-	if err := r.Run(context.Background(), "fix the config", collect(&kinds, &texts)); err != nil {
-		t.Fatal(err)
-	}
+	_ = r.Run(context.Background(), "check the config", collect(&kinds, &texts))
+
 	if llm.calls != 2 {
-		t.Fatalf("the model was asked %d times, want 2 (one push-back)", llm.calls)
+		t.Fatalf("the model was asked %d times, want 2", llm.calls)
 	}
 	var nudges int
 	for _, e := range hist.Entries() {
@@ -508,33 +496,74 @@ func TestNudgeOncePerTurn(t *testing.T) {
 	if nudges != 1 {
 		t.Fatalf("%d nudge entries, want 1", nudges)
 	}
-	// The note reaches the model as a user message, and the transcript
-	// says why the turn carried on.
 	var sawNote bool
 	for _, m := range DefaultProject(hist.Entries()) {
-		if strings.Contains(m.Content, "[unfinished]") && m.Role == "user" {
+		if m.Role == "user" && strings.Contains(m.Content, "[unfinished]") {
 			sawNote = true
 		}
 	}
 	if !sawNote {
 		t.Fatal("the push-back never reached the model")
 	}
-	if i := slices.Index(kinds, "system"); i < 0 || !strings.Contains(texts[i], "announced work") {
-		t.Fatalf("no visible note: %v", kinds)
-	}
 	if kinds[len(kinds)-1] != "done" {
 		t.Fatalf("the turn did not end: %v", kinds)
 	}
 }
 
-// A finished answer is never pushed back on: one call, one reply.
-func TestNoNudgeOnAnAnswer(t *testing.T) {
-	llm := &seqLLM{replies: []string{"Done — 184 files, the biggest is model.go."}}
-	r := &runner{llm: llm, code: &stubCode{}, hist: &memHistory{}, secs: &Sections{}}
+// A model that never stops costs a bounded number of calls, and the
+// user still gets its last reply.
+func TestStopRetriesAreCapped(t *testing.T) {
+	llm := &seqLLM{replies: []string{"still thinking about it"}}
+	r := &runner{llm: llm, code: &stubCode{}, hist: &memHistory{}, secs: &Sections{}, stopRetries: 2}
 	var kinds, texts []string
-	_ = r.Run(context.Background(), "count them", collect(&kinds, &texts))
-	if llm.calls != 1 {
-		t.Fatalf("an answer was pushed back on (%d calls)", llm.calls)
+	_ = r.Run(context.Background(), "go", collect(&kinds, &texts))
+	if llm.calls != 3 {
+		t.Fatalf("%d calls, want 3 (the first plus two retries)", llm.calls)
+	}
+	if kinds[len(kinds)-1] != "done" {
+		t.Fatalf("the turn never ended: %v", kinds)
+	}
+	if i := slices.Index(texts, "still thinking about it"); i < 0 {
+		t.Fatal("the user lost the model's last reply")
+	}
+}
+
+// A js block still runs, and a stop block written under it does not
+// end the turn early: the step happens, then the model is asked again.
+func TestJsBeforeStopStillRuns(t *testing.T) {
+	llm := &seqLLM{replies: []string{
+		"```js\nconsole.log(1)\n```\nand then\n```stop\nDone.\n```",
+		"```stop\nReally done.\n```",
+	}}
+	code := &stubCode{}
+	r := &runner{llm: llm, code: code, hist: &memHistory{}, secs: &Sections{}, stopRetries: 2}
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "go", collect(&kinds, &texts))
+	if len(code.ran) != 1 {
+		t.Fatalf("the js block did not run: %v", code.ran)
+	}
+	if llm.calls != 2 {
+		t.Fatalf("%d calls, want 2 (the stop under the js block was dropped)", llm.calls)
+	}
+}
+
+// stopAnswer keeps the prose above the fence and drops what follows.
+func TestStopAnswer(t *testing.T) {
+	cases := []struct {
+		reply, want string
+		ok          bool
+	}{
+		{"```stop\nAll done.\n```", "All done.", true},
+		{"Here is what I found.\n```stop\nThe gate is red.\n```", "Here is what I found.\n\nThe gate is red.", true},
+		{"```stop\nfirst\n```\nignored tail", "first", true},
+		{"no fence here", "", false},
+		{"```stop\n \n```", "", false},
+	}
+	for _, c := range cases {
+		got, ok := stopAnswer(c.reply)
+		if got != c.want || ok != c.ok {
+			t.Fatalf("stopAnswer(%q) = %q,%v; want %q,%v", c.reply, got, ok, c.want, c.ok)
+		}
 	}
 }
 
@@ -550,5 +579,5 @@ func (l *seqLLM) Complete(ctx context.Context, system string, messages []Message
 	if i >= len(l.replies) {
 		i = len(l.replies) - 1
 	}
-	return l.replies[i], nil
+	return l.replies[i], nil // scripted verbatim: these tests are about the contract
 }

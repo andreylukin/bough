@@ -42,7 +42,7 @@ import (
 // executes in the parent's codemode VM, so it must be told the same
 // tools (bash, view, patch, mcp, ...) in the same words. Without this
 // the child was told only that "the tools API" exists.
-const SubSystemPrompt = `You are a bough subagent spawned for ONE task. Complete exactly that task with the tools above (you cannot spawn), then reply with a REPORT as plain text — no code block in the final reply. The report is all the parent agent sees, so make it self-contained and short (under 30 lines):
+const SubSystemPrompt = `You are a bough subagent spawned for ONE task. Complete exactly that task with the tools above (you cannot spawn), then end with your REPORT inside a ` + "```stop" + ` block — that is what hands your work back. The report is all the parent agent sees, so make it self-contained and short (under 30 lines):
 
 Status: ok | failed
 Findings: what you established, as bullets (facts, numbers, paths)
@@ -390,9 +390,22 @@ func (w *Workers) runChild(ctx context.Context, task string, id int, run func(st
 		// fabricated system message in it would read there as an
 		// instruction from the harness.
 		reply = loop.StripFabrications(reply)
-		// One block per step, like the parent: a child that writes a
-		// dozen blind commands in one reply is the same failure.
-		reply, dropped := loop.FirstBlockOnly(reply)
+		// A child ends its run the way the parent does: the report
+		// lives in a stop block, unwrapped before it is shown or
+		// handed back. A reply with no block at all is still taken as
+		// the report — a child has a step budget, and an unbounded
+		// push-back loop inside a subagent is worse than a slightly
+		// informal report.
+		stopped := false
+		if answer, ok := loop.StopAnswer(reply); ok {
+			reply, stopped = answer, true
+		}
+		dropped := 0
+		if !stopped {
+			// One block per step, like the parent: a child that writes
+			// a dozen blind commands in one reply is the same failure.
+			reply, dropped = loop.FirstBlockOnly(reply)
+		}
 		note("assistant", reply, nil)
 		msgs = append(msgs, llm.Message{Role: "assistant", Content: reply})
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
