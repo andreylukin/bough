@@ -839,3 +839,28 @@ func TestThinkingSpanShowsMarkerWhileStreaming(t *testing.T) {
 		t.Fatalf("want the prose and the thinking marker:\n%s", p)
 	}
 }
+
+// glamour pads inline code with non-breaking spaces, which put a
+// double space before every span and a gap before the punctuation
+// after it — visible in almost every reply that names a symbol.
+func TestInlineCodeIsNotPadded(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.event("assistant", "Fixed `a + b`; `go run .` now prints `5`.")
+	p := d.plain()
+	if strings.Contains(p, " ") {
+		t.Errorf("inline code should carry no non-breaking padding:\n%q", p)
+	}
+	// The artifacts padding produced, spelled out: a gap before the
+	// punctuation that follows a span, and a double space before one.
+	for _, bad := range []string{"5 .", "b ;", "Fixed  ", "prints  "} {
+		if strings.Contains(p, bad) {
+			t.Errorf("padding artifact %q still on screen:\n%s", bad, p)
+		}
+	}
+	for _, want := range []string{"Fixed a + b;", "go run . now prints 5."} {
+		if !strings.Contains(p, want) {
+			t.Errorf("inline code should read as ordinary prose (%q):\n%s", want, p)
+		}
+	}
+}

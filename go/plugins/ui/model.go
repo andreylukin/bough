@@ -242,6 +242,13 @@ func mdStyles(style string, th theme) ansi.StyleConfig {
 	if style == "light" {
 		cfg = styles.LightStyleConfig
 	}
+	// glamour pads inline code with a non-breaking space on each side,
+	// to keep a span from breaking across lines. The cost shows up in
+	// every reply that names a symbol: "Fixed to  a + b ;  go run .
+	// now prints  5 ." — a double space before each span and a gap
+	// before the punctuation after it. The background colour is what
+	// separates code from prose here, so the padding buys nothing.
+	cfg.Code.Prefix, cfg.Code.Suffix = "", ""
 	if fg := hexOf(th["accent"].GetForeground()); fg != "" {
 		cfg.Code.Color = &fg
 	}
