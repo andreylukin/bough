@@ -131,6 +131,13 @@
 - id: auto-memory
   plugin: auto-memory
 
+# The agent's own directory: values that survive a code block, notes
+# that survive the context window, and somewhere to put a throwaway
+# file that is not the user's checkout. $BOUGH_SCRATCH points at it.
+# After loop so its prompt section lands. config: {dir: <path>}
+- id: scratchpad
+  plugin: scratchpad
+
 # While the agent works, a small model says what it is doing in a few
 # words, on the bottom line. Needs the llm-small row; without it the
 # plugin is quiet (a status line is not worth the agent's own model).
